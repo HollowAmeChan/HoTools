@@ -117,7 +117,6 @@ class OP_ShapekeyTools_multi_generateLinkedObjects(Operator):
             emptyNameObj.empty_display_size = 0.01
             emptyNameObj.location = NameCenterLoc
             emptyNameObj.parent = empty
-            context.scene.collection.objects.link(emptyNameObj)
             main_collection.objects.link(emptyNameObj)
             
 
