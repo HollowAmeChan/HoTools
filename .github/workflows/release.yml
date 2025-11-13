@@ -31,6 +31,6 @@ jobs:
         zip -r $ZIP_NAME $FOLDER_NAME
 
         # 创建 Release 并上传 ZIP
-        gh release create $GITHUB_REF_NAME $ZIP_NAME --title " $ZIP_NAME"
+        gh release create "v$(date +'%Y%m%d-%H%M%S')" $ZIP_NAME --title "$ZIP_NAME"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
