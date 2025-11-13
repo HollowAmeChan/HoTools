@@ -9,5 +9,6 @@ release页最新为最新版可以直接下载安装使用，下载源码压缩�
 
 # 插件文档
 https://hollowamechan.github.io/HotoolsDoc-Quartz/
+文档不定期更新，最新功能基本都是群内快速演示一遍，所以多多关注群内消息
 
 
