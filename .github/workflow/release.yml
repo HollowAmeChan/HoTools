@@ -1,0 +1,35 @@
+name: Auto Release Clean ZIP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up zip tool
+      run: sudo apt-get install zip -y rsync -y
+
+    - name: Prepare clean folder and create ZIP
+      run: |
+        # 固定压缩包内文件夹名
+        FOLDER_NAME="Hotools"
+        mkdir $FOLDER_NAME
+
+        # 复制文件到文件夹，排除 .git 和 .github
+        rsync -av --exclude=".git" --exclude=".github" ./ $FOLDER_NAME/
+
+        # 压缩包名字用日期
+        ZIP_NAME="Hotools-$(date +'%Y%m%d-%H%M%S').zip"
+        zip -r $ZIP_NAME $FOLDER_NAME
+
+        # 创建 Release 并上传 ZIP
+        gh release create $GITHUB_REF_NAME $ZIP_NAME --title " $ZIP_NAME"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
