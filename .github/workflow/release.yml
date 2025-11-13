@@ -16,6 +16,7 @@ jobs:
     - name: Set up zip tool
       run: sudo apt-get install zip -y rsync -y
 
+
     - name: Prepare clean folder and create ZIP
       run: |
         # 固定压缩包内文件夹名
