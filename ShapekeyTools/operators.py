@@ -821,48 +821,30 @@ class OP_ClearAllShapekeyValue(Operator):
         return context.active_object is not None and context.selected_objects
 
     def execute(self, context):
-        source_obj = context.object
-        source_sk = source_obj.data.shape_keys
-        source_basis = source_sk.reference_key
-        source_keys = [k.name for k in source_sk.key_blocks if k != source_basis]
+        # 遍历选中物体，清除非基型形态键值
+        cleared_objects = 0
+        # 遍历选中的物体，处理每个物体的形态键
+        for obj in context.selected_objects:
+            if obj.type == 'MESH' and obj.data.shape_keys:
+                shape_keys = obj.data.shape_keys
+                basis_key = shape_keys.reference_key  # 获取基型形态键
 
-        if not source_keys:
-            self.report({'WARNING'}, "源物体没有非基型的形态键")
-            return {'CANCELLED'}
+                if basis_key:  # 确保基型形态键存在
+                    # 遍历非基型形态键，清零值
+                    non_basis_keys = [
+                        key for key in shape_keys.key_blocks if key != basis_key]
 
-        selected_objs = [o for o in context.selected_objects if o != source_obj]
+                    for key in non_basis_keys:
+                        key.value = 0
+                    cleared_objects += 1
 
-        if not selected_objs:
-            self.report({'WARNING'}, "没有其他被选中的物体")
-            return {'CANCELLED'}
+        # 根据结果显示反馈信息
+        if cleared_objects > 0:
+            self.report({'INFO'}, f"已清除 {cleared_objects} 个物体的非基型形态键值")
+        else:
+            self.report({'WARNING'}, "没有找到包含非基型形态键的物体")
 
-        for target in selected_objs:
-            # 确保目标物体有形态键
-            if target.data.shape_keys is None:
-                target.shape_key_add(name="Basis")
-
-            target_sk = target.data.shape_keys
-            target_basis = target_sk.reference_key
-
-            # 确保每个源键存在
-            for key_name in source_keys:
-                if key_name not in target_sk.key_blocks:
-                    target.shape_key_add(name=key_name)
-
-            # 构造新顺序（基型保持在第 0 位）
-            current_keys = [k.name for k in target_sk.key_blocks if k != target_basis]#基型外的键
-            extra_keys = [k for k in current_keys if k not in source_keys]#额外的键
-            new_order = [target_basis.name] + source_keys + extra_keys
-
-            # 调整顺序（reference_key 固定第 0 个）
-            for i, name in enumerate(new_order):
-                idx = target_sk.key_blocks.find(name)
-                if idx != -1 and idx != i:
-                    target_sk.key_blocks.move(idx, i)
-
-        self.report({'INFO'}, f"已复制形态键顺序到 {len(selected_objs)} 个物体（跳过基型）")
         return {'FINISHED'}
-
 
 class OP_SetBasisShapekeyActive(Operator):
     """设置选择的所有物体的活动形态键为基型"""
