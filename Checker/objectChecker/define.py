@@ -1,12 +1,10 @@
-import bpy
-from bpy.types import Operator,Panel,Menu,Object
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
+from  . import  fixOperator
+from bpy.types import Object
 import bmesh
-from bpy_extras.io_utils import ExportHelper, ImportHelper
 import re
 import math
 from mathutils import Vector
-from . import fix
+
 
 #TODO 物体是否是实例化物体
 
@@ -61,7 +59,6 @@ def check_object_bones_rotation_mode_not_quaternion(obj: Object) -> list[str]:
 
     return result
 
-
 def check_object_default_material_names(obj: Object) -> bool:
     """检查是否存在默认的材质名称(如Material, Material.001, 材质, 材质.001等)"""
     if obj.type != 'MESH':
@@ -104,11 +101,9 @@ def check_object_not_mesh(obj: Object) -> bool:
     """检查是否是非mesh/armature/empty物体(如Text、Curve等)"""
     return obj.type not in ['MESH',"ARMATURE","EMPTY"]
 
-
 def check_object_data_is_shared(obj: Object) -> bool:
     """检查本物体的数据是否被多个物体使用(例如多个物体使用相同Mesh)"""
     return obj.data and obj.data.users > 1
-
 
 def check_object_non_applied_mirror_modifier(obj: Object) -> bool:
     """检查镜像修改器是否未应用"""
@@ -118,8 +113,6 @@ def check_object_non_applied_mirror_modifier(obj: Object) -> bool:
         if mod.type == 'MIRROR':
             return True
     return False
-
-
 
 def check_transform_object_scale_not_applied(obj: Object) -> bool:
     """检查物体的缩放是否未应用(非1)"""
@@ -191,7 +184,6 @@ def check_geometry_non_manifold_geometry(obj: Object) -> bool:
     bm.free()
     return result
 
-
 def check_geometry_unmerged_vertices(obj: Object):
     """返回所有与其它顶点距离小于阈值的可能重复顶点索引；如果没有则返回空"""
     if obj.type != 'MESH':
@@ -212,7 +204,6 @@ def check_geometry_unmerged_vertices(obj: Object):
         seen.append((i, co))
 
     return list(unmerged)
-
 
 def check_geometry_disconnected_elements(obj: Object):
     """返回所有属于没有面的孤岛中的顶点索引列表；如果没有则返回空"""
@@ -284,7 +275,6 @@ def check_geometry_unnormalized_vertex_weights(obj: Object):
 
     return unnormalized
 
-
 def check_geometry_zero_weight_vertices(obj: Object):
     """返回所有不受骨骼控制的顶点索引列表（无有效骨骼权重）；如果没有则返回空"""
     if obj.type != 'MESH':
@@ -329,7 +319,6 @@ def check_geometry_zero_weight_vertices(obj: Object):
             unweighted_verts.append(v.index)
 
     return unweighted_verts
-
 
 def check_geometry_overly_distorted_spatialquad(obj: Object):
     """使用两种不同三角形划分法线夹角差异判断四边形畸变，返回畸变面索引列表，没有返回 None"""
@@ -398,8 +387,6 @@ def check_geometry_vertexgroup_over_four(obj: Object):
 
     return too_many_groups
 
-
-
 def check_uv_layer_count(obj: Object) -> bool:
     """检查物体UV层数量是否为1"""
     if obj.type != 'MESH':
@@ -440,7 +427,6 @@ def check_uv_out_of_bounds(obj: Object):
 
     return list(out_of_bounds_verts)
 
-
 # def check_uv_island_overlap(obj:Object):
 #     """检查UV岛与岛之间是否存在重叠"""
 
@@ -448,8 +434,17 @@ def check_uv_out_of_bounds(obj: Object):
 #     """检查单个UV岛内部是否存在自我重叠"""
 
 
-
-
+ICON_MAP_LEVEL = {
+            "ERROR": 'CANCEL',
+            "WARNING": 'ERROR',
+            "INFO": 'DOT',
+        }
+ICON_MAP_OBJ_TYPE = {
+    'MESH': 'MESH_DATA',
+    'CURVE': 'CURVE_DATA',
+    'ARMATURE': 'ARMATURE_DATA',
+    'EMPTY': 'EMPTY_DATA'
+}
 
 CHECK_FUNCTIONS = [
     # Object
@@ -464,14 +459,14 @@ CHECK_FUNCTIONS = [
         "func": check_object_armature_bones_transformed,
         "message":"骨架在姿态模式且有骨骼变换不为空",
         "level": "ERROR",
-        "select_operator_id": fix.OP_Checker_selectBones.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectBones.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_object_bones_rotation_mode_not_quaternion,
         "message":"骨架中有骨骼的旋转方式不是四元数",
         "level": "ERROR",
-        "select_operator_id": fix.OP_Checker_selectBones.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectBones.bl_idname,
         "fix_operator_id": "",
     },
 
@@ -486,7 +481,7 @@ CHECK_FUNCTIONS = [
         "func": check_object_invalid_bone_names,
         "message":"存在默认命名的骨骼(如Bone.001)",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectBones.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectBones.bl_idname,
         "fix_operator_id": "",
     },
     {
@@ -539,35 +534,35 @@ CHECK_FUNCTIONS = [
         "func": check_geometry_has_ngons,
         "message":"存在五边面/ngon",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectFace.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectFace.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_overlapping_faces,
         "message":"存在重叠面",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectFace.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectFace.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_non_manifold_geometry,
         "message":"存在非流形结构",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectEdges.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectEdges.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_unmerged_vertices,
         "message":"存在未合并重叠顶点",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_disconnected_elements,
         "message":"存在孤立顶点/线",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
     {
@@ -581,28 +576,28 @@ CHECK_FUNCTIONS = [
         "func": check_geometry_unnormalized_vertex_weights,
         "message":"存在未归一化顶点权重",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_zero_weight_vertices,
         "message":"存在没有权重的顶点",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_overly_distorted_spatialquad,
         "message":"存在过于扭曲的空间四边形",
         "level": "INFO",
-        "select_operator_id": fix.OP_Checker_selectFace.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectFace.bl_idname,
         "fix_operator_id": "",
     },
     {
         "func": check_geometry_vertexgroup_over_four,
         "message":"存在超过四个顶点权重控制的顶点",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
 
@@ -618,7 +613,7 @@ CHECK_FUNCTIONS = [
         "func": check_uv_out_of_bounds,
         "message":"活动UV层内,有顶点不在默认象限",
         "level": "WARNING",
-        "select_operator_id": fix.OP_Checker_selectVerts.bl_idname,
+        "select_operator_id": fixOperator.OP_Checker_selectVerts.bl_idname,
         "fix_operator_id": "",
     },
     {
@@ -644,4 +639,5 @@ CHECK_FUNCTIONS = [
     # },
     
 ]
+
 

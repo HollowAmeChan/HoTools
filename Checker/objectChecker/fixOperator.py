@@ -1,13 +1,10 @@
 import bpy
-from bpy.types import Operator,Panel,Menu
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
+from bpy.types import Operator
 import bmesh
-from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 # region 变量
 def reg_props():
     return
-
 
 def ureg_props():
     return
