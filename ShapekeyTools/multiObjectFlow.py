@@ -53,8 +53,7 @@ class OP_ShapekeyTools_multi_generateLinkedObjects(Operator):
         length = max(ys) - min(ys)
         height = max(zs) - min(zs)
         return Vector((width,length,height))
-
-
+    
     def execute(self, context):
         objs = context.selected_objects
         if not objs:
@@ -83,14 +82,13 @@ class OP_ShapekeyTools_multi_generateLinkedObjects(Operator):
 
         # --- 创建总集合 ---
         main_collection_name = "Ho_BSLink"
-        main_collection = None
+        main_collection:bpy.types.Collection = None
         if main_collection_name in bpy.data.collections:
             main_collection = bpy.data.collections[main_collection_name]
         else:
             main_collection = bpy.data.collections.new(main_collection_name)
             context.scene.collection.children.link(main_collection)
-        context.scene.hoShapekeyTools_bs_multi_col = main_collection#自动填入
-
+        context.scene.hoShapekeyTools_bs_multi_col = main_collection    #自动填入
         
         # --- 每个形态键一个空物体 ---
         emptys = []
@@ -251,7 +249,52 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
 
         return {'FINISHED'}
 
+class OP_ShapekeyTools_multi_removeLinkColloection(bpy.types.Operator):
+    bl_idname = "ho.shapekeytools_remove_linkcollection"
+    bl_label = "删除缓存集合"
+    bl_description = "彻底删除集合及所有物体和数据！"
+    bl_options = {'REGISTER', 'UNDO'}
 
+    confirm: bpy.props.BoolProperty(default=False) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene and context.scene.hoShapekeyTools_bs_multi_col != ""
+
+    # 先调用 invoke，弹出确认提示框
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    # 用户按确认后才会执行 execute
+    def execute(self, context):
+        collection = context.scene.hoShapekeyTools_bs_multi_col
+
+        # ----------- 删除集合内部对象 -----------
+        for obj in list(collection.objects):
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+        # ----------- 删除子集合（如果有） -----------
+        for child in list(collection.children):
+            bpy.data.collections.remove(child)
+
+        # ----------- 清理无引用 Mesh / Curve / Armature / Material -----------
+        for mesh in list(bpy.data.meshes):
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        for curve in list(bpy.data.curves):
+            if curve.users == 0:
+                bpy.data.curves.remove(curve)
+        for arm in list(bpy.data.armatures):
+            if arm.users == 0:
+                bpy.data.armatures.remove(arm)
+        for mat in list(bpy.data.materials):
+            if mat.users == 0:
+                bpy.data.materials.remove(mat)
+
+        # ----------- 最后删除集合本体 -----------
+        bpy.data.collections.remove(collection)
+        self.report({'INFO'}, "集合与数据已清理完成")
+        return {'FINISHED'}
 
 def draw_in_DATA_PT_shape_keys(self, context: Context):
     """属性形态键下"""
@@ -266,6 +309,9 @@ def draw_in_DATA_PT_shape_keys(self, context: Context):
     row = layout.row(align=True)
     row.operator(OP_ShapekeyTools_multi_generateLinkedObjects.bl_idname,text="生成链接集合",icon="LINKED")
     row.prop(context.scene,"hoShapekeyTools_bs_multi_col",text="")
+    row.alert = True
+    row.operator(OP_ShapekeyTools_multi_removeLinkColloection.bl_idname,text="",icon="CANCEL")
+
     row = layout.row(align=True)
     row.scale_y = 2.0
     row.operator(OP_ShapekeyTools_multi_refreshKeysFromMulti.bl_idname,text="从集合刷新",icon="FILE_REFRESH")
@@ -275,7 +321,7 @@ def draw_in_DATA_PT_shape_keys(self, context: Context):
     
 
 cls = [
-    OP_ShapekeyTools_multi_generateLinkedObjects,OP_ShapekeyTools_multi_refreshKeysFromMulti,
+    OP_ShapekeyTools_multi_generateLinkedObjects,OP_ShapekeyTools_multi_refreshKeysFromMulti,OP_ShapekeyTools_multi_removeLinkColloection
     ]
 
 
