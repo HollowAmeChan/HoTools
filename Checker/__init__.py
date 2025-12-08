@@ -6,7 +6,7 @@ from  . import objectChecker,meshMirrorChecker
 def reg_props():
     # 功能区开关
     enum_items = [
-        ('PANEL_CHECKER_MIRRORCHECKER', "镜像检查", ""),
+        ('PANEL_CHECKER_MIRRORCHECKER', "网格镜像", ""),
         ('PANEL_CHECKER_OBJECTCHECKER', "物体检查", ""),
     ]
     bpy.types.Scene.ho_CheckerToolsPanel_Mod = bpy.props.EnumProperty(
@@ -30,7 +30,7 @@ class PL_ObjectChecker(Panel):
         layout = self.layout
         row = layout.row(align=True)
         row.label(text="检查")
-        row.prop(context.scene, "CheckerToolsPanelMod", expand=True,)
+        row.prop(context.scene, "ho_CheckerToolsPanel_Mod", expand=True,)
         if context.scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_MIRRORCHECKER":
             meshMirrorChecker.drawMeshMirrorCheckerPanel(self.layout, context)
         if context.scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_OBJECTCHECKER":
@@ -40,12 +40,13 @@ class PL_ObjectChecker(Panel):
 
 
 
-cls = []
+cls = [PL_ObjectChecker]
 
 
 
 def register():
     objectChecker.register()
+    meshMirrorChecker.register()
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
@@ -53,6 +54,7 @@ def register():
 
 def unregister():
     objectChecker.unregister()
+    meshMirrorChecker.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()

@@ -15,7 +15,7 @@ def ureg_props():
 
 class OP_SetViewPortShadingMode(Operator):
     bl_idname = "ho.set_viewport_shadingmode_rigidview"
-    bl_label = "space_data.shading.color_type = 'OBJECT'"
+    bl_label = "设置视图"
     bl_description = "设置视图预览方便看刚体"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -29,7 +29,7 @@ class OP_SetViewPortShadingMode(Operator):
 
 class OP_AssignColorsByCollisionGroupCombination(Operator):
     bl_idname = "ho.assign_colors_by_collision_group_combination"
-    bl_label = "Assign Colors by Collision Group Combination"
+    bl_label = "分类碰撞体"
     bl_description = "根据碰撞组不同，对所选物体进行颜色分类"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -58,7 +58,7 @@ class OP_AssignColorsByCollisionGroupCombination(Operator):
 
 class OP_CopyRigidBodySettings(Operator):
     bl_idname = "ho.copy_rigidbody_constraints_settings"
-    bl_label = "Copy Rigid Body Constraints Setting to Selected Empties"
+    bl_label = "复制刚体约束到所选"
     bl_description = "复制刚体约束到所选的全部空物体（不复制物体"
     bl_options = {'REGISTER', 'UNDO'}
 
