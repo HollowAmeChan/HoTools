@@ -20,7 +20,7 @@ def reg_props():
     bpy.types.Scene.ho_mirrorchecker_checkuv_tolerance = FloatProperty(description="UV容差,推荐低于1e-6",default=0.00000001,max=0.001,min=0)
     bpy.types.Scene.ho_mirrorchecker_topu_ischeck = BoolProperty(description="检查拓补,计算较快但会误判一些网格",default=False)
     bpy.types.Scene.ho_mirrorchecker_mirroruv_ischeck = BoolProperty(description="检查镜像UV",default=True)
-    bpy.types.Scene.ho_mirrorchecker_stackuv_ischeck = BoolProperty(description="检查重叠UV",default=True)
+    bpy.types.Scene.ho_mirrorchecker_stackuv_ischeck = BoolProperty(description="检查重叠UV",default=False)
     bpy.types.Scene.ho_mirrorchecker_swapsign = BoolProperty(description="翻转正负轴",default=False)
     return
 

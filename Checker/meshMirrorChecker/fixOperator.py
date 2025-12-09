@@ -98,7 +98,7 @@ class OP_Checker_AutoForceVertexMirror(Operator):
     checkuv_tolerance:FloatProperty(default=0.0000001) # type: ignore
     topu_ischeck:BoolProperty(default=False) # type: ignore
     mirroruv_ischeck:BoolProperty(default=True) # type: ignore
-    stackuv_ischeck:BoolProperty(default=True) # type: ignore
+    stackuv_ischeck:BoolProperty(default=False) # type: ignore
     swapsign:BoolProperty(default=False) # type: ignore
 
     @classmethod
@@ -216,6 +216,35 @@ class OP_Checker_AutoForceVertexMirror(Operator):
             else:right.append(v.index)
 
         paired=set();repaired=0
+
+        # ====防呆，首先加入已经成对的顶点====
+        def is_sym_pair(v1, v2, axis, tol=1e-6):
+            a = v1.co
+            b = v2.co
+            if axis=="X":
+                return (abs(a.y-b.y)<tol and abs(a.z-b.z)<tol and abs(a.x + b.x)<tol)
+            if axis=="Y":
+                return (abs(a.x-b.x)<tol and abs(a.z-b.z)<tol and abs(a.y + b.y)<tol)
+            if axis=="Z":
+                return (abs(a.x-b.x)<tol and abs(a.y-b.y)<tol and abs(a.z + b.z)<tol)
+            return False
+
+        right_by_axis = {}
+        for r in right:
+            v = verts[r]
+            key = round(getattr(v.co,axis.lower()),6)  # 小数取精避免浮点误差
+            right_by_axis.setdefault(abs(key), []).append(r)
+
+        for l in left:
+            lv = verts[l]
+            sym_key = round(abs(getattr(lv.co,axis.lower())),6)
+            if sym_key not in right_by_axis: 
+                continue
+            for r in right_by_axis[sym_key]:
+                if is_sym_pair(lv, verts[r], axis):
+                    paired.add(l); paired.add(r)
+                    break
+
 
         def try_pair(v_idx,target_uv):
             if v_idx in paired:return None
