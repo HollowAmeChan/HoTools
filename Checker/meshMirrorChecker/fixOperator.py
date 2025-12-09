@@ -106,7 +106,6 @@ class OP_Checker_AutoForceVertexMirror(Operator):
         obj=context.active_object
         return obj and obj.type=="MESH" and obj.mode=="EDIT"
 
-
     # ---------------- UV处理加速核心 ---------------- #
     def calc_avg_uv(self,obj,precision=1e6):
         """
@@ -137,7 +136,6 @@ class OP_Checker_AutoForceVertexMirror(Operator):
         bm.free()
         return uv_map,uv_hash
 
-
     def find_uv_match(self,vert_index,target_uv,uv_map,uv_hash,tolerance,precision=1e6):
         """模糊哈希桶+近邻搜索 → 近似O(1)"""
         cell_r=int(tolerance*precision)+1
@@ -155,7 +153,6 @@ class OP_Checker_AutoForceVertexMirror(Operator):
                         best=idx;best_d=d
 
         return [best] if best else []
-
 
     # ---------------- 对称处理 ---------------- #
     def fix_pos(self,v1,v2,axis,tol=1e-8,sw=False):
@@ -180,7 +177,6 @@ class OP_Checker_AutoForceVertexMirror(Operator):
             if right.co.z<=tol:return
             if sw:left,right=right,left
             right.co.x=left.co.x;right.co.y=left.co.y;right.co.z=-left.co.z
-
 
     # ---------------- 主执行 ---------------- #
     def execute(self,context):
