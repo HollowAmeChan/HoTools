@@ -90,187 +90,170 @@ class OP_Checker_forceVertexMirror(Operator):
     
 class OP_Checker_AutoForceVertexMirror(Operator):
     bl_idname = "ho.checker_auto_force_vertex_mirror"
-    bl_label = "自动对称"
-    bl_description = "自动对称mesh,需要注意会改变选中物体的对称模式(对齐到ho操作轴)"
+    bl_label = "自动修复对称"
+    bl_description = "使用UV快速匹配修复顶点对称"
     bl_options = {'REGISTER', 'UNDO'}
 
-    isonlyselect:BoolProperty(description="仅检查选中顶点",default=True) # type: ignore
-    checkuv_tolerance:FloatProperty(description="UV容差",default=0.00000001) # type: ignore
-    topu_ischeck:BoolProperty(description="检查拓补",default=False) # type: ignore
-    mirroruv_ischeck:BoolProperty(description="检查镜像UV",default=True) # type: ignore
-    stackuv_ischeck:BoolProperty(description="检查重叠UV",default=True) # type: ignore
-    swapsign:BoolProperty(description="翻转正负轴",default=False) # type: ignore
+    isonlyselect:BoolProperty(default=True) # type: ignore
+    checkuv_tolerance:FloatProperty(default=0.0000001) # type: ignore
+    topu_ischeck:BoolProperty(default=False) # type: ignore
+    mirroruv_ischeck:BoolProperty(default=True) # type: ignore
+    stackuv_ischeck:BoolProperty(default=True) # type: ignore
+    swapsign:BoolProperty(default=False) # type: ignore
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+        obj=context.active_object
+        return obj and obj.type=="MESH" and obj.mode=="EDIT"
 
 
-
-    def calc_avg_uv(self, obj):
-        """返回 { vert_index : (avg_uv, count) }"""
-        mesh = obj.data
-        bm = bmesh.new()
-        bm.from_mesh(mesh)
-        uv_layer = bm.loops.layers.uv.active
+    # ---------------- UV处理加速核心 ---------------- #
+    def calc_avg_uv(self,obj,precision=1e6):
+        """
+        返回:
+            uv_map = {vert_index:Vector}
+            uv_hash = {(ui,vi):[vert_index...]}
+        """
+        mesh=obj.data
+        bm=bmesh.new(); bm.from_mesh(mesh)
+        uv_layer=bm.loops.layers.uv.active
         if not uv_layer:
-            bm.free()
-            return None
+            bm.free();return None,None
 
-        uv_acc = defaultdict(lambda:[0.0,0.0,0])
+        uv_acc=defaultdict(lambda:[0.0,0.0,0])
         for f in bm.faces:
             for l in f.loops:
-                i = l.vert.index
-                uv = l[uv_layer].uv
-                uv_acc[i][0]+=uv.x; uv_acc[i][1]+=uv.y; uv_acc[i][2]+=1
+                i=l.vert.index
+                uv=l[uv_layer].uv
+                uv_acc[i][0]+=uv.x;uv_acc[i][1]+=uv.y;uv_acc[i][2]+=1
 
-        uv_map = {
-            i: (Vector((d[0]/d[2], d[1]/d[2])), d[2])  # ★ 返回UV与使用次数
-            for i,d in uv_acc.items()
-        }
+        uv_map={};uv_hash=defaultdict(list)
+        for i,(x,y,c) in uv_acc.items():
+            uv=Vector((x/c,y/c))
+            uv_map[i]=uv
+            key=(int(uv.x*precision),int(uv.y*precision))
+            uv_hash[key].append(i)
 
         bm.free()
-        return uv_map
+        return uv_map,uv_hash
 
-    def find_uv_match(self, vert_index, target, uv_map, tolerance):
-        """以距离与loop数量完全一致为前提匹配"""
-        t_uv,t_cnt = target
-        nearest = None
-        nearest_dist = float('inf')
 
-        for idx,(uv,cnt) in uv_map.items():
-            if idx == vert_index:
-                continue
-            
-            # ★ 必须loop计数相同，否则不作为候选
-            if cnt != t_cnt:
-                continue
+    def find_uv_match(self,vert_index,target_uv,uv_map,uv_hash,tolerance,precision=1e6):
+        """模糊哈希桶+近邻搜索 → 近似O(1)"""
+        cell_r=int(tolerance*precision)+1
+        base=(int(target_uv.x*precision),int(target_uv.y*precision))
+        best=None;best_d=tolerance**2
 
-            d = (uv - t_uv).length
-            if d < tolerance and d < nearest_dist:
-                nearest = idx
-                nearest_dist = d
+        for dx in range(-cell_r,cell_r+1):
+            for dy in range(-cell_r,cell_r+1):
+                key=(base[0]+dx,base[1]+dy)
+                if key not in uv_hash:continue
+                for idx in uv_hash[key]:
+                    if idx==vert_index:continue
+                    d=(uv_map[idx]-target_uv).length_squared
+                    if d<best_d:
+                        best=idx;best_d=d
 
-        return [nearest] if nearest is not None else []
+        return [best] if best else []
 
-    def fix_pos(self,v1,v2,mirror_axis="X",tolerance=0.00000001,swapsign=False):
-        left =None
-        right = None
-        if mirror_axis=="X":
-            if v1.co.x < v2.co.x:
-                left = v1
-                right = v2
-            else:
-                left = v2
-                right = v1
-            if right.co.x<=tolerance:return#剔除非常靠近轴的点
-            if swapsign:
-                t = right
-                right = left
-                left = t
-            right.co.x = -left.co.x
-            right.co.y = left.co.y
-            right.co.z = left.co.z
 
-        if mirror_axis=="Y":
-            if v1.co.y < v2.co.y:
-                left = v1
-                right = v2
-            else:
-                left = v2
-                right = v1
-            if right.co.y<=tolerance:return#剔除非常靠近轴的点
-            if swapsign:
-                t = right
-                right = left
-                left = t
-            right.co.x = left.co.x
-            right.co.y = -left.co.y
-            right.co.z = left.co.z
+    # ---------------- 对称处理 ---------------- #
+    def fix_pos(self,v1,v2,axis,tol=1e-8,sw=False):
+        """保持你原来的对称实现"""
+        def pick(a,b,coord):
+            return (a,b) if getattr(a.co,coord)<getattr(b.co,coord) else (b,a)
 
-        if mirror_axis=="Z":
-            if v1.co.z < v2.co.z:
-                left = v1
-                right = v2
-            else:
-                left = v2
-                right = v1
-            if right.co.z<=tolerance:return#剔除非常靠近轴的点
-            if swapsign:
-                t = right
-                right = left
-                left = t
-            right.co.x = left.co.x
-            right.co.y = left.co.y
-            right.co.z = -left.co.z
-        return
-    
-    def execute(self, context):
-        scene = context.scene
-        obj = context.active_object
-        mesh = obj.data
-        mirror_axis = scene.ho_MirrorCheckerAxis
-        #对齐内部镜像轴向与ho镜像轴,记录旧的拓补检查状态
-        if mirror_axis=="X":
-            obj.use_mesh_mirror_x = True
-            obj.use_mesh_mirror_y = False
-            obj.use_mesh_mirror_z = False
-        if mirror_axis=="Y":
-            obj.use_mesh_mirror_x = False
-            obj.use_mesh_mirror_y = True
-            obj.use_mesh_mirror_z = False
-        if mirror_axis=="Z":
-            obj.use_mesh_mirror_x = False
-            obj.use_mesh_mirror_y = False
-            obj.use_mesh_mirror_z = True
-        old_topumirror_state = obj.data.use_mirror_topology
-        
+        if axis=="X":
+            left,right=pick(v1,v2,"x")
+            if right.co.x<=tol:return
+            if sw:left,right=right,left
+            right.co.x=-left.co.x;right.co.y=left.co.y;right.co.z=left.co.z
 
-        #1.使用内部的拓补镜像,对模型进行一次强制对称
+        if axis=="Y":
+            left,right=pick(v1,v2,"y")
+            if right.co.y<=tol:return
+            if sw:left,right=right,left
+            right.co.x=left.co.x;right.co.y=-left.co.y;right.co.z=left.co.z
+
+        if axis=="Z":
+            left,right=pick(v1,v2,"z")
+            if right.co.z<=tol:return
+            if sw:left,right=right,left
+            right.co.x=left.co.x;right.co.y=left.co.y;right.co.z=-left.co.z
+
+
+    # ---------------- 主执行 ---------------- #
+    def execute(self,context):
+        obj=context.active_object
+        mesh=obj.data
+        axis=context.scene.ho_MirrorCheckerAxis   # 与你原逻辑兼容
+        tol=self.checkuv_tolerance
+
+        # 对齐bl内部镜像轴设置
+        obj.use_mesh_mirror_x=(axis=="X")
+        obj.use_mesh_mirror_y=(axis=="Y")
+        obj.use_mesh_mirror_z=(axis=="Z")
+
+        # 可选拓扑镜像处理
+        old=obj.data.use_mirror_topology
         if self.topu_ischeck:
-            obj.data.use_mirror_topology = True
-            bpy.ops.transform.translate(value=(0, 0, 0), mirror=True)
-            obj.data.use_mirror_topology = old_topumirror_state
+            obj.data.use_mirror_topology=True
+            bpy.ops.transform.translate(value=(0,0,0),mirror=True)
+            obj.data.use_mirror_topology=old
 
-        #2.检查UV，如果UV内成对，会强制对称
-        bm = bmesh.from_edit_mesh(mesh)
-        avg_uv = self.calc_avg_uv(obj)
-        verts = bm.verts
-        repaired=0
+        # --- UV预处理加速 --- #
+        uv_map,uv_hash=self.calc_avg_uv(obj)
+        if not uv_map:
+            self.report({"ERROR"},"无UV层")
+            return {'CANCELLED'}
+
+        bm=bmesh.from_edit_mesh(mesh)
+        verts=bm.verts
+
+        # --- 按轴分区 (加速匹配) --- #
+        left=[];right=[];center=[]
+        for v in verts:
+            if self.isonlyselect and not v.select:continue
+            a={"X":v.co.x,"Y":v.co.y,"Z":v.co.z}[axis]
+            if abs(a)<1e-8:center.append(v.index)
+            elif a<0:left.append(v.index)
+            else:right.append(v.index)
+
+        paired=set();repaired=0
+
+        def try_pair(v_idx,target_uv):
+            if v_idx in paired:return None
+            pair=self.find_uv_match(v_idx,target_uv,uv_map,uv_hash,tol)
+            if not pair:return None
+            p=pair[0]
+            if p in paired:return None
+            paired.add(v_idx);paired.add(p)
+            return p
+
+        # ---------------- UV镜像优先 ---------------- #
         if self.mirroruv_ischeck:
-            for v in verts:
-                if self.isonlyselect and not v.select:
-                    continue
-                # 镜像匹配
-                uv, cnt = avg_uv.get(v.index,(None,0))
-                pair_mirror = self.find_uv_match(v.index,(Vector((1-uv.x, uv.y)), cnt),avg_uv,self.checkuv_tolerance)
-
-                if len(pair_mirror)==0: continue
-                v1 = v
-                v2 = verts[pair_mirror[0]]
-                self.fix_pos(v1,v2,mirror_axis,self.checkuv_tolerance,self.swapsign)
-                # print("UV对称:",v1.index,"  ",v2.index)
+            for v_idx in left+right:
+                uv=uv_map.get(v_idx,None)
+                if uv is None:continue
+                tgt=Vector((1-uv.x,uv.y))            # 你的原镜像uv逻辑，可扩展YZ
+                p=try_pair(v_idx,tgt)
+                if not p:continue
+                self.fix_pos(verts[v_idx],verts[p],axis,tol,self.swapsign)
                 repaired+=1
 
+        # ---------------- UV重叠次之 ---------------- #
         if self.stackuv_ischeck:
-            for v in verts:
-                if self.isonlyselect and not v.select:
-                    continue
-                uv = avg_uv.get(v.index,None)
-                # 重叠匹配
-                uv, cnt = avg_uv.get(v.index,(None,0))
-                pair_mirror = self.find_uv_match(v.index,(uv, cnt),avg_uv,self.checkuv_tolerance)
-
-                if len(pair_mirror)==0: continue
-                v1 = v
-                v2 = verts[pair_mirror[0]]
-                self.fix_pos(v1,v2,mirror_axis,self.checkuv_tolerance,self.swapsign)
-                # print("UV重叠:",v1.index,"  ",v2.index)
+            for v_idx in left+right+center:
+                if v_idx in paired:continue
+                uv=uv_map.get(v_idx,None)
+                if uv is None:continue
+                p=try_pair(v_idx,uv)
+                if not p:continue
+                self.fix_pos(verts[v_idx],verts[p],axis,tol,self.swapsign)
                 repaired+=1
-        self.report({'INFO'},f"基于UV成功修复 {repaired} 个点")
 
         bmesh.update_edit_mesh(mesh)
+        self.report({'INFO'},f"增强版对称修复完成：{repaired} 点")
         return {'FINISHED'}
 
 cls = [OP_Checker_getActiveVertexIndex,OP_Checker_forceVertexMirror,OP_Checker_swapMirrorVertexIndex,

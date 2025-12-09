@@ -261,16 +261,19 @@ class OP_VertexGroupTools_RemoveGroupVertex_by_value(Operator):
         prev_mode = obj.mode
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        # 遍历所有非锁定的顶点组
+        # 遍历顶点组
         for vg in obj.vertex_groups:
             if vg.lock_weight:
                 continue  # 跳过锁定的组
+
+            if context.object.find_armature() and vg.name not in context.object.find_armature().data.bones:
+                continue  # 跳过非骨骼顶点组
 
             verts_to_remove = []
             for vert in obj.data.vertices:
                 if not vert.select:  # 跳过未选中定点
                     continue
-
+                
                 for g in vert.groups:
                     if g.group == vg.index and g.weight <= threshold:
                         verts_to_remove.append(vert.index)
@@ -1034,8 +1037,7 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
             bpy.ops.object.mode_set(mode='EDIT')
 
         if len(obj.vertex_groups):
-            bpy.ops.object.vertex_group_limit_total(limit=self.num_max)
-
+            bpy.ops.object.vertex_group_limit_total(limit=self.num_max,group_select_mode='BONE_DEFORM')
         return {'FINISHED'}
 
 def draw_in_DATA_PT_vertex_groups(self, context: Context):
