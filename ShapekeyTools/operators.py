@@ -121,6 +121,7 @@ LISTENER_CACHE = {
 }
 
 
+
 class PG_ShapeKeyTools_ListenerCache(PropertyGroup):
         key_name: bpy.props.StringProperty(name="键名", default="") # type: ignore
         key_value: bpy.props.FloatProperty(name="键值", default=0.0) # type: ignore
