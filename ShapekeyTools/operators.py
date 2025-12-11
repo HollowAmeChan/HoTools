@@ -112,21 +112,14 @@ VRM_SHAPEKEYS = [
     "Blink_L", "Blink_R"
 ]
 
-# 监听器缓存（存在scene中报错）
+# 监听器缓存,监听任务缓存
 LISTENER_CACHE = {
     "key_name": "",
     "key_value": 0.0,
     "lock": False,
     "edit_mode": False,
 }
-
-
-class PG_ShapeKeyTools_ListenerCache(PropertyGroup):
-        key_name: bpy.props.StringProperty(name="键名", default="") # type: ignore
-        key_value: bpy.props.FloatProperty(name="键值", default=0.0) # type: ignore
-        lock: bpy.props.BoolProperty(name="是否锁定", default=False) # type: ignore
-        edit_mode: bpy.props.BoolProperty(name="是否编辑模式", default=False) # type: ignore
-
+PENDING_SYNC = []
 
 def reg_props():
     bpy.types.Scene.hoShapekeyTools_open_menu = BoolProperty(default=False)#启用属性下的操作菜单
@@ -174,22 +167,24 @@ def reg_props():
         default=False)
 
     #======================================================================#
-    # 监听器(每帧执行)
+    # 监听器(每帧执行监听)
     def shape_key_listener(scene):
-        global LISTENER_CACHE
+        global LISTENER_CACHE, PENDING_SYNC
 
         active_obj = bpy.context.object
         if not active_obj or not active_obj.data.shape_keys:
             return
+
         active_sk = active_obj.active_shape_key
         if not active_sk:
-            return 
+            return
 
         current_name = active_sk.name
         current_value = round(active_sk.value, 6)
         current_lock = active_obj.show_only_shape_key
         current_edit_mode = active_obj.use_shape_key_edit_mode
 
+        # 如果完全没变化就跳过
         if (LISTENER_CACHE["key_name"] == current_name and
             LISTENER_CACHE["key_value"] == current_value and
             LISTENER_CACHE["lock"] == current_lock and
@@ -201,38 +196,60 @@ def reg_props():
             "key_name": current_name,
             "key_value": current_value,
             "lock": current_lock,
-            "edit_mode": current_edit_mode
+            "edit_mode": current_edit_mode,
         })
 
-        # 执行更新
-        for obj in bpy.context.selected_objects:
+        # 推入任务（不做任何写操作）
+        PENDING_SYNC.append({
+            "name": current_name,
+            "value": current_value,
+            "lock": current_lock,
+            "edit_mode": current_edit_mode,
+            "src_obj": active_obj,
+        })
+
+    # Timer（监听结束后的操作，使用timer安全写入）
+    def process_shape_key_sync():
+        global PENDING_SYNC
+
+        if not PENDING_SYNC:
+            return 0.05  # 下次继续执行
+
+        task = PENDING_SYNC.pop(0)
+
+        name = task["name"]
+        value = task["value"]
+        lock = task["lock"]
+        edit_mode = task["edit_mode"]
+        src_obj = task["src_obj"]
+
+        selected = list(bpy.context.selected_objects)
+
+        for obj in selected:
             if not obj.data.shape_keys:
                 continue
-            # 设置锁定与编辑模式启用与否
-            obj.show_only_shape_key = current_lock
-            obj.use_shape_key_edit_mode = current_edit_mode
 
-            # 设置活动键与活动键值
-            sk_block_idx = obj.data.shape_keys.key_blocks.find(current_name)
-            sk_block = obj.data.shape_keys.key_blocks[sk_block_idx]
-            if sk_block:
-                #设置对应键值
-                sk_block.value = active_sk.value
-                #设置为活动键
-                obj.active_shape_key_index = sk_block_idx
+            # 安全地写操作（timer 中允许对 ID 修改）
+            obj.show_only_shape_key = lock
+            obj.use_shape_key_edit_mode = edit_mode
 
-            # 同步其他所有键值（可选）
-            for sk in active_obj.data.shape_keys.key_blocks:
-                if sk == active_obj.data.shape_keys.reference_key:#跳过基型
+            # 设置活动 shape key
+            idx = obj.data.shape_keys.key_blocks.find(name)
+            if idx != -1:
+                obj.active_shape_key_index = idx
+                obj.data.shape_keys.key_blocks[idx].value = value
+
+            # 同步其他所有键值
+            for sk in src_obj.data.shape_keys.key_blocks:
+                if sk == src_obj.data.shape_keys.reference_key:
                     continue
-                #获取目标键
+
                 tgt_sk = obj.data.shape_keys.key_blocks.get(sk.name)
-                if not tgt_sk:
-                    continue
-                if tgt_sk == obj.data.shape_keys.reference_key:#跳过目标基型
-                    continue
+                if tgt_sk and tgt_sk != obj.data.shape_keys.reference_key:
+                    tgt_sk.value = sk.value
 
-                tgt_sk.value = sk.value
+        return 0.01  # 继续执行 timer
+    
 
     # 开关更新函数-用于监听器的注册于注销
     def update_listener_switch(self, context):
@@ -255,6 +272,9 @@ def reg_props():
         default=False,
         update=update_listener_switch
     )
+    if not hasattr(bpy.app.timers, "_ho_shape_key_timer_registered"):
+        bpy.app.timers.register(process_shape_key_sync, persistent=True)
+        bpy.app.timers._ho_shape_key_timer_registered = True
     #======================================================================#
 
     return
@@ -1597,7 +1617,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     
 
 
-cls = [PG_ShapeKeyTools_ListenerCache,
+cls = [
     OP_SelectVertexByIndex, OP_SelectShapekeyOffsetedVerticex,
     OP_RemoveEmptyShapekeys, OP_RemoveSelectedVerticesInActiveShapekey,
     OP_SmoothShapekey,OP_balanceShapekey, OP_GenerateMirroredShapekey, OP_SplitShapekey,
