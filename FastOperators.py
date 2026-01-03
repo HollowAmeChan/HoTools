@@ -418,7 +418,7 @@ def get_first_image_from_material(obj):
 class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
     bl_label = "面片转参考图"
-    bl_description = "逆向操作为bl自带的转化"
+    bl_description = "需要严格注意面片的原点以及变换信息，不带旋转变换的面片需要是躺放在世界平面的。逆向操作为bl原生操作"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -432,55 +432,59 @@ class OP_MeshToImageEmpty(Operator):
             self.report({'ERROR'}, "未找到图片材质")
             return {'CANCELLED'}
 
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
-        faces = [f for f in bm.faces if f.select]
+        # -------------------------
+        # 获取参考面
+        # -------------------------
+        face = next((f for f in obj.data.polygons if f.select), None)
+        if not face:
+            face = obj.data.polygons[0]  # 没选中面则取第一个面
 
-        f = faces[0]
-        verts = [obj.matrix_world @ v.co for v in f.verts]
+        # 面片顶点世界坐标
+        verts = [obj.matrix_world @ obj.data.vertices[i].co for i in face.vertices]
+        if len(verts) < 2:
+            self.report({'ERROR'}, "面顶点不足")
+            return {'CANCELLED'}
 
-        # 计算面片两条相邻边长度
+        # 高度为基准
         e1 = verts[1] - verts[0]
-        e2 = verts[2] - verts[1]
+        if len(verts) >= 3:
+            e2 = verts[2] - verts[1]
+        else:
+            e2 = Vector((0,1,0))  # 顶点不足时用默认方向
 
-        width  = e1.length
         height = e2.length
 
-        # 构建局部坐标系
-        x_axis = e1.normalized()
-        z_axis = (obj.matrix_world.to_3x3() @ f.normal).normalized()
-        y_axis = z_axis.cross(x_axis)
-        rot = Matrix((x_axis, y_axis, z_axis)).transposed().to_euler()
-        center = sum(verts, Vector()) / 4.0
-
+        # -------------------------
         # 创建 Image Empty
+        # -------------------------
         empty = bpy.data.objects.new(f"REF_{image.name}", None)
         empty.empty_display_type = 'IMAGE'
         empty.data = image
 
         # -------------------------
-        # 修正缩放逻辑：等比缩放
+        # 使用原面片矩阵对齐
         # -------------------------
-        img_w, img_h = image.size
-        aspect = img_w / img_h if img_h else 1.0
+        empty.matrix_world = obj.matrix_world
 
-        # 使用面片高度为基准，Image Empty 会根据图片比例自动撑开宽度
+        # -------------------------
+        # 等比缩放，基于面片高度
+        # -------------------------
         empty.empty_display_size = height
-        empty.scale = (1, 1, 1)  # 关键：等比缩放
+        empty.scale = (1, 1, 1)  # 保证等比缩放
 
-        empty.location = center
-        empty.rotation_euler = rot
-
+        # -------------------------
+        # 链接场景
+        # -------------------------
         context.collection.objects.link(empty)
         context.view_layer.objects.active = empty
 
-        bm.free()
         # -------------------------
-        # 删除原面片
+        # 删除原 Mesh
         # -------------------------
         bpy.data.objects.remove(obj, do_unlink=True)
-        
+
         return {'FINISHED'}
+
 
 
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
