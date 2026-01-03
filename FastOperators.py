@@ -436,11 +436,6 @@ class OP_MeshToImageEmpty(Operator):
         bm.from_mesh(obj.data)
         faces = [f for f in bm.faces if f.select]
 
-        if len(faces) != 1 or len(faces[0].verts) != 4:
-            self.report({'ERROR'}, "请选择一个四边面")
-            bm.free()
-            return {'CANCELLED'}
-
         f = faces[0]
         verts = [obj.matrix_world @ v.co for v in f.verts]
 
