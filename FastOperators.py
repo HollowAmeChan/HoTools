@@ -404,6 +404,89 @@ class OP_Replace_MeshDataBlock2selectedObj(Operator):
         return {'FINISHED'}
 
 
+def get_first_image_from_material(obj):
+    if not obj.data.materials:
+        return None
+    mat = obj.data.materials[0]
+    if not mat or not mat.use_nodes:
+        return None
+    for n in mat.node_tree.nodes:
+        if n.type == 'TEX_IMAGE' and n.image:
+            return n.image
+    return None
+
+class OP_MeshToImageEmpty(Operator):
+    bl_idname = "ho.mesh_to_image_empty"
+    bl_label = "面片转参考图"
+    bl_description = "逆向操作为bl自带的转化"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            self.report({'ERROR'}, "请选择 Mesh")
+            return {'CANCELLED'}
+
+        image = get_first_image_from_material(obj)
+        if not image:
+            self.report({'ERROR'}, "未找到图片材质")
+            return {'CANCELLED'}
+
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        faces = [f for f in bm.faces if f.select]
+
+        if len(faces) != 1 or len(faces[0].verts) != 4:
+            self.report({'ERROR'}, "请选择一个四边面")
+            bm.free()
+            return {'CANCELLED'}
+
+        f = faces[0]
+        verts = [obj.matrix_world @ v.co for v in f.verts]
+
+        # 计算面片两条相邻边长度
+        e1 = verts[1] - verts[0]
+        e2 = verts[2] - verts[1]
+
+        width  = e1.length
+        height = e2.length
+
+        # 构建局部坐标系
+        x_axis = e1.normalized()
+        z_axis = (obj.matrix_world.to_3x3() @ f.normal).normalized()
+        y_axis = z_axis.cross(x_axis)
+        rot = Matrix((x_axis, y_axis, z_axis)).transposed().to_euler()
+        center = sum(verts, Vector()) / 4.0
+
+        # 创建 Image Empty
+        empty = bpy.data.objects.new(f"REF_{image.name}", None)
+        empty.empty_display_type = 'IMAGE'
+        empty.data = image
+
+        # -------------------------
+        # 修正缩放逻辑：等比缩放
+        # -------------------------
+        img_w, img_h = image.size
+        aspect = img_w / img_h if img_h else 1.0
+
+        # 使用面片高度为基准，Image Empty 会根据图片比例自动撑开宽度
+        empty.empty_display_size = height
+        empty.scale = (1, 1, 1)  # 关键：等比缩放
+
+        empty.location = center
+        empty.rotation_euler = rot
+
+        context.collection.objects.link(empty)
+        context.view_layer.objects.active = empty
+
+        bm.free()
+        # -------------------------
+        # 删除原面片
+        # -------------------------
+        bpy.data.objects.remove(obj, do_unlink=True)
+        
+        return {'FINISHED'}
+
 
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
     """大纲视图右键菜单"""
@@ -433,6 +516,13 @@ def draw_in_DATA_PT_customdata(self,context: bpy.types.Context):
     row = layout.row(align=True)
     row.operator(OP_CustomSplitNormals_Export.bl_idname)
     row.operator(OP_CustomSplitNormals_Import.bl_idname)
+
+def draw_in_VIEW3D_MT_object_convert(self,context: bpy.types.Context):
+    """物体转换菜单下"""
+    layout: bpy.types.UILayout = self.layout
+    row = layout.row(align=True)
+    row.operator(OP_MeshToImageEmpty.bl_idname)
+
 
 class VIEW3D_MT_edit_mesh_hotools(Menu):
     """编辑模式右键时的菜单追加"""
@@ -474,6 +564,7 @@ cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_AlignViewToAvgNormal,
        OP_CustomSplitNormals_Import,OP_CustomSplitNormals_Export,
        OP_Replace_MeshDataBlock2selectedObj,
+       OP_MeshToImageEmpty,
        ]
 
 
@@ -486,6 +577,7 @@ def register():
     bpy.types.DATA_PT_remesh.append(draw_in_DATA_PT_remesh)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.DATA_PT_context_mesh.append(draw_in_DATA_PT_context_mesh)
+    bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
     # 默认绑定 Ctrl + Shift + 右键
