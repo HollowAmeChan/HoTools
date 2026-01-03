@@ -350,7 +350,6 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         self.report({'INFO'}, "已选择形态键所有顶点")
         return {'FINISHED'}
 
-
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
     """清除活动形态键中，选择的顶点的偏移"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
@@ -375,7 +374,6 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
         bpy.ops.mesh.blend_from_shape(shape=self.shape_key, add=False)
 
         return {'FINISHED'}
-
 
 class OP_SmoothShapekey(Operator):
     """平滑形态键，使用距离平滑偏移量"""
@@ -475,8 +473,6 @@ class OP_SmoothShapekey(Operator):
         obj.update_from_editmode()
 
         return {'FINISHED'}
-
-
 
 class OP_balanceShapekey(Operator):
     """对称当前形态键，将选中的顶点对称到另一侧,全选则为镜像，可以指定轴向，轴向正负为所选的方向"""
@@ -592,7 +588,6 @@ class OP_balanceShapekey(Operator):
         self.report({'INFO'}, "Symmetry operation completed.")
         return {'FINISHED'}
 
-
 class OP_GenerateMirroredShapekey(Operator):
     """直接生成活动形态键的镜像形态键,并改名,不使用bl的镜像,而使用hotools的镜像,因此面板中的容差/轴向参数可用"""
     bl_idname = "ho.generate_mirrored_shapekey"
@@ -673,7 +668,6 @@ class OP_GenerateMirroredShapekey(Operator):
         # 显式提示用户
         self.report({'INFO'}, msg)
         return {'FINISHED'}
-
 
 class OP_SplitShapekey(Operator):
     """拆分形态键为左右两份"""
@@ -757,7 +751,6 @@ class OP_SplitShapekey(Operator):
             {'INFO'}, f"形态键 '{key_name}' 已拆分为 '{key_name}_L' 和 '{key_name}_R'。")
         return {'FINISHED'}
 
-
 class OP_RemoveEmptyShapekeys(Operator):
     """删除活动物体中所有的空形态键"""
     bl_idname = "ho.remove_empty_shapekey"
@@ -808,7 +801,6 @@ class OP_RemoveEmptyShapekeys(Operator):
             self.report({'WARNING'}, "所选物体中没有找到空形态键")
 
         return {'FINISHED'}
-
 
 class OP_ClearAllShapekeyValue(Operator):
     """清除选择的所有物体的所有形态键值,设置为0"""
@@ -880,7 +872,6 @@ class OP_SetBasisShapekeyActive(Operator):
             self.report({'WARNING'}, "没有找到包含基型形态键的物体")
 
         return {'FINISHED'}
-
 
 class OP_applyShowingModifiersKeepShapekeys(Operator):
     """
@@ -1040,7 +1031,6 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
 
         return {'FINISHED'}
 
-
 class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
     """仅应用骨架修改器并保持形态键和其他修改器状态"""
     bl_idname = "ho.apply_armature_modifiers_keepshapekeys"
@@ -1176,7 +1166,6 @@ class OP_ApplyArmatureModifiersKeepShapekeys(Operator):
 
         return {'FINISHED'}
 
-
 class OP_deleteUnusingShapeKeys(Operator):
     """删除所有未启用的形态键"""
     bl_idname = "ho.delete_unusing_shapekeys"
@@ -1203,7 +1192,6 @@ class OP_deleteUnusingShapeKeys(Operator):
 
         self.report({'INFO'}, "已删除所有未启用的形态键")
         return {'FINISHED'}
-
 
 class OP_AddShapekeysByTemplate(Operator):
     """批量添加形态键"""
@@ -1265,7 +1253,6 @@ class OP_AddShapekeysByTemplate(Operator):
     def invoke(self, context, event):
         # 弹出对话框让用户选择形态键列表
         return context.window_manager.invoke_props_dialog(self)
-
 
 class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     bl_idname = "ho.shapekeytools_copyshapekey2shearplate"
@@ -1458,6 +1445,59 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
                     current_index -= 1
         obj.active_shape_key_index = 0  # 选中基型
 
+class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
+    """活动键到基型"""
+    bl_idname = "ho.apply_active_shapekey_to_basis"
+    bl_label = "活动键到基型"
+    bl_description = "根据活动键的权重混合到基型，会删除活动键"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        obj = context.object
+
+        if obj is None or obj.type != 'MESH':
+            self.report({'ERROR'}, "活动对象不是网格")
+            return {'CANCELLED'}
+
+        if not obj.data.shape_keys or len(obj.data.shape_keys.key_blocks) < 2:
+            self.report({'ERROR'}, "对象没有足够的形态键")
+            return {'CANCELLED'}
+
+        key_blocks = obj.data.shape_keys.key_blocks
+        active_key = obj.active_shape_key
+        basis = key_blocks[0]
+
+        if active_key is None or active_key == basis:
+            self.report({'ERROR'}, "没有有效的活动形态键")
+            return {'CANCELLED'}
+
+        weight = active_key.value
+        if weight == 0.0:
+            self.report({'WARNING'}, "活动形态键权重为0，未做任何操作")
+            return {'CANCELLED'}
+
+        # 切换到 Object 模式确保 BMesh 操作正常
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # 创建 BMesh
+        mesh = obj.data
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+
+        # 应用 delta 到基型顶点
+        for i, v in enumerate(bm.verts):
+            delta = active_key.data[i].co - basis.data[i].co
+            v.co = basis.data[i].co + delta * weight
+
+        # 将修改写回网格
+        bm.to_mesh(mesh)
+        bm.free()
+
+        # 删除活动键
+        obj.shape_key_remove(active_key)
+        return {'FINISHED'}
+
 
 def draw_in_DATA_PT_modifiers(self, context):
     """修改器顶上"""
@@ -1594,6 +1634,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_deleteUnusingShapeKeys.bl_idname,icon="X")
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
+    layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
     
     
 
@@ -1606,7 +1647,8 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_applyShowingModifiersKeepShapekeys, OP_ApplyArmatureModifiersKeepShapekeys,
     OP_deleteUnusingShapeKeys, OP_AddShapekeysByTemplate,
     OP_ShapekeyTools_copyShapekey2ShearPlate,OP_ShapekeyTools_importShapekeyFromShearPlate,
-    OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_CopyList2selectedObjects
+    OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_CopyList2selectedObjects,
+    OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
 ]
 
 
