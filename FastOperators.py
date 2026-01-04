@@ -415,73 +415,73 @@ def get_first_image_from_material(obj):
             return n.image
     return None
 
+def longest_edge_world(obj, face):
+    mw = obj.matrix_world
+    verts = obj.data.vertices
+
+    max_len = 0.0
+    v_idx = face.vertices
+    n = len(v_idx)
+
+    for i in range(n):
+        v0 = mw @ verts[v_idx[i]].co
+        v1 = mw @ verts[v_idx[(i + 1) % n]].co
+        l = (v1 - v0).length
+        if l > max_len:
+            max_len = l
+
+    return max_len
+
 class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
     bl_label = "面片转参考图"
-    bl_description = "需要严格注意面片的原点以及变换信息，不带旋转变换的面片需要是躺放在世界平面的。逆向操作为bl原生操作"
+    bl_description = "将面片转为 Image Empty，服用原物体变换，尺寸基于面片世界空间最长边"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        return any(
+            obj.type == 'MESH'
+            for obj in context.selected_objects
+        )
+
     def execute(self, context):
-        obj = context.active_object
-        if not obj or obj.type != 'MESH':
-            self.report({'ERROR'}, "请选择 Mesh")
+        objs = context.selected_objects
+        if not objs:
+            self.report({'ERROR'}, "未选择物体")
             return {'CANCELLED'}
 
-        image = get_first_image_from_material(obj)
-        if not image:
-            self.report({'ERROR'}, "未找到图片材质")
-            return {'CANCELLED'}
+        for obj in list(objs):
+            # 仅处理 Mesh
+            if obj.type != 'MESH' or not obj.data.polygons:
+                continue
 
-        # -------------------------
-        # 获取参考面
-        # -------------------------
-        face = next((f for f in obj.data.polygons if f.select), None)
-        if not face:
-            face = obj.data.polygons[0]  # 没选中面则取第一个面
+            image = get_first_image_from_material(obj)
+            if not image:
+                continue
 
-        # 面片顶点世界坐标
-        verts = [obj.matrix_world @ obj.data.vertices[i].co for i in face.vertices]
-        if len(verts) < 2:
-            self.report({'ERROR'}, "面顶点不足")
-            return {'CANCELLED'}
+            # 取选中面，否则取第一个面
+            face = next((f for f in obj.data.polygons if f.select), None)
+            if not face:
+                face = obj.data.polygons[0]
 
-        # 高度为基准
-        e1 = verts[1] - verts[0]
-        if len(verts) >= 3:
-            e2 = verts[2] - verts[1]
-        else:
-            e2 = Vector((0,1,0))  # 顶点不足时用默认方向
+            # 创建 Image Empty
+            empty = bpy.data.objects.new(f"REF_{image.name}", None)
+            empty.empty_display_type = 'IMAGE'
+            empty.data = image
 
-        height = e2.length
+            # 直接服用原物体变换
+            empty.matrix_world = obj.matrix_world.copy()
 
-        # -------------------------
-        # 创建 Image Empty
-        # -------------------------
-        empty = bpy.data.objects.new(f"REF_{image.name}", None)
-        empty.empty_display_type = 'IMAGE'
-        empty.data = image
+            # Image Empty 使用 bbox 最长边作为显示尺寸
+            empty.empty_display_size = longest_edge_world(obj, face)
+            empty.scale = (1, 1, 1)
 
-        # -------------------------
-        # 使用原面片矩阵对齐
-        # -------------------------
-        empty.matrix_world = obj.matrix_world
+            # 链接到场景
+            context.collection.objects.link(empty)
 
-        # -------------------------
-        # 等比缩放，基于面片高度
-        # -------------------------
-        empty.empty_display_size = height
-        empty.scale = (1, 1, 1)  # 保证等比缩放
-
-        # -------------------------
-        # 链接场景
-        # -------------------------
-        context.collection.objects.link(empty)
-        context.view_layer.objects.active = empty
-
-        # -------------------------
-        # 删除原 Mesh
-        # -------------------------
-        bpy.data.objects.remove(obj, do_unlink=True)
+            # 删除原 Mesh
+            bpy.data.objects.remove(obj, do_unlink=True)
 
         return {'FINISHED'}
 
