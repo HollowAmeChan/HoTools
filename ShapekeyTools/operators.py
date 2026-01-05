@@ -494,8 +494,8 @@ class OP_balanceShapekey(Operator):
     tolerance: FloatProperty(
         name="容差",
         description="查找对称顶点时的容差，允许一定范围内的不对称",
-        default=0.001,
-        min=0.0001,
+        default=0.00001,
+        min=0.000000001,
         max=1.0
     )  # type: ignore
 
@@ -552,9 +552,7 @@ class OP_balanceShapekey(Operator):
         #     verts = list(bm.verts)
         verts = [v for v in bm.verts if v.select]  # 只处理选择
 
-        if not verts:
-            self.report({'INFO'}, "没有检查到需要处理的顶点！")
-            return {'FINISHED'}
+        key_co_backup = [v.co.copy() for v in active_shape_key.data] # 备份防止循环偏移
 
         # 逐个处理顶点
         for vert in verts:
@@ -562,22 +560,29 @@ class OP_balanceShapekey(Operator):
 
             # 获取源顶点位置
             source_basis_co = basis_shape_key.data[vert_idx].co
-            source_key_co = active_shape_key.data[vert_idx].co
+            source_key_co = key_co_backup[vert_idx]  # ← 改这里（幂等）
 
             # 计算对称位置
             co_mirrored = source_basis_co.copy()
             co_mirrored[axis_index] *= -1
 
-            # 在 基型位置KDTree 中查找对称顶点
-            result = kd_tree.find_range(co_mirrored, self.tolerance)
-            if result:
-                mirror_idx = result[0][1]  # 最近点的索引
+            # 稳定 KDTree 查找
+            co, mirror_idx, dist = kd_tree.find(co_mirrored)
+            if dist <= self.tolerance:
                 mirrored_basis_co = basis_shape_key.data[mirror_idx].co
                 mirrored_vert = bm.verts[mirror_idx]
 
                 # 计算偏移并更新 BMesh 顶点位置
                 offset = source_key_co - source_basis_co
                 offset[axis_index] *= -1
+
+                def snap(v, eps=1e-6):
+                    return 0.0 if abs(v) < eps else v
+
+                offset[0] = snap(offset[0])
+                offset[1] = snap(offset[1])
+                offset[2] = snap(offset[2])
+
                 mirrored_vert.co = mirrored_basis_co + offset
 
         # 将 BMesh 数据写回 mesh

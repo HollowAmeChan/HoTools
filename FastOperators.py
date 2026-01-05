@@ -435,7 +435,7 @@ def longest_edge_world(obj, face):
 class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
     bl_label = "面片转参考图"
-    bl_description = "将面片转为 Image Empty，服用原物体变换，尺寸基于面片世界空间最长边"
+    bl_description = "将面片转为 Image Empty，复用原物体变换，尺寸基于面片世界空间最长边"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
