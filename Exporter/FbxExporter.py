@@ -284,15 +284,101 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             for p in params.items():
                 layout.label(text=(str(p[0]) + " = " + str(p[1])))
 
+class OP_FinalFBXExport_only_preprocess(Operator):
+    bl_idname = "ho.final_fbx_export_only_preprocess"
+    bl_label = "Hotools导出FBX(仅预处理)"
+    bl_description = ""
+    bl_options = {'REGISTER', 'UNDO'}
+
+    cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+
+
+    def export_fbx_preprocess(self,context):
+        global hidden_collections
+        global hidden_objects
+        global disabled_collections
+        global disabled_objects
+
+        root_objects = [item for item in bpy.data.objects if (item.type == "EMPTY" or item.type == "MESH" or item.type == "ARMATURE" or item.type == "FONT" or item.type == "CURVE" or item.type == "SURFACE") and not item.parent]
+        armature_objects = [item for item in bpy.data.objects if item.type == "ARMATURE"]
+        
+        hidden_collections = []
+        hidden_objects = []
+        disabled_collections = []
+        disabled_objects = []
+
+        selection = bpy.context.selected_objects
+
+        #准备操作，全显场景中的对象与集合，并且全选
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        FBXExporter.unhide_collections(col=bpy.context.view_layer.layer_collection)
+        FBXExporter.unhide_objects()
+        
+        # 修复骨骼旋转
+        if self.cheekBoneKeepRotation and armature_objects !=[]:
+            #选择所有骨架进入编辑模式
+            bpy.ops.object.select_all(action='DESELECT')
+            for ob in armature_objects:
+                ob.data.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
+                ob.select_set(True)
+            bpy.ops.object.mode_set(mode="EDIT")
+            #TODO 没有处理活动物体不是骨架的问题
+            #处理骨骼旋转
+            for ob in armature_objects:
+                FBXExporter.clearArmatureBoneRoration(ob)
+            #重置状态
+            bpy.ops.object.mode_set(mode="OBJECT")
+            for ob in selection:
+                ob.select_set(True)
+
+
+        # 修复物体旋转（所有顶级父级物体）
+        for ob in root_objects:
+            FBXExporter.fix_object(ob)
+
+        # 刷新场景防止变换没有应用
+        bpy.context.view_layer.update()
+
+        #重置物体与集合的可见可选
+        for ob in hidden_objects:
+            ob.hide_set(True)
+        for ob in disabled_objects:
+            ob.hide_viewport = True
+        for col in hidden_collections:
+            col.hide_viewport = True
+        for col in disabled_collections:
+            col.collection.hide_viewport = True
+
+        # 重置选择状态
+        bpy.ops.object.select_all(action='DESELECT')
+        for ob in selection:
+            ob.select_set(True)
+
+    
+
+    @classmethod
+    def poll(cls, context):
+        return True
+    
+    def execute(self, context):
+        self.export_fbx_preprocess(context)
+        return {'FINISHED'}
+    
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self,"cheekBoneKeepRotation")
 
 
 def OPF_FinalFBXExport(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
     self.layout.operator(OP_FinalFBXExport.bl_idname, text="Hotools-FBX(.fbx)")
+    self.layout.operator(OP_FinalFBXExport_only_preprocess.bl_idname, text="Hotools-FBX(OnlyPreProcess)")
 
 
 cls = [
-    OP_FinalFBXExport,
+    OP_FinalFBXExport,OP_FinalFBXExport_only_preprocess
 ]
 
 

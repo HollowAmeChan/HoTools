@@ -1,4 +1,6 @@
 import bpy
+import os
+from bpy.types import Operator
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,Checker
 from bpy.props import BoolProperty, FloatProperty
@@ -28,6 +30,44 @@ def updateExIconState(self, context):
     else:
         bpy.ops.ho.remove_exicon()
 
+# 插件内置资源路径相关函数
+def asset_library_exists(path):
+    libs = bpy.context.preferences.filepaths.asset_libraries
+    path = os.path.normpath(path)
+
+    for lib in libs:
+        if os.path.normpath(lib.path) == path:
+            return True
+    return False
+def register_asset_library(name, path):
+    prefs = bpy.context.preferences.filepaths
+    libs = prefs.asset_libraries
+    path = os.path.normpath(path)
+    
+    try:
+        # Blender 4.x
+        libs.new(name=name, directory=path)
+    except TypeError:
+        # Blender 3.x
+        libs.new(name=name, path=path)
+    return True
+
+class OP_register_asset_library(Operator):
+    bl_idname = "ho.register_asset_library"
+    bl_label = "注册内置资源库"
+    bl_description = "将Hotools内置资源库注册到Blender资源库中,可在资源浏览器中使用"
+
+    def execute(self, context):
+        addon_dir = os.path.dirname(__file__)
+        asset_path = os.path.join(addon_dir, "HoAssets")
+        if asset_library_exists(asset_path):
+            self.report({'INFO'}, "HoAssets已经被注册过了")
+            return {'CANCELLED'}
+
+        register_asset_library("HoTools", asset_path)
+        self.report({'INFO'}, "HoTools资产库HoAssets已注册")
+        return {'FINISHED'}
+
 
 class AddonPreference(bpy.types.AddonPreferences):
     """插件的参数，不随着文件改变而改变"""
@@ -41,6 +81,10 @@ class AddonPreference(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout: bpy.types.UILayout = self.layout
+        row = layout.row(align=True)
+        row.alert = True
+        row.operator("ho.register_asset_library", text="注册内置资源库")
+        row.alert = False
         row = layout.row(align=True)
         row.prop(self, "hoTools_enableExIcon", toggle=True)
         row.prop(self, "hoTools_ExIconSize")
@@ -62,7 +106,7 @@ class AddonPreference(bpy.types.AddonPreferences):
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
 
-cls = [AddonPreference]
+cls = [OP_register_asset_library,AddonPreference]
 
 
 def register():
