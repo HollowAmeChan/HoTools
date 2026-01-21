@@ -1,6 +1,6 @@
 import bpy
 import random
-from bpy.types import Operator
+from bpy.types import Operator,UILayout
 
 
 # region 变量
@@ -143,6 +143,26 @@ class OP_CopyRigidBodySettings(Operator):
                 obj.rigid_body_constraint.spring_damping_z = constraint_settings.spring_damping_z
 
         return {'FINISHED'}
+
+def drawRigidBodyPhysicsPanel(layout:UILayout, context):
+    row = layout.row(align=True)
+    row.label(text="刚体物理相关")
+    row.operator(
+        OP_SetViewPortShadingMode.bl_idname, text="刚体预览")
+
+    col = layout.column(align=True)
+    row = col.row(align=True)
+    row.prop(context.scene.rigidbody_world, "enabled", text="刚体世界")
+    if context.scene.rigidbody_world.enabled:
+        # 使用指向 frame_end 属性的路径来绘制属性
+        row.prop(context.scene.rigidbody_world.point_cache,
+                    "frame_end", text="End Frame")
+    col.operator(
+        OP_CopyRigidBodySettings.bl_idname, text="复制刚体约束到所选")
+    col.operator("rigidbody.object_settings_copy", text="复制刚体到所选")
+    col.operator(
+        OP_AssignColorsByCollisionGroupCombination.bl_idname, text="刚体组颜色刷新")
+
 
 
 cls = [OP_CopyRigidBodySettings, OP_SetViewPortShadingMode,

@@ -1,10 +1,17 @@
 import bpy
 from bpy.types import Panel
-from . import rigidBodyPhysics
+from . import rigidBodyPhysics,actionProcess
 
 
 # region 变量
 def reg_props():
+    # 功能区开关
+    enum_items = [
+        ('PANEL_ANIMATIONTOOLS_ACTIONPROCESS', "动画处理", ""),
+        ('PANEL_ANIMATIONTOOLS_RIGIDBODYPHYSICS', "刚体物理", ""),
+    ]
+    bpy.types.Scene.ho_AnimationToolsPanel_Mod = bpy.props.EnumProperty(
+        name="AnimationToolsPanelMod", items=enum_items)
     return
 
 
@@ -25,29 +32,25 @@ class PL_AnimationTools(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="刚体物理相关")
-        row.operator(
-            rigidBodyPhysics.OP_SetViewPortShadingMode.bl_idname, text="刚体预览")
-
-        col = layout.column(align=True)
-        row = col.row(align=True)
-        row.prop(context.scene.rigidbody_world, "enabled", text="刚体世界")
-        if context.scene.rigidbody_world.enabled:
-            # 使用指向 frame_end 属性的路径来绘制属性
-            row.prop(context.scene.rigidbody_world.point_cache,
-                     "frame_end", text="End Frame")
-        col.operator(
-            rigidBodyPhysics.OP_CopyRigidBodySettings.bl_idname, text="复制刚体约束到所选")
-        col.operator("rigidbody.object_settings_copy", text="复制刚体到所选")
-        col.operator(
-            rigidBodyPhysics.OP_AssignColorsByCollisionGroupCombination.bl_idname, text="刚体组颜色刷新")
+        row.label(text="动画工具")
+        row.prop(context.scene, "ho_AnimationToolsPanel_Mod", expand=True,)
+        layout.separator()
+        if context.scene.ho_AnimationToolsPanel_Mod == "PANEL_ANIMATIONTOOLS_ACTIONPROCESS":
+            actionProcess.drawActionProcessPanel(self.layout, context)
+        if context.scene.ho_AnimationToolsPanel_Mod == "PANEL_ANIMATIONTOOLS_RIGIDBODYPHYSICS":
+            rigidBodyPhysics.drawRigidBodyPhysicsPanel(self.layout, context)
 
 
-cls = []
+
+        
+
+
+cls = [PL_AnimationTools]
 
 
 def register():
     rigidBodyPhysics.register()
+    actionProcess.register()
 
     for i in cls:
         bpy.utils.register_class(i)
@@ -56,6 +59,7 @@ def register():
 
 def unregister():
     rigidBodyPhysics.unregister()
+    actionProcess.unregister()
 
     for i in cls:
         bpy.utils.unregister_class(i)
