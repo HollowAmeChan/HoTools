@@ -179,8 +179,104 @@ class OP_UVTools_MoveActiveUV(Operator):
         uv_layers.active_index = target_index
 
 
+class OP_UVTools_MultiObj_SelectLayer(Operator):
+    bl_idname = "ho.uvtools_multiobj_selectlayer"
+    bl_label = "同步活动UV层"
+    bl_description = "如果选择了多个物体，所有物体的活动UV层将与活动物体活动UV层匹配至相同。"
+    bl_options = {'REGISTER', 'UNDO'}
 
+    def execute(self, context):
+        active_obj = context.active_object
+        selected_objs = context.selected_objects
 
+        if not active_obj or active_obj.type != 'MESH':
+            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
+            return {'CANCELLED'}
+
+        if not active_obj.data.uv_layers.active:
+            self.report({'WARNING'}, "活动物体没有UV层")
+            return {'CANCELLED'}
+
+        target_uv_name = active_obj.data.uv_layers.active.name
+        missing_objs = []
+
+        for obj in selected_objs:
+            if obj.type != 'MESH':
+                continue
+
+            uv_layers = obj.data.uv_layers
+            uv = uv_layers.get(target_uv_name)
+
+            if uv:
+                uv_layers.active = uv
+            else:
+                missing_objs.append(obj.name)
+
+        if missing_objs:
+            self.report(
+                {'INFO'},
+                f"以下物体没有 UV 层 '{target_uv_name}': {', '.join(missing_objs)}"
+            )
+
+        return {'FINISHED'}
+
+class OP_UVTools_MultiObj_SelectLayer_render(Operator):
+    bl_idname = "ho.uvtools_multiobj_selectlayer_render"
+    bl_label = "同步激活UV层"
+    bl_description = "同步所有选中物体的渲染UV层为活动物体的渲染UV层"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        active_obj = context.active_object
+        selected_objs = context.selected_objects
+
+        if not active_obj or active_obj.type != 'MESH':
+            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
+            return {'CANCELLED'}
+
+        uv_layers = active_obj.data.uv_layers
+        if not uv_layers:
+            self.report({'WARNING'}, "活动物体没有UV层")
+            return {'CANCELLED'}
+
+        # 找到活动物体的 render UV
+        target_uv = None
+        for uv in uv_layers:
+            if uv.active_render:
+                target_uv = uv
+                break
+
+        if not target_uv:
+            self.report({'WARNING'}, "活动物体没有设置渲染UV层")
+            return {'CANCELLED'}
+
+        target_uv_name = target_uv.name
+        missing_objs = []
+
+        for obj in selected_objs:
+            if obj.type != 'MESH':
+                continue
+
+            obj_uvs = obj.data.uv_layers
+            uv = obj_uvs.get(target_uv_name)
+
+            if not uv:
+                missing_objs.append(obj.name)
+                continue
+
+            # 只能有一个 render UV，先清空
+            for u in obj_uvs:
+                u.active_render = False
+
+            uv.active_render = True
+
+        if missing_objs:
+            self.report(
+                {'INFO'},
+                f"以下物体没有渲染 UV 层 '{target_uv_name}': {', '.join(missing_objs)}"
+            )
+
+        return {'FINISHED'}
 
 
 
@@ -191,6 +287,8 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
     row = layout.row(align=True)
     row.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_UP").direction = 'UP'
     row.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_DOWN").direction = 'DOWN'
+    row.operator(OP_UVTools_MultiObj_SelectLayer.bl_idname,text="",icon="UV")
+    row.operator(OP_UVTools_MultiObj_SelectLayer_render.bl_idname,text="",icon="RESTRICT_RENDER_OFF")
 
 
     layout.operator(OP_UVTools_ReplaceFromLayer.bl_idname)
@@ -198,7 +296,7 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
 
 
 
-cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV]
+cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,OP_UVTools_MultiObj_SelectLayer,OP_UVTools_MultiObj_SelectLayer_render]
 
 
 
