@@ -666,7 +666,11 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return  obj.type == 'MESH' and obj.mode == 'EDIT'
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
 
     def execute(self, context):
         obj = context.active_object

@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Panel
 
-from . import vertexGroupOperators,advancedList
+from . import vertexGroupOperators
 
 
 def reg_props():
@@ -16,7 +16,6 @@ cls = []
 
 
 def register():
-    advancedList.register()
     vertexGroupOperators.register()
     for i in cls:
         bpy.utils.register_class(i)
@@ -24,7 +23,6 @@ def register():
 
 
 def unregister():
-    advancedList.unregister()
     vertexGroupOperators.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)

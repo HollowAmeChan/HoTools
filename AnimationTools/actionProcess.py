@@ -18,10 +18,6 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
     bl_description = "修复因骨架 Object 缩放导致的所有骨骼位移动画错误（破坏性操作）"
     bl_options = {'REGISTER', 'UNDO'}
 
-    # --------------------------------------------------
-    # 警告文本
-    # --------------------------------------------------
-
     warning_text: bpy.props.StringProperty(
         name="⚠ 警告",
         default=(
@@ -45,18 +41,10 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
         options={'SKIP_SAVE'}
     )  # type: ignore
 
-    # --------------------------------------------------
-    # Poll
-    # --------------------------------------------------
-
     @classmethod
     def poll(cls, context):
         obj = context.object
         return obj and obj.type == 'ARMATURE'
-
-    # --------------------------------------------------
-    # 弹窗
-    # --------------------------------------------------
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self, width=560)
@@ -68,16 +56,8 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
         for line in self.warning_text.split("\n"):
             col.label(text=line)
 
-    # --------------------------------------------------
-    # 执行
-    # --------------------------------------------------
-
     def execute(self, context):
         arm = context.object
-
-        # --------------------------------------------------
-        # 检查缩放（仅支持等比）
-        # --------------------------------------------------
 
         sx, sy, sz = arm.scale
         if not (abs(sx - sy) < 1e-6 and abs(sx - sz) < 1e-6):
@@ -89,9 +69,6 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
             self.report({'INFO'}, "骨架 Scale 已为 1，无需修复")
             return {'CANCELLED'}
 
-        # --------------------------------------------------
-        # 遍历并修复所有 Action
-        # --------------------------------------------------
 
         fixed_actions = 0
         fixed_curves = 0
@@ -125,10 +102,6 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
             )
             return {'CANCELLED'}
 
-        # --------------------------------------------------
-        # 应用骨架缩放
-        # --------------------------------------------------
-
         view_layer = context.view_layer
         view_layer.objects.active = arm
 
@@ -138,9 +111,6 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
             scale=True
         )
 
-        # --------------------------------------------------
-        # 结果提示
-        # --------------------------------------------------
 
         self.report(
             {'INFO'},

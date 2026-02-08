@@ -136,8 +136,13 @@ class OP_PlaceObjectBottom(Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.object
-        return obj and obj.type == 'MESH' and context.mode == "EDIT_MESH"
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
 
     def execute(self, context):
         bpy.ops.object.mode_set(mode='OBJECT')
