@@ -6,7 +6,6 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, IntProperty, EnumProperty,FloatProperty
 import json
 import re
-from . import advancedList
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
 
