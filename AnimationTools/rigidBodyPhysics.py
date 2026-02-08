@@ -144,29 +144,83 @@ class OP_CopyRigidBodySettings(Operator):
 
         return {'FINISHED'}
 
-def drawRigidBodyPhysicsPanel(layout:UILayout, context):
-    row = layout.row(align=True)
-    row.label(text="刚体物理相关")
-    row.operator(
-        OP_SetViewPortShadingMode.bl_idname, text="刚体预览")
+class OP_GenerateRigidBodyConstraints(Operator):
+    bl_idname = "ho.generate_rigidbody_constraints"
+    bl_label = "生成刚体约束"
+    bl_description = "在所选两个物体间添加刚体约束"
+    bl_options = {'REGISTER', 'UNDO'}
 
-    col = layout.column(align=True)
-    row = col.row(align=True)
-    row.prop(context.scene.rigidbody_world, "enabled", text="刚体世界")
-    if context.scene.rigidbody_world.enabled:
-        # 使用指向 frame_end 属性的路径来绘制属性
-        row.prop(context.scene.rigidbody_world.point_cache,
-                    "frame_end", text="End Frame")
-    col.operator(
-        OP_CopyRigidBodySettings.bl_idname, text="复制刚体约束到所选")
-    col.operator("rigidbody.object_settings_copy", text="复制刚体到所选")
-    col.operator(
-        OP_AssignColorsByCollisionGroupCombination.bl_idname, text="刚体组颜色刷新")
+    def execute(self, context):
+        selected_objs = context.selected_objects
+
+        # -------- 安全检查 --------
+        if len(selected_objs) != 2:
+            self.report({'ERROR'}, "请正好选择两个物体")
+            return {'CANCELLED'}
+
+        obj_a, obj_b = selected_objs
+
+        # 确保两个物体都有刚体
+        for obj in (obj_a, obj_b):
+            if not obj.rigid_body:
+                bpy.ops.rigidbody.object_add({'object': obj})
+
+        # -------- 创建约束对象 --------
+        bpy.ops.object.empty_add(
+            type='PLAIN_AXES',
+            location=(obj_a.location + obj_b.location) * 0.5
+        )
+        constraint_obj = context.active_object
+        constraint_obj.name = f"RB_Constraint_{obj_a.name}_{obj_b.name}"
+
+        with context.temp_override(
+            object=constraint_obj,
+            active_object=constraint_obj,
+            selected_objects=[constraint_obj],
+            selected_editable_objects=[constraint_obj],
+        ):
+            bpy.ops.rigidbody.constraint_add()
+
+
+        rbc = constraint_obj.rigid_body_constraint
+        rbc.object1 = obj_a
+        rbc.object2 = obj_b
+
+        # -------- 默认参数（可按你需求改）--------
+        rbc.type = 'FIXED'
+        rbc.use_breaking = False
+        rbc.enabled = True
+
+        return {'FINISHED'}
+    
+
+
+def drawRigidBodyPhysicsPanel(layout:UILayout, context):
+    # row = layout.row(align=True)
+    # row.label(text="刚体物理相关")
+    # row.operator(
+    #     OP_SetViewPortShadingMode.bl_idname, text="刚体预览")
+
+    # col = layout.column(align=True)
+    # row = col.row(align=True)
+    # row.prop(context.scene.rigidbody_world, "enabled", text="刚体世界")
+    # if context.scene.rigidbody_world.enabled:
+    #     # 使用指向 frame_end 属性的路径来绘制属性
+    #     row.prop(context.scene.rigidbody_world.point_cache,
+    #                 "frame_end", text="End Frame")
+    # col.operator(
+    #     OP_CopyRigidBodySettings.bl_idname, text="复制刚体约束到所选")
+    # col.operator("rigidbody.object_settings_copy", text="复制刚体到所选")
+    # col.operator(
+    #     OP_AssignColorsByCollisionGroupCombination.bl_idname, text="刚体组颜色刷新")
+    row = layout.row(align=True)
+    row.operator(OP_GenerateRigidBodyConstraints.bl_idname, text="生成刚体约束")
+
 
 
 
 cls = [OP_CopyRigidBodySettings, OP_SetViewPortShadingMode,
-       OP_AssignColorsByCollisionGroupCombination,
+       OP_AssignColorsByCollisionGroupCombination,OP_GenerateRigidBodyConstraints
        ]
 
 
