@@ -5,7 +5,7 @@ import bmesh
 from bpy.types import Operator,Panel,Menu
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
-
+from mathutils import Vector
 
 def reg_props():
     return
@@ -278,6 +278,95 @@ class OP_UVTools_MultiObj_SelectLayer_render(Operator):
 
         return {'FINISHED'}
 
+class OP_UVTools_FitToFirstQuadrant(Operator):
+    bl_idname = "ho.uvtools_fit_to_first_quadrant"
+    bl_label = "选中UV适配到第一象限"
+    bl_description = "将选中的UV整体移动并等比缩放到0~1第一象限"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        area = context.area
+        if not area or area.type != 'IMAGE_EDITOR':
+            return False
+
+        tool_settings = context.scene.tool_settings
+        if not tool_settings or tool_settings.use_uv_select_sync:
+            return False
+
+        obj = context.active_object
+        if not obj or obj.type != 'MESH' or obj.mode != 'EDIT':
+            return False
+
+        return True
+
+    def execute(self, context):
+
+        objects = context.objects_in_mode_unique_data
+
+        collected = []
+        object_map = {}
+
+        for obj in objects:
+
+            if obj.type != 'MESH':
+                continue
+
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+
+            object_map[obj] = bm
+
+            for face in bm.faces:
+                for loop in face.loops:
+                    if loop[uv_layer].select:
+                        collected.append((obj, uv_layer, loop))
+
+        if not collected:
+            self.report({'WARNING'}, "没有选中的UV")
+            return {'CANCELLED'}
+
+        # ----------------------------
+        # 计算整体包围盒
+        # ----------------------------
+        min_x = min_y = float("inf")
+        max_x = max_y = float("-inf")
+
+        for obj, uv_layer, loop in collected:
+            uv = loop[uv_layer].uv
+            min_x = min(min_x, uv.x)
+            min_y = min(min_y, uv.y)
+            max_x = max(max_x, uv.x)
+            max_y = max(max_y, uv.y)
+
+        width = max_x - min_x
+        height = max_y - min_y
+
+        if width == 0 or height == 0:
+            self.report({'WARNING'}, "选中UV尺寸为0，无法缩放")
+            return {'CANCELLED'}
+
+        # 等比缩放
+        scale = 1.0 / max(width, height)
+
+        # ----------------------------
+        # 平移 + 缩放
+        # ----------------------------
+        for obj, uv_layer, loop in collected:
+            uv = loop[uv_layer].uv
+            uv.x -= min_x
+            uv.y -= min_y
+            uv *= scale
+            loop[uv_layer].uv = uv
+
+        # 更新
+        for obj in object_map.keys():
+            bmesh.update_edit_mesh(obj.data)
+
+        return {'FINISHED'}
+
 
 
 def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
@@ -292,11 +381,24 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
 
 
     layout.operator(OP_UVTools_ReplaceFromLayer.bl_idname)
-    
+
+
+class IMAGE_MT_uvs_context_hotools(Menu):
+    """UV编辑器右键时的菜单追加"""
+    bl_label = "Hotools"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
+
+def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
+    """UV编辑器右键菜单"""
+    self.layout.menu("IMAGE_MT_uvs_context_hotools") 
 
 
 
-cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,OP_UVTools_MultiObj_SelectLayer,OP_UVTools_MultiObj_SelectLayer_render]
+cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,OP_UVTools_MultiObj_SelectLayer,OP_UVTools_MultiObj_SelectLayer_render,
+       IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant]
 
 
 
@@ -305,6 +407,7 @@ def register():
         bpy.utils.register_class(i)
 
     bpy.types.DATA_PT_uv_texture.append(draw_in_DATA_PT_uv_texture)
+    bpy.types.IMAGE_MT_uvs_context_menu.append(draw_in_IMAGE_MT_uvs_context_menu)
     reg_props()
 
 
@@ -313,4 +416,6 @@ def unregister():
         bpy.utils.unregister_class(i)
 
     bpy.types.DATA_PT_uv_texture.remove(draw_in_DATA_PT_uv_texture)
+    bpy.types.IMAGE_MT_uvs_context_menu.remove(draw_in_IMAGE_MT_uvs_context_menu)
+
     ureg_props()
