@@ -5,6 +5,11 @@ import json
 import subprocess
 import random
 import numpy as np
+import blf
+from gpu_extras.batch import batch_for_shader
+from mathutils import Vector
+import gpu
+
 
 if sys.version_info >= (3, 11):
     from ._Lib.py311.PIL import Image, ImageDraw ,ImageFilter
@@ -380,7 +385,6 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
         self.report({'INFO'}, f"成功导入并应用 {len(split_normals)} 个法线")
         return {'FINISHED'}
 
-
 class OP_Replace_MeshDataBlock2selectedObj(Operator):
     bl_idname = "ho.replace"
     bl_label = "复制活动物体网格数据到所选物体"
@@ -408,7 +412,426 @@ class OP_Replace_MeshDataBlock2selectedObj(Operator):
         self.report({'INFO'}, "已将网格数据复制到选中物体")
         return {'FINISHED'}
 
+class OP_AddSelectSideRingLoops(Operator):
+    bl_idname = "ho.addselect_sideringloops"
+    bl_label = "加选Ring"
+    bl_description = "选择并排的循环边线,如果选中中的不是loop会尝试首先选择loop"
+    bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
+    def execute(self, context):
+
+        obj = context.active_object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        # 1️⃣ 如果选中的不是完整 loop，先补全 loop
+        bpy.ops.mesh.loop_multi_select(ring=False)
+
+        bm = bmesh.from_edit_mesh(me)
+
+        selected_edges = [e for e in bm.edges if e.select]
+
+        if not selected_edges:
+            self.report({'WARNING'}, "没有选中任何边")
+            return {'CANCELLED'}
+
+        side_edges = set()
+
+        # 2️⃣ 对每条已选边，查找相邻的“并排ring边”
+        for edge in selected_edges:
+
+            if len(edge.link_faces) != 2:
+                continue  # 非流形边跳过
+
+            for face in edge.link_faces:
+
+                # 找到该面中与当前边“相对”的边（quad专用）
+                if len(face.edges) == 4:
+                    for e in face.edges:
+                        if e != edge and not any(v in edge.verts for v in e.verts):
+                            side_edges.add(e)
+
+        # 3️⃣ 选中这些并排边
+        for e in side_edges:
+            e.select = True
+
+        bmesh.update_edit_mesh(me, loop_triangles=False, destructive=False)
+
+        return {'FINISHED'}
+
+class OP_RemoveSelectSideRingLoops(Operator):
+    bl_idname = "ho.removeselect_sideringloops"
+    bl_label = "减选Ring"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
+    def execute(self, context):
+
+        obj = context.active_object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        selected_edges = {e for e in bm.edges if e.select}
+
+        if not selected_edges:
+            return {'CANCELLED'}
+
+        ring_neighbors = {e: set() for e in selected_edges}
+
+        # 建立 ring 邻接关系
+        for edge in selected_edges:
+
+            for face in edge.link_faces:
+
+                if len(face.edges) != 4:
+                    continue
+
+                # 找对边（ring方向）
+                for e in face.edges:
+                    if e != edge and not any(v in edge.verts for v in e.verts):
+                        if e in selected_edges:
+                            ring_neighbors[edge].add(e)
+                        break
+
+        # 找外层（只有一个ring邻居的）
+        edges_to_remove = {
+            e for e, neighbors in ring_neighbors.items()
+            if len(neighbors) <= 1
+        }
+
+        for e in edges_to_remove:
+            e.select = False
+
+        bmesh.update_edit_mesh(me)
+
+        return {'FINISHED'}
+
+
+class OP_CreatBoneChainByMeshFlow(Operator):
+    bl_idname = "ho.create_bone_chain_by_meshflow"
+    bl_label = "根据选中的线段创建骨骼链"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    num_segments: IntProperty(
+        name="段数",
+        default=4,
+        min=1,
+    )
+
+    # ---------------------------------------------------
+    # 获取选中边 flow（只返回 world Vector）
+    # ---------------------------------------------------
+
+    def get_edge_flow_points(self, context):
+
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+
+        edges = [e for e in bm.edges if e.select]
+        if not edges:
+            return None
+
+        vert_count = {}
+        for e in edges:
+            for v in e.verts:
+                vert_count[v] = vert_count.get(v, 0) + 1
+
+        start_verts = [v for v, c in vert_count.items() if c == 1]
+        current = start_verts[0] if start_verts else edges[0].verts[0]
+
+        ordered = [current]
+        visited = set()
+
+        while True:
+            next_edge = None
+            for e in current.link_edges:
+                if e.select and e not in visited:
+                    next_edge = e
+                    break
+
+            if not next_edge:
+                break
+
+            visited.add(next_edge)
+            v1, v2 = next_edge.verts
+            current = v2 if v1 == current else v1
+            ordered.append(current)
+
+        world = obj.matrix_world
+        return [world @ v.co.copy() for v in ordered]
+
+    # ---------------------------------------------------
+    # 重采样
+    # ---------------------------------------------------
+
+    def resample_points(self):
+
+        pts = self.base_points
+        if len(pts) < 2:
+            return None
+
+        lengths = []
+        total = 0.0
+
+        for i in range(len(pts) - 1):
+            l = (pts[i + 1] - pts[i]).length
+            lengths.append(l)
+            total += l
+
+        step = total / self.num_segments
+
+        result = [pts[0]]
+        accumulated = 0.0
+        index = 0
+
+        for i in range(1, self.num_segments):
+            target = i * step
+
+            while index < len(lengths) - 1 and accumulated + lengths[index] < target:
+                accumulated += lengths[index]
+                index += 1
+
+            remain = target - accumulated
+            direction = (pts[index + 1] - pts[index]).normalized()
+            result.append(pts[index] + direction * remain)
+
+        result.append(pts[-1])
+        return result
+
+    # ---------------------------------------------------
+    # 渐变 + 箭头绘制
+    # ---------------------------------------------------
+
+    def draw_preview(self):
+
+        if not self.preview_points:
+            return
+
+        points = list(self.preview_points)
+        if self.reverse:
+            points.reverse()
+
+        total = len(points) - 1
+        if total <= 0:
+            return
+
+        # ---------- 渐变线 ----------
+        shader = gpu.shader.from_builtin('SMOOTH_COLOR')
+
+        coords = []
+        colors = []
+
+        for i in range(total):
+            p1 = points[i]
+            p2 = points[i + 1]
+
+            t1 = i / total
+            t2 = (i + 1) / total
+
+            col1 = (t1, 1.0 - t1, 0.2, 1.0)
+            col2 = (t2, 1.0 - t2, 0.2, 1.0)
+
+            coords.extend([p1, p2])
+            colors.extend([col1, col2])
+
+        batch = batch_for_shader(shader, 'LINES', {
+            "pos": coords,
+            "color": colors,
+        })
+
+        gpu.state.blend_set('ALPHA')
+        gpu.state.line_width_set(4.0)
+
+        shader.bind()
+        batch.draw(shader)
+
+        # ---------- 箭头 ----------
+        arrow_coords = []
+        arrow_colors = []
+
+        for i in range(total):
+            head = points[i]
+            tail = points[i + 1]
+
+            direction = (tail - head).normalized()
+            length = (tail - head).length
+
+            arrow_size = length * 0.2
+            base = tail - direction * arrow_size
+
+            rv3d = bpy.context.region_data
+            view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
+            side = direction.cross(view_dir)
+
+            if side.length == 0:
+                side = Vector((1, 0, 0))
+            side.normalize()
+            side *= arrow_size * 0.5
+
+            left = base + side
+            right = base - side
+
+            arrow_coords.extend([left, tail, right])
+            arrow_colors.extend([(1, 1, 1, 1)] * 3)
+
+        arrow_batch = batch_for_shader(shader, 'TRIS', {
+            "pos": arrow_coords,
+            "color": arrow_colors,
+        })
+
+        arrow_batch.draw(shader)
+
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+
+    # ---------------------------------------------------
+    # 跟随鼠标 UI
+    # ---------------------------------------------------
+
+    def draw_text(self):
+
+        font_id = 0
+        blf.size(font_id, 16)
+
+        x = self.mouse_x + 20
+        y = self.mouse_y - 20
+
+        blf.position(font_id, x, y, 0)
+        blf.draw(font_id, f"滚轮:分段: {self.num_segments}")
+        blf.position(font_id, x, y - 22, 0)
+        blf.draw(font_id, f"F:: {'反向' if self.reverse else '正向'}")
+
+    # ---------------------------------------------------
+
+    def update_preview(self, context):
+        self.preview_points = self.resample_points()
+        context.area.tag_redraw()
+
+    # ---------------------------------------------------
+
+    def modal(self, context, event):
+
+        if event.type == 'MOUSEMOVE':
+            self.mouse_x = event.mouse_region_x
+            self.mouse_y = event.mouse_region_y
+            context.area.tag_redraw()
+
+        if event.type in {'ESC', 'RIGHTMOUSE'}:
+            self.finish(context)
+            return {'CANCELLED'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            self.finish(context)
+            self.create_bones(context)
+            return {'FINISHED'}
+
+        if event.type == 'WHEELUPMOUSE':
+            self.num_segments += 1
+            self.update_preview(context)
+
+        if event.type == 'WHEELDOWNMOUSE':
+            if self.num_segments > 1:
+                self.num_segments -= 1
+                self.update_preview(context)
+
+        # F 键翻转方向
+        if event.type == 'F' and event.value == 'PRESS':
+            self.reverse = not self.reverse
+            context.area.tag_redraw()
+
+        return {'RUNNING_MODAL'}
+
+    # ---------------------------------------------------
+
+    def finish(self, context):
+        bpy.types.SpaceView3D.draw_handler_remove(self._handle_3d, 'WINDOW')
+        bpy.types.SpaceView3D.draw_handler_remove(self._handle_text, 'WINDOW')
+        context.area.tag_redraw()
+
+    # ---------------------------------------------------
+
+    def create_bones(self, context):
+
+        points = list(self.preview_points)
+        if self.reverse:
+            points.reverse()
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        arm_data = bpy.data.armatures.new("FlowArmature")
+        arm_obj = bpy.data.objects.new("FlowArmature", arm_data)
+        context.collection.objects.link(arm_obj)
+
+        context.view_layer.objects.active = arm_obj
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        for i in range(len(points) - 1):
+            bone = arm_data.edit_bones.new(f"FlowBone_{i}")
+            bone.head = points[i]
+            bone.tail = points[i + 1]
+
+            if i > 0:
+                bone.parent = arm_data.edit_bones[f"FlowBone_{i-1}"]
+                bone.use_connect = True
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    # ---------------------------------------------------
+
+    def invoke(self, context, event):
+
+        self.base_points = self.get_edge_flow_points(context)
+
+        if not self.base_points:
+            self.report({'WARNING'}, "请选择一条连续边")
+            return {'CANCELLED'}
+
+        self.reverse = False
+        self.mouse_x = event.mouse_region_x
+        self.mouse_y = event.mouse_region_y
+
+        self.preview_points = self.resample_points()
+
+        self._handle_3d = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_preview,
+            (),
+            'WINDOW',
+            'POST_VIEW'
+        )
+
+        self._handle_text = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_text,
+            (),
+            'WINDOW',
+            'POST_PIXEL'
+        )
+
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+        
 def get_first_image_from_material(obj):
     if not obj.data.materials:
         return None
@@ -536,6 +959,7 @@ class VIEW3D_MT_edit_mesh_hotools(Menu):
         layout = self.layout
         layout.operator(OP_PlaceObjectBottom.bl_idname, icon='TRIA_DOWN')
         layout.operator(OP_AlignViewToAvgNormal.bl_idname,icon="RESTRICT_RENDER_OFF")
+        layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname,icon="ADD")
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     """编辑模式右键时的菜单追加"""
@@ -569,6 +993,8 @@ cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_CustomSplitNormals_Import,OP_CustomSplitNormals_Export,
        OP_Replace_MeshDataBlock2selectedObj,
        OP_MeshToImageEmpty,
+       OP_AddSelectSideRingLoops,OP_RemoveSelectSideRingLoops,
+       OP_CreatBoneChainByMeshFlow,
        ]
 
 
@@ -584,13 +1010,24 @@ def register():
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
-    # 默认绑定 Ctrl + Shift + 右键
-    # 此设置可以被preference保存，不用担心注册阶段写死
+    
+    # 快捷键设置可以被preference保存，不用担心注册阶段写死
     wm = bpy.context.window_manager
+    #填充选择-默认绑定 Ctrl + Shift + 右键
     km = wm.keyconfigs.addon.keymaps.new(
         name="Window", space_type="EMPTY", region_type="WINDOW")
     kmi = km.keymap_items.new(OP_select_inside_face_loop.bl_idname,
                               type='RIGHTMOUSE', value='PRESS', ctrl=True, shift=True)
+    kmi.active = True
+
+    #加减选环线-默认绑定 Alt + 小键盘"+/-"
+    km = wm.keyconfigs.addon.keymaps.new(
+        name="Window", space_type="EMPTY", region_type="WINDOW")
+    kmi = km.keymap_items.new(OP_AddSelectSideRingLoops.bl_idname,
+                              type='NUMPAD_PLUS', value='PRESS',alt=True)
+    kmi.active = True
+    kmi = km.keymap_items.new(OP_RemoveSelectSideRingLoops.bl_idname,
+                              type='NUMPAD_MINUS', value='PRESS',alt=True)
     kmi.active = True
 
     reg_props()

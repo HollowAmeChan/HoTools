@@ -101,6 +101,12 @@ class AddonPreference(bpy.types.AddonPreferences):
                 if kmi.idname == FastOperators.OP_select_inside_face_loop.bl_idname:
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
+                if kmi.idname == FastOperators.OP_AddSelectSideRingLoops.bl_idname:
+                    col.context_pointer_set("keymap", km)
+                    rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
+                if kmi.idname == FastOperators.OP_RemoveSelectSideRingLoops.bl_idname:
+                    col.context_pointer_set("keymap", km)
+                    rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
                 if kmi.idname == "ho.vertexgrouptools_switch_vg_bycursor":
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
