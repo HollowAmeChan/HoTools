@@ -11,9 +11,24 @@ def ureg_props():
     return
 
 
-cls = []
+class PL_UvTools(Panel):
+    bl_idname = "VIEW_PT_Hollow_UvTools"
+    bl_label = "UV工具"
+    # bl_space_type = "IMAGE_EDITOR"
+    # bl_region_type = "UI"
+    # bl_category = "HoTools"
+    # bl_options = {'DEFAULT_CLOSED'}
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_parent_id = "PT_Main_HotoolsMainPanel"
+    bl_options = {"DEFAULT_CLOSED"}
+    
+    def draw(self, context):
+        layout = self.layout
+        baker.drawBakePanel(layout, context)
+        return
 
-
+cls = [PL_UvTools]
 
 def register():
     baker.register()

@@ -755,40 +755,30 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
-class PL_UvTools(Panel):
-    bl_idname = "VIEW_PT_Hollow_UvTools"
-    bl_label = "UV工具"
-    bl_space_type = "IMAGE_EDITOR"
-    bl_region_type = "UI"
-    bl_category = "HoTools"
-    bl_options = {'DEFAULT_CLOSED'}
+def drawBakePanel(layout:bpy.types.UILayout, context):
+    box = layout.box()
+    box.label(text="导出UV贴图")
+    row = box.row(align=True)
+    row.operator(OT_UVTools_FastBakeUVImage.bl_idname,text="",icon="FUND")
+    row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text="UV岛")
+    row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
+    row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
+    row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
+    row.operator("uv.export_layout", text="网格")
+    row = box.row(align=True)
+    row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
+    
 
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        box.label(text="导出UV贴图")
-        row = box.row(align=True)
-        row.operator(OT_UVTools_FastBakeUVImage.bl_idname,text="",icon="FUND")
-        row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text="UV岛")
-        row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
-        row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
-        row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
-        row.operator("uv.export_layout", text="网格")
-        row = box.row(align=True)
-        row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
-        
+    # box = layout.box()
+    # box.label(text="检查UV")
 
-        # box = layout.box()
-        # box.label(text="检查UV")
-
-        return
+    return
 
 
 
    
 
-cls = [PL_UvTools,
-       OT_UVTools_BakeUVIslandImage,OT_UVTools_BakeFaceIDImage,OT_UVTools_BakeObjectIDImage,OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage,OT_UVTools_BakeFaceIDImage,OT_UVTools_BakeObjectIDImage,OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_FastBakeUVImage,
        ]
