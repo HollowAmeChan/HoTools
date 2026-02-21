@@ -1,9 +1,9 @@
 import bpy
 from mathutils import Vector
 import numpy as np
-from bpy.types import PropertyGroup, UIList, Operator, Panel
+from bpy.types import PropertyGroup, UIList, Operator, Panel,Menu
 from bpy.types import UILayout, Context
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,FloatProperty
+from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,FloatProperty,IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight
 
@@ -673,6 +673,127 @@ class OP_Fix_EmptyRotate_Bone(Operator):
 
         return {'FINISHED'}
 
+class OP_RelaxBoneChain(Operator):
+    bl_idname = "ho.relax_bone_chain"
+    bl_label = "松弛骨骼链"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    iterations: IntProperty(default=3, min=1, max=200)  # type: ignore
+    factor: FloatProperty(default=1.0, min=0.0, max=1.0)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_ARMATURE' and context.selected_editable_bones
+
+    def execute(self, context):
+
+        arm = context.object.data
+        arm.use_mirror_x = False
+
+        selected = [b for b in arm.edit_bones if b.select]
+        selected_set = set(selected)
+
+        if len(selected) < 3:
+            self.report({'WARNING'}, "至少需要3根骨骼")
+            return {'CANCELLED'}
+
+        # -------------------------------------------------
+        # 1️⃣ 拆分成多条独立链
+        # -------------------------------------------------
+
+        roots = []
+        for b in selected:
+            if b.parent not in selected_set:
+                roots.append(b)
+
+        if not roots:
+            self.report({'WARNING'}, "未检测到链根")
+            return {'CANCELLED'}
+
+        chains = []
+
+        for root in roots:
+
+            chain = []
+            cur = root
+
+            while cur:
+                chain.append(cur)
+                children = [c for c in cur.children if c in selected_set]
+
+                if len(children) > 1:
+                    self.report({'WARNING'}, f"{cur.name} 存在分叉")
+                    return {'CANCELLED'}
+
+                cur = children[0] if children else None
+
+            chains.append(chain)
+
+        # 校验是否所有骨骼都被覆盖（防止断链）
+        total_count = sum(len(c) for c in chains)
+        if total_count != len(selected):
+            self.report({'WARNING'}, "检测到非连续结构")
+            return {'CANCELLED'}
+
+        # -------------------------------------------------
+        # 2️⃣ 对每条链做合法性校验
+        # -------------------------------------------------
+
+        for chain in chains:
+
+            if len(chain) < 3:
+                self.report({'WARNING'}, "每条链至少需要3根骨骼")
+                return {'CANCELLED'}
+
+            for i, b in enumerate(chain):
+
+                if (b.tail - b.head).length < 1e-8:
+                    self.report({'WARNING'}, f"{b.name} 长度为0")
+                    return {'CANCELLED'}
+
+                if i > 0:
+                    if not b.use_connect:
+                        self.report({'WARNING'}, f"{b.name} 未开启连接")
+                        return {'CANCELLED'}
+
+                    if (b.head - chain[i - 1].tail).length > 1e-6:
+                        self.report({'WARNING'}, f"{b.name} 头尾未真实连接")
+                        return {'CANCELLED'}
+
+        # -------------------------------------------------
+        # 3️⃣ 对每条链分别进行 Laplacian Relax
+        # -------------------------------------------------
+
+        for chain in chains:
+
+            # ---- 提取 polyline ----
+            heads = [b.head.copy() for b in chain]
+            heads.append(chain[-1].tail.copy())
+
+            original_first = heads[0].copy()
+            original_last = heads[-1].copy()
+
+            # ---- 迭代 ----
+            for _ in range(self.iterations):
+                new_heads = heads.copy()
+
+                for i in range(1, len(heads) - 1):
+                    target = (heads[i - 1] + heads[i + 1]) * 0.5
+                    new_heads[i] = heads[i].lerp(target, self.factor)
+
+                heads = new_heads
+
+            # 锁首尾
+            heads[0] = original_first
+            heads[-1] = original_last
+
+            # ---- 写回 ----
+            for i, bone in enumerate(chain):
+                bone.head = heads[i]
+                bone.tail = heads[i + 1]
+
+        return {'FINISHED'}
+
 class PT_Hotools_PosebonePanel(Panel):
     bl_idname = "BONE_PT_Hotools_PoseBonePanel"
     bl_label = "HoTools骨骼"
@@ -720,36 +841,35 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row = layout.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname,text="应用约束到骨骼")
     row.operator(OP_BoneRemoveConstraints.bl_idname,text="移除骨骼约束")
-    
-   
+       
+class VIEW3D_MT_armature_context_menu_hotools(Menu):
+    """骨骼编辑模式下的右键菜单"""
+    bl_label = "Hotools"
 
-def drawIn_VIEW3D_MT_edit_armature(self, context):
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-    """骨骼编辑模式下的顶菜单，骨架"""
-    layout.operator(OP_ForceClearBoneRotation.bl_idname)
-    layout.operator(OP_Fix_EmptyRotate_Bone.bl_idname)
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(OP_RelaxBoneChain.bl_idname)
+        layout.operator(OP_AddEndBone.bl_idname)
+        layout.operator(OP_ForceClearBoneRotation.bl_idname)
+        layout.operator(OP_Fix_EmptyRotate_Bone.bl_idname)
 
-def drawIn_VIEW3D_MT_select_edit_armature(self,context):
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-    """骨骼编辑模式下的顶菜单，选择"""
-    layout.operator(OP_AddEndBone.bl_idname)
+def drawIn_VIEW3D_MT_armature_context_menu(self, context):
+    self.layout.menu("VIEW3D_MT_armature_context_menu_hotools") 
 
-def drawIn_VIEW3D_MT_select_pose(self,context):
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-    """骨骼姿态模式下的顶菜单，选择"""
-    layout.operator(OP_SelectBoneBy_by_KeepRotation.bl_idname)
-    layout.operator(OP_SelectBone_by_Nochild.bl_idname)
-    layout.operator(OP_SelectBone_by_endBone.bl_idname)
+class VIEW3D_MT_pose_context_menu_hotools(Menu):
+    """骨骼姿态模式下的右键菜单"""
+    bl_label = "Hotools"
 
-def drawIn_VIEW3D_MT_pose(self, context):
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-    """骨骼姿态模式下的顶菜单，姿态"""
-    if context.active_object and context.active_object.type == 'ARMATURE':
-        layout.operator(OP_ApplyRestPose.bl_idname)
+    def draw(self, context):
+        layout = self.layout
+        layout.operator(OP_SelectBoneBy_by_KeepRotation.bl_idname)
+        layout.operator(OP_SelectBone_by_Nochild.bl_idname)
+        layout.operator(OP_SelectBone_by_endBone.bl_idname)
+        if context.active_object and context.active_object.type == 'ARMATURE':
+            layout.operator(OP_ApplyRestPose.bl_idname)
+
+def drawIn_VIEW3D_MT_pose_context_menu(self, context):
+    self.layout.menu("VIEW3D_MT_pose_context_menu_hotools") 
 
 cls = [
     OP_SameNameBone_addConstraint,
@@ -766,6 +886,9 @@ cls = [
     OP_SelectBone_by_endBone,
     OP_ForceMirrorBoneWeight,
     OP_Fix_EmptyRotate_Bone,
+    OP_RelaxBoneChain,
+    VIEW3D_MT_armature_context_menu_hotools,
+    VIEW3D_MT_pose_context_menu_hotools,
 ]
 
 
@@ -774,10 +897,8 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
 
-    bpy.types.VIEW3D_MT_pose.append(drawIn_VIEW3D_MT_pose)
-    bpy.types.VIEW3D_MT_edit_armature.append(drawIn_VIEW3D_MT_edit_armature)
-    bpy.types.VIEW3D_MT_select_pose.append(drawIn_VIEW3D_MT_select_pose)
-    bpy.types.VIEW3D_MT_select_edit_armature.append(drawIn_VIEW3D_MT_select_edit_armature)
+    bpy.types.VIEW3D_MT_armature_context_menu.append(drawIn_VIEW3D_MT_armature_context_menu)
+    bpy.types.VIEW3D_MT_pose_context_menu.append(drawIn_VIEW3D_MT_pose_context_menu)
 
     reg_props()
 
@@ -786,9 +907,8 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
 
-    bpy.types.VIEW3D_MT_pose.remove(drawIn_VIEW3D_MT_pose)
-    bpy.types.VIEW3D_MT_edit_armature.remove(drawIn_VIEW3D_MT_edit_armature)
-    bpy.types.VIEW3D_MT_select_pose.remove(drawIn_VIEW3D_MT_select_pose)
-    bpy.types.VIEW3D_MT_select_edit_armature.remove(drawIn_VIEW3D_MT_select_edit_armature)
+    bpy.types.VIEW3D_MT_armature_context_menu.remove(drawIn_VIEW3D_MT_armature_context_menu)
+    bpy.types.VIEW3D_MT_pose_context_menu.remove(drawIn_VIEW3D_MT_pose_context_menu)
+
 
     ureg_props()

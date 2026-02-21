@@ -540,55 +540,93 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         min=1,
     ) # type: ignore
 
+    direction_mode: EnumProperty(
+        name="方向模式",
+        items=[
+            ('FORWARD', "正向", ""),
+            ('REVERSE', "反向", ""),
+            ('CURSOR', "指向游标", ""),
+            ('CURSORMINUS', "远离游标", ""),
+        ],
+        default='FORWARD'
+    ) # type: ignore
+
     # ---------------------------------------------------
-    # 获取选中边 flow（只返回 world Vector）
+    # 获取所有连通 flow
     # ---------------------------------------------------
 
-    def get_edge_flow_points(self, context):
+    def get_edge_flows(self, context):
 
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
 
-        edges = [e for e in bm.edges if e.select]
-        if not edges:
+        selected_edges = [e for e in bm.edges if e.select]
+        if not selected_edges:
             return None
 
-        vert_count = {}
-        for e in edges:
-            for v in e.verts:
-                vert_count[v] = vert_count.get(v, 0) + 1
+        unvisited = set(selected_edges)
+        world = obj.matrix_world
+        all_chains = []
 
-        start_verts = [v for v, c in vert_count.items() if c == 1]
-        current = start_verts[0] if start_verts else edges[0].verts[0]
+        while unvisited:
 
-        ordered = [current]
-        visited = set()
+            start_edge = unvisited.pop()
 
-        while True:
-            next_edge = None
-            for e in current.link_edges:
-                if e.select and e not in visited:
-                    next_edge = e
+            stack = [start_edge]
+            component = {start_edge}
+
+            while stack:
+                e = stack.pop()
+                for v in e.verts:
+                    for linked in v.link_edges:
+                        if linked.select and linked in unvisited:
+                            unvisited.remove(linked)
+                            component.add(linked)
+                            stack.append(linked)
+
+            vert_count = {}
+            for e in component:
+                for v in e.verts:
+                    vert_count[v] = vert_count.get(v, 0) + 1
+
+            start_verts = [v for v, c in vert_count.items() if c == 1]
+
+            is_closed = False
+            if start_verts:
+                current = start_verts[0]
+            else:
+                current = list(component)[0].verts[0]
+                is_closed = True
+
+            ordered = [current]
+            visited_edges = set()
+
+            while True:
+                next_edge = None
+                for e in current.link_edges:
+                    if e in component and e not in visited_edges:
+                        next_edge = e
+                        break
+
+                if not next_edge:
                     break
 
-            if not next_edge:
-                break
+                visited_edges.add(next_edge)
+                v1, v2 = next_edge.verts
+                current = v2 if v1 == current else v1
+                ordered.append(current)
 
-            visited.add(next_edge)
-            v1, v2 = next_edge.verts
-            current = v2 if v1 == current else v1
-            ordered.append(current)
+            chain_points = [world @ v.co.copy() for v in ordered]
 
-        world = obj.matrix_world
-        return [world @ v.co.copy() for v in ordered]
+            if len(chain_points) > 1:
+                all_chains.append((chain_points, is_closed))
+
+        return all_chains
 
     # ---------------------------------------------------
-    # 重采样
-    # ---------------------------------------------------
 
-    def resample_points(self):
+    def resample_chain(self, pts):
 
-        pts = self.base_points
         if len(pts) < 2:
             return None
 
@@ -621,7 +659,67 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         return result
 
     # ---------------------------------------------------
-    # 渐变 + 箭头绘制
+    # 方向处理
+    # ---------------------------------------------------
+
+    def apply_direction(self, chain):
+
+        points = list(chain)
+
+        if self.direction_mode == 'FORWARD':
+            return points
+
+        if self.direction_mode == 'REVERSE':
+            points.reverse()
+            return points
+
+        if self.direction_mode == 'CURSOR':
+
+            cursor = bpy.context.scene.cursor.location
+
+            start = points[0]
+            end = points[-1]
+
+            d_start = (start - cursor).length
+            d_end = (end - cursor).length
+
+            if d_start > d_end:
+                points.reverse()
+
+            return points
+        
+        if self.direction_mode == 'CURSORMINUS':
+
+            cursor = bpy.context.scene.cursor.location
+
+            start = points[0]
+            end = points[-1]
+
+            d_start = (start - cursor).length
+            d_end = (end - cursor).length
+
+            if d_start < d_end:
+                points.reverse()
+
+            return points
+
+        return points
+
+    # ---------------------------------------------------
+
+    def update_preview(self, context):
+
+        self.preview_points = []
+
+        for chain, is_closed in self.base_chains:
+            sampled = self.resample_chain(chain)
+            if sampled:
+                self.preview_points.append((sampled, is_closed))
+
+        context.area.tag_redraw()
+
+    # ---------------------------------------------------
+    # 绘制
     # ---------------------------------------------------
 
     def draw_preview(self):
@@ -629,85 +727,87 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         if not self.preview_points:
             return
 
-        points = list(self.preview_points)
-        if self.reverse:
-            points.reverse()
-
-        total = len(points) - 1
-        if total <= 0:
-            return
-
-        # ---------- 渐变线 ----------
         shader = gpu.shader.from_builtin('SMOOTH_COLOR')
-
-        coords = []
-        colors = []
-
-        for i in range(total):
-            p1 = points[i]
-            p2 = points[i + 1]
-
-            t1 = i / total
-            t2 = (i + 1) / total
-
-            col1 = (t1, 1.0 - t1, 0.2, 1.0)
-            col2 = (t2, 1.0 - t2, 0.2, 1.0)
-
-            coords.extend([p1, p2])
-            colors.extend([col1, col2])
-
-        batch = batch_for_shader(shader, 'LINES', {
-            "pos": coords,
-            "color": colors,
-        })
-
         gpu.state.blend_set('ALPHA')
         gpu.state.line_width_set(4.0)
 
-        shader.bind()
-        batch.draw(shader)
+        rv3d = bpy.context.region_data
+        if not rv3d:
+            return
 
-        # ---------- 箭头 ----------
-        arrow_coords = []
-        arrow_colors = []
+        view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
 
-        for i in range(total):
-            head = points[i]
-            tail = points[i + 1]
+        for chain, is_closed in self.preview_points:
 
-            direction = (tail - head).normalized()
-            length = (tail - head).length
+            points = self.apply_direction(chain)
+            total = len(points) - 1
+            if total <= 0:
+                continue
 
-            arrow_size = length * 0.2
-            base = tail - direction * arrow_size
+            # ----- 线 -----
+            coords = []
+            colors = []
 
-            rv3d = bpy.context.region_data
-            view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
-            side = direction.cross(view_dir)
+            for i in range(total):
+                p1 = points[i]
+                p2 = points[i + 1]
 
-            if side.length == 0:
-                side = Vector((1, 0, 0))
-            side.normalize()
-            side *= arrow_size * 0.5
+                t1 = i / total
+                t2 = (i + 1) / total
 
-            left = base + side
-            right = base - side
+                col1 = (t1, 1 - t1, 0.2, 1)
+                col2 = (t2, 1 - t2, 0.2, 1)
 
-            arrow_coords.extend([left, tail, right])
-            arrow_colors.extend([(1, 1, 1, 1)] * 3)
+                coords.extend([p1, p2])
+                colors.extend([col1, col2])
 
-        arrow_batch = batch_for_shader(shader, 'TRIS', {
-            "pos": arrow_coords,
-            "color": arrow_colors,
-        })
+            batch = batch_for_shader(shader, 'LINES', {
+                "pos": coords,
+                "color": colors,
+            })
 
-        arrow_batch.draw(shader)
+            shader.bind()
+            batch.draw(shader)
+
+            # ----- 箭头 -----
+            arrow_coords = []
+            arrow_colors = []
+
+            for i in range(total):
+
+                head = points[i]
+                tail = points[i + 1]
+
+                direction = (tail - head).normalized()
+                length = (tail - head).length
+
+                arrow_size = length * 0.25
+                base = tail - direction * arrow_size
+
+                side = direction.cross(view_dir)
+
+                if side.length < 0.0001:
+                    side = Vector((1, 0, 0))
+
+                side.normalize()
+                side *= arrow_size * 0.5
+
+                left = base + side
+                right = base - side
+
+                arrow_coords.extend([left, tail, right])
+                arrow_colors.extend([(1, 1, 1, 1)] * 3)
+
+            arrow_batch = batch_for_shader(shader, 'TRIS', {
+                "pos": arrow_coords,
+                "color": arrow_colors,
+            })
+
+            arrow_batch.draw(shader)
 
         gpu.state.line_width_set(1.0)
         gpu.state.blend_set('NONE')
 
-    # ---------------------------------------------------
-    # 跟随鼠标 UI
     # ---------------------------------------------------
 
     def draw_text(self):
@@ -721,13 +821,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x, y, 0)
         blf.draw(font_id, f"滚轮:分段: {self.num_segments}")
         blf.position(font_id, x, y - 22, 0)
-        blf.draw(font_id, f"F:: {'反向' if self.reverse else '正向'}")
-
-    # ---------------------------------------------------
-
-    def update_preview(self, context):
-        self.preview_points = self.resample_points()
-        context.area.tag_redraw()
+        blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
     # ---------------------------------------------------
 
@@ -756,9 +850,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 self.num_segments -= 1
                 self.update_preview(context)
 
-        # F 键翻转方向
         if event.type == 'F' and event.value == 'PRESS':
-            self.reverse = not self.reverse
+            modes = ['FORWARD', 'REVERSE', 'CURSOR' , 'CURSORMINUS']
+            i = modes.index(self.direction_mode)
+            self.direction_mode = modes[(i + 1) % 4]
             context.area.tag_redraw()
 
         return {'RUNNING_MODAL'}
@@ -774,10 +869,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
     def create_bones(self, context):
 
-        points = list(self.preview_points)
-        if self.reverse:
-            points.reverse()
-
         bpy.ops.object.mode_set(mode='OBJECT')
 
         arm_data = bpy.data.armatures.new("FlowArmature")
@@ -787,14 +878,21 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         context.view_layer.objects.active = arm_obj
         bpy.ops.object.mode_set(mode='EDIT')
 
-        for i in range(len(points) - 1):
-            bone = arm_data.edit_bones.new(f"FlowBone_{i}")
-            bone.head = points[i]
-            bone.tail = points[i + 1]
+        for chain_index, (chain, is_closed) in enumerate(self.preview_points):
 
-            if i > 0:
-                bone.parent = arm_data.edit_bones[f"FlowBone_{i-1}"]
-                bone.use_connect = True
+            points = self.apply_direction(chain)
+            previous = None
+
+            for i in range(len(points) - 1):
+                bone = arm_data.edit_bones.new(f"Flow_{chain_index}_{i}")
+                bone.head = points[i]
+                bone.tail = points[i + 1]
+
+                if previous:
+                    bone.parent = previous
+                    bone.use_connect = True
+
+                previous = bone
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -802,35 +900,28 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
     def invoke(self, context, event):
 
-        self.base_points = self.get_edge_flow_points(context)
+        self.base_chains = self.get_edge_flows(context)
 
-        if not self.base_points:
-            self.report({'WARNING'}, "请选择一条连续边")
+        if not self.base_chains:
+            self.report({'WARNING'}, "请选择连续边")
             return {'CANCELLED'}
 
-        self.reverse = False
         self.mouse_x = event.mouse_region_x
         self.mouse_y = event.mouse_region_y
 
-        self.preview_points = self.resample_points()
+        self.update_preview(context)
 
         self._handle_3d = bpy.types.SpaceView3D.draw_handler_add(
-            self.draw_preview,
-            (),
-            'WINDOW',
-            'POST_VIEW'
+            self.draw_preview, (), 'WINDOW', 'POST_VIEW'
         )
 
         self._handle_text = bpy.types.SpaceView3D.draw_handler_add(
-            self.draw_text,
-            (),
-            'WINDOW',
-            'POST_PIXEL'
+            self.draw_text, (), 'WINDOW', 'POST_PIXEL'
         )
 
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
-        
+
 def get_first_image_from_material(obj):
     if not obj.data.materials:
         return None
