@@ -529,7 +529,6 @@ class OP_RemoveSelectSideRingLoops(Operator):
 
         return {'FINISHED'}
 
-
 class OP_CreatBoneChainByMeshFlow(Operator):
     bl_idname = "ho.create_bone_chain_by_meshflow"
     bl_label = "根据选中的线段创建骨骼链"

@@ -765,7 +765,77 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         bmesh.update_edit_mesh(me)
         return {'FINISHED'}
 
+class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
+    bl_idname = "ho.vertexgrouptools_soft_weight_allbone"
+    bl_label = "柔化骨骼顶点组权重"
+    bl_description = "柔化所选顶点的全部骨骼顶点组权重"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+
+    def execute(self, context):
+        obj = context.edit_object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        # 验证或创建 deform 层
+        dvert_layer = bm.verts.layers.deform.verify()
+
+        # 找到骨骼绑定的顶点组
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定骨骼")
+            return {'CANCELLED'}
+        bone_vg_indices = {vg.index for vg in obj.vertex_groups if vg.name in arm.data.bones}
+        if not bone_vg_indices:
+            self.report({'WARNING'}, "没有匹配骨骼的顶点组")
+            return {'CANCELLED'}
+
+        # 获取所有选中顶点
+        sel_verts = [v for v in bm.verts if v.select]
+        if not sel_verts:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        # 构建邻居索引列表
+        neighbors = {v.index: [e.other_vert(v).index for e in v.link_edges] for v in sel_verts}
+
+        # 构建权重矩阵，只包含骨骼顶点组
+        weights = {}
+        for v in sel_verts:
+            w = {g: v[dvert_layer].get(g, 0.0) for g in bone_vg_indices}
+            weights[v.index] = w
+
+        # 新权重矩阵，计算邻居平均
+        new_weights = {}
+        for v in sel_verts:
+            new_w = {}
+            for g in bone_vg_indices:
+                neigh_ws = [weights[n][g] for n in neighbors[v.index]]
+                if neigh_ws:
+                    avg = sum(neigh_ws) / len(neigh_ws)
+                    new_w[g] = avg
+                else:
+                    new_w[g] = weights[v.index][g]  # 保留原权重
+            new_weights[v.index] = new_w
+
+        # 写回顶点权重
+        for v in sel_verts:
+            for g, w in new_weights[v.index].items():
+                v[dvert_layer][g] = w
+
+        # 自动归一化
+        if getattr(context.scene, "hoVertexGroupTools_isAutoNormalizeWeight", False):
+            bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
+
+        bmesh.update_edit_mesh(me)
+        return {'FINISHED'}
+    
 class OP_VertexGroupTools_SharpenWeight(Operator):
+    #TODO 存在收缩出孤岛的问题
     bl_idname = "ho.vertexgrouptools_sharpen_weight"
     bl_label = "锐化权重"
     bl_description = "锐化所选的顶点的当前顶点组权重"
@@ -819,6 +889,85 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
         # 4. 更新网格显示
         bmesh.update_edit_mesh(me)                   # 刷新编辑模式网格 :contentReference[oaicite:3]{index=3}
 
+        return {'FINISHED'}
+
+class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
+    #TODO 存在收缩出孤岛的问题
+    bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
+    bl_label = "锐化骨骼顶点组权重"
+    bl_description = "锐化所选顶点的全部骨骼顶点组权重"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    factor: bpy.props.FloatProperty(
+        name="锐化强度",
+        default=1.0,
+        min=0.0,
+        max=5.0,
+        description="放大偏差的倍数"
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
+
+    def execute(self, context):
+        obj = context.edit_object
+        me = obj.data
+        bm = bmesh.from_edit_mesh(me)
+
+        dvert_layer = bm.verts.layers.deform.verify()
+
+        # 找到骨骼绑定的顶点组
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定骨骼")
+            return {'CANCELLED'}
+        bone_vg_indices = {vg.index for vg in obj.vertex_groups if vg.name in arm.data.bones}
+        if not bone_vg_indices:
+            self.report({'WARNING'}, "没有匹配骨骼的顶点组")
+            return {'CANCELLED'}
+
+        # 选中顶点
+        sel_verts = [v for v in bm.verts if v.select]
+        if not sel_verts:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        # 构建邻居索引列表
+        neighbors = {v.index: [e.other_vert(v).index for e in v.link_edges] for v in sel_verts}
+
+        # 构建权重矩阵
+        weights = {}
+        for v in sel_verts:
+            w = {g: v[dvert_layer].get(g, 0.0) for g in bone_vg_indices}
+            weights[v.index] = w
+
+        # 计算锐化的新权重
+        new_weights = {}
+        for v in sel_verts:
+            new_w = {}
+            for g in bone_vg_indices:
+                neigh_ws = [weights[n][g] for n in neighbors[v.index]]
+                if neigh_ws:
+                    avg = sum(neigh_ws) / len(neigh_ws)
+                    w = weights[v.index][g]
+                    w_new = max(0.0, min(1.0, w + (w - avg) * self.factor))
+                    new_w[g] = w_new
+                else:
+                    new_w[g] = weights[v.index][g]
+            new_weights[v.index] = new_w
+
+        # 写回顶点权重
+        for v in sel_verts:
+            for g, w in new_weights[v.index].items():
+                v[dvert_layer][g] = w
+
+        # 自动归一化
+        if getattr(context.scene, "hoVertexGroupTools_isAutoNormalizeWeight", False):
+            bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
+
+        bmesh.update_edit_mesh(me)
         return {'FINISHED'}
 
 class OP_VertexGroupTools_Change_VG_weight(Operator):
@@ -1053,6 +1202,8 @@ class OP_SelectNonWeightVertices(Operator):
     def execute(self, context):
         obj = context.active_object
 
+        bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='VERT')
+
         arm = obj.find_armature()
         if not arm:
             self.report({'WARNING'}, "未找到绑定的骨架")
@@ -1147,6 +1298,52 @@ class OP_GenegateNoneMirroredGroup(Operator):
 
         return {'FINISHED'}
 
+class OP_RemoveNoneWeightGroup(Operator):
+    """移除不是骨骼权重的顶点组"""
+    bl_idname = "ho.vertexgrouptools_remove_none_weight_group"
+    bl_label = "移除非骨骼权重组"
+    bl_description = "移除所有不是骨骼权重的顶点组，使用前需要保证特殊用处的组处于锁定状态"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH'
+        )
+
+    def invoke(self, context, event):
+        # 弹出确认对话框
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="使用前检查功能用顶点组开启了锁定")
+    def execute(self, context):
+        obj = context.active_object
+
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定的骨架")
+            return {'CANCELLED'}
+
+        bone_names = {b.name for b in arm.data.bones}
+
+        remove_count = 0
+
+        # 收集需要删除的顶点组
+        groups_to_remove = [
+            vg for vg in obj.vertex_groups
+            if vg.name not in bone_names and not vg.lock_weight
+        ]
+
+        for vg in groups_to_remove:
+            obj.vertex_groups.remove(vg)
+            remove_count += 1
+
+        self.report({'INFO'}, f"已移除 {remove_count} 个非骨骼顶点组")
+        return {'FINISHED'}
 
 def draw_in_DATA_PT_vertex_groups(self, context: Context):
     """属性，数据-顶点组-(顶点组界面下部)"""
@@ -1268,6 +1465,9 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
                     )
     row.operator(OP_VertexGroupTools_SharpenWeight.bl_idname,text="锐化"
                     )
+    row = col.row(align=True)
+    row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname,text="柔化全部")   
+    row.operator(OP_VertexGroupTools_SharpenWeight_AllBone.bl_idname,text="锐化全部")
     
     col = layout.column(align=True)
     col.scale_y = 2.0
@@ -1297,6 +1497,7 @@ def draw_in_MESH_MT_vertex_group_context_menu(self, context: Context):
                     icon="CANCEL")
     layout.operator(OP_SelectNonWeightVertices.bl_idname,text="选择无组顶点",icon="ERROR")
     layout.operator(OP_GenegateNoneMirroredGroup.bl_idname,text="生成镜像骨骼权重组",icon="MOD_MIRROR")
+    layout.operator(OP_RemoveNoneWeightGroup.bl_idname,text="移除非骨骼权重组",icon="TRASH")
 
 def draw_in_VIEW3D_MT_vertex_group(self, context: Context):
     """顶菜单，顶点-顶点组-(CtrlG展开菜单)"""
@@ -1315,7 +1516,9 @@ cls = [
     OP_VertexGroupTools_Select_Vertices_halfside,OP_VertexGroupTools_Select_Vertices_by_WeightValue,
     OP_VertexGroupTools_Max_VG_Limit,
     OP_SelectNonWeightVertices,
-    OP_GenegateNoneMirroredGroup
+    OP_GenegateNoneMirroredGroup,
+    OP_RemoveNoneWeightGroup,
+    OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone
 ]
 
 
