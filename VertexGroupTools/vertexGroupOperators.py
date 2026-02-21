@@ -766,6 +766,7 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
+    #TODO 有时会弹报错
     bl_idname = "ho.vertexgrouptools_soft_weight_allbone"
     bl_label = "柔化骨骼顶点组权重"
     bl_description = "柔化所选顶点的全部骨骼顶点组权重"
@@ -893,6 +894,7 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
 
 class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
     #TODO 存在收缩出孤岛的问题
+    #TODO 有时会弹报错
     bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
     bl_label = "锐化骨骼顶点组权重"
     bl_description = "锐化所选顶点的全部骨骼顶点组权重"
