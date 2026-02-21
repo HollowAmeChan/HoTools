@@ -539,7 +539,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         name="段数",
         default=4,
         min=1,
-    )
+    ) # type: ignore
 
     # ---------------------------------------------------
     # 获取选中边 flow（只返回 world Vector）
