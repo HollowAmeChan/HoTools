@@ -21,7 +21,7 @@ class UL_SKManager_SKItems(UIList):
 
         if sk_cache.is_basis:
             row.alert = True
-        row.prop(sk_cache, "is_selected", text=sk_cache.key_name,emboss=1-sk_cache.is_basis,toggle=True)
+        row.prop(sk_cache, "is_selected", text=sk_cache.key_name,emboss=1-sk_cache.is_basis,toggle=True,translate=False)
         row.alert = False
 
         
