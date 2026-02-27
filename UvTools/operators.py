@@ -465,9 +465,7 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
     row.operator(OP_UVTools_MultiObj_SelectLayer.bl_idname,text="",icon="UV")
     row.operator(OP_UVTools_MultiObj_SelectLayer_render.bl_idname,text="",icon="RESTRICT_RENDER_OFF")
     row.operator(OP_UVTools_UV2SK.bl_idname,text="",icon="SHAPEKEY_DATA")
-
-
-    layout.operator(OP_UVTools_ReplaceFromLayer.bl_idname)
+    row.operator(OP_UVTools_ReplaceFromLayer.bl_idname,text="",icon="TRANSFORM_ORIGINS")
 
 
 class IMAGE_MT_uvs_context_hotools(Menu):
