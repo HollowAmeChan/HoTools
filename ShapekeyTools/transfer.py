@@ -6,7 +6,8 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 from mathutils import Vector
 import bmesh
 from collections import defaultdict
-
+from mathutils.kdtree import KDTree
+import math
 # region 变量
 
 
@@ -40,33 +41,25 @@ class PG_transferSettings(PropertyGroup):
 
     use_one_vertex: BoolProperty(
         name="点对点匹配",
-        description="仅使用最近顶点的位置，否则使用范围内的多个顶点(第一次发现有顶点匹配成功时的全部匹配顶点)的平均位置",
+        description="仅使用最近顶点的位置，否则使用范围内的多个顶点的平均位置(若未找到任何点则会退化为点对点匹配)",
         default=True
     )  # type: ignore
 
     absolute_mode: BoolProperty(
         name="绝对位置模式",
-        description="默认传递的是相对形态键，开启以后传递绝对位置，传递的形态键直接会贴合到源物体形态键的mesh上",
+        description="默认传递的是相对形态键,开启以后传递绝对位置,传递的形态键直接会贴合到源物体形态键的mesh上",
         default=False
     )  # type: ignore
 
     increment_radius: FloatProperty(
-        name="增量半径",
-        description="在没有搜索到配对顶点时，额外的判定顶点配对的球形半径，如果匹配到的顶点太多，可以缩小这个值",
+        name="rbf半径",
+        description="在一对多模式中，搜索多个顶点的半径,建议开的比较小",
         default=0.05,
         soft_min=0.01,
         soft_max=1,
         min=0.00000001
     )  # type: ignore
 
-    number_of_increments: IntProperty(
-        name="搜索次数",
-        description="增加半径搜索顶点的最大次数,半径乘以次数为1时可以全包裹,UV在界外时这个积可以更大",
-        default=20,
-        soft_min=1,
-        soft_max=50,
-        min=1
-    )  # type: ignore
     is_list_inversed: BoolProperty(
         name="反转名单",
         description="将名单作为白名单使用",
@@ -114,426 +107,320 @@ class UL_transferListItems(UIList):
 
 
 class ShapeKeyTransfer:
-    """
-    构造传递形态键操作的类(仅限一个形态键到另一个形态键)
-    这个类的作用是存一些不能用Bl数值类型存储的数据结构,以及将用到的函数封装好
-    为什么要再存一份数据(PropertyGroup,Int)在scene里面,是为了方便改动这些数值(UI,ops里面改)
-    在使用实例的时候,先将Bl内置类型数据拷贝进来再操作
-    """
 
     def __init__(self):
-        self.dest_object = None
+
         self.src_object = None
+        self.dest_object = None
+
         self.use_one_vertex = True
-        self.increment_radius = .05
-        self.number_of_increments = 20
-        self.is_list_inversed = False
-        self.mode = ""
+        self.increment_radius = 0.05  # RBF 半径
+        self.mode = "MOD_WORLD_POSITION"
+
         self.only_selected_dest = False
         self.only_selected_src = False
-        self.list_shape_keys = []  # 名单内的列表,需要传递进来
 
-        # 需要用到的缓存
-        self.work_shape_keys = []  # 需要传递的列表,内部生成
-        self.base_shape_keys = ['Basis', '基型']  # 默认参数，默认忽略的列表
-        self.src_mwi = None
-        self.src_uv_avglayer = {}  # 所有顶点的平均UV字典
-        self.dest_uv_avglayer = {}  # 所有顶点的平均UV字典
-        self.src_vertex_isSeleted: list[bool] = []  # 所有顶点是否被选中
-        self.dest_vertex_isSeleted: list[bool] = []  # 所有顶点是否被选中
+        self.base_shape_keys = ['Basis', '基型']
+        self.list_shape_keys = []
+        self.is_list_inversed = False
 
-        self.dest_shape_key_index = 0  # 目标网格形态键的索引
-        self.src_shape_key_index = 0  # 源网格形态键的索引
-        self.current_vertex_index = 0  # 正在处理的dest_object的网格的顶点序号
-        self.current_vertex = None  # 当前处理的顶点对象
-        self.total_vertices = 0  # 目标网格的总顶点数
-        self.do_once_per_vertex = False  # 是否是第一次处理顶点(遍历顶点，所以此值可以重复使用)
-        self.src_chosen_vertices = []  # 匹配到的源网络的顶点索引列表(按距离搜索到的顶点可能不止一个)
-        self.message = ""  # 需要汇报的信息(本次形态键->形态键传递过程中的情况)
+        self.src_vertex_selected = []
+        self.dest_vertex_selected = []
 
-    # 功能函数
-    def set_vertex_position(self, v_pos):
-        """在形状键上设置新的顶点位置（并非偏移量）"""
-        self.dest_object.data.shape_keys.key_blocks[
-            self.dest_shape_key_index].data[self.current_vertex_index].co = v_pos
+        self.src_world_kdtree = None
+        self.src_uv_kdtree = None
 
-    def update_global_shapekey_indices(self, p_key_name):
-        """储存临时工作形态键索引"""
-        for index, sk in enumerate(self.dest_object.data.shape_keys.key_blocks):
-            if sk.name == p_key_name:
-                self.dest_shape_key_index = index
-        for index, sk in enumerate(self.src_object.data.shape_keys.key_blocks):
-            if sk.name == p_key_name:
-                self.src_shape_key_index = index
+        self.src_uv_avg = {}
+        self.dest_uv_avg = {}
 
-    def get_shape_keys_mesh(self, obj: Object):
-        """获取网格的形态键"""
-        keys = []
-        if (not hasattr(obj.data.shape_keys, "key_blocks")):
-            self.message = "网格中没有形态键！"
-            return True
-        for shape_key_iter in obj.data.shape_keys.key_blocks:
-            keys.append(shape_key_iter.name)
-        self.message = keys
-        return False
+        # dest_idx -> [(src_idx, weight)]
+        self.match_cache = {}
 
-    def save_vertex_isSelected(self, obj: Object):
-        """根据物体名称选中物体，进入编辑模式，并保存顶点选择状态。
-        返回:list[bool]: 顶点选择状态的列表。如果物体不存在或不是网格对象，返回 None。"""
+        self.message = ""
 
-        # 保存当前活动物体和模式
+    # -------------------------------------------------
+    # 选择缓存
+    # -------------------------------------------------
+
+    def save_vertex_selection(self, obj):
+
         current_obj = bpy.context.object
         current_mode = current_obj.mode if current_obj else 'OBJECT'
 
         try:
-            # 选中目标物体并进入编辑模式
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode='EDIT')
-
-            # 使用 bmesh 读取顶点选择状态
             bm = bmesh.from_edit_mesh(obj.data)
-            selection_data = [vert.select for vert in bm.verts]
-
-            return selection_data
-        except Exception as e:
-            print(f"处理物体 '{obj.name}' 时发生错误: {e}")
-            return None
+            return [v.select for v in bm.verts]
         finally:
-            # 恢复原活动物体和模式
             if current_obj:
                 bpy.context.view_layer.objects.active = current_obj
                 bpy.ops.object.mode_set(mode=current_mode)
 
-    # worldPos匹配
-    def select_vertices(self, center, radius):
-        """选择半径内配对的顶点并返回索引数组"""
-        src_chosen_vertices = []
-        closest_vertex_index = -1
-        radius_vec = center + Vector((0, 0, radius))
-        # 将选择范围放入本地坐标中
-        lco = self.src_mwi @ center
-        r = self.src_mwi @ (radius_vec) - lco
-        closest_length = r.length
+    # -------------------------------------------------
+    # KDTree 构建
+    # -------------------------------------------------
 
-        # 选择半径内的顶点
-        for index, v in enumerate(self.src_object.data.shape_keys.key_blocks[0].data):
+    def build_world_kdtree(self):
 
-            if self.only_selected_src:  # 仅处理选中时，若没选中就跳过这个顶点
-                isSelected = self.src_vertex_isSeleted[index]
-                if not isSelected:
-                    continue
+        verts = self.src_object.data.shape_keys.key_blocks[0].data
+        kd = KDTree(len(verts))
 
-            isLengthOK = (v.co - lco).length <= r.length
-            if (isLengthOK):
-                src_chosen_vertices.append(index)
-                if (self.use_one_vertex):  # 只要一个顶点时，额外存储最近的顶点索引与最近距离
-                    if ((v.co - lco).length <= closest_length):
-                        closest_length = (v.co - lco).length
-                        closest_vertex_index = index
+        for i, v in enumerate(verts):
 
-        # 只要一个顶点时，舍弃已选顶点，只留最近的顶点
-        if (self.use_one_vertex):
-            src_chosen_vertices = []
-            if (closest_vertex_index > - 1):
-                src_chosen_vertices.append(closest_vertex_index)
+            if self.only_selected_src and not self.src_vertex_selected[i]:
+                continue
 
-        return src_chosen_vertices
+            world_co = self.src_object.matrix_world @ v.co
+            kd.insert(world_co, i)
 
-    def select_required_verts(self, vert, rad, level=0):
-        """该选择函数最初通过匹配与源网格相同空间中的点开始(如果 level=0),如果找不到相似的定位点,将会增加level继续直到达到最大重复次数"""
-        verts = []
-        if (level > self.number_of_increments):
-            return verts
-        verts = self.select_vertices(vert, rad)
-        if (len(verts) == 0):
-            return self.select_required_verts(vert, rad + self.increment_radius, level + 1)
-        else:
-            return verts
+        kd.balance()
+        self.src_world_kdtree = kd
 
-    def update_vertex_worldPos(self):
-        """更新目标网格的 1 个顶点"""
-        if (self.current_vertex_index >= self.total_vertices):
-            return False  # 工作顶点序号达到总顶点数时，返回顶点处理完毕
-        if self.only_selected_dest and not self.dest_vertex_isSeleted[self.current_vertex_index]:
-            return False  # 开启了仅处理选中顶点时若工作顶点没选中，返回顶点处理完毕
+    def calculate_avg_uv(self, obj):
 
-        if (self.do_once_per_vertex):  # 每个顶点只执行一次
-            self.current_vertex = self.dest_object.matrix_world @ self.dest_object.data.shape_keys.key_blocks[
-                0].data[self.current_vertex_index].co
-            # self.current_vertex = self.dest_object.data.shape_keys.key_blocks[
-            #     0].data[self.current_vertex_index].co
-
-            self.src_chosen_vertices = self.select_required_verts(
-                self.current_vertex, 0)
-            self.do_once_per_vertex = False
-
-        if (len(self.src_chosen_vertices) == 0):
-            return True  # 没匹配到返回没设置成功
-
-        result_position = Vector()
-        for v in self.src_chosen_vertices:
-            result_position += self.src_object.data.shape_keys.key_blocks[0].data[v].co
-        result_position /= len(self.src_chosen_vertices)
-
-        result_position2 = Vector()
-        for v in self.src_chosen_vertices:
-            result_position2 += self.src_object.data.shape_keys.key_blocks[self.src_shape_key_index].data[v].co
-        result_position2 /= len(self.src_chosen_vertices)
-
-
-        #根据模式传递绝对位置或相对位置
-        props = bpy.context.scene.shapekeytransfer
-        abs_mode = props.absolute_mode
-        if abs_mode:
-            result = result_position2
-        else:
-            result = result_position2 - result_position + self.current_vertex
-
-
-        self.set_vertex_position(result)  # 将新的位置设置到这个形态键中
-        return False
-
-    # uvPos匹配
-    def calculate_avgUV(self, obj: Object):
-        """计算网格物体的所有顶点平均 UV,返回{vertexIndex:avgUV}"""
-        # 创建 BMesh 并加载网格数据
         mesh = obj.data
         bm = bmesh.new()
         bm.from_mesh(mesh)
 
-        # 获取 UV 层
-        uv_layer = bm.loops.layers.uv.active  # TODO
+        uv_layer = bm.loops.layers.uv.active
         if not uv_layer:
-            raise ValueError(f"对象 {obj.name} 没有 UV 数据")
+            bm.free()
+            raise ValueError(f"{obj.name} 没有 UV")
 
-        # 使用 defaultdict 存储累积 UV 数据
-        uv_data = defaultdict(lambda: [0.0, 0.0, 0])  # [累积 U, 累积 V, 计数]
+        uv_data = defaultdict(lambda: [0.0, 0.0, 0])
 
-        # 遍历所有面
         for face in bm.faces:
             for loop in face.loops:
-                vert_idx = loop.vert.index
+                idx = loop.vert.index
                 uv = loop[uv_layer].uv
-                uv_data[vert_idx][0] += uv.x
-                uv_data[vert_idx][1] += uv.y
-                uv_data[vert_idx][2] += 1
+                uv_data[idx][0] += uv.x
+                uv_data[idx][1] += uv.y
+                uv_data[idx][2] += 1
 
-        average_uvs = {
-            idx: Vector((data[0] / data[2], data[1] / data[2]))
-            for idx, data in uv_data.items()
+        avg = {
+            idx: Vector((d[0]/d[2], d[1]/d[2]))
+            for idx, d in uv_data.items()
         }
-        bm.free()  # 释放 BMesh 内存
-        return average_uvs
 
-    def select_vertices_byUV(self, uv_center, uv_radius):
-        """选择 UV 半径内配对的顶点并返回索引数组, uv_center为目标顶点的UV"""
-        src_chosen_vertices = []
-        closest_vertex_index = -1
-        closest_length = uv_radius
+        bm.free()
+        return avg
 
-        for index, uv in self.src_uv_avglayer.items():
+    def build_uv_kdtree(self):
 
-            if self.only_selected_src:  # 仅处理选中时，若没选中就跳过这个顶点
-                isSelected = self.src_vertex_isSeleted[index]
-                if not isSelected:
+        kd = KDTree(len(self.src_uv_avg))
+
+        for idx, uv in self.src_uv_avg.items():
+
+            if self.only_selected_src and not self.src_vertex_selected[idx]:
+                continue
+
+            kd.insert((uv.x, uv.y, 0.0), idx)
+
+        kd.balance()
+        self.src_uv_kdtree = kd
+
+    # -------------------------------------------------
+    # RBF 权重计算（高斯核）
+    # -------------------------------------------------
+
+    def rbf_weights(self, distances, radius):
+
+        weights = []
+
+        for d in distances:
+            if d > radius:
+                weights.append(0.0)
+            else:
+                w = math.exp(-(d * d) / (radius * radius))
+                weights.append(w)
+
+        total = sum(weights)
+
+        if total == 0:
+            return None
+
+        return [w / total for w in weights]
+
+    # -------------------------------------------------
+    # 构建匹配缓存（只执行一次）
+    # -------------------------------------------------
+
+    def build_match_cache(self):
+
+        self.match_cache = {}
+
+        total = len(self.dest_object.data.vertices)
+
+        for dest_idx in range(total):
+
+            if self.only_selected_dest and not self.dest_vertex_selected[dest_idx]:
+                continue
+
+            # ================= WORLD =================
+            if self.mode == "MOD_WORLD_POSITION":
+
+                dest_world = (
+                    self.dest_object.matrix_world @
+                    self.dest_object.data.shape_keys.key_blocks[0]
+                    .data[dest_idx].co
+                )
+
+                co, index, dist = self.src_world_kdtree.find(dest_world)
+
+                if self.use_one_vertex:
+                    self.match_cache[dest_idx] = [(index, 1.0)]
+                else:
+                    results = self.src_world_kdtree.find_range(
+                        dest_world,
+                        self.increment_radius
+                    )
+
+                    if not results:
+                        self.match_cache[dest_idx] = [(index, 1.0)]
+                    else:
+                        distances = [r[2] for r in results]
+                        indices = [r[1] for r in results]
+
+                        weights = self.rbf_weights(distances, self.increment_radius)
+
+                        if not weights:
+                            self.match_cache[dest_idx] = [(index, 1.0)]
+                        else:
+                            self.match_cache[dest_idx] = list(zip(indices, weights))
+
+            # ================= UV =================
+            elif self.mode == "MOD_UV_POSITION":
+
+                uv = self.dest_uv_avg.get(dest_idx)
+                if uv is None:
                     continue
 
-            distance = (uv - uv_center).length  # 计算 UV 距离
+                center = (uv.x, uv.y, 0.0)
 
-            # 检查顶点是否在半径范围内
-            if distance <= uv_radius:
-                src_chosen_vertices.append(index)
+                co, index, dist = self.src_uv_kdtree.find(center)
 
-                # 如果只选择最近的顶点，更新最近的顶点
-                if distance < closest_length:
-                    closest_length = distance
-                    closest_vertex_index = index
+                if self.use_one_vertex:
+                    self.match_cache[dest_idx] = [(index, 1.0)]
+                else:
+                    results = self.src_uv_kdtree.find_range(
+                        center,
+                        self.increment_radius
+                    )
 
-        # 如果只选择最近的顶点，更新选择结果
-        if self.use_one_vertex and closest_vertex_index != -1:
-            src_chosen_vertices = [closest_vertex_index]
+                    if not results:
+                        self.match_cache[dest_idx] = [(index, 1.0)]
+                    else:
+                        distances = [r[2] for r in results]
+                        indices = [r[1] for r in results]
 
-        return src_chosen_vertices
+                        weights = self.rbf_weights(distances, self.increment_radius)
 
-    def select_required_verts_byUV(self, uv, uv_radius, level=0):
-        """通过 UV 匹配的递归选择函数"""
-        verts = []
-        if level > self.number_of_increments:
-            return verts  # 递归达到上限直接返回
-        verts = self.select_vertices_byUV(uv, uv_radius)  # dest的UV
-        if len(verts) == 0:  # 没找到递归了找
-            return self.select_required_verts_byUV(uv, uv_radius + self.increment_radius, level + 1)
-        else:
-            return verts
+                        if not weights:
+                            self.match_cache[dest_idx] = [(index, 1.0)]
+                        else:
+                            self.match_cache[dest_idx] = list(zip(indices, weights))
 
-    def update_vertex_uvPos(self):
-        """更新目标网格的 1 个顶点 (基于 UV 匹配)"""
-        if self.current_vertex_index >= self.total_vertices:
-            return False  # 工作顶点序号达到总顶点数时，返回完毕
-        if self.only_selected_dest and not self.dest_vertex_isSeleted[self.current_vertex_index]:
-            return False  # 开启了仅处理选中顶点时若工作顶点没选中，返回顶点处理完毕
+            # ================= INDEX =================
+            else:
+                if self.only_selected_src:
+                    if not self.src_vertex_selected[dest_idx]:
+                        continue
 
-        if self.do_once_per_vertex:  # 每个顶点只执行一次
-            # 存一次世界空间坐标位置
-            # self.current_vertex = self.dest_object.matrix_world @ self.dest_object.data.shape_keys.key_blocks[
-            #     0].data[self.current_vertex_index].co
-            self.current_vertex = self.dest_object.data.shape_keys.key_blocks[
-                0].data[self.current_vertex_index].co
+                self.match_cache[dest_idx] = [(dest_idx, 1.0)]
 
-            # 获取目标顶点的 平均UV 坐标
-            uv = self.dest_uv_avglayer[self.current_vertex_index]
+    # -------------------------------------------------
+    # 主传递逻辑
+    # -------------------------------------------------
 
-            self.src_chosen_vertices = self.select_required_verts_byUV(uv, 0)
-            self.do_once_per_vertex = False
+    def transfer_shape_keys(self, src, dest):
 
-        if len(self.src_chosen_vertices) == 0:
-            return True  # 没匹配到返回没设置成功
-
-        result_position = Vector((0, 0, 0))
-        for v in self.src_chosen_vertices:
-            result_position += self.src_object.data.shape_keys.key_blocks[0].data[v].co
-        result_position /= len(self.src_chosen_vertices)
-
-        result_position2 = Vector((0, 0, 0))
-        for v in self.src_chosen_vertices:
-            result_position2 += self.src_object.data.shape_keys.key_blocks[self.src_shape_key_index].data[v].co
-        result_position2 /= len(self.src_chosen_vertices)
-
-        #根据模式传递绝对位置或相对位置
-        props = bpy.context.scene.shapekeytransfer
-        abs_mode = props.absolute_mode
-        if abs_mode:
-            result = result_position2
-        else:
-            result = result_position2 - result_position + self.current_vertex
-
-
-        self.set_vertex_position(result)  # 将新的位置设置到这个形态键中
-        return False
-    # 顶点索引匹配
-
-    def select_required_verts_byIndex(self, dest_index: int):
-
-        if self.only_selected_src:
-            if not self.src_vertex_isSeleted[dest_index]:
-                return []  # 仅处理选中时，若没选中就跳过这个顶点
-
-        return [dest_index]
-
-    def update_vertex_index(self):
-        """更新目标网格的顶点索引并处理其位置"""
-        if self.current_vertex_index >= self.total_vertices:
-            return False  # 所有顶点已处理完成
-        if self.only_selected_dest and not self.dest_vertex_isSeleted[self.current_vertex_index]:
-            return False  # 开启了仅处理选中顶点时若工作顶点没选中，返回顶点处理完毕
-
-        if self.do_once_per_vertex:  # 每个顶点只执行一次
-            self.current_vertex = self.dest_object.data.shape_keys.key_blocks[
-                0].data[self.current_vertex_index].co
-
-            self.src_chosen_vertices = self.select_required_verts_byIndex(
-                dest_index=self.current_vertex_index)  
-            self.do_once_per_vertex = False
-
-        if len(self.src_chosen_vertices) == 0:
-            return True  # 没匹配到返回没设置成功
-        if self.src_chosen_vertices[0] >= len(self.src_object.data.shape_keys.key_blocks[
-                0].data):    # 没超出字典范围返回处理完成
-            return False
-
-        result_position = self.src_object.data.shape_keys.key_blocks[
-            0].data[self.src_chosen_vertices[0]].co
-        result_position2 = self.src_object.data.shape_keys.key_blocks[
-            self.src_shape_key_index].data[self.src_chosen_vertices[0]].co
-
-        #根据模式传递绝对位置或相对位置
-        props = bpy.context.scene.shapekeytransfer
-        abs_mode = props.absolute_mode
-        if abs_mode:
-            result = result_position2
-        else:
-            result = result_position2 - result_position + self.current_vertex
-
-
-
-        self.set_vertex_position(result)
-        return False
-
-    # 主功能
-    def transfer_shape_keys(self, src: Object, dest: Object):
-        """传递形态键"""
         self.src_object = src
         self.dest_object = dest
-        self.src_mwi = self.src_object.matrix_world.inverted()
 
-        self.current_vertex_index = 0  # 正在处理的dest_object的网格的顶点索引
-        self.total_vertices = len(self.dest_object.data.vertices)
         if self.only_selected_src:
-            self.src_vertex_isSeleted = self.save_vertex_isSelected(
-                self.src_object)  # 预储存顶点是否被选择
+            self.src_vertex_selected = self.save_vertex_selection(src)
+
         if self.only_selected_dest:
-            self.dest_vertex_isSeleted = self.save_vertex_isSelected(
-                self.dest_object)  # 预储存顶点是否被选择
+            self.dest_vertex_selected = self.save_vertex_selection(dest)
 
-        if self.mode == "MOD_UV_POSITION":
-            self.src_uv_avglayer = self.calculate_avgUV(
-                self.src_object)  # 预计算平均UV
-            self.dest_uv_avglayer = self.calculate_avgUV(
-                self.dest_object)  # 预计算平均UV
+        if self.mode == "MOD_WORLD_POSITION":
+            self.build_world_kdtree()
 
-        if (not (self.src_object.data and self.dest_object.data)):
-            self.message = "网格无效!"
+        elif self.mode == "MOD_UV_POSITION":
+            self.src_uv_avg = self.calculate_avg_uv(src)
+            self.dest_uv_avg = self.calculate_avg_uv(dest)
+            self.build_uv_kdtree()
+
+        if not dest.data.shape_keys:
+            dest.shape_key_add(name="Basis")
+
+        # 构建工作 key 列表
+        work_keys = []
+
+        if not src.data.shape_keys:
+            self.message = "源物体没有形态键"
             return True
 
-        if (not hasattr(self.src_object.data.shape_keys, "key_blocks")):
-            self.message = "源网格中没有形态键!"
-            return True
+        for sk in src.data.shape_keys.key_blocks:
 
-        # 保证目标物体有basis键
-        if (not hasattr(self.dest_object.data.shape_keys, "key_blocks")):
-            self.dest_object.shape_key_add(name="Basis")
+            name = sk.name
 
-        # 生成工作形态键目录(遍历源物体的形态键)
-        for src_shape_key_iter in self.src_object.data.shape_keys.key_blocks:
-            src_name = src_shape_key_iter.name
-            if self.is_list_inversed:  # 白名单模式
-                if src_name in self.list_shape_keys:  # 原物体的形态键在列表的就加进work列表
-                    self.work_shape_keys.append(src_name)
+            # 跳过 Basis
+            if name in self.base_shape_keys:
+                continue
+
+            # ===== 黑白名单判断 =====
+            if self.list_shape_keys:
+                if self.is_list_inversed:
+                    # 白名单
+                    if name not in self.list_shape_keys:
+                        continue
                 else:
-                    continue
-            else:  # 黑名单模式
-                if (src_name not in self.list_shape_keys) and (src_name not in self.base_shape_keys):
-                    self.work_shape_keys.append(src_name)
+                    # 黑名单
+                    if name in self.list_shape_keys:
+                        continue
+
+            # ===== 真正通过过滤 =====
+            work_keys.append(name)
+
+            # 只为需要传递的 key 创建目标 key
+            if not any(name == dsk.name
+                    for dsk in dest.data.shape_keys.key_blocks):
+                dest.shape_key_add(name=name)
+
+        # ⚡ 只算一次匹配
+        self.build_match_cache()
+
+        props = bpy.context.scene.shapekeytransfer
+
+        # 批量写入
+        for key_name in work_keys:
+
+            src_basis = src.data.shape_keys.key_blocks[0]
+            src_key = src.data.shape_keys.key_blocks[key_name]
+            dest_key = dest.data.shape_keys.key_blocks[key_name]
+            dest_basis = dest.data.shape_keys.key_blocks[0]
+
+            for dest_idx, src_list in self.match_cache.items():
+
+                result_basis = Vector()
+                result_key = Vector()
+
+                for sidx, weight in src_list:
+                    result_basis += src_basis.data[sidx].co * weight
+                    result_key += src_key.data[sidx].co * weight
+
+                if props.absolute_mode:
+                    final = result_key
                 else:
-                    continue
+                    dest_base = dest_basis.data[dest_idx].co
+                    final = result_key - result_basis + dest_base
 
-            # 检查目标物体是否缺少该形态键，若缺少则添加
-            if not any(src_name == dest_shape_key_iter.name for dest_shape_key_iter in self.dest_object.data.shape_keys.key_blocks):
-                self.dest_object.shape_key_add(name=src_name)
-        # print("列表目录", self.list_shape_keys[:])
-        # print("传递目录", self.work_shape_keys[:])
+                dest_key.data[dest_idx].co = final
 
-        # 处理全部的顶点
-        update_vertex_method = self.update_vertex_worldPos
-        if self.mode == "MOD_UV_POSITION":
-            update_vertex_method = self.update_vertex_uvPos
-        if self.mode == "MOD_VERTEX_INDEX":
-            update_vertex_method = self.update_vertex_index
-
-        while self.current_vertex_index < self.total_vertices:  # 对所有顶点处理
-            self.do_once_per_vertex = True  # 设置工作顶点为第一次处理此顶点
-            # 遍历源对象的形态键，根据过滤规则处理
-            for shape_key_iter in self.src_object.data.shape_keys.key_blocks:
-                key_name = shape_key_iter.name
-                if key_name in self.work_shape_keys:
-                    self.update_global_shapekey_indices(key_name)  # 设置工作形态键的索引
-                    if update_vertex_method():  # 执行一次形态键的传递
-                        print(f"目标物体顶点{self.current_vertex_index}的形态键未设置成功:")
-            self.current_vertex_index += 1
-
-        self.message = "形态键传递成功"
+        self.message = "形态键传递成功（RBF 高性能模式）"
         return False
-
 
 SKT = ShapeKeyTransfer()
 
@@ -623,7 +510,6 @@ class OP_transferShapeKeys(Operator):
         skt = context.scene.shapekeytransfer
         SKT.increment_radius = skt.increment_radius
         SKT.use_one_vertex = skt.use_one_vertex
-        SKT.number_of_increments = skt.number_of_increments
         SKT.is_list_inversed = skt.is_list_inversed
         SKT.mode = skt.mode
         SKT.only_selected_dest = skt.only_selected_dest
@@ -647,7 +533,6 @@ class OP_transferShapeKeys(Operator):
         col.label(text="顶点判定:")
         col.prop(skt, "increment_radius")
         col.prop(skt, "use_one_vertex")
-        col.prop(skt, "number_of_increments")
 
 
 class OP_removeShapeKeys(Operator):
@@ -828,7 +713,6 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
     layout.separator()
     row = layout.row(align=True)
     row.prop(skt, "increment_radius", slider=True)
-    row.prop(skt, "number_of_increments", slider=True)
     row = layout.row(align=True)
     # 主功能
     row = layout.row(align=True)
