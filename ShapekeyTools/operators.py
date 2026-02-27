@@ -1607,7 +1607,6 @@ def draw_in_DATA_PT_modifiers(self, context):
     row.operator(OP_applyShowingModifiersKeepShapekeys.bl_idname,
                  text="应用")
 
-
 def draw_in_DATA_PT_shape_keys(self, context: Context):
     """属性形态键下"""
     layout: bpy.types.UILayout = self.layout
@@ -1709,7 +1708,6 @@ def draw_in_DATA_PT_shape_keys(self, context: Context):
     op.suffix_viewLeft = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     op.suffix_viewRight = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
 
-
 def draw_in_MESH_MT_shape_key_context_menu(self, context):
     """形态键下拉菜单"""
     layout: bpy.types.UILayout = self.layout
@@ -1721,8 +1719,6 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
     
-    
-
 
 cls = [PG_ShapeKeyTools_ListenerCache,
     OP_SelectVertexByIndex, OP_SelectShapekeyOffsetedVerticex,
