@@ -684,14 +684,11 @@ MENU_PRESETS = []
 class NameMappingTools(Panel):
     bl_idname = "VIEW_PT_Hollow_NameMappingTool"
     bl_label = "映射改名工具"
-    # bl_space_type = "VIEW_3D"
-    # bl_region_type = "UI"
-    # bl_category = "HoTools"
-    # bl_options = {'DEFAULT_CLOSED'}
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_parent_id = "PT_Main_HotoolsMainPanel"
-    bl_options = {"DEFAULT_CLOSED"}
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "HoTools"
+    bl_options = {'DEFAULT_CLOSED'}
+
 
     def draw(self, context):
         layout = self.layout

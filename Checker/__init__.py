@@ -21,14 +21,10 @@ def ureg_props():
 class PL_ObjectChecker(Panel):
     bl_idname = "VIEW_PT_Hollow_ObjectChecker"
     bl_label = "检查"
-    # bl_space_type = "VIEW_3D"
-    # bl_region_type = "UI"
-    # bl_category = "HoTools"
-    # bl_options = {'DEFAULT_CLOSED'}
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_parent_id = "PT_Main_HotoolsMainPanel"
-    bl_options = {"DEFAULT_CLOSED"}
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "HoTools"
+    bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout

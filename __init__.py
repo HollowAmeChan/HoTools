@@ -112,57 +112,7 @@ class AddonPreference(bpy.types.AddonPreferences):
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
 
 
-class PT_HotoolsMainPanel(Panel):
-    """
-    用于存放所有的功能区的主面板
-    需要保证子面板的bl_space_type,bl_region_type与其一致
-    子面板的bl_parent_id 需要设置为本类的bl_idname
-    """
-    bl_idname = "PT_Main_HotoolsMainPanel"
-    bl_label = "HoTools面板"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "scene"                # Bone 页签
-    bl_options = {"DEFAULT_CLOSED"}     # 折叠
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def draw_header(self, context):
-        layout = self.layout
-        layout.operator(OP_OpenWindow.bl_idname, text="", icon="TOPBAR")
-
-    def draw(self, context):
-        
-
-        return
-
-
-class OP_OpenWindow(bpy.types.Operator):
-    bl_idname = "ho.open_mainwindow"
-    bl_label = "Open HotoolsMainPanel"
-
-    def execute(self, context):
-
-        # 新建窗口
-        bpy.ops.screen.area_dupli('INVOKE_DEFAULT')
-
-        # 获取新窗口
-        new_window = context.window_manager.windows[-1]
-        area = new_window.screen.areas[0]
-
-        # 切换为 Properties
-        area.type = 'PROPERTIES'
-
-        # 切换到 Scene 标签
-        for space in area.spaces:
-            if space.type == 'PROPERTIES':
-                space.context = 'SCENE'
-
-        return {'FINISHED'}
-
-cls = [OP_register_asset_library,AddonPreference,PT_HotoolsMainPanel,OP_OpenWindow]
+cls = [OP_register_asset_library,AddonPreference,]
 
 
 def register():

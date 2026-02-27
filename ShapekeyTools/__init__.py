@@ -25,14 +25,11 @@ def ureg_props():
 class ShapekeyTools(Panel):
     bl_idname = "VIEW_PT_Hollow_ShapekeyTool"
     bl_label = "形态键工具"
-    # bl_space_type = "VIEW_3D"
-    # bl_region_type = "UI"
-    # bl_category = "HoTools"
-    # bl_options = {'DEFAULT_CLOSED'}
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_parent_id = "PT_Main_HotoolsMainPanel"
-    bl_options = {"DEFAULT_CLOSED"}
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "HoTools"
+    bl_options = {'DEFAULT_CLOSED'}
+
 
     def draw(self, context):
         layout = self.layout
