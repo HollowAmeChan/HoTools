@@ -1503,6 +1503,84 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
         obj.shape_key_remove(active_key)
         return {'FINISHED'}
 
+class OP_ForceRemoveAll(Operator):
+    """批量移除所有形态键,无视锁定组"""
+    bl_idname = "ho.force_remove_all_shapekeys"
+    bl_label = "强制移除所有形态键"
+    bl_description = "批量移除所有形态键,无视锁定"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj and obj.type == 'MESH'
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        obj = context.object
+
+        if not obj.data.shape_keys:
+            self.report({'INFO'}, "没有形态键")
+            return {'CANCELLED'}
+
+        # 保存当前模式
+        old_mode = obj.mode
+        if old_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        # 🔥 解除所有锁定
+        for kb in obj.data.shape_keys.key_blocks:
+            kb.lock_shape = False
+
+        # 删除全部
+        bpy.ops.object.shape_key_remove(all=True)
+
+        # 恢复模式
+        if old_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=old_mode)
+
+        self.report({'INFO'}, "已强制移除所有形态键")
+        return {'FINISHED'}
+
+class OP_ForceApplyAll(Operator):
+    """批量应用所有形态键"""
+    #TODO 没有考虑驱动器与动画造成的值
+    bl_idname = "ho.force_apply_all_shapekeys"
+    bl_label = "强制应用所有形态键"
+    bl_description = "批量应用所有形态键,然后删除所有的键，无视锁定"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj and obj.type == 'MESH'
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        obj = context.object
+
+        if not obj.data.shape_keys:
+            self.report({'INFO'}, "没有形态键")
+            return {'CANCELLED'}
+
+        depsgraph = context.evaluated_depsgraph_get()
+        obj_eval = obj.evaluated_get(depsgraph)
+
+        # 🔥 先烘焙当前视觉状态
+        new_mesh = bpy.data.meshes.new_from_object(obj_eval)
+
+        old_mesh = obj.data
+        obj.data = new_mesh
+
+        if old_mesh.users == 0:
+            bpy.data.meshes.remove(old_mesh)
+
+        self.report({'INFO'}, "已强制应用并删除所有形态键")
+        return {'FINISHED'}
 
 def draw_in_DATA_PT_modifiers(self, context):
     """修改器顶上"""
@@ -1635,6 +1713,8 @@ def draw_in_DATA_PT_shape_keys(self, context: Context):
 def draw_in_MESH_MT_shape_key_context_menu(self, context):
     """形态键下拉菜单"""
     layout: bpy.types.UILayout = self.layout
+    layout.operator(OP_ForceRemoveAll.bl_idname,icon="TRASH")
+    layout.operator(OP_ForceApplyAll.bl_idname,icon="GHOST_ENABLED")
     layout.operator(OP_RemoveEmptyShapekeys.bl_idname,text="删除空键",icon="X")
     layout.operator(OP_deleteUnusingShapeKeys.bl_idname,icon="X")
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
@@ -1654,6 +1734,7 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ShapekeyTools_copyShapekey2ShearPlate,OP_ShapekeyTools_importShapekeyFromShearPlate,
     OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
+    OP_ForceRemoveAll, OP_ForceApplyAll
 ]
 
 
