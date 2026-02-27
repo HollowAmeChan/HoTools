@@ -6,6 +6,11 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, IntProperty, EnumProperty,FloatProperty
 import json
 import re
+import gpu
+import blf
+import time
+from mathutils import Vector
+from gpu_extras.batch import batch_for_shader
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
 
@@ -651,6 +656,198 @@ class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
                     f"共 {total} 顶点 | 成功对称 {matched} | 未找到 {not_found} | 跳过 {skipped}")
         return {'FINISHED'}
 
+class VGSwitchHUD:
+    _handler_2d = None
+    _handler_3d = None
+    _timer_running = False
+
+    _text = None
+    _bone_head = None
+    _bone_tail = None
+    _start_time = 0.0
+    _duration = 1.0
+
+    # ---------------------------------
+    # 防翻译
+    # ---------------------------------
+    @staticmethod
+    def no_i18n(name):
+        return "\u200B".join(name)
+
+    # ---------------------------------
+    # 外部调用
+    # ---------------------------------
+    @staticmethod
+    def show(context, bone_name: str):
+
+        VGSwitchHUD._text = VGSwitchHUD.no_i18n(bone_name)
+        VGSwitchHUD._start_time = time.time()
+
+        obj = context.active_object
+        rig = None
+
+        if obj:
+            for mod in obj.modifiers:
+                if mod.type == 'ARMATURE' and mod.object:
+                    rig = mod.object
+                    break
+
+        if rig:
+            pb = rig.pose.bones.get(bone_name)
+            if pb:
+                VGSwitchHUD._bone_head = rig.matrix_world @ pb.head
+                VGSwitchHUD._bone_tail = rig.matrix_world @ pb.tail
+        else:
+            VGSwitchHUD._bone_head = None
+            VGSwitchHUD._bone_tail = None
+
+        # 注册 3D 绘制
+        if not VGSwitchHUD._handler_3d:
+            VGSwitchHUD._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
+                VGSwitchHUD._draw_3d,
+                (),
+                'WINDOW',
+                'POST_VIEW'
+            )
+
+        # 注册 2D 绘制
+        if not VGSwitchHUD._handler_2d:
+            VGSwitchHUD._handler_2d = bpy.types.SpaceView3D.draw_handler_add(
+                VGSwitchHUD._draw_2d,
+                (),
+                'WINDOW',
+                'POST_PIXEL'
+            )
+
+        # 启动 timer
+        if not VGSwitchHUD._timer_running:
+            VGSwitchHUD._timer_running = True
+            bpy.app.timers.register(VGSwitchHUD._timer)
+
+    # ---------------------------------
+    # Timer 驱动刷新
+    # ---------------------------------
+    @staticmethod
+    def _timer():
+
+        if not VGSwitchHUD._text:
+            VGSwitchHUD._timer_running = False
+            return None
+
+        # 强制刷新所有 3D 视图
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
+        return 0.016  # 60fps
+
+    # ---------------------------------
+    # 3D 绘制（骨骼）
+    # ---------------------------------
+    @staticmethod
+    def _draw_3d():
+
+        if VGSwitchHUD._bone_head is None or VGSwitchHUD._bone_tail is None:
+            return
+
+        elapsed = time.time() - VGSwitchHUD._start_time
+        if elapsed > VGSwitchHUD._duration:
+            VGSwitchHUD._remove()
+            return
+
+        alpha = 1.0 - (elapsed / VGSwitchHUD._duration)
+
+        # ✅ Blender 4.x 正确shader
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+        gpu.state.blend_set('ALPHA')
+        gpu.state.line_width_set(6.0)
+        gpu.state.depth_test_set('NONE')
+
+        batch = batch_for_shader(shader, 'LINES', {
+            "pos": [
+                VGSwitchHUD._bone_head,
+                VGSwitchHUD._bone_tail
+            ]
+        })
+
+        shader.bind()
+        shader.uniform_float("color", (1.0, 0.85, 0.2, alpha))
+        batch.draw(shader)
+
+        # 恢复状态
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+        gpu.state.depth_test_set('LESS_EQUAL')
+
+    # ---------------------------------
+    # 2D 绘制（文字）
+    # ---------------------------------
+    @staticmethod
+    def _draw_2d():
+
+        if not VGSwitchHUD._text:
+            return
+
+        elapsed = time.time() - VGSwitchHUD._start_time
+        if elapsed > VGSwitchHUD._duration:
+            return
+
+        alpha = 1.0 - (elapsed / VGSwitchHUD._duration)
+
+        region = bpy.context.region
+        width = region.width
+        height = region.height
+
+        font_id = 0
+        blf.size(font_id, 42)
+
+        text = VGSwitchHUD._text
+        tw, th = blf.dimensions(font_id, text)
+
+        x = (width - tw) * 0.5
+        y = (height - th) * 0.5
+
+        blf.enable(font_id, blf.SHADOW)
+        blf.shadow(font_id, 5, 0, 0, 0, 0.6 * alpha)
+        blf.shadow_offset(font_id, 2, -2)
+
+        blf.color(font_id, 1.0, 0.85, 0.2, alpha)
+        blf.position(font_id, x, y, 0)
+        blf.draw(font_id, text)
+
+    # ---------------------------------
+    # 清理
+    # ---------------------------------
+    @staticmethod
+    def _remove():
+
+        if VGSwitchHUD._handler_3d:
+            bpy.types.SpaceView3D.draw_handler_remove(
+                VGSwitchHUD._handler_3d,
+                'WINDOW'
+            )
+
+        if VGSwitchHUD._handler_2d:
+            bpy.types.SpaceView3D.draw_handler_remove(
+                VGSwitchHUD._handler_2d,
+                'WINDOW'
+            )
+
+        VGSwitchHUD._handler_3d = None
+        VGSwitchHUD._handler_2d = None
+        VGSwitchHUD._text = None
+        VGSwitchHUD._bone_head = None
+        VGSwitchHUD._bone_tail = None
+        VGSwitchHUD._timer_running = False
+
+        # 最后再刷新一次
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
 class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     """切换到鼠标位置的骨骼/顶点组"""
     bl_idname = "ho.vertexgrouptools_switch_vg_bycursor"
@@ -713,6 +910,8 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
                     obj.vertex_groups.active = obj.vertex_groups[active_bone]
                 if rig.data.bones.get(active_bone):
                     rig.data.bones[active_bone].hide = False
+                # 显示 HUD
+                VGSwitchHUD.show(context, active_bone)
 
         return {'FINISHED'}
 

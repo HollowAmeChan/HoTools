@@ -112,8 +112,6 @@ class OP_BoneApplyConstraint(Operator):
         self.report({'INFO'}, f"已应用 {len(pose_bones)} 根骨骼的约束")
         return {'FINISHED'}
     
-
-
 class OP_movingArmture_clear_constraint(Operator):
     bl_idname = "ho.movingarmture_clear_constraint"
     bl_label = "清空移动骨架中的所有约束"
