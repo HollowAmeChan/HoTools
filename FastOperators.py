@@ -795,8 +795,11 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 left = base + side
                 right = base - side
 
+                t = (i + 1) / total
+                col = (t, 1 - t, 0.2, 1)
+
                 arrow_coords.extend([left, tail, right])
-                arrow_colors.extend([(1, 1, 1, 1)] * 3)
+                arrow_colors.extend([col, col, col])
 
             arrow_batch = batch_for_shader(shader, 'TRIS', {
                 "pos": arrow_coords,
@@ -811,16 +814,41 @@ class OP_CreatBoneChainByMeshFlow(Operator):
     # ---------------------------------------------------
 
     def draw_text(self):
-
         font_id = 0
         blf.size(font_id, 16)
 
         x = self.mouse_x + 20
         y = self.mouse_y - 20
 
+        # ===== 开启阴影 =====
+        blf.enable(font_id, blf.SHADOW)
+        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
+        blf.shadow_offset(font_id, 1, -1)
+
+        # ---------------- 第一行 ----------------
+        key_text = "滚轮:"
+        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y, 0)
-        blf.draw(font_id, f"滚轮:分段: {self.num_segments}")
+        blf.draw(font_id, key_text)
+
+        # 获取宽度
+        key_width, _ = blf.dimensions(font_id, key_text)
+
+        # 描述 + 数值（白色）
+        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+        blf.position(font_id, x + key_width, y, 0)
+        blf.draw(font_id, f"分段: {self.num_segments}")
+
+        # ---------------- 第二行 ----------------
+        key_text = "F键:"
+        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y - 22, 0)
+        blf.draw(font_id, key_text)
+
+        key_width, _ = blf.dimensions(font_id, key_text)
+
+        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+        blf.position(font_id, x + key_width, y - 22, 0)
         blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
     # ---------------------------------------------------
