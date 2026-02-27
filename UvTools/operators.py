@@ -6,6 +6,7 @@ from bpy.types import Operator,Panel,Menu
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
+from collections import defaultdict
 
 def reg_props():
     return
@@ -95,7 +96,6 @@ class OP_UVTools_ReplaceFromLayer(Operator):
 
         return {'FINISHED'}
 
-
 class OP_UVTools_MoveActiveUV(Operator):
     """移动活动UV层顺序"""
     bl_idname = "ho.uvtools_move_active_uv"
@@ -177,7 +177,6 @@ class OP_UVTools_MoveActiveUV(Operator):
         uv2.active_render = uv1_render
         # --- 4. 更新活动层索引 ---
         uv_layers.active_index = target_index
-
 
 class OP_UVTools_MultiObj_SelectLayer(Operator):
     bl_idname = "ho.uvtools_multiobj_selectlayer"
@@ -367,6 +366,93 @@ class OP_UVTools_FitToFirstQuadrant(Operator):
 
         return {'FINISHED'}
 
+class OP_UVTools_UV2SK(Operator):
+    bl_idname = "ho.uvtools_uv2sk"
+    bl_label = "UV转形态键"
+    bl_description = "将当前UV层的顶点坐标转换为形态键"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    plane: EnumProperty(
+        name="投影平面",
+        description="选择UV写入的目标平面",
+        items=[
+            ('XY', "XY 平面", "U→X, V→Y"),
+            ('XZ', "XZ 平面", "U→X, V→Z"),
+        ],
+        default='XY'
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH'
+    
+    # 让操作执行前弹出设置面板
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    # 绘制UI
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "plane", expand=True)
+
+
+    def execute(self, context):
+        obj = context.active_object
+
+        if not obj or obj.type != 'MESH':
+            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+
+        uv_layer = mesh.uv_layers.active
+        if not uv_layer:
+            self.report({'WARNING'}, "活动物体没有UV层")
+            return {'CANCELLED'}
+
+        # 如果没有 shape key，先创建 Basis
+        if obj.data.shape_keys is None:
+            obj.shape_key_add(name="Basis")
+
+        # 创建新的 shape key
+        new_key = obj.shape_key_add(name=f"UV_{uv_layer.name}", from_mix=False)
+
+        # --- 计算每个顶点对应的UV（取平均值） ---
+        vert_uv_sum = defaultdict(lambda: [0.0, 0.0])
+        vert_uv_count = defaultdict(int)
+
+        for loop in mesh.loops:
+            vert_index = loop.vertex_index
+            uv = uv_layer.data[loop.index].uv
+            vert_uv_sum[vert_index][0] += uv.x
+            vert_uv_sum[vert_index][1] += uv.y
+            vert_uv_count[vert_index] += 1
+
+        # --- 写入 Shape Key ---
+        for v in mesh.vertices:
+            idx = v.index
+
+            if vert_uv_count[idx] == 0:
+                continue
+
+            avg_u = vert_uv_sum[idx][0] / vert_uv_count[idx]
+            avg_v = vert_uv_sum[idx][1] / vert_uv_count[idx]
+
+            co = new_key.data[idx].co
+
+            if self.plane == 'XY':
+                co.x = avg_u
+                co.y = avg_v
+                co.z = 0.0
+            elif self.plane == 'XZ':
+                co.x = avg_u
+                co.y = 0.0
+                co.z = avg_v
+
+        self.report({'INFO'}, "已根据活动UV层生成形态键")
+
+        return {'FINISHED'}
 
 
 def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
@@ -378,6 +464,7 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
     row.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_DOWN").direction = 'DOWN'
     row.operator(OP_UVTools_MultiObj_SelectLayer.bl_idname,text="",icon="UV")
     row.operator(OP_UVTools_MultiObj_SelectLayer_render.bl_idname,text="",icon="RESTRICT_RENDER_OFF")
+    row.operator(OP_UVTools_UV2SK.bl_idname,text="",icon="SHAPEKEY_DATA")
 
 
     layout.operator(OP_UVTools_ReplaceFromLayer.bl_idname)
@@ -398,7 +485,8 @@ def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
 
 
 cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,OP_UVTools_MultiObj_SelectLayer,OP_UVTools_MultiObj_SelectLayer_render,
-       IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant]
+       IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant,
+       OP_UVTools_UV2SK]
 
 
 
