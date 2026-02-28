@@ -1,6 +1,17 @@
 import bpy
-import os
 from bpy.types import Operator,Panel
+
+import os  # NOQA: E402
+import sys  # NOQA: E402
+"""
+bl安装插件时无法识别到内部写为模块的文件夹(仅安装阶段，安装完毕后使用正常),
+需要单独添加模块的路径才能找到
+"""
+plugin_dir = os.path.dirname(__file__)
+sys.path.append(plugin_dir)
+lib_dir = os.path.join(plugin_dir, "_Lib")
+sys.path.append(lib_dir)
+
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker
 from bpy.props import BoolProperty, FloatProperty
@@ -119,16 +130,6 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     
-    import os  # NOQA: E402
-    import sys  # NOQA: E402
-    """
-    bl安装插件时无法识别到内部写为模块的文件夹(仅安装阶段，安装完毕后使用正常),
-    需要单独添加模块的路径才能找到
-    """
-    plugin_dir = os.path.dirname(__file__)
-    sys.path.append(plugin_dir)
-    lib_dir = os.path.join(plugin_dir, "_Lib")
-    sys.path.append(lib_dir)
     FastOperators.register()
     VertexColorTools.register()
     VertexGroupTools.register()
