@@ -385,33 +385,6 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
         self.report({'INFO'}, f"成功导入并应用 {len(split_normals)} 个法线")
         return {'FINISHED'}
 
-class OP_Replace_MeshDataBlock2selectedObj(Operator):
-    bl_idname = "ho.replace"
-    bl_label = "复制活动物体网格数据到所选物体"
-    bl_description = "会使选择物体全部关联到活动物体"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    confirm: bpy.props.BoolProperty(default=False) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return context.object and context.object.type == 'MESH'
-
-    def invoke(self, context, event):
-        wm = context.window_manager
-        return wm.invoke_confirm(self, event)
-
-    def execute(self, context):
-        active_obj = context.object
-        mesh = active_obj.data
-
-        for obj in context.selected_objects:
-            if obj != active_obj and obj.type == 'MESH':
-                obj.data = mesh
-
-        self.report({'INFO'}, "已将网格数据复制到选中物体")
-        return {'FINISHED'}
-
 class OP_AddSelectSideRingLoops(Operator):
     bl_idname = "ho.addselect_sideringloops"
     bl_label = "加选Ring"
@@ -1088,12 +1061,6 @@ def draw_in_DATA_PT_remesh(self, context):
     layout: bpy.types.UILayout = self.layout
     layout.operator(OP_BooleanUnionReconstruction.bl_idname)
 
-def draw_in_DATA_PT_context_mesh(self, context):
-    """数据顶"""
-    layout: bpy.types.UILayout = self.layout
-    layout.operator(OP_Replace_MeshDataBlock2selectedObj.bl_idname)
-
-
 def draw_in_TOPBAR_MT_editor_menus(self, context):
     # TODO 不知道要不要加,顶部的快速重启bl按键
     layout: bpy.types.UILayout = self.layout
@@ -1109,7 +1076,6 @@ cls = [OP_select_inside_face_loop, OP_RestartBlender,
        VIEW3D_MT_edit_mesh_hotools,
        OP_AlignViewToAvgNormal,
        OP_CustomSplitNormals_Import,OP_CustomSplitNormals_Export,
-       OP_Replace_MeshDataBlock2selectedObj,
        OP_MeshToImageEmpty,
        OP_AddSelectSideRingLoops,OP_RemoveSelectSideRingLoops,
        OP_CreatBoneChainByMeshFlow,
@@ -1124,7 +1090,6 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_remesh.append(draw_in_DATA_PT_remesh)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
-    bpy.types.DATA_PT_context_mesh.append(draw_in_DATA_PT_context_mesh)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
@@ -1159,7 +1124,6 @@ def unregister():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_remesh.remove(draw_in_DATA_PT_remesh)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
-    bpy.types.DATA_PT_context_mesh.remove(draw_in_DATA_PT_context_mesh)
 
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)
 
