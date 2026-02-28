@@ -272,43 +272,6 @@ class OP_AlignViewToAvgNormal(Operator):
 
         return {'FINISHED'}
 
-class OP_BooleanUnionReconstruction(Operator):
-    bl_idname = "ho.boolean_union_reconstruction"
-    bl_label = "布尔并集重构"
-    bl_description = "使用布尔并集，消除网格内的内部交叉区域，保留其他区域的布线"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return context.object is not None and context.object.type == 'MESH'
-    def execute(self, context):
-        obj = context.object
-
-        # 创建一个空的 mesh 对象作为布尔对象
-        mesh_data = bpy.data.meshes.new(name="EmptyMesh")
-        bool_obj = bpy.data.objects.new("BooleanUnionHelper", mesh_data)
-        context.collection.objects.link(bool_obj)
-
-        # 设置布尔修改器
-        bool_mod = obj.modifiers.new(name="Boolean_Union_Reconstruct", type='BOOLEAN')
-        bool_mod.operation = 'UNION'
-        bool_mod.solver = 'EXACT'  # 使用准确模式
-        bool_mod.use_self = True   # 启用自身交集
-        bool_mod.object = bool_obj
-
-        # 切换到对象模式以应用修改器
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-        # 应用所有 viewport 中显示的修改器
-        for mod in [m for m in obj.modifiers if m.show_viewport]:
-            try:
-                bpy.ops.object.modifier_apply(modifier=mod.name)
-            except:
-                self.report({'WARNING'}, f"无法应用修改器: {mod.name}")
-
-        # 删除临时对象
-        bpy.data.objects.remove(bool_obj, do_unlink=True)
-        return {'FINISHED'}
 
 class OP_CustomSplitNormals_Export(Operator, ExportHelper):
     bl_idname = "ho.custom_splitnormal_export"
@@ -1056,11 +1019,6 @@ def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     """编辑模式右键时的菜单追加"""
     self.layout.menu("VIEW3D_MT_edit_mesh_hotools") 
 
-def draw_in_DATA_PT_remesh(self, context):
-    """重构网格面板添加"""
-    layout: bpy.types.UILayout = self.layout
-    layout.operator(OP_BooleanUnionReconstruction.bl_idname)
-
 def draw_in_TOPBAR_MT_editor_menus(self, context):
     # TODO 不知道要不要加,顶部的快速重启bl按键
     layout: bpy.types.UILayout = self.layout
@@ -1072,7 +1030,6 @@ def draw_in_TOPBAR_MT_editor_menus(self, context):
 cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_sync_render_visibility,
        OP_CopyALL_modifiers_to_selected,OP_PlaceObjectBottom,
-       OP_BooleanUnionReconstruction,
        VIEW3D_MT_edit_mesh_hotools,
        OP_AlignViewToAvgNormal,
        OP_CustomSplitNormals_Import,OP_CustomSplitNormals_Export,
@@ -1088,7 +1045,6 @@ def register():
     bpy.types.OUTLINER_MT_context_menu.append(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_modifiers.append(draw_in_DATA_PT_modifiers)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
-    bpy.types.DATA_PT_remesh.append(draw_in_DATA_PT_remesh)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
@@ -1122,7 +1078,6 @@ def unregister():
     bpy.types.OUTLINER_MT_context_menu.remove(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
-    bpy.types.DATA_PT_remesh.remove(draw_in_DATA_PT_remesh)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
 
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)

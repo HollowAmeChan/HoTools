@@ -2,7 +2,7 @@ import bpy
 import os
 from bpy.types import Operator,Panel
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,Checker
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -139,6 +139,7 @@ def register():
     NameMapping.register()
     exIcon.register()
     UvTools.register()
+    MeshTools.register()
     Checker.register()
 
     
@@ -157,6 +158,7 @@ def unregister():
     NameMapping.unregister()
     exIcon.unregister()
     UvTools.unregister()
+    MeshTools.unregister()
     Checker.unregister()
 
     
