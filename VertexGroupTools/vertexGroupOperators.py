@@ -965,7 +965,6 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
-    #TODO 有时会弹报错
     bl_idname = "ho.vertexgrouptools_soft_weight_allbone"
     bl_label = "柔化骨骼顶点组权重"
     bl_description = "柔化所选顶点的全部骨骼顶点组权重"
@@ -1001,7 +1000,16 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
             return {'CANCELLED'}
 
         # 构建邻居索引列表
-        neighbors = {v.index: [e.other_vert(v).index for e in v.link_edges] for v in sel_verts}
+        sel_indices = {v.index for v in sel_verts}
+
+        neighbors = {
+            v.index: [
+                e.other_vert(v).index
+                for e in v.link_edges
+                if e.other_vert(v).index in sel_indices
+            ]
+            for v in sel_verts
+        }
 
         # 构建权重矩阵，只包含骨骼顶点组
         weights = {}
@@ -1014,12 +1022,20 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
         for v in sel_verts:
             new_w = {}
             for g in bone_vg_indices:
-                neigh_ws = [weights[n][g] for n in neighbors[v.index]]
+                # 只取存在于 weights 中的邻居，避免 KeyError
+                neigh_ws = [
+                    weights[n][g]
+                    for n in neighbors[v.index]
+                    if n in weights
+                ]
+
                 if neigh_ws:
-                    avg = sum(neigh_ws) / len(neigh_ws)
+                    # 加入自身权重参与平均，避免权重塌陷
+                    avg = (weights[v.index][g] + sum(neigh_ws)) / (len(neigh_ws) + 1)
                     new_w[g] = avg
                 else:
                     new_w[g] = weights[v.index][g]  # 保留原权重
+
             new_weights[v.index] = new_w
 
         # 写回顶点权重
@@ -1052,48 +1068,69 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
         bm = bmesh.from_edit_mesh(me)
 
         # 1. 获取 Deform 层和活跃顶点组索引
-        dvert_layer = bm.verts.layers.deform.verify()  # 创建或获取 Deform 层 :contentReference[oaicite:2]{index=2}
+        dvert_layer = bm.verts.layers.deform.verify()
         vg = obj.vertex_groups.active
         if vg is None:
             self.report({'WARNING'}, "没有活跃的顶点组")
             return {'CANCELLED'}
         idx = vg.index
 
-        factor = 1.0  # 锐化强度，可改为属性
+        factor = 1.0  # 可改成属性
 
-        # 2. 第一次遍历：计算所有选中顶点的新权重
+        # 2. 预收集所有选中顶点
+        sel_verts = [v for v in bm.verts if v.select]
+        if not sel_verts:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        sel_set = set(sel_verts)
+
+        # 3. 第一次遍历：计算所有选中顶点的新权重
         new_weights = {}
-        for v in bm.verts:
-            if not v.select:
-                continue
+
+        for v in sel_verts:
             w = v[dvert_layer].get(idx, 0.0)
-            # 收集邻域顶点权重
+
+            # 只收集选中的邻域顶点权重
             neigh_ws = [
                 e.other_vert(v)[dvert_layer].get(idx, 0.0)
                 for e in v.link_edges
+                if e.other_vert(v) in sel_set
             ]
+
             if not neigh_ws:
                 continue
+
             avg = sum(neigh_ws) / len(neigh_ws)
-            # 锐化公式：放大偏差并 clamp 到 [0,1]
-            w_new = max(0.0, min(1.0, w + (w - avg) * factor))
+
+            # ---------- 稳定锐化公式 ----------
+            delta = w - avg
+            w_new = w + delta * factor
+
+            # 轻微阻尼，防止极端孤岛
+            w_new = (w_new + w) * 0.5
+
+            # clamp
+            w_new = max(0.0, min(1.0, w_new))
+            # ----------------------------------
+
             new_weights[v] = w_new
 
-        # 3. 第二次遍历：统一写回新权重
+        # 4. 第二次遍历：统一写回新权重
         for v, w_new in new_weights.items():
             v[dvert_layer][idx] = w_new
 
-        #是否执行自动归一化
+        # 是否执行自动归一化
         if context.scene.hoVertexGroupTools_isAutoNormalizeWeight:
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
-        # 4. 更新网格显示
-        bmesh.update_edit_mesh(me)                   # 刷新编辑模式网格 :contentReference[oaicite:3]{index=3}
+
+        # 5. 更新网格显示
+        bmesh.update_edit_mesh(me)
 
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
     #TODO 存在收缩出孤岛的问题
-    #TODO 有时会弹报错
     bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
     bl_label = "锐化骨骼顶点组权重"
     bl_description = "锐化所选顶点的全部骨骼顶点组权重"
@@ -1124,7 +1161,12 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
         if not arm:
             self.report({'WARNING'}, "未找到绑定骨骼")
             return {'CANCELLED'}
-        bone_vg_indices = {vg.index for vg in obj.vertex_groups if vg.name in arm.data.bones}
+
+        bone_vg_indices = {
+            vg.index for vg in obj.vertex_groups
+            if vg.name in arm.data.bones
+        }
+
         if not bone_vg_indices:
             self.report({'WARNING'}, "没有匹配骨骼的顶点组")
             return {'CANCELLED'}
@@ -1135,8 +1177,17 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
             self.report({'WARNING'}, "没有选中的顶点")
             return {'CANCELLED'}
 
-        # 构建邻居索引列表
-        neighbors = {v.index: [e.other_vert(v).index for e in v.link_edges] for v in sel_verts}
+        sel_indices = {v.index for v in sel_verts}
+
+        # 构建邻居索引列表（只保留选中邻居）
+        neighbors = {
+            v.index: [
+                e.other_vert(v).index
+                for e in v.link_edges
+                if e.other_vert(v).index in sel_indices
+            ]
+            for v in sel_verts
+        }
 
         # 构建权重矩阵
         weights = {}
@@ -1146,17 +1197,37 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
 
         # 计算锐化的新权重
         new_weights = {}
+
         for v in sel_verts:
             new_w = {}
+
             for g in bone_vg_indices:
-                neigh_ws = [weights[n][g] for n in neighbors[v.index]]
+
+                neigh_ws = [
+                    weights[n][g]
+                    for n in neighbors[v.index]
+                    if n in weights
+                ]
+
                 if neigh_ws:
                     avg = sum(neigh_ws) / len(neigh_ws)
                     w = weights[v.index][g]
-                    w_new = max(0.0, min(1.0, w + (w - avg) * self.factor))
+
+                    # -------- 稳定锐化公式 --------
+                    delta = w - avg
+                    w_new = w + delta * self.factor
+
+                    # 阻尼，减少孤岛
+                    w_new = (w_new + w) * 0.5
+
+                    # clamp
+                    w_new = max(0.0, min(1.0, w_new))
+                    # -----------------------------
+
                     new_w[g] = w_new
                 else:
                     new_w[g] = weights[v.index][g]
+
             new_weights[v.index] = new_w
 
         # 写回顶点权重
