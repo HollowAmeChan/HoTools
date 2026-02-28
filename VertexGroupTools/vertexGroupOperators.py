@@ -14,34 +14,6 @@ from gpu_extras.batch import batch_for_shader
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
 
-def Updated_switch_only_activebone(self, context):
-    """更新参数hoVertexGroupTools_switch_only_activebone调用"""
-    switch_only_activebone = context.scene.hoVertexGroupTools_switch_only_activebone
-    obj = context.active_object
-
-    armature = None
-    has_vg = False
-    if len(obj.vertex_groups):
-        has_vg = True
-
-    for mod in obj.modifiers:
-        if mod.type == 'ARMATURE':
-            mod.show_on_cage = True
-            mod.show_in_editmode = True
-            armature = mod.object.data
-
-    if switch_only_activebone == True and armature and has_vg:
-        for bone in armature.bones:
-            bone.hide = True
-
-        if armature.bones.get(obj.vertex_groups.active.name):
-            armature.bones.get(obj.vertex_groups.active.name).hide = False
-
-    elif switch_only_activebone == False and armature and has_vg:
-        for bone in armature.bones:
-            bone.hide = False
-    return 
-
 def reg_props():
     bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False)#启用属性下的操作菜单
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(
@@ -51,7 +23,6 @@ def reg_props():
         min=0,
         max=1
     )
-    bpy.types.Scene.hoVertexGroupTools_switch_only_activebone = BoolProperty(default=False,name="切换时独显骨骼",update=Updated_switch_only_activebone)
     bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight = BoolProperty(default=False,name="显示活动顶点权重信息",description="很卡，不舒服自己关掉")
 
     bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.1,min=0,max=1)
@@ -62,7 +33,6 @@ def reg_props():
 
 def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_remove_max
-    del bpy.types.Scene.hoVertexGroupTools_switch_only_activebone
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
     del bpy.types.Scene.hoVertexGroupTools_vg_increment2
     del bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue
@@ -865,7 +835,6 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        only_activebone = context.scene.hoVertexGroupTools_switch_only_activebone
         rig = None
         for mod in obj.modifiers:
             if mod.type == 'ARMATURE' and mod.object:
@@ -901,15 +870,9 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
                     min_distance = distance
                     active_bone = bone.name
 
-            if only_activebone:
-                for bone in rig.data.bones:
-                    bone.hide = True
-
             if active_bone:
                 if obj.vertex_groups.get(active_bone):
                     obj.vertex_groups.active = obj.vertex_groups[active_bone]
-                if rig.data.bones.get(active_bone):
-                    rig.data.bones[active_bone].hide = False
                 # 显示 HUD
                 VGSwitchHUD.show(context, active_bone)
 
@@ -1749,12 +1712,6 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     op1.num_max = scene.hoVertexGroupTools_max_vg_number
     row.scale_x = 0.5
     row.prop(scene,"hoVertexGroupTools_max_vg_number",text="",icon_only=True)
-
-    
-    #设置
-    layout.label(text="参数设置:")
-    layout.prop(scene,"hoVertexGroupTools_switch_only_activebone",text="切换时独显骨骼",toggle=True)
-    row = layout.row(align=True)
 
     # #测试
     # row.template_list("UL_VertexGroup_AdvancedList", "",
