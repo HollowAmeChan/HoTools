@@ -1447,6 +1447,73 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
 
         return {'FINISHED'}
 
+class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
+    bl_idname = "ho.shapekeytools_importshapekey_from_shearplate_relatove_sub"
+    bl_label = "从剪切板粘贴相对形态键进行相减"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "粘贴相对基型的位移，会从当前活动键上减去，开启绝对后不要使用,要确保点序一致"
+
+    def execute(self, context):
+        try:
+            data = json.loads(context.window_manager.clipboard)
+        except Exception:
+            self.report({'ERROR'}, "剪切板数据解析失败")
+            return {'CANCELLED'}
+
+        success = []
+        skipped = []
+        warnings = []
+
+        for obj in context.selected_objects:
+
+            if obj.type != 'MESH':
+                skipped.append(f"{obj.name}(非Mesh)")
+                continue
+            if not obj.data.shape_keys:
+                skipped.append(f"{obj.name}(无ShapeKey)")
+                continue
+            active_sk = obj.active_shape_key
+            if not active_sk:
+                skipped.append(f"{obj.name}(无活动ShapeKey)")
+                continue
+
+            solo_mode = obj.show_only_shape_key
+            if not solo_mode and active_sk.value != 1:
+                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
+                continue
+
+            if len(data) != len(active_sk.data):
+                skipped.append(f"{obj.name}(顶点数不匹配)")
+                continue
+
+            try:
+                for i, delta in enumerate(data):
+                    active_sk.data[i].co -= Vector(delta)
+                success.append(obj.name)
+            except Exception:
+                skipped.append(f"{obj.name}(写入失败)")
+
+        # ---------- 汇总报告 ----------
+        msg = f"成功: {len(success)}"
+        if skipped:
+            msg += f" | 跳过: {len(skipped)}"
+        if warnings:
+            msg += f" | 警告: {len(warnings)}"
+        self.report({'INFO'}, msg+" 详情查看控制台")
+
+        print("====Shapekey Paste Result====")
+        if warnings:
+            print("Value Warning Objects:")
+            for w in warnings:
+                print("  ", w)
+        if skipped:
+            print("Skipped Objects:")
+            for s in skipped:
+                print("  ", s)
+        print("====End Result====")
+
+        return {'FINISHED'}
+
 class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
     bl_idname = "ho.shapekeytools_copylist2selectedobjects"
     bl_label = "复制列表到选中物体"
@@ -1720,7 +1787,8 @@ def draw_in_DATA_PT_shape_keys(self, context: Context):
     op = row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate.bl_idname,text="粘贴",icon="PASTEDOWN")
     op.is_abs = is_abs
     if not is_abs:
-        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text="叠加",icon="FUND")
+        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text="叠加")
+        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub.bl_idname,text="叠减")
 
 
     row = layout.row(align=True)
@@ -1801,7 +1869,8 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_applyShowingModifiersKeepShapekeys, OP_ApplyArmatureModifiersKeepShapekeys,
     OP_deleteUnusingShapeKeys, OP_AddShapekeysByTemplate,
     OP_ShapekeyTools_copyShapekey2ShearPlate,OP_ShapekeyTools_importShapekeyFromShearPlate,
-    OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_CopyList2selectedObjects,
+    OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub,
+    OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
     OP_ForceRemoveAll, OP_ForceApplyAll
 ]
