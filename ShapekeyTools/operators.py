@@ -1263,7 +1263,7 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     bl_idname = "ho.shapekeytools_copyshapekey2shearplate"
     bl_label = "复制形态键到剪切板"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "默认为相对基型的位移，开启绝对后复制绝对位置,要确保点序一致"
+    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后复制绝对位置,要确保点序一致"
 
     is_abs:BoolProperty(name="是否绝对复制",default=False) # type: ignore
 
@@ -1279,6 +1279,8 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
         
         active_sk = obj.active_shape_key
         basis_key = obj.data.shape_keys.reference_key
+        solo_mode = obj.show_only_shape_key
+        sk_value = 1.0 if solo_mode else active_sk.value #对齐用户视图显示
 
         # 提取形态键数据
         coords = []
@@ -1286,56 +1288,99 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
             coords = [list(v.co) for v in active_sk.data]
         else :
             for base_v, active_v in zip(basis_key.data, active_sk.data):
-                delta = active_v.co - base_v.co
+                delta = (active_v.co - base_v.co) * sk_value
                 coords.append([delta.x, delta.y, delta.z])
 
 
         # 使用JSON存储并复制到剪切板
         json_str = json.dumps(coords)
         context.window_manager.clipboard = json_str
-        self.report({'INFO'}, f"已复制形态键 '{active_sk.name}' 数据到剪切板")
+        if not solo_mode:
+            self.report({'INFO'},f"已复制 '{active_sk.name}' (value={sk_value:.3f}) 到剪切板，未开启独显模式")
+        else:
+            self.report({'INFO'},f"已复制 '{active_sk.name}' 数据到剪切板")
         return {'FINISHED'}
 
 class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
     bl_idname = "ho.shapekeytools_importshapekey_from_shearplate"
     bl_label = "从剪切板粘贴形态键"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "默认为相对基型的位移，开启绝对后粘贴绝对位置,要确保点序一致"
+    bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后粘贴绝对位置,要确保点序一致"
 
-    is_abs:BoolProperty(name="是否粘贴绝对位置",default=False) # type: ignore
+    is_abs: BoolProperty(name="是否粘贴绝对位置", default=False)  # type: ignore
 
     def execute(self, context):
-        obj = context.object
-        if not obj or obj.type != 'MESH':
-            self.report({'ERROR'}, "必须是一个Mesh物体")
-            return {'CANCELLED'}
-        if not obj.data.shape_keys or not obj.data.shape_keys.key_blocks:
-            self.report({'ERROR'}, "没有找到形态键")
-            return {'CANCELLED'}
-        
-        active_sk = obj.active_shape_key
-        basis_key = obj.data.shape_keys.reference_key
-
-
+        # ---------- 读取剪切板 ----------
         try:
             data = json.loads(context.window_manager.clipboard)
-            if len(data) != len(active_sk.data):
-                self.report({'ERROR'}, "粘贴数据与形态键顶点数量不匹配")
-                return {'CANCELLED'}
-            
-            if self.is_abs:
-                for i, co in enumerate(data):
-                    active_sk.data[i].co = co
-            else:
-                for i, delta in enumerate(data):
-                    base = basis_key.data[i].co
-                    active_sk.data[i].co = Vector(base) + Vector(delta)
-                
-            self.report({'INFO'}, f"成功粘贴到形态键 '{active_sk.name}'")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"粘贴失败: {str(e)}")
+        except Exception:
+            self.report({'ERROR'}, "剪切板数据解析失败")
             return {'CANCELLED'}
+
+        success = []
+        skipped = []
+        warnings = []
+
+        for obj in context.selected_objects:
+
+            if obj.type != 'MESH':
+                skipped.append(f"{obj.name}(非Mesh)")
+                continue
+
+            if not obj.data.shape_keys:
+                skipped.append(f"{obj.name}(无ShapeKey)")
+                continue
+
+            active_sk = obj.active_shape_key
+            basis_key = obj.data.shape_keys.reference_key
+
+            if active_sk is None:
+                skipped.append(f"{obj.name}(无活动ShapeKey)")
+                continue
+
+            solo_mode = obj.show_only_shape_key
+            if not solo_mode and active_sk.value != 1:
+                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
+                continue
+
+            if len(data) != len(active_sk.data):
+                skipped.append(f"{obj.name}(顶点数不匹配)")
+                continue
+
+            try:
+                if self.is_abs:
+                    for i, co in enumerate(data):
+                        active_sk.data[i].co = Vector(co)
+                else:
+                    for i, delta in enumerate(data):
+                        base = basis_key.data[i].co
+                        active_sk.data[i].co = base + Vector(delta)
+
+                success.append(obj.name)
+
+            except Exception:
+                skipped.append(f"{obj.name}(写入失败)")
+
+        # ---------- 汇总报告 ----------
+        msg = f"成功: {len(success)}"
+        if skipped:
+            msg += f" | 跳过: {len(skipped)}"
+        if warnings:
+            msg += f" | 警告: {len(warnings)}"
+        self.report({'INFO'}, msg+"详情查看控制台")
+
+        print("====Shapekey Paste Result====")
+        if warnings:
+            print("Value Warning Objects:")
+            for w in warnings:
+                print("  ", w)
+        if skipped:
+            print("Skipped Objects:")
+            for s in skipped:
+                print("  ", s)
+        print("====End Result====")
+
+        return {'FINISHED'}
 
 class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
     bl_idname = "ho.shapekeytools_importshapekey_from_shearplate_relatove_add"
@@ -1344,35 +1389,63 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
     bl_description = "粘贴相对基型的位移，会直接叠加到当前活动键上，开启绝对后不要使用,要确保点序一致"
 
     def execute(self, context):
-        obj = context.object
-        if not obj or obj.type != 'MESH':
-            self.report({'ERROR'}, "必须是一个Mesh物体")
-            return {'CANCELLED'}
-        if not obj.data.shape_keys or not obj.data.shape_keys.key_blocks:
-            self.report({'ERROR'}, "没有找到形态键")
-            return {'CANCELLED'}
-        #检测键
-        basis_key = obj.data.shape_keys.reference_key
-        active_sk = obj.active_shape_key
-
-        if not active_sk:
-            self.report({'ERROR'}, "当前没有活动形态键")
-            return {'CANCELLED'}
-
         try:
             data = json.loads(context.window_manager.clipboard)
-            if len(data) != len(active_sk.data):
-                self.report({'ERROR'}, "粘贴数据与形态键顶点数量不匹配")
-                return {'CANCELLED'}
-            
-            for i, delta in enumerate(data):
-                active_sk.data[i].co += Vector(delta)
-            
-            self.report({'INFO'}, f"成功粘贴到形态键 '{active_sk.name}'")
-            return {'FINISHED'}
-        except Exception as e:
-            self.report({'ERROR'}, f"粘贴失败: {str(e)}")
+        except Exception:
+            self.report({'ERROR'}, "剪切板数据解析失败")
             return {'CANCELLED'}
+
+        success = []
+        skipped = []
+        warnings = []
+
+        for obj in context.selected_objects:
+
+            if obj.type != 'MESH':
+                skipped.append(f"{obj.name}(非Mesh)")
+                continue
+            if not obj.data.shape_keys:
+                skipped.append(f"{obj.name}(无ShapeKey)")
+                continue
+            active_sk = obj.active_shape_key
+            if not active_sk:
+                skipped.append(f"{obj.name}(无活动ShapeKey)")
+                continue
+            solo_mode = obj.show_only_shape_key
+            if not solo_mode and active_sk.value != 1:
+                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
+                continue
+            if len(data) != len(active_sk.data):
+                skipped.append(f"{obj.name}(顶点数不匹配)")
+                continue
+
+            try:
+                for i, delta in enumerate(data):
+                    active_sk.data[i].co += Vector(delta)
+                success.append(obj.name)
+            except Exception:
+                skipped.append(f"{obj.name}(写入失败)")
+
+        # ---------- 汇总报告 ----------
+        msg = f"成功: {len(success)}"
+        if skipped:
+            msg += f" | 跳过: {len(skipped)}"
+        if warnings:
+            msg += f" | 警告: {len(warnings)}"
+        self.report({'INFO'}, msg+"详情查看控制台")
+
+        print("====Shapekey Paste Result====")
+        if warnings:
+            print("Value Warning Objects:")
+            for w in warnings:
+                print("  ", w)
+        if skipped:
+            print("Skipped Objects:")
+            for s in skipped:
+                print("  ", s)
+        print("====End Result====")
+
+        return {'FINISHED'}
 
 class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
     bl_idname = "ho.shapekeytools_copylist2selectedobjects"
