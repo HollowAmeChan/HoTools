@@ -792,6 +792,34 @@ class OP_RelaxBoneChain(Operator):
 
         return {'FINISHED'}
 
+class OP_FastCreatPoseAsset(Operator):
+    bl_idname = "ho.fast_create_pose_asset"
+    bl_label = "快速创建姿态资产"
+    bl_description = """一个对内部资产库的创建资产的再封装，原版位置比较反人类
+    对选中的骨骼进行快速资产创建"""
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'ARMATURE' and
+            context.mode == 'POSE'
+        )
+    pose_name: StringProperty(name="姿态名称", default="New Pose") # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "pose_name")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+    
+    def execute(self, context):
+        bpy.ops.poselib.create_pose_asset(pose_name = self.pose_name, activate_new_action=False)
+        return {'FINISHED'}
+
 class PT_Hotools_PosebonePanel(Panel):
     bl_idname = "BONE_PT_Hotools_PoseBonePanel"
     bl_label = "HoTools骨骼"
@@ -865,6 +893,7 @@ class VIEW3D_MT_pose_context_menu_hotools(Menu):
         layout.operator(OP_SelectBone_by_endBone.bl_idname)
         if context.active_object and context.active_object.type == 'ARMATURE':
             layout.operator(OP_ApplyRestPose.bl_idname)
+        layout.operator(OP_FastCreatPoseAsset.bl_idname)
 
 def drawIn_VIEW3D_MT_pose_context_menu(self, context):
     self.layout.menu("VIEW3D_MT_pose_context_menu_hotools") 
@@ -887,6 +916,7 @@ cls = [
     OP_RelaxBoneChain,
     VIEW3D_MT_armature_context_menu_hotools,
     VIEW3D_MT_pose_context_menu_hotools,
+    OP_FastCreatPoseAsset,
 ]
 
 
