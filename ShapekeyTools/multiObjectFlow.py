@@ -1,7 +1,7 @@
 import bpy
 import numpy as np
 import bmesh
-from bpy.types import Operator,Panel,Menu,Context
+from bpy.types import Operator,Panel,Menu,Context,UILayout
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
 import bmesh
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -11,7 +11,7 @@ import json
 
 # region 变量
 def reg_props():
-    bpy.types.Scene.hoShapekeyTools_enable_multi = BoolProperty(default=False)#启用开关
+    bpy.types.Scene.hoShapekeyTools_enable_multi = BoolProperty(default=False,name="多物体工作流面板")#启用开关
     bpy.types.Scene.hoShapekeyTools_bs_multi_col = PointerProperty(type=bpy.types.Collection,name="源集合",description="选择生成的物体的集合",update=None)  # type: ignore
 
     return
@@ -296,16 +296,8 @@ class OP_ShapekeyTools_multi_removeLinkColloection(bpy.types.Operator):
         self.report({'INFO'}, "集合与数据已清理完成")
         return {'FINISHED'}
 
-def draw_in_DATA_PT_shape_keys(self, context: Context):
-    """属性形态键下"""
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-
-
-    row = layout.row(align=True)
-    row.prop(context.scene,"hoShapekeyTools_enable_multi",text="启用多物体工作流",toggle=True)
-    if not context.scene.hoShapekeyTools_enable_multi:
-            return
+def _draw_sk_multiobj(layout: UILayout,context:Context):
+    layout = layout.box()
     row = layout.row(align=True)
     row.operator(OP_ShapekeyTools_multi_generateLinkedObjects.bl_idname,text="生成链接集合",icon="LINKED")
     row.prop(context.scene,"hoShapekeyTools_bs_multi_col",text="")
@@ -329,16 +321,10 @@ def register():
 
     for i in cls:
         bpy.utils.register_class(i)
-
-    bpy.types.DATA_PT_shape_keys.append(draw_in_DATA_PT_shape_keys)
-
     reg_props()
 
 
 def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
-
-    bpy.types.DATA_PT_shape_keys.remove(draw_in_DATA_PT_shape_keys)
-
     ureg_props()

@@ -130,7 +130,7 @@ class PG_ShapeKeyTools_ListenerCache(PropertyGroup):
 
 
 def reg_props():
-    bpy.types.Scene.hoShapekeyTools_open_menu = BoolProperty(default=False)#启用属性下的操作菜单
+    bpy.types.Scene.hoShapekeyTools_open_menu = BoolProperty(default=False,name="hotools形态键面板")#启用属性下的操作菜单
     
     bpy.types.Scene.hoShapekeyTools_chooseVertexByIndex = IntProperty(
         default=0)  # 按照顶点索引选择顶点的UI参数
@@ -248,9 +248,10 @@ def reg_props():
                 print("监听器已禁用")
     #开关
     bpy.types.Scene.hoShapekeyTools_control_shape_key_listener = bpy.props.BoolProperty(
-        name="同步模式",
+        name="开启全局多物体同步模式",
         description="""
         启用后监听活动物体的形态键设置变化
+        所有选中中的物体都会跟随活动物体的形态键设置
         需要注意监听不到非活动键的值修改，此时点击任意键可以刷新
         """,
         default=False,
@@ -1747,23 +1748,9 @@ def draw_in_DATA_PT_modifiers(self, context):
     row.operator(OP_applyShowingModifiersKeepShapekeys.bl_idname,
                  text="应用")
 
-def draw_in_DATA_PT_shape_keys(self, context: Context):
-    """属性形态键下"""
-    layout: bpy.types.UILayout = self.layout
-    layout.use_property_decorate = False  # 禁用关键帧动画
-
-
-    row = layout.row(align=True)
-    row.prop(context.scene,"hoShapekeyTools_open_menu",text="启用Hotools拓展",toggle=True)
-    if not context.scene.hoShapekeyTools_open_menu:
-        return
-
-    row = layout.row(align=True)
-    row.scale_y = 2.0
-    if context.scene.hoShapekeyTools_control_shape_key_listener:
-        row.alert = True
-    row.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="全局多物体同步",toggle=True,icon="FILE_REFRESH")
-    row.alert =False
+def _draw_sk_operators(layout: UILayout,context:Context):
+    layout = layout.box()
+    layout = layout.column()
 
     # # 绘制开关编号显示
     # area = context.area
@@ -1881,7 +1868,6 @@ def register():
         bpy.utils.register_class(i)
     reg_props()
     bpy.types.DATA_PT_modifiers.append(draw_in_DATA_PT_modifiers)
-    bpy.types.DATA_PT_shape_keys.append(draw_in_DATA_PT_shape_keys)
     bpy.types.MESH_MT_shape_key_context_menu.append(
         draw_in_MESH_MT_shape_key_context_menu)
 
@@ -1891,7 +1877,6 @@ def unregister():
         bpy.utils.unregister_class(i)
     ureg_props()
     bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
-    bpy.types.DATA_PT_shape_keys.remove(draw_in_DATA_PT_shape_keys)
     bpy.types.MESH_MT_shape_key_context_menu.remove(
         draw_in_MESH_MT_shape_key_context_menu)
 

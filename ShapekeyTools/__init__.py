@@ -44,6 +44,26 @@ class ShapekeyTools(Panel):
 
 cls = [ShapekeyTools]
 # endregion
+def draw_in_DATA_PT_shape_keys(self, context: bpy.types.Context):
+    layout: bpy.types.UILayout = self.layout
+    layout.use_property_decorate = False  # 禁用关键帧动画
+
+
+    row = layout.row(align=True)
+    row.prop(context.scene,"hoShapekeyTools_open_menu",text="",icon="EVENT_H",toggle=True)
+    row.prop(context.scene,"hoShapekeyTools_enable_multi",text="",icon="OUTLINER_COLLECTION",toggle=True)
+    
+    if context.scene.hoShapekeyTools_control_shape_key_listener:
+        row.alert = True
+    row.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="",toggle=True,icon="FILE_REFRESH")
+    row.alert =False
+
+    if context.scene.hoShapekeyTools_open_menu:
+        operators._draw_sk_operators(context=context,layout=layout)
+    if context.scene.hoShapekeyTools_enable_multi:
+        multiObjectFlow._draw_sk_multiobj(context=context,layout=layout)
+
+
 
 
 def register():
@@ -55,6 +75,7 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
+    bpy.types.DATA_PT_shape_keys.append(draw_in_DATA_PT_shape_keys)
 
 
 def unregister():
@@ -66,3 +87,4 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()
+    bpy.types.DATA_PT_shape_keys.remove(draw_in_DATA_PT_shape_keys)
