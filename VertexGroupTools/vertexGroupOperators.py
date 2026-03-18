@@ -951,6 +951,7 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
+    # TODO 性能一般，大量组+大量顶点会卡几秒，但是瓶颈在bl端的IO
     bl_idname = "ho.vertexgrouptools_soft_weight_allbone"
     bl_label = "柔化骨骼顶点组权重"
     bl_description = "柔化所选顶点的全部骨骼顶点组权重"
