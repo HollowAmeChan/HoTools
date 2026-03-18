@@ -10,12 +10,15 @@ import gpu
 import blf
 import time
 from mathutils import Vector
+import heapq
+import random
 from gpu_extras.batch import batch_for_shader
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
 
 def reg_props():
-    bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False)#启用属性下的操作菜单
+    bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False,name="hotools顶点组面板")#启用属性下的操作菜单
+    bpy.types.Scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu = BoolProperty(default=False,name="hotools顶点组debug面板")
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(
         name="最大值",
         description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",
@@ -30,8 +33,11 @@ def reg_props():
     bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue = FloatProperty(name="选中权重小于",default=0.05,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_max_vg_number = IntProperty(name="最多权重数",default=4)
     bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
+    bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit = IntProperty(name="debug最多骨权重数",default=4)
 
 def ureg_props():
+    del bpy.types.Scene.hoVertexGroupTools_open_menu
+    del bpy.types.Scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu
     del bpy.types.Scene.hoVertexGroupTools_remove_max
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
     del bpy.types.Scene.hoVertexGroupTools_vg_increment2
@@ -39,7 +45,7 @@ def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_max_vg_number
     del bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight
     del bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight
-
+    del bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit
 
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
@@ -143,6 +149,10 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
         bpy.ops.object.mode_set(mode='EDIT')
 
         self.report({'INFO'}, "已粘贴权重信息")
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
@@ -199,6 +209,9 @@ class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
                 normalized_weight = weight / total_weight
                 vg.add([v_idx], normalized_weight, 'REPLACE')
 
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         bpy.ops.object.mode_set(mode='EDIT')
         self.report({'INFO'}, "所选顶点的骨骼权重已规格化（锁定组未动）")
         return {'FINISHED'}
@@ -253,6 +266,9 @@ class OP_VertexGroupTools_RemoveGroupVertex_by_value(Operator):
             if verts_to_remove:
                 vg.remove(verts_to_remove)
                 removed_total += len(verts_to_remove)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
 
         # 恢复原来的模式
         bpy.ops.object.mode_set(mode=prev_mode)
@@ -431,6 +447,10 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
         bpy.ops.object.mode_set(mode='EDIT')
         self.report(
             {'INFO'}, f"成功处理 {total_processed}/{len(selected_verts)} 个顶点")
+        
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
@@ -923,8 +943,11 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         if context.scene.hoVertexGroupTools_isAutoNormalizeWeight:
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
 
-
         bmesh.update_edit_mesh(me)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
@@ -1011,6 +1034,10 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
 
         bmesh.update_edit_mesh(me)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
     
 class OP_VertexGroupTools_SharpenWeight(Operator):
@@ -1089,6 +1116,9 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
 
         # 5. 更新网格显示
         bmesh.update_edit_mesh(me)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
 
         return {'FINISHED'}
 
@@ -1203,6 +1233,10 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
 
         bmesh.update_edit_mesh(me)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_Change_VG_weight(Operator):
@@ -1247,6 +1281,10 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
         if context.scene.hoVertexGroupTools_isAutoNormalizeWeight:
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
         bmesh.update_edit_mesh(obj.data)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
             
 class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
@@ -1317,6 +1355,10 @@ class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
         if context.scene.hoVertexGroupTools_isAutoNormalizeWeight:
             bpy.ops.ho.vertexgrouptools_normalize_selectedvertex_groupvalues()
         bmesh.update_edit_mesh(obj.data)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
@@ -1416,6 +1458,10 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
 
         if len(obj.vertex_groups):
             bpy.ops.object.vertex_group_limit_total(limit=self.num_max,group_select_mode='BONE_DEFORM')
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
         return {'FINISHED'}
 
 class OP_SelectNonWeightVertices(Operator):
@@ -1580,67 +1626,331 @@ class OP_RemoveNoneWeightGroup(Operator):
         self.report({'INFO'}, f"已移除 {remove_count} 个非骨骼顶点组")
         return {'FINISHED'}
 
-def draw_in_DATA_PT_vertex_groups(self, context: Context):
-    """属性，数据-顶点组-(顶点组界面下部)"""
-    scene = context.scene
-    layout: bpy.types.UILayout = self.layout
+DEBUG_BONEWEIGHTGROUP_DRAW = None # 用于存储绘制柄
+DEBUG_BONEWEIGHTGROUP_MODE_TEMP = {"mode":None,"limit":None} # 用于存储模式，hotools某些功能结束后触发刷新用
+
+class DebugBoneWeightGroup:
+
+    positions = []
+    colors = []
+    batch = None
+    shader = gpu.shader.from_builtin('SMOOTH_COLOR')
+
+    @staticmethod
+    def get_weights(v, mesh, bm, deform_layer, index):
+        if bm:
+            return v[deform_layer]
+        else:
+            return {g.group: g.weight for g in mesh.vertices[index].groups}
+
+    @staticmethod
+    def get_world_pos(obj, v, bm):
+        world_pos = obj.matrix_world @ v.co
+        # 防止zfighting
+        normal = v.normal if not bm else v.normal
+        offset_pos = world_pos + normal * 0.0005
+
+        return offset_pos
+
+    @staticmethod
+    def build_bone_colors(obj):
+        random.seed(0)
+        return {
+            vg.index: (random.random(), random.random(), random.random())
+            for vg in obj.vertex_groups
+        }
+
+    @staticmethod
+    def DRAW_multiGroup(weights, bone_colors, limit):
+        if len(weights) == 0:
+            return None
+
+        top = heapq.nlargest(limit, weights.items(), key=lambda x: x[1])
+        total = sum(w for _, w in top)
+        if total == 0:
+            return None
+
+        r = g = b = 0.0
+        for group_index, w in top:
+            w /= total
+            c = bone_colors.get(group_index, (0, 0, 0))
+            r += c[0] * w
+            g += c[1] * w
+            b += c[2] * w
+
+        return (r, g, b, 0.6)  # 半透明
+
+    @staticmethod
+    def DRAW_noneBoneWeightGroup(weights):
+        if len(weights) == 0:
+            return (1, 0, 0, 0.6)# 无骨权重，红
+        else:
+            return (0, 1, 0, 0.6)# 正常有权重，绿
+
+    @staticmethod
+    def DRAW_unlimitedBoneWeightGroup(weights, limit):
+        if len(weights) > limit:
+            return (1, 0, 0, 0.6)#组多了，红
+        elif len(weights) == limit:
+            return (0, 1, 0, 0.6)#组正好，绿
+        else:
+            return (0, 0, 1, 0.6)#组少了，蓝 
+
+    @staticmethod
+    def DRAW_unnormalizedBoneWeightGroup(weights):
+        total = sum(weights.values())
+        if abs(total - 1.0) > 0.001:
+            return (1, 1, 0, 0.6)#没归一化，黄
+        else:
+            return (0, 1, 0, 0.6)#正常，绿
+
+    @staticmethod
+    def DRAW_strictUnnormalizedBoneWeightGroup(weights, eps=1e-6):
+        if len(weights) == 0:
+            return (0, 1, 0, 0.6)  # 没权重正常，绿
+
+        total = sum(weights.values())
+
+        # 必须先是归一化
+        if abs(total - 1.0) > 0.001:
+            return (1, 0, 0, 0.6)  # 未归一化，红
+
+        # 检查是否存在0权重
+        for w in weights.values():
+            if w <= eps:
+                return (1, 0, 0, 0.6)  # 归一化但有0，红
+
+        return (0, 1, 0, 0.6)  # 其他，绿
+
+    @staticmethod
+    def build_data(obj, mode="MULTI", limit=4):
+        DebugBoneWeightGroup.positions.clear()
+        DebugBoneWeightGroup.colors.clear()
+
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh) if obj.mode == 'EDIT' else None
+        if bm:
+            bm.verts.ensure_lookup_table()
+        deform_layer = bm.verts.layers.deform.active if bm else None
+
+        bone_colors = DebugBoneWeightGroup.build_bone_colors(obj)
+
+        mesh.calc_loop_triangles()
+        # ---------- 缓存每个顶点颜色 ----------
+        vertex_colors = {}
+        verts = bm.verts if bm else mesh.vertices
+
+        for i, v in enumerate(verts):
+
+            weights = DebugBoneWeightGroup.get_weights(
+                v, mesh, bm, deform_layer, i
+            )
+
+            color = None
+
+            if mode == "MULTI":color = DebugBoneWeightGroup.DRAW_multiGroup(weights, bone_colors, limit)
+            elif mode == "NONE": color = DebugBoneWeightGroup.DRAW_noneBoneWeightGroup(weights)
+            elif mode == "LIMIT": color = DebugBoneWeightGroup.DRAW_unlimitedBoneWeightGroup(weights, limit)
+            elif mode == "UNNORMALIZED": color = DebugBoneWeightGroup.DRAW_unnormalizedBoneWeightGroup(weights)
+            elif mode == "STRICT_UNNORMALIZED":color = DebugBoneWeightGroup.DRAW_strictUnnormalizedBoneWeightGroup(weights)
+
+            if color is None:
+                color = (0, 0, 0, 0)
+
+            vertex_colors[i] = color
+
+
+        # ---------- 构建三角 ----------
+        for tri in mesh.loop_triangles:
+            for loop_index in tri.loops:
+
+                v_index = mesh.loops[loop_index].vertex_index
+
+                if bm:
+                    v = bm.verts[v_index]
+                else:
+                    v = mesh.vertices[v_index]
+
+                color = vertex_colors[v_index]
+
+                world_pos = DebugBoneWeightGroup.get_world_pos(obj, v, bm)
+
+                DebugBoneWeightGroup.positions.append(world_pos)
+                DebugBoneWeightGroup.colors.append(color)
+
+        if DebugBoneWeightGroup.positions:
+            DebugBoneWeightGroup.batch = batch_for_shader(
+                DebugBoneWeightGroup.shader,
+                'TRIS',
+                {
+                    "pos": DebugBoneWeightGroup.positions,
+                    "color": DebugBoneWeightGroup.colors
+                }
+            )
+        else:
+            DebugBoneWeightGroup.batch = None
     
+    @staticmethod
+    def draw():
+        if not DebugBoneWeightGroup.batch:
+            return
+
+        shader = DebugBoneWeightGroup.shader
+        shader.bind()
+
+        gpu.state.depth_test_set('LESS_EQUAL')
+        gpu.state.depth_mask_set(False)  # 不写深度
+        gpu.state.blend_set('ALPHA')  # 开启透明混合
+
+        DebugBoneWeightGroup.batch.draw(shader)
+
+        gpu.state.blend_set('NONE')  # 还原状态
+
+    @staticmethod
+    def refresh_draw(context):
+        """如果有任何一个其他operator需要刷新，可以直接使用DebugBoneWeightGroup.refresh_draw(context)这一句"""
+        obj = context.active_object
+        if not obj:
+            return
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is None:
+            return  # 没开就不刷新
+
+        # 使用你之前记录的模式
+        mode = DEBUG_BONEWEIGHTGROUP_MODE_TEMP.get("mode", "MULTI")
+        limit = DEBUG_BONEWEIGHTGROUP_MODE_TEMP.get("limit", 4)
+
+        DebugBoneWeightGroup.build_data(obj, mode=mode, limit=limit)
+
+        # 强制刷新视图
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+class OP_DebugBoneWeightGroupSwitch(Operator):
+    """骨骼权重Debug开关"""
+    bl_idname = "ho.debug_boneweightgroup_switch"
+    bl_label = "骨骼权重Debug"
+
+    mode: bpy.props.EnumProperty(
+        name="Mode",
+        items=[
+            ('MULTI', "多骨骼混合", ""),
+            ('NONE', "无权重", ""),
+            ('LIMIT', "超过骨骼数", ""),
+            ('UNNORMALIZED', "未归一化", ""),
+            ('STRICT_UNNORMALIZED',"严格归一化",""),
+        ],
+        default='MULTI'
+    ) # type: ignore
+
+    limit: bpy.props.IntProperty(
+        name="限制骨骼数",
+        default=4,
+        min=1,
+        max=32
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH'
+
+    def execute(self, context):
+        global DEBUG_BONEWEIGHTGROUP_DRAW
+
+        obj = context.active_object
+
+        # ===== 关闭旧绘制 =====
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(DEBUG_BONEWEIGHTGROUP_DRAW, 'WINDOW')
+            DEBUG_BONEWEIGHTGROUP_DRAW = None
+            
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
+        # ===== 检查骨架 =====
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定的骨架")
+            return {'CANCELLED'}
+
+        DebugBoneWeightGroup.build_data(obj,mode=self.mode,limit=self.limit)
+        # 记入全局变量
+        DEBUG_BONEWEIGHTGROUP_DRAW = bpy.types.SpaceView3D.draw_handler_add(
+            DebugBoneWeightGroup.draw,
+            (),
+            'WINDOW',
+            'POST_VIEW'
+        )
+        DEBUG_BONEWEIGHTGROUP_MODE_TEMP["mode"] = self.mode
+        DEBUG_BONEWEIGHTGROUP_MODE_TEMP["limit"] = self.limit
+        # 刷新视图
+        for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+        self.report({'INFO'}, "Debug 已开启")
+        
+        return {'FINISHED'}
+
+class OP_DebugBoneWeightGroupClear(Operator):
+    """骨骼权重Debug绘制清理"""
+    bl_idname = "ho.debug_boneweightgroup_clear"
+    bl_label = "骨骼权重Debug绘制清理"
+
+    def execute(self, context):
+        global DEBUG_BONEWEIGHTGROUP_DRAW
+        obj = context.active_object
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(DEBUG_BONEWEIGHTGROUP_DRAW, 'WINDOW')
+            DEBUG_BONEWEIGHTGROUP_DRAW = None
+            
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+            self.report({'INFO'}, "Debug 已关闭")
+
+        return {'FINISHED'}
+
+class OP_DebugBoneWeightGroupRefresh(Operator):
+    """
+    刷新骨骼权重Debug,用户手动刷新视图的操作
+    ！！！目前无法做到自动刷新，多手动刷新，仅hotools自带功能部分支持，原生功能均不刷新，如撤销不会自动刷新！！！
+    如果有任何一个其他operator需要刷新，可以直接使用DebugBoneWeightGroup.refresh_draw(context)这一句,注意先判定是否需要绘制
+    """
+    bl_idname = "ho.debug_boneweightgroup_refresh"
+    bl_label = "刷新骨骼权重Debug"
+
+    def execute(self, context):
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+
+            DEBUG_BONEWEIGHTGROUP_MODE_TEMP["limit"] = context.scene.hoVertexGroupTools_debug_groupnum_limit#使用实时新值
+            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+
+        self.report({'INFO'}, "Debug 已刷新")
+        return {'FINISHED'}
+
+def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
+    scene = context.scene
+    box = layout.box()
+    layout = box
     
     col = layout.column(align=True)
-    col.prop(context.scene,"hoVertexGroupTools_view_activevertex_weight",text="活动顶点权重列表",toggle=True)
-    col.prop(context.scene,"hoVertexGroupTools_open_menu",text="启用Hotools拓展",toggle=True)
-
-    if context.scene.hoVertexGroupTools_view_activevertex_weight:
-        # 活动顶点情况
-        # 此办法比第二种快，只有在切换选择顶点的时候会卡
-        obj = context.active_object
-        if obj and obj.mode == 'EDIT' and len(obj.vertex_groups):
-            box = layout.box()
-            dic_v = []
-            bm = bmesh.from_edit_mesh(obj.data)
-            for v in bm.verts:
-                if v.select:
-                    dic_v.append(v.index)
-
-            if len(dic_v) == 1:
-                obj.update_from_editmode()
-                v_grps = obj.data.vertices[dic_v[0]].groups
-                o_grps = obj.vertex_groups
-                for grp in o_grps:
-                    for g in v_grps:
-                        if g.group == grp.index:
-                            row = box.row(align = True)
-                            row.label(text= grp.name, translate=False)
-                            row.label(text= f"{g.weight:.6f}", translate=False)
-            else:
-                box.label(text = '选择一个顶点')
-
-        # obj = context.active_object
-        # if obj and obj.mode == 'EDIT' and len(obj.vertex_groups):
-        #     box = layout.box()
-        #     obj.update_from_editmode()
-
-        #     selected_indices = [v.index for v in obj.data.vertices if v.select]
-
-        #     if len(selected_indices) == 1:
-        #         v_grps = obj.data.vertices[selected_indices[0]].groups
-        #         o_grps = obj.vertex_groups
-        #         for grp in o_grps:
-        #             for g in v_grps:
-        #                 if g.group == grp.index:
-        #                     row = box.row(align=True)
-        #                     row.label(text=grp.name)
-        #                     row.label(text=f"{g.weight:.6f}")
-        #     else:
-        #         box.label(text='选择一个顶点')
-    if not context.scene.hoVertexGroupTools_open_menu:
-        return
-    
-    row = layout.row(align=True)
+    row = col.row(align=True)
     row.prop(scene, "hoVertexGroupTools_remove_max",
              icon_only=True, slider=True)
-    row.operator(
-        OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="从所有组中移除")
+    row.operator(OP_VertexGroupTools_RemoveGroupVertex_by_value.bl_idname, text="从所有组中移除")
+    
+    col = col.column(align=True)
+    row = col.row(align=True)
+    op1 = row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限制顶点权重组数量")
+    op1.num_max = scene.hoVertexGroupTools_max_vg_number
+    row.scale_x = 0.5
+    row.prop(scene,"hoVertexGroupTools_max_vg_number",text="",icon_only=True)
+
 
     row = layout.row(align=True)
     row.operator(OP_VertexGroupTools_ExtractGroupValues_SelectedVertex.bl_idname,
@@ -1648,6 +1958,7 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     row.operator(OP_VertexGroupTools_ApplyGroupValues_SelectedVertex.bl_idname,
                  text="粘贴权重", icon="PASTEDOWN")
     
+
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
@@ -1669,8 +1980,6 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
                  icon="CANCEL")
     row.operator(OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex.bl_idname,
                  text="规格所选", icon="FUND")
-    
-    
     
     col = layout.column(align=True)
     col.scale_y = 2.0
@@ -1704,20 +2013,122 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname,text="柔化全部")   
     row.operator(OP_VertexGroupTools_SharpenWeight_AllBone.bl_idname,text="锐化全部")
     
-    col = layout.column(align=True)
-    col.scale_y = 2.0
-    row = col.row(align=True)
-    op1 = row.operator(OP_VertexGroupTools_Max_VG_Limit.bl_idname,text="限制顶点权重组数量"
-                    )
-    op1.num_max = scene.hoVertexGroupTools_max_vg_number
-    row.scale_x = 0.5
-    row.prop(scene,"hoVertexGroupTools_max_vg_number",text="",icon_only=True)
+    
 
     # #测试
     # row.template_list("UL_VertexGroup_AdvancedList", "",
     #                   obj,"vertex_groups",
     #                   obj.vertex_groups,"active_index",
     #                   rows=8)
+    
+def _draw_ActiveVertex_weight(layout:bpy.types.UILayout,context:bpy.types.Context):
+    # 活动顶点情况
+    # 此办法比第二种快，只有在切换选择顶点的时候会卡
+    obj = context.active_object
+    if obj and obj.mode == 'EDIT' and len(obj.vertex_groups):
+        box = layout.box()
+        dic_v = []
+        bm = bmesh.from_edit_mesh(obj.data)
+        for v in bm.verts:
+            if v.select:
+                dic_v.append(v.index)
+
+        if len(dic_v) == 1:
+            obj.update_from_editmode()
+            v_grps = obj.data.vertices[dic_v[0]].groups
+            o_grps = obj.vertex_groups
+            for grp in o_grps:
+                for g in v_grps:
+                    if g.group == grp.index:
+                        row = box.row(align = True)
+                        row.label(text= grp.name, translate=False)
+                        row.label(text= f"{g.weight:.6f}", translate=False)
+        else:
+            box.label(text = '选择一个顶点')
+
+    # obj = context.active_object
+    # if obj and obj.mode == 'EDIT' and len(obj.vertex_groups):
+    #     box = layout.box()
+    #     obj.update_from_editmode()
+
+    #     selected_indices = [v.index for v in obj.data.vertices if v.select]
+
+    #     if len(selected_indices) == 1:
+    #         v_grps = obj.data.vertices[selected_indices[0]].groups
+    #         o_grps = obj.vertex_groups
+    #         for grp in o_grps:
+    #             for g in v_grps:
+    #                 if g.group == grp.index:
+    #                     row = box.row(align=True)
+    #                     row.label(text=grp.name)
+    #                     row.label(text=f"{g.weight:.6f}")
+    #     else:
+    #         box.label(text='选择一个顶点')
+
+def _draw_DebugMode(layout:bpy.types.UILayout,context:bpy.types.Context):
+    global DEBUG_BONEWEIGHTGROUP_DRAW
+
+    box = layout.box()
+    col = box.column(align=True)
+
+    row = col.row(align=True)
+    if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+        row.alert = True
+    row.operator(OP_DebugBoneWeightGroupClear.bl_idname,text="",icon="CANCEL")
+    row.operator(OP_DebugBoneWeightGroupRefresh.bl_idname,text="",icon="FILE_REFRESH")
+    row.prop(context.scene,"hoVertexGroupTools_debug_groupnum_limit",text="",icon_only=True)
+    row.alert = False
+    
+    row = col.row(align=True)
+    type1 = row.operator(OP_DebugBoneWeightGroupSwitch.bl_idname,text="总体")
+    type1.mode = 'MULTI'
+    row.label(text="每个组分配一个颜色")
+
+    row = col.row(align=True)
+    type2 = row.operator(OP_DebugBoneWeightGroupSwitch.bl_idname,text="无权重")
+    type2.mode = 'NONE'
+    row.label(text="无骨骼权重为红")
+
+    row = col.row(align=True)
+    type3 = row.operator(OP_DebugBoneWeightGroupSwitch.bl_idname,text="组数量")
+    type3.mode = 'LIMIT'
+    type3.limit = context.scene.hoVertexGroupTools_debug_groupnum_limit
+    row.label(text="组不足为蓝，过多为红")
+
+    row = col.row(align=True)
+    type4 = row.operator(OP_DebugBoneWeightGroupSwitch.bl_idname,text="归一化")
+    type4.mode = 'UNNORMALIZED'
+    row.label(text="骨权重未归一化为红")
+
+    
+    row = col.row(align=True)
+    type5 = row.operator(OP_DebugBoneWeightGroupSwitch.bl_idname,text="严格归一")
+    type5.mode = 'STRICT_UNNORMALIZED'
+    row.label(text="未归一化/有0权重为红")
+
+
+def draw_in_DATA_PT_vertex_groups(self, context: Context):
+    """属性，数据-顶点组-(顶点组界面下部)"""
+    layout: bpy.types.UILayout = self.layout
+    
+    row = layout.row(align=True)
+    
+    row.prop(context.scene,"hoVertexGroupTools_open_menu",text="",icon="EVENT_H",icon_only=True,toggle=True)
+    row.prop(context.scene,"hoVertexGroupTools_view_activevertex_weight",text="",icon="OUTLINER_DATA_MESH",icon_only=True,toggle=True)
+    global DEBUG_BONEWEIGHTGROUP_DRAW
+    if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+        row.alert = True
+    row.prop(context.scene,"hoVertexGroupTools_DebugBoneWeightGroup_open_menu",text="",icon="OUTLINER_DATA_LIGHT",icon_only=True,toggle=True)
+    row.alert = False
+
+
+    if context.scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu:
+        _draw_DebugMode(layout=layout,context=context)
+    if context.scene.hoVertexGroupTools_view_activevertex_weight:
+        _draw_ActiveVertex_weight(layout=layout,context=context)
+    if context.scene.hoVertexGroupTools_open_menu:
+        _draw_VertexGroupTools(layout=layout,context=context)
+    
     
 def draw_in_MESH_MT_vertex_group_context_menu(self, context: Context):
     """属性，数据-顶点组-顶点组专用项-(顶点组下拉三角)"""
@@ -1747,7 +2158,8 @@ cls = [
     OP_SelectNonWeightVertices,
     OP_GenegateNoneMirroredGroup,
     OP_RemoveNoneWeightGroup,
-    OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone
+    OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone,
+    OP_DebugBoneWeightGroupSwitch,OP_DebugBoneWeightGroupClear,OP_DebugBoneWeightGroupRefresh,
 ]
 
 
