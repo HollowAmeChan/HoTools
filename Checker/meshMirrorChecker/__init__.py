@@ -39,9 +39,10 @@ def drawMeshMirrorCheckerPanel(layout:bpy.types.UILayout,context:bpy.types.Conte
     row.label(text="视图显示")
     space = context.space_data
     row.label(text="",icon="MOD_MIRROR")
-    row.prop(context.object,"use_mesh_mirror_x",toggle=True)
-    row.prop(context.object,"use_mesh_mirror_y",toggle=True)
-    row.prop(context.object,"use_mesh_mirror_z",toggle=True)
+    if context.object and context.object.type == "MESH":
+        row.prop(context.object,"use_mesh_mirror_x",toggle=True)
+        row.prop(context.object,"use_mesh_mirror_y",toggle=True)
+        row.prop(context.object,"use_mesh_mirror_z",toggle=True)
 
     if hasattr(space, "overlay"):
         row.prop(space.overlay, "show_text", text="",toggle=True,icon="LINENUMBERS_OFF")
