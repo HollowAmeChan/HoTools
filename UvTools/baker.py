@@ -4,7 +4,9 @@ import os
 import random
 import numpy as np
 
-if sys.version_info >= (3, 11):
+if sys.version_info >= (3, 13):
+    from .._Lib.py313.PIL import Image, ImageDraw
+elif sys.version_info >= (3, 11):
     from .._Lib.py311.PIL import Image, ImageDraw
 else:
     from .._Lib.py310.PIL import Image, ImageDraw

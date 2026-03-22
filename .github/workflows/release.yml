@@ -24,7 +24,7 @@ jobs:
         mkdir $FOLDER_NAME
 
         # 复制文件到文件夹，排除 .git .venv .github
-        rsync -av --exclude=".git" --exclude=".github" --exclude=".venv" ./ $FOLDER_NAME/
+        rsync -av --exclude=".git" --exclude=".github" --exclude=".venv_3_13_9" ./ $FOLDER_NAME/
 
         # 压缩包名字用日期
         ZIP_NAME="Hotools-$(date +'%Y%m%d-%H%M%S').zip"
