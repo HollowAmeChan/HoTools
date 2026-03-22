@@ -23,8 +23,8 @@ jobs:
         FOLDER_NAME="Hotools"
         mkdir $FOLDER_NAME
 
-        # 复制文件到文件夹，排除 .git .venv .github
-        rsync -av --exclude=".git" --exclude=".github" --exclude=".venv_3_13_9" ./ $FOLDER_NAME/
+        # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__
+        rsync -av --exclude=".git" --exclude=".github" --exclude=".vscode" --exclude=".venv" --exclude=".gitignore" --exclude="__pycache__" ./ $FOLDER_NAME/
 
         # 压缩包名字用日期
         ZIP_NAME="Hotools-$(date +'%Y%m%d-%H%M%S').zip"
