@@ -10,8 +10,9 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 import gpu
 
-
-if sys.version_info >= (3, 11):
+if sys.version_info >= (3, 13):
+    from .._Lib.py313.PIL import Image, ImageDraw ,ImageFilter
+elif sys.version_info >= (3, 11):
     from ._Lib.py311.PIL import Image, ImageDraw ,ImageFilter
 else:
     from ._Lib.py310.PIL import Image, ImageDraw, ImageFilter
