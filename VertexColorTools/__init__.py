@@ -1,6 +1,7 @@
 import mathutils
 import bpy
 from bpy.types import Operator, Panel, PropertyGroup
+from bpy.props import EnumProperty
 import random
 import time
 import bmesh
@@ -813,67 +814,97 @@ class bakeNormal2VertexColor(Operator):
     bl_label = "烘焙自定义法线到顶点色"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def bake_normal(self,obj, src):
-        obj.data.calc_tangents()
-        src.data.calc_tangents()
+    mode: EnumProperty(
+        name="法线模式",
+        items=[
+            ('POSITIVE', "正向", "自定义法线 → 原始法线空间"),
+            ('NEGATIVE', "Liltoon", "原始法线 → 自定义法线空间 用于修复描边效果"),
+        ],
+        default='POSITIVE'
+    ) # type: ignore
 
-        if not obj.data.vertex_colors:
-            obj.data.vertex_colors.new()
+    def bake_normal(self, dst_obj, tbn_obj, normal_obj):
+        dst_mesh = dst_obj.data
+        tbn_mesh = tbn_obj.data
+        normal_mesh = normal_obj.data
 
-        for polygon in obj.data.polygons:
-            for loop_index in polygon.loop_indices:
-                obj_loop = obj.data.loops[loop_index]
+        dst_mesh.calc_tangents()
+        tbn_mesh.calc_tangents()
+        normal_mesh.calc_tangents()
 
-                obj_tangent = obj_loop.tangent
-                obj_bitangent = obj_loop.bitangent
-                obj_normal = obj_loop.normal
+        if not dst_mesh.vertex_colors:
+            dst_mesh.vertex_colors.new()
 
-                src_loop = src.data.loops[loop_index]
-                src_normal = src_loop.normal
+        color_layer = dst_mesh.vertex_colors.active.data
 
-                obj.data.vertex_colors.active.data[loop_index].color = (
-                    mathutils.Vector.dot(src_normal, obj_tangent) * 0.5 + 0.5,
-                    mathutils.Vector.dot(src_normal, obj_bitangent) * 0.5 + 0.5,
-                    mathutils.Vector.dot(src_normal, obj_normal) * 0.5 + 0.5,
+        for poly in dst_mesh.polygons:
+            for li in poly.loop_indices:
+
+                tbn_loop = tbn_mesh.loops[li]
+                t = tbn_loop.tangent
+                b = tbn_loop.bitangent
+                n = tbn_loop.normal
+
+                src_n = normal_mesh.loops[li].normal
+
+                color_layer[li].color = (
+                    src_n.dot(t) * 0.5 + 0.5,
+                    src_n.dot(b) * 0.5 + 0.5,
+                    src_n.dot(n) * 0.5 + 0.5,
                     1.0
                 )
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "mode", expand=True)
 
     def execute(self, context):
         obj0 = context.object
         mesh0 = obj0.data
-        if not mesh0.has_custom_normals:
-            self.report({'WARNING'}, "当前网格没有自定义法线")
-            return {'CANCELLED'}
+
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        # 提取源原本网格的loop normals，然后清除
-        normals = [list(loop.normal) for loop in mesh0.loops]
+        if not mesh0.has_custom_normals:
+            self.report({'WARNING'}, "当前网格没有自定义法线")
+            return {'CANCELLED'}
+
+        custom_normals = [loop.normal.copy() for loop in mesh0.loops]
+
         bpy.ops.mesh.customdata_custom_splitnormals_clear()
 
-        # 复制空法线数据对象（包括 mesh 数据）
-        obj1 = obj0.copy()
-        obj1.data = obj0.data.copy()
-        obj1.name = obj0.name + "_copy"
-        bpy.context.collection.objects.link(obj1)
+        obj_original = obj0.copy()
+        obj_original.data = obj0.data.copy()
+        obj_original.name = obj0.name + "_original"
+        context.collection.objects.link(obj_original)
 
-        #导回源原本网格的loop normals
-        mesh0.normals_split_custom_set(normals)
-        
-        #进行切线空间法线计算
-        if bpy.context.active_object == obj0:
-            try:
-                self.bake_normal(obj0, obj1)
-            except:
-                return {'CANCELLED'}
+        mesh0.normals_split_custom_set(custom_normals)
 
-        else:
-            try:
-             self.bake_normal(obj1, obj0)
-            except:
-                return {'CANCELLED'}
-        # 删除备份物体
-        bpy.data.objects.remove(obj1, do_unlink=True)
+        try:
+            if self.mode == 'NEGATIVE':
+                self.bake_normal(
+                    dst_obj=obj0,
+                    tbn_obj=obj0,
+                    normal_obj=obj_original
+                )
+
+            else:
+                self.bake_normal(
+                    dst_obj=obj0,
+                    tbn_obj=obj_original,
+                    normal_obj=obj0
+                )
+
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            bpy.data.objects.remove(obj_original, do_unlink=True)
+            return {'CANCELLED'}
+
+        # 删除临时物体
+        bpy.data.objects.remove(obj_original, do_unlink=True)
 
         return {"FINISHED"}
 
