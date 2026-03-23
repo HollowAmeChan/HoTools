@@ -1005,6 +1005,12 @@ def draw_in_VIEW3D_MT_object_convert(self,context: bpy.types.Context):
     row = layout.row(align=True)
     row.operator(OP_MeshToImageEmpty.bl_idname)
 
+def draw_in_VIEW3D_MT_edit_curve_context_menu(self,context: bpy.types.Context):
+    """曲线物体右键菜单下"""
+    # TODO
+    layout: bpy.types.UILayout = self.layout
+    row = layout.row(align=True)
+
 
 class VIEW3D_MT_edit_mesh_hotools(Menu):
     """编辑模式右键时的菜单追加"""
@@ -1048,6 +1054,7 @@ def register():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
+    bpy.types.VIEW3D_MT_edit_curve_context_menu.append(draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
     
@@ -1080,7 +1087,7 @@ def unregister():
     bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
-
+    bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)
 
     ureg_props()
