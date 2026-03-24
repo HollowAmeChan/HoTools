@@ -506,7 +506,9 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
         obj.update_from_editmode()
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         coords = [v.co.copy() for v in bm.verts]
         kd = KDTree(len(coords))
@@ -591,7 +593,9 @@ class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
         obj.update_from_editmode()
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         coords = [v.co.copy() for v in bm.verts]
         kd = KDTree(len(coords))
@@ -913,6 +917,9 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         obj = context.edit_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         # 验证或创建 deform 层
         dvert_layer = bm.verts.layers.deform.verify()  # :contentReference[oaicite:0]{index=0}
@@ -966,6 +973,9 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
         obj = context.edit_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         # 验证或创建 deform 层
         dvert_layer = bm.verts.layers.deform.verify()
@@ -1057,6 +1067,9 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
         obj = context.edit_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         # 1. 获取 Deform 层和活跃顶点组索引
         dvert_layer = bm.verts.layers.deform.verify()
@@ -1147,6 +1160,9 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
         obj = context.edit_object
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         dvert_layer = bm.verts.layers.deform.verify()
 
@@ -1259,7 +1275,9 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
         vg = obj.vertex_groups.active
 
         bm = bmesh.from_edit_mesh(obj.data)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         deform_layer = bm.verts.layers.deform.verify()
 
@@ -1312,7 +1330,9 @@ class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
         vg = obj.vertex_groups.active
 
         bm = bmesh.from_edit_mesh(obj.data)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         vgroup_index = vg.index
         group_layer = bm.verts.layers.deform.verify()
@@ -1378,6 +1398,9 @@ class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
     def execute(self, context):
         obj = context.active_object
         mesh = bmesh.from_edit_mesh(obj.data)
+        mesh.faces.ensure_lookup_table()  # 刷新索引表
+        mesh.edges.ensure_lookup_table()
+        mesh.verts.ensure_lookup_table() 
         # 取消所有顶点的选择
         for v in mesh.verts:
             v.select = False
@@ -1418,7 +1441,10 @@ class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
         vg_index = vg.index
 
         bm = bmesh.from_edit_mesh(obj.data)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
+        
 
         deform_layer = bm.verts.layers.deform.verify()
 
@@ -1505,6 +1531,9 @@ class OP_SelectNonWeightVertices(Operator):
             return {'CANCELLED'}
 
         bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
         deform_layer = bm.verts.layers.deform.verify()
 
         count = 0
@@ -1731,7 +1760,9 @@ class DebugBoneWeightGroup:
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh) if obj.mode == 'EDIT' else None
         if bm:
-            bm.verts.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()  # 刷新索引表
+            bm.edges.ensure_lookup_table()
+            bm.verts.ensure_lookup_table() 
         deform_layer = bm.verts.layers.deform.active if bm else None
 
         bone_colors = DebugBoneWeightGroup.build_bone_colors(obj)
@@ -2030,6 +2061,9 @@ def _draw_ActiveVertex_weight(layout:bpy.types.UILayout,context:bpy.types.Contex
         box = layout.box()
         dic_v = []
         bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
         for v in bm.verts:
             if v.select:
                 dic_v.append(v.index)

@@ -64,6 +64,9 @@ class OP_UVTools_ReplaceFromLayer(Operator):
 
         # 获取bmesh数据
         bm = bmesh.from_edit_mesh(mesh)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
         uv_layers = bm.loops.layers.uv
 
         # 获取源层和目标层
@@ -312,6 +315,9 @@ class OP_UVTools_FitToFirstQuadrant(Operator):
                 continue
 
             bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()  # 刷新索引表
+            bm.edges.ensure_lookup_table()
+            bm.verts.ensure_lookup_table() 
             uv_layer = bm.loops.layers.uv.active
             if not uv_layer:
                 continue

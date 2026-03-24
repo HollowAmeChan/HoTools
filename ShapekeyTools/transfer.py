@@ -151,6 +151,9 @@ class ShapeKeyTransfer:
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.mode_set(mode='EDIT')
             bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()  # 刷新索引表
+            bm.edges.ensure_lookup_table()
+            bm.verts.ensure_lookup_table() 
             return [v.select for v in bm.verts]
         finally:
             if current_obj:

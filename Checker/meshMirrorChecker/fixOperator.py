@@ -30,6 +30,10 @@ class OP_Checker_getActiveVertexIndex(Operator):
         obj = context.active_object
         mesh = obj.data
         bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
+        
         if self.is_target:
             context.scene.ho_mirrorchecker_target_vertex_index = bm.select_history.active.index
         else:
@@ -66,6 +70,9 @@ class OP_Checker_forceVertexMirror(Operator):
     def execute(self, context):
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
         baseV_index = context.scene.ho_mirrorchecker_base_vertex_index
         targetV_index = context.scene.ho_mirrorchecker_target_vertex_index
         mirrorAxis = context.scene.ho_MirrorCheckerAxis
@@ -204,6 +211,9 @@ class OP_Checker_AutoForceVertexMirror(Operator):
             return {'CANCELLED'}
 
         bm=bmesh.from_edit_mesh(mesh)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
         verts=bm.verts
 
         # --- 按轴分区 (加速匹配) --- #
@@ -276,7 +286,7 @@ class OP_Checker_AutoForceVertexMirror(Operator):
                 if not p:continue
                 self.fix_pos(verts[v_idx],verts[p],axis,tol,self.swapsign)
                 repaired+=1
-
+        bm.normal_update()
         bmesh.update_edit_mesh(mesh)
         self.report({'INFO'},f"增强版对称修复完成：{repaired} 点")
         return {'FINISHED'}

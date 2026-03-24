@@ -30,6 +30,8 @@ class OP_Checker_selectFace(Operator):
 
         bm = bmesh.from_edit_mesh(mesh)
         bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         for f in bm.faces:
             f.select = False
@@ -59,6 +61,8 @@ class OP_Checker_selectVerts(Operator):
         bpy.ops.mesh.select_mode(type='VERT')
         bm = bmesh.from_edit_mesh(mesh)
         bm.verts.ensure_lookup_table()  # 刷新顶点索引表
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
 
         for v in bm.verts:
             v.select = False
@@ -89,7 +93,9 @@ class OP_Checker_selectEdges(Operator):
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_mode(type='EDGE')
         bm = bmesh.from_edit_mesh(mesh)
-        bm.edges.ensure_lookup_table()  # 刷新边索引表
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         for e in bm.edges:
             e.select = False

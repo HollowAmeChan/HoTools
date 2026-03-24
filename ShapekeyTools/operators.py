@@ -337,6 +337,9 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
 
         bpy.ops.object.mode_set(mode='EDIT')
         mesh = bmesh.from_edit_mesh(obj.data)
+        mesh.faces.ensure_lookup_table()  # 刷新索引表
+        mesh.edges.ensure_lookup_table()
+        mesh.verts.ensure_lookup_table() 
 
         # 遍历形态键数据并选中对应顶点
         for i, shape_vert in enumerate(active_key.data):
@@ -439,7 +442,9 @@ class OP_SmoothShapekey(Operator):
         active = obj.active_shape_key
 
         bm = bmesh.from_edit_mesh(mesh)
-        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         basis_co = [Vector(basis.data[v.index].co) for v in bm.verts]
         offsets = [active.data[v.index].co - basis.data[v.index].co for v in bm.verts]
@@ -535,7 +540,9 @@ class OP_balanceShapekey(Operator):
 
         # 创建 bmesh（使用当前编辑模式下的物体网格）
         bm = bmesh.from_edit_mesh(mesh)
-        bm.verts.ensure_lookup_table()  # 保证刷新，不加这句在其他ops中调用无法成功
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         # 基型位置KDTree,用于查找匹配顶点
         basis_verts = [basis_shape_key.data[i].co for i in range(

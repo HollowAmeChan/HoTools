@@ -368,15 +368,14 @@ class OP_AddSelectSideRingLoops(Operator):
 
         obj = context.active_object
         me = obj.data
-        bm = bmesh.from_edit_mesh(me)
-
-        bm.edges.ensure_lookup_table()
-        bm.faces.ensure_lookup_table()
 
         # 1️⃣ 如果选中的不是完整 loop，先补全 loop
         bpy.ops.mesh.loop_multi_select(ring=False)
 
         bm = bmesh.from_edit_mesh(me)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         selected_edges = [e for e in bm.edges if e.select]
 
@@ -428,8 +427,9 @@ class OP_RemoveSelectSideRingLoops(Operator):
         me = obj.data
         bm = bmesh.from_edit_mesh(me)
 
+        bm.faces.ensure_lookup_table()  # 刷新索引表
         bm.edges.ensure_lookup_table()
-        bm.faces.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         selected_edges = {e for e in bm.edges if e.select}
 
@@ -496,6 +496,9 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()  # 刷新索引表
+        bm.edges.ensure_lookup_table()
+        bm.verts.ensure_lookup_table() 
 
         selected_edges = [e for e in bm.edges if e.select]
         if not selected_edges:
