@@ -625,14 +625,11 @@ class vertexGroup2RandomVertexColor(Operator):
                                         random.random(), random.random(), random.random())
                                     bpy.ops.paint.vertex_color_set()
                                     bpy.ops.object.editmode_toggle()
-                                    return {'FINISHED'}
                         break
                 break
         else:
             self.report({'WARNING'}, "找不到 3D 视图区")
             return {'CANCELLED'}
-
-        
         return {'FINISHED'}
 
 
@@ -815,13 +812,21 @@ class bakeNormal2VertexColor(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     mode: EnumProperty(
-        name="法线模式",
+        name="法线空间转换",
         items=[
-            ('POSITIVE', "正向", "自定义法线 → 原始法线空间"),
-            ('NEGATIVE', "Liltoon", "原始法线 → 自定义法线空间 用于修复描边效果"),
+            (
+                'CUSTOM2RAW',
+                "custom → raw",
+                "将自定义（平滑）法线编码到原始TBN空间"
+            ),
+            (
+                'RAW2CUSTOM',
+                "raw → custom（liltoon）",
+                "将原始法线编码到当前（自定义/平滑）TBN空间，用于修复 liltoon 描边方向"
+            ),
         ],
-        default='POSITIVE'
-    ) # type: ignore
+        default='CUSTOM2RAW'
+    )  # type: ignore
 
     def bake_normal(self, dst_obj, tbn_obj, normal_obj):
         dst_mesh = dst_obj.data
@@ -884,7 +889,7 @@ class bakeNormal2VertexColor(Operator):
         mesh0.normals_split_custom_set(custom_normals)
 
         try:
-            if self.mode == 'NEGATIVE':
+            if self.mode == 'RAW2CUSTOM':
                 self.bake_normal(
                     dst_obj=obj0,
                     tbn_obj=obj0,
