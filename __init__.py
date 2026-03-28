@@ -13,7 +13,7 @@ lib_dir = os.path.join(plugin_dir, "_Lib")
 sys.path.append(lib_dir)
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -142,6 +142,7 @@ def register():
     UvTools.register()
     MeshTools.register()
     Checker.register()
+    Rbf.register()
 
     
 
@@ -161,5 +162,6 @@ def unregister():
     UvTools.unregister()
     MeshTools.unregister()
     Checker.unregister()
+    Rbf.unregister()
 
     
