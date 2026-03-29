@@ -10,16 +10,14 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 
 class PG_renameRule(PropertyGroup):
     enum_items = [
-        ('MOD_FIXED_STRING', "固", "固定添加的字符"),
-        ('MOD_VARIABLE', "变", "随着骨骼链递增"),
+        ('MOD_FIXED_STRING', "字符", "固定字符"),
+        ('MOD_CHAIN', "链", "拥有相同父级的骨骼视为同一层，递增：如A、B、C...当出现分叉时链名会固定，然后考虑下一个链名规则。递增只发生在语义上的最后一位，因此可以写HairA"),
+        ('MOD_DEPTH', "深度", "从无父骨层级查询到当前骨的深度，递增只发生在语义上的最后一位，因此可以写d01、001"),
     ]
-    type: EnumProperty(name="Mod", items=enum_items)  # type: ignore
-    targetStr: StringProperty(name="Target String")  # type: ignore
-    startStr: StringProperty(
-        name="Start",
-        default="01",
-        description="起始值，可输入 01 / A / AA / 001 / ABC"
-    )  # type: ignore
+    type: EnumProperty(name="Mod", items=enum_items) # type: ignore
+    fixedStr: StringProperty(name="字符", default="Bone") # type: ignore
+    chainStr: StringProperty(name="链名", default="A", description="分叉时递增(A,B..)") # type: ignore
+    deepStr: StringProperty(name="深度", default="01", description="沿链条向下递增(01,02..)") # type: ignore
 
 class UL_RuleList(UIList):
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
@@ -29,9 +27,11 @@ class UL_RuleList(UIList):
         tmp.prop(item, "type", text="")  # 绘制枚举类型
 
         if item.type == 'MOD_FIXED_STRING':
-            row.prop(item, "targetStr", text="")
-        if item.type == 'MOD_VARIABLE':
-            row.prop(item, "startStr", text="")
+            row.prop(item, "fixedStr", text="")
+        if item.type == 'MOD_CHAIN':
+            row.prop(item, "chainStr", text="")
+        if item.type == 'MOD_DEPTH':
+            row.prop(item, "deepStr", text="")
         # 留空以便选择
         tmp = row.row(align=True)
         tmp.scale_x = 0.4
@@ -342,171 +342,108 @@ class OP_RemoveSideTail(Operator):
 
 class OP_RuleRenameBoneSelected(Operator):
     bl_idname = "ho.rename_rulerenameboneselected"
-    bl_label = "对选择的骨骼链进行规则重命名"
-    bl_description = "多条链使用最后一个可变规则,链中第一个分叉使用倒数第二个可变规则，以此类推"
+    bl_label = "链叉重命名"
+    bl_description = "建议使用预设来学习用法"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def increment_string(self, s: str) -> str:
-            # 纯数字
-            if s.isdigit():
-                return str(int(s) + 1).zfill(len(s))
-            
-            # 纯字母 (保留大小写)
-            if s.isalpha():
-                chars = list(s)
+    def increment_string(self, s: str, times: int = 0) -> str:
+        if times <= 0: return s
+        result = s
+        for _ in range(times):
+            if result.isdigit():
+                result = str(int(result) + 1).zfill(len(result))
+            elif result.isalpha():
+                chars = list(result)
                 i = len(chars) - 1
-                
                 while i >= 0:
                     c = chars[i]
-                    # 处理小写字母的进位
-                    if c == 'z':
-                        chars[i] = 'a'
+                    if c in ('z', 'Z'):
+                        chars[i] = 'a' if c == 'z' else 'A'
                         i -= 1
-                    # 处理大写字母的进位
-                    elif c == 'Z':
-                        chars[i] = 'A'
-                        i -= 1
-                    # 正常递增
                     else:
                         chars[i] = chr(ord(c) + 1)
-                        return ''.join(chars)
-                
-                # 如果全部进位了（例如 "z" -> "aa", "ZZ" -> "AAA"）
-                # 根据原字符串首字母的大小写来决定新增字母是大写还是小写
-                prefix = 'a' if s[0].islower() else 'A'
-                return prefix + ''.join(chars)
-
-            # 混合（处理尾部数字）
-            import re
-            match = re.search(r'(\d+)$', s)
-            if match:
-                num_part = match.group(1)
-                prefix = s[:-len(num_part)]
-                new_num = str(int(num_part) + 1).zfill(len(num_part))
-                return prefix + new_num
-
-            # fallback
-            return s + "1"
-    
-    def sort_bones_by_hierarchy(self, selected_bones):
-        """
-        使用邻接表（字典）构建相对层级树结构。
-        返回: (roots, children_map)
-        - roots: 没有选中父级的骨骼列表
-        - children_map: {骨骼: [选中的直接或间接子骨骼列表]}
-        难以利用用户选择顺序，只能利用谷歌内部创建顺序
-        """
-        selected_set = set(selected_bones)
-        roots = []
-        children_map = {bone: [] for bone in selected_bones}
-
-        for bone in selected_bones:
-            # 向上查找，直到找到第一个也在选中列表中的父骨骼
-            parent = bone.parent
-            while parent and parent not in selected_set:
-                parent = parent.parent
-
-            if parent in selected_set:
-                children_map[parent].append(bone)
+                        result = ''.join(chars)
+                        break
+                else:
+                    result = ('a' if result[0].islower() else 'A') + ''.join(chars)
             else:
-                roots.append(bone)
-
-        # 为了保证重命名顺序的一致性，可以对兄弟骨骼按照坐标或原名称进行排序
-        roots.sort(key=lambda b: b.name)
-        for parent in children_map:
-            children_map[parent].sort(key=lambda b: b.name)
-
-        return roots, children_map
+                match = re.search(r'(\d+)$', result)
+                if match:
+                    num = match.group(1)
+                    result = result[:-len(num)] + str(int(num) + 1).zfill(len(num))
+                else:
+                    result = result + "1"
+        return result
 
     def execute(self, context):
-        armature = bpy.context.active_object
-        if not (armature and armature.type == 'ARMATURE'):
-            self.report({'WARNING'}, "请选择一个骨架")
-            return {'FINISHED'}
-
-        # 假设你的 UI 规则列表存在 context.scene.ho_boneRename_rules 下
-        # 这里需要替换为你实际存放 PG_renameRule 的 CollectionProperty 路径
-        rules = getattr(context.scene, "ho_boneRename_rules", []) 
-        if not rules:
-            self.report({'WARNING'}, "没有设置重命名规则")
-            return {'FINISHED'}
-
-        current_mode = armature.mode
-        bpy.ops.object.mode_set(mode='OBJECT')  # 切换到对象模式以确保数据刷新
-
-        selected_bones = [bone for bone in armature.data.bones if bone.select]
+        obj = context.active_object
+        rules = context.scene.ho_boneRename_rules
+        selected_bones = [b for b in obj.data.bones if b.select]
+        
         if not selected_bones:
-            bpy.ops.object.mode_set(mode=current_mode)
-            self.report({'WARNING'}, "未选中任何骨骼")
-            return {'FINISHED'}
+            return {'CANCELLED'}
 
-        # 1. 构建层级树
-        roots, children_map = self.sort_bones_by_hierarchy(selected_bones)
+        # 1. 找到所有的根骨骼
+        roots = [b for b in selected_bones if b.parent not in selected_bones]
 
-        # 2. 准备初始变量状态
-        # 提取所有的变量规则初始值
-        var_indices = [i for i, r in enumerate(rules) if r.type == 'MOD_VARIABLE']
-        initial_vars = {i: rules[i].startStr for i in var_indices}
+        # 2. 递归扫描拓扑结构，存储每个骨骼的“链信息”
+        # bone_data 格式: { bone_pointer: { 'chains': [idx0, idx1...], 'depth': int } }
+        self.bone_topology_data = {}
+        
+        for root in roots:
+            # 根骨骼初始：链层级0，该层级分叉索引由root在所有根中的顺序决定
+            root_idx = roots.index(root)
+            self.scan_topology(root, [root_idx], 0, selected_bones)
 
-        rename_queue = [] # 收集待重命名的字典，避免在遍历中直接修改影响逻辑
-
-        # 3. 使用 DFS（深度优先）遍历树并生成新名字
-        def traverse(bone, current_vars, depth):
-            # 生成当前骨骼的名称
+        # 3. 根据扫描到的数据，对照 rules 统一渲染名字
+        for bone, data in self.bone_topology_data.items():
             new_name_parts = []
-            for i, rule in enumerate(rules):
+            chain_rule_count = 0
+            
+            for rule in rules:
                 if rule.type == 'MOD_FIXED_STRING':
-                    new_name_parts.append(rule.targetStr)
-                elif rule.type == 'MOD_VARIABLE':
-                    new_name_parts.append(current_vars[i])
-            
-            new_name = "".join(new_name_parts)
-            rename_queue.append((bone, new_name))
-
-            # 遍历子骨骼
-            children = children_map.get(bone, [])
-            for child_idx, child_bone in enumerate(children):
-                # 复制当前变量状态，准备传递给子集
-                next_vars = current_vars.copy()
+                    new_name_parts.append(rule.fixedStr)
                 
-                # 确定哪一个变量需要递增（根据你的逻辑：子代分支递增）
-                # 这里提供一种通用逻辑：如果没有分支，最末尾的变量递增；如果是兄弟分支，次级变量递增。
-                # 你可以根据具体需求修改这里的变量递增映射。
-                if var_indices:
-                    # 默认让最后一个变量递增以代表链条延伸
-                    var_to_increment = var_indices[-1] 
-                    
-                    # 如果有多个子骨骼（分叉），可能需要递增倒数第二个变量来区分不同的链
-                    if child_idx > 0 and len(var_indices) >= 2:
-                        var_to_increment = var_indices[-2]
-
-                    next_vars[var_to_increment] = self.increment_string(next_vars[var_to_increment])
+                elif rule.type == 'MOD_CHAIN':
+                    # 只有当骨骼拥有对应层级的链信息时才添加
+                    if chain_rule_count < len(data['chains']):
+                        val_idx = data['chains'][chain_rule_count]
+                        new_name_parts.append(self.increment_string(rule.chainStr, val_idx))
+                    chain_rule_count += 1
                 
-                traverse(child_bone, next_vars, depth + 1)
+                elif rule.type == 'MOD_DEPTH':
+                    new_name_parts.append(self.increment_string(rule.deepStr, data['depth']))
 
-        # 遍历所有根骨骼
-        for root_idx, root_bone in enumerate(roots):
-            current_vars = initial_vars.copy()
-            # 不同的根骨骼递增规则（比如最高层级的可变规则）
-            if root_idx > 0 and var_indices:
-                top_var_idx = var_indices[0]
-                # 模拟根据根骨骼数量递增初始值
-                for _ in range(root_idx):
-                    current_vars[top_var_idx] = self.increment_string(current_vars[top_var_idx])
-            
-            traverse(root_bone, current_vars, depth=0)
+            bone.name = "_".join(new_name_parts)
 
-        # 4. 执行重命名
-        # 在应用名字前，先统一加一个临时后缀避免 Blender 自动加 .001 导致名字混乱
-        for bone, new_name in rename_queue:
-            bone.name = new_name + "_TMP_RENAME"
-        for bone, new_name in rename_queue:
-            bone.name = new_name
-
-        bpy.ops.object.mode_set(mode=current_mode)
-        self.report({'INFO'}, f"成功重命名了 {len(rename_queue)} 根骨骼")
         return {'FINISHED'}
 
+    def scan_topology(self, bone, current_chains, depth, scope):
+        """
+        current_chains: 列表，存储从祖先到当前骨骼每一级分叉的索引值
+        """
+        # 记录当前骨骼数据
+        self.bone_topology_data[bone] = {
+            'chains': current_chains,
+            'depth': depth
+        }
+
+        # 获取在选中范围内的子骨骼
+        children = [b for b in bone.children if b in scope]
+        
+        for i, child in enumerate(children):
+            next_chains = list(current_chains)
+            
+            if len(children) > 1:
+                # 发生分叉：子级开启一个新的链层级，记录它是第几个分叉
+                next_chains.append(i)
+                # 分叉后，子级的局部深度是否重置？
+                # 按照常规骨骼命名，深度通常是全局增长的，所以这里保持 depth + 1
+            else:
+                # 单传：继承父级的链条索引，不增加新的链层级
+                pass
+            
+            self.scan_topology(child, next_chains, depth + 1, scope)
 
 class OP_RuleChangeNameBoneSelected(Operator):
     bl_idname = "ho.rename_rulechangenameboneselected"
@@ -579,6 +516,38 @@ class OP_RemoveRule(Operator):
                 0, scene.ho_boneRename_rules_index - 1)  # 更新索引
         return {'FINISHED'}
 
+class OP_AddRenamePreset(Operator):
+    bl_idname = "ho.rename_add_preset"
+    bl_label = "添加命名预设"
+    bl_description = "快速添加常用的骨骼重命名规则组合"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    preset_type: bpy.props.EnumProperty(
+        items=[
+            ('DEFAULT', "默认", "适用于复杂分叉(不超过三次分叉)：Bone_A_A_A_01"),
+            ('SHORT', "短", "稍短(不超过三次分叉)：Bone01_A_A_01"),
+        ],
+        name="预设类型"
+    ) # type: ignore
+
+    def execute(self, context):
+        rules = context.scene.ho_boneRename_rules
+        rules.clear()  # 清空当前所有规则
+
+        if self.preset_type == 'DEFAULT':
+            r = rules.add(); r.type = 'MOD_FIXED_STRING'; r.fixedStr = "Bone"
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "A"
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "A"
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "A"
+            r = rules.add(); r.type = 'MOD_DEPTH'; r.deepStr = "01"
+        if self.preset_type == 'SHORT':
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "Bone01"
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "A"
+            r = rules.add(); r.type = 'MOD_CHAIN'; r.chainStr = "A"
+            r = rules.add(); r.type = 'MOD_DEPTH'; r.deepStr = "01"
+
+        return {'FINISHED'}
+
 
 class OP_AddChangeRule(Operator):
     bl_idname = "ho.rename_addchangerule"
@@ -633,6 +602,7 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
     row1 = col.row(align=True)
     row1.scale_y = 2.0
     row1.operator(OP_RuleRenameBoneSelected.bl_idname, text="重命名")
+    row1.operator_menu_enum(OP_AddRenamePreset.bl_idname, "preset_type", text="", icon='PRESET')
 
     row2 = col.row(align=True)
     row2.operator(OP_RemoveNumberTail.bl_idname, text="去除数字后缀")
@@ -662,7 +632,7 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
 cls = [PG_renameRule, PG_changenameRule,
        UL_RuleList, UL_ChangeRuleList,
        OP_SaveRules, OP_LoadRules,
-       OP_SaveChangeRules, OP_LoadChangeRules,
+       OP_SaveChangeRules, OP_LoadChangeRules,OP_AddRenamePreset,
        OP_RemoveNumberTail, OP_RemoveSideTail,
        OP_AddRule, OP_RemoveRule, OP_MoveRule,
        OP_AddChangeRule, OP_RemoveChangeRule, OP_MoveChangeRule,
