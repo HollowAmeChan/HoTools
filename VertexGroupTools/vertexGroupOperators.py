@@ -454,105 +454,135 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
-    """对称顶点组权重到对侧骨骼顶点组"""
     bl_idname = "ho.vertex_group_mirror_to_other"
-    bl_label = "镜像权重到对侧组"
-    bl_description = "处理选中顶点，将当前激活顶点组的权重镜像复制到另一侧的对应顶点组（例如 .L 到 .R），并激活目标组"
+    bl_label = "镜像权重到对侧组（骨骼限定版）"
     bl_options = {'REGISTER', 'UNDO'}
 
     tolerance: FloatProperty(
-        name="容差",
+        name="匹配容差",
         default=0.001,
-        min=0.0001,
+        min=0.00001,
         max=1.0
-    )  # type: ignore
+    ) # type: ignore
+
+    midline_epsilon: FloatProperty(
+        name="中线阈值",
+        default=1e-6,
+        min=1e-8,
+        max=0.01
+    ) # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
-    def flip_group_name(self, name: str) -> str:
-        patterns = [
-            (r"\.l$", ".r"), (r"\.r$", ".l"),
-            (r"\.L$", ".R"), (r"\.R$", ".L"),
-            (r"_L$", "_R"), (r"_R$", "_L"),
-            (r"Left", "Right"), (r"Right", "Left"),
-            (r"left", "right"), (r"right", "left"),
-            (r"LEFT", "RIGHT"), (r"RIGHT", "LEFT"),
-        ]
-        for pattern, replacement in patterns:
-            if re.search(pattern, name):
-                return re.sub(pattern, replacement, name)
-        return name
-
     def execute(self, context):
         obj = context.active_object
         vg = obj.vertex_groups.active
+
         if not vg:
-            self.report({'ERROR'}, "请先选择一个激活的顶点组")
+            self.report({'WARNING'}, "请先选择一个激活的顶点组")
             return {'CANCELLED'}
 
-        target_group_name = self.flip_group_name(vg.name)
-        if target_group_name == vg.name:
-            self.report({'ERROR'}, "未检测到命名中的左右标识 (.L/_L/Left 等)")
+        # === 找骨架 ===
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定骨骼")
             return {'CANCELLED'}
 
-        if target_group_name not in obj.vertex_groups:
-            obj.vertex_groups.new(name=target_group_name)
+        bone_names = {b.name for b in arm.data.bones}
 
-        target_vg = obj.vertex_groups[target_group_name]
+        # === 当前组必须是骨骼组 ===
+        if vg.name not in bone_names:
+            self.report({'WARNING'}, f"当前顶点组 {vg.name} 不是骨骼对应组")
+            return {'CANCELLED'}
+
+        # === flip 名字 ===
+        flipped_name = bpy.utils.flip_name(vg.name)
+
+        if not flipped_name or flipped_name == vg.name:
+            self.report({'WARNING'}, "未检测到有效左右标识")
+            return {'CANCELLED'}
+
+        # === 关键：必须是骨骼里真实存在的 ===
+        if flipped_name not in bone_names:
+            self.report({'WARNING'}, f"目标骨骼 {flipped_name} 不存在（已阻止自动创建）")
+            return {'CANCELLED'}
+
+        # === 顶点组必须存在===
+        if flipped_name not in obj.vertex_groups:
+            obj.vertex_groups.new(name=flipped_name)
+
+        target_vg = obj.vertex_groups[flipped_name]
 
         obj.update_from_editmode()
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
-        bm.faces.ensure_lookup_table()  # 刷新索引表
-        bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table() 
+        bm.verts.ensure_lookup_table()
 
-        coords = [v.co.copy() for v in bm.verts]
-        kd = KDTree(len(coords))
-        for i, co in enumerate(coords):
-            kd.insert(co, i)
+        # === KDTree ===
+        kd = KDTree(len(bm.verts))
+        for v in bm.verts:
+            kd.insert(v.co, v.index)
         kd.balance()
 
         deform_layer = bm.verts.layers.deform.verify()
         src_index = vg.index
         dst_index = target_vg.index
 
-        to_write: list[tuple[int, float | None]] = []
-        total = matched = skipped = not_found = 0
+        to_write = []
+
+        total = matched = not_found = midline = 0
 
         for v in bm.verts:
             if not v.select:
                 continue
-            total += 1
 
+            total += 1
+            src_weights = v[deform_layer]
+
+            # === 中线 ===
+            if abs(v.co.x) < self.midline_epsilon:
+                midline += 1
+                if src_index in src_weights:
+                    to_write.append((v.index, src_weights[src_index]))
+                else:
+                    to_write.append((v.index, None))
+                matched += 1
+                continue
+
+            # === 镜像坐标 ===
             mirrored_co = v.co.copy()
-            mirrored_co[0] *= -1
-            hits = kd.find_range(mirrored_co, self.tolerance)
-            if not hits:
+            mirrored_co.x *= -1
+
+            co, mirror_idx, dist = kd.find(mirrored_co)
+
+            if dist > self.tolerance:
                 not_found += 1
                 continue
 
-            mirror_idx = hits[0][1]
-            if mirror_idx == v.index:
-                skipped += 1
+            # === 防止匹配到同侧（重要）===
+            if (v.co.x > 0 and bm.verts[mirror_idx].co.x > 0) or \
+               (v.co.x < 0 and bm.verts[mirror_idx].co.x < 0):
                 continue
 
-            src_weights = v[deform_layer]
+            # === 写入 ===
             if src_index in src_weights:
                 to_write.append((mirror_idx, src_weights[src_index]))
             else:
                 to_write.append((mirror_idx, None))
+
             matched += 1
 
+        # === 批量写 ===
         for idx, w in to_write:
             weights = bm.verts[idx][deform_layer]
             if w is not None:
                 weights[dst_index] = w
-            elif dst_index in weights:
-                del weights[dst_index]
+            else:
+                if dst_index in weights:
+                    del weights[dst_index]
 
         bm.normal_update()
         bmesh.update_edit_mesh(mesh, loop_triangles=False)
@@ -560,10 +590,13 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
 
         obj.vertex_groups.active_index = target_vg.index
 
-        self.report({'INFO'},
-                    f"{vg.name} → {target_vg.name} | 处理 {total} 顶点，成功 {matched}，跳过 {skipped}，未找到 {not_found}")
-        return {'FINISHED'}
+        self.report(
+            {'INFO'},
+            f"{vg.name} → {target_vg.name} | 总 {total} | 成功 {matched} | 中线 {midline} | 未找到 {not_found}"
+        )
 
+        return {'FINISHED'}
+    
 class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
     """对称选中顶点的顶点组权重到 X 轴另一侧"""
     bl_idname = "ho.balance_vertex_group_weight"
