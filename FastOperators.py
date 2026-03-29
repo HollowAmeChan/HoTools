@@ -488,32 +488,54 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         default='FORWARD'
     ) # type: ignore
 
+    auto_rename: bpy.props.BoolProperty(
+        name="自动重命名",
+        description="创建完成后自动联动hotools规则重命名",
+        default=True
+    ) # type: ignore
+
     # ---------------------------------------------------
     # 获取所有连通 flow
     # ---------------------------------------------------
 
     def get_edge_flows(self, context):
-
+        import bmesh
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
-        bm.faces.ensure_lookup_table()  # 刷新索引表
+        
+        # 必须刷新，否则索引和选择状态可能不对
         bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table() 
+        bm.verts.ensure_lookup_table()
 
+        # 1. 获取当前所有选中的边
         selected_edges = [e for e in bm.edges if e.select]
         if not selected_edges:
             return None
-
+            
         unvisited = set(selected_edges)
         world = obj.matrix_world
         all_chains = []
 
-        while unvisited:
+        # 2. 提取选择历史中的边，作为排序种子
+        # history 记录了用户点击的先后顺序
+        seeds_from_history = []
+        for elem in bm.select_history:
+            if isinstance(elem, bmesh.types.BMEdge) and elem.select:
+                if elem in unvisited:
+                    seeds_from_history.append(elem)
+        
+        # 3. 构建完整的种子队列：历史种子 + 剩余选中的边
+        seeds_queue = seeds_from_history + [e for e in selected_edges if e not in set(seeds_from_history)]
 
-            start_edge = unvisited.pop()
+        # 4. 开始按种子顺序遍历连通分支
+        for start_edge in seeds_queue:
+            if start_edge not in unvisited:
+                continue
 
+            # --- 寻找当前连通分支 (BFS) ---
             stack = [start_edge]
             component = {start_edge}
+            unvisited.remove(start_edge)
 
             while stack:
                 e = stack.pop()
@@ -524,45 +546,58 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                             component.add(linked)
                             stack.append(linked)
 
+            # --- 确定链条的逻辑顺序 ---
+            # 计算分支内每个顶点的度
             vert_count = {}
             for e in component:
                 for v in e.verts:
                     vert_count[v] = vert_count.get(v, 0) + 1
 
+            # 找到端点（度为1的点）
             start_verts = [v for v, c in vert_count.items() if c == 1]
 
             is_closed = False
-            if start_verts:
-                current = start_verts[0]
-            else:
-                current = list(component)[0].verts[0]
+            if not start_verts:
+                # 如果没有端点，说明是闭合环
+                current_vert = start_edge.verts[0]
                 is_closed = True
+            else:
+                # 如果是开链，选择离“种子边”最近的那个端点作为起点
+                # 这样可以保证骨骼链的方向更符合用户点击时的直觉
+                v1, v2 = start_verts[0], start_verts[-1]
+                mid_seed = (start_edge.verts[0].co + start_edge.verts[1].co) / 2
+                if (v1.co - mid_seed).length <= (v2.co - mid_seed).length:
+                    current_vert = v1
+                else:
+                    current_vert = v2
 
-            ordered = [current]
-            visited_edges = set()
+            # --- 按照拓扑顺序排列顶点 ---
+            ordered_verts = [current_vert]
+            visited_edges_in_comp = set()
 
             while True:
                 next_edge = None
-                for e in current.link_edges:
-                    if e in component and e not in visited_edges:
+                for e in current_vert.link_edges:
+                    if e in component and e not in visited_edges_in_comp:
                         next_edge = e
                         break
 
                 if not next_edge:
                     break
 
-                visited_edges.add(next_edge)
-                v1, v2 = next_edge.verts
-                current = v2 if v1 == current else v1
-                ordered.append(current)
+                visited_edges_in_comp.add(next_edge)
+                # 移动到下一个顶点
+                v_other = next_edge.other_vert(current_vert)
+                current_vert = v_other
+                ordered_verts.append(current_vert)
 
-            chain_points = [world @ v.co.copy() for v in ordered]
+            # 转换为世界坐标
+            chain_points = [world @ v.co.copy() for v in ordered_verts]
 
             if len(chain_points) > 1:
                 all_chains.append((chain_points, is_closed))
 
         return all_chains
-
     # ---------------------------------------------------
 
     def resample_chain(self, pts):
@@ -791,6 +826,17 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x + key_width, y - 22, 0)
         blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
+        # ---------------- 第三行 ----------------
+        key_text = "R键:"
+        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+        blf.position(font_id, x, y - 44, 0)
+        blf.draw(font_id, key_text)
+
+        key_width, _ = blf.dimensions(font_id, key_text)
+        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+        blf.position(font_id, x + key_width, y - 44, 0)
+        blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
+
     # ---------------------------------------------------
 
     def modal(self, context, event):
@@ -824,6 +870,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             self.direction_mode = modes[(i + 1) % 4]
             context.area.tag_redraw()
 
+        if event.type == 'R' and event.value == 'PRESS':
+            self.auto_rename = not self.auto_rename
+            context.area.tag_redraw()
+
         return {'RUNNING_MODAL'}
 
     # ---------------------------------------------------
@@ -836,7 +886,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
     # ---------------------------------------------------
 
     def create_bones(self, context):
-
         bpy.ops.object.mode_set(mode='OBJECT')
 
         arm_data = bpy.data.armatures.new("FlowArmature")
@@ -846,13 +895,16 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         context.view_layer.objects.active = arm_obj
         bpy.ops.object.mode_set(mode='EDIT')
 
-        for chain_index, (chain, is_closed) in enumerate(self.preview_points):
+        # 用于存储所有新生成的骨骼名，保持创建顺序
+        new_bone_names = []
 
+        for chain_index, (chain, is_closed) in enumerate(self.preview_points):
             points = self.apply_direction(chain)
             previous = None
 
             for i in range(len(points) - 1):
-                bone = arm_data.edit_bones.new(f"Flow_{chain_index}_{i}")
+                bone_name = f"Flow_{chain_index}_{i}"
+                bone = arm_data.edit_bones.new(bone_name)
                 bone.head = points[i]
                 bone.tail = points[i + 1]
 
@@ -861,9 +913,31 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                     bone.use_connect = True
 
                 previous = bone
+                new_bone_names.append(bone.name) # 记录顺序
 
-        bpy.ops.object.mode_set(mode='OBJECT')
-
+        # --- 自动重命名的核心逻辑 ---
+        if self.auto_rename:
+            # 确保在编辑模式下操作
+            bpy.ops.armature.select_all(action='DESELECT')
+            
+            # 按照创建顺序（权重）选中骨骼
+            for b_name in new_bone_names:
+                eb = arm_data.edit_bones.get(b_name)
+                if eb:
+                    eb.select = True
+            
+            # 更新层级数据，确保算子能获取到最新的选择状态
+            arm_data.edit_bones.active = arm_data.edit_bones[new_bone_names[0]]
+            
+            # 切换到物体模式以刷新数据，然后调用重命名算子
+            # 注意：如果你的重命名算子要在编辑模式跑，就保持编辑模式
+            bpy.ops.object.mode_set(mode='OBJECT')
+            
+            # 调用你之前的重命名算子
+            # 确保 bl_idname 匹配
+            bpy.ops.ho.rename_rulerenameboneselected()
+        else:
+            bpy.ops.object.mode_set(mode='OBJECT')
     # ---------------------------------------------------
 
     def invoke(self, context, event):
