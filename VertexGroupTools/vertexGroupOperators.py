@@ -15,6 +15,8 @@ import random
 from gpu_extras.batch import batch_for_shader
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
+# TODO 需要一个全局开关，让所有的操作开关是否仅处理骨骼权重组
+# TODO 自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
 def reg_props():
     bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False,name="hotools顶点组面板")#启用属性下的操作菜单
@@ -455,7 +457,7 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
 
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
     bl_idname = "ho.vertex_group_mirror_to_other"
-    bl_label = "镜像权重到对侧组（骨骼限定版）"
+    bl_label = "镜像权重(仅骨骼权重)到对侧组，无自动归一化"
     bl_options = {'REGISTER', 'UNDO'}
 
     tolerance: FloatProperty(
@@ -601,15 +603,22 @@ class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
     """对称选中顶点的顶点组权重到 X 轴另一侧"""
     bl_idname = "ho.balance_vertex_group_weight"
     bl_label = "对称/翻转顶点组权重"
-    bl_description = "仅处理选中的顶点,默认x轴向,全选进行翻转"
+    bl_description = "仅处理选中的顶点, 默认X轴。不判定是否为骨骼权重"
     bl_options = {'REGISTER', 'UNDO'}
 
     tolerance: FloatProperty(
-        name="容差",
+        name="匹配容差",
         default=0.001,
-        min=0.0001,
+        min=0.00001,
         max=1.0
-    )  # type: ignore
+    ) # type: ignore
+
+    midline_epsilon: FloatProperty(
+        name="中线阈值",
+        default=1e-6,
+        min=1e-8,
+        max=0.01
+    ) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -619,6 +628,7 @@ class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
     def execute(self, context):
         obj = context.active_object
         vg = obj.vertex_groups.active
+
         if not vg:
             self.report({'ERROR'}, "请先选择一个激活的顶点组")
             return {'CANCELLED'}
@@ -626,61 +636,84 @@ class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
         obj.update_from_editmode()
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
-        bm.faces.ensure_lookup_table()  # 刷新索引表
-        bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table() 
+        bm.verts.ensure_lookup_table()
 
-        coords = [v.co.copy() for v in bm.verts]
-        kd = KDTree(len(coords))
-        for i, co in enumerate(coords):
-            kd.insert(co, i)
+        # === KDTree ===
+        kd = KDTree(len(bm.verts))
+        for v in bm.verts:
+            kd.insert(v.co, v.index)
         kd.balance()
 
         deform_layer = bm.verts.layers.deform.verify()
         group_index = vg.index
 
-        to_write: list[tuple[int, float | None]] = []
-        total = matched = skipped = not_found = 0
+        to_write = []
+
+        total = matched = not_found = midline = skipped = 0
 
         for v in bm.verts:
             if not v.select:
                 continue
+
             total += 1
+            src_weights = v[deform_layer]
 
-            src_idx = v.index
-            target_co = coords[src_idx].copy()
-            target_co[0] *= -1
+            # === 中线处理 ===
+            if abs(v.co.x) < self.midline_epsilon:
+                midline += 1
 
-            hits = kd.find_range(target_co, self.tolerance)
-            if not hits:
+                # 👉 自身复制（关键修复）
+                if group_index in src_weights:
+                    to_write.append((v.index, src_weights[group_index]))
+                else:
+                    to_write.append((v.index, None))
+
+                matched += 1
+                continue
+
+            # === 镜像坐标 ===
+            mirrored_co = v.co.copy()
+            mirrored_co.x *= -1
+
+            co, mirror_idx, dist = kd.find(mirrored_co)
+
+            if dist > self.tolerance:
                 not_found += 1
                 continue
 
-            mirror_idx = hits[0][1]
-            if mirror_idx == src_idx:
+            # === 防止同侧匹配（很重要）===
+            mv = bm.verts[mirror_idx]
+            if (v.co.x > 0 and mv.co.x > 0) or (v.co.x < 0 and mv.co.x < 0):
                 skipped += 1
                 continue
 
-            src_weights = v[deform_layer]
+            # === 写入 ===
             if group_index in src_weights:
                 to_write.append((mirror_idx, src_weights[group_index]))
             else:
                 to_write.append((mirror_idx, None))
+
             matched += 1
 
+        # === 批量写入 ===
         for idx, w in to_write:
             weights = bm.verts[idx][deform_layer]
             if w is not None:
                 weights[group_index] = w
-            elif group_index in weights:
-                del weights[group_index]
+            else:
+                if group_index in weights:
+                    del weights[group_index]
 
+        # === 更新 ===
         bm.normal_update()
         bmesh.update_edit_mesh(mesh, loop_triangles=False)
         obj.update_from_editmode()
 
-        self.report({'INFO'},
-                    f"共 {total} 顶点 | 成功对称 {matched} | 未找到 {not_found} | 跳过 {skipped}")
+        self.report(
+            {'INFO'},
+            f"总 {total} | 成功 {matched} | 中线 {midline} | 未找到 {not_found} | 跳过 {skipped}"
+        )
+
         return {'FINISHED'}
 
 class VGSwitchHUD:
