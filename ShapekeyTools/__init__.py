@@ -50,13 +50,18 @@ def draw_in_DATA_PT_shape_keys(self, context: bpy.types.Context):
 
 
     row = layout.row(align=True)
-    row.prop(context.scene,"hoShapekeyTools_open_menu",text="",icon="EVENT_H",toggle=True)
-    row.prop(context.scene,"hoShapekeyTools_enable_multi",text="",icon="OUTLINER_COLLECTION",toggle=True)
+    row1 = row.row(align=True)
+    row1.alignment = 'LEFT'
+    row1.prop(context.scene,"hoShapekeyTools_open_menu",text="",icon="EVENT_H",toggle=True)
+    row1.prop(context.scene,"hoShapekeyTools_enable_multi",text="",icon="OUTLINER_COLLECTION",toggle=True)
     
+    row2 = row.row(align=True)
+    row2.alignment= 'RIGHT'
     if context.scene.hoShapekeyTools_control_shape_key_listener:
-        row.alert = True
-    row.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="",toggle=True,icon="FILE_REFRESH")
-    row.alert =False
+        row2.alert = True
+    row2.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="",toggle=True,icon="FILE_REFRESH")
+    row2.alert =False
+
 
     if context.scene.hoShapekeyTools_open_menu:
         operators._draw_sk_operators(context=context,layout=layout)

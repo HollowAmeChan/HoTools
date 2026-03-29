@@ -2081,7 +2081,6 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
-    row.prop(scene,"hoVertexGroupTools_isAutoNormalizeWeight",text="",icon="RECORD_ON",toggle=True)
     op = row.operator(OP_VertexGroupTools_Select_Vertices_halfside.bl_idname,text="左半")
     op.reverse = True
     op = row.operator(OP_VertexGroupTools_Select_Vertices_halfside.bl_idname,text="右半")
@@ -2234,14 +2233,21 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     layout: bpy.types.UILayout = self.layout
     
     row = layout.row(align=True)
-    
-    row.prop(context.scene,"hoVertexGroupTools_open_menu",text="",icon="EVENT_H",icon_only=True,toggle=True)
-    row.prop(context.scene,"hoVertexGroupTools_view_activevertex_weight",text="",icon="OUTLINER_DATA_MESH",icon_only=True,toggle=True)
+
+    row1 = row.row(align=True)
+    row1.alignment = 'LEFT'
+    row1.prop(context.scene,"hoVertexGroupTools_open_menu",text="",icon="EVENT_H",icon_only=True,toggle=True)
+    row1.prop(context.scene,"hoVertexGroupTools_view_activevertex_weight",text="",icon="OUTLINER_DATA_MESH",icon_only=True,toggle=True)
     global DEBUG_BONEWEIGHTGROUP_DRAW
     if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
-        row.alert = True
-    row.prop(context.scene,"hoVertexGroupTools_DebugBoneWeightGroup_open_menu",text="",icon="OUTLINER_DATA_LIGHT",icon_only=True,toggle=True)
-    row.alert = False
+        row1.alert = True
+    row1.prop(context.scene,"hoVertexGroupTools_DebugBoneWeightGroup_open_menu",text="",icon="OUTLINER_DATA_LIGHT",icon_only=True,toggle=True)
+    row1.alert = False
+
+    row2 = row.row(align=True)
+    row2.alignment = 'RIGHT'
+    row2.prop(context.scene,"hoVertexGroupTools_isAutoNormalizeWeight",text="",icon="RECORD_ON",toggle=True)
+
 
 
     if context.scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu:
