@@ -15,43 +15,41 @@ import random
 from gpu_extras.batch import batch_for_shader
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
-# TODO 需要一个全局开关，让所有的操作开关是否仅处理骨骼权重组
 # TODO 自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
 def reg_props():
     bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False,name="hotools顶点组面板")#启用属性下的操作菜单
-    bpy.types.Scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu = BoolProperty(default=False,name="hotools顶点组debug面板")
-    bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(
-        name="最大值",
-        description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",
-        default=0,
-        min=0,
-        max=1
-    )
     bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight = BoolProperty(default=False,name="显示活动顶点权重信息",description="很卡，不舒服自己关掉")
+    bpy.types.Scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu = BoolProperty(default=False,name="hotools顶点组debug面板")
 
+    bpy.types.Scene.hoVertexGroupTools_OnlyAffectBoneGroup = BoolProperty(name="仅影响骨骼权重组",default=True,description="仅影响骨骼权重组，非骨骼权重组将被忽略。对于通用操作此开关会被忽略")
+    bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
+
+    bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(name="最大值",description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",default=0,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.1,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_vg_increment2 = FloatProperty(name="权重增减量2",default=0.05,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue = FloatProperty(name="选中权重小于",default=0.05,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_max_vg_number = IntProperty(name="最多权重数",default=4)
-    bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
     bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit = IntProperty(name="debug最多骨权重数",default=4)
 
 def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_open_menu
+    del bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight
     del bpy.types.Scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu
+
+    del bpy.types.Scene.hoVertexGroupTools_OnlyAffectBoneGroup
+    del bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight
+    
     del bpy.types.Scene.hoVertexGroupTools_remove_max
     del bpy.types.Scene.hoVertexGroupTools_vg_increment1
     del bpy.types.Scene.hoVertexGroupTools_vg_increment2
     del bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue
     del bpy.types.Scene.hoVertexGroupTools_max_vg_number
-    del bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight
-    del bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight
     del bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit
 
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
-    bl_label = "复制权重"
+    bl_label = "复制顶点权重"
     bl_description = "提取选中顶点的权重信息到剪切板，若多个顶点则会平均"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -106,7 +104,7 @@ class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
 
 class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_applyt_selectedvertex_groupvalues"
-    bl_label = "粘贴权重"
+    bl_label = "粘贴顶点权重"
     bl_description = "从剪切板中粘贴权重信息到选中的顶点"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -160,8 +158,14 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
 class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_normalize_selectedvertex_groupvalues"
     bl_label = "规格化权重"
-    bl_description = "规格化所选的所有顶点的骨骼权重（跳过锁定组，仅处理骨骼权重）"
+    bl_description = "规格化顶点的骨骼权重（跳过锁定组，仅处理骨骼权重）"
     bl_options = {'REGISTER', 'UNDO'}
+
+    only_selected: bpy.props.BoolProperty(
+        name="仅选中",
+        description="仅对选中的顶点进行规格化，否则对全部顶点",
+        default=True
+    ) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -174,48 +178,65 @@ class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
             self.report({'WARNING'}, "无效对象或对象无顶点组")
             return {'CANCELLED'}
 
-        # 切换模式确保顶点数据同步
-        if obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
+        # 切换模式确保数据同步
+        bpy.ops.object.mode_set(mode='OBJECT')
 
         mesh = obj.data
-        selected_verts = [v.index for v in mesh.vertices if v.select]
 
-        if not selected_verts:
-            self.report({'WARNING'}, "未选中任何顶点")
-            bpy.ops.object.mode_set(mode='EDIT')
-            return {'CANCELLED'}
+        # 获取目标顶点
+        if self.only_selected:
+            target_verts = [v.index for v in mesh.vertices if v.select]
+            if not target_verts:
+                self.report({'WARNING'}, "未选中任何顶点")
+                bpy.ops.object.mode_set(mode='EDIT')
+                return {'CANCELLED'}
+        else:
+            target_verts = [v.index for v in mesh.vertices]
+
+        # 缓存骨架
+        armature = obj.find_armature()
+        bone_names = set()
+        if armature:
+            bone_names = {b.name for b in armature.data.bones}
 
         # 遍历顶点
-        for v_idx in selected_verts:
+        for v_idx in target_verts:
             vert = mesh.vertices[v_idx]
 
-            # 计算该顶点在骨骼且未锁定的顶点组中的总权重
             total_weight = 0.0
             valid_groups = []
+
             for g in vert.groups:
                 vg = obj.vertex_groups[g.group]
+
                 if vg.lock_weight:
-                    continue  # 跳过锁定组
-                # 这里假设骨骼顶点组的名字存在于对象的骨架中
-                if context.object.find_armature() and vg.name not in context.object.find_armature().data.bones:
-                    continue  # 跳过非骨骼顶点组
+                    continue
+
+                # 仅处理骨骼权重
+                if armature and vg.name not in bone_names:
+                    continue
+
                 total_weight += g.weight
                 valid_groups.append((vg, g.weight))
 
             if total_weight == 0.0:
-                continue  # 没有有效权重，跳过
+                continue
 
-            # 规范化权重
+            # 规范化
+            inv_total = 1.0 / total_weight
             for vg, weight in valid_groups:
-                normalized_weight = weight / total_weight
-                vg.add([v_idx], normalized_weight, 'REPLACE')
+                vg.add([v_idx], weight * inv_total, 'REPLACE')
 
         if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
-            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+            DebugBoneWeightGroup.refresh_draw(context)
 
         bpy.ops.object.mode_set(mode='EDIT')
-        self.report({'INFO'}, "所选顶点的骨骼权重已规格化（锁定组未动）")
+
+        if self.only_selected:
+            self.report({'INFO'}, "已规格化选中顶点权重")
+        else:
+            self.report({'INFO'}, "已规格化全部顶点权重")
+
         return {'FINISHED'}
 
 class OP_VertexGroupTools_RemoveGroupVertex_by_value(Operator):
@@ -2052,9 +2073,9 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
 
     row = layout.row(align=True)
     row.operator(OP_VertexGroupTools_ExtractGroupValues_SelectedVertex.bl_idname,
-                 text="复制权重", icon="COPYDOWN")
+                 text="复制顶点权重", icon="COPYDOWN")
     row.operator(OP_VertexGroupTools_ApplyGroupValues_SelectedVertex.bl_idname,
-                 text="粘贴权重", icon="PASTEDOWN")
+                 text="粘贴顶点权重", icon="PASTEDOWN")
     
 
     col = layout.column(align=True)
