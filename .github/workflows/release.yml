@@ -23,9 +23,9 @@ jobs:
         FOLDER_NAME="Hotools"
         mkdir $FOLDER_NAME
 
-        # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__ *.blend*
-        rsync -av --exclude=".git" --exclude=".github" --exclude=".vscode" --exclude=".venv" --exclude=".gitignore" --exclude="__pycache__" --exclude="*.blend*" ./ $FOLDER_NAME/
-
+        # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__ *.blend[0-9]
+        # 不能使用*.blend*替代，因为这里的*可以为空，导致.blend文件也被排除掉了
+        rsync -av --exclude=".git" --exclude=".github" --exclude=".vscode" --exclude=".venv" --exclude=".gitignore" --exclude="__pycache__" --exclude="*.blend[0-9]" ./ $FOLDER_NAME/
         # 压缩包名字用日期
         ZIP_NAME="Hotools-$(date +'%Y%m%d-%H%M%S').zip"
         zip -r $ZIP_NAME $FOLDER_NAME
