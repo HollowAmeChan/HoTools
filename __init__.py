@@ -14,6 +14,7 @@ sys.path.append(lib_dir)
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
+from . import Exp_hogui
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -40,6 +41,15 @@ def updateExIconState(self, context):
         bpy.ops.ho.draw_exicon()
     else:
         bpy.ops.ho.remove_exicon()
+
+
+def updateExperimentalFeaturesState(self, context):
+    prefs = context.preferences.addons[__name__].preferences
+    if prefs.hoTools_ExperimentalFeatures_enable:
+        Exp_hogui.register()
+    else:
+        Exp_hogui.unregister()
+
 
 # 插件内置资源路径相关函数
 def asset_library_exists(path):
@@ -86,6 +96,9 @@ class AddonPreference(bpy.types.AddonPreferences):
 
     hoTools_enableExIcon: BoolProperty(name="开关exicon",
                                        default=False, update=updateExIconState)  # type: ignore
+    hoTools_ExperimentalFeatures_enable: BoolProperty(name="实验性功能",
+                                         default=False,
+                                         update=updateExperimentalFeaturesState)  # type: ignore
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
         name="图标不透明度", default=0.5, min=0.0, max=1.0)  # type: ignore
@@ -100,6 +113,8 @@ class AddonPreference(bpy.types.AddonPreferences):
         row.prop(self, "hoTools_enableExIcon", toggle=True)
         row.prop(self, "hoTools_ExIconSize")
         row.prop(self, "hoTools_ExiconAlpha")
+        row = layout.row(align=True)
+        row.prop(self, "hoTools_ExperimentalFeatures_enable", toggle=True)
 
         # 获取 KeyMap
         wm = context.window_manager
@@ -144,7 +159,10 @@ def register():
     Checker.register()
     Rbf.register()
 
-    
+    prefs = bpy.context.preferences.addons[__name__].preferences
+    if prefs.hoTools_ExperimentalFeatures_enable:
+        Exp_hogui.register()
+
 
 def unregister():
     for i in cls:
@@ -163,5 +181,6 @@ def unregister():
     MeshTools.unregister()
     Checker.unregister()
     Rbf.unregister()
+    Exp_hogui.unregister()
 
     
