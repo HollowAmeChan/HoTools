@@ -11,20 +11,19 @@ from mathutils import Vector
 import gpu
 
 if sys.version_info >= (3, 13):
-    from ._Lib.py313.PIL import Image, ImageDraw ,ImageFilter
+    from ._Lib.py313.PIL import Image, ImageDraw, ImageFilter
 elif sys.version_info >= (3, 11):
-    from ._Lib.py311.PIL import Image, ImageDraw ,ImageFilter
-else:
-    from ._Lib.py310.PIL import Image, ImageDraw, ImageFilter
+    from ._Lib.py311.PIL import Image, ImageDraw, ImageFilter
 
 import bmesh
 import math
-from bpy.types import Operator,Panel,Menu
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
+from bpy.types import Operator, Panel, Menu
+from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty, FloatVectorProperty
 import bmesh
 
-from mathutils import Vector, Matrix,Euler
+from mathutils import Vector, Matrix, Euler
 from bpy_extras.io_utils import ExportHelper, ImportHelper
+
 
 def reg_props():
     return
@@ -62,6 +61,7 @@ class OP_select_inside_face_loop(bpy.types.Operator):
         self.location = (event.mouse_region_x, event.mouse_region_y)
         return self.execute(context)
 
+
 class OP_RestartBlender(Operator):
     bl_idname = "ho.restart_blender"
     bl_label = "快速重启"
@@ -77,6 +77,7 @@ class OP_RestartBlender(Operator):
             subprocess.Popen([sys.argv[0], '-P', py])
         bpy.ops.wm.quit_blender()
         return {'FINISHED'}
+
 
 class OP_sync_render_visibility(Operator):
     bl_idname = "ho.sync_render_visibility"
@@ -98,6 +99,7 @@ class OP_sync_render_visibility(Operator):
 
         return {'FINISHED'}
 
+
 class OP_CopyALL_modifiers_to_selected(Operator):
     bl_idname = "ho.copyall_modifiers_to_selected"
     bl_label = "复制全部修改器到所选"
@@ -112,7 +114,7 @@ class OP_CopyALL_modifiers_to_selected(Operator):
         if not active_obj:
             self.report({'ERROR'}, "没有活动物体")
             return {'CANCELLED'}
-            
+
         if len(selected_objs) < 2:
             self.report({'ERROR'}, "需要选择至少两个物体（源物体+目标物体）")
             return {'CANCELLED'}
@@ -134,6 +136,7 @@ class OP_CopyALL_modifiers_to_selected(Operator):
         self.report({'INFO'}, f"成功复制 {len(modifiers)} 个修改器")
         return {'FINISHED'}
 
+
 class OP_PlaceObjectBottom(Operator):
     bl_idname = "ho.placeobjectbottom"
     bl_label = "选择底面放置"
@@ -148,7 +151,6 @@ class OP_PlaceObjectBottom(Operator):
             obj.type == 'MESH' and
             context.mode == 'EDIT_MESH'
         )
-
 
     def execute(self, context):
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -217,6 +219,7 @@ class OP_PlaceObjectBottom(Operator):
         obj.location.z -= min_z
 
         return {'FINISHED'}
+
 
 class OP_AlignViewToAvgNormal(Operator):
     bl_idname = "ho.align_to_avg_normal"
@@ -313,6 +316,7 @@ class OP_CustomSplitNormals_Export(Operator, ExportHelper):
         self.report({'INFO'}, f"已导出 {len(normals)} 个自定义法线")
         return {'FINISHED'}
 
+
 class OP_CustomSplitNormals_Import(Operator, ImportHelper):
     bl_idname = "ho.custom_splitnormal_import"
     bl_label = "导入自定义拆边法向文件"
@@ -337,7 +341,8 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
             return {'CANCELLED'}
 
         if len(normal_data) != len(mesh.loops):
-            self.report({'ERROR'}, f"法线数量不匹配 ({len(normal_data)} vs {len(mesh.loops)})")
+            self.report(
+                {'ERROR'}, f"法线数量不匹配 ({len(normal_data)} vs {len(mesh.loops)})")
             return {'CANCELLED'}
 
         # 转换为 Vector 列表
@@ -348,6 +353,7 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
         mesh.normals_split_custom_set(split_normals)
         self.report({'INFO'}, f"成功导入并应用 {len(split_normals)} 个法线")
         return {'FINISHED'}
+
 
 class OP_AddSelectSideRingLoops(Operator):
     bl_idname = "ho.addselect_sideringloops"
@@ -375,7 +381,7 @@ class OP_AddSelectSideRingLoops(Operator):
         bm = bmesh.from_edit_mesh(me)
         bm.faces.ensure_lookup_table()  # 刷新索引表
         bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table() 
+        bm.verts.ensure_lookup_table()
 
         selected_edges = [e for e in bm.edges if e.select]
 
@@ -407,6 +413,7 @@ class OP_AddSelectSideRingLoops(Operator):
 
         return {'FINISHED'}
 
+
 class OP_RemoveSelectSideRingLoops(Operator):
     bl_idname = "ho.removeselect_sideringloops"
     bl_label = "减选Ring"
@@ -429,7 +436,7 @@ class OP_RemoveSelectSideRingLoops(Operator):
 
         bm.faces.ensure_lookup_table()  # 刷新索引表
         bm.edges.ensure_lookup_table()
-        bm.verts.ensure_lookup_table() 
+        bm.verts.ensure_lookup_table()
 
         selected_edges = {e for e in bm.edges if e.select}
 
@@ -466,6 +473,7 @@ class OP_RemoveSelectSideRingLoops(Operator):
 
         return {'FINISHED'}
 
+
 class OP_CreatBoneChainByMeshFlow(Operator):
     bl_idname = "ho.create_bone_chain_by_meshflow"
     bl_label = "根据选中的线段创建骨骼链"
@@ -475,7 +483,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         name="段数",
         default=4,
         min=1,
-    ) # type: ignore
+    )  # type: ignore
 
     direction_mode: EnumProperty(
         name="方向模式",
@@ -486,13 +494,13 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             ('CURSORMINUS', "远离游标", ""),
         ],
         default='FORWARD'
-    ) # type: ignore
+    )  # type: ignore
 
     auto_rename: bpy.props.BoolProperty(
         name="自动重命名",
         description="创建完成后自动联动hotools规则重命名",
         default=True
-    ) # type: ignore
+    )  # type: ignore
 
     # ---------------------------------------------------
     # 获取所有连通 flow
@@ -502,7 +510,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         import bmesh
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
-        
+
         # 必须刷新，否则索引和选择状态可能不对
         bm.edges.ensure_lookup_table()
         bm.verts.ensure_lookup_table()
@@ -511,7 +519,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         selected_edges = [e for e in bm.edges if e.select]
         if not selected_edges:
             return None
-            
+
         unvisited = set(selected_edges)
         world = obj.matrix_world
         all_chains = []
@@ -523,9 +531,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             if isinstance(elem, bmesh.types.BMEdge) and elem.select:
                 if elem in unvisited:
                     seeds_from_history.append(elem)
-        
+
         # 3. 构建完整的种子队列：历史种子 + 剩余选中的边
-        seeds_queue = seeds_from_history + [e for e in selected_edges if e not in set(seeds_from_history)]
+        seeds_queue = seeds_from_history + \
+            [e for e in selected_edges if e not in set(seeds_from_history)]
 
         # 4. 开始按种子顺序遍历连通分支
         for start_edge in seeds_queue:
@@ -565,7 +574,8 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 # 如果是开链，选择离“种子边”最近的那个端点作为起点
                 # 这样可以保证骨骼链的方向更符合用户点击时的直觉
                 v1, v2 = start_verts[0], start_verts[-1]
-                mid_seed = (start_edge.verts[0].co + start_edge.verts[1].co) / 2
+                mid_seed = (start_edge.verts[0].co +
+                            start_edge.verts[1].co) / 2
                 if (v1.co - mid_seed).length <= (v2.co - mid_seed).length:
                     current_vert = v1
                 else:
@@ -662,7 +672,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 points.reverse()
 
             return points
-        
+
         if self.direction_mode == 'CURSORMINUS':
 
             cursor = bpy.context.scene.cursor.location
@@ -865,7 +875,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 self.update_preview(context)
 
         if event.type == 'F' and event.value == 'PRESS':
-            modes = ['FORWARD', 'REVERSE', 'CURSOR' , 'CURSORMINUS']
+            modes = ['FORWARD', 'REVERSE', 'CURSOR', 'CURSORMINUS']
             i = modes.index(self.direction_mode)
             self.direction_mode = modes[(i + 1) % 4]
             context.area.tag_redraw()
@@ -913,26 +923,26 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                     bone.use_connect = True
 
                 previous = bone
-                new_bone_names.append(bone.name) # 记录顺序
+                new_bone_names.append(bone.name)  # 记录顺序
 
         # --- 自动重命名的核心逻辑 ---
         if self.auto_rename:
             # 确保在编辑模式下操作
             bpy.ops.armature.select_all(action='DESELECT')
-            
+
             # 按照创建顺序（权重）选中骨骼
             for b_name in new_bone_names:
                 eb = arm_data.edit_bones.get(b_name)
                 if eb:
                     eb.select = True
-            
+
             # 更新层级数据，确保算子能获取到最新的选择状态
             arm_data.edit_bones.active = arm_data.edit_bones[new_bone_names[0]]
-            
+
             # 切换到物体模式以刷新数据，然后调用重命名算子
             # 注意：如果你的重命名算子要在编辑模式跑，就保持编辑模式
             bpy.ops.object.mode_set(mode='OBJECT')
-            
+
             # 调用你之前的重命名算子
             # 确保 bl_idname 匹配
             bpy.ops.ho.rename_rulerenameboneselected()
@@ -964,6 +974,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+
 def get_first_image_from_material(obj):
     if not obj.data.materials:
         return None
@@ -974,6 +985,7 @@ def get_first_image_from_material(obj):
         if n.type == 'TEX_IMAGE' and n.image:
             return n.image
     return None
+
 
 def longest_edge_world(obj, face):
     mw = obj.matrix_world
@@ -991,6 +1003,7 @@ def longest_edge_world(obj, face):
             max_len = l
 
     return max_len
+
 
 class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
@@ -1046,13 +1059,14 @@ class OP_MeshToImageEmpty(Operator):
         return {'FINISHED'}
 
 
-
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
     """大纲视图右键菜单"""
     layout: bpy.types.UILayout = self.layout
     layout.operator(OP_sync_render_visibility.bl_idname,
                     icon="RESTRICT_RENDER_OFF")
-def draw_in_DATA_PT_modifiers(self,context: bpy.types.Context):
+
+
+def draw_in_DATA_PT_modifiers(self, context: bpy.types.Context):
     """修改器顶上"""
     layout: bpy.types.UILayout = self.layout
     layout.use_property_decorate = False  # 禁用关键帧动画
@@ -1068,21 +1082,25 @@ def draw_in_DATA_PT_modifiers(self,context: bpy.types.Context):
 
     row = layout.row(align=True)
     row.operator(OP_CopyALL_modifiers_to_selected.bl_idname,
-                 text="复制全部到所选") 
-def draw_in_DATA_PT_customdata(self,context: bpy.types.Context):
+                 text="复制全部到所选")
+
+
+def draw_in_DATA_PT_customdata(self, context: bpy.types.Context):
     """几何数据属性下"""
     layout: bpy.types.UILayout = self.layout
     row = layout.row(align=True)
     row.operator(OP_CustomSplitNormals_Export.bl_idname)
     row.operator(OP_CustomSplitNormals_Import.bl_idname)
 
-def draw_in_VIEW3D_MT_object_convert(self,context: bpy.types.Context):
+
+def draw_in_VIEW3D_MT_object_convert(self, context: bpy.types.Context):
     """物体转换菜单下"""
     layout: bpy.types.UILayout = self.layout
     row = layout.row(align=True)
     row.operator(OP_MeshToImageEmpty.bl_idname)
 
-def draw_in_VIEW3D_MT_edit_curve_context_menu(self,context: bpy.types.Context):
+
+def draw_in_VIEW3D_MT_edit_curve_context_menu(self, context: bpy.types.Context):
     """曲线物体右键菜单下"""
     # TODO
     layout: bpy.types.UILayout = self.layout
@@ -1096,12 +1114,15 @@ class VIEW3D_MT_edit_mesh_hotools(Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator(OP_PlaceObjectBottom.bl_idname, icon='TRIA_DOWN')
-        layout.operator(OP_AlignViewToAvgNormal.bl_idname,icon="RESTRICT_RENDER_OFF")
-        layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname,icon="ADD")
+        layout.operator(OP_AlignViewToAvgNormal.bl_idname,
+                        icon="RESTRICT_RENDER_OFF")
+        layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon="ADD")
+
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
     """编辑模式右键时的菜单追加"""
-    self.layout.menu("VIEW3D_MT_edit_mesh_hotools") 
+    self.layout.menu("VIEW3D_MT_edit_mesh_hotools")
+
 
 def draw_in_TOPBAR_MT_editor_menus(self, context):
     # TODO 不知道要不要加,顶部的快速重启bl按键
@@ -1113,12 +1134,12 @@ def draw_in_TOPBAR_MT_editor_menus(self, context):
 
 cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_sync_render_visibility,
-       OP_CopyALL_modifiers_to_selected,OP_PlaceObjectBottom,
+       OP_CopyALL_modifiers_to_selected, OP_PlaceObjectBottom,
        VIEW3D_MT_edit_mesh_hotools,
        OP_AlignViewToAvgNormal,
-       OP_CustomSplitNormals_Import,OP_CustomSplitNormals_Export,
+       OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
        OP_MeshToImageEmpty,
-       OP_AddSelectSideRingLoops,OP_RemoveSelectSideRingLoops,
+       OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops,
        OP_CreatBoneChainByMeshFlow,
        ]
 
@@ -1128,30 +1149,31 @@ def register():
         bpy.utils.register_class(i)
     bpy.types.OUTLINER_MT_context_menu.append(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_modifiers.append(draw_in_DATA_PT_modifiers)
-    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(draw_in_VIEW3D_MT_edit_mesh_context_menu)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(
+        draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.append(draw_in_DATA_PT_customdata)
     bpy.types.VIEW3D_MT_object_convert.append(draw_in_VIEW3D_MT_object_convert)
-    bpy.types.VIEW3D_MT_edit_curve_context_menu.append(draw_in_VIEW3D_MT_edit_curve_context_menu)
+    bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
+        draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
 
-    
     # 快捷键设置可以被preference保存，不用担心注册阶段写死
     wm = bpy.context.window_manager
-    #填充选择-默认绑定 Ctrl + Shift + 右键
+    # 填充选择-默认绑定 Ctrl + Shift + 右键
     km = wm.keyconfigs.addon.keymaps.new(
         name="Window", space_type="EMPTY", region_type="WINDOW")
     kmi = km.keymap_items.new(OP_select_inside_face_loop.bl_idname,
                               type='RIGHTMOUSE', value='PRESS', ctrl=True, shift=True)
     kmi.active = True
 
-    #加减选环线-默认绑定 Alt + 小键盘"+/-"
+    # 加减选环线-默认绑定 Alt + 小键盘"+/-"
     km = wm.keyconfigs.addon.keymaps.new(
         name="Window", space_type="EMPTY", region_type="WINDOW")
     kmi = km.keymap_items.new(OP_AddSelectSideRingLoops.bl_idname,
-                              type='NUMPAD_PLUS', value='PRESS',alt=True)
+                              type='NUMPAD_PLUS', value='PRESS', alt=True)
     kmi.active = True
     kmi = km.keymap_items.new(OP_RemoveSelectSideRingLoops.bl_idname,
-                              type='NUMPAD_MINUS', value='PRESS',alt=True)
+                              type='NUMPAD_MINUS', value='PRESS', alt=True)
     kmi.active = True
 
     reg_props()
@@ -1162,9 +1184,11 @@ def unregister():
         bpy.utils.unregister_class(i)
     bpy.types.OUTLINER_MT_context_menu.remove(draw_in_OUTLINER_MT_context_menu)
     bpy.types.DATA_PT_modifiers.remove(draw_in_DATA_PT_modifiers)
-    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(draw_in_VIEW3D_MT_edit_mesh_context_menu)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(
+        draw_in_VIEW3D_MT_edit_mesh_context_menu)
     bpy.types.DATA_PT_customdata.remove(draw_in_DATA_PT_customdata)
-    bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(draw_in_VIEW3D_MT_edit_curve_context_menu)
+    bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
+        draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)
 
     ureg_props()

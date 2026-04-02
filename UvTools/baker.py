@@ -8,23 +8,25 @@ if sys.version_info >= (3, 13):
     from .._Lib.py313.PIL import Image, ImageDraw
 elif sys.version_info >= (3, 11):
     from .._Lib.py311.PIL import Image, ImageDraw
-else:
-    from .._Lib.py310.PIL import Image, ImageDraw
 
 import bmesh
-from bpy.types import Operator,Panel,Menu
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty,FloatVectorProperty
+from bpy.types import Operator, Panel, Menu
+from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, FloatProperty, IntProperty, EnumProperty, FloatVectorProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from mathutils.geometry import intersect_line_line_2d
 
 # region 变量
+
+
 def reg_props():
     return
+
 
 def ureg_props():
     return
 # endregion
+
 
 def dilate_image_with_colors(pil_img, radius):
     """为每个像素保留颜色，使用膨胀传播颜色"""
@@ -38,8 +40,8 @@ def dilate_image_with_colors(pil_img, radius):
     for _ in range(radius):
         dilated = img_arr.copy()
         for dx, dy in [(-1, -1), (-1, 0), (-1, 1),
-                        (0, -1),          (0, 1),
-                        (1, -1), (1, 0),  (1, 1)]:
+                       (0, -1),          (0, 1),
+                       (1, -1), (1, 0),  (1, 1)]:
             shifted = np.roll(np.roll(img_arr, dx, axis=0), dy, axis=1)
             shifted_alpha = shifted[:, :, 3]
             cond = (shifted_alpha > 0) & mask
@@ -49,6 +51,7 @@ def dilate_image_with_colors(pil_img, radius):
 
     return Image.fromarray(img_arr, mode="RGBA")
 
+
 class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     """将所有选中物体的UV岛填充为纯色并导出为一张图像"""
     bl_idname = "ho.uvtools_bakeuvisland_image"
@@ -57,22 +60,25 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'}) # type: ignore
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
 
-    image_width: IntProperty(name="图像宽度", default=2048, min=1) # type: ignore
-    image_height: IntProperty(name="图像高度", default=2048, min=1) # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
 
-    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0,description="空白区域的透明度") # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
 
     image_format: EnumProperty(name="图像格式",
-        items=[
-            ('PNG', "PNG", ""),
-            ('JPEG', "JPEG", "")
-        ],
-        default='PNG'
-    ) # type: ignore
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
 
-    dilate_radius: IntProperty(name="膨胀像素数",default=2,min=0,description="向外扩张的像素数,用于消除UV边缘缝隙") # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -90,10 +96,12 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
         height = self.image_height
         background_alpha_255 = int(self.background_alpha * 255)
 
-        pil_img = Image.new("RGBA", (width, height), (0, 0, 0, background_alpha_255))
+        pil_img = Image.new("RGBA", (width, height),
+                            (0, 0, 0, background_alpha_255))
         draw = ImageDraw.Draw(pil_img)
         depsgraph = context.evaluated_depsgraph_get()
-        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
             self.report({'ERROR'}, "未选中任何网格物体")
@@ -127,7 +135,8 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
 
                     f_uvs = [l[uv_layer].uv for l in f.loops]
                     for edge in f.edges:
-                        linked_faces = [lf for lf in edge.link_faces if lf not in island_faces]
+                        linked_faces = [
+                            lf for lf in edge.link_faces if lf not in island_faces]
                         for lf in linked_faces:
                             lf_uvs = [l[uv_layer].uv for l in lf.loops]
                             shared = False
@@ -159,7 +168,7 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
         # 膨胀每个区域颜色
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
 
-         # 保存图像
+        # 保存图像
         ext = ".png" if self.image_format == 'PNG' else ".jpg"
         final_path = bpy.path.abspath(self.filepath)
         if not final_path.lower().endswith(ext):
@@ -169,6 +178,7 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
         self.report({'INFO'}, f"已导出ID图像:{final_path}")
         return {'FINISHED'}
 
+
 class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
     """将所有选中物体的网格孤岛填充为纯色并导出为一张图像"""
     bl_idname = "ho.uvtools_bakemeshisland_image"
@@ -177,19 +187,22 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'}) # type: ignore
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
 
-    image_width: IntProperty(name="图像宽度", default=2048, min=1) # type: ignore
-    image_height: IntProperty(name="图像高度", default=2048, min=1) # type: ignore
-    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度") # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
     image_format: EnumProperty(name="图像格式",
-        items=[
-            ('PNG', "PNG", ""),
-            ('JPEG', "JPEG", "")
-        ],
-        default='PNG'
-    ) # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙") # type: ignore
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -207,11 +220,13 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
         width = self.image_width
         height = self.image_height
         background_alpha_255 = int(self.background_alpha * 255)
-        pil_img = Image.new("RGBA", (width, height), (0, 0, 0, background_alpha_255))
+        pil_img = Image.new("RGBA", (width, height),
+                            (0, 0, 0, background_alpha_255))
         draw = ImageDraw.Draw(pil_img)
 
         depsgraph = context.evaluated_depsgraph_get()
-        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
             self.report({'ERROR'}, "未选中任何网格物体")
             return {'CANCELLED'}
@@ -283,21 +298,24 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'})  # type: ignore # 不限制后缀，由用户选择格式
+    # type: ignore # 不限制后缀，由用户选择格式
+    filter_glob: StringProperty(default="*", options={'HIDDEN'})
 
-    image_width: IntProperty(name="图像宽度", default=2048, min=1) # type: ignore
-    image_height: IntProperty(name="图像高度", default=2048, min=1) # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
 
-    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0,description="空白区域的透明度") # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数",default=2,min=0,description="向外扩张的像素数,用于消除UV边缘缝隙") # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     image_format: EnumProperty(name="图像格式",
-        items=[
-            ('PNG', "PNG", ""),
-            ('JPEG', "JPEG", "")
-        ],
-        default='PNG'
-    ) # type: ignore
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -307,25 +325,24 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
         layout.prop(self, "image_format")
         layout.prop(self, "dilate_radius")
 
-
     def execute(self, context):
         # 初始颜色使用颜色
         self.palette = [
             (255,   0,   0, 255),       # 红
-            (  0, 255,   0, 255),       # 绿
-            (  0,   0, 255, 255),       # 蓝
+            (0, 255,   0, 255),       # 绿
+            (0,   0, 255, 255),       # 蓝
             (255, 255,   0, 255),       # 黄
             (255,   0, 255, 255),       # 品红
-            (  0, 255, 255, 255),       # 青
+            (0, 255, 255, 255),       # 青
             (255, 128,   0, 255),       # 橙
             (128,   0, 255, 255),       # 紫
             (128, 128, 128, 255),       # 灰
             (255, 192, 203, 255),       # 粉红
             (128, 128,   0, 255),       # 橄榄绿
-            (  0, 128, 128, 255),       # 深青
+            (0, 128, 128, 255),       # 深青
             (128,   0,   0, 255),       # 深红
-            (  0, 128,   0, 255),       # 深绿
-            (  0,   0, 128, 255),       # 深蓝
+            (0, 128,   0, 255),       # 深绿
+            (0,   0, 128, 255),       # 深蓝
             (255, 165,   0, 255),       # 橘黄
         ]
 
@@ -361,7 +378,8 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
                 color_table = {}
                 failed = False
                 for f in faces:
-                    used_colors = set(color_table.get(n, None) for n in neighbors[f])
+                    used_colors = set(color_table.get(n, None)
+                                      for n in neighbors[f])
                     for c in range(len(palette)):
                         if c not in used_colors:
                             color_table[f] = c
@@ -375,7 +393,8 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
                 self.report({'WARNING'}, f"颜色不足，已扩展颜色数量到 {len(palette)}")
             return None
 
-        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
             self.report({'ERROR'}, "未选中任何网格物体")
             return {'CANCELLED'}
@@ -383,7 +402,8 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
         width = self.image_width
         height = self.image_height
         background_alpha_255 = int(self.background_alpha * 255)
-        pil_img = Image.new("RGBA", (width, height), (0, 0, 0, background_alpha_255))
+        pil_img = Image.new("RGBA", (width, height),
+                            (0, 0, 0, background_alpha_255))
         draw = ImageDraw.Draw(pil_img)
         depsgraph = context.evaluated_depsgraph_get()
 
@@ -430,6 +450,7 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
         self.report({'INFO'}, f"已导出ID图像:{final_path}")
         return {'FINISHED'}
 
+
 class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
     """将每个选中物体填充为不同颜色并导出为一张图像"""
     bl_idname = "ho.uvtools_bake_objectid_image"
@@ -438,11 +459,13 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'})  # type: ignore
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
 
     image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
     image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
-    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
 
     image_format: EnumProperty(
         name="图像格式",
@@ -453,7 +476,8 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         default='PNG'
     )  # type: ignore
 
-    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
 
     def draw(self, context):
         layout = self.layout
@@ -472,10 +496,12 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         height = self.image_height
         background_alpha_255 = int(self.background_alpha * 255)
 
-        pil_img = Image.new("RGBA", (width, height), (0, 0, 0, background_alpha_255))
+        pil_img = Image.new("RGBA", (width, height),
+                            (0, 0, 0, background_alpha_255))
         draw = ImageDraw.Draw(pil_img)
         depsgraph = context.evaluated_depsgraph_get()
-        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
             self.report({'ERROR'}, "未选中任何网格物体")
@@ -514,11 +540,14 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         self.report({'INFO'}, f"已导出物体ID图像: {final_path}")
         return {'FINISHED'}
 
+
 def linear_channel_to_srgb(c):
     return 12.92 * c if c <= 0.0031308 else 1.055 * pow(c, 1.0 / 2.4) - 0.055
 
+
 def linear_to_srgb(color):
     return [linear_channel_to_srgb(c) for c in color]
+
 
 class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
     """导出选中物体的顶点色贴图（无顶点色则为黑）"""
@@ -527,20 +556,22 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*", options={'HIDDEN'}) # type: ignore
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
 
-    image_width: IntProperty(name="图像宽度", default=2048, min=1) # type: ignore
-    image_height: IntProperty(name="图像高度", default=2048, min=1) # type: ignore
-    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0) # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0) # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0)  # type: ignore
     image_format: EnumProperty(name="图像格式",
-        items=[
-            ('PNG', "PNG", ""),
-            ('JPEG', "JPEG", "")
-        ],
-        default='PNG'
-    ) # type: ignore
-    
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "image_width")
@@ -558,7 +589,8 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
         draw = ImageDraw.Draw(pil_img)
 
         depsgraph = context.evaluated_depsgraph_get()
-        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
             self.report({'ERROR'}, "请先选中至少一个网格物体")
@@ -589,7 +621,8 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
                 if color_layer:
                     cols = [loop[color_layer][:4] for loop in face.loops]
                 else:
-                    cols = [(1.0, 1.0, 1.0, 1.0)] * len(uvs)#没有数据就填充白色，因bl对没有颜色属性的物体显示为白色，有但是没启用的为黑色（极少见）
+                    # 没有数据就填充白色，因bl对没有颜色属性的物体显示为白色，有但是没启用的为黑色（极少见）
+                    cols = [(1.0, 1.0, 1.0, 1.0)] * len(uvs)
 
                 # 转为 0-255 范围
                 cols = [
@@ -601,14 +634,16 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
                     ) for c in cols
                 ]
 
-                px_uvs = [(int(uv.x * width), int((1.0 - uv.y) * height)) for uv in uvs]
+                px_uvs = [(int(uv.x * width), int((1.0 - uv.y) * height))
+                          for uv in uvs]
 
                 for i in range(1, len(px_uvs) - 1):
                     pts = [px_uvs[0], px_uvs[i], px_uvs[i + 1]]
                     cols_rgb = [cols[0], cols[i], cols[i + 1]]
 
                     # 用平均颜色填充三角形
-                    avg_col = tuple(int(sum(c[j] for c in cols_rgb) / 3) for j in range(4))
+                    avg_col = tuple(
+                        int(sum(c[j] for c in cols_rgb) / 3) for j in range(4))
                     draw.polygon(pts, fill=avg_col)
 
             bm.free()
@@ -627,6 +662,7 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
         self.report({'INFO'}, f"已导出顶点色贴图: {final_path}")
         return {'FINISHED'}
 
+
 class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     """快速合并导出psd模板"""
     bl_idname = "ho.uvtools_fastbake_uv_image"
@@ -635,35 +671,38 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
-    filter_glob: StringProperty(default="*.png", options={'HIDDEN'}) # type: ignore
+    filter_glob: StringProperty(
+        default="*.png", options={'HIDDEN'})  # type: ignore
 
-    image_width: IntProperty(name="图像宽度", default=2048, min=1) # type: ignore
-    image_height: IntProperty(name="图像高度", default=2048, min=1) # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
 
-    background_alpha: FloatProperty(name="背景透明度",description="空白区域的透明度", default=0.0, min=0.0, max=1.0) # type: ignore
-    dilate_radius: IntProperty(name="膨胀像素数",description="向外扩张的像素数,用于消除UV边缘缝隙",default=2,min=0) # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", description="空白区域的透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", description="向外扩张的像素数,用于消除UV边缘缝隙", default=2, min=0)  # type: ignore
 
-    export_UVIslandImage:BoolProperty(name="UV岛",default=True) # type: ignore
-    export_MeshIslandImage:BoolProperty(name="Mesh岛",default=True) # type: ignore
-    export_FaceIDImage:BoolProperty(name="面",default=True) # type: ignore
-    export_ObjectIDImage:BoolProperty(name="物体",default=True) # type: ignore
-    export_LineImage:BoolProperty(name="线框",default=True) # type: ignore
+    export_UVIslandImage: BoolProperty(
+        name="UV岛", default=True)  # type: ignore
+    export_MeshIslandImage: BoolProperty(
+        name="Mesh岛", default=True)  # type: ignore
+    export_FaceIDImage: BoolProperty(name="面", default=True)  # type: ignore
+    export_ObjectIDImage: BoolProperty(name="物体", default=True)  # type: ignore
+    export_LineImage: BoolProperty(name="线框", default=True)  # type: ignore
 
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
-        col.prop(self,"export_UVIslandImage",toggle=True)
-        col.prop(self,"export_MeshIslandImage",toggle=True)
-        col.prop(self,"export_FaceIDImage",toggle=True)
-        col.prop(self,"export_ObjectIDImage",toggle=True)
-        col.prop(self,"export_LineImage",toggle=True)
-        
+        col.prop(self, "export_UVIslandImage", toggle=True)
+        col.prop(self, "export_MeshIslandImage", toggle=True)
+        col.prop(self, "export_FaceIDImage", toggle=True)
+        col.prop(self, "export_ObjectIDImage", toggle=True)
+        col.prop(self, "export_LineImage", toggle=True)
 
         layout.prop(self, "image_width")
         layout.prop(self, "image_height")
         layout.prop(self, "background_alpha")
         layout.prop(self, "dilate_radius")
-
 
     def execute(self, context):
         base_path = os.path.splitext(self.filepath)[0]
@@ -757,11 +796,11 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
-def drawBakePanel(layout:bpy.types.UILayout, context):
+def drawBakePanel(layout: bpy.types.UILayout, context):
     box = layout.box()
     box.label(text="导出UV贴图")
     row = box.row(align=True)
-    row.operator(OT_UVTools_FastBakeUVImage.bl_idname,text="",icon="FUND")
+    row.operator(OT_UVTools_FastBakeUVImage.bl_idname, text="", icon="FUND")
     row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text="UV岛")
     row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
     row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
@@ -769,7 +808,6 @@ def drawBakePanel(layout:bpy.types.UILayout, context):
     row.operator("uv.export_layout", text="网格")
     row = box.row(align=True)
     row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
-    
 
     # box = layout.box()
     # box.label(text="检查UV")
@@ -777,10 +815,7 @@ def drawBakePanel(layout:bpy.types.UILayout, context):
     return
 
 
-
-   
-
-cls = [OT_UVTools_BakeUVIslandImage,OT_UVTools_BakeFaceIDImage,OT_UVTools_BakeObjectIDImage,OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_FastBakeUVImage,
        ]
@@ -790,15 +825,11 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
 
-    
-
     reg_props()
 
 
 def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
-    
-
 
     ureg_props()
