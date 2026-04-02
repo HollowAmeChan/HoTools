@@ -11,10 +11,13 @@ plugin_dir = os.path.dirname(__file__)
 sys.path.append(plugin_dir)
 lib_dir = os.path.join(plugin_dir, "_Lib")
 sys.path.append(lib_dir)
+#OmniNode的lib
+omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
+sys.path.append(omni_lib_dir)
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
-from . import Exp_hogui
+from . import Exp_hogui,OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -24,8 +27,8 @@ import rna_keymap_ui
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
-    "version": (2, 0, 0),
-    "blender": (4, 3, 0),
+    "version": (2, 2, 0),
+    "blender": (4, 5, 0),
     "location": "Hollow",
     "description": "https://space.bilibili.com/60340452",
     "warning": "",
@@ -44,11 +47,20 @@ def updateExIconState(self, context):
 
 
 def updateExperimentalFeaturesState(self, context):
+    """实验性功能使用到的更新函数"""
     prefs = context.preferences.addons[__name__].preferences
     if prefs.hoTools_ExperimentalFeatures_enable:
         Exp_hogui.register()
     else:
         Exp_hogui.unregister()
+
+def updateOmniNodeFeaturesState(self, context):
+    """OmniNode功能使用到的更新函数"""
+    prefs = context.preferences.addons[__name__].preferences
+    if prefs.hoTools_OmniNodeFeatures_enable:
+        OmniNode.register()
+    else:
+        OmniNode.unregister()
 
 
 # 插件内置资源路径相关函数
@@ -97,8 +109,10 @@ class AddonPreference(bpy.types.AddonPreferences):
     hoTools_enableExIcon: BoolProperty(name="开关exicon",
                                        default=False, update=updateExIconState)  # type: ignore
     hoTools_ExperimentalFeatures_enable: BoolProperty(name="实验性功能",
-                                         default=False,
-                                         update=updateExperimentalFeaturesState)  # type: ignore
+                                         default=False,update=updateExperimentalFeaturesState)  # type: ignore
+    hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
+                                          default=False,update=updateOmniNodeFeaturesState)  # type: ignore
+
     hoTools_ExIconSize: FloatProperty(name="图标大小", default=0.5)  # type: ignore
     hoTools_ExiconAlpha: FloatProperty(
         name="图标不透明度", default=0.5, min=0.0, max=1.0)  # type: ignore
@@ -115,6 +129,7 @@ class AddonPreference(bpy.types.AddonPreferences):
         row.prop(self, "hoTools_ExiconAlpha")
         row = layout.row(align=True)
         row.prop(self, "hoTools_ExperimentalFeatures_enable", toggle=True)
+        row.prop(self, "hoTools_OmniNodeFeatures_enable", toggle=True)
 
         # 获取 KeyMap
         wm = context.window_manager
@@ -162,6 +177,8 @@ def register():
     prefs = bpy.context.preferences.addons[__name__].preferences
     if prefs.hoTools_ExperimentalFeatures_enable:
         Exp_hogui.register()
+    if prefs.hoTools_OmniNodeFeatures_enable:
+        OmniNode.register()
 
 
 def unregister():
@@ -182,5 +199,6 @@ def unregister():
     Checker.unregister()
     Rbf.unregister()
     Exp_hogui.unregister()
+    OmniNode.unregister()
 
     
