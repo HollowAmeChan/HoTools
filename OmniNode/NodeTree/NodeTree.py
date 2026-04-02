@@ -24,13 +24,26 @@ class OmniNodeTree(NodeTree):  # 节点树
             self.pool = DataPool(nodeTree=self)  # 新建数据池,全为空
             self.doing_initNode = False
 
+    @staticmethod
+    def ensure_tree_runtime(tree):
+        if not hasattr(tree, "GlslTaskList"):   tree.GlslTaskList = []
+        if not hasattr(tree, "GlfwThread"):     tree.GlfwThread = None
+        if not hasattr(tree, "pool"):           tree.pool = DataPool(nodeTree=self) 
+        if not hasattr(tree, "doing_initNode"): tree.doing_initNode = False
+
     @classmethod
     def poll(self, context):
         return True
 
     def update(self):
         """原生回调,只有这一种原生回调__init__不在实例化时运行,只在注册时运行"""
-        self.OmniInit()
+        OmniNodeTree.ensure_tree_runtime(self)
+        if hasattr(self, "OmniInit"):
+            try:
+                self.OmniInit()
+            except Exception as e:
+                print("OmniInit error:", e)
+                
         if self.doing_initNode:  # 树状态-正在新建节点时不回调
             return
         if self.is_auto_update:  # 如果节点树自动更新，则运行整个节点树,只有运算的时候更新默认值
