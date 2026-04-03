@@ -4,7 +4,6 @@ import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .NodeTree import TREE_ID
 from .Function import DynamicBoneRig, Base, Math
-from .GlslNode import GlslNode
 
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -21,8 +20,7 @@ node_cls_DynamicBoneRig = FunctionCore.loadRegisterFuncNodes(DynamicBoneRig)
 cls.extend(node_cls_math)
 cls.extend(node_cls_base)
 cls.extend(node_cls_DynamicBoneRig)
-# GlslNode生成节点
-cls.extend(GlslNode.cls)
+
 
 
 node_categories = [
@@ -35,9 +33,6 @@ node_categories = [
     OmniNodeCategory("DYNAMICBONERIG", "DynamicBoneRig", items=[
         NodeItem(i.bl_idname) for i in node_cls_DynamicBoneRig
     ]),
-    OmniNodeCategory("GlSL_TESTNODE", "GLSL-testNode", items=[
-        NodeItem(i.bl_idname) for i in GlslNode.cls
-    ])
 ]
 
 

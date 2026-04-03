@@ -53,37 +53,10 @@ class OmniNodeSocketAny(NodeSocket):
         return (0.5, 0.5, 0.5, 0.9)
 
 
-class OmniNodeSocketGlslVertexList(OmniNodeSocketAny):
-    bl_label = "Omni节点Glsl顶点列表"
-    bl_idname = 'OmniNodeSocketGlslVertexList'
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.1, 0.3, 0.7, 0.9)
-
-
-class OmniNodeSocketGlslVertexIndicesList(OmniNodeSocketAny):
-    bl_label = "Omni节点Glsl顶点索引列表"
-    bl_idname = 'OmniNodeSocketGlslVertexIndicesList'
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.1, 0.3, 0.3, 0.9)
-
-
-class OmniNodeSocketGlslMat4x4(OmniNodeSocketAny):
-    bl_label = "Omni节点Glsl矩阵4x4"
-    bl_idname = 'OmniNodeSocketGlslMat4x4'
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.1, 0.3, 0.3, 0.9)
-
 
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
        OmniNodeSocketAny,
-       OmniNodeSocketGlslVertexList, OmniNodeSocketGlslVertexIndicesList,
-       OmniNodeSocketGlslMat4x4]
+       ]
 
 
 def register():

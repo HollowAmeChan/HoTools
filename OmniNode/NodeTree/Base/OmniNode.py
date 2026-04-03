@@ -1,5 +1,5 @@
 import bpy
-from bpy.types import Node
+from bpy.types import Node, NodeSocket
 from ...operator import NodeBaseOps
 
 

@@ -77,6 +77,9 @@ class DataPool:
 
     def __iter__(self):  # for i in 迭代器
         return iter(self._pool.values())  # 返回指点的值而不是键
+    
+    def __len__(self):  # len(DataPool())
+        return len(self._pool)
 
     def clearPool(self):
         self._pool.clear()

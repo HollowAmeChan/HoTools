@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import NodeTree, Node, NodeSocket, NodeLink
 from .Base.DataPool import DataPool, poolNodeInfo
+from .Base.OmniNode import OmniNode
 import time
 
 TREE_ID = 'OMNINODE'  # 节点树系统注册进去的identifier
@@ -18,18 +19,12 @@ class OmniNodeTree(NodeTree):  # 节点树
         description="阻止新建节点频繁回调", default=False)  # type: ignore
 
     def OmniInit(self):
-        if not hasattr(self, "GlslTaskList"):
-            self.GlslTaskList = []  # glsl处理的任务列表，与glfw窗口线程共享
-            self.GlfwThread = None
+        if not hasattr(self, "pool"):
             self.pool = DataPool(nodeTree=self)  # 新建数据池,全为空
-            self.doing_initNode = False
 
     @staticmethod
     def ensure_tree_runtime(tree):
-        if not hasattr(tree, "GlslTaskList"):   tree.GlslTaskList = []
-        if not hasattr(tree, "GlfwThread"):     tree.GlfwThread = None
         if not hasattr(tree, "pool"):           tree.pool = DataPool(nodeTree=tree) 
-        if not hasattr(tree, "doing_initNode"): tree.doing_initNode = False
 
     @classmethod
     def poll(self, context):
@@ -60,7 +55,7 @@ class OmniNodeTree(NodeTree):  # 节点树
     def reBuildPool(self):
         self.pool = DataPool(nodeTree=self)  # 新建数据池,全为空
 
-    def getRunLayer(self) -> tuple[set, set, list]:
+    def getRunLayer(self) -> tuple[set[NodeLink], set[OmniNode], list[list[OmniNode]], list[list[OmniNode | NodeLink]]]:
         """
         遍历节点图,分层输出相关信息
         outLinkSet:     涉及的link
@@ -68,10 +63,10 @@ class OmniNodeTree(NodeTree):  # 节点树
         outLayerList:   涉及的节点层
         outRunningList: 涉及的节点+link层 - 实际用来运行
         """
-        nodes = self.nodes
-        tempLinkSet = set()
-        outLinkSet = set()
-        visitedNode = set()
+        nodes: list[OmniNode] = self.nodes
+        tempLinkSet :set[NodeLink] = set()
+        outLinkSet :set[NodeLink] = set()
+        visitedNode :set[OmniNode] = set()
 
         # 搜索输出节点集合
         outNodeSet = set()
@@ -81,7 +76,7 @@ class OmniNodeTree(NodeTree):  # 节点树
                 outNodeSet.add(node)
 
         # dfs搜索出所有link
-        def followLinks(node_in):
+        def followLinks(node_in: OmniNode):
             for n_inputs in node_in.inputs:
                 for node_links in n_inputs.links:
                     tempLinkSet.add(node_links)
@@ -118,7 +113,7 @@ class OmniNodeTree(NodeTree):  # 节点树
             outLayerList.append(list(layer))
 
         # 分层输出运行节点+link
-        outRunningList = []
+        outRunningList : list[list[OmniNode | NodeLink]] = []
         total = len(outLayerList)
         for time in range(total):
             thisLayer = outLayerList[time]
@@ -135,19 +130,23 @@ class OmniNodeTree(NodeTree):  # 节点树
                         linkLayer.append(link)
             outRunningList.append(linkLayer)
 
-        # 不存在link时(此逻辑找不到任何节点)，输出一层outNode
         if len(outRunningList) == 0:
             outRunningList.append(list(outNodeSet))
 
         return outLinkSet, visitedNode, outLayerList, outRunningList
 
     def runRunLayer(self, outRunningList):
-        pool = self.pool
+        pool : DataPool = self.pool
         for layer in outRunningList:
+            layer: list[OmniNode | NodeLink]
             if layer == []:
                 break
-            if isinstance(layer[0], Node):
+            if isinstance(layer[0], OmniNode):
                 for node in layer:
+                    for socket in node.inputs:# process前首先利用自身socket默认值填充pool输入，防止缺少输入导致错误
+                        socket: NodeSocket
+                        pool[node.name].inputs[socket.identifier] = socket.default_value
+
                     errorlog = node.process()
                     if errorlog:
                         node.is_bug = True
