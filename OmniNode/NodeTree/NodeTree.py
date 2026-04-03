@@ -83,7 +83,7 @@ class OmniNodeTree(NodeTree):  # 节点树
                     outLinkSet.add(node_links)
                     followLinks(node_links.from_node)
 
-        # 此处控制起点，将总输出节点独立储存
+        # 递归搜索所有输出节点的全部上游节点和link，存储
         outSet = set()
         for node in nodes[:]:
             if node.is_output_node:
@@ -91,7 +91,7 @@ class OmniNodeTree(NodeTree):  # 节点树
                 followLinks(node)
 
         # 分层输出运行节点
-        outLayerList = []
+        outLayerList : list[list[OmniNode]] = []
         while len(tempLinkSet):
             parentSet = set()
             childrenSet = set()
@@ -111,8 +111,9 @@ class OmniNodeTree(NodeTree):  # 节点树
                 layer = outSet-visitedNode  # 防止重复运行 - 路线上有多个输出
             visitedNode = visitedNode.union(layer)
             outLayerList.append(list(layer))
+        visitedNode.update(outNodeSet)  # 加入输出节点,防止输出节点被误判为孤立节点
 
-        # 分层输出运行节点+link
+        # 分层输出运行节点列表+link列表，直接用于顺序运行（已合批）
         outRunningList : list[list[OmniNode | NodeLink]] = []
         total = len(outLayerList)
         for time in range(total):
@@ -169,11 +170,11 @@ class OmniNodeTree(NodeTree):  # 节点树
         """
         debug运行时报告运行的顺序
         """
-        print("==========    REPORT    ==========")
+        print("##########    REPORT    ##########")
         for i in runningNodeLayer:
             print([j.name for j in i], end="\t")
             print("")
-        print("==========    LAYERS    ==========")
+        print("##########    LAYERS    ##########")
         for i in runningLayer:
             for j in i:
                 if isinstance(j, NodeLink):
@@ -181,24 +182,27 @@ class OmniNodeTree(NodeTree):  # 节点树
                           "\t->\t",
                           j.to_node.name, ":", j.to_socket.identifier,)
                 if isinstance(j, Node):
-                    print(j.name, end="\t,\t")
+                    print(j.name, end="")
             print("")
-        print("==========    LINKS     ==========")
+        print("##########    LINKS     ##########")
         for i in linkSet:
             i: NodeLink
             print(i.from_node.name, ":", i.from_socket.identifier,
                   "\t->\t",
                   i.to_node.name, ":", i.to_socket.identifier,)
-        print("==========   Pool Data  ==========")
+        print("##########    NODES     ##########")
+        for i in nodeSet:
+            print(i.name)
+        print("##########   Pool Data  ##########")
         self.reportPool()
-        print("==========     OVER     ==========")
+        print("##########     OVER     ##########")
 
     def run(self):
         linkSet = set()
         nodeSet = set()
         runningNodeLayer = []
         linkSet, nodeSet, runningNodeLayer, runningLayers = self.getRunLayer()
-        # self.debugRunLayer(linkSet, nodeSet, runningNodeLayer, runningLayers)
+        self.debugRunLayer(linkSet, nodeSet, runningNodeLayer, runningLayers)
         pool = self.pool
         pool.clearPool()  # 重新把所有涉及到的节点创建标志符
         for node in nodeSet:
