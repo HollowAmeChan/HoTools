@@ -12,6 +12,8 @@ from . import _COLOR
       bl_label="设置物体位置",
       base_color=_COLOR.colorCat["SetBlenderProp"],
       is_output_node=True,
+      color_tag = "GEOMETRY",
+      bl_icon = "OBJECT_DATAMODE",
       )
 def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types.Object:
     obj.location = pos
@@ -20,7 +22,8 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
 
 @meta(enable=True,
       bl_label="Float加法",
-      base_color=_COLOR.colorCat["BaseMathFunction"]
+      base_color=_COLOR.colorCat["BaseMathFunction"],
+      color_tag = "CONVERTER",
       )
 def floatAdd(a: float, b: float) -> float:
     return a+b
@@ -28,6 +31,8 @@ def floatAdd(a: float, b: float) -> float:
 
 @meta(enable=True,
       bl_label="物体输入",
+      bl_icon = "OBJECT_DATAMODE",
+      color_tag = "GEOMETRY",
       base_color=_COLOR.colorCat["GetBlenderProp/BaseProp"],
       )
 def objectInput(obj: bpy.types.Object) -> bpy.types.Object:

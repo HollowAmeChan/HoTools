@@ -165,6 +165,8 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     node.updateColor()
     node.is_output_node = NodeInfo.get("is_output_node")
     node.omni_description = NodeInfo.get("omni_description")
+    # node.color_tag= NodeInfo.get("color_tag", "NONE")#blender的节点颜色标签，TODO:4.5暂时不能用，但是5.0以上已经修了
+    node.bl_icon = NodeInfo.get("bl_icon", "NONE")#blender的节点图标
     # 生成输入
     for i in SocketInMetaDict.keys():
         node.inputs.new(**SocketInMetaDict[i])
