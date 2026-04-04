@@ -33,7 +33,7 @@ class OmniNode(Node):
     is_output_node: bpy.props.BoolProperty(
         name="是否是输出节点", default=False, update=setOutputNode)  # type: ignore
     output_color: bpy.props.FloatVectorProperty(
-        name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0.4, 0, 0))  # type: ignore
+        name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0.7, 0, 0))  # type: ignore
     base_color: bpy.props.FloatVectorProperty(
         name="默认类型", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
     omni_description_toggle: bpy.props.BoolProperty(
@@ -103,7 +103,7 @@ class OmniNode(Node):
 
         # 生成布尔总开关
         bool = self.inputs.new(type="NodeSocketBool",
-                               name="布尔控制", identifier="_BOOL")
+                               name="执行", identifier="_BOOL")
         bool.hide = True
         bool.default_value = True
 
@@ -125,31 +125,31 @@ class OmniNode(Node):
         row_L.prop(self, "omni_description_toggle",
                    text="", toggle=True, icon="OUTLINER_DATA_LIGHT")
 
-        row_C = main_row.row(align=True)  # 中心按钮
-        SetDefaultSize = row_C.operator(
-            NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
-        SetDefaultSize.node_name = self.name
-        SetBiggerSize = row_C.operator(
-            NodeBaseOps.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
-        SetBiggerSize.node_name = self.name
+        # row_C = main_row.row(align=True)  # 中心按钮-放大缩小
+        # SetDefaultSize = row_C.operator(
+        #     NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
+        # SetDefaultSize.node_name = self.name
+        # SetBiggerSize = row_C.operator(
+        #     NodeBaseOps.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
+        # SetBiggerSize.node_name = self.name
 
         row_R = main_row.row(align=True)  # 右侧按钮
         row_R.alignment = 'RIGHT'
-        # 是否是自动更新的
-        if context.space_data.node_tree.is_auto_update:
-            row_R.prop(context.space_data.node_tree,
-                       "is_auto_update", text="", icon="DECORATE_LINKED")
-        else:
-            row_R.prop(context.space_data.node_tree,
-                       "is_auto_update", text="", icon="UNLINKED")
-
         row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
         row_R.operator(
             NodeBaseOps.LayerRunning.bl_idname, text="", icon="FILE_REFRESH")
 
         # 绘制高级工具栏
         if self.advanced:
-            layout.prop(self, "process_bool_toggle",
+            row = layout.row(align=True)
+            # 是否是自动更新的
+            if context.space_data.node_tree.is_auto_update:
+                row.prop(context.space_data.node_tree,
+                        "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+            else:
+                row.prop(context.space_data.node_tree,
+                        "is_auto_update", text="树自动更新", icon="UNLINKED")
+            row.prop(self, "process_bool_toggle",
                         text="逻辑socket", icon="DECORATE_ANIMATE")
 
         # debug显示

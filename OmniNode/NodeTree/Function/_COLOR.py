@@ -1,12 +1,11 @@
+import colorsys
+@staticmethod
+def hsv2rgb(h, s, v):
+    return colorsys.hsv_to_rgb(h, s, v)
+
 colorCat = {
-    "GetBlenderProp/BaseProp": (0.3, 0.3, 0.3),
-    "SetBlenderProp": (0.2, 0.3, 0.1),
-    "GetStruct": (),
-    "SetStruct": (),
-    "BaseMathFunction": (0.1, 0.2, 0.5),
-    "ComplexMathFunction"
-    "Function": (),
-    "Operator": (),
-    "ComplexOperator": (),
-    "Rig": (0.5, 0.1, 0.5),
+    "GetData": hsv2rgb(0, 0, 0.3),
+    "Operator": hsv2rgb(0.05, 0.35, 0.35),
+    "Math": hsv2rgb(0.58, 0.35, 0.35),
+    "ComplexMath": hsv2rgb(0.58, 0.35, 0.35),
 }

@@ -6,13 +6,28 @@ import typing
 from .Base.OmniNode import OmniNode
 from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny
 from bpy.types import Node
-from bpy.types import NodeSocketFloat, NodeSocketVector, NodeSocketColor, NodeSocketImage, NodeSocketBool, NodeSocketInt, NodeSocketObject, NodeSocketString, NodeSocketCollection
+from bpy.types import (
+    NodeSocketFloat,
+    NodeSocketVector,
+    NodeSocketColor,
+    NodeSocketBool,
+    NodeSocketInt,
+    NodeSocketString,
+    NodeSocketObject,
+    NodeSocketCollection,
+    NodeSocketImage,
+    NodeSocketMaterial,
+    NodeSocketTexture,
+    NodeSocketGeometry,
+    NodeSocketMatrix,
+)
 
 
 # 函数变量标签类型：blenderSocket类型
 cls_dic = {
     # 签名中没写类型的全是_empty类
     inspect._empty: OmniNodeSocketAny,
+    typing.Any: OmniNodeSocketAny,
     # blender类转化
     NodeSocketFloat: NodeSocketFloat,
     NodeSocketVector: NodeSocketVector,
@@ -28,17 +43,23 @@ cls_dic = {
     bpy.types.StringProperty: NodeSocketString,
     bpy.types.IntProperty: NodeSocketInt,
     bpy.types.Object: NodeSocketObject,
+    bpy.types.Mesh:NodeSocketGeometry,
     bpy.types.Image: NodeSocketImage,
     bpy.types.Collection: NodeSocketCollection,
     mathutils.Color: NodeSocketColor,
+    bpy.types.Material: NodeSocketMaterial,
+    bpy.types.Mesh: NodeSocketObject,
+    bpy.types.Armature: NodeSocketObject,
+    bpy.types.Texture: NodeSocketTexture,
+    mathutils.Matrix: NodeSocketMatrix,
     # python类到blender socket类
     float: NodeSocketFloat,
     str: NodeSocketString,
+    bool: NodeSocketBool,
+    int: NodeSocketInt,
     # Omni自定义接口
     bpy.types.Scene: OmniNodeSocketScene,
-    typing.Any: OmniNodeSocketAny,
     bpy.types.Text: OmniNodeSocketText,
-
 }
 
 
@@ -161,7 +182,8 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict]]:
 
 
 def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict):
-    node.base_color = NodeInfo.get("base_color")
+    if NodeInfo.get("base_color"):
+        node.base_color = NodeInfo.get("base_color")
     node.updateColor()
     node.is_output_node = NodeInfo.get("is_output_node")
     node.omni_description = NodeInfo.get("omni_description")

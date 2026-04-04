@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .NodeTree import TREE_ID
-from .Function import DynamicBoneRig, Base, Math
+from .Function import Data, Math,Operator, RigTooKit
 
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -14,24 +14,28 @@ class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
 
 cls = []
 # Function生成节点
+node_cls_data = FunctionCore.loadRegisterFuncNodes(Data)
 node_cls_math = FunctionCore.loadRegisterFuncNodes(Math)
-node_cls_base = FunctionCore.loadRegisterFuncNodes(Base)
-node_cls_DynamicBoneRig = FunctionCore.loadRegisterFuncNodes(DynamicBoneRig)
+node_cls_operator = FunctionCore.loadRegisterFuncNodes(Operator)
+node_cls_rigtoolkit = FunctionCore.loadRegisterFuncNodes(RigTooKit)
+cls.extend(node_cls_data)
 cls.extend(node_cls_math)
-cls.extend(node_cls_base)
-cls.extend(node_cls_DynamicBoneRig)
-
+cls.extend(node_cls_operator)
+cls.extend(node_cls_rigtoolkit)
 
 
 node_categories = [
+    OmniNodeCategory("DATA", "Data", items=[
+        NodeItem(i.bl_idname) for i in node_cls_data
+    ]),
     OmniNodeCategory("MATH", "Math", items=[
         NodeItem(i.bl_idname) for i in node_cls_math
     ]),
-    OmniNodeCategory("BASE", "Base", items=[
-        NodeItem(i.bl_idname) for i in node_cls_base
+    OmniNodeCategory("OPERATOR", "Operator", items=[
+        NodeItem(i.bl_idname) for i in node_cls_operator
     ]),
-    OmniNodeCategory("DYNAMICBONERIG", "DynamicBoneRig", items=[
-        NodeItem(i.bl_idname) for i in node_cls_DynamicBoneRig
+    OmniNodeCategory("RIGTOOLKIT", "RigToolKit", items=[
+        NodeItem(i.bl_idname) for i in node_cls_rigtoolkit
     ]),
 ]
 
