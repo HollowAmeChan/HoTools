@@ -33,7 +33,7 @@ class OmniNode(Node):
     is_output_node: bpy.props.BoolProperty(
         name="是否是输出节点", default=False, update=setOutputNode)  # type: ignore
     output_color: bpy.props.FloatVectorProperty(
-        name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0.7, 0, 0))  # type: ignore
+        name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0, 0.6, 0))  # type: ignore
     base_color: bpy.props.FloatVectorProperty(
         name="默认类型", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
     omni_description_toggle: bpy.props.BoolProperty(

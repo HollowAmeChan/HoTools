@@ -144,9 +144,10 @@ class OmniNodeTree(NodeTree):  # 节点树
                 break
             if isinstance(layer[0], OmniNode):
                 for node in layer:
-                    for socket in node.inputs:# process前首先利用自身socket默认值填充pool输入，防止缺少输入导致错误
+                    for socket in node.inputs:# process前,如果还没有上游link输入数据就利用自身socket默认值填充pool输入，防止缺少输入导致错误
                         socket: NodeSocket
-                        pool[node.name].inputs[socket.identifier] = socket.default_value
+                        if not pool[node.name].inputs[socket.identifier]:
+                            pool[node.name].inputs[socket.identifier] = socket.default_value
 
                     errorlog = node.process()
                     if errorlog:
