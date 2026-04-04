@@ -114,10 +114,11 @@ def get_socket_type_name(socket_cls):
     # Blender 内置 socket（用类名）（没有 bl_idname）
     return socket_cls.__name__
 
-def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict]]:
+def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
     NodeInfo = {}
     SocketInMetaDict = {}
     SocketOutMetaDict = {}
+    SocketDefaultDict = {}
 
     # 节点属性信息生成与覆盖
     NodeInfo["bl_label"] = func.__name__
@@ -146,10 +147,12 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict]]:
         index = 0
         for i in inputParamsPair:
             identifier = i.name
+            default_value = None if i.default is inspect._empty else i.default
+            SocketDefaultDict[identifier] = default_value
             dic = {
                 "type": get_socket_type_name(cls_dic.get(i.annotation, OmniNodeSocketAny)),
                 "name": i.name,
-                "identifier": identifier
+                "identifier": identifier,
             }
             SocketInMetaDict[identifier] = dic
             index += 1
@@ -169,7 +172,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict]]:
             dic = {
                 "type": get_socket_type_name(cls_dic.get(i, OmniNodeSocketAny)),
                 "name": name,
-                "identifier": identifier
+                "identifier": identifier,
             }
             SocketOutMetaDict[identifier] = dic
             index += 1
@@ -178,10 +181,10 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict]]:
                 if i in func.__meta:
                     SocketOutMetaDict[i].update(func.__meta[i])
 
-    return NodeInfo, SocketInMetaDict, SocketOutMetaDict
+    return NodeInfo, SocketInMetaDict, SocketOutMetaDict, SocketDefaultDict
 
 
-def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict):
+def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict):
     if NodeInfo.get("base_color"):
         node.base_color = NodeInfo.get("base_color")
     node.updateColor()
@@ -191,15 +194,22 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     node.bl_icon = NodeInfo.get("bl_icon", "NONE")#blender的节点图标
     # 生成输入
     for i in SocketInMetaDict.keys():
-        node.inputs.new(**SocketInMetaDict[i])
+        sock = node.inputs.new(**SocketInMetaDict[i])
+
+        default_value = SocketDefaultDict.get(i, None)
+        if default_value is not None:
+            try:
+                sock.default_value = default_value
+            except:
+                pass
     # 生成输出
     for i in SocketOutMetaDict.keys():
-        node.outputs.new(**SocketOutMetaDict[i])
+        sock = node.outputs.new(**SocketOutMetaDict[i])
     return
 
 
 def CreateNodeClass(func) -> OmniNode:
-    NodeInfo, SocketInMetaDict, SocketOutMetaDict = CheckMetaInfo(func)
+    NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict = CheckMetaInfo(func)
 
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
@@ -208,7 +218,7 @@ def CreateNodeClass(func) -> OmniNode:
         def init(self, context):
             super().init(context)
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
-                            SocketOutMetaDict)
+                            SocketOutMetaDict, SocketDefaultDict)
 
             self["fatherTree"].doing_initNode = False  # 更新树状态-新建节点结束
 
