@@ -10,7 +10,7 @@ from . import _COLOR
 @meta(enable=True,
       bl_label="设置物体位置",
       base_color=_COLOR.colorCat["Operator"],
-      is_output_node=True,
+      is_output_node=False,
       color_tag = "GEOMETRY",
       bl_icon = "OBJECT_DATAMODE",
       )
@@ -22,7 +22,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
 @meta(enable=True,
       bl_label="设置图像颜色",
       base_color=_COLOR.colorCat["Operator"],
-      is_output_node=True,
+      is_output_node=False,
       img={"name": "图像输入"},
       )
 def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.Image:
@@ -54,19 +54,12 @@ import bmesh
 import numpy as np
 from mathutils import Vector
 
-# -------------------------
-# UV sampling
-# -------------------------
 def sample_image(img_array, uv, w, h):
     x = min(max(uv.x * w, 0), w - 1)
     y = min(max(uv.y * h, 0), h - 1)
     ix, iy = int(x), int(y)
     return img_array[iy, ix]
 
-
-# -------------------------
-# barycentric
-# -------------------------
 def barycentric(p, a, b, c):
     v0 = b - a
     v1 = c - a
@@ -90,51 +83,36 @@ def barycentric(p, a, b, c):
 
 @meta(
     enable=True,
-    bl_label="跨UV烘焙贴图",
+    bl_label="纹理UV重定向",
     base_color=_COLOR.colorCat["Operator"],
-    is_output_node=True,
+    is_output_node=False,
     _OUTPUT_NAME=["图像"],
     omni_description="""
-    该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射（UV Reprojection Transfer）。
-
-    核心功能：
-    - 将输入图像从 uv_source 层重采样到 uv_target 层
-    - 支持 COLOR / NORMAL 两种贴图语义模式
-    - 支持 alpha 通道混合（COLOR模式）
-    - 支持 padding（UV边缘扩展，减少接缝）
-    - 支持 overwrite（原地编辑）或生成新贴图
-
-    工作逻辑说明：
-    1. 如果 overwrite=True：
+    该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射(UV Reprojection Transfer)
+    1. 如果 overwrite=True
     - 使用原始图像分辨率（禁止修改尺寸）
     - 在原图上进行像素重写
     - 保持材质/UV系统一致性
-
-    2. 如果 overwrite=False：
+    否则
     - 使用 resolution 创建新贴图
     - 输出独立结果图像
-
-    NORMAL模式说明：
+    2. isNormal=True
     - 自动设置 colorspace = Non-Color
     - 初始化值为 (0.5, 0.5, 1.0)
     - 不进行 alpha 混合，直接覆盖写入
-
-    COLOR模式说明：
+    否则
     - 使用 alpha 进行混合写入
     - 支持透明区域叠加
-
-    注意：
-    该节点不依赖 Blender Bake 系统，属于CPU UV重映射实现。
     """,
     )
-def bakeTextureBetweenUV(
+def uv_reprojectionTransfer(
     col: bpy.types.Collection,
     uv_source: str,
     uv_target: str,
     img: bpy.types.Image,
-    expend: int = 4,
+    padding: int = 4,
     resolution: int = 2048,
-    mode: str = "COLOR",
+    isNormal: bool = False,
     overwrite: bool = True,
     new_name: str = "UVBakeResult",
 ) -> bpy.types.Image:
@@ -162,16 +140,17 @@ def bakeTextureBetweenUV(
             alpha=True
         )
 
-        if mode.upper() == "NORMAL":
+        if isNormal:
             out_img.colorspace_settings.name = "Non-Color"
             out_img.alpha_mode = "STRAIGHT"
 
             out = np.zeros((out_h, out_w, 4), dtype=np.float32)
-            out[..., :3] = 0.5
+            out[..., :3] = (0.5, 0.5, 1.0)
             out[..., 3] = 1.0
 
         else:
             out = np.zeros((out_h, out_w, 4), dtype=np.float32)
+            out[..., :] = 0.0
 
     # -------------------------
     # 3. mesh loop
@@ -206,11 +185,11 @@ def bakeTextureBetweenUV(
                 src_uv = [uv_src[loops[j].index].uv.copy() for j in tri]
                 dst_uv = [uv_dst[loops[j].index].uv.copy() for j in tri]
 
-                min_x = max(int(min(v.x for v in dst_uv) * out_w) - expend, 0)
-                max_x = min(int(max(v.x for v in dst_uv) * out_w) + expend, out_w - 1)
+                min_x = max(int(min(v.x for v in dst_uv) * out_w) - padding, 0)
+                max_x = min(int(max(v.x for v in dst_uv) * out_w) + padding, out_w - 1)
 
-                min_y = max(int(min(v.y for v in dst_uv) * out_h) - expend, 0)
-                max_y = min(int(max(v.y for v in dst_uv) * out_h) + expend, out_h - 1)
+                min_y = max(int(min(v.y for v in dst_uv) * out_h) - padding, 0)
+                max_y = min(int(max(v.y for v in dst_uv) * out_h) + padding, out_h - 1)
 
                 for y in range(min_y, max_y + 1):
                     for x in range(min_x, max_x + 1):
@@ -237,12 +216,12 @@ def bakeTextureBetweenUV(
                         # -------------------------
                         # 5. write logic
                         # -------------------------
-                        if mode.upper() == "COLOR":
+                        if not isNormal:
                             a = color[3]
                             out[y, x, :3] = color[:3] * a + out[y, x, :3] * (1.0 - a)
                             out[y, x, 3] = max(out[y, x, 3], a)
 
-                        elif mode.upper() == "NORMAL":
+                        elif isNormal:
                             # direct overwrite
                             out[y, x, :3] = color[:3]
                             out[y, x, 3] = 1.0
