@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketFolderPath,OmniNodeSocketImageFormat
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -22,6 +22,12 @@ from bpy.types import (
     NodeSocketMatrix,
 )
 
+class _OmniFolderPath:
+    def __init__():
+        return
+class _OmniImageFormat:
+    def __init__():
+        return
 
 # 函数变量标签类型：blenderSocket类型
 cls_dic = {
@@ -60,7 +66,11 @@ cls_dic = {
     # Omni自定义接口
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
+    _OmniFolderPath: OmniNodeSocketFolderPath,
+    _OmniImageFormat: OmniNodeSocketImageFormat,
 }
+
+
 
 
 def meta(**metadata):

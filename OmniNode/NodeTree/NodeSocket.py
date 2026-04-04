@@ -52,10 +52,57 @@ class OmniNodeSocketAny(NodeSocket):
     def draw_color_simple(cls):
         return (0.5, 0.5, 0.5, 0.9)
 
+class OmniNodeSocketImageFormat(NodeSocket):
+    bl_label = "图片后缀格式Socket"
+    bl_idname = 'OmniNodeSocketImageFormat'
+
+    format_items = [
+        ('PNG', "PNG", ""),
+        ('JPG', "JPG", ""),
+        ('JPEG', "JPEG", ""),
+        ('TGA', "TGA", ""),
+        ('EXR', "EXR", ""),
+        ('BMP', "BMP", ""),
+    ]
+
+    default_value: bpy.props.EnumProperty(
+        items=format_items,
+        name="Image Format"
+    )  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.default_value)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.3, 0.6, 1.0, 0.8)
+
+
+class OmniNodeSocketFolderPath(NodeSocket):
+    bl_label = "文件夹路径Socket"
+    bl_idname = 'OmniNodeSocketFolderPath'
+
+    default_value: bpy.props.StringProperty(
+        name="Folder Path",
+        subtype='DIR_PATH'
+    )  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.default_value)
+        else:
+            row = layout.row(align=True)
+            row.prop(self, "default_value", text=text)
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.8, 0.6, 0.2, 0.9)
 
 
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
-       OmniNodeSocketAny,
+       OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketFolderPath,
        ]
 
 

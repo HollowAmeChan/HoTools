@@ -1,4 +1,4 @@
-from ..FunctionCore import meta
+from ..FunctionCore import meta , _OmniFolderPath, _OmniImageFormat
 from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
@@ -44,11 +44,17 @@ def boolInput(v: bool) -> bool:
 def stringInput(v: str) -> str:
     return v
 
-# @meta(enable=True, 
-#       bl_label="文件路径",
-#       base_color=_COLOR.colorCat["GetData"],)
-# def filepathInput(v: str) -> str:
-#     return v
+@meta(enable=True, 
+      bl_label="文件路径",
+      base_color=_COLOR.colorCat["GetData"],)
+def filepathInput(v: _OmniFolderPath) -> _OmniFolderPath:
+    return v
+
+@meta(enable=True,
+      bl_label="图像格式",
+      base_color=_COLOR.colorCat["GetData"],)
+def imageFormatInput(v:_OmniImageFormat) -> _OmniImageFormat:
+    return v
 
 @meta(enable=True,
       bl_label="物体",
