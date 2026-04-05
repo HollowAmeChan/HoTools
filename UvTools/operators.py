@@ -7,6 +7,7 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from collections import defaultdict
+from bpy.app.handlers import persistent
 
 UV_LISTENER_CACHE = {
     "active_uv": None,
@@ -119,6 +120,19 @@ def update_uv_listener_switch(self, context):
             print("UV监听器已禁用")
 
 
+# =========================================================
+# 文件加载处理器
+# =========================================================
+@persistent
+def uv_load_handler(dummy):
+    """Re-register UV listener when file is loaded"""
+    for scene in bpy.data.scenes:
+        if hasattr(scene, 'hoUVTools_control_uv_listener') and scene.hoUVTools_control_uv_listener:
+            if uv_layer_listener not in bpy.app.handlers.depsgraph_update_post:
+                bpy.app.handlers.depsgraph_update_post.append(uv_layer_listener)
+            break
+
+
 def reg_props():
     bpy.types.Scene.hoUVTools_control_uv_listener = bpy.props.BoolProperty(
         name="开启UV多物体同步",
@@ -133,12 +147,15 @@ def reg_props():
         default=False,
         update=update_uv_listener_switch
     )
+    bpy.app.handlers.load_post.append(uv_load_handler)
     return
 
 def ureg_props():
     if uv_layer_listener in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(uv_layer_listener)
     del bpy.types.Scene.hoUVTools_control_uv_listener
+    if uv_load_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(uv_load_handler)
     return
 
 class OP_UVTools_ReplaceFromLayer(Operator):

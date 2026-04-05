@@ -13,6 +13,7 @@ from mathutils import Vector
 import heapq
 import random
 from gpu_extras.batch import batch_for_shader
+from bpy.app.handlers import persistent
 # TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
 # TODO 现在可以updatefromeditmode解决，有时间改改
 # TODO 自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
@@ -81,6 +82,19 @@ def update_vg_listener_switch(self, context):
             bpy.app.handlers.depsgraph_update_post.remove(vertex_group_listener)
             print("顶点组监听器已禁用")
 
+# =========================================================
+# 文件加载处理器
+# =========================================================
+@persistent
+def vg_load_handler(dummy):
+    """Re-register VG listener when file is loaded"""
+    for scene in bpy.data.scenes:
+        if hasattr(scene, 'hoVertexGroupTools_control_vg_listener') and scene.hoVertexGroupTools_control_vg_listener:
+            if vertex_group_listener not in bpy.app.handlers.depsgraph_update_post:
+                bpy.app.handlers.depsgraph_update_post.append(vertex_group_listener)
+            break
+
+
 def reg_props():
     bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False,name="hotools顶点组面板")#启用属性下的操作菜单
     bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight = BoolProperty(default=False,name="显示活动顶点权重信息",description="很卡，不舒服自己关掉")
@@ -107,6 +121,7 @@ def reg_props():
         default=False,
         update=update_vg_listener_switch
     )
+    bpy.app.handlers.load_post.append(vg_load_handler)
 
 def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_open_menu
@@ -126,6 +141,8 @@ def ureg_props():
     if vertex_group_listener in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(vertex_group_listener)
     del bpy.types.Scene.hoVertexGroupTools_control_vg_listener
+    if vg_load_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(vg_load_handler)
 
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
