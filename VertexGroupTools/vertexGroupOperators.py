@@ -918,8 +918,8 @@ class VGSwitchHUD:
 
         alpha = 1.0 - (elapsed / VGSwitchHUD._duration)
 
-        # 使用POLYLINE_UNIFORM_COLOR而不是UNIFORM_COLOR防止gpu驱动导致的线宽不生效
-        # UNIFORM_COLOR会绘制圆角直线，POLYLINE_UNIFORM_COLOR会绘制面片伪装出的直角线段
+        # 使用POLYLINE_UNIFORM_COLOR而不是UNIFORM_COLOR防止gpu驱动(vk后端的问题)导致的线宽不生效
+        # POLYLINE_UNIFORM_COLOR会绘制面片伪装出的直角线段
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         coords = [
             VGSwitchHUD._bone_head,
