@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketFolderPath,OmniNodeSocketImageFormat
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -20,12 +20,13 @@ from bpy.types import (
     NodeSocketTexture,
     NodeSocketGeometry,
     NodeSocketMatrix,
+    NodeSocketStringFilePath,
 )
 
-class _OmniFolderPath:
+class _OmniFolderPath(str):
     def __init__():
         return
-class _OmniImageFormat:
+class _OmniImageFormat(str):
     def __init__():
         return
 
@@ -58,6 +59,7 @@ cls_dic = {
     bpy.types.Armature: NodeSocketObject,
     bpy.types.Texture: NodeSocketTexture,
     mathutils.Matrix: NodeSocketMatrix,
+    _OmniFolderPath: NodeSocketStringFilePath,
     # python类到blender socket类
     float: NodeSocketFloat,
     str: NodeSocketString,
@@ -66,7 +68,6 @@ cls_dic = {
     # Omni自定义接口
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
-    _OmniFolderPath: OmniNodeSocketFolderPath,
     _OmniImageFormat: OmniNodeSocketImageFormat,
 }
 
@@ -76,16 +77,15 @@ cls_dic = {
 def meta(**metadata):
     '''
     META信息装饰器
-    1.  对于输入参数可以传入一个字典，填入.inputs.new的参数
-        a={"name":"111","type":"","identifier":"}
-        目前只支持name修改,identifier不可修改
-    2.  对于本身的一些设置,一般支持
+    1.  可以配置的META信息包括:
         omni_description:str
         bl_label:str
         base_color:tuple[float,float,float]
         is_output_node:bool
+        _INPUT_NAME:list[str]
         _OUTPUT_NAME:list[str]
-    3.  由于使用了函数签名来生成，签名无法设置多输出的名字
+        等
+    2.  由于使用了函数签名来生成，签名无法设置多输出的名字
         目前使用默认_OUTPUT+数字来生成identifier
         名称想要修改可以使用_OUTPUT_NAME这个列表,他将会顺序指定输出的名字
     '''
@@ -136,6 +136,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
     NodeInfo["is_output_node"] = False
     NodeInfo["base_color"] = (0.5, 0.5, 0)
     NodeInfo["omni_description"] = ""
+    NodeInfo["_INPUT_NAME"] = []
     NodeInfo["_OUTPUT_NAME"] = ["输出"]
     NodeInfo.update(func.__meta)
 
@@ -152,25 +153,24 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
     inputParamsPair = list(params.values())
     outputParamsType = resolve_output_types(outputs)
 
-    #   #没有meta的默认input信息
     if len(inputParamsPair) != 0:
         index = 0
         for i in inputParamsPair:
             identifier = i.name
             default_value = None if i.default is inspect._empty else i.default
             SocketDefaultDict[identifier] = default_value
+            try:
+                name = NodeInfo["_INPUT_NAME"][index]
+            except Exception:
+                name = i.name
             dic = {
                 "type": get_socket_type_name(cls_dic.get(i.annotation, OmniNodeSocketAny)),
-                "name": i.name,
+                "name": name,
                 "identifier": identifier,
             }
             SocketInMetaDict[identifier] = dic
             index += 1
-        if hasattr(func, "__meta"):
-            for i in SocketInMetaDict.keys():
-                if i in func.__meta:
-                    SocketInMetaDict[i].update(func.__meta[i])
-    #   #没有meta的默认output信息
+
     if len(outputParamsType) != 0:
         index = 0
         for i in outputParamsType:
@@ -186,10 +186,6 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
             }
             SocketOutMetaDict[identifier] = dic
             index += 1
-        if hasattr(func, "__meta"):
-            for i in SocketOutMetaDict.keys():
-                if i in func.__meta:
-                    SocketOutMetaDict[i].update(func.__meta[i])
 
     return NodeInfo, SocketInMetaDict, SocketOutMetaDict, SocketDefaultDict
 

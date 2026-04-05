@@ -6,6 +6,7 @@ from mathutils.kdtree import KDTree
 import json
 import math
 from mathutils import Vector
+from bpy.app.handlers import persistent
 
 
 SHAPE_KEY_RENAME_MAP = {
@@ -119,7 +120,78 @@ LISTENER_CACHE = {
     "lock": False,
     "edit_mode": False,
 }
+#======================================================================#
+# 监听器(每帧执行)
+def shape_key_listener(scene):
+    global LISTENER_CACHE
 
+    active_obj = bpy.context.object
+    if not active_obj or not active_obj.data.shape_keys:
+        return
+    active_sk = active_obj.active_shape_key
+    if not active_sk:
+        return 
+
+    current_name = active_sk.name
+    current_value = round(active_sk.value, 6)
+    current_lock = active_obj.show_only_shape_key
+    current_edit_mode = active_obj.use_shape_key_edit_mode
+
+    if (LISTENER_CACHE["key_name"] == current_name and
+        LISTENER_CACHE["key_value"] == current_value and
+        LISTENER_CACHE["lock"] == current_lock and
+        LISTENER_CACHE["edit_mode"] == current_edit_mode):
+        return
+
+    # 更新缓存
+    LISTENER_CACHE.update({
+        "key_name": current_name,
+        "key_value": current_value,
+        "lock": current_lock,
+        "edit_mode": current_edit_mode
+    })
+
+    # 执行更新
+    for obj in bpy.context.selected_objects:
+        if not obj.data.shape_keys:
+            continue
+        # 设置锁定与编辑模式启用与否
+        obj.show_only_shape_key = current_lock
+        obj.use_shape_key_edit_mode = current_edit_mode
+
+        # 设置活动键与活动键值
+        sk_block_idx = obj.data.shape_keys.key_blocks.find(current_name)
+        sk_block = obj.data.shape_keys.key_blocks[sk_block_idx]
+        if sk_block:
+            #设置对应键值
+            sk_block.value = active_sk.value
+            #设置为活动键
+            obj.active_shape_key_index = sk_block_idx
+
+        # 同步其他所有键值（可选）
+        for sk in active_obj.data.shape_keys.key_blocks:
+            if sk == active_obj.data.shape_keys.reference_key:#跳过基型
+                continue
+            #获取目标键
+            tgt_sk = obj.data.shape_keys.key_blocks.get(sk.name)
+            if not tgt_sk:
+                continue
+            if tgt_sk == obj.data.shape_keys.reference_key:#跳过目标基型
+                continue
+
+            tgt_sk.value = sk.value
+
+# 开关更新函数-用于监听器的注册于注销
+def update_listener_switch(self, context):
+    enabled = context.scene.hoShapekeyTools_control_shape_key_listener
+    if enabled:
+        if shape_key_listener not in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.append(shape_key_listener)
+            print("监听器已启用")
+    else:
+        if shape_key_listener in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(shape_key_listener)
+            print("监听器已禁用")
 
 
 class PG_ShapeKeyTools_ListenerCache(PropertyGroup):
@@ -173,80 +245,7 @@ def reg_props():
         name="是否绝对复制粘贴",
         description="开启后的复制粘贴将会视形态键位绝对位置进行复制粘贴,如果你看不懂，不要开，注意不要混用两种复制与粘贴",
         default=False)
-
-    #======================================================================#
-    # 监听器(每帧执行)
-    def shape_key_listener(scene):
-        global LISTENER_CACHE
-
-        active_obj = bpy.context.object
-        if not active_obj or not active_obj.data.shape_keys:
-            return
-        active_sk = active_obj.active_shape_key
-        if not active_sk:
-            return 
-
-        current_name = active_sk.name
-        current_value = round(active_sk.value, 6)
-        current_lock = active_obj.show_only_shape_key
-        current_edit_mode = active_obj.use_shape_key_edit_mode
-
-        if (LISTENER_CACHE["key_name"] == current_name and
-            LISTENER_CACHE["key_value"] == current_value and
-            LISTENER_CACHE["lock"] == current_lock and
-            LISTENER_CACHE["edit_mode"] == current_edit_mode):
-            return
-
-        # 更新缓存
-        LISTENER_CACHE.update({
-            "key_name": current_name,
-            "key_value": current_value,
-            "lock": current_lock,
-            "edit_mode": current_edit_mode
-        })
-
-        # 执行更新
-        for obj in bpy.context.selected_objects:
-            if not obj.data.shape_keys:
-                continue
-            # 设置锁定与编辑模式启用与否
-            obj.show_only_shape_key = current_lock
-            obj.use_shape_key_edit_mode = current_edit_mode
-
-            # 设置活动键与活动键值
-            sk_block_idx = obj.data.shape_keys.key_blocks.find(current_name)
-            sk_block = obj.data.shape_keys.key_blocks[sk_block_idx]
-            if sk_block:
-                #设置对应键值
-                sk_block.value = active_sk.value
-                #设置为活动键
-                obj.active_shape_key_index = sk_block_idx
-
-            # 同步其他所有键值（可选）
-            for sk in active_obj.data.shape_keys.key_blocks:
-                if sk == active_obj.data.shape_keys.reference_key:#跳过基型
-                    continue
-                #获取目标键
-                tgt_sk = obj.data.shape_keys.key_blocks.get(sk.name)
-                if not tgt_sk:
-                    continue
-                if tgt_sk == obj.data.shape_keys.reference_key:#跳过目标基型
-                    continue
-
-                tgt_sk.value = sk.value
-
-    # 开关更新函数-用于监听器的注册于注销
-    def update_listener_switch(self, context):
-        enabled = context.scene.hoShapekeyTools_control_shape_key_listener
-        if enabled:
-            if shape_key_listener not in bpy.app.handlers.depsgraph_update_post:
-                bpy.app.handlers.depsgraph_update_post.append(shape_key_listener)
-                print("监听器已启用")
-        else:
-            if shape_key_listener in bpy.app.handlers.depsgraph_update_post:
-                bpy.app.handlers.depsgraph_update_post.remove(shape_key_listener)
-                print("监听器已禁用")
-    #开关
+    
     bpy.types.Scene.hoShapekeyTools_control_shape_key_listener = bpy.props.BoolProperty(
         name="开启全局多物体同步模式",
         description="""
@@ -259,7 +258,21 @@ def reg_props():
     )
     #======================================================================#
 
+    bpy.app.handlers.load_post.append(sk_load_handler)
     return
+
+
+# =========================================================
+# 文件加载处理器
+# =========================================================
+@persistent
+def sk_load_handler(dummy):
+    """Re-register ShapeKey listener when file is loaded"""
+    for scene in bpy.data.scenes:
+        if hasattr(scene, 'hoShapekeyTools_control_shape_key_listener') and scene.hoShapekeyTools_control_shape_key_listener:
+            if shape_key_listener not in bpy.app.handlers.depsgraph_update_post:
+                bpy.app.handlers.depsgraph_update_post.append(shape_key_listener)
+            break
 
 
 def ureg_props():
@@ -278,6 +291,8 @@ def ureg_props():
 
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener_cache
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener
+    if sk_load_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(sk_load_handler)
     return
 
 
