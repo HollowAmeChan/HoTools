@@ -17,6 +17,70 @@ from gpu_extras.batch import batch_for_shader
 # TODO 现在可以updatefromeditmode解决，有时间改改
 # TODO 自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
+
+VG_LISTENER_CACHE = {
+    "active_vg": None,
+}
+DEBUG = False
+
+def vertex_group_listener(scene):
+    global VG_LISTENER_CACHE
+
+    context = bpy.context
+    active_obj = context.object
+
+    # ---------- 基础过滤 ----------
+    if not active_obj or active_obj.type != 'MESH':
+        return
+    if len(context.selected_objects) < 2:
+        return
+    vg = active_obj.vertex_groups
+    if not vg:
+        return
+
+    active_index = active_obj.vertex_groups.active_index
+    if active_index < 0 or active_index >= len(vg):
+        return
+    active_name = vg[active_index].name
+
+    # ---------- 缓存判断 ----------
+    if VG_LISTENER_CACHE["active_vg"] == active_name:
+        return
+    # ---------- 更新缓存 ----------
+    VG_LISTENER_CACHE["active_vg"] = active_name
+    if DEBUG:
+        print(f"[VG Sync] Active Group: {active_name}")
+    # =====================================================
+    # 执行同步
+    # =====================================================
+    for obj in context.selected_objects:
+        if obj == active_obj:
+            continue
+        if obj.type != 'MESH':
+            continue
+
+        obj_vg = obj.vertex_groups
+        if not obj_vg:
+            continue
+        tgt = obj_vg.get(active_name)
+        if tgt:
+            obj.vertex_groups.active_index = tgt.index
+        else:
+            if DEBUG:
+                print(f"[VG Sync] Missing VG '{active_name}' on {obj.name}")
+
+def update_vg_listener_switch(self, context):
+    enabled = context.scene.hoVertexGroupTools_control_vg_listener
+
+    if enabled:
+        if vertex_group_listener not in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.append(vertex_group_listener)
+            print("顶点组监听器已启用")
+    else:
+        if vertex_group_listener in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(vertex_group_listener)
+            print("顶点组监听器已禁用")
+
 def reg_props():
     bpy.types.Scene.hoVertexGroupTools_open_menu = BoolProperty(default=False,name="hotools顶点组面板")#启用属性下的操作菜单
     bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight = BoolProperty(default=False,name="显示活动顶点权重信息",description="很卡，不舒服自己关掉")
@@ -32,6 +96,18 @@ def reg_props():
     bpy.types.Scene.hoVertexGroupTools_max_vg_number = IntProperty(name="最多权重数",default=4)
     bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit = IntProperty(name="debug最多骨权重数",default=4)
 
+    bpy.types.Scene.hoVertexGroupTools_control_vg_listener = bpy.props.BoolProperty(
+        name="开启顶点组多物体同步",
+        description="""
+        启用后监听活动物体的顶点组选择变化：
+        - 同步 Active Vertex Group
+        - 自动跳过无变化
+        - 多物体实时同步
+        """,
+        default=False,
+        update=update_vg_listener_switch
+    )
+
 def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_open_menu
     del bpy.types.Scene.hoVertexGroupTools_view_activevertex_weight
@@ -46,6 +122,10 @@ def ureg_props():
     del bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue
     del bpy.types.Scene.hoVertexGroupTools_max_vg_number
     del bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit
+
+    if vertex_group_listener in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(vertex_group_listener)
+    del bpy.types.Scene.hoVertexGroupTools_control_vg_listener
 
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
@@ -2247,7 +2327,10 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     row2 = row.row(align=True)
     row2.alignment = 'RIGHT'
     row2.prop(context.scene,"hoVertexGroupTools_isAutoNormalizeWeight",text="",icon="RECORD_ON",toggle=True)
-
+    if context.scene.hoVertexGroupTools_control_vg_listener:
+        row2.alert = True
+    row2.prop(context.scene,"hoVertexGroupTools_control_vg_listener",text="",toggle=True,icon="FILE_REFRESH")
+    row2.alert =False
 
 
     if context.scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu:

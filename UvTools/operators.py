@@ -136,10 +136,9 @@ def reg_props():
     return
 
 def ureg_props():
-    del bpy.types.Scene.hoUVTools_control_uv_listener
     if uv_layer_listener in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(uv_layer_listener)
-
+    del bpy.types.Scene.hoUVTools_control_uv_listener
     return
 
 class OP_UVTools_ReplaceFromLayer(Operator):
