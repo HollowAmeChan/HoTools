@@ -172,7 +172,6 @@ class OP_RbfTransferSnapCage(Operator):
         depsgraph = context.evaluated_depsgraph_get()
         bvh = build_bvh(target, depsgraph)
 
-        blend = self.blend
         offset = self.offset
 
         cage_mw = cage.matrix_world
