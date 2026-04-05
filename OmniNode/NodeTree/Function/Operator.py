@@ -20,11 +20,12 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
 
 
 @meta(enable=True,
-      bl_label="设置图像颜色",
-      base_color=_COLOR.colorCat["Operator"],
-      is_output_node=False,
-      img={"name": "图像输入"},
-      )
+    bl_label="设置图像颜色",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图像","颜色"],
+    _OUTPUT_NAME=["图像"],
+    )
 def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.Image:
     length = len(img.pixels)//4
     col = list(color)*length
@@ -32,21 +33,22 @@ def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.I
     return img
 
 @meta(enable=True,
-      bl_label="创建UV层",
-      base_color=_COLOR.colorCat["Operator"],
-      is_output_node=False,
-      _OUTPUT_NAME=["物体","UV层"],
-      omni_description="""
-      在输入的Mesh上创建一个UV层，返回Mesh和UV层名称
-      如果已经存在同名UV层，则不创建，直接返回已有的层
-      """,
-      )
-def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.types.Mesh,str]:
+    bl_label="创建UV层",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物体","UV层"],
+    _OUTPUT_NAME=["物体","UV层"],
+    omni_description="""
+    在输入的Mesh上创建一个UV层，返回Mesh和UV层名称
+    如果已经存在同名UV层，则不创建，直接返回已有的层
+    """,
+    )
+def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.types.Object,str]:
     mesh = obj.data
     if uv_layer_name in mesh.uv_layers:
-        return mesh, uv_layer_name
+        return obj, uv_layer_name
     mesh.uv_layers.new(name=uv_layer_name)
-    return mesh, uv_layer_name
+    return obj, uv_layer_name
 
 
 import bpy
@@ -86,6 +88,7 @@ def barycentric(p, a, b, c):
     bl_label="纹理UV重定向",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
+    _INPUT_NAME=["集合","UV源层","UV目标层","图像","膨胀","输出分辨率","是否为法线图","是否覆盖原图","新建图像名称"],
     _OUTPUT_NAME=["图像"],
     omni_description="""
     该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射(UV Reprojection Transfer)
@@ -117,15 +120,9 @@ def uv_reprojectionTransfer(
     new_name: str = "UVBakeResult",
 ) -> bpy.types.Image:
 
-    # -------------------------
-    # 1. source image
-    # -------------------------
     src_w, src_h = img.size
     src_pixels = np.array(img.pixels[:], dtype=np.float32).reshape(src_h, src_w, 4)
 
-    # -------------------------
-    # 2. output image setup
-    # -------------------------
     if overwrite and img:
         out_img = img
         out_w, out_h = img.size
@@ -152,9 +149,6 @@ def uv_reprojectionTransfer(
             out = np.zeros((out_h, out_w, 4), dtype=np.float32)
             out[..., :] = 0.0
 
-    # -------------------------
-    # 3. mesh loop
-    # -------------------------
     meshes = [o for o in col.objects if o.type == 'MESH']
 
     for obj in meshes:
@@ -170,9 +164,6 @@ def uv_reprojectionTransfer(
         bm.from_mesh(me)
         bm.faces.ensure_lookup_table()
 
-        # -------------------------
-        # 4. triangle raster
-        # -------------------------
         for face in bm.faces:
             loops = face.loops
             if len(loops) < 3:
@@ -213,9 +204,6 @@ def uv_reprojectionTransfer(
 
                         color = sample_image(src_pixels, src_p, src_w, src_h)
 
-                        # -------------------------
-                        # 5. write logic
-                        # -------------------------
                         if not isNormal:
                             a = color[3]
                             out[y, x, :3] = color[:3] * a + out[y, x, :3] * (1.0 - a)
@@ -228,9 +216,6 @@ def uv_reprojectionTransfer(
 
         bm.free()
 
-    # -------------------------
-    # 5. write back
-    # -------------------------
     out_img.pixels = out.flatten()
     out_img.update()
 
