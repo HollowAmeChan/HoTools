@@ -524,10 +524,7 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
 
     row2 = row.row(align=True)
     row2.alignment= 'RIGHT'
-    if context.scene.hoUVTools_control_uv_listener:
-        row2.alert = True
     row2.prop(context.scene,"hoUVTools_control_uv_listener",text="",toggle=True,icon="FILE_REFRESH")
-    row2.alert =False
 
     
 

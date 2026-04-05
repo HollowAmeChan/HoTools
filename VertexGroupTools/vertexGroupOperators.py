@@ -2342,10 +2342,8 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
     row2 = row.row(align=True)
     row2.alignment = 'RIGHT'
     row2.prop(context.scene,"hoVertexGroupTools_isAutoNormalizeWeight",text="",icon="RECORD_ON",toggle=True)
-    if context.scene.hoVertexGroupTools_control_vg_listener:
-        row2.alert = True
     row2.prop(context.scene,"hoVertexGroupTools_control_vg_listener",text="",toggle=True,icon="FILE_REFRESH")
-    row2.alert =False
+
 
 
     if context.scene.hoVertexGroupTools_DebugBoneWeightGroup_open_menu:
