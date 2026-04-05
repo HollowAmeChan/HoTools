@@ -25,7 +25,6 @@ class OmniNode(Node):
     is_bug: bpy.props.BoolProperty(
         name="是否bug", default=False, update=setBugNode)  # type: ignore
     debug: bpy.props.BoolProperty(name="调试", default=False)  # type: ignore
-    advanced: bpy.props.BoolProperty(name="高级", default=False)  # type: ignore
 
     default_width: bpy.props.FloatProperty(default=250)  # type: ignore
     default_heigh: bpy.props.FloatProperty(default=100)  # type: ignore
@@ -36,8 +35,6 @@ class OmniNode(Node):
         name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0, 0.6, 0))  # type: ignore
     base_color: bpy.props.FloatVectorProperty(
         name="默认类型", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
-    omni_description_toggle: bpy.props.BoolProperty(
-        name="是否开启显示功能描述", default=False)  # type: ignore
     omni_description: bpy.props.StringProperty(
         name="OMNI节点描述", default="没有使用描述")  # type: ignore
     process_bool_toggle: bpy.props.BoolProperty(
@@ -113,45 +110,27 @@ class OmniNode(Node):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         '''绘制节点按钮'''
-        # 绘制小工具栏
         main_row = layout.row(align=False)
 
         row_L = main_row.row(align=True)  # 左侧按钮
         row_L.alignment = 'LEFT'
         if self.is_bug:
             row_L.label(icon="ERROR",)
-        row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
-        row_L.prop(self, "advanced", text="", toggle=True, icon="MODIFIER")
-        row_L.prop(self, "omni_description_toggle",
-                   text="", toggle=True, icon="OUTLINER_DATA_LIGHT")
+        row_L.prop(self, "is_output_node", text="", icon="ANIM_DATA")
+        SetDefaultSize = row_L.operator(
+            NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
+        SetDefaultSize.node_name = self.name
+        SetBiggerSize = row_L.operator(
+            NodeBaseOps.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
+        SetBiggerSize.node_name = self.name
 
-        # row_C = main_row.row(align=True)  # 中心按钮-放大缩小
-        # SetDefaultSize = row_C.operator(
-        #     NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
-        # SetDefaultSize.node_name = self.name
-        # SetBiggerSize = row_C.operator(
-        #     NodeBaseOps.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
-        # SetBiggerSize.node_name = self.name
 
         row_R = main_row.row(align=True)  # 右侧按钮
         row_R.alignment = 'RIGHT'
-        row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
+        row_R.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
         row_R.operator(
             NodeBaseOps.LayerRunning.bl_idname, text="", icon="FILE_REFRESH")
-
-        # 绘制高级工具栏
-        if self.advanced:
-            row = layout.row(align=True)
-            # 是否是自动更新的
-            if context.space_data.node_tree.is_auto_update:
-                row.prop(context.space_data.node_tree,
-                        "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
-            else:
-                row.prop(context.space_data.node_tree,
-                        "is_auto_update", text="树自动更新", icon="UNLINKED")
-            row.prop(self, "process_bool_toggle",
-                        text="逻辑socket", icon="DECORATE_ANIMATE")
-
+        
         # debug显示
         if self.debug:
             # bug描述
@@ -188,9 +167,27 @@ class OmniNode(Node):
                 grid.label(text="[类型]")
                 for value in outputInfo.values():
                     grid.label(text=type(value).__name__)
+        pass
 
+
+    def draw_buttons_ext(self, context, layout: bpy.types.UILayout):
+        '''侧边栏中节点属性绘制'''
+        row = layout.row(align=True)
+        # 是否是自动更新的
+        if context.space_data.node_tree.is_auto_update:
+            row.alert = True
+            row.prop(context.space_data.node_tree,
+                    "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+            row.alert = False
+        else:
+            row.prop(context.space_data.node_tree,
+                    "is_auto_update", text="树自动更新", icon="UNLINKED")
+        row.prop(self, "process_bool_toggle",
+                    text="逻辑socket", icon="DECORATE_ANIMATE")
+            
         # OMNI节点描述
-        if self.omni_description_toggle:
-            lines = self.omni_description.splitlines()
-            for line in lines:
-                layout.label(text=line)
+        lines = self.omni_description.splitlines()
+        for line in lines:
+            layout.label(text=line)
+
+        pass
