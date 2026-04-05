@@ -163,7 +163,7 @@ def uv_reprojectionTransfer(
     new_name: str = "UVBakeResult",
     file_path: _OmniFolderPath = "",
     format: _OmniImageFormat = "PNG",
-) -> tuple[bpy.types.Image, str]:
+) -> tuple[bpy.types.Image, _OmniFolderPath]:
 
     src_w, src_h = img.size
     src_pixels = np.array(img.pixels[:], dtype=np.float32).reshape(src_h, src_w, 4)
