@@ -8,10 +8,138 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from collections import defaultdict
 
+UV_LISTENER_CACHE = {
+    "active_uv": None,
+    "render_uv": None,
+}
+AUTO_CREATE_UV = False# 是否自动创建缺失UV
+DEBUG = False# 调试输出
+# =========================================================
+# 监听器
+# =========================================================
+def uv_layer_listener(scene):
+    global UV_LISTENER_CACHE
+
+    context = bpy.context
+    active_obj = context.object
+
+    # ---------- 基础过滤 ----------
+    if not active_obj or active_obj.type != 'MESH':
+        return
+
+    if len(context.selected_objects) < 2:
+        return
+
+    uv_layers = active_obj.data.uv_layers
+    if not uv_layers:
+        return
+
+    # ---------- 获取当前状态 ----------
+    active_uv = uv_layers.active.name if uv_layers.active else None
+
+    render_uv = None
+    for uv in uv_layers:
+        if uv.active_render:
+            render_uv = uv.name
+            break
+
+    # ---------- 缓存判断 ----------
+    if (UV_LISTENER_CACHE["active_uv"] == active_uv and
+        UV_LISTENER_CACHE["render_uv"] == render_uv):
+        return
+
+    # ---------- 更新缓存 ----------
+    UV_LISTENER_CACHE["active_uv"] = active_uv
+    UV_LISTENER_CACHE["render_uv"] = render_uv
+
+    if DEBUG:
+        print(f"[UV Sync] Active: {active_uv}, Render: {render_uv}")
+
+    # =====================================================
+    # 执行同步
+    # =====================================================
+    for obj in context.selected_objects:
+
+        if obj == active_obj:
+            continue
+
+        if obj.type != 'MESH':
+            continue
+
+        obj_uvs = obj.data.uv_layers
+        if not obj_uvs:
+            continue
+
+        # ---------- 同步 Active UV ----------
+        if active_uv:
+            uv = obj_uvs.get(active_uv)
+
+            if not uv and AUTO_CREATE_UV:
+                uv = obj_uvs.new(name=active_uv)
+                if DEBUG:
+                    print(f"[UV Sync] Created UV '{active_uv}' on {obj.name}")
+
+            if uv:
+                obj_uvs.active = uv
+            else:
+                if DEBUG:
+                    print(f"[UV Sync] Missing Active UV '{active_uv}' on {obj.name}")
+
+        # ---------- 同步 Render UV ----------
+        if render_uv:
+            uv = obj_uvs.get(render_uv)
+
+            if not uv and AUTO_CREATE_UV:
+                uv = obj_uvs.new(name=render_uv)
+                if DEBUG:
+                    print(f"[UV Sync] Created Render UV '{render_uv}' on {obj.name}")
+
+            if uv:
+                # 清空旧的 render 标记
+                for u in obj_uvs:
+                    u.active_render = False
+
+                uv.active_render = True
+            else:
+                if DEBUG:
+                    print(f"[UV Sync] Missing Render UV '{render_uv}' on {obj.name}")
+
+# =========================================================
+# 开关控制
+# =========================================================
+def update_uv_listener_switch(self, context):
+    enabled = context.scene.hoUVTools_control_uv_listener
+    if enabled:
+        if uv_layer_listener not in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.append(uv_layer_listener)
+            print("UV监听器已启用")
+    else:
+        if uv_layer_listener in bpy.app.handlers.depsgraph_update_post:
+            bpy.app.handlers.depsgraph_update_post.remove(uv_layer_listener)
+            print("UV监听器已禁用")
+
+
 def reg_props():
+    bpy.types.Scene.hoUVTools_control_uv_listener = bpy.props.BoolProperty(
+        name="开启UV多物体同步",
+        description="""
+        启用后监听活动物体的UV层变化：
+        - 同步 Active UV
+        - 同步 Render UV
+        - 自动跳过无变化
+        - 支持自动创建UV（可配置，默认关闭）
+        - 多物体实时同步
+        """,
+        default=False,
+        update=update_uv_listener_switch
+    )
     return
 
 def ureg_props():
+    del bpy.types.Scene.hoUVTools_control_uv_listener
+    if uv_layer_listener in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(uv_layer_listener)
+
     return
 
 class OP_UVTools_ReplaceFromLayer(Operator):
@@ -181,104 +309,8 @@ class OP_UVTools_MoveActiveUV(Operator):
         # --- 4. 更新活动层索引 ---
         uv_layers.active_index = target_index
 
-class OP_UVTools_MultiObj_SelectLayer(Operator):
-    bl_idname = "ho.uvtools_multiobj_selectlayer"
-    bl_label = "同步活动UV层"
-    bl_description = "如果选择了多个物体，所有物体的活动UV层将与活动物体活动UV层匹配至相同。"
-    bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context):
-        active_obj = context.active_object
-        selected_objs = context.selected_objects
 
-        if not active_obj or active_obj.type != 'MESH':
-            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
-            return {'CANCELLED'}
-
-        if not active_obj.data.uv_layers.active:
-            self.report({'WARNING'}, "活动物体没有UV层")
-            return {'CANCELLED'}
-
-        target_uv_name = active_obj.data.uv_layers.active.name
-        missing_objs = []
-
-        for obj in selected_objs:
-            if obj.type != 'MESH':
-                continue
-
-            uv_layers = obj.data.uv_layers
-            uv = uv_layers.get(target_uv_name)
-
-            if uv:
-                uv_layers.active = uv
-            else:
-                missing_objs.append(obj.name)
-
-        if missing_objs:
-            self.report(
-                {'INFO'},
-                f"以下物体没有 UV 层 '{target_uv_name}': {', '.join(missing_objs)}"
-            )
-
-        return {'FINISHED'}
-
-class OP_UVTools_MultiObj_SelectLayer_render(Operator):
-    bl_idname = "ho.uvtools_multiobj_selectlayer_render"
-    bl_label = "同步激活UV层"
-    bl_description = "同步所有选中物体的渲染UV层为活动物体的渲染UV层"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        active_obj = context.active_object
-        selected_objs = context.selected_objects
-
-        if not active_obj or active_obj.type != 'MESH':
-            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
-            return {'CANCELLED'}
-
-        uv_layers = active_obj.data.uv_layers
-        if not uv_layers:
-            self.report({'WARNING'}, "活动物体没有UV层")
-            return {'CANCELLED'}
-
-        # 找到活动物体的 render UV
-        target_uv = None
-        for uv in uv_layers:
-            if uv.active_render:
-                target_uv = uv
-                break
-
-        if not target_uv:
-            self.report({'WARNING'}, "活动物体没有设置渲染UV层")
-            return {'CANCELLED'}
-
-        target_uv_name = target_uv.name
-        missing_objs = []
-
-        for obj in selected_objs:
-            if obj.type != 'MESH':
-                continue
-
-            obj_uvs = obj.data.uv_layers
-            uv = obj_uvs.get(target_uv_name)
-
-            if not uv:
-                missing_objs.append(obj.name)
-                continue
-
-            # 只能有一个 render UV，先清空
-            for u in obj_uvs:
-                u.active_render = False
-
-            uv.active_render = True
-
-        if missing_objs:
-            self.report(
-                {'INFO'},
-                f"以下物体没有渲染 UV 层 '{target_uv_name}': {', '.join(missing_objs)}"
-            )
-
-        return {'FINISHED'}
 
 class OP_UVTools_FitToFirstQuadrant(Operator):
     bl_idname = "ho.uvtools_fit_to_first_quadrant"
@@ -466,13 +498,22 @@ def draw_in_DATA_PT_uv_texture(self,context: bpy.types.Context):
     layout: bpy.types.UILayout = self.layout
 
     row = layout.row(align=True)
-    row.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_UP").direction = 'UP'
-    row.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_DOWN").direction = 'DOWN'
-    row.operator(OP_UVTools_MultiObj_SelectLayer.bl_idname,text="",icon="UV")
-    row.operator(OP_UVTools_MultiObj_SelectLayer_render.bl_idname,text="",icon="RESTRICT_RENDER_OFF")
-    row.operator(OP_UVTools_UV2SK.bl_idname,text="",icon="SHAPEKEY_DATA")
-    row.operator(OP_UVTools_ReplaceFromLayer.bl_idname,text="",icon="TRANSFORM_ORIGINS")
 
+    row1 = row.row(align=True)
+    row1.alignment = 'LEFT'
+    row1.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_UP").direction = 'UP'
+    row1.operator(OP_UVTools_MoveActiveUV.bl_idname,text="",icon="TRIA_DOWN").direction = 'DOWN'
+    row1.operator(OP_UVTools_UV2SK.bl_idname,text="",icon="SHAPEKEY_DATA")
+    row1.operator(OP_UVTools_ReplaceFromLayer.bl_idname,text="",icon="TRANSFORM_ORIGINS")
+
+    row2 = row.row(align=True)
+    row2.alignment= 'RIGHT'
+    if context.scene.hoUVTools_control_uv_listener:
+        row2.alert = True
+    row2.prop(context.scene,"hoUVTools_control_uv_listener",text="",toggle=True,icon="FILE_REFRESH")
+    row2.alert =False
+
+    
 
 class IMAGE_MT_uvs_context_hotools(Menu):
     """UV编辑器右键时的菜单追加"""
@@ -488,7 +529,7 @@ def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
 
 
 
-cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,OP_UVTools_MultiObj_SelectLayer,OP_UVTools_MultiObj_SelectLayer_render,
+cls = [OP_UVTools_ReplaceFromLayer,OP_UVTools_MoveActiveUV,
        IMAGE_MT_uvs_context_hotools,OP_UVTools_FitToFirstQuadrant,
        OP_UVTools_UV2SK]
 
