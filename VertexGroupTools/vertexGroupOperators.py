@@ -908,7 +908,6 @@ class VGSwitchHUD:
     # ---------------------------------
     @staticmethod
     def _draw_3d():
-
         if VGSwitchHUD._bone_head is None or VGSwitchHUD._bone_tail is None:
             return
 
@@ -919,26 +918,25 @@ class VGSwitchHUD:
 
         alpha = 1.0 - (elapsed / VGSwitchHUD._duration)
 
-        # ✅ Blender 4.x 正确shader
-        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-
-        gpu.state.blend_set('ALPHA')
-        gpu.state.line_width_set(6.0)
-        gpu.state.depth_test_set('NONE')
-
-        batch = batch_for_shader(shader, 'LINES', {
-            "pos": [
-                VGSwitchHUD._bone_head,
-                VGSwitchHUD._bone_tail
-            ]
+        # 使用POLYLINE_UNIFORM_COLOR而不是UNIFORM_COLOR防止gpu驱动导致的线宽不生效
+        # UNIFORM_COLOR会绘制圆角直线，POLYLINE_UNIFORM_COLOR会绘制面片伪装出的直角线段
+        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+        coords = [
+            VGSwitchHUD._bone_head,
+            VGSwitchHUD._bone_tail
+        ]
+        batch = batch_for_shader(shader, 'LINE_STRIP', {
+            "pos": coords
         })
 
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('NONE')
         shader.bind()
+        region = bpy.context.region
+        shader.uniform_float("viewportSize", (region.width, region.height))
+        shader.uniform_float("lineWidth", 6.0)
         shader.uniform_float("color", (1.0, 0.85, 0.2, alpha))
         batch.draw(shader)
-
-        # 恢复状态
-        gpu.state.line_width_set(1.0)
         gpu.state.blend_set('NONE')
         gpu.state.depth_test_set('LESS_EQUAL')
 
