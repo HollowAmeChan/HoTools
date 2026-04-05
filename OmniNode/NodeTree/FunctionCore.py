@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketFolderPath,OmniNodeSocketImageFormat
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -20,12 +20,13 @@ from bpy.types import (
     NodeSocketTexture,
     NodeSocketGeometry,
     NodeSocketMatrix,
+    NodeSocketStringFilePath,
 )
 
-class _OmniFolderPath:
+class _OmniFolderPath(str):
     def __init__():
         return
-class _OmniImageFormat:
+class _OmniImageFormat(str):
     def __init__():
         return
 
@@ -58,6 +59,7 @@ cls_dic = {
     bpy.types.Armature: NodeSocketObject,
     bpy.types.Texture: NodeSocketTexture,
     mathutils.Matrix: NodeSocketMatrix,
+    _OmniFolderPath: NodeSocketStringFilePath,
     # python类到blender socket类
     float: NodeSocketFloat,
     str: NodeSocketString,
@@ -66,7 +68,6 @@ cls_dic = {
     # Omni自定义接口
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
-    _OmniFolderPath: OmniNodeSocketFolderPath,
     _OmniImageFormat: OmniNodeSocketImageFormat,
 }
 
@@ -169,7 +170,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
             }
             SocketInMetaDict[identifier] = dic
             index += 1
-            
+
     if len(outputParamsType) != 0:
         index = 0
         for i in outputParamsType:

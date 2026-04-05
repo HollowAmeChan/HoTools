@@ -17,7 +17,7 @@ class OmniNodeSocketScene(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (1.0, 0.4, 0.216, 0.5)
+        return (1.0, 0.4, 0.216, 1.0)
 
 class OmniNodeSocketText(NodeSocket):
     bl_label = "Omni节点文本文件Socket"
@@ -34,7 +34,7 @@ class OmniNodeSocketText(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (1.0, 1.0, 1.0, 0.5)
+        return (1.0, 1.0, 1.0, 1.0)
 
 
 class OmniNodeSocketAny(NodeSocket):
@@ -50,7 +50,7 @@ class OmniNodeSocketAny(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (0.5, 0.5, 0.5, 0.9)
+        return (0.5, 0.5, 0.5, 0.5)
 
 class OmniNodeSocketImageFormat(NodeSocket):
     bl_label = "图片后缀格式Socket"
@@ -78,31 +78,10 @@ class OmniNodeSocketImageFormat(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (0.3, 0.6, 1.0, 0.8)
-
-
-class OmniNodeSocketFolderPath(NodeSocket):
-    bl_label = "文件夹路径Socket"
-    bl_idname = 'OmniNodeSocketFolderPath'
-
-    default_value: bpy.props.StringProperty(
-        name="Folder Path",
-        subtype='DIR_PATH'
-    )  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.default_value)
-        else:
-            row = layout.row(align=True)
-            row.prop(self, "default_value", text=text)
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.8, 0.6, 0.2, 0.9)
-
+        return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
 
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
-       OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketFolderPath,
+       OmniNodeSocketAny,OmniNodeSocketImageFormat,
        ]
 
 
