@@ -65,7 +65,7 @@ def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.ty
 
 def sample_image(img_array, uv, w, h):
     x = min(max(uv.x * (w - 1), 0.0), w - 1)
-    y = min(max((1.0 - uv.y) * (h - 1), 0.0), h - 1)
+    y = min(max(uv.y * (h - 1), 0.0), h - 1)
     ix = int(x)
     iy = int(y)
     return img_array[iy, ix]
