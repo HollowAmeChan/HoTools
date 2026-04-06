@@ -110,6 +110,10 @@ class OmniNode(Node):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         '''绘制节点按钮'''
+        # bug描述
+        if self.is_bug:
+            layout.label(text=f"{self.bug_text}")
+
         main_row = layout.row(align=False)
 
         row_L = main_row.row(align=True)  # 左侧按钮
@@ -133,9 +137,7 @@ class OmniNode(Node):
         
         # debug显示
         if self.debug:
-            # bug描述
-            layout.label(text=f"bug类型:{self.bug_text}")
-            # # 内部prop详情
+            # 内部prop详情
             pool = self["fatherTree"].pool
             if pool[self.name]:
                 inputsInfo: dict = pool[self.name].inputs

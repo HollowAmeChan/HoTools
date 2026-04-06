@@ -235,7 +235,7 @@ def uv_reprojectionTransfer(
 
     # 检查是否在编辑模式下
     if bpy.context.mode == 'EDIT_MESH':
-        raise RuntimeError("无法在编辑模式下运行，请切换到对象模式")
+        raise RuntimeError("无法在编辑模式下运行，请切换到物体模式")
 
     total_start = time.perf_counter()
     timings = {k: 0.0 for k in [
