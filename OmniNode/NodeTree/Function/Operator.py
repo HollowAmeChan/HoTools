@@ -100,12 +100,110 @@ def dilate_image_with_colors(pil_img, radius):
 
     return Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
 
+def tri_area(uv):
+    return abs(
+        (uv[1][0] - uv[0][0]) * (uv[2][1] - uv[0][1]) -
+        (uv[2][0] - uv[0][0]) * (uv[1][1] - uv[0][1])
+    ) * 0.5
+
+def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
+    # -------------------------
+    # 模式选择
+    # -------------------------
+    if not enable_aa or scale < 1.2:
+        mode = 0
+    elif scale < 2.5:
+        mode = 1
+    elif scale < 6.0:
+        mode = 2
+    else:
+        mode = 3
+
+    # -------------------------
+    # nearest
+    # -------------------------
+    if mode == 0:
+        sx = np.clip((src_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
+        sy = np.clip((src_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
+        return src_pixels[sy, sx]
+
+    # -------------------------
+    # bilinear函数
+    # -------------------------
+    def bilinear(u, v):
+        sx = u * (src_w - 1)
+        sy = v * (src_h - 1)
+
+        x0 = np.floor(sx).astype(np.int32)
+        x1 = np.clip(x0 + 1, 0, src_w - 1)
+        y0 = np.floor(sy).astype(np.int32)
+        y1 = np.clip(y0 + 1, 0, src_h - 1)
+
+        wx = sx - x0
+        wy = sy - y0
+
+        c00 = src_pixels[y0, x0]
+        c10 = src_pixels[y0, x1]
+        c01 = src_pixels[y1, x0]
+        c11 = src_pixels[y1, x1]
+
+        return (
+            c00 * (1 - wx)[..., None] * (1 - wy)[..., None] +
+            c10 * wx[..., None] * (1 - wy)[..., None] +
+            c01 * (1 - wx)[..., None] * wy[..., None] +
+            c11 * wx[..., None] * wy[..., None]
+        )
+
+    # -------------------------
+    # 纯bilinear
+    # -------------------------
+    if mode == 1:
+        return bilinear(src_uvs[..., 0], src_uvs[..., 1])
+
+    # -------------------------
+    # 多采样
+    # -------------------------
+    radius = min(2.0, np.sqrt(scale) * 0.5)
+
+    if mode == 2:
+        offsets = [
+            (-radius, -radius),
+            ( radius, -radius),
+            (-radius,  radius),
+            ( radius,  radius),
+        ]
+    else:
+        offsets = [
+            (-radius, -radius), (0, -radius), (radius, -radius),
+            (-radius, 0),       (0, 0),       (radius, 0),
+            (-radius, radius),  (0, radius),  (radius, radius),
+        ]
+
+    acc = 0
+    weight = 0
+
+    for dx, dy in offsets:
+        u = np.clip(src_uvs[..., 0] + dx / src_w, 0.0, 1.0)
+        v = np.clip(src_uvs[..., 1] + dy / src_h, 0.0, 1.0)
+
+        sample = bilinear(u, v)
+
+        a = sample[..., 3:4]  # alpha
+
+        acc += sample * a
+        weight += a
+
+    # 防止除0
+    weight = np.clip(weight, 1e-6, None)
+
+    return acc / weight
+
 @meta(
     enable=True,
     bl_label="纹理UV重定向",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["集合","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式"],
+    _INPUT_NAME=["集合","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
     _OUTPUT_NAME=["图像","图像路径"],
     omni_description="""
     该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射(UV Reprojection Transfer)
@@ -132,6 +230,7 @@ def uv_reprojectionTransfer(
     new_name: str = "UVBakeResult",
     file_path: _OmniFolderPath = "",
     format: _OmniImageFormat = "PNG",
+    enable_aa: bool = True,
 ) -> tuple[bpy.types.Image, _OmniFolderPath]:
 
     total_start = time.perf_counter()
@@ -251,7 +350,16 @@ def uv_reprojectionTransfer(
             sx = np.clip((src_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
             sy = np.clip((src_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
 
-            colors = src_pixels[sy, sx]
+            #是否抗锯齿
+            scale = (tri_area(src_uv) * src_w * src_h) / (tri_area(dst_uv) * out_w * out_h + 1e-8)
+            colors = sample_texture(
+                src_pixels,
+                src_uvs,
+                src_w,
+                src_h,
+                scale,
+                enable_aa
+            )
 
             region = out[min_y:max_y+1, min_x:max_x+1]
 
