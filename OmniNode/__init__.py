@@ -2,7 +2,6 @@ def register():
     print("==========   OMNI NodeTree    ==========")
     from .NodeTree import Nodes, NodeSocket, NodeTree  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
-    from .panel import panel    # NOQA: E402
     import os  # NOQA: E402
     import sys  # NOQA: E402
     import bpy  # NOQA: E402
@@ -16,16 +15,13 @@ def register():
     NodeTree.register()
     NodeSocket.register()
     Nodes.register()
-    panel.register()
     print("==========         END         ==========")
 
 
 def unregister():
     from .NodeTree import Nodes, NodeSocket, NodeTree  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
-    from .panel import panel    # NOQA: E402
     NodeBaseOps.unregister()
     NodeTree.unregister()
     NodeSocket.unregister()
     Nodes.unregister()
-    panel.unregister()

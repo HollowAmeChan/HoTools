@@ -61,46 +61,30 @@ class LayerRunning(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class LoadGlslFile2BlenderTextData(bpy.types.Operator):
-    bl_idname = "ho.loadglslfile2blendertextdata"
-    bl_label = "从默认文件夹加载glsl文件进入blender"
+class NodeRebuildSockets(bpy.types.Operator):
+    bl_idname = "ho.noderebuildsockets"
+    bl_label = "重建节点socket"
+    bl_description = "用于插件更新后旧节点的修复,如果节点socket发生错误或者丢失,可以尝试使用这个功能重建socket"
 
-    # 从绝对路径添加默认glsl代码
-    def GlslFile_2_BlenderTextData(self, file_path):  # 绝对路径
-        with open(file_path, 'r') as file:
-            glsl_code = file.read()
-            name = os.path.basename(file_path)
-            bl_textData = bpy.data.texts.get(name)
-            if bl_textData:  # 如果存在就先清空
-                bl_textData.clear()
-            else:  # 不存在就新建
-                bl_textData = bpy.data.texts.new(name)
-            bl_textData.write(glsl_code)
+    @classmethod
+    def poll(cls, context):
+        node = getattr(context, "active_node", None) or getattr(context, "node", None)
+        return node is not None and hasattr(node, "rebuild")
 
-    # 获得路径文件夹下的所有文件的绝对路径
-    def get_files_in_directory(self, directory):  # 相对路径文件夹
-        file_paths = []
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        full_path = os.path.join(script_dir, directory)
-        files = os.listdir(full_path)
-        for file in files:
-            file_path = os.path.join(full_path, file)
-            if os.path.isfile(file_path):
-                file_paths.append(file_path)
-        return file_paths
-
-    def execute(self, context: bpy.types.Context):
-        DefaultGlsl_foldPath = "..\\NodeTree\\GlslNode\\DefaultGlsl\\"  # 上一级目录
-        file_paths = self.get_files_in_directory(DefaultGlsl_foldPath)
-        print(file_paths)
-        for path in file_paths:
-            self.GlslFile_2_BlenderTextData(path)
-
-        return {'FINISHED'}
+    def execute(self, context):
+        try:
+            node = getattr(context, "active_node", None) or getattr(context, "node", None)
+            if node is None:
+                return {'CANCELLED'}
+            node.rebuild()
+            return {'FINISHED'}
+        except Exception as e:
+            print(f"Rebuild failed: {e}")
+            return {'CANCELLED'}
 
 
-clss = [NodeSetDefaultSize, NodeSetBiggerSize, LayerRunning, LoadGlslFile2BlenderTextData
-        ]
+clss = [NodeSetDefaultSize, NodeSetBiggerSize, LayerRunning,
+        NodeRebuildSockets]
 
 
 def register():
