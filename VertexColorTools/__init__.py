@@ -309,74 +309,36 @@ class changeDefaultVertexCol(Operator):
         return {'FINISHED'}
 
 
-class set1DefaultVertexCol(Operator):
+class setDefaultVertexCol(Operator):
     """
-    创建预设一
+    创建预设颜色组
     """
-    bl_idname = "ho.set1defaultvertexcol"
-    bl_label = "清除预设颜色"
+    bl_idname = "ho.setdefaultvertexcol"
+    bl_label = "设置预设颜色"
     bl_options = {'REGISTER', 'UNDO'}
 
-    color_list: bpy.props.FloatVectorProperty()  # type: ignore
+    group_index: bpy.props.IntProperty(default=1, min=1, max=3)  # type: ignore
 
     @classmethod
     def poll(cls, context):
         return True
 
     def execute(self, context):
-        context.scene.ho_GroupPaintDefaultIndex = 1
+        default_groups = {
+            1: DEFAULT_COLOR_GROUP1,
+            2: DEFAULT_COLOR_GROUP2,
+            3: DEFAULT_COLOR_GROUP3,
+        }
+        color_group = default_groups.get(self.group_index)
+        if color_group is None:
+            self.report({'WARNING'}, "无效的预设组")
+            return {'CANCELLED'}
+
+        context.scene.ho_GroupPaintDefaultIndex = self.group_index
         context.scene.ho_VertexColorCol.clear()
-        for i in DEFAULT_COLOR_GROUP1:
+        for color in color_group:
             vtx_color = context.scene.ho_VertexColorCol.add()
-            vtx_color.color = i
-
-        return {'FINISHED'}
-
-
-class set2DefaultVertexCol(Operator):
-    """
-    创建预设二
-    """
-    bl_idname = "ho.set2defaultvertexcol"
-    bl_label = "清除预设颜色"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    color_list: bpy.props.FloatVectorProperty()  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def execute(self, context):
-        context.scene.ho_GroupPaintDefaultIndex = 2
-        context.scene.ho_VertexColorCol.clear()
-        for i in DEFAULT_COLOR_GROUP2:
-            vtx_color = context.scene.ho_VertexColorCol.add()
-            vtx_color.color = i
-
-        return {'FINISHED'}
-
-
-class set3DefaultVertexCol(Operator):
-    """
-    创建预设三
-    """
-    bl_idname = "ho.set3defaultvertexcol"
-    bl_label = "清除预设颜色"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    color_list: bpy.props.FloatVectorProperty()  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def execute(self, context):
-        context.scene.ho_GroupPaintDefaultIndex = 3
-        context.scene.ho_VertexColorCol.clear()
-        for i in DEFAULT_COLOR_GROUP3:
-            vtx_color = context.scene.ho_VertexColorCol.add()
-            vtx_color.color = i
+            vtx_color.color = color
 
         return {'FINISHED'}
 
@@ -899,12 +861,15 @@ def draw_in_DATA_PT_vertex_colors(self, context: bpy.types.Context):
         single = layout.row(align=True)
         single.operator(clearDefaultVertexCol.bl_idname,
                         text="", icon="TRASH")
-        single.operator(set1DefaultVertexCol.bl_idname,
+        o = single.operator(setDefaultVertexCol.bl_idname,
                         text="", icon="EVENT_A")
-        single.operator(set2DefaultVertexCol.bl_idname,
+        o.group_index = 1
+        o = single.operator(setDefaultVertexCol.bl_idname,
                         text="", icon="EVENT_B")
-        single.operator(set3DefaultVertexCol.bl_idname,
+        o.group_index = 2
+        o = single.operator(setDefaultVertexCol.bl_idname,
                         text="", icon="EVENT_C")
+        o.group_index = 3
 
         # 预设顶点颜色
         vc = context.scene.ho_VertexColorCol
@@ -981,9 +946,7 @@ cls = [PG_VertexColorCol,
     changeTempVertexCol, changeFBVertexCol,
     clearDefaultVertexCol, changeDefaultVertexCol,
     clearTempVertexCol,
-    set1DefaultVertexCol,
-    set2DefaultVertexCol,
-    set3DefaultVertexCol,
+    setDefaultVertexCol,
     enterVertexColorView, quitVertexColorView,
     setMeshVertexColor, chooseSameVertexColorMesh,
     vertexWeight2vertexColor,
