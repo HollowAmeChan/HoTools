@@ -121,9 +121,6 @@ def reg_props():
     bpy.types.Scene.ho_BackTempVertexColor = bpy.props.FloatVectorProperty(
         name="背景颜色", size=3, subtype="COLOR", default=(0, 0, 0), min=0, max=1)
 
-    # 默认组赋色的布尔开关，以及组赋色的index
-    bpy.types.Scene.ho_isGroupPaintMode = bpy.props.BoolProperty(
-        default=True)
     bpy.types.Scene.ho_GroupPaintDefaultIndex = bpy.props.IntProperty(
         default=1)
 
@@ -156,7 +153,6 @@ def ureg_props():
     del bpy.types.Scene.ho_FrontTempVertexColor
     del bpy.types.Scene.ho_BackTempVertexColor
 
-    del bpy.types.Scene.ho_isGroupPaintMode
     del bpy.types.Scene.ho_GroupPaintDefaultIndex
 
     del bpy.types.Scene.ho_chooseSameVertexColorMeshThreshold
@@ -481,32 +477,41 @@ class setMeshVertexColor(Operator):
 
     @classmethod
     def poll(cls, context):
-        return True
+        return (context.object is not None and context.object.type == 'MESH'
+                and context.mode == 'EDIT_MESH')
 
     def execute(self, context):
-        for area in bpy.context.window.screen.areas:
-            if area.type == 'VIEW_3D':
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        override = {
-                            'window': bpy.context.window,
-                            'screen': bpy.context.screen,
-                            'area': area,
-                            'region': region,
-                        }
-                        with bpy.context.temp_override(**override):
-                            bpy.ops.paint.vertex_paint_toggle()
-                            context.object.data.use_paint_mask = True
-                            context.tool_settings.vertex_paint.brush = bpy.data.brushes['Draw']
-                            #UI绘制的颜色存进去的颜色不一样，存进去的颜色使用属性预览的跟出去烘的是一致的，所以需要修正的部分在这个指定的步骤
-                            bpy.data.brushes["Draw"].color = linear_to_srgb(self.color[:3])
-                            bpy.ops.paint.vertex_color_set()
-                            bpy.ops.object.editmode_toggle()
-                        break
-                break
-        else:
-            self.report({'WARNING'}, "找不到 3D 视图区")
+        obj = context.object
+        if obj is None or obj.type != 'MESH':
+            self.report({'WARNING'}, "当前对象不是网格")
             return {'CANCELLED'}
+
+        if context.mode != 'EDIT_MESH':
+            self.report({'WARNING'}, "请在编辑模式下使用此操作")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+
+        active_color = mesh.color_attributes.active
+        if active_color is None:
+            active_color = mesh.color_attributes.new(
+                name="Col", type='BYTE_COLOR', domain='CORNER')
+        color_layer = bm.loops.layers.color.get(active_color.name)
+        if color_layer is None:
+            color_layer = bm.loops.layers.color.new(active_color.name)
+
+        color = (*linear_to_srgb(self.color[:3]), 1.0)
+        selected_faces = [face for face in bm.faces if face.select]
+        if not selected_faces:
+            self.report({'WARNING'}, "当前没有选中任何面")
+            return {'CANCELLED'}
+
+        for face in selected_faces:
+            for loop in face.loops:
+                loop[color_layer] = color
+
+        bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
         return {'FINISHED'}
 
 class chooseSameVertexColorMesh(Operator):
@@ -567,162 +572,7 @@ class chooseSameVertexColorMesh(Operator):
                     p.select = True
 
         bpy.ops.object.editmode_toggle()
-        return {'FINISHED'}
-
-
-class vertexGroup2RandomVertexColor(Operator):
-    """
-    给顶点组赋随机的顶点色
-    """
-    bl_idname = "ho.vertexgroup2randomvertexcolor"
-    bl_label = "给顶点组赋随机的顶点色，只能为面组"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def execute(self, context):
-        obj = bpy.context.active_object
-        for area in bpy.context.window.screen.areas:
-            if area.type == 'VIEW_3D':
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        override = {
-                            'window': bpy.context.window,
-                            'screen': bpy.context.screen,
-                            'area': area,
-                            'region': region,
-                        }
-                        with bpy.context.temp_override(**override):
-                            # 获取所有顶点组
-                            vgroups = obj.vertex_groups
-                            bpy.ops.object.editmode_toggle()
-                            for i in range(len(vgroups)):
-                                selected_vgroup = vgroups[i]
-
-                                # 检查顶点组是否存在
-                                if selected_vgroup is not None:
-                                    # 获取网格数据
-                                    mesh = obj.data
-
-                                    # 选择指定名称的顶点组所属的网格
-                                    bpy.ops.object.mode_set(mode='OBJECT')
-                                    bpy.ops.object.select_all(action='DESELECT')
-                                    obj.select_set(True)
-                                    bpy.context.view_layer.objects.active = obj
-                                    bpy.ops.object.mode_set(mode='EDIT')
-                                    bpy.ops.mesh.select_all(action='DESELECT')
-                                    bpy.ops.object.vertex_group_set_active(
-                                        group=selected_vgroup.name)
-                                    bpy.ops.object.vertex_group_select()
-                                    bpy.ops.object.mode_set(mode='OBJECT')
-                                    # 赋予颜色
-                                    bpy.ops.paint.vertex_paint_toggle()
-                                    bpy.context.object.data.use_paint_mask = True
-                                    context.tool_settings.vertex_paint.brush = bpy.data.brushes['Draw']
-                                    bpy.data.brushes["Draw"].color = (
-                                        random.random(), random.random(), random.random())
-                                    bpy.ops.paint.vertex_color_set()
-                                    bpy.ops.object.editmode_toggle()
-                        break
-                break
-        else:
-            self.report({'WARNING'}, "找不到 3D 视图区")
-            return {'CANCELLED'}
-        return {'FINISHED'}
-
-
-class vertexGroup2DefaultVertexColor(Operator):
-    """
-    给顶点组赋指定组内的的颜色
-    """
-    bl_idname = "ho.vertexgroup2defaultvertexcolor"
-    bl_label = "给顶点组赋指定组内的的颜色，只能为面组"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def execute(self, context):
-        obj = bpy.context.active_object
-        for area in bpy.context.window.screen.areas:
-            if area.type == 'VIEW_3D':
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        override = {
-                            'window': bpy.context.window,
-                            'screen': bpy.context.screen,
-                            'area': area,
-                            'region': region,
-                        }
-                        with bpy.context.temp_override(**override):
-                            # 获取所有顶点组
-                            vgroups = obj.vertex_groups
-
-                            index = context.scene.ho_GroupPaintDefaultIndex
-                            mode = context.scene.ho_isGroupPaintMode
-
-                            if obj == None:
-                                return
-                            if mode == False:
-                                default_color = [
-                                    i.color for i in context.scene.ho_TempVertexColor[:]]
-                            elif mode != False and index == 1:
-                                default_color = DEFAULT_COLOR_GROUP1
-                            elif mode != False and index == 2:
-                                default_color = DEFAULT_COLOR_GROUP2
-                            elif mode != False and index == 3:
-                                default_color = DEFAULT_COLOR_GROUP3
-                            else:
-                                default_color = DEFAULT_COLOR_GROUP1
-
-                            # 首先刷白此物体全部顶点色
-                            bpy.ops.object.mode_set(mode='EDIT')
-                            bpy.ops.mesh.select_all(action='SELECT')
-                            bpy.ops.paint.vertex_paint_toggle()
-                            bpy.context.object.data.use_paint_mask = True
-                            context.tool_settings.vertex_paint.brush = bpy.data.brushes['Draw']
-                            bpy.data.brushes["Draw"].color = (1, 1, 1)
-                            bpy.ops.paint.vertex_color_set()
-                            bpy.ops.object.editmode_toggle()
-                            # 逐顶点组操作
-                            bpy.ops.object.editmode_toggle()
-                            for i in range(len(vgroups)):
-                                selected_vgroup = vgroups[i]
-
-                                # 检查顶点组是否存在,颜色组是否存在
-                                if selected_vgroup is None:
-                                    return {'FINISHED'}
-                                if len(default_color) == 0:
-                                    return {'FINISHED'}
-                                # 选择指定名称的顶点组所属的网格
-                                bpy.ops.object.mode_set(mode='OBJECT')
-                                bpy.ops.object.select_all(action='DESELECT')
-                                obj.select_set(True)
-                                bpy.context.view_layer.objects.active = obj
-                                bpy.ops.object.mode_set(mode='EDIT')
-                                bpy.ops.mesh.select_all(action='DESELECT')
-                                bpy.ops.object.vertex_group_set_active(
-                                    group=selected_vgroup.name)
-                                bpy.ops.object.vertex_group_select()
-                                bpy.ops.object.mode_set(mode='OBJECT')
-
-                                bpy.ops.paint.vertex_paint_toggle()
-                                bpy.context.object.data.use_paint_mask = True
-                                context.tool_settings.vertex_paint.brush = bpy.data.brushes['Draw']
-                                bpy.data.brushes["Draw"].color = default_color[i %
-                                                                            len(default_color)]
-                                bpy.ops.paint.vertex_color_set()
-                                bpy.ops.object.editmode_toggle()
-                            return {'FINISHED'}
-                        break
-                break
-        else:
-            self.report({'WARNING'}, "找不到 3D 视图区")
-            return {'CANCELLED'}
-        
+        return {'FINISHED'}     
 
 
 class vertexWeight2vertexColor(Operator):
@@ -1085,21 +935,14 @@ def draw_in_DATA_PT_vertex_colors(self, context: bpy.types.Context):
     if context.scene.ho_VertexColorPannel_Utils:
         layout = self.layout.column(align=True)
         layout.label(text="实用工具")
+        
         row = layout.row(align=True)
-        row.prop(context.scene, "ho_isGroupPaintMode",
-                    text="使用预设组", toggle=True)
-        row.operator(
-            vertexGroup2DefaultVertexColor.bl_idname, text="顶点组赋颜色组", icon="FUND")
-        row = layout.row(align=True)
-
         row.prop(context.scene,
                     "ho_chooseSameVertexColorMeshThreshold", text="容差")
         o = row.operator(
-            chooseSameVertexColorMesh.bl_idname, text="选择同顶点色面", icon="SEQUENCE_COLOR_01")
+            chooseSameVertexColorMesh.bl_idname, text="选择同顶点色面", icon="RADIOBUT_ON")
         o.threshold = context.scene.ho_chooseSameVertexColorMeshThreshold
 
-        layout.operator(
-            vertexGroup2RandomVertexColor.bl_idname, text="顶点组赋随机色")
         layout.operator(vertexWeight2vertexColor.bl_idname,
                         text="权重到顶点色")
         layout.operator(bakeNormal2VertexColor.bl_idname,
@@ -1134,17 +977,17 @@ def draw_in_DATA_PT_vertex_colors(self, context: bpy.types.Context):
 
 
 cls = [PG_VertexColorCol,
-       addTempVertexCol, removeTempVertexCol,
-       changeTempVertexCol, changeFBVertexCol,
-       clearDefaultVertexCol, changeDefaultVertexCol,
-       clearTempVertexCol,
-       set1DefaultVertexCol,
-       set2DefaultVertexCol,
-       set3DefaultVertexCol,
-       enterVertexColorView, quitVertexColorView,
-       setMeshVertexColor, chooseSameVertexColorMesh,
-       vertexGroup2RandomVertexColor, vertexGroup2DefaultVertexColor, vertexWeight2vertexColor,
-       vertexColorChannelCombine,bakeNormal2VertexColor
+    addTempVertexCol, removeTempVertexCol,
+    changeTempVertexCol, changeFBVertexCol,
+    clearDefaultVertexCol, changeDefaultVertexCol,
+    clearTempVertexCol,
+    set1DefaultVertexCol,
+    set2DefaultVertexCol,
+    set3DefaultVertexCol,
+    enterVertexColorView, quitVertexColorView,
+    setMeshVertexColor, chooseSameVertexColorMesh,
+    vertexWeight2vertexColor,
+    vertexColorChannelCombine,bakeNormal2VertexColor
 
        ]
 # endregion
