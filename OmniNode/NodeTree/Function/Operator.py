@@ -61,75 +61,44 @@ def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.ty
     mesh.uv_layers.new(name=uv_layer_name)
     return obj, uv_layer_name
 
-
-
-def sample_image(img_array, uv, w, h):
-    x = min(max(uv.x * (w - 1), 0.0), w - 1)
-    y = min(max(uv.y * (h - 1), 0.0), h - 1)
-    ix = int(x)
-    iy = int(y)
-    return img_array[iy, ix]
-
-def barycentric(p, a, b, c):
-    v0 = b - a
-    v1 = c - a
-    v2 = p - a
-
-    d00 = v0.dot(v0)
-    d01 = v0.dot(v1)
-    d11 = v1.dot(v1)
-    d20 = v2.dot(v0)
-    d21 = v2.dot(v1)
-
-    denom = d00 * d11 - d01 * d01
-    if denom == 0:
-        return None
-
-    v = (d11 * d20 - d01 * d21) / denom
-    w_ = (d00 * d21 - d01 * d20) / denom
-    u = 1.0 - v - w_
-    return u, v, w_
-
 def dilate_image_with_colors(pil_img, radius):
-    """为每个像素保留颜色，使用膨胀传播颜色"""
     if radius <= 0:
         return pil_img
 
-    img_arr = np.array(pil_img)
-    h, w = img_arr.shape[:2]
+    img = np.array(pil_img, dtype=np.uint8)
+    h, w = img.shape[:2]
+
+    rgb = img[..., :3]
+    alpha = img[..., 3]
+
+    mask = alpha > 0
 
     for _ in range(radius):
-        dilated = img_arr.copy()
-        alpha = img_arr[:, :, 3]
-        mask = (alpha == 0)
-        if not mask.any():
+        if mask.all():
             break
 
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
+        new_mask = mask.copy()
 
-                src_y0 = max(0, -dy)
-                src_y1 = h - max(0, dy)
-                src_x0 = max(0, -dx)
-                src_x1 = w - max(0, dx)
-                dst_y0 = max(0, dy)
-                dst_y1 = h - max(0, -dy)
-                dst_x0 = max(0, dx)
-                dst_x1 = w - max(0, -dx)
+        # 8邻域
+        neighbors = [
+            (-1,0),(1,0),(0,-1),(0,1),
+            (-1,-1),(-1,1),(1,-1),(1,1)
+        ]
 
-                src = img_arr[src_y0:src_y1, src_x0:src_x1]
-                dst_mask = mask[dst_y0:dst_y1, dst_x0:dst_x1]
-                cond = (src[:, :, 3] > 0) & dst_mask
-                if cond.any():
-                    region = dilated[dst_y0:dst_y1, dst_x0:dst_x1]
-                    region[cond] = src[cond]
-                    dilated[dst_y0:dst_y1, dst_x0:dst_x1] = region
+        for dy, dx in neighbors:
+            shifted_mask = np.roll(mask, (dy, dx), axis=(0,1))
+            shifted_rgb  = np.roll(rgb,  (dy, dx), axis=(0,1))
 
-        img_arr = dilated
+            fill = (~mask) & shifted_mask
 
-    return Image.fromarray(img_arr, mode="RGBA")
+            rgb[fill] = shifted_rgb[fill]
+            alpha[fill] = 255
+
+            new_mask |= fill
+
+        mask = new_mask
+
+    return Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
 
 @meta(
     enable=True,
@@ -165,21 +134,42 @@ def uv_reprojectionTransfer(
     format: _OmniImageFormat = "PNG",
 ) -> tuple[bpy.types.Image, _OmniFolderPath]:
 
-    src_w, src_h = img.size
-    src_pixels = np.array(img.pixels[:], dtype=np.float32).reshape(src_h, src_w, 4)
+    total_start = time.perf_counter()
+    timings = {k: 0.0 for k in [
+        "collect_meshes","reproject","dilate","fill_normal",
+        "save","load_blender","create_blender_image"
+    ]}
 
-    # Always create new image with specified resolution
+    # -------------------------
+    # Source image
+    # -------------------------
+    src_w, src_h = img.size
+    src_pixels = np.empty(src_w * src_h * 4, dtype=np.float32)
+    img.pixels.foreach_get(src_pixels)
+    src_pixels = src_pixels.reshape(src_h, src_w, 4)
+
+    # -------------------------
+    # Output
+    # -------------------------
     out_w = out_h = resolution
 
     if isNormal:
         out = np.zeros((out_h, out_w, 4), dtype=np.float32)
         out[..., :3] = (0.5, 0.5, 1.0)
-        out[..., 3] = 0.0
     else:
         out = np.zeros((out_h, out_w, 4), dtype=np.float32)
-        out[..., :] = 0.0
 
+    # -------------------------
+    # Collect meshes
+    # -------------------------
+    collect_start = time.perf_counter()
     meshes = [o for o in col.objects if o.type == 'MESH']
+    timings["collect_meshes"] = time.perf_counter() - collect_start
+
+    # -------------------------
+    # Reproject (核心优化区)
+    # -------------------------
+    repro_start = time.perf_counter()
 
     for obj in meshes:
         me = obj.data
@@ -187,140 +177,147 @@ def uv_reprojectionTransfer(
         if uv_source not in me.uv_layers or uv_target not in me.uv_layers:
             continue
 
-        uv_src = me.uv_layers[uv_source].data
-        uv_dst = me.uv_layers[uv_target].data
+        me.calc_loop_triangles()
+        tris = me.loop_triangles
 
-        bm = bmesh.new()
-        bm.from_mesh(me)
-        bm.faces.ensure_lookup_table()
+        uv_src_layer = me.uv_layers[uv_source].data
+        uv_dst_layer = me.uv_layers[uv_target].data
 
-        for face in bm.faces:
-            loops = face.loops
-            if len(loops) < 3:
+        for tri in tris:
+            idx = tri.loops
+
+            # ---- 取UV（numpy化）----
+            src_uv = np.array([uv_src_layer[i].uv[:] for i in idx], dtype=np.float32)
+            dst_uv = np.array([uv_dst_layer[i].uv[:] for i in idx], dtype=np.float32)
+
+            # ---- bounding box ----
+            uv_min = np.clip(dst_uv.min(axis=0), 0.0, 1.0)
+            uv_max = np.clip(dst_uv.max(axis=0), 0.0, 1.0)
+
+            min_x = int(uv_min[0] * (out_w - 1))
+            max_x = int(uv_max[0] * (out_w - 1))
+
+            min_y = int((1.0 - uv_max[1]) * (out_h - 1))
+            max_y = int((1.0 - uv_min[1]) * (out_h - 1))
+
+            if min_x > max_x or min_y > max_y:
                 continue
 
-            for i in range(1, len(loops) - 1):
+            # ---- 像素grid ----
+            xs = np.arange(min_x, max_x + 1)
+            ys = np.arange(min_y, max_y + 1)
 
-                tri = [0, i, i + 1]
+            grid_x, grid_y = np.meshgrid(xs, ys)
 
-                src_uv = [uv_src[loops[j].index].uv.copy() for j in tri]
-                dst_uv = [uv_dst[loops[j].index].uv.copy() for j in tri]
+            px = (grid_x + 0.5) / out_w
+            py = 1.0 - (grid_y + 0.5) / out_h
 
-                uv_min_x = max(min(v.x for v in dst_uv), 0.0)
-                uv_max_x = min(max(v.x for v in dst_uv), 1.0)
-                uv_min_y = max(min(v.y for v in dst_uv), 0.0)
-                uv_max_y = min(max(v.y for v in dst_uv), 1.0)
+            p = np.stack([px, py], axis=-1)
 
-                min_x = int(uv_min_x * (out_w - 1))
-                max_x = int(uv_max_x * (out_w - 1))
-                pixel_min_y = int((1.0 - uv_max_y) * (out_h - 1))
-                pixel_max_y = int((1.0 - uv_min_y) * (out_h - 1))
+            # ---- barycentric（向量化）----
+            a, b, c = dst_uv
 
-                min_y = max(min(pixel_min_y, out_h - 1), 0)
-                max_y = max(min(pixel_max_y, out_h - 1), 0)
+            v0 = b - a
+            v1 = c - a
+            v2 = p - a
 
-                if min_x > max_x or min_y > max_y:
-                    continue
+            d00 = np.dot(v0, v0)
+            d01 = np.dot(v0, v1)
+            d11 = np.dot(v1, v1)
 
-                for y in range(min_y, max_y + 1):
-                    for x in range(min_x, max_x + 1):
+            denom = d00 * d11 - d01 * d01
+            if denom == 0:
+                continue
 
-                        p = Vector(((x + 0.5) / out_w, 1.0 - (y + 0.5) / out_h))  # Pixel center UV
-                        bc = barycentric(p, dst_uv[0], dst_uv[1], dst_uv[2])
+            d20 = v2[..., 0] * v0[0] + v2[..., 1] * v0[1]
+            d21 = v2[..., 0] * v1[0] + v2[..., 1] * v1[1]
 
-                        if bc is None:
-                            continue
+            v = (d11 * d20 - d01 * d21) / denom
+            w = (d00 * d21 - d01 * d20) / denom
+            u = 1.0 - v - w
 
-                        u, v, w_ = bc
+            mask = (u >= 0) & (v >= 0) & (w >= 0)
+            if not mask.any():
+                continue
 
-                        if u < 0 or v < 0 or w_ < 0:
-                            continue
+            # ---- src uv ----
+            src_uvs = (
+                src_uv[0] * u[..., None] +
+                src_uv[1] * v[..., None] +
+                src_uv[2] * w[..., None]
+            )
 
-                        src_p = (
-                            src_uv[0] * u +
-                            src_uv[1] * v +
-                            src_uv[2] * w_
-                        )
+            # ---- 采样 ----
+            sx = np.clip((src_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
+            sy = np.clip((src_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
 
-                        color = sample_image(src_pixels, src_p, src_w, src_h)
+            colors = src_pixels[sy, sx]
 
-                        if not isNormal:
-                            a = color[3]
-                            out[y, x, :3] = color[:3] * a + out[y, x, :3] * (1.0 - a)
-                            out[y, x, 3] = max(out[y, x, 3], a)
+            region = out[min_y:max_y+1, min_x:max_x+1]
 
-                        elif isNormal:
-                            # direct overwrite
-                            out[y, x, :3] = color[:3]
-                            out[y, x, 3] = 1.0
+            if isNormal:
+                region[mask] = colors[mask]
+                region[mask, 3] = 1.0
+            else:
+                a_col = colors[..., 3:4]
+                region[..., :3] = colors[..., :3] * a_col + region[..., :3] * (1.0 - a_col)
+                region[..., 3] = np.maximum(region[..., 3], colors[..., 3])
 
-        bm.free()
+            out[min_y:max_y+1, min_x:max_x+1] = region
 
+    timings["reproject"] = time.perf_counter() - repro_start
+
+    # -------------------------
+    # 后处理（保持你原逻辑）
+    # -------------------------
     def fill_normal_background(img):
         arr = np.array(img, dtype=np.uint8)
         mask = arr[:, :, 3] == 0
         if mask.any():
-            arr[mask, 0] = int(0.5 * 255)
-            arr[mask, 1] = int(0.5 * 255)
-            arr[mask, 2] = int(1.0 * 255)
+            arr[mask, 0] = 128
+            arr[mask, 1] = 128
+            arr[mask, 2] = 255
             arr[mask, 3] = 255
         return Image.fromarray(arr, mode='RGBA')
 
-    def normalize_format(fmt):
-        fmt = fmt.upper()
-        if fmt == 'JPG':
-            return 'JPEG', 'jpg'
-        if fmt == 'JPEG':
-            return 'JPEG', 'jpeg'
-        if fmt == 'PNG':
-            return 'PNG', 'png'
-        if fmt == 'TGA':
-            return 'TGA', 'tga'
-        if fmt == 'BMP':
-            return 'BMP', 'bmp'
-        return fmt, fmt.lower()
-
-    file_format, file_ext = normalize_format(format)
+    file_format = format.upper()
     output_path = ""
+
     if file_path:
         abs_file_path = bpy.path.abspath(file_path)
         dir_path = os.path.dirname(abs_file_path)
-        full_path = os.path.join(dir_path, new_name + '.' + file_ext)
+        full_path = os.path.join(dir_path, new_name + '.' + file_format.lower())
         os.makedirs(dir_path, exist_ok=True)
-        # Convert to uint8 for PIL
+
         img_array = (out * 255).astype(np.uint8)
         pil_img = Image.fromarray(img_array, 'RGBA')
+
+        t = time.perf_counter()
         pil_img = dilate_image_with_colors(pil_img, dilate_radius)
+        timings["dilate"] = time.perf_counter() - t
+
         if isNormal:
+            t = time.perf_counter()
             pil_img = fill_normal_background(pil_img)
-        if file_format == 'JPEG':
-            pil_img = pil_img.convert('RGB')
+            timings["fill_normal"] = time.perf_counter() - t
+
+        t = time.perf_counter()
         pil_img.save(full_path, format=file_format)
+        timings["save"] = time.perf_counter() - t
+
         output_path = full_path
 
-        # Load into Blender
+        t = time.perf_counter()
         if new_name in bpy.data.images:
             bpy.data.images.remove(bpy.data.images[new_name])
         out_img = bpy.data.images.load(full_path)
-        out_img.name = new_name  # Set the name in Blender
+        out_img.name = new_name
         if isNormal:
             out_img.colorspace_settings.name = "Non-Color"
+        timings["load_blender"] = time.perf_counter() - t
+
     else:
-        # Create Blender image
-        if isNormal and dilate_radius > 0:
-            img_array = (out * 255).astype(np.uint8)
-            pil_img = Image.fromarray(img_array, 'RGBA')
-            pil_img = dilate_image_with_colors(pil_img, dilate_radius)
-            pil_img = fill_normal_background(pil_img)
-            out = np.array(pil_img, dtype=np.uint8).astype(np.float32) / 255.0
-        elif isNormal:
-            # fill neutral background for normal maps
-            mask = out[:, :, 3] == 0
-            if mask.any():
-                out[mask, 0] = 0.5
-                out[mask, 1] = 0.5
-                out[mask, 2] = 1.0
-                out[mask, 3] = 1.0
+        t = time.perf_counter()
         out_img = bpy.data.images.new(
             name=new_name,
             width=out_w,
@@ -329,8 +326,25 @@ def uv_reprojectionTransfer(
         )
         if isNormal:
             out_img.colorspace_settings.name = "Non-Color"
-            out_img.alpha_mode = "STRAIGHT"
-        out_img.pixels = out.flatten()
+
+        flat = out.ravel()  # 不复制
+        out_img.pixels.foreach_set(flat)
         out_img.update()
+        timings["create_blender_image"] = time.perf_counter() - t
+
+    total_time = time.perf_counter() - total_start
+
+    print(
+        f"[uv_reprojectionTransfer OPT] "
+        f"collect_meshes={timings['collect_meshes']:.4f}s "
+        f"reproject={timings['reproject']:.4f}s "
+        f"dilate={timings['dilate']:.4f}s "
+        f"fill_normal={timings['fill_normal']:.4f}s "
+        f"save={timings['save']:.4f}s "
+        f"load_blender={timings['load_blender']:.4f}s "
+        f"create_blender_image={timings['create_blender_image']:.4f}s "
+        f"total={total_time:.4f}s"
+    )
 
     return out_img, output_path
+
