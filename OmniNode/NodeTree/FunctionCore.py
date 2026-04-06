@@ -230,7 +230,7 @@ def CreateNodeClass(func) -> OmniNode:
 
         def process(self):
             super().process()
-            self.processUsingPool(func)  # 程序化节点特有的调用
+            return self.processUsingPool(func)  # 程序化节点特有的调用，返回可能的错误
 
     OmniNodeClassInstance.__name__ = "HO_OmniProgramCreateNode_"+func.__name__
     return OmniNodeClassInstance

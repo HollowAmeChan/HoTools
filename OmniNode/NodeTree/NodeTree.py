@@ -149,12 +149,15 @@ class OmniNodeTree(NodeTree):  # 节点树
                         if not pool[node.name].inputs[socket.identifier]:
                             pool[node.name].inputs[socket.identifier] = socket.default_value
 
-                    errorlog = node.process()
-                    if errorlog:
+                    try:
+                        errorlog = node.process()
+                        # 如果 process() 返回异常对象，也捕获处理
+                        if errorlog and isinstance(errorlog, Exception):
+                            raise errorlog
+                    except Exception as e:
                         node.is_bug = True
-                        node.bug_text = errorlog.__class__.__name__ + \
-                            "\n"+str(errorlog)
-                        print(errorlog)
+                        node.bug_text = e.__class__.__name__ + "\n" + str(e)
+                        print(f"Error in node '{node.name}':", e)
                         break
             if isinstance(layer[0], NodeLink):
                 link: NodeLink
