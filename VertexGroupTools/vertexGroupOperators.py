@@ -2148,6 +2148,27 @@ class OP_DebugBoneWeightGroupRefresh(Operator):
         self.report({'INFO'}, "Debug 已刷新")
         return {'FINISHED'}
 
+class OP_VertexGroupTools_select_mirror(Operator):
+    bl_idname = "ho.vertexgrouptools_select_mirror"
+    bl_label = "选择镜像"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "按住shift触发时加选另一边,否则选择另一边"
+
+    extend: bpy.props.BoolProperty(
+        name="Extend",
+        default=False
+    )  # type: ignore
+
+    def invoke(self, context, event):
+        # 根据 Shift 决定默认行为
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        bpy.ops.mesh.select_mirror('EXEC_DEFAULT', extend=self.extend)
+        return {'FINISHED'}
+
+
 def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     scene = context.scene
     box = layout.box()
@@ -2181,6 +2202,7 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     op.reverse = True
     op = row.operator(OP_VertexGroupTools_Select_Vertices_halfside.bl_idname,text="右半")
     op.reverse = False
+    op = row.operator(OP_VertexGroupTools_select_mirror.bl_idname,text="选择镜像")
     op2 = row.operator(OP_VertexGroupTools_Select_Vertices_by_WeightValue.bl_idname,text="选择小于")
     op2.value = scene.hoVertexGroupTools_select_by_weightvalue
     row.prop(scene,"hoVertexGroupTools_select_by_weightvalue",text="")
@@ -2385,6 +2407,7 @@ cls = [
     OP_RemoveNoneWeightGroup,
     OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone,
     OP_DebugBoneWeightGroupSwitch,OP_DebugBoneWeightGroupClear,OP_DebugBoneWeightGroupRefresh,
+    OP_VertexGroupTools_select_mirror,
 ]
 
 
