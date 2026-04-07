@@ -57,7 +57,7 @@ def draw_in_DATA_PT_shape_keys(self, context: bpy.types.Context):
     
     row2 = row.row(align=True)
     row2.alignment= 'RIGHT'
-    row2.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="",toggle=True,icon="FILE_REFRESH")
+    row2.prop(context.scene,"hoShapekeyTools_control_shape_key_listener",text="",toggle=True,icon="UV_SYNC_SELECT")
 
 
     if context.scene.hoShapekeyTools_open_menu:
