@@ -146,7 +146,7 @@ class OmniNodeTree(NodeTree):  # 节点树
                 for node in layer:
                     for socket in node.inputs:# process前,如果还没有上游link输入数据就利用自身socket默认值填充pool输入，防止缺少输入导致错误
                         socket: NodeSocket
-                        if not pool[node.name].inputs[socket.identifier]:
+                        if pool[node.name].inputs[socket.identifier] is None:
                             pool[node.name].inputs[socket.identifier] = socket.default_value
 
                     try:
@@ -168,7 +168,13 @@ class OmniNodeTree(NodeTree):  # 节点树
                     to_socket = link.to_socket
                     # 这里直接查可能为空吗
                     pool_from_prop = pool[from_node.name].outputs[from_socket.identifier]
-                    pool[to_node.name].inputs[to_socket.identifier] = pool_from_prop
+                    if to_socket.is_multi_input:
+                        if not isinstance(pool[to_node.name].inputs[to_socket.identifier], list):
+                            current = pool[to_node.name].inputs[to_socket.identifier]
+                            pool[to_node.name].inputs[to_socket.identifier] = [current] if current is not None else []
+                        pool[to_node.name].inputs[to_socket.identifier].append(pool_from_prop)
+                    else:
+                        pool[to_node.name].inputs[to_socket.identifier] = pool_from_prop
 
     def debugRunLayer(self, linkSet, nodeSet, runningNodeLayer, runningLayer):
         """

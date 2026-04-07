@@ -1,5 +1,5 @@
 import bpy
-from bpy.types import NodeSocket
+from bpy.types import NodeSocket,NodeSocketImage
 
 
 class OmniNodeSocketScene(NodeSocket):
@@ -80,8 +80,22 @@ class OmniNodeSocketImageFormat(NodeSocket):
     def draw_color_simple(cls):
         return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
 
+class OmniNodeSocketImage_multi(NodeSocketImage):
+    bl_label = "Omni节点图片多输入Socket"
+    bl_idname = 'OmniNodeSocketImage_multi'
+
+    is_multi_input = True
+    default_value: bpy.props.CollectionProperty(type=bpy.types.Image)  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        return
+
+
+
+
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
        OmniNodeSocketAny,OmniNodeSocketImageFormat,
+       OmniNodeSocketImage_multi
        ]
 
 

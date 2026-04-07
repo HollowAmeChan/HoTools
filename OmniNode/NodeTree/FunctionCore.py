@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketImage_multi
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -69,6 +69,7 @@ cls_dic = {
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
     _OmniImageFormat: OmniNodeSocketImageFormat,
+    list[bpy.types.Image]: OmniNodeSocketImage_multi,
 }
 
 
@@ -163,10 +164,21 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
                 name = NodeInfo["_INPUT_NAME"][index]
             except Exception:
                 name = i.name
+            
+            annotation = i.annotation
+            use_multi_input = False
+            if typing.get_origin(annotation) is list:
+                inner_type = typing.get_args(annotation)[0]
+                socket_cls = cls_dic.get(inner_type, OmniNodeSocketAny)
+                use_multi_input = True
+            else:
+                socket_cls = cls_dic.get(annotation, OmniNodeSocketAny)
+            
             dic = {
-                "type": get_socket_type_name(cls_dic.get(i.annotation, OmniNodeSocketAny)),
+                "type": get_socket_type_name(socket_cls),
                 "name": name,
                 "identifier": identifier,
+                "use_multi_input": use_multi_input,
             }
             SocketInMetaDict[identifier] = dic
             index += 1

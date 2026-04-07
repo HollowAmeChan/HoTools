@@ -460,3 +460,13 @@ def uv_reprojectionTransfer(
 
     return out_img, output_path
 
+@meta(
+    enable=True,
+    bl_label="加合",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["整数列表"],
+    _OUTPUT_NAME=["和"],
+    )
+def sumInt(ints: list[int])->int:
+    return sum(ints)

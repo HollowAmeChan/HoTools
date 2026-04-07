@@ -24,7 +24,10 @@ class poolNodeInfo:
             return
         self.nodename = node.name
         for skt in node.inputs:
-            self.inputs[skt.identifier] = skt.default_value
+            if skt.is_multi_input:
+                self.inputs[skt.identifier] = []
+            else:
+                self.inputs[skt.identifier] = skt.default_value
         for skt in node.outputs:  # TODO:不应该更新,因为现在process直接传递到输出socket，但是这样完全不支持自定义属性
             self.outputs[skt.identifier] = skt.default_value
 
