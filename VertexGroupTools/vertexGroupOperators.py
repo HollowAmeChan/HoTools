@@ -1841,7 +1841,7 @@ class OP_RemoveNoneWeightGroup(Operator):
 
 DEBUG_BONEWEIGHTGROUP_DRAW = None # 用于存储绘制柄
 DEBUG_BONEWEIGHTGROUP_MODE_TEMP = {"mode":None,"limit":None} # 用于存储模式，hotools某些功能结束后触发刷新用
-
+# TODO:目前不支持形态键，修改器的影响，如果要考虑的话会很重，重到无法编辑模式下刷新了（并且编辑模式下的实时修改也无法获取）
 class DebugBoneWeightGroup:
 
     positions = []
