@@ -576,6 +576,7 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
     bl_idname = "ho.vertex_group_mirror_to_other"
     bl_label = "镜像权重(仅骨骼权重)到对侧组，无自动归一化"
+    bl_description = "仅处理选中中的顶点，将当前顶点组的权重镜像到对侧的骨骼权重组，不会自动归一化"
     bl_options = {'REGISTER', 'UNDO'}
 
     tolerance: FloatProperty(
