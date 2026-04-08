@@ -495,7 +495,7 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types
     _INPUT_NAME=["图片路径","是否为法线图"],
     _OUTPUT_NAME=["图片"],
     )
-def importMultiImage2Blender(imagePaths: list[_OmniFolderPath],isNormal: bool) -> list[bpy.types.Image]:
+def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNormal: bool) -> list[bpy.types.Image]:
     imgs = []
     for path in imagePaths:
         img_name = os.path.basename(path)

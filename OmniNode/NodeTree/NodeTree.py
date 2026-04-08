@@ -140,6 +140,14 @@ class OmniNodeTree(NodeTree):  # 节点树
     @staticmethod
     def isMultiSocket(node: OmniNode, socket: NodeSocket):
         return socket.identifier in getattr(node, "_SocketIsMultiDict", {})
+    @staticmethod
+    def normalize_socket_value(v):
+        """消除单值和多值的差异，统一输出列表"""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        return [v]
 
     def runRunLayer(self, outRunningList):
         pool : DataPool = self.pool
@@ -175,12 +183,12 @@ class OmniNodeTree(NodeTree):  # 节点树
                     to_node = link.to_node
                     from_socket = link.from_socket
                     to_socket = link.to_socket
-                    # 这里直接查可能为空吗
-                    pool_from_prop = pool[from_node.name].outputs[from_socket.identifier]
+
+                    value = pool[from_node.name].outputs[from_socket.identifier]
                     if OmniNodeTree.isMultiSocket(to_node, to_socket):
-                        pool[to_node.name].inputs[to_socket.identifier].append(pool_from_prop)
+                        pool[to_node.name].inputs[to_socket.identifier].extend(OmniNodeTree.normalize_socket_value(value))
                     else:
-                        pool[to_node.name].inputs[to_socket.identifier] = pool_from_prop
+                        pool[to_node.name].inputs[to_socket.identifier] = value
 
     def debugRunLayer(self, linkSet, nodeSet, runningNodeLayer, runningLayer):
         """
