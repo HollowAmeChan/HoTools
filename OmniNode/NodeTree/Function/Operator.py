@@ -686,7 +686,7 @@ def combineImages(
     该节点用于将Blender图片保存到指定路径，支持 PNG、JPEG、EXR 等格式
     """
 )
-def saveImage(bl_img, file_path, format):
+def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniImageFormat) -> _OmniFolderPath:
 
     if not bl_img:
         raise ValueError("[saveImage] bl_img is None")

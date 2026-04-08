@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Node, NodeSocket
 from ...operator import NodeBaseOps
-
+import json
 
 def setOutputNode(node, context):
     node.updateColor()
@@ -98,9 +98,30 @@ class OmniNode(Node):
 # --------------------------------rebuild相关------------------------------
 
     def rebuild(self):
-        import json
         tree = self["fatherTree"]
-        # 收集链接信息，避免 later invalid link objects
+        # -----------------------------
+        # 1. 缓存旧 socket 的值和链接信息
+        # -----------------------------
+        input_value_cache = {}
+        output_value_cache = {}
+
+        for sock in self.inputs:
+            if sock.identifier == "_BOOL":
+                continue
+            try:
+                input_value_cache[sock.identifier] = getattr(sock, "default_value", None)
+            except Exception:
+                pass
+
+        for sock in self.outputs:
+            try:
+                output_value_cache[sock.identifier] = getattr(sock, "default_value", None)
+            except Exception:
+                pass
+
+        # -----------------------------
+        # 2. 收集 link
+        # -----------------------------
         input_links = []
         for sock in self.inputs:
             if sock.identifier == "_BOOL":
@@ -111,6 +132,7 @@ class OmniNode(Node):
                     "from_socket": link.from_socket.identifier,
                     "to_socket": sock.identifier,
                 })
+
         output_links = []
         for sock in self.outputs:
             for link in sock.links:
@@ -119,66 +141,113 @@ class OmniNode(Node):
                     "to_node": link.to_node.name,
                     "to_socket": link.to_socket.identifier,
                 })
-        # 移除旧socket 和 关联链接
+
+        # -----------------------------
+        # 3. 清理旧 socket
+        # -----------------------------
         for sock in list(self.inputs):
             if sock.identifier != "_BOOL":
                 for link in list(sock.links):
                     tree.links.remove(link)
                 self.inputs.remove(sock)
+
         for sock in list(self.outputs):
             for link in list(sock.links):
                 tree.links.remove(link)
             self.outputs.remove(sock)
-        # 重新创建 socket
+
+        # -----------------------------
+        # 4. 重新创建 socket
+        # -----------------------------
         cls = type(self)
+
         in_meta = getattr(cls, "_SocketInMetaDict", None)
         out_meta = getattr(cls, "_SocketOutMetaDict", None)
         default_meta = getattr(cls, "_SocketDefaultDict", None)
         is_multi_meta = getattr(cls, "_SocketIsMultiDict", None)
+
         if in_meta is None or out_meta is None or default_meta is None:
             in_meta = json.loads(self.SocketInMetaDict)
             out_meta = json.loads(self.SocketOutMetaDict)
             default_meta = json.loads(self.SocketDefaultDict)
             is_multi_meta = json.loads(self.SocketIsMultiDict)
+
+        # -----------------------------
+        # 5. inputs rebuild + restore value
+        # -----------------------------
         for identifier, meta in in_meta.items():
             sock = self.inputs.new(**meta)
-            default_value = default_meta.get(identifier, None)
-            if default_value is not None:
+
+            # ⭐ 优先恢复 runtime value，其次 default meta
+            value = input_value_cache.get(identifier, None)
+            if value is None:
+                value = default_meta.get(identifier, None)
+
+            if value is not None:
                 try:
-                    sock.default_value = default_value
+                    sock.default_value = value
                 except Exception:
                     pass
+
             if is_multi_meta.get(identifier, False):
                 sock.display_shape = "SQUARE"
 
+        # -----------------------------
+        # 6. outputs rebuild + restore value
+        # -----------------------------
         for identifier, meta in out_meta.items():
             sock = self.outputs.new(**meta)
+
+            value = output_value_cache.get(identifier, None)
+            if value is not None:
+                try:
+                    sock.default_value = value
+                except Exception:
+                    pass
+
             if is_multi_meta.get(identifier, False):
                 sock.display_shape = "SQUARE"
-        # 重新连接，按 identifier 匹配
+
+        # -----------------------------
+        # 7. reconnect input links
+        # -----------------------------
         for link_info in input_links:
             to_id = link_info["to_socket"]
+
             if to_id not in in_meta:
                 continue
+
             from_node = tree.nodes.get(link_info["from_node"])
             if from_node is None:
                 continue
+
             from_socket = from_node.outputs.get(link_info["from_socket"])
             to_socket = self.inputs.get(to_id)
+
             if from_socket is None or to_socket is None:
                 continue
+
             tree.links.new(from_socket, to_socket)
+
+        # -----------------------------
+        # 8. reconnect output links
+        # -----------------------------
         for link_info in output_links:
             from_id = link_info["from_socket"]
+
             if from_id not in out_meta:
                 continue
+
             to_node = tree.nodes.get(link_info["to_node"])
             if to_node is None:
                 continue
+
             from_socket = self.outputs.get(from_id)
             to_socket = to_node.inputs.get(link_info["to_socket"])
+
             if from_socket is None or to_socket is None:
                 continue
+
             tree.links.new(from_socket, to_socket)
 # --------------------------------原生方法重载------------------------------
 
@@ -213,8 +282,9 @@ class OmniNode(Node):
             row_L.label(icon="ERROR",)
         
         row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
-        row_L.operator(
+        Rebuild = row_L.operator(
             NodeBaseOps.NodeRebuildSockets.bl_idname, text="", icon="NODETREE")
+        Rebuild.node_name = self.name
         SetDefaultSize = row_L.operator(
             NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
         SetDefaultSize.node_name = self.name

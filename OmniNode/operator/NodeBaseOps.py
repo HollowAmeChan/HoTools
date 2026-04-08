@@ -66,14 +66,15 @@ class NodeRebuildSockets(bpy.types.Operator):
     bl_label = "重建节点socket"
     bl_description = "用于插件更新后旧节点的修复,如果节点socket发生错误或者丢失,可以尝试使用这个功能重建socket"
 
+    node_name: StringProperty(name="节点名称", default="")  # type: ignore
+
     @classmethod
     def poll(cls, context):
-        node = getattr(context, "active_node", None) or getattr(context, "node", None)
-        return node is not None and hasattr(node, "rebuild")
+        return True
 
     def execute(self, context):
         try:
-            node = getattr(context, "active_node", None) or getattr(context, "node", None)
+            node = bpy.context.space_data.node_tree.nodes[self.node_name]
             if node is None:
                 return {'CANCELLED'}
             node.rebuild()
