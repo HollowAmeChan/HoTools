@@ -44,6 +44,7 @@ class OmniNode(Node):
     SocketInMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
     SocketOutMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
     SocketDefaultDict: bpy.props.StringProperty(default="{}") # type: ignore
+    SocketIsMultiDict: bpy.props.StringProperty(default="{}") # type: ignore
 
 
 # --------------------------------自身基本特性相关------------------------------
@@ -133,10 +134,12 @@ class OmniNode(Node):
         in_meta = getattr(cls, "_SocketInMetaDict", None)
         out_meta = getattr(cls, "_SocketOutMetaDict", None)
         default_meta = getattr(cls, "_SocketDefaultDict", None)
+        is_multi_meta = getattr(cls, "_SocketIsMultiDict", None)
         if in_meta is None or out_meta is None or default_meta is None:
             in_meta = json.loads(self.SocketInMetaDict)
             out_meta = json.loads(self.SocketOutMetaDict)
             default_meta = json.loads(self.SocketDefaultDict)
+            is_multi_meta = json.loads(self.SocketIsMultiDict)
         for identifier, meta in in_meta.items():
             sock = self.inputs.new(**meta)
             default_value = default_meta.get(identifier, None)
@@ -145,8 +148,13 @@ class OmniNode(Node):
                     sock.default_value = default_value
                 except Exception:
                     pass
+            if is_multi_meta.get(identifier, False):
+                sock.display_shape = "SQUARE"
+
         for identifier, meta in out_meta.items():
-            self.outputs.new(**meta)
+            sock = self.outputs.new(**meta)
+            if is_multi_meta.get(identifier, False):
+                sock.display_shape = "SQUARE"
         # 重新连接，按 identifier 匹配
         for link_info in input_links:
             to_id = link_info["to_socket"]
@@ -255,6 +263,16 @@ class OmniNode(Node):
                 grid.label(text="[类型]")
                 for value in outputInfo.values():
                     grid.label(text=type(value).__name__)
+
+            # layout.label(text="Socket构建")
+            # layout.label(text="SocketInMetaDict: ")
+            # layout.label(text=self.SocketInMetaDict)
+            # layout.label(text="SocketOutMetaDict: ")
+            # layout.label(text=self.SocketOutMetaDict)
+            # layout.label(text="SocketDefaultDict: ")
+            # layout.label(text=self.SocketDefaultDict)
+            # layout.label(text="SocketIsMultiDict: ")
+            # layout.label(text=self.SocketIsMultiDict)
         pass
 
 

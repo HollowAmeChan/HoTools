@@ -136,6 +136,10 @@ class OmniNodeTree(NodeTree):  # 节点树
 
         return outLinkSet, visitedNode, outLayerList, outRunningList
 
+    @staticmethod
+    def isMultiSocket(node: OmniNode, socket: NodeSocket):
+        return socket.identifier in getattr(node, "_SocketIsMultiDict", {})
+
     def runRunLayer(self, outRunningList):
         pool : DataPool = self.pool
         for layer in outRunningList:
@@ -168,10 +172,7 @@ class OmniNodeTree(NodeTree):  # 节点树
                     to_socket = link.to_socket
                     # 这里直接查可能为空吗
                     pool_from_prop = pool[from_node.name].outputs[from_socket.identifier]
-                    if to_socket.is_multi_input:
-                        if not isinstance(pool[to_node.name].inputs[to_socket.identifier], list):
-                            current = pool[to_node.name].inputs[to_socket.identifier]
-                            pool[to_node.name].inputs[to_socket.identifier] = [current] if current is not None else []
+                    if OmniNodeTree.isMultiSocket(to_node, to_socket):
                         pool[to_node.name].inputs[to_socket.identifier].append(pool_from_prop)
                     else:
                         pool[to_node.name].inputs[to_socket.identifier] = pool_from_prop

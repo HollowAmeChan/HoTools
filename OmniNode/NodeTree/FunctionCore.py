@@ -94,27 +94,21 @@ def meta(**metadata):
         return func
     return decorator
 
-def resolve_output_types(annotation):
-    # 无返回
-    if annotation is inspect._empty or annotation is None:
-        return []
-
-    # Python 3.9+ tuple[]
-    if isinstance(annotation, types.GenericAlias):
-        return list(typing.get_args(annotation))
-
-    # typing.Tuple / Union / Optional
+def resolve_socket(annotation):
+    """统一解析 socket 类型 + multi 状态"""
     origin = typing.get_origin(annotation)
-    if origin is tuple:
-        return list(typing.get_args(annotation))
+    args = typing.get_args(annotation)
 
-    if origin is typing.Union:
-        # Optional[T] -> (T, NoneType)
-        args = [a for a in typing.get_args(annotation) if a is not type(None)]
-        return args if args else [OmniNodeSocketAny]
+    is_multi = origin in (list, typing.List)
 
-    # 单返回
-    return [annotation]
+    if is_multi and args:
+        inner_type = args[0]
+    else:
+        inner_type = annotation
+
+    socket_cls = cls_dic.get(inner_type, OmniNodeSocketAny)
+
+    return socket_cls, is_multi
 
 def get_socket_type_name(socket_cls):
     # 自定义 socket（有 bl_idname）
@@ -124,13 +118,16 @@ def get_socket_type_name(socket_cls):
     # Blender 内置 socket（用类名）（没有 bl_idname）
     return socket_cls.__name__
 
-def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
+def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[dict]]:
     NodeInfo = {}
     SocketInMetaDict = {}
     SocketOutMetaDict = {}
     SocketDefaultDict = {}
+    SocketIsMulti = {}
 
-    # 节点属性信息生成与覆盖
+    # -------------------------
+    # Node info
+    # -------------------------
     NodeInfo["bl_label"] = func.__name__
     NodeInfo["bl_idname"] = "HO_OmniNode_" + func.__name__
     NodeInfo["is_output_node"] = False
@@ -140,68 +137,78 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict]]:
     NodeInfo["_OUTPUT_NAME"] = ["输出"]
     NodeInfo.update(func.__meta)
 
-    # 节点输入输出接口信息
+    # -------------------------
+    # Signature
+    # -------------------------
     signature = inspect.signature(func)
     params = signature.parameters
     outputs = signature.return_annotation
 
-    # 解算输入输出信息
-    # 内容类型inspect.Parameter，名字是.name，类型是.annotation
-    inputParamsPair: list[inspect.Parameter] = []
-    outputParamsType: list[type] = []
-
     inputParamsPair = list(params.values())
-    outputParamsType = resolve_output_types(outputs)
+    outputParamsType = resolve_socket(outputs)
 
-    if len(inputParamsPair) != 0:
-        index = 0
-        for i in inputParamsPair:
-            identifier = i.name
-            default_value = None if i.default is inspect._empty else i.default
-            SocketDefaultDict[identifier] = default_value
-            try:
-                name = NodeInfo["_INPUT_NAME"][index]
-            except Exception:
-                name = i.name
-            
-            annotation = i.annotation
-            use_multi_input = False
-            if typing.get_origin(annotation) is list:
-                inner_type = typing.get_args(annotation)[0]
-                socket_cls = cls_dic.get(inner_type, OmniNodeSocketAny)
-                use_multi_input = True
-            else:
-                socket_cls = cls_dic.get(annotation, OmniNodeSocketAny)
-            
-            dic = {
-                "type": get_socket_type_name(socket_cls),
-                "name": name,
-                "identifier": identifier,
-                "use_multi_input": use_multi_input,
-            }
-            SocketInMetaDict[identifier] = dic
-            index += 1
+    # -------------------------
+    # Inputs
+    # -------------------------
+    for index, param in enumerate(inputParamsPair):
+        identifier = param.name
 
-    if len(outputParamsType) != 0:
-        index = 0
-        for i in outputParamsType:
-            try:
-                name = NodeInfo["_OUTPUT_NAME"][index]
-            except:
-                name = "输出"
-            identifier = "_OUTPUT"+str(index)
-            dic = {
-                "type": get_socket_type_name(cls_dic.get(i, OmniNodeSocketAny)),
-                "name": name,
-                "identifier": identifier,
-            }
-            SocketOutMetaDict[identifier] = dic
-            index += 1
+        default_value = None if param.default is inspect._empty else param.default
+        SocketDefaultDict[identifier] = default_value
 
-    return NodeInfo, SocketInMetaDict, SocketOutMetaDict, SocketDefaultDict
+        name = (
+            NodeInfo["_INPUT_NAME"][index]
+            if index < len(NodeInfo["_INPUT_NAME"])
+            else identifier
+        )
 
+        socket_cls, is_multi = resolve_socket(param.annotation)
 
-def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict):
+        SocketIsMulti[identifier] = is_multi
+
+        SocketInMetaDict[identifier] = {
+            "type": get_socket_type_name(socket_cls),
+            "name": name,
+            "identifier": identifier,
+            "use_multi_input": is_multi,
+        }
+
+    # -------------------------
+    # Outputs
+    # -------------------------
+    origin = typing.get_origin(outputs)
+    if origin in (tuple, typing.Tuple):
+        outputParamsType = typing.get_args(outputs)
+    else:
+        outputParamsType = [outputs]
+
+    for index, annotation in enumerate(outputParamsType):
+        identifier = "_OUTPUT" + str(index)
+
+        name = (
+            NodeInfo["_OUTPUT_NAME"][index]
+            if index < len(NodeInfo["_OUTPUT_NAME"])
+            else "输出"
+        )
+
+        socket_cls, is_multi = resolve_socket(annotation)
+
+        SocketIsMulti[identifier] = is_multi
+
+        SocketOutMetaDict[identifier] = {
+            "type": get_socket_type_name(socket_cls),
+            "name": name,
+            "identifier": identifier,
+        }
+    return (
+        NodeInfo,
+        SocketInMetaDict,
+        SocketOutMetaDict,
+        SocketDefaultDict,
+        SocketIsMulti,
+    )
+
+def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti):
     import json
     if NodeInfo.get("base_color"):
         node.base_color = NodeInfo.get("base_color")
@@ -214,10 +221,12 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     node.SocketInMetaDict = json.dumps(SocketInMetaDict)
     node.SocketOutMetaDict = json.dumps(SocketOutMetaDict)
     node.SocketDefaultDict = json.dumps(SocketDefaultDict)
+    node.SocketIsMultiDict = json.dumps(SocketIsMulti)
     cls = type(node)
     setattr(cls, "_SocketInMetaDict", SocketInMetaDict)
     setattr(cls, "_SocketOutMetaDict", SocketOutMetaDict)
     setattr(cls, "_SocketDefaultDict", SocketDefaultDict)
+    setattr(cls, "_SocketIsMultiDict", SocketIsMulti)
     # 生成输入
     for i in SocketInMetaDict.keys():
         sock = node.inputs.new(**SocketInMetaDict[i])
@@ -228,14 +237,19 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
                 sock.default_value = default_value
             except:
                 pass
+        if SocketIsMulti.get(i, False):
+            sock.display_shape = "SQUARE"
+
     # 生成输出
     for i in SocketOutMetaDict.keys():
         sock = node.outputs.new(**SocketOutMetaDict[i])
+        if SocketIsMulti.get(i, False):
+            sock.display_shape = "SQUARE"
     return
 
 
 def CreateNodeClass(func) -> OmniNode:
-    NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict = CheckMetaInfo(func)
+    NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti = CheckMetaInfo(func)
 
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
@@ -244,7 +258,7 @@ def CreateNodeClass(func) -> OmniNode:
         def init(self, context):
             super().init(context)
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
-                            SocketOutMetaDict, SocketDefaultDict)
+                            SocketOutMetaDict, SocketDefaultDict, SocketIsMulti)
 
             self["fatherTree"].doing_initNode = False  # 更新树状态-新建节点结束
 
@@ -256,6 +270,7 @@ def CreateNodeClass(func) -> OmniNode:
     OmniNodeClassInstance._SocketInMetaDict = SocketInMetaDict
     OmniNodeClassInstance._SocketOutMetaDict = SocketOutMetaDict
     OmniNodeClassInstance._SocketDefaultDict = SocketDefaultDict
+    OmniNodeClassInstance._SocketIsMultiDict = SocketIsMulti
     return OmniNodeClassInstance
 
 
