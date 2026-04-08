@@ -575,43 +575,68 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 
     return out_rgb, out_a
 
-@meta(enable=True,
+@meta(
+    enable=True,
     bl_label="合成图片",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片列表","背景颜色","新建图像名称"],
+    _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","16bit"],
     _OUTPUT_NAME=["合成图像"],
-    omni_description="""
-    该节点用于将多张图片按照顺序进行alpha叠加合成，返回一张新的Blender Image
-    1. 图片尺寸必须一致，取第一张的尺寸作为输出尺寸
-    2. 背景颜色会被当做底层进行叠加
-    3. 输出的Blender Image名称由输入参数指定
-    """,
 )
 def combineImages(
     imgs: list[bpy.types.Image],
     backgroundColor: mathutils.Color,
-    name: str
+    name: str,
+    overwrite: bool = True,
+    use_16bit: bool = False,
 ) -> bpy.types.Image:
 
     if not imgs:
         raise ValueError("[combineImages] empty image list")
-    # 1. 统一尺寸（取第一张）
+
+    # -------------------------
+    # 0. 覆写逻辑
+    # -------------------------
+    if overwrite:
+        old_img = bpy.data.images.get(name)
+        if old_img:
+            old_img.user_clear()
+            bpy.data.images.remove(old_img)
+
+    # -------------------------
+    # 1. 尺寸
+    # -------------------------
     base = imgs[0]
     width = base.size[0]
     height = base.size[1]
-    # 2. 背景层
+
+    # -------------------------
+    # 2. 背景
+    # -------------------------
     bg_rgb = np.ones((height, width, 3), dtype=np.float32)
+
+    backgroundColor = mathutils.Color(backgroundColor[:3])
+
     bg_rgb[..., 0] *= backgroundColor.r
     bg_rgb[..., 1] *= backgroundColor.g
     bg_rgb[..., 2] *= backgroundColor.b
 
     bg_a = np.ones((height, width), dtype=np.float32)
-    # 3. 从底向上叠加
+
+    # -------------------------
+    # 3. 合成
+    # -------------------------
     acc_rgb = bg_rgb
     acc_a = bg_a
 
     for img in imgs:
+
+        if img.size[0] != width or img.size[1] != height:
+            raise ValueError(
+                f"[combineImages] size mismatch: {img.name} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+
         img_pixels = np.array(img.pixels[:], dtype=np.float32)
         img_pixels = img_pixels.reshape((height, width, 4))
 
@@ -619,15 +644,37 @@ def combineImages(
         src_a = img_pixels[..., 3]
 
         acc_rgb, acc_a = alpha_over(src_rgb, src_a, acc_rgb, acc_a)
-    # 4. 写回 Blender Image
-    result = bpy.data.images.new(name=name, width=width, height=height, alpha=True)
 
+    # -------------------------
+    # 4. 创建 Image（关键升级点）
+    # -------------------------
+    result = bpy.data.images.new(
+        name=name,
+        width=width,
+        height=height,
+        alpha=True,
+        float_buffer=use_16bit  # ⭐ 核心开关
+    )
+
+    # -------------------------
+    # 5. 写入
+    # -------------------------
     out = np.zeros((height, width, 4), dtype=np.float32)
     out[..., :3] = acc_rgb
     out[..., 3] = acc_a
-    result.pixels = out.flatten().tolist()
+
+    result.pixels = out.flatten()
+
+    # -------------------------
+    # 6. 额外安全：强制颜色空间（可选但推荐）
+    # -------------------------
+    if use_16bit:
+        result.colorspace_settings.name = 'Linear Rec.709'
+    else:
+        result.colorspace_settings.name = 'sRGB'
 
     return result
+
 
 @meta(enable=True,
     bl_label="保存图片",
@@ -639,43 +686,68 @@ def combineImages(
     该节点用于将Blender图片保存到指定路径，支持 PNG、JPEG、EXR 等格式
     """
 )
-def saveImage(
-    bl_img: bpy.types.Image,
-    file_path: _OmniFolderPath,
-    format: _OmniImageFormat,
-) -> _OmniFolderPath:
+def saveImage(bl_img, file_path, format):
 
-    # 1. 基础检查
     if not bl_img:
         raise ValueError("[saveImage] bl_img is None")
+
     if not file_path:
         raise ValueError("[saveImage] file_path is empty")
 
-    # 2. 创建目录
+    # -------------------------
+    # 1. 转换路径
+    # -------------------------
+    file_path = bpy.path.abspath(file_path)
+
+    # -------------------------
+    # 2. 如果传进来是目录 -> 自动补文件名
+    # -------------------------
+    if file_path.endswith(os.sep) or os.path.isdir(file_path):
+        name = bl_img.name
+
+        fmt = format.lower()
+        ext_map = {
+            "png": ".png",
+            "jpg": ".jpg",
+            "jpeg": ".jpg",
+            "exr": ".exr",
+            "open_exr": ".exr",
+        }
+
+        ext = ext_map.get(fmt, ".png")
+
+        file_path = os.path.join(file_path, name + ext)
+
+    # -------------------------
+    # 3. 创建目录
+    # -------------------------
     folder = os.path.dirname(file_path)
     if folder:
         os.makedirs(folder, exist_ok=True)
 
-    # 4. format 映射
+    # -------------------------
+    # 4. format
+    # -------------------------
     fmt = format.upper()
 
     if fmt == "PNG":
         bl_img.file_format = 'PNG'
+
     elif fmt in ("EXR", "OPEN_EXR"):
         bl_img.file_format = 'OPEN_EXR'
-        bl_img.exr_codec = 'ZIP'  # 可选：更安全默认
+        bl_img.exr_codec = 'ZIP'
+
     elif fmt in ("JPG", "JPEG"):
         bl_img.file_format = 'JPEG'
+
     else:
         raise ValueError(f"[saveImage] unsupported format: {format}")
 
-    # 5. 设置保存路径（关键）
+    # -------------------------
+    # 5. 保存
+    # -------------------------
     bl_img.filepath_raw = file_path
 
-    # 6. 使用 Blender 原生保存
-    try:
-        bl_img.save()
-    except RuntimeError as e:
-        raise RuntimeError(f"[saveImage] save failed: {e}")
+    bl_img.save()
 
     return file_path
