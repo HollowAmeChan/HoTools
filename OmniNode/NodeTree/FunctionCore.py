@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketImage_multi
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -69,7 +69,6 @@ cls_dic = {
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
     _OmniImageFormat: OmniNodeSocketImageFormat,
-    list[bpy.types.Image]: OmniNodeSocketImage_multi,
 }
 
 

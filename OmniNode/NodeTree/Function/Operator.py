@@ -470,3 +470,40 @@ def uv_reprojectionTransfer(
     )
 def sumInt(ints: list[int])->int:
     return sum(ints)
+
+@meta(enable=True,
+    bl_label="导入图片",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径","是否为法线图"],
+    _OUTPUT_NAME=["图片"],
+    )
+def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types.Image:
+    img_name = os.path.basename(imagePath)
+    if bpy.data.images.get(img_name):
+        bpy.data.images.remove(bpy.data.images[img_name])
+    img = bpy.data.images.load(imagePath)
+    img.name = img_name
+    if isNormal:
+        img.colorspace_settings.name = "Non-Color"
+    return img
+
+@meta(enable=True,
+    bl_label="批量导入图片",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径","是否为法线图"],
+    _OUTPUT_NAME=["图片"],
+    )
+def importMultiImage2Blender(imagePath: list[_OmniFolderPath],isNormal: bool) -> list[bpy.types.Image]:
+    imgs = []
+    for _OmniImagePath in imagePath:
+        img_name = os.path.basename(_OmniImagePath)
+        if bpy.data.images.get(img_name):
+            bpy.data.images.remove(bpy.data.images[img_name])
+        img = bpy.data.images.load(_OmniImagePath)
+        img.name = img_name
+        if isNormal:
+            img.colorspace_settings.name = "Non-Color"
+        imgs.append(img)
+    return imgs
