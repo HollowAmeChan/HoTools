@@ -10,6 +10,7 @@ import time
 import mathutils
 from mathutils import Vector
 import numpy as np
+import re
 
 import os
 import sys
@@ -519,44 +520,162 @@ def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
     return [o for o in col.objects]
 
 
-import os
-import re
-@meta(enable=True,
-    bl_label="扫描文件路径",
+@meta(
+    enable=True,
+    bl_label="文件路径(正则)",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["文件夹路径","正则表达式"],
+    _INPUT_NAME=["文件夹路径", "正则表达式"],
     _OUTPUT_NAME=["文件路径列表"],
     omni_description="""
     该节点用于扫描指定文件夹下所有符合正则表达式的文件路径，返回一个列表
-     - 文件夹路径必须是绝对路径或者相对于.blend文件的路径
-     - 正则表达式用于匹配文件名，可以使用捕获组来提取信息，但最终输出是完整路径
-     - 输出的文件路径列表会进行稳定排序，保证同样输入每次输出顺序一致
-     - 该节点不递归扫描子文件夹
     """
-    )
+)
 def scanFilePath(
     folderPath: _OmniFolderPath,
     pattern: str
 ) -> list[_OmniFolderPath]:
 
-    if not folderPath or not os.path.isdir(folderPath):
-        return []
+    # 路径解析
+    folderPath = bpy.path.abspath(folderPath)
 
+    if not folderPath:
+        raise ValueError("[scanFilePath] folderPath is empty")
+
+    if not os.path.isdir(folderPath):
+        raise FileNotFoundError(f"[scanFilePath] folder not found: {folderPath}")
+    # 正则编译
     try:
         regex = re.compile(pattern, re.IGNORECASE)
     except re.error as e:
-        print(f"[scanFilePath] Invalid regex: {pattern} -> {e}")
-        return []
+        raise ValueError(f"[scanFilePath] Invalid regex: {pattern} -> {e}")
+
 
     result = []
-
     for root, dirs, files in os.walk(folderPath):
         for f in files:
             if regex.search(f):
                 result.append(os.path.join(root, f))
-
-    # 默认稳定排序
+    # 稳定顺序
     result.sort()
 
     return result
+
+
+def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
+    out_a = src_a + dst_a * (1.0 - src_a)
+
+    # 防止除0
+    safe_out_a = np.maximum(out_a, 1e-8)
+
+    out_rgb = (
+        src_rgb * src_a[..., None] +
+        dst_rgb * dst_a[..., None] * (1.0 - src_a[..., None])
+    ) / safe_out_a[..., None]
+
+    return out_rgb, out_a
+
+@meta(enable=True,
+    bl_label="合成图片",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片列表","背景颜色","新建图像名称"],
+    _OUTPUT_NAME=["合成图像"],
+    omni_description="""
+    该节点用于将多张图片按照顺序进行alpha叠加合成，返回一张新的Blender Image
+    1. 图片尺寸必须一致，取第一张的尺寸作为输出尺寸
+    2. 背景颜色会被当做底层进行叠加
+    3. 输出的Blender Image名称由输入参数指定
+    """,
+)
+def combineImages(
+    imgs: list[bpy.types.Image],
+    backgroundColor: mathutils.Color,
+    name: str
+) -> bpy.types.Image:
+
+    if not imgs:
+        raise ValueError("[combineImages] empty image list")
+    # 1. 统一尺寸（取第一张）
+    base = imgs[0]
+    width = base.size[0]
+    height = base.size[1]
+    # 2. 背景层
+    bg_rgb = np.ones((height, width, 3), dtype=np.float32)
+    bg_rgb[..., 0] *= backgroundColor.r
+    bg_rgb[..., 1] *= backgroundColor.g
+    bg_rgb[..., 2] *= backgroundColor.b
+
+    bg_a = np.ones((height, width), dtype=np.float32)
+    # 3. 从底向上叠加
+    acc_rgb = bg_rgb
+    acc_a = bg_a
+
+    for img in imgs:
+        img_pixels = np.array(img.pixels[:], dtype=np.float32)
+        img_pixels = img_pixels.reshape((height, width, 4))
+
+        src_rgb = img_pixels[..., :3]
+        src_a = img_pixels[..., 3]
+
+        acc_rgb, acc_a = alpha_over(src_rgb, src_a, acc_rgb, acc_a)
+    # 4. 写回 Blender Image
+    result = bpy.data.images.new(name=name, width=width, height=height, alpha=True)
+
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., :3] = acc_rgb
+    out[..., 3] = acc_a
+    result.pixels = out.flatten().tolist()
+
+    return result
+
+@meta(enable=True,
+    bl_label="保存图片",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片","文件路径","格式"],
+    _OUTPUT_NAME=["文件路径"],
+    omni_description="""
+    该节点用于将Blender图片保存到指定路径，支持 PNG、JPEG、EXR 等格式
+    """
+)
+def saveImage(
+    bl_img: bpy.types.Image,
+    file_path: _OmniFolderPath,
+    format: _OmniImageFormat,
+) -> _OmniFolderPath:
+
+    # 1. 基础检查
+    if not bl_img:
+        raise ValueError("[saveImage] bl_img is None")
+    if not file_path:
+        raise ValueError("[saveImage] file_path is empty")
+
+    # 2. 创建目录
+    folder = os.path.dirname(file_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    # 4. format 映射
+    fmt = format.upper()
+
+    if fmt == "PNG":
+        bl_img.file_format = 'PNG'
+    elif fmt in ("EXR", "OPEN_EXR"):
+        bl_img.file_format = 'OPEN_EXR'
+        bl_img.exr_codec = 'ZIP'  # 可选：更安全默认
+    elif fmt in ("JPG", "JPEG"):
+        bl_img.file_format = 'JPEG'
+    else:
+        raise ValueError(f"[saveImage] unsupported format: {format}")
+
+    # 5. 设置保存路径（关键）
+    bl_img.filepath_raw = file_path
+
+    # 6. 使用 Blender 原生保存
+    try:
+        bl_img.save()
+    except RuntimeError as e:
+        raise RuntimeError(f"[saveImage] save failed: {e}")
+
+    return file_path

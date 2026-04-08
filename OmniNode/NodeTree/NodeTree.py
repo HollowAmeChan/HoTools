@@ -139,7 +139,9 @@ class OmniNodeTree(NodeTree):  # 节点树
 
     @staticmethod
     def isMultiSocket(node: OmniNode, socket: NodeSocket):
-        return socket.identifier in getattr(node, "_SocketIsMultiDict", {})
+        if socket.identifier in getattr(node, "_SocketIsMultiDict", {}):
+            return node._SocketIsMultiDict.get(socket.identifier, False)
+        return False 
     @staticmethod
     def normalize_socket_value(v):
         """消除单值和多值的差异，统一输出列表"""

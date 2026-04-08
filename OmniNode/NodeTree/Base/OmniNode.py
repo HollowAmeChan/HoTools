@@ -264,15 +264,15 @@ class OmniNode(Node):
                 for value in outputInfo.values():
                     grid.label(text=type(value).__name__)
 
-            # layout.label(text="Socket构建")
-            # layout.label(text="SocketInMetaDict: ")
-            # layout.label(text=self.SocketInMetaDict)
-            # layout.label(text="SocketOutMetaDict: ")
-            # layout.label(text=self.SocketOutMetaDict)
-            # layout.label(text="SocketDefaultDict: ")
-            # layout.label(text=self.SocketDefaultDict)
-            # layout.label(text="SocketIsMultiDict: ")
-            # layout.label(text=self.SocketIsMultiDict)
+            layout.label(text="Socket构建")
+            layout.label(text="SocketInMetaDict: ")
+            layout.label(text=self.SocketInMetaDict)
+            layout.label(text="SocketOutMetaDict: ")
+            layout.label(text=self.SocketOutMetaDict)
+            layout.label(text="SocketDefaultDict: ")
+            layout.label(text=self.SocketDefaultDict)
+            layout.label(text="SocketIsMultiDict: ")
+            layout.label(text=self.SocketIsMultiDict)
         pass
 
 
