@@ -3,6 +3,7 @@ from bpy.types import NodeTree, Node, NodeSocket, NodeLink
 from .Base.DataPool import DataPool, poolNodeInfo
 from .Base.OmniNode import OmniNode
 import time
+import traceback
 
 TREE_ID = 'OMNINODE'  # 节点树系统注册进去的identifier
 TREE_ID_NAME = 'OmniNodeTree'  # 节点树系统的标识符idname
@@ -160,9 +161,13 @@ class OmniNodeTree(NodeTree):  # 节点树
                             raise errorlog
                     except Exception as e:
                         node.is_bug = True
+                        tb = traceback.TracebackException.from_exception(e)
+                        full_trace = "".join(tb.format())
+                        # node.bug_text = full_trace
                         node.bug_text = e.__class__.__name__ + "\n" + str(e)
-                        print(f"Error in node '{node.name}':", e)
+                        print(f"Error in node '{node.name}':\n{full_trace}")
                         break
+
             if isinstance(layer[0], NodeLink):
                 link: NodeLink
                 for link in layer:

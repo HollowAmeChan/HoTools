@@ -203,7 +203,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     bl_label="纹理UV重定向",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["集合","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
+    _INPUT_NAME=["物体","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
     _OUTPUT_NAME=["图像","图像路径"],
     omni_description="""
     该节点用于在同一Collection内对所有Mesh进行UV空间贴图重映射(UV Reprojection Transfer)
@@ -220,7 +220,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     """,
     )
 def uv_reprojectionTransfer(
-    col: bpy.types.Collection,
+    objs:list[bpy.types.Object],
     uv_source: str,
     uv_target: str,
     img: bpy.types.Image,
@@ -266,7 +266,7 @@ def uv_reprojectionTransfer(
     # Collect meshes
     # -------------------------
     collect_start = time.perf_counter()
-    meshes = [o for o in col.objects if o.type == 'MESH']
+    meshes = [o for o in objs if o.type == 'MESH']
     timings["collect_meshes"] = time.perf_counter() - collect_start
 
     # -------------------------
@@ -495,15 +495,68 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types
     _INPUT_NAME=["图片路径","是否为法线图"],
     _OUTPUT_NAME=["图片"],
     )
-def importMultiImage2Blender(imagePath: list[_OmniFolderPath],isNormal: bool) -> list[bpy.types.Image]:
+def importMultiImage2Blender(imagePaths: list[_OmniFolderPath],isNormal: bool) -> list[bpy.types.Image]:
     imgs = []
-    for _OmniImagePath in imagePath:
-        img_name = os.path.basename(_OmniImagePath)
+    for path in imagePaths:
+        img_name = os.path.basename(path)
         if bpy.data.images.get(img_name):
             bpy.data.images.remove(bpy.data.images[img_name])
-        img = bpy.data.images.load(_OmniImagePath)
+        img = bpy.data.images.load(path)
         img.name = img_name
         if isNormal:
             img.colorspace_settings.name = "Non-Color"
         imgs.append(img)
     return imgs
+
+@meta(enable=True,
+    bl_label="获取集合中的物体",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["集合"],
+    _OUTPUT_NAME=["物体列表"],
+    )
+def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
+    return [o for o in col.objects]
+
+
+import os
+import re
+@meta(enable=True,
+    bl_label="扫描文件路径",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["文件夹路径","正则表达式"],
+    _OUTPUT_NAME=["文件路径列表"],
+    omni_description="""
+    该节点用于扫描指定文件夹下所有符合正则表达式的文件路径，返回一个列表
+     - 文件夹路径必须是绝对路径或者相对于.blend文件的路径
+     - 正则表达式用于匹配文件名，可以使用捕获组来提取信息，但最终输出是完整路径
+     - 输出的文件路径列表会进行稳定排序，保证同样输入每次输出顺序一致
+     - 该节点不递归扫描子文件夹
+    """
+    )
+def scanFilePath(
+    folderPath: _OmniFolderPath,
+    pattern: str
+) -> list[_OmniFolderPath]:
+
+    if not folderPath or not os.path.isdir(folderPath):
+        return []
+
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        print(f"[scanFilePath] Invalid regex: {pattern} -> {e}")
+        return []
+
+    result = []
+
+    for root, dirs, files in os.walk(folderPath):
+        for f in files:
+            if regex.search(f):
+                result.append(os.path.join(root, f))
+
+    # 默认稳定排序
+    result.sort()
+
+    return result
