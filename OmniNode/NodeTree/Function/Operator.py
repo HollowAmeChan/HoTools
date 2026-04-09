@@ -655,7 +655,10 @@ def combineImages(
         alpha=True,
         float_buffer=use_16bit  # ⭐ 核心开关
     )
-
+    if use_16bit:# 必须在创建后立刻设置
+        result.colorspace_settings.name = 'Linear Rec.709'
+    else:
+        result.colorspace_settings.name = 'sRGB'
     # -------------------------
     # 5. 写入
     # -------------------------
@@ -663,16 +666,9 @@ def combineImages(
     out[..., :3] = acc_rgb
     out[..., 3] = acc_a
 
-    result.pixels = out.flatten()
-
-    # -------------------------
-    # 6. 额外安全：强制颜色空间（可选但推荐）
-    # -------------------------
-    if use_16bit:
-        result.colorspace_settings.name = 'Linear Rec.709'
-    else:
-        result.colorspace_settings.name = 'sRGB'
-
+    flat = np.ascontiguousarray(out, dtype=np.float32).ravel()
+    result.pixels.foreach_set(flat)
+    result.update()
     return result
 
 
