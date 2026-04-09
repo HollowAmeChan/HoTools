@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .Base.OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat
+from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
@@ -27,6 +27,12 @@ class _OmniFolderPath(str):
     def __init__():
         return
 class _OmniImageFormat(str):
+    def __init__():
+        return
+class _OmniRegex(str):
+    def __init__():
+        return
+class _OmniGlob(str):
     def __init__():
         return
 
@@ -69,6 +75,8 @@ cls_dic = {
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
     _OmniImageFormat: OmniNodeSocketImageFormat,
+    _OmniRegex: OmniNodeSocketRegex,
+    _OmniGlob: OmniNodeSocketGlob,
 }
 
 

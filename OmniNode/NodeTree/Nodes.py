@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .NodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit
+from .Function import Data, Math,Operator, RigTooKit,Logic
 
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -18,11 +18,12 @@ node_cls_data = FunctionCore.loadRegisterFuncNodes(Data)
 node_cls_math = FunctionCore.loadRegisterFuncNodes(Math)
 node_cls_operator = FunctionCore.loadRegisterFuncNodes(Operator)
 node_cls_rigtoolkit = FunctionCore.loadRegisterFuncNodes(RigTooKit)
+node_cls_logic = FunctionCore.loadRegisterFuncNodes(Logic)
 cls.extend(node_cls_data)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
 cls.extend(node_cls_rigtoolkit)
-
+cls.extend(node_cls_logic)
 
 node_categories = [
     OmniNodeCategory("DATA", "Data", items=[
@@ -36,6 +37,9 @@ node_categories = [
     ]),
     OmniNodeCategory("RIGTOOLKIT", "RigToolKit", items=[
         NodeItem(i.bl_idname) for i in node_cls_rigtoolkit
+    ]),
+    OmniNodeCategory("LOGIC", "Logic", items=[
+        NodeItem(i.bl_idname) for i in node_cls_logic
     ]),
 ]
 

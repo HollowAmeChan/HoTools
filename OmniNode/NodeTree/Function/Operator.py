@@ -1,4 +1,4 @@
-from ..FunctionCore import meta , _OmniImageFormat , _OmniFolderPath
+from ..FunctionCore import meta , _OmniImageFormat , _OmniFolderPath, _OmniRegex, _OmniGlob
 from . import _COLOR
 
 from bpy.types import NodeSocketVector, NodeSocketColor
@@ -14,6 +14,7 @@ import re
 
 import os
 import sys
+import fnmatch
 if sys.version_info >= (3, 13):
     from ...._Lib.py313.PIL import Image, ImageDraw
 elif sys.version_info >= (3, 11):
@@ -533,7 +534,7 @@ def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
 )
 def scanFilePath(
     folderPath: _OmniFolderPath,
-    pattern: str
+    pattern: _OmniRegex,
 ) -> list[_OmniFolderPath]:
 
     # 路径解析
@@ -560,7 +561,6 @@ def scanFilePath(
     result.sort()
 
     return result
-
 
 def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
     out_a = src_a + dst_a * (1.0 - src_a)
@@ -751,3 +751,31 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
     bl_img.save()
 
     return file_path
+
+
+@meta(enable=True,
+    bl_label="glob转正则",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["glob表达式"],
+    _OUTPUT_NAME=["正则表达式"],
+    omni_description="""
+    该节点用于将glob表达式转换为正则表达式
+    """
+)
+def glob2regex(pattern: _OmniGlob) -> _OmniRegex:
+    if not pattern:
+        raise ValueError("glob表达式不能为空")
+    return fnmatch.translate(pattern)
+
+@meta(enable=True,
+    bl_label="字符串连接",
+    base_color=_COLOR.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["字符串1","字符串2"],
+    _OUTPUT_NAME=["字符串"],
+    )
+def combineStrs(str1: str, str2: str) -> str:
+    return str1 + str2
+
+

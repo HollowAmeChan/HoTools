@@ -1,4 +1,4 @@
-from ..FunctionCore import meta , _OmniFolderPath, _OmniImageFormat
+from ..FunctionCore import meta , _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
@@ -115,3 +115,16 @@ def armatureInput(arm: bpy.types.Armature) -> bpy.types.Armature:
       base_color=_COLOR.colorCat["GetData"],)
 def matrixInput(m: mathutils.Matrix) -> mathutils.Matrix:
     return m
+
+@meta(enable=True,
+      bl_label="正则表达式"
+      ,base_color=_COLOR.colorCat["GetData"],)
+def regexInput(r: _OmniRegex) -> _OmniRegex:
+      return r
+
+@meta(enable=True,
+      bl_label="Glob表达式"
+      ,base_color=_COLOR.colorCat["GetData"],)
+def globInput(g: _OmniGlob) -> _OmniGlob:
+      return g
+

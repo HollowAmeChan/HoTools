@@ -11,7 +11,7 @@ class OmniNodeSocketScene(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=text)
+            layout.label(text=self.name)
         else:
             layout.prop(self, "default_value", text=text)
 
@@ -28,14 +28,13 @@ class OmniNodeSocketText(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=text)
+            layout.label(text=self.name)
         else:
             layout.prop(self, "default_value", text=text)
 
     @classmethod
     def draw_color_simple(cls):
         return (1.0, 1.0, 1.0, 1.0)
-
 
 class OmniNodeSocketAny(NodeSocket):
     bl_label = "Omni节点虚Socket"
@@ -46,7 +45,7 @@ class OmniNodeSocketAny(NodeSocket):
     default_value: bpy.props.FloatProperty()  # type: ignore
 
     def draw(self, context, layout, node, text):
-        layout.label(text=text)
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -72,7 +71,7 @@ class OmniNodeSocketImageFormat(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.default_value)
+            layout.label(text=self.name)
         else:
             layout.prop(self, "default_value", text=text)
 
@@ -80,10 +79,41 @@ class OmniNodeSocketImageFormat(NodeSocket):
     def draw_color_simple(cls):
         return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
 
+class OmniNodeSocketRegex(NodeSocket):
+    bl_label = "正则表达式Socket"
+    bl_idname = 'OmniNodeSocketRegex'
 
+    default_value: bpy.props.StringProperty()  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0, 0, 0.5, 1.0) #内置NodeSocketString的颜色，偏色1
+    
+class OmniNodeSocketGlob(NodeSocket):
+    bl_label = "Glob表达式Socket"
+    bl_idname = 'OmniNodeSocketGlob'
+
+    default_value: bpy.props.StringProperty()  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.2, 0.2, 0.5, 1.0) #内置NodeSocketString的颜色，偏色2
 
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
        OmniNodeSocketAny,OmniNodeSocketImageFormat,
+       OmniNodeSocketRegex, OmniNodeSocketGlob
        ]
 
 
