@@ -34,13 +34,15 @@ class OmniNode(Node):
     output_color: bpy.props.FloatVectorProperty(
         name="作为输出节点的高亮颜色", size=3, subtype="COLOR", default=(0, 0.6, 0))  # type: ignore
     base_color: bpy.props.FloatVectorProperty(
-        name="默认类型", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
+        name="默认类型颜色", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
     omni_description: bpy.props.StringProperty(
         name="OMNI节点描述", default="没有使用描述")  # type: ignore
     process_bool_toggle: bpy.props.BoolProperty(
         name="是否公开bool逻辑接口", default=False, update=ProcessBoolToggleUpdate)  # type: ignore
 
     # 新增属性用于rebuild
+    # SocketInMetaDict等为实例化对象存储的旧内容，_SocketInMetaDict等为每次启动插件时重新生成的新内容用于rebuild
+    # TODO:为fuctionnode构建特化出来的，可能需要一个bool参数代表本节点是否为fuctionnode
     SocketInMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
     SocketOutMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
     SocketDefaultDict: bpy.props.StringProperty(default="{}") # type: ignore
@@ -79,7 +81,7 @@ class OmniNode(Node):
         except Exception as error:
             return error  # 有错误返回错误
 
-        if not isinstance(result, tuple):  # TODO:这样判定多返回会导致返回元组的函数无法正常生成,不好解决
+        if not isinstance(result, tuple):
             outputs["_OUTPUT0"] = result
             return  # 单返回
         else:
@@ -90,6 +92,7 @@ class OmniNode(Node):
             return  # 多返回
 
     def process(self):
+        # TODO:debug显示不应该在这个阶段，并且这个输出的还很丑
         print("PROCESS RUN:", self.name)
         print("BOOL:", self["fatherTree"].pool[self.name].inputs.get("_BOOL"))
         self.is_bug = False
@@ -98,6 +101,9 @@ class OmniNode(Node):
 # --------------------------------rebuild相关------------------------------
 
     def rebuild(self):
+        # TODO:对于_BOOL基类socket处理太hack
+        # TODO:没有考虑非functionnode的rebuild，也就是没有存_SocketMetaDict等数据的node会报错，未来会添加一些专用的带UI的节点无法使用function来描述
+        # TODO:没有对OmniNode某些自带的参数进行rebuild，比如process_bool_toggle，base_color，is_output_node等（我不确定是不是所有的基类变量都应该被rebuild）
         tree = self["fatherTree"]
         # -----------------------------
         # 1. 缓存旧 socket 的值和链接信息
@@ -177,8 +183,6 @@ class OmniNode(Node):
         # -----------------------------
         for identifier, meta in in_meta.items():
             sock = self.inputs.new(**meta)
-
-            # ⭐ 优先恢复 runtime value，其次 default meta
             value = input_value_cache.get(identifier, None)
             if value is None:
                 value = default_meta.get(identifier, None)
@@ -259,6 +263,8 @@ class OmniNode(Node):
         self.size2default()
 
         # 生成布尔总开关
+        # TODO:总是生成开关虽然比较优雅一致，但是对rebuild节点功能有限制，但是不总是生成又对runnode有限制
+        # TODO:总是生成开关，在node wrangler的自动连接中，如果输入是一个bool类型，会强制把没绘制的开关给绘制出来
         bool = self.inputs.new(type="NodeSocketBool",
                                name="执行", identifier="_BOOL")
         bool.hide = True
@@ -300,6 +306,7 @@ class OmniNode(Node):
             NodeBaseOps.LayerRunning.bl_idname, text="", icon="FILE_REFRESH")
         
         # debug显示
+        # TODO:目前显示的比较丑，列表太长会看不清楚（节点最大宽度不够用，应该要换行，或者有个按钮能看），同时英文变量名会被强制汉化（需要插入0长字符防止汉化）
         if self.debug:
             # 内部prop详情
             pool = self["fatherTree"].pool
@@ -334,6 +341,7 @@ class OmniNode(Node):
                 for value in outputInfo.values():
                     grid.label(text=type(value).__name__)
 
+            # TODO:很丑很难看
             layout.label(text="Socket构建")
             layout.label(text="SocketInMetaDict: ")
             layout.label(text=self.SocketInMetaDict)

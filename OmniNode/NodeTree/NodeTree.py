@@ -158,6 +158,7 @@ class OmniNodeTree(NodeTree):  # 节点树
             if layer == []:
                 break
             if isinstance(layer[0], OmniNode):
+                # TODO:对于Reroute节点无法正常运行，Reroute可能会由其他整理node的插件生成，但也可以考虑不兼容Reroute
                 for node in layer:
                     for socket in node.inputs:# process前,如果还没有上游link输入数据就利用自身socket默认值填充pool输入，防止缺少输入导致错误
                         socket: NodeSocket
@@ -224,6 +225,7 @@ class OmniNodeTree(NodeTree):  # 节点树
         print("##########     OVER     ##########")
 
     def run(self):
+        # TODO:没有考虑过未来可能添加的节点组套娃运行，可能需要设计一个新的基类节点，用于在运行树过程中插入一个新的运行树任务（但是需要设计一下要不要允许不定长的循环/隐式长度的循环）
         linkSet = set()
         nodeSet = set()
         runningNodeLayer = []
