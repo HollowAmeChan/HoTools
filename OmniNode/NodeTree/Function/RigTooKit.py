@@ -1,9 +1,9 @@
 import bpy
-from ..FunctionCore import meta
+from ..FunctionNodeCore import omni
 from . import _COLOR
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="创建集合",
     base_color=_COLOR.colorCat["Operator"],
     omni_description="""

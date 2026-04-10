@@ -1,4 +1,4 @@
-from ..FunctionCore import meta , _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..FunctionNodeCore import omni , _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
@@ -6,7 +6,7 @@ import mathutils
 from . import _COLOR
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="且",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
@@ -16,7 +16,7 @@ def logic_and(a: bool, b: bool) -> bool:
     return a and b
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="或",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
@@ -26,7 +26,7 @@ def logic_or(a: bool, b: bool) -> bool:
     return a or b
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="非",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["条件"],
@@ -38,7 +38,7 @@ def logic_not(a: bool) -> bool:
 
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="等于",
     base_color=_COLOR.colorCat["Logic"],
     is_output_node=False,
@@ -48,7 +48,7 @@ def logic_not(a: bool) -> bool:
 def equal(a: Any, b: Any) -> bool:
     return a == b
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="不等于",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
@@ -57,7 +57,7 @@ def equal(a: Any, b: Any) -> bool:
 def not_equal(a: Any, b: Any) -> bool:
     return a != b
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="大于等于",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
@@ -66,7 +66,7 @@ def not_equal(a: Any, b: Any) -> bool:
 def bigger_equal(a: Any, b: Any) -> bool:
     return a >= b
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="小于等于",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
@@ -75,7 +75,7 @@ def bigger_equal(a: Any, b: Any) -> bool:
 def smaller_equal(a: Any, b: Any) -> bool:
     return a <= b
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="大于",
     base_color=_COLOR.colorCat["Logic"],
     is_output_node=False,
@@ -85,7 +85,7 @@ def smaller_equal(a: Any, b: Any) -> bool:
 def bigger(a: Any, b: Any) -> bool:
     return a > b
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="小于",
     base_color=_COLOR.colorCat["Logic"],
     is_output_node=False,
@@ -98,7 +98,7 @@ def smaller(a: Any, b: Any) -> bool:
 
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="在列表中",
     base_color=_COLOR.colorCat["Logic"],
     is_output_node=False,
@@ -108,7 +108,7 @@ def smaller(a: Any, b: Any) -> bool:
 def inList(item: Any, lst: list[Any]) -> bool:
     return item in lst
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="列表是否为空",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["列表"],
@@ -118,7 +118,7 @@ def list_is_empty(lst: list[Any]) -> bool:
     return len(lst) == 0
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="列表长度",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["列表"],
@@ -130,7 +130,7 @@ def list_length(lst: list[Any]) -> int:
 
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="在范围内",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值","最小值","最大值"],
@@ -141,7 +141,7 @@ def in_range(x: Any, min_val: Any, max_val: Any) -> bool:
 
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="是否为空",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值"],
@@ -151,7 +151,7 @@ def is_none(x: Any) -> bool:
     return x is None
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="是否非空",
     base_color=_COLOR.colorCat["Logic"],
     _INPUT_NAME=["值"],
@@ -162,7 +162,7 @@ def is_not_none(x: Any) -> bool:
 
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="条件选择",
     base_color=_COLOR.colorCat["Logic"],
     is_output_node=False,

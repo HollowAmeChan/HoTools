@@ -1,15 +1,15 @@
-from ..FunctionCore import meta
+from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketColor
 from . import _COLOR
 
 
-@meta(enable=True,
+@omni(enable=True,
       base_color=_COLOR.colorCat["Math"],)
 def lerp(a: NodeSocketColor, b: NodeSocketColor, weight: float) -> NodeSocketColor:
     return a*(1-weight)+b*weight
 
 
-@meta(enable=True,
+@omni(enable=True,
       base_color=_COLOR.colorCat["Math"],)
 def smoothStep(x: float) -> float:
     out = x*x*(3 - 2*x)
@@ -19,7 +19,7 @@ def smoothStep(x: float) -> float:
         out = 0
     return out
 
-@meta(enable=True,
+@omni(enable=True,
       bl_label="Float加法",
       base_color=_COLOR.colorCat["Math"],
       color_tag = "CONVERTER",

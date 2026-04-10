@@ -1,4 +1,4 @@
-from ..FunctionCore import meta , _OmniImageFormat , _OmniFolderPath, _OmniRegex, _OmniGlob
+from ..FunctionNodeCore import omni , _OmniImageFormat , _OmniFolderPath, _OmniRegex, _OmniGlob
 from . import _COLOR
 
 from bpy.types import NodeSocketVector, NodeSocketColor
@@ -20,7 +20,7 @@ if sys.version_info >= (3, 13):
 elif sys.version_info >= (3, 11):
     from ...._Lib.py311.PIL import Image, ImageDraw
 
-@meta(enable=True,
+@omni(enable=True,
       bl_label="设置物体位置",
       base_color=_COLOR.colorCat["Operator"],
       is_output_node=False,
@@ -32,7 +32,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
     return obj
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="设置图像颜色",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -45,7 +45,7 @@ def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.I
     img.pixels = col
     return img
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="创建UV层",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -200,7 +200,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
 
     return acc / weight
 
-@meta(
+@omni(
     enable=True,
     bl_label="纹理UV重定向",
     base_color=_COLOR.colorCat["Operator"],
@@ -462,7 +462,7 @@ def uv_reprojectionTransfer(
 
     return out_img, output_path
 
-@meta(
+@omni(
     enable=True,
     bl_label="加合",
     base_color=_COLOR.colorCat["Operator"],
@@ -473,7 +473,7 @@ def uv_reprojectionTransfer(
 def sumInt(ints: list[int])->int:
     return sum(ints)
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="导入图片",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -490,7 +490,7 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types
         img.colorspace_settings.name = "Non-Color"
     return img
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="批量导入图片",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -510,7 +510,7 @@ def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNormal: bool) 
         imgs.append(img)
     return imgs
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="获取集合中的物体",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -521,7 +521,7 @@ def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
     return [o for o in col.objects]
 
 
-@meta(
+@omni(
     enable=True,
     bl_label="文件路径(正则)",
     base_color=_COLOR.colorCat["Operator"],
@@ -575,7 +575,7 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 
     return out_rgb, out_a
 
-@meta(
+@omni(
     enable=True,
     bl_label="合成图片",
     base_color=_COLOR.colorCat["Operator"],
@@ -672,7 +672,7 @@ def combineImages(
     return result
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="保存图片",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -749,7 +749,7 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
     return file_path
 
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="glob转正则",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,
@@ -764,7 +764,7 @@ def glob2regex(pattern: _OmniGlob) -> _OmniRegex:
         raise ValueError("glob表达式不能为空")
     return fnmatch.translate(pattern)
 
-@meta(enable=True,
+@omni(enable=True,
     bl_label="字符串连接",
     base_color=_COLOR.colorCat["Operator"],
     is_output_node=False,

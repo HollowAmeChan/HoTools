@@ -1,0 +1,1 @@
+# 本文件为functionnode以外的拓展类型node，用于实现高级功能

@@ -82,9 +82,9 @@ cls_dic = {
 
 
 
-def meta(**metadata):
+def omni(**omnidata):
     '''
-    META信息装饰器
+    OMNI信息装饰器
     1.  可以配置的META信息包括:
         omni_description:str
         bl_label:str
@@ -98,7 +98,7 @@ def meta(**metadata):
         名称想要修改可以使用_OUTPUT_NAME这个列表,他将会顺序指定输出的名字
     '''
     def decorator(func):
-        func.__meta = metadata
+        func.__meta = omnidata
         return func
     return decorator
 

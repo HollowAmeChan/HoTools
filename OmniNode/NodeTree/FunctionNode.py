@@ -1,4 +1,4 @@
-from . import FunctionCore
+from . import FunctionNodeCore
 import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
@@ -14,11 +14,11 @@ class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
 
 cls = []
 # Function生成节点
-node_cls_data = FunctionCore.loadRegisterFuncNodes(Data)
-node_cls_math = FunctionCore.loadRegisterFuncNodes(Math)
-node_cls_operator = FunctionCore.loadRegisterFuncNodes(Operator)
-node_cls_rigtoolkit = FunctionCore.loadRegisterFuncNodes(RigTooKit)
-node_cls_logic = FunctionCore.loadRegisterFuncNodes(Logic)
+node_cls_data = FunctionNodeCore.loadRegisterFuncNodes(Data)
+node_cls_math = FunctionNodeCore.loadRegisterFuncNodes(Math)
+node_cls_operator = FunctionNodeCore.loadRegisterFuncNodes(Operator)
+node_cls_rigtoolkit = FunctionNodeCore.loadRegisterFuncNodes(RigTooKit)
+node_cls_logic = FunctionNodeCore.loadRegisterFuncNodes(Logic)
 cls.extend(node_cls_data)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
