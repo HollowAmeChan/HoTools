@@ -104,8 +104,8 @@ def reg_props():
     bpy.types.Scene.hoVertexGroupTools_isAutoNormalizeWeight = BoolProperty(name="Ho自动归一化",default=True,description="仅控制Hotools拓展中对权重的直接操作的是否自动归一化（不包括限制组、清除小于）")
 
     bpy.types.Scene.hoVertexGroupTools_remove_max = FloatProperty(name="最大值",description="顶点在此组中的权重，若小于等于这个值，则会被移除顶点组",default=0,min=0,max=1)
-    bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.1,min=0,max=1)
-    bpy.types.Scene.hoVertexGroupTools_vg_increment2 = FloatProperty(name="权重增减量2",default=0.05,min=0,max=1)
+    bpy.types.Scene.hoVertexGroupTools_vg_increment1 = FloatProperty(name="权重增减量1",default=0.05,min=0,max=1)
+    bpy.types.Scene.hoVertexGroupTools_vg_increment2 = FloatProperty(name="权重增减量2",default=0.1,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_select_by_weightvalue = FloatProperty(name="选中权重小于",default=0.05,min=0,max=1)
     bpy.types.Scene.hoVertexGroupTools_max_vg_number = IntProperty(name="最多权重数",default=4)
     bpy.types.Scene.hoVertexGroupTools_debug_groupnum_limit = IntProperty(name="debug最多骨权重数",default=4)
@@ -1348,16 +1348,25 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
     """改变顶点权重"""
     bl_idname = "ho.vertexgrouptools_change_vertexweight"
     bl_label = "改变顶点权重"
+    bl_description = "改变的值为value1,如果按住shift将会使用value2"
     bl_options = {'REGISTER', 'UNDO'}
 
-    only_selected:BoolProperty(default=True) # type: ignore
-    value:FloatProperty(default=0.1) # type: ignore
+    only_selected: BoolProperty(default=True)  # type: ignore
+    value1: FloatProperty(default=0.05)  # type: ignore
+    value2: FloatProperty(default=0.1) # type: ignore
+
+    _use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj and obj.type == 'MESH' and obj.mode == 'EDIT' and obj.vertex_groups.active
 
+    def invoke(self, context, event):
+        # 检测 Shift
+        self._use_shift = event.shift
+        return self.execute(context)
+    
     def execute(self, context):
         obj = context.active_object
         vg = obj.vertex_groups.active
@@ -1375,10 +1384,11 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
 
             d = v[deform_layer]
             current_weight = d.get(vg.index, 0.0)
-            new_weight = current_weight + self.value
+
+            delta = self.value2 if self._use_shift else self.value1
+            new_weight = current_weight + delta
 
             if new_weight <= 0.0:
-                # 移除该权重
                 if vg.index in d:
                     del d[vg.index]
             else:
@@ -2127,16 +2137,13 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
-    op1 = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname,text="++")
-    op1.value = scene.hoVertexGroupTools_vg_increment1
-    op2 = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname,text="--")
-    op2.value = -scene.hoVertexGroupTools_vg_increment1
+    op_add = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname, text="+")
+    op_add.value1 = scene.hoVertexGroupTools_vg_increment1
+    op_add.value2 = scene.hoVertexGroupTools_vg_increment2
+    op_sub = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname, text="-")
+    op_sub.value1 = -scene.hoVertexGroupTools_vg_increment1
+    op_sub.value2 = -scene.hoVertexGroupTools_vg_increment2
     row.prop(scene,"hoVertexGroupTools_vg_increment1",text="")
-    row = col.row(align=True)
-    op1 = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname,text="+")
-    op1.value = scene.hoVertexGroupTools_vg_increment2
-    op2 = row.operator(OP_VertexGroupTools_Change_VG_weight.bl_idname,text="-")
-    op2.value = -scene.hoVertexGroupTools_vg_increment2
     row.prop(scene,"hoVertexGroupTools_vg_increment2",text="")
 
 
