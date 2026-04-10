@@ -14,9 +14,7 @@ import heapq
 import random
 from gpu_extras.batch import batch_for_shader
 from bpy.app.handlers import persistent
-# TODO 对于在编辑模式中现场修改的数据，可能不能直接同步到obj.data中，下面都是两次切换模式刷新的，比较丑陋
-# TODO 现在可以updatefromeditmode解决，有时间改改
-# TODO 自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
+# TODO:自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
 
 VG_LISTENER_CACHE = {
