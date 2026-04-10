@@ -147,7 +147,7 @@ def ureg_props():
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
     bl_label = "复制顶点权重"
-    bl_description = "提取选中顶点的权重信息到剪切板，若多个顶点则会平均(注意,此功能会产生大量0权重组,需要手动清)"
+    bl_description = "编辑模式下，对所选顶点，提取选中顶点的权重信息到剪切板，若多个顶点则会平均(注意,此功能会产生大量0权重组,需要手动清)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -200,7 +200,7 @@ class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
 class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_applyt_selectedvertex_groupvalues"
     bl_label = "粘贴顶点权重"
-    bl_description = "从剪切板中粘贴权重信息到选中的顶点(注意,此功能会产生大量0权重组,需要手动清)"
+    bl_description = "编辑模式下，对所选顶点，从剪切板中粘贴权重信息到选中的顶点(注意,此功能会产生大量0权重组,需要手动清)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -252,7 +252,6 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
                 idx = vg_index_map[vg_name]
                 dvert[idx] = weight  # 直接写
 
-        # 🔥 关键：刷新 edit mesh
         bmesh.update_edit_mesh(obj.data)
 
         self.report({'INFO'}, "已粘贴权重信息")
@@ -265,14 +264,10 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
 class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_normalize_selectedvertex_groupvalues"
     bl_label = "规格化权重"
-    bl_description = "规格化顶点的骨骼权重（跳过锁定组，仅处理骨骼权重）"
+    bl_description = "编辑模式下，对所选(全部)顶点，规格化顶点的骨骼权重（跳过锁定组，仅处理骨骼权重）"
     bl_options = {'REGISTER', 'UNDO'}
 
-    only_selected: bpy.props.BoolProperty(
-        name="仅选中",
-        description="仅对选中的顶点进行规格化，否则对全部顶点",
-        default=True
-    ) # type: ignore
+    only_selected: bpy.props.BoolProperty(default=True)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -281,133 +276,113 @@ class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        if obj is None or obj.type != 'MESH' or obj.vertex_groups is None:
-            self.report({'WARNING'}, "无效对象或对象无顶点组")
+        bm = bmesh.from_edit_mesh(obj.data)
+        deform = bm.verts.layers.deform.active
+
+        if deform is None:
+            self.report({'WARNING'}, "无权重数据")
             return {'CANCELLED'}
 
-        # 切换模式确保数据同步
-        bpy.ops.object.mode_set(mode='OBJECT')
+        verts = [v for v in bm.verts if (v.select or not self.only_selected)]
 
-        mesh = obj.data
+        if not verts:
+            self.report({'WARNING'}, "未选中任何顶点")
+            return {'CANCELLED'}
 
-        # 获取目标顶点
-        if self.only_selected:
-            target_verts = [v.index for v in mesh.vertices if v.select]
-            if not target_verts:
-                self.report({'WARNING'}, "未选中任何顶点")
-                bpy.ops.object.mode_set(mode='EDIT')
-                return {'CANCELLED'}
-        else:
-            target_verts = [v.index for v in mesh.vertices]
+        # armature过滤
+        arm = obj.find_armature()
+        bone_names = {b.name for b in arm.data.bones} if arm else None
 
-        # 缓存骨架
-        armature = obj.find_armature()
-        bone_names = set()
-        if armature:
-            bone_names = {b.name for b in armature.data.bones}
+        vg_lock = {vg.index: vg.lock_weight for vg in obj.vertex_groups}
+        vg_name = {vg.index: vg.name for vg in obj.vertex_groups}
 
-        # 遍历顶点
-        for v_idx in target_verts:
-            vert = mesh.vertices[v_idx]
+        for v in verts:
+            d = v[deform]
 
-            total_weight = 0.0
-            valid_groups = []
+            valid = []
+            total = 0.0
 
-            for g in vert.groups:
-                vg = obj.vertex_groups[g.group]
-
-                if vg.lock_weight:
+            for idx, w in d.items():
+                if vg_lock.get(idx):
+                    continue
+                if bone_names and vg_name.get(idx) not in bone_names:
                     continue
 
-                # 仅处理骨骼权重
-                if armature and vg.name not in bone_names:
-                    continue
+                total += w
+                valid.append((idx, w))
 
-                total_weight += g.weight
-                valid_groups.append((vg, g.weight))
-
-            if total_weight == 0.0:
+            if total == 0:
                 continue
 
-            # 规范化
-            inv_total = 1.0 / total_weight
-            for vg, weight in valid_groups:
-                vg.add([v_idx], weight * inv_total, 'REPLACE')
+            inv = 1.0 / total
 
-        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
+            for idx, w in valid:
+                d[idx] = w * inv
+
+        bmesh.update_edit_mesh(obj.data)
+
+        if DEBUG_BONEWEIGHTGROUP_DRAW:
             DebugBoneWeightGroup.refresh_draw(context)
 
-        bpy.ops.object.mode_set(mode='EDIT')
-
-        if self.only_selected:
-            self.report({'INFO'}, "已规格化选中顶点权重")
-        else:
-            self.report({'INFO'}, "已规格化全部顶点权重")
-
+        self.report({'INFO'}, "规格化完成")
         return {'FINISHED'}
-
+    
 class OP_VertexGroupTools_RemoveGroupVertex_by_value(Operator):
     bl_idname = "ho.vertexgrouptools_remove_group_vertex_byvalue"
     bl_label = "组中移除顶点"
-    bl_description = "选中中的顶点，在所有顶点组中权重小于某值(0),此点将从那个顶点组中移除，跳过锁定组"
+    bl_description = "编辑模式下，对所选的顶点，在所有顶点组中权重小于某值(0),此点将从那个顶点组中移除，跳过锁定组"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def execute(self, context):
-        # 确保在对象模式下应用修改
-        if context.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-            bpy.ops.object.mode_set(mode='EDIT')
-
+    @classmethod
+    def poll(cls, context):
         obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'WARNING'}, "请选中一个网格对象")
-            return {'CANCELLED'}
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
-        if not obj.vertex_groups:
-            self.report({'WARNING'}, "对象没有顶点组")
+    def execute(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        deform = bm.verts.layers.deform.active
+
+        if deform is None:
             return {'CANCELLED'}
 
         threshold = context.scene.hoVertexGroupTools_remove_max
 
-        removed_total = 0  # 统计总共移除的顶点数
+        arm = obj.find_armature()
+        bone_names = {b.name for b in arm.data.bones} if arm else None
 
-        # 记录当前模式，并切换到对象模式
-        prev_mode = obj.mode
-        bpy.ops.object.mode_set(mode='OBJECT')
+        vg_lock = {vg.index: vg.lock_weight for vg in obj.vertex_groups}
+        vg_name = {vg.index: vg.name for vg in obj.vertex_groups}
 
-        # 遍历顶点组
-        for vg in obj.vertex_groups:
-            if vg.lock_weight:
-                continue  # 跳过锁定的组
+        removed = 0
 
-            if context.object.find_armature() and vg.name not in context.object.find_armature().data.bones:
-                continue  # 跳过非骨骼顶点组
+        for v in bm.verts:
+            if not v.select:
+                continue
 
-            verts_to_remove = []
-            for vert in obj.data.vertices:
-                if not vert.select:  # 跳过未选中定点
+            d = v[deform]
+            to_del = []
+
+            for idx, w in d.items():
+                if vg_lock.get(idx):
                     continue
-                
-                for g in vert.groups:
-                    if g.group == vg.index and g.weight <= threshold:
-                        verts_to_remove.append(vert.index)
-                        break
+                if bone_names and vg_name.get(idx) not in bone_names:
+                    continue
+                if w <= threshold:
+                    to_del.append(idx)
 
-            if verts_to_remove:
-                vg.remove(verts_to_remove)
-                removed_total += len(verts_to_remove)
+            for idx in to_del:
+                del d[idx]
+                removed += 1
 
-        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
-            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+        bmesh.update_edit_mesh(obj.data)
 
-        # 恢复原来的模式
-        bpy.ops.object.mode_set(mode=prev_mode)
+        if DEBUG_BONEWEIGHTGROUP_DRAW:
+            DebugBoneWeightGroup.refresh_draw(context)
 
-        self.report(
-            {'INFO'}, f"移除了 {removed_total} 个权重小于 {threshold} 的顶点（所有非锁定组）"
-        )
+        self.report({'INFO'}, f"移除 {removed} 个权重")
         return {'FINISHED'}
-
+    
 class OP_VertexGroupTools_RemoveEmptyVertexGroups(Operator):
     bl_idname = "ho.vertexgrouptools_remove_empty_vertex_groups"
     bl_label = "移除所有空组"
@@ -420,75 +395,45 @@ class OP_VertexGroupTools_RemoveEmptyVertexGroups(Operator):
         return obj and obj.type == 'MESH' and obj.mode == 'OBJECT'
 
     def execute(self, context):
-        original_active = context.view_layer.objects.active
-        original_modes = {}
-
-        # 保存所有选中物体的原始模式
-        for obj in context.selected_objects:
-            if obj.type == 'MESH':
-                original_modes[obj] = obj.mode
-
         for obj in context.selected_objects:
             if obj.type != 'MESH':
                 continue
 
-            context.view_layer.objects.active = obj
-            if obj.mode != 'OBJECT':
-                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='OBJECT')
 
-            mesh = obj.data
-            vgroups = obj.vertex_groups
+            used = set()
+
+            # 一次扫描收集所有使用的组
+            for v in obj.data.vertices:
+                for g in v.groups:
+                    if g.weight > 0:
+                        used.add(g.group)
+
             to_remove = []
 
-            # 检查每个顶点组是否为空
-            for vg in vgroups:
-                vg_index = vg.index
-                is_empty = True
-
+            for vg in obj.vertex_groups:
                 if vg.lock_weight:
-                    continue  # 跳过锁定的组
+                    continue
+                if vg.index not in used:
+                    to_remove.append(vg)
 
-                for v in mesh.vertices:
-                    for g in v.groups:
-                        if g.group == vg_index and g.weight > 0.0:
-                            is_empty = False
-                            break
-                    if not is_empty:
-                        break
-
-                if is_empty:
-                    to_remove.append(vg.index)
-
-            # 从高到低删除索引，避免索引变化问题
-            for index in sorted(to_remove, reverse=True):
-                vgroups.remove(vgroups[index])
-
-        # 恢复原始模式
-        for obj, mode in original_modes.items():
-            context.view_layer.objects.active = obj
-            if obj.mode != mode:
-                bpy.ops.object.mode_set(mode=mode)
-
-        context.view_layer.objects.active = original_active
+            for vg in reversed(to_remove):
+                obj.vertex_groups.remove(vg)
 
         return {'FINISHED'}
 
 class OP_VertexGroupTools_BlendFromGroup(Operator):
     bl_idname = "ho.vertexgrouptools_blendfromgroup"
     bl_label = "权重从组混合"
-    bl_description = "类似从形态键混合，将其他顶点组的所选顶点权重混合到当前组，可以指定模式"
+    bl_description = "编辑模式下，对所选(全部)顶点，类似从形态键混合，将其他顶点组的所选顶点权重混合到当前组，可以指定模式"
     bl_options = {'REGISTER', 'UNDO'}
 
-    group_name: StringProperty(
-        name="源顶点组",
-        default=""
-    )  # type: ignore
-
+    group_name: StringProperty()  # type: ignore
     mode: EnumProperty(
-        name="混合模式",
         items=[
-            ('REPLACE', "替换", "完全替换目标组的权重"),
-            ('ADD', "叠加", "将权重叠加到现有权重上"),
+            ('REPLACE', "替换", ""),
+            ('ADD', "叠加", ""),
         ],
         default='REPLACE'
     )  # type: ignore
@@ -498,91 +443,41 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
         obj = context.active_object
         return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
-    def draw(self, context):
-        layout = self.layout
-        layout.prop_search(self, "group_name",
-                           context.object, "vertex_groups",
-                           text="来源组")
-        layout.prop(self, "mode", expand=True)
-
-    def invoke(self, context, event):
-        # 自动设置默认源组为第一个非活动组
-        groups = context.object.vertex_groups
-        if groups and len(groups) > 1:
-            active_group = groups.active
-            for g in groups:
-                if g != active_group:
-                    self.group_name = g.name
-                    break
-        return context.window_manager.invoke_props_dialog(self)
-
     def execute(self, context):
         obj = context.active_object
-        target_group = obj.vertex_groups.active
 
-        # 参数有效性检查
-        if not self.group_name:
-            self.report({'ERROR'}, "必须选择源顶点组")
+        target = obj.vertex_groups.active
+        source = obj.vertex_groups.get(self.group_name)
+
+        if not target or not source:
             return {'CANCELLED'}
+        bm = bmesh.from_edit_mesh(obj.data)
+        deform = bm.verts.layers.deform.verify()
+        tidx = target.index
+        sidx = source.index
+        processed = 0
 
-        if not target_group:
-            self.report({'ERROR'}, "没有活动组")
-            return {'CANCELLED'}
-
-        if self.group_name == target_group.name:
-            self.report({'WARNING'}, "源和目标顶点组相同，操作已取消")
-            return {'CANCELLED'}
-
-        # 获取源顶点组
-        try:
-            source_group = obj.vertex_groups[self.group_name]
-        except KeyError:
-            self.report({'ERROR'}, f"找不到源顶点组：{self.group_name}")
-            return {'CANCELLED'}
-
-        # 检查当前模式（只能物体模式下修改）
-        if obj.mode != 'OBJECT':
-            # 如果不在物体模式，尝试切换到物体模式
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-        # 优化：预先收集需要处理的数据
-        selected_verts = [v.index for v in obj.data.vertices if v.select]
-        total_processed = 0
-        mode = self.mode
-
-        # 批量操作提升性能
-        for v_idx in selected_verts:
-            try:
-                src_weight = source_group.weight(v_idx)
-            except RuntimeError:
-                continue  # 跳过不在源组的顶点
-
-            # 获取当前权重
-            try:
-                current_weight = target_group.weight(v_idx)
-            except RuntimeError:
-                current_weight = 0.0
-
-            # 计算新权重
-            if mode == 'REPLACE':
-                new_weight = src_weight
+        for v in bm.verts:
+            if not v.select:
+                continue
+            d = v[deform]
+            src = d.get(sidx, 0.0)
+            if src == 0:
+                continue
+            cur = d.get(tidx, 0.0)
+            if self.mode == 'REPLACE':
+                d[tidx] = src
             else:
-                new_weight = min(current_weight + src_weight, 1.0)
+                d[tidx] = min(cur + src, 1.0)
 
-            # 更新权重
-            target_group.add([v_idx], new_weight, 'REPLACE')
-            total_processed += 1
+            processed += 1
 
-        # 切换回编辑模式
-        bpy.ops.object.mode_set(mode='EDIT')
-        self.report(
-            {'INFO'}, f"成功处理 {total_processed}/{len(selected_verts)} 个顶点")
-        
-        if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
-            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
-
+        bmesh.update_edit_mesh(obj.data)
+        if DEBUG_BONEWEIGHTGROUP_DRAW:
+            DebugBoneWeightGroup.refresh_draw(context)
+        self.report({'INFO'}, f"处理 {processed} 个顶点")
         return {'FINISHED'}
-
+    
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
     bl_idname = "ho.vertex_group_mirror_to_other"
     bl_label = "镜像权重(仅骨骼权重)到对侧组，无自动归一化"
@@ -1151,7 +1046,7 @@ class OP_VertexGroupTools_SoftWeight(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
-    # TODO 性能一般，大量组+大量顶点会卡几秒，但是瓶颈在bl端的IO
+    # TODO:性能一般，大量组+大量顶点会卡几秒，但是瓶颈在bl端的IO
     bl_idname = "ho.vertexgrouptools_soft_weight_allbone"
     bl_label = "柔化骨骼顶点组权重"
     bl_description = "柔化所选顶点的全部骨骼顶点组权重"
@@ -1245,7 +1140,7 @@ class OP_VertexGroupTools_SoftWeight_AllBone(Operator):
         return {'FINISHED'}
     
 class OP_VertexGroupTools_SharpenWeight(Operator):
-    #TODO 存在收缩出孤岛的问题
+    #TODO:存在收缩出孤岛的问题
     bl_idname = "ho.vertexgrouptools_sharpen_weight"
     bl_label = "锐化权重"
     bl_description = "锐化所选的顶点的当前顶点组权重"
@@ -1330,10 +1225,10 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
-    #TODO 存在收缩出孤岛的问题
+    #TODO:存在收缩出孤岛的问题
     bl_idname = "ho.vertexgrouptools_sharpen_weight_allbone"
     bl_label = "锐化骨骼顶点组权重"
-    bl_description = "锐化所选顶点的全部骨骼顶点组权重"
+    bl_description = "编辑模式下，对所选顶点，锐化所选顶点的全部骨骼顶点组权重"
     bl_options = {'REGISTER', 'UNDO'}
 
     factor: bpy.props.FloatProperty(
@@ -1502,10 +1397,9 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
 class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
     """漫延顶点权重"""
     bl_idname = "ho.vertexgrouptools_floodfill_vertexweight"
-    bl_label = "漫延顶点权重"
+    bl_label = "编辑模式下，对所选顶点，漫延顶点权重"
     bl_options = {'REGISTER', 'UNDO'}
 
-    only_selected: BoolProperty(default=True) # type: ignore
     value: FloatProperty(default=0.2, min=0.0, max=1.0) # type: ignore
     reverse: BoolProperty(
         name="反向传播",
@@ -1541,7 +1435,7 @@ class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
         new_weights = {}
 
         for v in bm.verts:
-            if self.only_selected and not v.select:
+            if not v.select:
                 continue
 
             current_weight = get_weight(v)
@@ -1578,7 +1472,8 @@ class OP_VertexGroupTools_FloodFill_VG_weight(Operator):
 class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
     """选择一半的网格"""
     bl_idname = "ho.vertexgrouptools_select_oneside"
-    bl_label = "选择一半的网格"
+    bl_label = "选择一半的"
+    bl_description = "编辑模式下,选择一半的网格"
     bl_options = {'REGISTER', 'UNDO'}
 
     reverse:BoolProperty(default=False,name="是否翻转(选择x-)") # type: ignore
@@ -1613,15 +1508,10 @@ class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
 class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
     bl_idname = "ho.vertexgrouptools_select_by_weightvalue"
     bl_label = "选择小于"
-    bl_description = "按阈值选择顶点"
+    bl_description = "编辑模式下,按阈值选择顶点"
     bl_options = {'REGISTER', 'UNDO'}
 
     value :FloatProperty(default=0.05) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
     @classmethod
     def poll(cls, context):
@@ -1662,6 +1552,7 @@ class OP_VertexGroupTools_Max_VG_Limit(Operator):
     bl_idname = "ho.vertexgrouptools_max_vg_limit"
     bl_label = "最多骨权重数"
     bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "对全部顶点进行处理"
 
     num_max:IntProperty(default=4) # type: ignore
     
@@ -1688,7 +1579,7 @@ class OP_SelectNonWeightVertices(Operator):
     """选择无骨骼权重的顶点"""
     bl_idname = "ho.vertexgrouptools_select_non_weight_vertices"
     bl_label = "选择无骨骼权重顶点"
-    bl_description = "选择没有任何骨骼权重的顶点（忽略非骨骼组）"
+    bl_description = "编辑模式下,选择没有任何骨骼权重的顶点（忽略非骨骼组）"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -2147,6 +2038,7 @@ class OP_DebugBoneWeightGroupRefresh(Operator):
     """
     bl_idname = "ho.debug_boneweightgroup_refresh"
     bl_label = "刷新骨骼权重Debug"
+    bl_description = "刷新当前权重debug显示的状态"
 
     def execute(self, context):
 
@@ -2162,12 +2054,17 @@ class OP_VertexGroupTools_select_mirror(Operator):
     bl_idname = "ho.vertexgrouptools_select_mirror"
     bl_label = "选择镜像"
     bl_options = {'REGISTER', 'UNDO'}
-    bl_description = "按住shift触发时加选另一边,否则选择另一边"
+    bl_description = "编辑模式下,按住shift触发时加选另一边,否则选择另一边"
 
     extend: bpy.props.BoolProperty(
         name="Extend",
         default=False
     )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'MESH' and obj.mode == 'EDIT'
 
     def invoke(self, context, event):
         # 根据 Shift 决定默认行为
