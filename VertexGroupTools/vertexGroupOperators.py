@@ -147,7 +147,7 @@ def ureg_props():
 class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_extract_selectedvertex_groupvalues"
     bl_label = "复制顶点权重"
-    bl_description = "提取选中顶点的权重信息到剪切板，若多个顶点则会平均"
+    bl_description = "提取选中顶点的权重信息到剪切板，若多个顶点则会平均(注意,此功能会产生大量0权重组,需要手动清)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -157,37 +157,34 @@ class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        if obj is None or obj.type != 'MESH' or obj.vertex_groups is None:
+
+        if obj is None or obj.vertex_groups is None:
             self.report({'WARNING'}, "无效对象或对象无顶点组")
             return {'CANCELLED'}
 
-         # 使用两次切换确保暂时修改的数据被应用
-        if obj.mode == 'EDIT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-            bpy.ops.object.mode_set(mode='EDIT')
+        bm = bmesh.from_edit_mesh(obj.data)
+        deform_layer = bm.verts.layers.deform.active
 
-        mesh = obj.data
-        selected_verts = [v.index for v in mesh.vertices if v.select]
+        if deform_layer is None:
+            self.report({'WARNING'}, "无权重数据")
+            return {'CANCELLED'}
+
+        selected_verts = [v for v in bm.verts if v.select]
 
         if not selected_verts:
             self.report({'WARNING'}, "未选中任何顶点")
             return {'CANCELLED'}
 
         weight_dict = {}
-        for vg in obj.vertex_groups:
-            # 针对每个顶点，检查它是否在当前顶点组中，若不在则设置权重为0
-            weights = []
-            for v in selected_verts:
-                group_found = False
-                for g in mesh.vertices[v].groups:
-                    if g.group == vg.index:
-                        weights.append(g.weight)
-                        group_found = True
-                        break
-                if not group_found:
-                    weights.append(0)  # 默认权重为 0
 
-            # 计算该顶点组的平均权重
+        for vg in obj.vertex_groups:
+            weights = []
+
+            for v in selected_verts:
+                dvert = v[deform_layer]
+                weight = dvert.get(vg.index, 0.0)
+                weights.append(weight)
+
             if weights:
                 weight_dict[vg.name] = sum(weights) / len(weights)
 
@@ -195,14 +192,15 @@ class OP_VertexGroupTools_ExtractGroupValues_SelectedVertex(Operator):
             self.report({'WARNING'}, "选中的顶点无权重")
             return {'CANCELLED'}
 
-        context.window_manager.clipboard = json.dumps(weight_dict)  # 直接存入剪贴板
+        context.window_manager.clipboard = json.dumps(weight_dict)
         self.report({'INFO'}, "已复制权重信息")
-        return {'FINISHED'}
 
+        return {'FINISHED'}
+    
 class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_applyt_selectedvertex_groupvalues"
     bl_label = "粘贴顶点权重"
-    bl_description = "从剪切板中粘贴权重信息到选中的顶点"
+    bl_description = "从剪切板中粘贴权重信息到选中的顶点(注意,此功能会产生大量0权重组,需要手动清)"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -212,16 +210,9 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        if obj is None or obj.type != 'MESH' or obj.vertex_groups is None:
+
+        if obj is None or obj.vertex_groups is None:
             self.report({'WARNING'}, "无效对象或对象无顶点组")
-            return {'CANCELLED'}
-
-        obj.update_from_editmode()
-        mesh = obj.data
-        selected_verts = [v.index for v in mesh.vertices if v.select]
-
-        if not selected_verts:
-            self.report({'WARNING'}, "未选中任何顶点")
             return {'CANCELLED'}
 
         clipboard_data = context.window_manager.clipboard
@@ -235,23 +226,42 @@ class OP_VertexGroupTools_ApplyGroupValues_SelectedVertex(Operator):
             self.report({'ERROR'}, "剪贴板中的数据无效")
             return {'CANCELLED'}
 
-        bpy.ops.object.mode_set(mode='OBJECT')
-        for vg_name, weight in weight_dict.items():
+        bm = bmesh.from_edit_mesh(obj.data)
+        deform_layer = bm.verts.layers.deform.verify()
+
+        selected_verts = [v for v in bm.verts if v.select]
+
+        if not selected_verts:
+            self.report({'WARNING'}, "未选中任何顶点")
+            return {'CANCELLED'}
+
+        # 建立 group index 映射（避免重复查找）
+        vg_index_map = {}
+
+        for vg_name in weight_dict.keys():
             vg = obj.vertex_groups.get(vg_name)
             if vg is None:
                 vg = obj.vertex_groups.new(name=vg_name)
+            vg_index_map[vg_name] = vg.index
 
-            for v in selected_verts:
-                vg.add([v], weight, 'REPLACE')
-        bpy.ops.object.mode_set(mode='EDIT')
+        # 写入权重
+        for v in selected_verts:
+            dvert = v[deform_layer]
+
+            for vg_name, weight in weight_dict.items():
+                idx = vg_index_map[vg_name]
+                dvert[idx] = weight  # 直接写
+
+        # 🔥 关键：刷新 edit mesh
+        bmesh.update_edit_mesh(obj.data)
 
         self.report({'INFO'}, "已粘贴权重信息")
 
         if DEBUG_BONEWEIGHTGROUP_DRAW is not None:
-            DebugBoneWeightGroup.refresh_draw(context)#刷新debug显示
+            DebugBoneWeightGroup.refresh_draw(context)
 
         return {'FINISHED'}
-
+    
 class OP_VertexGroupTools_NormalizeGroupValues_SelectedVertex(Operator):
     bl_idname = "ho.vertexgrouptools_normalize_selectedvertex_groupvalues"
     bl_label = "规格化权重"
