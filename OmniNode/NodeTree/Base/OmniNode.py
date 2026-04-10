@@ -11,11 +11,6 @@ def setBugNode(node, context):
     node.updateColor()
 
 
-def ProcessBoolToggleUpdate(node, context):
-    node.inputs["_BOOL"].hide = 1-node.process_bool_toggle  # 先触发回调再更新
-    return
-
-
 class OmniNode(Node):
     '''节点基类'''
     bug_color: bpy.props.FloatVectorProperty(
@@ -37,8 +32,6 @@ class OmniNode(Node):
         name="默认类型颜色", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
     omni_description: bpy.props.StringProperty(
         name="OMNI节点描述", default="没有使用描述")  # type: ignore
-    process_bool_toggle: bpy.props.BoolProperty(
-        name="是否公开bool逻辑接口", default=False, update=ProcessBoolToggleUpdate)  # type: ignore
 
     # 新增属性用于rebuild
     # SocketInMetaDict等为实例化对象存储的旧内容，_SocketInMetaDict等为每次启动插件时重新生成的新内容用于rebuild
@@ -73,10 +66,8 @@ class OmniNode(Node):
         pool = self["fatherTree"].pool
         kargs = pool[self.name].inputs
         outputs = pool[self.name].outputs
-        if not kargs["_BOOL"]:
-            return  # 逻辑关闭立刻退出
+
         try:
-            del kargs["_BOOL"]  # 不传入BOOL变量
             result = func(**kargs)
         except Exception as error:
             return error  # 有错误返回错误
@@ -92,18 +83,14 @@ class OmniNode(Node):
             return  # 多返回
 
     def process(self):
-        # TODO:debug显示不应该在这个阶段，并且这个输出的还很丑
-        print("PROCESS RUN:", self.name)
-        print("BOOL:", self["fatherTree"].pool[self.name].inputs.get("_BOOL"))
         self.is_bug = False
         self.property_unset("bug_text")  # 首先清空bug
         return
 # --------------------------------rebuild相关------------------------------
 
     def rebuild(self):
-        # TODO:对于_BOOL基类socket处理太hack
         # TODO:没有考虑非functionnode的rebuild，也就是没有存_SocketMetaDict等数据的node会报错，未来会添加一些专用的带UI的节点无法使用function来描述
-        # TODO:没有对OmniNode某些自带的参数进行rebuild，比如process_bool_toggle，base_color，is_output_node等（我不确定是不是所有的基类变量都应该被rebuild）
+        # TODO:没有对OmniNode某些自带的参数进行rebuild，比如base_color，is_output_node等（我不确定是不是所有的基类变量都应该被rebuild）
         tree = self["fatherTree"]
         # -----------------------------
         # 1. 缓存旧 socket 的值和链接信息
@@ -112,8 +99,6 @@ class OmniNode(Node):
         output_value_cache = {}
 
         for sock in self.inputs:
-            if sock.identifier == "_BOOL":
-                continue
             try:
                 input_value_cache[sock.identifier] = getattr(sock, "default_value", None)
             except Exception:
@@ -130,8 +115,6 @@ class OmniNode(Node):
         # -----------------------------
         input_links = []
         for sock in self.inputs:
-            if sock.identifier == "_BOOL":
-                continue
             for link in sock.links:
                 input_links.append({
                     "from_node": link.from_node.name,
@@ -152,10 +135,9 @@ class OmniNode(Node):
         # 3. 清理旧 socket
         # -----------------------------
         for sock in list(self.inputs):
-            if sock.identifier != "_BOOL":
-                for link in list(sock.links):
-                    tree.links.remove(link)
-                self.inputs.remove(sock)
+            for link in list(sock.links):
+                tree.links.remove(link)
+            self.inputs.remove(sock)
 
         for sock in list(self.outputs):
             for link in list(sock.links):
@@ -262,14 +244,6 @@ class OmniNode(Node):
         self.updateColor()
         self.size2default()
 
-        # 生成布尔总开关
-        # TODO:总是生成开关虽然比较优雅一致，但是对rebuild节点功能有限制，但是不总是生成又对runnode有限制
-        # TODO:总是生成开关，在node wrangler的自动连接中，如果输入是一个bool类型，会强制把没绘制的开关给绘制出来
-        bool = self.inputs.new(type="NodeSocketBool",
-                               name="执行", identifier="_BOOL")
-        bool.hide = True
-        bool.default_value = True
-
     def draw_label(self):
         '''动态标签'''
         return f"{self.name}"
@@ -366,8 +340,6 @@ class OmniNode(Node):
         else:
             row.prop(context.space_data.node_tree,
                     "is_auto_update", text="树自动更新", icon="UNLINKED")
-        row.prop(self, "process_bool_toggle",
-                    text="逻辑socket", icon="DECORATE_ANIMATE")
             
         # OMNI节点描述
         lines = self.omni_description.splitlines()
