@@ -2,7 +2,7 @@ from . import FunctionCore
 import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
-from .NodeTree import TREE_ID
+from .Base.OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic
 
 

@@ -1,6 +1,9 @@
+from .NodeTree.Base import OmniNodeTree
+
+
 def register():
     print("==========   OMNI NodeTree    ==========")
-    from .NodeTree import Nodes, NodeSocket, NodeTree  # NOQA: E402
+    from .NodeTree import Nodes, NodeSocket  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
     import os  # NOQA: E402
     import sys  # NOQA: E402
@@ -12,16 +15,16 @@ def register():
     sys.path.append(lib_dir)
     
     NodeBaseOps.register()
-    NodeTree.register()
+    OmniNodeTree.register()
     NodeSocket.register()
     Nodes.register()
     print("==========         END         ==========")
 
 
 def unregister():
-    from .NodeTree import Nodes, NodeSocket, NodeTree  # NOQA: E402
+    from .NodeTree import Nodes, NodeSocket  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
     NodeBaseOps.unregister()
-    NodeTree.unregister()
+    OmniNodeTree.unregister()
     NodeSocket.unregister()
     Nodes.unregister()
