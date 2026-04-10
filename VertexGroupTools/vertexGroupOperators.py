@@ -1353,7 +1353,7 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
     value1: FloatProperty(default=0.05)  # type: ignore
     value2: FloatProperty(default=0.1) # type: ignore
 
-    _use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
+    use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1362,7 +1362,7 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
 
     def invoke(self, context, event):
         # 检测 Shift
-        self._use_shift = event.shift
+        self.use_shift = event.shift
         return self.execute(context)
     
     def execute(self, context):
@@ -1383,7 +1383,7 @@ class OP_VertexGroupTools_Change_VG_weight(Operator):
             d = v[deform_layer]
             current_weight = d.get(vg.index, 0.0)
 
-            delta = self.value2 if self._use_shift else self.value1
+            delta = self.value2 if self.use_shift else self.value1
             new_weight = current_weight + delta
 
             if new_weight <= 0.0:
