@@ -1,5 +1,5 @@
 import bpy
-from ..FunctionCore import meta
+from ..Base.FunctionCore import meta
 from . import _COLOR
 
 

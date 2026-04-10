@@ -1,4 +1,4 @@
-from ..FunctionCore import meta
+from ..Base.FunctionCore import meta
 from bpy.types import NodeSocketColor
 from . import _COLOR
 

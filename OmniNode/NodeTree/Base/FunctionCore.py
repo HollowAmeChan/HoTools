@@ -3,7 +3,7 @@ import mathutils
 import inspect
 import types
 import typing
-from .Base.OmniNode import OmniNode
+from .OmniNode import OmniNode
 from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob
 from bpy.types import Node
 from bpy.types import (

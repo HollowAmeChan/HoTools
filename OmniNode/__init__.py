@@ -1,9 +1,9 @@
-from .NodeTree.Base import OmniNodeTree
+from .NodeTree.Base import Nodes, OmniNodeTree
 
 
 def register():
     print("==========   OMNI NodeTree    ==========")
-    from .NodeTree import Nodes, NodeSocket  # NOQA: E402
+    from .NodeTree.Base import NodeSocket  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
     import os  # NOQA: E402
     import sys  # NOQA: E402
@@ -22,7 +22,7 @@ def register():
 
 
 def unregister():
-    from .NodeTree import Nodes, NodeSocket  # NOQA: E402
+    from .NodeTree.Base import NodeSocket  # NOQA: E402
     from .operator import NodeBaseOps  # NOQA: E402
     NodeBaseOps.unregister()
     OmniNodeTree.unregister()

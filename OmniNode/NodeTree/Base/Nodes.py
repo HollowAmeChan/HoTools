@@ -2,8 +2,8 @@ from . import FunctionCore
 import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
-from .Base.OmniNodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit,Logic
+from .OmniNodeTree import TREE_ID
+from ..Function import Data, Math,Operator, RigTooKit,Logic
 
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
