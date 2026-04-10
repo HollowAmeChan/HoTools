@@ -131,7 +131,6 @@ class OP_removeExIcon(Operator):
         return {'FINISHED'}
 
 
-@persistent
 def loadExIcon(dummy):
     """用于加入bpy.app.handlers.load_post从而在blender文件启动时运行"""
     prefs = bpy.context.preferences.addons["HoTools"].preferences
@@ -147,7 +146,7 @@ cls = [OP_drawExIcon, OP_removeExIcon]
 
 
 def register():
-    bpy.app.handlers.load_post.append(loadExIcon)  # 在blender文件加载完毕后启用exIcon
+    bpy.app.handlers.load_post.append(loadExIcon)  # 在blender文件加载完毕后启用exIcon，loadExIcon不能使用@persistent因为内部操作用了注册完以后才能访问的东西
     for i in cls:
         bpy.utils.register_class(i)
 
