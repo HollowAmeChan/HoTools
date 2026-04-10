@@ -1,11 +1,11 @@
 import bpy
 from ..FunctionNodeCore import omni
-from . import _COLOR
+from . import _Color
 
 
 @omni(enable=True,
     bl_label="创建集合",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     omni_description="""
     在指定的父集合下创建一个集合
     如果没有则在活动场景下创建

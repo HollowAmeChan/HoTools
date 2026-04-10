@@ -1,5 +1,5 @@
 from ..FunctionNodeCore import omni , _OmniImageFormat , _OmniFolderPath, _OmniRegex, _OmniGlob
-from . import _COLOR
+from . import _Color
 
 from bpy.types import NodeSocketVector, NodeSocketColor
 import bpy
@@ -22,7 +22,7 @@ elif sys.version_info >= (3, 11):
 
 @omni(enable=True,
       bl_label="设置物体位置",
-      base_color=_COLOR.colorCat["Operator"],
+      base_color=_Color.colorCat["Operator"],
       is_output_node=False,
       color_tag = "GEOMETRY",
       bl_icon = "OBJECT_DATAMODE",
@@ -34,7 +34,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
 
 @omni(enable=True,
     bl_label="设置图像颜色",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图像","颜色"],
     _OUTPUT_NAME=["图像"],
@@ -47,7 +47,7 @@ def imgSetPureColor(img: bpy.types.Image, color: mathutils.Color) -> bpy.types.I
 
 @omni(enable=True,
     bl_label="创建UV层",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体","UV层"],
     _OUTPUT_NAME=["物体","UV层"],
@@ -203,7 +203,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
 @omni(
     enable=True,
     bl_label="纹理UV重定向",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体","UV源层","UV目标层","图像","膨胀像素数","输出分辨率","是否为法线图","新建图像名称","文件路径","图像格式","自动抗锯齿"],
     _OUTPUT_NAME=["图像","图像路径"],
@@ -465,7 +465,7 @@ def uv_reprojectionTransfer(
 @omni(
     enable=True,
     bl_label="加合",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["整数列表"],
     _OUTPUT_NAME=["和"],
@@ -475,7 +475,7 @@ def sumInt(ints: list[int])->int:
 
 @omni(enable=True,
     bl_label="导入图片",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片路径","是否为法线图"],
     _OUTPUT_NAME=["图片"],
@@ -492,7 +492,7 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types
 
 @omni(enable=True,
     bl_label="批量导入图片",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片路径","是否为法线图"],
     _OUTPUT_NAME=["图片"],
@@ -512,7 +512,7 @@ def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNormal: bool) 
 
 @omni(enable=True,
     bl_label="获取集合中的物体",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["集合"],
     _OUTPUT_NAME=["物体列表"],
@@ -524,7 +524,7 @@ def getObjectsInCollection(col: bpy.types.Collection) -> list[bpy.types.Object]:
 @omni(
     enable=True,
     bl_label="文件路径(正则)",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["文件夹路径", "正则表达式"],
     _OUTPUT_NAME=["文件路径列表"],
@@ -578,7 +578,7 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 @omni(
     enable=True,
     bl_label="合成图片",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","16bit"],
     _OUTPUT_NAME=["合成图像"],
@@ -674,7 +674,7 @@ def combineImages(
 
 @omni(enable=True,
     bl_label="保存图片",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["图片","文件路径","格式"],
     _OUTPUT_NAME=["文件路径"],
@@ -751,7 +751,7 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
 
 @omni(enable=True,
     bl_label="glob转正则",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["glob表达式"],
     _OUTPUT_NAME=["正则表达式"],
@@ -766,7 +766,7 @@ def glob2regex(pattern: _OmniGlob) -> _OmniRegex:
 
 @omni(enable=True,
     bl_label="字符串连接",
-    base_color=_COLOR.colorCat["Operator"],
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["字符串1","字符串2"],
     _OUTPUT_NAME=["字符串"],
