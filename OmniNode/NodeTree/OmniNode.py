@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Node, NodeSocket
-from ...operator import NodeBaseOps
+from . import OmniNodeOperators
 import json
 
 def setOutputNode(node, context):
@@ -263,13 +263,13 @@ class OmniNode(Node):
         
         row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
         Rebuild = row_L.operator(
-            NodeBaseOps.NodeRebuildSockets.bl_idname, text="", icon="NODETREE")
+            OmniNodeOperators.NodeRebuildSockets.bl_idname, text="", icon="NODETREE")
         Rebuild.node_name = self.name
         SetDefaultSize = row_L.operator(
-            NodeBaseOps.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
+            OmniNodeOperators.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
         SetDefaultSize.node_name = self.name
         SetBiggerSize = row_L.operator(
-            NodeBaseOps.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
+            OmniNodeOperators.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
         SetBiggerSize.node_name = self.name
 
 
@@ -277,7 +277,7 @@ class OmniNode(Node):
         row_R.alignment = 'RIGHT'
         row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
         row_R.operator(
-            NodeBaseOps.LayerRunning.bl_idname, text="", icon="FILE_REFRESH")
+            OmniNodeOperators.LayerRunning.bl_idname, text="", icon="FILE_REFRESH")
         
         # debug显示
         # TODO:目前显示的比较丑，列表太长会看不清楚（节点最大宽度不够用，应该要换行，或者有个按钮能看），同时英文变量名会被强制汉化（需要插入0长字符防止汉化）

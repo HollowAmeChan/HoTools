@@ -1,7 +1,7 @@
 from typing import Any
 from bpy.types import Node, NodeSocket, NodeTree
 from .OmniNode import OmniNode
-from ...lib.multimethod import multimethod  # 重载装饰器
+from ..lib.multimethod import multimethod  # 重载装饰器
 import time
 
 

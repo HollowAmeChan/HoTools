@@ -1,10 +1,12 @@
-from .NodeTree.Base import Nodes, OmniNodeTree
+from .NodeTree import NodeFactory
+
+from .NodeTree import OmniNodeTree
 
 
 def register():
     print("==========   OMNI NodeTree    ==========")
-    from .NodeTree.Base import NodeSocket  # NOQA: E402
-    from .operator import NodeBaseOps  # NOQA: E402
+    from .NodeTree import OmniNodeSocket  # NOQA: E402
+    from .NodeTree import OmniNodeOperators  # NOQA: E402
     import os  # NOQA: E402
     import sys  # NOQA: E402
     import bpy  # NOQA: E402
@@ -14,17 +16,17 @@ def register():
         plugin_dir, ".", "lib"))
     sys.path.append(lib_dir)
     
-    NodeBaseOps.register()
+    OmniNodeOperators.register()
     OmniNodeTree.register()
-    NodeSocket.register()
-    Nodes.register()
+    OmniNodeSocket.register()
+    NodeFactory.register()
     print("==========         END         ==========")
 
 
 def unregister():
-    from .NodeTree.Base import NodeSocket  # NOQA: E402
-    from .operator import NodeBaseOps  # NOQA: E402
-    NodeBaseOps.unregister()
+    from .NodeTree import OmniNodeSocket  # NOQA: E402
+    from .NodeTree import OmniNodeOperators  # NOQA: E402
+    OmniNodeOperators.unregister()
     OmniNodeTree.unregister()
-    NodeSocket.unregister()
-    Nodes.unregister()
+    OmniNodeSocket.unregister()
+    NodeFactory.unregister()

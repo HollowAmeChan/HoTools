@@ -4,7 +4,7 @@ import inspect
 import types
 import typing
 from .OmniNode import OmniNode
-from .NodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob
+from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob
 from bpy.types import Node
 from bpy.types import (
     NodeSocketFloat,
