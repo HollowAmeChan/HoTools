@@ -33,9 +33,7 @@ jobs:
         
         zip -r $ZIP_NAME $FOLDER_NAME
 
-        # 创建 Release 并上传 ZIP,tag为latest,如果已经存在latest则覆盖
-        gh release view latest || gh release create latest --title "Latest Build"
-        gh release upload latest $ZIP_NAME --clobber
-
+        # 创建 Release 并上传 ZIP
+        gh release create "v$VERSION" $ZIP_NAME --title "$ZIP_NAME"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
