@@ -27,7 +27,7 @@ import rna_keymap_ui
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
-    "version": (2, 2, 0),
+    "version": (__VERSION__), # type: ignore 在github workflow中指定，必须要有括号
     "blender": (4, 5, 0),
     "location": "Hollow",
     "description": "https://space.bilibili.com/60340452",

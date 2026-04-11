@@ -21,16 +21,21 @@ jobs:
       run: |
         # 固定压缩包内文件夹名
         FOLDER_NAME="Hotools"
+        VERSION=$(date +'%Y%m%d-%H%M%S')
+        # 修改 __init__.py 中的版本号
+        sed -i "s/__VERSION__/(${VERSION:0:4}, ${VERSION:4:2}, ${VERSION:6:2}, ${VERSION:9:6})/" __init__.py
+        ZIP_NAME="Hotools-$VERSION.zip"   # 压缩包名字用日期
         mkdir $FOLDER_NAME
 
         # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__ *.blend[0-9]
         # 不能使用*.blend*替代，因为这里的*可以为空，导致.blend文件也被排除掉了
         rsync -av --exclude=".git" --exclude=".github" --exclude=".vscode" --exclude=".venv" --exclude=".gitignore" --exclude="__pycache__" --exclude="*.blend[0-9]" ./ $FOLDER_NAME/
-        # 压缩包名字用日期
-        ZIP_NAME="Hotools-$(date +'%Y%m%d-%H%M%S').zip"
+        
         zip -r $ZIP_NAME $FOLDER_NAME
 
-        # 创建 Release 并上传 ZIP
-        gh release create "v$(date +'%Y%m%d-%H%M%S')" $ZIP_NAME --title "$ZIP_NAME"
+        # 创建 Release 并上传 ZIP,tag为latest,如果已经存在latest则在里面追加
+        gh release view latest || gh release create latest --title "Latest Build"
+        gh release upload latest $ZIP_NAME
+
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
