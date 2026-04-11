@@ -20,11 +20,11 @@ jobs:
     - name: Prepare clean folder and create ZIP
       run: |
         # 固定压缩包内文件夹名
-        FOLDER_NAME="Hotools"
+        FOLDER_NAME="HoTools"
         VERSION=$(date +'%Y%m%d-%H%M%S')
         # 修改 __init__.py 中的版本号
         sed -i "s/__VERSION__/(${VERSION:0:4}, ${VERSION:4:2}, ${VERSION:6:2}, ${VERSION:9:6})/" __init__.py
-        ZIP_NAME="Hotools-$VERSION.zip"   # 压缩包名字用日期
+        ZIP_NAME="HoTools-$VERSION.zip"   # 压缩包名字用日期
         mkdir $FOLDER_NAME
 
         # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__ *.blend[0-9]

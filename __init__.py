@@ -16,7 +16,7 @@ omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
 sys.path.append(omni_lib_dir)
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,FastUpdate
 from . import Exp_hogui,OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
@@ -124,6 +124,9 @@ class AddonPreference(bpy.types.AddonPreferences):
         row.operator("ho.register_asset_library", text="注册内置资源库")
         row.alert = False
         row = layout.row(align=True)
+        row.label(text=f"当前版本: {bl_info['version']}")
+        row.operator("ho.update_addon", icon='FILE_REFRESH')
+        row = layout.row(align=True)
         row.prop(self, "hoTools_enableExIcon", toggle=True)
         row.prop(self, "hoTools_ExIconSize")
         row.prop(self, "hoTools_ExiconAlpha")
@@ -160,6 +163,7 @@ def register():
     for i in cls:
         bpy.utils.register_class(i)
     
+    FastUpdate.register()
     FastOperators.register()
     VertexColorTools.register()
     VertexGroupTools.register()
@@ -185,6 +189,7 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
 
+    FastUpdate.unregister()
     FastOperators.unregister()
     VertexColorTools.unregister()
     VertexGroupTools.unregister()
