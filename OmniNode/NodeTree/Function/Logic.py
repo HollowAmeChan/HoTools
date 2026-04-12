@@ -3,12 +3,12 @@ from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
 import mathutils
-from . import _Color2
+from . import _Color
 
 
 @omni(enable=True,
     bl_label="且",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
     _OUTPUT_NAME=["结果"],
 )
@@ -18,7 +18,7 @@ def logic_and(a: bool, b: bool) -> bool:
 
 @omni(enable=True,
     bl_label="或",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
     _OUTPUT_NAME=["结果"],
 )
@@ -28,7 +28,7 @@ def logic_or(a: bool, b: bool) -> bool:
 
 @omni(enable=True,
     bl_label="非",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["条件"],
     _OUTPUT_NAME=["结果"],
 )
@@ -40,7 +40,7 @@ def logic_not(a: bool) -> bool:
 
 @omni(enable=True,
     bl_label="等于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     is_output_node=False,
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
@@ -50,7 +50,7 @@ def equal(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="不等于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
 )
@@ -59,7 +59,7 @@ def not_equal(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="大于等于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
 )
@@ -68,7 +68,7 @@ def bigger_equal(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="小于等于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
 )
@@ -77,7 +77,7 @@ def smaller_equal(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="大于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     is_output_node=False,
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
@@ -87,7 +87,7 @@ def bigger(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="小于",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     is_output_node=False,
     _INPUT_NAME=["值A","值B"],
     _OUTPUT_NAME=["结果"],
@@ -100,7 +100,7 @@ def smaller(a: Any, b: Any) -> bool:
 
 @omni(enable=True,
     bl_label="在列表中",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     is_output_node=False,
     _INPUT_NAME=["项目","列表"],
     _OUTPUT_NAME=["结果"],
@@ -110,7 +110,7 @@ def inList(item: Any, lst: list[Any]) -> bool:
 
 @omni(enable=True,
     bl_label="列表是否为空",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["列表"],
     _OUTPUT_NAME=["结果"],
 )
@@ -120,7 +120,7 @@ def list_is_empty(lst: list[Any]) -> bool:
 
 @omni(enable=True,
     bl_label="列表长度",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["列表"],
     _OUTPUT_NAME=["长度"],
 )
@@ -132,7 +132,7 @@ def list_length(lst: list[Any]) -> int:
 
 @omni(enable=True,
     bl_label="在范围内",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值","最小值","最大值"],
     _OUTPUT_NAME=["结果"],
 )
@@ -143,7 +143,7 @@ def in_range(x: Any, min_val: Any, max_val: Any) -> bool:
 
 @omni(enable=True,
     bl_label="是否为空",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
 )
@@ -153,7 +153,7 @@ def is_none(x: Any) -> bool:
 
 @omni(enable=True,
     bl_label="是否非空",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["值"],
     _OUTPUT_NAME=["结果"],
 )
@@ -164,7 +164,7 @@ def is_not_none(x: Any) -> bool:
 
 @omni(enable=True,
     bl_label="条件选择",
-    base_color=_Color2.colorCat["Logic"],
+    base_color=_Color.colorCat["Logic"],
     is_output_node=False,
     _INPUT_NAME=["条件","值1","值2"],
     _OUTPUT_NAME=["结果"],
