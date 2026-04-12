@@ -32,14 +32,11 @@ class OmniNode(Node):
         name="默认类型颜色", size=3, subtype="COLOR", default=(0.191, 0.061, 0.012))  # type: ignore
     omni_description: bpy.props.StringProperty(
         name="OMNI节点描述", default="没有使用描述")  # type: ignore
-
-    # 新增属性用于rebuild
-    # SocketInMetaDict等为实例化对象存储的旧内容，_SocketInMetaDict等为每次启动插件时重新生成的新内容用于rebuild
-    # TODO:为fuctionnode构建特化出来的，可能需要一个bool参数代表本节点是否为fuctionnode
-    SocketInMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
-    SocketOutMetaDict: bpy.props.StringProperty(default="{}") # type: ignore
-    SocketDefaultDict: bpy.props.StringProperty(default="{}") # type: ignore
-    SocketIsMultiDict: bpy.props.StringProperty(default="{}") # type: ignore
+    
+    _SocketInMetaDict = None# 正常初始化时读取,在类生成时就被定义了，不会随着工程持久化储存
+    _SocketOutMetaDict = None
+    _SocketDefaultDict = None
+    _SocketIsMultiDict = None
 
 
 # --------------------------------自身基本特性相关------------------------------
@@ -147,18 +144,10 @@ class OmniNode(Node):
         # -----------------------------
         # 4. 重新创建 socket
         # -----------------------------
-        cls = type(self)
-
-        in_meta = getattr(cls, "_SocketInMetaDict", None)
-        out_meta = getattr(cls, "_SocketOutMetaDict", None)
-        default_meta = getattr(cls, "_SocketDefaultDict", None)
-        is_multi_meta = getattr(cls, "_SocketIsMultiDict", None)
-
-        if in_meta is None or out_meta is None or default_meta is None:
-            in_meta = json.loads(self.SocketInMetaDict)
-            out_meta = json.loads(self.SocketOutMetaDict)
-            default_meta = json.loads(self.SocketDefaultDict)
-            is_multi_meta = json.loads(self.SocketIsMultiDict)
+        in_meta = self._SocketInMetaDict
+        out_meta = self._SocketOutMetaDict
+        default_meta = self._SocketDefaultDict
+        is_multi_meta = self._SocketIsMultiDict
 
         # -----------------------------
         # 5. inputs rebuild + restore value
@@ -318,13 +307,13 @@ class OmniNode(Node):
             # TODO:很丑很难看
             layout.label(text="Socket构建")
             layout.label(text="SocketInMetaDict: ")
-            layout.label(text=self.SocketInMetaDict)
+            layout.label(text=self._SocketInMetaDict)
             layout.label(text="SocketOutMetaDict: ")
-            layout.label(text=self.SocketOutMetaDict)
+            layout.label(text=self._SocketOutMetaDict)
             layout.label(text="SocketDefaultDict: ")
-            layout.label(text=self.SocketDefaultDict)
+            layout.label(text=self._SocketDefaultDict)
             layout.label(text="SocketIsMultiDict: ")
-            layout.label(text=self.SocketIsMultiDict)
+            layout.label(text=self._SocketIsMultiDict)
         pass
 
 

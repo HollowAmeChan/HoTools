@@ -225,16 +225,7 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     node.omni_description = NodeInfo.get("omni_description")
     # node.color_tag= NodeInfo.get("color_tag", "NONE")#blender的节点颜色标签，TODO:4.5暂时不能用，但是5.0以上已经修了
     node.bl_icon = NodeInfo.get("bl_icon", "NONE")#blender的节点图标
-    # 存储meta信息用于rebuild
-    node.SocketInMetaDict = json.dumps(SocketInMetaDict)
-    node.SocketOutMetaDict = json.dumps(SocketOutMetaDict)
-    node.SocketDefaultDict = json.dumps(SocketDefaultDict)
-    node.SocketIsMultiDict = json.dumps(SocketIsMulti)
-    cls = type(node)
-    setattr(cls, "_SocketInMetaDict", SocketInMetaDict)
-    setattr(cls, "_SocketOutMetaDict", SocketOutMetaDict)
-    setattr(cls, "_SocketDefaultDict", SocketDefaultDict)
-    setattr(cls, "_SocketIsMultiDict", SocketIsMulti)
+
     # 生成输入
     for i in SocketInMetaDict.keys():
         sock = node.inputs.new(**SocketInMetaDict[i])
@@ -262,6 +253,11 @@ def CreateNodeClass(func) -> OmniNode:
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
         bl_idname = NodeInfo.get("bl_idname")
+        __name__ = "HO_OmniProgramCreateNode_"+func.__name__
+        _SocketInMetaDict = SocketInMetaDict
+        _SocketOutMetaDict = SocketOutMetaDict
+        _SocketDefaultDict = SocketDefaultDict
+        _SocketIsMultiDict = SocketIsMulti
 
         def init(self, context):
             super().init(context)
@@ -273,12 +269,7 @@ def CreateNodeClass(func) -> OmniNode:
         def process(self):
             super().process()
             return self.processUsingPool(func)  # 程序化节点特有的调用，返回可能的错误
-
-    OmniNodeClassInstance.__name__ = "HO_OmniProgramCreateNode_"+func.__name__
-    OmniNodeClassInstance._SocketInMetaDict = SocketInMetaDict
-    OmniNodeClassInstance._SocketOutMetaDict = SocketOutMetaDict
-    OmniNodeClassInstance._SocketDefaultDict = SocketDefaultDict
-    OmniNodeClassInstance._SocketIsMultiDict = SocketIsMulti
+        
     return OmniNodeClassInstance
 
 
