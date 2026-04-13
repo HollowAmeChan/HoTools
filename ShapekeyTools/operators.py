@@ -1030,22 +1030,35 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
             # 删除其他的全部修改器
             self.remove_modifiers(blendshapeObject)
 
-            # 将副本作为形态键添加到接收物体
-            # self.add_objs_shapekeys(receiver, [blendshapeObject])
-            if self.add_objs_shapekeys(receiver, [blendshapeObject]):
-                self.report({'ERROR'}, f"形态键 '{shapekey_names[i]}' 添加失败，可能是形态键下修改器应用后与基型修改器应用后拓扑不一致。")
-                # 清理临时物体再退出
+            # 记录添加前数量
+            if not receiver.data.shape_keys:
+                before = 0
+            else:
+                before = len(receiver.data.shape_keys.key_blocks)
+            # 尝试合并
+            self.add_objs_shapekeys(receiver, [blendshapeObject])
+            # 重新获取（避免引用问题）
+            key_blocks = receiver.data.shape_keys.key_blocks
+            after = len(key_blocks)
+
+            # 统一检测是否成功创建，如果没有成功创建（通常是拓扑不一致导致的），则删除所有临时物体并报错退出
+            if after == before:
+                self.report(
+                    {'ERROR'},
+                    f"形态键 '{shapekey_names[i]}' 添加失败（可能由于修改器的自动焊接，导致点序/点数不一致）"
+                )
+                mesh_data = blendshapeObject.data
                 bpy.data.objects.remove(blendshapeObject)
+                bpy.data.meshes.remove(mesh_data)
+
+                receiver_mesh = receiver.data
+                bpy.data.objects.remove(receiver)
+                bpy.data.meshes.remove(receiver_mesh)
+
+                # 恢复原物体为 active
                 bpy.context.view_layer.objects.active = obj
                 bpy.context.view_layer.update()
-                return {'CANCELLED'}
 
-        
-            # 恢复名字(首先需要检查键是否成功创建，防止上一层添加形态键存在未知情况导致没有正常生成)
-            key_blocks = receiver.data.shape_keys.key_blocks
-            if len(key_blocks) <= i:
-                self.report({'ERROR'}, f"形态键 '{shapekey_names[i]}' 添加失败（未生成 key）,可能是形态键下修改器应用后与基型修改器应用后拓扑不一致。")
-                bpy.data.objects.remove(blendshapeObject)
                 return {'CANCELLED'}
             key_blocks[-1].name = shapekey_names[i]
 
