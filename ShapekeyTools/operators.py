@@ -920,6 +920,7 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
 
     def copy_object(self, obj, times=1, offset=0) -> list[Object]:
         """复制传入的物体多份返回,并在x轴上偏移,可以指定偏移的起始量"""
+        # TODO 没有必要做的这么复杂
         objects = []
         for i in range(0, times):
             copy_obj = obj.copy()
@@ -936,7 +937,7 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
         """等效于应用形态键，删除某个形态键以外的全部键，总而达到保留那一个键的位置的效果"""
         shapekeys = obj.data.shape_keys.key_blocks
 
-        if sk_keep < 0 or sk_keep > len(shapekeys):
+        if sk_keep < 0 or sk_keep >=  len(shapekeys):
             return
         # 倒着删保证目标键最后删，等效应用
         for i in reversed(range(0, len(shapekeys))):
@@ -1040,8 +1041,13 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
                 return {'CANCELLED'}
 
         
-            # 恢复名字
-            receiver.data.shape_keys.key_blocks[i].name = shapekey_names[i] #TODO
+            # 恢复名字(首先需要检查键是否成功创建，防止上一层添加形态键存在未知情况导致没有正常生成)
+            key_blocks = receiver.data.shape_keys.key_blocks
+            if len(key_blocks) <= i:
+                self.report({'ERROR'}, f"形态键 '{shapekey_names[i]}' 添加失败（未生成 key）,可能是形态键下修改器应用后与基型修改器应用后拓扑不一致。")
+                bpy.data.objects.remove(blendshapeObject)
+                return {'CANCELLED'}
+            key_blocks[-1].name = shapekey_names[i]
 
             # 删除临时物体
             mesh_data = blendshapeObject.data
