@@ -4,7 +4,6 @@ from .NodeTree import OmniNodeTree
 
 
 def register():
-    print("==========   OMNI NodeTree    ==========")
     from .NodeTree import OmniNodeSocket  # NOQA: E402
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     import os  # NOQA: E402
@@ -20,7 +19,6 @@ def register():
     OmniNodeTree.register()
     OmniNodeSocket.register()
     FunctionNode.register()
-    print("==========         END         ==========")
 
 
 def unregister():

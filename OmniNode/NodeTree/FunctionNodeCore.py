@@ -254,17 +254,10 @@ def CreateNodeClass(func) -> OmniNode:
         bl_label = NodeInfo.get("bl_label")
         bl_idname = NodeInfo.get("bl_idname")
         __name__ = "HO_OmniProgramCreateNode_"+func.__name__
-        _SocketInMetaDict = SocketInMetaDict
-        _SocketOutMetaDict = SocketOutMetaDict
-        _SocketDefaultDict = SocketDefaultDict
-        _SocketIsMultiDict = SocketIsMulti
 
-        def init(self, context):
-            super().init(context)
+        def build(self):
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
                             SocketOutMetaDict, SocketDefaultDict, SocketIsMulti)
-
-            self["fatherTree"].doing_initNode = False  # 更新树状态-新建节点结束
 
         def process(self):
             super().process()
