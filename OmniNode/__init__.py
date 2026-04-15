@@ -1,4 +1,4 @@
-from .NodeTree import FunctionNode
+from .NodeTree import GraphNode, OmniNodeRegister
 
 from .NodeTree import OmniNodeTree
 
@@ -8,7 +8,6 @@ def register():
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     import os  # NOQA: E402
     import sys  # NOQA: E402
-    import bpy  # NOQA: E402
     # 将本地的第三方库导入
     plugin_dir = os.path.dirname(__file__)
     lib_dir = os.path.abspath(os.path.join(
@@ -18,7 +17,7 @@ def register():
     OmniNodeOperator.register()
     OmniNodeTree.register()
     OmniNodeSocket.register()
-    FunctionNode.register()
+    OmniNodeRegister.register()
 
 
 def unregister():
@@ -27,4 +26,4 @@ def unregister():
     OmniNodeOperator.unregister()
     OmniNodeTree.unregister()
     OmniNodeSocket.unregister()
-    FunctionNode.unregister()
+    OmniNodeRegister.unregister()

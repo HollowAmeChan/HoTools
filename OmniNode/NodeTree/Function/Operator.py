@@ -575,12 +575,13 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 
     return out_rgb, out_a
 
+# TODO:很诡异的一个事实是，只有srgb的情况下保存才正确，但是这么保存了就又很奇怪
 @omni(
     enable=True,
     bl_label="合成图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","16bit"],
+    _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","是法线贴图","是灰度数据图"],
     _OUTPUT_NAME=["合成图像"],
 )
 def combineImages(
@@ -588,7 +589,8 @@ def combineImages(
     backgroundColor: mathutils.Color,
     name: str,
     overwrite: bool = True,
-    use_16bit: bool = False,
+    is_normalMap: bool = False,
+    is_GrayscaleData:bool = False,
 ) -> bpy.types.Image:
 
     if not imgs:
@@ -653,10 +655,10 @@ def combineImages(
         width=width,
         height=height,
         alpha=True,
-        float_buffer=use_16bit  # ⭐ 核心开关
+        float_buffer=is_normalMap  #法线贴图需要半精度渲染（）
     )
-    if use_16bit:# 必须在创建后立刻设置
-        result.colorspace_settings.name = 'Linear Rec.709'
+    if is_GrayscaleData:# 必须在创建后立刻设置
+        result.colorspace_settings.name = 'Non-Color'
     else:
         result.colorspace_settings.name = 'sRGB'
     # -------------------------

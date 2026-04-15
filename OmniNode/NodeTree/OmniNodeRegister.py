@@ -4,6 +4,7 @@ import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic
+from .GraphNode import CLS_GRAPH
 
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -13,6 +14,9 @@ class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
 
 
 cls = []
+# Graph节点
+node_cls_graph = CLS_GRAPH
+cls.extend(node_cls_graph)
 # Function生成节点
 node_cls_data = FunctionNodeCore.loadRegisterFuncNodes(Data)
 node_cls_math = FunctionNodeCore.loadRegisterFuncNodes(Math)
@@ -26,6 +30,9 @@ cls.extend(node_cls_rigtoolkit)
 cls.extend(node_cls_logic)
 
 node_categories = [
+    OmniNodeCategory("GRAPH", "graph", items=[
+        NodeItem(i.bl_idname) for i in node_cls_graph
+    ]),
     OmniNodeCategory("DATA", "Data", items=[
         NodeItem(i.bl_idname) for i in node_cls_data
     ]),

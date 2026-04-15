@@ -1,1 +1,69 @@
 # 本文件为functionnode以外的拓展类型node，用于实现高级功能
+import bpy
+from .OmniNode import OmniNode
+
+
+
+class OmniGroupNode(OmniNode):
+    # TODO:参考Sverchok得知使用原生的逻辑会非常困难，因此放弃原生逻辑
+    # https://blender.stackexchange.com/questions/58614/custom-nodetree-and-nodecustomgroup-and-bpy-ops-node-tree-path-parent
+    bl_idname = "HO_OmniNode_GroupNode"
+    bl_label = "组引用"
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def init(self, context):
+        pass
+
+    def draw_buttons(self, context, layout: bpy.types.UILayout):
+        # 顶掉父级的绘制
+        return
+
+class OmniGroupNodeInputs(OmniNode):
+    bl_idname = "HO_OmniNode_GroupNode_Inputs"
+    bl_label = "组输入"
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def init(self, context):
+        pass
+
+    def draw_buttons(self, context, layout: bpy.types.UILayout):
+        # 顶掉父级的绘制
+        return
+    
+class OmniGroupNodeOutputs(OmniNode):
+    bl_idname = "HO_OmniNode_GroupNode_Outputs"
+    bl_label = "组输出"
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def init(self, context):
+        pass
+
+    def draw_buttons(self, context, layout: bpy.types.UILayout):
+        # 顶掉父级的绘制
+        return
+    
+class OmniGroupNodeRepeat(OmniNode):
+    bl_idname = "HO_OmniNode_GroupNode_Repeat"
+    bl_label = "组重复"
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def init(self, context):
+        pass
+
+    def draw_buttons(self, context, layout: bpy.types.UILayout):
+        # 顶掉父级的绘制
+        return
+
+CLS_GRAPH = [OmniGroupNode,OmniGroupNodeInputs,OmniGroupNodeOutputs,OmniGroupNodeRepeat]

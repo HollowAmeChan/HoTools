@@ -62,6 +62,8 @@ class LayerRunning(Operator):
 
 
 class OmniNodeRebuild(Operator):
+    # TODO:诡异bug，重建以后会自动拥有bl_icon，此问题在pr中北反复讨论，是有关customgroupnode的
+    # https://projects.blender.org/blender/blender/pulls/130204
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
     bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
@@ -201,6 +203,7 @@ class OmniNodeRebuild(Operator):
 
 def draw_in_NODE_MT_editor_menus(self, context: Context):
     """OmniNode顶部运行按钮"""
+    # TODO:需要限制在OMNItree下才显示
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
     return

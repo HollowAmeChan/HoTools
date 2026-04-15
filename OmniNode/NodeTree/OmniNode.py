@@ -18,7 +18,7 @@ class OmniNode(Node):
     bug_text: bpy.props.StringProperty(
         name="Bug详情", default="No bug")  # type: ignore
     is_bug: bpy.props.BoolProperty(
-        name="是否bug", default=False, update=setBugNode)  # type: ignore
+        name="是否bug", default=False, update=setBugNode)  # type: ignore TODO:也许应该使用内置的bug了的UI显示
     debug: bpy.props.BoolProperty(name="调试", default=False)  # type: ignore
 
     default_width: bpy.props.FloatProperty(default=250)  # type: ignore
@@ -164,17 +164,6 @@ class OmniNode(Node):
                 grid.label(text="[类型]")
                 for value in outputInfo.values():
                     grid.label(text=type(value).__name__)
-
-            # TODO:很丑很难看
-            layout.label(text="Socket构建")
-            layout.label(text="SocketInMetaDict: ")
-            layout.label(text=self._SocketInMetaDict)
-            layout.label(text="SocketOutMetaDict: ")
-            layout.label(text=self._SocketOutMetaDict)
-            layout.label(text="SocketDefaultDict: ")
-            layout.label(text=self._SocketDefaultDict)
-            layout.label(text="SocketIsMultiDict: ")
-            layout.label(text=self._SocketIsMultiDict)
         pass
 
 
