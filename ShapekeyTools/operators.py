@@ -285,8 +285,6 @@ def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_isMirrorOverwrite
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
-    del bpy.types.Scene.hoShapekeyTools_control_seleted_object_SKValue
-    del bpy.types.Scene.hoShapekeyTools_control_seleted_object_SKLock
     del bpy.types.Scene.hoShapekeyTools_copy_is_abs
 
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener_cache
