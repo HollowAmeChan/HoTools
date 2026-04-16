@@ -2164,7 +2164,7 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     
 
     # #测试
-    # row.template_list("UL_VertexGroup_AdvancedList", "",
+    # row.template_list("HO_UL_VertexGroup_AdvancedList", "",
     #                   obj,"vertex_groups",
     #                   obj.vertex_groups,"active_index",
     #                   rows=8)

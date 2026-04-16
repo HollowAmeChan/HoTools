@@ -10,7 +10,7 @@ class PG_SKManager_SKCache(PropertyGroup):  # 存储目标骨骼和源骨骼的�
     is_basis: BoolProperty(default=False)  # type: ignore 
 
 
-class UL_SKManager_SKItems(UIList):  
+class HO_UL_SKManager_SKItems(UIList):  
     def draw_item(self, context, layout:UILayout, data, item, icon, active_data, active_propname, index):
         sk_cache = item
         
@@ -340,7 +340,7 @@ class OP_ApplyOrderSKCacheItems(bpy.types.Operator):
 def drawShapekeyManagerPanel(layout: UILayout, context: Context):
     scene = context.scene
     row = layout.row()
-    row.template_list("UL_SKManager_SKItems", "",
+    row.template_list(HO_UL_SKManager_SKItems.__name__, "",
                       scene,"skmanager_skcache_col",
                       scene, "skmanager_skcache_index",
                       rows=20)
@@ -383,7 +383,7 @@ def drawShapekeyManagerPanel(layout: UILayout, context: Context):
     col.alert = False
 
 
-cls = [PG_SKManager_SKCache, UL_SKManager_SKItems,
+cls = [PG_SKManager_SKCache, HO_UL_SKManager_SKItems,
        OP_SelectAllSKCacheItems, OP_DeselectAllSKCacheItems,
        OP_RefreshSKCacheItems, OP_SortSKCacheItems,
        OP_ClearSKCacheItems,OP_ApplyOrderSKCacheItems,

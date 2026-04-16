@@ -19,7 +19,7 @@ class PG_renameRule(PropertyGroup):
     chainStr: StringProperty(name="链名", default="A", description="分叉时递增(A,B..)") # type: ignore
     deepStr: StringProperty(name="深度", default="01", description="沿链条向下递增(01,02..)") # type: ignore
 
-class UL_RuleList(UIList):
+class HO_UL_RuleList(UIList):
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         tmp = row.row(align=True)
@@ -51,7 +51,7 @@ class PG_changenameRule(PropertyGroup):
     isCheckLower: BoolProperty(
         name="CheckLower?", description="区分大小写", default=True)  # type: ignore
 
-class UL_ChangeRuleList(UIList):
+class HO_UL_ChangeRuleList(UIList):
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         tmp = row.row(align=True)
@@ -583,7 +583,7 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
     row = layout.row(align=True)  # 左右两列
     # 左侧UIList
     col1 = row.column()
-    col1.template_list("UL_RuleList", "", scene,
+    col1.template_list(HO_UL_RuleList.__name__, "", scene,
                        "ho_boneRename_rules", scene, "ho_boneRename_rules_index")
 
     # 右侧按钮
@@ -612,7 +612,7 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
     row = layout.row(align=True)  # 左右两列
     # 左侧UIList
     col1 = row.column()
-    col1.template_list("UL_ChangeRuleList", "", scene,
+    col1.template_list(HO_UL_ChangeRuleList.__name__, "", scene,
                        "ho_boneRename_change_rules", scene, "ho_boneRename_change_rules_index")
     # 右侧按钮
     col2 = row.column(align=True)
@@ -630,7 +630,7 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
 
 
 cls = [PG_renameRule, PG_changenameRule,
-       UL_RuleList, UL_ChangeRuleList,
+       HO_UL_RuleList, HO_UL_ChangeRuleList,
        OP_SaveRules, OP_LoadRules,
        OP_SaveChangeRules, OP_LoadChangeRules,OP_AddRenamePreset,
        OP_RemoveNumberTail, OP_RemoveSideTail,

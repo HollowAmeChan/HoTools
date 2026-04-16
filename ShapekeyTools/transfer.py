@@ -91,7 +91,7 @@ class PG_transferListItem(PropertyGroup):
     name: StringProperty()  # type: ignore
 
 
-class UL_transferListItems(UIList):
+class HO_UL_transferListItems(UIList):
     """黑/白名单"""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
@@ -735,7 +735,7 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
     else:
         layout.label(text="黑名单")
     row = layout.row()
-    row.template_list(UL_transferListItems.__name__, "", scn, "customshapekeylist",
+    row.template_list(HO_UL_transferListItems.__name__, "", scn, "customshapekeylist",
                       scn, "shapekeytransfer_list_index", rows=9)
 
     col = row.column(align=True)
@@ -764,7 +764,7 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
 
 cls = (
     PG_transferSettings, PG_transferListItem,
-    UL_transferListItems,
+    HO_UL_transferListItems,
     OP_copyKeyNames, OP_insertKeyNames,
     OP_transferShapeKeys,
     OP_removeShapeKeys,

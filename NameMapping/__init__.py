@@ -20,7 +20,7 @@ class PG_MappingItem(PropertyGroup):
     isSelected: BoolProperty(
         name="list item isSelected", default=False)  # type: ignore
 
-class UL_Mapping_TargetItems(UIList):
+class HO_UL_Mapping_TargetItems(UIList):
     """Mapping的目标UIlist"""
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -30,7 +30,7 @@ class UL_Mapping_TargetItems(UIList):
         label.prop(item, "isSelected", text=str(index + 1))
         row.prop(item, "name", text="")
 
-class UL_Mapping_SearchItems(UIList):
+class HO_UL_Mapping_SearchItems(UIList):
     """Mapping的搜寻UIlist"""
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -705,7 +705,7 @@ class NameMappingTools(Panel):
         # 添加全选和取消全部选择按钮
         list = row_left.column(align=True)
 
-        list.template_list("UL_Mapping_SearchItems", "",
+        list.template_list(HO_UL_Mapping_SearchItems.__name__, "",
                         scene, "ho_mapping_searchlist",
                         scene, "ho_mapping_searchlist_index",
                         rows=10)
@@ -739,7 +739,7 @@ class NameMappingTools(Panel):
         # 右侧列表
         row_right = row.row(align=True)
         list = row_right.column(align=True)
-        list.template_list("UL_Mapping_TargetItems", "",
+        list.template_list(HO_UL_Mapping_TargetItems.__name__, "",
                         scene, "ho_mapping_targetlist",
                         scene, "ho_mapping_targetlist_index",
                         rows=10)
@@ -789,7 +789,7 @@ class NameMappingTools(Panel):
 
 
         
-cls = [PG_MappingItem,UL_Mapping_TargetItems,UL_Mapping_SearchItems,
+cls = [PG_MappingItem,HO_UL_Mapping_TargetItems,HO_UL_Mapping_SearchItems,
        OP_Mapping_SwapList,OP_Mapping_RemoveListItems,OP_Mapping_ClearItems,
        OP_Mapping_MoveUpItems,OP_Mapping_MoveDownItems,OP_Mapping_MoveTopItems,OP_Mapping_MoveBottomItems,
        OP_Mapping_SelectAllItems,OP_Mapping_DeselectAllItems,
