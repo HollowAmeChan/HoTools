@@ -287,7 +287,6 @@ def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
     del bpy.types.Scene.hoShapekeyTools_copy_is_abs
 
-    del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener_cache
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener
     if sk_load_handler in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(sk_load_handler)
