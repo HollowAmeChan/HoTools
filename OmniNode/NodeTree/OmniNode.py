@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Node, NodeSocket
-from . import OmniNodeOperator
+from .OmniNodeOperator import OmniNodeRebuild,NodeSetDefaultSize,NodeSetBiggerSize
 import json
 
 def setOutputNode(node, context):
@@ -114,14 +114,14 @@ class OmniNode(Node):
         
         row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
         Rebuild = row_L.operator(
-            OmniNodeOperator.OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
+            OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
         Rebuild.node_name = self.name
         Rebuild.node_tree_name = self.id_data.name
         SetDefaultSize = row_L.operator(
-            OmniNodeOperator.NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
+            NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
         SetDefaultSize.node_name = self.name
         SetBiggerSize = row_L.operator(
-            OmniNodeOperator.NodeSetBiggerSize.bl_idname, text="", icon="ADD")
+            NodeSetBiggerSize.bl_idname, text="", icon="ADD")
         SetBiggerSize.node_name = self.name
 
 

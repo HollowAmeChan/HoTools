@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import NodeTree, Node, NodeSocket, NodeLink
-from .DataPool import DataPool, poolNodeInfo
+from .DataPool import DataPool
 from .OmniNode import OmniNode
 import time
 import traceback

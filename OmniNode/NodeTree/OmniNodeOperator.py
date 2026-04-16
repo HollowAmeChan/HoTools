@@ -204,6 +204,12 @@ class OmniNodeRebuild(Operator):
 def draw_in_NODE_MT_editor_menus(self, context: Context):
     """OmniNode顶部运行按钮"""
     # TODO:需要限制在OMNItree下才显示
+    space = context.space_data
+    if not space or space.type != 'NODE_EDITOR':return
+    tree = space.node_tree
+    if not tree:return
+    if tree.bl_idname != "OmniNodeTree":return # TREE_ID_NAME
+
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
     return
