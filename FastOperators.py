@@ -65,17 +65,21 @@ class OP_select_inside_face_loop(bpy.types.Operator):
 class OP_RestartBlender(Operator):
     bl_idname = "ho.restart_blender"
     bl_label = "快速重启"
-    bl_description = "不保存重启"
+    bl_description = "不保存并重启 Blender"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        py = os.path.join(os.path.dirname(__file__), "console_toggle.py")
+        blender_exe = bpy.app.binary_path
         filepath = bpy.data.filepath
-        if (filepath != ""):
-            subprocess.Popen([sys.argv[0], filepath, '-P', py])
-        else:
-            subprocess.Popen([sys.argv[0], '-P', py])
+
+        args = [blender_exe]
+
+        if filepath:
+            args.append(filepath)
+
+        subprocess.Popen(args)
         bpy.ops.wm.quit_blender()
+
         return {'FINISHED'}
 
 

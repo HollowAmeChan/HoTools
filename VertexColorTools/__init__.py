@@ -957,7 +957,6 @@ cls = [PG_VertexColorCol,
 
 
 def register():
-    print("VertexColorTools reging")
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
