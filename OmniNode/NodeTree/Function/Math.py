@@ -1,3 +1,4 @@
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketColor
 from . import _Color

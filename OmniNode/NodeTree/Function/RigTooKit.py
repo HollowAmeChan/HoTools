@@ -1,4 +1,5 @@
 import bpy
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
 from ..FunctionNodeCore import omni
 from . import _Color
 

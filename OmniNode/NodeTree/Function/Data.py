@@ -1,4 +1,5 @@
-from ..FunctionNodeCore import omni , _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
