@@ -478,16 +478,16 @@ def sumInt(ints: list[int])->int:
     bl_label="导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","是否为法线图"],
+    _INPUT_NAME=["图片路径","非彩色"],
     _OUTPUT_NAME=["图片"],
     )
-def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types.Image:
+def importImage2Blender(imagePath: _OmniFolderPath, isNonColor: bool) -> bpy.types.Image:
     img_name = os.path.basename(imagePath)
     if bpy.data.images.get(img_name):
         bpy.data.images.remove(bpy.data.images[img_name])
     img = bpy.data.images.load(imagePath)
     img.name = img_name
-    if isNormal:
+    if isNonColor:
         img.colorspace_settings.name = "Non-Color"
     return img
 
@@ -495,10 +495,10 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNormal: bool) -> bpy.types
     bl_label="批量导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","是否为法线图"],
+    _INPUT_NAME=["图片路径","非彩色"],
     _OUTPUT_NAME=["图片"],
     )
-def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNormal: bool) -> list[bpy.types.Image]:
+def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNonColor: bool) -> list[bpy.types.Image]:
     imgs = []
     for path in imagePaths:
         img_name = os.path.basename(path)
@@ -506,7 +506,7 @@ def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNormal: bool) 
             bpy.data.images.remove(bpy.data.images[img_name])
         img = bpy.data.images.load(path)
         img.name = img_name
-        if isNormal:
+        if isNonColor:
             img.colorspace_settings.name = "Non-Color"
         imgs.append(img)
     return imgs
@@ -576,7 +576,6 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 
     return out_rgb, out_a
 
-# TODO:很诡异的一个事实是，只有srgb的情况下保存才正确，但是这么保存了就又很奇怪
 @omni(
     enable=True,
     bl_label="合成图片",
@@ -658,7 +657,7 @@ def combineImages(
         alpha=True,
         float_buffer=is_normalMap  #法线贴图需要半精度渲染（）
     )
-    if is_GrayscaleData:# 必须在创建后立刻设置
+    if is_GrayscaleData or is_normalMap:# 必须在创建后立刻设置
         result.colorspace_settings.name = 'Non-Color'
     else:
         result.colorspace_settings.name = 'sRGB'
