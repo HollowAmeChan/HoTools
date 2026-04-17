@@ -1,9 +1,108 @@
 from typing import Set
 import bpy
 import os
-from bpy.props import BoolProperty, StringProperty
-from bpy.types import Context,Operator
+from bpy.props import BoolProperty, StringProperty,EnumProperty
+from bpy.types import Context,Operator,PropertyGroup,UIList,UILayout
+from . import OmniNodeSocket
 
+BLENDER_SOCKET_TYPES = {
+    "NodeSocketFloat": "Float",
+    "NodeSocketInt": "Int",
+    "NodeSocketBool": "Bool",
+    "NodeSocketString": "String",
+
+    "NodeSocketVector": "Vector",
+    "NodeSocketColor": "Color",
+    "NodeSocketRotation": "Rotation",
+
+    "NodeSocketGeometry": "Geometry",
+
+    "NodeSocketObject": "Object",
+    "NodeSocketImage": "Image",
+    "NodeSocketCollection": "Collection",
+
+    "NodeSocketMaterial": "Material",
+    "NodeSocketTexture": "Texture",
+
+    "NodeSocketShader": "Shader",
+
+    # Geometry Nodes 常用扩展
+    "NodeSocketMatrix": "Matrix",
+    # "NodeSocketMenu": "Menu",
+}
+
+def full_socket_type_items():
+    items = []
+    for idname, label in BLENDER_SOCKET_TYPES.items():
+        items.append((idname, label, ""))
+    for k in OmniNodeSocket.cls:
+        items.append((k.bl_idname, k.bl_label, ""))
+    return items
+
+def sync_io_sockets(node):
+    """同步output_IO与node的socket"""
+    if not hasattr(node, "output_IO"):
+        node.output_IO = []
+
+    node.inputs.clear()
+
+    for item in node.output_IO:
+        node.inputs.new(
+            type=item.socket_type,
+            name=item.name,
+            identifier = item.identifier
+        )
+
+def OmniGraphNodeIOItem_update(self, context):
+    node = context.node #TODO:不太安全，可以测试使用self.id_data
+    sync_io_sockets(node)
+
+class OmniGraphNodeIOItem(PropertyGroup):
+    """IO输入输出组的ui绘制使用的列表单行"""
+    name: StringProperty(name="IO", default="IO",update=OmniGraphNodeIOItem_update) # type: ignore
+    identifier: StringProperty(name="ID",update=OmniGraphNodeIOItem_update) # type: ignore
+    socket_type: EnumProperty(name="Socket Type",items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
+
+class HO_UL_GraphNodeIO(UIList):
+    """IO输入输出组的ui绘制使用的列表"""
+    def draw_item(self, context, layout:UILayout, data, item, icon, active_data, active_propname, index):
+        row = layout.row(align=True)
+        row.prop(item, "name", text="", emboss=False)
+        row.prop(item, "socket_type", text="")
+
+class OP_IOItemAdd(Operator):
+    bl_idname = "ho.omni_ioitemadd"
+    bl_label = "AddIO"
+
+    node_name: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        node = bpy.context.space_data.node_tree.nodes[self.node_name]
+
+        item = node.output_IO.add()
+        item.name = "Output"
+
+        node.active_index = len(node.output_IO) - 1
+
+        sync_io_sockets(node)# 强制同步socket与ui
+        return {'FINISHED'}
+
+class OP_IOItemRemove(Operator):
+    bl_idname = "ho.omni_ioitemremove"
+    bl_label = "RemoveIO"
+
+    node_name: bpy.props.StringProperty()  # type: ignore
+
+    def execute(self, context):
+        node = bpy.context.space_data.node_tree.nodes[self.node_name]
+
+        idx = node.active_index
+        if node.output_IO:
+            node.output_IO.remove(idx)
+            node.active_index = max(0, idx - 1)
+
+        sync_io_sockets(node)# 强制同步socket与ui
+        return {'FINISHED'}
 
 class NodeSetDefaultSize(Operator):
     bl_idname = "ho.nodesetdefaultsize"  # 注册到bpy.ops下
@@ -50,7 +149,7 @@ class LayerRunning(Operator):
     bl_label = "树手动触发回调"
     reportInfo: BoolProperty(name="报告pool信息", default=True)  # type: ignore
 
-    def execute(self, context: bpy.types.Context):  # TODO:最好用调用的方式
+    def execute(self, context: bpy.types.Context):
         if (not hasattr(context.space_data, "node_tree")) or (not context.space_data.node_tree):
             return {'FINISHED'}
         tree = context.space_data.node_tree
@@ -211,7 +310,8 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
     return
 
 clss = [NodeSetDefaultSize, NodeSetBiggerSize, LayerRunning,
-        OmniNodeRebuild]
+        OmniNodeRebuild,OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemAdd,OP_IOItemRemove,
+        ]
 
 
 def register():
