@@ -10,11 +10,7 @@ class OmniGroupNode(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode"
     bl_label = "组引用"
 
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def init(self, context):
+    def build(self, context):
         pass
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
@@ -25,11 +21,7 @@ class OmniGroupNodeInputs(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Inputs"
     bl_label = "组输入"
 
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def init(self, context):
+    def build(self, context):
         pass
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
@@ -40,26 +32,22 @@ class OmniGroupNodeOutputs(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Outputs"
     bl_label = "组输出"
 
-    @classmethod
-    def poll(cls, context):
-        return True
+    last_debug_data = None
 
-    def init(self, context):
+    @staticmethod
+    def _func():
         pass
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
+        layout.label(text="Debug Output Node")
         return
     
 class OmniGroupNodeRepeat(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Repeat"
     bl_label = "组重复"
 
-    @classmethod
-    def poll(cls, context):
-        return True
-
-    def init(self, context):
+    def build(self, context):
         pass
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):

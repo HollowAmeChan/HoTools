@@ -63,6 +63,7 @@ SKT_DIC = {
     bpy.types.Armature: NodeSocketObject,
     bpy.types.Texture: NodeSocketTexture,
     mathutils.Matrix: NodeSocketMatrix,
+    mathutils.Vector:NodeSocketVector,
     _OmniFolderPath: NodeSocketStringFilePath,
     # python类到blender socket类
     float: NodeSocketFloat,

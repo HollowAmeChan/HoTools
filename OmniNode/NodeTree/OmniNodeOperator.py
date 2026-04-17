@@ -54,9 +54,6 @@ class LayerRunning(Operator):
         if (not hasattr(context.space_data, "node_tree")) or (not context.space_data.node_tree):
             return {'FINISHED'}
         tree = context.space_data.node_tree
-        if self.reportInfo:
-            tree.reportPool()
-        tree.OmniInit()
         tree.run()  # 无视是否自动更新
         return {'FINISHED'}
 

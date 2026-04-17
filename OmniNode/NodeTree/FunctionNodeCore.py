@@ -143,7 +143,6 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
     )
 
 def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti):
-    import json
     if NodeInfo.get("base_color"):
         node.base_color = NodeInfo.get("base_color")
     node.updateColor()
@@ -180,14 +179,12 @@ def CreateNodeClass(func) -> OmniNode:
         bl_label = NodeInfo.get("bl_label")
         bl_idname = NodeInfo.get("bl_idname")
         __name__ = "HO_OmniProgramCreateNode_"+func.__name__
+        _func = staticmethod(func)
+        _socket_is_multi = SocketIsMulti
 
         def build(self):
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
                             SocketOutMetaDict, SocketDefaultDict, SocketIsMulti)
-
-        def process(self):
-            super().process()
-            return self.processUsingPool(func)  # 程序化节点特有的调用，返回可能的错误
         
     return OmniNodeClassInstance
 

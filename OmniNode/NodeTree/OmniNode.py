@@ -33,6 +33,10 @@ class OmniNode(Node):
     omni_description: bpy.props.StringProperty(
         name="OMNI节点描述", default="没有使用描述")  # type: ignore
     
+    _socket_is_multi = None #用于编译时处理多口
+    _func = None #存储节点的静态运行函数，编译时直接调用
+
+    
 
 # --------------------------------自身基本特性相关------------------------------
 
@@ -49,34 +53,6 @@ class OmniNode(Node):
             return
         else:
             self.color = self.base_color
-# --------------------------------自身功能相关------------------------------
-
-    def processUsingPool(self, func):
-        """程序化节点独有调用,手动创建节点要模仿这个写
-        使用pool中的数据,处理也返回到pool中
-        """
-        pool = self["fatherTree"].pool
-        kargs = pool[self.name].inputs
-        outputs = pool[self.name].outputs
-
-        try:
-            result = func(**kargs)
-        except Exception as error:
-            return error  # 有错误返回错误
-
-        if not isinstance(result, tuple):
-            outputs["_OUTPUT0"] = result
-            return  # 单返回
-        else:
-            index = 0
-            for i in result:
-                outputs["_OUTPUT"+str(index)] = i
-                index += 1
-            return  # 多返回
-
-    def process(self):
-        self.is_bug = False
-        self.property_unset("bug_text")  # 首先清空bug 
 # --------------------------------原生方法重载------------------------------
     def build(self):
         """
