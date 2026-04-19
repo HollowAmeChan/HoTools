@@ -68,7 +68,7 @@ class OmniGroupNode(OmniNode):
         pass
 
     @staticmethod
-    def _func():
+    def _func(*arg):
         pass
 
     def syncGroupIO(self):
@@ -109,7 +109,7 @@ class OmniGroupNodeInputs(OmniNode):
         pass
     
     @staticmethod
-    def _func():
+    def _func(*arg):
         pass
 
     def syncGroupIO(self):
@@ -159,7 +159,7 @@ class OmniGroupNodeOutputs(OmniNode):
         pass
 
     @staticmethod
-    def _func():
+    def _func(*arg):
         pass
 
     def syncGroupIO(self):
@@ -213,7 +213,7 @@ class OmniGroupNodeRepeat(OmniNode):
         pass
 
     @staticmethod
-    def _func():
+    def _func(*arg):
         pass
 
     def syncGroupIO(self):

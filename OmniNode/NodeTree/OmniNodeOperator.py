@@ -175,7 +175,7 @@ class OmniNodeRebuild(Operator):
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
     bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {'REGISTER'}
 
     node_tree_name: bpy.props.StringProperty() # type: ignore
     node_name: bpy.props.StringProperty() # type: ignore
@@ -258,6 +258,8 @@ class OmniNodeRebuild(Operator):
         # -----------------------------
         node.build()
         # node.is_output_node = is_output_node
+        node.is_bug = False
+        node.property_unset("bug_text")  # 清空bug 
 
         # -----------------------------
         # 5. 恢复 default_value（用户输入）
