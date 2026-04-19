@@ -120,6 +120,7 @@ class OmniCompiler:
             input_regs = []
 
             for sock in node.inputs:
+                if not node._socket_is_multi: continue
                 is_multi = node._socket_is_multi.get(sock.identifier, False)
                 links = sorted(
                     sock.links,

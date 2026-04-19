@@ -25,10 +25,11 @@ class OmniGroupNode(OmniNode):
 
     def build(self):
         self.syncGroupIO()
+        self._socket_is_multi = None
         pass
 
     @staticmethod
-    def _func(self):
+    def _func():
         pass
 
     def syncGroupIO(self):
@@ -62,10 +63,11 @@ class OmniGroupNodeInputs(OmniNode):
 
     def build(self):
         self.syncGroupIO()
+        self._socket_is_multi = None
         pass
     
     @staticmethod
-    def _func(self):
+    def _func():
         pass
 
     def syncGroupIO(self):
@@ -108,11 +110,12 @@ class OmniGroupNodeOutputs(OmniNode):
     
     def build(self):
         self.syncGroupIO()
+        self._socket_is_multi = None
         self.is_output_node = True #特别注意
         pass
 
     @staticmethod
-    def _func(self):
+    def _func():
         pass
 
     def syncGroupIO(self):
@@ -160,10 +163,11 @@ class OmniGroupNodeRepeat(OmniNode):
 
     def build(self):
         self.syncGroupIO()
+        self._socket_is_multi = None
         pass
 
     @staticmethod
-    def _func(self):
+    def _func():
         pass
 
     def syncGroupIO(self):
