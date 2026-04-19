@@ -7,9 +7,11 @@ from bpy.props import CollectionProperty,IntProperty
 from .OmniNodeTree import OmniNodeTree
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
 
+def OmniTreeFilter(self, tree):
+    return isinstance(tree, OmniNodeTree)
 
 class OmniGroupNode(OmniNode):
-    # TODO:参考Sverchok得知使用原生的逻辑会非常困难，因此放弃原生逻辑
+    # 参考Sverchok得知使用原生的逻辑会非常困难，因此放弃原生逻辑
     # https://blender.stackexchange.com/questions/58614/custom-nodetree-and-nodecustomgroup-and-bpy-ops-node-tree-path-parent
     bl_idname = "HO_OmniNode_GroupNode"
     bl_label = "组引用"
@@ -17,22 +19,29 @@ class OmniGroupNode(OmniNode):
     target_tree: bpy.props.PointerProperty(
         name="Group",
         type=OmniNodeTree,
-        update=OmniGraphNodeIOItem_update
+        update=OmniGraphNodeIOItem_update,
+        poll=OmniTreeFilter,
     ) # type: ignore
 
     def build(self):
         pass
 
+    def syncGroupIO(self):
+        tree = self.target_tree
+
+        self.inputs.clear()
+        self.outputs.clear()
+
+        # Group 输入 → 当前 node.inputs
+        for io in tree.group_inputs:
+            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+        # Group 输出 → 当前 node.outputs
+        for io in tree.group_outputs:
+            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
-        layout.prop_search(
-            self,
-            "target_tree",
-            bpy.data,
-            "node_groups",
-            text="Group"
-        )
-        #TODO:没有过滤，直接使用prop绘制会无法修改
+        layout.template_ID(self, "target_tree")
         return
 
 class OmniGroupNodeInputs(OmniNode):
@@ -43,6 +52,16 @@ class OmniGroupNodeInputs(OmniNode):
 
     def build(self):
         pass
+    
+    @staticmethod
+    def _func(self):
+        pass
+
+    def syncGroupIO(self):
+        tree = self.id_data
+        self.outputs.clear()
+        for io in tree.group_inputs:
+            sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
 
     def draw_buttons(self, context, layout):
         tree = self.id_data
@@ -72,10 +91,20 @@ class OmniGroupNodeOutputs(OmniNode):
 
     output_IO: CollectionProperty(type=OmniGraphNodeIOItem)# type: ignore
     active_index: IntProperty(default=0) # type: ignore
+    
+    def build(self):
+        pass
 
     @staticmethod
-    def _func():
+    def _func(self):
         pass
+
+    def syncGroupIO(self):
+        tree = self.id_data
+        self.inputs.clear()
+
+        for io in tree.group_outputs:
+            sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
     
     def draw_buttons(self, context, layout):
         tree = self.id_data
@@ -103,11 +132,36 @@ class OmniGroupNodeRepeat(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Repeat"
     bl_label = "组重复"
 
+    target_tree: bpy.props.PointerProperty(
+        name="Group",
+        type=OmniNodeTree,
+        update=OmniGraphNodeIOItem_update,
+        poll=OmniTreeFilter,
+    ) # type: ignore
+
     def build(self):
         pass
 
+    @staticmethod
+    def _func(self):
+        pass
+
+    def syncGroupIO(self):
+        tree = self.target_tree
+
+        self.inputs.clear()
+        self.outputs.clear()
+
+        # Group 输入 → 当前 node.inputs
+        for io in tree.group_inputs:
+            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+        # Group 输出 → 当前 node.outputs
+        for io in tree.group_outputs:
+            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
+        layout.template_ID(self, "target_tree")
         return
 
 CLS_GRAPH = [OmniGroupNode,OmniGroupNodeInputs,OmniGroupNodeOutputs,OmniGroupNodeRepeat]
