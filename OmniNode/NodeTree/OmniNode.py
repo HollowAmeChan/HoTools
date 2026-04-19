@@ -108,38 +108,7 @@ class OmniNode(Node):
         # debug显示
         # TODO:目前显示的比较丑，列表太长会看不清楚（节点最大宽度不够用，应该要换行，或者有个按钮能看），同时英文变量名会被强制汉化（需要插入0长字符防止汉化）
         if self.debug:
-            # 内部prop详情
-            pool = self["fatherTree"].pool
-            if pool[self.name]:
-                inputsInfo: dict = pool[self.name].inputs
-                outputInfo: dict = pool[self.name].outputs
-                # 输入表
-                col = layout.column(align=True)
-                grid = col.grid_flow(columns=3, align=True)
-
-                grid.label(text="[标识符]")
-                for key in inputsInfo.keys():
-                    grid.label(text=str(key))
-                grid.label(text="[值]")
-                for value in inputsInfo.values():
-                    grid.label(text=str(value))
-                grid.label(text="[类型]")
-                for value in inputsInfo.values():
-                    grid.label(text=type(value).__name__)
-                # 输出表
-                layout.label(text="")
-                col = layout.column(align=True)
-                grid = col.grid_flow(columns=3, align=True)
-
-                grid.label(text="[标识符]")
-                for key in outputInfo.keys():
-                    grid.label(text=str(key))
-                grid.label(text="[值]")
-                for value in outputInfo.values():
-                    grid.label(text=str(value))
-                grid.label(text="[类型]")
-                for value in outputInfo.values():
-                    grid.label(text=type(value).__name__)
+            pass
         pass
 
 

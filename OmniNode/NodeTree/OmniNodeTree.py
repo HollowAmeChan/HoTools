@@ -12,7 +12,7 @@ TREE_ID = 'OMNINODE'  # 节点树系统注册进去的identifier
 TREE_ID_NAME = 'OmniNodeTree'  # 节点树系统的标识符idname
 
 
-class OmniNodeTree(bpy.types.GeometryNodeTree):  # 节点树
+class OmniNodeTree(NodeTree):  # 节点树
     bl_idname = TREE_ID_NAME
     bl_label = "Omni节点图"  # 界面显示名
     bl_icon = 'NODETREE'
@@ -39,19 +39,9 @@ class OmniNodeTree(bpy.types.GeometryNodeTree):  # 节点树
             print("树自动运行:", self.name, "\t", time.ctime())
             self.run()
 
-    @staticmethod
-    def isMultiSocket(node: OmniNode, socket: NodeSocket):
-        if socket.identifier in getattr(node, "_SocketIsMultiDict", {}):
-            return node._SocketIsMultiDict.get(socket.identifier, False)
-        return False 
-    @staticmethod
-    def normalize_socket_value(v):
-        """消除单值和多值的差异，统一输出列表"""
-        if v is None:
-            return []
-        if isinstance(v, list):
-            return v
-        return [v]
+    def interface_update(self, context):
+        """需要研究触发逻辑"""
+        pass
 
     def run(self):
         for node in self.nodes:
@@ -60,6 +50,8 @@ class OmniNodeTree(bpy.types.GeometryNodeTree):  # 节点树
         compiled = OmniCompiler.compile(self)
         print(compiled.node_order)# TODO:比较简陋的debug
         OmniExecutor.run(compiled)
+
+
 
 cls = [OmniNodeTree]
 
