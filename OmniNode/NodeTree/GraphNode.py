@@ -24,10 +24,16 @@ class OmniGroupNode(OmniNode):
     ) # type: ignore
 
     def build(self):
+        self.syncGroupIO()
+        pass
+
+    @staticmethod
+    def _func(self):
         pass
 
     def syncGroupIO(self):
         tree = self.target_tree
+        if not tree:return
 
         self.inputs.clear()
         self.outputs.clear()
@@ -35,9 +41,11 @@ class OmniGroupNode(OmniNode):
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
             sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock.hide_value = True
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
@@ -51,6 +59,7 @@ class OmniGroupNodeInputs(OmniNode):
     active_index: IntProperty(default=0) # type: ignore
 
     def build(self):
+        self.syncGroupIO()
         pass
     
     @staticmethod
@@ -62,6 +71,7 @@ class OmniGroupNodeInputs(OmniNode):
         self.outputs.clear()
         for io in tree.group_inputs:
             sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
+            sock.hide_value = True
 
     def draw_buttons(self, context, layout):
         tree = self.id_data
@@ -93,6 +103,7 @@ class OmniGroupNodeOutputs(OmniNode):
     active_index: IntProperty(default=0) # type: ignore
     
     def build(self):
+        self.syncGroupIO()
         pass
 
     @staticmethod
@@ -105,6 +116,7 @@ class OmniGroupNodeOutputs(OmniNode):
 
         for io in tree.group_outputs:
             sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
+            sock.hide_value = True
     
     def draw_buttons(self, context, layout):
         tree = self.id_data
@@ -140,6 +152,7 @@ class OmniGroupNodeRepeat(OmniNode):
     ) # type: ignore
 
     def build(self):
+        self.syncGroupIO()
         pass
 
     @staticmethod
@@ -155,9 +168,11 @@ class OmniGroupNodeRepeat(OmniNode):
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
             sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock.hide_value = True
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制

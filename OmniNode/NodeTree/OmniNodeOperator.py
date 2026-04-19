@@ -40,7 +40,6 @@ def full_socket_type_items():
 
 def sync_tree_io(tree):
     # 会同时同步tree内的所有节点
-    #TODO:default_value无法同步需要设计
     for node in tree.nodes:
         if node.bl_idname == "HO_OmniNode_GroupNode_Inputs":
             node.syncGroupIO()
@@ -54,13 +53,19 @@ def OmniGraphNodeIOItem_update(self, context):
     """在所有需要同步groupio的地方使用本函数来自动刷新"""
     tree = self.id_data  #node不是数据块没有iddata，直接访问就是他所在的数据块，也就是NodeTree
     sync_tree_io(tree)
-    # TODO:可能还需要寻找本tree之外的地方
+    # TODO 性能可以优化，但是没有特别多的必要
+    for other_tree in bpy.data.node_groups:
+        if tree.bl_idname != "OmniNodeTree":continue # TREE_ID_NAME
+        if other_tree == tree:continue
+        sync_tree_io(other_tree)
 
 class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
     name: StringProperty(name="IO", default="IO",update=OmniGraphNodeIOItem_update) # type: ignore
     identifier: StringProperty(name="ID",update=OmniGraphNodeIOItem_update) # type: ignore
     socket_type: EnumProperty(name="Socket Type",items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
+    #TODO:default_value无法同步需要设计,由于不能动态做类型所以defaultvalue很难搞进OmniGraphNodeIOItem
+    # 目前直接不允许用户改默认值，强制要求用户给每个输入口子连节点
 
 class HO_UL_GraphNodeIO(UIList):
     """IO输入输出组的ui绘制使用的列表"""
