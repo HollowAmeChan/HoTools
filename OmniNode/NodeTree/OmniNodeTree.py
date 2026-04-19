@@ -1,8 +1,10 @@
 import bpy
 from bpy.types import NodeTree, Node, NodeSocket, NodeLink
+from bpy.props import CollectionProperty,IntProperty
 from .OmniNode import OmniNode
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
+from .OmniNodeOperator import OmniGraphNodeIOItem
 import time
 import traceback
 
@@ -10,15 +12,20 @@ TREE_ID = 'OMNINODE'  # 节点树系统注册进去的identifier
 TREE_ID_NAME = 'OmniNodeTree'  # 节点树系统的标识符idname
 
 
-class OmniNodeTree(NodeTree):  # 节点树
+class OmniNodeTree(bpy.types.GeometryNodeTree):  # 节点树
     bl_idname = TREE_ID_NAME
     bl_label = "Omni节点图"  # 界面显示名
-    bl_icon = 'DRIVER'
+    bl_icon = 'NODETREE'
 
     is_auto_update: bpy.props.BoolProperty(
         description="是否实时刷新", default=False)  # type: ignore
     doing_initNode: bpy.props.BoolProperty(
         description="阻止新建节点频繁回调", default=False)  # type: ignore
+    # 用于tree的group化
+    group_inputs: CollectionProperty(type=OmniGraphNodeIOItem) # type: ignore
+    group_inputs_index: IntProperty(default=0) # type: ignore
+    group_outputs: CollectionProperty(type=OmniGraphNodeIOItem) # type: ignore
+    group_outputs_index: IntProperty(default=0) # type: ignore
 
     @classmethod
     def poll(self, context):

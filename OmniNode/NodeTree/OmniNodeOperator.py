@@ -26,7 +26,6 @@ BLENDER_SOCKET_TYPES = {
 
     "NodeSocketShader": "Shader",
 
-    # Geometry Nodes 常用扩展
     "NodeSocketMatrix": "Matrix",
     # "NodeSocketMenu": "Menu",
 }
@@ -39,23 +38,58 @@ def full_socket_type_items():
         items.append((k.bl_idname, k.bl_label, ""))
     return items
 
-def sync_io_sockets(node):
-    """同步output_IO与node的socket"""
-    if not hasattr(node, "output_IO"):
-        node.output_IO = []
+def sync_inputs(node:bpy.types.Node, io_list):
+    node.outputs.clear()
 
-    node.inputs.clear()
-
-    for item in node.output_IO:
-        node.inputs.new(
-            type=item.socket_type,
-            name=item.name,
-            identifier = item.identifier
+    for io in io_list:
+        sock = node.outputs.new(
+            type=io.socket_type,
+            name=io.name,
+            identifier=io.identifier
         )
 
+def sync_outputs(node:bpy.types.Node, io_list):
+    node.inputs.clear()
+
+    for io in io_list:
+        sock = node.inputs.new(
+            type=io.socket_type,
+            name=io.name,
+            identifier=io.identifier
+        )
+
+def sync_group_ref_node(node:bpy.types.Node):
+    if not node.target_tree:
+        return
+    tree = node.target_tree
+
+    node.inputs.clear()
+    node.outputs.clear()
+
+    # Group 输入 → 当前 node.inputs
+    for io in tree.group_inputs:
+        sock = node.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+    # Group 输出 → 当前 node.outputs
+    for io in tree.group_outputs:
+        sock = node.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+
+def sync_tree_io(tree):
+    # 会同时同步tree内的所有节点
+    #TODO:default_value无法同步需要设计
+    for node in tree.nodes:
+        if node.bl_idname == "HO_OmniNode_GroupNode_Inputs":
+            sync_inputs(node, tree.group_inputs)
+        elif node.bl_idname == "HO_OmniNode_GroupNode_Outputs":
+            sync_outputs(node, tree.group_outputs)
+        elif node.bl_idname == "HO_OmniNode_GroupNode":
+            sync_group_ref_node(node)
+    
+
 def OmniGraphNodeIOItem_update(self, context):
-    node = context.node #TODO:不太安全，可以测试使用self.id_data
-    sync_io_sockets(node)
+    """在所有需要同步groupio的地方使用本函数来自动刷新"""
+    tree = self.id_data  #node不是数据块没有iddata，直接访问就是他所在的数据块，也就是NodeTree
+    sync_tree_io(tree)
+    # TODO:可能还需要寻找本tree之外的地方
 
 class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
@@ -72,36 +106,44 @@ class HO_UL_GraphNodeIO(UIList):
 
 class OP_IOItemAdd(Operator):
     bl_idname = "ho.omni_ioitemadd"
-    bl_label = "AddIO"
+    bl_label = "Add IO"
 
-    node_name: bpy.props.StringProperty()  # type: ignore
+    is_input: BoolProperty() # type: ignore
 
     def execute(self, context):
-        node = bpy.context.space_data.node_tree.nodes[self.node_name]
+        tree = context.space_data.node_tree
 
-        item = node.output_IO.add()
-        item.name = "Output"
+        if self.is_input:
+            item = tree.group_inputs.add()
+            item.name = "Input"
+            tree.group_inputs_index = len(tree.group_inputs) - 1
+        else:
+            item = tree.group_outputs.add()
+            item.name = "Output"
+            tree.group_outputs_index = len(tree.group_outputs) - 1
 
-        node.active_index = len(node.output_IO) - 1
-
-        sync_io_sockets(node)# 强制同步socket与ui
+        sync_tree_io(tree)
         return {'FINISHED'}
 
 class OP_IOItemRemove(Operator):
     bl_idname = "ho.omni_ioitemremove"
-    bl_label = "RemoveIO"
+    bl_label = "Remove IO"
 
-    node_name: bpy.props.StringProperty()  # type: ignore
+    is_input: BoolProperty() # type: ignore
 
     def execute(self, context):
-        node = bpy.context.space_data.node_tree.nodes[self.node_name]
+        tree = context.space_data.node_tree
 
-        idx = node.active_index
-        if node.output_IO:
-            node.output_IO.remove(idx)
-            node.active_index = max(0, idx - 1)
+        if self.is_input:
+            idx = tree.group_inputs_index
+            tree.group_inputs.remove(idx)
+            tree.group_inputs_index = max(0, idx - 1)
+        else:
+            idx = tree.group_outputs_index
+            tree.group_outputs.remove(idx)
+            tree.group_outputs_index = max(0, idx - 1)
 
-        sync_io_sockets(node)# 强制同步socket与ui
+        sync_tree_io(tree)
         return {'FINISHED'}
 
 class NodeSetDefaultSize(Operator):

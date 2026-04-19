@@ -6,7 +6,6 @@ from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast
 from .GraphNode import CLS_GRAPH
 
-
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
     @classmethod
     def poll(cls, context):
@@ -15,7 +14,8 @@ class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
 
 cls = []
 # Graph节点
-node_cls_graph = CLS_GRAPH
+node_cls_graph = []
+node_cls_graph.extend(CLS_GRAPH)
 cls.extend(node_cls_graph)
 # Function生成节点
 node_cls_data = FunctionNodeCore.loadRegisterFuncNodes(Data)
