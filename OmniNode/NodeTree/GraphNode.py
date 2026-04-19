@@ -10,6 +10,45 @@ from .OmniNodeOperator import OmniGraphNodeIOItem_update
 def OmniTreeFilter(self, tree):
     return isinstance(tree, OmniNodeTree)
 
+def cache_node_links(node):
+    """缓存某个 node 所有 links"""
+    node_tree = node.id_data
+    cache = []
+
+    for link in node_tree.links:
+        if link.from_node == node or link.to_node == node:
+            cache.append({
+                "from_node": link.from_node,
+                "from_sock": link.from_socket.identifier,
+                "to_node": link.to_node,
+                "to_sock": link.to_socket.identifier,
+            })
+    return cache
+
+def restore_node_links(node, cache):
+    """根据 identifier 重建 links"""
+    tree = node.id_data
+
+    def find_socket(n, identifier, is_output):
+        sockets = n.outputs if is_output else n.inputs
+        for s in sockets:
+            if getattr(s, "identifier", None) == identifier:
+                return s
+        return None
+
+    for item in cache:
+        from_node = item["from_node"]
+        to_node = item["to_node"]
+
+        from_sock = find_socket(from_node, item["from_sock"], True)
+        to_sock = find_socket(to_node, item["to_sock"], False)
+
+        if from_sock and to_sock:
+            try:
+                tree.links.new(from_sock, to_sock)
+            except RuntimeError:
+                pass  # 已存在或非法连接
+
 class OmniGroupNode(OmniNode):
     # 参考Sverchok得知使用原生的逻辑会非常困难，因此放弃原生逻辑
     # https://blender.stackexchange.com/questions/58614/custom-nodetree-and-nodecustomgroup-and-bpy-ops-node-tree-path-parent
@@ -36,6 +75,7 @@ class OmniGroupNode(OmniNode):
         tree = self.target_tree
         if not tree:return
 
+        link_cache = cache_node_links(self)
         self.inputs.clear()
         self.outputs.clear()
 
@@ -47,6 +87,8 @@ class OmniGroupNode(OmniNode):
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
             sock.hide_value = True
+
+        restore_node_links(self, link_cache)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
@@ -72,10 +114,12 @@ class OmniGroupNodeInputs(OmniNode):
 
     def syncGroupIO(self):
         tree = self.id_data
+        link_cache = cache_node_links(self)
         self.outputs.clear()
         for io in tree.group_inputs:
             sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
             sock.hide_value = True
+        restore_node_links(self, link_cache)
 
     def draw_buttons(self, context, layout):
         if self.is_bug:
@@ -120,11 +164,13 @@ class OmniGroupNodeOutputs(OmniNode):
 
     def syncGroupIO(self):
         tree = self.id_data
+        link_cache = cache_node_links(self)
         self.inputs.clear()
 
         for io in tree.group_outputs:
             sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
             sock.hide_value = True
+        restore_node_links(self, link_cache)
     
     def draw_buttons(self, context, layout):
         if self.is_bug:
@@ -173,6 +219,7 @@ class OmniGroupNodeRepeat(OmniNode):
     def syncGroupIO(self):
         tree = self.target_tree
 
+        link_cache = cache_node_links(self)
         self.inputs.clear()
         self.outputs.clear()
 
@@ -184,6 +231,7 @@ class OmniGroupNodeRepeat(OmniNode):
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
             sock.hide_value = True
+        restore_node_links(self, link_cache)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制

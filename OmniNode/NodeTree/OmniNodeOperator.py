@@ -63,7 +63,7 @@ class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
     name: StringProperty(name="IO", default="IO",update=OmniGraphNodeIOItem_update) # type: ignore
     identifier: StringProperty(name="ID",update=OmniGraphNodeIOItem_update) # type: ignore
-    socket_type: EnumProperty(name="Socket Type",items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
+    socket_type: EnumProperty(name="Socket Type",default=OmniNodeSocket.OmniNodeSocketAny.bl_idname,items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
     #TODO:default_value无法同步需要设计,由于不能动态做类型所以defaultvalue很难搞进OmniGraphNodeIOItem
     # 目前直接不允许用户改默认值，强制要求用户给每个输入口子连节点
 
@@ -204,7 +204,7 @@ class OmniNodeRebuild(Operator):
         # -----------------------------
         input_value_cache = {}
         output_value_cache = {}
-        is_output_node = None # TODO:不一定保留
+        # is_output_node = None # TODO:不一定保留
 
         for sock in node.inputs:
             try:
@@ -217,7 +217,7 @@ class OmniNodeRebuild(Operator):
                 output_value_cache[sock.identifier] = sock.default_value
             except Exception:
                 pass
-        is_output_node = node.is_output_node
+        # is_output_node = node.is_output_node
 
         # -----------------------------
         # 2. 收集 links
@@ -257,7 +257,7 @@ class OmniNodeRebuild(Operator):
         # 4. rebuild（核心）
         # -----------------------------
         node.build()
-        node.is_output_node = is_output_node
+        # node.is_output_node = is_output_node
 
         # -----------------------------
         # 5. 恢复 default_value（用户输入）

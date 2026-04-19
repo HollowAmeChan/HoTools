@@ -88,22 +88,22 @@ class OmniNode(Node):
         if self.is_bug:
             row_L.label(icon="ERROR",)
         
-        row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
+        # row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
         Rebuild = row_L.operator(
             OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
         Rebuild.node_name = self.name
         Rebuild.node_tree_name = self.id_data.name
-        SetDefaultSize = row_L.operator(
-            NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
-        SetDefaultSize.node_name = self.name
-        SetBiggerSize = row_L.operator(
-            NodeSetBiggerSize.bl_idname, text="", icon="ADD")
-        SetBiggerSize.node_name = self.name
+        # SetDefaultSize = row_L.operator(
+        #     NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
+        # SetDefaultSize.node_name = self.name
+        # SetBiggerSize = row_L.operator(
+        #     NodeSetBiggerSize.bl_idname, text="", icon="ADD")
+        # SetBiggerSize.node_name = self.name
 
-
-        row_R = main_row.row(align=True)  # 右侧按钮
-        row_R.alignment = 'RIGHT'
-        row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
+        # 不允许用户显式修改is_output_node的值
+        # row_R = main_row.row(align=True)  # 右侧按钮
+        # row_R.alignment = 'RIGHT'
+        # row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
         
         # debug显示
         # TODO:目前显示的比较丑，列表太长会看不清楚（节点最大宽度不够用，应该要换行，或者有个按钮能看），同时英文变量名会被强制汉化（需要插入0长字符防止汉化）
@@ -131,4 +131,3 @@ class OmniNode(Node):
             layout.label(text=line)
 
         pass
-    
