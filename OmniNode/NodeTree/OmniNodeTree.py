@@ -32,15 +32,16 @@ class OmniNodeTree(NodeTree):  # 节点树
         return True
 
     def update(self):
-        """原生回调,只有这一种原生回调__init__不在实例化时运行,只在注册时运行"""
         if self.doing_initNode:  # 树状态-正在新建节点时不回调
             return
         if self.is_auto_update:  # 如果节点树自动更新，则运行整个节点树,只有运算的时候更新默认值
             print("树自动运行:", self.name, "\t", time.ctime())
+            # TODO:巨量会触发update的东西，需要大量优化，但耦合程度较高
             self.run()
 
     def interface_update(self, context):
-        """需要研究触发逻辑"""
+        """需要研究触发逻辑，不明触发逻辑"""
+        # print(self.name," interface_update")
         pass
 
     def run(self):
@@ -48,7 +49,7 @@ class OmniNodeTree(NodeTree):  # 节点树
             node.is_bug = False
             node.property_unset("bug_text")  # 清空bug 
         compiled = OmniCompiler.compile(self)
-        print(compiled.node_order)# TODO:比较简陋的debug
+        # print(compiled.node_order)# TODO:比较简陋的debug
         OmniExecutor.run(compiled)
 
 

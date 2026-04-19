@@ -38,10 +38,10 @@ class OmniGroupNode(OmniNode):
         self.inputs.clear()
         self.outputs.clear()
 
-        # Group 输入 → 当前 node.inputs
-        for io in tree.group_inputs:
-            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
-            sock.hide_value = True
+        # # Group 输入 → 当前 node.inputs
+        # for io in tree.group_inputs:
+        #     sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+        #     sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
@@ -49,6 +49,8 @@ class OmniGroupNode(OmniNode):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
+        if self.is_bug:
+            layout.label(text=f"{self.bug_text}")
         layout.template_ID(self, "target_tree")
         return
 
@@ -74,6 +76,8 @@ class OmniGroupNodeInputs(OmniNode):
             sock.hide_value = True
 
     def draw_buttons(self, context, layout):
+        if self.is_bug:
+            layout.label(text=f"{self.bug_text}")
         tree = self.id_data
 
         row = layout.row()
@@ -104,6 +108,7 @@ class OmniGroupNodeOutputs(OmniNode):
     
     def build(self):
         self.syncGroupIO()
+        self.is_output_node = True #特别注意
         pass
 
     @staticmethod
@@ -119,6 +124,8 @@ class OmniGroupNodeOutputs(OmniNode):
             sock.hide_value = True
     
     def draw_buttons(self, context, layout):
+        if self.is_bug:
+            layout.label(text=f"{self.bug_text}")
         tree = self.id_data
 
         row = layout.row()
@@ -176,6 +183,8 @@ class OmniGroupNodeRepeat(OmniNode):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
+        if self.is_bug:
+            layout.label(text=f"{self.bug_text}")
         layout.template_ID(self, "target_tree")
         return
 
