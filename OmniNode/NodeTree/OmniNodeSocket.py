@@ -52,7 +52,7 @@ class OmniNodeSocketAny(NodeSocket):
         return (0.5, 0.5, 0.5, 0.5)
 
 class OmniNodeSocketImageFormat(NodeSocket):
-    bl_label = "图片后缀格式Socket"
+    bl_label = "Omni图片后缀格式Socket"
     bl_idname = 'OmniNodeSocketImageFormat'
 
     format_items = [
@@ -80,7 +80,7 @@ class OmniNodeSocketImageFormat(NodeSocket):
         return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
 
 class OmniNodeSocketRegex(NodeSocket):
-    bl_label = "正则表达式Socket"
+    bl_label = "Omni正则表达式Socket"
     bl_idname = 'OmniNodeSocketRegex'
 
     default_value: bpy.props.StringProperty()  # type: ignore
@@ -96,7 +96,7 @@ class OmniNodeSocketRegex(NodeSocket):
         return (0, 0, 0.5, 1.0) #内置NodeSocketString的颜色，偏色1
     
 class OmniNodeSocketGlob(NodeSocket):
-    bl_label = "Glob表达式Socket"
+    bl_label = "OmniGlob表达式Socket"
     bl_idname = 'OmniNodeSocketGlob'
 
     default_value: bpy.props.StringProperty()  # type: ignore
