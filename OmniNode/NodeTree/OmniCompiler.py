@@ -1,4 +1,13 @@
 # 此文件专用于omninode-tree的编译，为执行做准备
+# TODO:暂时不支持子图编译
+# 子图需要特判
+# node.bl_idename == "HO_OmniNode_GroupNode"
+# node.bl_idename == "HO_OmniNode_GroupNode_Inputs"
+# node.bl_idename == "HO_OmniNode_GroupNode_Outputs"
+# 子图还需要检测自循环防止卡死
+# 子图需要隔离参数域
+# 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
+
 
 class CompiledGraph:
     """树的编译结果"""
