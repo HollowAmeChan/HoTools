@@ -250,6 +250,56 @@ class OmniNodeRebuild(Operator):
         return getattr(context, "active_node", None) is not None
 
     @staticmethod
+    def _socket_type_id(sock):
+        return getattr(sock, "bl_idname", type(sock).__name__)
+
+    @staticmethod
+    def _snapshot_default_value(value):
+        if isinstance(value, (str, bool, int, float)) or value is None:
+            return value
+
+        try:
+            return tuple(value)
+        except Exception:
+            pass
+
+        try:
+            return value.copy()
+        except Exception:
+            return value
+
+    @staticmethod
+    def _restore_default_value(sock, cache_entry):
+        if not cache_entry:
+            return
+
+        if OmniNodeRebuild._socket_type_id(sock) != cache_entry["socket_type"]:
+            return
+
+        value = cache_entry["value"]
+
+        try:
+            current_value = sock.default_value
+        except Exception:
+            return
+
+        if isinstance(current_value, (str, bool, int, float)) or current_value is None:
+            sock.default_value = value
+            return
+
+        try:
+            current_len = len(current_value)
+            value_len = len(value)
+        except Exception:
+            sock.default_value = value
+            return
+
+        if current_len != value_len:
+            return
+
+        sock.default_value = value
+
+    @staticmethod
     def rebuild_single_node(tree, node):
         if not hasattr(node, "build"):
             raise RuntimeError(f"Node '{node.name}' has no build() method")
@@ -260,13 +310,19 @@ class OmniNodeRebuild(Operator):
 
         for sock in node.inputs:
             try:
-                input_value_cache[sock.identifier] = sock.default_value
+                input_value_cache[sock.identifier] = {
+                    "socket_type": OmniNodeRebuild._socket_type_id(sock),
+                    "value": OmniNodeRebuild._snapshot_default_value(sock.default_value),
+                }
             except Exception:
                 pass
 
         for sock in node.outputs:
             try:
-                output_value_cache[sock.identifier] = sock.default_value
+                output_value_cache[sock.identifier] = {
+                    "socket_type": OmniNodeRebuild._socket_type_id(sock),
+                    "value": OmniNodeRebuild._snapshot_default_value(sock.default_value),
+                }
             except Exception:
                 pass
 
@@ -313,7 +369,7 @@ class OmniNodeRebuild(Operator):
             sock = node.inputs.get(identifier)
             if sock:
                 try:
-                    sock.default_value = value
+                    OmniNodeRebuild._restore_default_value(sock, value)
                 except Exception:
                     pass
 
@@ -321,7 +377,7 @@ class OmniNodeRebuild(Operator):
             sock = node.outputs.get(identifier)
             if sock:
                 try:
-                    sock.default_value = value
+                    OmniNodeRebuild._restore_default_value(sock, value)
                 except Exception:
                     pass
 
