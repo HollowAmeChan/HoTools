@@ -1,27 +1,39 @@
 # 此文件专用于omninode-tree的编译，为执行做准备
 # TODO:暂时不支持子图编译
 
-# 子图需要检测自循环防止卡死
-# 子图需要隔离参数域
-# 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
-# 需要分两段编译，首先编译tree+group（递归得到，中间做循环检查），然后再做数据的mapping以及缓存隔离
-# 可能的话可以编译成直接可以执行的代码，寄存器也丢里面统一运行
-# 编译bug了需要直接找到出问题的node去显示bug
+
+# 需要分两段编译
+# 首先找到所有要编译的tree，以及他们的运行顺序，并且把graphnode特判当做桥（递归得到，需要做循环检查，最好是首先扫一遍全node进行dfs）
+# 然后编译每一个tree（可以做缓存防止重复编译）
+# 然后排列编译后的tree与桥，结果丢给运行器
+# 如果可以的话，最狠的办法是输出可以运行的人类能看懂的代码（就像编译shader一样）
+# 编译bug了需要直接找到出问题的node去显示bug，如果可能的话可以吧出问题的组引用节点也显示一下bug
 # node.is_bug = True
 # node.bug_text = str(e)
 
-# 子图需要特判
+# 特判graphnode类型
 # node.bl_idename == "HO_OmniNode_GroupNode"
 # node.bl_idename == "HO_OmniNode_GroupNode_Inputs"
 # node.bl_idename == "HO_OmniNode_GroupNode_Outputs"
+
+# 子图需要检测自循环防止卡死
+# 子图需要隔离参数域
+# 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
 # 子树subtree可以通过HO_OmniNode_GroupNode类型节点的target_tree来获取
 # 这些节点语义上直接代表tree的IO
 # 需要注意io的名字，现在graphnode的socket的identity直接使用treeIO内容的uid，在每个tree内部都是唯一的，作用域+uid就可以解决桥中参数的定位问题
 # 严格注意io存在tree上不在node的socket上，这几个特殊节点的socket的defaultvalue我隐藏了不让用户改，出问题直接报错用户自己会排查
 # 后面也许可以做检测判定是否有输入
 
+# node._socket_is_multi需要尤其注意，node不一定有
+# node._func只有大部分正常的节点是对的，GroupNode这类graphnode都是填的空func，他们绝对的只能当做桥来使用
+# node.name在单个tree内是独一无二的
+
+# 暂时不要做增量更新，每次运行时都应该编译
+
 class CompiledGraph:
     """树的编译结果"""
+    # 如果有子图，可以加一个子图的io
     def __init__(self):
         self.instructions = [] 
         self.reg_count = 0
@@ -135,7 +147,7 @@ class OmniCompiler:
         # -----------------------
         for node in topo:
 
-            func = node._func   # 👈 关键：后面说怎么加
+            func = node._func
 
             input_regs = []
 

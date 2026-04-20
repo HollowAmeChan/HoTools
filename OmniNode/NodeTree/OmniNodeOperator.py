@@ -179,6 +179,7 @@ class NodeSetBiggerSize(Operator):
 class LayerRunning(Operator):
     bl_idname = "ho.layerrunning"
     bl_label = "树手动触发回调"
+    bl_options = {'REGISTER', 'UNDO'} #TODO:不好说是不是应该允许他撤回
     reportInfo: BoolProperty(name="报告pool信息", default=True)  # type: ignore
 
     def execute(self, context: bpy.types.Context):
