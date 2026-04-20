@@ -14,6 +14,7 @@
 # node.bl_idename == "HO_OmniNode_GroupNode"
 # node.bl_idename == "HO_OmniNode_GroupNode_Inputs"
 # node.bl_idename == "HO_OmniNode_GroupNode_Outputs"
+# 子树subtree可以通过HO_OmniNode_GroupNode类型节点的target_tree来获取
 # 这些节点语义上直接代表tree的IO
 # 需要注意io的名字，现在graphnode的socket的identity直接使用treeIO内容的uid，在每个tree内部都是唯一的，作用域+uid就可以解决桥中参数的定位问题
 # 严格注意io存在tree上不在node的socket上，这几个特殊节点的socket的defaultvalue我隐藏了不让用户改，出问题直接报错用户自己会排查

@@ -13,6 +13,7 @@ def setBugNode(node:Node, context):
 
 class OmniNode(Node):
     '''节点基类'''
+    # TODO:ctrlCV出来的节点multisocket的形状就不对，可能需要改造
     bug_color: bpy.props.FloatVectorProperty(
         name="link连接bug", size=3, subtype="COLOR", default=(1, 0, 0))  # type: ignore
     bug_text: bpy.props.StringProperty(
