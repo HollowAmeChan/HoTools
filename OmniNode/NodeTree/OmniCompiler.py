@@ -4,13 +4,13 @@
 # node.bl_idename == "HO_OmniNode_GroupNode"
 # node.bl_idename == "HO_OmniNode_GroupNode_Inputs"
 # node.bl_idename == "HO_OmniNode_GroupNode_Outputs"
-# 子图还需要检测自循环防止卡死
+# 子图需要检测自循环防止卡死
 # 子图需要隔离参数域
 # 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
 # 需要分两段编译，首先编译tree+group（递归得到，中间做循环检查），然后再做数据的mapping以及缓存隔离
 # 严格注意io存在tree上不在node的socket上，也不要用这几个特殊节点的socket的defaultvalue，有缺的直接报错就行
 # 可能的话可以编译成直接可以执行的代码，寄存器也丢里面统一运行
-# 还需要注意io的名字可能会重复，做桥的时候绝对不能用名字，至少是用index去做
+# 还需要注意io的名字（存在tree.group_inputs与tree.group_outputs里面，没有默认值只有名字+类型bl_idname）可能会重复，做桥的时候绝对不能用名字，至少是用index去做
 
 class CompiledGraph:
     """树的编译结果"""
