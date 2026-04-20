@@ -76,8 +76,7 @@ class OmniCompiler:
         if len(result) != len(nodes):
             cycle_nodes = [n for n in nodes if in_degree[n] > 0]
             for node in cycle_nodes:
-                node.is_bug = True
-                node.bug_text = "Cycle detected in node graph"
+                node.set_bug_state("Cycle detected in node graph")
             raise RuntimeError("Cycle detected in OmniNodeTree")
 
         return result
@@ -247,15 +246,13 @@ class OmniCompiler:
             if node_idname == OmniCompiler.GROUP_NODE_IDNAME:
                 child_tree = getattr(node, "target_tree", None)
                 if child_tree is None:
-                    node.is_bug = True
-                    node.bug_text = "Group node has no target tree"
+                    node.set_bug_state("Group node has no target tree")
                     raise RuntimeError(f"Group node '{node.name}' has no target tree")
 
                 try:
                     compiled_subtree = OmniCompiler._compile_tree(child_tree, compiling_stack, debug=debug)
                 except Exception as exc:
-                    node.is_bug = True
-                    node.bug_text = str(exc)
+                    node.set_bug_state(exc)
                     raise
 
                 input_regs = [compile_single_input(sock) for sock in node.inputs]

@@ -63,8 +63,7 @@ class OmniExecutor:
                 try:
                     result = op.func(*args)
                 except Exception as exc:
-                    op.node.is_bug = True
-                    op.node.bug_text = str(exc)
+                    op.node.set_bug_state(exc)
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
                         f"{OmniDebug.error_label('ERROR')} in {OmniDebug.func_label(OmniDebug.func_name(op.func))} "
@@ -117,8 +116,7 @@ class OmniExecutor:
                         depth=depth + 1,
                     )
                 except Exception as exc:
-                    op.node.is_bug = True
-                    op.node.bug_text = str(exc)
+                    op.node.set_bug_state(exc)
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
                         f"{OmniDebug.error_label('ERROR')} in subtree {OmniDebug.node_label(op.node.name)}: "

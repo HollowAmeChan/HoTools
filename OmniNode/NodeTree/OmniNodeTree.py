@@ -6,6 +6,7 @@ from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
 from .OmniCompiler import SubtreeCall
 from .OmniDebug import OmniDebug
+from . import OmniNodeDraw
 from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
@@ -59,9 +60,13 @@ class OmniNodeTree(NodeTree):
         print(self.name, " interface_update")
 
     def run(self):
+        OmniNodeDraw.clear_tree(self)
         for node in self.nodes:
-            node.is_bug = False
-            node.property_unset("bug_text")
+            if hasattr(node, "clear_bug_state"):
+                node.clear_bug_state()
+            else:
+                node.is_bug = False
+                node.bug_text = ""
 
         debug_enabled = getattr(self, "debug_compile", False)
         compiled = OmniCompiler.compile(self, debug=debug_enabled)

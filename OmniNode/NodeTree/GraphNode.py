@@ -89,8 +89,6 @@ class OmniGroupNode(OmniNode):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
-        if self.is_bug:
-            layout.label(text=f"{self.bug_text}")
         layout.template_ID(self, "target_tree")
         return
 
@@ -115,8 +113,6 @@ class OmniGroupNodeInputs(OmniNode):
         restore_node_links(self, link_cache)
 
     def draw_buttons(self, context, layout):
-        if self.is_bug:
-            layout.label(text=f"{self.bug_text}")
         tree = self.id_data
 
         row = layout.row()
@@ -162,8 +158,6 @@ class OmniGroupNodeOutputs(OmniNode):
         restore_node_links(self, link_cache)
     
     def draw_buttons(self, context, layout):
-        if self.is_bug:
-            layout.label(text=f"{self.bug_text}")
         tree = self.id_data
 
         row = layout.row()
@@ -221,8 +215,6 @@ class OmniGroupNodeRepeat(OmniNode):
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制
-        if self.is_bug:
-            layout.label(text=f"{self.bug_text}")
         layout.template_ID(self, "target_tree")
         return
 

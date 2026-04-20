@@ -302,8 +302,11 @@ class OmniNodeRebuild(Operator):
 
         # 4. rebuild
         node.build()
-        node.is_bug = False
-        node.property_unset("bug_text")
+        if hasattr(node, "clear_bug_state"):
+            node.clear_bug_state()
+        else:
+            node.is_bug = False
+            node.bug_text = ""
 
         # 5. 恢复 default_value
         for identifier, value in input_value_cache.items():
@@ -389,8 +392,11 @@ class OmniNodeRebuild(Operator):
                 OmniNodeRebuild.rebuild_single_node(tree, node)
                 rebuilt_names.append(node.name)
             except Exception as exc:
-                node.is_bug = True
-                node.bug_text = str(exc)
+                if hasattr(node, "set_bug_state"):
+                    node.set_bug_state(exc)
+                else:
+                    node.is_bug = True
+                    node.bug_text = str(exc)
                 failed_messages.append(f"{node.name}: {exc}")
 
         if rebuilt_names:
