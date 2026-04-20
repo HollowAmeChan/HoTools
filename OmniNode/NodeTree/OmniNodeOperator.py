@@ -4,6 +4,7 @@ import os
 from bpy.props import BoolProperty, StringProperty,EnumProperty
 from bpy.types import Context,Operator,PropertyGroup,UIList,UILayout
 from . import OmniNodeSocket
+import uuid
 
 # 用于获取动态的全socket枚举
 BLENDER_SOCKET_TYPES = {
@@ -62,7 +63,7 @@ def OmniGraphNodeIOItem_update(self, context):
 class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
     name: StringProperty(name="IO", default="IO",update=OmniGraphNodeIOItem_update) # type: ignore
-    identifier: StringProperty(name="ID",update=OmniGraphNodeIOItem_update) # type: ignore
+    uid: StringProperty(name="UID",default="",options={'HIDDEN'}) # type: ignore # 用于填socket的identity作为唯一标识符
     socket_type: EnumProperty(name="Socket Type",default=OmniNodeSocket.OmniNodeSocketAny.bl_idname,items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
     #TODO:default_value无法同步需要设计,由于不能动态做类型所以defaultvalue很难搞进OmniGraphNodeIOItem
     # 目前直接不允许用户改默认值，强制要求用户给每个输入口子连节点
@@ -72,6 +73,7 @@ class HO_UL_GraphNodeIO(UIList):
     def draw_item(self, context, layout:UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         row.prop(item, "name", text="", emboss=False)
+        row.label(text="UID:"+item.uid)
         row.prop(item, "socket_type", text="")
 
 class OP_IOItemAdd(Operator):
@@ -80,16 +82,34 @@ class OP_IOItemAdd(Operator):
 
     is_input: BoolProperty() # type: ignore
 
+    def generate_unique_uid(self,tree):
+        existing = set()
+
+        for item in tree.group_inputs:
+            if item.uid:
+                existing.add(item.uid)
+
+        for item in tree.group_outputs:
+            if item.uid:
+                existing.add(item.uid)
+
+        while True:
+            uid = uuid.uuid4().hex
+            if uid not in existing:
+                return uid
+
     def execute(self, context):
         tree = context.space_data.node_tree
 
         if self.is_input:
             item = tree.group_inputs.add()
             item.name = "Input"
+            item.uid = self.generate_unique_uid(tree)
             tree.group_inputs_index = len(tree.group_inputs) - 1
         else:
             item = tree.group_outputs.add()
             item.name = "Output"
+            item.uid = self.generate_unique_uid(tree)
             tree.group_outputs_index = len(tree.group_outputs) - 1
 
         sync_tree_io(tree)

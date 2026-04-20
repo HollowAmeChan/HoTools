@@ -10,7 +10,6 @@ from .OmniNodeOperator import OmniGraphNodeIOItem_update
 def OmniTreeFilter(self, tree):
     return isinstance(tree, OmniNodeTree)
 
-# TODO:非常难设计，目前改名会断link。改名，同名，改顺序，改类型，都可能出现，也不能精确对比新旧的缓存（update里面猜不到你敢乐山），所以很难做到
 def cache_node_links(node):
     """缓存某个 node 所有 links"""
     node_tree = node.id_data
@@ -24,6 +23,7 @@ def cache_node_links(node):
                 "to_node": link.to_node,
                 "to_sock": link.to_socket.identifier,
             })
+            # to_sock.identifier在这里绝对不会重名，因为生成时就做了处理
     return cache
 
 def restore_node_links(node, cache):
@@ -82,11 +82,11 @@ class OmniGroupNode(OmniNode):
 
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
-            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
             sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
-            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
             sock.hide_value = True
 
         restore_node_links(self, link_cache)
@@ -118,7 +118,7 @@ class OmniGroupNodeInputs(OmniNode):
         link_cache = cache_node_links(self)
         self.outputs.clear()
         for io in tree.group_inputs:
-            sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
+            sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
 
@@ -169,7 +169,7 @@ class OmniGroupNodeOutputs(OmniNode):
         self.inputs.clear()
 
         for io in tree.group_outputs:
-            sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.identifier)
+            sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
     
@@ -227,11 +227,11 @@ class OmniGroupNodeRepeat(OmniNode):
 
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
-            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
             sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
-            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
 
