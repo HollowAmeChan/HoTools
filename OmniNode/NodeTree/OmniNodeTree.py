@@ -4,6 +4,8 @@ from bpy.props import CollectionProperty, IntProperty
 
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
+from .OmniCompiler import SubtreeCall
+from .OmniDebug import OmniDebug
 from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
@@ -65,14 +67,9 @@ class OmniNodeTree(NodeTree):
         compiled = OmniCompiler.compile(self, debug=debug_enabled)
 
         if debug_enabled:
-            print("")
-            print("=" * 72)
-            print(f"OMNI DEBUG COMPILE  |  Tree: {self.name}")
-            print("=" * 72)
-            print("\n".join(OmniCompiler._format_compile_report(compiled)))
-            print("-" * 72)
-            print(f"OMNI DEBUG RUNTIME  |  Tree: {self.name}")
-            print("-" * 72)
+            print("\n".join(OmniDebug.format_runtime_header(self.name)))
+            print("\n".join(OmniDebug.format_compile_report(compiled, SubtreeCall)))
+            print("\n".join(OmniDebug.format_runtime_separator(self.name)))
 
         return OmniExecutor.run(compiled, debug=debug_enabled)
 
