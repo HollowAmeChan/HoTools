@@ -1,69 +1,108 @@
 import bpy
-from bpy.types import NodeTree, Node, NodeSocket, NodeLink
-from bpy.props import CollectionProperty,IntProperty
-from .OmniNode import OmniNode
+from bpy.types import NodeTree
+from bpy.props import CollectionProperty, IntProperty
+
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
-from .OmniNodeOperator import OmniGraphNodeIOItem,OP_IOItemAdd,OP_IOItemRemove,HO_UL_GraphNodeIO
+from .OmniNodeOperator import (
+    HO_UL_GraphNodeIO,
+    OP_IOItemAdd,
+    OP_IOItemRemove,
+    OmniGraphNodeIOItem,
+)
+
 import time
-import traceback
 
-TREE_ID = 'OMNINODE'  # 节点树系统注册进去的identifier
-TREE_ID_NAME = 'OmniNodeTree'  # 节点树系统的标识符idname
+TREE_ID = "OMNINODE"
+TREE_ID_NAME = "OmniNodeTree"
 
 
-class OmniNodeTree(NodeTree):  # 节点树
+class OmniNodeTree(NodeTree):
     bl_idname = TREE_ID_NAME
-    bl_label = "Omni节点图"  # 界面显示名
-    bl_icon = 'NODETREE'
+    bl_label = "Omni节点图"
+    bl_icon = "NODETREE"
 
     is_auto_update: bpy.props.BoolProperty(
-        description="是否实时刷新", default=False)  # type: ignore
+        description="是否实时刷新",
+        default=False,
+    )  # type: ignore
+    debug_compile: bpy.props.BoolProperty(
+        name="Debug Compile",
+        description="打印完整编译过程、寄存器桥和运行顺序",
+        default=False,
+    )  # type: ignore
     doing_initNode: bpy.props.BoolProperty(
-        description="阻止新建节点频繁回调", default=False)  # type: ignore
-    # 用于tree的group化
-    group_inputs: CollectionProperty(type=OmniGraphNodeIOItem) # type: ignore
-    group_inputs_index: IntProperty(default=0) # type: ignore
-    group_outputs: CollectionProperty(type=OmniGraphNodeIOItem) # type: ignore
-    group_outputs_index: IntProperty(default=0) # type: ignore
+        description="阻止新建节点频繁回调",
+        default=False,
+    )  # type: ignore
+    group_inputs: CollectionProperty(type=OmniGraphNodeIOItem)  # type: ignore
+    group_inputs_index: IntProperty(default=0)  # type: ignore
+    group_outputs: CollectionProperty(type=OmniGraphNodeIOItem)  # type: ignore
+    group_outputs_index: IntProperty(default=0)  # type: ignore
 
     @classmethod
-    def poll(self, context):
+    def poll(cls, context):
         return True
 
     def update(self):
-        if self.doing_initNode:  # 树状态-正在新建节点时不回调
+        if self.doing_initNode:
             return
-        if self.is_auto_update:  # 如果节点树自动更新，则运行整个节点树
+        if self.is_auto_update:
             print("树自动运行:", self.name, "\t", time.ctime())
-            # TODO:巨量会触发update的东西，需要大量优化，但耦合程度较高
             self.run()
-        if not self.use_fake_user: # 不是很优雅，但是够用了，新建nodegroup不会加，但是添加任何node了都会触发
+        if not self.use_fake_user:
             self.use_fake_user = True
 
     def interface_update(self, context):
-        """被弃用的api，并且由于被弃用，导致完全无法使用interface的io功能了，只能手动写一个io"""
-        print(self.name," interface_update")
-        pass
+        print(self.name, " interface_update")
 
     def run(self):
         for node in self.nodes:
             node.is_bug = False
-            node.property_unset("bug_text")  # 清空bug 
-        compiled = OmniCompiler.compile(self)
-        # print(compiled.node_order)# TODO:比较简陋的debug
-        OmniExecutor.run(compiled)
+            node.property_unset("bug_text")
+
+        debug_enabled = getattr(self, "debug_compile", False)
+        compiled = OmniCompiler.compile(self, debug=debug_enabled)
+
+        if debug_enabled:
+            print("")
+            print("=" * 72)
+            print(f"OMNI DEBUG COMPILE  |  Tree: {self.name}")
+            print("=" * 72)
+            print("\n".join(OmniCompiler._format_compile_report(compiled)))
+            print("-" * 72)
+            print(f"OMNI DEBUG RUNTIME  |  Tree: {self.name}")
+            print("-" * 72)
+
+        return OmniExecutor.run(compiled, debug=debug_enabled)
+
 
 def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     layout: bpy.types.UILayout = self.layout
     tree = context.space_data.node_tree
 
+    layout.prop(tree, "debug_compile", text="Debug Compile / Runtime", toggle=True)
+
+    if tree.is_auto_update:
+        layout.alert = True
+        layout.prop(tree,
+                "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+        layout.alert = False
+    else:
+        layout.prop(tree,
+                "is_auto_update", text="树自动更新", icon="UNLINKED")
+
+
     layout.label(text="OmniTreeInputs:")
     row = layout.row()
-    row.template_list(HO_UL_GraphNodeIO.__name__,"",
-        tree,"group_inputs",
-        tree,"group_inputs_index",
-        rows=3
+    row.template_list(
+        HO_UL_GraphNodeIO.__name__,
+        "",
+        tree,
+        "group_inputs",
+        tree,
+        "group_inputs_index",
+        rows=3,
     )
     col = row.column(align=True)
     add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
@@ -73,10 +112,14 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     layout.label(text="OmniTreeOutputs:")
     row = layout.row()
-    row.template_list(HO_UL_GraphNodeIO.__name__,"",
-        tree,"group_outputs",
-        tree,"group_outputs_index",
-        rows=3
+    row.template_list(
+        HO_UL_GraphNodeIO.__name__,
+        "",
+        tree,
+        "group_outputs",
+        tree,
+        "group_outputs_index",
+        rows=3,
     )
     col = row.column(align=True)
     add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
@@ -85,20 +128,16 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     remove.is_input = False
 
 
-    return
-
-
 cls = [OmniNodeTree]
 
 
 def register():
-    for i in cls:
-        bpy.utils.register_class(i)
+    for item in cls:
+        bpy.utils.register_class(item)
     bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
 
 def unregister():
-    for i in cls:
-        bpy.utils.unregister_class(i)
+    for item in cls:
+        bpy.utils.unregister_class(item)
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
-

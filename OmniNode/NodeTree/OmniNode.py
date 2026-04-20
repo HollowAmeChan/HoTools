@@ -114,15 +114,6 @@ class OmniNode(Node):
     def draw_buttons_ext(self, context, layout: bpy.types.UILayout):
         '''侧边栏中节点属性绘制'''
         row = layout.row(align=True)
-        # 是否是自动更新的
-        if  self.id_data.is_auto_update:
-            row.alert = True
-            row.prop(self.id_data,
-                    "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
-            row.alert = False
-        else:
-            row.prop(self.id_data,
-                    "is_auto_update", text="树自动更新", icon="UNLINKED")
         # 重建节点
         Rebuild = row.operator(
             OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
