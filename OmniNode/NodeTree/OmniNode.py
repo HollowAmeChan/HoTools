@@ -67,7 +67,7 @@ class OmniNode(Node):
         self.use_custom_color = True
         self.build()
         self.updateColor()
-        self.size2default()
+        # self.size2default()
         self.id_data.doing_initNode = False
         return
 

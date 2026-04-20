@@ -1,53 +1,39 @@
-# 此文件专用于omninode-tree的编译，为执行做准备
-# TODO:暂时不支持子图编译
+# This file compiles OmniNode trees into a simple runtime instruction list.
+# Group nodes are treated as subtree bridges instead of normal function nodes.
 
-
-# 需要分两段编译
-# 首先找到所有要编译的tree，以及他们的运行顺序，并且把graphnode特判当做桥（递归得到，需要做循环检查，最好是首先扫一遍全node进行dfs）
-# 然后编译每一个tree（可以做缓存防止重复编译）
-# 然后排列编译后的tree与桥，结果丢给运行器
-# 如果可以的话，最狠的办法是输出可以运行的人类能看懂的代码（就像编译shader一样）
-# 编译bug了需要直接找到出问题的node去显示bug，如果可能的话可以吧出问题的组引用节点也显示一下bug
-# node.is_bug = True
-# node.bug_text = str(e)
-
-# 特判graphnode类型
-# node.bl_idename == "HO_OmniNode_GroupNode"
-# node.bl_idename == "HO_OmniNode_GroupNode_Inputs"
-# node.bl_idename == "HO_OmniNode_GroupNode_Outputs"
-
-# 子图需要检测自循环防止卡死
-# 子图需要隔离参数域
-# 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
-# 子树subtree可以通过HO_OmniNode_GroupNode类型节点的target_tree来获取
-# 这些节点语义上直接代表tree的IO
-# 需要注意io的名字，现在graphnode的socket的identity直接使用treeIO内容的uid，在每个tree内部都是唯一的，作用域+uid就可以解决桥中参数的定位问题
-# 严格注意io存在tree上不在node的socket上，这几个特殊节点的socket的defaultvalue我隐藏了不让用户改，出问题直接报错用户自己会排查
-# 后面也许可以做检测判定是否有输入
-
-# node._socket_is_multi需要尤其注意，node不一定有
-# node._func只有大部分正常的节点是对的，GroupNode这类graphnode都是填的空func，他们绝对的只能当做桥来使用
-# node.name在单个tree内是独一无二的
-
-# 暂时不要做增量更新，每次运行时都应该编译
 
 class CompiledGraph:
-    """树的编译结果"""
-    # 如果有子图，可以加一个子图的io
+    """Compiled result for a single OmniNode tree."""
+
     def __init__(self):
-        self.instructions = [] 
+        self.instructions = []
         self.reg_count = 0
-        # debug用 TODO:没写完，不知道哪儿绘制
+        self.input_regs = {}
+        self.output_regs = {}
+        self.tree_name = ""
         self.node_order = []
+
 
 class OpCall:
     def __init__(self, func, inputs, outputs, node):
         self.func = func
         self.inputs = inputs
         self.outputs = outputs
-        self.node = node  # debug
+        self.node = node
+
+
+class SubtreeCall:
+    def __init__(self, compiled_graph, inputs, outputs, node):
+        self.compiled_graph = compiled_graph
+        self.inputs = inputs
+        self.outputs = outputs
+        self.node = node
+
 
 class OmniCompiler:
+    GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
+    GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
+    GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
 
     @staticmethod
     def topo_sort(nodes, links):
@@ -57,26 +43,21 @@ class OmniCompiler:
 
         return: list[OmniNode]
         """
-        # 1. 初始化
         in_degree = {node: 0 for node in nodes}
         adjacency = {node: [] for node in nodes}
 
-        # 2. 构建图
         for link in links:
             src = link.from_node
             dst = link.to_node
-            # 只处理在子图内的节点
             if src not in nodes or dst not in nodes:
                 continue
             adjacency[src].append(dst)
             in_degree[dst] += 1
 
-        # 3. 找入度为0的节点
         queue = [node for node in nodes if in_degree[node] == 0]
-        queue.sort(key=lambda n: n.name)# 避免 Blender 内部随机顺序
+        queue.sort(key=lambda n: n.name)
 
         result = []
-        # 4. Kahn 算法
         while queue:
             node = queue.pop(0)
             result.append(node)
@@ -84,28 +65,33 @@ class OmniCompiler:
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
-
-            # 避免 Blender 内部随机顺序
             queue.sort(key=lambda n: n.name)
 
-        # 5. 环检测
         if len(result) != len(nodes):
             cycle_nodes = [n for n in nodes if in_degree[n] > 0]
             for n in cycle_nodes:
                 n.is_bug = True
                 n.bug_text = "Cycle detected in node graph"
-
             raise RuntimeError("Cycle detected in OmniNodeTree")
 
         return result
-    
+
     @staticmethod
     def compile(tree):
+        return OmniCompiler._compile_tree(tree, compiling_stack=[])
+
+    @staticmethod
+    def _compile_tree(tree, compiling_stack):
         graph = CompiledGraph()
-        # -----------------------
-        # 1. 找有效子图
-        # -----------------------
-        output_nodes = [n for n in tree.nodes if n.is_output_node]
+        graph.tree_name = getattr(tree, "name", "")
+
+        if tree in compiling_stack:
+            cycle_path = [getattr(t, "name", "<tree>") for t in compiling_stack + [tree]]
+            raise RuntimeError("Cycle detected in OmniNode subtree: " + " -> ".join(cycle_path))
+
+        compiling_stack = compiling_stack + [tree]
+
+        output_nodes = [n for n in tree.nodes if getattr(n, "is_output_node", False)]
 
         visited = set()
         links = set()
@@ -120,17 +106,11 @@ class OmniCompiler:
                     links.add(link)
                     dfs(link.from_node)
 
-        for n in output_nodes:
-            dfs(n)
+        for node in output_nodes:
+            dfs(node)
 
-        # -----------------------
-        # 2. 拓扑排序
-        # -----------------------
         topo = OmniCompiler.topo_sort(visited, links)
 
-        # -----------------------
-        # 3. 分配寄存器
-        # -----------------------
         reg_map = {}
         reg_id = 0
 
@@ -142,43 +122,94 @@ class OmniCompiler:
 
         instructions = []
 
-        # -----------------------
-        # 4. 编译每个节点
-        # -----------------------
-        for node in topo:
+        def compile_single_input(sock):
+            socket_links = sorted(
+                sock.links,
+                key=lambda l: (l.from_node.name, l.from_socket.identifier)
+            )
+            if socket_links:
+                link = socket_links[0]
+                key = (link.from_node.name, link.from_socket.identifier)
+                return reg_map[key]
 
-            func = node._func
+            r = new_reg()
+            instructions.append(("CONST", r, sock.default_value))
+            return r
 
+        def compile_node_inputs(node):
             input_regs = []
+            socket_is_multi = getattr(node, "_socket_is_multi", None) or {}
 
             for sock in node.inputs:
-                if not node._socket_is_multi: continue
-                is_multi = node._socket_is_multi.get(sock.identifier, False)
-                links = sorted(
+                is_multi = socket_is_multi.get(sock.identifier, False)
+                socket_links = sorted(
                     sock.links,
                     key=lambda l: (l.from_node.name, l.from_socket.identifier)
                 )
-                # multi-input
                 if is_multi:
-                    # 需要注意编译阶段是完全无法做flatten的，因为根本没有结果给你合
                     regs = []
-                    if links:
-                        for link in links:
-                            key = (link.from_node.name, link.from_socket.identifier)
-                            regs.append(reg_map[key])
-                    else:pass # 空 multi → []
-                    input_regs.append(regs)
-
-                # single input
-                else:
-                    if links:
-                        link = links[0]
+                    for link in socket_links:
                         key = (link.from_node.name, link.from_socket.identifier)
-                        r = reg_map[key]
-                    else:
+                        regs.append(reg_map[key])
+                    input_regs.append(regs)
+                else:
+                    input_regs.append(compile_single_input(sock))
+
+            return input_regs
+
+        for node in topo:
+            node_idname = getattr(node, "bl_idname", "")
+
+            if node_idname == OmniCompiler.GROUP_INPUTS_IDNAME:
+                for sock in node.outputs:
+                    uid = sock.identifier
+                    r = graph.input_regs.get(uid)
+                    if r is None:
                         r = new_reg()
-                        instructions.append(("CONST", r, sock.default_value))
-                    input_regs.append(r)
+                        graph.input_regs[uid] = r
+                    reg_map[(node.name, sock.identifier)] = r
+                continue
+
+            if node_idname == OmniCompiler.GROUP_OUTPUTS_IDNAME:
+                for sock in node.inputs:
+                    socket_links = sorted(
+                        sock.links,
+                        key=lambda l: (l.from_node.name, l.from_socket.identifier)
+                    )
+                    if not socket_links:
+                        continue
+                    link = socket_links[0]
+                    key = (link.from_node.name, link.from_socket.identifier)
+                    graph.output_regs[sock.identifier] = reg_map[key]
+                continue
+
+            if node_idname == OmniCompiler.GROUP_NODE_IDNAME:
+                child_tree = getattr(node, "target_tree", None)
+                if child_tree is None:
+                    node.is_bug = True
+                    node.bug_text = "Group node has no target tree"
+                    raise RuntimeError(f"Group node '{node.name}' has no target tree")
+
+                try:
+                    compiled_subtree = OmniCompiler._compile_tree(child_tree, compiling_stack)
+                except Exception as e:
+                    node.is_bug = True
+                    node.bug_text = str(e)
+                    raise
+
+                input_regs = [compile_single_input(sock) for sock in node.inputs]
+
+                output_regs = []
+                for sock in node.outputs:
+                    r = new_reg()
+                    reg_map[(node.name, sock.identifier)] = r
+                    output_regs.append(r)
+
+                instructions.append(SubtreeCall(compiled_subtree, input_regs, output_regs, node))
+                continue
+
+            func = getattr(node, "_func", None)
+            input_regs = compile_node_inputs(node)
 
             output_regs = []
             for sock in node.outputs:
@@ -186,13 +217,9 @@ class OmniCompiler:
                 reg_map[(node.name, sock.identifier)] = r
                 output_regs.append(r)
 
-            instructions.append(
-                OpCall(func, input_regs, output_regs, node)
-            )
+            instructions.append(OpCall(func, input_regs, output_regs, node))
 
         graph.instructions = instructions
         graph.reg_count = reg_id
-        #debug用
         graph.node_order = [node.name for node in topo]
-
         return graph
