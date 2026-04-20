@@ -38,6 +38,8 @@ class OmniNodeTree(NodeTree):  # 节点树
             print("树自动运行:", self.name, "\t", time.ctime())
             # TODO:巨量会触发update的东西，需要大量优化，但耦合程度较高
             self.run()
+        if not self.use_fake_user: # TODO:不是很优雅，但是够用了，新建nodegroup不会加，但是添加任何node了都会触发
+            self.use_fake_user = True
 
     def interface_update(self, context):
         """需要研究触发逻辑，不明触发逻辑"""
@@ -58,16 +60,10 @@ cls = [OmniNodeTree]
 
 
 def register():
-    try:
-        for i in cls:
-            bpy.utils.register_class(i)
-    except Exception:
-        print(__file__+" register failed!!!")
+    for i in cls:
+        bpy.utils.register_class(i)
 
 
 def unregister():
-    try:
-        for i in cls:
-            bpy.utils.unregister_class(i)
-    except Exception:
-        print(__file__+" unregister failed!!!")
+    for i in cls:
+        bpy.utils.unregister_class(i)

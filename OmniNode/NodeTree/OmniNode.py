@@ -3,11 +3,11 @@ from bpy.types import Node, NodeSocket
 from .OmniNodeOperator import OmniNodeRebuild,NodeSetDefaultSize,NodeSetBiggerSize
 import json
 
-def setOutputNode(node, context):
+def setOutputNode(node:Node, context):
     node.updateColor()
 
 
-def setBugNode(node, context):
+def setBugNode(node:Node, context):
     node.updateColor()
 
 
@@ -62,14 +62,13 @@ class OmniNode(Node):
         pass
 
     def init(self, context):
-        fatherTree = self["fatherTree"] = bpy.context.space_data.node_tree
-
-        fatherTree.doing_initNode = True  # 更新树状态-正在新建节点,子类定义init后要切回来
+        self.id_data.doing_initNode = True  # 更新树状态-正在新建节点,子类定义init后要切回来
         self.use_custom_color = True
         self.build()
         self.updateColor()
         self.size2default()
-        fatherTree.doing_initNode = False  # 更新树状态-新建节点完成
+        self.id_data.doing_initNode = False  # 更新树状态-新建节点完成
+        return
 
     def draw_label(self):
         '''动态标签'''
@@ -115,13 +114,13 @@ class OmniNode(Node):
         '''侧边栏中节点属性绘制'''
         row = layout.row(align=True)
         # 是否是自动更新的
-        if context.space_data.node_tree.is_auto_update:
+        if  self.id_data.is_auto_update:
             row.alert = True
-            row.prop(context.space_data.node_tree,
+            row.prop(self.id_data,
                     "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
             row.alert = False
         else:
-            row.prop(context.space_data.node_tree,
+            row.prop(self.id_data,
                     "is_auto_update", text="树自动更新", icon="UNLINKED")
         # 重建节点
         Rebuild = row.operator(
