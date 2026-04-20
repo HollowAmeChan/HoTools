@@ -113,12 +113,6 @@ class OmniNode(Node):
 
     def draw_buttons_ext(self, context, layout: bpy.types.UILayout):
         '''侧边栏中节点属性绘制'''
-        row = layout.row(align=True)
-        # 重建节点
-        Rebuild = row.operator(
-            OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
-        Rebuild.node_name = self.name
-        Rebuild.node_tree_name = self.id_data.name
         # OMNI节点描述
         lines = self.omni_description.splitlines()
         for line in lines:

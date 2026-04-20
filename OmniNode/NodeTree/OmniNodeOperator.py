@@ -237,21 +237,22 @@ class OmniNodeRebuild(Operator):
     node_tree_name: bpy.props.StringProperty()  # type: ignore
     node_name: bpy.props.StringProperty()  # type: ignore
 
-    def execute(self, context):
-        # 0. 获取 node_tree 和 node
-        tree = bpy.data.node_groups.get(self.node_tree_name)
-        if tree is None:
-            self.report({'ERROR'}, f"NodeTree not found: {self.node_tree_name}")
-            return {'CANCELLED'}
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "node_tree", None)
+        if not space or space.type != 'NODE_EDITOR':
+            return False
+        if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
+            return False
+        if getattr(context, "selected_nodes", None):
+            return True
+        return getattr(context, "active_node", None) is not None
 
-        node = tree.nodes.get(self.node_name)
-        if node is None:
-            self.report({'ERROR'}, f"Node not found: {self.node_name}")
-            return {'CANCELLED'}
-
+    @staticmethod
+    def rebuild_single_node(tree, node):
         if not hasattr(node, "build"):
-            self.report({'ERROR'}, "Node has no build() method")
-            return {'CANCELLED'}
+            raise RuntimeError(f"Node '{node.name}' has no build() method")
 
         # 1. cache 用户 default_value
         input_value_cache = {}
@@ -345,6 +346,61 @@ class OmniNodeRebuild(Operator):
             if from_socket and to_socket:
                 tree.links.new(from_socket, to_socket)
 
+    def _resolve_target_nodes(self, context):
+        if self.node_tree_name and self.node_name:
+            tree = bpy.data.node_groups.get(self.node_tree_name)
+            if tree is None:
+                raise RuntimeError(f"NodeTree not found: {self.node_tree_name}")
+
+            node = tree.nodes.get(self.node_name)
+            if node is None:
+                raise RuntimeError(f"Node not found: {self.node_name}")
+
+            return tree, [node]
+
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "node_tree", None)
+        if tree is None:
+            raise RuntimeError("No active node tree")
+
+        selected_nodes = list(getattr(context, "selected_nodes", []) or [])
+        if not selected_nodes:
+            active_node = getattr(context, "active_node", None)
+            if active_node is not None:
+                selected_nodes = [active_node]
+
+        if not selected_nodes:
+            raise RuntimeError("No nodes selected")
+
+        return tree, selected_nodes
+
+    def execute(self, context):
+        try:
+            tree, nodes = self._resolve_target_nodes(context)
+        except RuntimeError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        rebuilt_names = []
+        failed_messages = []
+
+        for node in nodes:
+            try:
+                OmniNodeRebuild.rebuild_single_node(tree, node)
+                rebuilt_names.append(node.name)
+            except Exception as exc:
+                node.is_bug = True
+                node.bug_text = str(exc)
+                failed_messages.append(f"{node.name}: {exc}")
+
+        if rebuilt_names:
+            self.report({'INFO'}, f"已重建 {len(rebuilt_names)} 个节点: {', '.join(rebuilt_names)}")
+
+        if failed_messages:
+            self.report({'ERROR'}, " | ".join(failed_messages))
+            if not rebuilt_names:
+                return {'CANCELLED'}
+
         return {'FINISHED'}
 
 
@@ -362,6 +418,26 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
     return
+
+
+def draw_in_NODE_MT_context_menu(self, context: Context):
+    space = context.space_data
+    if not space or space.type != 'NODE_EDITOR':
+        return
+    tree = getattr(space, "node_tree", None)
+    if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
+        return
+
+    selected_nodes = list(getattr(context, "selected_nodes", []) or [])
+    active_node = getattr(context, "active_node", None)
+    target_count = len(selected_nodes) if selected_nodes else (1 if active_node else 0)
+    if target_count <= 0:
+        return
+
+    layout: bpy.types.UILayout = self.layout
+    layout.separator()
+    label = "重建所选节点" if target_count > 1 else "重建节点"
+    layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")
 
 
 clss = [
@@ -383,6 +459,7 @@ def register():
     except Exception:
         print(__file__ + " register failed!!!")
     bpy.types.NODE_MT_editor_menus.append(draw_in_NODE_MT_editor_menus)
+    bpy.types.NODE_MT_context_menu.append(draw_in_NODE_MT_context_menu)
 
 
 def unregister():
@@ -392,3 +469,4 @@ def unregister():
     except Exception:
         print(__file__ + " unregister failed!!!")
     bpy.types.NODE_MT_editor_menus.remove(draw_in_NODE_MT_editor_menus)
+    bpy.types.NODE_MT_context_menu.remove(draw_in_NODE_MT_context_menu)
