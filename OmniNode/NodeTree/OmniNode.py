@@ -62,12 +62,12 @@ class OmniNode(Node):
         pass
 
     def init(self, context):
-        self.id_data.doing_initNode = True  # 更新树状态-正在新建节点,子类定义init后要切回来
+        self.id_data.doing_initNode = True  # 更新树状态-正在新建节点,用于抑制频繁刷新
         self.use_custom_color = True
         self.build()
         self.updateColor()
         self.size2default()
-        self.id_data.doing_initNode = False  # 更新树状态-新建节点完成
+        self.id_data.doing_initNode = False
         return
 
     def draw_label(self):

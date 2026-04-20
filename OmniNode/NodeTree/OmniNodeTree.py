@@ -4,7 +4,7 @@ from bpy.props import CollectionProperty,IntProperty
 from .OmniNode import OmniNode
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
-from .OmniNodeOperator import OmniGraphNodeIOItem
+from .OmniNodeOperator import OmniGraphNodeIOItem,OP_IOItemAdd,OP_IOItemRemove,HO_UL_GraphNodeIO
 import time
 import traceback
 
@@ -34,16 +34,16 @@ class OmniNodeTree(NodeTree):  # 节点树
     def update(self):
         if self.doing_initNode:  # 树状态-正在新建节点时不回调
             return
-        if self.is_auto_update:  # 如果节点树自动更新，则运行整个节点树,只有运算的时候更新默认值
+        if self.is_auto_update:  # 如果节点树自动更新，则运行整个节点树
             print("树自动运行:", self.name, "\t", time.ctime())
             # TODO:巨量会触发update的东西，需要大量优化，但耦合程度较高
             self.run()
-        if not self.use_fake_user: # TODO:不是很优雅，但是够用了，新建nodegroup不会加，但是添加任何node了都会触发
+        if not self.use_fake_user: # 不是很优雅，但是够用了，新建nodegroup不会加，但是添加任何node了都会触发
             self.use_fake_user = True
 
     def interface_update(self, context):
-        """需要研究触发逻辑，不明触发逻辑"""
-        # print(self.name," interface_update")
+        """被弃用的api，并且由于被弃用，导致完全无法使用interface的io功能了，只能手动写一个io"""
+        print(self.name," interface_update")
         pass
 
     def run(self):
@@ -54,6 +54,38 @@ class OmniNodeTree(NodeTree):  # 节点树
         # print(compiled.node_order)# TODO:比较简陋的debug
         OmniExecutor.run(compiled)
 
+def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
+    layout: bpy.types.UILayout = self.layout
+    tree = context.space_data.node_tree
+
+    layout.label(text="OmniTreeInputs:")
+    row = layout.row()
+    row.template_list(HO_UL_GraphNodeIO.__name__,"",
+        tree,"group_inputs",
+        tree,"group_inputs_index",
+        rows=3
+    )
+    col = row.column(align=True)
+    add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
+    add.is_input = True
+    remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
+    remove.is_input = True
+
+    layout.label(text="OmniTreeOutputs:")
+    row = layout.row()
+    row.template_list(HO_UL_GraphNodeIO.__name__,"",
+        tree,"group_outputs",
+        tree,"group_outputs_index",
+        rows=3
+    )
+    col = row.column(align=True)
+    add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
+    add.is_input = False
+    remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
+    remove.is_input = False
+
+
+    return
 
 
 cls = [OmniNodeTree]
@@ -62,8 +94,11 @@ cls = [OmniNodeTree]
 def register():
     for i in cls:
         bpy.utils.register_class(i)
+    bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
 
 def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
+    bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
+

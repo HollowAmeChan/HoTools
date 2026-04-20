@@ -10,6 +10,7 @@ from .OmniNodeOperator import OmniGraphNodeIOItem_update
 def OmniTreeFilter(self, tree):
     return isinstance(tree, OmniNodeTree)
 
+# TODO:非常难设计，目前改名会断link。改名，同名，改顺序，改类型，都可能出现，也不能精确对比新旧的缓存（update里面猜不到你敢乐山），所以很难做到
 def cache_node_links(node):
     """缓存某个 node 所有 links"""
     node_tree = node.id_data
@@ -79,10 +80,10 @@ class OmniGroupNode(OmniNode):
         self.inputs.clear()
         self.outputs.clear()
 
-        # # Group 输入 → 当前 node.inputs
-        # for io in tree.group_inputs:
-        #     sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
-        #     sock.hide_value = True
+        # Group 输入 → 当前 node.inputs
+        for io in tree.group_inputs:
+            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
+            sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.identifier)
@@ -128,7 +129,7 @@ class OmniGroupNodeInputs(OmniNode):
 
         row = layout.row()
         row.template_list(
-            "HO_UL_GraphNodeIO",
+            HO_UL_GraphNodeIO.__name__,
             "",
             tree,
             "group_inputs",
@@ -179,7 +180,7 @@ class OmniGroupNodeOutputs(OmniNode):
 
         row = layout.row()
         row.template_list(
-            "HO_UL_GraphNodeIO",
+            HO_UL_GraphNodeIO.__name__,
             "",
             tree,
             "group_outputs",
@@ -218,6 +219,7 @@ class OmniGroupNodeRepeat(OmniNode):
 
     def syncGroupIO(self):
         tree = self.target_tree
+        if not tree:return
 
         link_cache = cache_node_links(self)
         self.inputs.clear()
