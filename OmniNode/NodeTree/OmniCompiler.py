@@ -9,6 +9,7 @@
 # 子图的数据传输需要有桥（有可能写在graphnode的_func里吗）
 # 需要分两段编译，首先编译tree+group（递归得到，中间做循环检查），然后再做数据的mapping以及缓存隔离
 # 严格注意io存在tree上不在node的socket上，也不要用这几个特殊节点的socket的defaultvalue，有缺的直接报错就行
+# 可能的话可以编译成直接可以执行的代码，寄存器也丢里面统一运行
 
 class CompiledGraph:
     """树的编译结果"""
@@ -102,7 +103,7 @@ class OmniCompiler:
             dfs(n)
 
         # -----------------------
-        # 2. 拓扑排序（你原来的layer逻辑可以复用但简化）
+        # 2. 拓扑排序
         # -----------------------
         topo = OmniCompiler.topo_sort(visited, links)
 

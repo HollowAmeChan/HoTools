@@ -89,10 +89,10 @@ class OmniNode(Node):
             row_L.label(icon="ERROR",)
         
         # row_L.prop(self, "debug", text="", toggle=True, icon="FILE_SCRIPT")
-        Rebuild = row_L.operator(
-            OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
-        Rebuild.node_name = self.name
-        Rebuild.node_tree_name = self.id_data.name
+        # Rebuild = row_L.operator(
+        #     OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
+        # Rebuild.node_name = self.name
+        # Rebuild.node_tree_name = self.id_data.name
         # SetDefaultSize = row_L.operator(
         #     NodeSetDefaultSize.bl_idname, text="", icon="REMOVE")
         # SetDefaultSize.node_name = self.name
@@ -106,7 +106,6 @@ class OmniNode(Node):
         # row_R.prop(self, "is_output_node", text="", icon="ANIM_DATA")
         
         # debug显示
-        # TODO:目前显示的比较丑，列表太长会看不清楚（节点最大宽度不够用，应该要换行，或者有个按钮能看），同时英文变量名会被强制汉化（需要插入0长字符防止汉化）
         if self.debug:
             pass
         pass
@@ -124,7 +123,11 @@ class OmniNode(Node):
         else:
             row.prop(context.space_data.node_tree,
                     "is_auto_update", text="树自动更新", icon="UNLINKED")
-            
+        # 重建节点
+        Rebuild = row.operator(
+            OmniNodeRebuild.bl_idname, text="", icon="NODETREE")
+        Rebuild.node_name = self.name
+        Rebuild.node_tree_name = self.id_data.name
         # OMNI节点描述
         lines = self.omni_description.splitlines()
         for line in lines:
