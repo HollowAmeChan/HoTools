@@ -1,8 +1,8 @@
 from typing import Set
 import bpy
 import os
-from bpy.props import BoolProperty, StringProperty,EnumProperty
-from bpy.types import Context,Operator,PropertyGroup,UIList,UILayout
+from bpy.props import BoolProperty, StringProperty, EnumProperty
+from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
 import uuid
 
@@ -31,6 +31,8 @@ BLENDER_SOCKET_TYPES = {
     "NodeSocketMatrix": "Matrix",
     # "NodeSocketMenu": "Menu",
 }
+
+
 def full_socket_type_items():
     items = []
     for idname, label in BLENDER_SOCKET_TYPES.items():
@@ -39,8 +41,9 @@ def full_socket_type_items():
         items.append((k.bl_idname, k.bl_label, ""))
     return items
 
+
 def sync_tree_io(tree):
-    # 会同时同步tree内的所有节点
+    # 会同步tree内的所有特殊graph节点
     for node in tree.nodes:
         if node.bl_idname == "HO_OmniNode_GroupNode_Inputs":
             node.syncGroupIO()
@@ -48,41 +51,70 @@ def sync_tree_io(tree):
             node.syncGroupIO()
         elif node.bl_idname == "HO_OmniNode_GroupNode":
             node.syncGroupIO()
-    
+        elif node.bl_idname == "HO_OmniNode_GroupNode_Repeat":
+            node.syncGroupIO()
+
+
+def sync_all_related_tree_io(tree):
+    """同步当前tree，以及所有引用这个tree的组节点。"""
+    if not tree:
+        return
+    if getattr(tree, "bl_idname", None) != "OmniNodeTree":
+        return
+
+    sync_tree_io(tree)
+
+    for other_tree in bpy.data.node_groups:
+        if other_tree == tree:
+            continue
+        if getattr(other_tree, "bl_idname", None) != "OmniNodeTree":
+            continue
+
+        for node in other_tree.nodes:
+            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_GroupNode_Repeat"}:
+                continue
+            if getattr(node, "target_tree", None) != tree:
+                continue
+            node.syncGroupIO()
+
 
 def OmniGraphNodeIOItem_update(self, context):
-    """在所有需要同步groupio的地方使用本函数来自动刷新"""
-    tree = self.id_data  #node不是数据块没有iddata，直接访问就是他所在的数据块，也就是NodeTree
-    sync_tree_io(tree)
-    # TODO 性能可以优化，但是没有特别多的必要
-    for other_tree in bpy.data.node_groups:
-        if tree.bl_idname != "OmniNodeTree":continue # TREE_ID_NAME
-        if other_tree == tree:continue
-        sync_tree_io(other_tree)
+    """在所有需要同步group io的地方统一使用这个函数。"""
+    tree = self.id_data
+    sync_all_related_tree_io(tree)
+
 
 class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
-    name: StringProperty(name="IO", default="IO",update=OmniGraphNodeIOItem_update) # type: ignore
-    uid: StringProperty(name="UID",default="",options={'HIDDEN'}) # type: ignore # 用于填socket的identity作为唯一标识符
-    socket_type: EnumProperty(name="Socket Type",default=OmniNodeSocket.OmniNodeSocketAny.bl_idname,items=full_socket_type_items(),update=OmniGraphNodeIOItem_update) # type: ignore
-    #TODO:default_value无法同步需要设计,由于不能动态做类型所以defaultvalue很难搞进OmniGraphNodeIOItem
+    name: StringProperty(name="IO", default="IO", update=OmniGraphNodeIOItem_update)  # type: ignore
+    uid: StringProperty(name="UID", default="", options={'HIDDEN'})  # type: ignore
+    socket_type: EnumProperty(  # type: ignore
+        name="Socket Type",
+        default=OmniNodeSocket.OmniNodeSocketAny.bl_idname,
+        items=full_socket_type_items(),
+        update=OmniGraphNodeIOItem_update,
+    )
+    # TODO: default_value无法同步需要设计
     # 目前直接不允许用户改默认值，强制要求用户给每个输入口子连节点
+
 
 class HO_UL_GraphNodeIO(UIList):
     """IO输入输出组的ui绘制使用的列表"""
-    def draw_item(self, context, layout:UILayout, data, item, icon, active_data, active_propname, index):
+
+    def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
         row.prop(item, "name", text="", emboss=False)
-        row.label(text="UID:"+item.uid)
+        row.label(text="UID:" + item.uid)
         row.prop(item, "socket_type", text="")
+
 
 class OP_IOItemAdd(Operator):
     bl_idname = "ho.omni_ioitemadd"
     bl_label = "Add IO"
 
-    is_input: BoolProperty() # type: ignore
+    is_input: BoolProperty()  # type: ignore
 
-    def generate_unique_uid(self,tree):
+    def generate_unique_uid(self, tree):
         existing = set()
 
         for item in tree.group_inputs:
@@ -112,32 +144,38 @@ class OP_IOItemAdd(Operator):
             item.uid = self.generate_unique_uid(tree)
             tree.group_outputs_index = len(tree.group_outputs) - 1
 
-        sync_tree_io(tree)
+        sync_all_related_tree_io(tree)
         return {'FINISHED'}
+
 
 class OP_IOItemRemove(Operator):
     bl_idname = "ho.omni_ioitemremove"
     bl_label = "Remove IO"
 
-    is_input: BoolProperty() # type: ignore
+    is_input: BoolProperty()  # type: ignore
 
     def execute(self, context):
         tree = context.space_data.node_tree
 
         if self.is_input:
             idx = tree.group_inputs_index
+            if idx < 0 or idx >= len(tree.group_inputs):
+                return {'CANCELLED'}
             tree.group_inputs.remove(idx)
             tree.group_inputs_index = max(0, idx - 1)
         else:
             idx = tree.group_outputs_index
+            if idx < 0 or idx >= len(tree.group_outputs):
+                return {'CANCELLED'}
             tree.group_outputs.remove(idx)
             tree.group_outputs_index = max(0, idx - 1)
 
-        sync_tree_io(tree)
+        sync_all_related_tree_io(tree)
         return {'FINISHED'}
 
+
 class NodeSetDefaultSize(Operator):
-    bl_idname = "ho.nodesetdefaultsize"  # 注册到bpy.ops下
+    bl_idname = "ho.nodesetdefaultsize"
     bl_label = "恢复node默认大小"
 
     node_name: bpy.props.StringProperty()  # type: ignore
@@ -150,14 +188,13 @@ class NodeSetDefaultSize(Operator):
         try:
             node = bpy.context.space_data.node_tree.nodes[self.node_name]
             node.size2default()
-
             return {'FINISHED'}
-        except:
+        except Exception:
             return {'FINISHED'}
 
 
 class NodeSetBiggerSize(Operator):
-    bl_idname = "ho.nodesetbiggersize"  # 注册到bpy.ops下
+    bl_idname = "ho.nodesetbiggersize"
     bl_label = "加宽node"
 
     node_name: bpy.props.StringProperty()  # type: ignore
@@ -170,41 +207,38 @@ class NodeSetBiggerSize(Operator):
         try:
             node = bpy.context.space_data.node_tree.nodes[self.node_name]
             node.width *= 2
-
             return {'FINISHED'}
-        except:
+        except Exception:
             return {'FINISHED'}
 
 
 class LayerRunning(Operator):
     bl_idname = "ho.layerrunning"
     bl_label = "树手动触发回调"
-    bl_options = {'REGISTER', 'UNDO'} #TODO:不好说是不是应该允许他撤回
+    bl_options = {'REGISTER', 'UNDO'}
     reportInfo: BoolProperty(name="报告pool信息", default=True)  # type: ignore
 
     def execute(self, context: bpy.types.Context):
         if (not hasattr(context.space_data, "node_tree")) or (not context.space_data.node_tree):
             return {'FINISHED'}
         tree = context.space_data.node_tree
-        tree.run()  # 无视是否自动更新
+        tree.run()
         return {'FINISHED'}
 
 
 class OmniNodeRebuild(Operator):
-    # TODO:诡异bug，重建以后会自动拥有bl_icon，此问题在pr中北反复讨论，是有关customgroupnode的
+    # TODO: 诡异bug，重建以后会自动拥有bl_icon，此问题在pr中被反复讨论，是有关customgroupnode的？
     # https://projects.blender.org/blender/blender/pulls/130204
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
     bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
     bl_options = {'REGISTER'}
 
-    node_tree_name: bpy.props.StringProperty() # type: ignore
-    node_name: bpy.props.StringProperty() # type: ignore
+    node_tree_name: bpy.props.StringProperty()  # type: ignore
+    node_name: bpy.props.StringProperty()  # type: ignore
 
     def execute(self, context):
-        # -----------------------------
         # 0. 获取 node_tree 和 node
-        # -----------------------------
         tree = bpy.data.node_groups.get(self.node_tree_name)
         if tree is None:
             self.report({'ERROR'}, f"NodeTree not found: {self.node_tree_name}")
@@ -215,17 +249,13 @@ class OmniNodeRebuild(Operator):
             self.report({'ERROR'}, f"Node not found: {self.node_name}")
             return {'CANCELLED'}
 
-        # 必须有 build()
         if not hasattr(node, "build"):
             self.report({'ERROR'}, "Node has no build() method")
             return {'CANCELLED'}
 
-        # -----------------------------
         # 1. cache 用户 default_value
-        # -----------------------------
         input_value_cache = {}
         output_value_cache = {}
-        # is_output_node = None # TODO:不一定保留
 
         for sock in node.inputs:
             try:
@@ -238,11 +268,8 @@ class OmniNodeRebuild(Operator):
                 output_value_cache[sock.identifier] = sock.default_value
             except Exception:
                 pass
-        # is_output_node = node.is_output_node
 
-        # -----------------------------
         # 2. 收集 links
-        # -----------------------------
         input_links = []
         for sock in node.inputs:
             for link in sock.links:
@@ -261,9 +288,7 @@ class OmniNodeRebuild(Operator):
                     link.to_socket.identifier,
                 ))
 
-        # -----------------------------
         # 3. 清理 sockets + links
-        # -----------------------------
         for sock in list(node.inputs):
             for link in list(sock.links):
                 tree.links.remove(link)
@@ -274,17 +299,12 @@ class OmniNodeRebuild(Operator):
                 tree.links.remove(link)
             node.outputs.remove(sock)
 
-        # -----------------------------
-        # 4. rebuild（核心）
-        # -----------------------------
+        # 4. rebuild
         node.build()
-        # node.is_output_node = is_output_node
         node.is_bug = False
-        node.property_unset("bug_text")  # 清空bug 
+        node.property_unset("bug_text")
 
-        # -----------------------------
-        # 5. 恢复 default_value（用户输入）
-        # -----------------------------
+        # 5. 恢复 default_value
         for identifier, value in input_value_cache.items():
             sock = node.inputs.get(identifier)
             if sock:
@@ -301,9 +321,7 @@ class OmniNodeRebuild(Operator):
                 except Exception:
                     pass
 
-        # -----------------------------
         # 6. reconnect input links
-        # -----------------------------
         for from_node_name, from_socket_id, to_socket_id in input_links:
             from_node = tree.nodes.get(from_node_name)
             if not from_node:
@@ -315,9 +333,7 @@ class OmniNodeRebuild(Operator):
             if from_socket and to_socket:
                 tree.links.new(from_socket, to_socket)
 
-        # -----------------------------
         # 7. reconnect output links
-        # -----------------------------
         for from_socket_id, to_node_name, to_socket_id in output_links:
             to_node = tree.nodes.get(to_node_name)
             if not to_node:
@@ -335,18 +351,29 @@ class OmniNodeRebuild(Operator):
 def draw_in_NODE_MT_editor_menus(self, context: Context):
     """OmniNode顶部运行按钮"""
     space = context.space_data
-    if not space or space.type != 'NODE_EDITOR':return
+    if not space or space.type != 'NODE_EDITOR':
+        return
     tree = space.node_tree
-    if not tree:return
-    if tree.bl_idname != "OmniNodeTree":return # TREE_ID_NAME
+    if not tree:
+        return
+    if tree.bl_idname != "OmniNodeTree":
+        return
 
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
     return
 
-clss = [NodeSetDefaultSize, NodeSetBiggerSize, LayerRunning,
-        OmniNodeRebuild,OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemAdd,OP_IOItemRemove,
-        ]
+
+clss = [
+    NodeSetDefaultSize,
+    NodeSetBiggerSize,
+    LayerRunning,
+    OmniNodeRebuild,
+    OmniGraphNodeIOItem,
+    HO_UL_GraphNodeIO,
+    OP_IOItemAdd,
+    OP_IOItemRemove,
+]
 
 
 def register():
@@ -354,9 +381,8 @@ def register():
         for i in clss:
             bpy.utils.register_class(i)
     except Exception:
-        print(__file__+" register failed!!!")
+        print(__file__ + " register failed!!!")
     bpy.types.NODE_MT_editor_menus.append(draw_in_NODE_MT_editor_menus)
-
 
 
 def unregister():
@@ -364,5 +390,5 @@ def unregister():
         for i in clss:
             bpy.utils.unregister_class(i)
     except Exception:
-        print(__file__+" unregister failed!!!")
+        print(__file__ + " unregister failed!!!")
     bpy.types.NODE_MT_editor_menus.remove(draw_in_NODE_MT_editor_menus)
