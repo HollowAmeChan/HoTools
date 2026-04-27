@@ -18,8 +18,9 @@ from bpy.types import (
     NodeSocketTexture,
     NodeSocketGeometry,
     NodeSocketMatrix,
-    NodeSocketStringFilePath,
 )
+
+NodeSocketStringFilePath = getattr(bpy.types, "NodeSocketStringFilePath", NodeSocketString)
 
 class _OmniFolderPath(str):
     def __init__():
