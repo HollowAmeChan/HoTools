@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -6,6 +6,7 @@ from bpy.types import NodeSocketVector, NodeSocketColor
 import bpy
 import bmesh
 import typing
+from types import SimpleNamespace
 from typing import Any
 import time
 import mathutils
@@ -586,7 +587,7 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
 )
 def combineImages(
     imgs: list[bpy.types.Image],
-    backgroundColor: mathutils.Color,
+    backgroundColor: _OmniColorRGBA,
     name: str,
     overwrite: bool = True,
     is_normalMap: bool = False,
@@ -617,13 +618,19 @@ def combineImages(
     # -------------------------
     bg_rgb = np.ones((height, width, 3), dtype=np.float32)
 
-    backgroundColor = mathutils.Color(backgroundColor[:3])
+    bg_rgba = tuple(backgroundColor)
+    backgroundColor = SimpleNamespace(
+        r=bg_rgba[0],
+        g=bg_rgba[1],
+        b=bg_rgba[2],
+        a=bg_rgba[3] if len(bg_rgba) > 3 else 1.0,
+    )
 
     bg_rgb[..., 0] *= backgroundColor.r
     bg_rgb[..., 1] *= backgroundColor.g
     bg_rgb[..., 2] *= backgroundColor.b
 
-    bg_a = np.ones((height, width), dtype=np.float32)
+    bg_a = np.full((height, width), backgroundColor.a, dtype=np.float32)
 
     # -------------------------
     # 3. 合成

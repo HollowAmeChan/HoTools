@@ -34,6 +34,9 @@ class _OmniRegex(str):
 class _OmniGlob(str):
     def __init__():
         return
+class _OmniColorRGBA():
+    def __init__():
+        return
 
 # 函数变量标签类型：blenderSocket类型
 SKT_DIC = {
@@ -59,6 +62,7 @@ SKT_DIC = {
     bpy.types.Image: NodeSocketImage,
     bpy.types.Collection: NodeSocketCollection,
     mathutils.Color: NodeSocketColor,
+    _OmniColorRGBA: NodeSocketColor,
     bpy.types.Material: NodeSocketMaterial,
     bpy.types.Mesh: NodeSocketObject,
     bpy.types.Armature: NodeSocketObject,
