@@ -79,7 +79,7 @@ class OmniGroupNode(OmniNode):
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
             sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
-            sock.hide_value = True
+            # sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
             sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
