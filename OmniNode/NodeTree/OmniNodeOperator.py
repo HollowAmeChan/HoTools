@@ -4,6 +4,7 @@ import os
 from bpy.props import BoolProperty, StringProperty, EnumProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
+from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
 
 # 用于获取动态的全socket枚举
@@ -12,6 +13,7 @@ BLENDER_SOCKET_TYPES = {
     "NodeSocketInt": "Int",
     "NodeSocketBool": "Bool",
     "NodeSocketString": "String",
+    "NodeSocketStringFilePath": "File Path",
 
     "NodeSocketVector": "Vector",
     "NodeSocketColor": "Color",
@@ -36,7 +38,7 @@ BLENDER_SOCKET_TYPES = {
 def full_socket_type_items():
     items = []
     for idname, label in BLENDER_SOCKET_TYPES.items():
-        items.append((idname, label, ""))
+        items.append((idname, label, runtime_socket_type_id(idname)))
     for k in OmniNodeSocket.cls:
         items.append((k.bl_idname, k.bl_label, ""))
     return items

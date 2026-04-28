@@ -1,18 +1,20 @@
 # 本文件为functionnode以外的拓展类型node，用于实现高级功能
 
-# TODO:目前的IO节点不支持自动变换type（以及socket.name）,导致非常难以使用
+# TODO:目前的IO节点不支持自动变换type（以及socket.name）,导致非常难以使用。但是为了这个功能需要写巨量多的代码得不偿失
 import bpy
+from typing import Any
 from .OmniNode import OmniNode
 from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd
 from bpy.props import CollectionProperty,IntProperty
 
 from .OmniNodeTree import OmniNodeTree
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
+from .OmniNodeSocketMapping import runtime_socket_type_id
 
-def OmniTreeFilter(self, tree):
+def OmniTreeFilter(self: Any, tree: Any) -> bool:
     return isinstance(tree, OmniNodeTree)
 
-def cache_node_links(node):
+def cache_node_links(node: OmniNode) -> list[dict[str, Any]]:
     """缓存某个 node 所有 links"""
     node_tree = node.id_data
     cache = []
@@ -28,11 +30,11 @@ def cache_node_links(node):
             # to_sock.identifier在这里绝对不会重名，因为生成时就做了处理
     return cache
 
-def restore_node_links(node, cache):
+def restore_node_links(node: OmniNode, cache: list[dict[str, Any]]) -> None:
     """根据 identifier 重建 links"""
     tree = node.id_data
 
-    def find_socket(n, identifier, is_output):
+    def find_socket(n: bpy.types.Node, identifier: str, is_output: bool) -> bpy.types.NodeSocket | None:
         sockets = n.outputs if is_output else n.inputs
         for s in sockets:
             if getattr(s, "identifier", None) == identifier:
@@ -65,12 +67,12 @@ class OmniGroupNode(OmniNode):
         poll=OmniTreeFilter,
     ) # type: ignore
 
-    def build(self):
+    def build(self) -> None:
         self.syncGroupIO()
         self._socket_is_multi = None
         pass
 
-    def syncGroupIO(self):
+    def syncGroupIO(self) -> None:
         tree = self.target_tree
         if not tree:return
 
@@ -80,11 +82,11 @@ class OmniGroupNode(OmniNode):
 
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
-            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
+            sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
             # sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
-            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
+            sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
             sock.hide_value = True
 
         restore_node_links(self, link_cache)
@@ -100,21 +102,21 @@ class OmniGroupNodeInputs(OmniNode):
 
     active_index: IntProperty(default=0) # type: ignore
 
-    def build(self):
+    def build(self) -> None:
         self.syncGroupIO()
         self._socket_is_multi = None
         pass
 
-    def syncGroupIO(self):
+    def syncGroupIO(self) -> None:
         tree = self.id_data
         link_cache = cache_node_links(self)
         self.outputs.clear()
         for io in tree.group_inputs:
-            sock = self.outputs.new(type=io.socket_type,name=io.name,identifier=io.uid)
+            sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type),name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
 
-    def draw_buttons(self, context, layout):
+    def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
         tree = self.id_data
 
         row = layout.row()
@@ -143,23 +145,23 @@ class OmniGroupNodeOutputs(OmniNode):
     output_IO: CollectionProperty(type=OmniGraphNodeIOItem)# type: ignore
     active_index: IntProperty(default=0) # type: ignore
     
-    def build(self):
+    def build(self) -> None:
         self.syncGroupIO()
         self._socket_is_multi = None
         self.is_output_node = True #特别注意
         pass
 
-    def syncGroupIO(self):
+    def syncGroupIO(self) -> None:
         tree = self.id_data
         link_cache = cache_node_links(self)
         self.inputs.clear()
 
         for io in tree.group_outputs:
-            sock = self.inputs.new(type=io.socket_type,name=io.name,identifier=io.uid)
+            sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type),name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
     
-    def draw_buttons(self, context, layout):
+    def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
         tree = self.id_data
 
         row = layout.row()
@@ -181,9 +183,6 @@ class OmniGroupNodeOutputs(OmniNode):
         remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
         remove.is_input = False
 
-    def update(self):
-        return
-        
 class OmniGroupNodeRepeat(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Repeat"
     bl_label = "组重复"
@@ -210,11 +209,11 @@ class OmniGroupNodeRepeat(OmniNode):
 
         # Group 输入 → 当前 node.inputs
         for io in tree.group_inputs:
-            sock = self.inputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
+            sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
             sock.hide_value = True
         # Group 输出 → 当前 node.outputs
         for io in tree.group_outputs:
-            sock = self.outputs.new(type=io.socket_type, name=io.name,identifier=io.uid)
+            sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
             sock.hide_value = True
         restore_node_links(self, link_cache)
 

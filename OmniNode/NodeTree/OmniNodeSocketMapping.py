@@ -22,6 +22,16 @@ from bpy.types import (
 
 NodeSocketStringFilePath = getattr(bpy.types, "NodeSocketStringFilePath", NodeSocketString)
 
+
+def runtime_socket_type_id(socket_type: str) -> str:
+    """
+    用于版本兼容
+    所有运行中使用socket type的地方都最好使用这个函数查找
+    """
+    if socket_type == "NodeSocketStringFilePath" and not hasattr(bpy.types, "NodeSocketStringFilePath"):
+        return "NodeSocketString"
+    return socket_type
+
 class _OmniFolderPath(str):
     def __init__():
         return
