@@ -1,4 +1,6 @@
 # 本文件为functionnode以外的拓展类型node，用于实现高级功能
+
+# TODO:目前的IO节点不支持自动变换type（以及socket.name）,导致非常难以使用
 import bpy
 from .OmniNode import OmniNode
 from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd
@@ -178,7 +180,10 @@ class OmniGroupNodeOutputs(OmniNode):
 
         remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
         remove.is_input = False
-    
+
+    def update(self):
+        return
+        
 class OmniGroupNodeRepeat(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Repeat"
     bl_label = "组重复"

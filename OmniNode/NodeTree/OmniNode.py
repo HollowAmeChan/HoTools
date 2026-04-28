@@ -90,6 +90,15 @@ class OmniNode(Node):
         self.updateColor()
         self.id_data.doing_initNode = False
         return
+    
+    def update(self):
+        """
+        Creat node instance
+        Update instance socket(link/unlink)
+        Open .blend project
+        Rename instance name
+        """
+        return
 
     def draw_label(self):
         return f"{self.name}"
