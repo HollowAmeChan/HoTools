@@ -5,13 +5,15 @@ from . import _Color
 
 
 @omni(enable=True,
-      base_color=_Color.colorCat["Math"],)
+    bl_label="Lerp",
+    base_color=_Color.colorCat["Math"],)
 def lerp(a: NodeSocketColor, b: NodeSocketColor, weight: float) -> NodeSocketColor:
     return a*(1-weight)+b*weight
 
 
 @omni(enable=True,
-      base_color=_Color.colorCat["Math"],)
+    bl_label="SmoothStep",
+    base_color=_Color.colorCat["Math"],)
 def smoothStep(x: float) -> float:
     out = x*x*(3 - 2*x)
     if out >= 1:
@@ -21,9 +23,9 @@ def smoothStep(x: float) -> float:
     return out
 
 @omni(enable=True,
-      bl_label="Float加法",
-      base_color=_Color.colorCat["Math"],
-      color_tag = "CONVERTER",
-      )
+    bl_label="Float加法",
+    base_color=_Color.colorCat["Math"],
+    color_tag = "CONVERTER",
+    )
 def floatAdd(a: float, b: float) -> float:
     return a+b

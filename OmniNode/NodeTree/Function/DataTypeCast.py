@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniColorRGBA
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
@@ -69,35 +69,21 @@ def string2float(v: str) -> float:
       bl_label="整数 → 向量",
       base_color=_Color.colorCat["Convert"],
       )
-def int2vector(v: int) -> mathutils.Vector:
-    return mathutils.Vector((v, v, v))
+def int2vector(x: int, y: int, z: int) -> mathutils.Vector:
+    return mathutils.Vector((x, y, z))
 
 @omni(enable=True,
       bl_label="浮点 → 向量",
       base_color=_Color.colorCat["Convert"],
       )
-def float2vector(v: float) -> mathutils.Vector:
-    return mathutils.Vector((v, v, v))
-
-@omni(enable=True,
-      bl_label="向量 → 浮点(长度)",
-      base_color=_Color.colorCat["Convert"],
-      )
-def vector2float(vec: mathutils.Vector) -> float:
-    return vec.length
-
-@omni(enable=True,
-      bl_label="向量 → 整数(长度)",
-      base_color=_Color.colorCat["Convert"],
-      )
-def vector2int(vec: mathutils.Vector) -> int:
-    return int(vec.length)
+def float2vector(x: float, y: float, z: float) -> mathutils.Vector:
+    return mathutils.Vector((x, y, z))
 
 @omni(enable=True,
       bl_label="向量 → 颜色",
       base_color=_Color.colorCat["Convert"],
       )
-def vector2color(vec: mathutils.Vector) -> mathutils.Color:
+def vector2color(vec: mathutils.Vector) -> _OmniColorRGBA:
     return mathutils.Color((vec[0], vec[1], vec[2]))
 
 @omni(enable=True,
@@ -108,10 +94,10 @@ def color2vector(col: mathutils.Color) -> mathutils.Vector:
     return mathutils.Vector((col[0], col[1], col[2]))
 
 @omni(enable=True,
-      bl_label="浮点 → 颜色(灰度)",
+      bl_label="浮点 → 颜色",
       base_color=_Color.colorCat["Convert"],
       )
-def float2color(v: float) -> mathutils.Color:
+def float2color(v: float) -> _OmniColorRGBA:
     return mathutils.Color((v, v, v))
 
 
