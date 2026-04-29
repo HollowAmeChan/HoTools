@@ -1,6 +1,7 @@
 # 本文件为functionnode以外的拓展类型node，用于实现高级功能
 
 # TODO:目前的IO节点不支持自动变换type（以及socket.name）,导致非常难以使用。但是为了这个功能需要写巨量多的代码得不偿失
+# TODO:缺少编译分支节点（未来再支持）
 import bpy
 from typing import Any
 from .OmniNode import OmniNode

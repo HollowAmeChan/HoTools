@@ -4,6 +4,7 @@ from bpy.types import NodeSocketVector
 import bpy
 from typing import Any
 import mathutils
+import fnmatch
 from . import _Color
 
 
@@ -127,3 +128,19 @@ def vector2matrix(vec: mathutils.Vector) -> mathutils.Matrix:
       )
 def matrix2vector(m: mathutils.Matrix) -> mathutils.Vector:
     return m.to_translation()
+
+
+@omni(enable=True,
+    bl_label="glob转正则",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["glob表达式"],
+    _OUTPUT_NAME=["正则表达式"],
+    omni_description="""
+    该节点用于将glob表达式转换为正则表达式
+    """
+)
+def glob2regex(pattern: _OmniGlob) -> _OmniRegex:
+    if not pattern:
+        raise ValueError("glob表达式不能为空")
+    return fnmatch.translate(pattern)
