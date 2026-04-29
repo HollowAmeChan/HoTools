@@ -25,17 +25,38 @@ elif sys.version_info >= (3, 11):
     bl_label="导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","非彩色"],
+    _INPUT_NAME=["图片路径","非彩色","覆盖旧图"],
     _OUTPUT_NAME=["图片"],
+    omni_description = """
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖旧图后会首先移除再新建，会使图片引用丢失
+    """,
     )
-def importImage2Blender(imagePath: _OmniFolderPath, isNonColor: bool) -> bpy.types.Image:
+def importImage2Blender(
+    imagePath: _OmniFolderPath,
+    isNonColor: bool,
+    isoverwrite: bool = False,
+) -> bpy.types.Image:
     img_name = os.path.basename(imagePath)
-    if bpy.data.images.get(img_name):
-        bpy.data.images.remove(bpy.data.images[img_name])
-    img = bpy.data.images.load(imagePath)
-    img.name = img_name
+    old_img = bpy.data.images.get(img_name)
+
+    if old_img:
+        if isoverwrite:
+            bpy.data.images.remove(old_img)
+            img = bpy.data.images.load(imagePath)
+            img.name = img_name
+        else:
+            old_img.filepath = imagePath
+            old_img.reload()
+            img = old_img
+    else:
+        img = bpy.data.images.load(imagePath)
+        img.name = img_name
+
     if isNonColor:
         img.colorspace_settings.name = "Non-Color"
+    else:
+        img.colorspace_settings.name = "sRGB"
     return img
 
 
@@ -43,19 +64,40 @@ def importImage2Blender(imagePath: _OmniFolderPath, isNonColor: bool) -> bpy.typ
     bl_label="批量导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","非彩色"],
+    _INPUT_NAME=["图片路径","非彩色","覆盖旧图"],
     _OUTPUT_NAME=["图片"],
+    omni_description = """
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖旧图后会首先移除再新建，会使图片引用丢失
+    """,
     )
-def importMultiImage2Blender(imagePaths: list[_OmniFolderPath] ,isNonColor: bool) -> list[bpy.types.Image]:
+def importMultiImage2Blender(
+    imagePaths: list[_OmniFolderPath],
+    isNonColor: bool,
+    isoverwrite: bool = True,
+) -> list[bpy.types.Image]:
     imgs = []
     for path in imagePaths:
         img_name = os.path.basename(path)
-        if bpy.data.images.get(img_name):
-            bpy.data.images.remove(bpy.data.images[img_name])
-        img = bpy.data.images.load(path)
-        img.name = img_name
+        old_img = bpy.data.images.get(img_name)
+
+        if old_img:
+            if isoverwrite:
+                bpy.data.images.remove(old_img)
+                img = bpy.data.images.load(path)
+                img.name = img_name
+            else:
+                old_img.filepath = path
+                old_img.reload()
+                img = old_img
+        else:
+            img = bpy.data.images.load(path)
+            img.name = img_name
+
         if isNonColor:
             img.colorspace_settings.name = "Non-Color"
+        else:
+            img.colorspace_settings.name = "sRGB"
         imgs.append(img)
     return imgs
 
