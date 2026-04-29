@@ -288,17 +288,13 @@ def uv_reprojectionTransfer(
         "save","load_blender","create_blender_image"
     ]}
 
-    # -------------------------
     # Source image
-    # -------------------------
     src_w, src_h = img.size
     src_pixels = np.empty(src_w * src_h * 4, dtype=np.float32)
     img.pixels.foreach_get(src_pixels)
     src_pixels = src_pixels.reshape(src_h, src_w, 4)
 
-    # -------------------------
     # Output
-    # -------------------------
     out_w = out_h = resolution
 
     if isNormal:
@@ -307,16 +303,12 @@ def uv_reprojectionTransfer(
     else:
         out = np.zeros((out_h, out_w, 4), dtype=np.float32)
 
-    # -------------------------
     # Collect meshes
-    # -------------------------
     collect_start = time.perf_counter()
     meshes = [o for o in objs if o.type == 'MESH']
     timings["collect_meshes"] = time.perf_counter() - collect_start
 
-    # -------------------------
-    # Reproject (核心优化区)
-    # -------------------------
+    # Reproject
     repro_start = time.perf_counter()
 
     for obj in meshes:
@@ -424,9 +416,7 @@ def uv_reprojectionTransfer(
 
     timings["reproject"] = time.perf_counter() - repro_start
 
-    # -------------------------
-    # 后处理（保持你原逻辑）
-    # -------------------------
+    # 后处理
     def fill_normal_background(img):
         arr = np.array(img, dtype=np.uint8)
         mask = arr[:, :, 3] == 0
@@ -539,25 +529,19 @@ def combineImages(
     if not imgs:
         raise ValueError("[combineImages] empty image list")
 
-    # -------------------------
     # 0. 覆写逻辑
-    # -------------------------
     if overwrite:
         old_img = bpy.data.images.get(name)
         if old_img:
             old_img.user_clear()
             bpy.data.images.remove(old_img)
 
-    # -------------------------
     # 1. 尺寸
-    # -------------------------
     base = imgs[0]
     width = base.size[0]
     height = base.size[1]
 
-    # -------------------------
     # 2. 背景
-    # -------------------------
     bg_rgb = np.ones((height, width, 3), dtype=np.float32)
 
     bg_rgba = tuple(backgroundColor)
@@ -574,9 +558,7 @@ def combineImages(
 
     bg_a = np.full((height, width), backgroundColor.a, dtype=np.float32)
 
-    # -------------------------
     # 3. 合成
-    # -------------------------
     acc_rgb = bg_rgb
     acc_a = bg_a
 
@@ -596,9 +578,7 @@ def combineImages(
 
         acc_rgb, acc_a = alpha_over(src_rgb, src_a, acc_rgb, acc_a)
 
-    # -------------------------
     # 4. 创建 Image（关键升级点）
-    # -------------------------
     result = bpy.data.images.new(
         name=name,
         width=width,
@@ -610,9 +590,7 @@ def combineImages(
         result.colorspace_settings.name = 'Non-Color'
     else:
         result.colorspace_settings.name = 'sRGB'
-    # -------------------------
     # 5. 写入
-    # -------------------------
     out = np.zeros((height, width, 4), dtype=np.float32)
     out[..., :3] = acc_rgb
     out[..., 3] = acc_a
@@ -641,14 +619,10 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
     if not file_path:
         raise ValueError("[saveImage] file_path is empty")
 
-    # -------------------------
     # 1. 转换路径
-    # -------------------------
     file_path = bpy.path.abspath(file_path)
 
-    # -------------------------
     # 2. 如果传进来是目录 -> 自动补文件名
-    # -------------------------
     if file_path.endswith(os.sep) or os.path.isdir(file_path):
         name = bl_img.name
 
@@ -665,16 +639,12 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
 
         file_path = os.path.join(file_path, name + ext)
 
-    # -------------------------
     # 3. 创建目录
-    # -------------------------
     folder = os.path.dirname(file_path)
     if folder:
         os.makedirs(folder, exist_ok=True)
 
-    # -------------------------
     # 4. format
-    # -------------------------
     fmt = format.upper()
 
     if fmt == "PNG":
@@ -690,9 +660,7 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
     else:
         raise ValueError(f"[saveImage] unsupported format: {format}")
 
-    # -------------------------
     # 5. 保存
-    # -------------------------
     bl_img.filepath_raw = file_path
 
     bl_img.save()
