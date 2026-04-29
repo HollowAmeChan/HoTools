@@ -174,6 +174,8 @@ def tri_area(uv):
     ) * 0.5
 
 def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
+    def wrap_repeat(uv):
+        return uv - np.floor(uv)
     # 模式选择
     if not enable_aa or scale < 1.2:
         mode = 0
@@ -186,14 +188,15 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
 
     # nearest
     if mode == 0:
-        sx = np.clip((src_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
-        sy = np.clip((src_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
+        wrapped_uvs = wrap_repeat(src_uvs)
+        sx = np.clip((wrapped_uvs[..., 0] * (src_w - 1)).astype(np.int32), 0, src_w - 1)
+        sy = np.clip((wrapped_uvs[..., 1] * (src_h - 1)).astype(np.int32), 0, src_h - 1)
         return src_pixels[sy, sx]
     
     # bilinear函数
     def bilinear(u, v):
-        u = np.clip(u, 0.0, 1.0)
-        v = np.clip(v, 0.0, 1.0)
+        u = wrap_repeat(u)
+        v = wrap_repeat(v)
         sx = u * (src_w - 1)
         sy = v * (src_h - 1)
 
@@ -242,8 +245,8 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     weight = 0
 
     for dx, dy in offsets:
-        u = np.clip(src_uvs[..., 0] + dx / src_w, 0.0, 1.0)
-        v = np.clip(src_uvs[..., 1] + dy / src_h, 0.0, 1.0)
+        u = wrap_repeat(src_uvs[..., 0] + dx / src_w)
+        v = wrap_repeat(src_uvs[..., 1] + dy / src_h)
 
         sample = bilinear(u, v)
 
