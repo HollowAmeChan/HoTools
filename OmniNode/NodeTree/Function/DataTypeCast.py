@@ -117,7 +117,7 @@ def matrix2vector(m: mathutils.Matrix) -> mathutils.Vector:
 
 
 @omni(enable=True,
-    bl_label="glob转正则",
+    bl_label="glob → 正则",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["glob表达式"],

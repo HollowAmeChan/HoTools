@@ -51,16 +51,6 @@ def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.ty
     mesh.uv_layers.new(name=uv_layer_name)
     return obj, uv_layer_name
 
-@omni(
-    enable=True,
-    bl_label="加合",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=["整数列表"],
-    _OUTPUT_NAME=["和"],
-    )
-def sumInt(ints: list[int])->int:
-    return sum(ints)
 
 @omni(enable=True,
     bl_label="获取集合中的物体",

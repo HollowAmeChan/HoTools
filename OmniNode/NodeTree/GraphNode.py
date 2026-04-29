@@ -184,43 +184,43 @@ class OmniGroupNodeOutputs(OmniNode):
         remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
         remove.is_input = False
 
-class OmniGroupNodeRepeat(OmniNode):
-    bl_idname = "HO_OmniNode_GroupNode_Repeat"
-    bl_label = "组重复"
+# class OmniGroupNodeRepeat(OmniNode):
+#     bl_idname = "HO_OmniNode_GroupNode_Repeat"
+#     bl_label = "组重复"
 
-    target_tree: bpy.props.PointerProperty(
-        name="Group",
-        type=OmniNodeTree,
-        update=OmniGraphNodeIOItem_update,
-        poll=OmniTreeFilter,
-    ) # type: ignore
+#     target_tree: bpy.props.PointerProperty(
+#         name="Group",
+#         type=OmniNodeTree,
+#         update=OmniGraphNodeIOItem_update,
+#         poll=OmniTreeFilter,
+#     ) # type: ignore
 
-    def build(self):
-        self.syncGroupIO()
-        self._socket_is_multi = None
-        pass
+#     def build(self):
+#         self.syncGroupIO()
+#         self._socket_is_multi = None
+#         pass
 
-    def syncGroupIO(self):
-        tree = self.target_tree
-        if not tree:return
+#     def syncGroupIO(self):
+#         tree = self.target_tree
+#         if not tree:return
 
-        link_cache = cache_node_links(self)
-        self.inputs.clear()
-        self.outputs.clear()
+#         link_cache = cache_node_links(self)
+#         self.inputs.clear()
+#         self.outputs.clear()
 
-        # Group 输入 → 当前 node.inputs
-        for io in tree.group_inputs:
-            sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
-            sock.hide_value = True
-        # Group 输出 → 当前 node.outputs
-        for io in tree.group_outputs:
-            sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
-            sock.hide_value = True
-        restore_node_links(self, link_cache)
+#         # Group 输入 → 当前 node.inputs
+#         for io in tree.group_inputs:
+#             sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
+#             sock.hide_value = True
+#         # Group 输出 → 当前 node.outputs
+#         for io in tree.group_outputs:
+#             sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
+#             sock.hide_value = True
+#         restore_node_links(self, link_cache)
 
-    def draw_buttons(self, context, layout: bpy.types.UILayout):
-        # 顶掉父级的绘制
-        layout.template_ID(self, "target_tree")
-        return
+#     def draw_buttons(self, context, layout: bpy.types.UILayout):
+#         # 顶掉父级的绘制
+#         layout.template_ID(self, "target_tree")
+#         return
 
-CLS_GRAPH = [OmniGroupNode,OmniGroupNodeInputs,OmniGroupNodeOutputs,OmniGroupNodeRepeat]
+CLS_GRAPH = [OmniGroupNode,OmniGroupNodeInputs,OmniGroupNodeOutputs]
