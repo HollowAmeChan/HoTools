@@ -120,13 +120,18 @@ def dilate_image_with_colors(pil_img, radius):
     if radius <= 0:
         return pil_img
 
+    pil_img = pil_img.convert("RGBA")
     img = np.array(pil_img, dtype=np.uint8)
     h, w = img.shape[:2]
 
-    rgb = img[..., :3]
-    alpha = img[..., 3]
+    rgb = img[..., :3].copy()
+    alpha = img[..., 3].copy()
 
     mask = alpha > 0
+    neighbors = [
+        (-1, 0), (1, 0), (0, -1), (0, 1),
+        (-1, -1), (-1, 1), (1, -1), (1, 1)
+    ]
 
     for _ in range(radius):
         if mask.all():
@@ -135,21 +140,28 @@ def dilate_image_with_colors(pil_img, radius):
         new_mask = mask.copy()
 
         # 8邻域
-        neighbors = [
-            (-1,0),(1,0),(0,-1),(0,1),
-            (-1,-1),(-1,1),(1,-1),(1,1)
-        ]
-
         for dy, dx in neighbors:
-            shifted_mask = np.roll(mask, (dy, dx), axis=(0,1))
-            shifted_rgb  = np.roll(rgb,  (dy, dx), axis=(0,1))
+            src_y0 = max(0, -dy)
+            src_y1 = h - max(0, dy)
+            src_x0 = max(0, -dx)
+            src_x1 = w - max(0, dx)
+            dst_y0 = max(0, dy)
+            dst_y1 = h - max(0, -dy)
+            dst_x0 = max(0, dx)
+            dst_x1 = w - max(0, -dx)
 
-            fill = (~mask) & shifted_mask
+            if src_y0 >= src_y1 or src_x0 >= src_x1:
+                continue
 
-            rgb[fill] = shifted_rgb[fill]
-            alpha[fill] = 255
+            src_mask = mask[src_y0:src_y1, src_x0:src_x1]
+            dst_mask = mask[dst_y0:dst_y1, dst_x0:dst_x1]
+            fill = (~dst_mask) & src_mask
+            if not fill.any():
+                continue
 
-            new_mask |= fill
+            rgb[dst_y0:dst_y1, dst_x0:dst_x1][fill] = rgb[src_y0:src_y1, src_x0:src_x1][fill]
+            alpha[dst_y0:dst_y1, dst_x0:dst_x1][fill] = 255
+            new_mask[dst_y0:dst_y1, dst_x0:dst_x1] |= fill
 
         mask = new_mask
 
@@ -180,12 +192,14 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     
     # bilinear函数
     def bilinear(u, v):
+        u = np.clip(u, 0.0, 1.0)
+        v = np.clip(v, 0.0, 1.0)
         sx = u * (src_w - 1)
         sy = v * (src_h - 1)
 
-        x0 = np.floor(sx).astype(np.int32)
+        x0 = np.clip(np.floor(sx).astype(np.int32), 0, src_w - 1)
         x1 = np.clip(x0 + 1, 0, src_w - 1)
-        y0 = np.floor(sy).astype(np.int32)
+        y0 = np.clip(np.floor(sy).astype(np.int32), 0, src_h - 1)
         y1 = np.clip(y0 + 1, 0, src_h - 1)
 
         wx = sx - x0
@@ -325,6 +339,13 @@ def uv_reprojectionTransfer(
 
         for tri in tris:
             idx = tri.loops
+            if len(idx) != 3:
+                continue
+
+            src_layer_len = len(uv_src_layer)
+            dst_layer_len = len(uv_dst_layer)
+            if any(i < 0 or i >= src_layer_len or i >= dst_layer_len for i in idx):
+                continue
 
             # ---- 取UV（numpy化）----
             src_uv = np.array([uv_src_layer[i].uv[:] for i in idx], dtype=np.float32)
