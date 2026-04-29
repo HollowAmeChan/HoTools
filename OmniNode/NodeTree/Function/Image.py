@@ -25,13 +25,13 @@ elif sys.version_info >= (3, 11):
     bl_label="导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","非彩色","覆盖旧图"],
+    _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
     _OUTPUT_NAME=["图片"],
     omni_description = """
     默认会直接替换已有图片的路径并重新加载
-    开启覆盖旧图后会首先移除再新建，会使图片引用丢失
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
     """,
-    )
+        )
 def importImage2Blender(
     imagePath: _OmniFolderPath,
     isNonColor: bool,
@@ -64,13 +64,13 @@ def importImage2Blender(
     bl_label="批量导入图片",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["图片路径","非彩色","覆盖旧图"],
+    _INPUT_NAME=["图片路径","非彩色","覆盖同名图像"],
     _OUTPUT_NAME=["图片"],
     omni_description = """
     默认会直接替换已有图片的路径并重新加载
-    开启覆盖旧图后会首先移除再新建，会使图片引用丢失
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
     """,
-    )
+        )
 def importMultiImage2Blender(
     imagePaths: list[_OmniFolderPath],
     isNonColor: bool,
@@ -530,11 +530,12 @@ def combineImages(
         raise ValueError("[combineImages] empty image list")
 
     # 0. 覆写逻辑
+    old_img = bpy.data.images.get(name)
     if overwrite:
-        old_img = bpy.data.images.get(name)
         if old_img:
             old_img.user_clear()
             bpy.data.images.remove(old_img)
+            old_img = None
 
     # 1. 尺寸
     base = imgs[0]
@@ -578,13 +579,18 @@ def combineImages(
 
         acc_rgb, acc_a = alpha_over(src_rgb, src_a, acc_rgb, acc_a)
 
-    # 4. 创建 Image（关键升级点）
-    result = bpy.data.images.new(
-        name=name,
-        width=width,
-        height=height,
-        alpha=True,
-        float_buffer=is_normalMap  #法线贴图需要半精度渲染（）
+    # 4. 创建 Image
+    if not overwrite and old_img:
+        result = old_img
+        if result.size[0] != width or result.size[1] != height:
+            result.scale(width, height)
+    else:
+        result = bpy.data.images.new(
+            name=name,
+            width=width,
+            height=height,
+            alpha=True,
+            float_buffer=is_normalMap  #法线贴图需要半精度渲染（）
     )
     if is_GrayscaleData or is_normalMap:# 必须在创建后立刻设置
         result.colorspace_settings.name = 'Non-Color'
