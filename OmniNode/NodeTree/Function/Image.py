@@ -540,6 +540,10 @@ def alpha_over(src_rgb, src_a, dst_rgb, dst_a):
     is_output_node=False,
     _INPUT_NAME=["图片列表","背景颜色","新建图像名称","覆盖同名图像","是法线贴图","是灰度数据图"],
     _OUTPUT_NAME=["合成图像"],
+    omni_description="""
+    默认会直接替换已有图片的路径并重新加载
+    开启覆盖同名图像后会首先移除再新建，会使图片引用丢失
+    """
 )
 def combineImages(
     imgs: list[bpy.types.Image],

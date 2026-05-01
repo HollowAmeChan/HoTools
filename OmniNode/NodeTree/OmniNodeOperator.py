@@ -176,6 +176,39 @@ class OP_IOItemRemove(Operator):
         sync_all_related_tree_io(tree)
         return {'FINISHED'}
 
+class OP_IOItemMove(Operator):
+    bl_idname = "ho.omni_ioitemmove"
+    bl_label = "Move IO Up/Down"
+
+    is_input: BoolProperty()  # type: ignore
+    is_Down: BoolProperty() # type: ignore
+
+    def execute(self, context):
+        tree = context.space_data.node_tree
+
+        direction = 1 if self.is_Down else -1
+
+        if self.is_input:
+            idx = tree.group_inputs_index
+            if idx < 0 or idx >= len(tree.group_inputs):
+                return {'CANCELLED'}
+            new_idx = idx + direction
+            if new_idx < 0 or new_idx >= len(tree.group_inputs):
+                return {'CANCELLED'}
+            tree.group_inputs.move(idx, new_idx)
+            tree.group_inputs_index = new_idx
+        else:
+            idx = tree.group_outputs_index
+            if idx < 0 or idx >= len(tree.group_outputs):
+                return {'CANCELLED'}
+            new_idx = idx + direction
+            if new_idx < 0 or new_idx >= len(tree.group_outputs):
+                return {'CANCELLED'}
+            tree.group_outputs.move(idx, new_idx)
+            tree.group_outputs_index = new_idx
+
+        sync_all_related_tree_io(tree)
+        return {'FINISHED'}
 
 class NodeSetDefaultSize(Operator):
     bl_idname = "ho.nodesetdefaultsize"
@@ -550,6 +583,7 @@ clss = [
     OP_IOItemAdd,
     OP_IOItemRemove,
     OmniTreeDestroy,
+    OP_IOItemMove,
 ]
 
 

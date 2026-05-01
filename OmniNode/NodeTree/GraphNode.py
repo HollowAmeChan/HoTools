@@ -6,7 +6,7 @@
 import bpy
 from typing import Any
 from .OmniNode import OmniNode
-from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd
+from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove
 from bpy.props import CollectionProperty,IntProperty
 
 from .OmniNodeTree import OmniNodeTree
@@ -206,6 +206,13 @@ class OmniGroupNodeInputs(OmniNode):
 
         remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
         remove.is_input = True
+
+        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
+        moveUp.is_input = True
+        moveUp.is_Down = False
+        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
+        moveUp.is_input = True
+        moveUp.is_Down = True
     
 class OmniGroupNodeOutputs(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Outputs"
@@ -251,6 +258,13 @@ class OmniGroupNodeOutputs(OmniNode):
 
         remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
         remove.is_input = False
+
+        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
+        moveUp.is_input = False
+        moveUp.is_Down = False
+        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
+        moveUp.is_input = False
+        moveUp.is_Down = True
 
 # class OmniGroupNodeRepeat(OmniNode):
 #     bl_idname = "HO_OmniNode_GroupNode_Repeat"
