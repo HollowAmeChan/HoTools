@@ -55,6 +55,71 @@ def restore_node_links(node: OmniNode, cache: list[dict[str, Any]]) -> None:
             except RuntimeError:
                 pass  # 已存在或非法连接
 
+def cache_nodesockets_defaultvalues(node: OmniNode) -> list[dict[str, Any]]:
+    def snapshot_default_value(value: Any) -> Any:
+        if isinstance(value, (str, bool, int, float)) or value is None:
+            return value
+
+        try:
+            return tuple(value)
+        except Exception:
+            pass
+
+        try:
+            return value.copy()
+        except Exception:
+            return value
+
+    cache: list[dict[str, Any]] = []
+
+    for is_output, sockets in ((False, node.inputs), (True, node.outputs)):
+        for sock in sockets:
+            try:
+                cache.append({
+                    "identifier": sock.identifier,
+                    "is_output": is_output,
+                    "value": snapshot_default_value(sock.default_value),
+                })
+            except Exception:
+                pass
+
+    return cache
+def restore_nodesockets_defaultvalues(node: OmniNode, cache: list[dict[str, Any]]) -> None:
+    def restore_default_value(sock: bpy.types.NodeSocket, cache_entry: dict[str, Any]) -> None:
+        value = cache_entry["value"]
+
+        try:
+            current_value = sock.default_value
+        except Exception:
+            return
+
+        if isinstance(current_value, (str, bool, int, float)) or current_value is None:
+            sock.default_value = value
+            return
+
+        try:
+            current_len = len(current_value)
+            value_len = len(value)
+        except Exception:
+            sock.default_value = value
+            return
+
+        if current_len != value_len:
+            return
+
+        sock.default_value = value
+
+    for item in cache:
+        sockets = node.outputs if item["is_output"] else node.inputs
+        sock = sockets.get(item["identifier"])
+        if not sock:
+            continue
+
+        try:
+            restore_default_value(sock, item)
+        except Exception:
+            pass
+
 class OmniGroupNode(OmniNode):
     # 参考Sverchok得知使用原生的逻辑会非常困难，因此放弃原生逻辑
     # https://blender.stackexchange.com/questions/58614/custom-nodetree-and-nodecustomgroup-and-bpy-ops-node-tree-path-parent
@@ -78,6 +143,7 @@ class OmniGroupNode(OmniNode):
         if not tree:return
 
         link_cache = cache_node_links(self)
+        default_values = cache_nodesockets_defaultvalues(self)
         self.inputs.clear()
         self.outputs.clear()
 
@@ -91,6 +157,7 @@ class OmniGroupNode(OmniNode):
             sock.hide_value = True
 
         restore_node_links(self, link_cache)
+        restore_nodesockets_defaultvalues(self,default_values)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         # 顶掉父级的绘制

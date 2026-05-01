@@ -6,6 +6,7 @@ from typing import Any
 import mathutils
 import fnmatch
 from . import _Color
+import re
 
 
 @omni(enable=True,
@@ -124,9 +125,34 @@ def matrix2vector(m: mathutils.Matrix) -> mathutils.Vector:
     _OUTPUT_NAME=["正则表达式"],
     omni_description="""
     该节点用于将glob表达式转换为正则表达式
+    规则：
+    *  匹配任意字符，但不包含 _
+    ** 匹配任意字符，包含 _
+    ?  匹配单个字符，但不包含 _
     """
 )
 def glob2regex(pattern: _OmniGlob) -> _OmniRegex:
     if not pattern:
         raise ValueError("glob表达式不能为空")
-    return fnmatch.translate(pattern)
+
+    regex = []
+    i = 0
+
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "*":
+            # ** 表示允许跨 _
+            if i + 1 < len(pattern) and pattern[i + 1] == "*":
+                regex.append(".*")
+                i += 2
+            else:
+                regex.append("[^_]*")
+                i += 1
+        elif c == "?":
+            regex.append("[^_]")
+            i += 1
+        else:
+            regex.append(re.escape(c))
+            i += 1
+
+    return "^" + "".join(regex) + "$"

@@ -137,14 +137,15 @@ class OP_IOItemAdd(Operator):
 
         if self.is_input:
             item = tree.group_inputs.add()
-            item.name = "Input"
             item.uid = self.generate_unique_uid(tree)
             tree.group_inputs_index = len(tree.group_inputs) - 1
+            item.name = "Input"
         else:
             item = tree.group_outputs.add()
-            item.name = "Output"
             item.uid = self.generate_unique_uid(tree)
             tree.group_outputs_index = len(tree.group_outputs) - 1
+            item.name = "Output"
+
 
         sync_all_related_tree_io(tree)
         return {'FINISHED'}
