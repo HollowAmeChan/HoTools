@@ -9,7 +9,7 @@ import blf
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 import gpu
-
+from collections import defaultdict
 if sys.version_info >= (3, 13):
     from ._Lib.py313.PIL import Image, ImageDraw, ImageFilter
 elif sys.version_info >= (3, 11):
@@ -1062,6 +1062,166 @@ class OP_MeshToImageEmpty(Operator):
 
         return {'FINISHED'}
 
+class OP_MergeOverlapping_VertexNormals(Operator):
+    bl_idname = "ho.merge_overlapping_vertexnormals"
+    bl_label = "合并最近顶点法线(仅法线)"
+    bl_description = "支持多物体同时编辑（未合并物体情况），仅合并法线不合并mesh，法线写入自定义法线"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    distancs:FloatProperty(name="间距",default=0.0001,min=0) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
+    def execute(self, context):
+        distance = self.distancs
+        if distance <= 0:
+            self.report({'WARNING'}, "间距必须大于 0")
+            return {'CANCELLED'}
+
+        edit_objs = [
+            obj for obj in context.objects_in_mode_unique_data
+            if obj.type == 'MESH'
+        ]
+
+        if not edit_objs:
+            return {'CANCELLED'}
+
+        # 退出编辑模式，让 mesh 数据同步
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        items = []
+        any_selected = False
+
+        for obj in edit_objs:
+            mesh = obj.data
+            mw = obj.matrix_world
+            normal_mat = mw.to_3x3().inverted().transposed()
+
+            if any(v.select and not v.hide for v in mesh.vertices):
+                any_selected = True
+
+            for v in mesh.vertices:
+                if v.hide:
+                    continue
+
+                items.append({
+                    "obj": obj,
+                    "mesh": mesh,
+                    "vi": v.index,
+                    "selected": v.select,
+                    "co": mw @ v.co,
+                    "normal_world": (normal_mat @ v.normal).normalized(),
+                })
+
+        # 如果有选中点，只处理选中点；否则处理全部点
+        if any_selected:
+            items = [it for it in items if it["selected"]]
+
+        if len(items) < 2:
+            bpy.ops.object.mode_set(mode='EDIT')
+            self.report({'INFO'}, "可处理的顶点少于 2 个")
+            return {'FINISHED'}
+
+        # ---------- 并查集 ----------
+        parent = list(range(len(items)))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        # ---------- 空间哈希找近邻 ----------
+        cell_size = distance
+        dist_sq = distance * distance
+        grid = defaultdict(list)
+
+        def cell_key(co):
+            return (
+                math.floor(co.x / cell_size),
+                math.floor(co.y / cell_size),
+                math.floor(co.z / cell_size),
+            )
+
+        for i, it in enumerate(items):
+            co = it["co"]
+            cx, cy, cz = cell_key(co)
+
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        key = (cx + dx, cy + dy, cz + dz)
+                        for j in grid.get(key, []):
+                            if (co - items[j]["co"]).length_squared <= dist_sq:
+                                union(i, j)
+
+            grid[(cx, cy, cz)].append(i)
+
+        groups = defaultdict(list)
+        for i in range(len(items)):
+            groups[find(i)].append(i)
+
+        # ---------- 计算每组平均世界法线 ----------
+        merged_count = 0
+        target_normals = defaultdict(dict)
+
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+
+            avg = Vector((0.0, 0.0, 0.0))
+            for idx in group:
+                avg += items[idx]["normal_world"]
+
+            if avg.length <= 1e-8:
+                continue
+
+            avg.normalize()
+            merged_count += len(group)
+
+            for idx in group:
+                it = items[idx]
+                obj :bpy.types.Object = it["obj"]
+
+                # 世界法线转回物体本地法线
+                local_normal = (obj.matrix_world.to_3x3().transposed() @ avg).normalized()
+                target_normals[obj][it["vi"]] = local_normal
+
+        # ---------- 写入 custom normals ----------
+        for obj, normal_map in target_normals.items():
+            mesh :bpy.types.Mesh = obj.data
+
+            normals = [v.normal.copy() for v in mesh.vertices]
+
+            for vi, n in normal_map.items():
+                normals[vi] = n
+
+            # 自定义法线通常需要 smooth face 才明显生效
+            for poly in mesh.polygons:
+                poly.use_smooth = True
+
+            if hasattr(mesh, "use_auto_smooth"):
+                mesh.use_auto_smooth = True
+
+            mesh.normals_split_custom_set_from_vertices(normals)
+            mesh.update()
+
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        self.report({'INFO'}, f"已合并 {merged_count} 个重叠/近邻顶点的法线")
+        return {'FINISHED'}
 
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
     """大纲视图右键菜单"""
@@ -1110,6 +1270,12 @@ def draw_in_VIEW3D_MT_edit_curve_context_menu(self, context: bpy.types.Context):
     layout: bpy.types.UILayout = self.layout
     row = layout.row(align=True)
 
+def draw_in_VIEW3D_MT_edit_mesh_merge(self, context: bpy.types.Context):
+    """编辑模式，M合并菜单内"""
+    layout: bpy.types.UILayout = self.layout
+    row = layout.row(align=True)
+    row.operator(OP_MergeOverlapping_VertexNormals.bl_idname)
+
 
 class VIEW3D_MT_edit_mesh_hotools(Menu):
     """编辑模式右键时的菜单追加"""
@@ -1144,7 +1310,7 @@ cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
        OP_MeshToImageEmpty,
        OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops,
-       OP_CreatBoneChainByMeshFlow,
+       OP_CreatBoneChainByMeshFlow,OP_MergeOverlapping_VertexNormals
        ]
 
 
@@ -1160,6 +1326,7 @@ def register():
     bpy.types.VIEW3D_MT_edit_curve_context_menu.append(
         draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.append(draw_in_TOPBAR_MT_editor_menus)
+    bpy.types.VIEW3D_MT_edit_mesh_merge.append(draw_in_VIEW3D_MT_edit_mesh_merge)
 
     # 快捷键设置可以被preference保存，不用担心注册阶段写死
     wm = bpy.context.window_manager
@@ -1194,5 +1361,7 @@ def unregister():
     bpy.types.VIEW3D_MT_edit_curve_context_menu.remove(
         draw_in_VIEW3D_MT_edit_curve_context_menu)
     # bpy.types.TOPBAR_MT_editor_menus.remove(draw_in_TOPBAR_MT_editor_menus)
+    bpy.types.VIEW3D_MT_edit_mesh_merge.remove(draw_in_VIEW3D_MT_edit_mesh_merge)
+
 
     ureg_props()
