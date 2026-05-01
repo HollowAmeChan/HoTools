@@ -2,7 +2,6 @@
 
 # TODO:目前的IO节点不支持自动变换type（以及socket.name）,导致非常难以使用。但是为了这个功能需要写巨量多的代码得不偿失
 # TODO:缺少编译分支节点（未来再支持）
-# TODO:缺少io的上下移动功能，可能会有一些bug
 import bpy
 from typing import Any
 from .OmniNode import OmniNode
