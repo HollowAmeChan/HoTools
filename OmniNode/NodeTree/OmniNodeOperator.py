@@ -228,6 +228,29 @@ class LayerRunning(Operator):
         tree.run()
         return {'FINISHED'}
 
+class OmniTreeDestroy(Operator):
+    bl_idname = "ho.omninodetree_destroy"
+    bl_label = "销毁树"
+    bl_description = "销毁当前 OmniNodeTree 数据块"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context: bpy.types.Context):
+        space = context.space_data
+
+        if (not hasattr(space, "node_tree")) or (not space.node_tree):
+            return {'FINISHED'}
+
+        tree = space.node_tree
+        tree_name = tree.name
+
+        bpy.data.node_groups.remove(tree, do_unlink=True)
+
+        self.report({'INFO'}, f"已销毁节点树: {tree_name}")
+
+        return {'FINISHED'}
 
 class OmniNodeRebuild(Operator):
     # TODO: 诡异bug，重建以后会自动拥有bl_icon，此问题在pr中被反复讨论，是有关customgroupnode的？
@@ -470,7 +493,7 @@ class OmniNodeRebuild(Operator):
 
 
 def draw_in_NODE_MT_editor_menus(self, context: Context):
-    """OmniNode顶部运行按钮"""
+    """OmniNode树顶栏左侧"""
     space = context.space_data
     if not space or space.type != 'NODE_EDITOR':
         return
@@ -486,6 +509,7 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
 
 
 def draw_in_NODE_MT_context_menu(self, context: Context):
+    """OMNINODE树内右键"""
     space = context.space_data
     if not space or space.type != 'NODE_EDITOR':
         return
@@ -504,6 +528,17 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
     label = "重建所选节点" if target_count > 1 else "重建节点"
     layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")
 
+def draw_in_NODE_HT_header(self, context: Context):
+    """OMNINODE树顶栏右侧"""
+    space = context.space_data
+    if not space or space.type != 'NODE_EDITOR':
+        return
+    tree = getattr(space, "node_tree", None)
+    if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
+        return
+    layout: bpy.types.UILayout = self.layout
+    layout.operator(OmniTreeDestroy.bl_idname,text="销毁树")
+
 
 clss = [
     NodeSetDefaultSize,
@@ -514,6 +549,7 @@ clss = [
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
     OP_IOItemRemove,
+    OmniTreeDestroy,
 ]
 
 
@@ -525,6 +561,7 @@ def register():
         print(__file__ + " register failed!!!")
     bpy.types.NODE_MT_editor_menus.append(draw_in_NODE_MT_editor_menus)
     bpy.types.NODE_MT_context_menu.append(draw_in_NODE_MT_context_menu)
+    bpy.types.NODE_HT_header.append(draw_in_NODE_HT_header)
 
 
 def unregister():
@@ -535,3 +572,4 @@ def unregister():
         print(__file__ + " unregister failed!!!")
     bpy.types.NODE_MT_editor_menus.remove(draw_in_NODE_MT_editor_menus)
     bpy.types.NODE_MT_context_menu.remove(draw_in_NODE_MT_context_menu)
+    bpy.types.NODE_HT_header.remove(draw_in_NODE_HT_header)
