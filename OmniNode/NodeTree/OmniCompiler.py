@@ -1,5 +1,5 @@
-# This file compiles OmniNode trees into a simple runtime instruction list.
-# Group nodes are treated as subtree bridges instead of normal function nodes.
+# 该文件将 OmniNode 树编译成简单的运行时指令列表。
+# 组节点被视为子树桥而不是普通的功能节点。
 
 from .OmniDebug import OmniDebug
 
