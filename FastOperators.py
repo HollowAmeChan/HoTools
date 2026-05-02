@@ -506,9 +506,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         default=True
     )  # type: ignore
 
-    # ---------------------------------------------------
     # 获取所有连通 flow
-    # ---------------------------------------------------
 
     def get_edge_flows(self, context):
         import bmesh
@@ -612,7 +610,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 all_chains.append((chain_points, is_closed))
 
         return all_chains
-    # ---------------------------------------------------
 
     def resample_chain(self, pts):
 
@@ -646,10 +643,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         result.append(pts[-1])
         return result
-
-    # ---------------------------------------------------
-    # 方向处理
-    # ---------------------------------------------------
 
     def apply_direction(self, chain):
 
@@ -694,8 +687,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         return points
 
-    # ---------------------------------------------------
-
     def update_preview(self, context):
 
         self.preview_points = []
@@ -706,10 +697,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 self.preview_points.append((sampled, is_closed))
 
         context.area.tag_redraw()
-
-    # ---------------------------------------------------
-    # 绘制
-    # ---------------------------------------------------
 
     def draw_preview(self):
 
@@ -800,8 +787,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         gpu.state.line_width_set(1.0)
         gpu.state.blend_set('NONE')
 
-    # ---------------------------------------------------
-
     def draw_text(self):
         font_id = 0
         blf.size(font_id, 16)
@@ -814,44 +799,32 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
         blf.shadow_offset(font_id, 1, -1)
 
-        # ---------------- 第一行 ----------------
         key_text = "滚轮:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y, 0)
         blf.draw(font_id, key_text)
-
-        # 获取宽度
         key_width, _ = blf.dimensions(font_id, key_text)
-
-        # 描述 + 数值（白色）
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
         blf.position(font_id, x + key_width, y, 0)
         blf.draw(font_id, f"分段: {self.num_segments}")
 
-        # ---------------- 第二行 ----------------
         key_text = "F键:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y - 22, 0)
         blf.draw(font_id, key_text)
-
         key_width, _ = blf.dimensions(font_id, key_text)
-
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
         blf.position(font_id, x + key_width, y - 22, 0)
         blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
-        # ---------------- 第三行 ----------------
         key_text = "R键:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y - 44, 0)
         blf.draw(font_id, key_text)
-
         key_width, _ = blf.dimensions(font_id, key_text)
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
         blf.position(font_id, x + key_width, y - 44, 0)
         blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
-
-    # ---------------------------------------------------
 
     def modal(self, context, event):
 
@@ -890,14 +863,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         return {'RUNNING_MODAL'}
 
-    # ---------------------------------------------------
-
     def finish(self, context):
         bpy.types.SpaceView3D.draw_handler_remove(self._handle_3d, 'WINDOW')
         bpy.types.SpaceView3D.draw_handler_remove(self._handle_text, 'WINDOW')
         context.area.tag_redraw()
-
-    # ---------------------------------------------------
 
     def create_bones(self, context):
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -929,8 +898,8 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 previous = bone
                 new_bone_names.append(bone.name)  # 记录顺序
 
-        # --- 自动重命名的核心逻辑 ---
         if self.auto_rename:
+            arm_obj.data.show_names = True
             # 确保在编辑模式下操作
             bpy.ops.armature.select_all(action='DESELECT')
 
@@ -952,7 +921,6 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             bpy.ops.ho.rename_rulerenameboneselected()
         else:
             bpy.ops.object.mode_set(mode='OBJECT')
-    # ---------------------------------------------------
 
     def invoke(self, context, event):
 
