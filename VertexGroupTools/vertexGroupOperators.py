@@ -49,9 +49,7 @@ def vertex_group_listener(scene):
     VG_LISTENER_CACHE["active_vg"] = active_name
     if DEBUG:
         print(f"[VG Sync] Active Group: {active_name}")
-    # =====================================================
     # 执行同步
-    # =====================================================
     for obj in context.selected_objects:
         if obj == active_obj:
             continue
@@ -749,16 +747,12 @@ class VGSwitchHUD:
     _start_time = 0.0
     _duration = 1.0
 
-    # ---------------------------------
     # 防翻译
-    # ---------------------------------
     @staticmethod
     def no_i18n(name):
         return "\u200B".join(name)
 
-    # ---------------------------------
     # 外部调用
-    # ---------------------------------
     @staticmethod
     def show(context, bone_name: str):
 
@@ -806,9 +800,7 @@ class VGSwitchHUD:
             VGSwitchHUD._timer_running = True
             bpy.app.timers.register(VGSwitchHUD._timer)
 
-    # ---------------------------------
     # Timer 驱动刷新
-    # ---------------------------------
     @staticmethod
     def _timer():
 
@@ -824,9 +816,7 @@ class VGSwitchHUD:
 
         return 0.016  # 60fps
 
-    # ---------------------------------
     # 3D 绘制（骨骼）
-    # ---------------------------------
     @staticmethod
     def _draw_3d():
         if VGSwitchHUD._bone_head is None or VGSwitchHUD._bone_tail is None:
@@ -861,9 +851,7 @@ class VGSwitchHUD:
         gpu.state.blend_set('NONE')
         gpu.state.depth_test_set('LESS_EQUAL')
 
-    # ---------------------------------
     # 2D 绘制（文字）
-    # ---------------------------------
     @staticmethod
     def _draw_2d():
 
@@ -897,9 +885,7 @@ class VGSwitchHUD:
         blf.position(font_id, x, y, 0)
         blf.draw(font_id, text)
 
-    # ---------------------------------
     # 清理
-    # ---------------------------------
     @staticmethod
     def _remove():
 
@@ -1193,7 +1179,6 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
 
             avg = sum(neigh_ws) / len(neigh_ws)
 
-            # ---------- 稳定锐化公式 ----------
             delta = w - avg
             w_new = w + delta * factor
 
@@ -1202,7 +1187,6 @@ class OP_VertexGroupTools_SharpenWeight(Operator):
 
             # clamp
             w_new = max(0.0, min(1.0, w_new))
-            # ----------------------------------
 
             new_weights[v] = w_new
 
@@ -1309,7 +1293,6 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
                     avg = sum(neigh_ws) / len(neigh_ws)
                     w = weights[v.index][g]
 
-                    # -------- 稳定锐化公式 --------
                     delta = w - avg
                     w_new = w + delta * self.factor
 
@@ -1318,7 +1301,6 @@ class OP_VertexGroupTools_SharpenWeight_AllBone(Operator):
 
                     # clamp
                     w_new = max(0.0, min(1.0, w_new))
-                    # -----------------------------
 
                     new_w[g] = w_new
                 else:
