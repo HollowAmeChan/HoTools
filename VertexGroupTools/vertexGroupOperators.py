@@ -488,13 +488,242 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
 
     use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
     is_RightGroups: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
+    batch_pair_count: IntProperty(default=0, options={'HIDDEN'}) # type: ignore
+    batch_preview: StringProperty(default="", options={'HIDDEN'}) # type: ignore
+
+    MIRROR_SUFFIX_MAP = {
+        "_L": ("LEFT", "_R"),
+        ".L": ("LEFT", ".R"),
+        "_l": ("LEFT", "_r"),
+        ".l": ("LEFT", ".r"),
+        "_R": ("RIGHT", "_L"),
+        ".R": ("RIGHT", ".L"),
+        "_r": ("RIGHT", "_l"),
+        ".r": ("RIGHT", ".l"),
+    }
+
+    def _get_armature_bone_names(self, obj):
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定骨骼")
+            return None
+        return {b.name for b in arm.data.bones}
+
+    def _parse_group_side(self, group_name):
+        for suffix, (side, mirror_suffix) in self.MIRROR_SUFFIX_MAP.items():
+            if group_name.endswith(suffix):
+                base_name = group_name[:-len(suffix)]
+                return side, f"{base_name}{mirror_suffix}"
+        return None, None
+
+    def _get_target_group_name(self, group_name):
+        _, target_name = self._parse_group_side(group_name)
+        if target_name:
+            return target_name
+
+        flipped_name = bpy.utils.flip_name(group_name)
+        if flipped_name and flipped_name != group_name:
+            return flipped_name
+        return None
+
+    def _collect_batch_pairs(self, obj, bone_names, source_side):
+        pairs = []
+        for vg in obj.vertex_groups:
+            side, target_name = self._parse_group_side(vg.name)
+            if side != source_side or not target_name:
+                continue
+            if vg.name not in bone_names or target_name not in bone_names:
+                continue
+            pairs.append((vg.name, target_name))
+        return pairs
+
+    def _build_mirror_cache(self, obj):
+        obj.update_from_editmode()
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+        bm.verts.ensure_lookup_table()
+
+        kd = KDTree(len(bm.verts))
+        for v in bm.verts:
+            kd.insert(v.co, v.index)
+        kd.balance()
+
+        mirror_map = {}
+        total = matched = not_found = midline = 0
+
+        for v in bm.verts:
+            if not v.select:
+                continue
+
+            total += 1
+
+            if abs(v.co.x) < self.midline_epsilon:
+                mirror_map[v.index] = v.index
+                midline += 1
+                matched += 1
+                continue
+
+            mirrored_co = v.co.copy()
+            mirrored_co.x *= -1
+
+            _, mirror_idx, dist = kd.find(mirrored_co)
+            if dist > self.tolerance:
+                not_found += 1
+                continue
+
+            mirror_vert = bm.verts[mirror_idx]
+            if (v.co.x > 0 and mirror_vert.co.x > 0) or \
+               (v.co.x < 0 and mirror_vert.co.x < 0):
+                not_found += 1
+                continue
+
+            mirror_map[v.index] = mirror_idx
+            matched += 1
+
+        deform_layer = bm.verts.layers.deform.verify()
+        stats = {
+            "total": total,
+            "matched": matched,
+            "not_found": not_found,
+            "midline": midline,
+        }
+        return mesh, bm, deform_layer, mirror_map, stats
+
+    def _apply_group_mirror(self, bm, deform_layer, mirror_map, source_vg, target_vg):
+        src_index = source_vg.index
+        dst_index = target_vg.index
+        to_write = []
+
+        for src_vert_idx, dst_vert_idx in mirror_map.items():
+            src_weights = bm.verts[src_vert_idx][deform_layer]
+            if src_index in src_weights:
+                to_write.append((dst_vert_idx, src_weights[src_index]))
+            else:
+                to_write.append((dst_vert_idx, None))
+
+        for dst_vert_idx, weight_value in to_write:
+            dst_weights = bm.verts[dst_vert_idx][deform_layer]
+            if weight_value is not None:
+                dst_weights[dst_index] = weight_value
+            elif dst_index in dst_weights:
+                del dst_weights[dst_index]
+
+    def _execute_single_group(self, obj, active_vg, bone_names):
+        if active_vg.name not in bone_names:
+            self.report({'WARNING'}, f"当前顶点组 {active_vg.name} 不是骨骼对应组")
+            return {'CANCELLED'}
+
+        target_name = self._get_target_group_name(active_vg.name)
+        if not target_name:
+            self.report({'WARNING'}, "未检测到有效左右标识")
+            return {'CANCELLED'}
+
+        if target_name not in bone_names:
+            self.report({'WARNING'}, f"目标骨骼 {target_name} 不存在（已阻止自动创建）")
+            return {'CANCELLED'}
+
+        if target_name not in obj.vertex_groups:
+            obj.vertex_groups.new(name=target_name)
+
+        target_vg = obj.vertex_groups[target_name]
+        mesh, bm, deform_layer, mirror_map, stats = self._build_mirror_cache(obj)
+        self._apply_group_mirror(bm, deform_layer, mirror_map, active_vg, target_vg)
+
+        bm.normal_update()
+        bmesh.update_edit_mesh(mesh, loop_triangles=False)
+        obj.update_from_editmode()
+        obj.vertex_groups.active_index = target_vg.index
+
+        self.report(
+            {'INFO'},
+            f"{active_vg.name} -> {target_vg.name} | 总 {stats['total']} | 成功 {stats['matched']} | 中线 {stats['midline']} | 未找到 {stats['not_found']}"
+        )
+        return {'FINISHED'}
+
+    def _execute_batch(self, obj, bone_names):
+        active_vg = obj.vertex_groups.active
+        if not active_vg:
+            self.report({'WARNING'}, "请先选择一个激活的顶点组")
+            return {'CANCELLED'}
+
+        source_side, _ = self._parse_group_side(active_vg.name)
+        if source_side is None:
+            self.report({'WARNING'}, "Shift 批处理模式需要当前激活组带有 L/R 后缀")
+            return {'CANCELLED'}
+
+        self.is_RightGroups = (source_side == "RIGHT")
+        pairs = self._collect_batch_pairs(obj, bone_names, source_side)
+        if not pairs:
+            self.report({'WARNING'}, "未找到可批量匹配的同侧左右骨骼组")
+            return {'CANCELLED'}
+
+        for _, target_name in pairs:
+            if target_name not in obj.vertex_groups:
+                obj.vertex_groups.new(name=target_name)
+
+        mesh, bm, deform_layer, mirror_map, stats = self._build_mirror_cache(obj)
+        for source_name, target_name in pairs:
+            source_vg = obj.vertex_groups.get(source_name)
+            target_vg = obj.vertex_groups.get(target_name)
+            if source_vg and target_vg:
+                self._apply_group_mirror(bm, deform_layer, mirror_map, source_vg, target_vg)
+
+        bm.normal_update()
+        bmesh.update_edit_mesh(mesh, loop_triangles=False)
+        obj.update_from_editmode()
+
+        direction_text = "R -> L" if self.is_RightGroups else "L -> R"
+        self.report(
+            {'INFO'},
+            f"批量同步 {direction_text} | 组 {len(pairs)} | 总 {stats['total']} | 成功 {stats['matched']} | 中线 {stats['midline']} | 未找到 {stats['not_found']}"
+        )
+        return {'FINISHED'}
 
     def invoke(self, context, event):
         # 检测 Shift
         self.use_shift = event.shift
         if event.shift:
-            return context.window_manager.invoke_confirm(self, event)
+            obj = context.active_object
+            if not obj or obj.type != 'MESH':
+                return {'CANCELLED'}
+
+            active_vg = obj.vertex_groups.active
+            if not active_vg:
+                self.report({'WARNING'}, "请先选择一个激活的顶点组")
+                return {'CANCELLED'}
+
+            bone_names = self._get_armature_bone_names(obj)
+            if bone_names is None:
+                return {'CANCELLED'}
+
+            source_side, _ = self._parse_group_side(active_vg.name)
+            if source_side is None:
+                self.report({'WARNING'}, "Shift 批处理模式需要当前激活组带有 L/R 后缀")
+                return {'CANCELLED'}
+
+            self.is_RightGroups = (source_side == "RIGHT")
+            pairs = self._collect_batch_pairs(obj, bone_names, source_side)
+            if not pairs:
+                self.report({'WARNING'}, "未找到可批量匹配的同侧左右骨骼组")
+                return {'CANCELLED'}
+
+            self.batch_pair_count = len(pairs)
+            self.batch_preview = " | ".join([f"{src} -> {dst}" for src, dst in pairs[:3]])
+            return context.window_manager.invoke_props_dialog(self, width=420)
         return self.execute(context)
+
+    def draw(self, context):
+        if not self.use_shift:
+            return
+
+        layout = self.layout
+        col = layout.column(align=True)
+        direction_text = "R -> L" if self.is_RightGroups else "L -> R"
+        col.label(text="将自动扫描同侧命名组并批量镜像到对侧")
+        col.label(text=f"方向: {direction_text} | 组数: {self.batch_pair_count}", translate=False)
+        col.label(text="支持后缀: _L _R .L .R _l _r .l .r", translate=False)
+        if self.batch_preview:
+            col.label(text=self.batch_preview, translate=False)
     
     @classmethod
     def poll(cls, context):
@@ -503,7 +732,18 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
 
     def execute(self, context):
         obj = context.active_object
+        if not obj:
+            return {'CANCELLED'}
+
+        bone_names = self._get_armature_bone_names(obj)
+        if bone_names is None:
+            return {'CANCELLED'}
+
+        if self.use_shift:
+            return self._execute_batch(obj, bone_names)
         vg = obj.vertex_groups.active
+        if vg:
+            return self._execute_single_group(obj, vg, bone_names)
 
         if not vg:
             self.report({'WARNING'}, "请先选择一个激活的顶点组")
