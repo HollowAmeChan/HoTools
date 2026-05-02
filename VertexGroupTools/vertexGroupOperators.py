@@ -485,11 +485,15 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
 
     tolerance: FloatProperty(name="匹配容差",default=0.001,min=0.00001,max=1.0) # type: ignore
     midline_epsilon: FloatProperty(name="中线阈值",default=1e-6,min=1e-8,max=0.01) # type: ignore
+
     use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
+    is_RightGroups: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
 
     def invoke(self, context, event):
         # 检测 Shift
         self.use_shift = event.shift
+        if event.shift:
+            return context.window_manager.invoke_confirm(self, event)
         return self.execute(context)
     
     @classmethod
