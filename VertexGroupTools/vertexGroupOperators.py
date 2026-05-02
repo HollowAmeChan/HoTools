@@ -477,23 +477,21 @@ class OP_VertexGroupTools_BlendFromGroup(Operator):
 class OP_VertexGroupTools_mirror_to_other_group(Operator):
     bl_idname = "ho.vertex_group_mirror_to_other"
     bl_label = "镜像权重(仅骨骼权重)到对侧组，无自动归一化"
-    bl_description = "仅处理选中中的顶点，将当前顶点组的权重镜像到对侧的骨骼权重组，不会自动归一化"
+    bl_description = """
+    按住shift进入批量模式（批量处理L/R组）
+    仅处理选中中的顶点，将当前顶点组的权重镜像到对侧的骨骼权重组，不会自动归一化
+    """
     bl_options = {'REGISTER', 'UNDO'}
 
-    tolerance: FloatProperty(
-        name="匹配容差",
-        default=0.001,
-        min=0.00001,
-        max=1.0
-    ) # type: ignore
+    tolerance: FloatProperty(name="匹配容差",default=0.001,min=0.00001,max=1.0) # type: ignore
+    midline_epsilon: FloatProperty(name="中线阈值",default=1e-6,min=1e-8,max=0.01) # type: ignore
+    use_shift: BoolProperty(default=False, options={'HIDDEN'}) # type: ignore
 
-    midline_epsilon: FloatProperty(
-        name="中线阈值",
-        default=1e-6,
-        min=1e-8,
-        max=0.01
-    ) # type: ignore
-
+    def invoke(self, context, event):
+        # 检测 Shift
+        self.use_shift = event.shift
+        return self.execute(context)
+    
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -618,7 +616,7 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
         )
 
         return {'FINISHED'}
-    
+
 class OP_VertexGroupTools_balanceVertexGroupWeight(Operator):
     """对称选中顶点的顶点组权重到 X 轴另一侧"""
     bl_idname = "ho.balance_vertex_group_weight"
