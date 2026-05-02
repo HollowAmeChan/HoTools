@@ -827,7 +827,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         for preview_data in self.preview_points:
 
-            points, _ = self.apply_direction(
+            points, segment_normals = self.apply_direction(
                 preview_data["points"],
                 preview_data["segment_normals"],
             )
@@ -898,6 +898,34 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             })
 
             arrow_batch.draw(shader)
+
+            if self.align_roll_to_normal:
+                z_axis_coords = []
+                z_axis_colors = []
+
+                for i in range(total):
+                    head = points[i]
+                    tail = points[i + 1]
+                    segment_normal = segment_normals[i] if segment_normals else None
+                    z_axis = self.get_roll_align_vector(head, tail, segment_normal)
+
+                    if z_axis is None:
+                        continue
+
+                    mid = (head + tail) * 0.5
+                    z_axis_length = (tail - head).length * 0.2
+                    z_axis_end = mid + z_axis * z_axis_length
+                    z_col = (0.2, 0.55, 1.0, 1.0)
+
+                    z_axis_coords.extend([mid, z_axis_end])
+                    z_axis_colors.extend([z_col, z_col])
+
+                if z_axis_coords:
+                    z_axis_batch = batch_for_shader(shader, 'LINES', {
+                        "pos": z_axis_coords,
+                        "color": z_axis_colors,
+                    })
+                    z_axis_batch.draw(shader)
 
         gpu.state.line_width_set(1.0)
         gpu.state.blend_set('NONE')
