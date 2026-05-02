@@ -508,6 +508,88 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
     # 获取所有连通 flow
 
+    align_roll_to_normal: BoolProperty(
+        name="扭转对齐法线",
+        description="创建骨骼时让每段骨骼的扭转对齐到对应边的法线",
+        default=False
+    )  # type: ignore
+
+    def get_edge_world_normal(self, normal_matrix, edge):
+        normal_sum = Vector((0.0, 0.0, 0.0))
+
+        for face in edge.link_faces:
+            normal_sum += (normal_matrix @ face.normal).normalized()
+
+        if normal_sum.length <= 1e-6:
+            return None
+
+        return normal_sum.normalized()
+
+    def build_sampled_segment_normals(self, lengths, edge_normals, total_length):
+        if not edge_normals or len(edge_normals) != len(lengths):
+            return [None] * self.num_segments
+
+        sampled_normals = []
+        edge_ranges = []
+        start = 0.0
+
+        for length, normal in zip(lengths, edge_normals):
+            edge_ranges.append((start, start + length, normal))
+            start += length
+
+        step = total_length / self.num_segments
+
+        for index in range(self.num_segments):
+            seg_start = index * step
+            seg_end = total_length if index == self.num_segments - 1 else (index + 1) * step
+            normal_sum = Vector((0.0, 0.0, 0.0))
+
+            for edge_start, edge_end, edge_normal in edge_ranges:
+                if edge_normal is None:
+                    continue
+
+                overlap = min(seg_end, edge_end) - max(seg_start, edge_start)
+                if overlap > 1e-6:
+                    normal_sum += edge_normal * overlap
+
+            if normal_sum.length <= 1e-6:
+                center = (seg_start + seg_end) * 0.5
+                for edge_start, edge_end, edge_normal in edge_ranges:
+                    if edge_normal is None:
+                        continue
+                    if edge_start - 1e-6 <= center <= edge_end + 1e-6:
+                        normal_sum = edge_normal.copy()
+                        break
+
+            sampled_normals.append(
+                normal_sum.normalized() if normal_sum.length > 1e-6 else None
+            )
+
+        return sampled_normals
+
+    def get_roll_align_vector(self, head, tail, normal):
+        axis = tail - head
+        if axis.length <= 1e-6:
+            return None
+
+        axis.normalize()
+
+        candidates = []
+        if normal is not None and normal.length > 1e-6:
+            candidates.append(normal)
+        candidates.extend((
+            Vector((0.0, 0.0, 1.0)),
+            Vector((1.0, 0.0, 0.0)),
+            Vector((0.0, 1.0, 0.0)),
+        ))
+
+        for candidate in candidates:
+            projected = candidate - axis * axis.dot(candidate)
+            if projected.length > 1e-6:
+                return projected.normalized()
+
+        return None
+
     def get_edge_flows(self, context):
         import bmesh
         obj = context.active_object
@@ -524,6 +606,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         unvisited = set(selected_edges)
         world = obj.matrix_world
+        normal_matrix = world.to_3x3().inverted().transposed()
         all_chains = []
 
         # 2. 提取选择历史中的边，作为排序种子
@@ -585,6 +668,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
             # --- 按照拓扑顺序排列顶点 ---
             ordered_verts = [current_vert]
+            ordered_edge_normals = []
             visited_edges_in_comp = set()
 
             while True:
@@ -598,6 +682,9 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                     break
 
                 visited_edges_in_comp.add(next_edge)
+                ordered_edge_normals.append(
+                    self.get_edge_world_normal(normal_matrix, next_edge)
+                )
                 # 移动到下一个顶点
                 v_other = next_edge.other_vert(current_vert)
                 current_vert = v_other
@@ -607,11 +694,15 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             chain_points = [world @ v.co.copy() for v in ordered_verts]
 
             if len(chain_points) > 1:
-                all_chains.append((chain_points, is_closed))
+                all_chains.append({
+                    "points": chain_points,
+                    "edge_normals": ordered_edge_normals,
+                    "is_closed": is_closed,
+                })
 
         return all_chains
 
-    def resample_chain(self, pts):
+    def resample_chain(self, pts, edge_normals=None):
 
         if len(pts) < 2:
             return None
@@ -623,6 +714,9 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             l = (pts[i + 1] - pts[i]).length
             lengths.append(l)
             total += l
+
+        if total <= 1e-6:
+            return None
 
         step = total / self.num_segments
 
@@ -642,18 +736,24 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             result.append(pts[index] + direction * remain)
 
         result.append(pts[-1])
-        return result
+        sampled_normals = self.build_sampled_segment_normals(
+            lengths, edge_normals, total
+        )
+        return result, sampled_normals
 
-    def apply_direction(self, chain):
+    def apply_direction(self, chain, segment_normals=None):
 
         points = list(chain)
+        normals = list(segment_normals) if segment_normals is not None else None
 
         if self.direction_mode == 'FORWARD':
-            return points
+            return (points, normals) if normals is not None else points
 
         if self.direction_mode == 'REVERSE':
             points.reverse()
-            return points
+            if normals is not None:
+                normals.reverse()
+            return (points, normals) if normals is not None else points
 
         if self.direction_mode == 'CURSOR':
 
@@ -667,8 +767,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
             if d_start > d_end:
                 points.reverse()
+                if normals is not None:
+                    normals.reverse()
 
-            return points
+            return (points, normals) if normals is not None else points
 
         if self.direction_mode == 'CURSORMINUS':
 
@@ -682,19 +784,29 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
             if d_start < d_end:
                 points.reverse()
+                if normals is not None:
+                    normals.reverse()
 
-            return points
+            return (points, normals) if normals is not None else points
 
-        return points
+        return (points, normals) if normals is not None else points
 
     def update_preview(self, context):
 
         self.preview_points = []
 
-        for chain, is_closed in self.base_chains:
-            sampled = self.resample_chain(chain)
+        for chain_data in self.base_chains:
+            sampled = self.resample_chain(
+                chain_data["points"],
+                chain_data["edge_normals"],
+            )
             if sampled:
-                self.preview_points.append((sampled, is_closed))
+                sampled_points, sampled_normals = sampled
+                self.preview_points.append({
+                    "points": sampled_points,
+                    "segment_normals": sampled_normals,
+                    "is_closed": chain_data["is_closed"],
+                })
 
         context.area.tag_redraw()
 
@@ -713,9 +825,12 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         view_dir = rv3d.view_rotation @ Vector((0, 0, -1))
 
-        for chain, is_closed in self.preview_points:
+        for preview_data in self.preview_points:
 
-            points = self.apply_direction(chain)
+            points, _ = self.apply_direction(
+                preview_data["points"],
+                preview_data["segment_normals"],
+            )
             total = len(points) - 1
             if total <= 0:
                 continue
@@ -826,6 +941,18 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x + key_width, y - 44, 0)
         blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
 
+        key_text = "N键:"
+        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+        blf.position(font_id, x, y - 66, 0)
+        blf.draw(font_id, key_text)
+        key_width, _ = blf.dimensions(font_id, key_text)
+        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+        blf.position(font_id, x + key_width, y - 66, 0)
+        blf.draw(
+            font_id,
+            f"扭转对齐法线: {'开' if self.align_roll_to_normal else '关'}"
+        )
+
     def modal(self, context, event):
 
         if event.type == 'MOUSEMOVE':
@@ -861,6 +988,10 @@ class OP_CreatBoneChainByMeshFlow(Operator):
             self.auto_rename = not self.auto_rename
             context.area.tag_redraw()
 
+        if event.type == 'N' and event.value == 'PRESS':
+            self.align_roll_to_normal = not self.align_roll_to_normal
+            context.area.tag_redraw()
+
         return {'RUNNING_MODAL'}
 
     def finish(self, context):
@@ -881,8 +1012,11 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         # 用于存储所有新生成的骨骼名，保持创建顺序
         new_bone_names = []
 
-        for chain_index, (chain, is_closed) in enumerate(self.preview_points):
-            points = self.apply_direction(chain)
+        for chain_index, preview_data in enumerate(self.preview_points):
+            points, segment_normals = self.apply_direction(
+                preview_data["points"],
+                preview_data["segment_normals"],
+            )
             previous = None
 
             for i in range(len(points) - 1):
@@ -890,6 +1024,15 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 bone = arm_data.edit_bones.new(bone_name)
                 bone.head = points[i]
                 bone.tail = points[i + 1]
+
+                if self.align_roll_to_normal:
+                    align_vector = self.get_roll_align_vector(
+                        bone.head,
+                        bone.tail,
+                        segment_normals[i] if segment_normals else None,
+                    )
+                    if align_vector is not None:
+                        bone.align_roll(align_vector)
 
                 if previous:
                     bone.parent = previous
