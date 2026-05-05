@@ -427,6 +427,33 @@ def linear_channel_to_srgb(c):
 def linear_to_srgb(color):
     return [linear_channel_to_srgb(c) for c in color]
 
+def get_active_corner_color_attribute(mesh, create_if_missing=True):
+    if len(mesh.color_attributes) == 0:
+        if not create_if_missing:
+            return None
+        color_attr = mesh.color_attributes.new(
+            name="Col", type='BYTE_COLOR', domain='CORNER')
+        mesh.color_attributes.active_color_index = len(mesh.color_attributes) - 1
+        return color_attr
+
+    color_index = mesh.color_attributes.active_color_index
+    color_attr = mesh.color_attributes[color_index]
+    if color_attr.domain != 'CORNER':
+        raise RuntimeError("当前激活的顶点色层不是 Face Corner 类型")
+
+    return color_attr
+
+def get_active_corner_color_data(mesh, create_if_missing=True):
+    color_attr = get_active_corner_color_attribute(mesh, create_if_missing)
+    if color_attr is None:
+        return None
+    return color_attr.data
+
+def get_color_data_value(color_data):
+    if hasattr(color_data, "color_srgb"):
+        return color_data.color_srgb
+    return color_data.color
+
 class setMeshVertexColor(Operator):
     """
     给选中网格指定顶点色
@@ -455,10 +482,7 @@ class setMeshVertexColor(Operator):
         mesh = obj.data
         bm = bmesh.from_edit_mesh(mesh)
 
-        active_color = mesh.color_attributes.active
-        if active_color is None:
-            active_color = mesh.color_attributes.new(
-                name="Col", type='BYTE_COLOR', domain='CORNER')
+        active_color = get_active_corner_color_attribute(mesh)
         color_layer = bm.loops.layers.color.get(active_color.name)
         if color_layer is None:
             color_layer = bm.loops.layers.color.new(active_color.name)
@@ -497,14 +521,18 @@ class chooseSameVertexColorMesh(Operator):
 
         bpy.ops.object.mode_set(mode="OBJECT")
 
-        colors = obj.data.vertex_colors.active.data
+        colors = get_active_corner_color_data(obj.data, create_if_missing=False)
+        if colors is None:
+            self.report({'WARNING'}, "当前没有可用的顶点色层")
+            bpy.ops.object.editmode_toggle()
+            return {'CANCELLED'}
         selected_polygons = list(filter(lambda p: p.select, obj.data.polygons))
 
         if len(selected_polygons):
             p = selected_polygons[0]
             r = g = b = 0
             for i in p.loop_indices:
-                c = colors[i].color
+                c = get_color_data_value(colors[i])
                 r += c[0]
                 g += c[1]
                 b += c[2]
@@ -516,7 +544,7 @@ class chooseSameVertexColorMesh(Operator):
             for p in obj.data.polygons:
                 r = g = b = 0
                 for i in p.loop_indices:
-                    c = colors[i].color
+                    c = get_color_data_value(colors[i])
                     r += c[0]
                     g += c[1]
                     b += c[2]
@@ -636,11 +664,73 @@ class bakeNormal2VertexColor(Operator):
                 "raw → custom（liltoon）",
                 "将原始法线编码到当前（自定义/平滑）TBN空间，用于修复 liltoon 描边方向"
             ),
+            (
+                'OBJECT2SMOOTH',
+                "other smooth → active smooth",
+                "将另一个物体的平滑法线编码到当前物体的平滑TBN空间"
+            ),
         ],
         default='CUSTOM2RAW'
     )  # type: ignore
 
-    def bake_normal(self, dst_obj, tbn_obj, normal_obj):
+    def get_active_corner_color_attribute(self, mesh):
+        return get_active_corner_color_attribute(mesh)
+
+    def write_color_data(self, color_data, color):
+        if hasattr(color_data, "color_srgb"):
+            color_data.color_srgb = color
+        else:
+            color_data.color = color
+
+    def get_source_normal(self, normal_mesh, loop_index, use_vertex_normal=False):
+        if use_vertex_normal:
+            vertex_index = normal_mesh.loops[loop_index].vertex_index
+            return normal_mesh.vertices[vertex_index].normal.normalized()
+        return normal_mesh.loops[loop_index].normal
+
+    def get_other_selected_mesh_object(self, context, active_obj):
+        other_mesh_objects = [
+            obj for obj in context.selected_objects
+            if obj.type == 'MESH' and obj != active_obj
+        ]
+        if len(other_mesh_objects) != 1:
+            raise RuntimeError("该模式需要额外选择且仅选择一个参考网格物体")
+        return other_mesh_objects[0]
+
+    def ensure_same_topology(self, mesh_a, mesh_b):
+        if len(mesh_a.vertices) != len(mesh_b.vertices):
+            raise RuntimeError("两个物体的顶点数量不一致")
+        if len(mesh_a.edges) != len(mesh_b.edges):
+            raise RuntimeError("两个物体的边数量不一致")
+        if len(mesh_a.loops) != len(mesh_b.loops):
+            raise RuntimeError("两个物体的面角数量不一致")
+        if len(mesh_a.polygons) != len(mesh_b.polygons):
+            raise RuntimeError("两个物体的面数量不一致")
+
+        for poly_index, (poly_a, poly_b) in enumerate(zip(mesh_a.polygons, mesh_b.polygons)):
+            if poly_a.loop_total != poly_b.loop_total:
+                raise RuntimeError(f"第 {poly_index} 个面的边数不一致")
+
+            verts_a = [mesh_a.loops[li].vertex_index for li in poly_a.loop_indices]
+            verts_b = [mesh_b.loops[li].vertex_index for li in poly_b.loop_indices]
+            if verts_a != verts_b:
+                raise RuntimeError(f"第 {poly_index} 个面的拓扑顺序不一致")
+
+    def create_raw_reference_object(self, context, obj):
+        mesh = obj.data
+        custom_normals = [loop.normal.copy() for loop in mesh.loops]
+
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+
+        obj_raw = obj.copy()
+        obj_raw.data = obj.data.copy()
+        obj_raw.name = obj.name + "_raw"
+        context.collection.objects.link(obj_raw)
+
+        mesh.normals_split_custom_set(custom_normals)
+        return obj_raw
+
+    def bake_normal(self, dst_obj, tbn_obj, normal_obj, use_vertex_normal=False):
         dst_mesh = dst_obj.data
         tbn_mesh = tbn_obj.data
         normal_mesh = normal_obj.data
@@ -649,10 +739,8 @@ class bakeNormal2VertexColor(Operator):
         tbn_mesh.calc_tangents()
         normal_mesh.calc_tangents()
 
-        if not dst_mesh.vertex_colors:
-            dst_mesh.vertex_colors.new()
-
-        color_layer = dst_mesh.vertex_colors.active.data
+        color_attr = self.get_active_corner_color_attribute(dst_mesh)
+        color_layer = color_attr.data
 
         for poly in dst_mesh.polygons:
             for li in poly.loop_indices:
@@ -662,14 +750,16 @@ class bakeNormal2VertexColor(Operator):
                 b = tbn_loop.bitangent
                 n = tbn_loop.normal
 
-                src_n = normal_mesh.loops[li].normal
+                src_n = self.get_source_normal(
+                    normal_mesh, li, use_vertex_normal)
 
-                color_layer[li].color = (
+                encoded_normal = (
                     src_n.dot(t) * 0.5 + 0.5,
                     src_n.dot(b) * 0.5 + 0.5,
                     src_n.dot(n) * 0.5 + 0.5,
                     1.0
                 )
+                self.write_color_data(color_layer[li], encoded_normal)
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -677,51 +767,68 @@ class bakeNormal2VertexColor(Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "mode", expand=True)
+        if self.mode == 'OBJECT2SMOOTH':
+            layout.label(text="额外选择一个拓扑一致的参考网格")
 
     def execute(self, context):
         obj0 = context.object
+        if obj0 is None or obj0.type != 'MESH':
+            self.report({'WARNING'}, "请先选择一个网格物体")
+            return {'CANCELLED'}
         mesh0 = obj0.data
 
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        if not mesh0.has_custom_normals:
-            self.report({'WARNING'}, "当前网格没有自定义法线")
-            return {'CANCELLED'}
-
-        custom_normals = [loop.normal.copy() for loop in mesh0.loops]
-
-        bpy.ops.mesh.customdata_custom_splitnormals_clear()
-
-        obj_original = obj0.copy()
-        obj_original.data = obj0.data.copy()
-        obj_original.name = obj0.name + "_original"
-        context.collection.objects.link(obj_original)
-
-        mesh0.normals_split_custom_set(custom_normals)
+        obj_raw = None
 
         try:
             if self.mode == 'RAW2CUSTOM':
+                if not mesh0.has_custom_normals:
+                    self.report({'WARNING'}, "当前网格没有自定义法线")
+                    return {'CANCELLED'}
+
+                obj_raw = self.create_raw_reference_object(context, obj0)
                 self.bake_normal(
                     dst_obj=obj0,
                     tbn_obj=obj0,
-                    normal_obj=obj_original
+                    normal_obj=obj_raw,
+                    use_vertex_normal=True
+                )
+
+            elif self.mode == 'CUSTOM2RAW':
+                if not mesh0.has_custom_normals:
+                    self.report({'WARNING'}, "当前网格没有自定义法线")
+                    return {'CANCELLED'}
+
+                obj_raw = self.create_raw_reference_object(context, obj0)
+                self.bake_normal(
+                    dst_obj=obj0,
+                    tbn_obj=obj_raw,
+                    normal_obj=obj0,
+                    use_vertex_normal=False
                 )
 
             else:
+                src_obj = self.get_other_selected_mesh_object(context, obj0)
+                self.ensure_same_topology(mesh0, src_obj.data)
+
+                obj_raw = self.create_raw_reference_object(context, obj0)
                 self.bake_normal(
                     dst_obj=obj0,
-                    tbn_obj=obj_original,
-                    normal_obj=obj0
+                    tbn_obj=obj_raw,
+                    normal_obj=src_obj,
+                    use_vertex_normal=True
                 )
 
         except Exception as e:
             self.report({'ERROR'}, str(e))
-            bpy.data.objects.remove(obj_original, do_unlink=True)
+            if obj_raw is not None:
+                bpy.data.objects.remove(obj_raw, do_unlink=True)
             return {'CANCELLED'}
 
-        # 删除临时物体
-        bpy.data.objects.remove(obj_original, do_unlink=True)
+        if obj_raw is not None:
+            bpy.data.objects.remove(obj_raw, do_unlink=True)
 
         return {"FINISHED"}
 
