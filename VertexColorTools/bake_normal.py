@@ -8,7 +8,7 @@ from .utils import get_active_corner_color_attribute, write_color_data
 MODE_ITEMS = [
     ("CUSTOM2RAW", "自定义法线 -> 原始法线", ""),
     ("RAW2CUSTOM", "原始法线 -> 自定义法线", ""),
-    ("OBJECT2SMOOTH", "其他物体自定义法线 -> 自定义法线法线", ""),
+    ("OBJECT2SMOOTH", "其他物体自定义法线 -> 自定义法线", ""),
     ("SOLIDIFY_RAW2CUSTOM", "原始法线 -> 自定义法线(厚度均衡)", ""),
 ]
 

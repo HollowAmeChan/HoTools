@@ -38,6 +38,11 @@ class HO_PG_VertexColorSceneSettings(PropertyGroup):
     default_colors: CollectionProperty(type=HO_PG_VertexColorItem)  # type: ignore
 
     show_base_tools: BoolProperty(default=True)  # type: ignore
+    show_active_vertex_color: BoolProperty(
+        default=False,
+        name="显示活动顶点颜色",
+        description="显示当前活动颜色层下单个选中顶点的 RGBA 数据",
+    )  # type: ignore
     show_template_tools: BoolProperty(default=False)  # type: ignore
     show_utils_tools: BoolProperty(default=False)  # type: ignore
 
