@@ -94,7 +94,7 @@ class OmniNodeTree(NodeTree):
 
 
 def draw_OmniTreeInputs(layout, tree):
-    layout.label(text="OmniTreeInputs:")
+    layout.label(text="Omni树输入:")
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -118,7 +118,7 @@ def draw_OmniTreeInputs(layout, tree):
     moveDown.is_Down = True
 
 def draw_OmniTreeOutputs(layout, tree):
-    layout.label(text="OmniTreeOutputs:")
+    layout.label(text="Omni树输出:")
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -149,7 +149,7 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     if tree is None or getattr(tree, "bl_idname", "") != TREE_ID_NAME:
         return
 
-    layout.prop(tree, "debug_compile", text="Debug Compile / Runtime", toggle=True)
+    layout.prop(tree, "debug_compile", text="Debug编译/运行", toggle=True)
 
     if tree.is_auto_update:
         layout.alert = True

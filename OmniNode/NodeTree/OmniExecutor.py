@@ -66,14 +66,18 @@ class OmniExecutor:
                         getattr(compiled, "tree_ref", None),
                         op.node,
                         args,
+                        getattr(op, "processor_graph", None),
                     )
 
                 try:
                     if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                        datablock = args[0] if len(args) > 0 else None
-                        prop_name = str(args[1]) if len(args) > 1 and args[1] is not None else ""
-                        value = args[2] if len(args) > 2 else None
-                        result = OmniMenuBind.execute_bind_node_update(op.node, datablock, prop_name, value)
+                        value = OmniMenuBind.get_parameter_value_from_args(op.node, args)
+                        result = OmniMenuBind.execute_bind_node_update(
+                            op.node,
+                            args,
+                            value,
+                            getattr(op, "processor_graph", None),
+                        )
                     else:
                         result = op.func(*args)
                 except Exception as exc:

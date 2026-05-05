@@ -23,11 +23,12 @@ class CompiledGraph:
 
 
 class OpCall:
-    def __init__(self, func, inputs, outputs, node):
+    def __init__(self, func, inputs, outputs, node, processor_graph=None):
         self.func = func
         self.inputs = inputs
         self.outputs = outputs
         self.node = node
+        self.processor_graph = processor_graph
 
 
 class SubtreeCall:
@@ -42,7 +43,7 @@ class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
     GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
     GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
-    BIND_NODE_IDNAME = "HO_OmniNode_BindInt"
+    BIND_NODE_IDNAME = "HO_OmniNode_Bind"
 
     @staticmethod
     def topo_sort(nodes, links):
@@ -293,6 +294,15 @@ class OmniCompiler:
                 continue
 
             if node_idname == OmniCompiler.BIND_NODE_IDNAME:
+                processor_graph = None
+                processor_tree = getattr(node, "processor_tree", None)
+                if processor_tree is not None:
+                    try:
+                        processor_graph = OmniCompiler._compile_tree(processor_tree, compiling_stack, debug=debug)
+                    except Exception as exc:
+                        node.set_bug_state(exc)
+                        raise
+
                 input_regs = compile_node_inputs(node)
 
                 output_regs = []
@@ -309,7 +319,7 @@ class OmniCompiler:
                         note="bind node output",
                     )
 
-                instructions.append(OpCall(None, input_regs, output_regs, node))
+                instructions.append(OpCall(None, input_regs, output_regs, node, processor_graph=processor_graph))
                 OmniDebug.append_compile_trace(
                     graph,
                     f"Emit BIND {node.name} inputs={input_regs} outputs={output_regs}",

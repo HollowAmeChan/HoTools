@@ -53,8 +53,8 @@ def sync_tree_io(tree):
             node.syncGroupIO()
         elif node.bl_idname == "HO_OmniNode_GroupNode":
             node.syncGroupIO()
-        elif node.bl_idname == "HO_OmniNode_GroupNode_Repeat":
-            node.syncGroupIO()
+        elif node.bl_idname == "HO_OmniNode_Bind":
+            node.syncProcessorIO()
 
 
 def sync_all_related_tree_io(tree):
@@ -73,11 +73,16 @@ def sync_all_related_tree_io(tree):
             continue
 
         for node in other_tree.nodes:
-            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_GroupNode_Repeat"}:
+            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_Bind"}:
                 continue
-            if getattr(node, "target_tree", None) != tree:
+            target_tree = getattr(node, "target_tree", None) or getattr(node, "processor_tree", None)
+            if target_tree != tree:
                 continue
-            node.syncGroupIO()
+
+            if node.bl_idname == "HO_OmniNode_Bind":
+                node.syncProcessorIO()
+            else:
+                node.syncGroupIO()
 
 
 def OmniGraphNodeIOItem_update(self, context):
