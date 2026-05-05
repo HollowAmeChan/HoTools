@@ -111,9 +111,30 @@ class OmniNodeSocketGlob(NodeSocket):
     def draw_color_simple(cls):
         return (0.2, 0.2, 0.5, 1.0) #内置NodeSocketString的颜色，偏色2
 
+
+class OmniNodeSocketDatablock(NodeSocket):
+    bl_label = "OmniDatablock Socket"
+    bl_idname = "OmniNodeSocketDatablock"
+
+    default_value: bpy.props.PointerProperty(
+        type=bpy.types.ID,
+        description="Datablock",
+    )  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.8, 0.55, 0.2, 1.0)
+
 cls = [OmniNodeSocketScene, OmniNodeSocketText,
        OmniNodeSocketAny,OmniNodeSocketImageFormat,
-       OmniNodeSocketRegex, OmniNodeSocketGlob
+       OmniNodeSocketRegex, OmniNodeSocketGlob,
+       OmniNodeSocketDatablock,
        ]
 
 

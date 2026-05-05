@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
@@ -55,6 +55,12 @@ def filepathInput(v: _OmniFolderPath) -> _OmniFolderPath:
       bl_label="图像格式",
       base_color=_Color.colorCat["GetData"],)
 def imageFormatInput(v:_OmniImageFormat) -> _OmniImageFormat:
+    return v
+
+@omni(enable=True,
+      bl_label="Datablock",
+      base_color=_Color.colorCat["GetData"],)
+def datablockInput(v: _OmniDatablock) -> _OmniDatablock:
     return v
 
 @omni(enable=True,
@@ -128,4 +134,3 @@ def regexInput(r: _OmniRegex) -> _OmniRegex:
       ,base_color=_Color.colorCat["GetData"],)
 def globInput(g: _OmniGlob) -> _OmniGlob:
       return g
-

@@ -174,12 +174,14 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
 
 def CreateNodeClass(func) -> OmniNode:
     NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti = CheckMetaInfo(func)
+    func_meta = getattr(func, "__meta", {})
 
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
         bl_idname = NodeInfo.get("bl_idname")
         __name__ = "HO_OmniProgramCreateNode_"+func.__name__
         _func = staticmethod(func)
+        _meta = func_meta
         _socket_is_multi = SocketIsMulti
 
         def build(self):
@@ -193,12 +195,13 @@ def loadRegisterFuncNodes(func_module) -> list[Node]:
     cls = []
     for func_str in dir(func_module):
         func = getattr(func_module, func_str)
+        func_meta = getattr(func, "__meta", None)
 
         if not callable(func):
             continue  # 跳过不可调用
-        if not hasattr(func, "__meta"):
+        if func_meta is None:
             continue  # 跳过没有meta信息的函数
-        if not func.__meta.get("enable"):
+        if not func_meta.get("enable"):
             continue  # 只编译手动启用的函数（防止加载import包/库）
         cls.append(CreateNodeClass(func))
     return cls
