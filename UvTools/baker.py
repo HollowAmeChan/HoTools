@@ -52,6 +52,40 @@ def dilate_image_with_colors(pil_img, radius):
     return Image.fromarray(img_arr, mode="RGBA")
 
 
+def fill_weight_triangle(img_arr, pts, weights):
+    x0, y0 = pts[0]
+    x1, y1 = pts[1]
+    x2, y2 = pts[2]
+    w0, w1, w2 = weights
+
+    denom = ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2))
+    if abs(denom) < 1e-8:
+        return
+
+    height, width = img_arr.shape[:2]
+    min_x = max(0, int(np.floor(min(x0, x1, x2))))
+    max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(np.floor(min(y0, y1, y2))))
+    max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
+
+    for py in range(min_y, max_y + 1):
+        sample_y = py + 0.5
+        for px in range(min_x, max_x + 1):
+            sample_x = px + 0.5
+            b0 = ((y1 - y2) * (sample_x - x2) +
+                  (x2 - x1) * (sample_y - y2)) / denom
+            b1 = ((y2 - y0) * (sample_x - x2) +
+                  (x0 - x2) * (sample_y - y2)) / denom
+            b2 = 1.0 - b0 - b1
+
+            if b0 < 0.0 or b1 < 0.0 or b2 < 0.0:
+                continue
+
+            weight = max(0.0, min(1.0, b0 * w0 + b1 * w1 + b2 * w2))
+            gray = int(weight * 255)
+            img_arr[py, px] = (gray, gray, gray, 255)
+
+
 class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     """将所有选中物体的UV岛填充为纯色并导出为一张图像"""
     bl_idname = "ho.uvtools_bakeuvisland_image"
@@ -663,6 +697,115 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
+    """导出选中物体的活动顶点组权重贴图，无活动顶点组则跳过"""
+    bl_idname = "ho.uvtools_bake_active_vertex_group_image"
+    bl_label = "导出顶点组权重贴图"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=2, min=0)  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        def get_vertex_group_weight(obj, vertex_index, group_index):
+            try:
+                return obj.vertex_groups[group_index].weight(vertex_index)
+            except RuntimeError:
+                return 0.0
+
+        width = self.image_width
+        height = self.image_height
+        alpha_val = int(self.background_alpha * 255)
+
+        pil_img = Image.new("RGBA", (width, height), (0, 0, 0, alpha_val))
+        img_arr = np.array(pil_img)
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+
+        if not selected_objs:
+            self.report({'ERROR'}, "请先选中至少一个网格物体")
+            return {'CANCELLED'}
+
+        exported_count = 0
+        skipped_objects = []
+
+        for obj in selected_objs:
+            vertex_group = obj.vertex_groups.active
+            if vertex_group is None:
+                skipped_objects.append(f"{obj.name}(无活动顶点组)")
+                continue
+
+            mesh = obj.data
+            uv_layer = mesh.uv_layers.active
+            if uv_layer is None:
+                skipped_objects.append(f"{obj.name}(无UV)")
+                continue
+
+            group_index = vertex_group.index
+
+            for poly in mesh.polygons:
+                loop_indices = poly.loop_indices
+                if len(loop_indices) < 3:
+                    continue
+
+                uvs = []
+                weights = []
+                for loop_index in loop_indices:
+                    loop = mesh.loops[loop_index]
+                    uv = uv_layer.data[loop_index].uv
+                    uvs.append((int(uv.x * width), int((1.0 - uv.y) * height)))
+                    weights.append(
+                        get_vertex_group_weight(obj, loop.vertex_index, group_index))
+
+                for i in range(1, len(uvs) - 1):
+                    pts = [uvs[0], uvs[i], uvs[i + 1]]
+                    tri_weights = [weights[0], weights[i], weights[i + 1]]
+                    fill_weight_triangle(img_arr, pts, tri_weights)
+
+            exported_count += 1
+
+        if exported_count == 0:
+            self.report({'ERROR'}, "没有可导出的活动顶点组权重")
+            return {'CANCELLED'}
+
+        pil_img = Image.fromarray(img_arr, mode="RGBA")
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        pil_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report({'INFO'}, f"已导出活动顶点组权重贴图: {final_path}")
+        return {'FINISHED'}
+
+
 class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     """快速合并导出psd模板"""
     bl_idname = "ho.uvtools_fastbake_uv_image"
@@ -809,6 +952,8 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row = box.row(align=True)
     row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
 
+    row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
+
     # box = layout.box()
     # box.label(text="检查UV")
 
@@ -817,6 +962,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
 
 cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
+       OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
        ]
 
