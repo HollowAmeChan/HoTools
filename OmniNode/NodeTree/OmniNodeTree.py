@@ -11,6 +11,7 @@ from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
     OP_IOItemRemove,
+    OP_IOItemMove,
     OmniGraphNodeIOItem,
 )
 
@@ -78,23 +79,7 @@ class OmniNodeTree(NodeTree):
 
         return OmniExecutor.run(compiled, debug=debug_enabled)
 
-
-def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
-    layout: bpy.types.UILayout = self.layout
-    tree = context.space_data.node_tree
-
-    layout.prop(tree, "debug_compile", text="Debug Compile / Runtime", toggle=True)
-
-    if tree.is_auto_update:
-        layout.alert = True
-        layout.prop(tree,
-                "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
-        layout.alert = False
-    else:
-        layout.prop(tree,
-                "is_auto_update", text="树自动更新", icon="UNLINKED")
-
-
+def draw_OmniTreeInputs(layout, tree):
     layout.label(text="OmniTreeInputs:")
     row = layout.row()
     row.template_list(
@@ -111,7 +96,14 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     add.is_input = True
     remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
     remove.is_input = True
+    moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
+    moveUp.is_input = True
+    moveUp.is_Down = False
+    moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
+    moveUp.is_input = True
+    moveUp.is_Down = True
 
+def draw_OmniTreeOutputs(layout, tree):
     layout.label(text="OmniTreeOutputs:")
     row = layout.row()
     row.template_list(
@@ -128,6 +120,30 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     add.is_input = False
     remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
     remove.is_input = False
+    moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
+    moveUp.is_input = False
+    moveUp.is_Down = False
+    moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
+    moveUp.is_input = False
+    moveUp.is_Down = True
+
+def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
+    layout: bpy.types.UILayout = self.layout
+    tree = context.space_data.node_tree
+
+    layout.prop(tree, "debug_compile", text="Debug Compile / Runtime", toggle=True)
+
+    if tree.is_auto_update:
+        layout.alert = True
+        layout.prop(tree,
+                "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+        layout.alert = False
+    else:
+        layout.prop(tree,
+                "is_auto_update", text="树自动更新", icon="UNLINKED")
+
+    draw_OmniTreeInputs(layout, tree)
+    draw_OmniTreeOutputs(layout, tree)
 
 
 cls = [OmniNodeTree]

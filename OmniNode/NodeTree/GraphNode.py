@@ -8,7 +8,7 @@ from .OmniNode import OmniNode
 from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove
 from bpy.props import CollectionProperty,IntProperty
 
-from .OmniNodeTree import OmniNodeTree
+from .OmniNodeTree import OmniNodeTree,draw_OmniTreeInputs,draw_OmniTreeOutputs
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
 from .OmniNodeSocketMapping import runtime_socket_type_id
 
@@ -185,33 +185,7 @@ class OmniGroupNodeInputs(OmniNode):
         restore_node_links(self, link_cache)
 
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        tree = self.id_data
-
-        row = layout.row()
-        row.template_list(
-            HO_UL_GraphNodeIO.__name__,
-            "",
-            tree,
-            "group_inputs",
-            tree,
-            "group_inputs_index",
-            rows=3
-        )
-
-        col = row.column(align=True)
-
-        add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
-        add.is_input = True
-
-        remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
-        remove.is_input = True
-
-        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
-        moveUp.is_input = True
-        moveUp.is_Down = False
-        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
-        moveUp.is_input = True
-        moveUp.is_Down = True
+        draw_OmniTreeInputs(layout, self.id_data)
     
 class OmniGroupNodeOutputs(OmniNode):
     bl_idname = "HO_OmniNode_GroupNode_Outputs"
@@ -237,33 +211,7 @@ class OmniGroupNodeOutputs(OmniNode):
         restore_node_links(self, link_cache)
     
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        tree = self.id_data
-
-        row = layout.row()
-        row.template_list(
-            HO_UL_GraphNodeIO.__name__,
-            "",
-            tree,
-            "group_outputs",
-            tree,
-            "group_outputs_index",
-            rows=3
-        )
-
-        col = row.column(align=True)
-
-        add = col.operator(OP_IOItemAdd.bl_idname, icon="ADD", text="")
-        add.is_input = False
-
-        remove = col.operator(OP_IOItemRemove.bl_idname, icon="REMOVE", text="")
-        remove.is_input = False
-
-        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_UP", text="")
-        moveUp.is_input = False
-        moveUp.is_Down = False
-        moveUp = col.operator(OP_IOItemMove.bl_idname, icon="TRIA_DOWN", text="")
-        moveUp.is_input = False
-        moveUp.is_Down = True
+        draw_OmniTreeOutputs(layout, self.id_data)
 
 # class OmniGroupNodeRepeat(OmniNode):
 #     bl_idname = "HO_OmniNode_GroupNode_Repeat"
