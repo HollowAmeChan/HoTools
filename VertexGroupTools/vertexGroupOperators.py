@@ -2500,6 +2500,19 @@ def draw_in_DATA_PT_vertex_groups(self, context: Context):
 
     row2 = row.row(align=True)
     row2.alignment = 'RIGHT'
+    view3d_overlay = None
+    if context.screen is not None:
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                view3d_overlay = getattr(area.spaces.active, "overlay", None)
+                if view3d_overlay is not None:
+                    break
+    if view3d_overlay is not None:
+        row2.prop(context.scene.tool_settings, "vertex_group_user", text="")
+        if view3d_overlay.show_weight:
+            row2.prop(view3d_overlay, "show_weight", text="", icon="HIDE_OFF", toggle=True)
+        else:
+            row2.prop(view3d_overlay, "show_weight", text="", icon="HIDE_ON", toggle=True)
     row2.prop(context.scene,"hoVertexGroupTools_isAutoNormalizeWeight",text="",icon="RECORD_ON",toggle=True)
     row2.prop(context.scene,"hoVertexGroupTools_control_vg_listener",text="",toggle=True,icon="UV_SYNC_SELECT")
 
