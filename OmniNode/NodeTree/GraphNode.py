@@ -5,7 +5,7 @@
 import bpy
 from typing import Any
 from .OmniNode import OmniNode
-from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove
+from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove,OP_JumpToNodeTree
 from bpy.props import CollectionProperty,IntProperty
 from . import OmniMenuBind
 
@@ -15,6 +15,16 @@ from .OmniNodeSocketMapping import runtime_socket_type_id
 
 def OmniTreeFilter(self: Any, tree: Any) -> bool:
     return isinstance(tree, OmniNodeTree)
+
+
+def draw_tree_ref_selector(layout: bpy.types.UILayout, node: bpy.types.Node, prop_name: str) -> None:
+    row = layout.row(align=True)
+    jump = row.row(align=True)
+    jump.enabled = getattr(node, prop_name, None) is not None
+    op = jump.operator(OP_JumpToNodeTree.bl_idname, text="", icon="FORWARD")
+    op.node_name = node.name
+    op.tree_attr = prop_name
+    row.template_ID(node, prop_name)
 
 def cache_node_links(node: OmniNode) -> list[dict[str, Any]]:
     """缓存某个 node 所有 links"""
@@ -162,8 +172,7 @@ class OmniGroupNode(OmniNode):
         restore_nodesockets_defaultvalues(self,default_values)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
-        # 顶掉父级的绘制
-        layout.template_ID(self, "target_tree")
+        draw_tree_ref_selector(layout, self, "target_tree")
         return
 
 class OmniGroupNodeInputs(OmniNode):
@@ -260,7 +269,7 @@ class OmniBindNode(OmniNode):
         restore_nodesockets_defaultvalues(self, default_values)
 
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        layout.template_ID(self, "processor_tree")
+        draw_tree_ref_selector(layout, self, "processor_tree")
 
 
 CLS_GRAPH = [OmniGroupNode, OmniGroupNodeInputs, OmniGroupNodeOutputs, OmniBindNode]

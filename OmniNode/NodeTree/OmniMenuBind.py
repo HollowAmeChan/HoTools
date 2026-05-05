@@ -785,7 +785,7 @@ class OmniMenuBindRuntime:
             return
 
         if len(tree.omni_bind_runtime_items) == 0:
-            box.label(text="无动态参数", icon="INFO")
+            box.label(text="无动态参数")
             return
 
         runtime_entries = []

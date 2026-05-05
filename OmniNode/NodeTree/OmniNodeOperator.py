@@ -215,6 +215,70 @@ class OP_IOItemMove(Operator):
         sync_all_related_tree_io(tree)
         return {'FINISHED'}
 
+
+class OP_JumpToNodeTree(Operator):
+    bl_idname = "ho.omni_jump_to_node_tree"
+    bl_label = "跳转到节点树"
+    bl_description = "在当前 Node Editor 区域打开该节点引用的 OmniNodeTree"
+
+    node_name: StringProperty(default="")  # type: ignore
+    tree_attr: StringProperty(default="target_tree")  # type: ignore
+
+    @staticmethod
+    def _enter_tree_with_path(space, node, target_tree) -> bool:
+        path = getattr(space, "path", None)
+        if path is None:
+            return False
+
+        append_attempts = [
+            # Omni 的 Group/Bind 是自定义 GraphNode，不一定能被 Blender 当作原生
+            # NodeGroup 节点校验通过；先尝试只追加 tree，可以保留路径栈并支持继续下钻。
+            lambda: path.append(target_tree),
+            lambda: path.append(target_tree, node=node),
+            lambda: path.append(target_tree, node),
+            lambda: path.append(node_tree=target_tree, node=node),
+        ]
+
+        for attempt in append_attempts:
+            try:
+                attempt()
+                if getattr(space, "edit_tree", None) == target_tree:
+                    return True
+            except Exception:
+                pass
+
+        return False
+
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        return bool(
+            space
+            and space.type == 'NODE_EDITOR'
+            and (getattr(space, "edit_tree", None) or getattr(space, "node_tree", None))
+        )
+
+    def execute(self, context):
+        space = context.space_data
+        tree = getattr(space, "edit_tree", None) or getattr(space, "node_tree", None)
+        if tree is None or not self.node_name:
+            return {'CANCELLED'}
+
+        node = tree.nodes.get(self.node_name)
+        if node is None:
+            self.report({'WARNING'}, "找不到源节点")
+            return {'CANCELLED'}
+
+        target_tree = getattr(node, self.tree_attr, None)
+        if target_tree is None:
+            self.report({'WARNING'}, "该节点没有可跳转的节点树")
+            return {'CANCELLED'}
+
+        if not self._enter_tree_with_path(space, node, target_tree):
+            space.node_tree = target_tree
+        return {'FINISHED'}
+
+
 class NodeSetDefaultSize(Operator):
     bl_idname = "ho.nodesetdefaultsize"
     bl_label = "恢复node默认大小"
@@ -575,6 +639,8 @@ def draw_in_NODE_HT_header(self, context: Context):
     if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
         return
     layout: bpy.types.UILayout = self.layout
+    if len(getattr(space, "path", [])) > 1:
+        layout.operator("node.tree_path_parent", text="", icon="BACK")
     layout.operator(OmniTreeDestroy.bl_idname,text="销毁树")
 
 
@@ -589,6 +655,7 @@ clss = [
     OP_IOItemRemove,
     OmniTreeDestroy,
     OP_IOItemMove,
+    OP_JumpToNodeTree,
 ]
 
 
