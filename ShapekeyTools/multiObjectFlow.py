@@ -194,7 +194,7 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
             return {'CANCELLED'}
 
         # 找出源集合中所有空物体（按空名区分形态键）
-        emptys = [obj for obj in src_col.objects if obj.type == 'EMPTY']
+        emptys = [obj for obj in src_col.objects if obj.type == 'EMPTY' and obj.parent is None]
         if not emptys:
             self.report({'ERROR'}, "集合中没有空物体")
             return {'CANCELLED'}
@@ -215,6 +215,7 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
 
                 # 查找当前空物体下对应的形态键物体
                 linked_objs = [child for child in empty.children if '#' in child.name]  # 只扫描带#的子级物体
+                linked_objs = [child for child in linked_objs if child.type == 'MESH']
                 matched = None
                 for child in linked_objs:
                     parts = child.name.split("#", 1) # 使用第一个#来分割
