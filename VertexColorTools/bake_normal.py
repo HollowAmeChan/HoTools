@@ -5,6 +5,13 @@ from mathutils import Vector
 
 from .utils import get_active_corner_color_attribute, write_color_data
 
+MODE_ITEMS = [
+    ("CUSTOM2RAW", "自定义法线 -> 原始法线", ""),
+    ("RAW2CUSTOM", "原始法线 -> 自定义法线", ""),
+    ("OBJECT2SMOOTH", "其他物体自定义法线 -> 自定义法线法线", ""),
+    ("SOLIDIFY_RAW2CUSTOM", "原始法线 -> 自定义法线(厚度均衡)", ""),
+]
+
 
 class HO_OT_bake_normal_to_vertex_color(Operator):
     bl_idname = "ho.bake_custom_normal_to_vertex_color"
@@ -269,11 +276,22 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "mode", expand=True)
-        if self.mode == "OBJECT2SMOOTH":
-            layout.label(text="额外选择一个拓扑一致的参考网格")
+        column = layout.column(align=True)
+        for identifier, label, _description in MODE_ITEMS:
+            column.prop_enum(self, "mode", identifier, text=label)
+        if self.mode == "CUSTOM2RAW":
+            layout.label(text="当前自定义法线到原始法线，需要确保有自定义法线")
+        elif self.mode == "RAW2CUSTOM":
+            layout.label(text="原始法线到当前自定义法线，需要确保有自定义法线")
+            layout.label(text="Liltoon使用此法烘焙的顶点色RGB修正描边挤出方向")
+        elif self.mode == "OBJECT2SMOOTH":
+            layout.label(text="另一个物体自定义法线到当前物体自定义法线")
+            layout.label(text="需要额外选择一个拓扑一致的参考网格")
         elif self.mode == "SOLIDIFY_RAW2CUSTOM":
-            layout.label(text="A 通道以 0.5 为基准保存厚度补偿")
+            layout.label(text="RAW2CUSTOM的加强版")
+            layout.label(text="如果你正在使用Liltoon描边RGBA修正，请使用它")
+            layout.label(text="A通道以0.5为基准保存厚度补偿，可以得到连续锐利的边缘")
+
 
     def execute(self, context):
         active_obj = context.object
