@@ -35,7 +35,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
 
 
 @omni(enable=True,
-      bl_label="Set Datablock Property",
+      bl_label="设置Datablock数据",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
       )
