@@ -1,9 +1,9 @@
-from .OmniCompiler import CompiledGraph, OpCall, SubtreeCall
+from .OmniCompiler import CompiledGraph, OmniCompiler, OpCall, SubtreeCall
 from .OmniDebug import OmniDebug
+from . import OmniMenuBind
 
 
 class OmniExecutor:
-
     @staticmethod
     def flatten_runtime(values):
         result = []
@@ -41,6 +41,7 @@ class OmniExecutor:
                 continue
 
             if isinstance(op, OpCall):
+                node_idname = getattr(op.node, "bl_idname", "")
                 args = []
                 arg_desc = []
                 for inp in op.inputs:
@@ -60,8 +61,21 @@ class OmniExecutor:
                             f"{OmniDebug.reg_label(inp)}={OmniDebug.value_label(OmniDebug.format_value(registers[inp]))}"
                         )
 
+                if node_idname == OmniCompiler.BIND_NODE_IDNAME:
+                    OmniMenuBind.capture_bind_node_runtime_context(
+                        getattr(compiled, "tree_ref", None),
+                        op.node,
+                        args,
+                    )
+
                 try:
-                    result = op.func(*args)
+                    if node_idname == OmniCompiler.BIND_NODE_IDNAME:
+                        datablock = args[0] if len(args) > 0 else None
+                        prop_name = str(args[1]) if len(args) > 1 and args[1] is not None else ""
+                        value = args[2] if len(args) > 2 else None
+                        result = OmniMenuBind.execute_bind_node_update(op.node, datablock, prop_name, value)
+                    else:
+                        result = op.func(*args)
                 except Exception as exc:
                     op.node.set_bug_state(exc)
                     log(

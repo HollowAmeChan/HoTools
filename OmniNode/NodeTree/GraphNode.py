@@ -7,6 +7,7 @@ from typing import Any
 from .OmniNode import OmniNode
 from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove
 from bpy.props import CollectionProperty,IntProperty
+from . import OmniMenuBind
 
 from .OmniNodeTree import OmniNodeTree,draw_OmniTreeInputs,draw_OmniTreeOutputs
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
@@ -84,6 +85,7 @@ def cache_nodesockets_defaultvalues(node: OmniNode) -> list[dict[str, Any]]:
                 pass
 
     return cache
+
 def restore_nodesockets_defaultvalues(node: OmniNode, cache: list[dict[str, Any]]) -> None:
     def restore_default_value(sock: bpy.types.NodeSocket, cache_entry: dict[str, Any]) -> None:
         value = cache_entry["value"]
@@ -213,43 +215,32 @@ class OmniGroupNodeOutputs(OmniNode):
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
         draw_OmniTreeOutputs(layout, self.id_data)
 
-# class OmniGroupNodeRepeat(OmniNode):
-#     bl_idname = "HO_OmniNode_GroupNode_Repeat"
-#     bl_label = "组重复"
 
-#     target_tree: bpy.props.PointerProperty(
-#         name="Group",
-#         type=OmniNodeTree,
-#         update=OmniGraphNodeIOItem_update,
-#         poll=OmniTreeFilter,
-#     ) # type: ignore
+class OmniBindIntNode(OmniNode):
+    bl_idname = "HO_OmniNode_BindInt"
+    bl_label = "BindInt"
+    _bind_spec = {
+        "value_type": "INT",
+        "description": "Update an integer property on the target datablock.",
+    }
 
-#     def build(self):
-#         self.syncGroupIO()
-#         self._socket_is_multi = None
-#         pass
+    def build(self) -> None:
+        self.omni_description = """
+        在数据块上绑定整数属性。
+        运行时更新直接写回真实属性路径。
+        访问自定义属性时使用 [""]/['']
+        """
 
-#     def syncGroupIO(self):
-#         tree = self.target_tree
-#         if not tree:return
+        if len(self.inputs) == 0:
+            self.inputs.new("OmniNodeSocketDatablock", "Datablock", identifier="datablock")
+            self.inputs.new("NodeSocketString", "Property", identifier="prop_name")
+            self.inputs.new("NodeSocketInt", "Value", identifier="value")
+            self.outputs.new("NodeSocketInt", "Value", identifier="_OUTPUT0")
 
-#         link_cache = cache_node_links(self)
-#         self.inputs.clear()
-#         self.outputs.clear()
+    def _bind_update(self, datablock, prop_name: str, raw_value):
+        value = int(raw_value)
+        OmniMenuBind.write_datablock_property(datablock, prop_name, value)
+        return value
 
-#         # Group 输入 → 当前 node.inputs
-#         for io in tree.group_inputs:
-#             sock = self.inputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
-#             sock.hide_value = True
-#         # Group 输出 → 当前 node.outputs
-#         for io in tree.group_outputs:
-#             sock = self.outputs.new(type=runtime_socket_type_id(io.socket_type), name=io.name,identifier=io.uid)
-#             sock.hide_value = True
-#         restore_node_links(self, link_cache)
 
-#     def draw_buttons(self, context, layout: bpy.types.UILayout):
-#         # 顶掉父级的绘制
-#         layout.template_ID(self, "target_tree")
-#         return
-
-CLS_GRAPH = [OmniGroupNode,OmniGroupNodeInputs,OmniGroupNodeOutputs]
+CLS_GRAPH = [OmniGroupNode, OmniGroupNodeInputs, OmniGroupNodeOutputs, OmniBindIntNode]

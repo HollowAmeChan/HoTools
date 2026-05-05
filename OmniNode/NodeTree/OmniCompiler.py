@@ -2,6 +2,7 @@
 # 组节点被视为子树桥而不是普通的功能节点。
 
 from .OmniDebug import OmniDebug
+from . import OmniMenuBind
 
 
 class CompiledGraph:
@@ -13,6 +14,7 @@ class CompiledGraph:
         self.input_regs = {}
         self.output_regs = {}
         self.tree_name = ""
+        self.tree_ref = None
         self.node_order = []
         self.compile_trace = []
         self.register_bridges = []
@@ -40,6 +42,7 @@ class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
     GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
     GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
+    BIND_NODE_IDNAME = "HO_OmniNode_BindInt"
 
     @staticmethod
     def topo_sort(nodes, links):
@@ -83,12 +86,14 @@ class OmniCompiler:
 
     @staticmethod
     def compile(tree, debug=False):
+        OmniMenuBind.clear_pending_bind_rules(tree)
         return OmniCompiler._compile_tree(tree, compiling_stack=[], debug=debug)
 
     @staticmethod
     def _compile_tree(tree, compiling_stack, debug=False):
         graph = CompiledGraph()
         graph.tree_name = getattr(tree, "name", "")
+        graph.tree_ref = tree
         graph.debug_enabled = debug
 
         OmniDebug.append_compile_trace(graph, f"Start compile tree '{graph.tree_name}'")
@@ -203,6 +208,15 @@ class OmniCompiler:
         for node in topo:
             node_idname = getattr(node, "bl_idname", "")
 
+            if node_idname == OmniCompiler.BIND_NODE_IDNAME:
+                rule = OmniMenuBind.build_bind_rule_from_node(node)
+                if rule is not None:
+                    OmniMenuBind.collect_bind_rule(tree, node)
+                    OmniDebug.append_compile_trace(
+                        graph,
+                        f"Collect BIND {node.name} -> {rule.get('key')} ({rule.get('value_type')})",
+                    )
+
             if node_idname == OmniCompiler.GROUP_INPUTS_IDNAME:
                 for sock in node.outputs:
                     uid = sock.identifier
@@ -275,6 +289,30 @@ class OmniCompiler:
                 OmniDebug.append_compile_trace(
                     graph,
                     f"Emit SUBTREE {node.name} -> {compiled_subtree.tree_name} inputs={input_regs} outputs={output_regs}",
+                )
+                continue
+
+            if node_idname == OmniCompiler.BIND_NODE_IDNAME:
+                input_regs = compile_node_inputs(node)
+
+                output_regs = []
+                for sock in node.outputs:
+                    reg = new_reg()
+                    reg_map[(node.name, sock.identifier)] = reg
+                    output_regs.append(reg)
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source="bind_graph_node",
+                        note="bind node output",
+                    )
+
+                instructions.append(OpCall(None, input_regs, output_regs, node))
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Emit BIND {node.name} inputs={input_regs} outputs={output_regs}",
                 )
                 continue
 
