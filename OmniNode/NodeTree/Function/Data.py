@@ -5,6 +5,7 @@ import bpy
 from typing import Any
 import mathutils
 from . import _Color
+from .. import OmniMenuBind
 
 @omni(enable=True,
       bl_label="颜色",
@@ -62,6 +63,12 @@ def imageFormatInput(v:_OmniImageFormat) -> _OmniImageFormat:
       base_color=_Color.colorCat["GetData"],)
 def datablockInput(v: _OmniDatablock) -> _OmniDatablock:
     return v
+
+@omni(enable=True,
+      bl_label="Get Datablock Property",
+      base_color=_Color.colorCat["GetData"],)
+def getDatablockProperty(datablock: _OmniDatablock, prop_name: str) -> Any:
+    return OmniMenuBind.read_datablock_property(datablock, prop_name)
 
 @omni(enable=True,
       bl_label="物体",

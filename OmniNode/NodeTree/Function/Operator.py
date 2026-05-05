@@ -1,6 +1,7 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock
 from ..FunctionNodeCore import omni
 from . import _Color
+from .. import OmniMenuBind
 
 from bpy.types import NodeSocketVector, NodeSocketColor
 import bpy
@@ -31,6 +32,16 @@ elif sys.version_info >= (3, 11):
 def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types.Object:
     obj.location = pos
     return obj
+
+
+@omni(enable=True,
+      bl_label="Set Datablock Property",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      )
+def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) -> Any:
+    OmniMenuBind.write_datablock_property(datablock, prop_name, value)
+    return value
 
 
 @omni(enable=True,
