@@ -669,6 +669,11 @@ class bakeNormal2VertexColor(Operator):
                 "other smooth → active smooth",
                 "将另一个物体的平滑法线编码到当前物体的平滑TBN空间"
             ),
+            (
+                'SOLIDIFY_RAW2CUSTOM',
+                "solidify avg → custom",
+                "将近似实体化平均厚度方向编码到当前TBN空间，A通道存厚度补偿逆因子"
+            ),
         ],
         default='CUSTOM2RAW'
     )  # type: ignore
@@ -687,6 +692,128 @@ class bakeNormal2VertexColor(Operator):
             vertex_index = normal_mesh.loops[loop_index].vertex_index
             return normal_mesh.vertices[vertex_index].normal.normalized()
         return normal_mesh.loops[loop_index].normal
+
+    def calc_shell_dist(self, a, b):
+        dot_value = abs(a.dot(b))
+        if dot_value <= 1e-8:
+            return 1.0
+        return 1.0 / dot_value
+
+    def calc_hq_vertex_normals(self, mesh):
+        face_normals = [poly.normal.normalized() for poly in mesh.polygons]
+        edge_faces = {index: [] for index in range(len(mesh.edges))}
+        for poly in mesh.polygons:
+            for loop_index in poly.loop_indices:
+                edge_index = mesh.loops[loop_index].edge_index
+                edge_faces[edge_index].append(poly.index)
+
+        hq_normals = [Vector((0.0, 0.0, 0.0)) for _ in mesh.vertices]
+        for edge_index, edge in enumerate(mesh.edges):
+            linked_faces = edge_faces[edge_index]
+            if len(linked_faces) == 0:
+                continue
+
+            if len(linked_faces) == 1:
+                edge_normal = face_normals[linked_faces[0]].copy()
+            elif len(linked_faces) == 2:
+                n0 = face_normals[linked_faces[0]]
+                n1 = face_normals[linked_faces[1]]
+                edge_normal = n0 + n1
+                if edge_normal.length_squared == 0.0:
+                    edge_normal = n0.copy()
+                else:
+                    edge_normal.normalize()
+                    edge_normal *= n0.angle(n1)
+            else:
+                continue
+
+            hq_normals[edge.vertices[0]] += edge_normal
+            hq_normals[edge.vertices[1]] += edge_normal
+
+        fallback_axis = Vector((0.0, 0.0, 1.0))
+        for vertex_index, vertex in enumerate(mesh.vertices):
+            if hq_normals[vertex_index].length_squared == 0.0:
+                hq_normals[vertex_index] = vertex.normal.copy()
+            if hq_normals[vertex_index].length_squared == 0.0:
+                hq_normals[vertex_index] = fallback_axis.copy()
+            hq_normals[vertex_index].normalize()
+
+        return hq_normals
+
+    def calc_vertex_curvature_signs(self, mesh, directions):
+        vertex_neighbors = [[] for _ in mesh.vertices]
+        for edge in mesh.edges:
+            v0, v1 = edge.vertices
+            vertex_neighbors[v0].append(v1)
+            vertex_neighbors[v1].append(v0)
+
+        signs = []
+        for vertex_index, vertex in enumerate(mesh.vertices):
+            neighbors = vertex_neighbors[vertex_index]
+            if not neighbors:
+                signs.append(1.0)
+                continue
+
+            laplacian = Vector((0.0, 0.0, 0.0))
+            for neighbor_index in neighbors:
+                laplacian += mesh.vertices[neighbor_index].co - vertex.co
+            laplacian /= len(neighbors)
+
+            if laplacian.length_squared == 0.0:
+                signs.append(1.0)
+                continue
+
+            signs.append(-1.0 if laplacian.dot(directions[vertex_index]) > 0.0 else 1.0)
+
+        return signs
+
+    def build_even_solidify_source(self, mesh):
+        hq_normals = self.calc_hq_vertex_normals(mesh)
+        curvature_signs = self.calc_vertex_curvature_signs(mesh, hq_normals)
+        vert_angles = [0.0 for _ in mesh.vertices]
+        vert_accum = [0.0 for _ in mesh.vertices]
+
+        for poly in mesh.polygons:
+            if poly.loop_total < 3 or poly.normal.length_squared == 0.0:
+                continue
+
+            face_normal = poly.normal.normalized()
+            loop_indices = list(poly.loop_indices)
+            loop_count = len(loop_indices)
+
+            for offset, loop_index in enumerate(loop_indices):
+                vertex_index = mesh.loops[loop_index].vertex_index
+                vertex_co = mesh.vertices[vertex_index].co
+
+                prev_loop_index = loop_indices[offset - 1]
+                next_loop_index = loop_indices[(offset + 1) % loop_count]
+                prev_vertex_index = mesh.loops[prev_loop_index].vertex_index
+                next_vertex_index = mesh.loops[next_loop_index].vertex_index
+
+                prev_edge = mesh.vertices[prev_vertex_index].co - vertex_co
+                next_edge = mesh.vertices[next_vertex_index].co - vertex_co
+
+                if prev_edge.length_squared == 0.0 or next_edge.length_squared == 0.0:
+                    corner_angle = 0.0
+                else:
+                    corner_angle = prev_edge.angle(next_edge)
+
+                shell_factor = self.calc_shell_dist(hq_normals[vertex_index], face_normal)
+                vert_angles[vertex_index] += shell_factor * corner_angle
+                vert_accum[vertex_index] += corner_angle
+
+        source_vectors = []
+        source_alpha = []
+        for vertex_index, direction in enumerate(hq_normals):
+            shell_factor = vert_angles[vertex_index] / vert_accum[vertex_index] if vert_accum[vertex_index] > 1e-8 else 1.0
+            shell_factor = max(1.0, shell_factor)
+            shell_strength = max(0.0, min(1.0, 1.0 - (1.0 / shell_factor)))
+            signed_strength = shell_strength * curvature_signs[vertex_index]
+            alpha = 0.5 + signed_strength * 0.5
+            source_vectors.append(direction.copy())
+            source_alpha.append(max(1e-4, min(1.0, alpha)))
+
+        return source_vectors, source_alpha
 
     def get_other_selected_mesh_object(self, context, active_obj):
         other_mesh_objects = [
@@ -730,14 +857,15 @@ class bakeNormal2VertexColor(Operator):
         mesh.normals_split_custom_set(custom_normals)
         return obj_raw
 
-    def bake_normal(self, dst_obj, tbn_obj, normal_obj, use_vertex_normal=False):
+    def bake_normal(self, dst_obj, tbn_obj, normal_obj=None, use_vertex_normal=False, source_vectors=None, source_alpha=None):
         dst_mesh = dst_obj.data
         tbn_mesh = tbn_obj.data
-        normal_mesh = normal_obj.data
+        normal_mesh = normal_obj.data if normal_obj is not None else None
 
         dst_mesh.calc_tangents()
         tbn_mesh.calc_tangents()
-        normal_mesh.calc_tangents()
+        if normal_mesh is not None:
+            normal_mesh.calc_tangents()
 
         color_attr = self.get_active_corner_color_attribute(dst_mesh)
         color_layer = color_attr.data
@@ -750,14 +878,20 @@ class bakeNormal2VertexColor(Operator):
                 b = tbn_loop.bitangent
                 n = tbn_loop.normal
 
-                src_n = self.get_source_normal(
-                    normal_mesh, li, use_vertex_normal)
+                if source_vectors is not None:
+                    vertex_index = dst_mesh.loops[li].vertex_index
+                    src_n = source_vectors[vertex_index]
+                    alpha = source_alpha[vertex_index] if source_alpha is not None else 1.0
+                else:
+                    src_n = self.get_source_normal(
+                        normal_mesh, li, use_vertex_normal)
+                    alpha = 1.0
 
                 encoded_normal = (
                     src_n.dot(t) * 0.5 + 0.5,
                     src_n.dot(b) * 0.5 + 0.5,
                     src_n.dot(n) * 0.5 + 0.5,
-                    1.0
+                    alpha
                 )
                 self.write_color_data(color_layer[li], encoded_normal)
 
@@ -769,6 +903,8 @@ class bakeNormal2VertexColor(Operator):
         layout.prop(self, "mode", expand=True)
         if self.mode == 'OBJECT2SMOOTH':
             layout.label(text="额外选择一个拓扑一致的参考网格")
+        elif self.mode == 'SOLIDIFY_RAW2CUSTOM':
+            layout.label(text="A 通道以 0.5 为基准保存凸凹补偿")
 
     def execute(self, context):
         obj0 = context.object
@@ -807,6 +943,15 @@ class bakeNormal2VertexColor(Operator):
                     tbn_obj=obj_raw,
                     normal_obj=obj0,
                     use_vertex_normal=False
+                )
+
+            elif self.mode == 'SOLIDIFY_RAW2CUSTOM':
+                source_vectors, source_alpha = self.build_even_solidify_source(mesh0)
+                self.bake_normal(
+                    dst_obj=obj0,
+                    tbn_obj=obj0,
+                    source_vectors=source_vectors,
+                    source_alpha=source_alpha
                 )
 
             else:
