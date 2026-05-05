@@ -66,7 +66,9 @@ def datablockInput(v: _OmniDatablock) -> _OmniDatablock:
 
 @omni(enable=True,
       bl_label="获取Datablock数据",
-      base_color=_Color.colorCat["GetData"],)
+      base_color=_Color.colorCat["GetData"],
+      _INPUT_NAME=["数据块","属性名称"],
+      )
 def getDatablockProperty(datablock: _OmniDatablock, prop_name: str) -> Any:
     return OmniMenuBind.read_datablock_property(datablock, prop_name)
 

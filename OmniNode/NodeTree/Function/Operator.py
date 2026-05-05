@@ -38,6 +38,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
       bl_label="设置Datablock数据",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
+      _INPUT_NAME=["数据块","属性名称","属性值"],
       )
 def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) -> Any:
     OmniMenuBind.write_datablock_property(datablock, prop_name, value)
