@@ -2,8 +2,8 @@
 # 这个文件集中管理 OmniNode 的动态 Bind 参数系统。
 #
 # 当前流程：
-# 1. 编译阶段扫描 Bind GraphNode，找到 processor_tree 输入中的 ParameterSocket。
-# 2. 将 ParameterSocket 展开为 pending rule，再在 tree.run() 结束后生成侧栏动态参数。
+# 1. 编译阶段扫描 Bind GraphNode，找到 processor_tree 输入中的所有 ParameterSocket。
+# 2. 将每个 ParameterSocket 展开为一条 pending rule，再在 tree.run() 结束后生成侧栏动态参数。
 # 3. 执行阶段缓存 Bind 节点本次运行的真实 args 与 processor_graph。
 # 4. 用户在侧栏修改动态参数时，用新值替换 args 中对应的 ParameterSocket 输入。
 # 5. 重新执行缓存中的 processor_graph，让子树使用真实 datablock 完成更新。
@@ -133,25 +133,38 @@ def _is_parameter_socket(socket) -> bool:
     return str(getattr(socket, "bl_idname", "")).startswith("OmniNodeSocketParameter")
 
 
-def find_parameter_input_index(node) -> int:
+def iter_parameter_inputs(node):
     if node is None:
-        return -1
+        return []
 
+    inputs = getattr(node, "inputs", [])
     processor_tree = getattr(node, "processor_tree", None)
+
     if processor_tree is not None:
+        result = []
         for index, item in enumerate(getattr(processor_tree, "group_inputs", [])):
-            if str(getattr(item, "socket_type", "")).startswith("OmniNodeSocketParameter"):
-                return index
+            if not str(getattr(item, "socket_type", "")).startswith("OmniNodeSocketParameter"):
+                continue
+            if index < len(inputs):
+                result.append((index, inputs[index]))
+        return result
 
-    for index, socket in enumerate(getattr(node, "inputs", [])):
-        if _is_parameter_socket(socket):
-            return index
+    return [
+        (index, socket)
+        for index, socket in enumerate(inputs)
+        if _is_parameter_socket(socket)
+    ]
 
-    return -1
+
+def find_parameter_input_index(node) -> int:
+    parameter_inputs = iter_parameter_inputs(node)
+    if not parameter_inputs:
+        return -1
+    return parameter_inputs[0][0]
 
 
-def coerce_node_parameter_value(node, value):
-    value_index = find_parameter_input_index(node)
+def coerce_node_parameter_value(node, value, parameter_index=None):
+    value_index = find_parameter_input_index(node) if parameter_index is None else int(parameter_index)
     inputs = getattr(node, "inputs", [])
     if 0 <= value_index < len(inputs):
         return _coerce_bind_value(_socket_to_bind_value_type(inputs[value_index]), value)
@@ -311,39 +324,41 @@ def _live_ref_key(tree, bind_key: str) -> tuple[int, str]:
     return (_tree_runtime_key(tree), str(bind_key))
 
 
-def build_bind_rule_from_node(node) -> dict[str, Any] | None:
-    if node is None:
-        return None
-
-    value_socket = None
-    value_index = find_parameter_input_index(node)
-
-    if value_index < 0:
-        return None
-
-    if value_index < len(node.inputs):
-        value_socket = node.inputs[value_index]
-    if value_socket is None:
-        return None
-
+def _build_bind_rule_from_parameter(node, value_index: int, value_socket) -> dict[str, Any]:
     value_type = _socket_to_bind_value_type(value_socket)
-    input_name = "Value"
-    default_value = 0.0
-
-    input_name = getattr(value_socket, "name", input_name) or input_name
-    default_value = _socket_default_to_json_value(getattr(value_socket, "default_value", default_value))
+    input_name = getattr(value_socket, "name", "Value") or "Value"
+    default_value = _socket_default_to_json_value(getattr(value_socket, "default_value", 0.0))
+    socket_identifier = str(getattr(value_socket, "identifier", "") or value_index)
 
     return {
-        "key": str(node.name),
+        "key": f"{node.name}:{socket_identifier}",
         "name": str(input_name or node.name),
         "value_type": value_type,
         "default": default_value,
-        "description": f"Bind from {node.name}.{input_name}",
+        "description": f"bpy.data.node_groups['{node.id_data.name}']['{node.name}'].{input_name}",
         "source": {
             "node_name": getattr(node, "name", ""),
             "parameter_input_index": value_index,
+            "parameter_socket_identifier": socket_identifier,
         },
     }
+
+
+def build_bind_rules_from_node(node) -> list[dict[str, Any]]:
+    if node is None:
+        return []
+
+    return [
+        _build_bind_rule_from_parameter(node, value_index, value_socket)
+        for value_index, value_socket in iter_parameter_inputs(node)
+    ]
+
+
+def build_bind_rule_from_node(node) -> dict[str, Any] | None:
+    rules = build_bind_rules_from_node(node)
+    if not rules:
+        return None
+    return rules[0]
 
 
 def append_pending_bind_rule(tree, rule: dict[str, Any]):
@@ -362,11 +377,20 @@ def clear_pending_bind_rules(tree):
         tree.omni_bind_pending_rules.clear()
 
 
+def collect_bind_rules(tree, node):
+    items = []
+    for rule in build_bind_rules_from_node(node):
+        item = append_pending_bind_rule(tree, rule)
+        if item is not None:
+            items.append(item)
+    return items
+
+
 def collect_bind_rule(tree, node):
-    rule = build_bind_rule_from_node(node)
-    if rule is None:
+    items = collect_bind_rules(tree, node)
+    if not items:
         return None
-    return append_pending_bind_rule(tree, rule)
+    return items[0]
 
 
 def clear_live_bind_contexts(tree):
@@ -438,10 +462,8 @@ def _runtime_debug_info(tree, rule: dict[str, Any]) -> dict[str, Any]:
 
 
 def capture_bind_node_runtime_context(tree, node, args, processor_graph=None):
-    rule = build_bind_rule_from_node(node)
-    if rule is None:
-        return
-    set_live_bind_context(tree, rule["key"], args, processor_graph)
+    for rule in build_bind_rules_from_node(node):
+        set_live_bind_context(tree, rule["key"], args, processor_graph)
 
 
 def _resolve_bind_node_runtime_context(tree, node, rule):
@@ -457,24 +479,59 @@ def _resolve_bind_node_runtime_context(tree, node, rule):
     return args, processor_graph
 
 
+def _apply_runtime_item_values_to_args(tree, args, node_name: str):
+    if tree is None or not hasattr(tree, "omni_bind_runtime_items"):
+        return args
+
+    for item in tree.omni_bind_runtime_items:
+        rule = item.get_rule()
+        source = rule.get("source") or {}
+        if str(source.get("node_name") or "") != node_name:
+            continue
+
+        value_index = int(source.get("parameter_input_index") or 0)
+        while len(args) <= value_index:
+            args.append(None)
+        args[value_index] = item.get_runtime_value()
+
+    return args
+
+
+def _sync_live_context_args_for_node(tree, node_name: str, args):
+    if tree is None or not hasattr(tree, "omni_bind_runtime_items"):
+        return
+
+    tree_key = _tree_runtime_key(tree)
+    for item in tree.omni_bind_runtime_items:
+        rule = item.get_rule()
+        source = rule.get("source") or {}
+        if str(source.get("node_name") or "") != node_name:
+            continue
+
+        bind_key = str(rule.get("key") or "")
+        live_context = LIVE_BIND_CONTEXTS.get((tree_key, bind_key))
+        if live_context is not None:
+            live_context["args"] = list(args)
+
+
 # =============================================================================
 # Bind 更新执行入口
 # =============================================================================
 
 
-def execute_bind_node_update(node, args, raw_value, processor_graph=None):
-    value = coerce_node_parameter_value(node, raw_value)
-    return run_bind_processor_graph(node, args, value, processor_graph)
+def execute_bind_node_update(node, args, raw_value, processor_graph=None, parameter_index=None):
+    value = coerce_node_parameter_value(node, raw_value, parameter_index=parameter_index)
+    return run_bind_processor_graph(node, args, value, processor_graph, parameter_index=parameter_index)
 
 
-def run_bind_processor_graph(node, args, value, processor_graph):
+def run_bind_processor_graph(node, args, value, processor_graph, parameter_index=None):
     if processor_graph is None:
         return value
 
     from .OmniExecutor import OmniExecutor
 
     provided_inputs = {}
-    value_index = find_parameter_input_index(node)
+    value_index = find_parameter_input_index(node) if parameter_index is None else int(parameter_index)
     for index, item in enumerate(getattr(processor_graph.tree_ref, "group_inputs", [])):
         if index >= len(args):
             continue
@@ -501,6 +558,7 @@ def apply_bind_node_update(tree, rule, raw_value):
     node_name = str((rule.get("source") or {}).get("node_name") or "")
     node = _find_tree_node_by_name(tree, node_name)
     args, processor_graph = _resolve_bind_node_runtime_context(tree, node, rule)
+    args = _apply_runtime_item_values_to_args(tree, args, node_name)
 
     # TODO: 如果 source node 已经找不到，但旧 live context 仍在，当前仍可能执行旧 processor_graph。
     # 这是调试期允许观察的 stale cache 行为；未来可以选择在 node is None 时直接拒绝 update。
@@ -508,7 +566,8 @@ def apply_bind_node_update(tree, rule, raw_value):
     while len(args) <= value_index:
         args.append(None)
     args[value_index] = raw_value
-    return execute_bind_node_update(node, args, raw_value, processor_graph)
+    _sync_live_context_args_for_node(tree, node_name, args)
+    return execute_bind_node_update(node, args, raw_value, processor_graph, parameter_index=value_index)
 
 
 def omni_bind_item_value_update(self, context):
@@ -663,10 +722,61 @@ class OmniMenuBindRuntime:
         cls.apply_runtime_update(tree, item)
 
     @classmethod
+    def draw_advanced_runtime_info(cls, layout: bpy.types.UILayout, runtime_entries):
+        advanced = layout.box()
+        grouped = {}
+        for item, rule, debug_info, cache_ready in runtime_entries:
+            source = rule.get("source") or {}
+            node_name = str(source.get("node_name") or "<missing>")
+            entry = grouped.setdefault(node_name, {
+                "debug_info": debug_info,
+                "cache_ready": True,
+                "params": [],
+                "datablocks": [],
+            })
+            entry["cache_ready"] = entry["cache_ready"] and cache_ready
+            entry["params"].append(item.name or item.key)
+
+            seen = {id(datablock) for datablock in entry["datablocks"]}
+            for datablock in debug_info["datablocks"]:
+                key = id(datablock)
+                if key not in seen:
+                    seen.add(key)
+                    entry["datablocks"].append(datablock)
+
+        for node_name, entry in grouped.items():
+            debug_info = entry["debug_info"]
+            card = advanced.box()
+            title = card.row(align=True)
+            title.alert = not entry["cache_ready"]
+            title.label(text=f"Bind Node: {node_name}", icon="NODE" if debug_info["has_source_node"] else "ERROR")
+            title.label(text="缓存就绪" if entry["cache_ready"] else "缓存丢失/过时",
+                        icon="CHECKMARK" if entry["cache_ready"] else "ERROR")
+
+            card.label(text="参数: " + ", ".join(entry["params"]), icon="RNA")
+
+            processor_ready = debug_info["has_processor_graph"]
+            card.label(text="运行缓存: 就绪" if processor_ready else "运行缓存: 丢失",
+                       icon="CHECKMARK" if processor_ready else "ERROR")
+
+            datablocks = entry["datablocks"]
+            if debug_info["has_live_context"]:
+                if datablocks:
+                    card.label(text="Datablocks使用中:", icon="OUTLINER_OB_GROUP_INSTANCE")
+                    for datablock in datablocks[:8]:
+                        card.label(text=_format_datablock_label(datablock))
+                    if len(datablocks) > 8:
+                        card.label(text=f"... {len(datablocks) - 8} more", icon="BLANK1")
+                else:
+                    card.label(text="Datablocks使用中: 无", icon="INFO")
+            else:
+                card.label(text="Datablocks使用中: <丢失运行cache>", icon="ERROR")
+
+    @classmethod
     def draw_runtime_panel(cls, layout: bpy.types.UILayout, tree):
         box = layout.box()
         header = box.row(align=True)
-        header.label(text="Omni动态面板", icon="DRIVER")
+        header.label(text="Omni动态参数面板")
         if hasattr(tree, "omni_bind_show_advanced_info"):
             header.prop(tree, "omni_bind_show_advanced_info", text="", icon="PREFERENCES")
 
@@ -695,72 +805,36 @@ class OmniMenuBindRuntime:
             warning = box.row(align=True)
             warning.alert = True
             warning.label(text="Bind运行缓存丢失或过时，请再次运行树。", icon="ERROR")
-        else:
-            box.label(text="运行缓存就绪", icon="CHECKMARK")
 
         show_advanced = bool(getattr(tree, "omni_bind_show_advanced_info", False))
+        if show_advanced:
+            cls.draw_advanced_runtime_info(box, runtime_entries)
 
+        params_box = box.column(align=True)
         for item, rule, debug_info, cache_ready in runtime_entries:
-            source = rule.get("source") or {}
-
-            card = box.box()
-            title = card.row(align=True)
-            title.alert = not cache_ready
-            title.label(text=item.name or item.key, icon="RNA")
-            if cache_ready:
-                title.label(text="缓存就绪", icon="CHECKMARK")
-            else:
-                title.label(text="缓存丢失", icon="ERROR")
-
-            col = card.column(align=True)
+            row = params_box.row(align=True)
+            row.alert = not cache_ready
             label = item.name or item.key
             value_type = _normalize_bind_value_type(item.value_type)
 
             if value_type == "BOOL":
-                col.prop(item, "bool_value", text=label)
+                row.prop(item, "bool_value", text=label)
             elif value_type == "INT":
-                col.prop(item, "int_value", text=label)
+                row.prop(item, "int_value", text=label)
             elif value_type == "FLOAT":
-                col.prop(item, "float_value", text=label)
+                row.prop(item, "float_value", text=label)
             elif value_type == "STRING":
-                col.prop(item, "string_value", text=label)
+                row.prop(item, "string_value", text=label)
             else:
-                col.prop(item, "vector_value", text=label)
+                row.prop(item, "vector_value", text=label)
 
             if not cache_ready:
-                warning = card.row(align=True)
-                warning.alert = True
-                warning.label(text="缓存丢失，更新可能无法到达子树。", icon="ERROR")
+                row.label(text="", icon="ERROR")
 
-            if not show_advanced:
-                continue
-
-            status = card.column(align=True)
-            node_name = str(source.get("node_name") or "")
-            if node_name:
-                node_icon = "NODE" if debug_info["has_source_node"] else "ERROR"
-                node_text = f"源Node: {node_name}" if debug_info["has_source_node"] else f"源Node丢失: {node_name}"
-                status.label(text=node_text, icon=node_icon)
-
-            processor_icon = "CHECKMARK" if debug_info["has_processor_graph"] else "ERROR"
-            processor_text = "运行缓存: 就绪" if debug_info["has_processor_graph"] else "运行缓存: 丢失"
-            status.label(text=processor_text, icon=processor_icon)
-
-            datablocks = debug_info["datablocks"]
-            if debug_info["has_live_context"]:
-                if datablocks:
-                    status.label(text="Datablocks使用中: ", icon="OUTLINER_OB_GROUP_INSTANCE")
-                    for datablock in datablocks[:8]:
-                        status.label(text=_format_datablock_label(datablock), icon="LIBRARY_DATA_DIRECT")
-                    if len(datablocks) > 8:
-                        status.label(text=f"... {len(datablocks) - 8} more", icon="BLANK1")
-                else:
-                    status.label(text="Datablocks使用中: 无", icon="INFO")
-            else:
-                status.label(text="Datablocks使用中: <丢失运行cache>", icon="ERROR")
-
-            if item.description:
-                status.label(text=item.description, icon="BLANK1")
+            if item.description and show_advanced:
+                desc = params_box.row(align=True)
+                desc.enabled = False
+                desc.label(text=item.description, icon="BLANK1")
 
 
 # =============================================================================

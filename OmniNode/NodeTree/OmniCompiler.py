@@ -210,12 +210,12 @@ class OmniCompiler:
             node_idname = getattr(node, "bl_idname", "")
 
             if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                rule = OmniMenuBind.build_bind_rule_from_node(node)
-                if rule is not None:
-                    OmniMenuBind.collect_bind_rule(tree, node)
+                rules = OmniMenuBind.build_bind_rules_from_node(node)
+                if rules:
+                    OmniMenuBind.collect_bind_rules(tree, node)
                     OmniDebug.append_compile_trace(
                         graph,
-                        f"Collect BIND {node.name} -> {rule.get('key')} ({rule.get('value_type')})",
+                        f"Collect BIND {node.name} -> {len(rules)} parameter(s)",
                     )
 
             if node_idname == OmniCompiler.GROUP_INPUTS_IDNAME:

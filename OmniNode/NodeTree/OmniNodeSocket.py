@@ -3,7 +3,7 @@ from bpy.types import NodeSocket,NodeSocketImage
 
 
 class OmniNodeSocketScene(NodeSocket):
-    bl_label = "Omni节点场景Socket"
+    bl_label = "场景-Omni"
     bl_idname = 'OmniNodeSocketScene'
 
     default_value: bpy.props.PointerProperty(
@@ -20,7 +20,7 @@ class OmniNodeSocketScene(NodeSocket):
         return (1.0, 0.4, 0.216, 1.0)
 
 class OmniNodeSocketText(NodeSocket):
-    bl_label = "Omni节点文本文件Socket"
+    bl_label = "文本文件-Omni"
     bl_idname = 'OmniNodeSocketText'
 
     default_value: bpy.props.PointerProperty(
@@ -37,7 +37,7 @@ class OmniNodeSocketText(NodeSocket):
         return (1.0, 1.0, 1.0, 1.0)
 
 class OmniNodeSocketAny(NodeSocket):
-    bl_label = "Omni节点虚Socket"
+    bl_label = "Any-Omni"
     bl_idname = 'OmniNodeSocketAny'
 
     # 无用
@@ -52,7 +52,7 @@ class OmniNodeSocketAny(NodeSocket):
         return (0.5, 0.5, 0.5, 0.5)
 
 class OmniNodeSocketImageFormat(NodeSocket):
-    bl_label = "Omni图片后缀格式Socket"
+    bl_label = "图片后缀格式-Omni"
     bl_idname = 'OmniNodeSocketImageFormat'
 
     format_items = [
@@ -80,7 +80,7 @@ class OmniNodeSocketImageFormat(NodeSocket):
         return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
 
 class OmniNodeSocketRegex(NodeSocket):
-    bl_label = "Omni正则表达式Socket"
+    bl_label = "正则表达式-Omni"
     bl_idname = 'OmniNodeSocketRegex'
 
     default_value: bpy.props.StringProperty()  # type: ignore
@@ -96,7 +96,7 @@ class OmniNodeSocketRegex(NodeSocket):
         return (0, 0, 0.5, 1.0) #内置NodeSocketString的颜色，偏色1
     
 class OmniNodeSocketGlob(NodeSocket):
-    bl_label = "OmniGlob表达式Socket"
+    bl_label = "Glob表达式-Omni"
     bl_idname = 'OmniNodeSocketGlob'
 
     default_value: bpy.props.StringProperty()  # type: ignore
@@ -113,7 +113,7 @@ class OmniNodeSocketGlob(NodeSocket):
 
 
 class OmniNodeSocketDatablock(NodeSocket):
-    bl_label = "OmniDatablock Socket"
+    bl_label = "数据块-Omni"
     bl_idname = "OmniNodeSocketDatablock"
 
     default_value: bpy.props.PointerProperty(
@@ -133,7 +133,7 @@ class OmniNodeSocketDatablock(NodeSocket):
 
 
 class OmniNodeSocketParameterFloat(NodeSocket):
-    bl_label = "Omni Parameter Float"
+    bl_label = "Float-OmniParam"
     bl_idname = "OmniNodeSocketParameterFloat"
 
     default_value: bpy.props.FloatProperty()  # type: ignore
@@ -150,7 +150,7 @@ class OmniNodeSocketParameterFloat(NodeSocket):
 
 
 class OmniNodeSocketParameterInt(NodeSocket):
-    bl_label = "Omni Parameter Int"
+    bl_label = "Int-OmniParam"
     bl_idname = "OmniNodeSocketParameterInt"
 
     default_value: bpy.props.IntProperty()  # type: ignore
@@ -167,7 +167,7 @@ class OmniNodeSocketParameterInt(NodeSocket):
 
 
 class OmniNodeSocketParameterBool(NodeSocket):
-    bl_label = "Omni Parameter Bool"
+    bl_label = "Bool-OmniParam"
     bl_idname = "OmniNodeSocketParameterBool"
 
     default_value: bpy.props.BoolProperty()  # type: ignore
@@ -184,7 +184,7 @@ class OmniNodeSocketParameterBool(NodeSocket):
 
 
 class OmniNodeSocketParameterString(NodeSocket):
-    bl_label = "Omni Parameter String"
+    bl_label = "String-OmniParam"
     bl_idname = "OmniNodeSocketParameterString"
 
     default_value: bpy.props.StringProperty()  # type: ignore
@@ -201,7 +201,7 @@ class OmniNodeSocketParameterString(NodeSocket):
 
 
 class OmniNodeSocketParameterVector(NodeSocket):
-    bl_label = "Omni Parameter Vector"
+    bl_label = "Vector-OmniParam"
     bl_idname = "OmniNodeSocketParameterVector"
 
     default_value: bpy.props.FloatVectorProperty(size=3, subtype="XYZ")  # type: ignore
