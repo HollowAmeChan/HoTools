@@ -112,6 +112,7 @@ VRM_SHAPEKEYS = [
     "LookUp", "LookDown", "LookLeft", "LookRight",
     "Blink_L", "Blink_R"
 ]
+
 UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS = [
     "EyeLookOutRight",
     "EyeLookInRight",
@@ -256,6 +257,7 @@ UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS =[
     "MouthTightener",
     "MouthPress"
 ]
+# https://docs.vrcft.io/docs/tutorial-avatars/tutorial-avatars-extras/unified-blendshapes
 
 QUEST_PRO_SHAPEKEYS = [
     "EYES_LOOK_UP_R",
@@ -326,14 +328,13 @@ QUEST_PRO_SHAPEKEYS = [
 # https://developers.meta.com/horizon/documentation/native/android/move-ref-blendshapes/
 
 
-# 监听器缓存（存在scene中报错）
+# 监听器缓存
 LISTENER_CACHE = {
     "key_name": "",
     "key_value": 0.0,
     "lock": False,
     "edit_mode": False,
 }
-#======================================================================#
 # 监听器(每帧执行)
 def shape_key_listener(scene):
     global LISTENER_CACHE
