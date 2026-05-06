@@ -257,6 +257,74 @@ UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS =[
     "MouthPress"
 ]
 
+QUEST_PRO_SHAPEKEYS = [
+    "EYES_LOOK_UP_R",
+    "EYES_LOOK_DOWN_R",
+    "EYES_LOOK_IN_R",
+    "EYES_LOOK_OUT_R",
+    "EYES_LOOK_UP_L",
+    "EYES_LOOK_DOWN_L",
+    "EYES_LOOK_IN_L",
+    "EYES_LOOK_OUT_L",
+    "EYES_CLOSED_R",
+    "EYES_CLOSED_L",
+    "EYES_SQUINT_R",
+    "EYES_SQUINT_R",
+    "EYES_WIDEN_R",
+    "EYES_WIDEN_L",
+    "BROW_LOWERER_R",
+    "BROW_LOWERER_L",
+    "INNER_BROW_RAISER_R",
+    "INNER_BROW_RAISER_L",
+    "OUTER_BROW_RAISER_R",
+    "OUTER_BROW_RAISER_L",
+    "NOSE_WRINKLER_R",
+    "NOSE_WRINKLER_L",
+    "CHEEK_RAISER_R",
+    "CHEEK_RAISER_L",
+    "CHEEK_PUFF_R",
+    "CHEEK_PUFF_L",
+    "CHEEK_SUCK_R",
+    "CHEEK_SUCK_L",
+    "JAW_DROP",
+    "LIPS_TOWARD",
+    "JAW_SIDEWAYS_RIGHT",
+    "JAW_SIDEWAYS_LEFT",
+    "JAW_THRUST",
+    "LIP_SUCK_RT",
+    "LIP_SUCK_LT",
+    "LIP_SUCK_RB",
+    "LIP_SUCK_LB",
+    "LIP_FUNNELER_RT",
+    "LIP_FUNNELER_LT",
+    "LIP_FUNNELER_RB",
+    "LIP_FUNNELER_LB",
+    "LIP_PUCKER_R",
+    "LIP_PUCKER_L",
+    "UPPER_LIP_RAISER_R",
+    "UPPER_LIP_RAISER_L",
+    "LOWER_LIP_DEPRESSOR_R",
+    "LOWER_LIP_DEPRESSER_L",
+    "LIP_CORNER_PULLER_R",
+    "LIP_CORNER_PULLER_L",
+    "LIP_CORNER_DEPRESSOR_R",
+    "LIP_CORNER_DEPRESSOR_L",
+    "LIP_STRETCHER_R",
+    "LIP_STRETCHER_L",
+    "DIMPLER_R",
+    "DIMPLER_L",
+    "CHIN_RAISER_T",
+    "CHIN_RAISER_B",
+    "LIP_PRESSOR_R",
+    "LIP_PRESSOR_L",
+    "LIP_TIGHTENER_R",
+    "LIP_TIGHTENER_L",
+    "MOUTH_RIGHT",
+    "MOUTH_LEFT",
+    "TONGUE_OUT"
+]
+# https://developers.meta.com/horizon/documentation/native/android/move-ref-blendshapes/
+
 
 # 监听器缓存（存在scene中报错）
 LISTENER_CACHE = {
@@ -1396,6 +1464,7 @@ class OP_AddShapekeysByTemplate(Operator):
             ('VRCHAT', "VRChat", "VRChat 形态键列表"),
             ('MMD', "MMD", "MMD 形态键列表"),
             ('VRM', "Vrm", "Vrm 形态键列表"),
+            ('QUEST_PRO', "Quest Pro", "Quest Pro 形态键列表"),
             ('UNIFIED_EXPRESSIONS_BASE', "Unified-base", "Unified基础键，用于组装arkit、vive、meta以及自己本身（混合键）"),
             ('UNIFIED_EXPRESSIONS_BLEND', "Unified-blend", "Unified混合键"),
         ],
@@ -1424,6 +1493,8 @@ class OP_AddShapekeysByTemplate(Operator):
             shapekey_names = MMD_SHAPEKEYS
         elif self.shapekey_list == 'VRM':
             shapekey_names = VRM_SHAPEKEYS
+        elif self.shapekey_list == 'QUEST_PRO':
+            shapekey_names = QUEST_PRO_SHAPEKEYS
         elif self.shapekey_list == 'UNIFIED_EXPRESSIONS_BASE':
             shapekey_names = UNIFIED_EXPRESSIONS_BASE_SHAPEKEYS
         elif self.shapekey_list == 'UNIFIED_EXPRESSIONS_BLEND':
