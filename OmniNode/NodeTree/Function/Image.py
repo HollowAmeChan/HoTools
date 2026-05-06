@@ -700,3 +700,169 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
     bl_img.save()
 
     return file_path
+
+
+def _image_to_numpy_rgba(img: bpy.types.Image) -> np.ndarray:
+    width = img.size[0]
+    height = img.size[1]
+    pixels = np.array(img.pixels[:], dtype=np.float32)
+    return pixels.reshape((height, width, 4))
+
+
+def _prepare_image_output(
+    name: str,
+    width: int,
+    height: int,
+    overwrite: bool,
+    float_buffer: bool = False,
+    is_non_color: bool = True,
+) -> bpy.types.Image:
+    old_img = bpy.data.images.get(name)
+
+    if overwrite and old_img:
+        old_img.user_clear()
+        bpy.data.images.remove(old_img)
+        old_img = None
+
+    if not overwrite and old_img:
+        result = old_img
+        if result.size[0] != width or result.size[1] != height:
+            result.scale(width, height)
+    else:
+        result = bpy.data.images.new(
+            name=name,
+            width=width,
+            height=height,
+            alpha=True,
+            float_buffer=float_buffer,
+        )
+
+    result.colorspace_settings.name = "Non-Color" if is_non_color else "sRGB"
+    return result
+
+
+def _write_numpy_to_image(img: bpy.types.Image, pixels: np.ndarray) -> bpy.types.Image:
+    flat = np.ascontiguousarray(pixels, dtype=np.float32).ravel()
+    img.pixels.foreach_set(flat)
+    img.update()
+    return img
+
+
+def _single_channel_to_rgba(channel: np.ndarray) -> np.ndarray:
+    height, width = channel.shape
+    out = np.ones((height, width, 4), dtype=np.float32)
+    out[..., 0] = channel
+    out[..., 1] = channel
+    out[..., 2] = channel
+    out[..., 3] = 1.0
+    return out
+
+
+@omni(
+    enable=True,
+    bl_label="拆分图片通道",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片", "输出名称前缀", "覆盖同名图像"],
+    _OUTPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图"],
+    omni_description="""
+    将输入图片拆分为 R/G/B/A 四张灰度通道图。
+    输出图会自动命名为 前缀_R、前缀_G、前缀_B、前缀_A，且默认使用 Non-Color 色彩空间。
+    """,
+)
+def splitImageChannels(
+    img: bpy.types.Image,
+    output_name_prefix: str = "",
+    overwrite: bool = True,
+) -> tuple[bpy.types.Image, bpy.types.Image, bpy.types.Image, bpy.types.Image]:
+    if not img:
+        raise ValueError("[splitImageChannels] img is None")
+
+    width = img.size[0]
+    height = img.size[1]
+    img_array = _image_to_numpy_rgba(img)
+
+    base_name = output_name_prefix if output_name_prefix else img.name
+    float_buffer = bool(getattr(img, "is_float", False))
+
+    outputs = []
+    for channel_index, suffix in enumerate(("R", "G", "B", "A")):
+        out_img = _prepare_image_output(
+            name=f"{base_name}_{suffix}",
+            width=width,
+            height=height,
+            overwrite=overwrite,
+            float_buffer=float_buffer,
+            is_non_color=True,
+        )
+        channel_pixels = _single_channel_to_rgba(img_array[..., channel_index])
+        _write_numpy_to_image(out_img, channel_pixels)
+        outputs.append(out_img)
+
+    return tuple(outputs)
+
+
+@omni(
+    enable=True,
+    bl_label="合并图片通道",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["R通道图", "G通道图", "B通道图", "A通道图", "新建图像名称", "覆盖同名图像", "是数据图"],
+    _OUTPUT_NAME=["合并图像"],
+    omni_description="""
+    将四张通道图合并为一张 RGBA 图片。
+    每个输入图片默认读取其 R 通道作为目标通道值；若 A 通道图为空，则 Alpha 默认为 1。
+    """,
+)
+def mergeImageChannels(
+    r_img: bpy.types.Image,
+    g_img: bpy.types.Image,
+    b_img: bpy.types.Image,
+    a_img: bpy.types.Image = None,
+    name: str = "",
+    overwrite: bool = True,
+    is_data: bool = True,
+) -> bpy.types.Image:
+    if not r_img or not g_img or not b_img:
+        raise ValueError("[mergeImageChannels] R/G/B images cannot be None")
+
+    base_img = r_img
+    width = base_img.size[0]
+    height = base_img.size[1]
+
+    for img in (g_img, b_img, a_img):
+        if img and (img.size[0] != width or img.size[1] != height):
+            raise ValueError(
+                f"[mergeImageChannels] size mismatch: {img.name} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+
+    r_pixels = _image_to_numpy_rgba(r_img)[..., 0]
+    g_pixels = _image_to_numpy_rgba(g_img)[..., 0]
+    b_pixels = _image_to_numpy_rgba(b_img)[..., 0]
+
+    if a_img:
+        a_pixels = _image_to_numpy_rgba(a_img)[..., 0]
+    else:
+        a_pixels = np.ones((height, width), dtype=np.float32)
+
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., 0] = r_pixels
+    out[..., 1] = g_pixels
+    out[..., 2] = b_pixels
+    out[..., 3] = a_pixels
+    out = np.clip(out, 0.0, 1.0)
+
+    result_name = name if name else f"{base_img.name}_Merged"
+    result = _prepare_image_output(
+        name=result_name,
+        width=width,
+        height=height,
+        overwrite=overwrite,
+        float_buffer=any(bool(getattr(img, "is_float", False)) for img in (r_img, g_img, b_img, a_img) if img),
+        is_non_color=is_data,
+    )
+    _write_numpy_to_image(result, out)
+    return result
+
+
