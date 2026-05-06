@@ -1071,7 +1071,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         if self.auto_rename:
             # TODO:由于未知原因，5.1版本无法使用autorename功能
-            arm_obj.data.show_names = True
+            arm_obj.data.show_names = True # TODO:由于未知原因，5.1-中show_names无法在模态中修改
             bpy.ops.armature.select_all(action='DESELECT')
             # 按照创建顺序（权重）选中骨骼
             for b_name in new_bone_names:
