@@ -503,7 +503,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
     auto_rename: bpy.props.BoolProperty(
         name="自动重命名",
         description="创建完成后自动联动hotools规则重命名",
-        default=True
+        default=False
     )  # type: ignore
 
     # 获取所有连通 flow
@@ -511,7 +511,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
     align_roll_to_normal: BoolProperty(
         name="扭转对齐法线",
         description="创建骨骼时让每段骨骼的扭转对齐到对应边的法线",
-        default=False
+        default=True
     )  # type: ignore
 
     def get_edge_world_normal(self, normal_matrix, edge):
@@ -1070,26 +1070,17 @@ class OP_CreatBoneChainByMeshFlow(Operator):
                 new_bone_names.append(bone.name)  # 记录顺序
 
         if self.auto_rename:
+            # TODO:由于未知原因，5.1版本无法使用autorename功能
             arm_obj.data.show_names = True
-            # 确保在编辑模式下操作
             bpy.ops.armature.select_all(action='DESELECT')
-
             # 按照创建顺序（权重）选中骨骼
             for b_name in new_bone_names:
                 eb = arm_data.edit_bones.get(b_name)
                 if eb:
                     eb.select = True
-
-            # 更新层级数据，确保算子能获取到最新的选择状态
             arm_data.edit_bones.active = arm_data.edit_bones[new_bone_names[0]]
-
-            # 切换到物体模式以刷新数据，然后调用重命名算子
-            # 注意：如果你的重命名算子要在编辑模式跑，就保持编辑模式
-            bpy.ops.object.mode_set(mode='OBJECT')
-
-            # 调用你之前的重命名算子
-            # 确保 bl_idname 匹配
             bpy.ops.ho.rename_rulerenameboneselected()
+            bpy.ops.object.mode_set(mode='OBJECT')
         else:
             bpy.ops.object.mode_set(mode='OBJECT')
 

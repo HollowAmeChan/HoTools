@@ -97,6 +97,135 @@ def ureg_props():
 # region 操作
 
 
+def get_selected_armature_bones(context, obj=None):
+    """
+    blender5.0+bone.select被删除
+    此方法兼容了edit/pose/object模式下获取选中骨骼的情况，并且在object模式下增加了对select属性的兼容，以适应不同版本的blender。
+    """
+    obj = obj or context.active_object
+    if not (obj and obj.type == 'ARMATURE'):
+        return []
+
+    if obj.mode == 'EDIT':
+        selected = getattr(context, "selected_editable_bones", None)
+        if selected is None:
+            selected = getattr(context, "selected_bones", None)
+        if selected:
+            return list(selected)
+
+        selected = []
+        for bone in obj.data.edit_bones:
+            if (
+                getattr(bone, "select", False)
+                or getattr(bone, "select_head", False)
+                or getattr(bone, "select_tail", False)
+            ):
+                selected.append(bone)
+        return selected
+
+    if obj.mode == 'POSE':
+        pose_bones = getattr(context, "selected_pose_bones", None) or []
+        if pose_bones:
+            selected = []
+            for pose_bone in pose_bones:
+                bone = obj.data.bones.get(pose_bone.name)
+                if bone is not None:
+                    selected.append(bone)
+            if selected:
+                return selected
+
+        selected = getattr(context, "selected_bones", None)
+        if selected:
+            return list(selected)
+
+        return [bone for bone in obj.data.bones if getattr(bone, "select", False)]
+
+    selected = getattr(context, "selected_bones", None)
+    if selected:
+        return list(selected)
+
+    return [bone for bone in obj.data.bones if getattr(bone, "select", False)]
+
+
+def increment_rename_string(s: str, times: int = 0) -> str:
+    if times <= 0:
+        return s
+    result = s
+    for _ in range(times):
+        if result.isdigit():
+            result = str(int(result) + 1).zfill(len(result))
+        elif result.isalpha():
+            chars = list(result)
+            i = len(chars) - 1
+            while i >= 0:
+                c = chars[i]
+                if c in ('z', 'Z'):
+                    chars[i] = 'a' if c == 'z' else 'A'
+                    i -= 1
+                else:
+                    chars[i] = chr(ord(c) + 1)
+                    result = ''.join(chars)
+                    break
+            else:
+                result = ('a' if result[0].islower() else 'A') + ''.join(chars)
+        else:
+            match = re.search(r'(\d+)$', result)
+            if match:
+                num = match.group(1)
+                result = result[:-len(num)] + str(int(num) + 1).zfill(len(num))
+            else:
+                result = result + "1"
+    return result
+
+
+def apply_rule_rename_to_bones(rules, selected_bones):
+    if not selected_bones:
+        return False
+
+    roots = [b for b in selected_bones if b.parent not in selected_bones]
+    bone_topology_data = {}
+
+    def scan_topology(bone, current_chains, depth):
+        bone_topology_data[bone] = {
+            'chains': current_chains.copy(),
+            'depth': depth,
+        }
+
+        children = [child for child in bone.children if child in selected_bones]
+        if not children:
+            return
+
+        for child_idx, child in enumerate(children):
+            child_chains = current_chains.copy()
+            if len(children) > 1:
+                child_chains.append(child_idx)
+            scan_topology(child, child_chains, depth + 1)
+
+    for root_idx, root in enumerate(roots):
+        scan_topology(root, [root_idx], 0)
+
+    for bone, data in bone_topology_data.items():
+        new_name_parts = []
+        chain_rule_count = 0
+
+        for rule in rules:
+            if rule.type == 'MOD_FIXED_STRING':
+                new_name_parts.append(rule.fixedStr)
+
+            elif rule.type == 'MOD_CHAIN':
+                if chain_rule_count < len(data['chains']):
+                    val_idx = data['chains'][chain_rule_count]
+                    new_name_parts.append(increment_rename_string(rule.chainStr, val_idx))
+                chain_rule_count += 1
+
+            elif rule.type == 'MOD_DEPTH':
+                new_name_parts.append(increment_rename_string(rule.deepStr, data['depth']))
+
+        bone.name = "_".join(new_name_parts)
+
+    return True
+
+
 class OP_SaveRules(Operator):
     # TODO
     bl_idname = "ho.rename_saverules"
@@ -307,12 +436,11 @@ class OP_RemoveNumberTail(Operator):
             suffix_pattern = r'\.\d{3}$'
 
             # 遍历所有选中的骨骼
-            for bone in armature.data.bones:
-                if bone.select:
+            for bone in get_selected_armature_bones(context, armature):
                     # 修改骨骼名称，去掉后缀
-                    original_name = bone.name
-                    new_name = re.sub(suffix_pattern, '', original_name)
-                    bone.name = new_name
+                original_name = bone.name
+                new_name = re.sub(suffix_pattern, '', original_name)
+                bone.name = new_name
 
         return {'FINISHED'}
 
@@ -330,12 +458,11 @@ class OP_RemoveSideTail(Operator):
             suffix_pattern = r'\.[RrLl]$'
 
             # 遍历所有选中的骨骼
-            for bone in armature.data.bones:
-                if bone.select:
+            for bone in get_selected_armature_bones(context, armature):
                     # 修改骨骼名称，去掉后缀
-                    original_name = bone.name
-                    new_name = re.sub(suffix_pattern, '', original_name)
-                    bone.name = new_name
+                original_name = bone.name
+                new_name = re.sub(suffix_pattern, '', original_name)
+                bone.name = new_name
 
         return {'FINISHED'}
 
@@ -378,7 +505,7 @@ class OP_RuleRenameBoneSelected(Operator):
     def execute(self, context):
         obj = context.active_object
         rules = context.scene.ho_boneRename_rules
-        selected_bones = [b for b in obj.data.bones if b.select]
+        selected_bones = get_selected_armature_bones(context, obj)
         
         if not selected_bones:
             return {'CANCELLED'}
@@ -462,8 +589,7 @@ class OP_RuleChangeNameBoneSelected(Operator):
         bpy.ops.object.mode_set(mode='OBJECT')#强制更新
         
         # 获取当前选中的骨骼列表
-        selected_bones = [
-            bone for bone in armature.data.bones if bone.select]
+        selected_bones = get_selected_armature_bones(context, armature)
 
         changerule = context.scene.ho_boneRename_change_rules[self.index]
 

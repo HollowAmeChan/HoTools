@@ -333,7 +333,7 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
 
     filename_ext = ""
     # type: ignore # 不限制后缀，由用户选择格式
-    filter_glob: StringProperty(default="*", options={'HIDDEN'})
+    filter_glob: StringProperty(default="*", options={'HIDDEN'}) # type: ignore
 
     image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
     image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
