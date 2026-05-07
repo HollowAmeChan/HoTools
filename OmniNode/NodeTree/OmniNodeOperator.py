@@ -34,6 +34,163 @@ BLENDER_SOCKET_TYPES = {
     # "NodeSocketMenu": "Menu",
 }
 
+_OMNI_TREE_NAV_STACKS = {}
+
+
+def _resolve_space_tree(space):
+    return getattr(space, "edit_tree", None) or getattr(space, "node_tree", None)
+
+
+def _is_omni_tree(tree):
+    return tree is not None and getattr(tree, "bl_idname", None) == "OmniNodeTree"
+
+
+def _nav_space_key(context):
+    space = getattr(context, "space_data", None)
+    area = getattr(context, "area", None)
+    if space is None or getattr(space, "type", None) != 'NODE_EDITOR':
+        return None
+
+    area_ptr = area.as_pointer() if area is not None else 0
+    try:
+        space_ptr = space.as_pointer()
+    except Exception:
+        space_ptr = id(space)
+    return f"{area_ptr}:{space_ptr}"
+
+
+def _resolve_tree_entry(entry):
+    if not entry:
+        return None
+
+    tree = entry.get("tree")
+    try:
+        if _is_omni_tree(tree):
+            return tree
+    except Exception:
+        pass
+
+    tree_name = entry.get("tree_name")
+    if not tree_name:
+        return None
+
+    tree = bpy.data.node_groups.get(tree_name)
+    if _is_omni_tree(tree):
+        return tree
+
+    for candidate in bpy.data.node_groups:
+        if getattr(candidate, "name_full", None) == tree_name and _is_omni_tree(candidate):
+            return candidate
+    return None
+
+
+def _get_nav_stack(context, create=False):
+    key = _nav_space_key(context)
+    if key is None:
+        return []
+
+    stack = _OMNI_TREE_NAV_STACKS.setdefault(key, []) if create else _OMNI_TREE_NAV_STACKS.get(key, [])
+    cleaned_stack = []
+    for entry in stack:
+        tree = _resolve_tree_entry(entry)
+        if tree is None:
+            continue
+        cleaned_stack.append({
+            "tree": tree,
+            "tree_name": getattr(tree, "name_full", tree.name),
+        })
+
+    if cleaned_stack or create:
+        _OMNI_TREE_NAV_STACKS[key] = cleaned_stack
+    else:
+        _OMNI_TREE_NAV_STACKS.pop(key, None)
+
+    return cleaned_stack
+
+
+def _push_nav_tree(context, tree):
+    if not _is_omni_tree(tree):
+        return
+
+    stack = _get_nav_stack(context, create=True)
+    entry_name = getattr(tree, "name_full", tree.name)
+    if stack and stack[-1].get("tree_name") == entry_name:
+        return
+
+    stack.append({
+        "tree": tree,
+        "tree_name": entry_name,
+    })
+    key = _nav_space_key(context)
+    if key is not None:
+        _OMNI_TREE_NAV_STACKS[key] = stack
+
+
+def _pop_nav_tree(context):
+    key = _nav_space_key(context)
+    if key is None:
+        return None
+
+    stack = _get_nav_stack(context)
+    while stack:
+        entry = stack.pop()
+        tree = _resolve_tree_entry(entry)
+        if tree is not None:
+            if stack:
+                _OMNI_TREE_NAV_STACKS[key] = stack
+            else:
+                _OMNI_TREE_NAV_STACKS.pop(key, None)
+            return tree
+
+    _OMNI_TREE_NAV_STACKS.pop(key, None)
+    return None
+
+
+def omni_nav_can_go_back(context):
+    return len(_get_nav_stack(context)) > 0
+
+
+def omni_nav_parent_name(context):
+    stack = _get_nav_stack(context)
+    if not stack:
+        return ""
+
+    tree = _resolve_tree_entry(stack[-1])
+    return tree.name if tree is not None else ""
+
+
+def omni_nav_depth(context):
+    return len(_get_nav_stack(context))
+
+
+def omni_nav_stack_label(context):
+    stack = _get_nav_stack(context)
+    if not stack:
+        return ""
+
+    names = []
+    for entry in stack:
+        tree = _resolve_tree_entry(entry)
+        if tree is not None:
+            names.append(tree.name)
+
+    if not names:
+        return ""
+
+    return " > ".join(names)
+
+
+def _activate_tree_in_space(space, tree):
+    if space is None or getattr(space, "type", None) != 'NODE_EDITOR' or not _is_omni_tree(tree):
+        return False
+
+    try:
+        space.node_tree = tree
+    except Exception:
+        return False
+
+    return _resolve_space_tree(space) == tree or getattr(space, "node_tree", None) == tree
+
 
 def full_socket_type_items():
     items = []
@@ -257,12 +414,12 @@ class OP_JumpToNodeTree(Operator):
         return bool(
             space
             and space.type == 'NODE_EDITOR'
-            and (getattr(space, "edit_tree", None) or getattr(space, "node_tree", None))
+            and _resolve_space_tree(space)
         )
 
     def execute(self, context):
         space = context.space_data
-        tree = getattr(space, "edit_tree", None) or getattr(space, "node_tree", None)
+        tree = _resolve_space_tree(space)
         if tree is None or not self.node_name:
             return {'CANCELLED'}
 
@@ -276,8 +433,47 @@ class OP_JumpToNodeTree(Operator):
             self.report({'WARNING'}, "该节点没有可跳转的节点树")
             return {'CANCELLED'}
 
-        if not self._enter_tree_with_path(space, node, target_tree):
-            space.node_tree = target_tree
+        if tree == target_tree:
+            return {'FINISHED'}
+
+        if not _activate_tree_in_space(space, target_tree):
+            self.report({'WARNING'}, "Unable to open target OmniNodeTree")
+            return {'CANCELLED'}
+        _push_nav_tree(context, tree)
+        return {'FINISHED'}
+
+
+class OP_ReturnToParentNodeTree(Operator):
+    bl_idname = "ho.omni_return_to_parent_node_tree"
+    bl_label = "返回上一级"
+    bl_description = "返回到 HoTools 自己维护的上一级 OmniNodeTree"
+
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        tree = _resolve_space_tree(space)
+        return bool(
+            space
+            and space.type == 'NODE_EDITOR'
+            and _is_omni_tree(tree)
+            and omni_nav_can_go_back(context)
+        )
+
+    def execute(self, context):
+        space = context.space_data
+        current_tree = _resolve_space_tree(space)
+        target_tree = _pop_nav_tree(context)
+
+        while target_tree is not None and target_tree == current_tree:
+            target_tree = _pop_nav_tree(context)
+
+        if target_tree is None:
+            self.report({'WARNING'}, "返回栈为空，没有可返回的节点树")
+            return {'CANCELLED'}
+
+        if not _activate_tree_in_space(space, target_tree):
+            self.report({'WARNING'}, "无法返回到上一级 OmniNodeTree")
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -617,7 +813,7 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
     space = context.space_data
     if not space or space.type != 'NODE_EDITOR':
         return
-    tree = getattr(space, "node_tree", None)
+    tree = _resolve_space_tree(space)
     if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
         return
 
@@ -637,12 +833,14 @@ def draw_in_NODE_HT_header(self, context: Context):
     space = context.space_data
     if not space or space.type != 'NODE_EDITOR':
         return
-    tree = getattr(space, "node_tree", None)
+    tree = _resolve_space_tree(space)
     if not tree or getattr(tree, "bl_idname", None) != "OmniNodeTree":
         return
     layout: bpy.types.UILayout = self.layout
-    if len(getattr(space, "path", [])) > 1:
-        layout.operator("node.tree_path_parent", text="", icon="BACK")
+    if omni_nav_can_go_back(context):
+        stack_label = omni_nav_stack_label(context)
+        if stack_label:
+            layout.operator(OP_ReturnToParentNodeTree.bl_idname, text=stack_label, icon="FILE_PARENT")
     layout.operator(OmniTreeDestroy.bl_idname,text="销毁树")
 
 
@@ -658,6 +856,7 @@ clss = [
     OmniTreeDestroy,
     OP_IOItemMove,
     OP_JumpToNodeTree,
+    OP_ReturnToParentNodeTree,
 ]
 
 

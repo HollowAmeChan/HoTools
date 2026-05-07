@@ -153,12 +153,10 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     if tree.is_auto_update:
         layout.alert = True
-        layout.prop(tree,
-                "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+        layout.prop(tree,"is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
         layout.alert = False
     else:
-        layout.prop(tree,
-                "is_auto_update", text="树自动更新", icon="UNLINKED")
+        layout.prop(tree,"is_auto_update", text="树自动更新", icon="UNLINKED")
 
     draw_OmniTreeInputs(layout, tree)
     draw_OmniTreeOutputs(layout, tree)
