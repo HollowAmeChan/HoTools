@@ -136,8 +136,12 @@ class OmniDebug:
             for entry in graph.compile_trace:
                 lines.append(f"{indent}    {OmniDebug.value_label(entry)}")
 
+        subtree_types = subtree_call_type
+        if not isinstance(subtree_types, tuple):
+            subtree_types = (subtree_types,)
+
         for op in graph.instructions:
-            if isinstance(op, subtree_call_type):
+            if isinstance(op, subtree_types):
                 lines.extend(OmniDebug.format_compile_report(op.compiled_graph, subtree_call_type, depth + 1))
 
         return lines

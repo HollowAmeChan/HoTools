@@ -183,7 +183,10 @@ class OmniNodeSocketModifierType(NodeSocket):
     )  # type: ignore
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)        
 
     @classmethod
     def draw_color_simple(cls):

@@ -6,7 +6,7 @@ import bpy
 from typing import Any
 from .OmniNode import OmniNode
 from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove,OP_JumpToNodeTree
-from bpy.props import CollectionProperty,IntProperty
+from bpy.props import CollectionProperty, IntProperty, EnumProperty
 from . import OmniMenuBind
 
 from .OmniNodeTree import OmniNodeTree,draw_OmniTreeInputs,draw_OmniTreeOutputs
@@ -272,4 +272,93 @@ class OmniBindNode(OmniNode):
         draw_tree_ref_selector(layout, self, "processor_tree")
 
 
-CLS_GRAPH = [OmniGroupNode, OmniGroupNodeInputs, OmniGroupNodeOutputs, OmniBindNode]
+class OmniBatchGroupNode(OmniNode):
+    bl_idname = "HO_OmniNode_BatchGroupNode"
+    bl_label = "组批量"
+
+    target_tree: bpy.props.PointerProperty(
+        name="Group",
+        type=OmniNodeTree,
+        update=lambda self, context: self.syncGroupIO(),
+        poll=OmniTreeFilter,
+    )  # type: ignore
+    batch_input_index: IntProperty(
+        name="Batch Input Index",
+        default=0,
+        min=0,
+        update=lambda self, context: self.syncGroupIO(),
+    )  # type: ignore
+
+    def build(self) -> None:
+        self.omni_description = """
+        批量运行一个组子树。
+        只有一个输入口会被当作批输入并逐项喂给子树，
+        其他输入口保持常值，每次运行都复用。
+        """
+        self.syncGroupIO()
+
+    def _resolve_batch_input_index(self, tree: OmniNodeTree | None) -> int:
+        if tree is None or len(tree.group_inputs) == 0:
+            return -1
+
+        selected_index = int(getattr(self, "batch_input_index", 0))
+        return max(0, min(selected_index, len(tree.group_inputs) - 1))
+
+    def syncGroupIO(self) -> None:
+        tree = self.target_tree
+        link_cache = cache_node_links(self)
+        default_values = cache_nodesockets_defaultvalues(self)
+        self.inputs.clear()
+        self.outputs.clear()
+
+        if tree is None:
+            self._socket_is_multi = {}
+            restore_node_links(self, link_cache)
+            restore_nodesockets_defaultvalues(self, default_values)
+            return
+
+        batch_index = self._resolve_batch_input_index(tree)
+        socket_is_multi = {}
+
+        for index, io in enumerate(tree.group_inputs):
+            is_batch = index == batch_index
+            sock = self.inputs.new(
+                type=runtime_socket_type_id(io.socket_type),
+                name=io.name,
+                identifier=io.uid,
+                use_multi_input=is_batch,
+            )
+            if is_batch:
+                sock.display_shape = "SQUARE"
+            socket_is_multi[io.uid] = is_batch
+
+        for io in tree.group_outputs:
+            sock = self.outputs.new(
+                type=runtime_socket_type_id(io.socket_type),
+                name=io.name,
+                identifier=io.uid,
+            )
+            sock.hide_value = True
+
+        self._socket_is_multi = socket_is_multi
+
+        if getattr(self, "batch_input_index", -1) != batch_index:
+            self.batch_input_index = batch_index
+
+        restore_node_links(self, link_cache)
+        restore_nodesockets_defaultvalues(self, default_values)
+
+    def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
+        draw_tree_ref_selector(layout, self, "target_tree")
+        tree = self.target_tree
+        row = layout.row()
+        row.enabled = tree is not None and len(tree.group_inputs) > 0
+        
+        if tree is not None and len(tree.group_inputs) > 0:
+            resolved_index = self._resolve_batch_input_index(tree)
+            if 0 <= resolved_index < len(tree.group_inputs):
+                row.label(text=f"批入口: {tree.group_inputs[resolved_index].name}")
+                row.prop(self, "batch_input_index", text="")
+
+
+CLS_GRAPH = [OmniGroupNode, OmniGroupNodeInputs, OmniGroupNodeOutputs, OmniBindNode, OmniBatchGroupNode]

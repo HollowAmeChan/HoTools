@@ -4,7 +4,7 @@ from bpy.props import CollectionProperty, IntProperty
 
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
-from .OmniCompiler import SubtreeCall
+from .OmniCompiler import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniNodeDraw
 from . import OmniMenuBind
@@ -82,7 +82,7 @@ class OmniNodeTree(NodeTree):
 
         if debug_enabled:
             print("\n".join(OmniDebug.format_runtime_header(self.name)))
-            print("\n".join(OmniDebug.format_compile_report(compiled, SubtreeCall)))
+            print("\n".join(OmniDebug.format_compile_report(compiled, (SubtreeCall, BatchSubtreeCall))))
             print("\n".join(OmniDebug.format_runtime_separator(self.name)))
 
         result = OmniExecutor.run(compiled, debug=debug_enabled)

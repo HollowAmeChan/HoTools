@@ -39,8 +39,18 @@ class SubtreeCall:
         self.node = node
 
 
+class BatchSubtreeCall:
+    def __init__(self, compiled_graph, inputs, outputs, node, batch_input_index):
+        self.compiled_graph = compiled_graph
+        self.inputs = inputs
+        self.outputs = outputs
+        self.node = node
+        self.batch_input_index = batch_input_index
+
+
 class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
+    BATCH_GROUP_NODE_IDNAME = "HO_OmniNode_BatchGroupNode"
     GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
     GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
     BIND_NODE_IDNAME = "HO_OmniNode_Bind"
@@ -290,6 +300,86 @@ class OmniCompiler:
                 OmniDebug.append_compile_trace(
                     graph,
                     f"Emit SUBTREE {node.name} -> {compiled_subtree.tree_name} inputs={input_regs} outputs={output_regs}",
+                )
+                continue
+
+            if node_idname == OmniCompiler.BATCH_GROUP_NODE_IDNAME:
+                child_tree = getattr(node, "target_tree", None)
+                if child_tree is None:
+                    node.set_bug_state("Batch group node has no target tree")
+                    raise RuntimeError(f"Batch group node '{node.name}' has no target tree")
+
+                try:
+                    compiled_subtree = OmniCompiler._compile_tree(child_tree, compiling_stack, debug=debug)
+                except Exception as exc:
+                    node.set_bug_state(exc)
+                    raise
+
+                batch_rules = OmniMenuBind.build_batch_bind_rules_from_compiled_graph(node, compiled_subtree)
+                for rule in batch_rules:
+                    OmniMenuBind.append_pending_bind_rule(tree, rule)
+                if batch_rules:
+                    OmniDebug.append_compile_trace(
+                        graph,
+                        f"Collect BATCH BIND {node.name} -> {len(batch_rules)} parameter(s)",
+                    )
+
+                batch_input_index = int(getattr(node, "batch_input_index", -1))
+                if batch_input_index < 0 or batch_input_index >= len(node.inputs):
+                    batch_input_index = -1
+                input_regs = []
+
+                for index, sock in enumerate(node.inputs):
+                    socket_links = sorted(
+                        sock.links,
+                        key=lambda link: (link.from_node.name, link.from_socket.identifier),
+                    )
+                    if index == batch_input_index:
+                        regs = []
+                        for link in socket_links:
+                            key = (link.from_node.name, link.from_socket.identifier)
+                            reg = reg_map[key]
+                            regs.append(reg)
+                            OmniDebug.append_compile_trace(
+                                graph,
+                                f"Use batch bridge r{reg} {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
+                                f"{OmniDebug.node_name(node)}.{OmniDebug.socket_name(sock)}",
+                            )
+                        input_regs.append(regs)
+                    else:
+                        input_regs.append(compile_single_input(sock))
+
+                if batch_input_index < 0:
+                    node.set_bug_state("Batch group node has no batch input selected")
+                    raise RuntimeError(f"Batch group node '{node.name}' has no batch input selected")
+
+                output_regs = []
+                for sock in node.outputs:
+                    reg = new_reg()
+                    reg_map[(node.name, sock.identifier)] = reg
+                    output_regs.append(reg)
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source=f"batch_subtree:{compiled_subtree.tree_name}",
+                        note="batch subtree output bridge",
+                    )
+
+                instructions.append(
+                    BatchSubtreeCall(
+                        compiled_subtree,
+                        input_regs,
+                        output_regs,
+                        node,
+                        batch_input_index=batch_input_index,
+                    )
+                )
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Emit BATCH SUBTREE {node.name} -> {compiled_subtree.tree_name} "
+                    f"batch_input_index={batch_input_index} inputs={input_regs} outputs={output_regs}",
                 )
                 continue
 

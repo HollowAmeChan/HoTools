@@ -53,6 +53,8 @@ def sync_tree_io(tree):
             node.syncGroupIO()
         elif node.bl_idname == "HO_OmniNode_GroupNode":
             node.syncGroupIO()
+        elif node.bl_idname == "HO_OmniNode_BatchGroupNode":
+            node.syncGroupIO()
         elif node.bl_idname == "HO_OmniNode_Bind":
             node.syncProcessorIO()
 
@@ -73,7 +75,7 @@ def sync_all_related_tree_io(tree):
             continue
 
         for node in other_tree.nodes:
-            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_Bind"}:
+            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_BatchGroupNode", "HO_OmniNode_Bind"}:
                 continue
             target_tree = getattr(node, "target_tree", None) or getattr(node, "processor_tree", None)
             if target_tree != tree:

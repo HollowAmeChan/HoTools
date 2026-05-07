@@ -1,4 +1,4 @@
-from .OmniCompiler import CompiledGraph, OmniCompiler, OpCall, SubtreeCall
+from .OmniCompiler import CompiledGraph, OmniCompiler, OpCall, SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniMenuBind
 
@@ -15,7 +15,7 @@ class OmniExecutor:
         return result
 
     @staticmethod
-    def _execute(compiled: CompiledGraph, provided_inputs=None, debug=False, depth=0):
+    def _execute(compiled: CompiledGraph, provided_inputs=None, debug=False, depth=0, batch_bind_context=None):
         registers = [None] * compiled.reg_count
         provided_inputs = provided_inputs or {}
         trace, log = OmniDebug.make_runtime_logger(depth)
@@ -62,12 +62,26 @@ class OmniExecutor:
                         )
 
                 if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                    OmniMenuBind.capture_bind_node_runtime_context(
-                        getattr(compiled, "tree_ref", None),
-                        op.node,
-                        args,
-                        getattr(op, "processor_graph", None),
-                    )
+                    if batch_bind_context is not None:
+                        OmniMenuBind.capture_batch_bind_node_runtime_context(
+                            batch_bind_context["tree"],
+                            batch_bind_context["batch_owner_node"],
+                            op.node,
+                            args,
+                            getattr(op, "processor_graph", None),
+                            bind_path=batch_bind_context.get("bind_path"),
+                            instance_meta={
+                                "iteration_index": batch_bind_context.get("iteration_index", -1),
+                                "batch_value": batch_bind_context.get("batch_value"),
+                            },
+                        )
+                    else:
+                        OmniMenuBind.capture_bind_node_runtime_context(
+                            getattr(compiled, "tree_ref", None),
+                            op.node,
+                            args,
+                            getattr(op, "processor_graph", None),
+                        )
 
                 try:
                     if node_idname == OmniCompiler.BIND_NODE_IDNAME:
@@ -132,6 +146,14 @@ class OmniExecutor:
                         subtree_inputs,
                         debug=debug,
                         depth=depth + 1,
+                        batch_bind_context=(
+                            {
+                                **batch_bind_context,
+                                "bind_path": list(batch_bind_context.get("bind_path") or [])
+                                + [getattr(op.compiled_graph, "tree_name", "") or getattr(op.node, "name", "")]
+                            }
+                            if batch_bind_context is not None else None
+                        ),
                     )
                 except Exception as exc:
                     op.node.set_bug_state(exc)
@@ -151,6 +173,94 @@ class OmniExecutor:
                 log(
                     f"  {OmniDebug.section_label(f'Step {step_index}')}: "
                     f"{OmniDebug.func_label('EXIT SUBTREE')} {OmniDebug.node_label(op.node.name)} outputs=("
+                    + ", ".join(
+                        f"{OmniDebug.reg_label(op.outputs[i])}="
+                        f"{OmniDebug.value_label(OmniDebug.format_value(registers[op.outputs[i]]))}"
+                        for i in range(min(len(op.outputs), len(ordered_output_uids)))
+                    )
+                    + ")"
+                )
+                continue
+
+            if isinstance(op, BatchSubtreeCall):
+                ordered_input_uids = list(op.compiled_graph.input_regs.keys())
+                ordered_output_uids = list(op.compiled_graph.output_regs.keys())
+
+                if op.batch_input_index >= len(op.inputs):
+                    op.node.set_bug_state("Batch input index out of range")
+                    log(
+                        f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                        f"{OmniDebug.error_label('ERROR')} invalid batch input index on "
+                        f"{OmniDebug.node_label(op.node.name)}"
+                    )
+                    break
+
+                batch_regs = op.inputs[op.batch_input_index]
+                if not isinstance(batch_regs, list):
+                    batch_regs = [batch_regs]
+
+                batch_values = OmniExecutor.flatten_runtime([registers[reg] for reg in batch_regs])
+
+                base_inputs = {}
+                for i, uid in enumerate(ordered_input_uids):
+                    if i >= len(op.inputs) or i == op.batch_input_index:
+                        continue
+                    base_inputs[uid] = registers[op.inputs[i]]
+
+                collected_outputs = {uid: [] for uid in ordered_output_uids}
+
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('ENTER BATCH SUBTREE')} {OmniDebug.node_label(op.node.name)} -> "
+                    f"{OmniDebug.tree_label(op.compiled_graph.tree_name)} "
+                    f"batch_count={OmniDebug.value_label(len(batch_values))}"
+                )
+
+                try:
+                    batch_uid = ordered_input_uids[op.batch_input_index]
+                    for batch_index, batch_value in enumerate(batch_values):
+                        subtree_inputs = dict(base_inputs)
+                        subtree_inputs[batch_uid] = batch_value
+
+                        log(
+                            f"    {OmniDebug.section_label(f'Batch {batch_index}')}: "
+                            f"{OmniDebug.value_label(batch_uid)}="
+                            f"{OmniDebug.value_label(OmniDebug.format_value(batch_value))}"
+                        )
+
+                        subtree_outputs, subtree_trace = OmniExecutor._execute(
+                            op.compiled_graph,
+                            subtree_inputs,
+                            debug=debug,
+                            depth=depth + 1,
+                            batch_bind_context={
+                                "tree": getattr(compiled, "tree_ref", None),
+                                "batch_owner_node": op.node,
+                                "bind_path": [],
+                                "iteration_index": batch_index,
+                                "batch_value": batch_value,
+                            },
+                        )
+                        trace.extend(subtree_trace)
+
+                        for uid in ordered_output_uids:
+                            collected_outputs[uid].append(subtree_outputs.get(uid))
+                except Exception as exc:
+                    op.node.set_bug_state(exc)
+                    log(
+                        f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                        f"{OmniDebug.error_label('ERROR')} in batch subtree {OmniDebug.node_label(op.node.name)}: "
+                        f"{OmniDebug.error_label(exc)}"
+                    )
+                    break
+
+                for i, uid in enumerate(ordered_output_uids):
+                    if i < len(op.outputs):
+                        registers[op.outputs[i]] = collected_outputs.get(uid, [])
+
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('EXIT BATCH SUBTREE')} {OmniDebug.node_label(op.node.name)} outputs=("
                     + ", ".join(
                         f"{OmniDebug.reg_label(op.outputs[i])}="
                         f"{OmniDebug.value_label(OmniDebug.format_value(registers[op.outputs[i]]))}"

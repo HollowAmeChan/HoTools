@@ -27,6 +27,7 @@ import bpy
 OMNI_BIND_VALUE_TYPES = {"BOOL", "INT", "FLOAT", "STRING", "VECTOR"}
 OMNI_BIND_DEFAULT_CAPACITY = 32
 LIVE_BIND_CONTEXTS: dict[tuple[int, str], dict[str, Any]] = {}
+BATCH_BIND_SCOPE = "BATCH_GROUP"
 
 
 def _safe_json_loads(raw: str, fallback: Any):
@@ -66,6 +67,7 @@ def _normalize_bind_rule(rule: dict[str, Any]) -> dict[str, Any]:
     rule["value_type"] = _normalize_bind_value_type(rule.get("value_type"))
     rule["description"] = str(rule.get("description") or "")
     rule["source"] = rule.get("source") or {}
+    rule["scope"] = str(rule.get("scope") or "BIND")
 
     if "default" not in rule:
         if rule["value_type"] == "BOOL":
@@ -336,8 +338,45 @@ def _build_bind_rule_from_parameter(node, value_index: int, value_socket) -> dic
         "value_type": value_type,
         "default": default_value,
         "description": f"bpy.data.node_groups['{node.id_data.name}']['{node.name}'].{input_name}",
+        "scope": "BIND",
         "source": {
             "node_name": getattr(node, "name", ""),
+            "parameter_input_index": value_index,
+            "parameter_socket_identifier": socket_identifier,
+        },
+    }
+
+
+def _make_batch_bind_group_key(batch_owner_node_name: str, bind_path: list[str], bind_node_name: str, socket_identifier: str) -> str:
+    path_key = "/".join(str(item) for item in bind_path if item)
+    if path_key:
+        return f"{batch_owner_node_name}:{path_key}:{bind_node_name}:{socket_identifier}"
+    return f"{batch_owner_node_name}:{bind_node_name}:{socket_identifier}"
+
+
+def _build_batch_bind_rule_from_parameter(batch_owner_node, bind_node, value_index: int, value_socket, bind_path=None) -> dict[str, Any]:
+    bind_path = list(bind_path or [])
+    value_type = _socket_to_bind_value_type(value_socket)
+    input_name = getattr(value_socket, "name", "Value") or "Value"
+    default_value = _socket_default_to_json_value(getattr(value_socket, "default_value", 0.0))
+    socket_identifier = str(getattr(value_socket, "identifier", "") or value_index)
+    batch_owner_name = str(getattr(batch_owner_node, "name", "Batch"))
+    bind_node_name = str(getattr(bind_node, "name", "Bind"))
+    key = _make_batch_bind_group_key(batch_owner_name, bind_path, bind_node_name, socket_identifier)
+
+    label_prefix = " / ".join(bind_path + [bind_node_name]) if bind_path else bind_node_name
+
+    return {
+        "key": key,
+        "name": f"{label_prefix}: {input_name}",
+        "value_type": value_type,
+        "default": default_value,
+        "description": f"Batch bind group on {batch_owner_name}: {label_prefix}.{input_name}",
+        "scope": BATCH_BIND_SCOPE,
+        "source": {
+            "batch_owner_node_name": batch_owner_name,
+            "bind_node_name": bind_node_name,
+            "bind_path": bind_path,
             "parameter_input_index": value_index,
             "parameter_socket_identifier": socket_identifier,
         },
@@ -359,6 +398,51 @@ def build_bind_rule_from_node(node) -> dict[str, Any] | None:
     if not rules:
         return None
     return rules[0]
+
+
+def build_batch_bind_rules_from_compiled_graph(batch_owner_node, compiled_graph, bind_path=None) -> list[dict[str, Any]]:
+    bind_path = list(bind_path or [])
+    rules = []
+    seen_keys = set()
+
+    for op in getattr(compiled_graph, "instructions", []):
+        node = getattr(op, "node", None)
+        node_idname = str(getattr(node, "bl_idname", "")) if node is not None else ""
+
+        if node_idname == "HO_OmniNode_Bind":
+            for value_index, value_socket in iter_parameter_inputs(node):
+                rule = _build_batch_bind_rule_from_parameter(
+                    batch_owner_node,
+                    node,
+                    value_index,
+                    value_socket,
+                    bind_path=bind_path,
+                )
+                key = rule["key"]
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    rules.append(rule)
+
+        child_graph = getattr(op, "compiled_graph", None)
+        if child_graph is not None:
+            child_name = getattr(child_graph, "tree_name", "") or getattr(node, "name", "")
+            rules.extend(
+                build_batch_bind_rules_from_compiled_graph(
+                    batch_owner_node,
+                    child_graph,
+                    bind_path=bind_path + ([child_name] if child_name else []),
+                )
+            )
+
+    deduped = []
+    emitted = set()
+    for rule in rules:
+        key = rule["key"]
+        if key in emitted:
+            continue
+        emitted.add(key)
+        deduped.append(rule)
+    return deduped
 
 
 def append_pending_bind_rule(tree, rule: dict[str, Any]):
@@ -407,6 +491,31 @@ def set_live_bind_context(tree, bind_key: str, args=None, processor_graph=None):
     }
 
 
+def append_live_bind_context(tree, bind_key: str, args=None, processor_graph=None, instance_meta=None, node_ref=None):
+    key = _live_ref_key(tree, bind_key)
+    entry = LIVE_BIND_CONTEXTS.get(key)
+    if entry is None or "instances" not in entry:
+        entry = {
+            "instances": [],
+            "processor_graph": processor_graph,
+            "instance_meta": [],
+        }
+        LIVE_BIND_CONTEXTS[key] = entry
+
+    instance_datablocks = []
+    _collect_datablocks(list(args or []), instance_datablocks, set())
+
+    entry["processor_graph"] = processor_graph
+    entry["instances"].append({
+        "args": list(args or []),
+        "processor_graph": processor_graph,
+        "instance_meta": dict(instance_meta or {}),
+        "node_ref": node_ref,
+        "datablocks": instance_datablocks,
+    })
+    return entry
+
+
 def get_live_bind_context(tree, bind_key: str):
     return LIVE_BIND_CONTEXTS.get(_live_ref_key(tree, bind_key))
 
@@ -441,29 +550,92 @@ def _collect_datablocks(value: Any, datablocks: list, seen: set[int]) -> None:
             _collect_datablocks(item, datablocks, seen)
 
 
+def _collect_bind_instance_datablocks(instance: dict[str, Any], datablocks: list, seen: set[int]) -> None:
+    cached_datablocks = instance.get("datablocks") or []
+    if cached_datablocks:
+        _collect_datablocks(cached_datablocks, datablocks, seen)
+    else:
+        _collect_datablocks(instance.get("args") or [], datablocks, seen)
+
+    node_ref = instance.get("node_ref")
+    if node_ref is not None:
+        _collect_datablocks(getattr(node_ref, "id_data", None), datablocks, seen)
+
+    processor_graph = instance.get("processor_graph")
+    if processor_graph is not None:
+        _collect_datablocks(getattr(processor_graph, "tree_ref", None), datablocks, seen)
+
+
 def _runtime_debug_info(tree, rule: dict[str, Any]) -> dict[str, Any]:
     bind_key = str(rule.get("key") or "")
     source = rule.get("source") or {}
-    source_node = _find_tree_node_by_name(tree, str(source.get("node_name") or ""))
+    if str(rule.get("scope") or "") == BATCH_BIND_SCOPE:
+        source_node = _find_tree_node_by_name(tree, str(source.get("batch_owner_node_name") or ""))
+    else:
+        source_node = _find_tree_node_by_name(tree, str(source.get("node_name") or ""))
     live_context = get_live_bind_context(tree, bind_key)
 
     # TODO: 这里只能判断缓存对象是否存在，无法判断 processor_tree 或 Bind IO 是否在 run 后发生过变化。
     # 后续如果需要更严格的状态，可以给 tree/group_io/bind node 增加 version 或 run stamp。
     datablocks = []
+    seen_datablocks = set()
+    instance_count = 0
     if live_context is not None:
-        _collect_datablocks(live_context.get("args") or [], datablocks, set())
+        instances = live_context.get("instances") or []
+        if instances:
+            instance_count = len(instances)
+            for instance in instances:
+                _collect_bind_instance_datablocks(instance, datablocks, seen_datablocks)
+        else:
+            instance_count = 1
+            _collect_datablocks(live_context.get("args") or [], datablocks, seen_datablocks)
 
     return {
         "has_live_context": live_context is not None,
         "has_processor_graph": bool(live_context and live_context.get("processor_graph") is not None),
         "has_source_node": source_node is not None,
         "datablocks": datablocks,
+        "instance_count": instance_count,
     }
+
+
+def _is_runtime_rule_ready(rule: dict[str, Any], debug_info: dict[str, Any]) -> bool:
+    scope = str(rule.get("scope") or "")
+    if scope == BATCH_BIND_SCOPE:
+        return (
+            debug_info.get("instance_count", 0) > 0
+            and debug_info.get("has_processor_graph", False)
+        )
+
+    return (
+        debug_info.get("has_live_context", False)
+        and debug_info.get("has_source_node", False)
+        and debug_info.get("has_processor_graph", False)
+    )
 
 
 def capture_bind_node_runtime_context(tree, node, args, processor_graph=None):
     for rule in build_bind_rules_from_node(node):
         set_live_bind_context(tree, rule["key"], args, processor_graph)
+
+
+def capture_batch_bind_node_runtime_context(tree, batch_owner_node, node, args, processor_graph=None, bind_path=None, instance_meta=None):
+    for value_index, value_socket in iter_parameter_inputs(node):
+        rule = _build_batch_bind_rule_from_parameter(
+            batch_owner_node,
+            node,
+            value_index,
+            value_socket,
+            bind_path=bind_path,
+        )
+        append_live_bind_context(
+            tree,
+            rule["key"],
+            args=args,
+            processor_graph=processor_graph,
+            instance_meta=instance_meta,
+            node_ref=node,
+        )
 
 
 def _resolve_bind_node_runtime_context(tree, node, rule):
@@ -555,6 +727,9 @@ def run_bind_processor_graph(node, args, value, processor_graph, parameter_index
 
 
 def apply_bind_node_update(tree, rule, raw_value):
+    if str(rule.get("scope") or "") == BATCH_BIND_SCOPE:
+        return apply_batch_bind_node_update(tree, rule, raw_value)
+
     node_name = str((rule.get("source") or {}).get("node_name") or "")
     node = _find_tree_node_by_name(tree, node_name)
     args, processor_graph = _resolve_bind_node_runtime_context(tree, node, rule)
@@ -568,6 +743,39 @@ def apply_bind_node_update(tree, rule, raw_value):
     args[value_index] = raw_value
     _sync_live_context_args_for_node(tree, node_name, args)
     return execute_bind_node_update(node, args, raw_value, processor_graph, parameter_index=value_index)
+
+
+def apply_batch_bind_node_update(tree, rule, raw_value):
+    live_context = get_live_bind_context(tree, str(rule.get("key") or "")) or {}
+    instances = live_context.get("instances") or []
+    if not instances:
+        return None
+
+    results = []
+    value_index = int((rule.get("source") or {}).get("parameter_input_index") or 0)
+
+    for instance in instances:
+        node = instance.get("node_ref")
+        args = list(instance.get("args") or [])
+        processor_graph = instance.get("processor_graph") or live_context.get("processor_graph")
+
+        while len(args) <= value_index:
+            args.append(None)
+        args[value_index] = raw_value
+        instance["args"] = list(args)
+
+        if node is not None:
+            results.append(
+                execute_bind_node_update(
+                    node,
+                    args,
+                    raw_value,
+                    processor_graph,
+                    parameter_index=value_index,
+                )
+            )
+
+    return results
 
 
 def omni_bind_item_value_update(self, context):
@@ -727,7 +935,10 @@ class OmniMenuBindRuntime:
         grouped = {}
         for item, rule, debug_info, cache_ready in runtime_entries:
             source = rule.get("source") or {}
-            node_name = str(source.get("node_name") or "<missing>")
+            if str(rule.get("scope") or "") == BATCH_BIND_SCOPE:
+                node_name = str(source.get("batch_owner_node_name") or "<missing>")
+            else:
+                node_name = str(source.get("node_name") or "<missing>")
             entry = grouped.setdefault(node_name, {
                 "debug_info": debug_info,
                 "cache_ready": True,
@@ -793,11 +1004,7 @@ class OmniMenuBindRuntime:
         for item in tree.omni_bind_runtime_items:
             rule = item.get_rule()
             debug_info = _runtime_debug_info(tree, rule)
-            cache_ready = (
-                debug_info["has_live_context"]
-                and debug_info["has_source_node"]
-                and debug_info["has_processor_graph"]
-            )
+            cache_ready = _is_runtime_rule_ready(rule, debug_info)
             has_cache_warning = has_cache_warning or not cache_ready
             runtime_entries.append((item, rule, debug_info, cache_ready))
 
