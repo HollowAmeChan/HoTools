@@ -115,7 +115,6 @@ def _get_render_color_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
     is_output_node=False,
     _INPUT_NAME=["物体", "属性名称", "颜色类型", "属性域"],
     _OUTPUT_NAME=["物体", "顶点色属性", "属性名称"],
-    bl_icon="GROUP_VCOL",
     omni_description="""
     在目标 Mesh 上创建一个顶点色属性。
     如果同名属性已经存在，则直接返回已有属性。
@@ -147,7 +146,6 @@ def objectCreateColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体", "属性名称"],
     _OUTPUT_NAME=["顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectGetColorAttributeByName(
     obj: bpy.types.Object,
@@ -163,7 +161,6 @@ def objectGetColorAttributeByName(
     is_output_node=False,
     _INPUT_NAME=["物体", "属性索引"],
     _OUTPUT_NAME=["顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectGetColorAttributeByIndex(
     obj: bpy.types.Object,
@@ -179,7 +176,6 @@ def objectGetColorAttributeByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectGetActiveColorAttribute(
     obj: bpy.types.Object,
@@ -194,7 +190,6 @@ def objectGetActiveColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectGetRenderColorAttribute(
     obj: bpy.types.Object,
@@ -209,7 +204,6 @@ def objectGetRenderColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["属性名称"],
-    bl_icon="GROUP_VCOL",
 )
 def colorAttributeGetName(
     color_attribute: _OmniColorAttribute,
@@ -225,7 +219,6 @@ def colorAttributeGetName(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["颜色类型"],
-    bl_icon="GROUP_VCOL",
 )
 def colorAttributeGetType(
     color_attribute: _OmniColorAttribute,
@@ -241,7 +234,6 @@ def colorAttributeGetType(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性"],
     _OUTPUT_NAME=["属性域"],
-    bl_icon="GROUP_VCOL",
 )
 def colorAttributeGetDomain(
     color_attribute: _OmniColorAttribute,
@@ -257,7 +249,6 @@ def colorAttributeGetDomain(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["属性索引"],
-    bl_icon="GROUP_VCOL",
 )
 def objectGetColorAttributeIndex(
     obj: bpy.types.Object,
@@ -277,7 +268,6 @@ def objectGetColorAttributeIndex(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性", "新名称"],
     _OUTPUT_NAME=["顶点色属性", "属性名称"],
-    bl_icon="GROUP_VCOL",
 )
 def colorAttributeRename(
     color_attribute: _OmniColorAttribute,
@@ -296,7 +286,6 @@ def colorAttributeRename(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectSetActiveColorAttribute(
     obj: bpy.types.Object,
@@ -318,7 +307,6 @@ def objectSetActiveColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体", "属性索引"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectSetActiveColorAttributeByIndex(
     obj: bpy.types.Object,
@@ -337,7 +325,6 @@ def objectSetActiveColorAttributeByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
-    bl_icon="GROUP_VCOL",
 )
 def objectSetRenderColorAttribute(
     obj: bpy.types.Object,
@@ -366,7 +353,6 @@ def objectSetRenderColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="GROUP_VCOL",
 )
 def objectRemoveColorAttribute(
     obj: bpy.types.Object,

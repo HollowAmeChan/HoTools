@@ -183,10 +183,7 @@ class OmniNodeSocketModifierType(NodeSocket):
     )  # type: ignore
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -204,12 +201,7 @@ class OmniNodeSocketModifier(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            row = layout.row(align=True)
-            row.label(text=text or self.name)
-            row.label(text="需要连接", icon="LINKED")
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -226,12 +218,7 @@ class OmniNodeSocketMaterialSlot(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            row = layout.row(align=True)
-            row.label(text=text or self.name)
-            row.label(text="需要连接", icon="LINKED")
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -248,12 +235,7 @@ class OmniNodeSocketUVLayer(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            row = layout.row(align=True)
-            row.label(text=text or self.name)
-            row.label(text="需要连接", icon="LINKED")
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -270,12 +252,7 @@ class OmniNodeSocketColorAttribute(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            row = layout.row(align=True)
-            row.label(text=text or self.name)
-            row.label(text="需要连接", icon="LINKED")
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):
@@ -292,12 +269,7 @@ class OmniNodeSocketVertexGroup(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            row = layout.row(align=True)
-            row.label(text=text or self.name)
-            row.label(text="需要连接", icon="LINKED")
+        layout.label(text=self.name)
 
     @classmethod
     def draw_color_simple(cls):

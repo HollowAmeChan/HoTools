@@ -136,7 +136,6 @@ def _apply_modifier_operator(obj: bpy.types.Object, modifier: bpy.types.Modifier
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器类型", "修改器名称"],
     _OUTPUT_NAME=["物体", "修改器名称", "修改器"],
-    bl_icon="MODIFIER",
     omni_description="""
     给目标物体添加一个修改器。
     如果修改器名称为空，会根据修改器类型自动生成默认名称。
@@ -159,7 +158,6 @@ def objectAddModifier(
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器名称"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def objectGetModifierByName(
     obj: bpy.types.Object,
@@ -175,7 +173,6 @@ def objectGetModifierByName(
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器索引"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def objectGetModifierByIndex(
     obj: bpy.types.Object,
@@ -191,7 +188,6 @@ def objectGetModifierByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体", "修改器类型", "匹配索引"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
     omni_description="""
     按修改器类型获取目标物体上的修改器。
     如果同类型有多个修改器，可以通过匹配索引指定第几个。
@@ -212,7 +208,6 @@ def objectGetModifierByType(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器名称"],
-    bl_icon="MODIFIER",
 )
 def modifierGetName(
     modifier: _OmniModifier,
@@ -228,7 +223,6 @@ def modifierGetName(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器类型"],
-    bl_icon="MODIFIER",
 )
 def modifierGetType(
     modifier: _OmniModifier,
@@ -244,7 +238,6 @@ def modifierGetType(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["修改器索引"],
-    bl_icon="MODIFIER",
 )
 def modifierGetIndex(
     modifier: _OmniModifier,
@@ -261,7 +254,6 @@ def modifierGetIndex(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="MODIFIER",
 )
 def modifierGetObject(
     modifier: _OmniModifier,
@@ -277,7 +269,6 @@ def modifierGetObject(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="MODIFIER",
 )
 def modifierRemove(
     modifier: _OmniModifier,
@@ -295,7 +286,6 @@ def modifierRemove(
     is_output_node=False,
     _INPUT_NAME=["修改器", "目标索引"],
     _OUTPUT_NAME=["物体", "修改器"],
-    bl_icon="MODIFIER",
     omni_description="""
     将修改器移动到指定的堆栈索引位置。
     目标索引会自动限制在有效范围内。
@@ -325,7 +315,6 @@ def modifierMove(
     is_output_node=False,
     _INPUT_NAME=["修改器"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="MODIFIER",
     omni_description="""
     调用 Blender 的 modifier_apply 操作来应用目标修改器。
     目标物体需要在当前上下文中处于可编辑状态。
@@ -347,7 +336,6 @@ def modifierApply(
     is_output_node=False,
     _INPUT_NAME=["修改器", "视图显示", "渲染显示", "编辑模式显示", "On Cage"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
     omni_description="""
     一次性设置修改器的多个显示开关。
     """,
@@ -374,7 +362,6 @@ def modifierSetDisplay(
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def modifierSetViewport(
     modifier: _OmniModifier,
@@ -392,7 +379,6 @@ def modifierSetViewport(
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def modifierSetRender(
     modifier: _OmniModifier,
@@ -410,7 +396,6 @@ def modifierSetRender(
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def modifierSetEditmode(
     modifier: _OmniModifier,
@@ -428,7 +413,6 @@ def modifierSetEditmode(
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],
     _OUTPUT_NAME=["修改器"],
-    bl_icon="MODIFIER",
 )
 def modifierSetOnCage(
     modifier: _OmniModifier,

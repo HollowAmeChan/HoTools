@@ -64,7 +64,6 @@ def _get_vertex_group_by_index(obj: bpy.types.Object, group_index: int) -> bpy.t
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组名称"],
     _OUTPUT_NAME=["物体", "顶点组", "顶点组名称"],
-    bl_icon="GROUP_VERTEX",
     omni_description="""
     在目标物体上创建一个顶点组。
     如果同名顶点组已经存在，则直接返回已有顶点组。
@@ -89,7 +88,6 @@ def objectCreateVertexGroup(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组名称"],
     _OUTPUT_NAME=["顶点组"],
-    bl_icon="GROUP_VERTEX",
 )
 def objectGetVertexGroupByName(
     obj: bpy.types.Object,
@@ -105,7 +103,6 @@ def objectGetVertexGroupByName(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组索引"],
     _OUTPUT_NAME=["顶点组"],
-    bl_icon="GROUP_VERTEX",
 )
 def objectGetVertexGroupByIndex(
     obj: bpy.types.Object,
@@ -121,7 +118,6 @@ def objectGetVertexGroupByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["顶点组"],
-    bl_icon="GROUP_VERTEX",
 )
 def objectGetActiveVertexGroup(
     obj: bpy.types.Object,
@@ -140,7 +136,6 @@ def objectGetActiveVertexGroup(
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["顶点组名称"],
-    bl_icon="GROUP_VERTEX",
 )
 def vertexGroupGetName(
     vertex_group: _OmniVertexGroup,
@@ -156,7 +151,6 @@ def vertexGroupGetName(
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["顶点组索引"],
-    bl_icon="GROUP_VERTEX",
 )
 def vertexGroupGetIndex(
     vertex_group: _OmniVertexGroup,
@@ -172,7 +166,6 @@ def vertexGroupGetIndex(
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="GROUP_VERTEX",
 )
 def vertexGroupGetObject(
     vertex_group: _OmniVertexGroup,
@@ -188,7 +181,6 @@ def vertexGroupGetObject(
     is_output_node=False,
     _INPUT_NAME=["顶点组", "新名称"],
     _OUTPUT_NAME=["顶点组", "顶点组名称"],
-    bl_icon="GROUP_VERTEX",
 )
 def vertexGroupRename(
     vertex_group: _OmniVertexGroup,
@@ -207,7 +199,6 @@ def vertexGroupRename(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组"],
     _OUTPUT_NAME=["物体", "顶点组"],
-    bl_icon="GROUP_VERTEX",
 )
 def objectSetActiveVertexGroup(
     obj: bpy.types.Object,
@@ -229,7 +220,6 @@ def objectSetActiveVertexGroup(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点组索引"],
     _OUTPUT_NAME=["物体", "顶点组"],
-    bl_icon="GROUP_VERTEX",
 )
 def objectSetActiveVertexGroupByIndex(
     obj: bpy.types.Object,
@@ -248,7 +238,6 @@ def objectSetActiveVertexGroupByIndex(
     is_output_node=False,
     _INPUT_NAME=["顶点组"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="GROUP_VERTEX",
 )
 def vertexGroupRemove(
     vertex_group: _OmniVertexGroup,

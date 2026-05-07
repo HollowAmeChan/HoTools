@@ -20,7 +20,7 @@ def _require_mesh_object(obj) -> bpy.types.Object:
 
 def _require_uv_layer(uv_layer) -> bpy.types.MeshUVLoopLayer:
     if uv_layer is None or not isinstance(uv_layer, bpy.types.MeshUVLoopLayer):
-        raise ValueError("UV槽输入未连接或无效")
+        raise ValueError("UV层输入未连接或无效")
     return uv_layer
 
 
@@ -28,7 +28,7 @@ def _get_uv_layer_by_name(obj: bpy.types.Object, uv_name: str) -> bpy.types.Mesh
     obj = _require_mesh_object(obj)
     uv_name = str(uv_name or "").strip()
     if not uv_name:
-        raise ValueError("UV槽名称为空")
+        raise ValueError("UV层名称为空")
 
     uv_layer = obj.data.uv_layers.get(uv_name)
     if uv_layer is None:
@@ -60,12 +60,11 @@ def _find_uv_layer_index(obj: bpy.types.Object, uv_layer: bpy.types.MeshUVLoopLa
 
 @omni(
     enable=True,
-    bl_label="创建UV槽",
+    bl_label="创建UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽名称"],
-    _OUTPUT_NAME=["物体", "UV槽", "UV槽名称"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层名称"],
+    _OUTPUT_NAME=["物体", "UV层", "UV层名称"],
     omni_description="""
     在目标 Mesh 上创建一个 UV 槽。
     如果同名 UV 槽已经存在，则直接返回已有的 UV 槽。
@@ -78,7 +77,7 @@ def objectCreateUVLayer(
     obj = _require_mesh_object(obj)
     uv_name = str(uv_name or "").strip()
     if not uv_name:
-        raise ValueError("UV槽名称为空")
+        raise ValueError("UV层名称为空")
 
     uv_layer = obj.data.uv_layers.get(uv_name)
     if uv_layer is None:
@@ -88,12 +87,11 @@ def objectCreateUVLayer(
 
 @omni(
     enable=True,
-    bl_label="按名称获取UV槽",
+    bl_label="按名称获取UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽名称"],
-    _OUTPUT_NAME=["UV槽"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层名称"],
+    _OUTPUT_NAME=["UV层"],
 )
 def objectGetUVLayerByName(
     obj: bpy.types.Object,
@@ -104,12 +102,11 @@ def objectGetUVLayerByName(
 
 @omni(
     enable=True,
-    bl_label="按索引获取UV槽",
+    bl_label="按索引获取UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽索引"],
-    _OUTPUT_NAME=["UV槽"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层索引"],
+    _OUTPUT_NAME=["UV层"],
 )
 def objectGetUVLayerByIndex(
     obj: bpy.types.Object,
@@ -120,12 +117,11 @@ def objectGetUVLayerByIndex(
 
 @omni(
     enable=True,
-    bl_label="获取激活UV槽",
+    bl_label="获取激活UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
-    _OUTPUT_NAME=["UV槽"],
-    bl_icon="GROUP_UVS",
+    _OUTPUT_NAME=["UV层"],
 )
 def objectGetActiveUVLayer(
     obj: bpy.types.Object,
@@ -139,12 +135,11 @@ def objectGetActiveUVLayer(
 
 @omni(
     enable=True,
-    bl_label="获取渲染UV槽",
+    bl_label="获取渲染UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["物体"],
-    _OUTPUT_NAME=["UV槽"],
-    bl_icon="GROUP_UVS",
+    _OUTPUT_NAME=["UV层"],
 )
 def objectGetRenderUVLayer(
     obj: bpy.types.Object,
@@ -158,12 +153,11 @@ def objectGetRenderUVLayer(
 
 @omni(
     enable=True,
-    bl_label="获取UV槽名称",
+    bl_label="获取UV层名称",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["UV槽"],
-    _OUTPUT_NAME=["UV槽名称"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["UV层"],
+    _OUTPUT_NAME=["UV层名称"],
 )
 def uvLayerGetName(
     uv_layer: _OmniUVLayer,
@@ -174,12 +168,11 @@ def uvLayerGetName(
 
 @omni(
     enable=True,
-    bl_label="获取UV槽索引",
+    bl_label="获取UV层索引",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽"],
-    _OUTPUT_NAME=["UV槽索引"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层"],
+    _OUTPUT_NAME=["UV层索引"],
 )
 def objectGetUVLayerIndex(
     obj: bpy.types.Object,
@@ -195,12 +188,11 @@ def objectGetUVLayerIndex(
 
 @omni(
     enable=True,
-    bl_label="重命名UV槽",
+    bl_label="重命名UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["UV槽", "新名称"],
-    _OUTPUT_NAME=["UV槽", "UV槽名称"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["UV层", "新名称"],
+    _OUTPUT_NAME=["UV层", "UV层名称"],
 )
 def uvLayerRename(
     uv_layer: _OmniUVLayer,
@@ -209,19 +201,18 @@ def uvLayerRename(
     uv_layer = _require_uv_layer(uv_layer)
     new_name = str(new_name or "").strip()
     if not new_name:
-        raise ValueError("新UV槽名称为空")
+        raise ValueError("新UV层名称为空")
     uv_layer.name = new_name
     return uv_layer, uv_layer.name
 
 
 @omni(
     enable=True,
-    bl_label="设置激活UV槽",
+    bl_label="设置激活UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽"],
-    _OUTPUT_NAME=["物体", "UV槽"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层"],
+    _OUTPUT_NAME=["物体", "UV层"],
 )
 def objectSetActiveUVLayer(
     obj: bpy.types.Object,
@@ -238,12 +229,11 @@ def objectSetActiveUVLayer(
 
 @omni(
     enable=True,
-    bl_label="设置激活UV槽索引",
+    bl_label="设置激活UV层索引",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽索引"],
-    _OUTPUT_NAME=["物体", "UV槽"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层索引"],
+    _OUTPUT_NAME=["物体", "UV层"],
 )
 def objectSetActiveUVLayerByIndex(
     obj: bpy.types.Object,
@@ -257,12 +247,11 @@ def objectSetActiveUVLayerByIndex(
 
 @omni(
     enable=True,
-    bl_label="设置渲染UV槽",
+    bl_label="设置渲染UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽"],
-    _OUTPUT_NAME=["物体", "UV槽"],
-    bl_icon="GROUP_UVS",
+    _INPUT_NAME=["物体", "UV层"],
+    _OUTPUT_NAME=["物体", "UV层"],
 )
 def objectSetRenderUVLayer(
     obj: bpy.types.Object,
@@ -281,12 +270,11 @@ def objectSetRenderUVLayer(
 
 @omni(
     enable=True,
-    bl_label="删除UV槽对象",
+    bl_label="删除UV层对象",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物体", "UV槽"],
+    _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体"],
-    bl_icon="GROUP_UVS",
 )
 def objectRemoveUVLayer(
     obj: bpy.types.Object,
