@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier
+from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material
 from .GraphNode import CLS_GRAPH
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -22,6 +22,7 @@ node_cls_data = FunctionNodeCore.loadRegisterFuncNodes(Data)
 node_cls_math = FunctionNodeCore.loadRegisterFuncNodes(Math)
 node_cls_operator = FunctionNodeCore.loadRegisterFuncNodes(Operator)
 node_cls_modifier = FunctionNodeCore.loadRegisterFuncNodes(Modifier)
+node_cls_material = FunctionNodeCore.loadRegisterFuncNodes(Material)
 node_cls_rigtoolkit = FunctionNodeCore.loadRegisterFuncNodes(RigTooKit)
 node_cls_logic = FunctionNodeCore.loadRegisterFuncNodes(Logic)
 node_cls_datatypecast = FunctionNodeCore.loadRegisterFuncNodes(DataTypeCast)
@@ -30,6 +31,7 @@ cls.extend(node_cls_data)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
 cls.extend(node_cls_modifier)
+cls.extend(node_cls_material)
 cls.extend(node_cls_rigtoolkit)
 cls.extend(node_cls_logic)
 cls.extend(node_cls_datatypecast)
@@ -53,6 +55,9 @@ node_categories = [
     ]),
     OmniNodeCategory("MODIFIER", "Modifier", items=[
         NodeItem(i.bl_idname) for i in node_cls_modifier
+    ]),
+    OmniNodeCategory("MATERIAL", "Material", items=[
+        NodeItem(i.bl_idname) for i in node_cls_material
     ]),
     OmniNodeCategory("IMAGE", "Image", items=[
         NodeItem(i.bl_idname) for i in node_cls_image

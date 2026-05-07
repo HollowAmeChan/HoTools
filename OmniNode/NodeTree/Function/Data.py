@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
@@ -68,6 +68,12 @@ def modifierTypeInput(v: _OmniModifierType) -> _OmniModifierType:
       bl_label="修改器",
       base_color=_Color.colorCat["GetData"],)
 def modifierInput(v: _OmniModifier) -> _OmniModifier:
+    return v
+
+@omni(enable=True,
+      bl_label="Material Slot",
+      base_color=_Color.colorCat["GetData"],)
+def materialSlotInput(v: _OmniMaterialSlot) -> _OmniMaterialSlot:
     return v
 
 @omni(enable=True,
