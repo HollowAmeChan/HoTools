@@ -1,4 +1,4 @@
-from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob, OmniNodeSocketDatablock
+from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob, OmniNodeSocketDatablock, OmniNodeSocketModifierType, OmniNodeSocketModifier
 import bpy
 import mathutils
 import inspect
@@ -50,6 +50,12 @@ class _OmniColorRGBA():
 class _OmniDatablock():
     def __init__():
         return
+class _OmniModifierType(str):
+    def __init__():
+        return
+class _OmniModifier():
+    def __init__():
+        return
 
 # 函数变量标签类型：blenderSocket类型
 SKT_DIC = {
@@ -91,7 +97,10 @@ SKT_DIC = {
     # Omni自定义接口
     bpy.types.Scene: OmniNodeSocketScene,
     bpy.types.Text: OmniNodeSocketText,
+    bpy.types.Modifier: OmniNodeSocketModifier,
     _OmniDatablock: OmniNodeSocketDatablock,
+    _OmniModifier: OmniNodeSocketModifier,
+    _OmniModifierType: OmniNodeSocketModifierType,
     _OmniImageFormat: OmniNodeSocketImageFormat,
     _OmniRegex: OmniNodeSocketRegex,
     _OmniGlob: OmniNodeSocketGlob,

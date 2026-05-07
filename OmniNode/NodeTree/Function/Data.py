@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
@@ -56,6 +56,18 @@ def filepathInput(v: _OmniFolderPath) -> _OmniFolderPath:
       bl_label="图像格式",
       base_color=_Color.colorCat["GetData"],)
 def imageFormatInput(v:_OmniImageFormat) -> _OmniImageFormat:
+    return v
+
+@omni(enable=True,
+      bl_label="Modifier Type",
+      base_color=_Color.colorCat["GetData"],)
+def modifierTypeInput(v: _OmniModifierType) -> _OmniModifierType:
+    return v
+
+@omni(enable=True,
+      bl_label="修改器",
+      base_color=_Color.colorCat["GetData"],)
+def modifierInput(v: _OmniModifier) -> _OmniModifier:
     return v
 
 @omni(enable=True,

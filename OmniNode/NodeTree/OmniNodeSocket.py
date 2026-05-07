@@ -1,13 +1,49 @@
 import bpy
-from bpy.types import NodeSocket,NodeSocketImage
+from bpy.types import NodeSocket, NodeSocketImage
+
+
+OMNI_MODIFIER_TYPE_ITEMS = [
+    ("SUBSURF", "Subdivision Surface", ""),
+    ("BOOLEAN", "Boolean", ""),
+    ("ARMATURE", "Armature", ""),
+]
+
+
+def _collect_modifier_type_items():
+    items = []
+    try:
+        modifier_type_prop = bpy.types.Modifier.bl_rna.properties["type"]
+        for item in modifier_type_prop.enum_items:
+            items.append((
+                str(item.identifier),
+                str(item.name or item.identifier),
+                str(item.description or ""),
+            ))
+    except Exception:
+        pass
+    return items
+
+
+def _refresh_modifier_type_items():
+    items = _collect_modifier_type_items()
+    if items:
+        OMNI_MODIFIER_TYPE_ITEMS.clear()
+        OMNI_MODIFIER_TYPE_ITEMS.extend(items)
+    return OMNI_MODIFIER_TYPE_ITEMS
+
+
+def _modifier_type_items_callback(self, context):
+    return OMNI_MODIFIER_TYPE_ITEMS
 
 
 class OmniNodeSocketScene(NodeSocket):
     bl_label = "场景-Omni"
-    bl_idname = 'OmniNodeSocketScene'
+    bl_idname = "OmniNodeSocketScene"
 
     default_value: bpy.props.PointerProperty(
-        type=bpy.types.Scene, description="场景")  # type: ignore
+        type=bpy.types.Scene,
+        description="场景",
+    )  # type: ignore
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
@@ -19,12 +55,15 @@ class OmniNodeSocketScene(NodeSocket):
     def draw_color_simple(cls):
         return (1.0, 0.4, 0.216, 1.0)
 
+
 class OmniNodeSocketText(NodeSocket):
     bl_label = "文本文件-Omni"
-    bl_idname = 'OmniNodeSocketText'
+    bl_idname = "OmniNodeSocketText"
 
     default_value: bpy.props.PointerProperty(
-        type=bpy.types.Text, description="场景")  # type: ignore
+        type=bpy.types.Text,
+        description="文本",
+    )  # type: ignore
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
@@ -36,11 +75,10 @@ class OmniNodeSocketText(NodeSocket):
     def draw_color_simple(cls):
         return (1.0, 1.0, 1.0, 1.0)
 
+
 class OmniNodeSocketAny(NodeSocket):
     bl_label = "Any-Omni"
-    bl_idname = 'OmniNodeSocketAny'
-
-    # 无用
+    bl_idname = "OmniNodeSocketAny"
 
     default_value: bpy.props.FloatProperty()  # type: ignore
 
@@ -51,22 +89,23 @@ class OmniNodeSocketAny(NodeSocket):
     def draw_color_simple(cls):
         return (0.5, 0.5, 0.5, 0.5)
 
+
 class OmniNodeSocketImageFormat(NodeSocket):
     bl_label = "图片后缀格式-Omni"
-    bl_idname = 'OmniNodeSocketImageFormat'
+    bl_idname = "OmniNodeSocketImageFormat"
 
     format_items = [
-        ('PNG', "PNG", ""),
-        ('JPG', "JPG", ""),
-        ('JPEG', "JPEG", ""),
-        ('TGA', "TGA", ""),
-        ('EXR', "EXR", ""),
-        ('BMP', "BMP", ""),
+        ("PNG", "PNG", ""),
+        ("JPG", "JPG", ""),
+        ("JPEG", "JPEG", ""),
+        ("TGA", "TGA", ""),
+        ("EXR", "EXR", ""),
+        ("BMP", "BMP", ""),
     ]
 
     default_value: bpy.props.EnumProperty(
         items=format_items,
-        name="Image Format"
+        name="Image Format",
     )  # type: ignore
 
     def draw(self, context, layout, node, text):
@@ -77,11 +116,12 @@ class OmniNodeSocketImageFormat(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (0.439216, 0.698039, 1.0, 1.0) #内置NodeSocketString的颜色
+        return (0.439216, 0.698039, 1.0, 1.0)
+
 
 class OmniNodeSocketRegex(NodeSocket):
     bl_label = "正则表达式-Omni"
-    bl_idname = 'OmniNodeSocketRegex'
+    bl_idname = "OmniNodeSocketRegex"
 
     default_value: bpy.props.StringProperty()  # type: ignore
 
@@ -93,11 +133,12 @@ class OmniNodeSocketRegex(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (0, 0, 0.5, 1.0) #内置NodeSocketString的颜色，偏色1
-    
+        return (0, 0, 0.5, 1.0)
+
+
 class OmniNodeSocketGlob(NodeSocket):
     bl_label = "Glob表达式-Omni"
-    bl_idname = 'OmniNodeSocketGlob'
+    bl_idname = "OmniNodeSocketGlob"
 
     default_value: bpy.props.StringProperty()  # type: ignore
 
@@ -109,7 +150,7 @@ class OmniNodeSocketGlob(NodeSocket):
 
     @classmethod
     def draw_color_simple(cls):
-        return (0.2, 0.2, 0.5, 1.0) #内置NodeSocketString的颜色，偏色2
+        return (0.2, 0.2, 0.5, 1.0)
 
 
 class OmniNodeSocketDatablock(NodeSocket):
@@ -130,6 +171,49 @@ class OmniNodeSocketDatablock(NodeSocket):
     @classmethod
     def draw_color_simple(cls):
         return (0.8, 0.55, 0.2, 1.0)
+
+
+class OmniNodeSocketModifierType(NodeSocket):
+    bl_label = "修改器类型-Omni"
+    bl_idname = "OmniNodeSocketModifierType"
+
+    default_value: bpy.props.EnumProperty(
+        items=_modifier_type_items_callback,
+        name="Modifier Type",
+    )  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            layout.prop(self, "default_value", text=text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.439216, 0.698039, 1.0, 1.0)
+
+
+class OmniNodeSocketModifier(NodeSocket):
+    bl_label = "修改器-Omni"
+    bl_idname = "OmniNodeSocketModifier"
+
+    # 仅作为运行时占位，避免未连接时编译阶段直接访问属性失败。
+    default_value: bpy.props.StringProperty(  # type: ignore
+        default="",
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            row = layout.row(align=True)
+            row.label(text=text or self.name)
+            row.label(text="需要连接", icon="LINKED")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.85, 0.63, 0.18, 1.0)
 
 
 class OmniNodeSocketParameterFloat(NodeSocket):
@@ -216,24 +300,32 @@ class OmniNodeSocketParameterVector(NodeSocket):
     def draw_color_simple(cls):
         return (0.63, 0.72, 1.0, 1.0)
 
-cls = [OmniNodeSocketScene, OmniNodeSocketText,
-       OmniNodeSocketAny,OmniNodeSocketImageFormat,
-       OmniNodeSocketRegex, OmniNodeSocketGlob,
-       OmniNodeSocketDatablock,
-       OmniNodeSocketParameterFloat,
-       OmniNodeSocketParameterInt,
-       OmniNodeSocketParameterBool,
-       OmniNodeSocketParameterString,
-       OmniNodeSocketParameterVector,
-       ]
+
+cls = [
+    OmniNodeSocketScene,
+    OmniNodeSocketText,
+    OmniNodeSocketAny,
+    OmniNodeSocketImageFormat,
+    OmniNodeSocketRegex,
+    OmniNodeSocketGlob,
+    OmniNodeSocketDatablock,
+    OmniNodeSocketModifierType,
+    OmniNodeSocketModifier,
+    OmniNodeSocketParameterFloat,
+    OmniNodeSocketParameterInt,
+    OmniNodeSocketParameterBool,
+    OmniNodeSocketParameterString,
+    OmniNodeSocketParameterVector,
+]
 
 
 def register():
     try:
+        _refresh_modifier_type_items()
         for i in cls:
             bpy.utils.register_class(i)
     except Exception:
-        print(__file__+" register failed!!!")
+        print(__file__ + " register failed!!!")
 
 
 def unregister():
@@ -241,4 +333,4 @@ def unregister():
         for i in cls:
             bpy.utils.unregister_class(i)
     except Exception:
-        print(__file__+" unregister failed!!!")
+        print(__file__ + " unregister failed!!!")
