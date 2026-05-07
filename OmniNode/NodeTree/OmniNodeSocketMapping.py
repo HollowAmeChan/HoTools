@@ -1,4 +1,4 @@
-from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob, OmniNodeSocketDatablock, OmniNodeSocketModifierType, OmniNodeSocketModifier, OmniNodeSocketMaterialSlot
+from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob, OmniNodeSocketDatablock, OmniNodeSocketModifierType, OmniNodeSocketModifier, OmniNodeSocketMaterialSlot, OmniNodeSocketUVLayer
 import bpy
 import mathutils
 import inspect
@@ -59,6 +59,9 @@ class _OmniModifier():
 class _OmniMaterialSlot():
     def __init__():
         return
+class _OmniUVLayer():
+    def __init__():
+        return
 
 # 函数变量标签类型：blenderSocket类型
 SKT_DIC = {
@@ -102,9 +105,11 @@ SKT_DIC = {
     bpy.types.Text: OmniNodeSocketText,
     bpy.types.Modifier: OmniNodeSocketModifier,
     bpy.types.MaterialSlot: OmniNodeSocketMaterialSlot,
+    bpy.types.MeshUVLoopLayer: OmniNodeSocketUVLayer,
     _OmniDatablock: OmniNodeSocketDatablock,
     _OmniModifier: OmniNodeSocketModifier,
     _OmniMaterialSlot: OmniNodeSocketMaterialSlot,
+    _OmniUVLayer: OmniNodeSocketUVLayer,
     _OmniModifierType: OmniNodeSocketModifierType,
     _OmniImageFormat: OmniNodeSocketImageFormat,
     _OmniRegex: OmniNodeSocketRegex,
