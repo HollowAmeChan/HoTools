@@ -260,6 +260,50 @@ class OmniNodeSocketUVLayer(NodeSocket):
         return (0.28, 0.72, 0.86, 1.0)
 
 
+class OmniNodeSocketColorAttribute(NodeSocket):
+    bl_label = "顶点色属性-Omni"
+    bl_idname = "OmniNodeSocketColorAttribute"
+
+    default_value: bpy.props.StringProperty(  # type: ignore
+        default="",
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            row = layout.row(align=True)
+            row.label(text=text or self.name)
+            row.label(text="需要连接", icon="LINKED")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.78, 0.36, 0.18, 1.0)
+
+
+class OmniNodeSocketVertexGroup(NodeSocket):
+    bl_label = "顶点组-Omni"
+    bl_idname = "OmniNodeSocketVertexGroup"
+
+    default_value: bpy.props.StringProperty(  # type: ignore
+        default="",
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+        else:
+            row = layout.row(align=True)
+            row.label(text=text or self.name)
+            row.label(text="需要连接", icon="LINKED")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.22, 0.66, 0.26, 1.0)
+
+
 class OmniNodeSocketParameterFloat(NodeSocket):
     bl_label = "Float-OmniParam"
     bl_idname = "OmniNodeSocketParameterFloat"
@@ -357,6 +401,8 @@ cls = [
     OmniNodeSocketModifier,
     OmniNodeSocketMaterialSlot,
     OmniNodeSocketUVLayer,
+    OmniNodeSocketColorAttribute,
+    OmniNodeSocketVertexGroup,
     OmniNodeSocketParameterFloat,
     OmniNodeSocketParameterInt,
     OmniNodeSocketParameterBool,

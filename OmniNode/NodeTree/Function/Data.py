@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import bpy
@@ -80,6 +80,18 @@ def materialSlotInput(v: _OmniMaterialSlot) -> _OmniMaterialSlot:
       bl_label="UV槽",
       base_color=_Color.colorCat["GetData"],)
 def uvLayerInput(v: _OmniUVLayer) -> _OmniUVLayer:
+    return v
+
+@omni(enable=True,
+      bl_label="顶点色属性",
+      base_color=_Color.colorCat["GetData"],)
+def colorAttributeInput(v: _OmniColorAttribute) -> _OmniColorAttribute:
+    return v
+
+@omni(enable=True,
+      bl_label="顶点组",
+      base_color=_Color.colorCat["GetData"],)
+def vertexGroupInput(v: _OmniVertexGroup) -> _OmniVertexGroup:
     return v
 
 @omni(enable=True,
