@@ -92,6 +92,9 @@ def objectCreateUVLayer(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层名称"],
     _OUTPUT_NAME=["UV层"],
+    omni_description="""
+    按名称获取目标 Mesh 上的 UV 槽。
+    """,
 )
 def objectGetUVLayerByName(
     obj: bpy.types.Object,
@@ -107,6 +110,9 @@ def objectGetUVLayerByName(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层索引"],
     _OUTPUT_NAME=["UV层"],
+    omni_description="""
+    按索引获取目标 Mesh 上的 UV 槽。
+    """,
 )
 def objectGetUVLayerByIndex(
     obj: bpy.types.Object,
@@ -122,6 +128,9 @@ def objectGetUVLayerByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["UV层"],
+    omni_description="""
+    获取目标 Mesh 上激活的 UV 槽。
+    """,
 )
 def objectGetActiveUVLayer(
     obj: bpy.types.Object,
@@ -140,6 +149,9 @@ def objectGetActiveUVLayer(
     is_output_node=False,
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["UV层"],
+    omni_description="""
+    获取目标 Mesh 上标记为渲染的 UV 槽。
+    """,
 )
 def objectGetRenderUVLayer(
     obj: bpy.types.Object,
@@ -158,6 +170,9 @@ def objectGetRenderUVLayer(
     is_output_node=False,
     _INPUT_NAME=["UV层"],
     _OUTPUT_NAME=["UV层名称"],
+    omni_description="""
+    获取目标 UV 层的名称。
+    """,
 )
 def uvLayerGetName(
     uv_layer: _OmniUVLayer,
@@ -173,6 +188,9 @@ def uvLayerGetName(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["UV层索引"],
+    omni_description="""
+    获取目标 UV 层在物体上的索引。
+    """,
 )
 def objectGetUVLayerIndex(
     obj: bpy.types.Object,
@@ -193,6 +211,9 @@ def objectGetUVLayerIndex(
     is_output_node=False,
     _INPUT_NAME=["UV层", "新名称"],
     _OUTPUT_NAME=["UV层", "UV层名称"],
+    omni_description="""
+    重命名目标 UV 层。
+    """,
 )
 def uvLayerRename(
     uv_layer: _OmniUVLayer,
@@ -213,6 +234,9 @@ def uvLayerRename(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体", "UV层"],
+    omni_description="""
+    设置目标 Mesh 的激活 UV 槽。
+    """,
 )
 def objectSetActiveUVLayer(
     obj: bpy.types.Object,
@@ -234,6 +258,9 @@ def objectSetActiveUVLayer(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层索引"],
     _OUTPUT_NAME=["物体", "UV层"],
+    omni_description="""
+    设置目标 Mesh 的激活 UV 槽。
+    """,
 )
 def objectSetActiveUVLayerByIndex(
     obj: bpy.types.Object,
@@ -252,6 +279,9 @@ def objectSetActiveUVLayerByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体", "UV层"],
+    omni_description="""
+    设置目标 Mesh 的渲染 UV 槽。
+    """,
 )
 def objectSetRenderUVLayer(
     obj: bpy.types.Object,
@@ -275,6 +305,9 @@ def objectSetRenderUVLayer(
     is_output_node=False,
     _INPUT_NAME=["物体", "UV层"],
     _OUTPUT_NAME=["物体"],
+    omni_description="""
+    删除目标 Mesh 上的一个 UV 槽。
+    """,
 )
 def objectRemoveUVLayer(
     obj: bpy.types.Object,

@@ -334,7 +334,7 @@ def modifierApply(
     bl_label="设置修改器对象显示",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["修改器", "视图显示", "渲染显示", "编辑模式显示", "On Cage"],
+    _INPUT_NAME=["修改器", "视图显示", "渲染显示", "编辑模式显示", "罩体显示"],
     _OUTPUT_NAME=["修改器"],
     omni_description="""
     一次性设置修改器的多个显示开关。
@@ -408,7 +408,7 @@ def modifierSetEditmode(
 
 @omni(
     enable=True,
-    bl_label="设置修改器对象On Cage",
+    bl_label="设置修改器对象罩体显示",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=["修改器", "状态"],

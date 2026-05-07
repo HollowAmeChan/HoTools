@@ -107,6 +107,9 @@ def objectAddMaterialSlot(
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["材质槽"],
     bl_icon="MATERIAL",
+    omni_description="""
+    按索引获取目标物体上的材质槽。
+    """,
 )
 def objectGetMaterialSlotByIndex(
     obj: bpy.types.Object,
@@ -123,6 +126,9 @@ def objectGetMaterialSlotByIndex(
     _INPUT_NAME=["物体", "槽名称"],
     _OUTPUT_NAME=["材质槽"],
     bl_icon="MATERIAL",
+    omni_description="""
+    按名称获取目标物体上的材质槽。
+    """,
 )
 def objectGetMaterialSlotByName(
     obj: bpy.types.Object,
@@ -160,6 +166,9 @@ def objectGetMaterialSlotByMaterial(
     _INPUT_NAME=["物体"],
     _OUTPUT_NAME=["材质槽"],
     bl_icon="MATERIAL",
+    omni_description="""
+    获取物体的激活材质槽。
+    """,
 )
 def objectGetActiveMaterialSlot(
     obj: bpy.types.Object,
@@ -178,6 +187,9 @@ def objectGetActiveMaterialSlot(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["材质"],
     bl_icon="MATERIAL",
+    omni_description="""
+    获取材质槽中的材质。
+    """,
 )
 def materialSlotGetMaterial(
     slot: _OmniMaterialSlot,
@@ -197,6 +209,9 @@ def materialSlotGetMaterial(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["槽索引"],
     bl_icon="MATERIAL",
+    omni_description="""
+    获取材质槽在物体上的索引。
+    """,
 )
 def materialSlotGetIndex(
     slot: _OmniMaterialSlot,
@@ -219,6 +234,9 @@ def materialSlotGetIndex(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["槽名称"],
     bl_icon="MATERIAL",
+    omni_description="""
+    获取材质槽的名称。
+    """,
 )
 def materialSlotGetName(
     slot: _OmniMaterialSlot,
@@ -235,6 +253,9 @@ def materialSlotGetName(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["物体"],
     bl_icon="MATERIAL",
+    omni_description="""
+    获取材质槽所属的物体。
+    """,
 )
 def materialSlotGetObject(
     slot: _OmniMaterialSlot,
@@ -254,6 +275,9 @@ def materialSlotGetObject(
     _INPUT_NAME=["材质槽", "材质"],
     _OUTPUT_NAME=["材质槽", "材质"],
     bl_icon="MATERIAL",
+    omni_description="""
+    设置材质槽的材质。
+    """,
 )
 def materialSlotSetMaterial(
     slot: _OmniMaterialSlot,
@@ -273,6 +297,9 @@ def materialSlotSetMaterial(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["材质槽"],
     bl_icon="MATERIAL",
+    omni_description="""
+    清空材质槽中的材质。
+    """,
 )
 def materialSlotClearMaterial(
     slot: _OmniMaterialSlot,
@@ -290,6 +317,9 @@ def materialSlotClearMaterial(
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["物体", "材质槽"],
     bl_icon="MATERIAL",
+    omni_description="""
+    设置活动材质槽。
+    """,
 )
 def objectSetActiveMaterialSlot(
     obj: bpy.types.Object,
@@ -309,6 +339,9 @@ def objectSetActiveMaterialSlot(
     _INPUT_NAME=["物体", "槽索引"],
     _OUTPUT_NAME=["物体"],
     bl_icon="MATERIAL",
+    omni_description="""
+    移除指定物体上的材质槽。
+    """,
 )
 def objectRemoveMaterialSlotByIndex(
     obj: bpy.types.Object,
@@ -330,6 +363,9 @@ def objectRemoveMaterialSlotByIndex(
     _INPUT_NAME=["材质槽"],
     _OUTPUT_NAME=["物体"],
     bl_icon="MATERIAL",
+    omni_description="""
+    移除指定的材质槽所属的物体上的该材质槽。
+    """,
 )
 def materialSlotRemove(
     slot: _OmniMaterialSlot,
@@ -351,6 +387,9 @@ def materialSlotRemove(
     _INPUT_NAME=["物体", "材质"],
     _OUTPUT_NAME=["槽索引"],
     bl_icon="MATERIAL",
+    omni_description="""
+    在指定物体上查找材质所在的槽索引。
+    """,
 )
 def objectFindMaterialSlotIndex(
     obj: bpy.types.Object,

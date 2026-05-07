@@ -118,6 +118,8 @@ def _get_render_color_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
     omni_description="""
     在目标 Mesh 上创建一个顶点色属性。
     如果同名属性已经存在，则直接返回已有属性。
+        颜色类型可选 BYTE_COLOR（8位颜色）或 FLOAT_COLOR（32位颜色）。
+        属性域可选 POINT（顶点）、CORNER（角落/面-顶点）、EDGE（边）或 FACE（面）。
     """,
 )
 def objectCreateColorAttribute(
