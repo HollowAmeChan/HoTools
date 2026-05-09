@@ -172,7 +172,9 @@ class MatchResult:
 @dataclass
 class AutoMappingResult:
     matches: list[MatchResult]
-    unmatched_targets: list[str]
+    # 未匹配的源骨骼
+    unmatched_sources: list[str]
+    # 低置信度匹配
     low_confidence_matches: list[MatchResult]
 
 
@@ -251,38 +253,6 @@ def load_humanoid_specs() -> list[HumanoidBoneSpec]:
         )
 
     return specs
-
-
-def _build_source_bone_infos(armature_obj) -> dict[str, SourceBoneInfo]:
-    infos: dict[str, SourceBoneInfo] = {}
-    depth_cache: dict[str, int] = {}
-
-    def bone_depth(bone) -> int:
-        if bone.name in depth_cache:
-            return depth_cache[bone.name]
-        depth = 0
-        current = bone.parent
-        while current is not None:
-            depth += 1
-            current = current.parent
-        depth_cache[bone.name] = depth
-        return depth
-
-    for bone in armature_obj.data.bones:
-        x_value = getattr(bone.head_local, "x", 0.0)
-        infos[bone.name] = SourceBoneInfo(
-            name=bone.name,
-            parent=bone.parent.name if bone.parent else None,
-            children=tuple(child.name for child in bone.children),
-            side=_detect_side(bone.name, x_value),
-            depth=bone_depth(bone),
-            use_deform=getattr(bone, "use_deform", True),
-            x=x_value,
-            normalized=_normalize_text(bone.name),
-            normalized_core=_strip_side_markers(bone.name),
-            tokens=_tokenize(bone.name),
-        )
-    return infos
 
 
 def _name_similarity_score(spec: HumanoidBoneSpec, bone: SourceBoneInfo) -> tuple[float, str]:
@@ -412,52 +382,10 @@ def _acceptance_threshold(spec: HumanoidBoneSpec) -> float:
     return 52.0
 
 
-def auto_map_humanoid_bones(armature_obj) -> AutoMappingResult:
-    specs = load_humanoid_specs()
-    source_infos = _build_source_bone_infos(armature_obj)
-    used_sources: set[str] = set()
-    matched_sources: dict[str, str] = {}
-    matches: list[MatchResult] = []
-    unmatched_targets: list[str] = []
-
-    for spec in specs:
-        scored_candidates: list[tuple[float, str, str]] = []
-        for bone_name, bone_info in source_infos.items():
-            if bone_name in used_sources:
-                continue
-            score, reason = _score_candidate(spec, bone_info, matched_sources, source_infos)
-            scored_candidates.append((score, bone_name, reason))
-
-        if not scored_candidates:
-            unmatched_targets.append(spec.name)
-            continue
-
-        scored_candidates.sort(key=lambda item: item[0], reverse=True)
-        best_score, best_source, best_reason = scored_candidates[0]
-        if best_score < _acceptance_threshold(spec):
-            unmatched_targets.append(spec.name)
-            continue
-
-        used_sources.add(best_source)
-        matched_sources[spec.name] = best_source
-        matches.append(
-            MatchResult(
-                target_name=spec.name,
-                source_name=best_source,
-                score=best_score,
-                reason=best_reason,
-            )
-        )
-
-    low_confidence_matches = [match for match in matches if match.score < 75.0]
-    return AutoMappingResult(
-        matches=matches,
-        unmatched_targets=unmatched_targets,
-        low_confidence_matches=low_confidence_matches,
-    )
-
-
 def auto_map_source_names_to_humanoid(source_names: list[str]) -> AutoMappingResult:
+    """
+    自动将给定的源骨骼名称列表映射到Humanoid标准骨骼名称。返回匹配结果、未匹配的目标名称列表，以及低置信度匹配列表。
+    """
     specs = load_humanoid_specs()
     used_targets: set[str] = set()
     matches: list[MatchResult] = []
@@ -542,6 +470,6 @@ def auto_map_source_names_to_humanoid(source_names: list[str]) -> AutoMappingRes
     low_confidence_matches = [match for match in final_matches if match.score < 75.0]
     return AutoMappingResult(
         matches=final_matches,
-        unmatched_targets=unmatched_sources,
+        unmatched_sources=unmatched_sources,
         low_confidence_matches=low_confidence_matches,
     )

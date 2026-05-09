@@ -6,7 +6,7 @@ from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 import subprocess
-from . import humanoid_auto_mapping
+from ..BoneTools import humanoid_auto_mapping
 
 
 
@@ -722,8 +722,8 @@ class OP_Mapping_BatchRename(Operator):
 
 class OP_Mapping_AutoHumanoid(Operator):
     bl_idname = "ho.mapping_auto_humanoid"
-    bl_label = "Auto Humanoid"
-    bl_description = "Auto fill Humanoid target names for the left list"
+    bl_label = "自动Humanoid"
+    bl_description = "计算左侧列表，自动填入humannoid骨骼名称在右侧列表"
     bl_options = {'REGISTER', 'UNDO'}
 
     clear_before: BoolProperty(
@@ -735,12 +735,12 @@ class OP_Mapping_AutoHumanoid(Operator):
         scene = context.scene
 
         if scene.ho_mapping_type != 'ARMATURE_BONE_NAME':
-            self.report({'ERROR'}, "Please switch mapping type to bone names first")
+            self.report({'ERROR'}, "请先将映射类型切换为骨骼名称")
             return {'CANCELLED'}
 
         source_names = [item.name for item in scene.ho_mapping_searchlist if item.name.strip()]
         if not source_names:
-            self.report({'ERROR'}, "Please put source bone names in the left list first")
+            self.report({'ERROR'}, "请先将源骨骼名称放在左侧列表中")
             return {'CANCELLED'}
 
         result = humanoid_auto_mapping.auto_map_source_names_to_humanoid(source_names)
@@ -767,19 +767,17 @@ class OP_Mapping_AutoHumanoid(Operator):
 
         match_count = len(result.matches)
         low_count = len(result.low_confidence_matches)
-        miss_count = len(result.unmatched_targets)
+        miss_count = len(result.unmatched_sources)
 
         if match_count == 0:
-            self.report({'WARNING'}, "No Humanoid matches found")
+            self.report({'WARNING'}, "未找到Humanoid匹配")
             return {'CANCELLED'}
 
-        message = f"Filled {match_count} target names"
+        message = f"已填充 {match_count} 个目标名称"
         if low_count or miss_count:
-            message += f" (low confidence: {low_count}, unmatched: {miss_count})"
+            message += f" (低置信度: {low_count}, 未匹配: {miss_count})"
         self.report({'INFO'}, message)
         return {'FINISHED'}
-
-MENU_PRESETS = []
 
 
 
@@ -884,7 +882,8 @@ class NameMappingTools(Panel):
         col.scale_y = 2.0
         row = col.row(align=True)
         row.operator(OP_Mapping_SwapList.bl_idname, text="", icon="MOD_MIRROR",)
-        row.operator(OP_Mapping_AutoHumanoid.bl_idname, text="", icon="ARMATURE_DATA")
+        if scene.ho_mapping_type == 'ARMATURE_BONE_NAME':
+            row.operator(OP_Mapping_AutoHumanoid.bl_idname, text="", icon="ARMATURE_DATA")
         row.operator(OP_Mapping_BatchRename.bl_idname, text="重命名")
 
         row2 = row.row(align=True)  # 保存和加载预设的按钮
