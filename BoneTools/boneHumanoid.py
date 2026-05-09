@@ -1,7 +1,14 @@
+# TODO:目前很难用，还很容易不小心把骨架搞坏，OP_Humanoid_ForceAlign对于扭转的识别很奇怪。arp的ref与deform骨命名很恶心奇怪，自动处理要做好很hack。以及用户需要首先把ref吸到自己的骨架上（需要自动map一次），然后生成对齐的deform层，然后自己的骨架又要使用约束吸到rig骨架上（这里用的交换运动骨架物体，然后使用deform层的map，所以ref的map要删掉重新给deformmap，这很傻逼），这整个流程中ref强制吸附+约束吸附可以完全整合成一整个无脑操作
 import bpy
 from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
-from .humanoid_auto_mapping import auto_map_source_names_to_humanoid
+from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
+
+import blf
+import gpu
+from gpu_extras.batch import batch_for_shader
+from mathutils import Vector
+from bpy_extras import view3d_utils
 
 def PF_armature_filter(self, obj):
     return obj.type == 'ARMATURE'
@@ -15,6 +22,26 @@ def reg_props():
 def ureg_props():
     del bpy.types.Scene.bone_constraint_resting_armature
     del bpy.types.Scene.bone_constraint_moving_armature
+
+class OP_SwapBoneConstraintArmatures(Operator):
+    bl_idname = "ho.swap_bone_constraint_armatures"
+    bl_label = "交换骨架"
+    bl_description = "交换当前设置的Resting和Moving骨架"
+
+    def execute(self, context):
+        scene = context.scene
+        resting = scene.bone_constraint_resting_armature
+        moving = scene.bone_constraint_moving_armature
+
+        if resting is None and moving is None:
+            self.report({'WARNING'}, "没有设置骨架")
+            return {'CANCELLED'}
+
+        scene.bone_constraint_resting_armature = moving
+        scene.bone_constraint_moving_armature = resting
+
+        self.report({'INFO'}, "已交换骨架")
+        return {'FINISHED'}
 
 class OP_SameNameBone_addConstraint(Operator):
     bl_idname = "ho.samenamebone_addconstraint"
@@ -241,22 +268,265 @@ class OP_BoneRemoveConstraints(Operator):
         self.report({'INFO'}, "已移除选中骨骼的全部约束")
         return {'FINISHED'}
 
-class OP_Mapping_WriteHumanoidBoneProps(Operator):
-    bl_idname = "ho.mapping_write_humanoid_boneprops"
-    bl_label = "自动计算选中骨架中的Humanoid映射"
-    bl_description = "自动指定Humanoid映射，填入bone的hotools自定义属性"
+class OP_Humanoid_ForceAlign(Operator):
+    bl_idname = "ho.humanoid_force_align"
+    bl_label = "强制Humanoid对齐"
+    bl_description = "根据Humanoid映射直接修改moving骨架的EditBone Rest Pose"
     bl_options = {'REGISTER', 'UNDO'}
 
-    clear_unmapped: BoolProperty(
-        name="清空未匹配",
-        default=False,
-        description="清空没有自动匹配到的骨骼映射",
-    )  # type: ignore
+    align_roll: BoolProperty(name="对齐Roll", default=True)  # type: ignore
+    align_tail: BoolProperty(name="对齐Tail", default=True)  # type: ignore
+    keep_length: BoolProperty(name="保持原长度", default=False)  # type: ignore
+    only_selected: BoolProperty(name="仅处理选中骨骼", default=True)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        scene = context.scene
+        resting = scene.bone_constraint_resting_armature
+        moving = scene.bone_constraint_moving_armature
+
+        return (
+            resting is not None
+            and moving is not None
+            and resting.type == 'ARMATURE'
+            and moving.type == 'ARMATURE'
+        )
+
+    def _edit_bone_depth(self, eb):
+        depth = 0
+        parent = eb.parent
+        while parent:
+            depth += 1
+            parent = parent.parent
+        return depth
+
+    def execute(self, context):
+        scene = context.scene
+        resting_obj = scene.bone_constraint_resting_armature
+        moving_obj = scene.bone_constraint_moving_armature
+
+        if resting_obj == moving_obj:
+            self.report({'ERROR'}, "不能对同一个骨架执行")
+            return {'CANCELLED'}
+
+        prev_active = context.view_layer.objects.active
+        prev_mode = context.mode
+
+        aligned_count = 0
+        missing_count = 0
+        skipped_count = 0
+        roll_failed_count = 0
+
+        # --------------------------------------------------
+        # 1. 读取 resting 骨架数据
+        # --------------------------------------------------
+        bpy.ops.object.mode_set(mode='OBJECT')
+        context.view_layer.objects.active = resting_obj
+        resting_obj.select_set(True)
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        resting_data = {}
+
+        resting_world = resting_obj.matrix_world.copy()
+        resting_rot = resting_world.to_3x3()
+
+        for eb in resting_obj.data.edit_bones:
+            bone = resting_obj.data.bones.get(eb.name)
+            if bone is None:
+                continue
+
+            props = getattr(bone, "hotools_boneprops", None)
+            if props is None:
+                continue
+
+            mapping = props.humanoidMapping.strip()
+            if not mapping:
+                continue
+
+            head_world = resting_world @ eb.head
+            tail_world = resting_world @ eb.tail
+            z_axis_world = (resting_rot @ eb.z_axis).normalized()
+
+            if mapping not in resting_data:
+                resting_data[mapping] = {
+                    "name": str(eb.name),
+                    "head_world": head_world.copy(),
+                    "tail_world": tail_world.copy(),
+                    "z_axis_world": z_axis_world.copy(),
+                }
+
+        # --------------------------------------------------
+        # 2. 修改 moving 骨架
+        # --------------------------------------------------
+        bpy.ops.object.mode_set(mode='OBJECT')
+        context.view_layer.objects.active = moving_obj
+        moving_obj.select_set(True)
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        moving_world_inv = moving_obj.matrix_world.inverted()
+        moving_rot_inv = moving_world_inv.to_3x3()
+
+        # 关键：全部断开连接，避免小腿/前臂/手指 head 被父骨 tail 拉回去
+        disconnected_count = 0
+        for eb in moving_obj.data.edit_bones:
+            if eb.use_connect:
+                eb.use_connect = False
+                disconnected_count += 1
+
+        moving_edit_bones = sorted(
+            list(moving_obj.data.edit_bones),
+            key=self._edit_bone_depth,
+        )
+
+        for moving_eb in moving_edit_bones:
+            bone = moving_obj.data.bones.get(moving_eb.name)
+            if bone is None:
+                skipped_count += 1
+                continue
+
+            if self.only_selected and not bone.select:
+                continue
+
+            if hasattr(bone, "visible") and not bone.visible:
+                continue
+
+            props = getattr(bone, "hotools_boneprops", None)
+            if props is None:
+                skipped_count += 1
+                continue
+
+            mapping = props.humanoidMapping.strip()
+            if not mapping:
+                continue
+
+            source = resting_data.get(mapping)
+            if source is None:
+                missing_count += 1
+                print(f"[Humanoid Force Align] missing mapping: {mapping}")
+                continue
+
+            original_length = moving_eb.length
+
+            head_local = moving_world_inv @ source["head_world"]
+            tail_local = moving_world_inv @ source["tail_world"]
+
+            if (tail_local - head_local).length < 1e-6:
+                skipped_count += 1
+                print(
+                    f"[Humanoid Force Align] skipped zero length: "
+                    f"{moving_eb.name}"
+                )
+                continue
+
+            moving_eb.head = head_local
+
+            if self.align_tail:
+                moving_eb.tail = tail_local
+            else:
+                direction = (moving_eb.tail - moving_eb.head).normalized()
+                moving_eb.tail = moving_eb.head + direction * original_length
+
+            if self.keep_length:
+                direction = (moving_eb.tail - moving_eb.head).normalized()
+                moving_eb.tail = moving_eb.head + direction * original_length
+
+            if self.align_roll:
+                try:
+                    roll_axis_local = (
+                        moving_rot_inv @ source["z_axis_world"]
+                    ).normalized()
+
+                    moving_eb.align_roll(roll_axis_local)
+
+                except Exception as e:
+                    roll_failed_count += 1
+                    print(
+                        f"[Humanoid Force Align] roll align failed: "
+                        f"{moving_eb.name}, mapping={mapping}, error={e}"
+                    )
+
+            aligned_count += 1
+
+            print(
+                "[Humanoid Force Align] "
+                f"{moving_eb.name} <- {source['name']} "
+                f"mapping={mapping}"
+            )
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        if prev_active:
+            context.view_layer.objects.active = prev_active
+
+        try:
+            if prev_mode == 'POSE':
+                bpy.ops.object.mode_set(mode='POSE')
+            elif prev_mode == 'EDIT_ARMATURE':
+                bpy.ops.object.mode_set(mode='EDIT')
+            else:
+                bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+
+        msg = (
+            f"Humanoid强制对齐完成："
+            f"对齐 {aligned_count}，"
+            f"缺失 {missing_count}，"
+            f"跳过 {skipped_count}，"
+            f"断开连接 {disconnected_count}"
+        )
+
+        if roll_failed_count:
+            msg += f"，Roll失败 {roll_failed_count}"
+
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}    
+    
+class OP_Mapping_WriteHumanoidBoneProps(Operator):
+    bl_idname = "ho.mapping_write_humanoid_boneprops"
+    bl_label = "自动计算选中骨骼的Humanoid映射"
+    bl_description = "只检测当前选中的可见骨骼；按住Shift点击会先清空选中骨骼的旧映射"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    use_shift: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
 
     @classmethod
     def poll(cls, context):
         obj = context.object
         return obj is not None and obj.type == 'ARMATURE'
+
+    def invoke(self, context, event):
+        self.use_shift = event.shift
+        return self.execute(context)
+
+    def _is_bone_visible(self, bone):
+        # Blender 4.x: bone.visible 会综合 bone.hide、bone collection 可见性等
+        if hasattr(bone, "visible"):
+            return bone.visible
+
+        # fallback
+        if getattr(bone, "hide", False):
+            return False
+
+        return True
+
+    def _collect_selected_visible_bones(self, obj):
+        armature = obj.data
+
+        selected = []
+        hidden_selected_count = 0
+
+        for bone in armature.bones:
+            if not bone.select:
+                continue
+
+            if not self._is_bone_visible(bone):
+                hidden_selected_count += 1
+                continue
+
+            selected.append(bone)
+
+        return selected, hidden_selected_count
 
     def execute(self, context):
         obj = context.object
@@ -265,12 +535,29 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             self.report({'ERROR'}, "请选择一个Armature")
             return {'CANCELLED'}
 
-        armature = obj.data
-        bones = list(armature.bones)
+        bones, hidden_selected_count = self._collect_selected_visible_bones(obj)
 
         if not bones:
-            self.report({'WARNING'}, "当前Armature没有骨骼")
+            if hidden_selected_count:
+                self.report({'WARNING'}, f"选中的骨骼都不可见或所在骨骼集合隐藏：{hidden_selected_count}")
+            else:
+                self.report({'WARNING'}, "请先选中需要参与Humanoid映射的骨骼")
             return {'CANCELLED'}
+
+        cleared_count = 0
+        skipped_count = 0
+
+        # Shift点击：只清空选中可见骨骼的旧映射
+        if self.use_shift:
+            for bone in bones:
+                props = getattr(bone, "hotools_boneprops", None)
+                if props is None:
+                    skipped_count += 1
+                    continue
+
+                if props.humanoidMapping:
+                    props.humanoidMapping = ""
+                    cleared_count += 1
 
         source_names = [bone.name for bone in bones]
 
@@ -286,8 +573,6 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
         }
 
         written_count = 0
-        cleared_count = 0
-        skipped_count = 0
 
         for bone in bones:
             props = getattr(bone, "hotools_boneprops", None)
@@ -301,30 +586,35 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             if target_name:
                 props.humanoidMapping = target_name
                 written_count += 1
-            elif self.clear_unmapped:
-                props.humanoidMapping = ""
-                cleared_count += 1
 
         unmatched_count = len(result.unmatched_sources)
         low_confidence_count = len(result.low_confidence_matches)
 
         msg = (
-            f"Humanoid映射完成："
+            f"选中骨骼Humanoid映射完成："
+            f"参与 {len(bones)}，"
             f"写入 {written_count}，"
-            f"未匹配源骨骼 {unmatched_count}，"
+            f"未匹配 {unmatched_count}，"
             f"低置信度 {low_confidence_count}"
         )
 
-        if self.clear_unmapped:
-            msg += f"，清空 {cleared_count}"
+        if self.use_shift:
+            msg += f"，清空旧映射 {cleared_count}"
+
+        if hidden_selected_count:
+            msg += f"，忽略隐藏选中 {hidden_selected_count}"
 
         if skipped_count:
-            msg += f"，跳过无属性骨骼 {skipped_count}"
+            msg += f"，跳过无属性 {skipped_count}"
 
         self.report({'INFO'}, msg)
 
-        print("[Humanoid Auto Mapping]")
+        print("[Humanoid Auto Mapping Selected Bones]")
         print(f"Armature: {obj.name}")
+        print(f"Selected visible bones: {len(bones)}")
+        print(f"Hidden selected ignored: {hidden_selected_count}")
+        print(f"Shift clear old mapping: {self.use_shift}")
+        print(f"Cleared: {cleared_count}")
         print(f"Written: {written_count}")
         print(f"Unmatched sources: {unmatched_count}")
         print(f"Low confidence: {low_confidence_count}")
@@ -342,7 +632,455 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             print("Unmatched sources:")
             for name in result.unmatched_sources:
                 print(f"  {name}")
+        
+        #刷新预览
+        if HumanoidMappingPreviewHUD.is_running():
+            bpy.ops.ho.humanoid_mapping_preview_clear()
+            bpy.ops.ho.humanoid_mapping_preview_show()
 
+        return {'FINISHED'}
+
+class OP_Mapping_ClearHumanoidBoneProps(Operator):
+    bl_idname = "ho.mapping_clear_humanoid_boneprops"
+    bl_label = "清空骨架Humanoid映射"
+    bl_description = "清空当前活动骨架中所有骨骼的Humanoid映射"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    only_selected: BoolProperty(
+        name="仅清空选中骨骼",
+        default=False,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        obj = context.object
+        bones = obj.data.bones
+
+        cleared_count = 0
+        skipped_count = 0
+
+        for bone in bones:
+            if self.only_selected and not bone.select:
+                continue
+
+            props = getattr(bone, "hotools_boneprops", None)
+            if props is None:
+                skipped_count += 1
+                continue
+
+            if props.humanoidMapping:
+                props.humanoidMapping = ""
+                cleared_count += 1
+
+        msg = f"已清空Humanoid映射：{cleared_count}"
+        if skipped_count:
+            msg += f"，跳过无属性 {skipped_count}"
+        
+        #刷新预览
+        if HumanoidMappingPreviewHUD.is_running():
+            bpy.ops.ho.humanoid_mapping_preview_clear()
+            bpy.ops.ho.humanoid_mapping_preview_show()
+
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+class HumanoidMappingPreviewHUD:
+    _handler_3d = None
+    _handler_2d = None
+    _timer_running = False
+
+    _armature = None
+    _items = []
+    _missing_targets = []
+
+    _line_width = 7.0
+    _point_size = 8.0
+
+    _font_size = 30
+    _line_length_x = 60
+    _line_length_y = 22
+
+    _line_end_offset_x = 18
+    _line_end_offset_y = 16
+
+    _label_stagger = 12
+
+    _missing_font_size = 30
+    _missing_line_height = 30
+    _missing_origin_offset_x = -40
+    _missing_origin_offset_y = -40
+    _missing_max_show = 40
+
+    @staticmethod
+    def no_i18n(name: str) -> str:
+        return "\u200B".join(name)
+    
+    @classmethod
+    def is_running(cls):
+        return (
+            cls._handler_2d is not None
+            or cls._handler_3d is not None
+        )
+
+    @classmethod
+    def show(cls, context: Context, armature_obj: bpy.types.Object):
+        cls.clear()
+
+        if armature_obj is None or armature_obj.type != 'ARMATURE':
+            return False, "请选择Armature"
+
+        cls._armature = armature_obj
+        cls._items = []
+        cls._missing_targets = []
+
+        # 标准 humanoid 目标名
+        try:
+            target_names = [item[0] for item in TARGET_LAYOUT]
+        except Exception as e:
+            return False, f"读取Humanoid规格失败: {e}"
+        
+        mapped_targets = set()
+
+        for pb in armature_obj.pose.bones:
+            props = getattr(pb.bone, "hotools_boneprops", None)
+            if props is None:
+                continue
+
+            mapping_name = props.humanoidMapping.strip()
+            if not mapping_name:
+                continue
+
+            mapped_targets.add(mapping_name)
+
+            # head = armature_obj.matrix_world @ pb.head
+            # tail = armature_obj.matrix_world @ pb.tail
+            # center = (head + tail) * 0.5
+
+            cls._items.append({
+                "bone_name": pb.name,
+                "mapping_name": mapping_name,
+                # # 动态绘制
+                # "head": head,
+                # "tail": tail,
+                # "center": center,
+            })
+
+        cls._missing_targets = [
+            name for name in target_names
+            if name not in mapped_targets
+        ]
+
+        cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
+            cls._draw_3d,
+            (),
+            'WINDOW',
+            'POST_VIEW',
+        )
+
+        cls._handler_2d = bpy.types.SpaceView3D.draw_handler_add(
+            cls._draw_2d,
+            (),
+            'WINDOW',
+            'POST_PIXEL',
+        )
+
+        if not cls._timer_running:
+            cls._timer_running = True
+            bpy.app.timers.register(cls._timer)
+
+        cls._tag_redraw()
+
+        return True, (
+            f"Humanoid预览已生成："
+            f"映射骨骼 {len(cls._items)}，"
+            f"缺失 {len(cls._missing_targets)}"
+        )
+
+    @classmethod
+    def clear(cls):
+        if cls._handler_3d:
+            bpy.types.SpaceView3D.draw_handler_remove(
+                cls._handler_3d,
+                'WINDOW',
+            )
+
+        if cls._handler_2d:
+            bpy.types.SpaceView3D.draw_handler_remove(
+                cls._handler_2d,
+                'WINDOW',
+            )
+
+        cls._handler_3d = None
+        cls._handler_2d = None
+        cls._timer_running = False
+
+        cls._armature = None
+        cls._items = []
+        cls._missing_targets = []
+
+        cls._tag_redraw()
+
+    @classmethod
+    def _get_pose_bone_world_points(cls, bone_name: str):
+        if cls._armature is None:
+            return None
+
+        pb = cls._armature.pose.bones.get(bone_name)
+        if pb is None:
+            return None
+
+        head = cls._armature.matrix_world @ pb.head
+        tail = cls._armature.matrix_world @ pb.tail
+        center = (head + tail) * 0.5
+
+        return head, tail, center
+
+    @classmethod
+    def _timer(cls):
+        if cls._handler_3d is None and cls._handler_2d is None:
+            cls._timer_running = False
+            return None
+
+        cls._tag_redraw()
+        return 0.05
+
+    @staticmethod
+    def _tag_redraw():
+        wm = bpy.context.window_manager
+        if wm is None:
+            return
+
+        for window in wm.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
+    @classmethod
+    def _draw_3d(cls):
+        if not cls._items:
+            return
+
+        region = bpy.context.region
+        if region is None:
+            return
+
+        coords = []
+        points = []
+
+        for item in cls._items:
+            result = cls._get_pose_bone_world_points(item["bone_name"])
+            if result is None:
+                continue
+
+            head, tail, center = result
+            coords.extend([head, tail])
+            points.extend([head, tail])
+
+        if not coords:
+            return
+
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('NONE')
+
+        # 粗骨骼线
+        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+
+        batch = batch_for_shader(shader, 'LINES', {
+            "pos": coords,
+        })
+
+        shader.bind()
+        shader.uniform_float("viewportSize", (region.width, region.height))
+        shader.uniform_float("lineWidth", cls._line_width)
+        shader.uniform_float("color", (0.1, 0.85, 1.0, 0.95))
+        batch.draw(shader)
+
+        # 骨骼端点
+        if points:
+            point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
+            point_batch = batch_for_shader(point_shader, 'POINTS', {
+                "pos": points,
+            })
+
+            gpu.state.point_size_set(cls._point_size)
+            point_shader.bind()
+            point_shader.uniform_float("color", (1.0, 0.9, 0.15, 0.95))
+            point_batch.draw(point_shader)
+            gpu.state.point_size_set(1.0)
+
+        gpu.state.blend_set('NONE')
+        gpu.state.depth_test_set('LESS_EQUAL')
+
+    @classmethod
+    def _draw_2d(cls):
+        if not cls._armature:
+            return
+
+        context = bpy.context
+        region = context.region
+        rv3d = context.region_data
+
+        if region is None or rv3d is None:
+            return
+
+        font_id = 0
+
+        # 画每个已映射骨骼的引导线 + 文字
+        line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+
+        for index, item in enumerate(cls._items):
+            result = cls._get_pose_bone_world_points(item["bone_name"])
+            if result is None:
+                continue
+
+            head, tail, center = result
+
+            pos_2d = view3d_utils.location_3d_to_region_2d(
+                region,
+                rv3d,
+                center,
+            )
+
+            if pos_2d is None:
+                continue
+
+            x, y = pos_2d
+
+            label_x = x + cls._line_length_x
+            label_y = (
+                y
+                + cls._line_length_y
+                + (index % 3) * cls._label_stagger
+            )
+
+            coords = [
+                (x, y),
+                (
+                    label_x - cls._line_end_offset_x,
+                    label_y + cls._line_end_offset_y,
+                ),
+            ]
+
+            batch = batch_for_shader(line_shader, 'LINES', {
+                "pos": coords,
+            })
+
+            line_shader.bind()
+            line_shader.uniform_float("color", (0.1, 0.85, 1.0, 0.85))
+            batch.draw(line_shader)
+
+            label = f'{item["mapping_name"]}  ({item["bone_name"]})'
+            label = cls.no_i18n(label)
+
+            blf.size(font_id, cls._font_size)
+            blf.enable(font_id, blf.SHADOW)
+            blf.shadow(font_id, 3, 0, 0, 0, 0.75)
+            blf.shadow_offset(font_id, 1, -1)
+
+            blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
+            blf.position(font_id, label_x, label_y, 0)
+            blf.draw(font_id, label)
+
+            blf.disable(font_id, blf.SHADOW)
+
+        # 缺失列表：画在骨架物体原点附近
+        if cls._missing_targets:
+            origin_2d = view3d_utils.location_3d_to_region_2d(
+                region,
+                rv3d,
+                cls._armature.matrix_world.translation,
+            )
+
+            if origin_2d is not None:
+                ox, oy = origin_2d
+
+                x = ox + cls._missing_origin_offset_x
+                y = oy + cls._missing_origin_offset_y
+
+                # 引导线：骨架原点 -> 缺失列表标题
+                coords = [
+                    (ox, oy),
+                    (x - 8, y + 6),
+                ]
+
+                batch = batch_for_shader(line_shader, 'LINES', {
+                    "pos": coords,
+                })
+
+                line_shader.bind()
+                line_shader.uniform_float("color", (1.0, 0.15, 0.1, 0.9))
+                batch.draw(line_shader)
+
+                blf.size(font_id, cls._missing_font_size + 2)
+                blf.enable(font_id, blf.SHADOW)
+                blf.shadow(font_id, 5, 0, 0, 0, 0.85)
+                blf.shadow_offset(font_id, 1, -1)
+
+                blf.color(font_id, 1.0, 0.2, 0.15, 1.0)
+                blf.position(font_id, x, y, 0)
+                blf.draw(
+                    font_id,
+                    cls.no_i18n(f"缺失Humanoid骨骼: {len(cls._missing_targets)}")
+                )
+
+                blf.size(font_id, cls._missing_font_size)
+
+                max_show = cls._missing_max_show
+
+                for i, name in enumerate(cls._missing_targets[:max_show]):
+                    line_y = y - 24 - i * cls._missing_line_height
+
+                    blf.position(font_id, x + 20, line_y, 0)
+                    blf.draw(font_id, cls.no_i18n(f"✕ {name}"))
+
+                remain = len(cls._missing_targets) - max_show
+                if remain > 0:
+                    line_y = y - 24 - max_show * cls._missing_line_height
+
+                    blf.position(font_id, x + 20, line_y, 0)
+                    blf.draw(font_id, cls.no_i18n(f"... 还有 {remain} 个"))
+
+                blf.disable(font_id, blf.SHADOW)
+       
+        gpu.state.blend_set('NONE')
+
+class OP_HumanoidMappingPreview_Show(Operator):
+    bl_idname = "ho.humanoid_mapping_preview_show"
+    bl_label = "预览Humanoid映射"
+    bl_description = "使用活动骨架物体的Humanoid映射绘制预览，如果已有预览则先清除"
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        obj = context.object
+
+        ok, msg = HumanoidMappingPreviewHUD.show(context, obj)
+
+        if not ok:
+            self.report({'ERROR'}, msg)
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+class OP_HumanoidMappingPreview_Clear(Operator):
+    bl_idname = "ho.humanoid_mapping_preview_clear"
+    bl_label = "清除Humanoid映射预览"
+    bl_description = "清除Humanoid映射绘制预览"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        HumanoidMappingPreviewHUD.clear()
+        self.report({'INFO'}, "Humanoid映射预览已清除")
         return {'FINISHED'}
 
 
@@ -353,21 +1091,31 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     box.label(text="Humanoid映射")
 
     row = box.row(align=True)
-    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",icon="AUTO",).clear_unmapped = False
-    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="重新映射",).clear_unmapped = True
+
+    if HumanoidMappingPreviewHUD.is_running():
+        row.alert = True
+        row.operator(OP_HumanoidMappingPreview_Clear.bl_idname,text="",icon="PANEL_CLOSE",)
+        row.alert = False
+    else:
+        row.operator(OP_HumanoidMappingPreview_Show.bl_idname,text="",icon="OVERLAY",)
+
+    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
+    row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
 
 
     row = box.row(align=True)
     row.prop_search(scene, "bone_constraint_resting_armature",scene,"objects",text="固定",icon="ARMATURE_DATA",)
+    row.operator(OP_SwapBoneConstraintArmatures.bl_idname,text="",icon="ARROW_LEFTRIGHT",)
     row.prop_search(scene,"bone_constraint_moving_armature",scene,"objects",text="移动",icon="ARMATURE_DATA",)
 
     col = box.column(align=True)
     row = col.row(align=True)
+    row.operator(OP_Humanoid_ForceAlign.bl_idname,text="强制Humanoid对齐",icon="CON_ARMATURE",)
 
+    row = col.row(align=True)
+    
     row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制位置",).constraint_type = 'COPY_LOCATION'
-
     row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制旋转",).constraint_type = 'COPY_ROTATION'
-
     row.operator(OP_movingArmture_clear_constraint.bl_idname,text="",icon="TRASH",)
 
     row = box.row(align=True)
@@ -375,11 +1123,16 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     row.operator(OP_BoneRemoveConstraints.bl_idname,text="移除骨骼约束",)
 
 cls = [
+    OP_SwapBoneConstraintArmatures,
     OP_SameNameBone_addConstraint,
     OP_BoneApplyConstraint,
     OP_movingArmture_clear_constraint,
     OP_BoneRemoveConstraints,
     OP_Mapping_WriteHumanoidBoneProps,
+    OP_Mapping_ClearHumanoidBoneProps,
+    OP_HumanoidMappingPreview_Show,
+    OP_HumanoidMappingPreview_Clear,
+    OP_Humanoid_ForceAlign,
 ]
 
 def register():
