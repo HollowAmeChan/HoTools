@@ -6,6 +6,7 @@ from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 import subprocess
+from . import humanoid_auto_mapping
 
 
 
@@ -19,26 +20,47 @@ class PG_MappingItem(PropertyGroup):
     isTarget:BoolProperty(name="是否为目标数据",description="0",default=False) # type: ignore
     isSelected: BoolProperty(
         name="list item isSelected", default=False)  # type: ignore
+    matchScore: IntProperty(name="match score", default=-1)  # type: ignore
+    matchReason: StringProperty(name="match reason", default="")  # type: ignore
+
+
+def _set_mapping_item(item, name, is_target=False, is_selected=False, match_score=-1, match_reason=""):
+    item.name = name
+    item.isTarget = is_target
+    item.isSelected = is_selected
+    item.matchScore = match_score
+    item.matchReason = match_reason
+
+
+def _draw_mapping_item(layout: UILayout, item, index: int):
+    row = layout.row(align=True)
+    label = row.row(align=True)
+    label.scale_x = 0.3
+    label.label(text=str(index + 1))
+    label.prop(item, "isSelected", text=str(index + 1))
+    row.prop(item, "name", text="")
+
+    if getattr(item, "matchScore", -1) >= 0:
+        score = int(item.matchScore)
+        if score < 60:
+            score_row = row.row(align=True)
+            score_row.alignment = 'RIGHT'
+            score_row.alert = True
+            score_row.label(text=str(score), icon='ERROR')
+        elif score < 75:
+            score_row = row.row(align=True)
+            score_row.alignment = 'RIGHT'
+            score_row.label(text=str(score), icon='QUESTION')
 
 class HO_UL_Mapping_TargetItems(UIList):
     """Mapping的目标UIlist"""
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
-        row = layout.row(align=True)
-        label = row.row(align=True)
-        label.scale_x = 0.3
-        label.label(text=str(index+1))
-        label.prop(item, "isSelected", text=str(index + 1))
-        row.prop(item, "name", text="")
+        _draw_mapping_item(layout, item, index)
 
 class HO_UL_Mapping_SearchItems(UIList):
     """Mapping的搜寻UIlist"""
     def draw_item(self, context, layout: UILayout, data, item, icon, active_data, active_propname, index):
-        row = layout.row(align=True)
-        label = row.row(align=True)
-        label.scale_x = 0.3
-        label.label(text=str(index+1))
-        label.prop(item, "isSelected", text=str(index + 1))
-        row.prop(item, "name", text="")
+        _draw_mapping_item(layout, item, index)
 
 
 def reg_props():
@@ -99,9 +121,7 @@ class OP_Mapping_SwapList(Operator):
         # 将 target_list 内容移到 temp_list
         for item in target_list:
             new_item = temp_list.add()
-            new_item.name = item.name
-            new_item.isTarget = item.isTarget
-            new_item.isSelected = item.isSelected
+            _set_mapping_item(new_item, item.name, item.isTarget, item.isSelected, item.matchScore, item.matchReason)
 
         # 清空 target_list
         target_list.clear()
@@ -109,9 +129,7 @@ class OP_Mapping_SwapList(Operator):
         # 将 search_list 内容移到 target_list
         for item in search_list:
             new_item = target_list.add()
-            new_item.name = item.name
-            new_item.isTarget = item.isTarget
-            new_item.isSelected = item.isSelected
+            _set_mapping_item(new_item, item.name, item.isTarget, item.isSelected, item.matchScore, item.matchReason)
 
         # 清空 search_list
         search_list.clear()
@@ -119,9 +137,7 @@ class OP_Mapping_SwapList(Operator):
         # 将 temp_list 内容移到 search_list
         for item in temp_list:
             new_item = search_list.add()
-            new_item.name = item.name
-            new_item.isTarget = item.isTarget
-            new_item.isSelected = item.isSelected
+            _set_mapping_item(new_item, item.name, item.isTarget, item.isSelected, item.matchScore, item.matchReason)
 
         # 清空缓存
         temp_list.clear()
@@ -350,7 +366,7 @@ class OP_Mapping_PasteListFromClipboard(bpy.types.Operator):
 
         for name in lines:
             item = lst.add()
-            item.name = name
+            _set_mapping_item(item, name, self.isTargetList)
 
         self.report({'INFO'}, f"成功粘贴 {len(lines)} 行")
         return {'FINISHED'}
@@ -395,10 +411,24 @@ class OP_Mapping_AddItem(Operator):
         if mode=='ARMATURE_BONE_NAME':       func = MappingCore.getItemNames_ArmatureBone
 
         names = func(obj)
+        if not names:
+            return {'FINISHED'}
+
+        selected_indices = [i for i, item in enumerate(list) if item.isSelected]
+        insert_at = selected_indices[-1] + 1 if selected_indices else len(list)
+
+        for offset, name in enumerate(names):
+            new_item = list.add()
+            _set_mapping_item(new_item, name, self.isTargetList)
+            target_index = insert_at + offset
+            if target_index < len(list) - 1:
+                list.move(len(list) - 1, target_index)
+
+        return {'FINISHED'}
         #添加并移位
         for name in names:
             new_item = list.add()
-            new_item.name = name
+            _set_mapping_item(new_item, name, self.isTargetList)
             selected_idx = next((i for i, item in enumerate(
                     list) if item.isSelected), None)
             if selected_idx is not None:
@@ -620,32 +650,44 @@ class MappingCore:
 
     @staticmethod
     def getItemNames_ArmatureBone(obj)->str:
-        armature:bpy.types.Armature = obj
-        old_mode = obj.mode
-        names = []
-        #保证骨架显示并为活动物体
-        was_hidden = armature.hide_viewport
-        if was_hidden:
-            armature.hide_set(False)
-            bpy.context.view_layer.update()  
-        armature.select_set(True)
-        bpy.context.view_layer.objects.active = armature
+        armature:bpy.types.Object = obj
+        if not armature or armature.type != 'ARMATURE':
+            return []
 
-        if old_mode == "POSE":
-            MappingCore.set_object_mode(armature,'EDIT')
-        if old_mode == "EDIT":
-            MappingCore.set_object_mode(armature,'POSE')
+        def bone_is_visible(bone) -> bool:
+            if getattr(bone, "hide", False):
+                return False
+            collections = getattr(bone, "collections", None)
+            if not collections:
+                return True
+            for collection in collections:
+                if getattr(collection, "is_visible_effectively", getattr(collection, "is_visible", True)):
+                    return True
+            return False
 
-        if armature and armature.type == 'ARMATURE':
-            names = [bone.name for bone in armature.data.bones if bone.select]
+        selected_names = set()
+        if armature.mode == "POSE":
+            pose_bones = bpy.context.selected_pose_bones_from_active_object or []
+            selected_names = {
+                pose_bone.name for pose_bone in pose_bones
+                if pose_bone and bone_is_visible(pose_bone.bone)
+            }
+        elif armature.mode == "EDIT":
+            edit_bones = bpy.context.selected_editable_bones or []
+            selected_names = {
+                bone.name for bone in edit_bones
+                if bone and bone_is_visible(bone)
+            }
+        else:
+            selected_names = {
+                bone.name for bone in armature.data.bones
+                if bone.select and bone_is_visible(bone)
+            }
 
-        #刷新并返回
-        bpy.context.view_layer.objects.active = armature
-        MappingCore.set_object_mode(armature,old_mode)   
-           
-        if was_hidden:
-            armature.hide_set(True)
-        return names
+        return [
+            bone.name for bone in armature.data.bones
+            if bone.name in selected_names and bone_is_visible(bone)
+        ]
 
 
 class OP_Mapping_BatchRename(Operator):
@@ -675,6 +717,66 @@ class OP_Mapping_BatchRename(Operator):
                 self.report({'WARNING'}, "重命名失败")
                 return {'CANCELLED'}
 
+        return {'FINISHED'}
+
+
+class OP_Mapping_AutoHumanoid(Operator):
+    bl_idname = "ho.mapping_auto_humanoid"
+    bl_label = "Auto Humanoid"
+    bl_description = "Auto fill Humanoid target names for the left list"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    clear_before: BoolProperty(
+        name="Clear Existing Items",
+        default=True,
+    )  # type: ignore
+
+    def execute(self, context):
+        scene = context.scene
+
+        if scene.ho_mapping_type != 'ARMATURE_BONE_NAME':
+            self.report({'ERROR'}, "Please switch mapping type to bone names first")
+            return {'CANCELLED'}
+
+        source_names = [item.name for item in scene.ho_mapping_searchlist if item.name.strip()]
+        if not source_names:
+            self.report({'ERROR'}, "Please put source bone names in the left list first")
+            return {'CANCELLED'}
+
+        result = humanoid_auto_mapping.auto_map_source_names_to_humanoid(source_names)
+
+        target_list = scene.ho_mapping_targetlist
+        search_list = scene.ho_mapping_searchlist
+
+        if self.clear_before:
+            target_list.clear()
+
+        match_map = {match.source_name: match for match in result.matches}
+        for item in search_list:
+            match = match_map.get(item.name)
+            if match:
+                item.matchScore = int(match.score)
+                item.matchReason = match.reason
+                target_item = target_list.add()
+                _set_mapping_item(target_item, match.target_name, True, item.isSelected, int(match.score), match.reason)
+            else:
+                item.matchScore = -1
+                item.matchReason = ""
+                target_item = target_list.add()
+                _set_mapping_item(target_item, "", True, item.isSelected, -1, "")
+
+        match_count = len(result.matches)
+        low_count = len(result.low_confidence_matches)
+        miss_count = len(result.unmatched_targets)
+
+        if match_count == 0:
+            self.report({'WARNING'}, "No Humanoid matches found")
+            return {'CANCELLED'}
+
+        message = f"Filled {match_count} target names"
+        if low_count or miss_count:
+            message += f" (low confidence: {low_count}, unmatched: {miss_count})"
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 MENU_PRESETS = []
@@ -782,6 +884,7 @@ class NameMappingTools(Panel):
         col.scale_y = 2.0
         row = col.row(align=True)
         row.operator(OP_Mapping_SwapList.bl_idname, text="", icon="MOD_MIRROR",)
+        row.operator(OP_Mapping_AutoHumanoid.bl_idname, text="", icon="ARMATURE_DATA")
         row.operator(OP_Mapping_BatchRename.bl_idname, text="重命名")
 
         row2 = row.row(align=True)  # 保存和加载预设的按钮
@@ -794,7 +897,7 @@ cls = [PG_MappingItem,HO_UL_Mapping_TargetItems,HO_UL_Mapping_SearchItems,
        OP_Mapping_MoveUpItems,OP_Mapping_MoveDownItems,OP_Mapping_MoveTopItems,OP_Mapping_MoveBottomItems,
        OP_Mapping_SelectAllItems,OP_Mapping_DeselectAllItems,
        OP_Mapping_AddItem,OP_Mapping_RemoveItem,
-       OP_Mapping_BatchRename,
+       OP_Mapping_BatchRename,OP_Mapping_AutoHumanoid,
        NameMappingTools,OP_Mapping_CopyListToClipboard,OP_Mapping_PasteListFromClipboard,OT_Mapping_OpenTemplateFile
        ]
 
