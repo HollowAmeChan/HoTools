@@ -329,7 +329,7 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
                     dst_obj=active_obj,
                     tbn_obj=raw_obj,
                     normal_obj=active_obj,
-                    use_vertex_normal=False,
+                    use_vertex_normal=True,
                 )
 
             elif self.mode == "SOLIDIFY_RAW2CUSTOM":
@@ -350,7 +350,7 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
                     dst_obj=active_obj,
                     tbn_obj=raw_obj,
                     normal_obj=source_obj,
-                    use_vertex_normal=True,
+                    use_vertex_normal=False,
                 )
 
         except Exception as exc:

@@ -15,14 +15,7 @@ def reg_props():
         min=0.01,
         max=1.0
     )
-    bpy.types.Scene.ho_rbf_snap_offset = FloatProperty(
-        name="Offset",
-        description="沿法线方向的偏移，让cage浮在表面上",
-        default=0.001,
-        min=-1.0,
-        max=1.0,
-        step=0.1
-    )
+
     bpy.types.Scene.ho_rbf_srccage = PointerProperty(type=bpy.types.Object)
     bpy.types.Scene.ho_rbf_destcage = PointerProperty(type=bpy.types.Object)
     bpy.types.Scene.ho_rbf_knn = IntProperty(name="K",description="考虑的邻点数，增加会更加平滑但速度更慢（慎重增加）", default=24, min=4, max=64)
@@ -30,7 +23,6 @@ def reg_props():
 
 def ureg_props():
     del bpy.types.Scene.ho_rbf_cage_ratio
-    del bpy.types.Scene.ho_rbf_snap_offset
     del bpy.types.Scene.ho_rbf_srccage
     del bpy.types.Scene.ho_rbf_destcage
     del bpy.types.Scene.ho_rbf_knn
@@ -131,63 +123,6 @@ class OP_RbfTransferGenerateCage(Operator):
         bpy.ops.object.modifier_apply(modifier=mod.name)
 
         self.report({'INFO'}, f"Cage created: {cage.name}")
-        return {'FINISHED'}
-    
-class OP_RbfTransferSnapCage(Operator):
-    bl_idname = "ho.rbftransfer_snapcage"
-    bl_label = "吸附cage到物体"
-    bl_description= "选择需要吸附上去的物体，再加选cage为活动物体，注意cage为活动物体"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    offset: FloatProperty(
-        name="Surface Offset",
-        description="沿法线方向的偏移，让cage浮在表面上",
-        default=0.01,
-        min=-1.0,
-        max=1.0,
-        step=0.1
-    ) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        if not obj or obj.type != 'MESH':
-            return False
-
-        return len(context.selected_objects) >= 2
-
-    def execute(self, context):
-        cage = context.object
-        targets = [obj for obj in context.selected_objects if obj != cage and obj.type == 'MESH']
-
-        if not targets:
-            self.report({'ERROR'}, "需要选中一个目标Mesh物体")
-            return {'CANCELLED'}
-        if len(targets) > 1:
-            self.report({'WARNING'}, "检测到多个目标，使用第一个")
-
-        target = targets[0]
-
-        # --- BVH ---
-        depsgraph = context.evaluated_depsgraph_get()
-        bvh = build_bvh(target, depsgraph)
-
-        offset = self.offset
-
-        cage_mw = cage.matrix_world
-        cage_inv = cage_mw.inverted()
-
-        verts = cage.data.vertices
-
-        for v in verts:
-            world_pos = cage_mw @ v.co
-            loc, normal, index, dist = bvh.find_nearest(world_pos)
-
-            if loc is not None:
-                offset_loc = loc + normal * offset
-                v.co = cage_inv @ offset_loc
-
-        self.report({'INFO'}, f"Snap done -> {target.name}")
         return {'FINISHED'}
     
 class OP_RbfTransferDoTrans(Operator):
@@ -326,11 +261,6 @@ def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context)
     op.ratio = context.scene.ho_rbf_cage_ratio
 
     row = layout.row(align=True)
-    row.prop(scene,"ho_rbf_snap_offset")
-    op = row.operator(OP_RbfTransferSnapCage.bl_idname)
-    op.offset = scene.ho_rbf_snap_offset
-
-    row = layout.row(align=True)
     row.prop(scene,"ho_rbf_srccage",text="原cage")
     row.prop(scene,"ho_rbf_destcage",text="目标cage")
     layout.prop(scene,"ho_rbf_knn")
@@ -341,7 +271,6 @@ def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context)
 
 cls = [
     OP_RbfTransferGenerateCage,
-    OP_RbfTransferSnapCage,
     OP_RbfTransferDoTrans
 ]
 
