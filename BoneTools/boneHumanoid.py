@@ -693,7 +693,10 @@ class HumanoidMappingPreviewHUD:
     _handler_2d = None
     _timer_running = False
 
+    _timer_interval = 1.0  # 固定低频刷新，避免属性面板卡顿
+
     _armature = None
+    _armature_name = ""
     _items = []
     _missing_targets = []
 
@@ -706,7 +709,6 @@ class HumanoidMappingPreviewHUD:
 
     _line_end_offset_x = 18
     _line_end_offset_y = 16
-
     _label_stagger = 12
 
     _missing_font_size = 30
@@ -718,13 +720,72 @@ class HumanoidMappingPreviewHUD:
     @staticmethod
     def no_i18n(name: str) -> str:
         return "\u200B".join(name)
-    
+
     @classmethod
     def is_running(cls):
-        return (
-            cls._handler_2d is not None
-            or cls._handler_3d is not None
-        )
+        return cls._handler_2d is not None or cls._handler_3d is not None
+
+    @classmethod
+    def _get_armature(cls):
+        if cls._armature is not None:
+            try:
+                if cls._armature.name in bpy.data.objects:
+                    return cls._armature
+            except ReferenceError:
+                pass
+
+        if cls._armature_name:
+            obj = bpy.data.objects.get(cls._armature_name)
+            if obj and obj.type == 'ARMATURE':
+                cls._armature = obj
+                return obj
+
+        return None
+
+    @classmethod
+    def _get_bone_mapping_name(cls, bone_name: str) -> str:
+        armature = cls._get_armature()
+        if armature is None:
+            return ""
+
+        bone = armature.data.bones.get(bone_name)
+        if bone is None:
+            return ""
+
+        props = getattr(bone, "hotools_boneprops", None)
+        if props is None:
+            return ""
+
+        return props.humanoidMapping.strip()
+
+    @classmethod
+    def _refresh_mapping_cache(cls):
+        armature = cls._get_armature()
+        if armature is None:
+            cls._items = []
+            cls._missing_targets = []
+            return
+
+        target_names = [item[0] for item in TARGET_LAYOUT]
+
+        mapped_targets = set()
+        items = []
+
+        for pb in armature.pose.bones:
+            mapping_name = cls._get_bone_mapping_name(pb.name)
+            if not mapping_name:
+                continue
+
+            mapped_targets.add(mapping_name)
+            items.append({
+                "bone_name": pb.name,
+            })
+
+        cls._items = items
+        cls._missing_targets = [
+            name for name in target_names
+            if name not in mapped_targets
+        ]
 
     @classmethod
     def show(cls, context: Context, armature_obj: bpy.types.Object):
@@ -734,45 +795,9 @@ class HumanoidMappingPreviewHUD:
             return False, "请选择Armature"
 
         cls._armature = armature_obj
-        cls._items = []
-        cls._missing_targets = []
+        cls._armature_name = armature_obj.name
 
-        # 标准 humanoid 目标名
-        try:
-            target_names = [item[0] for item in TARGET_LAYOUT]
-        except Exception as e:
-            return False, f"读取Humanoid规格失败: {e}"
-        
-        mapped_targets = set()
-
-        for pb in armature_obj.pose.bones:
-            props = getattr(pb.bone, "hotools_boneprops", None)
-            if props is None:
-                continue
-
-            mapping_name = props.humanoidMapping.strip()
-            if not mapping_name:
-                continue
-
-            mapped_targets.add(mapping_name)
-
-            # head = armature_obj.matrix_world @ pb.head
-            # tail = armature_obj.matrix_world @ pb.tail
-            # center = (head + tail) * 0.5
-
-            cls._items.append({
-                "bone_name": pb.name,
-                "mapping_name": mapping_name,
-                # # 动态绘制
-                # "head": head,
-                # "tail": tail,
-                # "center": center,
-            })
-
-        cls._missing_targets = [
-            name for name in target_names
-            if name not in mapped_targets
-        ]
+        cls._refresh_mapping_cache()
 
         cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
             cls._draw_3d,
@@ -802,13 +827,13 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def clear(cls):
-        if cls._handler_3d:
+        if cls._handler_3d is not None:
             bpy.types.SpaceView3D.draw_handler_remove(
                 cls._handler_3d,
                 'WINDOW',
             )
 
-        if cls._handler_2d:
+        if cls._handler_2d is not None:
             bpy.types.SpaceView3D.draw_handler_remove(
                 cls._handler_2d,
                 'WINDOW',
@@ -819,6 +844,7 @@ class HumanoidMappingPreviewHUD:
         cls._timer_running = False
 
         cls._armature = None
+        cls._armature_name = ""
         cls._items = []
         cls._missing_targets = []
 
@@ -826,15 +852,16 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def _get_pose_bone_world_points(cls, bone_name: str):
-        if cls._armature is None:
+        armature = cls._get_armature()
+        if armature is None:
             return None
 
-        pb = cls._armature.pose.bones.get(bone_name)
+        pb = armature.pose.bones.get(bone_name)
         if pb is None:
             return None
 
-        head = cls._armature.matrix_world @ pb.head
-        tail = cls._armature.matrix_world @ pb.tail
+        head = armature.matrix_world @ pb.head
+        tail = armature.matrix_world @ pb.tail
         center = (head + tail) * 0.5
 
         return head, tail, center
@@ -845,8 +872,10 @@ class HumanoidMappingPreviewHUD:
             cls._timer_running = False
             return None
 
+        cls._refresh_mapping_cache()
         cls._tag_redraw()
-        return 0.05
+
+        return cls._timer_interval
 
     @staticmethod
     def _tag_redraw():
@@ -886,9 +915,7 @@ class HumanoidMappingPreviewHUD:
         gpu.state.blend_set('ALPHA')
         gpu.state.depth_test_set('NONE')
 
-        # 粗骨骼线
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
-
         batch = batch_for_shader(shader, 'LINES', {
             "pos": coords,
         })
@@ -899,10 +926,8 @@ class HumanoidMappingPreviewHUD:
         shader.uniform_float("color", (0.1, 0.85, 1.0, 0.95))
         batch.draw(shader)
 
-        # 骨骼端点
         if points:
             point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-
             point_batch = batch_for_shader(point_shader, 'POINTS', {
                 "pos": points,
             })
@@ -918,7 +943,8 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def _draw_2d(cls):
-        if not cls._armature:
+        armature = cls._get_armature()
+        if armature is None:
             return
 
         context = bpy.context
@@ -930,12 +956,16 @@ class HumanoidMappingPreviewHUD:
 
         font_id = 0
 
-        # 画每个已映射骨骼的引导线 + 文字
         line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         gpu.state.blend_set('ALPHA')
 
         for index, item in enumerate(cls._items):
-            result = cls._get_pose_bone_world_points(item["bone_name"])
+            bone_name = item["bone_name"]
+            mapping_name = cls._get_bone_mapping_name(bone_name)
+            if not mapping_name:
+                continue
+
+            result = cls._get_pose_bone_world_points(bone_name)
             if result is None:
                 continue
 
@@ -975,7 +1005,7 @@ class HumanoidMappingPreviewHUD:
             line_shader.uniform_float("color", (0.1, 0.85, 1.0, 0.85))
             batch.draw(line_shader)
 
-            label = f'{item["mapping_name"]}  ({item["bone_name"]})'
+            label = f'{mapping_name}  ({bone_name})'
             label = cls.no_i18n(label)
 
             blf.size(font_id, cls._font_size)
@@ -989,12 +1019,11 @@ class HumanoidMappingPreviewHUD:
 
             blf.disable(font_id, blf.SHADOW)
 
-        # 缺失列表：画在骨架物体原点附近
         if cls._missing_targets:
             origin_2d = view3d_utils.location_3d_to_region_2d(
                 region,
                 rv3d,
-                cls._armature.matrix_world.translation,
+                armature.matrix_world.translation,
             )
 
             if origin_2d is not None:
@@ -1003,7 +1032,6 @@ class HumanoidMappingPreviewHUD:
                 x = ox + cls._missing_origin_offset_x
                 y = oy + cls._missing_origin_offset_y
 
-                # 引导线：骨架原点 -> 缺失列表标题
                 coords = [
                     (ox, oy),
                     (x - 8, y + 6),
@@ -1047,13 +1075,13 @@ class HumanoidMappingPreviewHUD:
                     blf.draw(font_id, cls.no_i18n(f"... 还有 {remain} 个"))
 
                 blf.disable(font_id, blf.SHADOW)
-       
+
         gpu.state.blend_set('NONE')
 
 class OP_HumanoidMappingPreview_Show(Operator):
     bl_idname = "ho.humanoid_mapping_preview_show"
     bl_label = "预览Humanoid映射"
-    bl_description = "使用活动骨架物体的Humanoid映射绘制预览，如果已有预览则先清除"
+    bl_description = """使用活动骨架物体的Humanoid映射绘制预览，如果已有预览则先清除"""
 
     @classmethod
     def poll(cls, context):
