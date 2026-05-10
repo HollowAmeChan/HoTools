@@ -226,6 +226,16 @@ class OmniGroupNodeOutputs(OmniNode):
 
 
 class OmniBindNode(OmniNode):
+    """
+    TODO：本节点设计的模式不好，他不应该是一个节点
+    应该移除这个节点，改为
+    Buffer Slot Reader
+    Buffer Slot Writer
+    然后param的设计改为用户手动在UI侧添加到Buffer Dynamic Param
+    把bind的职责移动到UI，让用户决定update buffer param的时候调用什么update tree
+    update tree里用户可以读取Buffer Slot里的真实datablock来操作
+    操作的时候就用function node的方式调用
+    """
     bl_idname = "HO_OmniNode_Bind"
     bl_label = "Bind"
     processor_tree: bpy.props.PointerProperty(
