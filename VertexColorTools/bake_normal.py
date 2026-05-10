@@ -7,9 +7,8 @@ from .utils import get_active_corner_color_attribute, write_color_data
 
 MODE_ITEMS = [
     ("CUSTOM2RAW", "自定义法线 -> 原始法线", ""),
-    ("RAW2CUSTOM", "原始法线 -> 自定义法线", ""),
     ("OBJECT2SMOOTH", "其他物体自定义法线 -> 自定义法线", ""),
-    ("SOLIDIFY_RAW2CUSTOM", "原始法线 -> 自定义法线(厚度均衡)", ""),
+    ("SOLIDIFY_RAW2SMOOTH", "原始法线 -> 自定义法线(厚度均衡)", ""),
 ]
 
 
@@ -27,17 +26,12 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
                 "将自定义平滑法线编码到原始 TBN 空间",
             ),
             (
-                "RAW2CUSTOM",
-                "raw -> custom",
-                "将原始法线编码到当前自定义或平滑 TBN 空间",
-            ),
-            (
                 "OBJECT2SMOOTH",
                 "other smooth -> active smooth",
                 "将另一个拓扑一致物体的平滑法线编码到当前物体",
             ),
             (
-                "SOLIDIFY_RAW2CUSTOM",
+                "SOLIDIFY_RAW2SMOOTH",
                 "solidify avg -> custom",
                 "将近似实心化的平均方向编码到当前 TBN 空间，A 通道保存补偿",
             ),
@@ -228,7 +222,7 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
         dst_obj,
         tbn_obj,
         normal_obj=None,
-        use_vertex_normal=False,
+        use_vertex_normal=True,
         source_vectors=None,
         source_alpha=None,
     ):
@@ -281,14 +275,11 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
             column.prop_enum(self, "mode", identifier, text=label)
         if self.mode == "CUSTOM2RAW":
             layout.label(text="当前自定义法线到原始法线，需要确保有自定义法线")
-        elif self.mode == "RAW2CUSTOM":
-            layout.label(text="原始法线到当前自定义法线，需要确保有自定义法线")
-            layout.label(text="Liltoon使用此法烘焙的顶点色RGB修正描边挤出方向")
         elif self.mode == "OBJECT2SMOOTH":
             layout.label(text="另一个物体自定义法线到当前物体自定义法线")
             layout.label(text="需要额外选择一个拓扑一致的参考网格")
-        elif self.mode == "SOLIDIFY_RAW2CUSTOM":
-            layout.label(text="RAW2CUSTOM的加强版")
+        elif self.mode == "SOLIDIFY_RAW2SMOOTH":
+            layout.label(text="OBJECT2SMOOTH的加强版")
             layout.label(text="如果你正在使用Liltoon描边RGBA修正，请使用它")
             layout.label(text="A通道以0.5为基准保存厚度补偿，可以得到连续锐利的边缘")
 
@@ -306,20 +297,7 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
         raw_obj = None
 
         try:
-            if self.mode == "RAW2CUSTOM":
-                if not active_mesh.has_custom_normals:
-                    self.report({"WARNING"}, "当前网格没有自定义法线")
-                    return {"CANCELLED"}
-
-                raw_obj = self.create_raw_reference_object(context, active_obj)
-                self.bake_normal(
-                    dst_obj=active_obj,
-                    tbn_obj=active_obj,
-                    normal_obj=raw_obj,
-                    use_vertex_normal=True,
-                )
-
-            elif self.mode == "CUSTOM2RAW":
+            if self.mode == "CUSTOM2RAW":
                 if not active_mesh.has_custom_normals:
                     self.report({"WARNING"}, "当前网格没有自定义法线")
                     return {"CANCELLED"}
@@ -329,10 +307,9 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
                     dst_obj=active_obj,
                     tbn_obj=raw_obj,
                     normal_obj=active_obj,
-                    use_vertex_normal=True,
                 )
 
-            elif self.mode == "SOLIDIFY_RAW2CUSTOM":
+            elif self.mode == "SOLIDIFY_RAW2SMOOTH":
                 source_vectors, source_alpha = self.build_even_solidify_source(active_mesh)
                 self.bake_normal(
                     dst_obj=active_obj,
@@ -350,7 +327,6 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
                     dst_obj=active_obj,
                     tbn_obj=raw_obj,
                     normal_obj=source_obj,
-                    use_vertex_normal=False,
                 )
 
         except Exception as exc:
