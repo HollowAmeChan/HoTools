@@ -479,6 +479,7 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
     bl_idname = "ho.vertex_group_mirror_to_other"
     bl_label = "镜像权重(仅骨骼权重)到对侧组，无自动归一化"
     bl_description = """
+    【仅考虑选中顶点的权重，如果shift批量请全选后使用】
     按住shift进入批量模式（批量处理L/R组）
     仅处理选中中的顶点，将当前顶点组的权重镜像到对侧的骨骼权重组，不会自动归一化
     """
@@ -720,6 +721,7 @@ class OP_VertexGroupTools_mirror_to_other_group(Operator):
         layout = self.layout
         col = layout.column(align=True)
         direction_text = "R -> L" if self.is_RightGroups else "L -> R"
+        col.label(text="【请全选mesh后使用，当前激活组必须带有 L/R 后缀】")
         col.label(text="将自动扫描同侧命名组并批量镜像到对侧")
         col.label(text=f"方向: {direction_text} | 组数: {self.batch_pair_count}", translate=False)
         col.label(text="支持后缀: _L _R .L .R _l _r .l .r", translate=False)
@@ -1793,22 +1795,26 @@ class OP_VertexGroupTools_Select_Vertices_halfside(Operator):
 
     def execute(self, context):
         obj = context.active_object
+
+        bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='VERT')
+
         mesh = bmesh.from_edit_mesh(obj.data)
         mesh.faces.ensure_lookup_table()  # 刷新索引表
         mesh.edges.ensure_lookup_table()
         mesh.verts.ensure_lookup_table() 
         # 取消所有顶点的选择
         for v in mesh.verts:
-            v.select = False
+            v.select_set(False)
 
         for v in mesh.verts:
             if not self.reverse:
                 if v.co.x > 0.0001:
-                    v.select = True
+                    v.select_set(True)
             else:
                 if v.co.x < -0.0001:
-                    v.select = True
+                    v.select_set(True)
 
+        mesh.select_flush_mode()
         bmesh.update_edit_mesh(obj.data)
         obj.update_from_editmode()
         return {'FINISHED'}
@@ -1831,6 +1837,8 @@ class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
         vg = obj.vertex_groups.active
         vg_index = vg.index
 
+        bpy.ops.mesh.select_mode(use_extend=False, use_expand=False, type='VERT')
+
         bm = bmesh.from_edit_mesh(obj.data)
         bm.faces.ensure_lookup_table()  # 刷新索引表
         bm.edges.ensure_lookup_table()
@@ -1841,7 +1849,7 @@ class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
 
         # 清除所有顶点的选择状态
         for v in bm.verts:
-            v.select = False
+            v.select_set(False)
 
         for v in bm.verts:
             d = v[deform_layer]
@@ -1850,8 +1858,9 @@ class OP_VertexGroupTools_Select_Vertices_by_WeightValue(Operator):
 
             weight = d[vg_index]
             if weight < self.value:
-                v.select = True
+                v.select_set(True)
 
+        bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
         return {'FINISHED'}
 
@@ -1941,11 +1950,12 @@ class OP_SelectNonWeightVertices(Operator):
                     break
 
             if not has_bone_weight:
-                v.select = True
+                v.select_set(True)
                 count += 1
             else:
-                v.select = False
+                v.select_set(False)
 
+        bm.select_flush_mode()
         bmesh.update_edit_mesh(obj.data)
 
         self.report({'INFO'}, f"已选择 {count} 个无骨骼权重顶点")
