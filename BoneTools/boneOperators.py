@@ -166,10 +166,22 @@ class OP_AddEndBone(Operator):
     bl_description = "给当前选中骨添加叶骨"
     bl_options = {'REGISTER', 'UNDO'}
 
+    length_factor: FloatProperty(
+        name="叶骨长度系数",
+        description="新建叶骨长度相对于原骨骼长度的比例",
+        default=0.1,
+        min=0.001,
+        soft_max=1.0,
+    )  # type: ignore
+
     @classmethod
     def poll(cls, context):
         obj = context.object
         return obj and obj.type == 'ARMATURE'  and obj.mode == "EDIT" and context.active_bone is not None
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "length_factor")
 
     def execute(self, context):
         obj = context.object
@@ -186,8 +198,14 @@ class OP_AddEndBone(Operator):
             new_bone:bpy.types.EditBone  
             new_bone = ebones.new(end_bone_name)
             new_bone.head = bone.tail
-            direction = (bone.tail - bone.head).normalized() if (bone.tail - bone.head).length > 0 else Vector((0, 0, 0.1))
-            new_bone.tail = new_bone.head + direction * 0.1  # 可调长度
+            bone_vector = bone.tail - bone.head
+            bone_length = bone_vector.length
+            if bone_length > 1e-8:
+                direction = bone_vector.normalized()
+            else:
+                direction = Vector((0, 0, 1))
+                bone_length = 1.0
+            new_bone.tail = new_bone.head + direction * bone_length * self.length_factor
             new_bone.parent = bone
             new_bone.use_connect = True #相连项开
             new_bone.use_deform = False #形变关

@@ -935,7 +935,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.size(font_id, 16)
 
         x = self.mouse_x + 20
-        y = self.mouse_y - 20
+        y = self.mouse_y + 20
 
         # ===== 开启阴影 =====
         blf.enable(font_id, blf.SHADOW)
@@ -953,29 +953,29 @@ class OP_CreatBoneChainByMeshFlow(Operator):
 
         key_text = "F键:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y - 22, 0)
+        blf.position(font_id, x, y + 22, 0)
         blf.draw(font_id, key_text)
         key_width, _ = blf.dimensions(font_id, key_text)
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y - 22, 0)
+        blf.position(font_id, x + key_width, y + 22, 0)
         blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
         key_text = "R键:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y - 44, 0)
+        blf.position(font_id, x, y + 44, 0)
         blf.draw(font_id, key_text)
         key_width, _ = blf.dimensions(font_id, key_text)
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y - 44, 0)
+        blf.position(font_id, x + key_width, y + 44, 0)
         blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
 
         key_text = "N键:"
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-        blf.position(font_id, x, y - 66, 0)
+        blf.position(font_id, x, y + 66, 0)
         blf.draw(font_id, key_text)
         key_width, _ = blf.dimensions(font_id, key_text)
         blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-        blf.position(font_id, x + key_width, y - 66, 0)
+        blf.position(font_id, x + key_width, y + 66, 0)
         blf.draw(
             font_id,
             f"扭转对齐法线: {'开' if self.align_roll_to_normal else '关'}"

@@ -13,6 +13,7 @@ from mathutils import Vector
 import heapq
 import random
 from gpu_extras.batch import batch_for_shader
+from bpy_extras import view3d_utils
 from bpy.app.handlers import persistent
 # TODO:自动归一化需要改成支持仅选中中的顶点，以及全部顶点两个模式，因为有的功能作用于全部顶点有的不是，有的甚至还是开关切换的
 
@@ -1171,49 +1172,124 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
             context.mode == 'EDIT_MESH'
         )
 
-    def execute(self, context):
-        obj = context.active_object
-        rig = None
+    @staticmethod
+    def _find_rig(obj):
         for mod in obj.modifiers:
             if mod.type == 'ARMATURE' and mod.object:
-                rig = mod.object
+                return mod.object
+        return obj.find_armature()
 
-        # 强制寻找 VIEW_3D 区域
-        for area in bpy.context.window.screen.areas:
-            if area.type == 'VIEW_3D':
+    @staticmethod
+    def _distance_point_to_segment_2d(point, start, end):
+        segment = end - start
+        length_sq = segment.length_squared
+        if length_sq <= 1e-8:
+            return (point - start).length
+        factor = (point - start).dot(segment) / length_sq
+        factor = max(0.0, min(1.0, factor))
+        closest = start + segment * factor
+        return (point - closest).length
+
+    def _find_view3d_region(self, context):
+        mouse_x = getattr(self, "_mouse_window_x", None)
+        mouse_y = getattr(self, "_mouse_window_y", None)
+
+        if mouse_x is not None and mouse_y is not None and context.window:
+            for area in context.window.screen.areas:
+                if area.type != 'VIEW_3D':
+                    continue
                 for region in area.regions:
-                    if region.type == 'WINDOW':
-                        override = {
-                            'window': bpy.context.window,
-                            'screen': bpy.context.screen,
-                            'area': area,
-                            'region': region,
-                        }
-                        with bpy.context.temp_override(**override):
-                            bpy.ops.view3d.cursor3d('INVOKE_DEFAULT')
-                        break
-                break
-        else:
-            self.report({'WARNING'}, "找不到 3D 视图区")
+                    if region.type != 'WINDOW':
+                        continue
+                    in_x = region.x <= mouse_x < region.x + region.width
+                    in_y = region.y <= mouse_y < region.y + region.height
+                    if in_x and in_y:
+                        rv3d = area.spaces.active.region_3d
+                        if rv3d is None:
+                            continue
+                        mouse_coord = Vector((mouse_x - region.x, mouse_y - region.y))
+                        return region, rv3d, mouse_coord
+
+        if context.area and context.area.type == 'VIEW_3D' and context.region:
+            rv3d = context.space_data.region_3d
+            if rv3d is None:
+                return None
+            mouse_coord = Vector((
+                getattr(self, "_mouse_region_x", context.region.width * 0.5),
+                getattr(self, "_mouse_region_y", context.region.height * 0.5),
+            ))
+            return context.region, rv3d, mouse_coord
+
+        return None
+
+    def _pick_bone_from_mouse(self, obj, rig, region, rv3d, mouse_coord):
+        min_distance = float('inf')
+        active_bone = None
+
+        for bone in rig.pose.bones:
+            if bone.bone.hide or not obj.vertex_groups.get(bone.name):
+                continue
+
+            head_2d = view3d_utils.location_3d_to_region_2d(
+                region,
+                rv3d,
+                rig.matrix_world @ bone.head
+            )
+            tail_2d = view3d_utils.location_3d_to_region_2d(
+                region,
+                rv3d,
+                rig.matrix_world @ bone.tail
+            )
+
+            if head_2d is None or tail_2d is None:
+                continue
+
+            distance = self._distance_point_to_segment_2d(
+                mouse_coord,
+                head_2d,
+                tail_2d
+            )
+            if distance < min_distance:
+                min_distance = distance
+                active_bone = bone.name
+
+        return active_bone
+
+    def invoke(self, context, event):
+        self._mouse_window_x = event.mouse_x
+        self._mouse_window_y = event.mouse_y
+        self._mouse_region_x = event.mouse_region_x
+        self._mouse_region_y = event.mouse_region_y
+        return self.execute(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        rig = self._find_rig(obj)
+
+        if not rig or not rig.pose:
+            self.report({'WARNING'}, "未找到绑定骨架")
             return {'CANCELLED'}
 
-        if rig:
-            cursor_loc = context.scene.cursor.location.copy()
-            min_distance = float('inf')
-            active_bone = None
+        view_context = self._find_view3d_region(context)
+        if view_context is None:
+            self.report({'WARNING'}, "找不到鼠标所在的 3D 视图区域")
+            return {'CANCELLED'}
 
-            for bone in rig.pose.bones:
-                distance = (cursor_loc - bone.center).length
-                if distance < min_distance and obj.vertex_groups.get(bone.name):
-                    min_distance = distance
-                    active_bone = bone.name
+        region, rv3d, mouse_coord = view_context
+        active_bone = self._pick_bone_from_mouse(
+            obj,
+            rig,
+            region,
+            rv3d,
+            mouse_coord
+        )
 
-            if active_bone:
-                if obj.vertex_groups.get(active_bone):
-                    obj.vertex_groups.active = obj.vertex_groups[active_bone]
-                # 显示 HUD
-                VGSwitchHUD.show(context, active_bone)
+        if not active_bone:
+            self.report({'WARNING'}, "鼠标附近没有可切换的骨骼顶点组")
+            return {'CANCELLED'}
 
+        obj.vertex_groups.active = obj.vertex_groups[active_bone]
+        VGSwitchHUD.show(context, active_bone)
         return {'FINISHED'}
 
 class OP_VertexGroupTools_SoftWeight(Operator):
