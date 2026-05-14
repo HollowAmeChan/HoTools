@@ -2,6 +2,7 @@ import bpy
 import os
 import mathutils
 import math
+import traceback
 from bpy.types import PropertyGroup, UIList, Operator, Panel
 from mathutils import Vector
 from types import SimpleNamespace
@@ -24,6 +25,20 @@ hidden_collections = []
 hidden_objects = []
 disabled_collections = []
 disabled_objects = []
+
+
+def report_exception(operator, prefix, exc):
+    message = f"{prefix}: {type(exc).__name__}: {exc}"
+    print(f"[HoTools FBX] {message}")
+    traceback.print_exc()
+    operator.report({"ERROR"}, message)
+
+
+def reset_export_undo():
+    bpy.ops.ed.undo_push(message="")
+    bpy.ops.ed.undo()
+    bpy.ops.ed.undo_push(message="Export Hotools FBX")
+
 
 class FBXExporter:
     @staticmethod
@@ -111,6 +126,124 @@ class FBXExporter:
             bone.roll = 0
             new_tail = bone.head + Vector((0, 0, original_length))
             bone.tail = new_tail
+    @staticmethod
+    def restore_selection(selection, active_object=None):
+        bpy.ops.object.select_all(action='DESELECT')
+        for ob in selection:
+            if ob.name in bpy.context.view_layer.objects:
+                ob.select_set(True)
+        if active_object and active_object.name in bpy.context.view_layer.objects:
+            bpy.context.view_layer.objects.active = active_object
+    @staticmethod
+    def set_armatures_pose_position(armature_objects, pose_position):
+        state = []
+        for ob in armature_objects:
+            armature = ob.data
+            if not hasattr(armature, "pose_position"):
+                continue
+            state.append((armature.name, armature.pose_position))
+            armature.pose_position = pose_position
+        return state
+    @staticmethod
+    def restore_armatures_pose_position(state):
+        for armature_name, pose_position in state:
+            armature = bpy.data.armatures.get(armature_name)
+            if armature is None:
+                continue
+            try:
+                armature.pose_position = pose_position
+            except TypeError:
+                pass
+    @staticmethod
+    def iter_bone_collections(armature):
+        collections = getattr(armature, "collections_all", None)
+        if collections is not None:
+            return list(collections)
+
+        result = []
+        pending = list(getattr(armature, "collections", []))
+        while pending:
+            collection = pending.pop(0)
+            result.append(collection)
+            pending.extend(getattr(collection, "children", []))
+        return result
+    @staticmethod
+    def unhide_armature_bones(armature):
+        state = {
+            "armature": armature,
+            "bones": [],
+            "collections": [],
+        }
+
+        for bone in armature.bones:
+            if hasattr(bone, "hide"):
+                state["bones"].append((bone.name, bone.hide))
+                bone.hide = False
+
+        for collection in FBXExporter.iter_bone_collections(armature):
+            collection_state = {}
+            try:
+                collection_state["is_visible"] = collection.is_visible
+                collection.is_visible = True
+            except (AttributeError, TypeError):
+                pass
+            try:
+                collection_state["is_solo"] = collection.is_solo
+                collection.is_solo = False
+            except (AttributeError, TypeError):
+                pass
+            if collection_state:
+                state["collections"].append((collection.name, collection_state))
+
+        return state
+    @staticmethod
+    def restore_armature_bone_visibility(state):
+        armature = state["armature"]
+
+        for collection_name, collection_state in state["collections"]:
+            collection = getattr(armature, "collections_all", {}).get(collection_name)
+            if collection is None:
+                continue
+            for attr, value in collection_state.items():
+                try:
+                    setattr(collection, attr, value)
+                except (AttributeError, TypeError, ReferenceError):
+                    pass
+
+        for bone_name, was_hidden in state["bones"]:
+            bone = armature.bones.get(bone_name)
+            if bone is None:
+                continue
+            try:
+                bone.hide = was_hidden
+            except ReferenceError:
+                pass
+    @staticmethod
+    def clear_armatures_bone_rotation(armature_objects, selection, active_object):
+        view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
+        if not view_layer_armatures:
+            return
+
+        visibility_states = []
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            for ob in view_layer_armatures:
+                visibility_states.append(FBXExporter.unhide_armature_bones(ob.data))
+                ob.data.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
+                ob.select_set(True)
+            bpy.context.view_layer.objects.active = view_layer_armatures[0]
+            bpy.ops.object.mode_set(mode="EDIT")
+            try:
+                for ob in view_layer_armatures:
+                    FBXExporter.clearArmatureBoneRoration(ob)
+            finally:
+                if bpy.ops.object.mode_set.poll():
+                    bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            for state in reversed(visibility_states):
+                FBXExporter.restore_armature_bone_visibility(state)
+            FBXExporter.restore_selection(selection, active_object)
+
 
 fbx_presets = []
 
@@ -150,7 +283,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
 
-    def getParams(self,context):
+    def getParams(self,context, report_errors=True):
         # 寻找所选预设脚本文件
         preset_file = None
         for p in bpy.utils.preset_paths("operator/export_scene.fbx"):
@@ -159,8 +292,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 preset_file = fp
                 break
         if not preset_file:
-            self.report({'ERROR'}, f"找不到预设文件: {self.preset}.py")
-            return {'CANCELLED'}
+            if report_errors:
+                self.report({'ERROR'}, f"找不到预设文件: {self.preset}.py")
+            return None
 
         # 只抽取 op.xxx 赋值语句
         with open(preset_file, 'r', encoding='utf-8') as f:
@@ -192,7 +326,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         disabled_collections = []
         disabled_objects = []
 
-        selection = bpy.context.selected_objects
+        selection = list(bpy.context.selected_objects)
+        active_object = bpy.context.view_layer.objects.active
+        pose_position_state = []
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -202,22 +338,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         FBXExporter.unhide_objects()
         
         try:
+            pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
-                #选择所有骨架进入编辑模式
-                bpy.ops.object.select_all(action='DESELECT')
-                for ob in armature_objects:
-                    ob.data.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
-                    ob.select_set(True)
-                bpy.ops.object.mode_set(mode="EDIT")
-                #TODO 没有处理活动物体不是骨架的问题
-                #处理骨骼旋转
-                for ob in armature_objects:
-                    FBXExporter.clearArmatureBoneRoration(ob)
-                #重置状态
-                bpy.ops.object.mode_set(mode="OBJECT")
-                for ob in selection:
-                    ob.select_set(True)
+                FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
 
 
             # 修复物体旋转（所有顶级父级物体）
@@ -238,26 +363,34 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 col.collection.hide_viewport = True
 
             # 重置选择状态
-            bpy.ops.object.select_all(action='DESELECT')
-            for ob in selection:
-                ob.select_set(True)
+            FBXExporter.restore_selection(selection, active_object)
 
             # 导出
             params = self.getParams(context)
+            if params is None:
+                raise RuntimeError("FBX 预设参数无效")
             bpy.ops.export_scene.fbx(**params)
 
         except Exception as e:
-            bpy.ops.ed.undo_push(message="")
-            bpy.ops.ed.undo()
-            bpy.ops.ed.undo_push(message="Export Hotools FBX")
-            print(e)
-            self.report({"ERROR"},"导出失败")
+            report_exception(self, "导出失败", e)
+            try:
+                reset_export_undo()
+                FBXExporter.restore_armatures_pose_position(pose_position_state)
+            except Exception as reset_error:
+                FBXExporter.restore_armatures_pose_position(pose_position_state)
+                report_exception(self, "导出后重置场景失败", reset_error)
+            return {'CANCELLED'}
 
         # 重置场景
-        bpy.ops.ed.undo_push(message="")
-        bpy.ops.ed.undo()
-        bpy.ops.ed.undo_push(message="Export Hotools FBX")
+        try:
+            reset_export_undo()
+            FBXExporter.restore_armatures_pose_position(pose_position_state)
+        except Exception as e:
+            FBXExporter.restore_armatures_pose_position(pose_position_state)
+            report_exception(self, "导出后重置场景失败", e)
+            return {'CANCELLED'}
         self.report({"INFO"},"导出成功")
+        return {'FINISHED'}
 
     
 
@@ -267,8 +400,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     
 
     def execute(self, context):
-        self.export_fbx(context)
-        return {'FINISHED'}
+        return self.export_fbx(context)
     def draw(self, context):
         layout = self.layout
         layout.prop(self,"preset")
@@ -279,7 +411,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.label(text="==================================")
         layout.prop(self,"cheekBoneKeepRotation")
         
-        params = self.getParams(context)
+        params = self.getParams(context, report_errors=False)
         if params:
             for p in params.items():
                 layout.label(text=(str(p[0]) + " = " + str(p[1])))
@@ -307,7 +439,8 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         disabled_collections = []
         disabled_objects = []
 
-        selection = bpy.context.selected_objects
+        selection = list(bpy.context.selected_objects)
+        active_object = bpy.context.view_layer.objects.active
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -315,46 +448,34 @@ class OP_FinalFBXExport_only_preprocess(Operator):
 
         FBXExporter.unhide_collections(col=bpy.context.view_layer.layer_collection)
         FBXExporter.unhide_objects()
-        
-        # 修复骨骼旋转
-        if self.cheekBoneKeepRotation and armature_objects !=[]:
-            #选择所有骨架进入编辑模式
-            bpy.ops.object.select_all(action='DESELECT')
-            for ob in armature_objects:
-                ob.data.use_mirror_x = False #!!!必须关闭所有骨架的对称，否则处理会有底层逻辑上的问题
-                ob.select_set(True)
-            bpy.ops.object.mode_set(mode="EDIT")
-            #TODO 没有处理活动物体不是骨架的问题
-            #处理骨骼旋转
-            for ob in armature_objects:
-                FBXExporter.clearArmatureBoneRoration(ob)
-            #重置状态
-            bpy.ops.object.mode_set(mode="OBJECT")
-            for ob in selection:
-                ob.select_set(True)
+        pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+        try:
+            # 修复骨骼旋转
+            if self.cheekBoneKeepRotation and armature_objects !=[]:
+                FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
 
 
-        # 修复物体旋转（所有顶级父级物体）
-        for ob in root_objects:
-            FBXExporter.fix_object(ob)
+            # 修复物体旋转（所有顶级父级物体）
+            for ob in root_objects:
+                FBXExporter.fix_object(ob)
 
-        # 刷新场景防止变换没有应用
-        bpy.context.view_layer.update()
+            # 刷新场景防止变换没有应用
+            bpy.context.view_layer.update()
 
-        #重置物体与集合的可见可选
-        for ob in hidden_objects:
-            ob.hide_set(True)
-        for ob in disabled_objects:
-            ob.hide_viewport = True
-        for col in hidden_collections:
-            col.hide_viewport = True
-        for col in disabled_collections:
-            col.collection.hide_viewport = True
+            #重置物体与集合的可见可选
+            for ob in hidden_objects:
+                ob.hide_set(True)
+            for ob in disabled_objects:
+                ob.hide_viewport = True
+            for col in hidden_collections:
+                col.hide_viewport = True
+            for col in disabled_collections:
+                col.collection.hide_viewport = True
 
-        # 重置选择状态
-        bpy.ops.object.select_all(action='DESELECT')
-        for ob in selection:
-            ob.select_set(True)
+            # 重置选择状态
+            FBXExporter.restore_selection(selection, active_object)
+        finally:
+            FBXExporter.restore_armatures_pose_position(pose_position_state)
 
     
 
@@ -363,7 +484,12 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         return True
     
     def execute(self, context):
-        self.export_fbx_preprocess(context)
+        try:
+            self.export_fbx_preprocess(context)
+        except Exception as e:
+            report_exception(self, "预处理失败", e)
+            return {'CANCELLED'}
+        self.report({"INFO"}, "预处理完成")
         return {'FINISHED'}
     
     def draw(self, context):
