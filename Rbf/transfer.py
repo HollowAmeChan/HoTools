@@ -151,13 +151,12 @@ class OP_RbfTransferDoTrans(Operator):
     bl_description  = """
     需要两个顶点数与拓补一致的cage
     对被传递的身体执行一次生成cage，生成一个低模代理，此时可以对其进行调整（如部分区域加面，调整位置）
-    复制一份cage，摆放到目标身体的位置（不要改变点序跟拓补，保证姿态没有旋转，也就是不要at互传，只能aa/tt传）
-    此时新cage可以雕刻移动位置，也可以使用形变类型的修改器辅助吸附
-    把这两个cage填入cage槽，选择所有需要传递的衣服执行KNN传递
-        注意：
-        所有的结果都存入一个新的形态键，如果原本就有一些开关类的形态键，可以配合使用hotools形态键模块进行修复与适配
+    复制一份cage，摆放到目标身体的位置(不要改变点序跟拓补，保证姿态没有旋转(不要at互传))
+    此时新cage可以雕刻移动位置，也可以使用形变类型的修改器辅助吸附。把这两个cage填入cage槽，选择所有需要传递的衣服执行KNN传递
+    注意：所有的结果都存入一个新的形态键，如果原本就有一些开关类的形态键，可以配合使用hotools形态键模块进行修复与适配
         如果效果不好，使用雕刻功能局部调整cage的位置，或者直接调整结果的形态键，正常来说只有少量瑕疵
-        如果有的地方过于贴合导致穿模，尝试使用snap并加大offset让cage浮在mesh上一点（也可以通过缩裹修改器+顶点组实现精细控制）
+        如果有的地方过于贴合导致穿模,可以缩裹修改器调offset或者手拉
+        如果你想撤回结果，使用右边的垃圾桶按钮删除结果形态键
     """
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -360,7 +359,7 @@ def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context)
     row = layout.row(align=True)
     op = row.operator(OP_RbfTransferDoTrans.bl_idname)
     op.knn_k = context.scene.ho_rbf_knn
-    row.operator(OP_RbfTransferRemoveResultKey.bl_idname, icon="TRASH")
+    row.operator(OP_RbfTransferRemoveResultKey.bl_idname,text="",icon="TRASH")
 
 
 
