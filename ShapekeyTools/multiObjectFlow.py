@@ -299,6 +299,12 @@ class OP_ShapekeyTools_multi_removeLinkColloection(bpy.types.Operator):
 
 def _draw_sk_multiobj(layout: UILayout,context:Context):
     layout = layout.box()
+
+    if context.scene.hoShapekeyTools_control_shape_key_listener:
+        warn = layout.row(align=True)
+        warn.alert = True
+        warn.label(text="已开启多物体同步，多选时活动键可能被同步影响", icon="ERROR")
+
     row = layout.row(align=True)
     row.operator(OP_ShapekeyTools_multi_generateLinkedObjects.bl_idname,text="生成链接集合",icon="LINKED")
     row.prop(context.scene,"hoShapekeyTools_bs_multi_col",text="")

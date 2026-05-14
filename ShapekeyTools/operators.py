@@ -367,20 +367,23 @@ def shape_key_listener(scene):
 
     # 执行更新
     for obj in bpy.context.selected_objects:
-        if not obj.data.shape_keys:
+        if obj.type != 'MESH' or not obj.data.shape_keys:
             continue
         # 设置锁定与编辑模式启用与否
         obj.show_only_shape_key = current_lock
         obj.use_shape_key_edit_mode = current_edit_mode
 
         # 设置活动键与活动键值
-        sk_block_idx = obj.data.shape_keys.key_blocks.find(current_name)
-        sk_block = obj.data.shape_keys.key_blocks[sk_block_idx]
-        if sk_block:
-            #设置对应键值
-            sk_block.value = active_sk.value
-            #设置为活动键
-            obj.active_shape_key_index = sk_block_idx
+        if active_sk == active_obj.data.shape_keys.reference_key:
+            obj.active_shape_key_index = 0
+        else:
+            sk_block_idx = obj.data.shape_keys.key_blocks.find(current_name)
+            if sk_block_idx >= 0:
+                sk_block = obj.data.shape_keys.key_blocks[sk_block_idx]
+                #设置对应键值
+                sk_block.value = active_sk.value
+                #设置为活动键
+                obj.active_shape_key_index = sk_block_idx
 
         # 同步其他所有键值（可选）
         for sk in active_obj.data.shape_keys.key_blocks:
@@ -1571,6 +1574,39 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
 
     is_abs: BoolProperty(name="是否粘贴绝对位置", default=False)  # type: ignore
 
+    def paste_to_object(self, obj, data):
+        if obj.type != 'MESH':
+            return 'skipped', "非 Mesh 物体"
+
+        if not obj.data.shape_keys:
+            return 'skipped', "没有 ShapeKey"
+
+        active_sk = obj.active_shape_key
+        basis_key = obj.data.shape_keys.reference_key
+
+        if active_sk is None:
+            return 'skipped', "没有活动 ShapeKey"
+
+        solo_mode = obj.show_only_shape_key
+        if not solo_mode and active_sk.value != 1:
+            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
+
+        if len(data) != len(active_sk.data):
+            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
+
+        try:
+            if self.is_abs:
+                for i, co in enumerate(data):
+                    active_sk.data[i].co = Vector(co)
+            else:
+                for i, delta in enumerate(data):
+                    base = basis_key.data[i].co
+                    active_sk.data[i].co = base + Vector(delta)
+        except Exception as exc:
+            return 'skipped', f"写入失败：{exc}"
+
+        return 'success', f"已粘贴到 {obj.name} 的 {active_sk.name}"
+
     def execute(self, context):
         # ---------- 读取剪切板 ----------
         try:
@@ -1579,49 +1615,31 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
             self.report({'ERROR'}, "剪切板数据解析失败")
             return {'CANCELLED'}
 
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "没有选中物体")
+            return {'CANCELLED'}
+
         success = []
         skipped = []
         warnings = []
 
-        for obj in context.selected_objects:
+        for obj in selected_objects:
+            status, message = self.paste_to_object(obj, data)
 
-            if obj.type != 'MESH':
-                skipped.append(f"{obj.name}(非Mesh)")
-                continue
+            if len(selected_objects) == 1:
+                if status == 'success':
+                    self.report({'INFO'}, message)
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                return {'CANCELLED'}
 
-            if not obj.data.shape_keys:
-                skipped.append(f"{obj.name}(无ShapeKey)")
-                continue
-
-            active_sk = obj.active_shape_key
-            basis_key = obj.data.shape_keys.reference_key
-
-            if active_sk is None:
-                skipped.append(f"{obj.name}(无活动ShapeKey)")
-                continue
-
-            solo_mode = obj.show_only_shape_key
-            if not solo_mode and active_sk.value != 1:
-                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
-                continue
-
-            if len(data) != len(active_sk.data):
-                skipped.append(f"{obj.name}(顶点数不匹配)")
-                continue
-
-            try:
-                if self.is_abs:
-                    for i, co in enumerate(data):
-                        active_sk.data[i].co = Vector(co)
-                else:
-                    for i, delta in enumerate(data):
-                        base = basis_key.data[i].co
-                        active_sk.data[i].co = base + Vector(delta)
-
+            if status == 'success':
                 success.append(obj.name)
-
-            except Exception:
-                skipped.append(f"{obj.name}(写入失败)")
+            elif status == 'warnings':
+                warnings.append(f"{obj.name}({message})")
+            else:
+                skipped.append(f"{obj.name}({message})")
 
         # ---------- 汇总报告 ----------
         msg = f"成功: {len(success)}"
@@ -1650,6 +1668,31 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "粘贴相对基型的位移，会直接叠加到当前活动键上，开启绝对后不要使用,要确保点序一致"
 
+    def paste_to_object(self, obj, data):
+        if obj.type != 'MESH':
+            return 'skipped', "非 Mesh 物体"
+        if not obj.data.shape_keys:
+            return 'skipped', "没有 ShapeKey"
+
+        active_sk = obj.active_shape_key
+        if not active_sk:
+            return 'skipped', "没有活动 ShapeKey"
+
+        solo_mode = obj.show_only_shape_key
+        if not solo_mode and active_sk.value != 1:
+            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
+
+        if len(data) != len(active_sk.data):
+            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
+
+        try:
+            for i, delta in enumerate(data):
+                active_sk.data[i].co += Vector(delta)
+        except Exception as exc:
+            return 'skipped', f"写入失败：{exc}"
+
+        return 'success', f"已叠加到 {obj.name} 的 {active_sk.name}"
+
     def execute(self, context):
         try:
             data = json.loads(context.window_manager.clipboard)
@@ -1657,36 +1700,31 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
             self.report({'ERROR'}, "剪切板数据解析失败")
             return {'CANCELLED'}
 
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "没有选中物体")
+            return {'CANCELLED'}
+
         success = []
         skipped = []
         warnings = []
 
-        for obj in context.selected_objects:
+        for obj in selected_objects:
+            status, message = self.paste_to_object(obj, data)
 
-            if obj.type != 'MESH':
-                skipped.append(f"{obj.name}(非Mesh)")
-                continue
-            if not obj.data.shape_keys:
-                skipped.append(f"{obj.name}(无ShapeKey)")
-                continue
-            active_sk = obj.active_shape_key
-            if not active_sk:
-                skipped.append(f"{obj.name}(无活动ShapeKey)")
-                continue
-            solo_mode = obj.show_only_shape_key
-            if not solo_mode and active_sk.value != 1:
-                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
-                continue
-            if len(data) != len(active_sk.data):
-                skipped.append(f"{obj.name}(顶点数不匹配)")
-                continue
+            if len(selected_objects) == 1:
+                if status == 'success':
+                    self.report({'INFO'}, message)
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                return {'CANCELLED'}
 
-            try:
-                for i, delta in enumerate(data):
-                    active_sk.data[i].co += Vector(delta)
+            if status == 'success':
                 success.append(obj.name)
-            except Exception:
-                skipped.append(f"{obj.name}(写入失败)")
+            elif status == 'warnings':
+                warnings.append(f"{obj.name}({message})")
+            else:
+                skipped.append(f"{obj.name}({message})")
 
         # ---------- 汇总报告 ----------
         msg = f"成功: {len(success)}"
@@ -1715,6 +1753,31 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "粘贴相对基型的位移，会从当前活动键上减去，开启绝对后不要使用,要确保点序一致"
 
+    def paste_to_object(self, obj, data):
+        if obj.type != 'MESH':
+            return 'skipped', "非 Mesh 物体"
+        if not obj.data.shape_keys:
+            return 'skipped', "没有 ShapeKey"
+
+        active_sk = obj.active_shape_key
+        if not active_sk:
+            return 'skipped', "没有活动 ShapeKey"
+
+        solo_mode = obj.show_only_shape_key
+        if not solo_mode and active_sk.value != 1:
+            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
+
+        if len(data) != len(active_sk.data):
+            return 'skipped', f"顶点数不匹配：剪贴板 {len(data)} / 当前物体 {len(active_sk.data)}"
+
+        try:
+            for i, delta in enumerate(data):
+                active_sk.data[i].co -= Vector(delta)
+        except Exception as exc:
+            return 'skipped', f"写入失败：{exc}"
+
+        return 'success', f"已从 {obj.name} 的 {active_sk.name} 叠减"
+
     def execute(self, context):
         try:
             data = json.loads(context.window_manager.clipboard)
@@ -1722,38 +1785,31 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
             self.report({'ERROR'}, "剪切板数据解析失败")
             return {'CANCELLED'}
 
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "没有选中物体")
+            return {'CANCELLED'}
+
         success = []
         skipped = []
         warnings = []
 
-        for obj in context.selected_objects:
+        for obj in selected_objects:
+            status, message = self.paste_to_object(obj, data)
 
-            if obj.type != 'MESH':
-                skipped.append(f"{obj.name}(非Mesh)")
-                continue
-            if not obj.data.shape_keys:
-                skipped.append(f"{obj.name}(无ShapeKey)")
-                continue
-            active_sk = obj.active_shape_key
-            if not active_sk:
-                skipped.append(f"{obj.name}(无活动ShapeKey)")
-                continue
+            if len(selected_objects) == 1:
+                if status == 'success':
+                    self.report({'INFO'}, message)
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                return {'CANCELLED'}
 
-            solo_mode = obj.show_only_shape_key
-            if not solo_mode and active_sk.value != 1:
-                warnings.append(f"{obj.name}(value≠1且未开启Solo)")
-                continue
-
-            if len(data) != len(active_sk.data):
-                skipped.append(f"{obj.name}(顶点数不匹配)")
-                continue
-
-            try:
-                for i, delta in enumerate(data):
-                    active_sk.data[i].co -= Vector(delta)
+            if status == 'success':
                 success.append(obj.name)
-            except Exception:
-                skipped.append(f"{obj.name}(写入失败)")
+            elif status == 'warnings':
+                warnings.append(f"{obj.name}({message})")
+            else:
+                skipped.append(f"{obj.name}({message})")
 
         # ---------- 汇总报告 ----------
         msg = f"成功: {len(success)}"
