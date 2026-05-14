@@ -5,7 +5,7 @@ from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 from mathutils import Vector
 from bpy.types import Panel, Operator
-from bpy.props import PointerProperty, FloatProperty, IntProperty
+from bpy.props import PointerProperty, FloatProperty, IntProperty, StringProperty
 
 def reg_props():
     bpy.types.Scene.ho_rbf_cage_ratio = FloatProperty(
@@ -45,6 +45,26 @@ def get_evaluated_world_verts(obj, depsgraph):
 
     eval_obj.to_mesh_clear()
     return verts
+
+
+def get_rbf_result_key_name(obj):
+    return f"ho_RBF_{obj.name}"
+
+
+def get_rbf_result_shape_key(obj):
+    if not obj.data.shape_keys:
+        return None
+
+    key_blocks = obj.data.shape_keys.key_blocks
+    key = key_blocks.get(get_rbf_result_key_name(obj))
+    if key:
+        return key
+
+    active_key = obj.active_shape_key
+    if active_key and active_key.name.startswith("ho_RBF_"):
+        return active_key
+
+    return None
 
 
 def write_to_shape_key(obj, new_positions, name="RBF_Result"):
@@ -142,10 +162,39 @@ class OP_RbfTransferDoTrans(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     knn_k: IntProperty(name="KNN", default=24, min=4, max=64)  # type: ignore
+    fixed_mode_objects: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     @classmethod
     def poll(cls, context):
         return any(o.type == 'MESH' for o in context.selected_objects)
+
+    def draw(self, context):
+        layout = self.layout
+        if self.fixed_mode_objects:
+            box = layout.box()
+            box.label(text="检测到形态键固定模式已开启", icon='ERROR')
+            box.label(text="执行前会自动关闭这些物体的固定模式：")
+            box.label(text=self.fixed_mode_objects)
+        layout.prop(self, "knn_k")
+
+    def invoke(self, context, event):
+        objs = self.get_target_objects(context)
+        fixed_objs = [
+            o.name for o in objs
+            if o.data.shape_keys and getattr(o, "show_only_shape_key", False)
+        ]
+        self.fixed_mode_objects = ", ".join(fixed_objs)
+        if fixed_objs:
+            return context.window_manager.invoke_props_dialog(self, width=460)
+        return self.execute(context)
+
+    def get_target_objects(self, context):
+        cageA = context.scene.ho_rbf_srccage
+        cageB = context.scene.ho_rbf_destcage
+        return [
+            o for o in context.selected_objects
+            if o.type == 'MESH' and o not in {cageA, cageB}
+        ]
 
     def execute(self, context):
 
@@ -186,14 +235,15 @@ class OP_RbfTransferDoTrans(Operator):
         
         depsgraph = context.evaluated_depsgraph_get()
 
-        objs = [
-            o for o in context.selected_objects
-            if o.type == 'MESH' and o not in {cageA, cageB}
-        ]
+        objs = self.get_target_objects(context)
 
         if not objs:
             self.report({'WARNING'}, "没有可处理的物体")
             return {'CANCELLED'}
+
+        for obj in objs:
+            if obj.data.shape_keys:
+                obj.show_only_shape_key = False
 
         wm = context.window_manager
         wm.progress_begin(0, len(objs))
@@ -245,12 +295,55 @@ class OP_RbfTransferDoTrans(Operator):
                     v /= w_sum
 
                 newP[pi] = p + v
-            write_to_shape_key(obj, newP, name=f"ho_RBF_{obj.name}")
+            write_to_shape_key(obj, newP, name=get_rbf_result_key_name(obj))
 
         wm.progress_end()
 
         self.report({'INFO'}, f"KNN RBF Done ({len(objs)} objects)")
         return {'FINISHED'}
+
+
+class OP_RbfTransferRemoveResultKey(Operator):
+    bl_idname = "ho.rbftransfer_remove_result_key"
+    bl_label = "删除RBF结果键"
+    bl_description = "删除选中物体上的RBF传递结果形态键，并将活动形态键切回基型"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(
+            o.type == 'MESH' and o.data.shape_keys
+            for o in context.selected_objects
+        )
+
+    def execute(self, context):
+        removed_count = 0
+        skipped_count = 0
+
+        for obj in context.selected_objects:
+            if obj.type != 'MESH' or not obj.data.shape_keys:
+                skipped_count += 1
+                continue
+
+            key = get_rbf_result_shape_key(obj)
+            if key and key != obj.data.shape_keys.reference_key:
+                obj.shape_key_remove(key)
+                removed_count += 1
+            else:
+                skipped_count += 1
+
+            if obj.data.shape_keys and obj.data.shape_keys.key_blocks:
+                obj.active_shape_key_index = 0
+
+        if removed_count:
+            self.report(
+                {'INFO'},
+                f"已删除 {removed_count} 个 RBF 结果键，跳过 {skipped_count} 个物体"
+            )
+            return {'FINISHED'}
+
+        self.report({'WARNING'}, "选中物体中没有找到 RBF 结果键")
+        return {'CANCELLED'}
     
 def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context):
     scene = context.scene
@@ -264,14 +357,17 @@ def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context)
     row.prop(scene,"ho_rbf_srccage",text="原cage")
     row.prop(scene,"ho_rbf_destcage",text="目标cage")
     layout.prop(scene,"ho_rbf_knn")
-    op = layout.operator(OP_RbfTransferDoTrans.bl_idname)
+    row = layout.row(align=True)
+    op = row.operator(OP_RbfTransferDoTrans.bl_idname)
     op.knn_k = context.scene.ho_rbf_knn
+    row.operator(OP_RbfTransferRemoveResultKey.bl_idname, icon="TRASH")
 
 
 
 cls = [
     OP_RbfTransferGenerateCage,
-    OP_RbfTransferDoTrans
+    OP_RbfTransferDoTrans,
+    OP_RbfTransferRemoveResultKey
 ]
 
 
