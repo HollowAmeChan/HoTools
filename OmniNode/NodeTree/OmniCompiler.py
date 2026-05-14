@@ -54,6 +54,32 @@ class OmniCompiler:
     GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
     GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
     BIND_NODE_IDNAME = "HO_OmniNode_Bind"
+    FRAME_NODE_IDNAME = "NodeFrame"
+    REROUTE_NODE_IDNAME = "NodeReroute"
+
+    @staticmethod
+    def _node_idname(node):
+        return getattr(node, "bl_idname", "") or node.__class__.__name__
+
+    @staticmethod
+    def _socket_default_value(sock):
+        try:
+            return sock.default_value
+        except Exception:
+            return None
+
+    @staticmethod
+    def _set_node_bug_state(node, message):
+        if hasattr(node, "set_bug_state"):
+            node.set_bug_state(message)
+
+    @staticmethod
+    def _is_frame_node(node):
+        return OmniCompiler._node_idname(node) == OmniCompiler.FRAME_NODE_IDNAME
+
+    @staticmethod
+    def _is_reroute_node(node):
+        return OmniCompiler._node_idname(node) == OmniCompiler.REROUTE_NODE_IDNAME
 
     @staticmethod
     def topo_sort(nodes, links):
@@ -90,7 +116,7 @@ class OmniCompiler:
         if len(result) != len(nodes):
             cycle_nodes = [n for n in nodes if in_degree[n] > 0]
             for node in cycle_nodes:
-                node.set_bug_state("Cycle detected in node graph")
+                OmniCompiler._set_node_bug_state(node, "Cycle detected in node graph")
             raise RuntimeError("Cycle detected in OmniNodeTree")
 
         return result
@@ -124,6 +150,9 @@ class OmniCompiler:
             if node in visited:
                 return
             visited.add(node)
+
+            if OmniCompiler._is_frame_node(node):
+                return
 
             for input_socket in node.inputs:
                 for link in input_socket.links:
@@ -173,10 +202,11 @@ class OmniCompiler:
                 return reg
 
             reg = new_reg()
-            instructions.append(("CONST", reg, sock.default_value))
+            default_value = OmniCompiler._socket_default_value(sock)
+            instructions.append(("CONST", reg, default_value))
             OmniDebug.append_compile_trace(
                 graph,
-                f"Emit CONST r{reg} = {OmniDebug.format_value(sock.default_value)} for "
+                f"Emit CONST r{reg} = {OmniDebug.format_value(default_value)} for "
                 f"{OmniDebug.node_name(sock.node)}.{OmniDebug.socket_name(sock)}",
             )
             OmniDebug.add_register_bridge(
@@ -184,7 +214,7 @@ class OmniCompiler:
                 reg,
                 OmniDebug.node_name(sock.node),
                 OmniDebug.socket_name(sock),
-                source=OmniDebug.format_value(sock.default_value),
+                source=OmniDebug.format_value(default_value),
                 note="CONST default",
             )
             return reg
@@ -217,7 +247,45 @@ class OmniCompiler:
             return input_regs
 
         for node in topo:
-            node_idname = getattr(node, "bl_idname", "")
+            node_idname = OmniCompiler._node_idname(node)
+
+            if OmniCompiler._is_frame_node(node):
+                OmniDebug.append_compile_trace(graph, f"Skip FRAME {node.name}")
+                continue
+
+            if OmniCompiler._is_reroute_node(node):
+                input_sock = node.inputs[0] if len(node.inputs) > 0 else None
+                input_reg = None
+                if input_sock is not None:
+                    input_reg = compile_single_input(input_sock)
+                else:
+                    input_reg = new_reg()
+                    instructions.append(("CONST", input_reg, None))
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        input_reg,
+                        node.name,
+                        "<missing input>",
+                        source="None",
+                        note="reroute fallback",
+                    )
+
+                for sock in node.outputs:
+                    reg_map[(node.name, sock.identifier)] = input_reg
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        input_reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source="reroute passthrough",
+                        note="reroute output bridge",
+                    )
+
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Pass REROUTE {node.name} -> r{input_reg}",
+                )
+                continue
 
             if node_idname == OmniCompiler.BIND_NODE_IDNAME:
                 rules = OmniMenuBind.build_bind_rules_from_node(node)
@@ -417,6 +485,11 @@ class OmniCompiler:
                 continue
 
             func = getattr(node, "_func", None)
+            if func is None:
+                message = f"Unsupported OmniNode node type: {node_idname}"
+                OmniCompiler._set_node_bug_state(node, message)
+                raise RuntimeError(f"{message} ({node.name})")
+
             input_regs = compile_node_inputs(node)
 
             output_regs = []

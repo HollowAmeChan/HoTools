@@ -73,7 +73,7 @@ class OmniNodeTree(NodeTree):
         for node in self.nodes:
             if hasattr(node, "clear_bug_state"):
                 node.clear_bug_state()
-            else:
+            elif hasattr(node, "is_bug") and hasattr(node, "bug_text"):
                 node.is_bug = False
                 node.bug_text = ""
 

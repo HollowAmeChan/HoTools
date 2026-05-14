@@ -686,7 +686,7 @@ class OmniNodeRebuild(Operator):
         node.build()
         if hasattr(node, "clear_bug_state"):
             node.clear_bug_state()
-        else:
+        elif hasattr(node, "is_bug") and hasattr(node, "bug_text"):
             node.is_bug = False
             node.bug_text = ""
 
@@ -776,7 +776,7 @@ class OmniNodeRebuild(Operator):
             except Exception as exc:
                 if hasattr(node, "set_bug_state"):
                     node.set_bug_state(exc)
-                else:
+                elif hasattr(node, "is_bug") and hasattr(node, "bug_text"):
                     node.is_bug = True
                     node.bug_text = str(exc)
                 failed_messages.append(f"{node.name}: {exc}")

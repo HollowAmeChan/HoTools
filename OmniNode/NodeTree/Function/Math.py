@@ -6,6 +6,12 @@ import mathutils
 from . import _Color
 
 
+def _to_vector(value) -> mathutils.Vector:
+    if isinstance(value, mathutils.Vector):
+        return value
+    return mathutils.Vector(value)
+
+
 @omni(enable=True,
     bl_label="Lerp",
     base_color=_Color.colorCat["Math"],)
@@ -207,7 +213,7 @@ def cosValue(x: float) -> float:
     _OUTPUT_NAME=["结果"],
     )
 def vectorAdd(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
-    return a + b
+    return _to_vector(a) + _to_vector(b)
 
 
 @omni(enable=True,
@@ -217,7 +223,7 @@ def vectorAdd(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     _OUTPUT_NAME=["结果"],
     )
 def vectorSubtract(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
-    return a - b
+    return _to_vector(a) - _to_vector(b)
 
 
 @omni(enable=True,
@@ -227,7 +233,7 @@ def vectorSubtract(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector
     _OUTPUT_NAME=["结果"],
     )
 def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
-    return vec * scale
+    return _to_vector(vec) * scale
 
 
 @omni(enable=True,
@@ -237,7 +243,7 @@ def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
     _OUTPUT_NAME=["结果"],
     )
 def vectorDot(a: mathutils.Vector, b: mathutils.Vector) -> float:
-    return a.dot(b)
+    return _to_vector(a).dot(_to_vector(b))
 
 
 @omni(enable=True,
@@ -247,7 +253,7 @@ def vectorDot(a: mathutils.Vector, b: mathutils.Vector) -> float:
     _OUTPUT_NAME=["结果"],
     )
 def vectorCross(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
-    return a.to_3d().cross(b.to_3d())
+    return _to_vector(a).to_3d().cross(_to_vector(b).to_3d())
 
 
 @omni(enable=True,
@@ -257,7 +263,7 @@ def vectorCross(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     _OUTPUT_NAME=["长度"],
     )
 def vectorLength(vec: mathutils.Vector) -> float:
-    return vec.length
+    return _to_vector(vec).length
 
 
 @omni(enable=True,
@@ -267,6 +273,7 @@ def vectorLength(vec: mathutils.Vector) -> float:
     _OUTPUT_NAME=["结果"],
     )
 def vectorNormalize(vec: mathutils.Vector) -> mathutils.Vector:
+    vec = _to_vector(vec)
     if vec.length == 0:
         return mathutils.Vector((0.0, 0.0, 0.0))
     return vec.normalized()
@@ -279,7 +286,7 @@ def vectorNormalize(vec: mathutils.Vector) -> mathutils.Vector:
     _OUTPUT_NAME=["X", "Y", "Z"],
     )
 def separateVector(vec: mathutils.Vector) -> tuple[float, float, float]:
-    vec3 = vec.to_3d()
+    vec3 = _to_vector(vec).to_3d()
     return vec3.x, vec3.y, vec3.z
 
 
@@ -324,7 +331,7 @@ def averageFloat(values: list[float]) -> float:
 def sumVector(values: list[mathutils.Vector]) -> mathutils.Vector:
     result = mathutils.Vector((0.0, 0.0, 0.0))
     for value in values:
-        result += value.to_3d()
+        result += _to_vector(value).to_3d()
     return result
 
 @omni(
