@@ -1,6 +1,6 @@
----
+﻿---
 name: material-node-ir
-description: Export, inspect, or evolve HoTools Blender material node IR for AI-readable shader graphs, glTF material migration, and Unity material mapping. Use when working on Blender shader nodes, material node serialization, node group traversal, texture/color-space capture, or conversion rules from Blender materials to glTF/Unity.
+description: Export, inspect, live-query, compare, or evolve HoTools Blender material node IR for AI-readable shader graphs, glTF material migration, and Unity material mapping. Use when working on Blender/Goo shader nodes, material node serialization, live bpy inspection, node group traversal, texture/color-space capture, or conversion rules from Blender materials to glTF/Unity.
 ---
 
 # Material Node IR
@@ -9,7 +9,7 @@ Use this skill when changing HoTools material node IR export or using exported I
 
 ## One-Line Handoff
 
-Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules, use SpecialTools/material_ir_ai.py to inspect the exported material IR JSON, and base every Blender-to-glTF/Unity decision on the JSON evidence.`
+Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules, use SpecialTools/material_ir_ai.py for exported material IR JSON, use SpecialTools/blender_live_inspector.py when a .blend can be opened live, and base every Blender-to-glTF/Unity decision on explicit JSON or live bpy evidence.`
 
 ## Workflow
 
@@ -21,6 +21,7 @@ Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules
 4. Keep Blender-side serialization dependency-free. Use `bpy`, RNA properties, node sockets, links, images, and node groups directly.
 5. For external projects, do not import Blender or HoTools. Run or copy `SpecialTools/material_ir_ai.py`; it uses only the Python standard library.
 6. For Unity/glTF migration work, read `references/ir-schema.md` before proposing mapping rules.
+7. When a `.blend` is available and a full scene bundle is too large, use `SpecialTools/blender_live_inspector.py` through the matching Blender/Goo runtime for targeted live queries.
 
 ## Helper Entrypoints
 
@@ -42,6 +43,18 @@ Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode audit`: run the main AI conversion-readiness checks together.
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode preview`: print a chat-friendly human estimate of node-tree capabilities, likely design, expected migration changes, risks, and boundaries.
 - In code, call `load_ir`, `summarize_ir`, `build_ai_context`, `build_user_preview`, `build_translation_view`, `extract_gltf_pbr_candidates`, `collect_source_urls`, `analyze_material_audit`, `analyze_cleanup`, `analyze_groups`, `analyze_annotations`, `analyze_color_transforms`, `analyze_images`, `analyze_drivers`, `analyze_custom_inputs`, or `trace_input`.
+
+## Live Inspector Entrypoints
+
+Use the same Blender dialect that authored the file. For Goo materials, prefer Goo Engine's `blender.exe`.
+
+- `blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode app`: confirm runtime metadata and Goo/source flavor.
+- `blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode materials`: list live material sizes and Goo signals without exporting a bundle.
+- `blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode material --material "MaterialName"`: inspect one live material's images, groups, context inputs, color transforms, annotations, and Goo nodes.
+- `blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode node --material "MaterialName" --node "Screenspace"`: search live nodes by substring and print sockets/defaults.
+- `blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode compare-material-ir --material "MaterialName" --ir material_ir.json`: compare live Blender/Goo data against exported Material IR.
+
+Live inspector is for fast querying and verification. Exported IR remains the canonical archive for offline conversion and sharing. Drop `--factory-startup` only when a user add-on is required to register custom data.
 
 ## AI Analysis Checklist
 
@@ -84,6 +97,11 @@ Run `--mode audit` before proposing Blender-to-glTF/Unity migration. Use specifi
    - Use `--mode translate` before code generation or shader graph translation on large graphs.
    - Treat it as a speed-oriented derived view: reroutes are collapsed, groups are split into separate tree records, and original JSON remains the source of truth.
    - If any collapsed link looks suspicious, inspect the original IR links before finalizing conversion.
+10. Live/runtime check:
+   - Use `blender_live_inspector.py --mode app` to confirm the active runtime before analyzing Goo/forked materials.
+   - Use `--mode material` or `--mode node` when a small live answer is enough and a full scene bundle would be noisy.
+   - Use `--mode compare-material-ir` when an exported JSON seems stale, too large, or inconsistent with what Blender currently shows.
+   - If official Blender and Goo Engine disagree, preserve both observations and prefer the runtime that authored the `.blend` for fork-specific node behavior.
 
 ## Blender Source Lookup
 
@@ -115,6 +133,7 @@ Goo Engine source backend:
 - Use `--source-profile goo` for Goo-only lookup and `--source-profile both` to compare official Blender and Goo Engine candidates.
 - Unknown ShaderNode types should be searched in Goo source before migration.
 - Goo Engine may alter NPR/render behavior beyond node declarations, so exact visual parity requires target-shader review.
+- For Goo files, live inspection is often more reliable than opening the file in official Blender. Official Blender may downgrade Goo nodes to `NodeUndefined`, while Goo Engine can expose concrete node ids such as `ShaderNodeShaderInfo` and `ShaderNodeScreenspaceInfo`.
 
 ## Design Notes
 
@@ -130,4 +149,4 @@ Goo Engine source backend:
 ## Companion IRs
 
 - Use `SpecialTools/object_scene_ir.py` and the `object-scene-ir` skill when a material depends on object-level context such as UV maps, mesh attributes, color attributes, material slots, shape keys, modifiers, or hierarchy.
-- Keep Geometry Nodes as a separate IR project. Material/Object IR may reference Geometry Nodes modifiers or node groups, but should not inline geometry node graphs.
+- Use `geometry-node-ir` for Geometry Nodes modifiers. Material/Object IR may reference Geometry Nodes modifiers or node groups, but should not inline geometry node graphs.

@@ -1,4 +1,4 @@
-# HoTools Material Node IR Schema
+﻿# HoTools Material Node IR Schema
 
 Canonical schema id: `hotools.material_node_ir.v1`
 
@@ -76,6 +76,33 @@ Useful functions:
 
 Use this helper for AI orientation. Keep actual conversion decisions explicit and reviewable.
 
+## Live Blender/Goo Inspector
+
+`SpecialTools/blender_live_inspector.py` is the live `bpy` query helper. It must run inside Blender or Goo Engine:
+
+```powershell
+blender --factory-startup --background asset.blend --python SpecialTools/blender_live_inspector.py -- --mode material --material "MaterialName"
+```
+
+Use it when:
+
+- a scene bundle is too large for quick analysis;
+- the `.blend` is available and the AI needs a focused live query;
+- Goo Engine nodes should be read before official Blender turns them into undefined nodes;
+- an exported IR may be stale and should be compared to the live file.
+
+Important modes:
+
+- `app`: runtime metadata and source flavor.
+- `scene`: live object/material/UV/attribute/modifier summary.
+- `materials`: compact material list.
+- `material`: one material's images, groups, context inputs, color transforms, annotations, and Goo signals.
+- `node`: substring search for live nodes and sockets.
+- `compare-material-ir`: compare live material data with an exported Material IR JSON.
+
+Live inspector is not the canonical archive. Use exported IR for reproducible offline conversion and live inspector for targeted verification.
+Use `--factory-startup` to avoid unrelated user add-on logs in background mode; remove it only if a user add-on is required for the file.
+
 ## Analysis Boundaries
 
 - Cleanup only reports reachability. It must not auto-delete nodes.
@@ -85,6 +112,7 @@ Use this helper for AI orientation. Keep actual conversion decisions explicit an
 - Image analysis can flag likely color-space risks, but final texture role should come from graph links and user review.
 - Context input analysis flags dependencies that may exceed the current material-only IR, such as UV set selection, mesh attributes, object coordinates, object random, and vertex colors.
 - Goo Engine analysis is conservative. User confirmation or app metadata is strong evidence; unknown/fork-like nodes and NPR naming are only suspicion.
+- Live inspector can confirm whether Goo-specific nodes exist in the current runtime. If official Blender and Goo Engine report different node ids for the same file, prefer the authoring runtime for fork-specific material behavior and keep the mismatch in the migration report.
 
 ## Blender Source Boundaries
 

@@ -3,6 +3,7 @@
 This module composes the specialized helpers:
 - material_ir_ai.py for material node graphs.
 - object_scene_ir_ai.py for object/mesh/scene context.
+- geometry_node_ir_ai.py for Geometry Nodes modifiers.
 
 It intentionally stays pure Python and does not import Blender.
 """
@@ -16,6 +17,11 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import material_ir_ai
 import object_scene_ir_ai
+
+try:
+    import geometry_node_ir_ai
+except Exception:
+    geometry_node_ir_ai = None
 
 
 IRDict = Dict[str, Any]
@@ -379,17 +385,34 @@ def analyze_scene_bundle(
         "schema": bundle.get("schema"),
         "export": bundle.get("export"),
         "material_export_failures": bundle.get("material_export_failures", []),
+        "geometry_node_export_failures": bundle.get("geometry_node_export_failures", []),
+    }
+    geometry_nodes_ir = bundle.get("geometry_nodes")
+    geometry_summary = None
+    geometry_audit = None
+    if geometry_nodes_ir and geometry_node_ir_ai is not None:
+        geometry_summary = geometry_node_ir_ai.summarize_ir(geometry_nodes_ir)
+        geometry_audit = geometry_node_ir_ai.audit_for_migration(geometry_nodes_ir)
+        report["issues"].extend(geometry_audit.get("issues", []))
+        report["issue_count"] = len(report["issues"])
+    report["geometry_nodes"] = {
+        "summary": geometry_summary,
+        "audit": geometry_audit,
+        "available": bool(geometry_nodes_ir),
+        "helper_available": geometry_node_ir_ai is not None,
     }
     return report
 
 
 def build_preview(report: IRDict) -> str:
     object_summary = report.get("object_scene", {}).get("summary")
+    geometry_summary = report.get("geometry_nodes", {}).get("summary")
     lines = [
         "# HoTools Joint IR Preview",
         "",
         f"- Materials: `{len(report.get('materials', []))}`",
         f"- Object Scene: `{'yes' if object_summary else 'no'}`",
+        f"- Geometry Nodes IR: `{'yes' if geometry_summary else 'no'}`",
         f"- Total issues: `{report.get('issue_count', 0)}`",
     ]
     if object_summary:
@@ -398,6 +421,14 @@ def build_preview(report: IRDict) -> str:
                 f"- Objects: `{object_summary.get('object_count')}`",
                 f"- Mesh totals: `{json.dumps(object_summary.get('mesh_totals', {}), ensure_ascii=False)}`",
                 f"- Geometry Nodes modifiers: `{object_summary.get('geometry_node_modifier_count')}`",
+            ]
+        )
+    if geometry_summary:
+        lines.extend(
+            [
+                f"- GN trees: `{geometry_summary.get('tree_count')}`",
+                f"- GN nodes: `{geometry_summary.get('node_count')}`",
+                f"- GN zones: `{json.dumps(geometry_summary.get('zone_counts', {}), ensure_ascii=False)}`",
             ]
         )
     lines.append("")
@@ -472,6 +503,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "schema": report["schema"],
             "inputs": report["inputs"],
             "object_scene_summary": report.get("object_scene", {}).get("summary"),
+            "geometry_nodes_summary": report.get("geometry_nodes", {}).get("summary"),
             "materials": [
                 {
                     "material": record.get("material"),

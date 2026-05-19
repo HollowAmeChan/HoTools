@@ -14,6 +14,11 @@ try:
 except Exception:
     material_node_ir = None
 
+try:
+    from . import geometry_node_ir
+except Exception:
+    geometry_node_ir = None
+
 
 SCHEMA = "hotools.object_scene_ir.v1"
 SCENE_BUNDLE_SCHEMA = "hotools.scene_asset_ir.v1"
@@ -102,7 +107,11 @@ def _custom_properties(id_obj):
     result = {}
     if id_obj is None or not hasattr(id_obj, "keys"):
         return result
-    for key in id_obj.keys():
+    try:
+        keys = list(id_obj.keys())
+    except Exception:
+        return result
+    for key in keys:
         if key == "_RNA_UI":
             continue
         try:
@@ -463,6 +472,8 @@ def format_object_scene_markdown(ir):
 
 
 def _replace_ext(filepath, ext):
+    if filepath.lower().endswith(ext.lower()):
+        return filepath
     root, current_ext = os.path.splitext(filepath)
     if current_ext.lower() == ext.lower():
         return filepath
@@ -511,6 +522,7 @@ def build_scene_asset_ir(
     context,
     include_material_groups=True,
     include_evaluated_mesh=False,
+    include_geometry_nodes=True,
 ):
     object_ir = build_object_scene_ir(
         context,
@@ -541,6 +553,21 @@ def build_scene_asset_ir(
             record["diffuse_color"] = _safe_value(getattr(material, "diffuse_color", None))
         material_records.append(record)
 
+    geometry_nodes_ir = None
+    geometry_node_export_failures = []
+    if include_geometry_nodes:
+        if geometry_node_ir is None:
+            geometry_node_export_failures.append({"error": "geometry_node_ir module is unavailable"})
+        else:
+            try:
+                geometry_nodes_ir = geometry_node_ir.build_geometry_node_ir(
+                    context,
+                    scope="SCENE",
+                    include_groups=True,
+                )
+            except Exception as exc:
+                geometry_node_export_failures.append({"error": str(exc)})
+
     return {
         "schema": SCENE_BUNDLE_SCHEMA,
         "blender_version": list(bpy.app.version),
@@ -552,10 +579,13 @@ def build_scene_asset_ir(
             "material_count": len(material_records),
             "include_material_groups": include_material_groups,
             "include_evaluated_mesh": include_evaluated_mesh,
+            "include_geometry_nodes": include_geometry_nodes,
         },
         "object_scene": object_ir,
         "materials": material_records,
         "material_export_failures": failures,
+        "geometry_nodes": geometry_nodes_ir,
+        "geometry_node_export_failures": geometry_node_export_failures,
     }
 
 
@@ -568,7 +598,9 @@ def format_scene_asset_markdown(ir):
         f"- Blender: `{'.'.join(str(v) for v in ir.get('blender_version', []))}`",
         f"- Objects: `{ir.get('export', {}).get('object_count')}`",
         f"- Materials: `{ir.get('export', {}).get('material_count')}`",
+        f"- Geometry Nodes Modifiers: `{(ir.get('geometry_nodes') or {}).get('summary', {}).get('geometry_node_modifier_count', 0)}`",
         f"- Material Export Failures: `{len(ir.get('material_export_failures', []))}`",
+        f"- Geometry Nodes Export Failures: `{len(ir.get('geometry_node_export_failures', []))}`",
         "",
         "## Object Summary",
         "",
@@ -594,6 +626,24 @@ def format_scene_asset_markdown(ir):
         lines.append("## Material Export Failures")
         for failure in ir.get("material_export_failures", []):
             lines.append(f"- `{failure.get('material')}`: {failure.get('error')}")
+
+    geometry_nodes = ir.get("geometry_nodes") or {}
+    if geometry_nodes:
+        lines.append("")
+        lines.append("## Geometry Nodes")
+        for record in geometry_nodes.get("modifiers", []):
+            obj = record.get("object") or {}
+            mod = record.get("modifier") or {}
+            summary = record.get("summary") or {}
+            lines.append(
+                f"- `{obj.get('name')}` / `{mod.get('name')}` "
+                f"nodes=`{summary.get('node_count', 0)}` zones=`{json.dumps(summary.get('zone_counts', {}), ensure_ascii=False)}`"
+            )
+    if ir.get("geometry_node_export_failures"):
+        lines.append("")
+        lines.append("## Geometry Nodes Export Failures")
+        for failure in ir.get("geometry_node_export_failures", []):
+            lines.append(f"- {failure.get('error')}")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -714,6 +764,11 @@ class HO_OT_export_scene_asset_ir(Operator, ExportHelper):
         default=False,
         description="Apply modifiers for mesh counts. Slower and may allocate temporary meshes.",
     )  # type: ignore
+    include_geometry_nodes: BoolProperty(
+        name="Include Geometry Nodes IR",
+        default=True,
+        description="Inline Geometry Nodes modifier graphs in the scene bundle.",
+    )  # type: ignore
     copy_to_clipboard: BoolProperty(
         name="Copy Text To Clipboard",
         default=False,
@@ -730,10 +785,15 @@ class HO_OT_export_scene_asset_ir(Operator, ExportHelper):
 
     def execute(self, context):
         try:
+            try:
+                include_geometry_nodes = bool(self.include_geometry_nodes)
+            except Exception:
+                include_geometry_nodes = True
             ir = build_scene_asset_ir(
                 context,
                 include_material_groups=self.include_material_groups,
                 include_evaluated_mesh=self.include_evaluated_mesh,
+                include_geometry_nodes=include_geometry_nodes,
             )
             paths = write_scene_asset_ir(ir, self.filepath, self.export_format)
             if self.copy_to_clipboard:
@@ -777,6 +837,10 @@ class HO_PT_object_scene_ir(Panel):
             icon="PACKAGE",
         )
         bundle.export_format = "JSON"
+        try:
+            bundle.include_geometry_nodes = True
+        except Exception:
+            pass
 
 
 CLASSES = (
@@ -786,11 +850,26 @@ CLASSES = (
 )
 
 
+def _draw_topbar_edit_menu(self, context):
+    layout = self.layout
+    layout.separator()
+    layout.operator(
+        HO_OT_export_scene_asset_ir.bl_idname,
+        text="HoTools Export Scene Bundle IR",
+        icon="PACKAGE",
+    )
+
+
 def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
+    bpy.types.TOPBAR_MT_edit.append(_draw_topbar_edit_menu)
 
 
 def unregister():
+    try:
+        bpy.types.TOPBAR_MT_edit.remove(_draw_topbar_edit_menu)
+    except Exception:
+        pass
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
