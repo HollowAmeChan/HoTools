@@ -1,8 +1,9 @@
-from . import material_node_ir
+from . import material_node_ir, object_scene_ir
 
 
 MODULES = (
     material_node_ir,
+    object_scene_ir,
 )
 
 

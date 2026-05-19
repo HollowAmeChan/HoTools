@@ -126,3 +126,8 @@ Goo Engine source backend:
 - Capture whether socket default values have drivers. Driver internals are intentionally not expanded.
 - Do not bake semantic conversion guesses into the raw exporter. Put mapping heuristics in a separate layer so the IR remains useful for diagnosis.
 - Do not create cache files or project-local state from helper code. Any generated `__pycache__` is disposable and not part of the module.
+
+## Companion IRs
+
+- Use `SpecialTools/object_scene_ir.py` and the `object-scene-ir` skill when a material depends on object-level context such as UV maps, mesh attributes, color attributes, material slots, shape keys, modifiers, or hierarchy.
+- Keep Geometry Nodes as a separate IR project. Material/Object IR may reference Geometry Nodes modifiers or node groups, but should not inline geometry node graphs.
