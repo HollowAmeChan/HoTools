@@ -184,6 +184,33 @@ OUTPUT_NODE_IDS = {
 }
 
 
+NON_TRANSLATION_PROPERTY_IDS = {
+    "bl_description",
+    "bl_height_default",
+    "bl_height_max",
+    "bl_height_min",
+    "bl_icon",
+    "bl_idname",
+    "bl_label",
+    "bl_static_type",
+    "bl_width_default",
+    "bl_width_max",
+    "bl_width_min",
+    "color",
+    "color_tag",
+    "dimensions",
+    "hide",
+    "location_absolute",
+    "mute",
+    "show_options",
+    "show_preview",
+    "show_texture",
+    "type",
+    "use_custom_color",
+    "warning_propagation",
+}
+
+
 def load_ir(path: str | Path) -> IRDict:
     """Load an exported material node IR JSON file."""
     with open(path, "r", encoding="utf-8") as handle:
@@ -361,7 +388,23 @@ def _source_profile_from_ir(ir: IRDict) -> str:
     hint = str(app.get("source_flavor_hint", "")).lower()
     if "goo" in hint:
         return "goo"
-    text = " ".join(str(app.get(key, "")) for key in ("binary_path", "build_branch", "build_hash")).lower()
+    evidence = app.get("source_flavor_evidence")
+    if isinstance(evidence, list) and evidence:
+        text = " ".join(str(item) for item in evidence).lower()
+        if "goo" in text:
+            return "goo"
+    text = " ".join(
+        str(app.get(key, ""))
+        for key in (
+            "binary_path",
+            "binary_dir",
+            "executable_name",
+            "version_string",
+            "build_branch",
+            "build_hash",
+            "source_flavor_label",
+        )
+    ).lower()
     if "goo" in text:
         return "goo"
     return "blender"
@@ -376,6 +419,7 @@ def goo_suspicion(ir: IRDict, include_groups: bool = True) -> IRDict:
         reasons.append("IR app metadata contains Goo/build hints.")
 
     unknown_nodes = []
+    unresolved_custom_nodes = []
     npr_names = []
     for tree_path, node in iter_nodes(ir, include_groups=include_groups):
         bl_idname = str(node.get("bl_idname", ""))
@@ -396,6 +440,16 @@ def goo_suspicion(ir: IRDict, include_groups: bool = True) -> IRDict:
                     "type": node.get("type"),
                 }
             )
+        if bl_idname == "NodeUndefined" or node.get("type") == "CUSTOM":
+            unresolved_custom_nodes.append(
+                {
+                    "tree": " / ".join(tree_path),
+                    "node": node.get("name"),
+                    "label": node.get("label"),
+                    "bl_idname": bl_idname,
+                    "type": node.get("type"),
+                }
+            )
         if any(word in haystack for word in ("goo", "toon", "matcap", "npr", "cel", "anime")):
             npr_names.append(
                 {
@@ -410,11 +464,13 @@ def goo_suspicion(ir: IRDict, include_groups: bool = True) -> IRDict:
 
     if unknown_nodes:
         reasons.append("Unknown ShaderNode types exist; they may be fork-specific.")
+    if unresolved_custom_nodes:
+        reasons.append("Undefined/custom nodes exist; they may require the original Blender fork or add-on.")
     if npr_names:
         reasons.append("NPR/toon/matcap naming hints exist; Goo Engine is common in this material family.")
 
     level = "none"
-    if profile == "goo" or unknown_nodes:
+    if profile == "goo" or unknown_nodes or unresolved_custom_nodes:
         level = "strong"
     elif npr_names:
         level = "possible"
@@ -430,6 +486,7 @@ def goo_suspicion(ir: IRDict, include_groups: bool = True) -> IRDict:
         },
         "reasons": reasons,
         "unknown_shader_nodes": unknown_nodes,
+        "unresolved_custom_nodes": unresolved_custom_nodes,
         "npr_name_hints": npr_names[:25],
         "user_override": "If the user says this was authored in Goo Engine, use --source-profile goo even when auto detection is weak.",
     }
@@ -482,25 +539,65 @@ def analyze_goo_engine(ir: IRDict, include_groups: bool = True) -> IRDict:
     suspicion = goo_suspicion(ir, include_groups=include_groups)
     profile = suspicion["detected_source_profile"]
     unknown_shader_nodes = []
+    unresolved_custom_nodes = []
     for tree_path, node in iter_nodes(ir, include_groups=include_groups):
         bl_idname = str(node.get("bl_idname", ""))
-        if not bl_idname.startswith("ShaderNode"):
+        node_type = str(node.get("type", ""))
+        if bl_idname == "NodeUndefined" or node_type == "CUSTOM":
+            search_terms = [
+                term
+                for term in (str(node.get("name", "")), str(node.get("label", "")), bl_idname, node_type)
+                if term
+            ]
+            unresolved_custom_nodes.append(
+                {
+                    "tree": " / ".join(tree_path),
+                    "node": node.get("name"),
+                    "label": node.get("label"),
+                    "bl_idname": bl_idname,
+                    "type": node.get("type"),
+                    "inputs": [
+                        {
+                            "name": socket.get("name"),
+                            "index": socket.get("index"),
+                            "type": socket.get("type"),
+                            "is_linked": socket.get("is_linked"),
+                        }
+                        for socket in node.get("inputs", [])
+                    ],
+                    "outputs": [
+                        {
+                            "name": socket.get("name"),
+                            "index": socket.get("index"),
+                            "type": socket.get("type"),
+                            "is_linked": socket.get("is_linked"),
+                        }
+                        for socket in node.get("outputs", [])
+                    ],
+                    "goo_search": [
+                        _github_repo_search_url(GOO_REPO, term)
+                        for term in search_terms[:4]
+                    ],
+                    "risk": "Undefined/custom node. Reopen in the original fork/add-on or inspect Goo Engine/custom source before migration.",
+                }
+            )
             continue
-        if shader_node_source_file(bl_idname) or bl_idname in STANDARD_SHADER_NODES_WITH_GENERIC_SOURCE:
-            continue
-        unknown_shader_nodes.append(
-            {
-                "tree": " / ".join(tree_path),
-                "node": node.get("name"),
-                "bl_idname": bl_idname,
-                "type": node.get("type"),
-                "goo_search": [
-                    _github_repo_search_url(GOO_REPO, bl_idname),
-                    _github_repo_search_url(GOO_REPO, str(node.get("type", ""))),
-                ],
-                "risk": "Unknown or fork-specific ShaderNode. Inspect Goo Engine source before migration.",
-            }
-        )
+        if bl_idname.startswith("ShaderNode"):
+            if shader_node_source_file(bl_idname) or bl_idname in STANDARD_SHADER_NODES_WITH_GENERIC_SOURCE:
+                continue
+            unknown_shader_nodes.append(
+                {
+                    "tree": " / ".join(tree_path),
+                    "node": node.get("name"),
+                    "bl_idname": bl_idname,
+                    "type": node.get("type"),
+                    "goo_search": [
+                        _github_repo_search_url(GOO_REPO, bl_idname),
+                        _github_repo_search_url(GOO_REPO, node_type),
+                    ],
+                    "risk": "Unknown or fork-specific ShaderNode. Inspect Goo Engine source before migration.",
+                }
+            )
     return {
         "material": material_name(ir),
         "detected_source_profile": profile,
@@ -508,6 +605,8 @@ def analyze_goo_engine(ir: IRDict, include_groups: bool = True) -> IRDict:
         "goo_repo": f"https://github.com/{GOO_REPO}/tree/{GOO_REF}",
         "unknown_shader_node_count": len(unknown_shader_nodes),
         "unknown_shader_nodes": unknown_shader_nodes,
+        "unresolved_custom_node_count": len(unresolved_custom_nodes),
+        "unresolved_custom_nodes": unresolved_custom_nodes,
         "notes": [
             "Goo Engine is a Blender fork used by many anime/NPR pipelines.",
             "If the file was authored in Goo Engine, official Blender source may miss fork-specific nodes or render behavior.",
@@ -687,6 +786,213 @@ def analyze_cleanup(ir: IRDict, include_groups: bool = True) -> IRDict:
             }
         )
     return {"material": material_name(ir), "trees": trees}
+
+
+def _is_reroute(node: IRDict) -> bool:
+    return node.get("bl_idname") == "NodeReroute" or node.get("type") == "REROUTE"
+
+
+def _compact_socket(socket: IRDict) -> IRDict:
+    result = {
+        "index": socket.get("index"),
+        "name": socket.get("name"),
+        "identifier": socket.get("identifier"),
+        "type": socket.get("type"),
+        "is_linked": socket.get("is_linked"),
+    }
+    if "default_value" in socket:
+        result["default_value"] = socket.get("default_value")
+    if socket.get("has_driver"):
+        result["has_driver"] = True
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def _compact_node_for_translation(node: IRDict, tree_path: TreePath) -> IRDict:
+    result = {
+        "name": node.get("name"),
+        "label": node.get("label") or None,
+        "bl_idname": node.get("bl_idname"),
+        "type": node.get("type"),
+        "parent": node.get("parent"),
+    }
+
+    group_tree = node.get("group_tree")
+    if isinstance(group_tree, dict):
+        result["group_tree"] = {
+            "name": group_tree.get("name"),
+            "path": " / ".join(
+                tree_path
+                + (
+                    str(node.get("name", "<node>")),
+                    str(group_tree.get("name", "<node tree>")),
+                )
+            ),
+        }
+
+    image = node.get("image")
+    if image:
+        result["image"] = {
+            "name": image.get("name"),
+            "filepath": image.get("filepath") or image.get("filepath_abs"),
+            "colorspace": image.get("colorspace"),
+            "size": image.get("size"),
+            "alpha_mode": image.get("alpha_mode"),
+            "packed": image.get("packed"),
+        }
+
+    properties = {
+        key: value
+        for key, value in node.get("properties", {}).items()
+        if key not in NON_TRANSLATION_PROPERTY_IDS
+    }
+    if properties:
+        result["properties"] = properties
+
+    if node.get("color_ramp"):
+        result["color_ramp"] = node.get("color_ramp")
+    if node.get("curve_mapping"):
+        result["curve_mapping"] = node.get("curve_mapping")
+
+    inputs = [
+        _compact_socket(socket)
+        for socket in node.get("inputs", [])
+        if socket.get("is_linked") or "default_value" in socket or socket.get("has_driver")
+    ]
+    outputs = [
+        _compact_socket(socket)
+        for socket in node.get("outputs", [])
+        if socket.get("is_linked") or socket.get("has_driver")
+    ]
+    if inputs:
+        result["inputs"] = inputs
+    if outputs:
+        result["outputs"] = outputs
+    return {key: value for key, value in result.items() if value not in (None, "", [], {})}
+
+
+def _reroute_collapsed_links(tree: IRDict) -> Tuple[List[IRDict], int, int]:
+    nodes = {node.get("name"): node for node in tree.get("nodes", [])}
+    valid_links = [
+        link
+        for link in tree.get("links", [])
+        if not link.get("is_muted") and link.get("is_valid") is not False
+    ]
+    dropped_link_count = len(tree.get("links", [])) - len(valid_links)
+    incoming = {}
+    for link in valid_links:
+        to_key = (link.get("to_node"), link.get("to_socket", {}).get("index"))
+        incoming.setdefault(to_key, []).append(link)
+
+    collapsed_count = 0
+
+    def resolve_source(link: IRDict, seen: Optional[set] = None) -> Optional[Tuple[str, IRDict]]:
+        nonlocal collapsed_count
+        if seen is None:
+            seen = set()
+        from_node = link.get("from_node")
+        if from_node in seen:
+            return None
+        source_node = nodes.get(from_node)
+        if source_node is None or not _is_reroute(source_node):
+            return link.get("from_node"), link.get("from_socket", {})
+
+        seen.add(from_node)
+        collapsed_count += 1
+        source_links = incoming.get((from_node, 0), [])
+        if not source_links:
+            return None
+        return resolve_source(source_links[0], seen)
+
+    result = []
+    seen_links = set()
+    for link in valid_links:
+        target_node = nodes.get(link.get("to_node"))
+        if target_node is not None and _is_reroute(target_node):
+            continue
+        resolved = resolve_source(link)
+        if resolved is None:
+            continue
+        from_node, from_socket = resolved
+        record = {
+            "from_node": from_node,
+            "from_socket": from_socket,
+            "to_node": link.get("to_node"),
+            "to_socket": link.get("to_socket", {}),
+        }
+        key = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        if key in seen_links:
+            continue
+        seen_links.add(key)
+        result.append(record)
+
+    return result, collapsed_count, dropped_link_count
+
+
+def build_translation_view(ir: IRDict, include_groups: bool = True) -> IRDict:
+    """Build a compact, non-destructive graph view for AI/code translation.
+
+    The raw IR remains the source of truth. This view removes reroute nodes from
+    executable node lists, collapses links through them, and lists group trees as
+    separate translation units instead of repeatedly inlining them.
+    """
+    trees = []
+    total_nodes = 0
+    total_reroutes = 0
+    total_collapsed_links = 0
+    total_dropped_links = 0
+
+    for tree_path, tree in iter_node_trees(ir, include_groups=include_groups):
+        nodes = tree.get("nodes", [])
+        reroute_count = sum(1 for node in nodes if _is_reroute(node))
+        compact_nodes = [
+            _compact_node_for_translation(node, tree_path)
+            for node in nodes
+            if not _is_reroute(node)
+        ]
+        links, collapsed_link_count, dropped_link_count = _reroute_collapsed_links(tree)
+        trees.append(
+            {
+                "path": " / ".join(tree_path),
+                "name": tree.get("name"),
+                "bl_idname": tree.get("bl_idname"),
+                "interface": tree.get("interface", []),
+                "node_count_raw": len(nodes),
+                "node_count_without_reroutes": len(compact_nodes),
+                "reroute_count": reroute_count,
+                "link_count_raw": len(tree.get("links", [])),
+                "link_count_collapsed": len(links),
+                "collapsed_reroute_link_steps": collapsed_link_count,
+                "dropped_invalid_or_muted_links": dropped_link_count,
+                "nodes": compact_nodes,
+                "links": links,
+            }
+        )
+        total_nodes += len(nodes)
+        total_reroutes += reroute_count
+        total_collapsed_links += collapsed_link_count
+        total_dropped_links += dropped_link_count
+
+    return {
+        "material": material_name(ir),
+        "schema": "hotools.material_node_ir.translation_view.v1",
+        "source_schema": ir.get("schema"),
+        "source_app": ir.get("app", {}),
+        "policy": [
+            "This is a derived view for translation speed; keep the original IR as canonical evidence.",
+            "NodeReroute nodes are removed and valid links are rewired through them.",
+            "Node group trees are emitted as separate tree records; group nodes keep group_tree references.",
+            "Frames, labels, images, color ramps, curves, Goo/custom nodes, sockets, and defaults are preserved when useful for translation.",
+        ],
+        "stats": {
+            "tree_count": len(trees),
+            "raw_node_count": total_nodes,
+            "reroute_count_removed": total_reroutes,
+            "node_count_without_reroutes": total_nodes - total_reroutes,
+            "collapsed_reroute_link_steps": total_collapsed_links,
+            "dropped_invalid_or_muted_links": total_dropped_links,
+        },
+        "trees": trees,
+    }
 
 
 def image_nodes(ir: IRDict, include_groups: bool = True) -> List[Tuple[TreePath, IRDict]]:
@@ -1168,7 +1474,7 @@ def _capability_tags(audit: IRDict) -> List[str]:
         tags.append("Driven/animated values")
     goo_level = audit.get("goo_engine", {}).get("suspicion", {}).get("level")
     if goo_level in {"possible", "strong"}:
-        tags.append("Possible Goo Engine/forked Blender material")
+        tags.append("Possible Goo Engine/fork/add-on material")
     return tags or ["Simple material graph"]
 
 
@@ -1196,7 +1502,7 @@ def _design_read(audit: IRDict) -> List[str]:
         lines.append("The material depends on scene/mesh context inputs such as UV, object, attribute, or geometry data.")
     goo_level = audit.get("goo_engine", {}).get("suspicion", {}).get("level")
     if goo_level == "strong":
-        lines.append("There are strong Goo Engine/forked Blender signals; use Goo source lookup before migration.")
+        lines.append("There are strong fork/add-on/custom-node signals; verify the original Blender/Goo/add-on version before migration.")
     elif goo_level == "possible":
         lines.append("There are possible Goo/NPR material signals; ask the user whether this came from Goo Engine.")
     return lines or ["The graph looks relatively direct from inputs/textures to material output."]
@@ -1229,7 +1535,7 @@ def _migration_change_read(audit: IRDict) -> List[str]:
     if audit.get("custom_inputs", {}).get("custom_input_count", 0):
         changes.append("Context inputs may require mesh attributes, UV set mapping, object data, or importer extensions.")
     if audit.get("goo_engine", {}).get("suspicion", {}).get("level") in {"possible", "strong"}:
-        changes.append("If this is Goo Engine-authored, fork-specific nodes/render behavior may need custom Unity shader work.")
+        changes.append("If this depends on Goo or another add-on/fork, custom nodes and render behavior may need custom Unity shader work.")
     return changes
 
 
@@ -1262,7 +1568,7 @@ def build_user_preview(ir: IRDict, include_groups: bool = True) -> str:
         f"- Color-coded nodes: {audit['annotations']['colored_node_count']}",
         f"- Color ramps/curves: {audit['color_transforms']['color_transform_count']}",
         f"- Context inputs: {audit['custom_inputs']['custom_input_count']}",
-        f"- Goo/fork suspicion: {audit['goo_engine']['suspicion']['level']}",
+        f"- Goo/fork/add-on suspicion: {audit['goo_engine']['suspicion']['level']}",
         f"- Driven values: {'yes' if audit['drivers']['has_drivers'] else 'no'}",
         f"- Possibly unused nodes: {cleanup_unused}",
         "",
@@ -1291,7 +1597,7 @@ def build_user_preview(ir: IRDict, include_groups: bool = True) -> str:
         lines.append("- Context inputs exist: material-only conversion may miss mesh/object/attribute data.")
     goo_level = audit["goo_engine"]["suspicion"]["level"]
     if goo_level == "strong":
-        lines.append("- Strong Goo/fork signals exist: use Goo Engine source lookup and do not rely only on official Blender behavior.")
+        lines.append("- Strong fork/add-on/custom-node signals exist: verify the original environment; do not rely only on official Blender behavior.")
     elif goo_level == "possible":
         lines.append("- Possible Goo/NPR signals exist: ask the user if this was authored in Goo Engine.")
     if audit["groups"]["group_count"]:
@@ -1586,6 +1892,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "goo",
             "drivers",
             "inputs",
+            "translate",
             "audit",
             "preview",
         ),
@@ -1641,6 +1948,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print_json(analyze_drivers(ir, include_groups=include_groups))
     elif args.mode == "inputs":
         print_json(analyze_custom_inputs(ir, include_groups=include_groups))
+    elif args.mode == "translate":
+        print_json(build_translation_view(ir, include_groups=include_groups))
     elif args.mode == "audit":
         print_json(analyze_material_audit(ir, include_groups=include_groups))
     elif args.mode == "preview":

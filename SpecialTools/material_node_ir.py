@@ -11,19 +11,48 @@ from bpy_extras.io_utils import ExportHelper
 SCHEMA = "hotools.material_node_ir.v1"
 
 
-def _app_metadata():
-    binary_path = getattr(bpy.app, "binary_path", "")
-    build_branch = getattr(bpy.app, "build_branch", "")
-    build_hash = getattr(bpy.app, "build_hash", "")
-    build_commit_date = getattr(bpy.app, "build_commit_date", "")
-    text = " ".join(str(item) for item in (binary_path, build_branch, build_hash)).lower()
+def _app_attr(name, default=""):
+    return _safe_value(getattr(bpy.app, name, default))
+
+
+def _detect_source_flavor(fields):
+    evidence = []
+    for field, value in fields.items():
+        text = str(value)
+        if "goo" in text.lower():
+            evidence.append({"field": field, "value": value})
+
+    if evidence:
+        return {
+            "source_flavor_hint": "goo",
+            "source_flavor_confidence": "strong",
+            "source_flavor_label": "Goo Engine",
+            "source_flavor_evidence": evidence,
+        }
+
     return {
-        "binary_path": binary_path,
-        "build_branch": build_branch,
-        "build_hash": build_hash,
-        "build_commit_date": build_commit_date,
-        "source_flavor_hint": "goo" if "goo" in text else "blender",
+        "source_flavor_hint": "blender",
+        "source_flavor_confidence": "metadata",
+        "source_flavor_label": "Blender",
+        "source_flavor_evidence": [],
     }
+
+
+def _app_metadata():
+    fields = {
+        "binary_path": _app_attr("binary_path"),
+        "version_string": _app_attr("version_string"),
+        "build_branch": _app_attr("build_branch"),
+        "build_hash": _app_attr("build_hash"),
+        "build_commit_date": _app_attr("build_commit_date"),
+        "build_commit_time": _app_attr("build_commit_time"),
+        "build_platform": _app_attr("build_platform"),
+        "build_type": _app_attr("build_type"),
+    }
+    fields["binary_dir"] = os.path.dirname(fields["binary_path"]) if fields["binary_path"] else ""
+    fields["executable_name"] = os.path.basename(fields["binary_path"]) if fields["binary_path"] else ""
+    fields.update(_detect_source_flavor(fields))
+    return fields
 
 
 def _safe_value(value, depth=0):
@@ -512,13 +541,25 @@ def _format_node_tree_markdown(node_tree, level=2):
 
 def format_material_markdown(ir):
     material = ir["material"]
+    app = ir.get("app", {})
+    evidence = app.get("source_flavor_evidence") or []
     lines = [
         f"# Material Node IR: {material['name']}",
         "",
         f"- Schema: `{ir['schema']}`",
         f"- Blender: `{'.'.join(str(v) for v in ir['blender_version'])}`",
+        f"- Export App: `{app.get('source_flavor_label', app.get('source_flavor_hint', 'unknown'))}`",
+        f"- Export Binary: `{app.get('binary_path', '')}`",
+        f"- Build: branch=`{app.get('build_branch', '')}` hash=`{app.get('build_hash', '')}` date=`{app.get('build_commit_date', '')}`",
+        f"- Source Flavor: `{app.get('source_flavor_hint', 'unknown')}` confidence=`{app.get('source_flavor_confidence', 'unknown')}`",
         "",
     ]
+    if evidence:
+        lines.append("## Export Environment Evidence")
+        lines.append("")
+        for item in evidence:
+            lines.append(f"- `{item.get('field')}` contains Goo hint: `{item.get('value')}`")
+        lines.append("")
     lines.extend(_format_node_tree_markdown(ir["node_tree"]))
     return "\n".join(lines).rstrip() + "\n"
 
@@ -546,15 +587,19 @@ def write_material_ir(ir, filepath, export_format):
     paths = []
     if export_format in {"JSON", "BOTH"}:
         json_path = _replace_ext(filepath, ".json")
-        with open(json_path, "w", encoding="utf-8") as handle:
+        temp_path = json_path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
             json.dump(ir, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+        os.replace(temp_path, json_path)
         paths.append(json_path)
 
     if export_format in {"MARKDOWN", "BOTH"}:
         markdown_path = _replace_ext(filepath, ".md")
-        with open(markdown_path, "w", encoding="utf-8") as handle:
+        temp_path = markdown_path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as handle:
             handle.write(format_material_markdown(ir))
+        os.replace(temp_path, markdown_path)
         paths.append(markdown_path)
 
     return paths

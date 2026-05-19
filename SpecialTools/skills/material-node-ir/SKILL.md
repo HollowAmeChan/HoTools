@@ -38,9 +38,10 @@ Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode images`: inspect duplicate images, file formats, color space, sampling, packed/dirty state, and direct uses.
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode drivers`: report whether driven socket values exist without expanding driver internals.
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode inputs`: find context-dependent inputs such as UV maps, object info, attributes, geometry, vertex color, and tangent data.
+- `python SpecialTools/material_ir_ai.py material_ir.json --mode translate`: output a compact translation view with `NodeReroute` nodes collapsed and node group trees split into separate records. This is derived from the raw IR and should not replace the canonical JSON.
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode audit`: run the main AI conversion-readiness checks together.
 - `python SpecialTools/material_ir_ai.py material_ir.json --mode preview`: print a chat-friendly human estimate of node-tree capabilities, likely design, expected migration changes, risks, and boundaries.
-- In code, call `load_ir`, `summarize_ir`, `build_ai_context`, `build_user_preview`, `extract_gltf_pbr_candidates`, `collect_source_urls`, `analyze_material_audit`, `analyze_cleanup`, `analyze_groups`, `analyze_annotations`, `analyze_color_transforms`, `analyze_images`, `analyze_drivers`, `analyze_custom_inputs`, or `trace_input`.
+- In code, call `load_ir`, `summarize_ir`, `build_ai_context`, `build_user_preview`, `build_translation_view`, `extract_gltf_pbr_candidates`, `collect_source_urls`, `analyze_material_audit`, `analyze_cleanup`, `analyze_groups`, `analyze_annotations`, `analyze_color_transforms`, `analyze_images`, `analyze_drivers`, `analyze_custom_inputs`, or `trace_input`.
 
 ## AI Analysis Checklist
 
@@ -79,6 +80,10 @@ Run `--mode audit` before proposing Blender-to-glTF/Unity migration. Use specifi
    - If the user does not know, use Goo suspicion as a conservative signal. Say "possibly Goo Engine/forked Blender" when unknown ShaderNode types, Goo metadata, or NPR/toon/matcap naming hints appear.
    - Do not assert Goo as fact unless app metadata or the user confirms it.
    - Treat Goo/NPR closure and render-pipeline behavior as a migration boundary.
+9. Translation view:
+   - Use `--mode translate` before code generation or shader graph translation on large graphs.
+   - Treat it as a speed-oriented derived view: reroutes are collapsed, groups are split into separate tree records, and original JSON remains the source of truth.
+   - If any collapsed link looks suspicious, inspect the original IR links before finalizing conversion.
 
 ## Blender Source Lookup
 

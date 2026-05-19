@@ -6,6 +6,10 @@ Canonical schema id: `hotools.material_node_ir.v1`
 
 - `schema`: versioned schema id.
 - `blender_version`: Blender version array.
+- `app`: export environment metadata such as binary path, build branch/hash/date,
+  version string, build platform/type, and source flavor hint. Goo-capable
+  exports should set `source_flavor_hint: "goo"` and include
+  `source_flavor_evidence` when Blender/Goo metadata contains a clear hint.
 - `material`: material metadata and RNA-backed properties.
 - `node_tree`: serialized shader node tree.
 
@@ -64,6 +68,10 @@ Useful functions:
 - `analyze_custom_inputs(ir)`: find UV/object/attribute/geometry/context-dependent input nodes.
 - `analyze_goo_engine(ir)`: report Goo Engine/forked Blender suspicion, unknown ShaderNode types, and Goo source search URLs.
 - `analyze_material_audit(ir)`: run the main conversion-readiness checks together.
+- `build_translation_view(ir)`: produce a derived translation view that removes
+  `NodeReroute` nodes, rewires valid links through them, and emits node groups as
+  separate tree records. Use it for AI/code translation speed, not as a
+  replacement for the canonical IR.
 - `trace_input(tree, node_name, socket_name_or_index)`: show upstream source chains inside one node tree.
 
 Use this helper for AI orientation. Keep actual conversion decisions explicit and reviewable.
