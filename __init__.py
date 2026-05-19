@@ -16,7 +16,7 @@ omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
 sys.path.append(omni_lib_dir)
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,SpecialTools
 from . import Exp_hogui,OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
@@ -173,6 +173,7 @@ def register():
     MeshTools.register()
     Checker.register()
     Rbf.register()
+    SpecialTools.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
     if prefs.hoTools_ExperimentalFeatures_enable:
@@ -198,6 +199,7 @@ def unregister():
     MeshTools.unregister()
     Checker.unregister()
     Rbf.unregister()
+    SpecialTools.unregister()
     Exp_hogui.unregister()
     OmniNode.unregister()
 
