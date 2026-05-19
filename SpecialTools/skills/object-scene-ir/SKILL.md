@@ -14,6 +14,7 @@ Use this skill when working on object-level scene context for Blender material o
 3. Use `SpecialTools/object_scene_ir_ai.py` outside Blender for summaries and migration-readiness checks.
 4. Keep Geometry Nodes graph serialization separate. Object Scene IR may record that a `NODES` modifier exists and which node group it references; use the `geometry-node-ir` skill for the actual node graph.
 5. When a `.blend` is available and a full scene bundle is too large, use `SpecialTools/blender_live_inspector.py` through the matching Blender/Goo runtime for quick object/material/attribute checks.
+6. For Blender-side automation, import `from SpecialTools import object_scene_ir` after adding the HoTools add-on folder to `sys.path`; avoid importing top-level `HoTools` unless the full UI add-on is required.
 
 ## Helper Entrypoints
 
@@ -39,6 +40,7 @@ The Blender exporter supports:
 - Object Scene IR helps answer whether a material's required UVs, attributes, color attributes, shape keys, material slots, hierarchy, and modifiers exist.
 - It does not replace Material Node IR.
 - Use Geometry Nodes IR when modifier settings, node groups, fields, simulation zones, and generated attributes need exact graph evidence.
+- If Material/GN IR references a missing UV/attribute, remember Blender may render with fallback behavior instead of hard failure. Object Scene IR should be used to confirm whether the named data really exists; missing data should be reported as `fallback-suspected` or `needs-evaluated-check`, not silently mapped.
 
 ## Scene Bundle
 

@@ -19,9 +19,10 @@ Tell another AI: `Use SpecialTools/skills/material-node-ir/SKILL.md as the rules
    - JSON is the canonical full-fidelity exchange format.
    - Markdown is a compact AI-facing reading view.
 4. Keep Blender-side serialization dependency-free. Use `bpy`, RNA properties, node sockets, links, images, and node groups directly.
-5. For external projects, do not import Blender or HoTools. Run or copy `SpecialTools/material_ir_ai.py`; it uses only the Python standard library.
-6. For Unity/glTF migration work, read `references/ir-schema.md` before proposing mapping rules.
-7. When a `.blend` is available and a full scene bundle is too large, use `SpecialTools/blender_live_inspector.py` through the matching Blender/Goo runtime for targeted live queries.
+5. For external JSON analysis, do not import Blender or HoTools. Run or copy `SpecialTools/material_ir_ai.py`; it uses only the Python standard library.
+6. For Blender-side automation, import the small package with `from SpecialTools import material_node_ir` after adding the HoTools add-on folder to `sys.path`. Do not import top-level `HoTools` unless full add-on registration is needed.
+7. For Unity/glTF migration work, read `references/ir-schema.md` before proposing mapping rules.
+8. When a `.blend` is available and a full scene bundle is too large, use `SpecialTools/blender_live_inspector.py` through the matching Blender/Goo runtime for targeted live queries.
 
 ## Helper Entrypoints
 
@@ -88,6 +89,7 @@ Run `--mode audit` before proposing Blender-to-glTF/Unity migration. Use specifi
 7. Context-dependent inputs:
    - Use `--mode inputs` for UVMap, Texture Coordinate, Attribute, Object Info, Geometry, Vertex Color, Tangent, Camera/Light/Particle/Hair info nodes.
    - Mark these as requiring mesh/importer/context support beyond raw material conversion.
+   - Blender may show some missing context values in red while still rendering with fallback. A missing/invalid UV map can fall back to active/default UV behavior; a missing Attribute can return default values or object/global data depending on node type. Mark these as `fallback-suspected` instead of treating the socket value as exact evidence.
 8. Goo Engine/forked Blender:
    - If the user says the material came from Goo Engine, use `--mode goo` and `--mode source --source-profile goo`.
    - If the user does not know, use Goo suspicion as a conservative signal. Say "possibly Goo Engine/forked Blender" when unknown ShaderNode types, Goo metadata, or NPR/toon/matcap naming hints appear.
@@ -138,6 +140,7 @@ Goo Engine source backend:
 ## Design Notes
 
 - Treat node names as local graph identifiers and socket indexes as the stable disambiguator when sockets share display names.
+- Treat red/missing/invalid Blender UI values as warning evidence. Do not assume the material is broken, and do not assume the fallback is portable to Unity/glTF. Record the intended socket/node value and the likely fallback path separately.
 - Inline node groups by default, but guard against recursive group cycles.
 - Treat Blender Frame nodes, labels, and node custom colors as author intent metadata. They help explain design, cleanup candidates, and migration grouping.
 - Serialize ColorRamp elements and CurveMapping points when exporting from Blender. These are essential for AI to understand gradients and color curves.

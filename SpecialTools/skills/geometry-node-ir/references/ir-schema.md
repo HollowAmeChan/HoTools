@@ -55,3 +55,5 @@ Each `zones` item records:
 ## Boundary
 
 This schema preserves enough graph evidence for AI reasoning and converter planning. It is not a Blender evaluator. Exact generated mesh output still requires evaluating the modifier in Blender, exporting an evaluated mesh, or implementing equivalent runtime logic.
+
+Blender UI red values or missing field resources should be treated as `fallback-suspected`, not proof that the node tree is unusable. Named Attribute may return default values or `Exists=false`; invalid domains and missing resources can still produce empty/default fields. When migration depends on the result, compare the IR with evaluated mesh evidence.

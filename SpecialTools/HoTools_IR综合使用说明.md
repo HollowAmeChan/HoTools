@@ -107,6 +107,50 @@ python SpecialTools/geometry_node_ir_ai.py asset.geometry_node.json --mode audit
 9. `zones`：几何节点里的 Simulation / Repeat / For Each / Closure 执行结构。
 10. `effects`：几何节点对属性、实例、采样、材质、最终 mesh 的影响。
 
+## Blender 后台导入规则
+
+AI 写 Blender 后台脚本时，不要为了用 IR 工具去 `import HoTools`。顶层 HoTools 可能会加载 UI/GPU 绘制相关模块，在 `--background` 下容易被无关模块影响。
+
+正确做法是把 HoTools 插件目录加入 `sys.path`，然后只导入 `SpecialTools` 这个小包：
+
+```python
+import sys
+sys.path.insert(0, r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools")
+
+from SpecialTools import material_node_ir
+from SpecialTools import object_scene_ir
+from SpecialTools import geometry_node_ir
+from SpecialTools import compositor_node_ir
+```
+
+示例：
+
+```python
+ir = geometry_node_ir.build_geometry_node_ir(bpy.context, scope="SCENE")
+geometry_node_ir.write_geometry_node_ir(ir, r"C:\Temp\scene.geometry_node.json", "JSON")
+```
+
+更简单的纯命令行导出仍然可以直接跑模块文件：
+
+```powershell
+& 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --factory-startup --background 'scene.blend' --python 'SpecialTools\geometry_node_ir.py' -- --scope SCENE --output 'scene.geometry_node.json' --format JSON
+```
+
+外部 JSON 分析脚本例如 `material_ir_ai.py`、`geometry_node_ir_ai.py`、`compositor_node_ir_ai.py` 仍然是纯 Python 标准库脚本，不需要 Blender，也不需要 import `SpecialTools`。
+
+## Blender Fallback 注意事项
+
+Blender UI 里标红的字段、资源名或 socket 值，不一定等于这个图已经不能渲染。很多节点会在运行时走 fallback：
+
+- 材质里的 UV Map 名字丢失或无效时，Blender 可能回退到 active/default UV。
+- Attribute / Named Attribute 找不到时，可能返回默认值、`Exists=false`，或者由节点类型决定其它上下文值。
+- Geometry Nodes 里的缺失 field、无效 domain 转换、缺失资源，可能继续输出空/default field。
+- Compositor 里的缺失 pass、image、mask，可能变成透明、空图、默认 socket，或者只在实际渲染时暴露问题。
+
+AI 分析时要把这类情况标成 `fallback-suspected` 或 `needs-evaluated-check`。报告里同时写清楚“用户设置的原始值”和“Blender 可能采用的 fallback 路径”。不要直接说材质/节点树坏了，也不要默认 Unity、glTF、lilToon、lilPBR 会复现 Blender 的 fallback。
+
+迁移前如果这个值会影响最终效果，优先用 Object Scene IR / Live Inspector 检查 mesh 是否真的有对应 UV、Attribute、Color Attribute，再用 Blender evaluated mesh 或渲染对照确认结果。
+
 ## Live Inspector 用法
 
 Live Inspector 必须运行在 Blender/Goo 的 Python 里。用哪个 runtime 很重要：

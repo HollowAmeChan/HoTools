@@ -111,6 +111,7 @@ Use `--factory-startup` to avoid unrelated user add-on logs in background mode; 
 - Driver analysis only reports existence and target sockets. Driver logic/evaluation remains Blender-side work.
 - Image analysis can flag likely color-space risks, but final texture role should come from graph links and user review.
 - Context input analysis flags dependencies that may exceed the current material-only IR, such as UV set selection, mesh attributes, object coordinates, object random, and vertex colors.
+- Red/missing/invalid context values in Blender UI are `fallback-suspected`, not automatic hard failures. Missing UV maps may fall back to active/default UV behavior; missing attributes may return defaults or existence flags. Preserve the authored value and verify object/evaluated data before migration.
 - Goo Engine analysis is conservative. User confirmation or app metadata is strong evidence; unknown/fork-like nodes and NPR naming are only suspicion.
 - Live inspector can confirm whether Goo-specific nodes exist in the current runtime. If official Blender and Goo Engine report different node ids for the same file, prefer the authoring runtime for fork-specific material behavior and keep the mismatch in the migration report.
 

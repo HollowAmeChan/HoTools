@@ -28,6 +28,7 @@ Backend rules:
 - Use PowerShell call operator `&` and quote every path, especially paths with Chinese characters or spaces.
 - Keep the separator `--` before inspector arguments. Arguments after it belong to `blender_live_inspector.py`, not Blender.
 - Use absolute paths when running from Codex or another project. Do not assume the current directory is HoTools.
+- For custom Blender scripts, add the HoTools add-on folder to `sys.path` and import `from SpecialTools import ...`; do not import the top-level `HoTools` package unless full UI add-on registration is needed.
 - Use `--factory-startup` by default to avoid user add-on logs and startup state. Drop it only when the `.blend` needs a user add-on to register custom nodes or custom data.
 - Add Blender's `--disable-autoexec` for untrusted files. This is safer, but may hide scripted setup or driver side effects.
 - Do not use `blender-launcher.exe` for automation if it produces no stdout; use the real `blender.exe`.
@@ -107,6 +108,7 @@ Interpret compare results:
 
 - If the process exits with no JSON, check whether the executable is a launcher. Retry with the adjacent `blender.exe`.
 - If Goo nodes are undefined, rerun with Goo Engine's `blender.exe` and record both runtime versions.
+- If Blender UI would show a socket/value in red, do not collapse that to "invalid graph". Blender may still render via fallback, such as default/active UV or default attribute values. Report the value as `fallback-suspected` and compare live data with object/scene attributes or evaluated output when possible.
 - If material names include spaces, dots, Chinese text, or duplicate suffixes, copy the exact name from `--mode materials`.
 - If background loading is slow, avoid full `--mode material` on all materials. Query `materials --no-groups`, then inspect only suspicious materials.
 - If a file requires add-ons, remove `--factory-startup` after confirming `--mode app` with factory startup. Record that add-ons affected the result.

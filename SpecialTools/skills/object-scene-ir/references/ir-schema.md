@@ -40,6 +40,7 @@ Scene bundle schema id: `hotools.scene_asset_ir.v1`
 - Evaluated mesh stats can be requested but are optional because they may allocate temporary meshes.
 - This IR records Geometry Nodes modifiers but does not serialize Geometry Nodes graphs. Use `hotools.geometry_node_ir.v1` for the graph.
 - Use Material Node IR for shader logic and Object Scene IR for scene/object context.
+- Use Object Scene IR to verify Material/GN fallback suspects: a red/missing UV, Attribute, Color Attribute, or named mesh data reference in Blender may still render through Blender fallback. Missing scene data should be reported as `fallback-suspected` or `needs-evaluated-check`, not silently converted as if the named data exists.
 
 ## Live Inspector
 

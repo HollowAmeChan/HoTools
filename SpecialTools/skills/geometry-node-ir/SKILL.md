@@ -19,11 +19,22 @@ In Blender, use the HoTools View3D panel `Geometry Nodes IR` or run:
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --factory-startup --background 'asset.blend' --python 'C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools\SpecialTools\geometry_node_ir.py' -- --scope SCENE --output 'C:\Temp\asset.geometry_node.json' --format JSON
 ```
 
+For custom Blender automation, import the small package directly instead of importing all of HoTools:
+
+```python
+import sys
+sys.path.insert(0, r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools")
+from SpecialTools import geometry_node_ir
+
+ir = geometry_node_ir.build_geometry_node_ir(bpy.context, scope="SCENE")
+geometry_node_ir.write_geometry_node_ir(ir, r"C:\Temp\asset.geometry_node.json", "JSON")
+```
+
 Use matching runtimes:
 
 - Official Blender GN asset: use official Blender with the same major/minor version when possible.
 - Goo-authored file: use Goo Engine's real `blender.exe`, not `blender-launcher.exe`.
-- In background mode, prefer `--python SpecialTools/geometry_node_ir.py -- ...` over importing the whole HoTools package. Some unrelated UI/GPU add-on modules may not be background-safe.
+- In background mode, avoid `import HoTools` when only IR tools are needed. `from SpecialTools import geometry_node_ir` is the intended package import, and `--python SpecialTools/geometry_node_ir.py -- ...` is the simplest CLI path.
 
 ## Helper Entrypoints
 
@@ -59,6 +70,7 @@ Flag these as important:
 - Set Material/Set Position/Delete Geometry/Join Geometry: affects final mesh and material slots.
 - Bake nodes: check whether Blender cached data should be used or live graph output should be evaluated.
 - Drivers on socket defaults: record presence, do not attempt to evaluate expressions.
+- Red/missing field inputs in Blender can still evaluate through fallback behavior. Named Attribute can return Exists=false/default values, invalid domain conversions may produce empty/default fields, and missing resources may keep the node tree structurally valid. Mark these as `fallback-suspected` and prefer evaluated mesh evidence when migration depends on the result.
 
 ## Relationship To Other IR
 

@@ -15,6 +15,17 @@ Run inside the matching Blender/Goo runtime:
 & 'D:\Blender\blender-4.5.8-windows-x64\blender.exe' --factory-startup --background 'scene.blend' --python 'C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools\SpecialTools\compositor_node_ir.py' -- --output 'C:\Temp\scene.compositor_node.json' --format JSON
 ```
 
+For custom Blender automation, import only `SpecialTools`, not the whole HoTools add-on:
+
+```python
+import sys
+sys.path.insert(0, r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools")
+from SpecialTools import compositor_node_ir
+
+ir = compositor_node_ir.build_compositor_node_ir(bpy.context.scene)
+compositor_node_ir.write_compositor_node_ir(ir, r"C:\Temp\scene.compositor_node.json", "JSON")
+```
+
 Use the Node Editor panel `HoTools > Compositor Node IR` when working interactively in a Compositor node tree.
 
 ## Helper
@@ -57,6 +68,8 @@ Lookup rule: convert `CompositorNodeGlare` to likely `node_composite_glare.cc`, 
 ## Boundary
 
 This IR describes the compositor graph. It does not serialize renderer settings, view transform/look, pass enable flags, render engine, camera, or output resolution. If a compositor depends on Render Layers passes that are not enabled in Blender, the graph can be structurally correct while the render result still differs.
+
+Blender compositor nodes may also show missing pass/image/mask values in red while evaluating a fallback, transparent result, or empty/default socket value. Treat those as `fallback-suspected`: keep the node/link evidence, but do not assume Unity/offline tools will reproduce Blender's fallback unless the fallback is explicitly implemented.
 
 ## Files
 
