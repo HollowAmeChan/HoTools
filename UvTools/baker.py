@@ -173,6 +173,196 @@ def fill_local_uv_triangle(img_arr, pts, local_uvs):
                                255)
 
 
+def distance_transform_1d_into(f, d, v, z, n):
+    k = 0
+    v[0] = 0
+    z[0] = -np.inf
+    z[1] = np.inf
+
+    for q in range(1, n):
+        q2 = q * q
+        while True:
+            p = v[k]
+            s = ((f[q] + q2) - (f[p] + p * p)) / (2.0 * q - 2.0 * p)
+            if s > z[k]:
+                break
+            k -= 1
+
+        k += 1
+        v[k] = q
+        z[k] = s
+        z[k + 1] = np.inf
+
+    k = 0
+    for q in range(n):
+        while z[k + 1] < q:
+            k += 1
+        p = v[k]
+        d[q] = (q - p) * (q - p) + f[p]
+
+
+def euclidean_distance_transform(seeds):
+    inf = 1.0e20
+    f = np.empty(seeds.shape, dtype=np.float64)
+    f[seeds] = 0.0
+    f[~seeds] = inf
+    height, width = f.shape
+    tmp = np.empty_like(f)
+    max_len = max(height, width)
+    v = np.empty(max_len, dtype=np.int32)
+    z = np.empty(max_len + 1, dtype=np.float64)
+
+    for y in range(height):
+        distance_transform_1d_into(f[y, :], tmp[y, :], v, z, width)
+
+    tmp_t = np.ascontiguousarray(tmp.T)
+    out_t = np.empty_like(tmp_t)
+    for x in range(width):
+        distance_transform_1d_into(tmp_t[x, :], out_t[x, :], v, z, height)
+
+    return out_t.T
+
+
+def get_resample_filter():
+    if hasattr(Image, "Resampling"):
+        return Image.Resampling.LANCZOS
+    return Image.LANCZOS
+
+
+def rasterize_object_uv_mask(obj, depsgraph, draw, width, height):
+    eval_obj = obj.evaluated_get(depsgraph)
+    mesh = eval_obj.to_mesh()
+    try:
+        uv_layer = mesh.uv_layers.active
+        if uv_layer is None:
+            return None
+
+        drawn_faces = 0
+
+        for poly in mesh.polygons:
+            loop_indices = poly.loop_indices
+            if len(loop_indices) < 3:
+                continue
+
+            pts = []
+            for loop_index in loop_indices:
+                uv = uv_layer.data[loop_index].uv
+                pts.append((uv.x * width, (1.0 - uv.y) * height))
+
+            for i in range(1, len(pts) - 1):
+                draw.polygon([pts[0], pts[i], pts[i + 1]], fill=255)
+                drawn_faces += 1
+
+        return drawn_faces
+    finally:
+        eval_obj.to_mesh_clear()
+
+
+def apply_black_mask(pil_img, mask):
+    if mask is None or not mask.any():
+        return pil_img
+
+    mask_img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
+    if mask_img.size != pil_img.size:
+        mask_img = mask_img.resize(pil_img.size, get_resample_filter())
+
+    mask_arr = np.array(mask_img, dtype=np.uint8)
+    if not mask_arr.any():
+        return pil_img
+
+    img_arr = np.array(pil_img)
+    cond = mask_arr > 0
+    img_arr[cond, 0:3] = 0
+    img_arr[cond, 3] = np.maximum(img_arr[cond, 3], mask_arr[cond])
+    return Image.fromarray(img_arr, mode="RGBA")
+
+
+def build_inner_distance_gray(mask, max_distance, scale):
+    gray = np.zeros(mask.shape, dtype=np.uint8)
+    ys, xs = np.nonzero(mask)
+    if len(xs) == 0:
+        return gray
+
+    min_x = int(xs.min())
+    max_x = int(xs.max()) + 1
+    min_y = int(ys.min())
+    max_y = int(ys.max()) + 1
+    crop_mask = mask[min_y:max_y, min_x:max_x]
+
+    padded_mask = np.zeros(
+        (crop_mask.shape[0] + 2, crop_mask.shape[1] + 2), dtype=bool)
+    padded_mask[1:-1, 1:-1] = crop_mask
+    dist_sq = euclidean_distance_transform(~padded_mask)
+    dist = dist_sq[1:-1, 1:-1]
+    np.sqrt(dist, out=dist)
+    dist -= 0.5
+    np.maximum(dist, 0.0, out=dist)
+    dist /= scale * float(max_distance)
+    np.clip(dist, 0.0, 1.0, out=dist)
+    crop_gray = dist
+    crop_gray = (crop_gray * 255.0 + 0.5).astype(np.uint8)
+    crop_gray[~crop_mask] = 0
+    gray[min_y:max_y, min_x:max_x] = crop_gray
+    return gray
+
+
+def push_temp_export_undo(message):
+    try:
+        bpy.ops.ed.undo_push(message=message)
+        return True
+    except RuntimeError:
+        return False
+
+
+def reset_temp_export_undo(message):
+    try:
+        bpy.ops.ed.undo_push(message="")
+        bpy.ops.ed.undo()
+        bpy.ops.ed.undo_push(message=message)
+        return True
+    except RuntimeError:
+        return False
+
+
+def enter_object_mode_for_export(context):
+    active_obj = context.view_layer.objects.active
+    previous_mode = active_obj.mode if active_obj is not None else 'OBJECT'
+    switched = False
+
+    if active_obj is not None and previous_mode != 'OBJECT':
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+            switched = True
+        except RuntimeError:
+            pass
+
+    return active_obj, previous_mode, switched
+
+
+def restore_export_mode(context, mode_state):
+    active_obj, previous_mode, switched = mode_state
+    if not switched or previous_mode == 'OBJECT' or active_obj is None:
+        return
+    if active_obj.name not in bpy.data.objects:
+        return
+
+    try:
+        context.view_layer.objects.active = active_obj
+        if active_obj.select_get():
+            bpy.ops.object.mode_set(mode=previous_mode)
+    except RuntimeError:
+        pass
+
+
+def set_modifier_enum_if_available(modifier, prop_name, value):
+    if not hasattr(modifier, prop_name):
+        return
+    try:
+        setattr(modifier, prop_name, value)
+    except TypeError:
+        pass
+
+
 class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     """将所有选中物体的UV岛填充为纯色并导出为一张图像"""
     bl_idname = "ho.uvtools_bakeuvisland_image"
@@ -790,6 +980,199 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
+    """导出UV岛内部到边缘的欧氏距离场"""
+    bl_idname = "ho.uvtools_bake_island_sdf_image"
+    bl_label = "导出岛SDF图"
+    bl_description = "离线烘焙UV岛内部到边缘的精确欧氏距离场,白色表示离边缘更远"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+    max_distance: IntProperty(
+        name="最大距离像素", default=64, min=1, description="达到此岛内距离后输出纯白")  # type: ignore
+    temp_subdivide: BoolProperty(
+        name="临时细分2级", default=False, description="烘焙前临时添加2级Subdivision Surface,导出后自动移除")  # type: ignore
+    temp_subdivide_uv_smooth: EnumProperty(name="细分UV平滑",
+                                           items=[
+                                               ('SMOOTH_ALL', "平滑全部", "使用细分后的平滑UV形状"),
+                                               ('PRESERVE_BOUNDARIES', "保留边界", "保持UV岛边界锐利")
+                                           ],
+                                           default='SMOOTH_ALL'
+                                           )  # type: ignore
+    fill_subdivide_shrink: BoolProperty(
+        name="补黑细分收缩", default=True, description="对比原始UV和细分后UV,将细分后收缩掉的像素填黑")  # type: ignore
+    supersample: EnumProperty(name="超采样",
+                              items=[
+                                  ('1', "1x", "最快"),
+                                  ('2', "2x", "更平滑"),
+                                  ('4', "4x", "最平滑,内存和时间开销较高")
+                              ],
+                              default='1'
+                              )  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "dilate_radius")
+        layout.prop(self, "max_distance")
+        layout.prop(self, "temp_subdivide")
+        if self.temp_subdivide:
+            layout.prop(self, "temp_subdivide_uv_smooth")
+            layout.prop(self, "fill_subdivide_shrink")
+        layout.prop(self, "supersample")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+
+        width = self.image_width
+        height = self.image_height
+        scale = int(self.supersample)
+        hi_width = width * scale
+        hi_height = height * scale
+        if hi_width * hi_height > 100_000_000:
+            self.report({'ERROR'}, "岛SDF超采样图过大,请降低图像尺寸或超采样倍率")
+            return {'CANCELLED'}
+
+        mask_img = Image.new("L", (hi_width, hi_height), 0)
+        draw = ImageDraw.Draw(mask_img)
+        base_mask_img = None
+        base_draw = None
+        if self.temp_subdivide and self.fill_subdivide_shrink:
+            base_mask_img = Image.new("L", (hi_width, hi_height), 0)
+            base_draw = ImageDraw.Draw(base_mask_img)
+        depsgraph = context.evaluated_depsgraph_get()
+        island_count = 0
+        skipped_objects = []
+        undo_restore_needed = False
+        temp_modifiers = []
+
+        if self.temp_subdivide:
+            undo_restore_needed = push_temp_export_undo(
+                "Prepare HoTools Island SDF")
+
+        try:
+            raster_objs = selected_objs
+            if base_draw is not None:
+                raster_objs = []
+                for obj in selected_objs:
+                    base_island_count = rasterize_object_uv_mask(
+                        obj, depsgraph, base_draw, hi_width, hi_height)
+                    if base_island_count is None:
+                        skipped_objects.append(f"{obj.name}(无UV)")
+                        continue
+                    raster_objs.append(obj)
+
+            if self.temp_subdivide:
+                for obj in raster_objs:
+                    temp_modifier = obj.modifiers.new(
+                        name="__HoTools_Temp_SDF_Subdivide__",
+                        type='SUBSURF'
+                    )
+                    temp_modifier.levels = 2
+                    temp_modifier.render_levels = 2
+                    temp_modifier.subdivision_type = 'CATMULL_CLARK'
+                    set_modifier_enum_if_available(
+                        temp_modifier,
+                        "uv_smooth",
+                        self.temp_subdivide_uv_smooth
+                    )
+                    temp_modifiers.append((obj, temp_modifier))
+                context.view_layer.update()
+                depsgraph = context.evaluated_depsgraph_get()
+
+            for obj in raster_objs:
+                object_island_count = rasterize_object_uv_mask(
+                    obj, depsgraph, draw, hi_width, hi_height)
+                if object_island_count is None:
+                    skipped_objects.append(f"{obj.name}(无UV)")
+                    continue
+
+                island_count += object_island_count
+        finally:
+            if self.temp_subdivide:
+                restored_by_undo = False
+                if undo_restore_needed:
+                    restored_by_undo = reset_temp_export_undo(
+                        "Bake HoTools Island SDF")
+                if not restored_by_undo:
+                    for obj, temp_modifier in reversed(temp_modifiers):
+                        try:
+                            obj.modifiers.remove(temp_modifier)
+                        except (ReferenceError, RuntimeError):
+                            pass
+                    context.view_layer.update()
+
+        if island_count == 0:
+            self.report({'ERROR'}, "没有可导出的UV岛")
+            return {'CANCELLED'}
+
+        mask = np.array(mask_img, dtype=np.uint8) > 0
+        if not mask.any():
+            self.report({'ERROR'}, "UV岛没有落在导出图像范围内")
+            return {'CANCELLED'}
+
+        shrink_mask = None
+        if base_mask_img is not None:
+            base_mask = np.array(base_mask_img, dtype=np.uint8) > 0
+            shrink_mask = base_mask & ~mask
+
+        gray = build_inner_distance_gray(mask, self.max_distance, scale)
+
+        alpha_inside = np.full_like(gray, 255, dtype=np.uint8)
+        alpha_outside = np.full_like(gray, int(self.background_alpha * 255), dtype=np.uint8)
+        alpha = np.where(mask, alpha_inside, alpha_outside).astype(np.uint8)
+        rgba = np.dstack((gray, gray, gray, alpha))
+        pil_img = Image.fromarray(rgba, mode="RGBA")
+
+        if scale > 1:
+            pil_img = pil_img.resize((width, height), get_resample_filter())
+
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+        pil_img = apply_black_mask(pil_img, shrink_mask)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
+        save_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report({'INFO'}, f"已导出岛SDF图像: {final_path}")
+        return {'FINISHED'}
+
+
 def linear_channel_to_srgb(c):
     return 12.92 * c if c <= 0.0031308 else 1.055 * pow(c, 1.0 / 2.4) - 0.055
 
@@ -1066,6 +1449,13 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         layout.prop(self, "dilate_radius")
 
     def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
         base_path = os.path.splitext(self.filepath)[0]
         temp_files = []
         width = self.image_width
@@ -1188,6 +1578,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
 
     row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
     row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
+    row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text="岛SDF")
 
 
     # box = layout.box()
@@ -1196,7 +1587,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
