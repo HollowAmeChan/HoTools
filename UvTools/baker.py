@@ -852,6 +852,125 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
+    """导出按材质区分颜色的UV ID图"""
+    bl_idname = "ho.uvtools_bake_materialid_image"
+    bl_label = "导出材质ID图"
+    bl_description = "将每个材质的UV区域填充为不同颜色并导出为一张图像"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    image_format: EnumProperty(
+        name="图像格式",
+        items=[
+            ('PNG', "PNG", ""),
+            ('JPEG', "JPEG", "")
+        ],
+        default='PNG'
+    )  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        def random_color(seed):
+            random.seed(seed)
+            return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 255)
+
+        def material_key(mesh, material_index):
+            if 0 <= material_index < len(mesh.materials):
+                mat = mesh.materials[material_index]
+                if mat is not None:
+                    return ("MATERIAL", mat.as_pointer())
+            return ("NO_MATERIAL", material_index)
+
+        width = self.image_width
+        height = self.image_height
+        background_alpha_255 = int(self.background_alpha * 255)
+        pil_img = Image.new("RGBA", (width, height),
+                            (0, 0, 0, background_alpha_255))
+        draw = ImageDraw.Draw(pil_img)
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+
+        depsgraph = context.evaluated_depsgraph_get()
+        material_colors = {}
+        skipped_objects = []
+
+        for obj in selected_objs:
+            eval_obj = obj.evaluated_get(depsgraph)
+            mesh = eval_obj.to_mesh()
+            try:
+                uv_layer = mesh.uv_layers.active
+                if uv_layer is None:
+                    skipped_objects.append(f"{obj.name}(无UV)")
+                    continue
+
+                for poly in mesh.polygons:
+                    loop_indices = poly.loop_indices
+                    if len(loop_indices) < 3:
+                        continue
+
+                    key = material_key(mesh, poly.material_index)
+                    color = material_colors.get(key)
+                    if color is None:
+                        color = random_color(len(material_colors))
+                        material_colors[key] = color
+
+                    pts = []
+                    for loop_index in loop_indices:
+                        uv = uv_layer.data[loop_index].uv
+                        pts.append((uv.x * width, (1.0 - uv.y) * height))
+
+                    for i in range(1, len(pts) - 1):
+                        draw.polygon([pts[0], pts[i], pts[i + 1]], fill=color)
+            finally:
+                eval_obj.to_mesh_clear()
+
+        if not material_colors:
+            self.report({'ERROR'}, "没有可导出的材质ID")
+            return {'CANCELLED'}
+
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
+        save_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report({'INFO'}, f"已导出材质ID图像: {final_path}")
+        return {'FINISHED'}
+
+
 class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
     """导出每个UV岛各自归一化的局部UV坐标图"""
     bl_idname = "ho.uvtools_bake_island_uvmap_image"
@@ -1425,22 +1544,21 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
 
     export_UVIslandImage: BoolProperty(
         name="UV岛", default=True)  # type: ignore
-    export_IslandUVMapImage: BoolProperty(
-        name="岛UV", default=True)  # type: ignore
     export_MeshIslandImage: BoolProperty(
         name="Mesh岛", default=True)  # type: ignore
     export_FaceIDImage: BoolProperty(name="面", default=True)  # type: ignore
     export_ObjectIDImage: BoolProperty(name="物体", default=True)  # type: ignore
+    export_MaterialIDImage: BoolProperty(name="材质", default=True)  # type: ignore
     export_LineImage: BoolProperty(name="线框", default=True)  # type: ignore
 
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
         col.prop(self, "export_UVIslandImage", toggle=True)
-        col.prop(self, "export_IslandUVMapImage", toggle=True)
         col.prop(self, "export_MeshIslandImage", toggle=True)
         col.prop(self, "export_FaceIDImage", toggle=True)
         col.prop(self, "export_ObjectIDImage", toggle=True)
+        col.prop(self, "export_MaterialIDImage", toggle=True)
         col.prop(self, "export_LineImage", toggle=True)
 
         layout.prop(self, "image_width")
@@ -1478,22 +1596,6 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 self.report({'ERROR'}, "UV岛导出失败")
                 return {'CANCELLED'}
             temp_files.append(base_path + "_UVIsland.png")
-
-        # 调用每岛UV图导出
-        if self.export_IslandUVMapImage:
-            result = bpy.ops.ho.uvtools_bake_island_uvmap_image(
-                'EXEC_DEFAULT',
-                filepath=base_path + "_IslandUV.png",
-                image_width=width,
-                image_height=height,
-                background_alpha=alpha,
-                dilate_radius=radius,
-                image_format='PNG'
-            )
-            if result != {'FINISHED'}:
-                self.report({'ERROR'}, "岛UV导出失败")
-                return {'CANCELLED'}
-            temp_files.append(base_path + "_IslandUV.png")
 
          # 调用Mesh岛导出
         if self.export_MeshIslandImage:
@@ -1543,6 +1645,22 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 return {'CANCELLED'}
             temp_files.append(base_path + "_ObjectID.png")
 
+        # 调用MaterialID导出
+        if self.export_MaterialIDImage:
+            result = bpy.ops.ho.uvtools_bake_materialid_image(
+                'EXEC_DEFAULT',
+                filepath=base_path + "_MaterialID.png",
+                image_width=width,
+                image_height=height,
+                background_alpha=alpha,
+                dilate_radius=radius,
+                image_format='PNG'
+            )
+            if result != {'FINISHED'}:
+                self.report({'ERROR'}, "材质ID导出失败")
+                return {'CANCELLED'}
+            temp_files.append(base_path + "_MaterialID.png")
+
         # 调用线框导出
         if self.export_LineImage:
             result = bpy.ops.uv.export_layout(
@@ -1572,6 +1690,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
     row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
     row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
+    row.operator(OT_UVTools_BakeMaterialIDImage.bl_idname, text="材质ID")
     row.operator("uv.export_layout", text="网格")
     row = box.row(align=True)
     row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
@@ -1587,7 +1706,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
