@@ -427,14 +427,17 @@ def uv_reprojectionTransfer(
             )
 
             region = out[min_y:max_y+1, min_x:max_x+1]
+            masked_colors = colors[mask]
 
             if isNormal:
-                region[mask] = colors[mask]
+                region[mask] = masked_colors
                 region[mask, 3] = 1.0
             else:
-                a_col = colors[..., 3:4]
-                region[..., :3] = colors[..., :3] * a_col + region[..., :3] * (1.0 - a_col)
-                region[..., 3] = np.maximum(region[..., 3], colors[..., 3])
+                src_a = masked_colors[:, 3:4]
+                dst_rgb = region[mask, :3]
+                dst_a = region[mask, 3]
+                region[mask, :3] = masked_colors[:, :3] * src_a + dst_rgb * (1.0 - src_a)
+                region[mask, 3] = np.maximum(dst_a, masked_colors[:, 3])
 
             out[min_y:max_y+1, min_x:max_x+1] = region
 
