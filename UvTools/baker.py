@@ -86,6 +86,93 @@ def fill_weight_triangle(img_arr, pts, weights):
             img_arr[py, px] = (gray, gray, gray, 255)
 
 
+def get_face_edge_uv_pair(face, edge, uv_layer):
+    for loop in face.loops:
+        if loop.edge == edge:
+            return loop[uv_layer].uv.copy(), loop.link_loop_next[uv_layer].uv.copy()
+    return None
+
+
+def uv_edge_connected(face, linked_face, edge, uv_layer, epsilon=1e-5):
+    pair_a = get_face_edge_uv_pair(face, edge, uv_layer)
+    pair_b = get_face_edge_uv_pair(linked_face, edge, uv_layer)
+    if pair_a is None or pair_b is None:
+        return False
+
+    a0, a1 = pair_a
+    b0, b1 = pair_b
+    same_dir = (a0 - b0).length < epsilon and (a1 - b1).length < epsilon
+    flip_dir = (a0 - b1).length < epsilon and (a1 - b0).length < epsilon
+    return same_dir or flip_dir
+
+
+def find_uv_islands(bm, uv_layer):
+    islands = []
+    visited = set()
+
+    for face in bm.faces:
+        if face in visited:
+            continue
+
+        island_faces = set()
+        stack = [face]
+        while stack:
+            f = stack.pop()
+            if f in island_faces:
+                continue
+
+            island_faces.add(f)
+            visited.add(f)
+
+            for edge in f.edges:
+                for linked_face in edge.link_faces:
+                    if linked_face == f or linked_face in island_faces or linked_face in visited:
+                        continue
+                    if uv_edge_connected(f, linked_face, edge, uv_layer):
+                        stack.append(linked_face)
+
+        islands.append(island_faces)
+
+    return islands
+
+
+def fill_local_uv_triangle(img_arr, pts, local_uvs):
+    x0, y0 = pts[0]
+    x1, y1 = pts[1]
+    x2, y2 = pts[2]
+    uv0, uv1, uv2 = local_uvs
+
+    denom = ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2))
+    if abs(denom) < 1e-8:
+        return
+
+    height, width = img_arr.shape[:2]
+    min_x = max(0, int(np.floor(min(x0, x1, x2))))
+    max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(np.floor(min(y0, y1, y2))))
+    max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
+
+    for py in range(min_y, max_y + 1):
+        sample_y = py + 0.5
+        for px in range(min_x, max_x + 1):
+            sample_x = px + 0.5
+            b0 = ((y1 - y2) * (sample_x - x2) +
+                  (x2 - x1) * (sample_y - y2)) / denom
+            b1 = ((y2 - y0) * (sample_x - x2) +
+                  (x0 - x2) * (sample_y - y2)) / denom
+            b2 = 1.0 - b0 - b1
+
+            if b0 < -1e-6 or b1 < -1e-6 or b2 < -1e-6:
+                continue
+
+            local_u = max(0.0, min(1.0, b0 * uv0[0] + b1 * uv1[0] + b2 * uv2[0]))
+            local_v = max(0.0, min(1.0, b0 * uv0[1] + b1 * uv1[1] + b2 * uv2[1]))
+            img_arr[py, px] = (int(local_u * 255 + 0.5),
+                               int(local_v * 255 + 0.5),
+                               0,
+                               255)
+
+
 class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     """将所有选中物体的UV岛填充为纯色并导出为一张图像"""
     bl_idname = "ho.uvtools_bakeuvisland_image"
@@ -575,6 +662,134 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
+    """导出每个UV岛各自归一化的局部UV坐标图"""
+    bl_idname = "ho.uvtools_bake_island_uvmap_image"
+    bl_label = "导出岛UV图"
+    bl_description = "每个UV岛单独归一化到0-1并写入RG通道, R=U, G=V"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        width = self.image_width
+        height = self.image_height
+        background_alpha_255 = int(self.background_alpha * 255)
+        img_arr = np.zeros((height, width, 4), dtype=np.uint8)
+        img_arr[:, :, 3] = background_alpha_255
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+
+        depsgraph = context.evaluated_depsgraph_get()
+        island_count = 0
+        skipped_objects = []
+
+        for obj in selected_objs:
+            eval_obj = obj.evaluated_get(depsgraph)
+            mesh = eval_obj.to_mesh()
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+            uv_layer = bm.loops.layers.uv.active
+            if uv_layer is None:
+                skipped_objects.append(f"{obj.name}(无UV)")
+                bm.free()
+                eval_obj.to_mesh_clear()
+                continue
+
+            bm.faces.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+
+            for island_faces in find_uv_islands(bm, uv_layer):
+                island_uvs = [
+                    loop[uv_layer].uv
+                    for face in island_faces
+                    for loop in face.loops
+                ]
+                if not island_uvs:
+                    continue
+
+                min_u = min(uv.x for uv in island_uvs)
+                max_u = max(uv.x for uv in island_uvs)
+                min_v = min(uv.y for uv in island_uvs)
+                max_v = max(uv.y for uv in island_uvs)
+                u_range = max_u - min_u
+                v_range = max_v - min_v
+                if abs(u_range) < 1e-8:
+                    u_range = 1.0
+                if abs(v_range) < 1e-8:
+                    v_range = 1.0
+
+                for face in island_faces:
+                    if len(face.loops) < 3:
+                        continue
+
+                    uvs = [loop[uv_layer].uv.copy() for loop in face.loops]
+                    pts = [(uv.x * width, (1.0 - uv.y) * height)
+                           for uv in uvs]
+                    local_uvs = [((uv.x - min_u) / u_range,
+                                  (uv.y - min_v) / v_range)
+                                 for uv in uvs]
+
+                    for i in range(1, len(pts) - 1):
+                        fill_local_uv_triangle(
+                            img_arr,
+                            [pts[0], pts[i], pts[i + 1]],
+                            [local_uvs[0], local_uvs[i], local_uvs[i + 1]]
+                        )
+
+                island_count += 1
+
+            bm.free()
+            eval_obj.to_mesh_clear()
+
+        if island_count == 0:
+            self.report({'ERROR'}, "没有可导出的UV岛")
+            return {'CANCELLED'}
+
+        pil_img = Image.fromarray(img_arr, mode="RGBA")
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
+        save_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report({'INFO'}, f"已导出岛UV图像: {final_path}")
+        return {'FINISHED'}
+
+
 def linear_channel_to_srgb(c):
     return 12.92 * c if c <= 0.0031308 else 1.055 * pow(c, 1.0 / 2.4) - 0.055
 
@@ -827,6 +1042,8 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
 
     export_UVIslandImage: BoolProperty(
         name="UV岛", default=True)  # type: ignore
+    export_IslandUVMapImage: BoolProperty(
+        name="岛UV", default=True)  # type: ignore
     export_MeshIslandImage: BoolProperty(
         name="Mesh岛", default=True)  # type: ignore
     export_FaceIDImage: BoolProperty(name="面", default=True)  # type: ignore
@@ -837,6 +1054,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
         layout = self.layout
         col = layout.column(align=True)
         col.prop(self, "export_UVIslandImage", toggle=True)
+        col.prop(self, "export_IslandUVMapImage", toggle=True)
         col.prop(self, "export_MeshIslandImage", toggle=True)
         col.prop(self, "export_FaceIDImage", toggle=True)
         col.prop(self, "export_ObjectIDImage", toggle=True)
@@ -870,6 +1088,22 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 self.report({'ERROR'}, "UV岛导出失败")
                 return {'CANCELLED'}
             temp_files.append(base_path + "_UVIsland.png")
+
+        # 调用每岛UV图导出
+        if self.export_IslandUVMapImage:
+            result = bpy.ops.ho.uvtools_bake_island_uvmap_image(
+                'EXEC_DEFAULT',
+                filepath=base_path + "_IslandUV.png",
+                image_width=width,
+                image_height=height,
+                background_alpha=alpha,
+                dilate_radius=radius,
+                image_format='PNG'
+            )
+            if result != {'FINISHED'}:
+                self.report({'ERROR'}, "岛UV导出失败")
+                return {'CANCELLED'}
+            temp_files.append(base_path + "_IslandUV.png")
 
          # 调用Mesh岛导出
         if self.export_MeshIslandImage:
@@ -953,6 +1187,8 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
 
     row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
+    row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
+
 
     # box = layout.box()
     # box.label(text="检查UV")
@@ -960,7 +1196,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
