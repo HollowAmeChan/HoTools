@@ -219,28 +219,40 @@ class OmniCompiler:
             )
             return reg
 
+        def compile_multi_input(sock, trace_kind="multi"):
+            socket_links = sorted(
+                sock.links,
+                key=lambda link: (link.from_node.name, link.from_socket.identifier),
+            )
+            if not socket_links:
+                reg = compile_single_input(sock)
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Use {trace_kind} default r{reg} for "
+                    f"{OmniDebug.node_name(sock.node)}.{OmniDebug.socket_name(sock)}",
+                )
+                return [reg]
+
+            regs = []
+            for link in socket_links:
+                key = (link.from_node.name, link.from_socket.identifier)
+                reg = reg_map[key]
+                regs.append(reg)
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Use {trace_kind} bridge r{reg} {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
+                    f"{OmniDebug.node_name(sock.node)}.{OmniDebug.socket_name(sock)}",
+                )
+            return regs
+
         def compile_node_inputs(node):
             input_regs = []
             socket_is_multi = getattr(node, "_socket_is_multi", None) or {}
 
             for sock in node.inputs:
                 is_multi = socket_is_multi.get(sock.identifier, False)
-                socket_links = sorted(
-                    sock.links,
-                    key=lambda link: (link.from_node.name, link.from_socket.identifier),
-                )
                 if is_multi:
-                    regs = []
-                    for link in socket_links:
-                        key = (link.from_node.name, link.from_socket.identifier)
-                        reg = reg_map[key]
-                        regs.append(reg)
-                        OmniDebug.append_compile_trace(
-                            graph,
-                            f"Use multi bridge r{reg} {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
-                            f"{OmniDebug.node_name(node)}.{OmniDebug.socket_name(sock)}",
-                        )
-                    input_regs.append(regs)
+                    input_regs.append(compile_multi_input(sock, trace_kind="multi"))
                 else:
                     input_regs.append(compile_single_input(sock))
 
@@ -398,22 +410,8 @@ class OmniCompiler:
                 input_regs = []
 
                 for index, sock in enumerate(node.inputs):
-                    socket_links = sorted(
-                        sock.links,
-                        key=lambda link: (link.from_node.name, link.from_socket.identifier),
-                    )
                     if index == batch_input_index:
-                        regs = []
-                        for link in socket_links:
-                            key = (link.from_node.name, link.from_socket.identifier)
-                            reg = reg_map[key]
-                            regs.append(reg)
-                            OmniDebug.append_compile_trace(
-                                graph,
-                                f"Use batch bridge r{reg} {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
-                                f"{OmniDebug.node_name(node)}.{OmniDebug.socket_name(sock)}",
-                            )
-                        input_regs.append(regs)
+                        input_regs.append(compile_multi_input(sock, trace_kind="batch"))
                     else:
                         input_regs.append(compile_single_input(sock))
 
