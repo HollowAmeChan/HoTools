@@ -5,9 +5,9 @@ import random
 import numpy as np
 
 if sys.version_info >= (3, 13):
-    from .._Lib.py313.PIL import Image, ImageDraw
+    from .._Lib.py313.PIL import Image, ImageDraw, ImageFilter
 elif sys.version_info >= (3, 11):
-    from .._Lib.py311.PIL import Image, ImageDraw
+    from .._Lib.py311.PIL import Image, ImageDraw, ImageFilter
 
 import bmesh
 from bpy.types import Operator, Panel, Menu
@@ -315,6 +315,195 @@ def rasterize_gravity_field_triangle(img_arr, pts, flows, strength_scale=1.0,
         target[inside] = encoded
 
     return True
+
+
+def rasterize_surface_sample_triangle(mask, pos_x, pos_y, pos_z, normal_x, normal_y,
+                                      normal_z, pts, positions, normals,
+                                      max_bbox_pixels=32_000_000, chunk_rows=32):
+    x0, y0 = pts[0]
+    x1, y1 = pts[1]
+    x2, y2 = pts[2]
+    p0, p1, p2 = positions
+    n0, n1, n2 = normals
+
+    denom = ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2))
+    if abs(denom) < 1e-8:
+        return False
+
+    height, width = mask.shape
+    min_x = max(0, int(np.floor(min(x0, x1, x2))))
+    max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(np.floor(min(y0, y1, y2))))
+    max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
+    if min_x > max_x or min_y > max_y:
+        return False
+    if (max_x - min_x + 1) * (max_y - min_y + 1) > max_bbox_pixels:
+        return False
+
+    xs = np.arange(min_x, max_x + 1, dtype=np.float32)[None, :] + 0.5
+    denom = np.float32(denom)
+
+    for y_start in range(min_y, max_y + 1, chunk_rows):
+        y_end = min(max_y, y_start + chunk_rows - 1)
+        ys = np.arange(y_start, y_end + 1, dtype=np.float32)[:, None] + 0.5
+
+        b0 = ((y1 - y2) * (xs - x2) + (x2 - x1) * (ys - y2)) / denom
+        b1 = ((y2 - y0) * (xs - x2) + (x0 - x2) * (ys - y2)) / denom
+        b2 = 1.0 - b0 - b1
+        inside = (b0 >= 0.0) & (b1 >= 0.0) & (b2 >= 0.0)
+        if not inside.any():
+            continue
+
+        mb0 = b0[inside]
+        mb1 = b1[inside]
+        mb2 = b2[inside]
+        px = mb0 * p0[0] + mb1 * p1[0] + mb2 * p2[0]
+        py = mb0 * p0[1] + mb1 * p1[1] + mb2 * p2[1]
+        pz = mb0 * p0[2] + mb1 * p1[2] + mb2 * p2[2]
+        nx = mb0 * n0[0] + mb1 * n1[0] + mb2 * n2[0]
+        ny = mb0 * n0[1] + mb1 * n1[1] + mb2 * n2[1]
+        nz = mb0 * n0[2] + mb1 * n1[2] + mb2 * n2[2]
+        normal_length = np.sqrt(nx * nx + ny * ny + nz * nz)
+        valid = normal_length > 1e-8
+        nx[valid] /= normal_length[valid]
+        ny[valid] /= normal_length[valid]
+        nz[valid] /= normal_length[valid]
+
+        target_mask = mask[y_start:y_end + 1, min_x:max_x + 1]
+        target_x = pos_x[y_start:y_end + 1, min_x:max_x + 1]
+        target_y = pos_y[y_start:y_end + 1, min_x:max_x + 1]
+        target_z = pos_z[y_start:y_end + 1, min_x:max_x + 1]
+        target_nx = normal_x[y_start:y_end + 1, min_x:max_x + 1]
+        target_ny = normal_y[y_start:y_end + 1, min_x:max_x + 1]
+        target_nz = normal_z[y_start:y_end + 1, min_x:max_x + 1]
+        target_mask[inside] = True
+        target_x[inside] = px.astype(np.float32)
+        target_y[inside] = py.astype(np.float32)
+        target_z[inside] = pz.astype(np.float32)
+        target_nx[inside] = nx.astype(np.float32)
+        target_ny[inside] = ny.astype(np.float32)
+        target_nz[inside] = nz.astype(np.float32)
+
+    return True
+
+
+SIX_DIRECTION_VISIBILITY_DIRS = [
+    (Vector((1.0, 0.0, 0.0)), 0, True),
+    (Vector((0.0, 1.0, 0.0)), 1, True),
+    (Vector((0.0, 0.0, 1.0)), 2, True),
+    (Vector((-1.0, 0.0, 0.0)), 0, False),
+    (Vector((0.0, -1.0, 0.0)), 1, False),
+    (Vector((0.0, 0.0, -1.0)), 2, False),
+]
+
+
+def scene_ray_cast(scene, depsgraph, origin, direction, max_distance):
+    try:
+        return scene.ray_cast(depsgraph, origin, direction, distance=max_distance)
+    except TypeError:
+        return scene.ray_cast(depsgraph, origin, direction, max_distance)
+
+
+def scene_ray_is_visible(scene, depsgraph, origin, direction, max_distance,
+                         occluder_objects=None, skip_epsilon=1e-4,
+                         max_skip_hits=64):
+    current_origin = origin
+    remaining_distance = max(0.0, float(max_distance))
+    occluder_objects = None if occluder_objects is None else set(occluder_objects)
+
+    for _skip_index in range(max_skip_hits):
+        if remaining_distance <= 0.0:
+            return True
+
+        result = scene_ray_cast(
+            scene, depsgraph, current_origin, direction, remaining_distance)
+        if not bool(result[0]):
+            return True
+
+        hit_location = result[1]
+        hit_object = result[4] if len(result) > 4 else None
+        if occluder_objects is None or hit_object in occluder_objects:
+            return False
+
+        hit_distance = (hit_location - current_origin).length
+        advance = max(float(skip_epsilon), 1e-6)
+        current_origin = hit_location + direction * advance
+        remaining_distance -= hit_distance + advance
+
+    return False
+
+
+def bake_six_direction_visibility(scene, depsgraph, mask, pos_x, pos_y, pos_z,
+                                  normal_x, normal_y, normal_z,
+                                  sample_step=2, max_distance=100.0,
+                                  ray_bias=0.001, occluder_objects=None):
+    height, width = mask.shape
+    pos_rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    neg_rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    sample_step = max(1, int(sample_step))
+    max_distance = max(0.0, float(max_distance))
+    ray_bias = max(0.0, float(ray_bias))
+
+    for y0 in range(0, height, sample_step):
+        y1 = min(height, y0 + sample_step)
+        for x0 in range(0, width, sample_step):
+            x1 = min(width, x0 + sample_step)
+            block_mask = mask[y0:y1, x0:x1]
+            if not block_mask.any():
+                continue
+
+            ys, xs = np.nonzero(block_mask)
+            sample_y = y0 + int(ys[len(ys) // 2])
+            sample_x = x0 + int(xs[len(xs) // 2])
+            base_origin = Vector((
+                float(pos_x[sample_y, sample_x]),
+                float(pos_y[sample_y, sample_x]),
+                float(pos_z[sample_y, sample_x]),
+            ))
+            normal = Vector((
+                float(normal_x[sample_y, sample_x]),
+                float(normal_y[sample_y, sample_x]),
+                float(normal_z[sample_y, sample_x]),
+            ))
+            if normal.length > 1e-8:
+                normal.normalize()
+
+            pos_values = [0, 0, 0]
+            neg_values = [0, 0, 0]
+            for direction, channel, is_positive in SIX_DIRECTION_VISIBILITY_DIRS:
+                origin = base_origin + normal * ray_bias
+                visible = scene_ray_is_visible(
+                    scene,
+                    depsgraph,
+                    origin,
+                    direction,
+                    max_distance,
+                    occluder_objects=occluder_objects
+                )
+                value = 255 if visible else 0
+                if is_positive:
+                    pos_values[channel] = value
+                else:
+                    neg_values[channel] = value
+
+            pos_block = pos_rgb[y0:y1, x0:x1]
+            neg_block = neg_rgb[y0:y1, x0:x1]
+            pos_block[block_mask] = pos_values
+            neg_block[block_mask] = neg_values
+
+    return pos_rgb, neg_rgb
+
+
+def finalize_six_direction_visibility_image(rgb_arr, mask, dilate_radius, blur_radius):
+    alpha = (mask.astype(np.uint8) * 255)
+    rgba = np.dstack((rgb_arr, alpha))
+    pil_img = Image.fromarray(rgba, mode="RGBA")
+    pil_img = dilate_image_with_colors(pil_img, dilate_radius)
+    if blur_radius > 0.0:
+        rgb_img = pil_img.convert("RGB").filter(
+            ImageFilter.GaussianBlur(radius=float(blur_radius)))
+        pil_img = Image.merge("RGBA", (*rgb_img.split(), pil_img.getchannel("A")))
+    return pil_img.convert("RGB")
 
 
 def rasterize_tb_flow_triangle(mask, flow_x, flow_y, pts, flows, island_ids=None,
@@ -2048,6 +2237,199 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
+    """导出世界六方向光照可见度,两张RGB分别存+XYZ和-XYZ"""
+    bl_idname = "ho.uvtools_bake_six_direction_visibility_image"
+    bl_label = "导出六向可见度Lightmap"
+    bl_description = "从UV texel还原真实3D世界位置,用Blender场景ray_cast烘焙世界+/-XYZ六方向可见度"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="Lightmap宽度", default=1024, min=1)  # type: ignore
+    image_height: IntProperty(name="Lightmap高度", default=1024, min=1)  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    sample_step: IntProperty(
+        name="采样步长", default=1, min=1, max=16,
+        description="每隔多少像素发射一次六向射线,1为逐像素最慢")  # type: ignore
+    max_distance: FloatProperty(
+        name="射线最大距离", default=100.0, min=0.0,
+        description="超过该距离视为可见")  # type: ignore
+    ray_bias: FloatProperty(
+        name="法线偏移", default=0.001, min=0.0,
+        description="沿真实3D表面法线偏移射线起点,避免命中当前表面")  # type: ignore
+    include_visible_scene_objects: BoolProperty(
+        name="考虑其他可见物体", default=True,
+        description="开启时场景中其它可见物体也会遮挡射线;关闭时只考虑当前选中物体集合")  # type: ignore
+    blur_radius: FloatProperty(
+        name="模糊半径", default=2, min=0.0, max=64.0,
+        description="导出前对可见度图做高斯模糊")  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0,
+        description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "image_format")
+        layout.prop(self, "sample_step")
+        layout.prop(self, "max_distance")
+        layout.prop(self, "ray_bias")
+        layout.prop(self, "include_visible_scene_objects")
+        layout.prop(self, "blur_radius")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        width = self.image_width
+        height = self.image_height
+        mask = np.zeros((height, width), dtype=bool)
+        pos_x = np.zeros((height, width), dtype=np.float32)
+        pos_y = np.zeros((height, width), dtype=np.float32)
+        pos_z = np.zeros((height, width), dtype=np.float32)
+        normal_x = np.zeros((height, width), dtype=np.float32)
+        normal_y = np.zeros((height, width), dtype=np.float32)
+        normal_z = np.zeros((height, width), dtype=np.float32)
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+        occluder_objects = None
+        if not self.include_visible_scene_objects:
+            occluder_objects = set(selected_objs)
+
+        depsgraph = context.evaluated_depsgraph_get()
+        exported_tris = 0
+        skipped_large_tris = 0
+        out_of_range_tris = 0
+        skipped_objects = []
+        uv_min_u = float("inf")
+        uv_min_v = float("inf")
+        uv_max_u = float("-inf")
+        uv_max_v = float("-inf")
+
+        for obj in selected_objs:
+            eval_obj = obj.evaluated_get(depsgraph)
+            mesh = eval_obj.to_mesh()
+            try:
+                uv_layer = mesh.uv_layers.active
+                if uv_layer is None:
+                    skipped_objects.append(f"{obj.name}(无UV)")
+                    continue
+
+                matrix_world = eval_obj.matrix_world
+                normal_matrix = matrix_world.to_3x3().inverted().transposed()
+                for poly in mesh.polygons:
+                    loop_indices = list(poly.loop_indices)
+                    if len(loop_indices) < 3:
+                        continue
+
+                    pts = []
+                    positions = []
+                    normals = []
+                    for loop_index in loop_indices:
+                        loop = mesh.loops[loop_index]
+                        uv = uv_layer.data[loop_index].uv.copy()
+                        uv_min_u = min(uv_min_u, uv.x)
+                        uv_min_v = min(uv_min_v, uv.y)
+                        uv_max_u = max(uv_max_u, uv.x)
+                        uv_max_v = max(uv_max_v, uv.y)
+                        pts.append((uv.x * width, (1.0 - uv.y) * height))
+                        world_pos = matrix_world @ mesh.vertices[loop.vertex_index].co
+                        positions.append((world_pos.x, world_pos.y, world_pos.z))
+                        world_normal = normal_matrix @ loop.normal
+                        if world_normal.length > 1e-8:
+                            world_normal.normalize()
+                        normals.append((world_normal.x, world_normal.y, world_normal.z))
+
+                    for i in range(1, len(loop_indices) - 1):
+                        tri_pts = [pts[0], pts[i], pts[i + 1]]
+                        tri_positions = [
+                            positions[0],
+                            positions[i],
+                            positions[i + 1]
+                        ]
+                        if any(p[0] < 0 or p[0] > width or p[1] < 0 or p[1] > height for p in tri_pts):
+                            out_of_range_tris += 1
+                        if rasterize_surface_sample_triangle(
+                            mask,
+                            pos_x,
+                            pos_y,
+                            pos_z,
+                            normal_x,
+                            normal_y,
+                            normal_z,
+                            tri_pts,
+                            tri_positions,
+                            [normals[0], normals[i], normals[i + 1]]
+                        ):
+                            exported_tris += 1
+                        else:
+                            skipped_large_tris += 1
+            finally:
+                eval_obj.to_mesh_clear()
+
+        if exported_tris == 0 or not mask.any():
+            self.report({'ERROR'}, "没有可导出的六向可见度数据")
+            return {'CANCELLED'}
+
+        pos_rgb, neg_rgb = bake_six_direction_visibility(
+            context.scene,
+            depsgraph,
+            mask,
+            pos_x,
+            pos_y,
+            pos_z,
+            normal_x,
+            normal_y,
+            normal_z,
+            sample_step=self.sample_step,
+            max_distance=self.max_distance,
+            ray_bias=self.ray_bias,
+            occluder_objects=occluder_objects
+        )
+
+        pos_img = finalize_six_direction_visibility_image(
+            pos_rgb, mask, self.dilate_radius, self.blur_radius)
+        neg_img = finalize_six_direction_visibility_image(
+            neg_rgb, mask, self.dilate_radius, self.blur_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        base_path = bpy.path.abspath(self.filepath)
+        lower_path = base_path.lower()
+        if lower_path.endswith(".png") or lower_path.endswith(".jpg") or lower_path.endswith(".jpeg"):
+            base_path = os.path.splitext(base_path)[0]
+        pos_path = base_path + "_SixDir_PosXYZ" + ext
+        neg_path = base_path + "_SixDir_NegXYZ" + ext
+        pos_img.save(pos_path)
+        neg_img.save(neg_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report(
+            {'INFO'},
+            f"已导出六向可见度: {pos_path} / {neg_path} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_tris} | 越界三角={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+        )
+        return {'FINISHED'}
+
+
 class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
     """导出UV岛内部到边缘的欧氏距离场"""
     bl_idname = "ho.uvtools_bake_island_sdf_image"
@@ -2821,6 +3203,9 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
     row.operator(OT_UVTools_BakeGravityFieldMapImage.bl_idname, text="重力场图")
 
+    row = col.row(align=True)
+    row.operator(OT_UVTools_BakeSixDirectionVisibilityImage.bl_idname, text="六向Lightmap")
+
 
 
     # box = layout.box()
@@ -2829,7 +3214,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeSixDirectionVisibilityImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
