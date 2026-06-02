@@ -22,6 +22,7 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 import bmesh
 
 from mathutils import Vector, Matrix, Euler
+from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 
@@ -1139,6 +1140,947 @@ def longest_edge_world(obj, face):
     return max_len
 
 
+class OP_ModalFillMeshHole(Operator):
+    bl_idname = "ho.modal_fill_mesh_hole"
+    bl_label = "点击封闭孔洞"
+    bl_description = "鼠标悬停高亮闭合边界孔洞，左键用三角面封闭"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    hit_radius: IntProperty(
+        name="捕捉半径",
+        description="鼠标到孔洞边界的最大屏幕距离",
+        default=30,
+        min=4,
+        max=120,
+    )  # type: ignore
+    fill_mode: EnumProperty(
+        name="封孔模式",
+        description="左键封闭孔洞时使用的算法",
+        items=[
+            ('SMOOTH_PATCH', "Smooth Patch", "三角剖分、补片细分、内部点平滑"),
+            ('GRID', "Grid Fill", "Blender 网格填充，适合规则偶数边孔洞"),
+            ('TRIANGLE', "Triangle Fill", "Beauty 三角剖分，稳定但布线较稀"),
+        ],
+        default='SMOOTH_PATCH',
+    )  # type: ignore
+    patch_edge_factor: FloatProperty(
+        name="补片密度",
+        description="目标补片边长 = 周围边长中位数 * 该倍率",
+        default=0.85,
+        min=0.35,
+        max=4.0,
+    )  # type: ignore
+    patch_refine_iterations: IntProperty(
+        name="细分轮数",
+        description="补片内部过长边的最大细分轮数",
+        default=4,
+        min=0,
+        max=8,
+    )  # type: ignore
+    patch_smooth_iterations: IntProperty(
+        name="平滑轮数",
+        description="只平滑新增内部点，边界点保持不动",
+        default=10,
+        min=0,
+        max=40,
+    )  # type: ignore
+    patch_surface_blend: FloatProperty(
+        name="曲面贴合",
+        description="内部点向边界邻域拟合曲面的投影强度",
+        default=0.45,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.area is not None and
+            context.area.type == 'VIEW_3D' and
+            context.object is not None and
+            context.object.type == 'MESH' and
+            context.mode == 'EDIT_MESH'
+        )
+
+    def _edit_bmesh(self, context):
+        obj = context.edit_object or context.object
+        if obj is None or obj.type != 'MESH':
+            return None, None
+        return obj, bmesh.from_edit_mesh(obj.data)
+
+    def _tag_redraw(self, context):
+        if context.area:
+            context.area.tag_redraw()
+
+    def _iter_boundary_components(self, bm):
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.verts.index_update()
+        bm.edges.index_update()
+
+        boundary_edges = [
+            e for e in bm.edges
+            if e.is_valid and e.is_boundary and not e.hide
+        ]
+        vert_edges = defaultdict(list)
+        for edge in boundary_edges:
+            vert_edges[edge.verts[0]].append(edge)
+            vert_edges[edge.verts[1]].append(edge)
+
+        visited = set()
+        for start_edge in boundary_edges:
+            if start_edge in visited:
+                continue
+
+            stack = [start_edge]
+            component_edges = set()
+            component_verts = set()
+
+            while stack:
+                edge = stack.pop()
+                if edge in component_edges:
+                    continue
+                component_edges.add(edge)
+                visited.add(edge)
+
+                for vert in edge.verts:
+                    component_verts.add(vert)
+                    for next_edge in vert_edges[vert]:
+                        if next_edge not in component_edges:
+                            stack.append(next_edge)
+
+            yield list(component_edges), component_verts, vert_edges
+
+    def _order_closed_boundary(self, component_edges, vert_edges):
+        if len(component_edges) < 3:
+            return None, None
+
+        component_edge_set = set(component_edges)
+        component_verts = set()
+        for edge in component_edges:
+            component_verts.update(edge.verts)
+
+        if len(component_edges) != len(component_verts):
+            return None, None
+
+        for vert in component_verts:
+            degree = sum(
+                1 for edge in vert_edges[vert]
+                if edge in component_edge_set
+            )
+            if degree != 2:
+                return None, None
+
+        start_edge = component_edges[0]
+        start_vert = start_edge.verts[0]
+        current_vert = start_edge.verts[1]
+        previous_edge = start_edge
+
+        ordered_edges = [start_edge]
+        ordered_verts = [start_vert, current_vert]
+
+        while current_vert != start_vert:
+            next_edges = [
+                edge for edge in vert_edges[current_vert]
+                if edge in component_edge_set and edge != previous_edge
+            ]
+            if len(next_edges) != 1:
+                return None, None
+
+            edge = next_edges[0]
+            next_vert = edge.other_vert(current_vert)
+            ordered_edges.append(edge)
+
+            if next_vert == start_vert:
+                current_vert = next_vert
+                break
+            if next_vert in ordered_verts:
+                return None, None
+
+            ordered_verts.append(next_vert)
+            previous_edge = edge
+            current_vert = next_vert
+
+            if len(ordered_edges) > len(component_edges):
+                return None, None
+
+        if len(ordered_edges) != len(component_edges):
+            return None, None
+
+        return ordered_verts, ordered_edges
+
+    def _loop_normal(self, verts, edges):
+        normal = Vector((0.0, 0.0, 0.0))
+        for index, vert in enumerate(verts):
+            co_a = vert.co
+            co_b = verts[(index + 1) % len(verts)].co
+            normal.x += (co_a.y - co_b.y) * (co_a.z + co_b.z)
+            normal.y += (co_a.z - co_b.z) * (co_a.x + co_b.x)
+            normal.z += (co_a.x - co_b.x) * (co_a.y + co_b.y)
+
+        adjacent_normal = Vector((0.0, 0.0, 0.0))
+        for edge in edges:
+            for face in edge.link_faces:
+                adjacent_normal += face.normal
+
+        if adjacent_normal.length > 1e-8:
+            adjacent_normal.normalize()
+            if normal.length > 1e-8:
+                normal.normalize()
+                if normal.dot(adjacent_normal) < 0.0:
+                    normal.negate()
+            else:
+                normal = adjacent_normal
+        elif normal.length > 1e-8:
+            normal.normalize()
+
+        return normal
+
+    def _rebuild_holes(self, context):
+        obj, bm = self._edit_bmesh(context)
+        self.obj = obj
+        self.holes = []
+        self.active_hole_index = -1
+
+        if bm is None:
+            self.message = "没有可编辑网格"
+            return
+
+        for component_edges, _component_verts, vert_edges in self._iter_boundary_components(bm):
+            verts, edges = self._order_closed_boundary(component_edges, vert_edges)
+            if not verts:
+                continue
+
+            normal = self._loop_normal(verts, edges)
+            world_points = [obj.matrix_world @ vert.co.copy() for vert in verts]
+            center_world = Vector((0.0, 0.0, 0.0))
+            for point in world_points:
+                center_world += point
+            center_world /= len(world_points)
+
+            self.holes.append({
+                "edge_indices": [edge.index for edge in edges],
+                "vert_count": len(verts),
+                "world_points": world_points,
+                "center_world": center_world,
+                "normal": normal.copy(),
+            })
+
+        self.message = f"找到 {len(self.holes)} 个闭合孔洞"
+
+    def _project_hole(self, context, hole):
+        region = context.region
+        rv3d = context.region_data
+        if region is None or rv3d is None:
+            return None
+
+        screen_points = []
+        for point in hole["world_points"]:
+            pos = view3d_utils.location_3d_to_region_2d(region, rv3d, point)
+            if pos is None:
+                return None
+            screen_points.append(pos)
+
+        return screen_points
+
+    def _point_segment_distance(self, point, start, end):
+        segment = end - start
+        length_squared = segment.length_squared
+        if length_squared <= 1e-8:
+            return (point - start).length
+
+        factor = (point - start).dot(segment) / length_squared
+        factor = max(0.0, min(1.0, factor))
+        closest = start + segment * factor
+        return (point - closest).length
+
+    def _point_inside_polygon(self, point, polygon):
+        inside = False
+        x = point.x
+        y = point.y
+        count = len(polygon)
+
+        for index in range(count):
+            a = polygon[index]
+            b = polygon[(index + 1) % count]
+            if (a.y > y) == (b.y > y):
+                continue
+            x_intersect = (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x
+            if x < x_intersect:
+                inside = not inside
+
+        return inside
+
+    def _hole_screen_distance(self, mouse_point, screen_points):
+        if len(screen_points) < 3:
+            return None
+
+        if self._point_inside_polygon(mouse_point, screen_points):
+            return 0.0
+
+        best_distance = None
+        for index, start in enumerate(screen_points):
+            end = screen_points[(index + 1) % len(screen_points)]
+            distance = self._point_segment_distance(mouse_point, start, end)
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+
+        return best_distance
+
+    def _update_hover(self, context, event):
+        self.mouse_x = event.mouse_region_x
+        self.mouse_y = event.mouse_region_y
+        mouse_point = Vector((self.mouse_x, self.mouse_y))
+
+        best_index = -1
+        best_distance = None
+        for index, hole in enumerate(self.holes):
+            screen_points = self._project_hole(context, hole)
+            if screen_points is None:
+                continue
+
+            distance = self._hole_screen_distance(mouse_point, screen_points)
+            if distance is None or distance > self.hit_radius:
+                continue
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_index = index
+
+        self.active_hole_index = best_index
+
+    def _active_hole(self):
+        if self.active_hole_index < 0:
+            return None
+        if self.active_hole_index >= len(self.holes):
+            return None
+        return self.holes[self.active_hole_index]
+
+    def _collect_hole_edges(self, bm, hole):
+        bm.edges.ensure_lookup_table()
+        edges = []
+        for edge_index in hole["edge_indices"]:
+            if edge_index < 0 or edge_index >= len(bm.edges):
+                return None, "孔洞数据已变化，请移动鼠标刷新"
+            edge = bm.edges[edge_index]
+            if not edge.is_valid or not edge.is_boundary:
+                return None, "孔洞已经被封闭"
+            edges.append(edge)
+        return edges, ""
+
+    def _median(self, values):
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        mid = len(ordered) // 2
+        if len(ordered) % 2:
+            return ordered[mid]
+        return (ordered[mid - 1] + ordered[mid]) * 0.5
+
+    def _hole_neighbor_edge_length(self, boundary_edges):
+        lengths = []
+        boundary_verts = set()
+        for edge in boundary_edges:
+            boundary_verts.update(edge.verts)
+            lengths.append(edge.calc_length())
+
+        for vert in boundary_verts:
+            for edge in vert.link_edges:
+                if edge in boundary_edges:
+                    continue
+                if edge.is_valid and not edge.is_wire:
+                    lengths.append(edge.calc_length())
+
+        return self._median([length for length in lengths if length > 1e-8])
+
+    def _boundary_surface_samples(self, boundary_verts):
+        samples = []
+        for vert in boundary_verts:
+            normal = Vector((0.0, 0.0, 0.0))
+            for face in vert.link_faces:
+                if face.is_valid:
+                    normal += face.normal
+            if normal.length > 1e-8:
+                samples.append((vert.co.copy(), normal.normalized()))
+        return samples
+
+    def _project_to_boundary_surface(self, co, samples):
+        if not samples:
+            return co
+
+        total_weight = 0.0
+        projected = Vector((0.0, 0.0, 0.0))
+        for sample_co, sample_normal in samples:
+            delta = co - sample_co
+            dist_sq = max(delta.length_squared, 1e-8)
+            weight = 1.0 / dist_sq
+            point_on_tangent = co - sample_normal * delta.dot(sample_normal)
+            projected += point_on_tangent * weight
+            total_weight += weight
+
+        if total_weight <= 1e-8:
+            return co
+
+        return projected / total_weight
+
+    def _tag_patch_faces(self, bm, patch_faces):
+        for face in bm.faces:
+            face.tag = False
+        for face in patch_faces:
+            if face.is_valid:
+                face.tag = True
+
+    def _tagged_patch_faces(self, bm):
+        return {
+            face for face in bm.faces
+            if face.is_valid and face.tag
+        }
+
+    def _patch_boundary_verts_from_faces(self, patch_faces):
+        verts = set()
+        for face in patch_faces:
+            if not face.is_valid:
+                continue
+            for edge in face.edges:
+                linked_patch_count = sum(
+                    1 for linked_face in edge.link_faces
+                    if linked_face.is_valid and linked_face.tag
+                )
+                if linked_patch_count < 2:
+                    verts.update(edge.verts)
+        return verts
+
+    def _clear_patch_tags(self, bm):
+        for face in bm.faces:
+            face.tag = False
+
+    def _relax_patch_verts(self, patch_faces, boundary_verts, surface_samples):
+        if not patch_faces:
+            return
+
+        patch_verts = set()
+        for face in patch_faces:
+            if face.is_valid:
+                patch_verts.update(face.verts)
+
+        movable = [
+            vert for vert in patch_verts
+            if vert.is_valid and vert not in boundary_verts
+        ]
+        if not movable:
+            return
+
+        for _iteration in range(self.patch_smooth_iterations):
+            new_positions = {}
+            for vert in movable:
+                neighbors = [
+                    edge.other_vert(vert)
+                    for edge in vert.link_edges
+                    if edge.is_valid and edge.other_vert(vert).is_valid
+                ]
+                if not neighbors:
+                    continue
+
+                avg = Vector((0.0, 0.0, 0.0))
+                for neighbor in neighbors:
+                    avg += neighbor.co
+                avg /= len(neighbors)
+
+                new_co = vert.co.lerp(avg, 0.45)
+                if surface_samples:
+                    projected = self._project_to_boundary_surface(
+                        new_co,
+                        surface_samples,
+                    )
+                    new_co = new_co.lerp(projected, self.patch_surface_blend)
+
+                new_positions[vert] = new_co
+
+            for vert, co in new_positions.items():
+                vert.co = co
+
+    def _fill_active_hole_patch(self, context, hole):
+        obj, bm = self._edit_bmesh(context)
+        if bm is None:
+            return False, "没有可编辑网格"
+
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        boundary_edges, error = self._collect_hole_edges(bm, hole)
+        if boundary_edges is None:
+            return False, error
+        boundary_edge_set = set(boundary_edges)
+
+        boundary_verts = set()
+        for edge in boundary_edges:
+            boundary_verts.update(edge.verts)
+
+        target_edge_length = self._hole_neighbor_edge_length(boundary_edges)
+        if target_edge_length <= 1e-8:
+            target_edge_length = self._median([
+                edge.calc_length()
+                for edge in boundary_edges
+                if edge.calc_length() > 1e-8
+            ])
+        if target_edge_length <= 1e-8:
+            target_edge_length = 1.0
+        target_edge_length *= self.patch_edge_factor
+
+        surface_samples = self._boundary_surface_samples(boundary_verts)
+
+        try:
+            result = bmesh.ops.triangle_fill(
+                bm,
+                edges=boundary_edges,
+                normal=hole["normal"],
+                use_beauty=True,
+                use_dissolve=False,
+            )
+        except Exception as exc:
+            return False, f"Patch Fill 三角剖分失败: {exc}"
+
+        new_faces = [
+            item for item in result.get("geom", [])
+            if isinstance(item, bmesh.types.BMFace)
+        ]
+        if not new_faces:
+            return False, "Patch Fill 未生成面"
+        self._tag_patch_faces(bm, new_faces)
+
+        if hole["normal"].length > 1e-8:
+            fill_normal = Vector((0.0, 0.0, 0.0))
+            for face in new_faces:
+                face.normal_update()
+                fill_normal += face.normal
+            if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
+                bmesh.ops.reverse_faces(bm, faces=new_faces)
+
+        refined_edges = 0
+        for _iteration in range(self.patch_refine_iterations):
+            patch_faces = self._tagged_patch_faces(bm)
+            patch_edges = {
+                edge for face in patch_faces if face.is_valid
+                for edge in face.edges
+                if edge.is_valid
+            }
+            long_edges = [
+                edge for edge in patch_edges
+                if edge.is_valid
+                and edge not in boundary_edge_set
+                and edge.calc_length() > target_edge_length * 1.35
+            ]
+            if not long_edges:
+                break
+
+            bmesh.ops.subdivide_edges(
+                bm,
+                edges=long_edges,
+                cuts=1,
+                smooth=0.0,
+                use_smooth_even=True,
+            )
+            refined_edges += len(long_edges)
+
+        patch_faces = self._tagged_patch_faces(bm)
+        if patch_faces:
+            bmesh.ops.triangulate(
+                bm,
+                faces=list(patch_faces),
+                quad_method='BEAUTY',
+                ngon_method='BEAUTY',
+            )
+            patch_faces = self._tagged_patch_faces(bm)
+            patch_boundary_verts = self._patch_boundary_verts_from_faces(patch_faces)
+            self._relax_patch_verts(
+                patch_faces,
+                patch_boundary_verts,
+                surface_samples,
+            )
+            try:
+                patch_faces = self._tagged_patch_faces(bm)
+                bmesh.ops.beautify_fill(
+                    bm,
+                    faces=list(patch_faces),
+                    edges=[],
+                    method='AREA',
+                )
+            except Exception:
+                pass
+
+        self._clear_patch_tags(bm)
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        return True, (
+            f"Smooth Patch 封闭 {len(boundary_edges)} 边孔洞"
+            f" / 细分 {refined_edges} 边"
+        )
+
+    def _fill_active_hole_grid(self, context, hole):
+        obj, bm = self._edit_bmesh(context)
+        if bm is None:
+            return False, "没有可编辑网格"
+
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        edges = []
+        for edge_index in hole["edge_indices"]:
+            if edge_index < 0 or edge_index >= len(bm.edges):
+                return False, "孔洞数据已变化，请移动鼠标刷新"
+            edge = bm.edges[edge_index]
+            if not edge.is_valid or not edge.is_boundary:
+                return False, "孔洞已经被封闭"
+            edges.append(edge)
+
+        if len(edges) < 4:
+            return False, "少于 4 边，跳过 Grid Fill"
+
+        old_vert_select = [vert.select for vert in bm.verts]
+        old_edge_select = [edge.select for edge in bm.edges]
+        old_face_select = [face.select for face in bm.faces]
+        old_select_mode = tuple(context.tool_settings.mesh_select_mode)
+        old_face_count = len(bm.faces)
+
+        try:
+            for vert in bm.verts:
+                vert.select = False
+            for edge in bm.edges:
+                edge.select = False
+            for face in bm.faces:
+                face.select = False
+
+            for edge in edges:
+                edge.select = True
+                edge.verts[0].select = True
+                edge.verts[1].select = True
+
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            context.tool_settings.mesh_select_mode = (False, True, False)
+            bpy.ops.mesh.fill_grid(
+                span=1,
+                offset=0,
+                use_interp_simple=False,
+            )
+
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()
+            new_faces = list(bm.faces[old_face_count:])
+            if not new_faces:
+                return False, "Grid Fill 未生成面"
+
+            if hole["normal"].length > 1e-8:
+                fill_normal = Vector((0.0, 0.0, 0.0))
+                for face in new_faces:
+                    face.normal_update()
+                    fill_normal += face.normal
+                if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
+                    bmesh.ops.reverse_faces(bm, faces=new_faces)
+
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+            return True, f"Grid Fill 四边封闭 {len(edges)} 边孔洞"
+        except Exception as exc:
+            return False, f"Grid Fill 失败: {exc}"
+        finally:
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.verts.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+
+            for index, selected in enumerate(old_vert_select):
+                if index < len(bm.verts):
+                    bm.verts[index].select = selected
+            for index, selected in enumerate(old_edge_select):
+                if index < len(bm.edges):
+                    bm.edges[index].select = selected
+            for index, selected in enumerate(old_face_select):
+                if index < len(bm.faces):
+                    bm.faces[index].select = selected
+
+            context.tool_settings.mesh_select_mode = old_select_mode
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+    def _fill_active_hole_triangle(self, context, hole):
+        obj, bm = self._edit_bmesh(context)
+        if bm is None:
+            return False, "没有可编辑网格"
+
+        bm.edges.ensure_lookup_table()
+        edges = []
+        for edge_index in hole["edge_indices"]:
+            if edge_index < 0 or edge_index >= len(bm.edges):
+                return False, "孔洞数据已变化，请移动鼠标刷新"
+            edge = bm.edges[edge_index]
+            if not edge.is_valid or not edge.is_boundary:
+                return False, "孔洞已经被封闭"
+            edges.append(edge)
+
+        try:
+            result = bmesh.ops.triangle_fill(
+                bm,
+                edges=edges,
+                normal=hole["normal"],
+                use_beauty=True,
+                use_dissolve=False,
+            )
+        except Exception as exc:
+            return False, f"Triangle Fill 失败: {exc}"
+
+        new_faces = [
+            item for item in result.get("geom", [])
+            if isinstance(item, bmesh.types.BMFace)
+        ]
+        if new_faces and hole["normal"].length > 1e-8:
+            fill_normal = Vector((0.0, 0.0, 0.0))
+            for face in new_faces:
+                face.normal_update()
+                fill_normal += face.normal
+            if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
+                bmesh.ops.reverse_faces(bm, faces=new_faces)
+
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        return True, f"Triangle Fill 三角封闭 {len(edges)} 边孔洞"
+
+    def _fill_active_hole(self, context):
+        hole = self._active_hole()
+        if hole is None:
+            self.message = "鼠标下没有闭合孔洞"
+            return False
+
+        if self.fill_mode == 'GRID':
+            success, message = self._fill_active_hole_grid(context, hole)
+        elif self.fill_mode == 'TRIANGLE':
+            success, message = self._fill_active_hole_triangle(context, hole)
+        else:
+            success, message = self._fill_active_hole_patch(context, hole)
+
+        self.message = message if success else f"封闭失败: {message}"
+        return success
+
+    def _hole_line_coords(self, hole):
+        points = hole["world_points"]
+        if len(points) < 2:
+            return []
+
+        coords = []
+        for index, start in enumerate(points):
+            coords.append(start)
+            coords.append(points[(index + 1) % len(points)])
+
+        return coords
+
+    def _draw_hole_lines(self, shader, hole, color, line_width):
+        coords = self._hole_line_coords(hole)
+        if not coords:
+            return
+
+        gpu.state.line_width_set(line_width)
+        batch = batch_for_shader(shader, 'LINES', {"pos": coords})
+        shader.uniform_float("color", color)
+        batch.draw(shader)
+
+    def draw_preview(self):
+        if not self.holes:
+            return
+
+        active_index = self.active_hole_index
+        inactive_holes = [
+            hole for index, hole in enumerate(self.holes)
+            if index != active_index
+        ]
+        active_hole = self._active_hole()
+
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_mask_set(False)
+
+        shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        shader.bind()
+
+        # Faint no-depth pass keeps blocked holes discoverable without dominating.
+        gpu.state.depth_test_set('NONE')
+        for hole in inactive_holes:
+            self._draw_hole_lines(shader, hole, (1.0, 0.08, 0.04, 0.18), 5.0)
+            self._draw_hole_lines(shader, hole, (1.0, 0.88, 0.10, 0.28), 2.0)
+        if active_hole:
+            self._draw_hole_lines(shader, active_hole, (0.05, 1.0, 0.25, 0.24), 7.0)
+            self._draw_hole_lines(shader, active_hole, (0.70, 1.0, 0.30, 0.34), 3.0)
+
+        # Depth-tested pass reads and writes depth so mesh surfaces occlude the hint.
+        gpu.state.depth_test_set('LESS_EQUAL')
+        gpu.state.depth_mask_set(True)
+        for hole in inactive_holes:
+            self._draw_hole_lines(shader, hole, (1.0, 0.08, 0.04, 0.92), 5.0)
+            self._draw_hole_lines(shader, hole, (1.0, 0.92, 0.08, 1.0), 2.0)
+        if active_hole:
+            self._draw_hole_lines(shader, active_hole, (0.02, 0.95, 0.20, 0.98), 7.0)
+            self._draw_hole_lines(shader, active_hole, (0.72, 1.0, 0.22, 1.0), 3.0)
+
+        gpu.state.line_width_set(1.0)
+        gpu.state.depth_mask_set(True)
+        gpu.state.blend_set('NONE')
+        gpu.state.depth_test_set('LESS_EQUAL')
+
+    def draw_text(self):
+        font_id = 0
+        blf.size(font_id, 16)
+
+        x = self.mouse_x + 20
+        y = self.mouse_y + 20
+
+        active_hole = self._active_hole()
+        if active_hole:
+            active_text = f"{active_hole['vert_count']} 边"
+            status_text = "已命中，左键封闭"
+            status_color = (0.35, 1.0, 0.35, 1.0)
+        else:
+            active_text = "未命中"
+            status_text = "移动到红黄孔洞边界"
+            status_color = (1.0, 0.65, 0.18, 1.0)
+
+        if "封闭" in self.message and not self.message.startswith("封闭失败"):
+            status_text = self.message
+            status_color = (0.35, 1.0, 0.35, 1.0)
+        elif self.message.startswith("密度倍率"):
+            status_text = self.message
+            status_color = (1.0, 0.85, 0.2, 1.0)
+        elif self.message.startswith("模式切换"):
+            status_text = self.message
+            status_color = (1.0, 0.85, 0.2, 1.0)
+        elif self.message.startswith("封闭失败"):
+            status_text = self.message
+            status_color = (1.0, 0.28, 0.20, 1.0)
+
+        # 跟骨链工具保持同一套 HUD：阴影、黄色按键、白色说明。
+        blf.enable(font_id, blf.SHADOW)
+        blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
+        blf.shadow_offset(font_id, 1, -1)
+
+        def draw_key_value(key_text, value_text, offset_y, value_color=(1.0, 1.0, 1.0, 1.0)):
+            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+            blf.position(font_id, x, y + offset_y, 0)
+            blf.draw(font_id, key_text)
+            key_width, _ = blf.dimensions(font_id, key_text)
+
+            blf.color(font_id, *value_color)
+            blf.position(font_id, x + key_width, y + offset_y, 0)
+            blf.draw(font_id, value_text)
+
+        mode_names = {
+            'SMOOTH_PATCH': "Smooth Patch",
+            'GRID': "Grid Fill",
+            'TRIANGLE': "Triangle Fill",
+        }
+
+        draw_key_value("滚轮:", f"密度倍率: {self.patch_edge_factor:.2f}", 0)
+        draw_key_value("F键:", f"模式: {mode_names.get(self.fill_mode, self.fill_mode)}", 22)
+        draw_key_value("左键:", "封闭绿色孔洞", 44)
+        draw_key_value("R键:", "刷新孔洞缓存", 66)
+        draw_key_value("Esc/右键:", "退出工具", 88)
+        draw_key_value("孔洞:", f"{len(self.holes)} 个 / 当前 {active_text}", 110)
+        draw_key_value("状态:", status_text, 132, status_color)
+
+        blf.disable(font_id, blf.SHADOW)
+
+    def modal(self, context, event):
+        if event.type in {'ESC', 'RIGHTMOUSE'}:
+            self.finish(context)
+            if self.did_fill:
+                return {'FINISHED'}
+            return {'CANCELLED'}
+
+        if event.type == 'MOUSEMOVE':
+            self._update_hover(context, event)
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'WHEELUPMOUSE':
+            self.patch_edge_factor = max(0.35, self.patch_edge_factor * 0.9)
+            self.message = f"密度倍率: {self.patch_edge_factor:.2f}"
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'WHEELDOWNMOUSE':
+            self.patch_edge_factor = min(4.0, self.patch_edge_factor / 0.9)
+            self.message = f"密度倍率: {self.patch_edge_factor:.2f}"
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+            if self._fill_active_hole(context):
+                self.did_fill = True
+                fill_message = self.message
+                self._rebuild_holes(context)
+                self.message = fill_message
+            self._update_hover(context, event)
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'F' and event.value == 'PRESS':
+            modes = ['SMOOTH_PATCH', 'GRID', 'TRIANGLE']
+            mode_names = {
+                'SMOOTH_PATCH': "Smooth Patch",
+                'GRID': "Grid Fill",
+                'TRIANGLE': "Triangle Fill",
+            }
+            index = modes.index(self.fill_mode) if self.fill_mode in modes else 0
+            self.fill_mode = modes[(index + 1) % len(modes)]
+            self.message = f"模式切换: {mode_names[self.fill_mode]}"
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'R' and event.value == 'PRESS':
+            self._rebuild_holes(context)
+            self._update_hover(context, event)
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {
+            'MIDDLEMOUSE',
+            'WHEELUPMOUSE',
+            'WHEELDOWNMOUSE',
+            'TRACKPADPAN',
+            'TRACKPADZOOM',
+            'NDOF_MOTION',
+        }:
+            return {'PASS_THROUGH'}
+
+        return {'RUNNING_MODAL'}
+
+    def finish(self, context):
+        handle_3d = getattr(self, "_handle_3d", None)
+        handle_text = getattr(self, "_handle_text", None)
+        if handle_3d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(handle_3d, 'WINDOW')
+            self._handle_3d = None
+        if handle_text is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(handle_text, 'WINDOW')
+            self._handle_text = None
+        self._tag_redraw(context)
+
+    def invoke(self, context, event):
+        self.mouse_x = event.mouse_region_x
+        self.mouse_y = event.mouse_region_y
+        self.holes = []
+        self.active_hole_index = -1
+        self.message = ""
+        self.obj = None
+        self.did_fill = False
+
+        self._rebuild_holes(context)
+        self._update_hover(context, event)
+
+        self._handle_3d = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_preview, (), 'WINDOW', 'POST_VIEW'
+        )
+        self._handle_text = bpy.types.SpaceView3D.draw_handler_add(
+            self.draw_text, (), 'WINDOW', 'POST_PIXEL'
+        )
+
+        context.window_manager.modal_handler_add(self)
+        self._tag_redraw(context)
+        return {'RUNNING_MODAL'}
+
+
 class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
     bl_label = "面片转参考图"
@@ -1417,6 +2359,7 @@ class VIEW3D_MT_edit_mesh_hotools(Menu):
         layout.operator(OP_AlignViewToAvgNormal.bl_idname,
                         icon="RESTRICT_RENDER_OFF")
         layout.operator(OP_CreatBoneChainByMeshFlow.bl_idname, icon="ADD")
+        layout.operator(OP_ModalFillMeshHole.bl_idname, icon="FACESEL")
 
 
 def draw_in_VIEW3D_MT_edit_mesh_context_menu(self, context):
@@ -1440,7 +2383,8 @@ cls = [OP_select_inside_face_loop, OP_RestartBlender,
        OP_CustomSplitNormals_Import, OP_CustomSplitNormals_Export,
        OP_MeshToImageEmpty,
        OP_AddSelectSideRingLoops, OP_RemoveSelectSideRingLoops,
-       OP_CreatBoneChainByMeshFlow,OP_MergeOverlapping_VertexNormals
+       OP_CreatBoneChainByMeshFlow, OP_ModalFillMeshHole,
+       OP_MergeOverlapping_VertexNormals
        ]
 
 
