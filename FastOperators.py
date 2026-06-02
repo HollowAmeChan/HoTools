@@ -1158,7 +1158,7 @@ class OP_ModalFillMeshHole(Operator):
         description="左键封闭孔洞时使用的算法",
         items=[
             ('SMOOTH_PATCH', "Smooth Patch", "三角剖分、补片细分、内部点平滑"),
-            ('QUAD_PATCH', "Quad Patch", "自适应补片后智能合并三角面为四边面"),
+            ('QUAD_PATCH', "Quad Grid", "自动四角参数化并生成规整四边网格"),
             ('TRIANGLE', "Triangle Fill", "Beauty 三角剖分，稳定但布线较稀"),
         ],
         default='SMOOTH_PATCH',
@@ -1185,9 +1185,9 @@ class OP_ModalFillMeshHole(Operator):
         max=40,
     )  # type: ignore
     patch_surface_blend: FloatProperty(
-        name="曲面贴合",
-        description="内部点向边界邻域拟合曲面的投影强度",
-        default=0.45,
+        name="曲面吸附",
+        description="内部点向孔边外侧拟合曲面的吸附强度",
+        default=0.82,
         min=0.0,
         max=1.0,
     )  # type: ignore
@@ -1360,6 +1360,7 @@ class OP_ModalFillMeshHole(Operator):
 
             self.holes.append({
                 "edge_indices": [edge.index for edge in edges],
+                "vert_indices": [vert.index for vert in verts],
                 "vert_count": len(verts),
                 "world_points": world_points,
                 "center_world": center_world,
@@ -1550,18 +1551,207 @@ class OP_ModalFillMeshHole(Operator):
             return ring_length
         return boundary_length
 
+    def _vertex_surface_normal(self, vert):
+        normal = Vector((0.0, 0.0, 0.0))
+        for face in vert.link_faces:
+            if not face.is_valid:
+                continue
+            weight = 1.0
+            try:
+                weight = max(face.calc_area(), 1e-8)
+            except Exception:
+                pass
+            normal += face.normal * weight
+        if normal.length <= 1e-8:
+            return None
+        return normal.normalized()
+
     def _boundary_surface_samples(self, boundary_verts):
         samples = []
-        for vert in boundary_verts:
-            normal = Vector((0.0, 0.0, 0.0))
-            for face in vert.link_faces:
-                if face.is_valid:
-                    normal += face.normal
-            if normal.length > 1e-8:
-                samples.append((vert.co.copy(), normal.normalized()))
-        return samples
+        visited = set()
+        frontier = {
+            vert for vert in boundary_verts
+            if vert.is_valid
+        }
 
-    def _project_to_boundary_surface(self, co, samples):
+        for ring_index in range(3):
+            next_frontier = set()
+            for vert in frontier:
+                if vert in visited or not vert.is_valid:
+                    continue
+                visited.add(vert)
+
+                normal = self._vertex_surface_normal(vert)
+                if normal is not None:
+                    samples.append({
+                        "co": vert.co.copy(),
+                        "normal": normal,
+                        "ring": ring_index,
+                    })
+
+                if ring_index >= 2:
+                    continue
+
+                for edge in vert.link_edges:
+                    if not edge.is_valid:
+                        continue
+                    other = edge.other_vert(vert)
+                    if other.is_valid and other not in visited:
+                        next_frontier.add(other)
+
+                for face in vert.link_faces:
+                    if not face.is_valid:
+                        continue
+                    for other in face.verts:
+                        if other.is_valid and other not in visited:
+                            next_frontier.add(other)
+
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return self._surface_projector_from_samples(samples)
+
+    def _surface_projector_from_samples(self, samples):
+        tangent_samples = [
+            (sample["co"], sample["normal"])
+            for sample in samples
+            if sample["normal"] is not None
+        ]
+        if not tangent_samples:
+            return None
+
+        projector = {"samples": tangent_samples}
+        if len(samples) < 6:
+            return projector
+
+        total_weight = 0.0
+        center = Vector((0.0, 0.0, 0.0))
+        normal = Vector((0.0, 0.0, 0.0))
+        for sample in samples:
+            weight = 1.0 / (1.0 + sample["ring"] * 0.35)
+            center += sample["co"] * weight
+            normal += sample["normal"] * weight
+            total_weight += weight
+
+        if total_weight <= 1e-8 or normal.length <= 1e-8:
+            return projector
+
+        center /= total_weight
+        n_axis = normal.normalized()
+        u_axis = None
+        for sample in samples:
+            tangent = sample["co"] - center
+            tangent -= n_axis * tangent.dot(n_axis)
+            if tangent.length > 1e-8:
+                u_axis = tangent.normalized()
+                break
+
+        if u_axis is None:
+            helper = Vector((1.0, 0.0, 0.0))
+            if abs(helper.dot(n_axis)) > 0.9:
+                helper = Vector((0.0, 1.0, 0.0))
+            u_axis = helper.cross(n_axis).normalized()
+
+        v_axis = n_axis.cross(u_axis)
+        if v_axis.length <= 1e-8:
+            return projector
+        v_axis.normalize()
+
+        local_points = []
+        radii = []
+        z_values = []
+        for sample in samples:
+            rel = sample["co"] - center
+            x = rel.dot(u_axis)
+            y = rel.dot(v_axis)
+            z = rel.dot(n_axis)
+            local_points.append((x, y, z, sample["ring"]))
+            radii.append(math.sqrt(x * x + y * y))
+            z_values.append(z)
+
+        scale = self._trimmed_median(radii)
+        if scale <= 1e-8:
+            scale = max(radii) if radii else 0.0
+        if scale <= 1e-8:
+            return projector
+
+        rows = []
+        rhs = []
+        weights = []
+        for x, y, z, ring_index in local_points:
+            xs = x / scale
+            ys = y / scale
+            rows.append([xs * xs, ys * ys, xs * ys, xs, ys, 1.0])
+            rhs.append(z / scale)
+            weights.append(1.0 / (1.0 + ring_index * 0.35))
+
+        try:
+            matrix = np.asarray(rows, dtype=float)
+            target = np.asarray(rhs, dtype=float)
+            weight_array = np.sqrt(np.asarray(weights, dtype=float))
+            weighted_matrix = matrix * weight_array[:, None]
+            weighted_target = target * weight_array
+            coeffs, _residuals, rank, singular_values = np.linalg.lstsq(
+                weighted_matrix,
+                weighted_target,
+                rcond=None,
+            )
+        except Exception:
+            return projector
+
+        if rank < 3 or not np.all(np.isfinite(coeffs)):
+            return projector
+        if singular_values.size and singular_values[-1] > 1e-10:
+            condition = singular_values[0] / singular_values[-1]
+            if condition > 1e8:
+                return projector
+
+        z_min = min(z_values)
+        z_max = max(z_values)
+        projector.update({
+            "center": center,
+            "u_axis": u_axis,
+            "v_axis": v_axis,
+            "n_axis": n_axis,
+            "scale": scale,
+            "coeffs": coeffs,
+            "z_min": z_min,
+            "z_max": z_max,
+        })
+        return projector
+
+    def _project_to_boundary_surface(self, co, projector):
+        if not projector:
+            return co
+
+        coeffs = projector.get("coeffs") if isinstance(projector, dict) else None
+        if coeffs is not None:
+            center = projector["center"]
+            u_axis = projector["u_axis"]
+            v_axis = projector["v_axis"]
+            n_axis = projector["n_axis"]
+            scale = projector["scale"]
+            rel = co - center
+            x = rel.dot(u_axis)
+            y = rel.dot(v_axis)
+            xs = x / scale
+            ys = y / scale
+            target_z = float(
+                coeffs[0] * xs * xs +
+                coeffs[1] * ys * ys +
+                coeffs[2] * xs * ys +
+                coeffs[3] * xs +
+                coeffs[4] * ys +
+                coeffs[5]
+            ) * scale
+            z_min = projector["z_min"]
+            z_max = projector["z_max"]
+            z_margin = max((z_max - z_min) * 1.5, scale * 0.12)
+            target_z = max(z_min - z_margin, min(z_max + z_margin, target_z))
+            return center + u_axis * x + v_axis * y + n_axis * target_z
+
+        samples = projector.get("samples", []) if isinstance(projector, dict) else projector
         if not samples:
             return co
 
@@ -1689,6 +1879,473 @@ class OP_ModalFillMeshHole(Operator):
 
             for vert, co in new_positions.items():
                 vert.co = co
+
+        if surface_samples:
+            final_blend = max(0.0, min(1.0, self.patch_surface_blend))
+            if final_blend > 0.0:
+                for vert in movable:
+                    projected = self._project_to_boundary_surface(
+                        vert.co,
+                        surface_samples,
+                    )
+                    vert.co = vert.co.lerp(projected, final_blend)
+
+    def _collect_hole_verts(self, bm, hole):
+        bm.verts.ensure_lookup_table()
+        bm.verts.index_update()
+        vert_indices = hole.get("vert_indices")
+        if not vert_indices:
+            return None, "孔洞缺少有序顶点数据，请刷新缓存"
+
+        verts = []
+        for vert_index in vert_indices:
+            if vert_index < 0 or vert_index >= len(bm.verts):
+                return None, "孔洞数据已变化，请刷新缓存"
+            vert = bm.verts[vert_index]
+            if not vert.is_valid:
+                return None, "孔洞顶点已变化，请刷新缓存"
+            verts.append(vert)
+
+        return verts, ""
+
+    def _hole_tangent_basis(
+        self,
+        boundary_verts,
+        boundary_edges,
+        normal,
+        use_neighbor_edges=True,
+    ):
+        if normal.length > 1e-8:
+            n_axis = normal.normalized()
+        else:
+            n_axis = self._loop_normal(boundary_verts, boundary_edges)
+            if n_axis.length <= 1e-8:
+                return None, None
+
+        directions = []
+        for edge in boundary_edges:
+            if not edge.is_valid:
+                continue
+            direction = edge.verts[1].co - edge.verts[0].co
+            projected = direction - n_axis * direction.dot(n_axis)
+            if projected.length > 1e-8:
+                directions.append(projected.normalized())
+
+        if use_neighbor_edges:
+            boundary_vert_set = set(boundary_verts)
+            for vert in boundary_verts:
+                for edge in vert.link_edges:
+                    if not edge.is_valid or edge.is_wire:
+                        continue
+                    other = edge.other_vert(vert)
+                    if other in boundary_vert_set:
+                        continue
+                    direction = other.co - vert.co
+                    projected = direction - n_axis * direction.dot(n_axis)
+                    if projected.length > 1e-8:
+                        directions.append(projected.normalized())
+
+        if not directions:
+            return None, None
+
+        best_axis = None
+        best_score = None
+        for candidate in directions:
+            u_axis = candidate.normalized()
+            v_axis = n_axis.cross(u_axis)
+            if v_axis.length <= 1e-8:
+                continue
+            v_axis.normalize()
+            score = 0.0
+            for direction in directions:
+                score += max(
+                    abs(direction.dot(u_axis)),
+                    abs(direction.dot(v_axis)),
+                ) ** 4
+            if best_score is None or score > best_score:
+                best_score = score
+                best_axis = u_axis
+
+        if best_axis is None:
+            return None, None
+
+        v_axis = n_axis.cross(best_axis)
+        if v_axis.length <= 1e-8:
+            return None, None
+        v_axis.normalize()
+        return best_axis, v_axis
+
+    def _cluster_axis_values(self, values, tolerance):
+        ordered = sorted(values)
+        clusters = []
+        for value in ordered:
+            if not clusters or abs(value - clusters[-1][-1]) > tolerance:
+                clusters.append([value])
+            else:
+                clusters[-1].append(value)
+        return [sum(cluster) / len(cluster) for cluster in clusters]
+
+    def _nearest_axis_index(self, value, axis_values):
+        best_index = 0
+        best_distance = None
+        for index, axis_value in enumerate(axis_values):
+            distance = abs(value - axis_value)
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_index = index
+        return best_index, best_distance
+
+    def _point_in_poly_2d(self, point, polygon):
+        inside = False
+        x, y = point
+        count = len(polygon)
+        for index in range(count):
+            ax, ay = polygon[index]
+            bx, by = polygon[(index + 1) % count]
+            if (ay > y) == (by > y):
+                continue
+            denom = by - ay
+            if abs(denom) <= 1e-12:
+                continue
+            x_intersect = (bx - ax) * (y - ay) / denom + ax
+            if x < x_intersect:
+                inside = not inside
+        return inside
+
+    def _key_on_boundary(self, key, boundary_keys):
+        ui, vi = key
+        count = len(boundary_keys)
+        for index, start in enumerate(boundary_keys):
+            end = boundary_keys[(index + 1) % count]
+            if start[0] == end[0] == ui:
+                if min(start[1], end[1]) <= vi <= max(start[1], end[1]):
+                    return True
+            if start[1] == end[1] == vi:
+                if min(start[0], end[0]) <= ui <= max(start[0], end[0]):
+                    return True
+        return False
+
+    def _merge_boundary_grid_keys_to_nearest_verts(
+        self,
+        boundary_edges,
+        boundary_keys,
+        boundary_key_to_vert,
+        u_values,
+        v_values,
+    ):
+        merged_count = 0
+        count = len(boundary_keys)
+        for index, start in enumerate(boundary_keys):
+            end = boundary_keys[(index + 1) % count]
+            edge = boundary_edges[index]
+            if not edge.is_valid:
+                return False, 0, "孔边已变化，无法自动补分段"
+
+            du = end[0] - start[0]
+            dv = end[1] - start[1]
+            if du and dv:
+                continue
+
+            steps = abs(du if du else dv)
+            if steps <= 1:
+                continue
+
+            missing = []
+            for step in range(1, steps):
+                if du:
+                    key = (start[0] + (1 if du > 0 else -1) * step, start[1])
+                else:
+                    key = (start[0], start[1] + (1 if dv > 0 else -1) * step)
+                if key not in boundary_key_to_vert:
+                    missing.append((step, key))
+
+            if not missing:
+                continue
+
+            start_vert = boundary_key_to_vert.get(start)
+            end_vert = boundary_key_to_vert.get(end)
+            if start_vert is None or end_vert is None:
+                return False, 0, "孔边端点缺失，无法自动补分段"
+
+            start_2d = Vector((u_values[start[0]], v_values[start[1]], 0.0))
+            end_2d = Vector((u_values[end[0]], v_values[end[1]], 0.0))
+            for _step, key in missing:
+                key_2d = Vector((u_values[key[0]], v_values[key[1]], 0.0))
+                start_distance = (key_2d - start_2d).length_squared
+                end_distance = (key_2d - end_2d).length_squared
+                boundary_key_to_vert[key] = (
+                    start_vert
+                    if start_distance <= end_distance
+                    else end_vert
+                )
+                merged_count += 1
+
+        return True, merged_count, ""
+
+    def _collapsed_grid_face_verts(self, verts):
+        collapsed = []
+        for vert in verts:
+            if collapsed and collapsed[-1] is vert:
+                continue
+            collapsed.append(vert)
+
+        if len(collapsed) > 1 and collapsed[0] is collapsed[-1]:
+            collapsed.pop()
+        if len(collapsed) < 3:
+            return None
+        if len(set(collapsed)) != len(collapsed):
+            return None
+        return collapsed
+
+    def _rollback_quad_grid_geometry(self, bm, faces, verts):
+        valid_faces = [
+            face for face in faces
+            if face.is_valid
+        ]
+        if valid_faces:
+            bmesh.ops.delete(bm, geom=valid_faces, context='FACES_ONLY')
+
+        valid_verts = [
+            vert for vert in verts
+            if vert.is_valid
+        ]
+        if valid_verts:
+            bmesh.ops.delete(bm, geom=valid_verts, context='VERTS')
+
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        bm.verts.index_update()
+        bm.edges.index_update()
+        bm.faces.index_update()
+
+    def _fill_hole_direct_quad_bm(self, bm, hole, boundary_verts):
+        if len(boundary_verts) != 4:
+            return False, "Direct Quad 需要 4 个边界点"
+
+        try:
+            face = bm.faces.new(boundary_verts)
+        except ValueError as exc:
+            return False, f"Direct Quad 失败: {exc}"
+
+        face.normal_update()
+        if (
+            hole["normal"].length > 1e-8 and
+            face.normal.length > 1e-8 and
+            face.normal.dot(hole["normal"]) < 0.0
+        ):
+            bmesh.ops.reverse_faces(bm, faces=[face])
+
+        self._tag_patch_faces(bm, [face])
+        return True, "Quad Grid 四边封口 1 面"
+
+    def _fill_hole_quad_grid_bm(self, bm, hole, allow_boundary_merges=True):
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        boundary_edges, error = self._collect_hole_edges(bm, hole)
+        if boundary_edges is None:
+            return False, error
+        boundary_verts, error = self._collect_hole_verts(bm, hole)
+        if boundary_verts is None:
+            return False, error
+        if len(boundary_verts) < 4:
+            return False, "Quad Grid 至少需要 4 个边界点"
+        if len(boundary_verts) == 4:
+            return self._fill_hole_direct_quad_bm(
+                bm,
+                hole,
+                boundary_verts,
+            )
+
+        center = Vector((0.0, 0.0, 0.0))
+        for vert in boundary_verts:
+            center += vert.co
+        center /= len(boundary_verts)
+
+        u_axis, v_axis = self._hole_tangent_basis(
+            boundary_verts,
+            boundary_edges,
+            hole["normal"],
+            use_neighbor_edges=False,
+        )
+        if u_axis is None or v_axis is None:
+            return False, "无法推断四边网格方向"
+
+        coords = []
+        for vert in boundary_verts:
+            delta = vert.co - center
+            coords.append((delta.dot(u_axis), delta.dot(v_axis)))
+
+        boundary_edge_length = self._trimmed_median(
+            edge.calc_length()
+            for edge in boundary_edges
+            if edge.is_valid
+        )
+        snap_tolerance = max(boundary_edge_length * 0.32, 1e-6)
+        u_values = self._cluster_axis_values(
+            [coord[0] for coord in coords],
+            snap_tolerance,
+        )
+        v_values = self._cluster_axis_values(
+            [coord[1] for coord in coords],
+            snap_tolerance,
+        )
+        if len(u_values) < 2 or len(v_values) < 2:
+            return False, "Quad Grid 网格轴数量不足"
+
+        boundary_keys = []
+        boundary_key_to_vert = {}
+        for vert, coord in zip(boundary_verts, coords):
+            ui, u_distance = self._nearest_axis_index(coord[0], u_values)
+            vi, v_distance = self._nearest_axis_index(coord[1], v_values)
+            if u_distance > snap_tolerance or v_distance > snap_tolerance:
+                return False, "边界无法稳定吸附到四边网格"
+            key = (ui, vi)
+            if key in boundary_key_to_vert and boundary_key_to_vert[key] is not vert:
+                return False, "四边网格边界点重叠"
+            boundary_keys.append(key)
+            boundary_key_to_vert[key] = vert
+
+        for index, start in enumerate(boundary_keys):
+            end = boundary_keys[(index + 1) % len(boundary_keys)]
+            if start == end:
+                return False, "四边网格边界有重叠点"
+            if start[0] != end[0] and start[1] != end[1]:
+                return False, "当前孔洞不是可分块四边网格边界"
+
+        polygon = [
+            (u_values[ui], v_values[vi])
+            for ui, vi in boundary_keys
+        ]
+        cells = []
+        for ui in range(len(u_values) - 1):
+            for vi in range(len(v_values) - 1):
+                center_2d = (
+                    (u_values[ui] + u_values[ui + 1]) * 0.5,
+                    (v_values[vi] + v_values[vi + 1]) * 0.5,
+                )
+                if self._point_in_poly_2d(center_2d, polygon):
+                    cells.append((ui, vi))
+
+        if not cells:
+            return False, "Quad Grid 没有可填充网格单元"
+
+        used_keys = set()
+        for ui, vi in cells:
+            used_keys.update((
+                (ui, vi),
+                (ui + 1, vi),
+                (ui + 1, vi + 1),
+                (ui, vi + 1),
+            ))
+
+        missing_boundary_keys = []
+        for key in used_keys:
+            if key in boundary_key_to_vert:
+                continue
+            if self._key_on_boundary(key, boundary_keys):
+                missing_boundary_keys.append(key)
+
+        surface_samples = self._boundary_surface_samples(set(boundary_verts))
+        merged_boundary_count = 0
+        if missing_boundary_keys:
+            if not allow_boundary_merges:
+                return False, "四边网格边界需要补分段"
+            success, merged_boundary_count, message = (
+                self._merge_boundary_grid_keys_to_nearest_verts(
+                    boundary_edges,
+                    boundary_keys,
+                    boundary_key_to_vert,
+                    u_values,
+                    v_values,
+                )
+            )
+            if not success:
+                return False, message
+
+        for key in used_keys:
+            if key in boundary_key_to_vert:
+                continue
+            if self._key_on_boundary(key, boundary_keys):
+                return False, "边界内部补分段失败"
+
+        grid_verts = {}
+        created_grid_verts = set()
+        for key in sorted(used_keys):
+            if key in boundary_key_to_vert:
+                grid_verts[key] = boundary_key_to_vert[key]
+                continue
+            ui, vi = key
+            co = center + u_axis * u_values[ui] + v_axis * v_values[vi]
+            if surface_samples:
+                co = self._project_to_boundary_surface(co, surface_samples)
+            vert = bm.verts.new(co)
+            grid_verts[key] = vert
+            created_grid_verts.add(vert)
+
+        bm.verts.ensure_lookup_table()
+        created_faces = []
+        for ui, vi in cells:
+            verts = [
+                grid_verts[(ui, vi)],
+                grid_verts[(ui + 1, vi)],
+                grid_verts[(ui + 1, vi + 1)],
+                grid_verts[(ui, vi + 1)],
+            ]
+            verts = self._collapsed_grid_face_verts(verts)
+            if not verts:
+                continue
+            try:
+                face = bm.faces.new(verts)
+                created_faces.append(face)
+            except ValueError:
+                continue
+
+        if not created_faces:
+            self._rollback_quad_grid_geometry(
+                bm,
+                created_faces,
+                created_grid_verts,
+            )
+            return False, "Quad Grid 未生成四边面"
+
+        open_boundary_edges = [
+            edge for edge in boundary_edges
+            if edge.is_valid and edge.is_boundary
+        ]
+        if open_boundary_edges:
+            self._rollback_quad_grid_geometry(
+                bm,
+                created_faces,
+                created_grid_verts,
+            )
+            return False, f"Quad Grid 边界未闭合 {len(open_boundary_edges)} 边"
+
+        self._tag_patch_faces(bm, created_faces)
+
+        if hole["normal"].length > 1e-8:
+            fill_normal = Vector((0.0, 0.0, 0.0))
+            for face in created_faces:
+                face.normal_update()
+                fill_normal += face.normal
+            if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
+                bmesh.ops.reverse_faces(bm, faces=created_faces)
+
+        self._relax_patch_verts(
+            set(created_faces),
+            set(boundary_verts),
+            surface_samples,
+        )
+
+        quad_count = sum(1 for face in created_faces if len(face.verts) == 4)
+        tri_count = sum(1 for face in created_faces if len(face.verts) == 3)
+        if tri_count:
+            return True, f"Quad Grid 四边 {quad_count} 面 / 边界三角 {tri_count} 面 / 融并 {merged_boundary_count} 点"
+        if merged_boundary_count:
+            return True, f"Quad Grid 四边 {quad_count} 面 / 融并 {merged_boundary_count} 点"
+        return True, f"Quad Grid 四边填充 {quad_count} 面"
 
     def _fill_hole_patch_bm(self, bm, hole, quadrangulate=False):
         bm.verts.ensure_lookup_table()
@@ -1854,7 +2511,7 @@ class OP_ModalFillMeshHole(Operator):
         self._clear_patch_tags(bm)
         if quadrangulate:
             return True, (
-                f"Quad Patch 封闭 {len(boundary_edges)} 边孔洞"
+                f"Quad Fallback 封闭 {len(boundary_edges)} 边孔洞"
                 f" / 四边 {quad_count} 面"
                 f" / 三角 {tri_count} 面"
             )
@@ -1888,6 +2545,11 @@ class OP_ModalFillMeshHole(Operator):
                 return False, "孔洞已经被封闭"
             edges.append(edge)
 
+        boundary_verts = set()
+        for edge in edges:
+            boundary_verts.update(edge.verts)
+        surface_samples = self._boundary_surface_samples(boundary_verts)
+
         try:
             result = bmesh.ops.triangle_fill(
                 bm,
@@ -1914,6 +2576,12 @@ class OP_ModalFillMeshHole(Operator):
             if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
                 bmesh.ops.reverse_faces(bm, faces=new_faces)
 
+        self._relax_patch_verts(
+            set(new_faces),
+            boundary_verts,
+            surface_samples,
+        )
+
         return True, f"Triangle Fill 三角封闭 {len(edges)} 边孔洞"
 
     def _fill_active_hole_triangle(self, context, hole):
@@ -1935,11 +2603,28 @@ class OP_ModalFillMeshHole(Operator):
         if self.fill_mode == 'TRIANGLE':
             success, message = self._fill_active_hole_triangle(context, hole)
         elif self.fill_mode == 'QUAD_PATCH':
-            success, message = self._fill_active_hole_patch(
-                context,
-                hole,
-                quadrangulate=True,
-            )
+            obj, bm = self._edit_bmesh(context)
+            if bm is None:
+                success, message = False, "没有可编辑网格"
+            else:
+                success, message = self._fill_hole_quad_grid_bm(
+                    bm,
+                    hole,
+                )
+                if not success:
+                    success, message = self._fill_hole_patch_bm(
+                        bm,
+                        hole,
+                        quadrangulate=True,
+                    )
+                    if success:
+                        message = f"{message} / Grid 回退"
+                if success:
+                    bmesh.update_edit_mesh(
+                        obj.data,
+                        loop_triangles=True,
+                        destructive=True,
+                    )
         else:
             success, message = self._fill_active_hole_patch(context, hole)
 
@@ -1967,6 +2652,7 @@ class OP_ModalFillMeshHole(Operator):
             new_vert = temp_bm.verts.new(vert.co.copy())
             vert_map[vert.index] = new_vert
         temp_bm.verts.ensure_lookup_table()
+        temp_bm.verts.index_update()
 
         for edge in bm.edges:
             if edge.is_valid:
@@ -1989,6 +2675,10 @@ class OP_ModalFillMeshHole(Operator):
         temp_bm.verts.ensure_lookup_table()
         temp_bm.edges.ensure_lookup_table()
         temp_bm.faces.ensure_lookup_table()
+        temp_bm.verts.index_update()
+        temp_bm.edges.index_update()
+        temp_bm.faces.index_update()
+        temp_bm.normal_update()
         old_face_count = len(temp_bm.faces)
 
         temp_hole = {
@@ -2000,11 +2690,19 @@ class OP_ModalFillMeshHole(Operator):
             if self.fill_mode == 'TRIANGLE':
                 success, message = self._fill_hole_triangle_bm(temp_bm, temp_hole)
             elif self.fill_mode == 'QUAD_PATCH':
-                success, message = self._fill_hole_patch_bm(
+                temp_hole["vert_indices"] = list(hole.get("vert_indices", []))
+                success, message = self._fill_hole_quad_grid_bm(
                     temp_bm,
                     temp_hole,
-                    quadrangulate=True,
                 )
+                if not success:
+                    success, message = self._fill_hole_patch_bm(
+                        temp_bm,
+                        temp_hole,
+                        quadrangulate=True,
+                    )
+                    if success:
+                        message = f"{message} / Grid 回退"
             else:
                 success, message = self._fill_hole_patch_bm(temp_bm, temp_hole)
         except Exception as exc:
@@ -2015,10 +2713,21 @@ class OP_ModalFillMeshHole(Operator):
             temp_bm.free()
             return False, f"预览失败: {message}", []
 
+        temp_bm.verts.ensure_lookup_table()
+        temp_bm.edges.ensure_lookup_table()
         temp_bm.faces.ensure_lookup_table()
+        temp_bm.verts.index_update()
+        temp_bm.edges.index_update()
+        temp_bm.faces.index_update()
+        temp_bm.normal_update()
         world = obj.matrix_world
         preview_faces = []
-        for face in list(temp_bm.faces)[old_face_count:]:
+        tagged_faces = [
+            face for face in temp_bm.faces
+            if face.is_valid and face.tag
+        ]
+        export_faces = tagged_faces if tagged_faces else list(temp_bm.faces)[old_face_count:]
+        for face in export_faces:
             if len(face.verts) < 3:
                 continue
             preview_faces.append([world @ vert.co.copy() for vert in face.verts])
@@ -2276,7 +2985,7 @@ class OP_ModalFillMeshHole(Operator):
 
         mode_names = {
             'SMOOTH_PATCH': "Smooth Patch",
-            'QUAD_PATCH': "Quad Patch",
+            'QUAD_PATCH': "Quad Grid",
             'TRIANGLE': "Triangle Fill",
         }
 
@@ -2287,7 +2996,8 @@ class OP_ModalFillMeshHole(Operator):
         draw_key_value("A键:", "全部预览", 94)
         draw_key_value("F键:", mode_names.get(self.fill_mode, self.fill_mode), 118)
         draw_key_value("Shift+滚轮:", f"倍率 {self.patch_edge_factor:.2f}", 140)
-        draw_key_value("R键:", "刷新", 162)
+        draw_key_value("Ctrl+Shift滚轮:", f"吸附 {self.patch_surface_blend:.2f}", 162)
+        draw_key_value("R键:", "刷新", 184)
 
         blf.disable(font_id, blf.SHADOW)
 
@@ -2309,8 +3019,12 @@ class OP_ModalFillMeshHole(Operator):
         if event.type == 'WHEELUPMOUSE':
             if not event.shift:
                 return {'PASS_THROUGH'}
-            self.patch_edge_factor = max(0.35, self.patch_edge_factor * 0.9)
-            self.message = f"倍率: {self.patch_edge_factor:.2f}"
+            if event.ctrl:
+                self.patch_surface_blend = min(1.0, self.patch_surface_blend + 0.05)
+                self.message = f"曲面吸附: {self.patch_surface_blend:.2f}"
+            else:
+                self.patch_edge_factor = max(0.35, self.patch_edge_factor * 0.9)
+                self.message = f"倍率: {self.patch_edge_factor:.2f}"
             if self.preview_hole_signatures:
                 self._rebuild_preview_faces(context)
             self._tag_redraw(context)
@@ -2319,8 +3033,12 @@ class OP_ModalFillMeshHole(Operator):
         if event.type == 'WHEELDOWNMOUSE':
             if not event.shift:
                 return {'PASS_THROUGH'}
-            self.patch_edge_factor = min(4.0, self.patch_edge_factor / 0.9)
-            self.message = f"倍率: {self.patch_edge_factor:.2f}"
+            if event.ctrl:
+                self.patch_surface_blend = max(0.0, self.patch_surface_blend - 0.05)
+                self.message = f"曲面吸附: {self.patch_surface_blend:.2f}"
+            else:
+                self.patch_edge_factor = min(4.0, self.patch_edge_factor / 0.9)
+                self.message = f"倍率: {self.patch_edge_factor:.2f}"
             if self.preview_hole_signatures:
                 self._rebuild_preview_faces(context)
             self._tag_redraw(context)
@@ -2369,7 +3087,7 @@ class OP_ModalFillMeshHole(Operator):
             modes = ['SMOOTH_PATCH', 'QUAD_PATCH', 'TRIANGLE']
             mode_names = {
                 'SMOOTH_PATCH': "Smooth Patch",
-                'QUAD_PATCH': "Quad Patch",
+                'QUAD_PATCH': "Quad Grid",
                 'TRIANGLE': "Triangle Fill",
             }
             index = modes.index(self.fill_mode) if self.fill_mode in modes else -1
