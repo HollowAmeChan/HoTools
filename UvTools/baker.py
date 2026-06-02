@@ -1,6 +1,7 @@
 import bpy
 import sys
 import os
+import math
 import random
 import numpy as np
 
@@ -20,10 +21,18 @@ from mathutils.geometry import intersect_line_line_2d
 
 
 def reg_props():
+    bpy.types.Scene.ho_uvtools_light_cast_object = PointerProperty(
+        name="光源",
+        type=bpy.types.Object,
+        poll=poll_light_object,
+        description="用于光源Cast Lightmap烘焙的Light对象"
+    )
     return
 
 
 def ureg_props():
+    if hasattr(bpy.types.Scene, "ho_uvtools_light_cast_object"):
+        del bpy.types.Scene.ho_uvtools_light_cast_object
     return
 # endregion
 
@@ -387,6 +396,113 @@ def rasterize_surface_sample_triangle(mask, pos_x, pos_y, pos_z, normal_x, norma
     return True
 
 
+def collect_lightmap_surface_samples(selected_objs, depsgraph, width, height):
+    mask = np.zeros((height, width), dtype=bool)
+    pos_x = np.zeros((height, width), dtype=np.float32)
+    pos_y = np.zeros((height, width), dtype=np.float32)
+    pos_z = np.zeros((height, width), dtype=np.float32)
+    normal_x = np.zeros((height, width), dtype=np.float32)
+    normal_y = np.zeros((height, width), dtype=np.float32)
+    normal_z = np.zeros((height, width), dtype=np.float32)
+    exported_tris = 0
+    skipped_large_tris = 0
+    out_of_range_tris = 0
+    skipped_objects = []
+    uv_min_u = float("inf")
+    uv_min_v = float("inf")
+    uv_max_u = float("-inf")
+    uv_max_v = float("-inf")
+
+    for obj in selected_objs:
+        eval_obj = obj.evaluated_get(depsgraph)
+        mesh = eval_obj.to_mesh()
+        try:
+            uv_layer = mesh.uv_layers.active
+            if uv_layer is None:
+                skipped_objects.append(f"{obj.name}(无UV)")
+                continue
+
+            matrix_world = eval_obj.matrix_world
+            try:
+                normal_matrix = matrix_world.to_3x3().inverted().transposed()
+            except ValueError:
+                skipped_objects.append(f"{obj.name}(法线矩阵无效)")
+                continue
+
+            for poly in mesh.polygons:
+                loop_indices = list(poly.loop_indices)
+                if len(loop_indices) < 3:
+                    continue
+
+                pts = []
+                positions = []
+                normals = []
+                for loop_index in loop_indices:
+                    loop = mesh.loops[loop_index]
+                    uv = uv_layer.data[loop_index].uv.copy()
+                    uv_min_u = min(uv_min_u, uv.x)
+                    uv_min_v = min(uv_min_v, uv.y)
+                    uv_max_u = max(uv_max_u, uv.x)
+                    uv_max_v = max(uv_max_v, uv.y)
+                    pts.append((uv.x * width, (1.0 - uv.y) * height))
+                    world_pos = matrix_world @ mesh.vertices[loop.vertex_index].co
+                    positions.append((world_pos.x, world_pos.y, world_pos.z))
+                    world_normal = normal_matrix @ loop.normal
+                    if world_normal.length > 1e-8:
+                        world_normal.normalize()
+                    normals.append((world_normal.x, world_normal.y, world_normal.z))
+
+                for i in range(1, len(loop_indices) - 1):
+                    tri_pts = [pts[0], pts[i], pts[i + 1]]
+                    tri_positions = [
+                        positions[0],
+                        positions[i],
+                        positions[i + 1]
+                    ]
+                    tri_normals = [
+                        normals[0],
+                        normals[i],
+                        normals[i + 1]
+                    ]
+                    if any(p[0] < 0 or p[0] > width or p[1] < 0 or p[1] > height for p in tri_pts):
+                        out_of_range_tris += 1
+                    if rasterize_surface_sample_triangle(
+                        mask,
+                        pos_x,
+                        pos_y,
+                        pos_z,
+                        normal_x,
+                        normal_y,
+                        normal_z,
+                        tri_pts,
+                        tri_positions,
+                        tri_normals
+                    ):
+                        exported_tris += 1
+                    else:
+                        skipped_large_tris += 1
+        finally:
+            eval_obj.to_mesh_clear()
+
+    return {
+        "mask": mask,
+        "pos_x": pos_x,
+        "pos_y": pos_y,
+        "pos_z": pos_z,
+        "normal_x": normal_x,
+        "normal_y": normal_y,
+        "normal_z": normal_z,
+        "exported_tris": exported_tris,
+        "skipped_large_tris": skipped_large_tris,
+        "out_of_range_tris": out_of_range_tris,
+        "skipped_objects": skipped_objects,
+        "uv_min_u": uv_min_u,
+        "uv_min_v": uv_min_v,
+        "uv_max_u": uv_max_u,
+        "uv_max_v": uv_max_v,
+    }
+
+
 SIX_DIRECTION_VISIBILITY_DIRS = [
     (Vector((1.0, 0.0, 0.0)), 0, True),
     (Vector((0.0, 1.0, 0.0)), 1, True),
@@ -494,6 +610,157 @@ def bake_six_direction_visibility(scene, depsgraph, mask, pos_x, pos_y, pos_z,
     return pos_rgb, neg_rgb
 
 
+def get_light_rgb(light_data, intensity_scale):
+    color = getattr(light_data, "color", (1.0, 1.0, 1.0))
+    energy = max(0.0, float(getattr(light_data, "energy", 1.0)))
+    return (
+        max(0.0, float(color[0])) * energy * intensity_scale,
+        max(0.0, float(color[1])) * energy * intensity_scale,
+        max(0.0, float(color[2])) * energy * intensity_scale,
+    )
+
+
+def calc_spot_factor(light_data, light_obj, ray_to_surface):
+    spot_size = max(1e-6, float(getattr(light_data, "spot_size", math.pi)))
+    spot_blend = max(0.0, min(1.0, float(getattr(light_data, "spot_blend", 0.0))))
+    light_forward = light_obj.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0))
+    if light_forward.length <= 1e-8 or ray_to_surface.length <= 1e-8:
+        return 0.0
+    light_forward.normalize()
+    ray_to_surface = ray_to_surface.normalized()
+    cos_angle = max(-1.0, min(1.0, light_forward.dot(ray_to_surface)))
+    angle = math.acos(cos_angle)
+    outer = spot_size * 0.5
+    if angle >= outer:
+        return 0.0
+    inner = outer * (1.0 - spot_blend)
+    if angle <= inner:
+        return 1.0
+    fade_range = max(1e-6, outer - inner)
+    return max(0.0, min(1.0, 1.0 - (angle - inner) / fade_range))
+
+
+def calc_area_light_direction_factor(light_obj, ray_to_surface):
+    light_forward = light_obj.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0))
+    if light_forward.length <= 1e-8 or ray_to_surface.length <= 1e-8:
+        return 0.0
+    light_forward.normalize()
+    ray_to_surface = ray_to_surface.normalized()
+    return max(0.0, light_forward.dot(ray_to_surface))
+
+
+def calc_light_sample(light_obj, base_origin, normal, max_distance, ray_bias,
+                      use_light_distance, intensity_scale):
+    light_data = light_obj.data
+    light_type = light_data.type
+    light_rgb = get_light_rgb(light_data, intensity_scale)
+    origin = base_origin + normal * ray_bias
+
+    if light_type == 'SUN':
+        light_forward = light_obj.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0))
+        if light_forward.length <= 1e-8:
+            return None
+        direction = -light_forward.normalized()
+        cast_distance = max_distance
+        attenuation = 1.0
+    else:
+        light_location = light_obj.matrix_world.translation
+        vector_to_light = light_location - origin
+        distance = vector_to_light.length
+        if distance <= 1e-8:
+            return None
+        direction = vector_to_light / distance
+        if use_light_distance:
+            cast_distance = max(0.0, distance - ray_bias)
+        else:
+            cast_distance = min(max_distance, max(0.0, distance - ray_bias))
+        if cast_distance <= 0.0:
+            return None
+
+        attenuation = 1.0 / max(distance * distance, 1.0e-6)
+        if light_type == 'SPOT':
+            attenuation *= calc_spot_factor(light_data, light_obj, -vector_to_light)
+        elif light_type == 'AREA':
+            attenuation *= calc_area_light_direction_factor(light_obj, -vector_to_light)
+
+    ndotl = max(0.0, normal.dot(direction))
+    strength = ndotl * attenuation
+    if strength <= 0.0:
+        return None
+    return origin, direction, cast_distance, light_rgb, strength
+
+
+def bake_light_cast(scene, depsgraph, light_obj, mask, pos_x, pos_y, pos_z,
+                    normal_x, normal_y, normal_z, sample_step=2,
+                    max_distance=100.0, ray_bias=0.001, occluder_objects=None,
+                    intensity_scale=1.0, use_light_distance=True):
+    height, width = mask.shape
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    sample_step = max(1, int(sample_step))
+    max_distance = max(0.0, float(max_distance))
+    ray_bias = max(0.0, float(ray_bias))
+    intensity_scale = max(0.0, float(intensity_scale))
+
+    for y0 in range(0, height, sample_step):
+        y1 = min(height, y0 + sample_step)
+        for x0 in range(0, width, sample_step):
+            x1 = min(width, x0 + sample_step)
+            block_mask = mask[y0:y1, x0:x1]
+            if not block_mask.any():
+                continue
+
+            ys, xs = np.nonzero(block_mask)
+            sample_y = y0 + int(ys[len(ys) // 2])
+            sample_x = x0 + int(xs[len(xs) // 2])
+            base_origin = Vector((
+                float(pos_x[sample_y, sample_x]),
+                float(pos_y[sample_y, sample_x]),
+                float(pos_z[sample_y, sample_x]),
+            ))
+            normal = Vector((
+                float(normal_x[sample_y, sample_x]),
+                float(normal_y[sample_y, sample_x]),
+                float(normal_z[sample_y, sample_x]),
+            ))
+            if normal.length > 1e-8:
+                normal.normalize()
+            else:
+                continue
+
+            sample = calc_light_sample(
+                light_obj,
+                base_origin,
+                normal,
+                max_distance,
+                ray_bias,
+                use_light_distance,
+                intensity_scale
+            )
+            if sample is None:
+                continue
+
+            origin, direction, cast_distance, light_rgb, strength = sample
+            visible = scene_ray_is_visible(
+                scene,
+                depsgraph,
+                origin,
+                direction,
+                cast_distance,
+                occluder_objects=occluder_objects
+            )
+            if not visible:
+                continue
+
+            value = [
+                int(max(0.0, min(1.0, light_rgb[channel] * strength)) * 255.0 + 0.5)
+                for channel in range(3)
+            ]
+            block = rgb[y0:y1, x0:x1]
+            block[block_mask] = value
+
+    return rgb
+
+
 def finalize_six_direction_visibility_image(rgb_arr, mask, dilate_radius, blur_radius):
     alpha = (mask.astype(np.uint8) * 255)
     rgba = np.dstack((rgb_arr, alpha))
@@ -504,6 +771,26 @@ def finalize_six_direction_visibility_image(rgb_arr, mask, dilate_radius, blur_r
             ImageFilter.GaussianBlur(radius=float(blur_radius)))
         pil_img = Image.merge("RGBA", (*rgb_img.split(), pil_img.getchannel("A")))
     return pil_img.convert("RGB")
+
+
+def finalize_light_cast_image(rgb_arr, mask, dilate_radius, blur_radius, image_format):
+    alpha = (mask.astype(np.uint8) * 255)
+    rgba = np.dstack((rgb_arr, alpha))
+    pil_img = Image.fromarray(rgba, mode="RGBA")
+    pil_img = dilate_image_with_colors(pil_img, dilate_radius)
+    if blur_radius > 0.0:
+        rgb_img = pil_img.convert("RGB").filter(
+            ImageFilter.GaussianBlur(radius=float(blur_radius)))
+        pil_img = Image.merge("RGBA", (*rgb_img.split(), pil_img.getchannel("A")))
+    return pil_img if image_format == 'PNG' else pil_img.convert("RGB")
+
+
+def poll_light_object(self, obj):
+    return obj is not None and obj.type == 'LIGHT'
+
+
+def clean_filename_part(name):
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
 
 
 def rasterize_tb_flow_triangle(mask, flow_x, flow_y, pts, flows, island_ids=None,
@@ -2298,13 +2585,6 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
     def execute_object_mode(self, context):
         width = self.image_width
         height = self.image_height
-        mask = np.zeros((height, width), dtype=bool)
-        pos_x = np.zeros((height, width), dtype=np.float32)
-        pos_y = np.zeros((height, width), dtype=np.float32)
-        pos_z = np.zeros((height, width), dtype=np.float32)
-        normal_x = np.zeros((height, width), dtype=np.float32)
-        normal_y = np.zeros((height, width), dtype=np.float32)
-        normal_z = np.zeros((height, width), dtype=np.float32)
 
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
@@ -2316,77 +2596,11 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
             occluder_objects = set(selected_objs)
 
         depsgraph = context.evaluated_depsgraph_get()
-        exported_tris = 0
-        skipped_large_tris = 0
-        out_of_range_tris = 0
-        skipped_objects = []
-        uv_min_u = float("inf")
-        uv_min_v = float("inf")
-        uv_max_u = float("-inf")
-        uv_max_v = float("-inf")
+        surface = collect_lightmap_surface_samples(
+            selected_objs, depsgraph, width, height)
+        mask = surface["mask"]
 
-        for obj in selected_objs:
-            eval_obj = obj.evaluated_get(depsgraph)
-            mesh = eval_obj.to_mesh()
-            try:
-                uv_layer = mesh.uv_layers.active
-                if uv_layer is None:
-                    skipped_objects.append(f"{obj.name}(无UV)")
-                    continue
-
-                matrix_world = eval_obj.matrix_world
-                normal_matrix = matrix_world.to_3x3().inverted().transposed()
-                for poly in mesh.polygons:
-                    loop_indices = list(poly.loop_indices)
-                    if len(loop_indices) < 3:
-                        continue
-
-                    pts = []
-                    positions = []
-                    normals = []
-                    for loop_index in loop_indices:
-                        loop = mesh.loops[loop_index]
-                        uv = uv_layer.data[loop_index].uv.copy()
-                        uv_min_u = min(uv_min_u, uv.x)
-                        uv_min_v = min(uv_min_v, uv.y)
-                        uv_max_u = max(uv_max_u, uv.x)
-                        uv_max_v = max(uv_max_v, uv.y)
-                        pts.append((uv.x * width, (1.0 - uv.y) * height))
-                        world_pos = matrix_world @ mesh.vertices[loop.vertex_index].co
-                        positions.append((world_pos.x, world_pos.y, world_pos.z))
-                        world_normal = normal_matrix @ loop.normal
-                        if world_normal.length > 1e-8:
-                            world_normal.normalize()
-                        normals.append((world_normal.x, world_normal.y, world_normal.z))
-
-                    for i in range(1, len(loop_indices) - 1):
-                        tri_pts = [pts[0], pts[i], pts[i + 1]]
-                        tri_positions = [
-                            positions[0],
-                            positions[i],
-                            positions[i + 1]
-                        ]
-                        if any(p[0] < 0 or p[0] > width or p[1] < 0 or p[1] > height for p in tri_pts):
-                            out_of_range_tris += 1
-                        if rasterize_surface_sample_triangle(
-                            mask,
-                            pos_x,
-                            pos_y,
-                            pos_z,
-                            normal_x,
-                            normal_y,
-                            normal_z,
-                            tri_pts,
-                            tri_positions,
-                            [normals[0], normals[i], normals[i + 1]]
-                        ):
-                            exported_tris += 1
-                        else:
-                            skipped_large_tris += 1
-            finally:
-                eval_obj.to_mesh_clear()
-
-        if exported_tris == 0 or not mask.any():
+        if surface["exported_tris"] == 0 or not mask.any():
             self.report({'ERROR'}, "没有可导出的六向可见度数据")
             return {'CANCELLED'}
 
@@ -2394,12 +2608,12 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
             context.scene,
             depsgraph,
             mask,
-            pos_x,
-            pos_y,
-            pos_z,
-            normal_x,
-            normal_y,
-            normal_z,
+            surface["pos_x"],
+            surface["pos_y"],
+            surface["pos_z"],
+            surface["normal_x"],
+            surface["normal_y"],
+            surface["normal_z"],
             sample_step=self.sample_step,
             max_distance=self.max_distance,
             ray_bias=self.ray_bias,
@@ -2421,11 +2635,144 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
         pos_img.save(pos_path)
         neg_img.save(neg_path)
 
-        if skipped_objects:
-            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        if surface["skipped_objects"]:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(surface["skipped_objects"]))
         self.report(
             {'INFO'},
-            f"已导出六向可见度: {pos_path} / {neg_path} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_tris} | 越界三角={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+            f"已导出六向可见度: {pos_path} / {neg_path} | UV范围=({surface['uv_min_u']:.4f},{surface['uv_min_v']:.4f})-({surface['uv_max_u']:.4f},{surface['uv_max_v']:.4f}) | 三角={surface['exported_tris']} | 越界三角={surface['out_of_range_tris']} | 跳过大三角={surface['skipped_large_tris']}"
+        )
+        return {'FINISHED'}
+
+
+class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
+    """导出指定光源的直接光照Cast Lightmap"""
+    bl_idname = "ho.uvtools_bake_light_cast_image"
+    bl_label = "导出光源Cast Lightmap"
+    bl_description = "从UV texel还原真实3D世界位置,按指定Light对象ray_cast烘焙直接光照"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="Lightmap宽度", default=1024, min=1)  # type: ignore
+    image_height: IntProperty(name="Lightmap高度", default=1024, min=1)  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    sample_step: IntProperty(
+        name="采样步长", default=1, min=1, max=16,
+        description="每隔多少像素发射一次光源射线,1为逐像素最慢")  # type: ignore
+    max_distance: FloatProperty(
+        name="Sun最大距离", default=100.0, min=0.0,
+        description="Sun光源使用的射线最大距离;非Sun光源默认使用到光源的真实距离")  # type: ignore
+    ray_bias: FloatProperty(
+        name="法线偏移", default=0.001, min=0.0,
+        description="沿真实3D表面法线偏移射线起点,避免命中当前表面")  # type: ignore
+    include_visible_scene_objects: BoolProperty(
+        name="考虑其他可见物体", default=True,
+        description="开启时场景中其它可见物体也会遮挡射线;关闭时只考虑当前选中物体集合")  # type: ignore
+    use_light_distance: BoolProperty(
+        name="点/聚光按光源距离截断", default=True,
+        description="开启时Point/Spot/Area只检测到光源中心的距离;关闭时也会受Sun最大距离限制")  # type: ignore
+    intensity_scale: FloatProperty(
+        name="强度倍率", default=1.0, min=0.0, max=100.0,
+        description="写入RGB前对光源能量的缩放")  # type: ignore
+    blur_radius: FloatProperty(
+        name="模糊半径", default=2, min=0.0, max=64.0,
+        description="导出前对光照图做高斯模糊")  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0,
+        description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(context.scene, "ho_uvtools_light_cast_object")
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "image_format")
+        layout.prop(self, "sample_step")
+        layout.prop(self, "max_distance")
+        layout.prop(self, "ray_bias")
+        layout.prop(self, "include_visible_scene_objects")
+        layout.prop(self, "use_light_distance")
+        layout.prop(self, "intensity_scale")
+        layout.prop(self, "blur_radius")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        width = self.image_width
+        height = self.image_height
+
+        light_obj = context.scene.ho_uvtools_light_cast_object
+        if light_obj is None or light_obj.type != 'LIGHT':
+            self.report({'ERROR'}, "请在光源输入口指定一个Light对象")
+            return {'CANCELLED'}
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+
+        occluder_objects = None
+        if not self.include_visible_scene_objects:
+            occluder_objects = set(selected_objs)
+
+        depsgraph = context.evaluated_depsgraph_get()
+        surface = collect_lightmap_surface_samples(
+            selected_objs, depsgraph, width, height)
+        mask = surface["mask"]
+
+        if surface["exported_tris"] == 0 or not mask.any():
+            self.report({'ERROR'}, "没有可导出的光源Cast Lightmap数据")
+            return {'CANCELLED'}
+
+        rgb = bake_light_cast(
+            context.scene,
+            depsgraph,
+            light_obj,
+            mask,
+            surface["pos_x"],
+            surface["pos_y"],
+            surface["pos_z"],
+            surface["normal_x"],
+            surface["normal_y"],
+            surface["normal_z"],
+            sample_step=self.sample_step,
+            max_distance=self.max_distance,
+            ray_bias=self.ray_bias,
+            occluder_objects=occluder_objects,
+            intensity_scale=self.intensity_scale,
+            use_light_distance=self.use_light_distance
+        )
+        img = finalize_light_cast_image(
+            rgb, mask, self.dilate_radius, self.blur_radius, self.image_format)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        base_path = bpy.path.abspath(self.filepath)
+        lower_path = base_path.lower()
+        if lower_path.endswith(".png") or lower_path.endswith(".jpg") or lower_path.endswith(".jpeg"):
+            base_path = os.path.splitext(base_path)[0]
+        final_path = base_path + "_LightCast_" + clean_filename_part(light_obj.name) + ext
+        img.save(final_path)
+
+        if surface["skipped_objects"]:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(surface["skipped_objects"]))
+        self.report(
+            {'INFO'},
+            f"已导出光源Cast Lightmap: {final_path} | 光源={light_obj.name}({light_obj.data.type}) | UV范围=({surface['uv_min_u']:.4f},{surface['uv_min_v']:.4f})-({surface['uv_max_u']:.4f},{surface['uv_max_v']:.4f}) | 三角={surface['exported_tris']} | 越界三角={surface['out_of_range_tris']} | 跳过大三角={surface['skipped_large_tris']}"
         )
         return {'FINISHED'}
 
@@ -3204,6 +3551,8 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeGravityFieldMapImage.bl_idname, text="重力场图")
 
     row = col.row(align=True)
+    row.prop(context.scene, "ho_uvtools_light_cast_object", text="光源")
+    row.operator(OT_UVTools_BakeLightCastImage.bl_idname, text="光源Cast")
     row.operator(OT_UVTools_BakeSixDirectionVisibilityImage.bl_idname, text="六向Lightmap")
 
 
@@ -3214,7 +3563,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeSixDirectionVisibilityImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeSixDirectionVisibilityImage, OT_UVTools_BakeLightCastImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
