@@ -2525,7 +2525,8 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
 def drawBakePanel(layout: bpy.types.UILayout, context):
     box = layout.box()
     box.label(text="导出UV贴图")
-    row = box.row(align=True)
+    col = box.column(align=True)
+    row = col.row(align=True)
     row.operator(OT_UVTools_FastBakeUVImage.bl_idname, text="", icon="FUND")
     row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text="UV岛")
     row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
@@ -2533,14 +2534,17 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
     row.operator(OT_UVTools_BakeMaterialIDImage.bl_idname, text="材质ID")
     row.operator("uv.export_layout", text="网格")
-    row = box.row(align=True)
-    row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
 
+    row = col.row(align=True)
+    row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
     row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
+
+    row = col.row(align=True)
     row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
-    row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
     row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text="岛SDF")
     row.operator(OT_UVTools_BakeTangentImage.bl_idname, text="切/副切线")
+    row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
+
 
 
     # box = layout.box()
