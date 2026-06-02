@@ -1158,6 +1158,7 @@ class OP_ModalFillMeshHole(Operator):
         description="左键封闭孔洞时使用的算法",
         items=[
             ('SMOOTH_PATCH', "Smooth Patch", "三角剖分、补片细分、内部点平滑"),
+            ('QUAD_PATCH', "Quad Patch", "自适应补片后智能合并三角面为四边面"),
             ('TRIANGLE', "Triangle Fill", "Beauty 三角剖分，稳定但布线较稀"),
         ],
         default='SMOOTH_PATCH',
@@ -1592,7 +1593,41 @@ class OP_ModalFillMeshHole(Operator):
             if face.is_valid and face.tag
         }
 
+    def _collect_patch_faces_from_boundary(self, boundary_edges, excluded_faces):
+        boundary_edge_set = set(boundary_edges)
+        patch_faces = set()
+        stack = []
+        for edge in boundary_edges:
+            if not edge.is_valid:
+                continue
+            for face in edge.link_faces:
+                if face.is_valid and face not in excluded_faces:
+                    stack.append(face)
+
+        while stack:
+            face = stack.pop()
+            if (
+                not face.is_valid or
+                face in patch_faces or
+                face in excluded_faces
+            ):
+                continue
+            patch_faces.add(face)
+            for edge in face.edges:
+                if not edge.is_valid or edge in boundary_edge_set:
+                    continue
+                for linked_face in edge.link_faces:
+                    if (
+                        linked_face.is_valid and
+                        linked_face not in patch_faces and
+                        linked_face not in excluded_faces
+                    ):
+                        stack.append(linked_face)
+
+        return patch_faces
+
     def _patch_boundary_verts_from_faces(self, patch_faces):
+        patch_face_set = set(patch_faces)
         verts = set()
         for face in patch_faces:
             if not face.is_valid:
@@ -1600,7 +1635,7 @@ class OP_ModalFillMeshHole(Operator):
             for edge in face.edges:
                 linked_patch_count = sum(
                     1 for linked_face in edge.link_faces
-                    if linked_face.is_valid and linked_face.tag
+                    if linked_face.is_valid and linked_face in patch_face_set
                 )
                 if linked_patch_count < 2:
                     verts.update(edge.verts)
@@ -1655,10 +1690,15 @@ class OP_ModalFillMeshHole(Operator):
             for vert, co in new_positions.items():
                 vert.co = co
 
-    def _fill_hole_patch_bm(self, bm, hole):
+    def _fill_hole_patch_bm(self, bm, hole, quadrangulate=False):
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
+
+        original_faces = {
+            face for face in bm.faces
+            if face.is_valid
+        }
 
         boundary_edges, error = self._collect_hole_edges(bm, hole)
         if boundary_edges is None:
@@ -1699,7 +1739,8 @@ class OP_ModalFillMeshHole(Operator):
         ]
         if not new_faces:
             return False, "Patch Fill 未生成面"
-        self._tag_patch_faces(bm, new_faces)
+        patch_faces = set(new_faces)
+        self._tag_patch_faces(bm, patch_faces)
 
         if hole["normal"].length > 1e-8:
             fill_normal = Vector((0.0, 0.0, 0.0))
@@ -1711,7 +1752,11 @@ class OP_ModalFillMeshHole(Operator):
 
         refined_edges = 0
         for _iteration in range(self.patch_refine_iterations):
-            patch_faces = self._tagged_patch_faces(bm)
+            patch_faces = self._collect_patch_faces_from_boundary(
+                boundary_edges,
+                original_faces,
+            )
+            self._tag_patch_faces(bm, patch_faces)
             patch_edges = {
                 edge for face in patch_faces if face.is_valid
                 for edge in face.edges
@@ -1735,7 +1780,11 @@ class OP_ModalFillMeshHole(Operator):
             )
             refined_edges += len(long_edges)
 
-        patch_faces = self._tagged_patch_faces(bm)
+        patch_faces = self._collect_patch_faces_from_boundary(
+            boundary_edges,
+            original_faces,
+        )
+        self._tag_patch_faces(bm, patch_faces)
         if patch_faces:
             bmesh.ops.triangulate(
                 bm,
@@ -1743,7 +1792,11 @@ class OP_ModalFillMeshHole(Operator):
                 quad_method='BEAUTY',
                 ngon_method='BEAUTY',
             )
-            patch_faces = self._tagged_patch_faces(bm)
+            patch_faces = self._collect_patch_faces_from_boundary(
+                boundary_edges,
+                original_faces,
+            )
+            self._tag_patch_faces(bm, patch_faces)
             patch_boundary_verts = self._patch_boundary_verts_from_faces(patch_faces)
             self._relax_patch_verts(
                 patch_faces,
@@ -1751,7 +1804,11 @@ class OP_ModalFillMeshHole(Operator):
                 surface_samples,
             )
             try:
-                patch_faces = self._tagged_patch_faces(bm)
+                patch_faces = self._collect_patch_faces_from_boundary(
+                    boundary_edges,
+                    original_faces,
+                )
+                self._tag_patch_faces(bm, patch_faces)
                 bmesh.ops.beautify_fill(
                     bm,
                     faces=list(patch_faces),
@@ -1761,18 +1818,61 @@ class OP_ModalFillMeshHole(Operator):
             except Exception:
                 pass
 
+            if quadrangulate:
+                patch_faces = self._collect_patch_faces_from_boundary(
+                    boundary_edges,
+                    original_faces,
+                )
+                try:
+                    bmesh.ops.join_triangles(
+                        bm,
+                        faces=list(patch_faces),
+                        cmp_seam=False,
+                        cmp_sharp=False,
+                        cmp_uvs=False,
+                        cmp_vcols=False,
+                        cmp_materials=False,
+                        angle_face_threshold=math.radians(140.0),
+                        angle_shape_threshold=math.radians(140.0),
+                        topology_influence=0.85,
+                        deselect_joined=False,
+                    )
+                    patch_faces = self._collect_patch_faces_from_boundary(
+                        boundary_edges,
+                        original_faces,
+                    )
+                except Exception:
+                    pass
+
+        patch_faces = self._collect_patch_faces_from_boundary(
+            boundary_edges,
+            original_faces,
+        )
+        quad_count = sum(1 for face in patch_faces if len(face.verts) == 4)
+        tri_count = sum(1 for face in patch_faces if len(face.verts) == 3)
+
         self._clear_patch_tags(bm)
+        if quadrangulate:
+            return True, (
+                f"Quad Patch 封闭 {len(boundary_edges)} 边孔洞"
+                f" / 四边 {quad_count} 面"
+                f" / 三角 {tri_count} 面"
+            )
         return True, (
             f"Smooth Patch 封闭 {len(boundary_edges)} 边孔洞"
             f" / 细分 {refined_edges} 边"
         )
 
-    def _fill_active_hole_patch(self, context, hole):
+    def _fill_active_hole_patch(self, context, hole, quadrangulate=False):
         obj, bm = self._edit_bmesh(context)
         if bm is None:
             return False, "没有可编辑网格"
 
-        success, message = self._fill_hole_patch_bm(bm, hole)
+        success, message = self._fill_hole_patch_bm(
+            bm,
+            hole,
+            quadrangulate=quadrangulate,
+        )
         if success:
             bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
         return success, message
@@ -1834,6 +1934,12 @@ class OP_ModalFillMeshHole(Operator):
 
         if self.fill_mode == 'TRIANGLE':
             success, message = self._fill_active_hole_triangle(context, hole)
+        elif self.fill_mode == 'QUAD_PATCH':
+            success, message = self._fill_active_hole_patch(
+                context,
+                hole,
+                quadrangulate=True,
+            )
         else:
             success, message = self._fill_active_hole_patch(context, hole)
 
@@ -1841,7 +1947,7 @@ class OP_ModalFillMeshHole(Operator):
         return success
 
     def _preview_mode_supported(self):
-        return self.fill_mode in {'SMOOTH_PATCH', 'TRIANGLE'}
+        return self.fill_mode in {'SMOOTH_PATCH', 'QUAD_PATCH', 'TRIANGLE'}
 
     def _build_preview_faces_for_hole(self, context, hole):
         if not self._preview_mode_supported():
@@ -1893,6 +1999,12 @@ class OP_ModalFillMeshHole(Operator):
         try:
             if self.fill_mode == 'TRIANGLE':
                 success, message = self._fill_hole_triangle_bm(temp_bm, temp_hole)
+            elif self.fill_mode == 'QUAD_PATCH':
+                success, message = self._fill_hole_patch_bm(
+                    temp_bm,
+                    temp_hole,
+                    quadrangulate=True,
+                )
             else:
                 success, message = self._fill_hole_patch_bm(temp_bm, temp_hole)
         except Exception as exc:
@@ -1937,6 +2049,24 @@ class OP_ModalFillMeshHole(Operator):
             self.preview_hole_signatures.append(signature)
 
         return self._rebuild_preview_faces(context)
+
+    def _queue_all_holes_preview(self, context):
+        self._rebuild_holes(context)
+        signatures = [
+            hole.get("signature")
+            for hole in self.holes
+            if hole.get("signature") is not None
+        ]
+        if not signatures:
+            self.message = "没有可预览孔洞"
+            return False
+
+        self.preview_hole_signatures = signatures
+        if self._rebuild_preview_faces(context):
+            self.message = "全部孔洞已预览"
+            return True
+
+        return False
 
     def _hole_by_signature(self, signature):
         for index, hole in enumerate(self.holes):
@@ -2122,6 +2252,9 @@ class OP_ModalFillMeshHole(Operator):
         elif self.message.startswith("已移除"):
             status_text = "已取消预览"
             status_color = (1.0, 0.85, 0.2, 1.0)
+        elif self.message.startswith("全部"):
+            status_text = "全部已预览"
+            status_color = (0.35, 1.0, 0.35, 1.0)
         elif self.message.startswith("封闭失败"):
             status_text = "封闭失败"
             status_color = (1.0, 0.28, 0.20, 1.0)
@@ -2143,6 +2276,7 @@ class OP_ModalFillMeshHole(Operator):
 
         mode_names = {
             'SMOOTH_PATCH': "Smooth Patch",
+            'QUAD_PATCH': "Quad Patch",
             'TRIANGLE': "Triangle Fill",
         }
 
@@ -2150,9 +2284,10 @@ class OP_ModalFillMeshHole(Operator):
         draw_key_value("左键:", "加入/取消预览", 24)
         draw_key_value("右键:", "取消/退出", 46)
         draw_key_value("Enter:", "提交", 68)
-        draw_key_value("F键:", mode_names.get(self.fill_mode, self.fill_mode), 94)
-        draw_key_value("Shift+滚轮:", f"倍率 {self.patch_edge_factor:.2f}", 116)
-        draw_key_value("R键:", "刷新", 138)
+        draw_key_value("A键:", "全部预览", 94)
+        draw_key_value("F键:", mode_names.get(self.fill_mode, self.fill_mode), 118)
+        draw_key_value("Shift+滚轮:", f"倍率 {self.patch_edge_factor:.2f}", 140)
+        draw_key_value("R键:", "刷新", 162)
 
         blf.disable(font_id, blf.SHADOW)
 
@@ -2196,6 +2331,12 @@ class OP_ModalFillMeshHole(Operator):
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
+        if event.type == 'A' and event.value == 'PRESS':
+            self._queue_all_holes_preview(context)
+            self._update_hover_at(context)
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
         if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
             if self.preview_hole_signatures:
                 queued_signatures = list(self.preview_hole_signatures)
@@ -2225,9 +2366,10 @@ class OP_ModalFillMeshHole(Operator):
             return {'RUNNING_MODAL'}
 
         if event.type == 'F' and event.value == 'PRESS':
-            modes = ['SMOOTH_PATCH', 'TRIANGLE']
+            modes = ['SMOOTH_PATCH', 'QUAD_PATCH', 'TRIANGLE']
             mode_names = {
                 'SMOOTH_PATCH': "Smooth Patch",
+                'QUAD_PATCH': "Quad Patch",
                 'TRIANGLE': "Triangle Fill",
             }
             index = modes.index(self.fill_mode) if self.fill_mode in modes else -1
