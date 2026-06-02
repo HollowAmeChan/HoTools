@@ -173,6 +173,368 @@ def fill_local_uv_triangle(img_arr, pts, local_uvs):
                                255)
 
 
+TB_FLOW_MAP_AXIS_ITEMS = [
+    ('WORLD_Z', "世界Z", "把Blender世界Z上方向投影到T/B平面"),
+    ('WORLD_X', "世界X", "把Blender世界X方向投影到T/B平面"),
+    ('WORLD_Y', "世界Y", "把Blender世界Y方向投影到T/B平面"),
+]
+
+
+def get_tb_flow_map_axis_vector(axis_mode):
+    axis_name = axis_mode.rsplit("_", 1)[-1]
+    if axis_name == 'X':
+        axis = Vector((1.0, 0.0, 0.0))
+    elif axis_name == 'Y':
+        axis = Vector((0.0, 1.0, 0.0))
+    else:
+        axis = Vector((0.0, 0.0, 1.0))
+
+    if axis.length <= 1e-8:
+        return None
+    axis.normalize()
+    return axis
+
+
+def get_loop_bitangent(loop):
+    bitangent = loop.normal.cross(loop.tangent)
+    bitangent *= loop.bitangent_sign
+    if bitangent.length > 1e-8:
+        bitangent.normalize()
+    return bitangent
+
+
+def calc_loop_tb_flow(loop, flow_axis, tangent_matrix):
+    tangent = tangent_matrix @ loop.tangent
+    if tangent.length <= 1e-8:
+        return 0.0, 0.0
+    tangent.normalize()
+
+    bitangent = tangent_matrix @ get_loop_bitangent(loop)
+    if bitangent.length <= 1e-8:
+        return 0.0, 0.0
+    bitangent.normalize()
+
+    return flow_axis.dot(tangent), flow_axis.dot(bitangent)
+
+
+def normalize_tb_flow(flow):
+    x, y = flow
+    length = (x * x + y * y) ** 0.5
+    if length <= 1e-8:
+        return None
+    return (x / length, y / length)
+
+
+def rasterize_tb_flow_triangle(mask, flow_x, flow_y, pts, flows, island_ids=None,
+                               island_id=1, max_bbox_pixels=32_000_000, chunk_rows=32):
+    x0, y0 = pts[0]
+    x1, y1 = pts[1]
+    x2, y2 = pts[2]
+    f0, f1, f2 = flows
+
+    denom = ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2))
+    if abs(denom) < 1e-8:
+        return False
+
+    height, width = mask.shape
+    min_x = max(0, int(np.floor(min(x0, x1, x2))))
+    max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(np.floor(min(y0, y1, y2))))
+    max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
+    if min_x > max_x or min_y > max_y:
+        return False
+    if (max_x - min_x + 1) * (max_y - min_y + 1) > max_bbox_pixels:
+        return False
+
+    xs = np.arange(min_x, max_x + 1, dtype=np.float32)[None, :] + 0.5
+    denom = np.float32(denom)
+
+    for y_start in range(min_y, max_y + 1, chunk_rows):
+        y_end = min(max_y, y_start + chunk_rows - 1)
+        ys = np.arange(y_start, y_end + 1, dtype=np.float32)[:, None] + 0.5
+
+        b0 = ((y1 - y2) * (xs - x2) + (x2 - x1) * (ys - y2)) / denom
+        b1 = ((y2 - y0) * (xs - x2) + (x0 - x2) * (ys - y2)) / denom
+        b2 = 1.0 - b0 - b1
+        inside = (b0 >= 0.0) & (b1 >= 0.0) & (b2 >= 0.0)
+        if not inside.any():
+            continue
+
+        mb0 = b0[inside]
+        mb1 = b1[inside]
+        mb2 = b2[inside]
+        fx = mb0 * f0[0] + mb1 * f1[0] + mb2 * f2[0]
+        fy = mb0 * f0[1] + mb1 * f1[1] + mb2 * f2[1]
+
+        length = np.sqrt(fx * fx + fy * fy)
+        valid = length > 1e-8
+        fx[valid] /= length[valid]
+        fy[valid] /= length[valid]
+
+        target_mask = mask[y_start:y_end + 1, min_x:max_x + 1]
+        target_x = flow_x[y_start:y_end + 1, min_x:max_x + 1]
+        target_y = flow_y[y_start:y_end + 1, min_x:max_x + 1]
+        target_mask[inside] = True
+        target_x[inside] = fx.astype(np.float32)
+        target_y[inside] = fy.astype(np.float32)
+        if island_ids is not None:
+            target_ids = island_ids[y_start:y_end + 1, min_x:max_x + 1]
+            target_ids[inside] = island_id
+
+    return True
+
+
+def tb_flow_image_direction(flow_x, flow_y, width, height):
+    dir_x = flow_x * float(width)
+    dir_y = -flow_y * float(height)
+    length = np.sqrt(dir_x * dir_x + dir_y * dir_y)
+    valid = length > 1e-8
+    dir_x = np.where(valid, dir_x / np.maximum(length, 1e-8), 0.0).astype(np.float32)
+    dir_y = np.where(valid, dir_y / np.maximum(length, 1e-8), 0.0).astype(np.float32)
+    return dir_x, dir_y
+
+
+def tb_flow_build_poisson_terms(mask, grad_x, grad_y):
+    mask = mask.astype(bool)
+    degree = np.zeros(mask.shape, dtype=np.float32)
+    delta_sum = np.zeros(mask.shape, dtype=np.float32)
+
+    horizontal = mask[:, :-1] & mask[:, 1:]
+    if horizontal.any():
+        delta = 0.5 * (grad_x[:, :-1] + grad_x[:, 1:])
+        edge_delta = np.where(horizontal, delta, 0.0).astype(np.float32)
+        edge_weight = horizontal.astype(np.float32)
+        degree[:, :-1] += edge_weight
+        degree[:, 1:] += edge_weight
+        delta_sum[:, :-1] += edge_delta
+        delta_sum[:, 1:] -= edge_delta
+
+    vertical = mask[:-1, :] & mask[1:, :]
+    if vertical.any():
+        delta = 0.5 * (grad_y[:-1, :] + grad_y[1:, :])
+        edge_delta = np.where(vertical, delta, 0.0).astype(np.float32)
+        edge_weight = vertical.astype(np.float32)
+        degree[:-1, :] += edge_weight
+        degree[1:, :] += edge_weight
+        delta_sum[:-1, :] += edge_delta
+        delta_sum[1:, :] -= edge_delta
+
+    return degree, delta_sum, horizontal, vertical
+
+
+def tb_flow_neighbor_sum(values, horizontal, vertical):
+    out = np.zeros(values.shape, dtype=np.float32)
+    if horizontal.any():
+        out[:, :-1] += np.where(horizontal, values[:, 1:], 0.0)
+        out[:, 1:] += np.where(horizontal, values[:, :-1], 0.0)
+    if vertical.any():
+        out[:-1, :] += np.where(vertical, values[1:, :], 0.0)
+        out[1:, :] += np.where(vertical, values[:-1, :], 0.0)
+    return out
+
+
+def tb_flow_solve_coordinate(mask, grad_x, grad_y, iterations=48, omega=1.35):
+    active = mask.astype(bool)
+    if not active.any():
+        return None
+
+    degree, delta_sum, horizontal, vertical = tb_flow_build_poisson_terms(
+        active, grad_x, grad_y)
+    solve_mask = active & (degree > 0.0)
+    if not solve_mask.any():
+        return None
+
+    yy, xx = np.indices(active.shape, dtype=np.float32)
+    ref_x = float(grad_x[solve_mask].mean())
+    ref_y = float(grad_y[solve_mask].mean())
+    values = (xx * ref_x + yy * ref_y).astype(np.float32)
+    values[~active] = 0.0
+
+    red = ((xx.astype(np.int32) + yy.astype(np.int32)) & 1) == 0
+    black = ~red
+    iterations = max(4, int(iterations))
+    omega = max(1.0, min(float(omega), 1.8))
+
+    for _iteration in range(iterations):
+        for color in (red, black):
+            update_mask = solve_mask & color
+            if not update_mask.any():
+                continue
+            neighbor_sum = tb_flow_neighbor_sum(values, horizontal, vertical)
+            target = (neighbor_sum - delta_sum) / np.maximum(degree, 1.0)
+            values[update_mask] = (
+                values[update_mask] * (1.0 - omega) +
+                target[update_mask] * omega
+            )
+
+        values[solve_mask] -= float(values[solve_mask].mean())
+        values[~active] = 0.0
+
+    return values
+
+
+def tb_flow_normalize_channel(mask, values, fallback_x=1.0, fallback_y=0.0):
+    active = mask.astype(bool)
+    out = np.zeros(mask.shape, dtype=np.float32)
+    if values is None or not active.any():
+        return out
+
+    active_values = values[active]
+    min_value = float(active_values.min())
+    max_value = float(active_values.max())
+    value_range = max_value - min_value
+
+    if value_range <= 1e-5:
+        yy, xx = np.indices(mask.shape, dtype=np.float32)
+        values = xx * float(fallback_x) + yy * float(fallback_y)
+        active_values = values[active]
+        min_value = float(active_values.min())
+        max_value = float(active_values.max())
+        value_range = max_value - min_value
+
+    if value_range <= 1e-5:
+        out[active] = 0.5
+    else:
+        out[active] = (values[active] - min_value) / value_range
+
+    return np.clip(out, 0.0, 1.0)
+
+
+def tb_flow_build_island_channels(mask, flow_x, flow_y, island_ids=None, island_id=1,
+                                  image_width=None, image_height=None,
+                                  coord_iterations=48, flip_r=False, flip_g=False):
+    if island_ids is None:
+        island_ids = np.zeros(mask.shape, dtype=np.int32)
+        island_ids[mask] = island_id
+
+    flow_len = np.sqrt(flow_x * flow_x + flow_y * flow_y)
+    active = island_ids == island_id
+    valid = active & (flow_len > 1e-8)
+    if not valid.any():
+        return None
+
+    ref_x = float(flow_x[valid].mean())
+    ref_y = float(flow_y[valid].mean())
+    ref = normalize_tb_flow((ref_x, ref_y))
+    if ref is None:
+        first_index = np.flatnonzero(valid.ravel())[0]
+        ref = (
+            float(flow_x.ravel()[first_index]),
+            float(flow_y.ravel()[first_index]),
+        )
+        ref = normalize_tb_flow(ref)
+    if ref is None:
+        return None
+
+    fixed_x = flow_x.copy()
+    fixed_y = flow_y.copy()
+    fixed_x[~active] = ref[0]
+    fixed_y[~active] = ref[1]
+    invalid = active & ~valid
+    fixed_x[invalid] = ref[0]
+    fixed_y[invalid] = ref[1]
+
+    opposing = active & ((fixed_x * ref[0] + fixed_y * ref[1]) < 0.0)
+    fixed_x[opposing] *= -1.0
+    fixed_y[opposing] *= -1.0
+
+    height, width = mask.shape
+    image_width = width if image_width is None else image_width
+    image_height = height if image_height is None else image_height
+    dir_x, dir_y = tb_flow_image_direction(fixed_x, fixed_y, image_width, image_height)
+    g_values = tb_flow_solve_coordinate(active, dir_x, dir_y, coord_iterations)
+    g = tb_flow_normalize_channel(active, g_values, ref[0], -ref[1])
+
+    perp_x = -fixed_y
+    perp_y = fixed_x
+    perp_dir_x, perp_dir_y = tb_flow_image_direction(perp_x, perp_y, image_width, image_height)
+    r_values = tb_flow_solve_coordinate(
+        active, perp_dir_x, perp_dir_y, coord_iterations)
+    r = tb_flow_normalize_channel(active, r_values, -ref[1], -ref[0])
+
+    if flip_r:
+        r = 1.0 - r
+    if flip_g:
+        g = 1.0 - g
+    return r, g
+
+
+def get_mesh_face_edge_uv_pair(mesh, uv_layer, polygon_index, edge_index):
+    loop_indices = list(mesh.polygons[polygon_index].loop_indices)
+    for offset, loop_index in enumerate(loop_indices):
+        if mesh.loops[loop_index].edge_index != edge_index:
+            continue
+        next_loop_index = loop_indices[(offset + 1) % len(loop_indices)]
+        return (
+            uv_layer.data[loop_index].uv.copy(),
+            uv_layer.data[next_loop_index].uv.copy(),
+        )
+    return None
+
+
+def mesh_uv_edge_connected(mesh, uv_layer, polygon_index, linked_polygon_index, edge_index, epsilon=1e-5):
+    pair_a = get_mesh_face_edge_uv_pair(
+        mesh, uv_layer, polygon_index, edge_index)
+    pair_b = get_mesh_face_edge_uv_pair(
+        mesh, uv_layer, linked_polygon_index, edge_index)
+    if pair_a is None or pair_b is None:
+        return False
+
+    a0, a1 = pair_a
+    b0, b1 = pair_b
+    same_dir = (a0 - b0).length < epsilon and (a1 - b1).length < epsilon
+    flip_dir = (a0 - b1).length < epsilon and (a1 - b0).length < epsilon
+    return same_dir or flip_dir
+
+
+def find_mesh_uv_islands(mesh, uv_layer):
+    edge_faces = {}
+    poly_edges = {}
+    for poly in mesh.polygons:
+        edges = [mesh.loops[loop_index].edge_index
+                 for loop_index in poly.loop_indices]
+        poly_edges[poly.index] = edges
+        for edge_index in edges:
+            edge_faces.setdefault(edge_index, []).append(poly.index)
+
+    islands = []
+    visited = set()
+    for poly in mesh.polygons:
+        if poly.index in visited:
+            continue
+
+        island = set()
+        stack = [poly.index]
+        while stack:
+            polygon_index = stack.pop()
+            if polygon_index in island:
+                continue
+
+            island.add(polygon_index)
+            visited.add(polygon_index)
+
+            for edge_index in poly_edges.get(polygon_index, []):
+                for linked_polygon_index in edge_faces.get(edge_index, []):
+                    if (
+                        linked_polygon_index == polygon_index or
+                        linked_polygon_index in island or
+                        linked_polygon_index in visited
+                    ):
+                        continue
+                    if mesh_uv_edge_connected(
+                        mesh,
+                        uv_layer,
+                        polygon_index,
+                        linked_polygon_index,
+                        edge_index
+                    ):
+                        stack.append(linked_polygon_index)
+
+        islands.append(island)
+
+    return islands
+
+
 def fill_vector_triangle(img_arr, pts, vectors, max_bbox_pixels=4_000_000, chunk_rows=32):
     x0, y0 = pts[0]
     x1, y1 = pts[1]
@@ -1157,6 +1519,262 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
+    """导出基于TBN流向的每岛归一化UV平面坐标图"""
+    bl_idname = "ho.uvtools_bake_world_space_tbflowmap_image"
+    bl_label = "导出World SpaceTBFlowMap"
+    bl_description = "用世界坐标轴在T/B平面里的流向作为每个UV岛的局部B轴,按岛归一化输出RG坐标"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(
+        default="*", options={'HIDDEN'})  # type: ignore
+
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(
+        name="背景透明度", default=0.0, min=0.0, max=1.0, description="空白区域的透明度")  # type: ignore
+    image_format: EnumProperty(name="图像格式",
+                               items=[
+                                   ('PNG', "PNG", ""),
+                                   ('JPEG', "JPEG", "")
+                               ],
+                               default='PNG'
+                               )  # type: ignore
+    flow_axis: EnumProperty(name="世界流向轴",
+                            items=TB_FLOW_MAP_AXIS_ITEMS,
+                            default='WORLD_Z'
+                            )  # type: ignore
+    flip_t: BoolProperty(name="翻转R", default=False)  # type: ignore
+    flip_b: BoolProperty(name="翻转G", default=False)  # type: ignore
+    coord_iterations: IntProperty(
+        name="坐标迭代次数", default=32, min=4, max=256,
+        description="弯曲坐标轴场的NumPy迭代次数,越高越贴合TB流向但越慢")  # type: ignore
+    dilate_radius: IntProperty(
+        name="膨胀像素数", default=2, min=0, description="向外扩张的像素数,用于消除UV边缘缝隙")  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "flow_axis")
+        layout.prop(self, "flip_t")
+        layout.prop(self, "flip_b")
+        layout.prop(self, "coord_iterations")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        width = self.image_width
+        height = self.image_height
+        background_alpha_255 = int(self.background_alpha * 255)
+        img_arr = np.zeros((height, width, 4), dtype=np.uint8)
+        img_arr[:, :, 3] = background_alpha_255
+
+        flow_axis = get_tb_flow_map_axis_vector(self.flow_axis)
+        if flow_axis is None:
+            self.report({'ERROR'}, "无效的世界流向轴")
+            return {'CANCELLED'}
+
+        selected_objs = [
+            obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}
+
+        depsgraph = context.evaluated_depsgraph_get()
+        island_count = 0
+        exported_tris = 0
+        skipped_objects = []
+        uv_min_u = float("inf")
+        uv_min_v = float("inf")
+        uv_max_u = float("-inf")
+        uv_max_v = float("-inf")
+        out_of_range_tris = 0
+
+        for obj in selected_objs:
+            loop_flows = {}
+            polygon_data = {}
+            polygon_points = {}
+            island_groups = []
+            object_ready = True
+
+            eval_obj = obj.evaluated_get(depsgraph)
+            mesh = eval_obj.to_mesh()
+            tangents_ready = False
+            try:
+                uv_layer = mesh.uv_layers.active
+                if uv_layer is None:
+                    skipped_objects.append(f"{obj.name}(无UV)")
+                    object_ready = False
+                    continue
+
+                for poly in mesh.polygons:
+                    loop_indices = list(poly.loop_indices)
+                    if len(loop_indices) < 3:
+                        continue
+
+                    uvs = []
+                    for loop_index in loop_indices:
+                        uv = uv_layer.data[loop_index].uv.copy()
+                        uv_min_u = min(uv_min_u, uv.x)
+                        uv_min_v = min(uv_min_v, uv.y)
+                        uv_max_u = max(uv_max_u, uv.x)
+                        uv_max_v = max(uv_max_v, uv.y)
+                        uvs.append(uv)
+
+                    polygon_data[poly.index] = (loop_indices, uvs)
+                    polygon_points[poly.index] = [
+                        (uv.x * width, (1.0 - uv.y) * height)
+                        for uv in uvs
+                    ]
+
+                island_groups = find_mesh_uv_islands(mesh, uv_layer)
+                try:
+                    mesh.calc_tangents(uvmap=uv_layer.name)
+                    tangents_ready = True
+                except RuntimeError as exc:
+                    skipped_objects.append(f"{obj.name}(切线失败:{exc})")
+                    object_ready = False
+                    continue
+
+                tangent_matrix = eval_obj.matrix_world.to_3x3()
+                for _poly_index, (loop_indices, _uvs) in polygon_data.items():
+                    for loop_index in loop_indices:
+                        loop_flows[loop_index] = calc_loop_tb_flow(
+                            mesh.loops[loop_index],
+                            flow_axis,
+                            tangent_matrix
+                        )
+            finally:
+                if tangents_ready:
+                    try:
+                        mesh.free_tangents()
+                    except RuntimeError:
+                        pass
+                eval_obj.to_mesh_clear()
+
+            if not object_ready:
+                continue
+
+            for island_polygon_indices in island_groups:
+                island_polygon_indices = [
+                    polygon_index
+                    for polygon_index in island_polygon_indices
+                    if polygon_index in polygon_points
+                ]
+                if not island_polygon_indices:
+                    continue
+
+                island_points = [
+                    point
+                    for polygon_index in island_polygon_indices
+                    for point in polygon_points[polygon_index]
+                ]
+                min_x = max(0, int(np.floor(min(point[0] for point in island_points))))
+                max_x = min(width - 1, int(np.ceil(max(point[0] for point in island_points))))
+                min_y = max(0, int(np.floor(min(point[1] for point in island_points))))
+                max_y = min(height - 1, int(np.ceil(max(point[1] for point in island_points))))
+                if min_x > max_x or min_y > max_y:
+                    continue
+
+                crop_width = max_x - min_x + 1
+                crop_height = max_y - min_y + 1
+                island_mask = np.zeros((crop_height, crop_width), dtype=bool)
+                island_flow_x = np.zeros((crop_height, crop_width), dtype=np.float32)
+                island_flow_y = np.zeros((crop_height, crop_width), dtype=np.float32)
+                island_ids = np.zeros((crop_height, crop_width), dtype=np.int32)
+                island_triangles = 0
+
+                for polygon_index in island_polygon_indices:
+                    polygon = polygon_data.get(polygon_index)
+                    if polygon is None:
+                        continue
+
+                    loop_indices, uvs = polygon
+                    pts = polygon_points[polygon_index]
+                    flows = [loop_flows[loop_index] for loop_index in loop_indices]
+
+                    for i in range(1, len(loop_indices) - 1):
+                        tri_pts = [pts[0], pts[i], pts[i + 1]]
+                        local_tri_pts = [
+                            (point[0] - min_x, point[1] - min_y)
+                            for point in tri_pts
+                        ]
+                        tri_flows = [flows[0], flows[i], flows[i + 1]]
+                        if any(p[0] < 0 or p[0] > width or p[1] < 0 or p[1] > height for p in tri_pts):
+                            out_of_range_tris += 1
+                        if rasterize_tb_flow_triangle(
+                            island_mask,
+                            island_flow_x,
+                            island_flow_y,
+                            local_tri_pts,
+                            tri_flows,
+                            island_ids=island_ids,
+                            island_id=1
+                        ):
+                            island_triangles += 1
+
+                if island_triangles == 0 or not island_mask.any():
+                    continue
+
+                channels = tb_flow_build_island_channels(
+                    island_mask,
+                    island_flow_x,
+                    island_flow_y,
+                    island_ids=island_ids,
+                    island_id=1,
+                    image_width=width,
+                    image_height=height,
+                    coord_iterations=self.coord_iterations,
+                    flip_r=self.flip_t,
+                    flip_g=self.flip_b
+                )
+                if channels is None:
+                    continue
+
+                r, g = channels
+                target = img_arr[min_y:max_y + 1, min_x:max_x + 1]
+                target[island_mask, 0] = (r[island_mask] * 255.0 + 0.5).astype(np.uint8)
+                target[island_mask, 1] = (g[island_mask] * 255.0 + 0.5).astype(np.uint8)
+                target[island_mask, 2] = 0
+                target[island_mask, 3] = 255
+                island_count += 1
+                exported_tris += island_triangles
+
+        if exported_tris == 0:
+            self.report({'ERROR'}, "没有可导出的TB流向图数据")
+            return {'CANCELLED'}
+
+        pil_img = Image.fromarray(img_arr, mode="RGBA")
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
+        save_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        axis_label = dict((item[0], item[1]) for item in TB_FLOW_MAP_AXIS_ITEMS).get(
+            self.flow_axis, self.flow_axis)
+        self.report(
+            {'INFO'},
+            f"已导出TB流向图: {final_path} | 参考轴={axis_label} | UV岛={island_count} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_tris} | 越界三角={out_of_range_tris}"
+        )
+        return {'FINISHED'}
+
+
 class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
     """导出UV岛内部到边缘的欧氏距离场"""
     bl_idname = "ho.uvtools_bake_island_sdf_image"
@@ -1920,6 +2538,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
 
     row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
     row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
+    row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
     row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text="岛SDF")
     row.operator(OT_UVTools_BakeTangentImage.bl_idname, text="切/副切线")
 
@@ -1930,7 +2549,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
