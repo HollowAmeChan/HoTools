@@ -1364,6 +1364,12 @@ class OP_ModalFillMeshHole(Operator):
                 "world_points": world_points,
                 "center_world": center_world,
                 "normal": normal.copy(),
+                "signature": (
+                    len(verts),
+                    round(center_world.x, 5),
+                    round(center_world.y, 5),
+                    round(center_world.z, 5),
+                ),
             })
 
         self.message = f"找到 {len(self.holes)} 个闭合孔洞"
@@ -1430,6 +1436,9 @@ class OP_ModalFillMeshHole(Operator):
     def _update_hover(self, context, event):
         self.mouse_x = event.mouse_region_x
         self.mouse_y = event.mouse_region_y
+        self._update_hover_at(context)
+
+    def _update_hover_at(self, context):
         mouse_point = Vector((self.mouse_x, self.mouse_y))
 
         best_index = -1
@@ -1598,11 +1607,7 @@ class OP_ModalFillMeshHole(Operator):
             for vert, co in new_positions.items():
                 vert.co = co
 
-    def _fill_active_hole_patch(self, context, hole):
-        obj, bm = self._edit_bmesh(context)
-        if bm is None:
-            return False, "没有可编辑网格"
-
+    def _fill_hole_patch_bm(self, bm, hole):
         bm.verts.ensure_lookup_table()
         bm.edges.ensure_lookup_table()
         bm.faces.ensure_lookup_table()
@@ -1709,11 +1714,20 @@ class OP_ModalFillMeshHole(Operator):
                 pass
 
         self._clear_patch_tags(bm)
-        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
         return True, (
             f"Smooth Patch 封闭 {len(boundary_edges)} 边孔洞"
             f" / 细分 {refined_edges} 边"
         )
+
+    def _fill_active_hole_patch(self, context, hole):
+        obj, bm = self._edit_bmesh(context)
+        if bm is None:
+            return False, "没有可编辑网格"
+
+        success, message = self._fill_hole_patch_bm(bm, hole)
+        if success:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        return success, message
 
     def _fill_active_hole_grid(self, context, hole):
         obj, bm = self._edit_bmesh(context)
@@ -1800,11 +1814,7 @@ class OP_ModalFillMeshHole(Operator):
             context.tool_settings.mesh_select_mode = old_select_mode
             bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
-    def _fill_active_hole_triangle(self, context, hole):
-        obj, bm = self._edit_bmesh(context)
-        if bm is None:
-            return False, "没有可编辑网格"
-
+    def _fill_hole_triangle_bm(self, bm, hole):
         bm.edges.ensure_lookup_table()
         edges = []
         for edge_index in hole["edge_indices"]:
@@ -1830,6 +1840,9 @@ class OP_ModalFillMeshHole(Operator):
             item for item in result.get("geom", [])
             if isinstance(item, bmesh.types.BMFace)
         ]
+        if not new_faces:
+            return False, "Triangle Fill 未生成面"
+
         if new_faces and hole["normal"].length > 1e-8:
             fill_normal = Vector((0.0, 0.0, 0.0))
             for face in new_faces:
@@ -1838,8 +1851,17 @@ class OP_ModalFillMeshHole(Operator):
             if fill_normal.length > 1e-8 and fill_normal.dot(hole["normal"]) < 0.0:
                 bmesh.ops.reverse_faces(bm, faces=new_faces)
 
-        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
         return True, f"Triangle Fill 三角封闭 {len(edges)} 边孔洞"
+
+    def _fill_active_hole_triangle(self, context, hole):
+        obj, bm = self._edit_bmesh(context)
+        if bm is None:
+            return False, "没有可编辑网格"
+
+        success, message = self._fill_hole_triangle_bm(bm, hole)
+        if success:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        return success, message
 
     def _fill_active_hole(self, context):
         hole = self._active_hole()
@@ -1856,6 +1878,159 @@ class OP_ModalFillMeshHole(Operator):
 
         self.message = message if success else f"封闭失败: {message}"
         return success
+
+    def _preview_mode_supported(self):
+        return self.fill_mode in {'SMOOTH_PATCH', 'TRIANGLE'}
+
+    def _build_preview_faces_for_hole(self, context, hole):
+        if not self._preview_mode_supported():
+            return False, "Grid Fill 无伪预览", []
+
+        obj, bm = self._edit_bmesh(context)
+        if obj is None or bm is None:
+            return False, "没有可编辑网格", []
+
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        temp_bm = bmesh.new()
+        vert_map = {}
+        for vert in bm.verts:
+            new_vert = temp_bm.verts.new(vert.co.copy())
+            vert_map[vert.index] = new_vert
+        temp_bm.verts.ensure_lookup_table()
+
+        for edge in bm.edges:
+            if edge.is_valid:
+                try:
+                    temp_bm.edges.new((
+                        vert_map[edge.verts[0].index],
+                        vert_map[edge.verts[1].index],
+                    ))
+                except ValueError:
+                    pass
+
+        for face in bm.faces:
+            if not face.is_valid:
+                continue
+            try:
+                temp_bm.faces.new([vert_map[vert.index] for vert in face.verts])
+            except ValueError:
+                pass
+
+        temp_bm.verts.ensure_lookup_table()
+        temp_bm.edges.ensure_lookup_table()
+        temp_bm.faces.ensure_lookup_table()
+        old_face_count = len(temp_bm.faces)
+
+        temp_hole = {
+            "edge_indices": list(hole["edge_indices"]),
+            "normal": hole["normal"].copy(),
+        }
+
+        try:
+            if self.fill_mode == 'TRIANGLE':
+                success, message = self._fill_hole_triangle_bm(temp_bm, temp_hole)
+            else:
+                success, message = self._fill_hole_patch_bm(temp_bm, temp_hole)
+        except Exception as exc:
+            temp_bm.free()
+            return False, f"预览失败: {exc}", []
+
+        if not success:
+            temp_bm.free()
+            return False, f"预览失败: {message}", []
+
+        temp_bm.faces.ensure_lookup_table()
+        world = obj.matrix_world
+        preview_faces = []
+        for face in list(temp_bm.faces)[old_face_count:]:
+            if len(face.verts) < 3:
+                continue
+            preview_faces.append([world @ vert.co.copy() for vert in face.verts])
+
+        temp_bm.free()
+        return bool(preview_faces), message, preview_faces
+
+    def _queue_active_hole_preview(self, context):
+        hole = self._active_hole()
+        if hole is None:
+            self.message = "鼠标下没有闭合孔洞"
+            return False
+
+        signature = hole.get("signature")
+        if signature in self.preview_hole_signatures:
+            self.preview_hole_signatures = [
+                item for item in self.preview_hole_signatures
+                if item != signature
+            ]
+            if self.preview_hole_signatures:
+                self._rebuild_preview_faces(context)
+                self.message = f"已移除孔洞，剩余 {len(self.preview_hole_signatures)} 个"
+            else:
+                self._clear_preview("已移除最后一个孔洞")
+            return True
+
+        if signature is not None:
+            self.preview_hole_signatures.append(signature)
+
+        return self._rebuild_preview_faces(context)
+
+    def _hole_by_signature(self, signature):
+        for index, hole in enumerate(self.holes):
+            if hole.get("signature") == signature:
+                return index, hole
+        return -1, None
+
+    def _rebuild_preview_faces(self, context):
+        self.preview_faces = []
+        if not self.preview_hole_signatures:
+            return False
+
+        if not self._preview_mode_supported():
+            self.message = (
+                f"已加入 {len(self.preview_hole_signatures)} 个孔洞，"
+                "Grid Fill 无伪预览，Enter 执行"
+            )
+            return True
+
+        all_preview_faces = []
+        messages = []
+        valid_signatures = []
+        for signature in self.preview_hole_signatures:
+            _hole_index, hole = self._hole_by_signature(signature)
+            if hole is None:
+                continue
+            success, message, faces = self._build_preview_faces_for_hole(
+                context,
+                hole,
+            )
+            if success:
+                valid_signatures.append(signature)
+                all_preview_faces.extend(faces)
+                messages.append(message)
+
+        self.preview_hole_signatures = valid_signatures
+        self.preview_faces = all_preview_faces
+
+        if not self.preview_hole_signatures:
+            self.message = "预览失败: 没有有效孔洞"
+            return False
+
+        self.message = (
+            f"预览 {len(self.preview_hole_signatures)} 个孔洞"
+            f" / {messages[-1] if messages else ''}"
+        )
+        return bool(self.preview_faces)
+
+    def _clear_preview(self, message="已清除预览"):
+        had_preview = bool(self.preview_faces or self.preview_hole_signatures)
+        self.preview_faces = []
+        self.preview_hole_signatures = []
+        if had_preview:
+            self.message = message
+        return had_preview
 
     def _hole_line_coords(self, hole):
         points = hole["world_points"]
@@ -1878,6 +2053,35 @@ class OP_ModalFillMeshHole(Operator):
         batch = batch_for_shader(shader, 'LINES', {"pos": coords})
         shader.uniform_float("color", color)
         batch.draw(shader)
+
+    def _draw_preview_faces(self, shader):
+        if not self.preview_faces:
+            return
+
+        tri_coords = []
+        line_coords = []
+        for face in self.preview_faces:
+            if len(face) < 3:
+                continue
+            anchor = face[0]
+            for index in range(1, len(face) - 1):
+                tri_coords.extend([anchor, face[index], face[index + 1]])
+            for index, point in enumerate(face):
+                line_coords.append(point)
+                line_coords.append(face[(index + 1) % len(face)])
+
+        if tri_coords:
+            gpu.state.depth_test_set('LESS_EQUAL')
+            gpu.state.depth_mask_set(False)
+            batch = batch_for_shader(shader, 'TRIS', {"pos": tri_coords})
+            shader.uniform_float("color", (0.15, 0.95, 0.35, 0.34))
+            batch.draw(shader)
+
+        if line_coords:
+            gpu.state.line_width_set(1.6)
+            batch = batch_for_shader(shader, 'LINES', {"pos": line_coords})
+            shader.uniform_float("color", (0.82, 1.0, 0.30, 0.95))
+            batch.draw(shader)
 
     def draw_preview(self):
         if not self.holes:
@@ -1915,6 +2119,8 @@ class OP_ModalFillMeshHole(Operator):
             self._draw_hole_lines(shader, active_hole, (0.02, 0.95, 0.20, 0.98), 7.0)
             self._draw_hole_lines(shader, active_hole, (0.72, 1.0, 0.22, 1.0), 3.0)
 
+        self._draw_preview_faces(shader)
+
         gpu.state.line_width_set(1.0)
         gpu.state.depth_mask_set(True)
         gpu.state.blend_set('NONE')
@@ -1930,14 +2136,22 @@ class OP_ModalFillMeshHole(Operator):
         active_hole = self._active_hole()
         if active_hole:
             active_text = f"{active_hole['vert_count']} 边"
-            status_text = "已命中，左键封闭"
+            status_text = "已命中，左键生成预览"
             status_color = (0.35, 1.0, 0.35, 1.0)
         else:
             active_text = "未命中"
             status_text = "移动到红黄孔洞边界"
             status_color = (1.0, 0.65, 0.18, 1.0)
 
-        if "封闭" in self.message and not self.message.startswith("封闭失败"):
+        queued_count = len(self.preview_hole_signatures)
+        if queued_count:
+            status_text = f"已排队 {queued_count} 个孔洞，Enter提交 / Esc取消"
+            status_color = (0.35, 1.0, 0.35, 1.0)
+
+        if self.message.startswith("预览"):
+            status_text = self.message
+            status_color = (0.35, 1.0, 0.35, 1.0)
+        elif "提交" in self.message or ("封闭" in self.message and not self.message.startswith("封闭失败")):
             status_text = self.message
             status_color = (0.35, 1.0, 0.35, 1.0)
         elif self.message.startswith("密度倍率"):
@@ -1971,18 +2185,22 @@ class OP_ModalFillMeshHole(Operator):
             'TRIANGLE': "Triangle Fill",
         }
 
-        draw_key_value("滚轮:", f"密度倍率: {self.patch_edge_factor:.2f}", 0)
+        draw_key_value("Shift+滚轮:", f"密度倍率: {self.patch_edge_factor:.2f}", 0)
         draw_key_value("F键:", f"模式: {mode_names.get(self.fill_mode, self.fill_mode)}", 22)
-        draw_key_value("左键:", "封闭绿色孔洞", 44)
-        draw_key_value("R键:", "刷新孔洞缓存", 66)
-        draw_key_value("Esc/右键:", "退出工具", 88)
-        draw_key_value("孔洞:", f"{len(self.holes)} 个 / 当前 {active_text}", 110)
-        draw_key_value("状态:", status_text, 132, status_color)
+        draw_key_value("左键:", "加入待补孔洞", 44)
+        draw_key_value("Enter:", "提交全部预览", 66)
+        draw_key_value("R键:", "刷新孔洞缓存", 88)
+        draw_key_value("Esc/右键:", "取消预览/退出工具", 110)
+        draw_key_value("孔洞:", f"{len(self.holes)} 个 / 当前 {active_text}", 132)
+        draw_key_value("状态:", status_text, 154, status_color)
 
         blf.disable(font_id, blf.SHADOW)
 
     def modal(self, context, event):
         if event.type in {'ESC', 'RIGHTMOUSE'}:
+            if self._clear_preview("已取消预览"):
+                self._tag_redraw(context)
+                return {'RUNNING_MODAL'}
             self.finish(context)
             if self.did_fill:
                 return {'FINISHED'}
@@ -1994,24 +2212,55 @@ class OP_ModalFillMeshHole(Operator):
             return {'RUNNING_MODAL'}
 
         if event.type == 'WHEELUPMOUSE':
+            if not event.shift:
+                return {'PASS_THROUGH'}
             self.patch_edge_factor = max(0.35, self.patch_edge_factor * 0.9)
             self.message = f"密度倍率: {self.patch_edge_factor:.2f}"
+            if self.preview_hole_signatures:
+                self._rebuild_preview_faces(context)
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'WHEELDOWNMOUSE':
+            if not event.shift:
+                return {'PASS_THROUGH'}
             self.patch_edge_factor = min(4.0, self.patch_edge_factor / 0.9)
             self.message = f"密度倍率: {self.patch_edge_factor:.2f}"
+            if self.preview_hole_signatures:
+                self._rebuild_preview_faces(context)
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if self._fill_active_hole(context):
-                self.did_fill = True
-                fill_message = self.message
+            self._queue_active_hole_preview(context)
+            self._tag_redraw(context)
+            return {'RUNNING_MODAL'}
+
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            if self.preview_hole_signatures:
+                queued_signatures = list(self.preview_hole_signatures)
+                filled_count = 0
+                messages = []
+                self._clear_preview("")
+                for signature in queued_signatures:
+                    self._rebuild_holes(context)
+                    hole_index, _hole = self._hole_by_signature(signature)
+                    if hole_index < 0:
+                        continue
+                    self.active_hole_index = hole_index
+                    if self._fill_active_hole(context):
+                        filled_count += 1
+                        messages.append(self.message)
+                self.did_fill = self.did_fill or filled_count > 0
                 self._rebuild_holes(context)
-                self.message = fill_message
-            self._update_hover(context, event)
+                self._update_hover_at(context)
+                if filled_count:
+                    tail = messages[-1] if messages else ""
+                    self.message = f"已提交 {filled_count} 个孔洞: {tail}"
+                else:
+                    self.message = "没有成功提交的孔洞"
+            else:
+                self.message = "没有待提交孔洞"
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
@@ -2025,10 +2274,13 @@ class OP_ModalFillMeshHole(Operator):
             index = modes.index(self.fill_mode) if self.fill_mode in modes else 0
             self.fill_mode = modes[(index + 1) % len(modes)]
             self.message = f"模式切换: {mode_names[self.fill_mode]}"
+            if self.preview_hole_signatures:
+                self._rebuild_preview_faces(context)
             self._tag_redraw(context)
             return {'RUNNING_MODAL'}
 
         if event.type == 'R' and event.value == 'PRESS':
+            self._clear_preview("")
             self._rebuild_holes(context)
             self._update_hover(context, event)
             self._tag_redraw(context)
@@ -2065,6 +2317,8 @@ class OP_ModalFillMeshHole(Operator):
         self.message = ""
         self.obj = None
         self.did_fill = False
+        self.preview_faces = []
+        self.preview_hole_signatures = []
 
         self._rebuild_holes(context)
         self._update_hover(context, event)
