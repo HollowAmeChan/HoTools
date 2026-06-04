@@ -170,6 +170,19 @@ class ImageSelection:
         self.last_rect_px = (0, 0, self.width, self.height)
         self._commit_change()
 
+    def apply_mask(self, mask, mode):
+        mask = mask.astype(np.uint8, copy=False)
+        if mode == "ADD":
+            np.bitwise_or(self.mask, mask, out=self.mask)
+        elif mode == "SUB":
+            self.mask[mask.astype(bool, copy=False)] = 0
+        else:
+            self.mask = mask.copy()
+
+        self.last_mode = mode
+        self.last_rect_px = (0, 0, self.width, self.height)
+        self._commit_change()
+
     def _commit_change(self):
         self.selected_pixels = int(np.count_nonzero(self.mask))
         self.operation_count += 1
@@ -635,6 +648,34 @@ def _draw_brush_circle(center, selection, radius_px, mode):
     gpu.state.blend_set("NONE")
 
 
+def _draw_lasso_path(points, mode):
+    if not points or len(points) < 2:
+        return
+
+    shader, shader_name = _get_rect_shader()
+    if shader is None:
+        return
+
+    coords = []
+    previous = points[0]
+    for point in points[1:]:
+        coords.extend((previous, point))
+        previous = point
+    if len(points) > 2:
+        coords.extend((points[-1], points[0]))
+
+    batch = batch_for_shader(shader, "LINES", {"pos": _shader_coords(coords, shader_name)})
+    _fill_color, line_color = MODE_COLORS.get(mode, MODE_COLORS["SET"])
+
+    gpu.state.blend_set("ALPHA")
+    gpu.state.line_width_set(2.0)
+    shader.bind()
+    shader.uniform_float("color", line_color)
+    batch.draw(shader)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set("NONE")
+
+
 def _draw_selection_mask(selection):
     rects = selection.overlay_rects()
     if not rects:
@@ -673,10 +714,15 @@ def _draw_image_border():
 
 
 def _draw_edit_overlay(operator):
-    if getattr(operator, "edit_mode", "BOX") == "BRUSH":
+    edit_mode = getattr(operator, "edit_mode", "BOX")
+    if edit_mode == "BRUSH":
         if operator.mouse_view_xy is not None:
             mode = operator.brush_mode or "ADD"
             _draw_brush_circle(operator.mouse_view_xy, operator.selection, operator.brush_radius, mode)
+        return
+
+    if edit_mode == "LASSO":
+        _draw_lasso_path(operator.lasso_points, operator.lasso_mode)
         return
 
     if operator.start_view_xy is None or operator.end_view_xy is None:
@@ -735,6 +781,18 @@ def _draw_hud(operator):
 
         _draw_hud_line(font_id, x, y + 44, "大小:", str(int(operator.brush_radius)))
         _draw_hud_line(font_id, x, y + 22, "Shift+滚轮:", "调整大小")
+        _draw_hud_line(font_id, x, y, "E:", "切到套索")
+    elif operator.edit_mode == "LASSO":
+        if operator.lasso_active:
+            mode_label = MODE_LABELS.get(operator.lasso_mode, operator.lasso_mode)
+            _draw_hud_line(font_id, x, y + 88, "状态:", "套索中", (0.35, 1.0, 0.35, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
+        else:
+            _draw_hud_line(font_id, x, y + 88, "状态:", "套索待命", (1.0, 0.65, 0.18, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "左键:", "拖拽闭合区域")
+
+        _draw_hud_line(font_id, x, y + 44, "Shift/Ctrl:", "加选 / 减选")
+        _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
         _draw_hud_line(font_id, x, y, "E:", "切到框选")
     else:
         if operator.waiting_start:
@@ -772,6 +830,9 @@ class OP_UVTools_ImageBoxSelect(Operator):
     brush_active = False
     brush_mode = "ADD"
     brush_radius = DEFAULT_BRUSH_RADIUS
+    lasso_active = False
+    lasso_mode = "SET"
+    lasso_points = None
     mouse_region_xy = (20, 20)
     mouse_view_xy = None
     start_view_xy = None
@@ -814,10 +875,18 @@ class OP_UVTools_ImageBoxSelect(Operator):
         self.brush_active = False
         self.brush_mode = "ADD"
 
+    def _reset_lasso_state(self):
+        self.lasso_active = False
+        self.lasso_mode = "SET"
+        self.lasso_points = None
+
     def _toggle_edit_mode(self, event):
+        modes = ("BOX", "BRUSH", "LASSO")
+        current_index = modes.index(self.edit_mode) if self.edit_mode in modes else 0
         self._reset_box_state()
         self._reset_brush_state()
-        self.edit_mode = "BRUSH" if self.edit_mode == "BOX" else "BOX"
+        self._reset_lasso_state()
+        self.edit_mode = modes[(current_index + 1) % len(modes)]
         self._update_mouse(event)
         self._tag_redraw()
 
@@ -893,6 +962,41 @@ class OP_UVTools_ImageBoxSelect(Operator):
         self._update_mouse(event)
         self._tag_redraw()
 
+    def _begin_lasso(self, event):
+        view_xy = _event_to_view_xy(self.area, event)
+        if view_xy is None:
+            return False
+
+        self.lasso_active = True
+        self.lasso_mode = _event_select_mode(event)
+        self.lasso_points = [view_xy]
+        self._update_mouse(event)
+        self._tag_redraw()
+        return True
+
+    def _update_lasso(self, event):
+        view_xy = _event_to_view_xy(self.area, event)
+        if view_xy is None:
+            return
+
+        self._update_mouse(event)
+        if self.lasso_points is None:
+            self.lasso_points = [view_xy]
+        else:
+            self.lasso_points.append(view_xy)
+        self._tag_redraw()
+
+    def _commit_lasso(self, context, event):
+        self._update_lasso(event)
+        points = self.lasso_points or []
+        if self.selection is not None and len(points) >= 3:
+            if self.selection.apply_polygon(points, self.lasso_mode):
+                SelectionOverlay.refresh(context)
+
+        self._reset_lasso_state()
+        self._tag_redraw()
+        return {"RUNNING_MODAL"}
+
     def _cancel(self):
         self._clear_draw_handlers()
         self._tag_redraw()
@@ -925,6 +1029,7 @@ class OP_UVTools_ImageBoxSelect(Operator):
         self.edit_mode = "BOX"
         self._reset_box_state()
         self._reset_brush_state()
+        self._reset_lasso_state()
         self.ignore_until_release = event.type == "LEFTMOUSE" and event.value != "RELEASE"
         self.view_navigation_active = False
         self.brush_radius = int(context.scene.ho_uvtools_image_brush_radius)
@@ -997,6 +1102,30 @@ class OP_UVTools_ImageBoxSelect(Operator):
 
             return {"RUNNING_MODAL"}
 
+        if self.edit_mode == "LASSO":
+            if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+                if self.lasso_active:
+                    self._update_lasso(event)
+                else:
+                    self._update_mouse(event)
+                    self._tag_redraw()
+                return {"RUNNING_MODAL"}
+
+            if event.type == "LEFTMOUSE":
+                if event.value == "PRESS" and _is_in_window_region(self.area, event):
+                    self._begin_lasso(event)
+                    return {"RUNNING_MODAL"}
+
+                if event.value == "RELEASE":
+                    if self.lasso_active:
+                        return self._commit_lasso(context, event)
+
+                    self._update_mouse(event)
+                    self._tag_redraw()
+                    return {"RUNNING_MODAL"}
+
+            return {"RUNNING_MODAL"}
+
         if self.waiting_start:
             if self.ignore_until_release:
                 if event.type == "LEFTMOUSE" and event.value == "RELEASE":
@@ -1062,8 +1191,22 @@ class OP_UVTools_ImageClearSelection(Operator):
 class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
     bl_idname = "ho.uvtools_image_fill_selection_from_selected_uv"
     bl_label = "从选中UV填充遮罩"
-    bl_description = "用当前选中的 UV 面填充 HoTools 当前硬选区遮罩"
+    bl_description = "用当前选中的 UV 面填充 HoTools 当前硬选区遮罩；Shift 叠加，Ctrl 叠减"
     bl_options = {"REGISTER", "UNDO"}
+
+    extend: BoolProperty(
+        name="叠加",
+        default=False,
+    )  # type: ignore
+    subtract: BoolProperty(
+        name="叠减",
+        default=False,
+    )  # type: ignore
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        self.subtract = event.ctrl
+        return self.execute(context)
 
     def execute(self, context):
         objects, error = _require_uv_face_mode(context)
@@ -1082,9 +1225,19 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
             self.report({"WARNING"}, "选中的 UV 面没有覆盖当前选区画布")
             return {"CANCELLED"}
 
-        selection.replace_mask(mask, "UV")
+        if self.subtract:
+            mode = "SUB"
+            action = "叠减"
+        elif self.extend:
+            mode = "ADD"
+            action = "叠加"
+        else:
+            mode = "UV"
+            action = "填充"
+
+        selection.apply_mask(mask, mode)
         SelectionOverlay.refresh(context)
-        self.report({"INFO"}, f"已从 {len(polygons)} 个 UV 面填充遮罩")
+        self.report({"INFO"}, f"已从 {len(polygons)} 个 UV 面{action}遮罩")
         return {"FINISHED"}
 
 
@@ -1192,7 +1345,7 @@ def drawImagePanel(layout: UILayout, context: Context):
     row = box.row(align=True)
     row.scale_y = 2
     row.prop(scene, "ho_uvtools_image_selection_show", text="", toggle=True, icon="OVERLAY")
-    row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区", icon="SELECT_SET")
+    row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区")
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
     row = box.row(align=True)
