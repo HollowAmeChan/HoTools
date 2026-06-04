@@ -12,6 +12,10 @@ from gpu_extras.batch import batch_for_shader
 
 DEFAULT_SELECTION_WIDTH = 2048
 DEFAULT_SELECTION_HEIGHT = 2048
+DEFAULT_BRUSH_RADIUS = 48
+MIN_BRUSH_RADIUS = 1
+MAX_BRUSH_RADIUS = 2048
+BRUSH_RADIUS_SCROLL_STEP = 8
 
 _RECT_SHADER = None
 _RECT_SHADER_NAME = None
@@ -86,6 +90,34 @@ class ImageSelection:
         self.last_mode = mode
         self._commit_change()
         return x0 < x1 and y0 < y1
+
+    def apply_brush(self, center_px, radius_px, mode):
+        cx, cy = center_px
+        radius = max(1.0, float(radius_px))
+        x0 = max(0, int(math.floor(cx - radius)))
+        x1 = min(self.width, int(math.ceil(cx + radius)) + 1)
+        y0 = max(0, int(math.floor(cy - radius)))
+        y1 = min(self.height, int(math.ceil(cy + radius)) + 1)
+        if x0 >= x1 or y0 >= y1:
+            return False
+
+        xs = np.arange(x0, x1, dtype=np.float64) + 0.5
+        ys = np.arange(y0, y1, dtype=np.float64) + 0.5
+        grid_x, grid_y = np.meshgrid(xs, ys)
+        circle = (grid_x - cx) ** 2 + (grid_y - cy) ** 2 <= radius ** 2
+        if not np.any(circle):
+            return False
+
+        value = 0 if mode == "SUB" else 1
+        region = self.mask[y0:y1, x0:x1]
+        if not np.any(region[circle] != value):
+            return False
+
+        region[circle] = value
+        self.last_rect_px = (x0, y0, x1, y1)
+        self.last_mode = mode
+        self._commit_change()
+        return True
 
     def invert(self):
         np.bitwise_xor(self.mask, 1, out=self.mask)
@@ -303,6 +335,10 @@ def _view_rect_to_pixel_rect(rect, width, height):
     py0 = math.floor(min_y * height)
     py1 = math.ceil(max_y * height)
     return _clamp_pixel_rect((px0, py0, px1, py1), width, height)
+
+
+def _view_xy_to_pixel_xy(view_xy, selection):
+    return view_xy[0] * selection.width, view_xy[1] * selection.height
 
 
 def _clamp_pixel_rect(rect, width, height):
@@ -532,6 +568,38 @@ def _draw_view_rect(rect, mode, active=True):
     gpu.state.blend_set("NONE")
 
 
+def _circle_line_coords(center, radius_x, radius_y, segments=72):
+    cx, cy = center
+    coords = []
+    previous = (cx + radius_x, cy)
+    for i in range(1, segments + 1):
+        angle = math.tau * i / segments
+        current = (cx + math.cos(angle) * radius_x, cy + math.sin(angle) * radius_y)
+        coords.extend((previous, current))
+        previous = current
+    return coords
+
+
+def _draw_brush_circle(center, selection, radius_px, mode):
+    shader, shader_name = _get_rect_shader()
+    if shader is None or selection is None:
+        return
+
+    radius_x = max(1.0, float(radius_px)) / selection.width
+    radius_y = max(1.0, float(radius_px)) / selection.height
+    coords = _circle_line_coords(center, radius_x, radius_y)
+    batch = batch_for_shader(shader, "LINES", {"pos": _shader_coords(coords, shader_name)})
+    _fill_color, line_color = MODE_COLORS.get(mode, MODE_COLORS["ADD"])
+
+    gpu.state.blend_set("ALPHA")
+    gpu.state.line_width_set(2.0)
+    shader.bind()
+    shader.uniform_float("color", line_color)
+    batch.draw(shader)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set("NONE")
+
+
 def _draw_selection_mask(selection):
     rects = selection.overlay_rects()
     if not rects:
@@ -576,6 +644,14 @@ def _draw_edit_overlay(operator):
     x0, y0 = operator.start_view_xy
     x1, y1 = operator.end_view_xy
     _draw_view_rect((x0, y0, x1, y1), operator.select_mode, active=True)
+
+
+def _draw_brush_overlay(operator):
+    if operator.mouse_view_xy is None:
+        return
+
+    mode = operator.brush_mode or "ADD"
+    _draw_brush_circle(operator.mouse_view_xy, operator.selection, operator.brush_radius, mode)
 
 
 def _tag_image_editors_redraw(context):
@@ -625,6 +701,33 @@ def _draw_hud(operator):
 
     _draw_hud_line(font_id, x, y + 22, "Shift/Ctrl:", "加选 / 减选")
     _draw_hud_line(font_id, x, y, "Ctrl+I:", "反选")
+    _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
+
+    blf.disable(font_id, blf.SHADOW)
+
+
+def _draw_brush_hud(operator):
+    font_id = 0
+    blf.size(font_id, 16)
+
+    x, y = operator.mouse_region_xy
+    x += 20
+    y += 20
+
+    blf.enable(font_id, blf.SHADOW)
+    blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
+    blf.shadow_offset(font_id, 1, -1)
+
+    if operator.brush_active:
+        mode_label = "清空" if operator.brush_mode == "SUB" else "添加"
+        _draw_hud_line(font_id, x, y + 66, "状态:", "涂抹中", (0.35, 1.0, 0.35, 1.0))
+        _draw_hud_line(font_id, x, y + 44, "模式:", mode_label)
+    else:
+        _draw_hud_line(font_id, x, y + 66, "状态:", "画笔待命", (1.0, 0.65, 0.18, 1.0))
+        _draw_hud_line(font_id, x, y + 44, "左键/Shift+左键:", "添加 / 清空")
+
+    _draw_hud_line(font_id, x, y + 22, "大小:", str(int(operator.brush_radius)))
+    _draw_hud_line(font_id, x, y, "Shift+滚轮:", "调整大小")
     _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
 
     blf.disable(font_id, blf.SHADOW)
@@ -810,6 +913,162 @@ class OP_UVTools_ImageBoxSelect(Operator):
         return {"RUNNING_MODAL"}
 
 
+class OP_UVTools_ImageBrushEdit(Operator):
+    bl_idname = "ho.uvtools_image_brush_edit"
+    bl_label = "画笔编辑选区"
+    bl_description = "用画笔编辑 HoTools 固定分辨率硬选区"
+    bl_options = {"REGISTER"}
+
+    draw_handle_view = None
+    draw_handle_hud = None
+    area = None
+    selection = None
+    view_navigation_active = False
+    brush_active = False
+    brush_mode = "ADD"
+    brush_radius = DEFAULT_BRUSH_RADIUS
+    mouse_region_xy = (20, 20)
+    mouse_view_xy = None
+
+    @classmethod
+    def poll(cls, context):
+        return context.area is not None and context.area.type == "IMAGE_EDITOR"
+
+    def _tag_redraw(self):
+        if self.area is not None:
+            self.area.tag_redraw()
+
+    def _clear_draw_handlers(self):
+        if self.draw_handle_view is not None:
+            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_view, "WINDOW")
+            self.draw_handle_view = None
+        if self.draw_handle_hud is not None:
+            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_hud, "WINDOW")
+            self.draw_handle_hud = None
+
+    def _update_mouse(self, event):
+        data = _event_to_region_xy(self.area, event)
+        if data is None:
+            return False
+
+        x, y, region = data
+        self.mouse_region_xy = (x, y)
+        self.mouse_view_xy = region.view2d.region_to_view(x, y)
+        return True
+
+    def _paint(self, context, event):
+        if self.selection is None or not self._update_mouse(event):
+            return
+
+        center_px = _view_xy_to_pixel_xy(self.mouse_view_xy, self.selection)
+        if self.selection.apply_brush(center_px, self.brush_radius, self.brush_mode):
+            SelectionOverlay.refresh(context)
+        self._tag_redraw()
+
+    def _set_brush_radius(self, context, value):
+        self.brush_radius = int(max(MIN_BRUSH_RADIUS, min(MAX_BRUSH_RADIUS, value)))
+        context.scene.ho_uvtools_image_brush_radius = self.brush_radius
+        self._tag_redraw()
+
+    def _adjust_brush_radius(self, context, event):
+        direction = 1 if event.type in {"WHEELUPMOUSE", "WHEELINMOUSE"} else -1
+        self._set_brush_radius(context, self.brush_radius + direction * BRUSH_RADIUS_SCROLL_STEP)
+        self._update_mouse(event)
+        self._tag_redraw()
+
+    def _pass_through_view_navigation(self, event):
+        if event.type == "MIDDLEMOUSE":
+            self._update_mouse(event)
+            self._tag_redraw()
+            self.view_navigation_active = event.value != "RELEASE"
+            return True
+
+        if self.view_navigation_active and event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            self._update_mouse(event)
+            self._tag_redraw()
+            return True
+
+        if event.type in VIEW_NAVIGATION_EVENTS:
+            self._update_mouse(event)
+            self._tag_redraw()
+            return True
+
+        return False
+
+    def _cancel(self):
+        self._clear_draw_handlers()
+        self._tag_redraw()
+        return {"CANCELLED"}
+
+    def invoke(self, context, event):
+        self.area = context.area
+        self.selection = SelectionOverlay.get_selection(context)
+        SelectionOverlay.force_visible(context)
+
+        self.view_navigation_active = False
+        self.brush_active = False
+        self.brush_mode = "ADD"
+        self.brush_radius = int(context.scene.ho_uvtools_image_brush_radius)
+        self.mouse_region_xy = (20, 20)
+        self.mouse_view_xy = None
+        self._update_mouse(event)
+
+        self.draw_handle_view = bpy.types.SpaceImageEditor.draw_handler_add(
+            _draw_brush_overlay, (self,), "WINDOW", "POST_VIEW"
+        )
+        self.draw_handle_hud = bpy.types.SpaceImageEditor.draw_handler_add(
+            _draw_brush_hud, (self,), "WINDOW", "POST_PIXEL"
+        )
+
+        context.window_manager.modal_handler_add(self)
+        self._tag_redraw()
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            return self._cancel()
+
+        if event.shift and event.type in {
+            "WHEELUPMOUSE",
+            "WHEELDOWNMOUSE",
+            "WHEELINMOUSE",
+            "WHEELOUTMOUSE",
+        }:
+            self._adjust_brush_radius(context, event)
+            return {"RUNNING_MODAL"}
+
+        if self._pass_through_view_navigation(event):
+            return {"PASS_THROUGH"}
+
+        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            if self.brush_active:
+                self.brush_mode = "SUB" if event.shift else "ADD"
+                self._paint(context, event)
+            else:
+                self._update_mouse(event)
+                self._tag_redraw()
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE":
+            if event.value == "PRESS" and _is_in_window_region(self.area, event):
+                self.brush_active = True
+                self.brush_mode = "SUB" if event.shift else "ADD"
+                self._paint(context, event)
+                return {"RUNNING_MODAL"}
+
+            if event.value == "RELEASE":
+                if self.brush_active:
+                    self.brush_mode = "SUB" if event.shift else "ADD"
+                    self._paint(context, event)
+                else:
+                    self._update_mouse(event)
+                self.brush_active = False
+                self._tag_redraw()
+                return {"RUNNING_MODAL"}
+
+        return {"RUNNING_MODAL"}
+
+
 class OP_UVTools_ImageRefreshSelectionCanvas(Operator):
     bl_idname = "ho.uvtools_image_refresh_selection_canvas"
     bl_label = "刷新选区画布"
@@ -919,6 +1178,12 @@ def reg_props():
         default=DEFAULT_SELECTION_HEIGHT,
         min=1,
     )
+    bpy.types.Scene.ho_uvtools_image_brush_radius = IntProperty(
+        name="画笔大小",
+        default=DEFAULT_BRUSH_RADIUS,
+        min=MIN_BRUSH_RADIUS,
+        max=MAX_BRUSH_RADIUS,
+    )
     bpy.types.Scene.ho_uvtools_image_box_select_has_rect = BoolProperty(
         name="有图像选区",
         default=False,
@@ -937,6 +1202,8 @@ def ureg_props():
         del bpy.types.Scene.ho_uvtools_image_box_select_rect
     if hasattr(bpy.types.Scene, "ho_uvtools_image_box_select_has_rect"):
         del bpy.types.Scene.ho_uvtools_image_box_select_has_rect
+    if hasattr(bpy.types.Scene, "ho_uvtools_image_brush_radius"):
+        del bpy.types.Scene.ho_uvtools_image_brush_radius
     if hasattr(bpy.types.Scene, "ho_uvtools_image_selection_height"):
         del bpy.types.Scene.ho_uvtools_image_selection_height
     if hasattr(bpy.types.Scene, "ho_uvtools_image_selection_width"):
@@ -967,6 +1234,7 @@ def drawImagePanel(layout: UILayout, context: Context):
     row.scale_y = 2
     row.prop(scene, "ho_uvtools_image_selection_show", text="", toggle=True, icon="OVERLAY")
     row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区", icon="SELECT_SET")
+    row.operator(OP_UVTools_ImageBrushEdit.bl_idname, text="画笔编辑", icon="BRUSH_DATA")
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
     row = box.row(align=True)
@@ -975,6 +1243,7 @@ def drawImagePanel(layout: UILayout, context: Context):
 
 cls = [
     OP_UVTools_ImageBoxSelect,
+    OP_UVTools_ImageBrushEdit,
     OP_UVTools_ImageRefreshSelectionCanvas,
     OP_UVTools_ImageClearSelection,
     OP_UVTools_ImageFillSelectionFromSelectedUv,
