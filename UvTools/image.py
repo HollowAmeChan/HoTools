@@ -1416,16 +1416,17 @@ def drawImagePanel(layout: UILayout, context: Context):
     image_size_row.operator(OP_UVTools_ImageSetSelectionCanvasFromImage.bl_idname, text="", icon="IMAGE_DATA")
 
     box = layout.box()
-    row = box.row(align=True)
+    col = box.column(align=True)
+    row = col.row(align=True)
     row.scale_y = 2
     row.prop(scene, "ho_uvtools_image_selection_show", text="", toggle=True, icon="OVERLAY")
     row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区")
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
-    row = box.row(align=True)
+    row = col.row(align=True)
     row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text="选中UV填充遮罩",)
 
-    row = box.row(align=True)
+    row = col.row(align=True)
     row.operator(OP_UVTools_ImageExpandSelectionMask.bl_idname, text="拓展蒙版")
     row.operator(OP_UVTools_ImageShrinkSelectionMask.bl_idname, text="收缩蒙版")
 
