@@ -346,47 +346,75 @@ def _mask_to_pixel_rects(mask):
     return rects
 
 
-def _require_uv_face_mode(context):
+def _editable_mesh_objects(context):
+    objects = getattr(context, "objects_in_mode_unique_data", None)
+    if objects:
+        return [obj for obj in objects if obj.type == "MESH" and obj.mode == "EDIT"]
+
     obj = context.edit_object or context.object
-    if obj is None or obj.type != "MESH" or obj.mode != "EDIT":
+    if obj is not None and obj.type == "MESH" and obj.mode == "EDIT":
+        return [obj]
+
+    return []
+
+
+def _require_uv_face_mode(context):
+    objects = _editable_mesh_objects(context)
+    if not objects:
         return None, "需要在 Mesh 编辑模式下执行"
 
     tool_settings = context.tool_settings
-    if tool_settings.use_uv_select_sync:
-        if tuple(tool_settings.mesh_select_mode) != (False, False, True):
-            return None, "需要切换到面选择模式"
-    elif getattr(tool_settings, "uv_select_mode", None) != "FACE":
-        return None, "需要切换到 UV 面选择模式"
+    if not tool_settings.use_uv_select_sync:
+        return None, "操作需要开启 UV 同步模式"
+    if tuple(tool_settings.mesh_select_mode) != (False, False, True):
+        return None, "需要切换到面选择模式"
 
-    if not obj.data.uv_layers.active:
+    if not any(obj.data.uv_layers.active for obj in objects):
         return None, "当前物体没有活动 UV 层"
 
-    return obj, None
+    return objects, None
 
 
-def _selected_uv_polygons_from_edit_mesh(context, obj):
+def _selected_uv_polygons_from_edit_mesh(context, objects):
+    polygons = []
+
+    for obj in objects:
+        polygons.extend(_selected_uv_polygons_from_object(obj))
+
+    return polygons
+
+
+def _selected_uv_polygons_from_object(obj):
     mesh = obj.data
     bm = bmesh.from_edit_mesh(mesh)
-    uv_layer = bm.loops.layers.uv.active
+    bm.faces.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    bm.verts.ensure_lookup_table()
+
+    active_uv = mesh.uv_layers.active
+    uv_layer = bm.loops.layers.uv.get(active_uv.name) if active_uv is not None else None
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.active
     if uv_layer is None:
         return []
 
-    use_uv_sync = context.tool_settings.use_uv_select_sync
     polygons = []
     for face in bm.faces:
         if face.hide:
             continue
-        if use_uv_sync:
-            selected = face.select
-        else:
-            selected = face.select or any(
-                loop[uv_layer].select or loop[uv_layer].select_edge for loop in face.loops
-            )
+        uv_loops = [loop[uv_layer] for loop in face.loops]
+        selected = _mesh_face_selected(face)
         if not selected or len(face.loops) < 3:
             continue
 
-        polygons.append([(loop[uv_layer].uv.x, loop[uv_layer].uv.y) for loop in face.loops])
+        polygons.append([(uv_loop.uv.x, uv_loop.uv.y) for uv_loop in uv_loops])
     return polygons
+
+
+def _mesh_face_selected(face):
+    if face.select:
+        return True
+    return all(loop.vert.select for loop in face.loops)
 
 
 def _points_in_polygon(x, y, points):
@@ -820,12 +848,12 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        obj, error = _require_uv_face_mode(context)
+        objects, error = _require_uv_face_mode(context)
         if error:
             self.report({"ERROR"}, error)
             return {"CANCELLED"}
 
-        polygons = _selected_uv_polygons_from_edit_mesh(context, obj)
+        polygons = _selected_uv_polygons_from_edit_mesh(context, objects)
         if not polygons:
             self.report({"WARNING"}, "没有选中的 UV 面")
             return {"CANCELLED"}
@@ -942,7 +970,7 @@ def drawImagePanel(layout: UILayout, context: Context):
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
     row = box.row(align=True)
-    row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text="从选中UV填充遮罩", icon="UV_FACESEL")
+    row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text="选中UV填充遮罩",)
 
 
 cls = [
