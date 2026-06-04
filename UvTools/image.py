@@ -19,6 +19,10 @@ BRUSH_RADIUS_SCROLL_STEP = 8
 
 _RECT_SHADER = None
 _RECT_SHADER_NAME = None
+_IMAGE_SHADER = None
+_IMAGE_PIXEL_UNDO_STACK = []
+_IMAGE_PIXEL_UNDO_LIMIT = 8
+_KEYMAP_ITEMS = []
 
 
 MODE_LABELS = {
@@ -580,6 +584,220 @@ def _uv_polygons_to_mask(polygons, width, height):
     return mask
 
 
+def _image_pixels_array(image):
+    width, height = (int(v) for v in image.size)
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    return pixels.reshape((height, width, 4))
+
+
+def _write_image_pixels(image, pixels):
+    image.pixels.foreach_set(np.ascontiguousarray(pixels, dtype=np.float32).ravel())
+    image.update()
+
+
+def _selection_mask_for_image(selection, width, height):
+    if selection.width == width and selection.height == height:
+        return selection.mask.astype(bool, copy=True)
+    return _resize_mask_nearest(selection.mask, width, height).astype(bool, copy=False)
+
+
+def _mask_bbox(mask):
+    ys, xs = np.nonzero(mask)
+    if xs.size == 0:
+        return None
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def _alpha_over(dst, src):
+    src_alpha = src[..., 3:4]
+    dst_alpha = dst[..., 3:4]
+    out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha)
+    out_rgb = src[..., :3] * src_alpha + dst[..., :3] * dst_alpha * (1.0 - src_alpha)
+    np.divide(out_rgb, out_alpha, out=out_rgb, where=out_alpha > 1e-8)
+    return np.concatenate((out_rgb, out_alpha), axis=-1)
+
+
+class MaskedPixelTransform:
+    def __init__(self, image, image_size, bbox, pixels, original_region, texture=None):
+        self.image = image
+        self.image_width, self.image_height = image_size
+        self.bbox = bbox
+        self.pixels = pixels
+        self.original_region = original_region
+        self.texture = texture
+
+    @classmethod
+    def cut_from_image(cls, image, selection):
+        width, height = (int(v) for v in image.size)
+        mask = _selection_mask_for_image(selection, width, height)
+        bbox = _mask_bbox(mask)
+        if bbox is None:
+            return None
+
+        x0, y0, x1, y1 = bbox
+        pixels = _image_pixels_array(image)
+        original_region = pixels[y0:y1, x0:x1].copy()
+        region_mask = mask[y0:y1, x0:x1]
+
+        cut_pixels = original_region.copy()
+        cut_pixels[~region_mask] = 0.0
+
+        cleared_region = pixels[y0:y1, x0:x1]
+        cleared_region[region_mask] = 0.0
+        _write_image_pixels(image, pixels)
+
+        return cls(image, (width, height), bbox, cut_pixels, original_region)
+
+    def restore(self):
+        pixels = _image_pixels_array(self.image)
+        x0, y0, x1, y1 = self.bbox
+        pixels[y0:y1, x0:x1] = self.original_region
+        _write_image_pixels(self.image, pixels)
+
+    def source_rect_view(self):
+        x0, y0, x1, y1 = self.bbox
+        return (
+            x0 / self.image_width,
+            y0 / self.image_height,
+            x1 / self.image_width,
+            y1 / self.image_height,
+        )
+
+    def alpha_composite_to_image(self, center, basis_x, basis_y):
+        inverse = _inverse_2x2(basis_x, basis_y)
+        if inverse is None:
+            return False
+
+        quad = _transform_quad(center, basis_x, basis_y)
+        xs = [point[0] for point in quad]
+        ys = [point[1] for point in quad]
+        x0 = max(0, int(math.floor(min(xs) * self.image_width)))
+        x1 = min(self.image_width, int(math.ceil(max(xs) * self.image_width)))
+        y0 = max(0, int(math.floor(min(ys) * self.image_height)))
+        y1 = min(self.image_height, int(math.ceil(max(ys) * self.image_height)))
+        if x0 >= x1 or y0 >= y1:
+            return False
+
+        dst_x = (np.arange(x0, x1, dtype=np.float64) + 0.5) / self.image_width
+        dst_y = (np.arange(y0, y1, dtype=np.float64) + 0.5) / self.image_height
+        grid_x, grid_y = np.meshgrid(dst_x, dst_y)
+        local_x = grid_x - center[0]
+        local_y = grid_y - center[1]
+        sample_u = inverse[0][0] * local_x + inverse[0][1] * local_y + 0.5
+        sample_v = inverse[1][0] * local_x + inverse[1][1] * local_y + 0.5
+        inside = (sample_u >= 0.0) & (sample_u <= 1.0) & (sample_v >= 0.0) & (sample_v <= 1.0)
+        if not np.any(inside):
+            return False
+
+        patch_height, patch_width, _channels = self.pixels.shape
+        src_x = np.clip(np.rint(sample_u * (patch_width - 1)).astype(np.int64), 0, patch_width - 1)
+        src_y = np.clip(np.rint(sample_v * (patch_height - 1)).astype(np.int64), 0, patch_height - 1)
+        src = self.pixels[src_y, src_x]
+        src[~inside] = 0.0
+
+        pixels = _image_pixels_array(self.image)
+        dst = pixels[y0:y1, x0:x1]
+        dst[:] = _alpha_over(dst, src)
+        _write_image_pixels(self.image, pixels)
+        return True
+
+
+def _inverse_2x2(basis_x, basis_y):
+    a, c = basis_x
+    b, d = basis_y
+    determinant = a * d - b * c
+    if abs(determinant) < 1e-12:
+        return None
+    inv = 1.0 / determinant
+    return ((d * inv, -b * inv), (-c * inv, a * inv))
+
+
+def _transform_quad(center, basis_x, basis_y):
+    cx, cy = center
+    hx = (basis_x[0] * 0.5, basis_x[1] * 0.5)
+    hy = (basis_y[0] * 0.5, basis_y[1] * 0.5)
+    return (
+        (cx - hx[0] - hy[0], cy - hx[1] - hy[1]),
+        (cx + hx[0] - hy[0], cy + hx[1] - hy[1]),
+        (cx + hx[0] + hy[0], cy + hx[1] + hy[1]),
+        (cx - hx[0] + hy[0], cy - hx[1] + hy[1]),
+    )
+
+
+def _rotate_vector(vector, angle):
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    x, y = vector
+    return x * cos_a - y * sin_a, x * sin_a + y * cos_a
+
+
+def _vec_add(a, b):
+    return a[0] + b[0], a[1] + b[1]
+
+
+def _vec_sub(a, b):
+    return a[0] - b[0], a[1] - b[1]
+
+
+def _vec_scale(vector, scale):
+    return vector[0] * scale, vector[1] * scale
+
+
+def _vec_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def _vec_length(vector):
+    return math.hypot(vector[0], vector[1])
+
+
+def _vec_normalize(vector):
+    length = _vec_length(vector)
+    if length <= 1e-12:
+        return None
+    return vector[0] / length, vector[1] / length
+
+
+def _view_delta_for_region_pixels(area, pixels):
+    region = _get_window_region(area)
+    if region is None:
+        return 0.01, 0.01
+
+    x0, y0 = region.view2d.region_to_view(0, 0)
+    x1, y1 = region.view2d.region_to_view(pixels, pixels)
+    return abs(x1 - x0), abs(y1 - y0)
+
+
+def _view_to_region_xy(area, view_xy):
+    region = _get_window_region(area)
+    if region is None:
+        return None
+    return region.view2d.view_to_region(view_xy[0], view_xy[1], clip=False)
+
+
+def _region_distance_to_view_point(area, region_xy, view_xy):
+    point_xy = _view_to_region_xy(area, view_xy)
+    if point_xy is None:
+        return float("inf")
+    return math.hypot(region_xy[0] - point_xy[0], region_xy[1] - point_xy[1])
+
+
+def _point_segment_region_distance(point, a, b):
+    ax, ay = a
+    bx, by = b
+    dx = bx - ax
+    dy = by - ay
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 1e-12:
+        return math.hypot(point[0] - ax, point[1] - ay)
+
+    t = max(0.0, min(1.0, ((point[0] - ax) * dx + (point[1] - ay) * dy) / length_sq))
+    px = ax + dx * t
+    py = ay + dy * t
+    return math.hypot(point[0] - px, point[1] - py)
+
+
 def _get_rect_shader():
     global _RECT_SHADER, _RECT_SHADER_NAME
 
@@ -595,6 +813,53 @@ def _get_rect_shader():
             pass
 
     return None, None
+
+
+def _get_image_shader():
+    global _IMAGE_SHADER
+
+    if _IMAGE_SHADER is not None:
+        return _IMAGE_SHADER
+
+    for name in ("IMAGE", "2D_IMAGE"):
+        try:
+            _IMAGE_SHADER = gpu.shader.from_builtin(name)
+            return _IMAGE_SHADER
+        except Exception:
+            pass
+
+    return None
+
+
+def _buffer_from_array(format_name, array):
+    flat = np.ascontiguousarray(array).ravel()
+    for dimensions in (flat.size, array.shape):
+        try:
+            return gpu.types.Buffer(format_name, dimensions, flat)
+        except Exception:
+            pass
+    return None
+
+
+def _texture_from_pixels(pixels):
+    height, width, _channels = pixels.shape
+    float_pixels = np.ascontiguousarray(np.clip(pixels, 0.0, 1.0).astype(np.float32))
+    buffer = _buffer_from_array("FLOAT", float_pixels)
+    if buffer is not None:
+        try:
+            return gpu.types.GPUTexture((width, height), format="RGBA32F", data=buffer)
+        except Exception:
+            pass
+
+    byte_pixels = np.ascontiguousarray((float_pixels * 255.0).astype(np.uint8))
+    buffer = _buffer_from_array("UBYTE", byte_pixels)
+    if buffer is not None:
+        try:
+            return gpu.types.GPUTexture((width, height), format="RGBA8", data=buffer)
+        except Exception:
+            pass
+
+    return None
 
 
 def _shader_coords(coords, shader_name):
@@ -755,6 +1020,103 @@ def _draw_image_border():
     gpu.state.blend_set("NONE")
 
 
+def _quad_line_coords(quad):
+    return (
+        quad[0],
+        quad[1],
+        quad[1],
+        quad[2],
+        quad[2],
+        quad[3],
+        quad[3],
+        quad[0],
+    )
+
+
+def _quad_fill_coords(quad):
+    return quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]
+
+
+def _draw_colored_tris(coords, color):
+    shader, shader_name = _get_rect_shader()
+    if shader is None:
+        return
+
+    batch = batch_for_shader(shader, "TRIS", {"pos": _shader_coords(coords, shader_name)})
+    gpu.state.blend_set("ALPHA")
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch.draw(shader)
+    gpu.state.blend_set("NONE")
+
+
+def _draw_colored_lines(coords, color, width=1.0):
+    shader, shader_name = _get_rect_shader()
+    if shader is None:
+        return
+
+    batch = batch_for_shader(shader, "LINES", {"pos": _shader_coords(coords, shader_name)})
+    gpu.state.blend_set("ALPHA")
+    gpu.state.line_width_set(width)
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch.draw(shader)
+    gpu.state.line_width_set(1.0)
+    gpu.state.blend_set("NONE")
+
+
+def _draw_view_handle(area, center, color):
+    dx, dy = _view_delta_for_region_pixels(area, 6)
+    x, y = center
+    rect = (
+        (x - dx, y - dy),
+        (x + dx, y - dy),
+        (x + dx, y + dy),
+        (x - dx, y + dy),
+    )
+    _draw_colored_tris(_quad_fill_coords(rect), color)
+    _draw_colored_lines(_quad_line_coords(rect), (0.0, 0.0, 0.0, 0.75), 1.0)
+
+
+def _draw_textured_quad(transform, quad):
+    if transform.texture is None:
+        return False
+
+    shader = _get_image_shader()
+    if shader is None:
+        return False
+
+    coords = _quad_fill_coords(quad)
+    tex_coords = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    try:
+        batch = batch_for_shader(shader, "TRIS", {"pos": coords, "texCoord": tex_coords})
+        gpu.state.blend_set("ALPHA")
+        shader.bind()
+        shader.uniform_sampler("image", transform.texture)
+        batch.draw(shader)
+        gpu.state.blend_set("NONE")
+        return True
+    except Exception:
+        gpu.state.blend_set("NONE")
+        transform.texture = None
+        return False
+
+
+def _draw_transform_overlay(operator):
+    transform = getattr(operator, "transform", None)
+    if transform is None:
+        return
+
+    quad = operator.current_quad()
+    drew_texture = _draw_textured_quad(transform, quad)
+    if not drew_texture:
+        _draw_colored_tris(_quad_fill_coords(quad), (1.0, 0.48, 0.05, 0.18))
+
+    _draw_colored_lines(_quad_line_coords(quad), (1.0, 0.48, 0.05, 1.0), 2.5)
+    for corner in quad:
+        _draw_view_handle(operator.area, corner, (1.0, 0.72, 0.18, 0.95))
+
+
 def _draw_edit_overlay(operator):
     edit_mode = getattr(operator, "edit_mode", "BOX")
     if edit_mode == "BRUSH":
@@ -850,6 +1212,36 @@ def _draw_hud(operator):
         _draw_hud_line(font_id, x, y, "E:", "切到画笔")
 
     _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
+
+    blf.disable(font_id, blf.SHADOW)
+
+
+def _draw_transform_hud(operator):
+    font_id = 0
+    blf.size(font_id, 16)
+
+    x, y = operator.mouse_region_xy
+    x += 20
+    y += 20
+
+    blf.enable(font_id, blf.SHADOW)
+    blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
+    blf.shadow_offset(font_id, 1, -1)
+
+    if operator.interaction == "MOVE":
+        state = "移动中"
+    elif operator.interaction == "SCALE":
+        state = "缩放中"
+    elif operator.interaction == "ROTATE":
+        state = "旋转中"
+    else:
+        state = "等待变换"
+
+    _draw_hud_line(font_id, x, y + 88, "状态:", state, (1.0, 0.65, 0.18, 1.0))
+    _draw_hud_line(font_id, x, y + 66, "框内:", "移动")
+    _draw_hud_line(font_id, x, y + 44, "角点/边线:", "缩放 / 旋转")
+    _draw_hud_line(font_id, x, y + 22, "Enter:", "应用")
+    _draw_hud_line(font_id, x, y, "Esc/右键:", "取消")
 
     blf.disable(font_id, blf.SHADOW)
 
@@ -1045,6 +1437,10 @@ class OP_UVTools_ImageBoxSelect(Operator):
         return {"CANCELLED"}
 
     def _pass_through_view_navigation(self, event):
+        if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            self.view_navigation_active = False
+            return False
+
         if event.type == "MIDDLEMOUSE":
             self._update_mouse(event)
             self._tag_redraw()
@@ -1059,7 +1455,11 @@ class OP_UVTools_ImageBoxSelect(Operator):
         if event.type in VIEW_NAVIGATION_EVENTS:
             self._update_mouse(event)
             self._tag_redraw()
+            self.view_navigation_active = False
             return True
+
+        if event.type not in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            self.view_navigation_active = False
 
         return False
 
@@ -1315,6 +1715,271 @@ class OP_UVTools_ImageShrinkSelectionMask(Operator):
         return {"FINISHED"}
 
 
+class OP_UVTools_ImageTransformMaskedPixels(Operator):
+    bl_idname = "ho.uvtools_image_transform_masked_pixels"
+    bl_label = "变换遮罩像素"
+    bl_description = "扣出当前遮罩覆盖的像素，移动/缩放/旋转后按 Enter 应用"
+    bl_options = {"REGISTER", "UNDO"}
+
+    area = None
+    transform = None
+    draw_handle_view = None
+    draw_handle_hud = None
+    interaction = None
+    drag_start_view_xy = None
+    drag_start_region_xy = None
+    start_center = None
+    start_basis_x = None
+    start_basis_y = None
+    start_angle = 0.0
+    scale_corner_index = -1
+    scale_anchor = None
+    scale_axis_x = None
+    scale_axis_y = None
+    scale_sign_x = 1.0
+    scale_sign_y = 1.0
+    view_navigation_active = False
+    mouse_region_xy = (20, 20)
+
+    @classmethod
+    def poll(cls, context):
+        return context.area is not None and context.area.type == "IMAGE_EDITOR"
+
+    def _tag_redraw(self):
+        if self.area is not None:
+            self.area.tag_redraw()
+
+    def _clear_draw_handlers(self):
+        if self.draw_handle_view is not None:
+            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_view, "WINDOW")
+            self.draw_handle_view = None
+        if self.draw_handle_hud is not None:
+            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_hud, "WINDOW")
+            self.draw_handle_hud = None
+
+    def current_quad(self):
+        return _transform_quad(self.center, self.basis_x, self.basis_y)
+
+    def _update_mouse(self, event):
+        data = _event_to_region_xy(self.area, event)
+        if data is None:
+            return False
+        x, y, _region = data
+        self.mouse_region_xy = (x, y)
+        return True
+
+    def _hit_test(self, event):
+        data = _event_to_region_xy(self.area, event)
+        view_xy = _event_to_view_xy(self.area, event)
+        if data is None or view_xy is None:
+            return None, None
+
+        region_xy = (data[0], data[1])
+        quad = self.current_quad()
+        for index, corner in enumerate(quad):
+            if _region_distance_to_view_point(self.area, region_xy, corner) <= 12.0:
+                return "SCALE", index
+
+        region_quad = [_view_to_region_xy(self.area, point) for point in quad]
+        if all(point is not None for point in region_quad):
+            for index in range(4):
+                if _point_segment_region_distance(region_xy, region_quad[index], region_quad[(index + 1) % 4]) <= 10.0:
+                    return "ROTATE", index
+
+        return "MOVE", None
+
+    def _begin_interaction(self, event):
+        interaction, data = self._hit_test(event)
+        if interaction is None:
+            return False
+
+        view_xy = _event_to_view_xy(self.area, event)
+        region_data = _event_to_region_xy(self.area, event)
+        if view_xy is None or region_data is None:
+            return False
+
+        self.interaction = interaction
+        self.drag_start_view_xy = view_xy
+        self.drag_start_region_xy = (region_data[0], region_data[1])
+        self.start_center = self.center
+        self.start_basis_x = self.basis_x
+        self.start_basis_y = self.basis_y
+        self.start_angle = math.atan2(view_xy[1] - self.center[1], view_xy[0] - self.center[0])
+        self.scale_corner_index = -1
+        self.scale_anchor = None
+        self.scale_axis_x = None
+        self.scale_axis_y = None
+        self.scale_sign_x = 1.0
+        self.scale_sign_y = 1.0
+
+        if interaction == "SCALE":
+            self.scale_corner_index = data
+            quad = self.current_quad()
+            self.scale_anchor = quad[(data + 2) % 4]
+            self.scale_axis_x = _vec_normalize(self.start_basis_x)
+            self.scale_axis_y = _vec_normalize(self.start_basis_y)
+            self.scale_sign_x = 1.0 if data in {1, 2} else -1.0
+            self.scale_sign_y = 1.0 if data in {2, 3} else -1.0
+            if self.scale_axis_x is None or self.scale_axis_y is None:
+                self.interaction = None
+                return False
+
+        self._tag_redraw()
+        return True
+
+    def _update_interaction(self, event):
+        view_xy = _event_to_view_xy(self.area, event)
+        if view_xy is None or self.interaction is None:
+            return
+
+        self._update_mouse(event)
+        if self.interaction == "MOVE":
+            delta = _vec_sub(view_xy, self.drag_start_view_xy)
+            self.center = _vec_add(self.start_center, delta)
+        elif self.interaction == "ROTATE":
+            angle = math.atan2(view_xy[1] - self.start_center[1], view_xy[0] - self.start_center[0])
+            delta = angle - self.start_angle
+            self.center = self.start_center
+            self.basis_x = _rotate_vector(self.start_basis_x, delta)
+            self.basis_y = _rotate_vector(self.start_basis_y, delta)
+        elif self.interaction == "SCALE":
+            delta = _vec_sub(view_xy, self.scale_anchor)
+            width = abs(_vec_dot(delta, self.scale_axis_x))
+            height = abs(_vec_dot(delta, self.scale_axis_y))
+            if width > 1e-6 and height > 1e-6:
+                self.basis_x = _vec_scale(self.scale_axis_x, width)
+                self.basis_y = _vec_scale(self.scale_axis_y, height)
+                offset = _vec_add(
+                    _vec_scale(self.basis_x, self.scale_sign_x),
+                    _vec_scale(self.basis_y, self.scale_sign_y),
+                )
+                self.center = _vec_add(self.scale_anchor, _vec_scale(offset, 0.5))
+
+        self._tag_redraw()
+
+    def _end_interaction(self):
+        self.interaction = None
+        self._tag_redraw()
+
+    def _pass_through_view_navigation(self, event):
+        if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            self.view_navigation_active = False
+            return False
+
+        if event.type == "MIDDLEMOUSE":
+            self._update_mouse(event)
+            self.view_navigation_active = event.value != "RELEASE"
+            self._tag_redraw()
+            return True
+
+        if self.view_navigation_active and event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            self._update_mouse(event)
+            self._tag_redraw()
+            return True
+
+        if event.type in VIEW_NAVIGATION_EVENTS:
+            self._update_mouse(event)
+            self._tag_redraw()
+            self.view_navigation_active = False
+            return True
+
+        if event.type not in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            self.view_navigation_active = False
+
+        return False
+
+    def _cancel(self):
+        if self.transform is not None:
+            self.transform.restore()
+        self._clear_draw_handlers()
+        self._tag_redraw()
+        return {"CANCELLED"}
+
+    def _apply(self, context):
+        if self.transform is None:
+            return self._cancel()
+
+        if not self.transform.alpha_composite_to_image(self.center, self.basis_x, self.basis_y):
+            self.transform.restore()
+            self.report({"WARNING"}, "变换区域没有落在当前图像内")
+            self._clear_draw_handlers()
+            self._tag_redraw()
+            return {"CANCELLED"}
+
+        self._clear_draw_handlers()
+        _tag_image_editors_redraw(context)
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        image = _get_active_image(context)
+        if image is None:
+            self.report({"ERROR"}, "当前 Image Editor 没有活动图像")
+            return {"CANCELLED"}
+
+        selection = SelectionOverlay.current_selection()
+        if selection is None or not np.any(selection.mask):
+            self.report({"ERROR"}, "当前没有可用遮罩")
+            return {"CANCELLED"}
+
+        transform = MaskedPixelTransform.cut_from_image(image, selection)
+        if transform is None:
+            self.report({"ERROR"}, "当前遮罩没有覆盖图像像素")
+            return {"CANCELLED"}
+
+        transform.texture = _texture_from_pixels(transform.pixels)
+        x0, y0, x1, y1 = transform.source_rect_view()
+        self.area = context.area
+        self.transform = transform
+        self.center = ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+        self.basis_x = (x1 - x0, 0.0)
+        self.basis_y = (0.0, y1 - y0)
+        self.interaction = None
+        self.view_navigation_active = False
+        self.mouse_region_xy = (20, 20)
+        self._update_mouse(event)
+
+        self.draw_handle_view = bpy.types.SpaceImageEditor.draw_handler_add(
+            _draw_transform_overlay, (self,), "WINDOW", "POST_VIEW"
+        )
+        self.draw_handle_hud = bpy.types.SpaceImageEditor.draw_handler_add(
+            _draw_transform_hud, (self,), "WINDOW", "POST_PIXEL"
+        )
+        context.window_manager.modal_handler_add(self)
+        self._tag_redraw()
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            return self._cancel()
+
+        if event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS":
+            return self._apply(context)
+
+        if self._pass_through_view_navigation(event):
+            return {"PASS_THROUGH"}
+
+        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            if self.interaction is not None:
+                self._update_interaction(event)
+            else:
+                self._update_mouse(event)
+                self._tag_redraw()
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE":
+            if event.value == "PRESS":
+                self._update_mouse(event)
+                if self._begin_interaction(event):
+                    return {"RUNNING_MODAL"}
+                return {"RUNNING_MODAL"}
+
+            if event.value == "RELEASE":
+                self._end_interaction()
+                return {"RUNNING_MODAL"}
+
+        return {"RUNNING_MODAL"}
+
+
 class OP_UVTools_ImageSetSelectionCanvasDefault(Operator):
     bl_idname = "ho.uvtools_image_set_selection_canvas_default"
     bl_label = "默认选区画布"
@@ -1430,6 +2095,9 @@ def drawImagePanel(layout: UILayout, context: Context):
     row.operator(OP_UVTools_ImageExpandSelectionMask.bl_idname, text="拓展蒙版")
     row.operator(OP_UVTools_ImageShrinkSelectionMask.bl_idname, text="收缩蒙版")
 
+    row = col.row(align=True)
+    row.operator(OP_UVTools_ImageTransformMaskedPixels.bl_idname, text="变换遮罩像素")
+
 
 cls = [
     OP_UVTools_ImageBoxSelect,
@@ -1438,6 +2106,7 @@ cls = [
     OP_UVTools_ImageFillSelectionFromSelectedUv,
     OP_UVTools_ImageExpandSelectionMask,
     OP_UVTools_ImageShrinkSelectionMask,
+    OP_UVTools_ImageTransformMaskedPixels,
     OP_UVTools_ImageSetSelectionCanvasDefault,
     OP_UVTools_ImageSetSelectionCanvasFromImage,
 ]
