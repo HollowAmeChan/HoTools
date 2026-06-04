@@ -183,6 +183,48 @@ class ImageSelection:
         self.last_rect_px = (0, 0, self.width, self.height)
         self._commit_change()
 
+    def _morph_mask(self, pixels, expand):
+        pixels = max(1, int(pixels))
+        mask = self.mask.astype(bool, copy=False)
+        if not np.any(mask):
+            return False
+
+        changed = False
+        for _i in range(pixels):
+            padded = np.pad(mask, 1, mode="constant", constant_values=False)
+            neighbors = (
+                padded[1:-1, 1:-1],
+                padded[:-2, 1:-1],
+                padded[2:, 1:-1],
+                padded[1:-1, :-2],
+                padded[1:-1, 2:],
+                padded[:-2, :-2],
+                padded[:-2, 2:],
+                padded[2:, :-2],
+                padded[2:, 2:],
+            )
+            next_mask = np.logical_or.reduce(neighbors) if expand else np.logical_and.reduce(neighbors)
+            if not np.any(next_mask != mask):
+                break
+
+            mask = next_mask
+            changed = True
+
+        if not changed:
+            return False
+
+        self.mask = mask.astype(np.uint8, copy=False)
+        self.last_mode = "EXPAND" if expand else "SHRINK"
+        self.last_rect_px = (0, 0, self.width, self.height)
+        self._commit_change()
+        return True
+
+    def expand(self, pixels=1):
+        return self._morph_mask(pixels, True)
+
+    def shrink(self, pixels=1):
+        return self._morph_mask(pixels, False)
+
     def _commit_change(self):
         self.selected_pixels = int(np.count_nonzero(self.mask))
         self.operation_count += 1
@@ -1241,6 +1283,38 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
         return {"FINISHED"}
 
 
+class OP_UVTools_ImageExpandSelectionMask(Operator):
+    bl_idname = "ho.uvtools_image_expand_selection_mask"
+    bl_label = "拓展蒙版"
+    bl_description = "将当前 HoTools 硬选区蒙版向外拓展 1 像素"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        selection = SelectionOverlay.get_selection(context)
+        if not selection.expand():
+            self.report({"WARNING"}, "当前蒙版为空或已经无法继续拓展")
+            return {"CANCELLED"}
+
+        SelectionOverlay.refresh(context)
+        return {"FINISHED"}
+
+
+class OP_UVTools_ImageShrinkSelectionMask(Operator):
+    bl_idname = "ho.uvtools_image_shrink_selection_mask"
+    bl_label = "收缩蒙版"
+    bl_description = "将当前 HoTools 硬选区蒙版向内收缩 1 像素"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        selection = SelectionOverlay.get_selection(context)
+        if not selection.shrink():
+            self.report({"WARNING"}, "当前蒙版为空或已经无法继续收缩")
+            return {"CANCELLED"}
+
+        SelectionOverlay.refresh(context)
+        return {"FINISHED"}
+
+
 class OP_UVTools_ImageSetSelectionCanvasDefault(Operator):
     bl_idname = "ho.uvtools_image_set_selection_canvas_default"
     bl_label = "默认选区画布"
@@ -1351,12 +1425,18 @@ def drawImagePanel(layout: UILayout, context: Context):
     row = box.row(align=True)
     row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text="选中UV填充遮罩",)
 
+    row = box.row(align=True)
+    row.operator(OP_UVTools_ImageExpandSelectionMask.bl_idname, text="拓展蒙版")
+    row.operator(OP_UVTools_ImageShrinkSelectionMask.bl_idname, text="收缩蒙版")
+
 
 cls = [
     OP_UVTools_ImageBoxSelect,
     OP_UVTools_ImageRefreshSelectionCanvas,
     OP_UVTools_ImageClearSelection,
     OP_UVTools_ImageFillSelectionFromSelectedUv,
+    OP_UVTools_ImageExpandSelectionMask,
+    OP_UVTools_ImageShrinkSelectionMask,
     OP_UVTools_ImageSetSelectionCanvasDefault,
     OP_UVTools_ImageSetSelectionCanvasFromImage,
 ]
