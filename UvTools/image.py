@@ -119,6 +119,41 @@ class ImageSelection:
         self._commit_change()
         return True
 
+    def apply_polygon(self, points, mode):
+        points = np.asarray(points, dtype=np.float64)
+        if points.shape[0] < 3:
+            return False
+
+        x0 = max(0, int(math.floor(float(points[:, 0].min()) * self.width)))
+        x1 = min(self.width, int(math.ceil(float(points[:, 0].max()) * self.width)))
+        y0 = max(0, int(math.floor(float(points[:, 1].min()) * self.height)))
+        y1 = min(self.height, int(math.ceil(float(points[:, 1].max()) * self.height)))
+
+        changed = False
+        if mode == "SET":
+            changed = bool(np.any(self.mask))
+            self.mask.fill(0)
+
+        if x0 < x1 and y0 < y1:
+            xs = (np.arange(x0, x1, dtype=np.float64) + 0.5) / self.width
+            ys = (np.arange(y0, y1, dtype=np.float64) + 0.5) / self.height
+            grid_x, grid_y = np.meshgrid(xs, ys)
+            polygon = _points_in_polygon(grid_x, grid_y, points)
+            if np.any(polygon):
+                value = 0 if mode == "SUB" else 1
+                region = self.mask[y0:y1, x0:x1]
+                if np.any(region[polygon] != value):
+                    region[polygon] = value
+                    changed = True
+
+        if not changed:
+            return False
+
+        self.last_rect_px = (x0, y0, x1, y1)
+        self.last_mode = mode
+        self._commit_change()
+        return True
+
     def invert(self):
         np.bitwise_xor(self.mask, 1, out=self.mask)
         self.last_mode = "INV"
@@ -638,20 +673,18 @@ def _draw_image_border():
 
 
 def _draw_edit_overlay(operator):
+    if getattr(operator, "edit_mode", "BOX") == "BRUSH":
+        if operator.mouse_view_xy is not None:
+            mode = operator.brush_mode or "ADD"
+            _draw_brush_circle(operator.mouse_view_xy, operator.selection, operator.brush_radius, mode)
+        return
+
     if operator.start_view_xy is None or operator.end_view_xy is None:
         return
 
     x0, y0 = operator.start_view_xy
     x1, y1 = operator.end_view_xy
     _draw_view_rect((x0, y0, x1, y1), operator.select_mode, active=True)
-
-
-def _draw_brush_overlay(operator):
-    if operator.mouse_view_xy is None:
-        return
-
-    mode = operator.brush_mode or "ADD"
-    _draw_brush_circle(operator.mouse_view_xy, operator.selection, operator.brush_radius, mode)
 
 
 def _tag_image_editors_redraw(context):
@@ -691,43 +724,31 @@ def _draw_hud(operator):
     blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
     blf.shadow_offset(font_id, 1, -1)
 
-    if operator.waiting_start:
-        _draw_hud_line(font_id, x, y + 66, "状态:", "等待框选", (1.0, 0.65, 0.18, 1.0))
-        _draw_hud_line(font_id, x, y + 44, "左键:", "拖拽创建区域")
+    if operator.edit_mode == "BRUSH":
+        if operator.brush_active:
+            mode_label = "清空" if operator.brush_mode == "SUB" else "添加"
+            _draw_hud_line(font_id, x, y + 88, "状态:", "涂抹中", (0.35, 1.0, 0.35, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
+        else:
+            _draw_hud_line(font_id, x, y + 88, "状态:", "画笔待命", (1.0, 0.65, 0.18, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "左键/Shift+左键:", "添加 / 清空")
+
+        _draw_hud_line(font_id, x, y + 44, "大小:", str(int(operator.brush_radius)))
+        _draw_hud_line(font_id, x, y + 22, "Shift+滚轮:", "调整大小")
+        _draw_hud_line(font_id, x, y, "E:", "切到框选")
     else:
-        mode_label = MODE_LABELS.get(operator.select_mode, operator.select_mode)
-        _draw_hud_line(font_id, x, y + 66, "状态:", "拖拽中", (0.35, 1.0, 0.35, 1.0))
-        _draw_hud_line(font_id, x, y + 44, "模式:", mode_label)
+        if operator.waiting_start:
+            _draw_hud_line(font_id, x, y + 88, "状态:", "等待框选", (1.0, 0.65, 0.18, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "左键:", "拖拽创建区域")
+        else:
+            mode_label = MODE_LABELS.get(operator.select_mode, operator.select_mode)
+            _draw_hud_line(font_id, x, y + 88, "状态:", "拖拽中", (0.35, 1.0, 0.35, 1.0))
+            _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
 
-    _draw_hud_line(font_id, x, y + 22, "Shift/Ctrl:", "加选 / 减选")
-    _draw_hud_line(font_id, x, y, "Ctrl+I:", "反选")
-    _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
+        _draw_hud_line(font_id, x, y + 44, "Shift/Ctrl:", "加选 / 减选")
+        _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
+        _draw_hud_line(font_id, x, y, "E:", "切到画笔")
 
-    blf.disable(font_id, blf.SHADOW)
-
-
-def _draw_brush_hud(operator):
-    font_id = 0
-    blf.size(font_id, 16)
-
-    x, y = operator.mouse_region_xy
-    x += 20
-    y += 20
-
-    blf.enable(font_id, blf.SHADOW)
-    blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
-    blf.shadow_offset(font_id, 1, -1)
-
-    if operator.brush_active:
-        mode_label = "清空" if operator.brush_mode == "SUB" else "添加"
-        _draw_hud_line(font_id, x, y + 66, "状态:", "涂抹中", (0.35, 1.0, 0.35, 1.0))
-        _draw_hud_line(font_id, x, y + 44, "模式:", mode_label)
-    else:
-        _draw_hud_line(font_id, x, y + 66, "状态:", "画笔待命", (1.0, 0.65, 0.18, 1.0))
-        _draw_hud_line(font_id, x, y + 44, "左键/Shift+左键:", "添加 / 清空")
-
-    _draw_hud_line(font_id, x, y + 22, "大小:", str(int(operator.brush_radius)))
-    _draw_hud_line(font_id, x, y, "Shift+滚轮:", "调整大小")
     _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
 
     blf.disable(font_id, blf.SHADOW)
@@ -735,19 +756,24 @@ def _draw_brush_hud(operator):
 
 class OP_UVTools_ImageBoxSelect(Operator):
     bl_idname = "ho.uvtools_image_box_select"
-    bl_label = "框选图像区域"
-    bl_description = "在图像编辑器中编辑 HoTools 固定分辨率硬选区"
+    bl_label = "编辑图像选区"
+    bl_description = "在图像编辑器中用框选或画笔编辑 HoTools 固定分辨率硬选区"
     bl_options = {"REGISTER"}
 
     draw_handle_view = None
     draw_handle_hud = None
     area = None
     selection = None
+    edit_mode = "BOX"
     waiting_start = False
     ignore_until_release = False
     view_navigation_active = False
     select_mode = "SET"
+    brush_active = False
+    brush_mode = "ADD"
+    brush_radius = DEFAULT_BRUSH_RADIUS
     mouse_region_xy = (20, 20)
+    mouse_view_xy = None
     start_view_xy = None
     end_view_xy = None
 
@@ -770,10 +796,30 @@ class OP_UVTools_ImageBoxSelect(Operator):
     def _update_mouse(self, event):
         data = _event_to_region_xy(self.area, event)
         if data is None:
-            return
+            return False
 
-        x, y, _region = data
+        x, y, region = data
         self.mouse_region_xy = (x, y)
+        self.mouse_view_xy = region.view2d.region_to_view(x, y)
+        return True
+
+    def _reset_box_state(self):
+        self.waiting_start = True
+        self.ignore_until_release = False
+        self.select_mode = "SET"
+        self.start_view_xy = None
+        self.end_view_xy = None
+
+    def _reset_brush_state(self):
+        self.brush_active = False
+        self.brush_mode = "ADD"
+
+    def _toggle_edit_mode(self, event):
+        self._reset_box_state()
+        self._reset_brush_state()
+        self.edit_mode = "BRUSH" if self.edit_mode == "BOX" else "BOX"
+        self._update_mouse(event)
+        self._tag_redraw()
 
     def _begin_drag(self, event):
         view_xy = _event_to_view_xy(self.area, event)
@@ -827,135 +873,6 @@ class OP_UVTools_ImageBoxSelect(Operator):
         self.selection.invert()
         SelectionOverlay.refresh(context)
 
-    def _cancel(self):
-        self._clear_draw_handlers()
-        self._tag_redraw()
-        return {"CANCELLED"}
-
-    def _pass_through_view_navigation(self, event):
-        if event.type == "MIDDLEMOUSE":
-            self._update_mouse(event)
-            self._tag_redraw()
-            self.view_navigation_active = event.value != "RELEASE"
-            return True
-
-        if self.view_navigation_active and event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
-            self._update_mouse(event)
-            self._tag_redraw()
-            return True
-
-        if event.type in VIEW_NAVIGATION_EVENTS:
-            self._update_mouse(event)
-            self._tag_redraw()
-            return True
-
-        return False
-
-    def invoke(self, context, event):
-        self.area = context.area
-        self.selection = SelectionOverlay.get_selection(context)
-        SelectionOverlay.force_visible(context)
-
-        self.waiting_start = True
-        self.ignore_until_release = event.type == "LEFTMOUSE" and event.value != "RELEASE"
-        self.view_navigation_active = False
-        self.select_mode = "SET"
-        self.mouse_region_xy = (20, 20)
-        self.start_view_xy = None
-        self.end_view_xy = None
-
-        self.draw_handle_view = bpy.types.SpaceImageEditor.draw_handler_add(
-            _draw_edit_overlay, (self,), "WINDOW", "POST_VIEW"
-        )
-        self.draw_handle_hud = bpy.types.SpaceImageEditor.draw_handler_add(
-            _draw_hud, (self,), "WINDOW", "POST_PIXEL"
-        )
-
-        context.window_manager.modal_handler_add(self)
-        self._tag_redraw()
-        return {"RUNNING_MODAL"}
-
-    def modal(self, context, event):
-        if event.type in {"ESC", "RIGHTMOUSE"}:
-            return self._cancel()
-
-        if event.type == "I" and event.value == "PRESS" and event.ctrl:
-            self._invert_selection(context)
-            return {"RUNNING_MODAL"}
-
-        if self._pass_through_view_navigation(event):
-            return {"PASS_THROUGH"}
-
-        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
-            self._update_mouse(event)
-            if not self.waiting_start:
-                self._update_drag(event)
-            self._tag_redraw()
-            return {"RUNNING_MODAL"}
-
-        if self.waiting_start:
-            if self.ignore_until_release:
-                if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-                    self.ignore_until_release = False
-                return {"RUNNING_MODAL"}
-
-            if event.type == "LEFTMOUSE" and event.value == "PRESS" and _is_in_window_region(self.area, event):
-                self._update_mouse(event)
-                self._begin_drag(event)
-                return {"RUNNING_MODAL"}
-
-            return {"RUNNING_MODAL"}
-
-        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            self._update_drag(event)
-            return self._commit_box(context)
-
-        return {"RUNNING_MODAL"}
-
-
-class OP_UVTools_ImageBrushEdit(Operator):
-    bl_idname = "ho.uvtools_image_brush_edit"
-    bl_label = "画笔编辑选区"
-    bl_description = "用画笔编辑 HoTools 固定分辨率硬选区"
-    bl_options = {"REGISTER"}
-
-    draw_handle_view = None
-    draw_handle_hud = None
-    area = None
-    selection = None
-    view_navigation_active = False
-    brush_active = False
-    brush_mode = "ADD"
-    brush_radius = DEFAULT_BRUSH_RADIUS
-    mouse_region_xy = (20, 20)
-    mouse_view_xy = None
-
-    @classmethod
-    def poll(cls, context):
-        return context.area is not None and context.area.type == "IMAGE_EDITOR"
-
-    def _tag_redraw(self):
-        if self.area is not None:
-            self.area.tag_redraw()
-
-    def _clear_draw_handlers(self):
-        if self.draw_handle_view is not None:
-            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_view, "WINDOW")
-            self.draw_handle_view = None
-        if self.draw_handle_hud is not None:
-            bpy.types.SpaceImageEditor.draw_handler_remove(self.draw_handle_hud, "WINDOW")
-            self.draw_handle_hud = None
-
-    def _update_mouse(self, event):
-        data = _event_to_region_xy(self.area, event)
-        if data is None:
-            return False
-
-        x, y, region = data
-        self.mouse_region_xy = (x, y)
-        self.mouse_view_xy = region.view2d.region_to_view(x, y)
-        return True
-
     def _paint(self, context, event):
         if self.selection is None or not self._update_mouse(event):
             return
@@ -976,6 +893,11 @@ class OP_UVTools_ImageBrushEdit(Operator):
         self._update_mouse(event)
         self._tag_redraw()
 
+    def _cancel(self):
+        self._clear_draw_handlers()
+        self._tag_redraw()
+        return {"CANCELLED"}
+
     def _pass_through_view_navigation(self, event):
         if event.type == "MIDDLEMOUSE":
             self._update_mouse(event)
@@ -995,29 +917,28 @@ class OP_UVTools_ImageBrushEdit(Operator):
 
         return False
 
-    def _cancel(self):
-        self._clear_draw_handlers()
-        self._tag_redraw()
-        return {"CANCELLED"}
-
     def invoke(self, context, event):
         self.area = context.area
         self.selection = SelectionOverlay.get_selection(context)
         SelectionOverlay.force_visible(context)
 
+        self.edit_mode = "BOX"
+        self._reset_box_state()
+        self._reset_brush_state()
+        self.ignore_until_release = event.type == "LEFTMOUSE" and event.value != "RELEASE"
         self.view_navigation_active = False
-        self.brush_active = False
-        self.brush_mode = "ADD"
         self.brush_radius = int(context.scene.ho_uvtools_image_brush_radius)
         self.mouse_region_xy = (20, 20)
         self.mouse_view_xy = None
+        self.start_view_xy = None
+        self.end_view_xy = None
         self._update_mouse(event)
 
         self.draw_handle_view = bpy.types.SpaceImageEditor.draw_handler_add(
-            _draw_brush_overlay, (self,), "WINDOW", "POST_VIEW"
+            _draw_edit_overlay, (self,), "WINDOW", "POST_VIEW"
         )
         self.draw_handle_hud = bpy.types.SpaceImageEditor.draw_handler_add(
-            _draw_brush_hud, (self,), "WINDOW", "POST_PIXEL"
+            _draw_hud, (self,), "WINDOW", "POST_PIXEL"
         )
 
         context.window_manager.modal_handler_add(self)
@@ -1028,43 +949,81 @@ class OP_UVTools_ImageBrushEdit(Operator):
         if event.type in {"ESC", "RIGHTMOUSE"}:
             return self._cancel()
 
-        if event.shift and event.type in {
-            "WHEELUPMOUSE",
-            "WHEELDOWNMOUSE",
-            "WHEELINMOUSE",
-            "WHEELOUTMOUSE",
-        }:
+        if event.type == "E" and event.value == "PRESS":
+            self._toggle_edit_mode(event)
+            return {"RUNNING_MODAL"}
+
+        if event.type == "I" and event.value == "PRESS" and event.ctrl:
+            self._invert_selection(context)
+            return {"RUNNING_MODAL"}
+
+        if (
+            self.edit_mode == "BRUSH"
+            and event.shift
+            and event.type in {"WHEELUPMOUSE", "WHEELDOWNMOUSE", "WHEELINMOUSE", "WHEELOUTMOUSE"}
+        ):
             self._adjust_brush_radius(context, event)
             return {"RUNNING_MODAL"}
 
         if self._pass_through_view_navigation(event):
             return {"PASS_THROUGH"}
 
-        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
-            if self.brush_active:
-                self.brush_mode = "SUB" if event.shift else "ADD"
-                self._paint(context, event)
-            else:
-                self._update_mouse(event)
-                self._tag_redraw()
-            return {"RUNNING_MODAL"}
-
-        if event.type == "LEFTMOUSE":
-            if event.value == "PRESS" and _is_in_window_region(self.area, event):
-                self.brush_active = True
-                self.brush_mode = "SUB" if event.shift else "ADD"
-                self._paint(context, event)
-                return {"RUNNING_MODAL"}
-
-            if event.value == "RELEASE":
+        if self.edit_mode == "BRUSH":
+            if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
                 if self.brush_active:
                     self.brush_mode = "SUB" if event.shift else "ADD"
                     self._paint(context, event)
                 else:
                     self._update_mouse(event)
-                self.brush_active = False
+                    self._tag_redraw()
+                return {"RUNNING_MODAL"}
+
+            if event.type == "LEFTMOUSE":
+                if event.value == "PRESS" and _is_in_window_region(self.area, event):
+                    self.brush_active = True
+                    self.brush_mode = "SUB" if event.shift else "ADD"
+                    self._paint(context, event)
+                    return {"RUNNING_MODAL"}
+
+                if event.value == "RELEASE":
+                    if self.brush_active:
+                        self.brush_mode = "SUB" if event.shift else "ADD"
+                        self._paint(context, event)
+                    else:
+                        self._update_mouse(event)
+                    self.brush_active = False
+                    self._tag_redraw()
+                    return {"RUNNING_MODAL"}
+
+            return {"RUNNING_MODAL"}
+
+        if self.waiting_start:
+            if self.ignore_until_release:
+                if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+                    self.ignore_until_release = False
+                return {"RUNNING_MODAL"}
+
+            if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+                self._update_mouse(event)
                 self._tag_redraw()
                 return {"RUNNING_MODAL"}
+
+            if event.type == "LEFTMOUSE" and event.value == "PRESS" and _is_in_window_region(self.area, event):
+                self._update_mouse(event)
+                self._begin_drag(event)
+                return {"RUNNING_MODAL"}
+
+            return {"RUNNING_MODAL"}
+
+        if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
+            self._update_mouse(event)
+            self._update_drag(event)
+            self._tag_redraw()
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            self._update_drag(event)
+            return self._commit_box(context)
 
         return {"RUNNING_MODAL"}
 
@@ -1234,7 +1193,6 @@ def drawImagePanel(layout: UILayout, context: Context):
     row.scale_y = 2
     row.prop(scene, "ho_uvtools_image_selection_show", text="", toggle=True, icon="OVERLAY")
     row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区", icon="SELECT_SET")
-    row.operator(OP_UVTools_ImageBrushEdit.bl_idname, text="画笔编辑", icon="BRUSH_DATA")
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
     row = box.row(align=True)
@@ -1243,7 +1201,6 @@ def drawImagePanel(layout: UILayout, context: Context):
 
 cls = [
     OP_UVTools_ImageBoxSelect,
-    OP_UVTools_ImageBrushEdit,
     OP_UVTools_ImageRefreshSelectionCanvas,
     OP_UVTools_ImageClearSelection,
     OP_UVTools_ImageFillSelectionFromSelectedUv,
