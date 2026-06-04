@@ -16,6 +16,7 @@ DEFAULT_BRUSH_RADIUS = 48
 MIN_BRUSH_RADIUS = 1
 MAX_BRUSH_RADIUS = 2048
 BRUSH_RADIUS_SCROLL_STEP = 8
+TRANSFORM_ROTATE_SNAP_ANGLE = math.radians(22.5)
 
 _RECT_SHADER = None
 _RECT_SHADER_NAME = None
@@ -409,7 +410,7 @@ def _event_to_view_xy(area, event):
 def _event_select_mode(event):
     if event.shift:
         return "ADD"
-    if event.ctrl:
+    if event.alt:
         return "SUB"
     return "SET"
 
@@ -616,12 +617,13 @@ def _alpha_over(dst, src):
 
 
 class MaskedPixelTransform:
-    def __init__(self, image, image_size, bbox, pixels, original_region, texture=None):
+    def __init__(self, image, image_size, bbox, pixels, original_region, source_mask, texture=None):
         self.image = image
         self.image_width, self.image_height = image_size
         self.bbox = bbox
         self.pixels = pixels
         self.original_region = original_region
+        self.source_mask = source_mask
         self.texture = texture
 
     @classmethod
@@ -644,7 +646,7 @@ class MaskedPixelTransform:
         cleared_region[region_mask] = 0.0
         _write_image_pixels(image, pixels)
 
-        return cls(image, (width, height), bbox, cut_pixels, original_region)
+        return cls(image, (width, height), bbox, cut_pixels, original_region, region_mask.astype(np.uint8, copy=True))
 
     def restore(self):
         pixels = _image_pixels_array(self.image)
@@ -699,6 +701,41 @@ class MaskedPixelTransform:
         _write_image_pixels(self.image, pixels)
         return True
 
+    def transformed_mask(self, width, height, center, basis_x, basis_y):
+        inverse = _inverse_2x2(basis_x, basis_y)
+        if inverse is None:
+            return None
+
+        quad = _transform_quad(center, basis_x, basis_y)
+        xs = [point[0] for point in quad]
+        ys = [point[1] for point in quad]
+        x0 = max(0, int(math.floor(min(xs) * width)))
+        x1 = min(width, int(math.ceil(max(xs) * width)))
+        y0 = max(0, int(math.floor(min(ys) * height)))
+        y1 = min(height, int(math.ceil(max(ys) * height)))
+
+        mask = np.zeros((height, width), dtype=np.uint8)
+        if x0 >= x1 or y0 >= y1:
+            return mask
+
+        dst_x = (np.arange(x0, x1, dtype=np.float64) + 0.5) / width
+        dst_y = (np.arange(y0, y1, dtype=np.float64) + 0.5) / height
+        grid_x, grid_y = np.meshgrid(dst_x, dst_y)
+        local_x = grid_x - center[0]
+        local_y = grid_y - center[1]
+        sample_u = inverse[0][0] * local_x + inverse[0][1] * local_y + 0.5
+        sample_v = inverse[1][0] * local_x + inverse[1][1] * local_y + 0.5
+        inside = (sample_u >= 0.0) & (sample_u <= 1.0) & (sample_v >= 0.0) & (sample_v <= 1.0)
+        if not np.any(inside):
+            return mask
+
+        src_height, src_width = self.source_mask.shape
+        src_x = np.clip(np.rint(sample_u * (src_width - 1)).astype(np.int64), 0, src_width - 1)
+        src_y = np.clip(np.rint(sample_v * (src_height - 1)).astype(np.int64), 0, src_height - 1)
+        sampled = self.source_mask[src_y, src_x].astype(bool, copy=False) & inside
+        mask[y0:y1, x0:x1][sampled] = 1
+        return mask
+
 
 def _inverse_2x2(basis_x, basis_y):
     a, c = basis_x
@@ -727,6 +764,10 @@ def _rotate_vector(vector, angle):
     sin_a = math.sin(angle)
     x, y = vector
     return x * cos_a - y * sin_a, x * sin_a + y * cos_a
+
+
+def _angle_delta(angle, start_angle):
+    return (angle - start_angle + math.pi) % math.tau - math.pi
 
 
 def _vec_add(a, b):
@@ -838,9 +879,26 @@ def _buffer_from_array(format_name, array):
     return None
 
 
+def _srgb_to_linear(values):
+    values = np.clip(values, 0.0, 1.0)
+    return np.where(
+        values <= 0.04045,
+        values / 12.92,
+        np.power((values + 0.055) / 1.055, 2.4),
+    )
+
+
+def _display_pixels_for_texture(pixels):
+    display_pixels = np.array(pixels, dtype=np.float32, copy=True)
+    display_pixels[..., :3] = _srgb_to_linear(display_pixels[..., :3])
+    return display_pixels
+
+
 def _texture_from_pixels(pixels):
     height, width, _channels = pixels.shape
-    float_pixels = np.ascontiguousarray(np.clip(pixels, 0.0, 1.0).astype(np.float32))
+    float_pixels = np.ascontiguousarray(
+        np.clip(_display_pixels_for_texture(pixels), 0.0, 1.0).astype(np.float32)
+    )
     buffer = _buffer_from_array("FLOAT", float_pixels)
     if buffer is not None:
         try:
@@ -1192,7 +1250,7 @@ def _draw_hud(operator):
             _draw_hud_line(font_id, x, y + 88, "状态:", "套索待命", (1.0, 0.65, 0.18, 1.0))
             _draw_hud_line(font_id, x, y + 66, "左键:", "拖拽闭合区域")
 
-        _draw_hud_line(font_id, x, y + 44, "Shift/Ctrl:", "加选 / 减选")
+        _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "加选 / 减选")
         _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
         _draw_hud_line(font_id, x, y, "E:", "切到框选")
     else:
@@ -1204,11 +1262,12 @@ def _draw_hud(operator):
             _draw_hud_line(font_id, x, y + 88, "状态:", "拖拽中", (0.35, 1.0, 0.35, 1.0))
             _draw_hud_line(font_id, x, y + 66, "模式:", mode_label)
 
-        _draw_hud_line(font_id, x, y + 44, "Shift/Ctrl:", "加选 / 减选")
+        _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "加选 / 减选")
         _draw_hud_line(font_id, x, y + 22, "Ctrl+I:", "反选")
         _draw_hud_line(font_id, x, y, "E:", "切到画笔")
 
-    _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "退出")
+    _draw_hud_line(font_id, x, y - 22, "X:", "清空遮罩")
+    _draw_hud_line(font_id, x, y - 44, "Esc/右键:", "退出")
 
     blf.disable(font_id, blf.SHADOW)
 
@@ -1234,11 +1293,13 @@ def _draw_transform_hud(operator):
     else:
         state = "等待变换"
 
-    _draw_hud_line(font_id, x, y + 88, "状态:", state, (1.0, 0.65, 0.18, 1.0))
-    _draw_hud_line(font_id, x, y + 66, "框内:", "移动")
-    _draw_hud_line(font_id, x, y + 44, "角点/边线:", "缩放 / 旋转")
-    _draw_hud_line(font_id, x, y + 22, "Enter:", "应用")
-    _draw_hud_line(font_id, x, y, "Esc/右键:", "取消")
+    _draw_hud_line(font_id, x, y + 110, "状态:", state, (1.0, 0.65, 0.18, 1.0))
+    _draw_hud_line(font_id, x, y + 88, "框内:", "移动")
+    _draw_hud_line(font_id, x, y + 66, "角点/边线:", "缩放 / 旋转")
+    _draw_hud_line(font_id, x, y + 44, "Shift/Alt:", "等比 / 中心")
+    _draw_hud_line(font_id, x, y + 22, "Shift旋转:", "22.5°吸附")
+    _draw_hud_line(font_id, x, y, "Enter:", "应用")
+    _draw_hud_line(font_id, x, y - 22, "Esc/右键:", "取消")
 
     blf.disable(font_id, blf.SHADOW)
 
@@ -1373,6 +1434,13 @@ class OP_UVTools_ImageBoxSelect(Operator):
         self.selection.invert()
         SelectionOverlay.refresh(context)
 
+    def _clear_selection(self, context):
+        if self.selection is None:
+            return
+
+        self.selection.clear()
+        SelectionOverlay.refresh(context)
+
     def _paint(self, context, event):
         if self.selection is None or not self._update_mouse(event):
             return
@@ -1499,6 +1567,10 @@ class OP_UVTools_ImageBoxSelect(Operator):
 
         if event.type == "I" and event.value == "PRESS" and event.ctrl:
             self._invert_selection(context)
+            return {"RUNNING_MODAL"}
+
+        if event.type == "X" and event.value == "PRESS":
+            self._clear_selection(context)
             return {"RUNNING_MODAL"}
 
         if (
@@ -1733,6 +1805,8 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
     scale_anchor = None
     scale_axis_x = None
     scale_axis_y = None
+    scale_start_width = 0.0
+    scale_start_height = 0.0
     scale_sign_x = 1.0
     scale_sign_y = 1.0
     view_navigation_active = False
@@ -1806,6 +1880,8 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
         self.scale_anchor = None
         self.scale_axis_x = None
         self.scale_axis_y = None
+        self.scale_start_width = 0.0
+        self.scale_start_height = 0.0
         self.scale_sign_x = 1.0
         self.scale_sign_y = 1.0
 
@@ -1815,9 +1891,16 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
             self.scale_anchor = quad[(data + 2) % 4]
             self.scale_axis_x = _vec_normalize(self.start_basis_x)
             self.scale_axis_y = _vec_normalize(self.start_basis_y)
+            self.scale_start_width = _vec_length(self.start_basis_x)
+            self.scale_start_height = _vec_length(self.start_basis_y)
             self.scale_sign_x = 1.0 if data in {1, 2} else -1.0
             self.scale_sign_y = 1.0 if data in {2, 3} else -1.0
-            if self.scale_axis_x is None or self.scale_axis_y is None:
+            if (
+                self.scale_axis_x is None
+                or self.scale_axis_y is None
+                or self.scale_start_width <= 1e-6
+                or self.scale_start_height <= 1e-6
+            ):
                 self.interaction = None
                 return False
 
@@ -1835,22 +1918,42 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
             self.center = _vec_add(self.start_center, delta)
         elif self.interaction == "ROTATE":
             angle = math.atan2(view_xy[1] - self.start_center[1], view_xy[0] - self.start_center[0])
-            delta = angle - self.start_angle
+            delta = _angle_delta(angle, self.start_angle)
+            if event.shift:
+                delta = round(delta / TRANSFORM_ROTATE_SNAP_ANGLE) * TRANSFORM_ROTATE_SNAP_ANGLE
             self.center = self.start_center
             self.basis_x = _rotate_vector(self.start_basis_x, delta)
             self.basis_y = _rotate_vector(self.start_basis_y, delta)
         elif self.interaction == "SCALE":
-            delta = _vec_sub(view_xy, self.scale_anchor)
+            anchor = self.start_center if event.alt else self.scale_anchor
+            delta = _vec_sub(view_xy, anchor)
             width = abs(_vec_dot(delta, self.scale_axis_x))
             height = abs(_vec_dot(delta, self.scale_axis_y))
+            if event.alt:
+                width *= 2.0
+                height *= 2.0
+            if event.shift:
+                corner_vector = _vec_add(
+                    _vec_scale(self.start_basis_x, self.scale_sign_x),
+                    _vec_scale(self.start_basis_y, self.scale_sign_y),
+                )
+                if event.alt:
+                    corner_vector = _vec_scale(corner_vector, 0.5)
+                length_sq = _vec_dot(corner_vector, corner_vector)
+                scale = abs(_vec_dot(delta, corner_vector) / length_sq) if length_sq > 1e-12 else 1.0
+                width = self.scale_start_width * scale
+                height = self.scale_start_height * scale
             if width > 1e-6 and height > 1e-6:
                 self.basis_x = _vec_scale(self.scale_axis_x, width)
                 self.basis_y = _vec_scale(self.scale_axis_y, height)
-                offset = _vec_add(
-                    _vec_scale(self.basis_x, self.scale_sign_x),
-                    _vec_scale(self.basis_y, self.scale_sign_y),
-                )
-                self.center = _vec_add(self.scale_anchor, _vec_scale(offset, 0.5))
+                if event.alt:
+                    self.center = self.start_center
+                else:
+                    offset = _vec_add(
+                        _vec_scale(self.basis_x, self.scale_sign_x),
+                        _vec_scale(self.basis_y, self.scale_sign_y),
+                    )
+                    self.center = _vec_add(self.scale_anchor, _vec_scale(offset, 0.5))
 
         self._tag_redraw()
 
@@ -1902,6 +2005,19 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
             self._clear_draw_handlers()
             self._tag_redraw()
             return {"CANCELLED"}
+
+        selection = SelectionOverlay.current_selection()
+        if selection is not None:
+            transformed_mask = self.transform.transformed_mask(
+                selection.width,
+                selection.height,
+                self.center,
+                self.basis_x,
+                self.basis_y,
+            )
+            if transformed_mask is not None:
+                selection.replace_mask(transformed_mask, "TRANSFORM")
+                SelectionOverlay.refresh(context)
 
         self._clear_draw_handlers()
         _tag_image_editors_redraw(context)
