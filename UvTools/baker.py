@@ -3526,7 +3526,6 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
 
 def drawBakePanel(layout: bpy.types.UILayout, context):
     box = layout.box()
-    box.label(text="导出UV贴图")
     col = box.column(align=True)
     row = col.row(align=True)
     row.operator(OT_UVTools_FastBakeUVImage.bl_idname, text="", icon="FUND")

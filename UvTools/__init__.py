@@ -2,7 +2,7 @@ import bpy
 import bmesh
 from bpy.types import Panel
 
-from  . import baker,operators,image
+from  . import baker, operators, image, RTbaker
 
 def reg_props():
     return
@@ -11,9 +11,9 @@ def ureg_props():
     return
 
 
-class PL_UvTools(Panel):
-    bl_idname = "VIEW_PT_Hollow_UvTools"
-    bl_label = "UV工具"
+class PL_BakeTools(Panel):
+    bl_idname = "VIEW_PT_Hollow_BakeTools"
+    bl_label = "烘焙"
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "UI"
     bl_category = "HoTools"
@@ -22,6 +22,20 @@ class PL_UvTools(Panel):
     def draw(self, context):
         layout = self.layout
         baker.drawBakePanel(layout, context)
+        return
+
+
+class PL_RTBakeTools(Panel):
+    bl_idname = "VIEW_PT_Hollow_RTBakeTools"
+    bl_label = "RT烘焙"
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "HoTools"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        RTbaker.drawRTBakePanel(layout, context)
         return
 
 
@@ -39,10 +53,11 @@ class PL_ImageTools(Panel):
         return
 
 
-cls = [PL_UvTools, PL_ImageTools]
+cls = [PL_BakeTools, PL_RTBakeTools, PL_ImageTools]
 
 def register():
     baker.register()
+    RTbaker.register()
     operators.register()
     image.register()
     for i in cls:
@@ -52,6 +67,7 @@ def register():
 
 def unregister():
     baker.unregister()
+    RTbaker.unregister()
     operators.unregister()
     image.unregister()
     for i in cls:
