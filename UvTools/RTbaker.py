@@ -1,15 +1,11 @@
 import bpy
 import os
 from bpy.types import Operator, PropertyGroup
-from bpy.props import BoolProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 
 
 BAKE_TYPES_WITHOUT_VIEW_FROM = {
     'AO',
-    'POSITION',
-    'NORMAL',
-    'UV',
-    'ROUGHNESS',
     'ENVIRONMENT',
 }
 
@@ -33,36 +29,6 @@ RT_BAKE_CHANNELS = [
         "label": "阴影", 
         "type": 'SHADOW', 
         "suffix": "Shadow"
-    },
-    {
-        "id": "position", 
-        "label": "位置", 
-        "type": 'POSITION', 
-        "suffix": "Position"
-    },
-    {
-        "id": "normal", 
-        "label": "法线", 
-        "type": 'NORMAL', 
-        "suffix": "Normal"
-    },
-    {
-        "id": "uv", 
-        "label": "UV", 
-        "type": 'UV', 
-        "suffix": "UV"
-    },
-    {
-        "id": "roughness", 
-        "label": "粗糙度", 
-        "type": 'ROUGHNESS', 
-        "suffix": "Roughness"
-    },
-    {
-        "id": "emit", 
-        "label": "自发光", 
-        "type": 'EMIT', 
-        "suffix": "Emission"
     },
     {
         "id": "environment", 
@@ -103,11 +69,15 @@ MARGIN_SPACE_ITEMS = [
 NON_COLOR_BAKE_TYPES = {
     'AO',
     'SHADOW',
-    'POSITION',
-    'NORMAL',
-    'UV',
-    'ROUGHNESS',
 }
+
+
+RT_CYCLES_SAMPLING_SETTINGS = (
+    'samples',
+    'use_adaptive_sampling',
+    'adaptive_threshold',
+    'adaptive_min_samples',
+)
 
 
 def update_margin_space(self, context):
@@ -138,6 +108,26 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         min=1,
         update=update_resolution
     )  # type: ignore
+    samples: IntProperty(
+        name="采样率",
+        default=128,
+        min=1
+    )  # type: ignore
+    use_adaptive_sampling: BoolProperty(
+        name="自适应采样",
+        default=True
+    )  # type: ignore
+    adaptive_threshold: FloatProperty(
+        name="噪声阈值",
+        default=0.01,
+        min=0.0,
+        precision=4
+    )  # type: ignore
+    adaptive_min_samples: IntProperty(
+        name="最小采样",
+        default=0,
+        min=0
+    )  # type: ignore
 
     use_combined: BoolProperty(name="合并结果", default=False)  # type: ignore
     suffix_combined: StringProperty(name="合并结果后缀", default="Combined")  # type: ignore
@@ -145,16 +135,6 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
     use_shadow: BoolProperty(name="阴影", default=True)  # type: ignore
     suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
-    use_position: BoolProperty(name="位置", default=True)  # type: ignore
-    suffix_position: StringProperty(name="位置后缀", default="Position")  # type: ignore
-    use_normal: BoolProperty(name="法线", default=True)  # type: ignore
-    suffix_normal: StringProperty(name="法线后缀", default="Normal")  # type: ignore
-    use_uv: BoolProperty(name="UV", default=True)  # type: ignore
-    suffix_uv: StringProperty(name="UV后缀", default="UV")  # type: ignore
-    use_roughness: BoolProperty(name="粗糙度", default=True)  # type: ignore
-    suffix_roughness: StringProperty(name="粗糙度后缀", default="Roughness")  # type: ignore
-    use_emit: BoolProperty(name="自发光", default=True)  # type: ignore
-    suffix_emit: StringProperty(name="自发光后缀", default="Emission")  # type: ignore
     use_environment: BoolProperty(name="环境", default=True)  # type: ignore
     suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
     use_diffuse: BoolProperty(name="漫射", default=True)  # type: ignore
@@ -210,9 +190,12 @@ class OT_UVTools_RTBake(Operator):
             return {'CANCELLED'}
 
         original_bake_type = scene.cycles.bake_type
+        original_cycles_sampling = capture_rt_cycles_sampling(scene)
         original_view_from = bake_settings.view_from
 
         try:
+            apply_rt_cycles_sampling(scene)
+
             for channel in bake_channels:
                 scene.cycles.bake_type = channel["type"]
                 apply_rt_bake_view_from(context, channel["type"])
@@ -227,6 +210,7 @@ class OT_UVTools_RTBake(Operator):
                     restore_active_image_targets(temp_targets)
         finally:
             scene.cycles.bake_type = original_bake_type
+            restore_rt_cycles_sampling(scene, original_cycles_sampling)
             bake_settings.view_from = original_view_from
 
         self.report({'INFO'}, f"已导出 {len(bake_channels)} 个RT烘焙通道")
@@ -250,6 +234,30 @@ def apply_rt_bake_view_from(context, bake_type):
     bake_settings = scene.render.bake
     if scene.camera is not None and bake_type not in BAKE_TYPES_WITHOUT_VIEW_FROM:
         bake_settings.view_from = 'ACTIVE_CAMERA'
+
+
+def capture_rt_cycles_sampling(scene):
+    cycles = scene.cycles
+    return {
+        attr: getattr(cycles, attr)
+        for attr in RT_CYCLES_SAMPLING_SETTINGS
+        if hasattr(cycles, attr)
+    }
+
+
+def apply_rt_cycles_sampling(scene):
+    cycles = scene.cycles
+    rt_settings = scene.ho_uvtools_rt_bake_settings
+    cycles.samples = rt_settings.samples
+    cycles.use_adaptive_sampling = rt_settings.use_adaptive_sampling
+    cycles.adaptive_threshold = rt_settings.adaptive_threshold
+    cycles.adaptive_min_samples = rt_settings.adaptive_min_samples
+
+
+def restore_rt_cycles_sampling(scene, original_values):
+    cycles = scene.cycles
+    for attr, value in original_values.items():
+        setattr(cycles, attr, value)
 
 
 def get_enabled_rt_bake_channels(scene):
@@ -286,14 +294,6 @@ def get_rt_bake_operator_args(context, channel):
         "use_split_materials": bake_settings.use_split_materials,
         "use_automatic_name": False,
     }
-
-    if channel["type"] == 'NORMAL':
-        args.update({
-            "normal_space": bake_settings.normal_space,
-            "normal_r": bake_settings.normal_r,
-            "normal_g": bake_settings.normal_g,
-            "normal_b": bake_settings.normal_b,
-        })
 
     pass_filter = channel.get("pass_filter")
     if pass_filter is not None:
@@ -515,6 +515,22 @@ def draw_rt_bake_output(layout: bpy.types.UILayout, context):
     margin_col.prop(bake_settings, "margin", text="边距")
 
 
+def draw_rt_bake_sampling(layout: bpy.types.UILayout, context):
+    rt_settings = context.scene.ho_uvtools_rt_bake_settings
+
+    box = layout.box()
+    box.label(text="采样")
+
+    col = box.column(align=True)
+    col.prop(rt_settings, "samples")
+    col.prop(rt_settings, "use_adaptive_sampling")
+
+    adaptive_col = col.column(align=True)
+    adaptive_col.enabled = rt_settings.use_adaptive_sampling
+    adaptive_col.prop(rt_settings, "adaptive_threshold")
+    adaptive_col.prop(rt_settings, "adaptive_min_samples")
+
+
 def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
     rt_settings = context.scene.ho_uvtools_rt_bake_settings
 
@@ -548,6 +564,7 @@ def draw_rt_bake_settings(layout: bpy.types.UILayout, context, use_box=True):
     row.prop(bake_settings, "view_from", text="观察方位")
     row.active = scene.camera is not None
 
+    draw_rt_bake_sampling(root, context)
     draw_rt_bake_channels(root, context)
     draw_rt_bake_output(root, context)
 
