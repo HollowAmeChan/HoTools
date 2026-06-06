@@ -12,6 +12,13 @@ BAKE_TYPES_WITHOUT_VIEW_FROM = {
 
 RT_BAKE_CHANNELS = [
     {
+        "id": "direct",
+        "label": "直出",
+        "type": 'COMBINED',
+        "suffix": "Direct",
+        "pass_filter": {'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'},
+    },
+    {
         "id": "ao",
         "label": "环境光遮蔽 (AO)",
         "type": 'AO', 
@@ -101,11 +108,13 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         min=0
     )  # type: ignore
 
-    use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=True)  # type: ignore
+    use_direct: BoolProperty(name="直出", default=True)  # type: ignore
+    suffix_direct: StringProperty(name="直出后缀", default="Direct")  # type: ignore
+    use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=False)  # type: ignore
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
-    use_shadow: BoolProperty(name="阴影", default=True)  # type: ignore
+    use_shadow: BoolProperty(name="阴影", default=False)  # type: ignore
     suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
-    use_environment: BoolProperty(name="环境", default=True)  # type: ignore
+    use_environment: BoolProperty(name="环境", default=False)  # type: ignore
     suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
 
 
