@@ -10,32 +10,50 @@ BAKE_TYPES_WITHOUT_VIEW_FROM = {
 }
 
 
+class RTBakeChannel:
+    def __init__(
+        self,
+        channel_id,
+        label,
+        bake_type,
+        suffix,
+        default_enabled=False,
+        pass_filter=None
+    ):
+        self.id = channel_id
+        self.label = label
+        self.bake_type = bake_type
+        self.suffix = suffix
+        self.default_enabled = default_enabled
+        self.pass_filter = pass_filter
+        self.enabled_prop = f"use_{channel_id}"
+        self.suffix_prop = f"suffix_{channel_id}"
+        self.expand_prop = f"show_{channel_id}_settings"
+
+    def get_suffix(self, rt_settings):
+        suffix = getattr(rt_settings, self.suffix_prop).strip()
+        return suffix if suffix else self.suffix
+
+    def draw_settings(self, layout, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(rt_settings, self.suffix_prop, text="后缀")
+
+
 RT_BAKE_CHANNELS = [
-    {
-        "id": "direct",
-        "label": "直出",
-        "type": 'COMBINED',
-        "suffix": "Direct",
-        "pass_filter": {'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'},
-    },
-    {
-        "id": "ao",
-        "label": "环境光遮蔽 (AO)",
-        "type": 'AO', 
-        "suffix": "AO"
-    },
-    {
-        "id": "shadow", 
-        "label": "阴影", 
-        "type": 'SHADOW', 
-        "suffix": "Shadow"
-    },
-    {
-        "id": "environment", 
-        "label": "环境", 
-        "type": 'ENVIRONMENT', 
-        "suffix": "Environment"
-    },
+    RTBakeChannel(
+        "direct",
+        "直出",
+        'COMBINED',
+        "Direct",
+        default_enabled=True,
+        pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
+    ),
+    RTBakeChannel("ao", "环境光遮蔽 (AO)", 'AO', "AO"),
+    RTBakeChannel("shadow", "阴影", 'SHADOW', "Shadow"),
+    RTBakeChannel("environment", "环境", 'ENVIRONMENT', "Environment"),
 ]
 
 
@@ -110,12 +128,16 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
 
     use_direct: BoolProperty(name="直出", default=True)  # type: ignore
     suffix_direct: StringProperty(name="直出后缀", default="Direct")  # type: ignore
+    show_direct_settings: BoolProperty(name="直出设置", default=False)  # type: ignore
     use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=False)  # type: ignore
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
+    show_ao_settings: BoolProperty(name="环境光遮蔽设置", default=False)  # type: ignore
     use_shadow: BoolProperty(name="阴影", default=False)  # type: ignore
     suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
+    show_shadow_settings: BoolProperty(name="阴影设置", default=False)  # type: ignore
     use_environment: BoolProperty(name="环境", default=False)  # type: ignore
     suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
+    show_environment_settings: BoolProperty(name="环境设置", default=False)  # type: ignore
 
 
 def reg_props():
@@ -170,10 +192,10 @@ class OT_UVTools_RTBake(Operator):
             apply_rt_cycles_sampling(scene)
 
             for channel in bake_channels:
-                scene.cycles.bake_type = channel["type"]
-                apply_rt_bake_view_from(context, channel["type"])
+                scene.cycles.bake_type = channel.bake_type
+                apply_rt_bake_view_from(context, channel.bake_type)
 
-                temp_targets = ensure_active_image_targets(context, channel["type"])
+                temp_targets = ensure_active_image_targets(context, channel.bake_type)
                 try:
                     result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, channel))
                     if result != {'FINISHED'}:
@@ -238,14 +260,10 @@ def get_enabled_rt_bake_channels(scene):
     bake_channels = []
 
     for channel in RT_BAKE_CHANNELS:
-        channel_id = channel["id"]
-        if not getattr(rt_settings, f"use_{channel_id}"):
+        if not getattr(rt_settings, channel.enabled_prop):
             continue
 
-        bake_channel = dict(channel)
-        suffix = getattr(rt_settings, f"suffix_{channel_id}").strip()
-        bake_channel["suffix"] = suffix if suffix else channel["suffix"]
-        bake_channels.append(bake_channel)
+        bake_channels.append(channel)
 
     return bake_channels
 
@@ -253,7 +271,7 @@ def get_enabled_rt_bake_channels(scene):
 def get_rt_bake_operator_args(context, channel):
     bake_settings = context.scene.render.bake
     args = {
-        "type": channel["type"],
+        "type": channel.bake_type,
         "filepath": bpy.path.abspath(bake_settings.filepath),
         "width": bake_settings.width,
         "height": bake_settings.height,
@@ -268,7 +286,7 @@ def get_rt_bake_operator_args(context, channel):
         "use_automatic_name": False,
     }
 
-    pass_filter = channel.get("pass_filter")
+    pass_filter = channel.pass_filter
     if pass_filter is not None:
         args["pass_filter"] = set(pass_filter)
 
@@ -413,7 +431,11 @@ def get_bake_output_path(base_filepath, image_name, context, channel):
     if not stem:
         stem = "Bake"
 
-    suffix_parts = [clean_filename_part(channel["suffix"])]
+    suffix_parts = [
+        clean_filename_part(
+            channel.get_suffix(context.scene.ho_uvtools_rt_bake_settings)
+        )
+    ]
     if bake_settings.use_split_materials:
         suffix_parts.append(clean_filename_part(image_name))
 
@@ -515,13 +537,21 @@ def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
     col.use_property_decorate = False
 
     for channel in RT_BAKE_CHANNELS:
-        channel_id = channel["id"]
+        is_expanded = getattr(rt_settings, channel.expand_prop)
         row = col.row(align=True)
-        row.prop(rt_settings, f"use_{channel_id}", text=channel["label"], toggle=True)
+        row.prop(
+            rt_settings,
+            channel.expand_prop,
+            text="",
+            icon='TRIA_DOWN' if is_expanded else 'TRIA_RIGHT',
+            emboss=False
+        )
+        row.prop(rt_settings, channel.enabled_prop, text=channel.label, toggle=True)
 
-        suffix_row = row.row(align=True)
-        suffix_row.enabled = getattr(rt_settings, f"use_{channel_id}")
-        suffix_row.prop(rt_settings, f"suffix_{channel_id}", text="")
+        if is_expanded:
+            settings_box = col.box()
+            settings_box.enabled = getattr(rt_settings, channel.enabled_prop)
+            channel.draw_settings(settings_box, context)
 
 
 def draw_rt_bake_settings(layout: bpy.types.UILayout, context, use_box=True):
