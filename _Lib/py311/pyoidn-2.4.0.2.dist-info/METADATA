@@ -1,0 +1,183 @@
+Metadata-Version: 2.1
+Name: pyoidn
+Version: 2.4.0.2
+Summary: Intel Open Image Denoise(OIDN) python binding.
+Home-page: https://github.com/Hyiker/pyoidn
+Author: Carbene Hu
+Author-email: hyikerhu0212@gmail.com
+Platform: Linux
+Platform: Windows
+Platform: macOS
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Image Processing
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Multimedia :: Graphics
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: C++
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Environment :: GPU
+Classifier: Natural Language :: English
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: cffi>=1.0.0
+Provides-Extra: torch
+Requires-Dist: torch>=2.0.0; extra == "torch"
+
+# PyOIDN: Intel Open Image Denoise Python binding
+
+[![GitHub Tag](https://img.shields.io/github/v/tag/Hyiker/pyoidn)](https://github.com/Hyiker/pyoidn/tags) [![Tests](https://img.shields.io/github/actions/workflow/status/Hyiker/pyoidn/testing.yml?branch=master)](https://github.com/Hyiker/pyoidn/actions/workflows/testing.yml) [![Docs](https://img.shields.io/github/actions/workflow/status/Hyiker/pyoidn/docs.yml?branch=master&label=docs)](https://github.com/Hyiker/pyoidn/actions/workflows/docs.yml)
+
+Yet another unofficial Intel [Open Image Denoise (OIDN)](https://www.openimagedenoise.org/) Python binding -- but more Pythonic. Checkout [docs](https://pyoidn.carbene.cc/) for more details.
+
+## Features
+
+- Directly use NumPy arrays as input/output images.
+- Support all OIDN filter types.
+- Simple and clean API design.
+- Lightweight: only depends on NumPy and the OIDN shared library.
+- CUDA device support (via PyTorch).
+
+## Install
+
+To install the latest release from PyPI:
+
+```bash
+pip install pyoidn
+```
+
+The default installation only includes lightweight CPU support with [NumPy](https://numpy.org/). Additionally, pyoidn provides support via [PyTorch](https://pytorch.org/) which enables CUDA device support:
+
+```bash
+pip install pyoidn[torch]
+```
+
+Note: this variant doesn't support Intel Macs, use the default installation instead.
+
+## Quickstart
+
+Given a noisy image, plus its normal map and albedo map, denoise and save the result.
+
+![noisy_color](imgs/result_noisy.png)
+
+```python
+import numpy as np
+from PIL import Image
+import pyoidn
+
+
+def load_image(path: str) -> np.ndarray:
+    return np.array(Image.open(path), dtype=np.float32) / 255.0
+
+
+color = load_image(color_path)
+normal = load_image(normal_path)
+albedo = load_image(albedo_path)
+result = np.zeros_like(color, dtype=np.float32)
+
+device = pyoidn.Device()
+device.commit()
+
+flt = pyoidn.Filter(device, "RT")
+flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color, pyoidn.OIDN_FORMAT_FLOAT3)
+flt.set_image(pyoidn.OIDN_IMAGE_NORMAL, normal, pyoidn.OIDN_FORMAT_FLOAT3)
+flt.set_image(pyoidn.OIDN_IMAGE_ALBEDO, albedo, pyoidn.OIDN_FORMAT_FLOAT3)
+flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, result, pyoidn.OIDN_FORMAT_FLOAT3)
+
+flt.commit()
+flt.execute()
+
+# Always check errors if something looks off
+assert device.get_error() is None
+
+result_u8 = np.array(np.clip(result * 255, 0, 255), dtype=np.uint8)
+Image.fromarray(result_u8).save(output_path)
+
+flt.release()
+device.release()
+```
+
+The result:
+
+![denoised_result](imgs/result_denoised.png)
+
+pyoidn also supports RAII-style resource management using context managers:
+
+```python
+with pyoidn.Device() as device:
+    device.commit()
+    with pyoidn.Filter(device, "RT") as flt:
+        flt.set_bool("hdr", True)
+        # set images and other parameters
+        flt.commit()
+        flt.execute()
+```
+
+
+If you have installed the PyTorch support, you can also use CUDA devices:
+
+```python
+torch_device = torch.device("cuda:0")
+color_t = torch.from_numpy(color).to(device=torch_device, dtype=torch.float32).contiguous()
+normal_t = torch.from_numpy(normal).to(device=torch_device, dtype=torch.float32).contiguous()
+albedo_t = torch.from_numpy(albedo).to(device=torch_device, dtype=torch.float32).contiguous()
+result_t = torch.zeros_like(color_t, dtype=torch.float32, device=torch_device)
+with pyoidn.Device(torch_device) as device:
+    device.commit()
+    with pyoidn.Filter(device, "RT") as flt:
+        # set images and other parameters
+        flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color_t, pyoidn.OIDN_FORMAT_FLOAT3)
+        flt.set_image(pyoidn.OIDN_IMAGE_NORMAL, normal_t, pyoidn.OIDN_FORMAT_FLOAT3)
+        flt.set_image(pyoidn.OIDN_IMAGE_ALBEDO, albedo_t, pyoidn.OIDN_FORMAT_FLOAT3)
+        flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, result_t, pyoidn.OIDN_FORMAT_FLOAT3)
+
+        flt.commit()
+        flt.execute()
+```
+
+## Notes
+
+- Error handling: use `device.get_error()` after creating/committing/executing.
+- Async example: see `tests/test.py`.
+
+## Documentation
+
+Build locally:
+
+```bash
+pip install -r requirements-docs.txt
+mkdocs serve
+```
+
+## Roadmap
+
+- [x] CPU device support
+- [x] NumPy array support
+- [x] All filter types support
+- [x] OIDN buffer support
+- [x] RAII-style resource management
+- [ ] More device types
+  - [x] CUDA (torch)
+  - [ ] SYCL
+  - [ ] Metal
+- [x] Documents
+- [ ] Examples
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+This project includes:
+
+- [Intel Open Image Denoise](https://github.com/RenderKit/oidn) (Apache License 2.0)

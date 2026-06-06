@@ -1,7 +1,24 @@
 import bpy
 import os
+import sys
+import numpy as np
 from bpy.types import Operator, PropertyGroup
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
+
+if sys.version_info >= (3, 13):
+    from .._Lib.py313.PIL import Image, ImageDraw
+    try:
+        from .._Lib.py313 import pyoidn
+    except ImportError:
+        pyoidn = None
+elif sys.version_info >= (3, 11):
+    from .._Lib.py311.PIL import Image, ImageDraw
+    try:
+        from .._Lib.py311 import pyoidn
+    except ImportError:
+        pyoidn = None
+else:
+    pyoidn = None
 
 
 BAKE_TYPES_WITHOUT_VIEW_FROM = {
@@ -41,11 +58,17 @@ class RTBakeChannel:
         col.use_property_decorate = False
         col.prop(rt_settings, self.suffix_prop, text="后缀")
 
+    def get_bake_margin(self, context):
+        return context.scene.render.bake.margin
+
     def prepare(self, context, operator):
         return {'FINISHED'}, None
 
     def restore(self, context, prepare_state):
         return
+
+    def postprocess_saved_image(self, filepath, image_name, context, operator):
+        return filepath
 
     def execute(self, context, operator):
         prepare_result, prepare_state = self.prepare(context, operator)
@@ -61,7 +84,7 @@ class RTBakeChannel:
             try:
                 result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
                 if result == {'FINISHED'}:
-                    save_baked_images(temp_targets, context, self)
+                    save_baked_images(temp_targets, context, self, operator)
                 return result
             finally:
                 restore_active_image_targets(temp_targets)
@@ -81,7 +104,13 @@ class RTShadowCastChannel(RTBakeChannel):
     3. 烘焙前只把当前选中网格的材质 Surface 临时改成
        白色 Diffuse BSDF -> Material Output，保证 ShadowCast 只受灯光和几何遮挡影响。
     4. 烘焙前把当前 Scene World 临时改成纯白 Background，Strength=1。
-    5. Cycles bake 结束后，无论成功或失败，都会恢复灯光 hide_render、
+    5. 因为 Blender 自带 padding 在降噪场景下会污染 UV 岛边缘，ShadowCast
+       不直接使用 UI 边距作为 Cycles bake margin，而是先使用一个隐性的极小
+       margin（当前约为分辨率 / 512，最小 1px）让 Cycles 只填基础邻域。
+    6. 后处理目标流程是：读取这个小 margin 结果 -> 按 UV 岛做无限膨胀 ->
+       喂给外部 OIDN 做图片降噪 -> 再按 UV 岛用用户 UI 里的边距值裁回最终输出。
+       这样 OIDN 看到的是连续扩展贴图，最终导出的 padding 仍然尊重 UI 设置。
+    7. Cycles bake 结束后，无论成功或失败，都会恢复灯光 hide_render、
        World、原 Surface 链接、临时节点、节点 active/selection 状态和 material.use_nodes。
 
     后续如果要做按物体/集合隔离、多次烘焙再合成，应继续放在这个类的
@@ -105,6 +134,260 @@ class RTShadowCastChannel(RTBakeChannel):
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(rt_settings, "shadowcast_light", text="光源")
+        col.prop(rt_settings, "shadowcast_debug_output", text="输出调试贴图")
+
+    def get_bake_margin(self, context):
+        resolution = context.scene.ho_uvtools_rt_bake_settings.resolution
+        return max(1, int(round(resolution / SHADOWCAST_BLENDER_MARGIN_DIVISOR)))
+
+    def postprocess_saved_image(self, filepath, image_name, context, operator):
+        return self.postprocess_shadowcast_denoise(filepath, image_name, context, operator)
+
+    def postprocess_shadowcast_denoise(self, filepath, image_name, context, operator):
+        """
+        ShadowCast OIDN 后处理预留入口。
+
+        计划接口：
+        1. 从 filepath 读出 Cycles 的小 margin 烘焙图。
+        2. 使用当前选中对象的 UV 岛 mask 做无限膨胀，生成 OIDN 输入图。
+        3. 调用本地 pyoidn / OIDN，对膨胀后的图做 RT 降噪。
+        4. 使用用户 UI 里的 render.bake.margin 做 UV 膨胀裁回，再覆盖保存 filepath。
+        """
+        uv_padding_context = self.build_shadowcast_uv_padding_context(context, image_name)
+        if uv_padding_context["debug_output"]:
+            self.save_debug_image(filepath, "BLRaw", filepath)
+        oidn_input_path = self.expand_shadowcast_image_for_oidn(filepath, uv_padding_context)
+        if uv_padding_context["debug_output"]:
+            self.save_debug_image(filepath, "InfinitePadding", oidn_input_path["array"])
+        denoised_path = self.denoise_shadowcast_image_with_oidn(oidn_input_path, filepath, operator)
+        return self.crop_shadowcast_image_to_user_margin(denoised_path, filepath, uv_padding_context, context)
+
+    def build_shadowcast_uv_padding_context(self, context, image_name):
+        bake_settings = context.scene.render.bake
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        return {
+            "objects": get_bake_target_objects(context),
+            "resolution": rt_settings.resolution,
+            "cycles_margin": self.get_bake_margin(context),
+            "output_margin": bake_settings.margin,
+            "material_name": image_name if bake_settings.use_split_materials else None,
+            "debug_output": rt_settings.shadowcast_debug_output,
+        }
+
+    def get_debug_output_path(self, filepath, tag):
+        stem, ext = os.path.splitext(filepath)
+        if not ext:
+            ext = ".png"
+        return f"{stem}_{tag}{ext}"
+
+    def save_debug_image(self, source_filepath, tag, image_data):
+        debug_path = self.get_debug_output_path(source_filepath, tag)
+        if isinstance(image_data, str):
+            Image.open(image_data).convert("RGBA").save(debug_path)
+        else:
+            Image.fromarray(image_data).save(debug_path)
+        return debug_path
+
+    def expand_shadowcast_image_for_oidn(self, filepath, uv_padding_context):
+        image = Image.open(filepath).convert("RGBA")
+        arr = np.array(image, dtype=np.uint8)
+        surface_mask = self.build_uv_mask(
+            uv_padding_context["objects"],
+            arr.shape[1],
+            arr.shape[0],
+            material_name=uv_padding_context.get("material_name"),
+            margin=0,
+        )
+        seed_mask = self.build_uv_edge_seed_mask(
+            surface_mask,
+            uv_padding_context["cycles_margin"],
+        )
+        expanded = self.expand_image_to_mask(arr, seed_mask)
+        expanded[surface_mask] = arr[surface_mask]
+        return {
+            "array": expanded,
+            "mask": surface_mask,
+            "seed_mask": seed_mask,
+        }
+
+    def denoise_shadowcast_image_with_oidn(self, oidn_input_path, output_path, operator):
+        if not is_oidn_available():
+            operator.report({'WARNING'}, "未找到 pyoidn，已跳过 ShadowCast OIDN 降噪")
+            return oidn_input_path
+
+        input_arr = oidn_input_path["array"]
+        color = np.ascontiguousarray(input_arr[:, :, :3].astype(np.float32) / 255.0)
+        output = np.zeros_like(color, dtype=np.float32)
+
+        with pyoidn.Device() as device:
+            device.commit()
+            with pyoidn.Filter(device, pyoidn.OIDN_FILTER_TYPE_RT) as flt:
+                flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color, pyoidn.OIDN_FORMAT_FLOAT3)
+                flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, output, pyoidn.OIDN_FORMAT_FLOAT3)
+                if hasattr(pyoidn, "OIDN_QUALITY_HIGH"):
+                    flt.set_quality(pyoidn.OIDN_QUALITY_HIGH)
+                flt.commit()
+                flt.execute()
+
+            error = device.get_error()
+            if error is not None:
+                operator.report({'WARNING'}, f"OIDN降噪失败: {error}")
+                return oidn_input_path
+
+        denoised = input_arr.copy()
+        denoised[:, :, :3] = np.clip(output * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        return {
+            "array": denoised,
+            "mask": oidn_input_path["mask"],
+        }
+
+    def crop_shadowcast_image_to_user_margin(self, denoised_path, output_path, uv_padding_context, context):
+        denoised = denoised_path["array"]
+        width = denoised.shape[1]
+        height = denoised.shape[0]
+        output_mask = self.build_uv_mask(
+            uv_padding_context["objects"],
+            width,
+            height,
+            material_name=uv_padding_context.get("material_name"),
+            margin=uv_padding_context["output_margin"],
+        )
+        output_arr = np.zeros_like(denoised)
+        output_arr[output_mask] = denoised[output_mask]
+        output_arr[output_mask, 3] = 255
+        Image.fromarray(output_arr).save(output_path)
+        return output_path
+
+    def build_uv_mask(self, objects, width, height, material_name=None, margin=0):
+        mask_img = Image.new("L", (width, height), 0)
+        draw = ImageDraw.Draw(mask_img)
+
+        for obj in objects:
+            mesh = obj.data
+            uv_layer = mesh.uv_layers.active
+            if uv_layer is None:
+                continue
+
+            for poly in mesh.polygons:
+                if material_name is not None:
+                    slot = obj.material_slots[poly.material_index]
+                    mat = slot.material
+                    if mat is None or mat.name != material_name:
+                        continue
+
+                pts = []
+                for loop_index in poly.loop_indices:
+                    uv = uv_layer.data[loop_index].uv
+                    x = int(round(uv.x * (width - 1)))
+                    y = int(round((1.0 - uv.y) * (height - 1)))
+                    pts.append((max(0, min(width - 1, x)), max(0, min(height - 1, y))))
+
+                if len(pts) < 3:
+                    continue
+                for i in range(1, len(pts) - 1):
+                    draw.polygon([pts[0], pts[i], pts[i + 1]], fill=255)
+
+        mask = np.array(mask_img, dtype=np.uint8) > 0
+        if margin > 0:
+            mask = self.dilate_mask(mask, margin)
+        return mask
+
+    def dilate_mask(self, mask, radius):
+        if radius <= 0 or not mask.any():
+            return mask
+
+        result = mask.copy()
+        for _ in range(radius):
+            padded = np.pad(result, 1, mode="constant", constant_values=False)
+            result = (
+                padded[0:-2, 0:-2] | padded[0:-2, 1:-1] | padded[0:-2, 2:] |
+                padded[1:-1, 0:-2] | padded[1:-1, 1:-1] | padded[1:-1, 2:] |
+                padded[2:, 0:-2] | padded[2:, 1:-1] | padded[2:, 2:]
+            )
+        return result
+
+    def build_uv_edge_seed_mask(self, surface_mask, radius):
+        if not surface_mask.any():
+            return surface_mask
+
+        boundary_radius = max(1, radius)
+        outside_reach = self.dilate_mask(~surface_mask, boundary_radius)
+        seed_mask = surface_mask & outside_reach
+        if seed_mask.any():
+            return seed_mask
+        return surface_mask
+
+    def expand_image_to_mask(self, arr, seed_mask):
+        valid = seed_mask
+        if not valid.any():
+            return arr
+
+        height, width = valid.shape
+        yy, xx = np.indices((height, width), dtype=np.int32)
+        nearest_x = np.where(valid, xx, -1)
+        nearest_y = np.where(valid, yy, -1)
+        distance = np.where(valid, 0, width * width + height * height).astype(np.int64)
+
+        step = 1
+        max_dim = max(width, height)
+        while step < max_dim:
+            for dy, dx in (
+                (-step, -step), (-step, 0), (-step, step),
+                (0, -step),                 (0, step),
+                (step, -step),  (step, 0),  (step, step),
+            ):
+                self.relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
+            step *= 2
+
+        step //= 2
+        while step >= 1:
+            for dy, dx in (
+                (-step, -step), (-step, 0), (-step, step),
+                (0, -step),                 (0, step),
+                (step, -step),  (step, 0),  (step, step),
+            ):
+                self.relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
+            step //= 2
+
+        expanded = arr.copy()
+        has_seed = nearest_x >= 0
+        expanded[has_seed] = arr[nearest_y[has_seed], nearest_x[has_seed]]
+        expanded[:, :, 3] = 255
+        return expanded
+
+    def relax_nearest_seed(self, nearest_x, nearest_y, distance, xx, yy, dx, dy):
+        height, width = nearest_x.shape
+        src_y0 = max(0, -dy)
+        src_y1 = min(height, height - dy)
+        src_x0 = max(0, -dx)
+        src_x1 = min(width, width - dx)
+        if src_y0 >= src_y1 or src_x0 >= src_x1:
+            return
+
+        dst_y0 = src_y0 + dy
+        dst_y1 = src_y1 + dy
+        dst_x0 = src_x0 + dx
+        dst_x1 = src_x1 + dx
+
+        cand_x = nearest_x[src_y0:src_y1, src_x0:src_x1]
+        cand_y = nearest_y[src_y0:src_y1, src_x0:src_x1]
+        valid = cand_x >= 0
+        if not valid.any():
+            return
+
+        target_x = xx[dst_y0:dst_y1, dst_x0:dst_x1]
+        target_y = yy[dst_y0:dst_y1, dst_x0:dst_x1]
+        cand_dist = (cand_x - target_x) ** 2 + (cand_y - target_y) ** 2
+        target_dist = distance[dst_y0:dst_y1, dst_x0:dst_x1]
+        update = valid & (cand_dist < target_dist)
+        if not update.any():
+            return
+
+        target_nearest_x = nearest_x[dst_y0:dst_y1, dst_x0:dst_x1]
+        target_nearest_y = nearest_y[dst_y0:dst_y1, dst_x0:dst_x1]
+        target_nearest_x[update] = cand_x[update]
+        target_nearest_y[update] = cand_y[update]
+        target_dist[update] = cand_dist[update]
 
     def prepare(self, context, operator):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
@@ -456,6 +739,9 @@ RT_CYCLES_DENOISING_SWITCHES = (
     'use_preview_denoising',
 )
 
+OIDN_FILTER_TYPE = "RT"
+SHADOWCAST_BLENDER_MARGIN_DIVISOR = 512
+
 
 def update_margin_space(self, context):
     try:
@@ -525,6 +811,7 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     use_shadowcast: BoolProperty(name="ShadowCast", default=False)  # type: ignore
     suffix_shadowcast: StringProperty(name="ShadowCast后缀", default="ShadowCast")  # type: ignore
     show_shadowcast_settings: BoolProperty(name="ShadowCast设置", default=False)  # type: ignore
+    shadowcast_debug_output: BoolProperty(name="输出调试贴图", default=False)  # type: ignore
     shadowcast_light: PointerProperty(
         name="光源",
         type=bpy.types.Object,
@@ -663,7 +950,7 @@ def get_rt_bake_operator_args(context, channel):
         "filepath": bpy.path.abspath(bake_settings.filepath),
         "width": bake_settings.width,
         "height": bake_settings.height,
-        "margin": bake_settings.margin,
+        "margin": channel.get_bake_margin(context),
         "margin_type": bake_settings.margin_type,
         "use_selected_to_active": False,
         "target": 'IMAGE_TEXTURES',
@@ -679,6 +966,14 @@ def get_rt_bake_operator_args(context, channel):
         args["pass_filter"] = set(pass_filter)
 
     return args
+
+
+def get_oidn_module():
+    return pyoidn
+
+
+def is_oidn_available():
+    return get_oidn_module() is not None
 
 
 def get_bake_target_objects(context):
@@ -833,7 +1128,7 @@ def get_bake_output_path(base_filepath, image_name, context, channel):
     return os.path.join(directory, stem + ext)
 
 
-def save_baked_images(targets, context, channel):
+def save_baked_images(targets, context, channel, operator):
     bake_settings = context.scene.render.bake
     image_settings = bake_settings.image_settings
 
@@ -846,6 +1141,7 @@ def save_baked_images(targets, context, channel):
         image.filepath_raw = filepath
         image.file_format = image_settings.file_format
         image.save()
+        channel.postprocess_saved_image(filepath, image_name, context, operator)
 
 
 def restore_active_image_targets(targets):

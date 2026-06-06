@@ -6,5 +6,19 @@
             "envManager": "ms-python.python:system",
             "packageManager": "ms-python.python:pip"
         }
+    ],
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/_Lib",
+        "${workspaceFolder}/_Lib/py311",
+        "${workspaceFolder}/_Lib/py313",
+        "${workspaceFolder}/OmniNode/lib"
+    ],
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/_Lib",
+        "${workspaceFolder}/_Lib/py311",
+        "${workspaceFolder}/_Lib/py313",
+        "${workspaceFolder}/OmniNode/lib"
     ]
 }

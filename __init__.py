@@ -11,6 +11,10 @@ plugin_dir = os.path.dirname(__file__)
 sys.path.append(plugin_dir)
 lib_dir = os.path.join(plugin_dir, "_Lib")
 sys.path.append(lib_dir)
+if sys.version_info >= (3, 13):
+    sys.path.append(os.path.join(lib_dir, "py313"))
+elif sys.version_info >= (3, 11):
+    sys.path.append(os.path.join(lib_dir, "py311"))
 #OmniNode的lib
 omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
 sys.path.append(omni_lib_dir)
