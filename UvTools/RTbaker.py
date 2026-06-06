@@ -12,13 +12,6 @@ BAKE_TYPES_WITHOUT_VIEW_FROM = {
 
 RT_BAKE_CHANNELS = [
     {
-        "id": "combined",
-        "label": "合并结果",
-        "type": 'COMBINED',
-        "suffix": "Combined",
-        "pass_filter": {'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'},
-    },
-    {
         "id": "ao",
         "label": "环境光遮蔽 (AO)",
         "type": 'AO', 
@@ -35,27 +28,6 @@ RT_BAKE_CHANNELS = [
         "label": "环境", 
         "type": 'ENVIRONMENT', 
         "suffix": "Environment"
-    },
-    {
-        "id": "diffuse",
-        "label": "漫射",
-        "type": 'DIFFUSE',
-        "suffix": "Diffuse",
-        "pass_filter": {'DIRECT', 'INDIRECT', 'COLOR'},
-    },
-    {
-        "id": "glossy",
-        "label": "光泽",
-        "type": 'GLOSSY',
-        "suffix": "Glossy",
-        "pass_filter": {'DIRECT', 'INDIRECT', 'COLOR'},
-    },
-    {
-        "id": "transmission",
-        "label": "透射",
-        "type": 'TRANSMISSION',
-        "suffix": "Transmission",
-        "pass_filter": {'DIRECT', 'INDIRECT', 'COLOR'},
     },
 ]
 
@@ -129,20 +101,12 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         min=0
     )  # type: ignore
 
-    use_combined: BoolProperty(name="合并结果", default=False)  # type: ignore
-    suffix_combined: StringProperty(name="合并结果后缀", default="Combined")  # type: ignore
     use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=True)  # type: ignore
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
     use_shadow: BoolProperty(name="阴影", default=True)  # type: ignore
     suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
     use_environment: BoolProperty(name="环境", default=True)  # type: ignore
     suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
-    use_diffuse: BoolProperty(name="漫射", default=True)  # type: ignore
-    suffix_diffuse: StringProperty(name="漫射后缀", default="Diffuse")  # type: ignore
-    use_glossy: BoolProperty(name="光泽", default=True)  # type: ignore
-    suffix_glossy: StringProperty(name="光泽后缀", default="Glossy")  # type: ignore
-    use_transmission: BoolProperty(name="透射", default=True)  # type: ignore
-    suffix_transmission: StringProperty(name="透射后缀", default="Transmission")  # type: ignore
 
 
 def reg_props():
