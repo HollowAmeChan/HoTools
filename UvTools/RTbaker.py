@@ -41,19 +41,394 @@ class RTBakeChannel:
         col.use_property_decorate = False
         col.prop(rt_settings, self.suffix_prop, text="后缀")
 
+    def prepare(self, context, operator):
+        return {'FINISHED'}, None
+
+    def restore(self, context, prepare_state):
+        return
+
+    def execute(self, context, operator):
+        prepare_result, prepare_state = self.prepare(context, operator)
+        if prepare_result != {'FINISHED'}:
+            return prepare_result
+
+        scene = context.scene
+        try:
+            scene.cycles.bake_type = self.bake_type
+            apply_rt_bake_view_from(context, self.bake_type)
+
+            temp_targets = ensure_active_image_targets(context, self.bake_type)
+            try:
+                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
+                if result == {'FINISHED'}:
+                    save_baked_images(temp_targets, context, self)
+                return result
+            finally:
+                restore_active_image_targets(temp_targets)
+        finally:
+            self.restore(context, prepare_state)
+
+
+class RTShadowCastChannel(RTBakeChannel):
+    """
+    ShadowCast 仍然走 Cycles 的 bpy.ops.object.bake，不使用 CPU ray_cast。
+
+    工作流程：
+    1. bake_type 使用 COMBINED，并把 pass_filter 限制为 DIRECT + DIFFUSE。
+       这样只取直接漫射光，避免原材质里的复杂 BSDF、发光、光泽、透射等影响结果。
+    2. 如果指定了单独光源，就临时关闭其它 Light 的 render 可见性。
+       如果光源为空，就保留当前所有可渲染、可见的 Light。
+    3. 烘焙前只把当前选中网格的材质 Surface 临时改成
+       白色 Diffuse BSDF -> Material Output，保证 ShadowCast 只受灯光和几何遮挡影响。
+    4. 烘焙前把当前 Scene World 临时改成纯白 Background，Strength=1。
+    5. Cycles bake 结束后，无论成功或失败，都会恢复灯光 hide_render、
+       World、原 Surface 链接、临时节点、节点 active/selection 状态和 material.use_nodes。
+
+    后续如果要做按物体/集合隔离、多次烘焙再合成，应继续放在这个类的
+    prepare/execute/restore 流程里，不要塞回主 operator。
+    """
+
+    def __init__(self):
+        super().__init__(
+            "shadowcast",
+            "ShadowCast",
+            'COMBINED',
+            "ShadowCast",
+            default_enabled=False,
+            pass_filter={'DIRECT', 'DIFFUSE'}
+        )
+
+    def draw_settings(self, layout, context):
+        super().draw_settings(layout, context)
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(rt_settings, "shadowcast_light", text="光源")
+
+    def prepare(self, context, operator):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        lights = self.get_lights(context, rt_settings.shadowcast_light)
+        if not lights:
+            operator.report({'ERROR'}, "没有可用于 ShadowCast 的灯光")
+            return {'CANCELLED'}, None
+
+        selected_objs = get_bake_target_objects(context)
+        if not selected_objs:
+            operator.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}, None
+
+        light_state = self.isolate_lights(context, lights)
+        world_state = self.override_world_with_white_background(context.scene)
+        material_state = self.override_objects_with_diffuse_bsdf(selected_objs)
+        return {'FINISHED'}, {
+            "lights": light_state,
+            "world": world_state,
+            "materials": material_state,
+        }
+
+    def restore(self, context, prepare_state):
+        if prepare_state is None:
+            return
+        self.restore_material_overrides(prepare_state.get("materials", []))
+        self.restore_world(prepare_state.get("world"))
+        self.restore_render_visibility(prepare_state.get("lights", []))
+
+    def get_lights(self, context, specified_light):
+        if specified_light is not None and specified_light.type == 'LIGHT':
+            return [specified_light]
+
+        lights = []
+        for obj in context.scene.objects:
+            if obj.type != 'LIGHT' or obj.hide_render:
+                continue
+            try:
+                if obj.hide_get(view_layer=context.view_layer):
+                    continue
+            except TypeError:
+                if obj.hide_get():
+                    continue
+            lights.append(obj)
+        return lights
+
+    def isolate_lights(self, context, enabled_lights):
+        enabled_lights = set(enabled_lights)
+        state = []
+        for obj in context.scene.objects:
+            if obj.type != 'LIGHT':
+                continue
+            state.append((obj, obj.hide_render))
+            obj.hide_render = obj not in enabled_lights
+        return state
+
+    def restore_render_visibility(self, state):
+        for obj, hide_render in state:
+            obj.hide_render = hide_render
+
+    def override_world_with_white_background(self, scene):
+        world = scene.world
+        original_world = world
+        if world is None:
+            world = bpy.data.worlds.new("HoRTBake_ShadowCast_World")
+            scene.world = world
+
+        original_use_nodes = world.use_nodes
+        original_color = world.color[:]
+        world.use_nodes = True
+
+        node_tree = world.node_tree
+        nodes = node_tree.nodes
+        links = node_tree.links
+        original_active = nodes.active
+        selected_nodes = [node for node in nodes if node.select]
+
+        output = None
+        for node in nodes:
+            if node.bl_idname == 'ShaderNodeOutputWorld' and getattr(node, "is_active_output", False):
+                output = node
+                break
+        if output is None:
+            for node in nodes:
+                if node.bl_idname == 'ShaderNodeOutputWorld':
+                    output = node
+                    break
+
+        created_output = False
+        if output is None:
+            output = nodes.new(type='ShaderNodeOutputWorld')
+            created_output = True
+
+        surface_input = output.inputs.get("Surface")
+        original_links = []
+        if surface_input is not None:
+            original_links = [
+                (link.from_socket, link.to_socket)
+                for link in surface_input.links
+            ]
+            for link in list(surface_input.links):
+                links.remove(link)
+
+        background = nodes.new(type='ShaderNodeBackground')
+        background.name = "HoRTBake_ShadowCast_World"
+        background.label = "HoRTBake ShadowCast World"
+        background.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+        background.inputs["Strength"].default_value = 1.0
+        temp_link = None
+        if surface_input is not None:
+            temp_link = links.new(background.outputs["Background"], surface_input)
+
+        return {
+            "scene": scene,
+            "world": world,
+            "original_world": original_world,
+            "created_world": original_world is None,
+            "original_use_nodes": original_use_nodes,
+            "original_color": original_color,
+            "created_output": created_output,
+            "output": output,
+            "background": background,
+            "temp_link": temp_link,
+            "original_links": original_links,
+            "original_active": original_active,
+            "selected_nodes": selected_nodes,
+        }
+
+    def restore_world(self, state):
+        if state is None:
+            return
+
+        world = state["world"]
+        node_tree = world.node_tree
+        if node_tree is not None:
+            nodes = node_tree.nodes
+            links = node_tree.links
+            temp_link = state["temp_link"]
+            if temp_link is not None:
+                try:
+                    links.remove(temp_link)
+                except (ReferenceError, RuntimeError):
+                    pass
+
+            background = state["background"]
+            if background.name in nodes:
+                nodes.remove(background)
+
+            output = state["output"]
+            if state["created_output"]:
+                if output.name in nodes:
+                    nodes.remove(output)
+            else:
+                for from_socket, to_socket in state["original_links"]:
+                    try:
+                        links.new(from_socket, to_socket)
+                    except RuntimeError:
+                        pass
+
+                for node in nodes:
+                    node.select = False
+                for node in state["selected_nodes"]:
+                    if node.name in nodes:
+                        node.select = True
+
+                original_active = state["original_active"]
+                if original_active is not None and original_active.name in nodes:
+                    nodes.active = original_active
+
+        world.use_nodes = state["original_use_nodes"]
+        world.color = state["original_color"]
+
+        if state["created_world"]:
+            state["scene"].world = None
+            if world.users == 0:
+                bpy.data.worlds.remove(world)
+
+    def get_active_material_output(self, nodes):
+        for node in nodes:
+            if node.bl_idname == 'ShaderNodeOutputMaterial' and getattr(node, "is_active_output", False):
+                return node
+        for node in nodes:
+            if node.bl_idname == 'ShaderNodeOutputMaterial':
+                return node
+        return None
+
+    def get_unique_materials_from_objects(self, objects):
+        materials = []
+        seen = set()
+        for obj in objects:
+            for slot in obj.material_slots:
+                mat = slot.material
+                if mat is None or mat.name in seen:
+                    continue
+                seen.add(mat.name)
+                materials.append(mat)
+        return materials
+
+    def override_objects_with_diffuse_bsdf(self, objects):
+        states = []
+        for mat in self.get_unique_materials_from_objects(objects):
+            original_use_nodes = mat.use_nodes
+            mat.use_nodes = True
+            node_tree = mat.node_tree
+            nodes = node_tree.nodes
+            links = node_tree.links
+            original_active = nodes.active
+            selected_nodes = [node for node in nodes if node.select]
+
+            output = self.get_active_material_output(nodes)
+            created_output = False
+            if output is None:
+                output = nodes.new(type='ShaderNodeOutputMaterial')
+                created_output = True
+
+            surface_input = output.inputs.get("Surface")
+            if surface_input is None:
+                continue
+
+            original_links = [
+                (link.from_socket, link.to_socket)
+                for link in surface_input.links
+            ]
+            for link in list(surface_input.links):
+                links.remove(link)
+
+            diffuse = nodes.new(type='ShaderNodeBsdfDiffuse')
+            diffuse.name = "HoRTBake_ShadowCast_Diffuse"
+            diffuse.label = "HoRTBake ShadowCast Diffuse"
+            diffuse.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            diffuse.inputs["Roughness"].default_value = 0.5
+            temp_link = links.new(diffuse.outputs["BSDF"], surface_input)
+
+            states.append({
+                "material": mat,
+                "original_use_nodes": original_use_nodes,
+                "created_output": created_output,
+                "output": output,
+                "diffuse": diffuse,
+                "temp_link": temp_link,
+                "original_links": original_links,
+                "original_active": original_active,
+                "selected_nodes": selected_nodes,
+            })
+
+        return states
+
+    def restore_material_overrides(self, states):
+        for state in reversed(states):
+            mat = state["material"]
+            node_tree = mat.node_tree
+            if node_tree is None:
+                mat.use_nodes = state["original_use_nodes"]
+                continue
+
+            nodes = node_tree.nodes
+            links = node_tree.links
+            temp_link = state["temp_link"]
+            try:
+                links.remove(temp_link)
+            except (ReferenceError, RuntimeError):
+                pass
+
+            diffuse = state["diffuse"]
+            if diffuse.name in nodes:
+                nodes.remove(diffuse)
+
+            output = state["output"]
+            if state["created_output"]:
+                if output.name in nodes:
+                    nodes.remove(output)
+            else:
+                for from_socket, to_socket in state["original_links"]:
+                    try:
+                        links.new(from_socket, to_socket)
+                    except RuntimeError:
+                        pass
+
+            for node in nodes:
+                node.select = False
+            for node in state["selected_nodes"]:
+                if node.name in nodes:
+                    node.select = True
+
+            original_active = state["original_active"]
+            if original_active is not None and original_active.name in nodes:
+                nodes.active = original_active
+
+            mat.use_nodes = state["original_use_nodes"]
+
+
+class RTDirectChannel(RTBakeChannel):
+    def __init__(self):
+        super().__init__(
+            "direct",
+            "直出",
+            'COMBINED',
+            "Direct",
+            default_enabled=True,
+            pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
+        )
+
+
+class RTAOChannel(RTBakeChannel):
+    def __init__(self):
+        super().__init__("ao", "环境光遮蔽 (AO)", 'AO', "AO")
+
+
+class RTShadowChannel(RTBakeChannel):
+    def __init__(self):
+        super().__init__("shadow", "阴影", 'SHADOW', "Shadow")
+
+
+class RTEnvironmentChannel(RTBakeChannel):
+    def __init__(self):
+        super().__init__("environment", "环境", 'ENVIRONMENT', "Environment")
+
 
 RT_BAKE_CHANNELS = [
-    RTBakeChannel(
-        "direct",
-        "直出",
-        'COMBINED',
-        "Direct",
-        default_enabled=True,
-        pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
-    ),
-    RTBakeChannel("ao", "环境光遮蔽 (AO)", 'AO', "AO"),
-    RTBakeChannel("shadow", "阴影", 'SHADOW', "Shadow"),
-    RTBakeChannel("environment", "环境", 'ENVIRONMENT', "Environment"),
+    RTDirectChannel(),
+    RTAOChannel(),
+    RTShadowChannel(),
+    RTEnvironmentChannel(),
+    RTShadowCastChannel(),
 ]
 
 
@@ -76,6 +451,11 @@ RT_CYCLES_SAMPLING_SETTINGS = (
     'adaptive_min_samples',
 )
 
+RT_CYCLES_DENOISING_SWITCHES = (
+    'use_denoising',
+    'use_preview_denoising',
+)
+
 
 def update_margin_space(self, context):
     try:
@@ -90,6 +470,10 @@ def update_resolution(self, context):
         context.scene.render.bake.height = self.resolution
     except AttributeError:
         pass
+
+
+def poll_light_object(self, obj):
+    return obj is not None and obj.type == 'LIGHT'
 
 
 class PG_UVTools_RTBakeSettings(PropertyGroup):
@@ -138,6 +522,15 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     use_environment: BoolProperty(name="环境", default=False)  # type: ignore
     suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
     show_environment_settings: BoolProperty(name="环境设置", default=False)  # type: ignore
+    use_shadowcast: BoolProperty(name="ShadowCast", default=False)  # type: ignore
+    suffix_shadowcast: StringProperty(name="ShadowCast后缀", default="ShadowCast")  # type: ignore
+    show_shadowcast_settings: BoolProperty(name="ShadowCast设置", default=False)  # type: ignore
+    shadowcast_light: PointerProperty(
+        name="光源",
+        type=bpy.types.Object,
+        poll=poll_light_object,
+        description="指定单独Light;留空时使用所有启用的灯光"
+    )  # type: ignore
 
 
 def reg_props():
@@ -192,17 +585,9 @@ class OT_UVTools_RTBake(Operator):
             apply_rt_cycles_sampling(scene)
 
             for channel in bake_channels:
-                scene.cycles.bake_type = channel.bake_type
-                apply_rt_bake_view_from(context, channel.bake_type)
-
-                temp_targets = ensure_active_image_targets(context, channel.bake_type)
-                try:
-                    result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, channel))
-                    if result != {'FINISHED'}:
-                        return result
-                    save_baked_images(temp_targets, context, channel)
-                finally:
-                    restore_active_image_targets(temp_targets)
+                result = channel.execute(context, self)
+                if result != {'FINISHED'}:
+                    return result
         finally:
             scene.cycles.bake_type = original_bake_type
             restore_rt_cycles_sampling(scene, original_cycles_sampling)
@@ -235,7 +620,7 @@ def capture_rt_cycles_sampling(scene):
     cycles = scene.cycles
     return {
         attr: getattr(cycles, attr)
-        for attr in RT_CYCLES_SAMPLING_SETTINGS
+        for attr in RT_CYCLES_SAMPLING_SETTINGS + RT_CYCLES_DENOISING_SWITCHES
         if hasattr(cycles, attr)
     }
 
@@ -247,6 +632,9 @@ def apply_rt_cycles_sampling(scene):
     cycles.use_adaptive_sampling = rt_settings.use_adaptive_sampling
     cycles.adaptive_threshold = rt_settings.adaptive_threshold
     cycles.adaptive_min_samples = rt_settings.adaptive_min_samples
+    for attr in RT_CYCLES_DENOISING_SWITCHES:
+        if hasattr(cycles, attr):
+            setattr(cycles, attr, False)
 
 
 def restore_rt_cycles_sampling(scene, original_values):
