@@ -68,110 +68,33 @@ class RTBakeChannel:
         return
 
     def postprocess_saved_image(self, filepath, image_name, context, operator):
-        return filepath
+        return self.postprocess_oidn_denoise(filepath, image_name, context, operator)
 
-    def execute(self, context, operator):
-        prepare_result, prepare_state = self.prepare(context, operator)
-        if prepare_result != {'FINISHED'}:
-            return prepare_result
-
-        scene = context.scene
-        try:
-            scene.cycles.bake_type = self.bake_type
-            apply_rt_bake_view_from(context, self.bake_type)
-
-            temp_targets = ensure_active_image_targets(context, self.bake_type)
-            try:
-                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
-                if result == {'FINISHED'}:
-                    save_baked_images(temp_targets, context, self, operator)
-                return result
-            finally:
-                restore_active_image_targets(temp_targets)
-        finally:
-            self.restore(context, prepare_state)
-
-
-class RTShadowCastChannel(RTBakeChannel):
-    """
-    ShadowCast 仍然走 Cycles 的 bpy.ops.object.bake，不使用 CPU ray_cast。
-
-    工作流程：
-    1. bake_type 使用 COMBINED，并把 pass_filter 限制为 DIRECT + DIFFUSE。
-       这样只取直接漫射光，避免原材质里的复杂 BSDF、发光、光泽、透射等影响结果。
-    2. 如果指定了单独光源，就临时关闭其它 Light 的 render 可见性。
-       如果光源为空，就保留当前所有可渲染、可见的 Light。
-    3. 烘焙前只把当前选中网格的材质 Surface 临时改成
-       白色 Diffuse BSDF -> Material Output，保证 ShadowCast 只受灯光和几何遮挡影响。
-    4. 烘焙前把当前 Scene World 临时改成纯白 Background，Strength=1。
-    5. 因为 Blender 自带 padding 在降噪场景下会污染 UV 岛边缘，ShadowCast
-       不直接使用 UI 边距作为 Cycles bake margin，而是先使用一个隐性的极小
-       margin（当前约为分辨率 / 512，最小 1px）让 Cycles 只填基础邻域。
-    6. 后处理目标流程是：读取这个小 margin 结果 -> 按 UV 岛做无限膨胀 ->
-       喂给外部 OIDN 做图片降噪 -> 再按 UV 岛用用户 UI 里的边距值裁回最终输出。
-       这样 OIDN 看到的是连续扩展贴图，最终导出的 padding 仍然尊重 UI 设置。
-    7. Cycles bake 结束后，无论成功或失败，都会恢复灯光 hide_render、
-       World、原 Surface 链接、临时节点、节点 active/selection 状态和 material.use_nodes。
-
-    后续如果要做按物体/集合隔离、多次烘焙再合成，应继续放在这个类的
-    prepare/execute/restore 流程里，不要塞回主 operator。
-    """
-
-    def __init__(self):
-        super().__init__(
-            "shadowcast",
-            "ShadowCast",
-            'COMBINED',
-            "ShadowCast",
-            default_enabled=False,
-            pass_filter={'DIRECT', 'DIFFUSE'}
-        )
-
-    def draw_settings(self, layout, context):
-        super().draw_settings(layout, context)
-        rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        col = layout.column(align=True)
-        col.use_property_split = True
-        col.use_property_decorate = False
-        col.prop(rt_settings, "shadowcast_light", text="光源")
-        col.prop(rt_settings, "shadowcast_debug_output", text="输出调试贴图")
-
-    def get_bake_margin(self, context):
-        resolution = context.scene.ho_uvtools_rt_bake_settings.resolution
-        return max(1, int(round(resolution / SHADOWCAST_BLENDER_MARGIN_DIVISOR)))
-
-    def postprocess_saved_image(self, filepath, image_name, context, operator):
-        return self.postprocess_shadowcast_denoise(filepath, image_name, context, operator)
-
-    def postprocess_shadowcast_denoise(self, filepath, image_name, context, operator):
-        """
-        ShadowCast OIDN 后处理预留入口。
-
-        计划接口：
-        1. 从 filepath 读出 Cycles 的小 margin 烘焙图。
-        2. 使用当前选中对象的 UV 岛 mask 做无限膨胀，生成 OIDN 输入图。
-        3. 调用本地 pyoidn / OIDN，对膨胀后的图做 RT 降噪。
-        4. 使用用户 UI 里的 render.bake.margin 做 UV 膨胀裁回，再覆盖保存 filepath。
-        """
-        uv_padding_context = self.build_shadowcast_uv_padding_context(context, image_name)
+    def postprocess_oidn_denoise(self, filepath, image_name, context, operator):
+        uv_padding_context = self.build_oidn_padding_context(context, image_name)
         if uv_padding_context["debug_output"]:
             self.save_debug_image(filepath, "BLRaw", filepath)
-        oidn_input_path = self.expand_shadowcast_image_for_oidn(filepath, uv_padding_context)
+        oidn_input = self.expand_image_for_oidn(filepath, uv_padding_context)
         if uv_padding_context["debug_output"]:
-            self.save_debug_image(filepath, "InfinitePadding", oidn_input_path["array"])
-        denoised_path = self.denoise_shadowcast_image_with_oidn(oidn_input_path, filepath, operator)
-        return self.crop_shadowcast_image_to_user_margin(denoised_path, filepath, uv_padding_context, context)
+            self.save_debug_image(filepath, "InfinitePadding", oidn_input["array"])
+        if uv_padding_context["use_oidn_denoise"]:
+            denoised = self.denoise_image_with_oidn(oidn_input, uv_padding_context, operator)
+        else:
+            denoised = oidn_input
+        return self.crop_image_to_user_margin(denoised, filepath, uv_padding_context)
 
-    def build_shadowcast_uv_padding_context(self, context, image_name):
+    def build_oidn_padding_context(self, context, image_name):
         bake_settings = context.scene.render.bake
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         return {
             "objects": get_bake_target_objects(context),
-            "resolution": rt_settings.resolution,
             "cycles_margin": self.get_bake_margin(context),
             "output_margin": bake_settings.margin,
             "material_name": image_name if bake_settings.use_split_materials else None,
-            "debug_output": rt_settings.shadowcast_debug_output,
+            "debug_output": rt_settings.debug_output,
+            "use_oidn_denoise": rt_settings.use_oidn_denoise,
+            "oidn_quality": rt_settings.oidn_quality,
+            "oidn_filter_type": rt_settings.oidn_filter_type,
         }
 
     def get_debug_output_path(self, filepath, tag):
@@ -185,10 +108,10 @@ class RTShadowCastChannel(RTBakeChannel):
         if isinstance(image_data, str):
             Image.open(image_data).convert("RGBA").save(debug_path)
         else:
-            Image.fromarray(image_data).save(debug_path)
+            self.save_array_image(debug_path, image_data)
         return debug_path
 
-    def expand_shadowcast_image_for_oidn(self, filepath, uv_padding_context):
+    def expand_image_for_oidn(self, filepath, uv_padding_context):
         image = Image.open(filepath).convert("RGBA")
         arr = np.array(image, dtype=np.uint8)
         surface_mask = self.build_uv_mask(
@@ -210,41 +133,44 @@ class RTShadowCastChannel(RTBakeChannel):
             "seed_mask": seed_mask,
         }
 
-    def denoise_shadowcast_image_with_oidn(self, oidn_input_path, output_path, operator):
+    def denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
         if not is_oidn_available():
-            operator.report({'WARNING'}, "未找到 pyoidn，已跳过 ShadowCast OIDN 降噪")
-            return oidn_input_path
+            operator.report({'WARNING'}, "未找到 pyoidn，已跳过 OIDN 降噪")
+            return oidn_input
 
-        input_arr = oidn_input_path["array"]
+        input_arr = oidn_input["array"]
         color = np.ascontiguousarray(input_arr[:, :, :3].astype(np.float32) / 255.0)
         output = np.zeros_like(color, dtype=np.float32)
 
         with pyoidn.Device() as device:
             device.commit()
-            with pyoidn.Filter(device, pyoidn.OIDN_FILTER_TYPE_RT) as flt:
+            filter_type = get_oidn_filter_type(uv_padding_context["oidn_filter_type"])
+            with pyoidn.Filter(device, filter_type) as flt:
                 flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color, pyoidn.OIDN_FORMAT_FLOAT3)
                 flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, output, pyoidn.OIDN_FORMAT_FLOAT3)
-                if hasattr(pyoidn, "OIDN_QUALITY_HIGH"):
-                    flt.set_quality(pyoidn.OIDN_QUALITY_HIGH)
+                quality = get_oidn_quality(uv_padding_context["oidn_quality"])
+                if quality is not None:
+                    flt.set_quality(quality)
                 flt.commit()
                 flt.execute()
 
             error = device.get_error()
             if error is not None:
                 operator.report({'WARNING'}, f"OIDN降噪失败: {error}")
-                return oidn_input_path
+                return oidn_input
 
         denoised = input_arr.copy()
         denoised[:, :, :3] = np.clip(output * 255.0 + 0.5, 0, 255).astype(np.uint8)
         return {
             "array": denoised,
-            "mask": oidn_input_path["mask"],
+            "mask": oidn_input["mask"],
+            "seed_mask": oidn_input.get("seed_mask"),
         }
 
-    def crop_shadowcast_image_to_user_margin(self, denoised_path, output_path, uv_padding_context, context):
-        denoised = denoised_path["array"]
-        width = denoised.shape[1]
-        height = denoised.shape[0]
+    def crop_image_to_user_margin(self, denoised, output_path, uv_padding_context):
+        denoised_arr = denoised["array"]
+        width = denoised_arr.shape[1]
+        height = denoised_arr.shape[0]
         output_mask = self.build_uv_mask(
             uv_padding_context["objects"],
             width,
@@ -252,11 +178,18 @@ class RTShadowCastChannel(RTBakeChannel):
             material_name=uv_padding_context.get("material_name"),
             margin=uv_padding_context["output_margin"],
         )
-        output_arr = np.zeros_like(denoised)
-        output_arr[output_mask] = denoised[output_mask]
+        output_arr = np.zeros_like(denoised_arr)
+        output_arr[output_mask] = denoised_arr[output_mask]
         output_arr[output_mask, 3] = 255
-        Image.fromarray(output_arr).save(output_path)
+        self.save_array_image(output_path, output_arr)
         return output_path
+
+    def save_array_image(self, filepath, arr):
+        image = Image.fromarray(arr)
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext in {".jpg", ".jpeg", ".bmp"}:
+            image = image.convert("RGB")
+        image.save(filepath)
 
     def build_uv_mask(self, objects, width, height, material_name=None, margin=0):
         mask_img = Image.new("L", (width, height), 0)
@@ -388,6 +321,70 @@ class RTShadowCastChannel(RTBakeChannel):
         target_nearest_x[update] = cand_x[update]
         target_nearest_y[update] = cand_y[update]
         target_dist[update] = cand_dist[update]
+
+    def execute(self, context, operator):
+        prepare_result, prepare_state = self.prepare(context, operator)
+        if prepare_result != {'FINISHED'}:
+            return prepare_result
+
+        scene = context.scene
+        try:
+            scene.cycles.bake_type = self.bake_type
+            apply_rt_bake_view_from(context, self.bake_type)
+
+            temp_targets = ensure_active_image_targets(context, self.bake_type)
+            try:
+                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
+                if result == {'FINISHED'}:
+                    save_baked_images(temp_targets, context, self, operator)
+                return result
+            finally:
+                restore_active_image_targets(temp_targets)
+        finally:
+            self.restore(context, prepare_state)
+
+
+class RTShadowCastChannel(RTBakeChannel):
+    """
+    ShadowCast 走 Cycles bake，临时把选中物体材质改成白色 Diffuse、
+    世界改成纯白，并用可选灯光隔离得到可控直射阴影结果。
+    它使用隐藏小 margin 给 Blender 烘焙，后续统一走基类的 UV 无限
+    padding + OIDN + UI 边距裁回流程；结束后恢复灯光、世界和材质状态。
+    """
+
+    def __init__(self):
+        super().__init__(
+            "shadowcast",
+            "ShadowCast",
+            'COMBINED',
+            "ShadowCast",
+            default_enabled=False,
+            pass_filter={'DIRECT', 'DIFFUSE'}
+        )
+
+    def draw_settings(self, layout, context):
+        super().draw_settings(layout, context)
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(rt_settings, "shadowcast_light", text="光源")
+
+    def get_bake_margin(self, context):
+        resolution = context.scene.ho_uvtools_rt_bake_settings.resolution
+        return max(1, int(round(resolution / SHADOWCAST_BLENDER_MARGIN_DIVISOR)))
+
+    def build_oidn_padding_context(self, context, image_name):
+        bake_settings = context.scene.render.bake
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        return {
+            "objects": get_bake_target_objects(context),
+            "resolution": rt_settings.resolution,
+            "cycles_margin": self.get_bake_margin(context),
+            "output_margin": bake_settings.margin,
+            "material_name": image_name if bake_settings.use_split_materials else None,
+            "debug_output": rt_settings.debug_output,
+        }
 
     def prepare(self, context, operator):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
@@ -720,6 +717,17 @@ MARGIN_SPACE_ITEMS = [
     ('EXTEND', "UV空间相邻", "按UV图像空间向外拓展边距"),
 ]
 
+OIDN_QUALITY_ITEMS = [
+    ('FAST', "快速", "更快，细节稳定性较低"),
+    ('BALANCED', "均衡", "速度和质量折中"),
+    ('HIGH', "高质量", "质量最高，速度较慢"),
+]
+
+OIDN_FILTER_TYPE_ITEMS = [
+    ('RT', "RT", "通用渲染降噪"),
+    ('RT_LIGHTMAP', "Lightmap", "光照贴图降噪"),
+]
+
 
 NON_COLOR_BAKE_TYPES = {
     'AO',
@@ -739,7 +747,6 @@ RT_CYCLES_DENOISING_SWITCHES = (
     'use_preview_denoising',
 )
 
-OIDN_FILTER_TYPE = "RT"
 SHADOWCAST_BLENDER_MARGIN_DIVISOR = 512
 
 
@@ -760,6 +767,25 @@ def update_resolution(self, context):
 
 def poll_light_object(self, obj):
     return obj is not None and obj.type == 'LIGHT'
+
+
+def get_oidn_quality(quality):
+    if not is_oidn_available():
+        return None
+    return {
+        'FAST': getattr(pyoidn, "OIDN_QUALITY_FAST", None),
+        'BALANCED': getattr(pyoidn, "OIDN_QUALITY_BALANCED", None),
+        'HIGH': getattr(pyoidn, "OIDN_QUALITY_HIGH", None),
+    }.get(quality)
+
+
+def get_oidn_filter_type(filter_type):
+    if not is_oidn_available():
+        return "RT"
+    return {
+        'RT': getattr(pyoidn, "OIDN_FILTER_TYPE_RT", "RT"),
+        'RT_LIGHTMAP': getattr(pyoidn, "OIDN_FILTER_TYPE_RT_LIGHTMAP", "RTLightmap"),
+    }.get(filter_type, getattr(pyoidn, "OIDN_FILTER_TYPE_RT", "RT"))
 
 
 class PG_UVTools_RTBakeSettings(PropertyGroup):
@@ -795,6 +821,18 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         default=0,
         min=0
     )  # type: ignore
+    debug_output: BoolProperty(name="输出调试贴图", default=False)  # type: ignore
+    use_oidn_denoise: BoolProperty(name="OIDN降噪", default=True)  # type: ignore
+    oidn_quality: EnumProperty(
+        name="OIDN质量",
+        items=OIDN_QUALITY_ITEMS,
+        default='HIGH'
+    )  # type: ignore
+    oidn_filter_type: EnumProperty(
+        name="OIDN类型",
+        items=OIDN_FILTER_TYPE_ITEMS,
+        default='RT'
+    )  # type: ignore
 
     use_direct: BoolProperty(name="直出", default=True)  # type: ignore
     suffix_direct: StringProperty(name="直出后缀", default="Direct")  # type: ignore
@@ -811,7 +849,6 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     use_shadowcast: BoolProperty(name="ShadowCast", default=False)  # type: ignore
     suffix_shadowcast: StringProperty(name="ShadowCast后缀", default="ShadowCast")  # type: ignore
     show_shadowcast_settings: BoolProperty(name="ShadowCast设置", default=False)  # type: ignore
-    shadowcast_debug_output: BoolProperty(name="输出调试贴图", default=False)  # type: ignore
     shadowcast_light: PointerProperty(
         name="光源",
         type=bpy.types.Object,
@@ -1188,6 +1225,7 @@ def draw_rt_bake_output(layout: bpy.types.UILayout, context):
     col.prop(rt_settings, "resolution")
     col.prop(bake_settings.image_settings, "file_format", text="格式")
     col.prop(bake_settings, "use_split_materials", text="按材质分离")
+    col.prop(rt_settings, "debug_output")
 
     margin_col = box.column(align=True)
     margin_col.prop(rt_settings, "margin_space")
@@ -1208,6 +1246,13 @@ def draw_rt_bake_sampling(layout: bpy.types.UILayout, context):
     adaptive_col.enabled = rt_settings.use_adaptive_sampling
     adaptive_col.prop(rt_settings, "adaptive_threshold")
     adaptive_col.prop(rt_settings, "adaptive_min_samples")
+
+    oidn_col = box.column(align=True)
+    oidn_col.prop(rt_settings, "use_oidn_denoise")
+    oidn_settings_col = oidn_col.column(align=True)
+    oidn_settings_col.enabled = rt_settings.use_oidn_denoise
+    oidn_settings_col.prop(rt_settings, "oidn_quality")
+    oidn_settings_col.prop(rt_settings, "oidn_filter_type")
 
 
 def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
