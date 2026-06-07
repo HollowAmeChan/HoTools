@@ -28,6 +28,7 @@ BAKE_TYPES_WITHOUT_VIEW_FROM = {
 
 
 class RTBakeChannel:
+    # 子类主要覆盖下面这一组 hook；其余 `_` 方法是基类内部流程工具。
     def __init__(
         self,
         channel_id,
@@ -46,6 +47,8 @@ class RTBakeChannel:
         self.enabled_prop = f"use_{channel_id}"
         self.suffix_prop = f"suffix_{channel_id}"
         self.expand_prop = f"show_{channel_id}_settings"
+
+    # Overridable hooks
 
     def get_suffix(self, rt_settings):
         suffix = getattr(rt_settings, self.suffix_prop).strip()
@@ -67,22 +70,6 @@ class RTBakeChannel:
     def restore(self, context, prepare_state):
         return
 
-    def postprocess_saved_image(self, filepath, image_name, context, operator):
-        return self.postprocess_oidn_denoise(filepath, image_name, context, operator)
-
-    def postprocess_oidn_denoise(self, filepath, image_name, context, operator):
-        uv_padding_context = self.build_oidn_padding_context(context, image_name)
-        if uv_padding_context["debug_output"]:
-            self.save_debug_image(filepath, "BLRaw", filepath)
-        oidn_input = self.expand_image_for_oidn(filepath, uv_padding_context)
-        if uv_padding_context["debug_output"]:
-            self.save_debug_image(filepath, "InfinitePadding", oidn_input["array"])
-        if uv_padding_context["use_oidn_denoise"]:
-            denoised = self.denoise_image_with_oidn(oidn_input, uv_padding_context, operator)
-        else:
-            denoised = oidn_input
-        return self.crop_image_to_user_margin(denoised, filepath, uv_padding_context)
-
     def build_oidn_padding_context(self, context, image_name):
         bake_settings = context.scene.render.bake
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
@@ -94,38 +81,79 @@ class RTBakeChannel:
             "debug_output": rt_settings.debug_output,
             "use_oidn_denoise": rt_settings.use_oidn_denoise,
             "oidn_quality": rt_settings.oidn_quality,
-            "oidn_filter_type": rt_settings.oidn_filter_type,
+            "oidn_hdr": rt_settings.oidn_hdr,
         }
 
-    def get_debug_output_path(self, filepath, tag):
+    def postprocess_saved_image(self, filepath, image_name, context, operator):
+        return self._postprocess_oidn_denoise(filepath, image_name, context, operator)
+
+    # Execution template
+
+    def execute(self, context, operator):
+        prepare_result, prepare_state = self.prepare(context, operator)
+        if prepare_result != {'FINISHED'}:
+            return prepare_result
+
+        scene = context.scene
+        try:
+            scene.cycles.bake_type = self.bake_type
+            apply_rt_bake_view_from(context, self.bake_type)
+
+            temp_targets = ensure_active_image_targets(context, self.bake_type)
+            try:
+                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
+                if result == {'FINISHED'}:
+                    save_baked_images(temp_targets, context, self, operator)
+                return result
+            finally:
+                restore_active_image_targets(temp_targets)
+        finally:
+            self.restore(context, prepare_state)
+
+    # Internal postprocess helpers
+
+    def _postprocess_oidn_denoise(self, filepath, image_name, context, operator):
+        uv_padding_context = self.build_oidn_padding_context(context, image_name)
+        if uv_padding_context["debug_output"]:
+            self._save_debug_image(filepath, "BLRaw", filepath)
+        oidn_input = self._expand_image_for_oidn(filepath, uv_padding_context)
+        if uv_padding_context["debug_output"]:
+            self._save_debug_image(filepath, "InfinitePadding", oidn_input["array"])
+        if uv_padding_context["use_oidn_denoise"]:
+            denoised = self._denoise_image_with_oidn(oidn_input, uv_padding_context, operator)
+        else:
+            denoised = oidn_input
+        return self._crop_image_to_user_margin(denoised, filepath, uv_padding_context)
+
+    def _get_debug_output_path(self, filepath, tag):
         stem, ext = os.path.splitext(filepath)
         if not ext:
             ext = ".png"
         return f"{stem}_{tag}{ext}"
 
-    def save_debug_image(self, source_filepath, tag, image_data):
-        debug_path = self.get_debug_output_path(source_filepath, tag)
+    def _save_debug_image(self, source_filepath, tag, image_data):
+        debug_path = self._get_debug_output_path(source_filepath, tag)
         if isinstance(image_data, str):
             Image.open(image_data).convert("RGBA").save(debug_path)
         else:
-            self.save_array_image(debug_path, image_data)
+            self._save_array_image(debug_path, image_data)
         return debug_path
 
-    def expand_image_for_oidn(self, filepath, uv_padding_context):
+    def _expand_image_for_oidn(self, filepath, uv_padding_context):
         image = Image.open(filepath).convert("RGBA")
         arr = np.array(image, dtype=np.uint8)
-        surface_mask = self.build_uv_mask(
+        surface_mask = self._build_uv_mask(
             uv_padding_context["objects"],
             arr.shape[1],
             arr.shape[0],
             material_name=uv_padding_context.get("material_name"),
             margin=0,
         )
-        seed_mask = self.build_uv_edge_seed_mask(
+        seed_mask = self._build_uv_edge_seed_mask(
             surface_mask,
             uv_padding_context["cycles_margin"],
         )
-        expanded = self.expand_image_to_mask(arr, seed_mask)
+        expanded = self._expand_image_to_mask(arr, seed_mask)
         expanded[surface_mask] = arr[surface_mask]
         return {
             "array": expanded,
@@ -133,7 +161,7 @@ class RTBakeChannel:
             "seed_mask": seed_mask,
         }
 
-    def denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
+    def _denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
         if not is_oidn_available():
             operator.report({'WARNING'}, "未找到 pyoidn，已跳过 OIDN 降噪")
             return oidn_input
@@ -144,8 +172,8 @@ class RTBakeChannel:
 
         with pyoidn.Device() as device:
             device.commit()
-            filter_type = get_oidn_filter_type(uv_padding_context["oidn_filter_type"])
-            with pyoidn.Filter(device, filter_type) as flt:
+            with pyoidn.Filter(device, getattr(pyoidn, "OIDN_FILTER_TYPE_RT", "RT")) as flt:
+                flt.set_bool("hdr", uv_padding_context["oidn_hdr"])
                 flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color, pyoidn.OIDN_FORMAT_FLOAT3)
                 flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, output, pyoidn.OIDN_FORMAT_FLOAT3)
                 quality = get_oidn_quality(uv_padding_context["oidn_quality"])
@@ -167,11 +195,11 @@ class RTBakeChannel:
             "seed_mask": oidn_input.get("seed_mask"),
         }
 
-    def crop_image_to_user_margin(self, denoised, output_path, uv_padding_context):
+    def _crop_image_to_user_margin(self, denoised, output_path, uv_padding_context):
         denoised_arr = denoised["array"]
         width = denoised_arr.shape[1]
         height = denoised_arr.shape[0]
-        output_mask = self.build_uv_mask(
+        output_mask = self._build_uv_mask(
             uv_padding_context["objects"],
             width,
             height,
@@ -181,17 +209,19 @@ class RTBakeChannel:
         output_arr = np.zeros_like(denoised_arr)
         output_arr[output_mask] = denoised_arr[output_mask]
         output_arr[output_mask, 3] = 255
-        self.save_array_image(output_path, output_arr)
+        self._save_array_image(output_path, output_arr)
         return output_path
 
-    def save_array_image(self, filepath, arr):
+    def _save_array_image(self, filepath, arr):
         image = Image.fromarray(arr)
         ext = os.path.splitext(filepath)[1].lower()
         if ext in {".jpg", ".jpeg", ".bmp"}:
             image = image.convert("RGB")
         image.save(filepath)
 
-    def build_uv_mask(self, objects, width, height, material_name=None, margin=0):
+    # Internal UV padding helpers
+
+    def _build_uv_mask(self, objects, width, height, material_name=None, margin=0):
         mask_img = Image.new("L", (width, height), 0)
         draw = ImageDraw.Draw(mask_img)
 
@@ -222,10 +252,10 @@ class RTBakeChannel:
 
         mask = np.array(mask_img, dtype=np.uint8) > 0
         if margin > 0:
-            mask = self.dilate_mask(mask, margin)
+            mask = self._dilate_mask(mask, margin)
         return mask
 
-    def dilate_mask(self, mask, radius):
+    def _dilate_mask(self, mask, radius):
         if radius <= 0 or not mask.any():
             return mask
 
@@ -239,18 +269,18 @@ class RTBakeChannel:
             )
         return result
 
-    def build_uv_edge_seed_mask(self, surface_mask, radius):
+    def _build_uv_edge_seed_mask(self, surface_mask, radius):
         if not surface_mask.any():
             return surface_mask
 
         boundary_radius = max(1, radius)
-        outside_reach = self.dilate_mask(~surface_mask, boundary_radius)
+        outside_reach = self._dilate_mask(~surface_mask, boundary_radius)
         seed_mask = surface_mask & outside_reach
         if seed_mask.any():
             return seed_mask
         return surface_mask
 
-    def expand_image_to_mask(self, arr, seed_mask):
+    def _expand_image_to_mask(self, arr, seed_mask):
         valid = seed_mask
         if not valid.any():
             return arr
@@ -269,7 +299,7 @@ class RTBakeChannel:
                 (0, -step),                 (0, step),
                 (step, -step),  (step, 0),  (step, step),
             ):
-                self.relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
+                self._relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
             step *= 2
 
         step //= 2
@@ -279,7 +309,7 @@ class RTBakeChannel:
                 (0, -step),                 (0, step),
                 (step, -step),  (step, 0),  (step, step),
             ):
-                self.relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
+                self._relax_nearest_seed(nearest_x, nearest_y, distance, xx, yy, dx, dy)
             step //= 2
 
         expanded = arr.copy()
@@ -288,7 +318,7 @@ class RTBakeChannel:
         expanded[:, :, 3] = 255
         return expanded
 
-    def relax_nearest_seed(self, nearest_x, nearest_y, distance, xx, yy, dx, dy):
+    def _relax_nearest_seed(self, nearest_x, nearest_y, distance, xx, yy, dx, dy):
         height, width = nearest_x.shape
         src_y0 = max(0, -dy)
         src_y1 = min(height, height - dy)
@@ -321,27 +351,6 @@ class RTBakeChannel:
         target_nearest_x[update] = cand_x[update]
         target_nearest_y[update] = cand_y[update]
         target_dist[update] = cand_dist[update]
-
-    def execute(self, context, operator):
-        prepare_result, prepare_state = self.prepare(context, operator)
-        if prepare_result != {'FINISHED'}:
-            return prepare_result
-
-        scene = context.scene
-        try:
-            scene.cycles.bake_type = self.bake_type
-            apply_rt_bake_view_from(context, self.bake_type)
-
-            temp_targets = ensure_active_image_targets(context, self.bake_type)
-            try:
-                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
-                if result == {'FINISHED'}:
-                    save_baked_images(temp_targets, context, self, operator)
-                return result
-            finally:
-                restore_active_image_targets(temp_targets)
-        finally:
-            self.restore(context, prepare_state)
 
 
 class RTShadowCastChannel(RTBakeChannel):
@@ -384,6 +393,9 @@ class RTShadowCastChannel(RTBakeChannel):
             "output_margin": bake_settings.margin,
             "material_name": image_name if bake_settings.use_split_materials else None,
             "debug_output": rt_settings.debug_output,
+            "use_oidn_denoise": rt_settings.use_oidn_denoise,
+            "oidn_quality": rt_settings.oidn_quality,
+            "oidn_hdr": rt_settings.oidn_hdr,
         }
 
     def prepare(self, context, operator):
@@ -723,11 +735,6 @@ OIDN_QUALITY_ITEMS = [
     ('HIGH', "高质量", "质量最高，速度较慢"),
 ]
 
-OIDN_FILTER_TYPE_ITEMS = [
-    ('RT', "RT", "通用渲染降噪"),
-    ('RT_LIGHTMAP', "Lightmap", "光照贴图降噪"),
-]
-
 
 NON_COLOR_BAKE_TYPES = {
     'AO',
@@ -779,15 +786,6 @@ def get_oidn_quality(quality):
     }.get(quality)
 
 
-def get_oidn_filter_type(filter_type):
-    if not is_oidn_available():
-        return "RT"
-    return {
-        'RT': getattr(pyoidn, "OIDN_FILTER_TYPE_RT", "RT"),
-        'RT_LIGHTMAP': getattr(pyoidn, "OIDN_FILTER_TYPE_RT_LIGHTMAP", "RTLightmap"),
-    }.get(filter_type, getattr(pyoidn, "OIDN_FILTER_TYPE_RT", "RT"))
-
-
 class PG_UVTools_RTBakeSettings(PropertyGroup):
     margin_space: EnumProperty(
         name="拓展",
@@ -828,11 +826,7 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         items=OIDN_QUALITY_ITEMS,
         default='HIGH'
     )  # type: ignore
-    oidn_filter_type: EnumProperty(
-        name="OIDN类型",
-        items=OIDN_FILTER_TYPE_ITEMS,
-        default='RT'
-    )  # type: ignore
+    oidn_hdr: BoolProperty(name="HDR", default=False)  # type: ignore
 
     use_direct: BoolProperty(name="直出", default=True)  # type: ignore
     suffix_direct: StringProperty(name="直出后缀", default="Direct")  # type: ignore
@@ -1252,7 +1246,7 @@ def draw_rt_bake_sampling(layout: bpy.types.UILayout, context):
     oidn_settings_col = oidn_col.column(align=True)
     oidn_settings_col.enabled = rt_settings.use_oidn_denoise
     oidn_settings_col.prop(rt_settings, "oidn_quality")
-    oidn_settings_col.prop(rt_settings, "oidn_filter_type")
+    oidn_settings_col.prop(rt_settings, "oidn_hdr")
 
 
 def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
