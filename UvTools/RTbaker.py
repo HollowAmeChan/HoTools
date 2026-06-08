@@ -23,7 +23,6 @@ else:
 
 BAKE_TYPES_WITHOUT_VIEW_FROM = {
     'AO',
-    'ENVIRONMENT',
 }
 
 
@@ -947,7 +946,7 @@ class RTAOChannel(RTShadowCastChannel):
             pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
         )
 
-    def draw_settings(self, layout, context):
+    def draw_settings(self, layout:bpy.types.UILayout, context):
         RTBakeChannel.draw_settings(self, layout, context)
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         col = layout.column(align=True)
@@ -1000,21 +999,9 @@ class RTAOChannel(RTShadowCastChannel):
         return state
 
 
-class RTShadowChannel(RTBakeChannel):
-    def __init__(self):
-        super().__init__("shadow", "阴影", 'SHADOW', "Shadow")
-
-
-class RTEnvironmentChannel(RTBakeChannel):
-    def __init__(self):
-        super().__init__("environment", "环境", 'ENVIRONMENT', "Environment")
-
-
 RT_BAKE_CHANNELS = [
     RTDirectChannel(),
     RTAOChannel(),
-    RTShadowChannel(),
-    RTEnvironmentChannel(),
     RTShadowCastChannel(),
 ]
 
@@ -1033,7 +1020,6 @@ OIDN_QUALITY_ITEMS = [
 
 NON_COLOR_BAKE_TYPES = {
     'AO',
-    'SHADOW',
 }
 
 
@@ -1136,12 +1122,6 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         min=0.0,
         precision=3
     )  # type: ignore
-    use_shadow: BoolProperty(name="阴影", default=False)  # type: ignore
-    suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
-    show_shadow_settings: BoolProperty(name="阴影设置", default=False)  # type: ignore
-    use_environment: BoolProperty(name="环境", default=False)  # type: ignore
-    suffix_environment: StringProperty(name="环境后缀", default="Environment")  # type: ignore
-    show_environment_settings: BoolProperty(name="环境设置", default=False)  # type: ignore
     use_shadowcast: BoolProperty(name="ShadowCast", default=False)  # type: ignore
     suffix_shadowcast: StringProperty(name="ShadowCast后缀", default="ShadowCast")  # type: ignore
     show_shadowcast_settings: BoolProperty(name="ShadowCast设置", default=False)  # type: ignore
