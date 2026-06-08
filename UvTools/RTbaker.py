@@ -33,8 +33,59 @@ BAKE_TYPES_WITHOUT_VIEW_FROM = {
     'AO',
 }
 
+MARGIN_SPACE_ITEMS = [
+    ('ADJACENT_FACES', "3D空间相邻", "按模型表面相邻关系拓展边距"),
+    ('EXTEND', "UV空间相邻", "按UV图像空间向外拓展边距"),
+]
 
-def poll_mesh_object(self, obj):
+OIDN_QUALITY_ITEMS = [
+    ('FAST', "快速", "更快，细节稳定性较低"),
+    ('BALANCED', "均衡", "速度和质量折中"),
+    ('HIGH', "高质量", "质量最高，速度较慢"),
+]
+
+NON_COLOR_BAKE_TYPES = {
+    'AO',
+}
+
+RT_CYCLES_SAMPLING_SETTINGS = (
+    'samples',
+    'use_adaptive_sampling',
+    'adaptive_threshold',
+    'adaptive_min_samples',
+)
+
+RT_CYCLES_DENOISING_SWITCHES = (
+    'use_denoising',
+    'use_preview_denoising',
+)
+
+IMAGE_FORMAT_EXTENSIONS = {
+    'BMP': ".bmp",
+    'IRIS': ".rgb",
+    'PNG': ".png",
+    'JPEG': ".jpg",
+    'JPEG2000': ".jp2",
+    'TARGA': ".tga",
+    'TARGA_RAW': ".tga",
+    'CINEON': ".cin",
+    'DPX': ".dpx",
+    'OPEN_EXR_MULTILAYER': ".exr",
+    'OPEN_EXR': ".exr",
+    'HDR': ".hdr",
+    'TIFF': ".tif",
+    'WEBP': ".webp",
+}
+
+SHADOWCAST_BLENDER_MARGIN_DIVISOR = 512
+
+TARGET_MOVE_ITEMS = [
+    ('UP', "上移", ""),
+    ('DOWN', "下移", ""),
+]
+
+
+def _poll_mesh_object(self, obj):
     return obj is not None and obj.type == 'MESH'
 
 
@@ -42,7 +93,7 @@ class PG_UVTools_RTBakeTargetItem(PropertyGroup):
     object: PointerProperty(
         name="物体",
         type=bpy.types.Object,
-        poll=poll_mesh_object
+        poll=_poll_mesh_object
     )  # type: ignore
 
 
@@ -85,7 +136,19 @@ class HO_UL_RTBakeGroupObjectList(UIList):
 
 
 class RTBakeChannel:
-    # 子类主要覆盖下面这一组 hook；其余 `_` 方法是基类内部流程工具。
+    """
+    RT 烘焙通道基类。
+
+    基类负责所有通道都必须一致的流程：切到 Object 模式、按 MeshGroup
+    临时选择并隔离物体、为所有目标材质挂活动 Image Texture、调用
+    `bpy.ops.object.bake`、保存最终图片、恢复选择/模式/材质节点状态，
+    以及统一执行 UV padding 和 OIDN 后处理。
+
+    子类只应该覆盖上方的 hook：烘焙类型、pass_filter、UI 设置、临时
+    环境/材质 prepare 和 restore。带 `_` 的方法是基类流程工具，不推荐
+    子类直接调用或覆盖，除非是在扩展新的通道执行模式。
+    """
+
     def __init__(
         self,
         channel_id,
@@ -105,7 +168,8 @@ class RTBakeChannel:
         self.suffix_prop = f"suffix_{channel_id}"
         self.expand_prop = f"show_{channel_id}_settings"
 
-    # Overridable hooks
+    # ------------------------------------------------------------------
+    # 子类覆盖点
 
     def get_suffix(self, rt_settings):
         suffix = getattr(rt_settings, self.suffix_prop).strip()
@@ -140,7 +204,7 @@ class RTBakeChannel:
         bake_settings = context.scene.render.bake
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         return {
-            "objects": get_bake_target_objects(context),
+            "objects": _get_bake_target_objects(context),
             "cycles_margin": self.get_bake_margin(context),
             "output_margin": bake_settings.margin,
             "material_name": image_name if bake_settings.use_split_materials else None,
@@ -153,7 +217,8 @@ class RTBakeChannel:
     def postprocess_saved_image(self, filepath, image_name, context, operator):
         return self._postprocess_oidn_denoise(filepath, image_name, context, operator)
 
-    # Execution template
+    # ------------------------------------------------------------------
+    # 主执行流程
 
     def execute(self, context, operator):
         mode_state = self._switch_to_object_mode(context)
@@ -161,23 +226,23 @@ class RTBakeChannel:
         try:
             scene = context.scene
             scene.cycles.bake_type = self.bake_type
-            apply_rt_bake_view_from(context, self)
+            self._apply_bake_view_from(context)
 
-            bake_contexts = get_bake_target_group_contexts(context)
+            bake_contexts = _get_bake_target_group_contexts(context)
             if not bake_contexts:
                 operator.report({'ERROR'}, "请先在MeshGroup中添加至少一个网格物体")
                 return {'CANCELLED'}
 
-            temp_targets = ensure_active_image_targets(context, self)
+            temp_targets = self._ensure_active_image_targets(context)
             try:
                 for bake_context in bake_contexts:
                     result = self._execute_group(context, operator, bake_context)
                     if result != {'FINISHED'}:
                         return result
-                save_baked_images(temp_targets, context, self, operator)
+                self._save_baked_images(temp_targets, context, operator)
                 return {'FINISHED'}
             finally:
-                restore_active_image_targets(temp_targets)
+                self._restore_active_image_targets(temp_targets)
         finally:
             self._restore_mode(context, mode_state)
 
@@ -195,12 +260,51 @@ class RTBakeChannel:
                 return prepare_result
             is_prepared = True
 
-            return bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
+            return bpy.ops.object.bake(**self._get_bake_operator_args(context))
         finally:
             if is_prepared:
                 self.restore(context, prepare_state, bake_context)
             self._restore_render_visibility(visibility_state)
             self._restore_selection(context, selection_state)
+
+    # ------------------------------------------------------------------
+    # bpy.ops.object.bake 参数与视角
+
+    def _apply_bake_view_from(self, context):
+        scene = context.scene
+        bake_settings = scene.render.bake
+        if not self.use_active_camera_view(context):
+            bake_settings.view_from = 'ABOVE_SURFACE'
+            return
+
+        if scene.camera is not None:
+            bake_settings.view_from = 'ACTIVE_CAMERA'
+
+    def _get_bake_operator_args(self, context):
+        bake_settings = context.scene.render.bake
+        args = {
+            "type": self.bake_type,
+            "filepath": bpy.path.abspath(bake_settings.filepath),
+            "width": bake_settings.width,
+            "height": bake_settings.height,
+            "margin": self.get_bake_margin(context),
+            "margin_type": bake_settings.margin_type,
+            "use_selected_to_active": False,
+            "target": 'IMAGE_TEXTURES',
+            "save_mode": 'EXTERNAL',
+            "use_clear": False,
+            "use_cage": False,
+            "use_split_materials": bake_settings.use_split_materials,
+            "use_automatic_name": False,
+        }
+
+        if self.pass_filter is not None:
+            args["pass_filter"] = set(self.pass_filter)
+
+        return args
+
+    # ------------------------------------------------------------------
+    # Blender 模式、选择和渲染可见性保护
 
     def _switch_to_object_mode(self, context):
         active_obj = context.view_layer.objects.active
@@ -321,7 +425,168 @@ class RTBakeChannel:
                 continue
             obj.hide_render = hide_render
 
-    # Internal postprocess helpers
+    # ------------------------------------------------------------------
+    # 活动 Image Texture 目标管理
+
+    def _ensure_active_image_targets(self, context):
+        scene = context.scene
+        bake_settings = scene.render.bake
+        shared_image = None
+        shared_name = "Bake"
+        image_by_material = {}
+        targets = []
+
+        for obj in _get_bake_target_objects(context):
+            if not obj.material_slots:
+                continue
+
+            for slot in obj.material_slots:
+                mat = slot.material
+                if mat is None:
+                    continue
+
+                original_use_nodes = mat.use_nodes
+                mat.use_nodes = True
+                node_tree = mat.node_tree
+                nodes = node_tree.nodes
+                original_active = nodes.active
+                selected_nodes = [node for node in nodes if node.select]
+
+                if bake_settings.use_split_materials:
+                    image_key = mat.name
+                    image = image_by_material.get(image_key)
+                    if image is None:
+                        image = bpy.data.images.new(
+                            f"HoRTBake_{mat.name}",
+                            bake_settings.width,
+                            bake_settings.height,
+                            alpha=True
+                        )
+                        self._set_image_color_space(image)
+                        image_by_material[image_key] = image
+                else:
+                    if shared_image is None:
+                        shared_image = bpy.data.images.new(
+                            "HoRTBake_Merged",
+                            bake_settings.width,
+                            bake_settings.height,
+                            alpha=True
+                        )
+                        self._set_image_color_space(shared_image)
+                    image = shared_image
+
+                node = nodes.new(type='ShaderNodeTexImage')
+                node.name = "HoRTBake_Target"
+                node.label = "HoRTBake Target"
+                node.image = image
+
+                for selected_node in selected_nodes:
+                    selected_node.select = False
+                node.select = True
+                nodes.active = node
+
+                targets.append({
+                    "material": mat,
+                    "original_use_nodes": original_use_nodes,
+                    "original_active": original_active,
+                    "selected_nodes": selected_nodes,
+                    "node": node,
+                    "image": image,
+                    "image_name": mat.name if bake_settings.use_split_materials else shared_name,
+                })
+
+        return targets
+
+    def _save_baked_images(self, targets, context, operator):
+        bake_settings = context.scene.render.bake
+        image_settings = bake_settings.image_settings
+
+        seen = set()
+        for target in targets:
+            image = target["image"]
+            if image.name in seen:
+                continue
+            seen.add(image.name)
+
+            image_name = target["image_name"]
+            filepath = self._get_bake_output_path(bake_settings.filepath, image_name, context)
+            directory = os.path.dirname(filepath)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+
+            image.filepath_raw = filepath
+            image.file_format = image_settings.file_format
+            image.save()
+            self.postprocess_saved_image(filepath, image_name, context, operator)
+
+    def _restore_active_image_targets(self, targets):
+        images = []
+        for target in reversed(targets):
+            mat = target["material"]
+            node_tree = mat.node_tree
+            if node_tree is None:
+                continue
+
+            nodes = node_tree.nodes
+            node = target["node"]
+            if node.name in nodes:
+                nodes.remove(node)
+
+            for selected_node in target["selected_nodes"]:
+                if selected_node.name in nodes:
+                    selected_node.select = True
+
+            original_active = target["original_active"]
+            if original_active is not None and original_active.name in nodes:
+                nodes.active = original_active
+
+            mat.use_nodes = target["original_use_nodes"]
+
+            image = target["image"]
+            if image not in images:
+                images.append(image)
+
+        for image in images:
+            if image.name in bpy.data.images and image.users == 0:
+                bpy.data.images.remove(image)
+
+    def _get_bake_output_path(self, base_filepath, image_name, context):
+        bake_settings = context.scene.render.bake
+        image_settings = bake_settings.image_settings
+        filepath = bpy.path.abspath(base_filepath)
+        directory, filename = os.path.split(filepath)
+        stem, ext = os.path.splitext(filename)
+        if not ext:
+            ext = IMAGE_FORMAT_EXTENSIONS.get(image_settings.file_format, ".png")
+        if not stem:
+            stem = "Bake"
+
+        suffix_parts = [
+            self._clean_filename_part(
+                self.get_suffix(context.scene.ho_uvtools_rt_bake_settings)
+            )
+        ]
+        if bake_settings.use_split_materials:
+            suffix_parts.append(self._clean_filename_part(image_name))
+
+        if suffix_parts:
+            stem = stem + "_" + "_".join(suffix_parts)
+
+        return os.path.join(directory, stem + ext)
+
+    def _set_image_color_space(self, image):
+        if not self.is_non_color_output():
+            return
+        try:
+            image.colorspace_settings.name = 'Non-Color'
+        except TypeError:
+            pass
+
+    def _clean_filename_part(self, name):
+        return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
+
+    # ------------------------------------------------------------------
+    # 输出图片后处理
 
     def _postprocess_oidn_denoise(self, filepath, image_name, context, operator):
         uv_padding_context = self.build_oidn_padding_context(context, image_name)
@@ -373,7 +638,7 @@ class RTBakeChannel:
         }
 
     def _denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
-        if not is_oidn_available():
+        if pyoidn is None:
             operator.report({'WARNING'}, "未找到 pyoidn，已跳过 OIDN 降噪")
             return oidn_input
 
@@ -387,7 +652,7 @@ class RTBakeChannel:
                 flt.set_bool("hdr", uv_padding_context["oidn_hdr"])
                 flt.set_image(pyoidn.OIDN_IMAGE_COLOR, color, pyoidn.OIDN_FORMAT_FLOAT3)
                 flt.set_image(pyoidn.OIDN_IMAGE_OUTPUT, output, pyoidn.OIDN_FORMAT_FLOAT3)
-                quality = get_oidn_quality(uv_padding_context["oidn_quality"])
+                quality = self._get_oidn_quality(uv_padding_context["oidn_quality"])
                 if quality is not None:
                     flt.set_quality(quality)
                 flt.commit()
@@ -405,6 +670,15 @@ class RTBakeChannel:
             "mask": oidn_input["mask"],
             "seed_mask": oidn_input.get("seed_mask"),
         }
+
+    def _get_oidn_quality(self, quality):
+        if pyoidn is None:
+            return None
+        return {
+            'FAST': getattr(pyoidn, "OIDN_QUALITY_FAST", None),
+            'BALANCED': getattr(pyoidn, "OIDN_QUALITY_BALANCED", None),
+            'HIGH': getattr(pyoidn, "OIDN_QUALITY_HIGH", None),
+        }.get(quality)
 
     def _crop_image_to_user_margin(self, denoised, output_path, uv_padding_context):
         denoised_arr = denoised["array"]
@@ -430,7 +704,8 @@ class RTBakeChannel:
             image = image.convert("RGB")
         image.save(filepath)
 
-    # Internal UV padding helpers
+    # ------------------------------------------------------------------
+    # UV mask、无限 padding 和边距裁切
 
     def _build_uv_mask(self, objects, width, height, material_name=None, margin=0):
         mask_img = Image.new("L", (width, height), 0)
@@ -569,10 +844,23 @@ class RTBakeChannel:
 
 class RTShadowCastChannel(RTBakeChannel):
     """
-    ShadowCast 走 Cycles bake，临时把选中物体材质改成白色 Diffuse、
-    世界改成纯白，并用可选灯光隔离得到可控直射阴影结果。
-    它使用隐藏小 margin 给 Blender 烘焙，后续统一走基类的 UV 无限
-    padding + OIDN + UI 边距裁回流程；结束后恢复灯光、世界和材质状态。
+    ShadowCast 通道工作原理。
+
+    这个通道不走 Blender 内置 SHADOW bake。内置 SHADOW 的可控性较低，
+    对 padding 和后处理也不友好。这里改用 Cycles COMBINED bake，但只
+    打开 DIRECT + DIFFUSE pass，让结果尽量接近“直接漫反射阴影”。
+
+    基类会按 MeshGroup 临时隔离物体并逐组调用 bake；这些 group 不会
+    参与输出命名，也不会输出多张贴图，而是连续写入同一张通道目标图。
+    本通道在每个 group bake 前额外做三类临时替换：
+    1. 灯光：指定单独灯光时只保留该灯，未指定时使用所有启用灯光。
+    2. 材质：把目标材质输出临时替换成白色 Diffuse BSDF，并尝试沿原
+       输出 shader 链路找到 Normal 输入接到临时 Diffuse，保留法线影响。
+    3. 世界：把 World 临时改为纯白背景、强度 1，避免环境颜色污染阴影。
+
+    bake 完成后恢复灯光 hide_render、World 节点、材质输出链接、节点选择
+    和活动节点。输出图片继续走基类的隐藏小 margin、UV 无限 padding、
+    OIDN 降噪和 UI 边距裁切流程。
     """
 
     def __init__(self):
@@ -584,6 +872,9 @@ class RTShadowCastChannel(RTBakeChannel):
             default_enabled=False,
             pass_filter={'DIRECT', 'DIFFUSE'}
         )
+
+    # ------------------------------------------------------------------
+    # 通道 hook
 
     def draw_settings(self, layout, context):
         super().draw_settings(layout, context)
@@ -601,7 +892,7 @@ class RTShadowCastChannel(RTBakeChannel):
         bake_settings = context.scene.render.bake
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         return {
-            "objects": get_bake_target_objects(context),
+            "objects": _get_bake_target_objects(context),
             "resolution": rt_settings.resolution,
             "cycles_margin": self.get_bake_margin(context),
             "output_margin": bake_settings.margin,
@@ -614,7 +905,7 @@ class RTShadowCastChannel(RTBakeChannel):
 
     def prepare(self, context, operator, bake_context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        lights = self.get_lights(context, rt_settings.shadowcast_light)
+        lights = self._get_lights(context, rt_settings.shadowcast_light)
         if not lights:
             operator.report({'ERROR'}, "没有可用于 ShadowCast 的灯光")
             return {'CANCELLED'}, None
@@ -624,9 +915,9 @@ class RTShadowCastChannel(RTBakeChannel):
             operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
             return {'CANCELLED'}, None
 
-        light_state = self.isolate_lights(context, lights)
-        world_state = self.override_world_with_white_background(context.scene)
-        material_state = self.override_objects_with_diffuse_bsdf(selected_objs)
+        light_state = self._isolate_lights(context, lights)
+        world_state = self._override_world_with_white_background(context.scene)
+        material_state = self._override_objects_with_diffuse_bsdf(selected_objs)
         return {'FINISHED'}, {
             "lights": light_state,
             "world": world_state,
@@ -636,11 +927,14 @@ class RTShadowCastChannel(RTBakeChannel):
     def restore(self, context, prepare_state, bake_context):
         if prepare_state is None:
             return
-        self.restore_material_overrides(prepare_state.get("materials", []))
-        self.restore_world(prepare_state.get("world"))
-        self.restore_render_visibility(prepare_state.get("lights", []))
+        self._restore_material_overrides(prepare_state.get("materials", []))
+        self._restore_world(prepare_state.get("world"))
+        self._restore_render_visibility(prepare_state.get("lights", []))
 
-    def get_lights(self, context, specified_light):
+    # ------------------------------------------------------------------
+    # 灯光和 World 临时环境
+
+    def _get_lights(self, context, specified_light):
         if specified_light is not None and specified_light.type == 'LIGHT':
             return [specified_light]
 
@@ -657,7 +951,7 @@ class RTShadowCastChannel(RTBakeChannel):
             lights.append(obj)
         return lights
 
-    def isolate_lights(self, context, enabled_lights):
+    def _isolate_lights(self, context, enabled_lights):
         enabled_lights = set(enabled_lights)
         state = []
         for obj in context.scene.objects:
@@ -667,11 +961,7 @@ class RTShadowCastChannel(RTBakeChannel):
             obj.hide_render = obj not in enabled_lights
         return state
 
-    def restore_render_visibility(self, state):
-        for obj, hide_render in state:
-            obj.hide_render = hide_render
-
-    def override_world_with_white_background(self, scene):
+    def _override_world_with_white_background(self, scene):
         world = scene.world
         original_world = world
         if world is None:
@@ -739,7 +1029,7 @@ class RTShadowCastChannel(RTBakeChannel):
             "selected_nodes": selected_nodes,
         }
 
-    def restore_world(self, state):
+    def _restore_world(self, state):
         if state is None:
             return
 
@@ -788,7 +1078,10 @@ class RTShadowCastChannel(RTBakeChannel):
             if world.users == 0:
                 bpy.data.worlds.remove(world)
 
-    def get_active_material_output(self, nodes):
+    # ------------------------------------------------------------------
+    # 材质节点查找
+
+    def _get_active_material_output(self, nodes):
         for node in nodes:
             if node.bl_idname == 'ShaderNodeOutputMaterial' and getattr(node, "is_active_output", False):
                 return node
@@ -797,7 +1090,7 @@ class RTShadowCastChannel(RTBakeChannel):
                 return node
         return None
 
-    def get_unique_materials_from_objects(self, objects):
+    def _get_unique_materials_from_objects(self, objects):
         materials = []
         seen = set()
         for obj in objects:
@@ -809,7 +1102,7 @@ class RTShadowCastChannel(RTBakeChannel):
                 materials.append(mat)
         return materials
 
-    def find_shader_normal_source(self, node, visited=None):
+    def _find_shader_normal_source(self, node, visited=None):
         if node is None:
             return None
         if visited is None:
@@ -826,23 +1119,26 @@ class RTShadowCastChannel(RTBakeChannel):
             if getattr(input_socket, "type", None) != 'SHADER' or not input_socket.is_linked:
                 continue
             for link in input_socket.links:
-                normal_source = self.find_shader_normal_source(link.from_node, visited)
+                normal_source = self._find_shader_normal_source(link.from_node, visited)
                 if normal_source is not None:
                     return normal_source
         return None
 
-    def find_output_surface_normal_source(self, surface_input):
+    def _find_output_surface_normal_source(self, surface_input):
         if surface_input is None:
             return None
         for link in surface_input.links:
-            normal_source = self.find_shader_normal_source(link.from_node)
+            normal_source = self._find_shader_normal_source(link.from_node)
             if normal_source is not None:
                 return normal_source
         return None
 
-    def override_objects_with_diffuse_bsdf(self, objects):
+    # ------------------------------------------------------------------
+    # 材质临时替换
+
+    def _override_objects_with_diffuse_bsdf(self, objects):
         states = []
-        for mat in self.get_unique_materials_from_objects(objects):
+        for mat in self._get_unique_materials_from_objects(objects):
             original_use_nodes = mat.use_nodes
             mat.use_nodes = True
             node_tree = mat.node_tree
@@ -851,7 +1147,7 @@ class RTShadowCastChannel(RTBakeChannel):
             original_active = nodes.active
             selected_nodes = [node for node in nodes if node.select]
 
-            output = self.get_active_material_output(nodes)
+            output = self._get_active_material_output(nodes)
             created_output = False
             if output is None:
                 output = nodes.new(type='ShaderNodeOutputMaterial')
@@ -865,7 +1161,7 @@ class RTShadowCastChannel(RTBakeChannel):
                 (link.from_socket, link.to_socket)
                 for link in surface_input.links
             ]
-            normal_source = self.find_output_surface_normal_source(surface_input)
+            normal_source = self._find_output_surface_normal_source(surface_input)
             for link in list(surface_input.links):
                 links.remove(link)
 
@@ -899,7 +1195,7 @@ class RTShadowCastChannel(RTBakeChannel):
 
         return states
 
-    def override_normal_source_strength(self, normal_source, links, strength):
+    def _override_normal_source_strength(self, normal_source, links, strength):
         if normal_source is None:
             return None
         node = getattr(normal_source, "node", None)
@@ -924,7 +1220,7 @@ class RTShadowCastChannel(RTBakeChannel):
             "original_links": original_links,
         }
 
-    def override_objects_with_ao_emission(
+    def _override_objects_with_ao_emission(
             self,
             objects,
             samples=32,
@@ -933,7 +1229,7 @@ class RTShadowCastChannel(RTBakeChannel):
             use_normal_map=True
     ):
         states = []
-        for mat in self.get_unique_materials_from_objects(objects):
+        for mat in self._get_unique_materials_from_objects(objects):
             original_use_nodes = mat.use_nodes
             mat.use_nodes = True
             node_tree = mat.node_tree
@@ -942,7 +1238,7 @@ class RTShadowCastChannel(RTBakeChannel):
             original_active = nodes.active
             selected_nodes = [node for node in nodes if node.select]
 
-            output = self.get_active_material_output(nodes)
+            output = self._get_active_material_output(nodes)
             created_output = False
             if output is None:
                 output = nodes.new(type='ShaderNodeOutputMaterial')
@@ -956,10 +1252,10 @@ class RTShadowCastChannel(RTBakeChannel):
                 (link.from_socket, link.to_socket)
                 for link in surface_input.links
             ]
-            normal_source = self.find_output_surface_normal_source(surface_input) if use_normal_map else None
+            normal_source = self._find_output_surface_normal_source(surface_input) if use_normal_map else None
             normal_strength_state = None
             if use_normal_map:
-                normal_strength_state = self.override_normal_source_strength(
+                normal_strength_state = self._override_normal_source_strength(
                     normal_source,
                     links,
                     normal_strength
@@ -1018,7 +1314,10 @@ class RTShadowCastChannel(RTBakeChannel):
 
         return states
 
-    def restore_material_overrides(self, states):
+    # ------------------------------------------------------------------
+    # 材质恢复
+
+    def _restore_material_overrides(self, states):
         for state in reversed(states):
             mat = state["material"]
             node_tree = mat.node_tree
@@ -1081,6 +1380,19 @@ class RTShadowCastChannel(RTBakeChannel):
 
 
 class RTDirectChannel(RTBakeChannel):
+    """
+    直出通道工作原理。
+
+    这个通道用于“直接烘当前材质最终外观”。它不替换材质节点，也不改 World
+    或灯光，只让基类按 MeshGroup 临时隔离物体、选择当前 group、挂活动
+    Image Texture，然后调用 Cycles COMBINED bake。
+
+    pass_filter 打开 DIRECT、INDIRECT、DIFFUSE、GLOSSY、TRANSMISSION 和
+    EMIT，目标是尽量接近当前材质网络经过 Cycles 计算后的综合结果。因为它
+    不拆材质节点，所以适合复杂节点、数学运算、BSDF 混合等“不要解释节点，
+    只要当前结果”的场景。
+    """
+
     def __init__(self):
         super().__init__(
             "direct",
@@ -1093,6 +1405,25 @@ class RTDirectChannel(RTBakeChannel):
 
 
 class RTAOChannel(RTShadowCastChannel):
+    """
+    AO 通道工作原理。
+
+    这个通道不使用 Blender 内置 AO bake。内置 AO 在一些背面、复杂法线和
+    padding 情况下结果不够可控。这里复用 ShadowCast 的材质/World 临时替换
+    基础设施，但材质不是改成 Diffuse，而是临时构造：
+
+        Ambient Occlusion 节点 -> Emission 节点 -> Material Output
+
+    然后仍用 Cycles COMBINED bake 输出这条临时自发光结果。这样 AO 是材质
+    节点自身算出来的值，不依赖内置 AO bake target；同时通过 Emission 输出
+    可以避开部分光照 pass 的干扰。
+
+    如果 UI 开启“搜寻法线贴图”，通道会沿原材质输出 shader 链路查找 Normal
+    输入，并把它接到临时 AO 节点；“法线强度”会临时覆盖 Normal Map 节点的
+    Strength 输入，烘焙结束后恢复原默认值和原链接。World 会临时改成纯白
+    背景强度 1，MeshGroup 隔离和最终 padding/OIDN 后处理仍由基类统一完成。
+    """
+
     def __init__(self):
         RTBakeChannel.__init__(
             self,
@@ -1102,6 +1433,9 @@ class RTAOChannel(RTShadowCastChannel):
             "AO",
             pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
         )
+
+    # ------------------------------------------------------------------
+    # 通道 hook
 
     def draw_settings(self, layout:bpy.types.UILayout, context):
         RTBakeChannel.draw_settings(self, layout, context)
@@ -1126,9 +1460,9 @@ class RTAOChannel(RTShadowCastChannel):
             operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
             return {'CANCELLED'}, None
 
-        world_state = self.override_world_with_white_background(context.scene)
+        world_state = self._override_world_with_white_background(context.scene)
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        material_state = self.override_objects_with_ao_emission(
+        material_state = self._override_objects_with_ao_emission(
             selected_objs,
             normal_strength=rt_settings.ao_normal_strength,
             use_normal_map=rt_settings.ao_search_normal_map
@@ -1141,56 +1475,24 @@ class RTAOChannel(RTShadowCastChannel):
     def restore(self, context, prepare_state, bake_context):
         if prepare_state is None:
             return
-        self.restore_material_overrides(prepare_state.get("materials", []))
-        self.restore_world(prepare_state.get("world"))
+        self._restore_material_overrides(prepare_state.get("materials", []))
+        self._restore_world(prepare_state.get("world"))
 
-RT_BAKE_CHANNELS = [
+_RT_BAKE_CHANNELS = [
     RTDirectChannel(),
     RTAOChannel(),
     RTShadowCastChannel(),
 ]
 
 
-MARGIN_SPACE_ITEMS = [
-    ('ADJACENT_FACES', "3D空间相邻", "按模型表面相邻关系拓展边距"),
-    ('EXTEND', "UV空间相邻", "按UV图像空间向外拓展边距"),
-]
-
-OIDN_QUALITY_ITEMS = [
-    ('FAST', "快速", "更快，细节稳定性较低"),
-    ('BALANCED', "均衡", "速度和质量折中"),
-    ('HIGH', "高质量", "质量最高，速度较慢"),
-]
-
-
-NON_COLOR_BAKE_TYPES = {
-    'AO',
-}
-
-
-RT_CYCLES_SAMPLING_SETTINGS = (
-    'samples',
-    'use_adaptive_sampling',
-    'adaptive_threshold',
-    'adaptive_min_samples',
-)
-
-RT_CYCLES_DENOISING_SWITCHES = (
-    'use_denoising',
-    'use_preview_denoising',
-)
-
-SHADOWCAST_BLENDER_MARGIN_DIVISOR = 512
-
-
-def update_margin_space(self, context):
+def _update_margin_space(self, context):
     try:
         context.scene.render.bake.margin_type = self.margin_space
     except AttributeError:
         pass
 
 
-def update_resolution(self, context):
+def _update_resolution(self, context):
     try:
         context.scene.render.bake.width = self.resolution
         context.scene.render.bake.height = self.resolution
@@ -1198,18 +1500,8 @@ def update_resolution(self, context):
         pass
 
 
-def poll_light_object(self, obj):
+def _poll_light_object(self, obj):
     return obj is not None and obj.type == 'LIGHT'
-
-
-def get_oidn_quality(quality):
-    if not is_oidn_available():
-        return None
-    return {
-        'FAST': getattr(pyoidn, "OIDN_QUALITY_FAST", None),
-        'BALANCED': getattr(pyoidn, "OIDN_QUALITY_BALANCED", None),
-        'HIGH': getattr(pyoidn, "OIDN_QUALITY_HIGH", None),
-    }.get(quality)
 
 
 class PG_UVTools_RTBakeSettings(PropertyGroup):
@@ -1223,13 +1515,13 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         name="拓展",
         items=MARGIN_SPACE_ITEMS,
         default='EXTEND',
-        update=update_margin_space
+        update=_update_margin_space
     )  # type: ignore
     resolution: IntProperty(
         name="分辨率",
         default=2048,
         min=1,
-        update=update_resolution
+        update=_update_resolution
     )  # type: ignore
     samples: IntProperty(
         name="采样率",
@@ -1279,31 +1571,12 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     shadowcast_light: PointerProperty(
         name="光源",
         type=bpy.types.Object,
-        poll=poll_light_object,
+        poll=_poll_light_object,
         description="指定单独Light;留空时使用所有启用的灯光"
     )  # type: ignore
 
 
-def reg_props():
-    bpy.types.Scene.ho_uvtools_rt_bake_settings = PointerProperty(
-        type=PG_UVTools_RTBakeSettings
-    )
-    return
-
-
-def ureg_props():
-    if hasattr(bpy.types.Scene, "ho_uvtools_rt_bake_settings"):
-        del bpy.types.Scene.ho_uvtools_rt_bake_settings
-    return
-
-
-TARGET_MOVE_ITEMS = [
-    ('UP', "上移", ""),
-    ('DOWN', "下移", ""),
-]
-
-
-def make_unique_target_group_name(target_groups):
+def _make_unique_target_group_name(target_groups):
     base_name = "MeshGroup"
     names = {group.name for group in target_groups}
     if base_name not in names:
@@ -1317,7 +1590,7 @@ def make_unique_target_group_name(target_groups):
         index += 1
 
 
-def clamp_target_group_index(rt_settings):
+def _clamp_target_group_index(rt_settings):
     if len(rt_settings.target_groups) == 0:
         rt_settings.target_group_index = 0
         return None
@@ -1329,16 +1602,55 @@ def clamp_target_group_index(rt_settings):
     return rt_settings.target_groups[rt_settings.target_group_index]
 
 
-def get_or_create_active_target_group(rt_settings):
-    group = clamp_target_group_index(rt_settings)
-    if group is not None:
-        return group
+def _get_bake_target_objects(context):
+    objects = []
+    seen = set()
+    for bake_context in _get_bake_target_group_contexts(context):
+        for obj in bake_context["objects"]:
+            if obj.name in seen:
+                continue
+            objects.append(obj)
+            seen.add(obj.name)
+    return objects
 
-    group_name = make_unique_target_group_name(rt_settings.target_groups)
-    group = rt_settings.target_groups.add()
-    group.name = group_name
-    rt_settings.target_group_index = len(rt_settings.target_groups) - 1
-    return group
+
+def _get_bake_target_group_contexts(context):
+    scene = context.scene
+    rt_settings = getattr(scene, "ho_uvtools_rt_bake_settings", None)
+    if rt_settings is None:
+        return []
+
+    all_objects = []
+    global_seen = set()
+    contexts = []
+    for group_index, group in enumerate(rt_settings.target_groups):
+        group_objects = []
+        group_seen = set()
+        for item in group.objects:
+            obj = item.object
+            if obj is None or obj.type != 'MESH':
+                continue
+            if obj.name in group_seen or obj.name in global_seen:
+                continue
+            group_objects.append(obj)
+            group_seen.add(obj.name)
+            global_seen.add(obj.name)
+            all_objects.append(obj)
+
+        if not group_objects:
+            continue
+
+        contexts.append({
+            "group": group,
+            "group_index": group_index,
+            "group_name": group.name,
+            "objects": group_objects,
+        })
+
+    for bake_context in contexts:
+        bake_context["all_objects"] = all_objects
+
+    return contexts
 
 
 class OT_UVTools_RTBakeGroupAdd(Operator):
@@ -1350,7 +1662,7 @@ class OT_UVTools_RTBakeGroupAdd(Operator):
 
     def execute(self, context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        group_name = make_unique_target_group_name(rt_settings.target_groups)
+        group_name = _make_unique_target_group_name(rt_settings.target_groups)
         group = rt_settings.target_groups.add()
         group.name = group_name
         rt_settings.target_group_index = len(rt_settings.target_groups) - 1
@@ -1402,7 +1714,13 @@ class OT_UVTools_RTBakeTargetAddSelected(Operator):
 
     def execute(self, context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        group = get_or_create_active_target_group(rt_settings)
+        group = _clamp_target_group_index(rt_settings)
+        if group is None:
+            group_name = _make_unique_target_group_name(rt_settings.target_groups)
+            group = rt_settings.target_groups.add()
+            group.name = group_name
+            rt_settings.target_group_index = len(rt_settings.target_groups) - 1
+
         existing = {
             item.object.name
             for item in group.objects
@@ -1433,7 +1751,7 @@ class OT_UVTools_RTBakeTargetRemove(Operator):
 
     def execute(self, context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        group = clamp_target_group_index(rt_settings)
+        group = _clamp_target_group_index(rt_settings)
         if group is None:
             return {'FINISHED'}
 
@@ -1456,7 +1774,7 @@ class OT_UVTools_RTBakeTargetMove(Operator):
 
     def execute(self, context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        group = clamp_target_group_index(rt_settings)
+        group = _clamp_target_group_index(rt_settings)
         if group is None:
             return {'FINISHED'}
 
@@ -1491,7 +1809,7 @@ class OT_UVTools_RTBakeTargetClearGroup(Operator):
 
     def execute(self, context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
-        group = clamp_target_group_index(rt_settings)
+        group = _clamp_target_group_index(rt_settings)
         if group is not None:
             group.objects.clear()
             group.active_object_index = 0
@@ -1499,7 +1817,7 @@ class OT_UVTools_RTBakeTargetClearGroup(Operator):
 
 
 class OT_UVTools_RTBake(Operator):
-    """按当前Cycles烘焙设置执行RT烘焙"""
+    """按当前 RT 面板设置批量执行启用的通道。"""
     bl_idname = "ho.uvtools_rt_bake"
     bl_label = "RT烘焙"
     bl_description = "按当前Cycles烘焙设置执行RT烘焙"
@@ -1516,8 +1834,8 @@ class OT_UVTools_RTBake(Operator):
     def execute(self, context):
         scene = context.scene
         bake_settings = scene.render.bake
-        bake_channels = get_enabled_rt_bake_channels(scene)
-        target_objects = get_bake_target_objects(context)
+        bake_channels = self._get_enabled_channels(scene)
+        target_objects = _get_bake_target_objects(context)
 
         filepath = bpy.path.abspath(bake_settings.filepath)
         if not filepath:
@@ -1533,12 +1851,12 @@ class OT_UVTools_RTBake(Operator):
             return {'CANCELLED'}
 
         original_bake_type = scene.cycles.bake_type
-        original_cycles_sampling = capture_rt_cycles_sampling(scene)
+        original_cycles_sampling = self._capture_cycles_sampling(scene)
         original_view_from = bake_settings.view_from
 
         try:
-            apply_rt_bake_defaults(context)
-            apply_rt_cycles_sampling(scene)
+            self._apply_bake_defaults(context)
+            self._apply_cycles_sampling(scene)
 
             for channel in bake_channels:
                 result = channel.execute(context, self)
@@ -1546,356 +1864,58 @@ class OT_UVTools_RTBake(Operator):
                     return result
         finally:
             scene.cycles.bake_type = original_bake_type
-            restore_rt_cycles_sampling(scene, original_cycles_sampling)
+            self._restore_cycles_sampling(scene, original_cycles_sampling)
             bake_settings.view_from = original_view_from
 
         self.report({'INFO'}, f"已导出 {len(bake_channels)} 个RT烘焙通道")
         return {'FINISHED'}
 
-
-def apply_rt_bake_defaults(context):
-    scene = context.scene
-    bake_settings = scene.render.bake
-    rt_settings = scene.ho_uvtools_rt_bake_settings
-    bake_settings.target = 'IMAGE_TEXTURES'
-    bake_settings.save_mode = 'EXTERNAL'
-    bake_settings.width = rt_settings.resolution
-    bake_settings.height = rt_settings.resolution
-    bake_settings.margin_type = rt_settings.margin_space
-    apply_rt_bake_view_from(context, scene.cycles.bake_type)
-
-
-def apply_rt_bake_view_from(context, bake_target):
-    scene = context.scene
-    bake_settings = scene.render.bake
-    if hasattr(bake_target, "bake_type"):
-        channel = bake_target
-        if not channel.use_active_camera_view(context):
-            bake_settings.view_from = 'ABOVE_SURFACE'
-            return
-        bake_type = channel.bake_type
-    else:
-        bake_type = bake_target
-
-    if scene.camera is not None and bake_type not in BAKE_TYPES_WITHOUT_VIEW_FROM:
-        bake_settings.view_from = 'ACTIVE_CAMERA'
-
-
-def capture_rt_cycles_sampling(scene):
-    cycles = scene.cycles
-    return {
-        attr: getattr(cycles, attr)
-        for attr in RT_CYCLES_SAMPLING_SETTINGS + RT_CYCLES_DENOISING_SWITCHES
-        if hasattr(cycles, attr)
-    }
-
-
-def apply_rt_cycles_sampling(scene):
-    cycles = scene.cycles
-    rt_settings = scene.ho_uvtools_rt_bake_settings
-    cycles.samples = rt_settings.samples
-    cycles.use_adaptive_sampling = rt_settings.use_adaptive_sampling
-    cycles.adaptive_threshold = rt_settings.adaptive_threshold
-    cycles.adaptive_min_samples = rt_settings.adaptive_min_samples
-    for attr in RT_CYCLES_DENOISING_SWITCHES:
-        if hasattr(cycles, attr):
-            setattr(cycles, attr, False)
-
-
-def restore_rt_cycles_sampling(scene, original_values):
-    cycles = scene.cycles
-    for attr, value in original_values.items():
-        setattr(cycles, attr, value)
-
-
-def get_enabled_rt_bake_channels(scene):
-    rt_settings = scene.ho_uvtools_rt_bake_settings
-    bake_channels = []
-
-    for channel in RT_BAKE_CHANNELS:
-        if not getattr(rt_settings, channel.enabled_prop):
-            continue
-
-        bake_channels.append(channel)
-
-    return bake_channels
-
-
-def get_rt_bake_operator_args(context, channel):
-    bake_settings = context.scene.render.bake
-    args = {
-        "type": channel.bake_type,
-        "filepath": bpy.path.abspath(bake_settings.filepath),
-        "width": bake_settings.width,
-        "height": bake_settings.height,
-        "margin": channel.get_bake_margin(context),
-        "margin_type": bake_settings.margin_type,
-        "use_selected_to_active": False,
-        "target": 'IMAGE_TEXTURES',
-        "save_mode": 'EXTERNAL',
-        "use_clear": False,
-        "use_cage": False,
-        "use_split_materials": bake_settings.use_split_materials,
-        "use_automatic_name": False,
-    }
-
-    pass_filter = channel.pass_filter
-    if pass_filter is not None:
-        args["pass_filter"] = set(pass_filter)
-
-    return args
-
-
-def get_oidn_module():
-    return pyoidn
-
-
-def is_oidn_available():
-    return get_oidn_module() is not None
-
-
-def get_bake_target_objects(context):
-    objects = []
-    seen = set()
-    for bake_context in get_bake_target_group_contexts(context):
-        for obj in bake_context["objects"]:
-            if obj.name in seen:
-                continue
-            objects.append(obj)
-            seen.add(obj.name)
-    return objects
-
-
-def get_bake_target_group_contexts(context):
-    scene = context.scene
-    rt_settings = getattr(scene, "ho_uvtools_rt_bake_settings", None)
-    if rt_settings is None:
-        return []
-
-    all_objects = []
-    global_seen = set()
-    contexts = []
-    for group_index, group in enumerate(rt_settings.target_groups):
-        group_objects = []
-        group_seen = set()
-        for item in group.objects:
-            obj = item.object
-            if obj is None or obj.type != 'MESH':
-                continue
-            if obj.name in group_seen or obj.name in global_seen:
-                continue
-            group_objects.append(obj)
-            group_seen.add(obj.name)
-            global_seen.add(obj.name)
-            all_objects.append(obj)
-
-        if not group_objects:
-            continue
-
-        contexts.append({
-            "group": group,
-            "group_index": group_index,
-            "group_name": group.name,
-            "objects": group_objects,
-        })
-
-    for bake_context in contexts:
-        bake_context["all_objects"] = all_objects
-
-    return contexts
-
-
-def clean_filename_part(name):
-    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
-
-
-def get_image_format_extension(file_format):
-    return {
-        'BMP': ".bmp",
-        'IRIS': ".rgb",
-        'PNG': ".png",
-        'JPEG': ".jpg",
-        'JPEG2000': ".jp2",
-        'TARGA': ".tga",
-        'TARGA_RAW': ".tga",
-        'CINEON': ".cin",
-        'DPX': ".dpx",
-        'OPEN_EXR_MULTILAYER': ".exr",
-        'OPEN_EXR': ".exr",
-        'HDR': ".hdr",
-        'TIFF': ".tif",
-        'WEBP': ".webp",
-    }.get(file_format, ".png")
-
-
-def make_temp_image_name(obj, mat, slot_index, split_materials):
-    if split_materials and mat is not None:
-        return f"HoRTBake_{mat.name}"
-    return f"HoRTBake_{obj.name}_{slot_index}"
-
-
-def set_image_color_space(image, channel):
-    if not channel.is_non_color_output():
-        return
-    try:
-        image.colorspace_settings.name = 'Non-Color'
-    except TypeError:
-        pass
-
-
-def ensure_active_image_targets(context, channel):
-    scene = context.scene
-    bake_settings = scene.render.bake
-    shared_image = None
-    shared_name = "Bake"
-    image_by_material = {}
-    targets = []
-
-    for obj in get_bake_target_objects(context):
-        if not obj.material_slots:
-            continue
-
-        for slot_index, slot in enumerate(obj.material_slots):
-            mat = slot.material
-            if mat is None:
-                continue
-
-            original_use_nodes = mat.use_nodes
-            mat.use_nodes = True
-            node_tree = mat.node_tree
-            nodes = node_tree.nodes
-            original_active = nodes.active
-            selected_nodes = [node for node in nodes if node.select]
-
-            if bake_settings.use_split_materials:
-                image_key = mat.name
-                image = image_by_material.get(image_key)
-                if image is None:
-                    image = bpy.data.images.new(
-                        make_temp_image_name(obj, mat, slot_index, True),
-                        bake_settings.width,
-                        bake_settings.height,
-                        alpha=True
-                    )
-                    set_image_color_space(image, channel)
-                    image_by_material[image_key] = image
-            else:
-                if shared_image is None:
-                    shared_image = bpy.data.images.new(
-                        "HoRTBake_Merged",
-                        bake_settings.width,
-                        bake_settings.height,
-                        alpha=True
-                    )
-                    set_image_color_space(shared_image, channel)
-                image = shared_image
-
-            node = nodes.new(type='ShaderNodeTexImage')
-            node.name = "HoRTBake_Target"
-            node.label = "HoRTBake Target"
-            node.image = image
-
-            for selected_node in selected_nodes:
-                selected_node.select = False
-            node.select = True
-            nodes.active = node
-
-            targets.append({
-                "material": mat,
-                "original_use_nodes": original_use_nodes,
-                "original_active": original_active,
-                "selected_nodes": selected_nodes,
-                "node": node,
-                "image": image,
-                "image_name": mat.name if bake_settings.use_split_materials else shared_name,
-            })
-
-    return targets
-
-
-def get_unique_bake_images(targets):
-    unique_images = []
-    seen = set()
-    for target in targets:
-        image = target["image"]
-        if image.name in seen:
-            continue
-        seen.add(image.name)
-        unique_images.append((image, target["image_name"]))
-    return unique_images
-
-
-def get_bake_output_path(base_filepath, image_name, context, channel):
-    bake_settings = context.scene.render.bake
-    image_settings = bake_settings.image_settings
-    filepath = bpy.path.abspath(base_filepath)
-    directory, filename = os.path.split(filepath)
-    stem, ext = os.path.splitext(filename)
-    if not ext:
-        ext = get_image_format_extension(image_settings.file_format)
-    if not stem:
-        stem = "Bake"
-
-    suffix_parts = [
-        clean_filename_part(
-            channel.get_suffix(context.scene.ho_uvtools_rt_bake_settings)
-        )
-    ]
-    if bake_settings.use_split_materials:
-        suffix_parts.append(clean_filename_part(image_name))
-
-    if suffix_parts:
-        stem = stem + "_" + "_".join(suffix_parts)
-
-    return os.path.join(directory, stem + ext)
-
-
-def save_baked_images(targets, context, channel, operator):
-    bake_settings = context.scene.render.bake
-    image_settings = bake_settings.image_settings
-
-    for image, image_name in get_unique_bake_images(targets):
-        filepath = get_bake_output_path(bake_settings.filepath, image_name, context, channel)
-        directory = os.path.dirname(filepath)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-
-        image.filepath_raw = filepath
-        image.file_format = image_settings.file_format
-        image.save()
-        channel.postprocess_saved_image(filepath, image_name, context, operator)
-
-
-def restore_active_image_targets(targets):
-    images = []
-    for target in reversed(targets):
-        mat = target["material"]
-        node_tree = mat.node_tree
-        if node_tree is None:
-            continue
-
-        nodes = node_tree.nodes
-        node = target["node"]
-        if node.name in nodes:
-            nodes.remove(node)
-
-        for selected_node in target["selected_nodes"]:
-            if selected_node.name in nodes:
-                selected_node.select = True
-
-        original_active = target["original_active"]
-        if original_active is not None and original_active.name in nodes:
-            nodes.active = original_active
-
-        mat.use_nodes = target["original_use_nodes"]
-
-        image = target["image"]
-        if image not in images:
-            images.append(image)
-
-    for image in images:
-        if image.name in bpy.data.images and image.users == 0:
-            bpy.data.images.remove(image)
+    # ------------------------------------------------------------------
+    # Operator 执行设置
+
+    def _get_enabled_channels(self, scene):
+        rt_settings = scene.ho_uvtools_rt_bake_settings
+        return [
+            channel for channel in _RT_BAKE_CHANNELS
+            if getattr(rt_settings, channel.enabled_prop)
+        ]
+
+    def _apply_bake_defaults(self, context):
+        scene = context.scene
+        bake_settings = scene.render.bake
+        rt_settings = scene.ho_uvtools_rt_bake_settings
+        bake_settings.target = 'IMAGE_TEXTURES'
+        bake_settings.save_mode = 'EXTERNAL'
+        bake_settings.width = rt_settings.resolution
+        bake_settings.height = rt_settings.resolution
+        bake_settings.margin_type = rt_settings.margin_space
+
+    # ------------------------------------------------------------------
+    # Cycles 采样和降噪临时设置
+
+    def _capture_cycles_sampling(self, scene):
+        cycles = scene.cycles
+        return {
+            attr: getattr(cycles, attr)
+            for attr in RT_CYCLES_SAMPLING_SETTINGS + RT_CYCLES_DENOISING_SWITCHES
+            if hasattr(cycles, attr)
+        }
+
+    def _apply_cycles_sampling(self, scene):
+        cycles = scene.cycles
+        rt_settings = scene.ho_uvtools_rt_bake_settings
+        cycles.samples = rt_settings.samples
+        cycles.use_adaptive_sampling = rt_settings.use_adaptive_sampling
+        cycles.adaptive_threshold = rt_settings.adaptive_threshold
+        cycles.adaptive_min_samples = rt_settings.adaptive_min_samples
+        for attr in RT_CYCLES_DENOISING_SWITCHES:
+            if hasattr(cycles, attr):
+                setattr(cycles, attr, False)
+
+    def _restore_cycles_sampling(self, scene, original_values):
+        cycles = scene.cycles
+        for attr, value in original_values.items():
+            setattr(cycles, attr, value)
 
 
 def draw_rt_bake_output(layout: bpy.types.UILayout, context):
@@ -2015,7 +2035,7 @@ def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
     col.use_property_split = False
     col.use_property_decorate = False
 
-    for channel in RT_BAKE_CHANNELS:
+    for channel in _RT_BAKE_CHANNELS:
         is_expanded = getattr(rt_settings, channel.expand_prop)
         row = col.row(align=True)
         row.prop(
@@ -2064,7 +2084,7 @@ def drawRTBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [
+_CLASSES = [
     PG_UVTools_RTBakeTargetItem,
     PG_UVTools_RTBakeTargetGroup,
     PG_UVTools_RTBakeSettings,
@@ -2083,14 +2103,17 @@ cls = [
 
 
 def register():
-    for i in cls:
+    for i in _CLASSES:
         bpy.utils.register_class(i)
 
-    reg_props()
+    bpy.types.Scene.ho_uvtools_rt_bake_settings = PointerProperty(
+        type=PG_UVTools_RTBakeSettings
+    )
 
 
 def unregister():
-    ureg_props()
+    if hasattr(bpy.types.Scene, "ho_uvtools_rt_bake_settings"):
+        del bpy.types.Scene.ho_uvtools_rt_bake_settings
 
-    for i in reversed(cls):
+    for i in reversed(_CLASSES):
         bpy.utils.unregister_class(i)
