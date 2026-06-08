@@ -64,6 +64,12 @@ class RTBakeChannel:
     def get_bake_margin(self, context):
         return context.scene.render.bake.margin
 
+    def is_non_color_output(self):
+        return self.bake_type in NON_COLOR_BAKE_TYPES
+
+    def use_active_camera_view(self, context):
+        return self.bake_type not in BAKE_TYPES_WITHOUT_VIEW_FROM
+
     def prepare(self, context, operator):
         return {'FINISHED'}, None
 
@@ -90,25 +96,74 @@ class RTBakeChannel:
     # Execution template
 
     def execute(self, context, operator):
-        prepare_result, prepare_state = self.prepare(context, operator)
-        if prepare_result != {'FINISHED'}:
-            return prepare_result
-
-        scene = context.scene
+        mode_state = self._switch_to_object_mode(context)
+        prepare_state = None
+        is_prepared = False
         try:
-            scene.cycles.bake_type = self.bake_type
-            apply_rt_bake_view_from(context, self.bake_type)
+            prepare_result, prepare_state = self.prepare(context, operator)
+            if prepare_result != {'FINISHED'}:
+                return prepare_result
+            is_prepared = True
 
-            temp_targets = ensure_active_image_targets(context, self.bake_type)
+            scene = context.scene
             try:
-                result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
-                if result == {'FINISHED'}:
-                    save_baked_images(temp_targets, context, self, operator)
-                return result
+                scene.cycles.bake_type = self.bake_type
+                apply_rt_bake_view_from(context, self)
+
+                temp_targets = ensure_active_image_targets(context, self)
+                try:
+                    result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
+                    if result == {'FINISHED'}:
+                        save_baked_images(temp_targets, context, self, operator)
+                    return result
+                finally:
+                    restore_active_image_targets(temp_targets)
             finally:
-                restore_active_image_targets(temp_targets)
+                if is_prepared:
+                    self.restore(context, prepare_state)
         finally:
-            self.restore(context, prepare_state)
+            self._restore_mode(context, mode_state)
+
+    def _switch_to_object_mode(self, context):
+        active_obj = context.view_layer.objects.active
+        mode = active_obj.mode if active_obj is not None else 'OBJECT'
+        state = {
+            "active_object": active_obj,
+            "mode": mode,
+        }
+
+        if mode == 'OBJECT':
+            return state
+
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except RuntimeError:
+            state["mode"] = 'OBJECT'
+        return state
+
+    def _restore_mode(self, context, state):
+        if state is None:
+            return
+
+        active_obj = state.get("active_object")
+        if active_obj is not None and active_obj.name in bpy.data.objects:
+            try:
+                context.view_layer.objects.active = active_obj
+            except (TypeError, RuntimeError):
+                pass
+
+        mode = state.get("mode", 'OBJECT')
+        if mode == 'OBJECT':
+            return
+
+        active_obj = context.view_layer.objects.active
+        if active_obj is None or active_obj.name not in bpy.data.objects:
+            return
+
+        try:
+            bpy.ops.object.mode_set(mode=mode)
+        except (TypeError, RuntimeError):
+            pass
 
     # Internal postprocess helpers
 
@@ -233,7 +288,10 @@ class RTBakeChannel:
 
             for poly in mesh.polygons:
                 if material_name is not None:
-                    slot = obj.material_slots[poly.material_index]
+                    material_index = poly.material_index
+                    if material_index < 0 or material_index >= len(obj.material_slots):
+                        continue
+                    slot = obj.material_slots[material_index]
                     mat = slot.material
                     if mat is None or mat.name != material_name:
                         continue
@@ -595,6 +653,37 @@ class RTShadowCastChannel(RTBakeChannel):
                 materials.append(mat)
         return materials
 
+    def find_shader_normal_source(self, node, visited=None):
+        if node is None:
+            return None
+        if visited is None:
+            visited = set()
+        if node.name in visited:
+            return None
+        visited.add(node.name)
+
+        normal_input = node.inputs.get("Normal")
+        if normal_input is not None and normal_input.is_linked:
+            return normal_input.links[0].from_socket
+
+        for input_socket in node.inputs:
+            if getattr(input_socket, "type", None) != 'SHADER' or not input_socket.is_linked:
+                continue
+            for link in input_socket.links:
+                normal_source = self.find_shader_normal_source(link.from_node, visited)
+                if normal_source is not None:
+                    return normal_source
+        return None
+
+    def find_output_surface_normal_source(self, surface_input):
+        if surface_input is None:
+            return None
+        for link in surface_input.links:
+            normal_source = self.find_shader_normal_source(link.from_node)
+            if normal_source is not None:
+                return normal_source
+        return None
+
     def override_objects_with_diffuse_bsdf(self, objects):
         states = []
         for mat in self.get_unique_materials_from_objects(objects):
@@ -620,6 +709,7 @@ class RTShadowCastChannel(RTBakeChannel):
                 (link.from_socket, link.to_socket)
                 for link in surface_input.links
             ]
+            normal_source = self.find_output_surface_normal_source(surface_input)
             for link in list(surface_input.links):
                 links.remove(link)
 
@@ -629,6 +719,14 @@ class RTShadowCastChannel(RTBakeChannel):
             diffuse.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
             diffuse.inputs["Roughness"].default_value = 0.5
             temp_link = links.new(diffuse.outputs["BSDF"], surface_input)
+            temp_normal_link = None
+            if normal_source is not None:
+                normal_input = diffuse.inputs.get("Normal")
+                if normal_input is not None:
+                    try:
+                        temp_normal_link = links.new(normal_source, normal_input)
+                    except RuntimeError:
+                        temp_normal_link = None
 
             states.append({
                 "material": mat,
@@ -637,6 +735,126 @@ class RTShadowCastChannel(RTBakeChannel):
                 "output": output,
                 "diffuse": diffuse,
                 "temp_link": temp_link,
+                "temp_normal_link": temp_normal_link,
+                "original_links": original_links,
+                "original_active": original_active,
+                "selected_nodes": selected_nodes,
+            })
+
+        return states
+
+    def override_normal_source_strength(self, normal_source, links, strength):
+        if normal_source is None:
+            return None
+        node = getattr(normal_source, "node", None)
+        if node is None:
+            return None
+        strength_input = node.inputs.get("Strength")
+        if strength_input is None:
+            return None
+
+        original_links = [
+            (link.from_socket, link.to_socket)
+            for link in strength_input.links
+        ]
+        for link in list(strength_input.links):
+            links.remove(link)
+
+        original_default = strength_input.default_value
+        strength_input.default_value = strength
+        return {
+            "input": strength_input,
+            "original_default": original_default,
+            "original_links": original_links,
+        }
+
+    def override_objects_with_ao_emission(
+            self,
+            objects,
+            samples=32,
+            distance=4.0,
+            normal_strength=1.0,
+            use_normal_map=True
+    ):
+        states = []
+        for mat in self.get_unique_materials_from_objects(objects):
+            original_use_nodes = mat.use_nodes
+            mat.use_nodes = True
+            node_tree = mat.node_tree
+            nodes = node_tree.nodes
+            links = node_tree.links
+            original_active = nodes.active
+            selected_nodes = [node for node in nodes if node.select]
+
+            output = self.get_active_material_output(nodes)
+            created_output = False
+            if output is None:
+                output = nodes.new(type='ShaderNodeOutputMaterial')
+                created_output = True
+
+            surface_input = output.inputs.get("Surface")
+            if surface_input is None:
+                continue
+
+            original_links = [
+                (link.from_socket, link.to_socket)
+                for link in surface_input.links
+            ]
+            normal_source = self.find_output_surface_normal_source(surface_input) if use_normal_map else None
+            normal_strength_state = None
+            if use_normal_map:
+                normal_strength_state = self.override_normal_source_strength(
+                    normal_source,
+                    links,
+                    normal_strength
+                )
+            for link in list(surface_input.links):
+                links.remove(link)
+
+            ao = nodes.new(type='ShaderNodeAmbientOcclusion')
+            ao.name = "HoRTBake_AO_Node"
+            ao.label = "HoRTBake AO"
+            if hasattr(ao, "samples"):
+                ao.samples = max(1, int(samples))
+            if hasattr(ao, "inside"):
+                ao.inside = False
+            if hasattr(ao, "only_local"):
+                ao.only_local = False
+            color_input = ao.inputs.get("Color")
+            if color_input is not None:
+                color_input.default_value = (1.0, 1.0, 1.0, 1.0)
+            distance_input = ao.inputs.get("Distance")
+            if distance_input is not None:
+                distance_input.default_value = distance
+
+            emission = nodes.new(type='ShaderNodeEmission')
+            emission.name = "HoRTBake_AO_Emission"
+            emission.label = "HoRTBake AO Emission"
+            emission.inputs["Strength"].default_value = 1.0
+
+            temp_links = []
+            ao_output = ao.outputs.get("AO") or ao.outputs.get("Color")
+            if ao_output is not None:
+                temp_links.append(links.new(ao_output, emission.inputs["Color"]))
+            emission_output = emission.outputs.get("Emission") or emission.outputs[0]
+            temp_links.append(links.new(emission_output, surface_input))
+
+            if normal_source is not None:
+                normal_input = ao.inputs.get("Normal")
+                if normal_input is not None:
+                    try:
+                        temp_links.append(links.new(normal_source, normal_input))
+                    except RuntimeError:
+                        pass
+
+            states.append({
+                "material": mat,
+                "original_use_nodes": original_use_nodes,
+                "created_output": created_output,
+                "output": output,
+                "temp_nodes": [ao, emission],
+                "temp_links": temp_links,
+                "normal_strength": normal_strength_state,
                 "original_links": original_links,
                 "original_active": original_active,
                 "selected_nodes": selected_nodes,
@@ -654,15 +872,33 @@ class RTShadowCastChannel(RTBakeChannel):
 
             nodes = node_tree.nodes
             links = node_tree.links
-            temp_link = state["temp_link"]
-            try:
-                links.remove(temp_link)
-            except (ReferenceError, RuntimeError):
-                pass
+            temp_links = state.get("temp_links")
+            if temp_links is None:
+                temp_links = [state.get("temp_link"), state.get("temp_normal_link")]
+            for temp_link in temp_links:
+                if temp_link is None:
+                    continue
+                try:
+                    links.remove(temp_link)
+                except (ReferenceError, RuntimeError):
+                    pass
 
-            diffuse = state["diffuse"]
-            if diffuse.name in nodes:
-                nodes.remove(diffuse)
+            temp_nodes = state.get("temp_nodes")
+            if temp_nodes is None:
+                temp_nodes = [state.get("diffuse")]
+            for temp_node in temp_nodes:
+                if temp_node is not None and temp_node.name in nodes:
+                    nodes.remove(temp_node)
+
+            normal_strength_state = state.get("normal_strength")
+            if normal_strength_state is not None:
+                strength_input = normal_strength_state["input"]
+                strength_input.default_value = normal_strength_state["original_default"]
+                for from_socket, to_socket in normal_strength_state["original_links"]:
+                    try:
+                        links.new(from_socket, to_socket)
+                    except RuntimeError:
+                        pass
 
             output = state["output"]
             if state["created_output"]:
@@ -700,9 +936,68 @@ class RTDirectChannel(RTBakeChannel):
         )
 
 
-class RTAOChannel(RTBakeChannel):
+class RTAOChannel(RTShadowCastChannel):
     def __init__(self):
-        super().__init__("ao", "环境光遮蔽 (AO)", 'AO', "AO")
+        RTBakeChannel.__init__(
+            self,
+            "ao",
+            "环境光遮蔽 (AO)",
+            'COMBINED',
+            "AO",
+            pass_filter={'DIRECT', 'INDIRECT', 'DIFFUSE', 'GLOSSY', 'TRANSMISSION', 'EMIT'}
+        )
+
+    def draw_settings(self, layout, context):
+        RTBakeChannel.draw_settings(self, layout, context)
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        col = layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(rt_settings, "ao_search_normal_map")
+        strength_col = col.column(align=True)
+        strength_col.enabled = rt_settings.ao_search_normal_map
+        strength_col.prop(rt_settings, "ao_normal_strength")
+
+    def is_non_color_output(self):
+        return True
+
+    def use_active_camera_view(self, context):
+        return False
+
+    def prepare(self, context, operator):
+        selected_objs = get_bake_target_objects(context)
+        if not selected_objs:
+            operator.report({'ERROR'}, "未选中任何网格物体")
+            return {'CANCELLED'}, None
+
+        visibility_state = self._isolate_selected_render_objects(context, selected_objs)
+        world_state = self.override_world_with_white_background(context.scene)
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        material_state = self.override_objects_with_ao_emission(
+            selected_objs,
+            normal_strength=rt_settings.ao_normal_strength,
+            use_normal_map=rt_settings.ao_search_normal_map
+        )
+        return {'FINISHED'}, {
+            "visibility": visibility_state,
+            "world": world_state,
+            "materials": material_state,
+        }
+
+    def restore(self, context, prepare_state):
+        if prepare_state is None:
+            return
+        self.restore_material_overrides(prepare_state.get("materials", []))
+        self.restore_world(prepare_state.get("world"))
+        self.restore_render_visibility(prepare_state.get("visibility", []))
+
+    def _isolate_selected_render_objects(self, context, selected_objs):
+        selected_objs = set(selected_objs)
+        state = []
+        for obj in context.scene.objects:
+            state.append((obj, obj.hide_render))
+            obj.hide_render = obj not in selected_objs
+        return state
 
 
 class RTShadowChannel(RTBakeChannel):
@@ -834,6 +1129,13 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
     use_ao: BoolProperty(name="环境光遮蔽 (AO)", default=False)  # type: ignore
     suffix_ao: StringProperty(name="环境光遮蔽后缀", default="AO")  # type: ignore
     show_ao_settings: BoolProperty(name="环境光遮蔽设置", default=False)  # type: ignore
+    ao_search_normal_map: BoolProperty(name="搜寻法线贴图", default=True)  # type: ignore
+    ao_normal_strength: FloatProperty(
+        name="法线强度",
+        default=1.0,
+        min=0.0,
+        precision=3
+    )  # type: ignore
     use_shadow: BoolProperty(name="阴影", default=False)  # type: ignore
     suffix_shadow: StringProperty(name="阴影后缀", default="Shadow")  # type: ignore
     show_shadow_settings: BoolProperty(name="阴影设置", default=False)  # type: ignore
@@ -884,8 +1186,6 @@ class OT_UVTools_RTBake(Operator):
         bake_settings = scene.render.bake
         bake_channels = get_enabled_rt_bake_channels(scene)
 
-        apply_rt_bake_defaults(context)
-
         filepath = bpy.path.abspath(bake_settings.filepath)
         if not filepath:
             self.report({'ERROR'}, "请先设置外部输出路径")
@@ -900,6 +1200,7 @@ class OT_UVTools_RTBake(Operator):
         original_view_from = bake_settings.view_from
 
         try:
+            apply_rt_bake_defaults(context)
             apply_rt_cycles_sampling(scene)
 
             for channel in bake_channels:
@@ -927,9 +1228,18 @@ def apply_rt_bake_defaults(context):
     apply_rt_bake_view_from(context, scene.cycles.bake_type)
 
 
-def apply_rt_bake_view_from(context, bake_type):
+def apply_rt_bake_view_from(context, bake_target):
     scene = context.scene
     bake_settings = scene.render.bake
+    if hasattr(bake_target, "bake_type"):
+        channel = bake_target
+        if not channel.use_active_camera_view(context):
+            bake_settings.view_from = 'ABOVE_SURFACE'
+            return
+        bake_type = channel.bake_type
+    else:
+        bake_type = bake_target
+
     if scene.camera is not None and bake_type not in BAKE_TYPES_WITHOUT_VIEW_FROM:
         bake_settings.view_from = 'ACTIVE_CAMERA'
 
@@ -1043,8 +1353,8 @@ def make_temp_image_name(obj, mat, slot_index, split_materials):
     return f"HoRTBake_{obj.name}_{slot_index}"
 
 
-def set_image_color_space(image, bake_type):
-    if bake_type not in NON_COLOR_BAKE_TYPES:
+def set_image_color_space(image, channel):
+    if not channel.is_non_color_output():
         return
     try:
         image.colorspace_settings.name = 'Non-Color'
@@ -1052,7 +1362,7 @@ def set_image_color_space(image, bake_type):
         pass
 
 
-def ensure_active_image_targets(context, bake_type):
+def ensure_active_image_targets(context, channel):
     scene = context.scene
     bake_settings = scene.render.bake
     shared_image = None
@@ -1086,7 +1396,7 @@ def ensure_active_image_targets(context, bake_type):
                         bake_settings.height,
                         alpha=True
                     )
-                    set_image_color_space(image, bake_type)
+                    set_image_color_space(image, channel)
                     image_by_material[image_key] = image
             else:
                 if shared_image is None:
@@ -1096,7 +1406,7 @@ def ensure_active_image_targets(context, bake_type):
                         bake_settings.height,
                         alpha=True
                     )
-                    set_image_color_space(shared_image, bake_type)
+                    set_image_color_space(shared_image, channel)
                 image = shared_image
 
             node = nodes.new(type='ShaderNodeTexImage')
