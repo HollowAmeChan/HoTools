@@ -2,8 +2,16 @@ import bpy
 import os
 import sys
 import numpy as np
-from bpy.types import Operator, PropertyGroup
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
+from bpy.types import Operator, PropertyGroup, UIList
+from bpy.props import (
+    BoolProperty,
+    CollectionProperty,
+    EnumProperty,
+    FloatProperty,
+    IntProperty,
+    PointerProperty,
+    StringProperty,
+)
 
 if sys.version_info >= (3, 13):
     from .._Lib.py313.PIL import Image, ImageDraw
@@ -24,6 +32,56 @@ else:
 BAKE_TYPES_WITHOUT_VIEW_FROM = {
     'AO',
 }
+
+
+def poll_mesh_object(self, obj):
+    return obj is not None and obj.type == 'MESH'
+
+
+class PG_UVTools_RTBakeTargetItem(PropertyGroup):
+    object: PointerProperty(
+        name="物体",
+        type=bpy.types.Object,
+        poll=poll_mesh_object
+    )  # type: ignore
+
+
+class PG_UVTools_RTBakeTargetGroup(PropertyGroup):
+    name: StringProperty(name="名称", default="MeshGroup")  # type: ignore
+    objects: CollectionProperty(
+        name="物体",
+        type=PG_UVTools_RTBakeTargetItem
+    )  # type: ignore
+    active_object_index: IntProperty(default=0)  # type: ignore
+
+
+class HO_UL_RTBakeGroupList(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            row_name = row.row(align=True)
+            row_name.prop(item, "name", text="", emboss=False, icon='OUTLINER_COLLECTION')
+            row_label = row.row(align=True)
+            row_label.alignment = 'RIGHT'
+            row_label.label(text=str(len(item.objects)))
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text="", icon='OUTLINER_COLLECTION')
+
+
+class HO_UL_RTBakeGroupObjectList(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            layout.prop(
+                item,
+                "object",
+                text="",
+                icon='MESH_DATA' if item.object else 'OBJECT_DATA',
+                emboss=False
+            )
+        elif self.layout_type == 'GRID':
+            layout.alignment = 'CENTER'
+            layout.label(text="", icon='MESH_DATA')
 
 
 class RTBakeChannel:
@@ -69,10 +127,13 @@ class RTBakeChannel:
     def use_active_camera_view(self, context):
         return self.bake_type not in BAKE_TYPES_WITHOUT_VIEW_FROM
 
-    def prepare(self, context, operator):
+    def use_group_isolation(self, context, bake_context):
+        return True
+
+    def prepare(self, context, operator, bake_context):
         return {'FINISHED'}, None
 
-    def restore(self, context, prepare_state):
+    def restore(self, context, prepare_state, bake_context):
         return
 
     def build_oidn_padding_context(self, context, image_name):
@@ -96,32 +157,50 @@ class RTBakeChannel:
 
     def execute(self, context, operator):
         mode_state = self._switch_to_object_mode(context)
+        temp_targets = []
+        try:
+            scene = context.scene
+            scene.cycles.bake_type = self.bake_type
+            apply_rt_bake_view_from(context, self)
+
+            bake_contexts = get_bake_target_group_contexts(context)
+            if not bake_contexts:
+                operator.report({'ERROR'}, "请先在MeshGroup中添加至少一个网格物体")
+                return {'CANCELLED'}
+
+            temp_targets = ensure_active_image_targets(context, self)
+            try:
+                for bake_context in bake_contexts:
+                    result = self._execute_group(context, operator, bake_context)
+                    if result != {'FINISHED'}:
+                        return result
+                save_baked_images(temp_targets, context, self, operator)
+                return {'FINISHED'}
+            finally:
+                restore_active_image_targets(temp_targets)
+        finally:
+            self._restore_mode(context, mode_state)
+
+    def _execute_group(self, context, operator, bake_context):
+        selection_state = None
+        visibility_state = None
         prepare_state = None
         is_prepared = False
         try:
-            prepare_result, prepare_state = self.prepare(context, operator)
+            selection_state = self._select_bake_target_objects(context, bake_context["objects"])
+            visibility_state = self._isolate_bake_group_render_objects(context, bake_context)
+
+            prepare_result, prepare_state = self.prepare(context, operator, bake_context)
             if prepare_result != {'FINISHED'}:
                 return prepare_result
             is_prepared = True
 
-            scene = context.scene
-            try:
-                scene.cycles.bake_type = self.bake_type
-                apply_rt_bake_view_from(context, self)
-
-                temp_targets = ensure_active_image_targets(context, self)
-                try:
-                    result = bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
-                    if result == {'FINISHED'}:
-                        save_baked_images(temp_targets, context, self, operator)
-                    return result
-                finally:
-                    restore_active_image_targets(temp_targets)
-            finally:
-                if is_prepared:
-                    self.restore(context, prepare_state)
+            return bpy.ops.object.bake(**get_rt_bake_operator_args(context, self))
         finally:
-            self._restore_mode(context, mode_state)
+            if is_prepared:
+                self.restore(context, prepare_state, bake_context)
+            self._restore_render_visibility(visibility_state)
+            self._restore_selection(context, selection_state)
 
     def _switch_to_object_mode(self, context):
         active_obj = context.view_layer.objects.active
@@ -163,6 +242,84 @@ class RTBakeChannel:
             bpy.ops.object.mode_set(mode=mode)
         except (TypeError, RuntimeError):
             pass
+
+    def _select_bake_target_objects(self, context, target_objects):
+        view_layer = context.view_layer
+        state = {
+            "active_object": view_layer.objects.active,
+            "selected_objects": list(context.selected_objects),
+        }
+
+        for obj in list(context.selected_objects):
+            try:
+                obj.select_set(False)
+            except (ReferenceError, RuntimeError):
+                pass
+
+        active_obj = None
+        for obj in target_objects:
+            if obj.name not in bpy.data.objects:
+                continue
+            try:
+                obj.select_set(True)
+            except (ReferenceError, RuntimeError):
+                continue
+            if active_obj is None:
+                active_obj = obj
+
+        if active_obj is not None:
+            try:
+                view_layer.objects.active = active_obj
+            except (TypeError, RuntimeError):
+                pass
+
+        return state
+
+    def _restore_selection(self, context, state):
+        if state is None:
+            return
+
+        for obj in list(context.selected_objects):
+            try:
+                obj.select_set(False)
+            except (ReferenceError, RuntimeError):
+                pass
+
+        for obj in state.get("selected_objects", []):
+            if obj is None or obj.name not in bpy.data.objects:
+                continue
+            try:
+                obj.select_set(True)
+            except (ReferenceError, RuntimeError):
+                pass
+
+        active_obj = state.get("active_object")
+        if active_obj is not None and active_obj.name in bpy.data.objects:
+            try:
+                context.view_layer.objects.active = active_obj
+            except (TypeError, RuntimeError):
+                pass
+
+    def _isolate_bake_group_render_objects(self, context, bake_context):
+        if not self.use_group_isolation(context, bake_context):
+            return []
+
+        enabled_objects = set(bake_context["objects"])
+        state = []
+        for obj in context.scene.objects:
+            if obj.type == 'LIGHT':
+                continue
+            state.append((obj, obj.hide_render))
+            obj.hide_render = obj not in enabled_objects
+        return state
+
+    def _restore_render_visibility(self, state):
+        if state is None:
+            return
+        for obj, hide_render in state:
+            if obj is None or obj.name not in bpy.data.objects:
+                continue
+            obj.hide_render = hide_render
 
     # Internal postprocess helpers
 
@@ -455,16 +612,16 @@ class RTShadowCastChannel(RTBakeChannel):
             "oidn_hdr": rt_settings.oidn_hdr,
         }
 
-    def prepare(self, context, operator):
+    def prepare(self, context, operator, bake_context):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         lights = self.get_lights(context, rt_settings.shadowcast_light)
         if not lights:
             operator.report({'ERROR'}, "没有可用于 ShadowCast 的灯光")
             return {'CANCELLED'}, None
 
-        selected_objs = get_bake_target_objects(context)
+        selected_objs = bake_context["objects"]
         if not selected_objs:
-            operator.report({'ERROR'}, "未选中任何网格物体")
+            operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
             return {'CANCELLED'}, None
 
         light_state = self.isolate_lights(context, lights)
@@ -476,7 +633,7 @@ class RTShadowCastChannel(RTBakeChannel):
             "materials": material_state,
         }
 
-    def restore(self, context, prepare_state):
+    def restore(self, context, prepare_state, bake_context):
         if prepare_state is None:
             return
         self.restore_material_overrides(prepare_state.get("materials", []))
@@ -963,13 +1120,12 @@ class RTAOChannel(RTShadowCastChannel):
     def use_active_camera_view(self, context):
         return False
 
-    def prepare(self, context, operator):
-        selected_objs = get_bake_target_objects(context)
+    def prepare(self, context, operator, bake_context):
+        selected_objs = bake_context["objects"]
         if not selected_objs:
-            operator.report({'ERROR'}, "未选中任何网格物体")
+            operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
             return {'CANCELLED'}, None
 
-        visibility_state = self._isolate_selected_render_objects(context, selected_objs)
         world_state = self.override_world_with_white_background(context.scene)
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         material_state = self.override_objects_with_ao_emission(
@@ -978,26 +1134,15 @@ class RTAOChannel(RTShadowCastChannel):
             use_normal_map=rt_settings.ao_search_normal_map
         )
         return {'FINISHED'}, {
-            "visibility": visibility_state,
             "world": world_state,
             "materials": material_state,
         }
 
-    def restore(self, context, prepare_state):
+    def restore(self, context, prepare_state, bake_context):
         if prepare_state is None:
             return
         self.restore_material_overrides(prepare_state.get("materials", []))
         self.restore_world(prepare_state.get("world"))
-        self.restore_render_visibility(prepare_state.get("visibility", []))
-
-    def _isolate_selected_render_objects(self, context, selected_objs):
-        selected_objs = set(selected_objs)
-        state = []
-        for obj in context.scene.objects:
-            state.append((obj, obj.hide_render))
-            obj.hide_render = obj not in selected_objs
-        return state
-
 
 RT_BAKE_CHANNELS = [
     RTDirectChannel(),
@@ -1068,6 +1213,12 @@ def get_oidn_quality(quality):
 
 
 class PG_UVTools_RTBakeSettings(PropertyGroup):
+    target_groups: CollectionProperty(
+        name="MeshGroup",
+        type=PG_UVTools_RTBakeTargetGroup
+    )  # type: ignore
+    target_group_index: IntProperty(default=0)  # type: ignore
+
     margin_space: EnumProperty(
         name="拓展",
         items=MARGIN_SPACE_ITEMS,
@@ -1146,6 +1297,207 @@ def ureg_props():
     return
 
 
+TARGET_MOVE_ITEMS = [
+    ('UP', "上移", ""),
+    ('DOWN', "下移", ""),
+]
+
+
+def make_unique_target_group_name(target_groups):
+    base_name = "MeshGroup"
+    names = {group.name for group in target_groups}
+    if base_name not in names:
+        return base_name
+
+    index = 1
+    while True:
+        name = f"{base_name}.{index:03d}"
+        if name not in names:
+            return name
+        index += 1
+
+
+def clamp_target_group_index(rt_settings):
+    if len(rt_settings.target_groups) == 0:
+        rt_settings.target_group_index = 0
+        return None
+
+    rt_settings.target_group_index = min(
+        max(0, rt_settings.target_group_index),
+        len(rt_settings.target_groups) - 1
+    )
+    return rt_settings.target_groups[rt_settings.target_group_index]
+
+
+def get_or_create_active_target_group(rt_settings):
+    group = clamp_target_group_index(rt_settings)
+    if group is not None:
+        return group
+
+    group_name = make_unique_target_group_name(rt_settings.target_groups)
+    group = rt_settings.target_groups.add()
+    group.name = group_name
+    rt_settings.target_group_index = len(rt_settings.target_groups) - 1
+    return group
+
+
+class OT_UVTools_RTBakeGroupAdd(Operator):
+    """添加MeshGroup"""
+    bl_idname = "ho.uvtools_rt_bake_group_add"
+    bl_label = "添加MeshGroup"
+    bl_description = "添加一个MeshGroup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        group_name = make_unique_target_group_name(rt_settings.target_groups)
+        group = rt_settings.target_groups.add()
+        group.name = group_name
+        rt_settings.target_group_index = len(rt_settings.target_groups) - 1
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeGroupRemove(Operator):
+    """删除活动MeshGroup"""
+    bl_idname = "ho.uvtools_rt_bake_group_remove"
+    bl_label = "删除MeshGroup"
+    bl_description = "删除活动MeshGroup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        index = rt_settings.target_group_index
+        if 0 <= index < len(rt_settings.target_groups):
+            rt_settings.target_groups.remove(index)
+            rt_settings.target_group_index = min(index, len(rt_settings.target_groups) - 1)
+            rt_settings.target_group_index = max(0, rt_settings.target_group_index)
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeGroupMove(Operator):
+    """移动活动MeshGroup"""
+    bl_idname = "ho.uvtools_rt_bake_group_move"
+    bl_label = "移动MeshGroup"
+    bl_description = "移动活动MeshGroup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: EnumProperty(items=TARGET_MOVE_ITEMS, default='UP')  # type: ignore
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        index = rt_settings.target_group_index
+        target_index = index - 1 if self.direction == 'UP' else index + 1
+        if 0 <= index < len(rt_settings.target_groups) and 0 <= target_index < len(rt_settings.target_groups):
+            rt_settings.target_groups.move(index, target_index)
+            rt_settings.target_group_index = target_index
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeTargetAddSelected(Operator):
+    """添加当前选中的网格物体"""
+    bl_idname = "ho.uvtools_rt_bake_target_add_selected"
+    bl_label = "添加选中物体"
+    bl_description = "添加当前选中的网格物体到活动MeshGroup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        group = get_or_create_active_target_group(rt_settings)
+        existing = {
+            item.object.name
+            for item in group.objects
+            if item.object is not None
+        }
+
+        added = 0
+        for obj in context.selected_objects:
+            if obj.type != 'MESH' or obj.name in existing:
+                continue
+            item = group.objects.add()
+            item.object = obj
+            existing.add(obj.name)
+            group.active_object_index = len(group.objects) - 1
+            added += 1
+
+        if added == 0:
+            self.report({'INFO'}, "没有可添加的选中网格物体")
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeTargetRemove(Operator):
+    """删除活动目标物体"""
+    bl_idname = "ho.uvtools_rt_bake_target_remove"
+    bl_label = "删除目标物体"
+    bl_description = "删除活动MeshGroup中的活动目标物体"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        group = clamp_target_group_index(rt_settings)
+        if group is None:
+            return {'FINISHED'}
+
+        index = group.active_object_index
+        if 0 <= index < len(group.objects):
+            group.objects.remove(index)
+            group.active_object_index = min(index, len(group.objects) - 1)
+            group.active_object_index = max(0, group.active_object_index)
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeTargetMove(Operator):
+    """移动活动目标物体"""
+    bl_idname = "ho.uvtools_rt_bake_target_move"
+    bl_label = "移动目标物体"
+    bl_description = "移动活动MeshGroup中的活动目标物体"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: EnumProperty(items=TARGET_MOVE_ITEMS, default='UP')  # type: ignore
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        group = clamp_target_group_index(rt_settings)
+        if group is None:
+            return {'FINISHED'}
+
+        index = group.active_object_index
+        target_index = index - 1 if self.direction == 'UP' else index + 1
+        if 0 <= index < len(group.objects) and 0 <= target_index < len(group.objects):
+            group.objects.move(index, target_index)
+            group.active_object_index = target_index
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeTargetClear(Operator):
+    """清空MeshGroup"""
+    bl_idname = "ho.uvtools_rt_bake_target_clear"
+    bl_label = "清空MeshGroup"
+    bl_description = "清空所有MeshGroup"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        rt_settings.target_groups.clear()
+        rt_settings.target_group_index = 0
+        return {'FINISHED'}
+
+
+class OT_UVTools_RTBakeTargetClearGroup(Operator):
+    """清空活动MeshGroup中的物体"""
+    bl_idname = "ho.uvtools_rt_bake_target_clear_group"
+    bl_label = "清空组内物体"
+    bl_description = "清空活动MeshGroup中的所有物体"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        rt_settings = context.scene.ho_uvtools_rt_bake_settings
+        group = clamp_target_group_index(rt_settings)
+        if group is not None:
+            group.objects.clear()
+            group.active_object_index = 0
+        return {'FINISHED'}
+
+
 class OT_UVTools_RTBake(Operator):
     """按当前Cycles烘焙设置执行RT烘焙"""
     bl_idname = "ho.uvtools_rt_bake"
@@ -1165,10 +1517,15 @@ class OT_UVTools_RTBake(Operator):
         scene = context.scene
         bake_settings = scene.render.bake
         bake_channels = get_enabled_rt_bake_channels(scene)
+        target_objects = get_bake_target_objects(context)
 
         filepath = bpy.path.abspath(bake_settings.filepath)
         if not filepath:
             self.report({'ERROR'}, "请先设置外部输出路径")
+            return {'CANCELLED'}
+
+        if not target_objects:
+            self.report({'ERROR'}, "请先在MeshGroup中添加至少一个网格物体")
             return {'CANCELLED'}
 
         if not bake_channels:
@@ -1298,10 +1655,54 @@ def is_oidn_available():
 
 
 def get_bake_target_objects(context):
-    return [
-        obj for obj in context.selected_objects
-        if obj.type == 'MESH'
-    ]
+    objects = []
+    seen = set()
+    for bake_context in get_bake_target_group_contexts(context):
+        for obj in bake_context["objects"]:
+            if obj.name in seen:
+                continue
+            objects.append(obj)
+            seen.add(obj.name)
+    return objects
+
+
+def get_bake_target_group_contexts(context):
+    scene = context.scene
+    rt_settings = getattr(scene, "ho_uvtools_rt_bake_settings", None)
+    if rt_settings is None:
+        return []
+
+    all_objects = []
+    global_seen = set()
+    contexts = []
+    for group_index, group in enumerate(rt_settings.target_groups):
+        group_objects = []
+        group_seen = set()
+        for item in group.objects:
+            obj = item.object
+            if obj is None or obj.type != 'MESH':
+                continue
+            if obj.name in group_seen or obj.name in global_seen:
+                continue
+            group_objects.append(obj)
+            group_seen.add(obj.name)
+            global_seen.add(obj.name)
+            all_objects.append(obj)
+
+        if not group_objects:
+            continue
+
+        contexts.append({
+            "group": group,
+            "group_index": group_index,
+            "group_name": group.name,
+            "objects": group_objects,
+        })
+
+    for bake_context in contexts:
+        bake_context["all_objects"] = all_objects
+
+    return contexts
 
 
 def clean_filename_part(name):
@@ -1539,6 +1940,71 @@ def draw_rt_bake_sampling(layout: bpy.types.UILayout, context):
     oidn_settings_col.prop(rt_settings, "oidn_hdr")
 
 
+def draw_rt_bake_targets(layout: bpy.types.UILayout, context):
+    scene = context.scene
+    rt_settings = scene.ho_uvtools_rt_bake_settings
+
+    box = layout.box()
+    active_group = None
+    if len(rt_settings.target_groups) > 0:
+        group_index = min(max(0, rt_settings.target_group_index), len(rt_settings.target_groups) - 1)
+        active_group = rt_settings.target_groups[group_index]
+
+    target_rows = 4
+    split = box.split(factor=0.5, align=True)
+
+    group_root = split.column()
+    group_row = group_root.row(align=True)
+    group_col = group_row.column()
+    group_col.template_list(
+        HO_UL_RTBakeGroupList.__name__,
+        "",
+        rt_settings,
+        "target_groups",
+        rt_settings,
+        "target_group_index",
+        rows=target_rows
+    )
+
+    group_buttons = group_row.column(align=True)
+    group_buttons.operator(OT_UVTools_RTBakeGroupAdd.bl_idname, text="", icon="ADD")
+    group_buttons.operator(OT_UVTools_RTBakeGroupRemove.bl_idname, text="", icon="REMOVE")
+    group_buttons.separator()
+    group_up = group_buttons.operator(OT_UVTools_RTBakeGroupMove.bl_idname, text="", icon="TRIA_UP")
+    group_up.direction = 'UP'
+    group_down = group_buttons.operator(OT_UVTools_RTBakeGroupMove.bl_idname, text="", icon="TRIA_DOWN")
+    group_down.direction = 'DOWN'
+    group_buttons.separator()
+    group_buttons.operator(OT_UVTools_RTBakeTargetClear.bl_idname, text="", icon="X")
+
+    object_root = split.column()
+    object_row = object_root.row(align=True)
+    object_col = object_row.column()
+    if active_group is None:
+        object_col.label(text="没有MeshGroup", icon="INFO")
+    else:
+        object_col.template_list(
+            HO_UL_RTBakeGroupObjectList.__name__,
+            "",
+            active_group,
+            "objects",
+            active_group,
+            "active_object_index",
+            rows=target_rows
+        )
+
+    object_buttons = object_row.column(align=True)
+    object_buttons.operator(OT_UVTools_RTBakeTargetAddSelected.bl_idname, text="", icon="RESTRICT_SELECT_OFF")
+    object_buttons.operator(OT_UVTools_RTBakeTargetRemove.bl_idname, text="", icon="REMOVE")
+    object_buttons.separator()
+    move_up = object_buttons.operator(OT_UVTools_RTBakeTargetMove.bl_idname, text="", icon="TRIA_UP")
+    move_up.direction = 'UP'
+    move_down = object_buttons.operator(OT_UVTools_RTBakeTargetMove.bl_idname, text="", icon="TRIA_DOWN")
+    move_down.direction = 'DOWN'
+    object_buttons.separator()
+    object_buttons.operator(OT_UVTools_RTBakeTargetClearGroup.bl_idname, text="", icon="X")
+
+
 def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
     rt_settings = context.scene.ho_uvtools_rt_bake_settings
 
@@ -1580,6 +2046,7 @@ def draw_rt_bake_settings(layout: bpy.types.UILayout, context, use_box=True):
     row.prop(bake_settings, "view_from", text="观察方位")
     row.active = scene.camera is not None
 
+    draw_rt_bake_targets(root, context)
     draw_rt_bake_sampling(root, context)
     draw_rt_bake_channels(root, context)
     draw_rt_bake_output(root, context)
@@ -1598,7 +2065,19 @@ def drawRTBakePanel(layout: bpy.types.UILayout, context):
 
 
 cls = [
+    PG_UVTools_RTBakeTargetItem,
+    PG_UVTools_RTBakeTargetGroup,
     PG_UVTools_RTBakeSettings,
+    HO_UL_RTBakeGroupList,
+    HO_UL_RTBakeGroupObjectList,
+    OT_UVTools_RTBakeGroupAdd,
+    OT_UVTools_RTBakeGroupRemove,
+    OT_UVTools_RTBakeGroupMove,
+    OT_UVTools_RTBakeTargetAddSelected,
+    OT_UVTools_RTBakeTargetRemove,
+    OT_UVTools_RTBakeTargetMove,
+    OT_UVTools_RTBakeTargetClear,
+    OT_UVTools_RTBakeTargetClearGroup,
     OT_UVTools_RTBake,
 ]
 
