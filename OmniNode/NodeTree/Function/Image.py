@@ -670,6 +670,8 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
             "jpeg": ".jpg",
             "exr": ".exr",
             "open_exr": ".exr",
+            "tga": ".tga",
+            "bmp": ".bmp",
         }
 
         ext = ext_map.get(fmt, ".png")
@@ -693,6 +695,12 @@ def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniI
 
     elif fmt in ("JPG", "JPEG"):
         bl_img.file_format = 'JPEG'
+
+    elif fmt == "TGA":
+        bl_img.file_format = 'TARGA'
+
+    elif fmt == "BMP":
+        bl_img.file_format = 'BMP'
 
     else:
         raise ValueError(f"[saveImage] unsupported format: {format}")
@@ -869,3 +877,72 @@ def mergeImageChannels(
     return result
 
 
+@omni(
+    enable=True,
+    bl_label="调整法线贴图强度",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["法线贴图", "强度", "新建图像名称", "覆盖同名图像", "文件路径", "图像格式"],
+    _OUTPUT_NAME=["法线贴图", "图像路径"],
+    omni_description="""
+    调整输入切线空间法线贴图的强度。
+    强度为 0 时输出平面法线，强度为 1 时保持原图，强度大于 1 时增强凹凸。
+    输出图像自动使用 Non-Color 色彩空间；填写文件路径时会同时保存到磁盘。
+    """,
+)
+def adjustNormalMapStrength(
+    img: bpy.types.Image,
+    strength: float = 1.0,
+    name: str = "",
+    overwrite: bool = True,
+    file_path: _OmniFolderPath = "",
+    format: _OmniImageFormat = "PNG",
+) -> tuple[bpy.types.Image, _OmniFolderPath]:
+    if not img:
+        raise ValueError("[adjustNormalMapStrength] img is None")
+
+    width = img.size[0]
+    height = img.size[1]
+    if width <= 0 or height <= 0:
+        raise ValueError(f"[adjustNormalMapStrength] invalid image size: {width}x{height}")
+
+    normal_strength = max(0.0, float(strength))
+    img_array = _image_to_numpy_rgba(img)
+
+    out = np.zeros((height, width, 4), dtype=np.float32)
+    out[..., 3] = img_array[..., 3]
+
+    if normal_strength <= 1e-8:
+        out[..., :3] = (0.5, 0.5, 1.0)
+    elif abs(normal_strength - 1.0) <= 1e-8:
+        out[..., :3] = img_array[..., :3]
+    else:
+        normal = img_array[..., :3] * 2.0 - 1.0
+        normal[..., :2] *= normal_strength
+
+        length = np.linalg.norm(normal, axis=2)
+        valid = length > 1e-8
+
+        adjusted_normal = np.zeros_like(normal, dtype=np.float32)
+        adjusted_normal[..., 2] = 1.0
+        adjusted_normal[valid] = normal[valid] / length[valid, None]
+        out[..., :3] = adjusted_normal * 0.5 + 0.5
+
+    out = np.clip(out, 0.0, 1.0)
+
+    result_name = name if name else f"{img.name}_NormalStrength"
+    result = _prepare_image_output(
+        name=result_name,
+        width=width,
+        height=height,
+        overwrite=overwrite,
+        float_buffer=bool(getattr(img, "is_float", False)),
+        is_non_color=True,
+    )
+    _write_numpy_to_image(result, out)
+
+    output_path = ""
+    if file_path:
+        output_path = saveImage(result, file_path, format)
+
+    return result, output_path
