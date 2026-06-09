@@ -1510,6 +1510,7 @@ class PG_UVTools_RTBakeSettings(PropertyGroup):
         type=PG_UVTools_RTBakeTargetGroup
     )  # type: ignore
     target_group_index: IntProperty(default=0)  # type: ignore
+    use_target_groups: BoolProperty(name="启用分组", default=True)  # type: ignore
 
     margin_space: EnumProperty(
         name="拓展",
@@ -1646,6 +1647,17 @@ def _get_bake_target_group_contexts(context):
             "group_name": group.name,
             "objects": group_objects,
         })
+
+    if not rt_settings.use_target_groups:
+        if not all_objects:
+            return []
+        return [{
+            "group": None,
+            "group_index": 0,
+            "group_name": "All",
+            "objects": all_objects,
+            "all_objects": all_objects,
+        }]
 
     for bake_context in contexts:
         bake_context["all_objects"] = all_objects
@@ -1964,7 +1976,11 @@ def draw_rt_bake_targets(layout: bpy.types.UILayout, context):
     scene = context.scene
     rt_settings = scene.ho_uvtools_rt_bake_settings
 
+    row = layout.row(align=True)
+    row.prop(rt_settings, "use_target_groups", text="启用分组", toggle=True)
+
     box = layout.box()
+
     active_group = None
     if len(rt_settings.target_groups) > 0:
         group_index = min(max(0, rt_settings.target_group_index), len(rt_settings.target_groups) - 1)
