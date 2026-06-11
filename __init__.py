@@ -21,7 +21,7 @@ sys.path.append(omni_lib_dir)
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
-from . import Exp_hogui,OmniNode
+from . import OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
 # 内置的绘制快捷键ui的接口
@@ -49,14 +49,6 @@ def updateExIconState(self, context):
     else:
         bpy.ops.ho.remove_exicon()
 
-
-def updateExperimentalFeaturesState(self, context):
-    """实验性功能使用到的更新函数"""
-    prefs = context.preferences.addons[__name__].preferences
-    if prefs.hoTools_ExperimentalFeatures_enable:
-        Exp_hogui.register()
-    else:
-        Exp_hogui.unregister()
 
 def updateOmniNodeFeaturesState(self, context):
     """OmniNode功能使用到的更新函数"""
@@ -112,8 +104,6 @@ class AddonPreference(bpy.types.AddonPreferences):
 
     hoTools_enableExIcon: BoolProperty(name="开关exicon",
                                        default=False, update=updateExIconState)  # type: ignore
-    hoTools_ExperimentalFeatures_enable: BoolProperty(name="实验性功能",
-                                         default=False,update=updateExperimentalFeaturesState)  # type: ignore
     hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
                                           default=False,update=updateOmniNodeFeaturesState)  # type: ignore
 
@@ -179,8 +169,6 @@ def register():
     Rbf.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
-    if prefs.hoTools_ExperimentalFeatures_enable:
-        Exp_hogui.register()
     if prefs.hoTools_OmniNodeFeatures_enable:
         OmniNode.register()
 
@@ -202,7 +190,6 @@ def unregister():
     MeshTools.unregister()
     Checker.unregister()
     Rbf.unregister()
-    Exp_hogui.unregister()
     OmniNode.unregister()
 
     
