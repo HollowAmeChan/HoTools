@@ -638,6 +638,144 @@ def combineImages(
     return result
 
 
+def _pil_save_format_and_ext(format: _OmniImageFormat) -> tuple[str, str, bool]:
+    fmt = str(format or "PNG").upper()
+    if fmt == "OPEN_EXR":
+        fmt = "EXR"
+
+    format_map = {
+        "PNG": ("PNG", ".png", True),
+        "JPG": ("JPEG", ".jpg", False),
+        "JPEG": ("JPEG", ".jpg", False),
+        "TGA": ("TGA", ".tga", True),
+        "BMP": ("BMP", ".bmp", False),
+    }
+
+    if fmt == "EXR":
+        raise ValueError("[combineImageFiles] EXR needs Blender/OpenEXR IO and is not supported by the direct Pillow path")
+
+    try:
+        return format_map[fmt]
+    except KeyError:
+        raise ValueError(f"[combineImageFiles] unsupported format: {format}")
+
+
+def _color_to_rgba8(color: _OmniColorRGBA) -> tuple[int, int, int, int]:
+    values = tuple(color) if color is not None else ()
+    r = values[0] if len(values) > 0 else 0.0
+    g = values[1] if len(values) > 1 else 0.0
+    b = values[2] if len(values) > 2 else 0.0
+    a = values[3] if len(values) > 3 else 1.0
+
+    return tuple(
+        int(round(float(np.clip(channel, 0.0, 1.0)) * 255.0))
+        for channel in (r, g, b, a)
+    )
+
+
+def _resolve_direct_image_output_path(
+    file_path: _OmniFolderPath,
+    name: str,
+    format: _OmniImageFormat,
+) -> str:
+    if not file_path:
+        raise ValueError("[combineImageFiles] file_path is empty")
+
+    _, ext, _ = _pil_save_format_and_ext(format)
+    output_path = bpy.path.abspath(str(file_path))
+
+    is_folder = (
+        output_path.endswith(("/", "\\"))
+        or os.path.isdir(output_path)
+        or not os.path.splitext(output_path)[1]
+    )
+
+    if is_folder:
+        output_name = str(name or "CombinedImage")
+        output_path = os.path.join(output_path, output_name + ext)
+
+    return output_path
+
+
+def _load_pil_rgba(path: _OmniFolderPath) -> Image.Image:
+    abs_path = bpy.path.abspath(str(path))
+    if not abs_path:
+        raise ValueError("[combineImageFiles] image path is empty")
+    if not os.path.isfile(abs_path):
+        raise FileNotFoundError(f"[combineImageFiles] image file not found: {abs_path}")
+
+    with Image.open(abs_path) as src:
+        return src.convert("RGBA")
+
+
+@omni(
+    enable=True,
+    bl_label="合成图片(外部)",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["图片路径列表", "保存位置", "背景颜色", "输出名称", "格式", "覆盖同名文件", "是数据贴图"],
+    _OUTPUT_NAME=["文件路径"],
+    omni_description="""
+    直接从磁盘读取多张图片，用 Pillow 合成后保存到磁盘。
+    不导入、不创建 Blender Image，适合批量纹理合成。
+    如果保存位置是目录或没有文件后缀，会使用输出名称和格式自动生成文件名。
+    数据贴图不会做色彩空间转换，但会阻止保存为 JPEG，避免数据被有损压缩。
+    """,
+)
+def combineImageFiles(
+    imagePaths: list[_OmniFolderPath],
+    file_path: _OmniFolderPath,
+    backgroundColor: _OmniColorRGBA = (0.0, 0.0, 0.0, 0.0),
+    name: str = "CombinedImage",
+    format: _OmniImageFormat = "PNG",
+    overwrite: bool = True,
+    is_data: bool = False,
+) -> _OmniFolderPath:
+    if isinstance(imagePaths, str):
+        image_paths = [imagePaths]
+    else:
+        image_paths = list(imagePaths or [])
+
+    image_paths = [path for path in image_paths if path]
+    if not image_paths:
+        raise ValueError("[combineImageFiles] empty image path list")
+
+    pil_format, _, supports_alpha = _pil_save_format_and_ext(format)
+    if is_data and pil_format == "JPEG":
+        raise ValueError("[combineImageFiles] data maps should not be saved as JPEG")
+
+    output_path = _resolve_direct_image_output_path(file_path, name, format)
+
+    if os.path.exists(output_path) and not overwrite:
+        raise FileExistsError(f"[combineImageFiles] output file exists: {output_path}")
+
+    first_img = _load_pil_rgba(image_paths[0])
+    width, height = first_img.size
+    bg_rgba = _color_to_rgba8(backgroundColor)
+    acc = Image.new("RGBA", (width, height), bg_rgba)
+    acc = Image.alpha_composite(acc, first_img)
+
+    for image_path in image_paths[1:]:
+        img = _load_pil_rgba(image_path)
+        if img.size != (width, height):
+            raise ValueError(
+                f"[combineImageFiles] size mismatch: {bpy.path.abspath(str(image_path))} "
+                f"({img.size[0]}x{img.size[1]}) != ({width}x{height})"
+            )
+        acc = Image.alpha_composite(acc, img)
+
+    if not supports_alpha:
+        opaque_bg = Image.new("RGBA", acc.size, (bg_rgba[0], bg_rgba[1], bg_rgba[2], 255))
+        acc = Image.alpha_composite(opaque_bg, acc).convert("RGB")
+
+    folder = os.path.dirname(output_path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    acc.save(output_path, format=pil_format)
+    return output_path
+
+
 @omni(enable=True,
     bl_label="保存图片",
     base_color=_Color.colorCat["Operator"],
