@@ -30,7 +30,7 @@ BLENDER_SOCKET_TYPES = {
 
     "NodeSocketShader": "Shader",
 
-    "NodeSocketMatrix": "Matrix",
+    # "NodeSocketMatrix": "Matrix", #4.1不存在，高版本存在，等5.xLTS
     # "NodeSocketMenu": "Menu",
 }
 

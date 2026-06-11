@@ -17,7 +17,7 @@ from bpy.types import (
     NodeSocketMaterial,
     NodeSocketTexture,
     NodeSocketGeometry,
-    NodeSocketMatrix,
+    # NodeSocketMatrix, #4.1不存在，高版本存在，等5.xLTS
 )
 
 NodeSocketStringFilePath = getattr(bpy.types, "NodeSocketStringFilePath", NodeSocketString)
@@ -98,7 +98,7 @@ SKT_DIC = {
     bpy.types.Mesh: NodeSocketObject,
     bpy.types.Armature: NodeSocketObject,
     bpy.types.Texture: NodeSocketTexture,
-    mathutils.Matrix: NodeSocketMatrix,
+    # mathutils.Matrix: NodeSocketMatrix, #4.1不存在，高版本存在，等5.xLTS
     mathutils.Vector:NodeSocketVector,
     _OmniFolderPath: NodeSocketStringFilePath,
     # python类到blender socket类
