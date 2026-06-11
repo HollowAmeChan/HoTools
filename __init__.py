@@ -122,7 +122,6 @@ class AddonPreference(bpy.types.AddonPreferences):
         row.prop(self, "hoTools_ExIconSize")
         row.prop(self, "hoTools_ExiconAlpha")
         row = layout.row(align=True)
-        row.prop(self, "hoTools_ExperimentalFeatures_enable", toggle=True)
         row.prop(self, "hoTools_OmniNodeFeatures_enable", toggle=True)
 
         # 获取 KeyMap
