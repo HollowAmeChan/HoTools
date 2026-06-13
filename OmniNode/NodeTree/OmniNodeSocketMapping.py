@@ -1,4 +1,19 @@
-from .OmniNodeSocket import OmniNodeSocketText, OmniNodeSocketScene, OmniNodeSocketAny,OmniNodeSocketImageFormat,OmniNodeSocketRegex,OmniNodeSocketGlob, OmniNodeSocketDatablock, OmniNodeSocketModifierType, OmniNodeSocketModifier, OmniNodeSocketMaterialSlot, OmniNodeSocketUVLayer, OmniNodeSocketColorAttribute, OmniNodeSocketVertexGroup
+from .OmniNodeSocket import (
+    OmniNodeSocketText,
+    OmniNodeSocketScene,
+    OmniNodeSocketAny,
+    OmniNodeSocketCache,
+    OmniNodeSocketImageFormat,
+    OmniNodeSocketRegex,
+    OmniNodeSocketGlob,
+    OmniNodeSocketDatablock,
+    OmniNodeSocketModifierType,
+    OmniNodeSocketModifier,
+    OmniNodeSocketMaterialSlot,
+    OmniNodeSocketUVLayer,
+    OmniNodeSocketColorAttribute,
+    OmniNodeSocketVertexGroup,
+)
 import bpy
 import mathutils
 import inspect
@@ -42,6 +57,9 @@ class _OmniRegex(str):
     def __init__():
         return
 class _OmniGlob(str):
+    def __init__():
+        return
+class _OmniCache(str):
     def __init__():
         return
 class _OmniColorRGBA():
@@ -124,4 +142,5 @@ SKT_DIC = {
     _OmniImageFormat: OmniNodeSocketImageFormat,
     _OmniRegex: OmniNodeSocketRegex,
     _OmniGlob: OmniNodeSocketGlob,
+    _OmniCache: OmniNodeSocketCache,
 }

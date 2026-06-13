@@ -89,14 +89,11 @@ class OmniExecutor:
                 continue
 
             if isinstance(op, CacheReadCall):
-                fallback_value = registers[op.fallback_input] if op.fallback_input is not None else None
                 key_value = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None))
                 cache_key = OmniRuntimeState.cache_key_for_node(op.node, key_value)
 
                 try:
                     hit, value = OmniRuntimeState.read_cache(runtime_context, cache_key)
-                    if not hit:
-                        value = fallback_value
                 except Exception as exc:
                     runtime_context.mark_failed()
                     op.node.set_bug_state(exc)

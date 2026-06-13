@@ -90,6 +90,23 @@ class OmniNodeSocketAny(NodeSocket):
         return (0.5, 0.5, 0.5, 0.5)
 
 
+class OmniNodeSocketCache(NodeSocket):
+    bl_label = "Cache-Omni"
+    bl_idname = "OmniNodeSocketCache"
+
+    default_value: bpy.props.StringProperty(
+        default="",
+        options={"HIDDEN", "SKIP_SAVE"},
+    )  # type: ignore
+
+    def draw(self, context, layout, node, text):
+        layout.label(text=self.name)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.1, 0.72, 0.62, 1.0)
+
+
 class OmniNodeSocketImageFormat(NodeSocket):
     bl_label = "图片后缀格式-Omni"
     bl_idname = "OmniNodeSocketImageFormat"
@@ -283,6 +300,7 @@ cls = [
     OmniNodeSocketScene,
     OmniNodeSocketText,
     OmniNodeSocketAny,
+    OmniNodeSocketCache,
     OmniNodeSocketImageFormat,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,

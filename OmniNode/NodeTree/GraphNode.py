@@ -330,8 +330,7 @@ def _sync_cache_node_io(node: OmniNode, *, is_writer: bool) -> None:
             pass
         node.outputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
     else:
-        node.inputs.new(type="OmniNodeSocketAny", name="默认值", identifier="fallback")
-        node.outputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
+        node.outputs.new(type="OmniNodeSocketCache", name="", identifier="cache")
         node.outputs.new(type="NodeSocketBool", name="命中", identifier="hit")
 
     restore_node_links(node, link_cache)
@@ -346,7 +345,8 @@ class OmniCacheReadNode(OmniNode):
         self.omni_description = """
         从当前执行实例的 committed runtime cache 中读取值。
         缓存名是字符串输入，留空时使用本节点自己的运行时ID。
-        如果缓存不存在，输出默认值并将命中输出设为False。
+        裸输出是 Cache 类型的缓存值，用于连接后续依赖 cache 的节点。
+        如果缓存不存在，裸输出为None，命中输出设为False。
         """
         self.syncCacheIO()
 

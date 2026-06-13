@@ -48,9 +48,8 @@ class BatchSubtreeCall:
 
 
 class CacheReadCall:
-    def __init__(self, cache_key_input, fallback_input, outputs, node):
+    def __init__(self, cache_key_input, outputs, node):
         self.cache_key_input = cache_key_input
-        self.fallback_input = fallback_input
         self.outputs = outputs
         self.node = node
 
@@ -482,7 +481,6 @@ class OmniCompiler:
 
             if node_idname == OmniCompiler.CACHE_READ_NODE_IDNAME:
                 cache_key_reg = compile_optional_input(node, "cache_key")
-                fallback_reg = compile_optional_input(node, "fallback")
 
                 output_regs = []
                 for sock in node.outputs:
@@ -501,14 +499,13 @@ class OmniCompiler:
                 instructions.append(
                     CacheReadCall(
                         cache_key_reg,
-                        fallback_reg,
                         output_regs,
                         node,
                     )
                 )
                 OmniDebug.append_compile_trace(
                     graph,
-                    f"Emit CACHE READ {node.name} key={cache_key_reg} fallback={fallback_reg} outputs={output_regs}",
+                    f"Emit CACHE READ {node.name} key={cache_key_reg} outputs={output_regs}",
                 )
                 continue
 
