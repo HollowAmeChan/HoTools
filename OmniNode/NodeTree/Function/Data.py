@@ -131,6 +131,7 @@ def stringInput(v: str) -> str:
 @omni(enable=True,
       bl_label="当前时间",
       base_color=_Color.colorCat["GetData"],
+      omni_description="输出当前系统本地时间，以及拆分后的年月日时分秒。",
       _OUTPUT_NAME=["时间", "年", "月", "日", "时", "分", "秒"],
       )
 def currentTime() -> tuple[str, int, int, int, int, int, int]:
@@ -143,6 +144,38 @@ def currentTime() -> tuple[str, int, int, int, int, int, int]:
         now.hour,
         now.minute,
         now.second,
+    )
+
+@omni(enable=True,
+      bl_label="当前帧",
+      base_color=_Color.colorCat["GetData"],
+      omni_description="输出当前场景的当前帧、帧范围和预览范围设置。",
+      _OUTPUT_NAME=["当前帧", "帧开始", "帧结束", "预览开始", "预览结束", "启用预览范围"],
+      )
+def currentFrame() -> tuple[int, int, int, int, int, bool]:
+    scene = bpy.context.scene
+    return (
+        scene.frame_current,
+        scene.frame_start,
+        scene.frame_end,
+        scene.frame_preview_start,
+        scene.frame_preview_end,
+        scene.use_preview_range,
+    )
+
+@omni(enable=True,
+      bl_label="场景帧率",
+      base_color=_Color.colorCat["GetData"],
+      omni_description="输出当前场景的实际帧率，以及每帧对应的秒数。",
+      _OUTPUT_NAME=["帧率", "帧间隔"],
+      )
+def sceneFrameRate() -> tuple[float, float]:
+    render = bpy.context.scene.render
+    fps_base = render.fps_base if render.fps_base else 1.0
+    fps = render.fps / fps_base
+    return (
+        fps,
+        1.0 / fps if fps else 0.0,
     )
 
 @omni(enable=True, 
