@@ -932,6 +932,9 @@ class OmniNodeRebuild(Operator):
         if isinstance(value, (str, bool, int, float)) or value is None:
             return value
 
+        if isinstance(value, bpy.types.ID):
+            return value
+
         try:
             return tuple(value)
         except Exception:
