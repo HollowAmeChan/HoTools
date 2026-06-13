@@ -5,6 +5,7 @@ import sys
 from bpy.props import BoolProperty, StringProperty, EnumProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
+from . import OmniNodeDraw
 from . import OmniRuntimeState
 from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
@@ -51,6 +52,17 @@ def _active_omni_tree(context):
     space = getattr(context, "space_data", None)
     tree = _resolve_space_tree(space)
     return tree if _is_omni_tree(tree) else None
+
+
+def _find_omni_tree(tree_name):
+    tree = bpy.data.node_groups.get(tree_name)
+    if _is_omni_tree(tree):
+        return tree
+
+    for candidate in bpy.data.node_groups:
+        if getattr(candidate, "name_full", None) == tree_name and _is_omni_tree(candidate):
+            return candidate
+    return None
 
 
 def _tree_runtime_module(tree):
@@ -661,6 +673,92 @@ class OmniTreeDestroy(Operator):
 
         return {'FINISHED'}
 
+
+class OmniNodeToggleDescription(Operator):
+    bl_idname = "ho.omni_toggle_node_description"
+    bl_label = "查看节点描述"
+    bl_description = "在节点上方显示或隐藏该节点的描述文本"
+    bl_options = {'REGISTER'}
+
+    node_tree_name: StringProperty(default="")  # type: ignore
+    node_name: StringProperty(default="")  # type: ignore
+    use_selected_nodes: BoolProperty(default=False)  # type: ignore
+    show_description: BoolProperty(default=True)  # type: ignore
+
+    def _resolve_tree(self, context):
+        return _find_omni_tree(self.node_tree_name) if self.node_tree_name else _active_omni_tree(context)
+
+    def _resolve_nodes(self, context):
+        tree = self._resolve_tree(context)
+        if tree is None:
+            return []
+
+        if self.use_selected_nodes:
+            nodes = [
+                node for node in (list(getattr(context, "selected_nodes", []) or []))
+                if getattr(node, "id_data", None) == tree
+            ]
+            active_node = getattr(context, "active_node", None)
+            if active_node is not None and getattr(active_node, "id_data", None) == tree and active_node not in nodes:
+                nodes.append(active_node)
+            return nodes
+
+        if self.node_name:
+            node = tree.nodes.get(self.node_name)
+            return [node] if node is not None else []
+
+        active_node = getattr(context, "active_node", None)
+        if active_node is not None and getattr(active_node, "id_data", None) == tree:
+            return [active_node]
+
+        selected_nodes = [
+            node for node in (list(getattr(context, "selected_nodes", []) or []))
+            if getattr(node, "id_data", None) == tree
+        ]
+        return selected_nodes[:1]
+
+    def execute(self, context: bpy.types.Context):
+        nodes = self._resolve_nodes(context)
+        if not nodes:
+            self.report({'WARNING'}, "找不到节点")
+            return {'CANCELLED'}
+
+        nodes_with_description = [
+            node for node in nodes
+            if OmniNodeDraw.description_text(node)
+        ]
+        if not nodes_with_description:
+            self.report({'WARNING'}, "所选节点没有描述")
+            return {'CANCELLED'}
+
+        shown_count = 0
+        hidden_count = 0
+        skipped_bug_count = 0
+
+        for node in nodes_with_description:
+            if getattr(node, "is_bug", False) and getattr(node, "bug_text", ""):
+                OmniNodeDraw.clear_description(node)
+                skipped_bug_count += 1
+                continue
+
+            if self.show_description:
+                OmniNodeDraw.draw_description(node)
+                shown_count += 1
+            else:
+                OmniNodeDraw.clear_description(node)
+                hidden_count += 1
+
+        parts = []
+        if shown_count:
+            parts.append(f"显示 {shown_count} 个")
+        if hidden_count:
+            parts.append(f"隐藏 {hidden_count} 个")
+        if skipped_bug_count:
+            parts.append(f"跳过 Bug {skipped_bug_count} 个")
+        self.report({'INFO'}, "节点描述: " + "，".join(parts))
+        return {'FINISHED'}
+
+
 class OmniNodeRebuild(Operator):
     # TODO: 诡异bug，重建以后会自动拥有bl_icon，此问题在pr中被反复讨论，是有关customgroupnode的？
     # https://projects.blender.org/blender/blender/pulls/130204
@@ -940,6 +1038,24 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
 
     layout: bpy.types.UILayout = self.layout
     layout.separator()
+    target_nodes = selected_nodes if selected_nodes else ([active_node] if active_node is not None else [])
+    target_nodes = [
+        node for node in target_nodes
+        if getattr(node, "id_data", None) == tree and OmniNodeDraw.description_text(node)
+    ]
+    if target_nodes:
+        all_visible = all(OmniNodeDraw.is_description_visible(node) for node in target_nodes)
+        multi_target = len(target_nodes) > 1
+        text = ("隐藏所选描述" if multi_target else "隐藏描述") if all_visible else (
+            "查看所选描述" if multi_target else "查看描述"
+        )
+        op = layout.operator(OmniNodeToggleDescription.bl_idname, text=text, icon="INFO")
+        op.node_tree_name = getattr(tree, "name_full", tree.name)
+        op.use_selected_nodes = len(selected_nodes) > 1
+        op.show_description = not all_visible
+        if not op.use_selected_nodes:
+            op.node_name = target_nodes[0].name
+
     label = "重建所选节点" if target_count > 1 else "重建节点"
     layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")
 
@@ -970,6 +1086,7 @@ clss = [
     OmniTreeRunCompiled,
     OmniTreeClearCompileCache,
     OmniTreeClearRuntimeCache,
+    OmniNodeToggleDescription,
     OmniNodeRebuild,
     OmniGraphNodeIOItem,
     HO_UL_GraphNodeIO,

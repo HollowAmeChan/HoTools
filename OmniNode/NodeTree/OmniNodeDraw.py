@@ -7,8 +7,19 @@ _HANDLES = {}
 _PAYLOADS = {}
 
 
-def _overlay_id(node):
-    return f"omni_error::{node.id_data.name_full}::{node.name}"
+def _overlay_id(node, kind="error"):
+    return f"omni_{kind}::{node.id_data.name_full}::{node.name}"
+
+
+def _wrap_text(text, width=40):
+    wrapped_lines = []
+    for line in str(text or "").strip().splitlines():
+        line = line.strip()
+        if not line:
+            wrapped_lines.append("")
+            continue
+        wrapped_lines.extend(textwrap.wrap(line, width=width) or [line])
+    return "\n".join(wrapped_lines)
 
 
 def _absolute_location(node):
@@ -132,8 +143,8 @@ def callback_disable(overlay_id):
         _tag_node_editors(payload["tree_name"])
 
 
-def draw_text(node, text, color=(1.0, 0.35, 0.35, 1.0), scale=1.3, align="UP"):
-    overlay_id = _overlay_id(node)
+def draw_text(node, text, color=(1.0, 0.35, 0.35, 1.0), scale=1.3, align="UP", kind="error"):
+    overlay_id = _overlay_id(node, kind)
     callback_disable(overlay_id)
     _PAYLOADS[overlay_id] = {
         "tree_name": node.id_data.name_full,
@@ -152,12 +163,46 @@ def draw_text(node, text, color=(1.0, 0.35, 0.35, 1.0), scale=1.3, align="UP"):
     _tag_node_editors(node.id_data.name_full)
 
 
+def clear_description(node):
+    callback_disable(_overlay_id(node, "description"))
+
+
+def is_description_visible(node):
+    return _overlay_id(node, "description") in _PAYLOADS
+
+
+def description_text(node):
+    text = str(getattr(node, "omni_description", "") or "").strip()
+    if not text or text == "No description":
+        return ""
+    return text
+
+
+def draw_description(node):
+    text = description_text(node)
+    if not text:
+        clear_description(node)
+        return False
+
+    wrapped = _wrap_text(text, width=48) or text
+    draw_text(
+        node,
+        wrapped,
+        color=(0.62, 0.82, 1.0, 1.0),
+        scale=1.05,
+        align="UP",
+        kind="description",
+    )
+    return True
+
+
 def sync_bug_text(node):
     if getattr(node, "is_bug", False) and getattr(node, "bug_text", ""):
-        wrapped = "\n".join(textwrap.wrap(node.bug_text, width=36)) or node.bug_text
-        draw_text(node, wrapped)
+        clear_description(node)
+        wrapped = _wrap_text(node.bug_text, width=36) or node.bug_text
+        draw_text(node, wrapped, kind="error")
     else:
-        callback_disable(_overlay_id(node))
+        callback_disable(_overlay_id(node, "error"))
 
 
 def clear_tree(tree):
