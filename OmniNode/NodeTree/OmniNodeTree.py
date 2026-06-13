@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import NodeTree
-from bpy.props import CollectionProperty, IntProperty
+from bpy.props import BoolProperty, CollectionProperty, IntProperty
+from bpy.app.handlers import persistent
 
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
@@ -20,6 +21,69 @@ import time
 TREE_ID = "OMNINODE"
 TREE_ID_NAME = "OmniNodeTree"
 
+# tree key -> CompiledGraph. Keeps compile artifacts for multiple OmniNodeTree datablocks.
+_COMPILED_TREE_CACHE = {}
+_FRAME_HANDLER_RUNNING = False
+
+
+def _tree_cache_key(tree):
+    if tree is None:
+        return "tree:<none>"
+
+    try:
+        return f"tree:{int(tree.as_pointer())}"
+    except Exception:
+        return f"tree:{id(tree)}"
+
+
+def clear_tree_compile_cache(tree):
+    _COMPILED_TREE_CACHE.pop(_tree_cache_key(tree), None)
+
+
+def _cached_compiled_graph(tree):
+    return _COMPILED_TREE_CACHE.get(_tree_cache_key(tree))
+
+
+def _is_omni_node_tree(tree):
+    return tree is not None and getattr(tree, "bl_idname", None) == TREE_ID_NAME
+
+
+@persistent
+def _omni_frame_change_post(scene, depsgraph=None):
+    global _FRAME_HANDLER_RUNNING
+    if _FRAME_HANDLER_RUNNING:
+        return
+
+    _FRAME_HANDLER_RUNNING = True
+    try:
+        for tree in list(bpy.data.node_groups):
+            if not _is_omni_node_tree(tree):
+                continue
+            if not getattr(tree, "is_frame_run_enabled", False):
+                continue
+            try:
+                tree.run_frame_cached()
+            except Exception as exc:
+                try:
+                    tree.is_frame_run_enabled = False
+                except Exception:
+                    pass
+                print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
+    finally:
+        _FRAME_HANDLER_RUNNING = False
+
+
+def _ensure_frame_handler():
+    handlers = bpy.app.handlers.frame_change_post
+    if _omni_frame_change_post not in handlers:
+        handlers.append(_omni_frame_change_post)
+
+
+def _remove_frame_handler():
+    handlers = bpy.app.handlers.frame_change_post
+    while _omni_frame_change_post in handlers:
+        handlers.remove(_omni_frame_change_post)
+
 
 class OmniNodeTree(NodeTree):
     bl_idname = TREE_ID_NAME
@@ -28,6 +92,11 @@ class OmniNodeTree(NodeTree):
 
     is_auto_update: bpy.props.BoolProperty(
         description="是否实时刷新",
+        default=False,
+    )  # type: ignore
+    is_frame_run_enabled: BoolProperty(
+        name="每帧运行",
+        description="帧变化后自动运行。没有编译缓存时会先编译一次，之后直接运行缓存的编译结果。",
         default=False,
     )  # type: ignore
     debug_compile: bpy.props.BoolProperty(
@@ -60,7 +129,7 @@ class OmniNodeTree(NodeTree):
     def interface_update(self, context):
         print(self.name, " interface_update")
 
-    def run(self):
+    def _clear_run_state(self):
         OmniNodeDraw.clear_tree(self)
 
         for node in self.nodes:
@@ -70,17 +139,53 @@ class OmniNodeTree(NodeTree):
                 node.is_bug = False
                 node.bug_text = ""
 
+    def compile_cache_status_label(self):
+        return "编译缓存: 已缓存" if _cached_compiled_graph(self) is not None else "编译缓存: 无缓存"
+
+    def compile_cached(self, force=False):
+        cache_key = _tree_cache_key(self)
+        compiled = _COMPILED_TREE_CACHE.get(cache_key)
+
+        if not force and compiled is not None:
+            return compiled
+
+        self._clear_run_state()
         debug_enabled = getattr(self, "debug_compile", False)
         compiled = OmniCompiler.compile(self, debug=debug_enabled)
+
+        _COMPILED_TREE_CACHE[cache_key] = compiled
 
         if debug_enabled:
             print("\n".join(OmniDebug.format_runtime_header(self.name)))
             print("\n".join(OmniDebug.format_compile_report(compiled, (SubtreeCall, BatchSubtreeCall))))
             print("\n".join(OmniDebug.format_runtime_separator(self.name)))
 
+        return compiled
+
+    def clear_compile_cache(self):
+        clear_tree_compile_cache(self)
+
+    def _run_compiled_graph(self, compiled):
+        self._clear_run_state()
+        debug_enabled = getattr(self, "debug_compile", False)
         result = OmniExecutor.run(compiled, debug=debug_enabled)
 
         return result
+
+    def run_compiled(self):
+        compiled = _cached_compiled_graph(self)
+        if compiled is None:
+            raise RuntimeError(f"OmniNodeTree '{self.name}' has not been compiled")
+
+        return self._run_compiled_graph(compiled)
+
+    def run_frame_cached(self):
+        compiled = self.compile_cached(force=False)
+        return self._run_compiled_graph(compiled)
+
+    def run(self):
+        self.compile_cached(force=True)
+        return self.run_compiled()
 
 
 def draw_OmniTreeInputs(layout, tree):
@@ -134,12 +239,14 @@ def draw_OmniTreeOutputs(layout, tree):
 
 def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     layout: bpy.types.UILayout = self.layout
-    tree = context.space_data.node_tree
+    tree: OmniNodeTree = context.space_data.node_tree
 
     if tree is None or getattr(tree, "bl_idname", "") != TREE_ID_NAME:
         return
 
     layout.prop(tree, "debug_compile", text="Debug编译/运行", toggle=True)
+    layout.label(text=tree.compile_cache_status_label())
+    layout.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True)
 
     if tree.is_auto_update:
         layout.alert = True
@@ -158,10 +265,13 @@ cls = [OmniNodeTree]
 def register():
     for item in cls:
         bpy.utils.register_class(item)
+    _ensure_frame_handler()
     bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
 
 def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
+    _remove_frame_handler()
+    _COMPILED_TREE_CACHE.clear()
     for item in cls:
         bpy.utils.unregister_class(item)

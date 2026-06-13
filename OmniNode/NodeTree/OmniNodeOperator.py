@@ -46,6 +46,12 @@ def _is_omni_tree(tree):
     return tree is not None and getattr(tree, "bl_idname", None) == "OmniNodeTree"
 
 
+def _active_omni_tree(context):
+    space = getattr(context, "space_data", None)
+    tree = _resolve_space_tree(space)
+    return tree if _is_omni_tree(tree) else None
+
+
 def _nav_space_key(context):
     space = getattr(context, "space_data", None)
     area = getattr(context, "area", None)
@@ -518,10 +524,56 @@ class LayerRunning(Operator):
     reportInfo: BoolProperty(name="报告pool信息", default=True)  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        if (not hasattr(context.space_data, "node_tree")) or (not context.space_data.node_tree):
+        tree = _active_omni_tree(context)
+        if tree is None:
             return {'FINISHED'}
-        tree = context.space_data.node_tree
-        tree.run()
+
+        try:
+            tree.run()
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class OmniTreeCompile(Operator):
+    bl_idname = "ho.omnitree_compile"
+    bl_label = "编译OMNI树"
+    bl_description = "只编译当前 OmniNodeTree，并缓存编译结果"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context: bpy.types.Context):
+        tree = _active_omni_tree(context)
+        if tree is None:
+            return {'CANCELLED'}
+
+        try:
+            tree.compile_cached(force=True)
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"已编译 Omni 树: {tree.name}")
+        return {'FINISHED'}
+
+
+class OmniTreeRunCompiled(Operator):
+    bl_idname = "ho.omnitree_run_compiled"
+    bl_label = "运行已编译OMNI树"
+    bl_description = "运行当前缓存的编译结果。没有编译缓存时请先编译。"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context: bpy.types.Context):
+        tree = _active_omni_tree(context)
+        if tree is None:
+            return {'CANCELLED'}
+
+        try:
+            tree.run_compiled()
+        except Exception as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
         return {'FINISHED'}
 
 class OmniTreeDestroy(Operator):
@@ -541,6 +593,8 @@ class OmniTreeDestroy(Operator):
 
         tree = space.node_tree
         tree_name = tree.name
+        if hasattr(tree, "clear_compile_cache"):
+            tree.clear_compile_cache()
 
         bpy.data.node_groups.remove(tree, do_unlink=True)
 
@@ -794,14 +848,17 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
     space = context.space_data
     if not space or space.type != 'NODE_EDITOR':
         return
-    tree = space.node_tree
-    if not tree:
-        return
-    if tree.bl_idname != "OmniNodeTree":
+    tree = _resolve_space_tree(space)
+    if not _is_omni_tree(tree):
         return
 
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
+    row = layout.row(align=True)
+    row.operator(OmniTreeCompile.bl_idname, text="编译", icon="FILE_TICK")
+    row.operator(OmniTreeRunCompiled.bl_idname, text="运行", icon="PLAY")
+    row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
+    row.label(text=tree.compile_cache_status_label())
     return
 
 
@@ -845,6 +902,8 @@ clss = [
     NodeSetDefaultSize,
     NodeSetBiggerSize,
     LayerRunning,
+    OmniTreeCompile,
+    OmniTreeRunCompiled,
     OmniNodeRebuild,
     OmniGraphNodeIOItem,
     HO_UL_GraphNodeIO,
