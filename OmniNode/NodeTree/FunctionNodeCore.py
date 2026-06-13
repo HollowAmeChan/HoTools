@@ -13,6 +13,7 @@ def omni(**omnidata):
     OMNI信息装饰器
     1.  可以配置的META信息包括:
         omni_description:str
+        omni_presets:list[dict]
         bl_label:str
         base_color:tuple[float,float,float]
         is_output_node:bool
@@ -67,6 +68,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
     NodeInfo["is_output_node"] = False
     NodeInfo["base_color"] = (0.5, 0.5, 0)
     NodeInfo["omni_description"] = ""
+    NodeInfo["omni_presets"] = []
     NodeInfo["_INPUT_NAME"] = []
     NodeInfo["_OUTPUT_NAME"] = ["输出"]
     NodeInfo.update(func.__meta)
@@ -182,6 +184,7 @@ def CreateNodeClass(func) -> OmniNode:
         __name__ = "HO_OmniProgramCreateNode_"+func.__name__
         _func = staticmethod(func)
         _meta = func_meta
+        _omni_presets = NodeInfo.get("omni_presets", [])
         _socket_is_multi = SocketIsMulti
 
         def build(self):

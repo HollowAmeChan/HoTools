@@ -182,6 +182,52 @@ def _smooth_damp_vector(
         "位置",
         "旋转",
     ],
+    omni_presets=[
+        {
+            "name": "缓慢跟随",
+            "values": {
+                "position_follow": 1.0,
+                "rotation_follow": 1.0,
+                "response": 0.1,
+                "overshoot": 0.0,
+                "max_velocity": 0.0,
+                "max_angular_velocity": 0.0,
+            },
+        },
+        {
+            "name": "柔和跟随",
+            "values": {
+                "position_follow": 1.0,
+                "rotation_follow": 1.0,
+                "response": 0.3,
+                "overshoot": 0.05,
+                "max_velocity": 0.0,
+                "max_angular_velocity": 0.0,
+            },
+        },
+        {
+            "name": "快速跟随",
+            "values": {
+                "position_follow": 1.0,
+                "rotation_follow": 1.0,
+                "response": 0.9,
+                "overshoot": 0.08,
+                "max_velocity": 0.0,
+                "max_angular_velocity": 0.0,
+            },
+        },
+        {
+            "name": "明显超调",
+            "values": {
+                "position_follow": 1.0,
+                "rotation_follow": 1.0,
+                "response": 0.6,
+                "overshoot": 0.35,
+                "max_velocity": 0.0,
+                "max_angular_velocity": 0.0,
+            },
+        },
+    ],
     omni_description="""
     使用一个打包的 runtime cache 状态做软跟随。
     参数命名和核心行为对齐 Unity HoFollowConstraint 的 Follow 分组。

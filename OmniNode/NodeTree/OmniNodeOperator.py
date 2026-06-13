@@ -2,7 +2,7 @@ from typing import Set
 import bpy
 import os
 import sys
-from bpy.props import BoolProperty, StringProperty, EnumProperty
+from bpy.props import BoolProperty, StringProperty, EnumProperty, IntProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
 from . import OmniNodeDraw
@@ -245,6 +245,52 @@ def full_socket_type_items():
     for k in OmniNodeSocket.cls:
         items.append((k.bl_idname, k.bl_label, ""))
     return items
+
+
+def _normalize_omni_preset(preset, index):
+    name = f"Preset {index + 1}"
+    description = ""
+    values = None
+
+    if isinstance(preset, dict):
+        name = str(preset.get("name") or preset.get("label") or name)
+        description = str(preset.get("description") or "")
+        values = preset.get("values")
+        if values is None:
+            values = preset.get("inputs")
+        if values is None:
+            meta_keys = {"name", "label", "description", "values", "inputs"}
+            values = {key: value for key, value in preset.items() if key not in meta_keys}
+    elif isinstance(preset, (list, tuple)) and len(preset) >= 2:
+        name = str(preset[0] or name)
+        values = preset[1]
+        if len(preset) >= 3:
+            description = str(preset[2] or "")
+
+    if not isinstance(values, dict) or not values:
+        return None
+
+    return {
+        "name": name,
+        "description": description,
+        "values": dict(values),
+    }
+
+
+def _node_omni_presets(node):
+    raw_presets = getattr(node, "_omni_presets", []) or []
+    if isinstance(raw_presets, dict):
+        raw_presets = [
+            {"name": name, "values": values}
+            for name, values in raw_presets.items()
+        ]
+
+    presets = []
+    for index, preset in enumerate(raw_presets):
+        normalized = _normalize_omni_preset(preset, index)
+        if normalized is not None:
+            presets.append(normalized)
+    return presets
 
 
 def sync_tree_io(tree):
@@ -759,6 +805,101 @@ class OmniNodeToggleDescription(Operator):
         return {'FINISHED'}
 
 
+class OmniNodeApplyPreset(Operator):
+    bl_idname = "ho.omni_apply_node_preset"
+    bl_label = "填入节点预设"
+    bl_description = "将 omni 装饰器定义的预设值填入当前节点输入"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    node_tree_name: StringProperty(default="")  # type: ignore
+    node_name: StringProperty(default="")  # type: ignore
+    preset_index: IntProperty(default=0, min=0)  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        space = getattr(context, "space_data", None)
+        return bool(
+            space
+            and space.type == 'NODE_EDITOR'
+            and _is_omni_tree(_resolve_space_tree(space))
+        )
+
+    def _resolve_node(self, context):
+        tree = _find_omni_tree(self.node_tree_name) if self.node_tree_name else _active_omni_tree(context)
+        if tree is None:
+            return None
+        if self.node_name:
+            return tree.nodes.get(self.node_name)
+        node = getattr(context, "active_node", None)
+        if node is not None and getattr(node, "id_data", None) == tree:
+            return node
+        return None
+
+    @staticmethod
+    def _set_socket_default(sock, value):
+        try:
+            sock.default_value = value
+            return True
+        except Exception:
+            pass
+
+        try:
+            current_value = sock.default_value
+        except Exception:
+            return False
+
+        if not isinstance(value, (list, tuple)):
+            return False
+
+        try:
+            if len(current_value) != len(value):
+                return False
+            for index, item in enumerate(value):
+                current_value[index] = item
+            return True
+        except Exception:
+            return False
+
+    def execute(self, context):
+        node = self._resolve_node(context)
+        if node is None:
+            self.report({'WARNING'}, "找不到节点")
+            return {'CANCELLED'}
+
+        presets = _node_omni_presets(node)
+        if self.preset_index < 0 or self.preset_index >= len(presets):
+            self.report({'WARNING'}, "找不到预设")
+            return {'CANCELLED'}
+
+        preset = presets[self.preset_index]
+        updated_count = 0
+        missing_count = 0
+        skipped_count = 0
+
+        for identifier, value in preset["values"].items():
+            sock = node.inputs.get(identifier)
+            if sock is None:
+                missing_count += 1
+                continue
+
+            if self._set_socket_default(sock, value):
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
+
+        parts = [f"更新 {updated_count} 项"]
+        if missing_count:
+            parts.append(f"缺失 {missing_count} 项")
+        if skipped_count:
+            parts.append(f"跳过 {skipped_count} 项")
+        self.report({'INFO'}, f"已填入预设 {preset['name']}: " + ", ".join(parts))
+        return {'FINISHED'}
+
+
 class OmniNodeRebuild(Operator):
     # TODO: 诡异bug，重建以后会自动拥有bl_icon，此问题在pr中被反复讨论，是有关customgroupnode的？
     # https://projects.blender.org/blender/blender/pulls/130204
@@ -1056,6 +1197,20 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
         if not op.use_selected_nodes:
             op.node_name = target_nodes[0].name
 
+    preset_node = active_node
+    if preset_node is None and len(selected_nodes) == 1:
+        preset_node = selected_nodes[0]
+    if preset_node is not None and getattr(preset_node, "id_data", None) == tree:
+        presets = _node_omni_presets(preset_node)
+        if presets:
+            layout.separator()
+            layout.label(text="填入预设", icon="PRESET")
+            for index, preset in enumerate(presets):
+                op = layout.operator(OmniNodeApplyPreset.bl_idname, text=preset["name"], icon="PRESET")
+                op.node_tree_name = getattr(tree, "name_full", tree.name)
+                op.node_name = preset_node.name
+                op.preset_index = index
+
     label = "重建所选节点" if target_count > 1 else "重建节点"
     layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")
 
@@ -1087,6 +1242,7 @@ clss = [
     OmniTreeClearCompileCache,
     OmniTreeClearRuntimeCache,
     OmniNodeToggleDescription,
+    OmniNodeApplyPreset,
     OmniNodeRebuild,
     OmniGraphNodeIOItem,
     HO_UL_GraphNodeIO,
