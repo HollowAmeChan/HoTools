@@ -1,6 +1,7 @@
 from typing import Set
 import bpy
 import os
+import sys
 from bpy.props import BoolProperty, StringProperty, EnumProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
@@ -50,6 +51,32 @@ def _active_omni_tree(context):
     space = getattr(context, "space_data", None)
     tree = _resolve_space_tree(space)
     return tree if _is_omni_tree(tree) else None
+
+
+def _tree_runtime_module(tree):
+    return sys.modules.get(type(tree).__module__)
+
+
+def _tree_has_compile_cache(tree):
+    module = _tree_runtime_module(tree)
+    cached_graph = getattr(module, "_cached_compiled_graph", None)
+    if not callable(cached_graph):
+        return False
+    return cached_graph(tree) is not None
+
+
+def _tree_frame_handler_registered(tree):
+    module = _tree_runtime_module(tree)
+    frame_handler = getattr(module, "_omni_frame_change_post", None)
+    return frame_handler is not None and frame_handler in bpy.app.handlers.frame_change_post
+
+
+def _should_alert_compile_button(tree):
+    return (
+        bool(getattr(tree, "is_frame_run_enabled", False))
+        and _tree_frame_handler_registered(tree)
+        and not _tree_has_compile_cache(tree)
+    )
 
 
 def _nav_space_key(context):
@@ -576,6 +603,39 @@ class OmniTreeRunCompiled(Operator):
 
         return {'FINISHED'}
 
+
+class OmniTreeClearCompileCache(Operator):
+    bl_idname = "ho.omnitree_clear_compile_cache"
+    bl_label = "清理编译缓存"
+    bl_description = "清理当前 OmniNodeTree 的编译产物缓存"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context: bpy.types.Context):
+        tree = _active_omni_tree(context)
+        if tree is None:
+            return {'CANCELLED'}
+
+        tree.clear_compile_cache()
+        self.report({'INFO'}, f"已清理编译缓存: {tree.name}")
+        return {'FINISHED'}
+
+
+class OmniTreeClearRuntimeCache(Operator):
+    bl_idname = "ho.omnitree_clear_runtime_cache"
+    bl_label = "清理运行缓存"
+    bl_description = "清理当前 OmniNodeTree 作为根树运行时保存的缓存数据"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context: bpy.types.Context):
+        tree = _active_omni_tree(context)
+        if tree is None:
+            return {'CANCELLED'}
+
+        OmniRuntimeState.clear_root_tree(tree)
+        self.report({'INFO'}, f"已清理运行缓存: {tree.name}")
+        return {'FINISHED'}
+
+
 class OmniTreeDestroy(Operator):
     bl_idname = "ho.omninodetree_destroy"
     bl_label = "销毁树"
@@ -586,15 +646,14 @@ class OmniTreeDestroy(Operator):
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context: bpy.types.Context):
-        space = context.space_data
-
-        if (not hasattr(space, "node_tree")) or (not space.node_tree):
+        tree = _active_omni_tree(context)
+        if tree is None:
             return {'FINISHED'}
 
-        tree = space.node_tree
         tree_name = tree.name
         if hasattr(tree, "clear_compile_cache"):
             tree.clear_compile_cache()
+        OmniRuntimeState.clear_root_tree(tree)
 
         bpy.data.node_groups.remove(tree, do_unlink=True)
 
@@ -855,7 +914,9 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
     layout: bpy.types.UILayout = self.layout
     layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
     row = layout.row(align=True)
-    row.operator(OmniTreeCompile.bl_idname, text="编译", icon="FILE_TICK")
+    compile_button = row.row(align=True)
+    compile_button.alert = _should_alert_compile_button(tree)
+    compile_button.operator(OmniTreeCompile.bl_idname, text="编译", icon="FILE_TICK")
     row.operator(OmniTreeRunCompiled.bl_idname, text="运行", icon="PLAY")
     row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
     row.label(text=tree.compile_cache_status_label())
@@ -895,7 +956,10 @@ def draw_in_NODE_HT_header(self, context: Context):
         stack_label = omni_nav_stack_label(context)
         if stack_label:
             layout.operator(OP_ReturnToParentNodeTree.bl_idname, text=stack_label, icon="FILE_PARENT")
-    layout.operator(OmniTreeDestroy.bl_idname,text="销毁树")
+    row = layout.row(align=True)
+    row.operator(OmniTreeDestroy.bl_idname, text="销毁树")
+    row.operator(OmniTreeClearCompileCache.bl_idname, text="销毁编译")
+    row.operator(OmniTreeClearRuntimeCache.bl_idname, text="销毁缓存")
 
 
 clss = [
@@ -904,6 +968,8 @@ clss = [
     LayerRunning,
     OmniTreeCompile,
     OmniTreeRunCompiled,
+    OmniTreeClearCompileCache,
+    OmniTreeClearRuntimeCache,
     OmniNodeRebuild,
     OmniGraphNodeIOItem,
     HO_UL_GraphNodeIO,

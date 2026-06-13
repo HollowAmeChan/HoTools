@@ -140,7 +140,7 @@ class OmniNodeTree(NodeTree):
                 node.bug_text = ""
 
     def compile_cache_status_label(self):
-        return "编译缓存: 已缓存" if _cached_compiled_graph(self) is not None else "编译缓存: 无缓存"
+        return "已缓存" if _cached_compiled_graph(self) is not None else "无缓存"
 
     def compile_cached(self, force=False):
         cache_key = _tree_cache_key(self)
