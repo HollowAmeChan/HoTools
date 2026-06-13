@@ -334,6 +334,127 @@ def sumVector(values: list[mathutils.Vector]) -> mathutils.Vector:
         result += _to_vector(value).to_3d()
     return result
 
+
+@omni(enable=True,
+    bl_label="整数加法",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intAdd(a: int, b: int) -> int:
+    return a + b
+
+
+@omni(enable=True,
+    bl_label="整数减法",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intSubtract(a: int, b: int) -> int:
+    return a - b
+
+
+@omni(enable=True,
+    bl_label="整数乘法",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intMultiply(a: int, b: int) -> int:
+    return a * b
+
+
+@omni(enable=True,
+    bl_label="整数整除",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intFloorDivide(a: int, b: int) -> int:
+    if b == 0:
+        raise ValueError("integer division by zero")
+    return a // b
+
+
+@omni(enable=True,
+    bl_label="整数取模",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intModulo(a: int, b: int) -> int:
+    if b == 0:
+        raise ValueError("integer modulo by zero")
+    return a % b
+
+
+@omni(enable=True,
+    bl_label="整数整除和余数",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["商", "余数"],
+    )
+def intDivmod(a: int, b: int) -> tuple[int, int]:
+    if b == 0:
+        raise ValueError("integer divmod by zero")
+    return divmod(a, b)
+
+
+@omni(enable=True,
+    bl_label="整数绝对值",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intAbs(x: int) -> int:
+    return abs(x)
+
+
+@omni(enable=True,
+    bl_label="整数最小值",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intMin(a: int, b: int) -> int:
+    return min(a, b)
+
+
+@omni(enable=True,
+    bl_label="整数最大值",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数A", "整数B"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intMax(a: int, b: int) -> int:
+    return max(a, b)
+
+
+@omni(enable=True,
+    bl_label="整数幂",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["底数", "指数"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intPower(base: int, exponent: int) -> int:
+    if exponent < 0:
+        raise ValueError("integer exponent must be non-negative")
+    return base ** exponent
+
+
+@omni(enable=True,
+    bl_label="整数Clamp",
+    base_color=_Color.colorCat["Math"],
+    _INPUT_NAME=["整数", "最小值", "最大值"],
+    _OUTPUT_NAME=["结果"],
+    )
+def intClamp(x: int, min_value: int, max_value: int) -> int:
+    if min_value > max_value:
+        min_value, max_value = max_value, min_value
+    return max(min_value, min(x, max_value))
+
+
 @omni(
     enable=True,
     bl_label="整数加合",

@@ -169,6 +169,9 @@ def is_not_none(x: Any) -> bool:
     is_output_node=False,
     _INPUT_NAME=["条件","值1","值2"],
     _OUTPUT_NAME=["结果"],
+    omni_description="""
+    值真返回值2，值假返回值1
+    """,
     )
 def switch(condition: bool, value1: Any, value2: Any) -> Any:
-    return value1 if condition else value2
+    return value2 if condition else value1
