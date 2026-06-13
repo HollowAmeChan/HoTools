@@ -4,6 +4,7 @@ import os
 from bpy.props import BoolProperty, StringProperty, EnumProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
+from . import OmniRuntimeState
 from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
 
@@ -212,8 +213,6 @@ def sync_tree_io(tree):
             node.syncGroupIO()
         elif node.bl_idname == "HO_OmniNode_BatchGroupNode":
             node.syncGroupIO()
-        elif node.bl_idname == "HO_OmniNode_Bind":
-            node.syncProcessorIO()
 
 
 def sync_all_related_tree_io(tree):
@@ -232,16 +231,13 @@ def sync_all_related_tree_io(tree):
             continue
 
         for node in other_tree.nodes:
-            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_BatchGroupNode", "HO_OmniNode_Bind"}:
+            if node.bl_idname not in {"HO_OmniNode_GroupNode", "HO_OmniNode_BatchGroupNode"}:
                 continue
-            target_tree = getattr(node, "target_tree", None) or getattr(node, "processor_tree", None)
+            target_tree = getattr(node, "target_tree", None)
             if target_tree != tree:
                 continue
 
-            if node.bl_idname == "HO_OmniNode_Bind":
-                node.syncProcessorIO()
-            else:
-                node.syncGroupIO()
+            node.syncGroupIO()
 
 
 def OmniGraphNodeIOItem_update(self, context):
@@ -390,7 +386,7 @@ class OP_JumpToNodeTree(Operator):
             return False
 
         append_attempts = [
-            # Omni 的 Group/Bind 是自定义 GraphNode，不一定能被 Blender 当作原生
+            # Omni 的 Group 是自定义 GraphNode，不一定能被 Blender 当作原生
             # NodeGroup 节点校验通过；先尝试只追加 tree，可以保留路径栈并支持继续下钻。
             lambda: path.append(target_tree),
             lambda: path.append(target_tree, node=node),
@@ -684,6 +680,7 @@ class OmniNodeRebuild(Operator):
 
         # 4. rebuild
         node.build()
+        OmniRuntimeState.ensure_tree_runtime_uids(tree)
         if hasattr(node, "clear_bug_state"):
             node.clear_bug_state()
         elif hasattr(node, "is_bug") and hasattr(node, "bug_text"):

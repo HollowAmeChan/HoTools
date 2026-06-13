@@ -2,7 +2,7 @@
 # 组节点被视为子树桥而不是普通的功能节点。
 
 from .OmniDebug import OmniDebug
-from . import OmniMenuBind
+from . import OmniRuntimeState
 
 
 class CompiledGraph:
@@ -23,12 +23,11 @@ class CompiledGraph:
 
 
 class OpCall:
-    def __init__(self, func, inputs, outputs, node, processor_graph=None):
+    def __init__(self, func, inputs, outputs, node):
         self.func = func
         self.inputs = inputs
         self.outputs = outputs
         self.node = node
-        self.processor_graph = processor_graph
 
 
 class SubtreeCall:
@@ -48,12 +47,51 @@ class BatchSubtreeCall:
         self.batch_input_index = batch_input_index
 
 
+class CacheReadCall:
+    def __init__(self, fallback_input, outputs, node, cache_key):
+        self.fallback_input = fallback_input
+        self.outputs = outputs
+        self.node = node
+        self.cache_key = cache_key
+
+
+class CacheWriteCall:
+    def __init__(self, value_input, enabled_input, outputs, node, cache_key):
+        self.value_input = value_input
+        self.enabled_input = enabled_input
+        self.outputs = outputs
+        self.node = node
+        self.cache_key = cache_key
+
+
+class CacheDeleteCall:
+    def __init__(self, trigger_input, enabled_input, outputs, node, cache_key, delete_all):
+        self.trigger_input = trigger_input
+        self.enabled_input = enabled_input
+        self.outputs = outputs
+        self.node = node
+        self.cache_key = cache_key
+        self.delete_all = delete_all
+
+
+class CacheDumpCall:
+    def __init__(self, trigger_input, label_input, outputs, node, print_to_console):
+        self.trigger_input = trigger_input
+        self.label_input = label_input
+        self.outputs = outputs
+        self.node = node
+        self.print_to_console = print_to_console
+
+
 class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
     BATCH_GROUP_NODE_IDNAME = "HO_OmniNode_BatchGroupNode"
     GROUP_INPUTS_IDNAME = "HO_OmniNode_GroupNode_Inputs"
     GROUP_OUTPUTS_IDNAME = "HO_OmniNode_GroupNode_Outputs"
-    BIND_NODE_IDNAME = "HO_OmniNode_Bind"
+    CACHE_READ_NODE_IDNAME = "HO_OmniNode_CacheRead"
+    CACHE_WRITE_NODE_IDNAME = "HO_OmniNode_CacheWrite"
+    CACHE_DELETE_NODE_IDNAME = "HO_OmniNode_CacheDelete"
+    CACHE_DUMP_NODE_IDNAME = "HO_OmniNode_CacheDump"
     FRAME_NODE_IDNAME = "NodeFrame"
     REROUTE_NODE_IDNAME = "NodeReroute"
 
@@ -123,11 +161,12 @@ class OmniCompiler:
 
     @staticmethod
     def compile(tree, debug=False):
-        OmniMenuBind.clear_pending_bind_rules(tree)
         return OmniCompiler._compile_tree(tree, compiling_stack=[], debug=debug)
 
     @staticmethod
     def _compile_tree(tree, compiling_stack, debug=False):
+        OmniRuntimeState.ensure_tree_runtime_uids(tree)
+
         graph = CompiledGraph()
         graph.tree_name = getattr(tree, "name", "")
         graph.tree_ref = tree
@@ -299,15 +338,6 @@ class OmniCompiler:
                 )
                 continue
 
-            if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                rules = OmniMenuBind.build_bind_rules_from_node(node)
-                if rules:
-                    OmniMenuBind.collect_bind_rules(tree, node)
-                    OmniDebug.append_compile_trace(
-                        graph,
-                        f"Collect BIND {node.name} -> {len(rules)} parameter(s)",
-                    )
-
             if node_idname == OmniCompiler.GROUP_INPUTS_IDNAME:
                 for sock in node.outputs:
                     uid = sock.identifier
@@ -318,7 +348,7 @@ class OmniCompiler:
                     reg_map[(node.name, sock.identifier)] = reg
                     OmniDebug.append_compile_trace(
                         graph,
-                        f"Bind tree input {uid} -> r{reg} via {node.name}.{OmniDebug.socket_name(sock)}",
+                        f"Map tree input {uid} -> r{reg} via {node.name}.{OmniDebug.socket_name(sock)}",
                     )
                     OmniDebug.add_register_bridge(
                         graph,
@@ -343,7 +373,7 @@ class OmniCompiler:
                     graph.output_regs[sock.identifier] = reg_map[key]
                     OmniDebug.append_compile_trace(
                         graph,
-                        f"Bind tree output {sock.identifier} <- r{reg_map[key]} from "
+                        f"Map tree output {sock.identifier} <- r{reg_map[key]} from "
                         f"{link.from_node.name}.{OmniDebug.socket_name(link.from_socket)}",
                     )
                 continue
@@ -395,15 +425,6 @@ class OmniCompiler:
                     node.set_bug_state(exc)
                     raise
 
-                batch_rules = OmniMenuBind.build_batch_bind_rules_from_compiled_graph(node, compiled_subtree)
-                for rule in batch_rules:
-                    OmniMenuBind.append_pending_bind_rule(tree, rule)
-                if batch_rules:
-                    OmniDebug.append_compile_trace(
-                        graph,
-                        f"Collect BATCH BIND {node.name} -> {len(batch_rules)} parameter(s)",
-                    )
-
                 batch_input_index = int(getattr(node, "batch_input_index", -1))
                 if batch_input_index < 0 or batch_input_index >= len(node.inputs):
                     batch_input_index = -1
@@ -449,17 +470,8 @@ class OmniCompiler:
                 )
                 continue
 
-            if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                processor_graph = None
-                processor_tree = getattr(node, "processor_tree", None)
-                if processor_tree is not None:
-                    try:
-                        processor_graph = OmniCompiler._compile_tree(processor_tree, compiling_stack, debug=debug)
-                    except Exception as exc:
-                        node.set_bug_state(exc)
-                        raise
-
-                input_regs = compile_node_inputs(node)
+            if node_idname == OmniCompiler.CACHE_READ_NODE_IDNAME:
+                fallback_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
 
                 output_regs = []
                 for sock in node.outputs:
@@ -471,14 +483,121 @@ class OmniCompiler:
                         reg,
                         node.name,
                         OmniDebug.socket_name(sock),
-                        source="bind_graph_node",
-                        note="bind node output",
+                        source="runtime_cache_read",
+                        note="cache read output",
                     )
 
-                instructions.append(OpCall(None, input_regs, output_regs, node, processor_graph=processor_graph))
+                instructions.append(
+                    CacheReadCall(
+                        fallback_reg,
+                        output_regs,
+                        node,
+                        getattr(node, "cache_key", ""),
+                    )
+                )
                 OmniDebug.append_compile_trace(
                     graph,
-                    f"Emit BIND {node.name} inputs={input_regs} outputs={output_regs}",
+                    f"Emit CACHE READ {node.name} fallback={fallback_reg} outputs={output_regs}",
+                )
+                continue
+
+            if node_idname == OmniCompiler.CACHE_WRITE_NODE_IDNAME:
+                value_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
+                enabled_reg = compile_single_input(node.inputs[1]) if len(node.inputs) > 1 else None
+
+                output_regs = []
+                for sock in node.outputs:
+                    reg = new_reg()
+                    reg_map[(node.name, sock.identifier)] = reg
+                    output_regs.append(reg)
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source="runtime_cache_write",
+                        note="cache write passthrough",
+                    )
+
+                instructions.append(
+                    CacheWriteCall(
+                        value_reg,
+                        enabled_reg,
+                        output_regs,
+                        node,
+                        getattr(node, "cache_key", ""),
+                    )
+                )
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Emit CACHE WRITE {node.name} value={value_reg} enabled={enabled_reg} outputs={output_regs}",
+                )
+                continue
+
+            if node_idname == OmniCompiler.CACHE_DELETE_NODE_IDNAME:
+                trigger_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
+                enabled_reg = compile_single_input(node.inputs[1]) if len(node.inputs) > 1 else None
+
+                output_regs = []
+                for sock in node.outputs:
+                    reg = new_reg()
+                    reg_map[(node.name, sock.identifier)] = reg
+                    output_regs.append(reg)
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source="runtime_cache_delete",
+                        note="cache delete output",
+                    )
+
+                instructions.append(
+                    CacheDeleteCall(
+                        trigger_reg,
+                        enabled_reg,
+                        output_regs,
+                        node,
+                        getattr(node, "cache_key", ""),
+                        bool(getattr(node, "delete_all", False)),
+                    )
+                )
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Emit CACHE DELETE {node.name} trigger={trigger_reg} enabled={enabled_reg} outputs={output_regs}",
+                )
+                continue
+
+            if node_idname == OmniCompiler.CACHE_DUMP_NODE_IDNAME:
+                trigger_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
+                label_reg = compile_single_input(node.inputs[1]) if len(node.inputs) > 1 else None
+
+                output_regs = []
+                for sock in node.outputs:
+                    reg = new_reg()
+                    reg_map[(node.name, sock.identifier)] = reg
+                    output_regs.append(reg)
+                    OmniDebug.add_register_bridge(
+                        graph,
+                        reg,
+                        node.name,
+                        OmniDebug.socket_name(sock),
+                        source="runtime_cache_dump",
+                        note="cache dump output",
+                    )
+
+                instructions.append(
+                    CacheDumpCall(
+                        trigger_reg,
+                        label_reg,
+                        output_regs,
+                        node,
+                        bool(getattr(node, "print_to_console", True)),
+                    )
+                )
+                OmniDebug.append_compile_trace(
+                    graph,
+                    f"Emit CACHE DUMP {node.name} trigger={trigger_reg} label={label_reg} outputs={output_regs}",
                 )
                 continue
 

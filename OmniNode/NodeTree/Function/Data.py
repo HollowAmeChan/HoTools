@@ -1,11 +1,93 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
+import ast
 import bpy
+from datetime import datetime
 from typing import Any
 import mathutils
 from . import _Color
-from .. import OmniMenuBind
+
+
+def _parse_custom_property_token(token: str):
+    token = str(token or "").strip()
+    if len(token) < 4 or token[0] != "[" or token[-1] != "]":
+        return None
+
+    try:
+        key = ast.literal_eval(token[1:-1].strip())
+    except Exception:
+        return None
+    return key if isinstance(key, str) else None
+
+
+def _parse_datablock_property_path(property_name: str):
+    property_name = str(property_name or "").strip()
+    if property_name.startswith("."):
+        property_name = property_name[1:]
+    if not property_name:
+        return []
+
+    segments = []
+    index = 0
+    while index < len(property_name):
+        if property_name[index] == ".":
+            index += 1
+            continue
+
+        if property_name[index] == "[":
+            end = property_name.find("]", index)
+            if end < 0:
+                return []
+            key = _parse_custom_property_token(property_name[index:end + 1])
+            if key is None:
+                return []
+            segments.append(("key", key))
+            index = end + 1
+            continue
+
+        start = index
+        while index < len(property_name) and property_name[index] not in ".[":
+            index += 1
+        name = property_name[start:index].strip()
+        if not name:
+            return []
+        segments.append(("attr", name))
+
+    return segments
+
+
+def _resolve_datablock_property_owner(datablock, property_name: str):
+    segments = _parse_datablock_property_path(property_name)
+    if not segments:
+        return None, None
+
+    owner = datablock
+    for access_type, access_name in segments[:-1]:
+        if owner is None:
+            return None, None
+        try:
+            owner = getattr(owner, access_name) if access_type == "attr" else owner[access_name]
+        except Exception:
+            return None, None
+
+    return owner, segments[-1]
+
+
+def _read_datablock_property(datablock, property_name: str):
+    property_name = str(property_name or "").strip()
+    if datablock is None or not property_name:
+        return None
+
+    owner, last_segment = _resolve_datablock_property_owner(datablock, property_name)
+    if owner is None or last_segment is None:
+        return None
+
+    access_type, access_name = last_segment
+    try:
+        return owner[access_name] if access_type == "key" else getattr(owner, access_name)
+    except Exception:
+        return None
 
 @omni(enable=True,
       bl_label="颜色",
@@ -45,6 +127,23 @@ def boolInput(v: bool) -> bool:
       base_color=_Color.colorCat["GetData"],)
 def stringInput(v: str) -> str:
     return v
+
+@omni(enable=True,
+      bl_label="当前时间",
+      base_color=_Color.colorCat["GetData"],
+      _OUTPUT_NAME=["时间", "年", "月", "日", "时", "分", "秒"],
+      )
+def currentTime() -> tuple[str, int, int, int, int, int, int]:
+    now = datetime.now()
+    return (
+        now.strftime("%Y-%m-%d %H:%M:%S"),
+        now.year,
+        now.month,
+        now.day,
+        now.hour,
+        now.minute,
+        now.second,
+    )
 
 @omni(enable=True, 
       bl_label="文件路径",
@@ -106,7 +205,7 @@ def datablockInput(v: _OmniDatablock) -> _OmniDatablock:
       _INPUT_NAME=["数据块","属性名称"],
       )
 def getDatablockProperty(datablock: _OmniDatablock, prop_name: str) -> Any:
-    return OmniMenuBind.read_datablock_property(datablock, prop_name)
+    return _read_datablock_property(datablock, prop_name)
 
 @omni(enable=True,
       bl_label="物体",

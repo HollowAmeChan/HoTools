@@ -1,9 +1,9 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock
 from ..FunctionNodeCore import omni
 from . import _Color
-from .. import OmniMenuBind
 
 from bpy.types import NodeSocketVector, NodeSocketColor
+import ast
 import bpy
 import bmesh
 import typing
@@ -21,6 +21,91 @@ if sys.version_info >= (3, 13):
     from ...._Lib.py313.PIL import Image, ImageDraw
 elif sys.version_info >= (3, 11):
     from ...._Lib.py311.PIL import Image, ImageDraw
+
+
+def _parse_custom_property_token(token: str):
+    token = str(token or "").strip()
+    if len(token) < 4 or token[0] != "[" or token[-1] != "]":
+        return None
+
+    try:
+        key = ast.literal_eval(token[1:-1].strip())
+    except Exception:
+        return None
+    return key if isinstance(key, str) else None
+
+
+def _parse_datablock_property_path(property_name: str):
+    property_name = str(property_name or "").strip()
+    if property_name.startswith("."):
+        property_name = property_name[1:]
+    if not property_name:
+        return []
+
+    segments = []
+    index = 0
+    while index < len(property_name):
+        if property_name[index] == ".":
+            index += 1
+            continue
+
+        if property_name[index] == "[":
+            end = property_name.find("]", index)
+            if end < 0:
+                return []
+            key = _parse_custom_property_token(property_name[index:end + 1])
+            if key is None:
+                return []
+            segments.append(("key", key))
+            index = end + 1
+            continue
+
+        start = index
+        while index < len(property_name) and property_name[index] not in ".[":
+            index += 1
+        name = property_name[start:index].strip()
+        if not name:
+            return []
+        segments.append(("attr", name))
+
+    return segments
+
+
+def _resolve_datablock_property_owner(datablock, property_name: str):
+    segments = _parse_datablock_property_path(property_name)
+    if not segments:
+        return None, None
+
+    owner = datablock
+    for access_type, access_name in segments[:-1]:
+        if owner is None:
+            return None, None
+        try:
+            owner = getattr(owner, access_name) if access_type == "attr" else owner[access_name]
+        except Exception:
+            return None, None
+
+    return owner, segments[-1]
+
+
+def _write_datablock_property(datablock, property_name: str, value: Any):
+    property_name = str(property_name or "").strip()
+    if datablock is None or not property_name:
+        return
+
+    owner, last_segment = _resolve_datablock_property_owner(datablock, property_name)
+    if owner is None or last_segment is None:
+        return
+
+    access_type, access_name = last_segment
+    try:
+        if access_type == "key":
+            owner[access_name] = value
+        else:
+            setattr(owner, access_name, value)
+    except Exception:
+        pass
+
 
 @omni(enable=True,
       bl_label="设置物体位置",
@@ -41,7 +126,7 @@ def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types
       _INPUT_NAME=["数据块","属性名称","属性值"],
       )
 def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) -> Any:
-    OmniMenuBind.write_datablock_property(datablock, prop_name, value)
+    _write_datablock_property(datablock, prop_name, value)
     return value
 
 

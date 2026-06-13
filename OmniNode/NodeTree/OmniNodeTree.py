@@ -7,7 +7,6 @@ from .OmniExecutor import OmniExecutor
 from .OmniCompiler import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniNodeDraw
-from . import OmniMenuBind
 from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
@@ -63,12 +62,6 @@ class OmniNodeTree(NodeTree):
 
     def run(self):
         OmniNodeDraw.clear_tree(self)
-        OmniMenuBind.OmniMenuBindRuntime.clear_runtime_items(self)
-
-        if hasattr(self, "omni_bind_pending_rules"):
-            self.omni_bind_pending_rules.clear()
-
-        OmniMenuBind.clear_live_bind_contexts(self)
 
         for node in self.nodes:
             if hasattr(node, "clear_bug_state"):
@@ -86,9 +79,6 @@ class OmniNodeTree(NodeTree):
             print("\n".join(OmniDebug.format_runtime_separator(self.name)))
 
         result = OmniExecutor.run(compiled, debug=debug_enabled)
-
-        if hasattr(self, "omni_bind_pending_rules") and len(self.omni_bind_pending_rules) > 0:
-            OmniMenuBind.OmniMenuBindRuntime.build_runtime_items_from_pending(self)
 
         return result
 
@@ -160,23 +150,18 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
 
     draw_OmniTreeInputs(layout, tree)
     draw_OmniTreeOutputs(layout, tree)
-    OmniMenuBind.OmniMenuBindRuntime.draw_runtime_panel(layout, tree)
 
 
 cls = [OmniNodeTree]
 
 
 def register():
-    OmniMenuBind.register()
     for item in cls:
         bpy.utils.register_class(item)
-    OmniMenuBind.OmniMenuBindRuntime.ensure_tree_props(OmniNodeTree)
     bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
 
 def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
-    OmniMenuBind.OmniMenuBindRuntime.remove_tree_props(OmniNodeTree)
     for item in cls:
         bpy.utils.unregister_class(item)
-    OmniMenuBind.unregister()

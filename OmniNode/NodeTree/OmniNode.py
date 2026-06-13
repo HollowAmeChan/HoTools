@@ -4,6 +4,7 @@ from bpy.types import Node, NodeSocket
 from . import OmniNodeDraw
 from .OmniNodeOperator import OmniNodeRebuild, NodeSetDefaultSize, NodeSetBiggerSize
 import json
+import uuid
 
 
 def setOutputNode(node: Node, context):
@@ -48,6 +49,9 @@ class OmniNode(Node):
     omni_description: bpy.props.StringProperty(
         name="Description", default="No description"
     )  # type: ignore
+    omni_runtime_uid: bpy.props.StringProperty(
+        name="Runtime UID", default="", options={'HIDDEN'}
+    )  # type: ignore
 
     _socket_is_multi = None
     _func = None
@@ -85,6 +89,8 @@ class OmniNode(Node):
 
     def init(self, context):
         self.id_data.doing_initNode = True
+        if not self.omni_runtime_uid:
+            self.omni_runtime_uid = uuid.uuid4().hex
         self.use_custom_color = True
         self.build()
         self.updateColor()

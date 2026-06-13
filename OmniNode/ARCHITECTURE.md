@@ -97,34 +97,36 @@ OmniNode 的组节点由 `GraphNode.py` 中的类实现：
 
 组节点编译时会递归调用 `OmniCompiler._compile_tree()`，并用 `compiling_stack` 检查子树循环引用。
 
-### 7. Bind 是动态 UI 参数系统，不是普通函数节点
+### 7. Runtime Cache 是执行实例隔离的状态系统
 
-`OmniBindNode` 和 `OmniMenuBind.py` 负责把子树中的参数暴露到 UI，并在运行时缓存参数上下文。
+`OmniCacheReadNode` / `OmniCacheWriteNode` / `OmniCacheDeleteNode` / `OmniCacheDumpNode` 和 `OmniRuntimeState.py` 负责在多次运行之间保存、清理、观察轻量状态。
 
-Bind 的关键边界：
+Runtime Cache 的关键边界：
 
-- 编译阶段收集 pending bind rules。
-- 执行阶段捕获本次运行的真实 args 和 processor graph。
-- 侧栏参数 UI 只是暴露当前 Python 会话中的缓存状态。
-- 文件重载、插件重载、节点结构变化、未重新运行 tree 都可能让 bind runtime cache 过期。
+- 缓存不是文件持久数据，只在当前 Python 会话中可靠。
+- 读节点只读取上一轮成功执行后提交的 committed cache。
+- 写节点在 `enable` 输入为 True 时写入本轮执行的 pending cache；关闭时只透传输入值，不覆盖已有缓存。
+- 删除节点在 `enable` 输入为 True 时写入本轮执行的 pending delete；可以删除指定 key，也可以清空当前执行实例命名空间。
+- 调试节点输出并可打印当前执行实例的 cache 快照；快照会叠加本轮 pending 写入和 pending 删除。
+- root tree 执行成功后 pending 才提交；执行失败时 pending 丢弃。
+- 缓存命名空间由 root tree、组调用路径和 batch item 共同决定，同一个子树被多个组实例调用时不会互相污染。
 
 ## 编译流程
 
 主要在 `NodeTree/OmniCompiler.py`。
 
-1. 清空 pending bind rules。
-2. 从输出节点反向 DFS，收集可达节点与 links。
-3. 对可达节点做拓扑排序。
-4. 顺序编译每个节点：
+1. 从输出节点反向 DFS，收集可达节点与 links。
+2. 对可达节点做拓扑排序。
+3. 顺序编译每个节点：
    - `Group Inputs`：绑定树输入寄存器。
    - `Group Outputs`：绑定树输出寄存器。
    - `Group Node`：递归编译子树，发出 `SubtreeCall`。
    - `Batch Group Node`：递归编译子树，发出 `BatchSubtreeCall`。
-   - `Bind Node`：收集绑定规则，必要时编译 processor tree。
+   - `Cache Read` / `Cache Write` / `Cache Delete` / `Cache Dump`：发出 runtime cache 专用指令。
    - `NodeFrame`：跳过。
    - `NodeReroute`：寄存器透传。
    - 普通函数节点：发出 `OpCall`。
-5. 输出 `CompiledGraph`。
+4. 输出 `CompiledGraph`。
 
 `CompiledGraph` 包含：
 
@@ -144,6 +146,10 @@ Bind 的关键边界：
 - `OpCall`：读取输入寄存器，调用 Python 函数，写输出寄存器。
 - `SubtreeCall`：准备子树输入，递归执行子树，再收集子树输出。
 - `BatchSubtreeCall`：展开 batch 输入，多次执行子树，并把每次输出收集成列表。
+- `CacheReadCall`：从当前执行实例的 committed cache 中读取值。
+- `CacheWriteCall`：当 `enable` 为 True 时，把值写入当前 root run 的 pending cache。
+- `CacheDeleteCall`：当 `enable` 为 True 时，把删除操作写入当前 root run 的 pending delete。
+- `CacheDumpCall`：输出并可打印当前执行实例的 cache 快照。
 
 执行器假设编译器已经处理好图结构问题。像 `NodeReroute` 这类编辑器节点不应该出现在执行指令里。
 
@@ -161,7 +167,7 @@ OmniNode 模块入口。负责：
 定义 `OmniNodeTree` 数据块类型。负责：
 
 - 树级属性，如自动更新、debug compile、组输入/输出列表。
-- `run()` 主流程：清理绘制和 bind runtime、清理 bug 状态、编译、执行、生成 bind runtime UI 项。
+- `run()` 主流程：清理绘制、清理 bug 状态、编译、执行。
 - Node editor 侧栏的树属性绘制。
 
 维护注意：
@@ -209,7 +215,6 @@ Python 类型到 Blender socket 类型的映射表。负责：
 
 - Scene、Text、ImageFormat、Regex、Glob、Datablock 等 socket。
 - Modifier、MaterialSlot、UVLayer、ColorAttribute、VertexGroup 等运行时占位 socket。
-- Bind 参数用的 `OmniNodeSocketParameter*` socket。
 
 维护注意：
 
@@ -221,8 +226,8 @@ Python 类型到 Blender socket 类型的映射表。负责：
 
 - 组引用节点。
 - 组输入/输出边界节点。
-- Bind 节点。
 - Batch group 节点。
+- Cache read/write/delete/dump 节点。
 - 节点重建时的 link/default value 缓存与恢复工具。
 
 维护注意：
@@ -236,7 +241,7 @@ Python 类型到 Blender socket 类型的映射表。负责：
 
 - 从输出节点反向收集可达子图。
 - 拓扑排序。
-- 编译常量、函数调用、组调用、批量组调用、Bind。
+- 编译常量、函数调用、组调用、批量组调用、runtime cache。
 - 适配 `NodeFrame` 和 `NodeReroute`。
 - 生成调试 trace 和 register bridge。
 
@@ -250,8 +255,8 @@ Python 类型到 Blender socket 类型的映射表。负责：
 执行器。负责：
 
 - 分配寄存器数组。
-- 执行 `CONST`、`OpCall`、`SubtreeCall`、`BatchSubtreeCall`。
-- 处理 Bind runtime context。
+- 执行 `CONST`、`OpCall`、`SubtreeCall`、`BatchSubtreeCall`、`CacheReadCall`、`CacheWriteCall`、`CacheDeleteCall`、`CacheDumpCall`。
+- 管理 root run 的 runtime cache context。
 - 生成 runtime debug trace。
 
 维护注意：
@@ -268,19 +273,18 @@ Python 类型到 Blender socket 类型的映射表。负责：
 - runtime trace logger。
 - 彩色终端标签和报告格式。
 
-### `NodeTree/OmniMenuBind.py`
+### `NodeTree/OmniRuntimeState.py`
 
-动态 Bind 参数系统。负责：
+运行时缓存系统。负责：
 
-- 从 Bind node / compiled graph 收集参数规则。
-- 序列化和规范化 bind value。
-- 维护当前 Python 会话中的 live bind context。
-- 绘制和更新侧栏 runtime 参数 UI。
-- 支持 batch group 中的 bind 参数实例。
+- 维护 committed cache、pending write 和 pending delete。
+- 生成 root tree、group path、batch item 的执行实例命名空间。
+- 读写、删除 cache slot，并提供当前执行实例的 cache 快照。
+- 成功执行后提交 pending，失败时丢弃 pending。
 
 维护注意：
 
-- 它管理的是“最近一次运行产生的可编辑参数上下文”，不是持久数据模型。
+- Runtime cache 不是持久数据模型，文件重载和插件重载后缓存会丢失。
 
 ### `NodeTree/OmniNodeOperator.py`
 
@@ -352,7 +356,7 @@ Python 类型到 Blender socket 类型的映射表。负责：
 
 ### 新增高级图节点
 
-如果节点不是一个简单函数调用，例如组、批处理、Bind、缓存、控制流，应放在 `GraphNode.py` 或新的 graph-node 模块中，并在 `OmniCompiler.py` 中增加明确编译分支。
+如果节点不是一个简单函数调用，例如组、批处理、缓存、控制流，应放在 `GraphNode.py` 或新的 graph-node 模块中，并在 `OmniCompiler.py` 中增加明确编译分支。
 
 不要让高级节点伪装成普通 `_func` 节点，除非它真的只需要 `func(*args)`。
 
@@ -375,6 +379,5 @@ Python 类型到 Blender socket 类型的映射表。负责：
 - Multi input 的输入顺序目前不是视觉顺序，而是编译器排序顺序。
 - `NodeReroute` 断开输入时会向下游传 `None`。
 - 默认值读取是尽力而为，不保证所有 Blender socket 都有 `default_value`。
-- Bind runtime context 只在当前 Python 会话内可靠。
+- Runtime cache 只在当前 Python 会话内可靠。
 - 函数节点的 socket identifier 与函数参数名绑定，改名会影响已有树。
-

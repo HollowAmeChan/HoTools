@@ -1,6 +1,15 @@
-from .OmniCompiler import CompiledGraph, OmniCompiler, OpCall, SubtreeCall, BatchSubtreeCall
+from .OmniCompiler import (
+    CompiledGraph,
+    OpCall,
+    SubtreeCall,
+    BatchSubtreeCall,
+    CacheReadCall,
+    CacheWriteCall,
+    CacheDeleteCall,
+    CacheDumpCall,
+)
 from .OmniDebug import OmniDebug
-from . import OmniMenuBind
+from . import OmniRuntimeState
 
 
 class OmniExecutor:
@@ -15,7 +24,39 @@ class OmniExecutor:
         return result
 
     @staticmethod
-    def _execute(compiled: CompiledGraph, provided_inputs=None, debug=False, depth=0, batch_bind_context=None):
+    def format_cache_snapshot(values):
+        if not values:
+            return "<empty>"
+
+        lines = []
+        for key in sorted(values.keys(), key=str):
+            lines.append(f"{key}: {OmniDebug.format_value(values[key])}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _execute(
+        compiled: CompiledGraph,
+        provided_inputs=None,
+        debug=False,
+        depth=0,
+        runtime_context=None,
+    ):
+        if runtime_context is None:
+            runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
+            try:
+                return OmniExecutor._execute(
+                    compiled,
+                    provided_inputs=provided_inputs,
+                    debug=debug,
+                    depth=depth,
+                    runtime_context=runtime_context,
+                )
+            except Exception:
+                runtime_context.mark_failed()
+                raise
+            finally:
+                OmniRuntimeState.finish_run(runtime_context)
+
         registers = [None] * compiled.reg_count
         provided_inputs = provided_inputs or {}
         trace, log = OmniDebug.make_runtime_logger(depth)
@@ -40,8 +81,161 @@ class OmniExecutor:
                 )
                 continue
 
+            if isinstance(op, CacheReadCall):
+                fallback_value = registers[op.fallback_input] if op.fallback_input is not None else None
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, getattr(op, "cache_key", ""))
+
+                try:
+                    hit, value = OmniRuntimeState.read_cache(runtime_context, cache_key)
+                    if not hit:
+                        value = fallback_value
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    log(
+                        f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                        f"{OmniDebug.error_label('ERROR')} in cache read "
+                        f"@ {OmniDebug.node_label(op.node.name)}: {OmniDebug.error_label(exc)}"
+                    )
+                    break
+
+                if len(op.outputs) > 0:
+                    registers[op.outputs[0]] = value
+                if len(op.outputs) > 1:
+                    registers[op.outputs[1]] = hit
+
+                out_desc = []
+                if len(op.outputs) > 0:
+                    out_desc.append(
+                        f"{OmniDebug.reg_label(op.outputs[0])}="
+                        f"{OmniDebug.value_label(OmniDebug.format_value(value))}"
+                    )
+                if len(op.outputs) > 1:
+                    out_desc.append(
+                        f"{OmniDebug.reg_label(op.outputs[1])}="
+                        f"{OmniDebug.value_label(OmniDebug.format_value(hit))}"
+                    )
+
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('CACHE READ')} {OmniDebug.node_label(op.node.name)} "
+                    f"key={OmniDebug.value_label(cache_key)} hit={OmniDebug.value_label(hit)} "
+                    f"-> {', '.join(out_desc)}"
+                )
+                continue
+
+            if isinstance(op, CacheWriteCall):
+                value = registers[op.value_input] if op.value_input is not None else None
+                enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else True
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, getattr(op, "cache_key", ""))
+
+                if enabled:
+                    try:
+                        OmniRuntimeState.write_cache(runtime_context, cache_key, value)
+                    except Exception as exc:
+                        runtime_context.mark_failed()
+                        op.node.set_bug_state(exc)
+                        log(
+                            f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                            f"{OmniDebug.error_label('ERROR')} in cache write "
+                            f"@ {OmniDebug.node_label(op.node.name)}: {OmniDebug.error_label(exc)}"
+                        )
+                        break
+
+                for reg in op.outputs:
+                    registers[reg] = value
+
+                out_desc = ", ".join(
+                    f"{OmniDebug.reg_label(reg)}={OmniDebug.value_label(OmniDebug.format_value(value))}"
+                    for reg in op.outputs
+                )
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('CACHE WRITE')} {OmniDebug.node_label(op.node.name)} "
+                    f"key={OmniDebug.value_label(cache_key)} enabled={OmniDebug.value_label(enabled)} value="
+                    f"{OmniDebug.value_label(OmniDebug.format_value(value))} -> {out_desc}"
+                )
+                continue
+
+            if isinstance(op, CacheDeleteCall):
+                trigger_value = registers[op.trigger_input] if op.trigger_input is not None else None
+                enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else False
+                cache_key = str(getattr(op, "cache_key", "") or "").strip()
+                delete_all = bool(getattr(op, "delete_all", False))
+                deleted_count = 0
+
+                try:
+                    if enabled:
+                        if delete_all:
+                            deleted_count = OmniRuntimeState.clear_namespace(runtime_context)
+                        elif cache_key:
+                            deleted_count = OmniRuntimeState.delete_cache(runtime_context, cache_key)
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    log(
+                        f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                        f"{OmniDebug.error_label('ERROR')} in cache delete "
+                        f"@ {OmniDebug.node_label(op.node.name)}: {OmniDebug.error_label(exc)}"
+                    )
+                    break
+
+                output_values = [trigger_value, deleted_count, enabled and (delete_all or bool(cache_key))]
+                for index, reg in enumerate(op.outputs):
+                    registers[reg] = output_values[index] if index < len(output_values) else None
+
+                out_desc = ", ".join(
+                    f"{OmniDebug.reg_label(reg)}={OmniDebug.value_label(OmniDebug.format_value(registers[reg]))}"
+                    for reg in op.outputs
+                )
+                mode = "all" if delete_all else (cache_key or "<empty>")
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('CACHE DELETE')} {OmniDebug.node_label(op.node.name)} "
+                    f"enabled={OmniDebug.value_label(enabled)} target={OmniDebug.value_label(mode)} "
+                    f"deleted={OmniDebug.value_label(deleted_count)} -> {out_desc}"
+                )
+                continue
+
+            if isinstance(op, CacheDumpCall):
+                trigger_value = registers[op.trigger_input] if op.trigger_input is not None else None
+                label_value = registers[op.label_input] if getattr(op, "label_input", None) is not None else ""
+                label = str(label_value).strip() if label_value is not None else ""
+                title = label or op.node.name
+
+                try:
+                    cache_values = OmniRuntimeState.snapshot_cache(runtime_context)
+                    body = OmniExecutor.format_cache_snapshot(cache_values)
+                    text = f"[OmniNode Cache] {title} ({len(cache_values)} item(s))\n{body}"
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    log(
+                        f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                        f"{OmniDebug.error_label('ERROR')} in cache dump "
+                        f"@ {OmniDebug.node_label(op.node.name)}: {OmniDebug.error_label(exc)}"
+                    )
+                    break
+
+                if getattr(op, "print_to_console", True):
+                    print(text)
+
+                output_values = [trigger_value, text, len(cache_values)]
+                for index, reg in enumerate(op.outputs):
+                    registers[reg] = output_values[index] if index < len(output_values) else None
+
+                out_desc = ", ".join(
+                    f"{OmniDebug.reg_label(reg)}={OmniDebug.value_label(OmniDebug.format_value(registers[reg]))}"
+                    for reg in op.outputs
+                )
+                log(
+                    f"  {OmniDebug.section_label(f'Step {step_index}')}: "
+                    f"{OmniDebug.func_label('CACHE DUMP')} {OmniDebug.node_label(op.node.name)} "
+                    f"title={OmniDebug.value_label(title)} count={OmniDebug.value_label(len(cache_values))} -> {out_desc}"
+                )
+                continue
+
             if isinstance(op, OpCall):
-                node_idname = getattr(op.node, "bl_idname", "")
                 args = []
                 arg_desc = []
                 for inp in op.inputs:
@@ -61,40 +255,10 @@ class OmniExecutor:
                             f"{OmniDebug.reg_label(inp)}={OmniDebug.value_label(OmniDebug.format_value(registers[inp]))}"
                         )
 
-                if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                    if batch_bind_context is not None:
-                        OmniMenuBind.capture_batch_bind_node_runtime_context(
-                            batch_bind_context["tree"],
-                            batch_bind_context["batch_owner_node"],
-                            op.node,
-                            args,
-                            getattr(op, "processor_graph", None),
-                            bind_path=batch_bind_context.get("bind_path"),
-                            instance_meta={
-                                "iteration_index": batch_bind_context.get("iteration_index", -1),
-                                "batch_value": batch_bind_context.get("batch_value"),
-                            },
-                        )
-                    else:
-                        OmniMenuBind.capture_bind_node_runtime_context(
-                            getattr(compiled, "tree_ref", None),
-                            op.node,
-                            args,
-                            getattr(op, "processor_graph", None),
-                        )
-
                 try:
-                    if node_idname == OmniCompiler.BIND_NODE_IDNAME:
-                        value = OmniMenuBind.get_parameter_value_from_args(op.node, args)
-                        result = OmniMenuBind.execute_bind_node_update(
-                            op.node,
-                            args,
-                            value,
-                            getattr(op, "processor_graph", None),
-                        )
-                    else:
-                        result = op.func(*args)
+                    result = op.func(*args)
                 except Exception as exc:
+                    runtime_context.mark_failed()
                     op.node.set_bug_state(exc)
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
@@ -146,16 +310,13 @@ class OmniExecutor:
                         subtree_inputs,
                         debug=debug,
                         depth=depth + 1,
-                        batch_bind_context=(
-                            {
-                                **batch_bind_context,
-                                "bind_path": list(batch_bind_context.get("bind_path") or [])
-                                + [getattr(op.compiled_graph, "tree_name", "") or getattr(op.node, "name", "")]
-                            }
-                            if batch_bind_context is not None else None
+                        runtime_context=runtime_context.descend_group(
+                            op.node,
+                            getattr(op.compiled_graph, "tree_ref", None),
                         ),
                     )
                 except Exception as exc:
+                    runtime_context.mark_failed()
                     op.node.set_bug_state(exc)
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
@@ -187,6 +348,7 @@ class OmniExecutor:
                 ordered_output_uids = list(op.compiled_graph.output_regs.keys())
 
                 if op.batch_input_index >= len(op.inputs):
+                    runtime_context.mark_failed()
                     op.node.set_bug_state("Batch input index out of range")
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
@@ -233,19 +395,18 @@ class OmniExecutor:
                             subtree_inputs,
                             debug=debug,
                             depth=depth + 1,
-                            batch_bind_context={
-                                "tree": getattr(compiled, "tree_ref", None),
-                                "batch_owner_node": op.node,
-                                "bind_path": [],
-                                "iteration_index": batch_index,
-                                "batch_value": batch_value,
-                            },
+                            runtime_context=runtime_context.descend_batch_item(
+                                op.node,
+                                getattr(op.compiled_graph, "tree_ref", None),
+                                batch_index,
+                            ),
                         )
                         trace.extend(subtree_trace)
 
                         for uid in ordered_output_uids:
                             collected_outputs[uid].append(subtree_outputs.get(uid))
                 except Exception as exc:
+                    runtime_context.mark_failed()
                     op.node.set_bug_state(exc)
                     log(
                         f"  {OmniDebug.section_label(f'Step {step_index}')}: "
@@ -287,7 +448,14 @@ class OmniExecutor:
 
     @staticmethod
     def run(compiled: CompiledGraph, debug=False):
-        result, trace = OmniExecutor._execute(compiled, debug=debug)
+        runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
+        try:
+            result, trace = OmniExecutor._execute(compiled, debug=debug, runtime_context=runtime_context)
+        except Exception:
+            runtime_context.mark_failed()
+            raise
+        finally:
+            OmniRuntimeState.finish_run(runtime_context)
         if debug:
             print("\n".join(trace))
         return result

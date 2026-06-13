@@ -279,91 +279,6 @@ class OmniNodeSocketVertexGroup(NodeSocket):
         return (0.22, 0.66, 0.26, 1.0)
 
 
-class OmniNodeSocketParameterFloat(NodeSocket):
-    bl_label = "Float-OmniParam"
-    bl_idname = "OmniNodeSocketParameterFloat"
-
-    default_value: bpy.props.FloatProperty()  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.63, 0.72, 1.0, 1.0)
-
-
-class OmniNodeSocketParameterInt(NodeSocket):
-    bl_label = "Int-OmniParam"
-    bl_idname = "OmniNodeSocketParameterInt"
-
-    default_value: bpy.props.IntProperty()  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.63, 0.72, 1.0, 1.0)
-
-
-class OmniNodeSocketParameterBool(NodeSocket):
-    bl_label = "Bool-OmniParam"
-    bl_idname = "OmniNodeSocketParameterBool"
-
-    default_value: bpy.props.BoolProperty()  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.63, 0.72, 1.0, 1.0)
-
-
-class OmniNodeSocketParameterString(NodeSocket):
-    bl_label = "String-OmniParam"
-    bl_idname = "OmniNodeSocketParameterString"
-
-    default_value: bpy.props.StringProperty()  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.63, 0.72, 1.0, 1.0)
-
-
-class OmniNodeSocketParameterVector(NodeSocket):
-    bl_label = "Vector-OmniParam"
-    bl_idname = "OmniNodeSocketParameterVector"
-
-    default_value: bpy.props.FloatVectorProperty(size=3, subtype="XYZ")  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        if self.is_output or self.is_linked:
-            layout.label(text=self.name)
-        else:
-            layout.prop(self, "default_value", text=text)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.63, 0.72, 1.0, 1.0)
-
-
 cls = [
     OmniNodeSocketScene,
     OmniNodeSocketText,
@@ -378,11 +293,6 @@ cls = [
     OmniNodeSocketUVLayer,
     OmniNodeSocketColorAttribute,
     OmniNodeSocketVertexGroup,
-    OmniNodeSocketParameterFloat,
-    OmniNodeSocketParameterInt,
-    OmniNodeSocketParameterBool,
-    OmniNodeSocketParameterString,
-    OmniNodeSocketParameterVector,
 ]
 
 
