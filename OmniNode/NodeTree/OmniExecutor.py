@@ -34,6 +34,13 @@ class OmniExecutor:
         return "\n".join(lines)
 
     @staticmethod
+    def cache_key_input_value(registers, reg):
+        if reg is None:
+            return ""
+        value = registers[reg]
+        return "" if value is None else str(value)
+
+    @staticmethod
     def _execute(
         compiled: CompiledGraph,
         provided_inputs=None,
@@ -83,7 +90,8 @@ class OmniExecutor:
 
             if isinstance(op, CacheReadCall):
                 fallback_value = registers[op.fallback_input] if op.fallback_input is not None else None
-                cache_key = OmniRuntimeState.cache_key_for_node(op.node, getattr(op, "cache_key", ""))
+                key_value = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None))
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, key_value)
 
                 try:
                     hit, value = OmniRuntimeState.read_cache(runtime_context, cache_key)
@@ -127,7 +135,8 @@ class OmniExecutor:
             if isinstance(op, CacheWriteCall):
                 value = registers[op.value_input] if op.value_input is not None else None
                 enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else True
-                cache_key = OmniRuntimeState.cache_key_for_node(op.node, getattr(op, "cache_key", ""))
+                key_value = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None))
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, key_value)
 
                 if enabled:
                     try:
@@ -160,8 +169,8 @@ class OmniExecutor:
             if isinstance(op, CacheDeleteCall):
                 trigger_value = registers[op.trigger_input] if op.trigger_input is not None else None
                 enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else False
-                cache_key = str(getattr(op, "cache_key", "") or "").strip()
-                delete_all = bool(getattr(op, "delete_all", False))
+                cache_key = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None)).strip()
+                delete_all = bool(registers[op.delete_all_input]) if getattr(op, "delete_all_input", None) is not None else False
                 deleted_count = 0
 
                 try:

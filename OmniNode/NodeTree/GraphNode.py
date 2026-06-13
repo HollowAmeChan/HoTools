@@ -5,8 +5,8 @@
 import bpy
 from typing import Any
 from .OmniNode import OmniNode
-from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove,OP_JumpToNodeTree, full_socket_type_items
-from bpy.props import BoolProperty, CollectionProperty, IntProperty, EnumProperty, StringProperty
+from .OmniNodeOperator import OmniGraphNodeIOItem,HO_UL_GraphNodeIO,OP_IOItemRemove,OP_IOItemAdd,OP_IOItemMove,OP_JumpToNodeTree
+from bpy.props import BoolProperty, CollectionProperty, IntProperty
 
 from .OmniNodeTree import OmniNodeTree,draw_OmniTreeInputs,draw_OmniTreeOutputs
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
@@ -316,22 +316,22 @@ class OmniBatchGroupNode(OmniNode):
 def _sync_cache_node_io(node: OmniNode, *, is_writer: bool) -> None:
     link_cache = cache_node_links(node)
     default_values = cache_nodesockets_defaultvalues(node)
-    socket_type = runtime_socket_type_id(getattr(node, "socket_type", "OmniNodeSocketAny"))
 
     node.inputs.clear()
     node.outputs.clear()
 
+    node.inputs.new(type="NodeSocketString", name="缓存名", identifier="cache_key")
     if is_writer:
-        node.inputs.new(type=socket_type, name="值", identifier="value")
+        node.inputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
         enable_sock = node.inputs.new(type="NodeSocketBool", name="启用", identifier="enable")
         try:
             enable_sock.default_value = True
         except Exception:
             pass
-        node.outputs.new(type=socket_type, name="值", identifier="value")
+        node.outputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
     else:
-        node.inputs.new(type=socket_type, name="默认值", identifier="fallback")
-        node.outputs.new(type=socket_type, name="值", identifier="value")
+        node.inputs.new(type="OmniNodeSocketAny", name="默认值", identifier="fallback")
+        node.outputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
         node.outputs.new(type="NodeSocketBool", name="命中", identifier="hit")
 
     restore_node_links(node, link_cache)
@@ -342,21 +342,10 @@ class OmniCacheReadNode(OmniNode):
     bl_idname = "HO_OmniNode_CacheRead"
     bl_label = "缓存读取"
 
-    cache_key: StringProperty(
-        name="缓存名",
-        description="当前执行实例内的缓存键。留空时使用本节点自己的运行时ID。",
-        default="",
-    )  # type: ignore
-    socket_type: EnumProperty(
-        name="Socket Type",
-        default="OmniNodeSocketAny",
-        items=full_socket_type_items(),
-        update=lambda self, context: self.syncCacheIO(),
-    )  # type: ignore
-
     def build(self) -> None:
         self.omni_description = """
         从当前执行实例的 committed runtime cache 中读取值。
+        缓存名是字符串输入，留空时使用本节点自己的运行时ID。
         如果缓存不存在，输出默认值并将命中输出设为False。
         """
         self.syncCacheIO()
@@ -365,29 +354,18 @@ class OmniCacheReadNode(OmniNode):
         _sync_cache_node_io(self, is_writer=False)
 
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        layout.prop(self, "cache_key")
-        layout.prop(self, "socket_type", text="")
+        pass
 
 
 class OmniCacheWriteNode(OmniNode):
     bl_idname = "HO_OmniNode_CacheWrite"
     bl_label = "缓存写入"
 
-    cache_key: StringProperty(
-        name="缓存名",
-        description="当前执行实例内的缓存键。留空时使用本节点自己的运行时ID。",
-        default="",
-    )  # type: ignore
-    socket_type: EnumProperty(
-        name="Socket Type",
-        default="OmniNodeSocketAny",
-        items=full_socket_type_items(),
-        update=lambda self, context: self.syncCacheIO(),
-    )  # type: ignore
-
     def build(self) -> None:
         self.omni_description = """
         把输入值写入当前执行实例的 pending runtime cache。
+        缓存名是字符串输入，留空时使用本节点自己的运行时ID。
+        如果缓存名每帧变化，会持续产生新的 cache 项；需要时请配合缓存删除节点清理。
         只有整棵root tree本轮执行成功后，pending cache才会提交。
         """
         self.syncCacheIO()
@@ -396,8 +374,7 @@ class OmniCacheWriteNode(OmniNode):
         _sync_cache_node_io(self, is_writer=True)
 
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        layout.prop(self, "cache_key")
-        layout.prop(self, "socket_type", text="")
+        pass
 
 
 def _sync_cache_delete_node_io(node: OmniNode) -> None:
@@ -408,9 +385,15 @@ def _sync_cache_delete_node_io(node: OmniNode) -> None:
     node.outputs.clear()
 
     node.inputs.new(type="OmniNodeSocketAny", name="触发", identifier="trigger")
+    node.inputs.new(type="NodeSocketString", name="缓存名", identifier="cache_key")
+    delete_all_sock = node.inputs.new(type="NodeSocketBool", name="删除全部", identifier="delete_all")
+    try:
+        delete_all_sock.default_value = False
+    except Exception:
+        pass
     enable_sock = node.inputs.new(type="NodeSocketBool", name="启用", identifier="enable")
     try:
-        enable_sock.default_value = False
+        enable_sock.default_value = True
     except Exception:
         pass
 
@@ -426,20 +409,11 @@ class OmniCacheDeleteNode(OmniNode):
     bl_idname = "HO_OmniNode_CacheDelete"
     bl_label = "缓存删除"
 
-    cache_key: StringProperty(
-        name="缓存名",
-        description="删除当前执行实例内指定缓存名。留空时不删除指定项。",
-        default="",
-    )  # type: ignore
-    delete_all: BoolProperty(
-        name="删除当前实例全部缓存",
-        description="删除当前 root/group/batch 实例命名空间中的全部 cache。",
-        default=False,
-    )  # type: ignore
-
     def build(self) -> None:
         self.omni_description = """
         删除当前执行实例中的 runtime cache。
+        删除全部输入为 True 时会删除当前 root/group/batch 实例命名空间中的全部 cache。
+        删除全部为 False 时按缓存名删除；缓存名为空不会删除指定项。
         删除操作和写入一样只在本轮 root tree 成功执行后提交。
         """
         self.is_output_node = False
@@ -449,10 +423,7 @@ class OmniCacheDeleteNode(OmniNode):
         _sync_cache_delete_node_io(self)
 
     def draw_buttons(self, context: bpy.types.Context, layout: bpy.types.UILayout) -> None:
-        layout.prop(self, "delete_all")
-        row = layout.row()
-        row.enabled = not self.delete_all
-        row.prop(self, "cache_key")
+        pass
 
 
 def _sync_cache_dump_node_io(node: OmniNode) -> None:

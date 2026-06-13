@@ -48,30 +48,30 @@ class BatchSubtreeCall:
 
 
 class CacheReadCall:
-    def __init__(self, fallback_input, outputs, node, cache_key):
+    def __init__(self, cache_key_input, fallback_input, outputs, node):
+        self.cache_key_input = cache_key_input
         self.fallback_input = fallback_input
         self.outputs = outputs
         self.node = node
-        self.cache_key = cache_key
 
 
 class CacheWriteCall:
-    def __init__(self, value_input, enabled_input, outputs, node, cache_key):
+    def __init__(self, cache_key_input, value_input, enabled_input, outputs, node):
+        self.cache_key_input = cache_key_input
         self.value_input = value_input
         self.enabled_input = enabled_input
         self.outputs = outputs
         self.node = node
-        self.cache_key = cache_key
 
 
 class CacheDeleteCall:
-    def __init__(self, trigger_input, enabled_input, outputs, node, cache_key, delete_all):
+    def __init__(self, trigger_input, cache_key_input, delete_all_input, enabled_input, outputs, node):
         self.trigger_input = trigger_input
+        self.cache_key_input = cache_key_input
+        self.delete_all_input = delete_all_input
         self.enabled_input = enabled_input
         self.outputs = outputs
         self.node = node
-        self.cache_key = cache_key
-        self.delete_all = delete_all
 
 
 class CacheDumpCall:
@@ -297,6 +297,16 @@ class OmniCompiler:
 
             return input_regs
 
+        def input_socket(node, identifier):
+            try:
+                return node.inputs.get(identifier)
+            except Exception:
+                return None
+
+        def compile_optional_input(node, identifier):
+            sock = input_socket(node, identifier)
+            return compile_single_input(sock) if sock is not None else None
+
         for node in topo:
             node_idname = OmniCompiler._node_idname(node)
 
@@ -471,7 +481,8 @@ class OmniCompiler:
                 continue
 
             if node_idname == OmniCompiler.CACHE_READ_NODE_IDNAME:
-                fallback_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
+                cache_key_reg = compile_optional_input(node, "cache_key")
+                fallback_reg = compile_optional_input(node, "fallback")
 
                 output_regs = []
                 for sock in node.outputs:
@@ -489,21 +500,22 @@ class OmniCompiler:
 
                 instructions.append(
                     CacheReadCall(
+                        cache_key_reg,
                         fallback_reg,
                         output_regs,
                         node,
-                        getattr(node, "cache_key", ""),
                     )
                 )
                 OmniDebug.append_compile_trace(
                     graph,
-                    f"Emit CACHE READ {node.name} fallback={fallback_reg} outputs={output_regs}",
+                    f"Emit CACHE READ {node.name} key={cache_key_reg} fallback={fallback_reg} outputs={output_regs}",
                 )
                 continue
 
             if node_idname == OmniCompiler.CACHE_WRITE_NODE_IDNAME:
-                value_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
-                enabled_reg = compile_single_input(node.inputs[1]) if len(node.inputs) > 1 else None
+                cache_key_reg = compile_optional_input(node, "cache_key")
+                value_reg = compile_optional_input(node, "value")
+                enabled_reg = compile_optional_input(node, "enable")
 
                 output_regs = []
                 for sock in node.outputs:
@@ -521,22 +533,24 @@ class OmniCompiler:
 
                 instructions.append(
                     CacheWriteCall(
+                        cache_key_reg,
                         value_reg,
                         enabled_reg,
                         output_regs,
                         node,
-                        getattr(node, "cache_key", ""),
                     )
                 )
                 OmniDebug.append_compile_trace(
                     graph,
-                    f"Emit CACHE WRITE {node.name} value={value_reg} enabled={enabled_reg} outputs={output_regs}",
+                    f"Emit CACHE WRITE {node.name} key={cache_key_reg} value={value_reg} enabled={enabled_reg} outputs={output_regs}",
                 )
                 continue
 
             if node_idname == OmniCompiler.CACHE_DELETE_NODE_IDNAME:
-                trigger_reg = compile_single_input(node.inputs[0]) if len(node.inputs) > 0 else None
-                enabled_reg = compile_single_input(node.inputs[1]) if len(node.inputs) > 1 else None
+                trigger_reg = compile_optional_input(node, "trigger")
+                cache_key_reg = compile_optional_input(node, "cache_key")
+                delete_all_reg = compile_optional_input(node, "delete_all")
+                enabled_reg = compile_optional_input(node, "enable")
 
                 output_regs = []
                 for sock in node.outputs:
@@ -555,16 +569,16 @@ class OmniCompiler:
                 instructions.append(
                     CacheDeleteCall(
                         trigger_reg,
+                        cache_key_reg,
+                        delete_all_reg,
                         enabled_reg,
                         output_regs,
                         node,
-                        getattr(node, "cache_key", ""),
-                        bool(getattr(node, "delete_all", False)),
                     )
                 )
                 OmniDebug.append_compile_trace(
                     graph,
-                    f"Emit CACHE DELETE {node.name} trigger={trigger_reg} enabled={enabled_reg} outputs={output_regs}",
+                    f"Emit CACHE DELETE {node.name} trigger={trigger_reg} key={cache_key_reg} delete_all={delete_all_reg} enabled={enabled_reg} outputs={output_regs}",
                 )
                 continue
 
