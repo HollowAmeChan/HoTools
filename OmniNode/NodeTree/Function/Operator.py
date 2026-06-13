@@ -128,6 +128,34 @@ def _to_vector3(value) -> mathutils.Vector:
     return vec.to_3d()
 
 
+def _to_vector3_default(value, fallback: mathutils.Vector) -> mathutils.Vector:
+    try:
+        vec = mathutils.Vector(value)
+    except Exception:
+        return fallback.copy()
+
+    if len(vec) == 0:
+        return fallback.copy()
+    if len(vec) == 1:
+        return mathutils.Vector((vec[0], fallback[1], fallback[2]))
+    if len(vec) == 2:
+        return mathutils.Vector((vec[0], vec[1], fallback[2]))
+    return vec.to_3d()
+
+
+def _component_multiply(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
+    return mathutils.Vector((a.x * b.x, a.y * b.y, a.z * b.z))
+
+
+def _rotation_quaternion(value) -> mathutils.Quaternion:
+    return mathutils.Euler(_to_vector3(value), "XYZ").to_quaternion()
+
+
+def _quaternion_to_euler_vector(quat: mathutils.Quaternion) -> mathutils.Vector:
+    euler = quat.to_euler("XYZ")
+    return mathutils.Vector((euler.x, euler.y, euler.z))
+
+
 def _euler_order(obj: bpy.types.Object) -> str:
     mode = getattr(obj, "rotation_mode", "XYZ")
     if mode in {"QUATERNION", "AXIS_ANGLE"}:
@@ -137,44 +165,96 @@ def _euler_order(obj: bpy.types.Object) -> str:
 
 
 @omni(enable=True,
-      bl_label="设置物体位置",
-      base_color=_Color.colorCat["Operator"],
-      is_output_node=False,
-      color_tag = "GEOMETRY",
-      bl_icon = "OBJECT_DATAMODE",
-      )
-def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types.Object:
-    obj.location = pos
-    return obj
-
-
-@omni(enable=True,
       bl_label="写入物体变换",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",
       bl_icon="OBJECT_DATAMODE",
-      _INPUT_NAME=["物体", "移动", "旋转"],
+      _INPUT_NAME=["物体", "移动", "旋转", "缩放"],
       _OUTPUT_NAME=["物体"],
       omni_description="""
-      将移动和旋转向量写入物体的普通 Transform。
-      移动写入 object.location，旋转写入 object.rotation_euler，旋转单位为弧度。
-      如果物体当前使用四元数或轴角旋转，会切换到 XYZ 欧拉旋转。
+      将移动、旋转、缩放写入物体的普通 Transform。
+      移动写入 object.location，旋转写入 object.rotation_euler，缩放写入 object.scale。
+      旋转单位为弧度；如果物体当前使用四元数或轴角旋转，会切换到 XYZ 欧拉旋转。
       """,
       )
-def objectWriteTransform(
+def objectWriteFullTransform(
     obj: bpy.types.Object,
     location: NodeSocketVector,
     rotation: NodeSocketVector,
+    scale: NodeSocketVector = mathutils.Vector((1.0, 1.0, 1.0)),
 ) -> bpy.types.Object:
     obj = _require_object(obj, "obj")
     obj.location = _to_vector3(location)
     obj.rotation_euler = mathutils.Euler(_to_vector3(rotation), _euler_order(obj))
+    obj.scale = _to_vector3_default(scale, mathutils.Vector((1.0, 1.0, 1.0)))
     return obj
 
 
 @omni(enable=True,
-      bl_label="写入物体增量变换",
+      bl_label="变换合成",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="GEOMETRY",
+      bl_icon="OBJECT_DATAMODE",
+      _INPUT_NAME=[
+          "基础位置",
+          "基础旋转",
+          "基础缩放",
+          "附加位置",
+          "附加旋转",
+          "附加缩放",
+          "附加位置使用基础旋转",
+          "缩放相乘",
+      ],
+      _OUTPUT_NAME=["位置", "旋转", "缩放"],
+      omni_description="""
+      合成两个局部变换，常用于把软跟随输出和漂浮输出合成为同一个控制器的最终变换。
+
+      默认规则：
+      位置 = 基础位置 + 附加位置。
+      旋转 = 基础旋转 @ 附加旋转。
+      缩放 = 基础缩放 * 附加缩放。
+
+      如果启用“附加位置使用基础旋转”，附加位置会先被基础旋转和基础缩放变换，再加到基础位置。
+      旋转输入/输出单位都是弧度，可直接接写入物体完整变换节点。
+      漂浮节点默认缩放输出为 1,1,1，因此缩放相乘时不会改变基础缩放。
+      """,
+      )
+def composeTransform(
+    base_location: NodeSocketVector,
+    base_rotation: NodeSocketVector,
+    base_scale: NodeSocketVector = mathutils.Vector((1.0, 1.0, 1.0)),
+    overlay_location: NodeSocketVector = mathutils.Vector((0.0, 0.0, 0.0)),
+    overlay_rotation: NodeSocketVector = mathutils.Vector((0.0, 0.0, 0.0)),
+    overlay_scale: NodeSocketVector = mathutils.Vector((1.0, 1.0, 1.0)),
+    overlay_location_in_base_rotation: bool = False,
+    multiply_scale: bool = True,
+) -> tuple[mathutils.Vector, mathutils.Vector, mathutils.Vector]:
+    base_location = _to_vector3(base_location)
+    base_rotation_quat = _rotation_quaternion(base_rotation)
+    base_scale = _to_vector3_default(base_scale, mathutils.Vector((1.0, 1.0, 1.0)))
+    overlay_location = _to_vector3(overlay_location)
+    overlay_rotation_quat = _rotation_quaternion(overlay_rotation)
+    overlay_scale = _to_vector3_default(overlay_scale, mathutils.Vector((1.0, 1.0, 1.0)))
+
+    if overlay_location_in_base_rotation:
+        location_delta = base_rotation_quat @ _component_multiply(base_scale, overlay_location)
+    else:
+        location_delta = overlay_location
+
+    result_location = base_location + location_delta
+    result_rotation = _quaternion_to_euler_vector(base_rotation_quat @ overlay_rotation_quat)
+    if multiply_scale:
+        result_scale = _component_multiply(base_scale, overlay_scale)
+    else:
+        result_scale = base_scale + overlay_scale
+
+    return result_location, result_rotation, result_scale
+
+
+@omni(enable=True,
+      bl_label="写入增量变换",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
       color_tag="GEOMETRY",

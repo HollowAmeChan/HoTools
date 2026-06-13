@@ -18,6 +18,7 @@ def omni(**omnidata):
         base_color:tuple[float,float,float]
         is_output_node:bool
         _INPUT_NAME:list[str]
+        input_init:list[dict]|dict[str,dict]
         _OUTPUT_NAME:list[str]
         等
     2.  由于使用了函数签名来生成，签名无法设置多输出的名字
@@ -53,12 +54,48 @@ def get_socket_type_name(socket_cls):
     # Blender 内置 socket（用类名）（没有 bl_idname）
     return socket_cls.__name__
 
-def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[dict]]:
+def _resolve_meta_value(meta_value, identifier, index, default=None):
+    if isinstance(meta_value, dict):
+        return meta_value.get(identifier, default)
+    if isinstance(meta_value, (list, tuple)) and index < len(meta_value):
+        return meta_value[index]
+    return default
+
+def _split_input_init(input_init, identifier, index):
+    config = _resolve_meta_value(input_init, identifier, index, {})
+    if config is None:
+        return {}, {}
+    if not isinstance(config, dict):
+        return {}, {"default_value": config}
+
+    config = dict(config)
+    new_kwargs = {}
+    attr_values = {}
+
+    explicit_new_kwargs = config.pop("new", None)
+    if isinstance(explicit_new_kwargs, dict):
+        new_kwargs.update(explicit_new_kwargs)
+
+    explicit_attr_values = config.pop("attrs", None)
+    if isinstance(explicit_attr_values, dict):
+        attr_values.update(explicit_attr_values)
+
+    new_keys = {"type", "name", "identifier", "use_multi_input"}
+    for key, value in config.items():
+        if key in new_keys:
+            new_kwargs[key] = value
+        else:
+            attr_values[key] = value
+
+    return new_kwargs, attr_values
+
+def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[dict], dict[dict]]:
     NodeInfo = {}
     SocketInMetaDict = {}
     SocketOutMetaDict = {}
     SocketDefaultDict = {}
     SocketIsMulti = {}
+    SocketInputSettings = {}
 
     # -------------------------
     # Node info
@@ -70,6 +107,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
     NodeInfo["omni_description"] = ""
     NodeInfo["omni_presets"] = []
     NodeInfo["_INPUT_NAME"] = []
+    NodeInfo["input_init"] = {}
     NodeInfo["_OUTPUT_NAME"] = ["输出"]
     NodeInfo.update(func.__meta)
 
@@ -102,12 +140,17 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
 
         SocketIsMulti[identifier] = is_multi
 
-        SocketInMetaDict[identifier] = {
+        socket_new_kwargs, socket_attr_values = _split_input_init(NodeInfo["input_init"], identifier, index)
+
+        socket_new_args = {
             "type": get_socket_type_name(socket_cls),
             "name": name,
             "identifier": identifier,
             "use_multi_input": is_multi,
         }
+        socket_new_args.update(socket_new_kwargs)
+        SocketInMetaDict[identifier] = socket_new_args
+        SocketInputSettings[identifier] = socket_attr_values
 
     # -------------------------
     # Outputs
@@ -142,9 +185,10 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
         SocketOutMetaDict,
         SocketDefaultDict,
         SocketIsMulti,
+        SocketInputSettings,
     )
 
-def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti):
+def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti,SocketInputSettings):
     if NodeInfo.get("base_color"):
         node.base_color = NodeInfo.get("base_color")
     node.updateColor()
@@ -157,7 +201,16 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     for i in SocketInMetaDict.keys():
         sock = node.inputs.new(**SocketInMetaDict[i])
 
-        default_value = SocketDefaultDict.get(i, None)
+        input_settings = dict(SocketInputSettings.get(i, {}))
+        has_init_default = "default_value" in input_settings
+        init_default_value = input_settings.pop("default_value", None)
+        for attr_name, attr_value in input_settings.items():
+            try:
+                setattr(sock, attr_name, attr_value)
+            except Exception:
+                pass
+
+        default_value = init_default_value if has_init_default else SocketDefaultDict.get(i, None)
         if default_value is not None:
             try:
                 sock.default_value = default_value
@@ -175,7 +228,7 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
 
 
 def CreateNodeClass(func) -> OmniNode:
-    NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti = CheckMetaInfo(func)
+    NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti,SocketInputSettings = CheckMetaInfo(func)
     func_meta = getattr(func, "__meta", {})
 
     class OmniNodeClassInstance(OmniNode, Node):
@@ -189,7 +242,7 @@ def CreateNodeClass(func) -> OmniNode:
 
         def build(self):
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
-                            SocketOutMetaDict, SocketDefaultDict, SocketIsMulti)
+                            SocketOutMetaDict, SocketDefaultDict, SocketIsMulti, SocketInputSettings)
         
     return OmniNodeClassInstance
 

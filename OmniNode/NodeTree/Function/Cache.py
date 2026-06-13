@@ -95,15 +95,6 @@ def _cache_quaternion(cache, key: str, fallback: mathutils.Quaternion) -> mathut
     return fallback.copy()
 
 
-def _object_rotation_quaternion(obj: bpy.types.Object) -> mathutils.Quaternion:
-    mode = getattr(obj, "rotation_mode", "XYZ")
-    if mode == "QUATERNION":
-        return obj.rotation_quaternion.copy()
-    if mode == "AXIS_ANGLE":
-        return mathutils.Quaternion(obj.rotation_axis_angle[1:], obj.rotation_axis_angle[0])
-    return obj.rotation_euler.to_quaternion()
-
-
 def _lerp_vector(a: mathutils.Vector, b: mathutils.Vector, t: float) -> mathutils.Vector:
     t = _clamp01(t)
     return a + (b - a) * t
@@ -115,12 +106,6 @@ def _slerp_quaternion(a: mathutils.Quaternion, b: mathutils.Quaternion, t: float
 
 def _wrap_angle(value: float) -> float:
     return (float(value) + math.pi) % (math.pi * 2.0) - math.pi
-
-
-def _matrix_in_parent_space(obj: bpy.types.Object, parent: bpy.types.Object | None) -> mathutils.Matrix:
-    if parent is None:
-        return obj.matrix_world.copy()
-    return parent.matrix_world.inverted_safe() @ obj.matrix_world
 
 
 def _smooth_damp_vector(
@@ -159,6 +144,76 @@ def _smooth_damp_vector(
     return output, next_velocity
 
 
+def _component_multiply(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
+    return mathutils.Vector((a.x * b.x, a.y * b.y, a.z * b.z))
+
+
+def _is_triangle_wave(value) -> bool:
+    if isinstance(value, (int, float)):
+        return int(value) == 1
+    text = str(value or "").strip().lower()
+    return text in {"1", "triangle", "tri", "t", "三角", "三角波"}
+
+
+def _scene_time_seconds() -> float:
+    scene = bpy.context.scene
+    render = scene.render
+    fps_base = getattr(render, "fps_base", 1.0) or 1.0
+    fps = max(float(getattr(render, "fps", 24.0)) / float(fps_base), 0.0001)
+    return float(scene.frame_current) / fps
+
+
+def _triangle_wave(time_value: float) -> float:
+    repeated = (time_value * 2.0) % 4.0
+    pingpong = 2.0 - abs(repeated - 2.0)
+    return pingpong - 1.0
+
+
+def _evaluate_waveform(waveform, frequency: float, phase: float, time_seconds: float) -> float:
+    time_value = time_seconds * max(float(frequency), 0.0) + float(phase)
+    if _is_triangle_wave(waveform):
+        return _triangle_wave(time_value)
+    return math.sin(time_value * math.pi * 2.0)
+
+
+def _hash01(value: float) -> float:
+    hashed = math.sin(value * 12.9898 + 78.233) * 43758.5453
+    return hashed - math.floor(hashed)
+
+
+def _signed_noise(seed: int, time_seconds: float, frequency: float) -> float:
+    time_value = time_seconds * max(float(frequency), 0.0)
+    left = math.floor(time_value)
+    blend = time_value - left
+    blend = blend * blend * (3.0 - 2.0 * blend)
+    seed_offset = float(seed) * 19.193
+    a = _hash01(float(left) + seed_offset)
+    b = _hash01(float(left + 1) + seed_offset)
+    return (a + (b - a) * blend) * 2.0 - 1.0
+
+
+def _signed_noise3(seed: int, frequency: float, time_seconds: float) -> mathutils.Vector:
+    return mathutils.Vector(
+        (
+            _signed_noise(seed, time_seconds, frequency),
+            _signed_noise(seed + 17, time_seconds + 19.0, frequency),
+            _signed_noise(seed + 31, time_seconds + 37.0, frequency),
+        )
+    )
+
+
+def _degrees_vector_to_quaternion(value) -> mathutils.Quaternion:
+    vec = _vector3(value, mathutils.Vector((0.0, 0.0, 0.0)))
+    return mathutils.Euler(
+        (
+            math.radians(vec.x),
+            math.radians(vec.y),
+            math.radians(vec.z),
+        ),
+        "XYZ",
+    ).to_quaternion()
+
+
 @omni(
     enable=True,
     bl_label="软跟随",
@@ -166,7 +221,6 @@ def _smooth_damp_vector(
     is_output_node=False,
     _INPUT_NAME=[
         "目标物体",
-        "跟随控制器",
         "缓存状态",
         "位置跟随",
         "旋转跟随",
@@ -177,7 +231,6 @@ def _smooth_damp_vector(
         "时间步长",
     ],
     _OUTPUT_NAME=[
-        "跟随控制器",
         "缓存状态",
         "位置",
         "旋转",
@@ -229,49 +282,24 @@ def _smooth_damp_vector(
         },
     ],
     omni_description="""
-    使用一个打包的 runtime cache 状态做软跟随。
-    参数命名和核心行为对齐 Unity HoFollowConstraint 的 Follow 分组。
-    本节点只保留基础软跟随，不包含 Unity 版本里的呼吸、噪波、相对偏移、限制和轴锁扩展。
+    从 000 空变换出发，缓慢追向目标物体的世界位置/旋转。
+    输出的是可写入控制器的累计变换，不是本帧增量。
 
-    推荐搭建方式：
-    1. 在目标物体下创建 TargetProbe 空物体，并保持 local 位置/旋转为 0。
-    2. 在跟随侧创建一个偏移父级空物体，用它摆放人工偏移空间。
-    3. 在偏移父级下创建 FollowCtrl 空物体，并保持 local 位置/旋转为 0。
-    4. 实际要动的物体通过父子关系、Copy Transforms 或 Child Of 等方式跟随 FollowCtrl。
-    5. 节点的目标物体输入接 TargetProbe，跟随控制器输入接 FollowCtrl。
-    6. 用缓存读取节点读取一个缓存名，接到本节点缓存状态输入。
-    7. 本节点缓存状态输出接缓存写入节点，写回同一个缓存名。
-    8. 本节点位置/旋转输出接写入物体变换节点，写入 FollowCtrl。
+    推荐接法：
+    1. 让目标输入接一个 TargetProbe 空物体。
+    2. 缓存读取和缓存写入使用同一个缓存名，读到的缓存接本节点，输出缓存再写回。
+    3. 只做跟随时，把位置/旋转接写入物体完整变换，缩放用 1,1,1，写入 FollowCtrl。
+    4. 要叠加漂浮时，先把软跟随和漂浮接到变换合成，再把合成结果写入 FollowCtrl。
 
-    空间规则：
-    节点以 FollowCtrl 的父级空间作为模拟空间。
-    TargetProbe 的世界变换会被转换到 FollowCtrl 父级空间中参与计算。
-    本节点输出的是 FollowCtrl 可直接使用的累计 local 位置/旋转，不是本帧增量。
-    如果 FollowCtrl 没有父级，模拟空间等同世界空间。
-
-    缓存规则：
-    Cache 输入应来自缓存读取节点；缓存缺失时会用 FollowCtrl 当前 local 变换和零速度初始化。
-    输出的 Cache 状态应写回同一个缓存名，供下一帧继续读取。
-    缓存状态内部包含 frame、anchor_position、anchor_rotation、position、rotation、velocity、angular_velocity、previous_euler。
-    节点只用缓存状态推进模拟，不会每帧反读写回后的控制器位置作为连续状态。
-
-    跳帧规则：
-    如果当前帧不是缓存帧的下一帧，会输出零位置/零旋转，并输出空缓存状态。
-    这样可以防止旧速度跨跳帧残留；用户也可以对 FollowCtrl 使用 Alt+G / Alt+R 手动归零。
-
-    参数规则：
-    位置跟随/旋转跟随范围为 0 到 1，0 表示回到初始化锚点，1 表示跟到目标。
-    响应越大越快，内部等价于 Unity 的 smoothTime = 1 / max(0.01, response)。
-    超调范围为 0 到 1，会根据当前速度向前追加一段惯性。
-    最大速度为位置单位/秒，0 表示不限制。
-    最大角速度按 Unity 习惯为度/秒，0 表示不限制。
-    时间步长应接场景帧率节点输出的帧间隔；未连接时默认按 24fps 计算。
-    输出旋转单位为弧度，可直接接写入物体变换节点。
+    使用习惯：
+    TargetProbe 和 FollowCtrl 建议初始 local 变换都是 0。
+    TargetProbe 是需要追踪的物体的子级
+    FollowCtrl  是一个裸物体接收变换，需要追踪的物体/骨骼使用【子级】约束跟随 FollowCtrl
+    子级约束中可以配置每个轴的权重和影响。
     """,
 )
 def softFollow(
     target_obj: bpy.types.Object,
-    follow_controller: bpy.types.Object,
     cache_state: _OmniCache,
     position_follow: float = 0.9,
     rotation_follow: float = 0.8,
@@ -281,20 +309,17 @@ def softFollow(
     max_angular_velocity: float = 0.0,
     delta_time: float = 1.0 / 24.0,
 ) -> tuple[
-    bpy.types.Object,
     _OmniCache,
     mathutils.Vector,
     mathutils.Vector,
 ]:
     target_obj = _require_object(target_obj, "target_obj")
-    follow_controller = _require_object(follow_controller, "follow_controller")
 
     dt = max(float(delta_time), 0.0)
     zero_vector = mathutils.Vector((0.0, 0.0, 0.0))
+    identity_rotation = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
 
-    current_position = _vector3(follow_controller.location, zero_vector)
-    current_rotation = _object_rotation_quaternion(follow_controller)
-    target_matrix = _matrix_in_parent_space(target_obj, follow_controller.parent)
+    target_matrix = target_obj.matrix_world.copy()
     target_position = target_matrix.translation.copy()
     target_rotation = target_matrix.to_quaternion()
     current_frame = bpy.context.scene.frame_current
@@ -302,16 +327,15 @@ def softFollow(
 
     if cached_frame is not None and current_frame != cached_frame + 1:
         return (
-            follow_controller,
             None,
             zero_vector.copy(),
             zero_vector.copy(),
         )
 
-    anchor_position = _cache_vector(cache_state, "anchor_position", current_position)
-    anchor_rotation = _cache_quaternion(cache_state, "anchor_rotation", current_rotation)
-    state_position = _cache_vector(cache_state, "position", anchor_position)
-    state_rotation = _cache_quaternion(cache_state, "rotation", anchor_rotation)
+    base_position = zero_vector.copy()
+    base_rotation = identity_rotation.copy()
+    state_position = _cache_vector(cache_state, "position", base_position)
+    state_rotation = _cache_quaternion(cache_state, "rotation", base_rotation)
     state_velocity = _cache_vector_any(cache_state, ("velocity", "position_velocity"), zero_vector)
     previous_euler = _cache_vector(
         cache_state,
@@ -327,13 +351,13 @@ def softFollow(
     max_angular_velocity = max(float(max_angular_velocity), 0.0)
 
     if position_follow <= 0.0:
-        next_position = anchor_position.copy()
+        next_position = base_position.copy()
         next_velocity = zero_vector.copy()
     elif dt <= 0.0:
-        next_position = _lerp_vector(anchor_position, target_position, position_follow)
+        next_position = _lerp_vector(base_position, target_position, position_follow)
         next_velocity = zero_vector.copy()
     else:
-        follow_target = _lerp_vector(anchor_position, target_position, position_follow)
+        follow_target = _lerp_vector(base_position, target_position, position_follow)
         smooth_time = 1.0 / max(0.01, response)
         old_position = state_position.copy()
         next_position, next_velocity = _smooth_damp_vector(
@@ -356,15 +380,15 @@ def softFollow(
                 next_velocity = (next_position - old_position) / dt
 
     if rotation_follow <= 0.0:
-        next_rotation = anchor_rotation.copy()
+        next_rotation = base_rotation.copy()
         angular_velocity = zero_vector.copy()
         next_previous_euler = _quaternion_to_euler_vector(next_rotation)
     elif dt <= 0.0:
-        next_rotation = _slerp_quaternion(anchor_rotation, target_rotation, rotation_follow)
+        next_rotation = _slerp_quaternion(base_rotation, target_rotation, rotation_follow)
         angular_velocity = zero_vector.copy()
         next_previous_euler = _quaternion_to_euler_vector(next_rotation)
     else:
-        follow_target_rotation = _slerp_quaternion(anchor_rotation, target_rotation, rotation_follow)
+        follow_target_rotation = _slerp_quaternion(base_rotation, target_rotation, rotation_follow)
         rotate_t = 1.0 - math.exp(-response * dt)
         rotate_t = _clamp01(rotate_t * (1.0 + overshoot))
         old_rotation = state_rotation.copy()
@@ -389,8 +413,6 @@ def softFollow(
 
     next_cache_state = {
         "frame": int(current_frame),
-        "anchor_position": anchor_position.copy(),
-        "anchor_rotation": anchor_rotation.copy(),
         "position": next_position.copy(),
         "rotation": next_rotation.copy(),
         "velocity": next_velocity.copy(),
@@ -399,8 +421,234 @@ def softFollow(
     }
 
     return (
-        follow_controller,
         next_cache_state,
         next_position,
         next_rotation_euler,
+    )
+
+
+@omni(
+    enable=True,
+    bl_label="漂浮",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "启用波动",
+        "波动倍率",
+        "波形",
+        "波动频率",
+        "波动相位",
+        "波动位置幅度",
+        "波动旋转幅度",
+        "波动缩放幅度",
+        "波动轴权重",
+        "启用噪波",
+        "噪波倍率",
+        "噪波频率",
+        "噪波种子",
+        "噪波位置幅度",
+        "噪波旋转幅度",
+        "噪波缩放幅度",
+    ],
+    input_init={
+        "oscillation_waveform": {
+            "description": "0 = Sin, 1 = Triangle",
+            "min_value": 0,
+            "max_value": 1,
+        },
+    },
+    _OUTPUT_NAME=[
+        "位置",
+        "旋转",
+        "缩放",
+    ],
+    omni_presets=[
+        {
+            "name": "清空",
+            "values": {
+                "oscillation_enabled": False,
+                "oscillation_multiplier": 1.0,
+                "oscillation_waveform": 0,
+                "oscillation_frequency": 0.35,
+                "oscillation_phase": 0.0,
+                "oscillation_position_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_rotation_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_scale_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_axis_weight": (1.0, 1.0, 1.0),
+                "noise_enabled": False,
+                "noise_multiplier": 1.0,
+                "noise_frequency": 0.75,
+                "noise_seed": 1,
+                "noise_position_amplitude": (0.0, 0.0, 0.0),
+                "noise_rotation_amplitude": (0.0, 0.0, 0.0),
+                "noise_scale_amplitude": (0.0, 0.0, 0.0),
+            },
+        },
+        {
+            "name": "光环",
+            "values": {
+                "oscillation_enabled": True,
+                "oscillation_multiplier": 1.0,
+                "oscillation_waveform": 0,
+                "oscillation_frequency": 0.35,
+                "oscillation_phase": 0.0,
+                "oscillation_position_amplitude": (0.0, 0.025, 0.0),
+                "oscillation_rotation_amplitude": (0.0, 0.3, 0.0),
+                "oscillation_scale_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_axis_weight": (1.0, 1.0, 1.0),
+                "noise_enabled": False,
+                "noise_multiplier": 1.0,
+                "noise_frequency": 0.75,
+                "noise_seed": 1,
+                "noise_position_amplitude": (0.0, 0.0, 0.0),
+                "noise_rotation_amplitude": (0.0, 0.0, 0.0),
+                "noise_scale_amplitude": (0.0, 0.0, 0.0),
+            },
+        },
+        {
+            "name": "武器",
+            "values": {
+                "oscillation_enabled": False,
+                "oscillation_multiplier": 1.0,
+                "oscillation_waveform": 0,
+                "oscillation_frequency": 0.35,
+                "oscillation_phase": 0.0,
+                "oscillation_position_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_rotation_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_scale_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_axis_weight": (1.0, 1.0, 1.0),
+                "noise_enabled": True,
+                "noise_multiplier": 1.0,
+                "noise_frequency": 0.75,
+                "noise_seed": 1,
+                "noise_position_amplitude": (0.012, 0.012, 0.012),
+                "noise_rotation_amplitude": (0.35, 0.35, 0.35),
+                "noise_scale_amplitude": (0.0, 0.0, 0.0),
+            },
+        },
+        {
+            "name": "背包",
+            "values": {
+                "oscillation_enabled": False,
+                "oscillation_multiplier": 1.0,
+                "oscillation_waveform": 0,
+                "oscillation_frequency": 0.35,
+                "oscillation_phase": 0.0,
+                "oscillation_position_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_rotation_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_scale_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_axis_weight": (1.0, 1.0, 1.0),
+                "noise_enabled": True,
+                "noise_multiplier": 1.0,
+                "noise_frequency": 0.75,
+                "noise_seed": 1,
+                "noise_position_amplitude": (0.018, 0.018, 0.018),
+                "noise_rotation_amplitude": (0.25, 0.25, 0.25),
+                "noise_scale_amplitude": (0.0, 0.0, 0.0),
+            },
+        },
+        {
+            "name": "无人机",
+            "values": {
+                "oscillation_enabled": False,
+                "oscillation_multiplier": 1.0,
+                "oscillation_waveform": 0,
+                "oscillation_frequency": 0.35,
+                "oscillation_phase": 0.0,
+                "oscillation_position_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_rotation_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_scale_amplitude": (0.0, 0.0, 0.0),
+                "oscillation_axis_weight": (1.0, 1.0, 1.0),
+                "noise_enabled": True,
+                "noise_multiplier": 1.0,
+                "noise_frequency": 0.75,
+                "noise_seed": 1,
+                "noise_position_amplitude": (0.02, 0.02, 0.02),
+                "noise_rotation_amplitude": (0.0, 0.45, 0.0),
+                "noise_scale_amplitude": (0.0, 0.0, 0.0),
+            },
+        },
+    ],
+    omni_description="""
+    从 000 空变换出发，生成一个漂浮附加变换。
+    默认位置 0,0,0，旋转 0,0,0，缩放 1,1,1；不读物体，也不需要 cache。
+
+    推荐接法：
+    1. 单独使用时，位置/旋转/缩放直接接写入物体完整变换。
+    2. 和软跟随一起用时，把软跟随接变换合成的基础变换，把漂浮接附加变换。
+    3. 想让漂浮沿跟随旋转后的本地轴移动，就在变换合成里启用“附加位置使用基础旋转”。
+
+    使用习惯：
+    FollowCtrl  是一个裸物体接收变换，需要追踪的物体/骨骼使用【子级】约束跟随 FollowCtrl
+    子级约束中可以配置每个轴的权重和影响。
+    """,
+)
+def floating(
+    oscillation_enabled: bool = False,
+    oscillation_multiplier: float = 1.0,
+    oscillation_waveform: int = 0,
+    oscillation_frequency: float = 0.35,
+    oscillation_phase: float = 0.0,
+    oscillation_position_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    oscillation_rotation_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    oscillation_scale_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    oscillation_axis_weight: mathutils.Vector = mathutils.Vector((1.0, 1.0, 1.0)),
+    noise_enabled: bool = False,
+    noise_multiplier: float = 1.0,
+    noise_frequency: float = 0.75,
+    noise_seed: int = 1,
+    noise_position_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    noise_rotation_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    noise_scale_amplitude: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+) -> tuple[
+    mathutils.Vector,
+    mathutils.Vector,
+    mathutils.Vector,
+]:
+    zero_vector = mathutils.Vector((0.0, 0.0, 0.0))
+    one_vector = mathutils.Vector((1.0, 1.0, 1.0))
+    time_value = _scene_time_seconds()
+    final_position = zero_vector.copy()
+    final_rotation = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+    final_scale = one_vector.copy()
+
+    if oscillation_enabled:
+        wave = _evaluate_waveform(oscillation_waveform, oscillation_frequency, oscillation_phase, time_value)
+        scaled_wave = wave * max(float(oscillation_multiplier), 0.0)
+        weighted_position_amplitude = _component_multiply(
+            _vector3(oscillation_position_amplitude, zero_vector),
+            _vector3(oscillation_axis_weight, one_vector),
+        )
+        final_position += weighted_position_amplitude * scaled_wave
+        final_rotation = final_rotation @ _degrees_vector_to_quaternion(
+            _vector3(oscillation_rotation_amplitude, zero_vector) * scaled_wave
+        )
+        final_scale += _vector3(oscillation_scale_amplitude, zero_vector) * scaled_wave
+
+    if noise_enabled:
+        noise = _signed_noise3(int(noise_seed), noise_frequency, time_value)
+        noise_scale = max(float(noise_multiplier), 0.0)
+        position_noise = _component_multiply(
+            _vector3(noise_position_amplitude, zero_vector),
+            noise,
+        ) * noise_scale
+        rotation_noise = _component_multiply(
+            _vector3(noise_rotation_amplitude, zero_vector),
+            _signed_noise3(int(noise_seed) + 17, noise_frequency, time_value),
+        ) * noise_scale
+        scale_noise = _component_multiply(
+            _vector3(noise_scale_amplitude, zero_vector),
+            _signed_noise3(int(noise_seed) + 31, noise_frequency, time_value),
+        ) * noise_scale
+
+        final_position += position_noise
+        final_rotation = final_rotation @ _degrees_vector_to_quaternion(rotation_noise)
+        final_scale += scale_noise
+
+    final_rotation_euler = _quaternion_to_euler_vector(final_rotation)
+
+    return (
+        final_position,
+        final_rotation_euler,
+        final_scale,
     )
