@@ -107,6 +107,35 @@ def _write_datablock_property(datablock, property_name: str, value: Any):
         pass
 
 
+def _require_object(obj, label: str) -> bpy.types.Object:
+    if obj is None or not isinstance(obj, bpy.types.Object):
+        raise ValueError(f"{label} is empty")
+    return obj
+
+
+def _to_vector3(value) -> mathutils.Vector:
+    try:
+        vec = mathutils.Vector(value)
+    except Exception:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+
+    if len(vec) == 0:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+    if len(vec) == 1:
+        return mathutils.Vector((vec[0], 0.0, 0.0))
+    if len(vec) == 2:
+        return mathutils.Vector((vec[0], vec[1], 0.0))
+    return vec.to_3d()
+
+
+def _euler_order(obj: bpy.types.Object) -> str:
+    mode = getattr(obj, "rotation_mode", "XYZ")
+    if mode in {"QUATERNION", "AXIS_ANGLE"}:
+        obj.rotation_mode = "XYZ"
+        return "XYZ"
+    return mode
+
+
 @omni(enable=True,
       bl_label="设置物体位置",
       base_color=_Color.colorCat["Operator"],
@@ -116,6 +145,56 @@ def _write_datablock_property(datablock, property_name: str, value: Any):
       )
 def objectSetPosition(obj: bpy.types.Object, pos: NodeSocketVector) -> bpy.types.Object:
     obj.location = pos
+    return obj
+
+
+@omni(enable=True,
+      bl_label="写入物体变换",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="GEOMETRY",
+      bl_icon="OBJECT_DATAMODE",
+      _INPUT_NAME=["物体", "移动", "旋转"],
+      _OUTPUT_NAME=["物体"],
+      omni_description="""
+      将移动和旋转向量写入物体的普通 Transform。
+      移动写入 object.location，旋转写入 object.rotation_euler，旋转单位为弧度。
+      如果物体当前使用四元数或轴角旋转，会切换到 XYZ 欧拉旋转。
+      """,
+      )
+def objectWriteTransform(
+    obj: bpy.types.Object,
+    location: NodeSocketVector,
+    rotation: NodeSocketVector,
+) -> bpy.types.Object:
+    obj = _require_object(obj, "obj")
+    obj.location = _to_vector3(location)
+    obj.rotation_euler = mathutils.Euler(_to_vector3(rotation), _euler_order(obj))
+    return obj
+
+
+@omni(enable=True,
+      bl_label="写入物体增量变换",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="GEOMETRY",
+      bl_icon="OBJECT_DATAMODE",
+      _INPUT_NAME=["物体", "移动", "旋转"],
+      _OUTPUT_NAME=["物体"],
+      omni_description="""
+      将移动和旋转向量写入物体的 Delta Transform。
+      移动写入 object.delta_location，旋转写入 object.delta_rotation_euler，旋转单位为弧度。
+      该节点不会修改普通 location/rotation_euler。
+      """,
+      )
+def objectWriteDeltaTransform(
+    obj: bpy.types.Object,
+    location: NodeSocketVector,
+    rotation: NodeSocketVector,
+) -> bpy.types.Object:
+    obj = _require_object(obj, "obj")
+    obj.delta_location = _to_vector3(location)
+    obj.delta_rotation_euler = mathutils.Euler(_to_vector3(rotation), _euler_order(obj))
     return obj
 
 

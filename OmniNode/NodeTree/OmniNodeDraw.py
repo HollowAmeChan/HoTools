@@ -190,7 +190,7 @@ def draw_description(node):
         wrapped,
         color=(0.62, 0.82, 1.0, 1.0),
         scale=1.05,
-        align="UP",
+        align="RIGHT",
         kind="description",
     )
     return True
