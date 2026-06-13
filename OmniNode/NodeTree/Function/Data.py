@@ -149,7 +149,12 @@ def currentTime() -> tuple[str, int, int, int, int, int, int]:
 @omni(enable=True,
       bl_label="当前帧",
       base_color=_Color.colorCat["GetData"],
-      omni_description="输出当前场景的当前帧、帧范围和预览范围设置。",
+      omni_description="""
+      输出当前场景的当前帧、帧范围和预览范围设置。
+      在每帧运行模式下，OmniNode 会在 Blender 完成帧切换后运行，
+      因此这里读到的是已经切换后的帧
+      从起始帧 1 开始播放时，首次运行通常会读到第 2 帧。
+      """,
       _OUTPUT_NAME=["当前帧", "帧开始", "帧结束", "预览开始", "预览结束", "启用预览范围"],
       )
 def currentFrame() -> tuple[int, int, int, int, int, bool]:
