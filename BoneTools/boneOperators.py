@@ -1,35 +1,11 @@
 import bpy
 from mathutils import Vector
-import numpy as np
-from bpy.types import PropertyGroup, UIList, Operator, Panel,Menu
+from bpy.types import Operator
 from bpy.types import UILayout, Context
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,FloatProperty,IntProperty
+from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight
 
-
-
-
-class PG_Hotools_BoneProps(PropertyGroup):
-    keepRotation: bpy.props.BoolProperty(
-        name="保留旋转",
-        description="在使用hotools fbx导出时,如果这段骨骼不保留旋转,将会自动将骨骼竖直，注意会导致这段骨骼后续的叶骨添加错误",
-        default=True) # type: ignore
-    endBone:bpy.props.BoolProperty(
-        name="叶骨",
-        description="Hotools是否将骨骼标记为叶骨",
-        default=False) # type: ignore
-    humanoidMapping: bpy.props.StringProperty(
-        name="Humanoid映射",
-        description="定义此骨对应Unity-Humannoid标准骨",
-        default="") # type: ignore
-
-def reg_props():
-    bpy.types.Bone.hotools_boneprops = bpy.props.PointerProperty(type=PG_Hotools_BoneProps)
-
-
-def ureg_props():
-    del bpy.types.Bone.hotools_boneprops
 
 class OP_ApplyRestPose(Operator):
     bl_idname = "ho.apply_rest_pose"
@@ -471,25 +447,6 @@ class OP_FastCreatPoseAsset(Operator):
         bpy.ops.poselib.create_pose_asset(pose_name = self.pose_name, activate_new_action=False)
         return {'FINISHED'}
 
-class PT_Hotools_PosebonePanel(Panel):
-    bl_idname = "BONE_PT_Hotools_PoseBonePanel"
-    bl_label = "HoTools骨骼"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "bone"                 # Bone 页签:contentReference[oaicite:6]{index=6}
-    bl_options = {"DEFAULT_CLOSED"}     # 折叠:contentReference[oaicite:7]{index=7}
-
-    @classmethod
-    def poll(cls, context):
-        return context.mode == "POSE"
-
-    def draw(self, context):
-        bone = context.active_bone
-        layout = self.layout
-        layout.prop(bone.hotools_boneprops, "keepRotation",toggle=False)
-        layout.prop(bone.hotools_boneprops, "endBone",toggle=False)
-        layout.prop(bone.hotools_boneprops, "humanoidMapping",toggle=False)
-
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     scene = context.scene
      #细分骨骼
@@ -501,8 +458,6 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 cls = [
     OP_ApplyRestPose,
     OP_ForceClearBoneRotation,
-    PG_Hotools_BoneProps,
-    PT_Hotools_PosebonePanel,
     OP_SelectBoneBy_by_KeepRotation,
     OP_SelectBone_by_Nochild,
     OP_AddEndBone,
@@ -517,10 +472,8 @@ cls = [
 def register():
     for i in cls:
         bpy.utils.register_class(i)
-    reg_props()
 
 
 def unregister():
-    for i in cls:
+    for i in reversed(cls):
         bpy.utils.unregister_class(i)
-    ureg_props()
