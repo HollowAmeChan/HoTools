@@ -932,6 +932,9 @@ class OmniNodeRebuild(Operator):
         if isinstance(value, (str, bool, int, float)) or value is None:
             return value
 
+        if isinstance(value, dict):
+            return dict(value)
+
         if isinstance(value, bpy.types.ID):
             return value
 
@@ -954,6 +957,10 @@ class OmniNodeRebuild(Operator):
             return
 
         value = cache_entry["value"]
+
+        if isinstance(value, dict):
+            sock.default_value = value
+            return
 
         try:
             current_value = sock.default_value

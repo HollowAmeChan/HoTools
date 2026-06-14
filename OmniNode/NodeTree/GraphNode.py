@@ -70,6 +70,12 @@ def cache_nodesockets_defaultvalues(node: OmniNode) -> list[dict[str, Any]]:
         if isinstance(value, (str, bool, int, float)) or value is None:
             return value
 
+        if isinstance(value, dict):
+            return dict(value)
+
+        if isinstance(value, bpy.types.ID):
+            return value
+
         try:
             return tuple(value)
         except Exception:
@@ -98,6 +104,10 @@ def cache_nodesockets_defaultvalues(node: OmniNode) -> list[dict[str, Any]]:
 def restore_nodesockets_defaultvalues(node: OmniNode, cache: list[dict[str, Any]]) -> None:
     def restore_default_value(sock: bpy.types.NodeSocket, cache_entry: dict[str, Any]) -> None:
         value = cache_entry["value"]
+
+        if isinstance(value, dict):
+            sock.default_value = value
+            return
 
         try:
             current_value = sock.default_value
@@ -322,13 +332,13 @@ def _sync_cache_node_io(node: OmniNode, *, is_writer: bool) -> None:
 
     node.inputs.new(type="NodeSocketString", name="缓存名", identifier="cache_key")
     if is_writer:
-        node.inputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
+        node.inputs.new(type="OmniNodeSocketCache", name="值", identifier="value")
         enable_sock = node.inputs.new(type="NodeSocketBool", name="启用", identifier="enable")
         try:
             enable_sock.default_value = True
         except Exception:
             pass
-        node.outputs.new(type="OmniNodeSocketAny", name="值", identifier="value")
+        node.outputs.new(type="OmniNodeSocketCache", name="值", identifier="value")
     else:
         node.outputs.new(type="OmniNodeSocketCache", name="", identifier="cache")
         node.outputs.new(type="NodeSocketBool", name="命中", identifier="hit")

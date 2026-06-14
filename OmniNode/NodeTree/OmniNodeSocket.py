@@ -36,6 +36,10 @@ def _modifier_type_items_callback(self, context):
     return OMNI_MODIFIER_TYPE_ITEMS
 
 
+def _armature_object_poll(self, obj):
+    return obj is not None and getattr(obj, "type", None) == "ARMATURE"
+
+
 class OmniNodeSocketScene(NodeSocket):
     bl_label = "场景-Omni"
     bl_idname = "OmniNodeSocketScene"
@@ -105,6 +109,64 @@ class OmniNodeSocketCache(NodeSocket):
     @classmethod
     def draw_color_simple(cls):
         return (0.1, 0.72, 0.62, 1.0)
+
+
+class OmniNodeSocketBone(NodeSocket):
+    bl_label = "Bone-Omni"
+    bl_idname = "OmniNodeSocketBone"
+
+    armature_object: bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        poll=_armature_object_poll,
+        description="Armature Object",
+    )  # type: ignore
+    bone_name: bpy.props.StringProperty(
+        name="Bone",
+    )  # type: ignore
+
+    @property
+    def default_value(self):
+        obj = self.armature_object
+        bone = str(self.bone_name or "").strip()
+        if obj is None or not bone:
+            return None
+        if getattr(obj, "type", None) != "ARMATURE" or bone not in obj.data.bones:
+            return None
+        return {
+            "armature": obj,
+            "bone": bone,
+        }
+
+    @default_value.setter
+    def default_value(self, value):
+        if not isinstance(value, dict):
+            return
+
+        obj = value.get("armature")
+        bone = str(value.get("bone") or "").strip()
+        if isinstance(obj, bpy.types.Object) and obj.type == "ARMATURE":
+            self.armature_object = obj
+        try:
+            self.bone_name = bone
+        except Exception:
+            pass
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+
+        row = layout.row(align=True)
+        row.prop(self, "armature_object", text=text)
+        obj = self.armature_object
+        if obj is not None and getattr(obj, "type", None) == "ARMATURE":
+            row.prop_search(self, "bone_name", obj.data, "bones", text="")
+        else:
+            row.prop(self, "bone_name", text="")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.55, 0.35, 0.78, 1.0)
 
 
 class OmniNodeSocketImageFormat(NodeSocket):
@@ -301,6 +363,7 @@ cls = [
     OmniNodeSocketText,
     OmniNodeSocketAny,
     OmniNodeSocketCache,
+    OmniNodeSocketBone,
     OmniNodeSocketImageFormat,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,
