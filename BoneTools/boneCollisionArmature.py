@@ -86,6 +86,47 @@ class PG_Hotools_BoneCollision(PropertyGroup):
     )  # type: ignore
 
 
+class PG_Hotools_ObjectCollision(PropertyGroup):
+    collision_type: EnumProperty(
+        name="碰撞体",
+        description="这个Object携带的被动碰撞体类型",
+        items=[
+            ("NONE", "无", "不作为被动碰撞体"),
+            ("SPHERE", "球体", "以Object局部偏移为中心的球形碰撞体"),
+            ("CAPSULE", "胶囊", "沿Object局部Y轴延伸的胶囊碰撞体"),
+        ],
+        default="NONE",
+    )  # type: ignore
+    radius: FloatProperty(
+        name="半径",
+        description="碰撞体半径，使用Blender单位",
+        default=0.05,
+        min=0.0,
+        soft_max=1.0,
+    )  # type: ignore
+    length: FloatProperty(
+        name="长度",
+        description="胶囊中段长度，球体类型会忽略这个参数",
+        default=0.2,
+        min=0.0,
+        soft_max=2.0,
+    )  # type: ignore
+    offset: FloatVectorProperty(
+        name="中心偏移",
+        description="碰撞体中心相对Object局部空间的偏移",
+        size=3,
+        subtype="XYZ",
+        default=(0.0, 0.0, 0.0),
+    )  # type: ignore
+    primary_collision_group: IntProperty(
+        name="主碰撞组",
+        description="这个被动碰撞体所属的主碰撞组，叠加显示颜色由它决定",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+
 def _tag_view3d_redraw():
     for window in bpy.context.window_manager.windows:
         screen = window.screen
@@ -111,11 +152,22 @@ def _collision_props(bone):
     return getattr(bone, "hotools_collision", None)
 
 
+def _object_collision_props(obj):
+    return getattr(obj, "hotools_object_collision", None)
+
+
 def _active_collision_props(context):
     bone = context.active_bone
     if bone is None:
         return None
     return _collision_props(bone)
+
+
+def _active_object_collision_props(context):
+    obj = context.object or context.active_object
+    if obj is None:
+        return None
+    return _object_collision_props(obj)
 
 
 def _set_collision_group_bit(mask, group, value):
@@ -156,6 +208,28 @@ def _collision_group_target_props(context, apply_selected):
 
     if not targets:
         props = _active_collision_props(context)
+        if props is not None:
+            targets.append(props)
+    return targets
+
+
+def _object_collision_group_target_props(context, apply_selected):
+    if not apply_selected:
+        props = _active_object_collision_props(context)
+        return [props] if props is not None else []
+
+    targets = []
+    seen_names = set()
+    for obj in getattr(context, "selected_objects", None) or []:
+        if obj.name in seen_names:
+            continue
+        props = _object_collision_props(obj)
+        if props is not None:
+            targets.append(props)
+            seen_names.add(obj.name)
+
+    if not targets:
+        props = _active_object_collision_props(context)
         if props is not None:
             targets.append(props)
     return targets
@@ -349,6 +423,25 @@ def _draw_collision_controls(layout, props):
     col.prop(props, "offset")
 
 
+def _draw_object_collision_controls(layout, props):
+    layout.prop(props, "collision_type", text="类型")
+
+    col = layout.column(align=True)
+    col.label(text="主碰撞组")
+    _draw_group_buttons(
+        col,
+        OP_Hotools_ObjectCollision_SetPrimaryGroup.bl_idname,
+        active_group=props.primary_collision_group,
+    )
+    if props.collision_type == "NONE":
+        return
+
+    col.prop(props, "radius")
+    if props.collision_type == "CAPSULE":
+        col.prop(props, "length")
+    col.prop(props, "offset")
+
+
 def _visible_armature_objects(context):
     visible_objects = getattr(context, "visible_objects", None)
     if visible_objects is None:
@@ -359,6 +452,21 @@ def _visible_armature_objects(context):
         for obj in visible_objects
         if obj.type == "ARMATURE" and obj.visible_get()
     ]
+
+
+def _visible_object_collision_objects(context):
+    visible_objects = getattr(context, "visible_objects", None)
+    if visible_objects is None:
+        visible_objects = context.view_layer.objects
+
+    result = []
+    for obj in visible_objects:
+        if not obj.visible_get():
+            continue
+        props = _object_collision_props(obj)
+        if props is not None and props.collision_type != "NONE":
+            result.append(obj)
+    return result
 
 
 def _bone_draw_matrix(armature_obj, bone):
@@ -505,6 +613,19 @@ def _draw_collision_overlay():
                 _append_sphere_lines(group_lines, matrix, props)
             elif props.collision_type == "CAPSULE":
                 _append_capsule_lines(group_lines, matrix, props)
+
+    for obj in _visible_object_collision_objects(context):
+        props = _object_collision_props(obj)
+        if props is None:
+            continue
+
+        group_lines = collision_lines_by_group[
+            min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
+        ]
+        if props.collision_type == "SPHERE":
+            _append_sphere_lines(group_lines, obj.matrix_world, props)
+        elif props.collision_type == "CAPSULE":
+            _append_capsule_lines(group_lines, obj.matrix_world, props)
 
     if not any(collision_lines_by_group.values()) and not root_lines:
         return
@@ -718,6 +839,47 @@ class OP_Hotools_BoneCollision_ToggleCollidedByGroup(Operator):
         _tag_view3d_redraw()
         if self.apply_selected:
             self.report({"INFO"}, f"已更新 {len(targets)} 根选中骨的被碰撞组")
+        return {"FINISHED"}
+
+
+class OP_Hotools_ObjectCollision_SetPrimaryGroup(Operator):
+    bl_idname = "ho.object_collision_set_primary_group"
+    bl_label = "设置Object主碰撞组"
+    bl_description = "设置当前Object被动碰撞体所属的主碰撞组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    group: IntProperty(
+        name="组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+    apply_selected: BoolProperty(
+        name="应用到选中Object",
+        default=False,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _active_object_collision_props(context) is not None
+
+    def invoke(self, context, event):
+        self.apply_selected = bool(event.alt)
+        return self.execute(context)
+
+    def execute(self, context):
+        targets = _object_collision_group_target_props(context, self.apply_selected)
+        if not targets:
+            return {"CANCELLED"}
+
+        group = min(max(int(self.group), 1), _COLLISION_GROUP_COUNT)
+        for props in targets:
+            props.primary_collision_group = group
+
+        _tag_view3d_redraw()
+        if self.apply_selected:
+            self.report({"INFO"}, f"已设置 {len(targets)} 个选中Object的主碰撞组")
         return {"FINISHED"}
 
 
@@ -957,6 +1119,25 @@ class PT_Hotools_BoneCollisionPanel(Panel):
         _draw_collision_controls(layout, props)
 
 
+class PT_Hotools_ObjectCollisionPanel(Panel):
+    bl_idname = "OBJECT_PT_Hotools_ObjectCollisionPanel"
+    bl_label = "HoTools被动碰撞体"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and _active_object_collision_props(context) is not None
+
+    def draw(self, context):
+        props = _active_object_collision_props(context)
+        layout = self.layout
+
+        _draw_object_collision_controls(layout, props)
+
+
 class PT_Hotools_ArmatureCollisionPanel(Panel):
     bl_idname = "DATA_PT_Hotools_ArmatureCollisionPanel"
     bl_label = "HoTools碰撞管理"
@@ -1023,14 +1204,17 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
 
 cls = [
     PG_Hotools_BoneCollision,
+    PG_Hotools_ObjectCollision,
     OP_Hotools_BoneCollision_AddSelectedSpringRoots,
     OP_Hotools_BoneCollision_ClearAllSpringRoots,
     OP_Hotools_BoneCollision_SelectSpringRoots,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
+    OP_Hotools_ObjectCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
     PT_Hotools_BoneCollisionPanel,
+    PT_Hotools_ObjectCollisionPanel,
     PT_Hotools_ArmatureCollisionPanel,
 ]
 
@@ -1039,6 +1223,10 @@ def reg_props():
     if hasattr(bpy.types.Bone, "hotools_collision"):
         del bpy.types.Bone.hotools_collision
     bpy.types.Bone.hotools_collision = PointerProperty(type=PG_Hotools_BoneCollision)
+
+    if hasattr(bpy.types.Object, "hotools_object_collision"):
+        del bpy.types.Object.hotools_object_collision
+    bpy.types.Object.hotools_object_collision = PointerProperty(type=PG_Hotools_ObjectCollision)
 
     if hasattr(bpy.types.Scene, "ho_bone_collision_show_overlay_section"):
         del bpy.types.Scene.ho_bone_collision_show_overlay_section
@@ -1069,6 +1257,8 @@ def ureg_props():
         del bpy.types.Scene.ho_bone_collision_show_info_section
     if hasattr(bpy.types.Scene, "ho_bone_collision_overlay_show"):
         del bpy.types.Scene.ho_bone_collision_overlay_show
+    if hasattr(bpy.types.Object, "hotools_object_collision"):
+        del bpy.types.Object.hotools_object_collision
     if hasattr(bpy.types.Bone, "hotools_collision"):
         del bpy.types.Bone.hotools_collision
 
