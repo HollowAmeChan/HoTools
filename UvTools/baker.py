@@ -95,6 +95,44 @@ def fill_weight_triangle(img_arr, pts, weights):
             img_arr[py, px] = (gray, gray, gray, 255)
 
 
+def fill_solid_triangle(img_arr, pts, color, max_bbox_pixels=0, chunk_rows=32):
+    x0, y0 = pts[0]
+    x1, y1 = pts[1]
+    x2, y2 = pts[2]
+
+    denom = ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2))
+    if abs(denom) < 1e-8:
+        return False
+
+    height, width = img_arr.shape[:2]
+    min_x = max(0, int(np.floor(min(x0, x1, x2))))
+    max_x = min(width - 1, int(np.ceil(max(x0, x1, x2))))
+    min_y = max(0, int(np.floor(min(y0, y1, y2))))
+    max_y = min(height - 1, int(np.ceil(max(y0, y1, y2))))
+    if min_x > max_x or min_y > max_y:
+        return False
+    if max_bbox_pixels > 0 and (max_x - min_x + 1) * (max_y - min_y + 1) > max_bbox_pixels:
+        return False
+
+    xs = np.arange(min_x, max_x + 1, dtype=np.float32)[None, :] + 0.5
+    denom = np.float32(denom)
+
+    for y_start in range(min_y, max_y + 1, chunk_rows):
+        y_end = min(max_y, y_start + chunk_rows - 1)
+        ys = np.arange(y_start, y_end + 1, dtype=np.float32)[:, None] + 0.5
+
+        b0 = ((y1 - y2) * (xs - x2) + (x2 - x1) * (ys - y2)) / denom
+        b1 = ((y2 - y0) * (xs - x2) + (x0 - x2) * (ys - y2)) / denom
+        b2 = 1.0 - b0 - b1
+        mask = (b0 >= 0.0) & (b1 >= 0.0) & (b2 >= 0.0)
+        if not mask.any():
+            continue
+
+        img_arr[y_start:y_end + 1, min_x:max_x + 1][mask] = color
+
+    return True
+
+
 def get_face_edge_uv_pair(face, edge, uv_layer):
     for loop in face.loops:
         if loop.edge == edge:
@@ -236,6 +274,162 @@ def get_loop_bitangent(loop):
     if bitangent.length > 1e-8:
         bitangent.normalize()
     return bitangent
+
+
+def triangulate_mesh_ngons_in_place(mesh):
+    ngon_indices = [poly.index for poly in mesh.polygons if len(poly.vertices) > 4]
+    if not ngon_indices:
+        return 0
+
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        bm.faces.ensure_lookup_table()
+        faces = [
+            bm.faces[index]
+            for index in ngon_indices
+            if index < len(bm.faces) and len(bm.faces[index].verts) > 4
+        ]
+        if not faces:
+            return 0
+
+        bmesh.ops.triangulate(bm, faces=faces)
+        bm.to_mesh(mesh)
+        mesh.update()
+        return len(faces)
+    finally:
+        bm.free()
+
+
+def get_loop_tangent_vector(loop, vector_mode):
+    if vector_mode == 'BITANGENT':
+        if hasattr(loop, "bitangent"):
+            vec = loop.bitangent.copy()
+        else:
+            vec = get_loop_bitangent(loop)
+    else:
+        vec = loop.tangent.copy()
+
+    if vec.length > 1e-8:
+        vec.normalize()
+    return vec
+
+
+def calc_temp_triangulated_loop_vectors(mesh, uv_layer, vector_mode):
+    uv_layer_name = uv_layer.name
+    tmp_mesh = mesh.copy()
+    tangents_ready = False
+    try:
+        attr_name = "__ho_orig_loop_index"
+        existing_attr = tmp_mesh.attributes.get(attr_name)
+        if existing_attr is not None:
+            tmp_mesh.attributes.remove(existing_attr)
+        loop_index_attr = tmp_mesh.attributes.new(
+            name=attr_name, type='INT', domain='CORNER')
+        for loop_index, attr_item in enumerate(loop_index_attr.data):
+            attr_item.value = loop_index
+
+        triangulated_faces = triangulate_mesh_ngons_in_place(tmp_mesh)
+        if triangulated_faces <= 0:
+            raise RuntimeError("没有可临时三角化的N-gon")
+
+        tmp_uv_layer = tmp_mesh.uv_layers.get(uv_layer_name) or tmp_mesh.uv_layers.active
+        if tmp_uv_layer is None:
+            raise RuntimeError("三角化后无UV")
+
+        tmp_mesh.calc_tangents(uvmap=tmp_uv_layer.name)
+        tangents_ready = True
+
+        loop_index_attr = tmp_mesh.attributes.get(attr_name)
+        if loop_index_attr is None:
+            raise RuntimeError("临时loop映射丢失")
+
+        vector_sums = {}
+        vector_counts = {}
+        for tmp_loop in tmp_mesh.loops:
+            orig_loop_index = loop_index_attr.data[tmp_loop.index].value
+            if orig_loop_index < 0 or orig_loop_index >= len(mesh.loops):
+                continue
+
+            vec = get_loop_tangent_vector(tmp_loop, vector_mode)
+            if vec.length <= 1e-8:
+                continue
+
+            if orig_loop_index in vector_sums:
+                vector_sums[orig_loop_index] += vec
+                vector_counts[orig_loop_index] += 1
+            else:
+                vector_sums[orig_loop_index] = vec.copy()
+                vector_counts[orig_loop_index] = 1
+
+        loop_vectors = {}
+        for loop_index, vec in vector_sums.items():
+            if vec.length <= 1e-8:
+                continue
+            vec.normalize()
+            loop_vectors[loop_index] = (vec.x, vec.y, vec.z)
+
+        return loop_vectors, triangulated_faces
+    finally:
+        if tangents_ready:
+            try:
+                tmp_mesh.free_tangents()
+            except RuntimeError:
+                pass
+        try:
+            bpy.data.meshes.remove(tmp_mesh)
+        except RuntimeError:
+            pass
+
+
+def calc_uv_tangent_bitangent_triangle(mesh, uv_layer, polygon, tri_loop_indices):
+    p0 = mesh.vertices[mesh.loops[tri_loop_indices[0]].vertex_index].co
+    p1 = mesh.vertices[mesh.loops[tri_loop_indices[1]].vertex_index].co
+    p2 = mesh.vertices[mesh.loops[tri_loop_indices[2]].vertex_index].co
+    uv0 = uv_layer.data[tri_loop_indices[0]].uv
+    uv1 = uv_layer.data[tri_loop_indices[1]].uv
+    uv2 = uv_layer.data[tri_loop_indices[2]].uv
+
+    q1 = p1 - p0
+    q2 = p2 - p0
+    du1 = uv1.x - uv0.x
+    dv1 = uv1.y - uv0.y
+    du2 = uv2.x - uv0.x
+    dv2 = uv2.y - uv0.y
+    det = du1 * dv2 - dv1 * du2
+    if abs(det) <= 1e-12:
+        return None
+
+    tangent = (q1 * dv2 - q2 * dv1) / det
+    bitangent = (q2 * du1 - q1 * du2) / det
+    normal = polygon.normal.copy()
+    if normal.length <= 1e-8:
+        normal = q1.cross(q2)
+    if tangent.length <= 1e-8 or bitangent.length <= 1e-8 or normal.length <= 1e-8:
+        return None
+
+    area = q1.cross(q2).length
+    tangent.normalize()
+    bitangent.normalize()
+    normal.normalize()
+    return tangent, bitangent, normal, area, abs(det)
+
+
+def calc_uv_chirality_triangle(mesh, uv_layer, polygon, tri_loop_indices):
+    tangent_space = calc_uv_tangent_bitangent_triangle(
+        mesh, uv_layer, polygon, tri_loop_indices)
+    if tangent_space is None:
+        return None
+
+    tangent, bitangent, normal, area, uv_area = tangent_space
+    handedness = tangent.cross(bitangent).dot(normal)
+    if abs(handedness) <= 1e-8:
+        return None
+
+    weight = area
+    if weight <= 1e-8:
+        weight = uv_area
+    return (1 if handedness >= 0.0 else -1), weight
 
 
 def calc_loop_tb_flow(loop, flow_axis, tangent_matrix):
@@ -2970,6 +3164,173 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
+    """导出黑白UV岛手性图。"""
+    bl_idname = "ho.uvtools_bake_uv_chirality_image"
+    bl_label = "导出UV手性图"
+    bl_description = "白色表示正常手性，黑色表示镜像，灰色表示未定义"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ""
+    filter_glob: StringProperty(default="*", options={'HIDDEN'})  # type: ignore
+    image_width: IntProperty(name="图像宽度", default=2048, min=1)  # type: ignore
+    image_height: IntProperty(name="图像高度", default=2048, min=1)  # type: ignore
+    background_alpha: FloatProperty(name="背景透明度", default=0.0, min=0.0, max=1.0)  # type: ignore
+    image_format: EnumProperty(
+        name="图像格式",
+        items=[('PNG', "PNG", ""), ('JPEG', "JPEG", "")],
+        default='PNG')  # type: ignore
+    invert: BoolProperty(name="反转", default=False)  # type: ignore
+    dilate_radius: IntProperty(name="膨胀像素数", default=1, min=0)  # type: ignore
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "image_width")
+        layout.prop(self, "image_height")
+        layout.prop(self, "background_alpha")
+        layout.prop(self, "image_format")
+        layout.prop(self, "invert")
+        layout.prop(self, "dilate_radius")
+
+    def execute(self, context):
+        mode_state = enter_object_mode_for_export(context)
+        try:
+            return self.execute_object_mode(context)
+        finally:
+            restore_export_mode(context, mode_state)
+
+    def execute_object_mode(self, context):
+        width = self.image_width
+        height = self.image_height
+        background_alpha_255 = int(self.background_alpha * 255)
+        img_arr = np.zeros((height, width, 4), dtype=np.uint8)
+        img_arr[:, :, 0:3] = 128
+        img_arr[:, :, 3] = background_alpha_255
+
+        selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
+        if not selected_objs:
+            self.report({'ERROR'}, "请先选中至少一个网格物体")
+            return {'CANCELLED'}
+
+        depsgraph = context.evaluated_depsgraph_get()
+        island_count = 0
+        exported_tris = 0
+        undefined_tri_count = 0
+        mixed_island_count = 0
+        undefined_island_count = 0
+        out_of_range_tris = 0
+        skipped_large_tris = 0
+        skipped_objects = []
+        uv_min_u = float("inf")
+        uv_min_v = float("inf")
+        uv_max_u = float("-inf")
+        uv_max_v = float("-inf")
+
+        for obj in selected_objs:
+            eval_obj = obj.evaluated_get(depsgraph)
+            mesh = eval_obj.to_mesh()
+            try:
+                uv_layer = mesh.uv_layers.active
+                if uv_layer is None:
+                    skipped_objects.append(f"{obj.name}(无UV)")
+                    continue
+
+                polygon_data = {}
+                for poly in mesh.polygons:
+                    loop_indices = list(poly.loop_indices)
+                    if len(loop_indices) < 3:
+                        continue
+
+                    pts = []
+                    for loop_index in loop_indices:
+                        uv = uv_layer.data[loop_index].uv.copy()
+                        uv_min_u = min(uv_min_u, uv.x)
+                        uv_min_v = min(uv_min_v, uv.y)
+                        uv_max_u = max(uv_max_u, uv.x)
+                        uv_max_v = max(uv_max_v, uv.y)
+                        pts.append((uv.x * width, (1.0 - uv.y) * height))
+                    polygon_data[poly.index] = (poly, loop_indices, pts)
+
+                for island_polygon_indices in find_mesh_uv_islands(mesh, uv_layer):
+                    island_score = 0.0
+                    island_undefined = 0
+                    island_defined = 0
+                    island_tris = []
+
+                    for polygon_index in island_polygon_indices:
+                        data = polygon_data.get(polygon_index)
+                        if data is None:
+                            continue
+                        poly, loop_indices, pts = data
+                        for i in range(1, len(loop_indices) - 1):
+                            tri_loop_indices = [loop_indices[0], loop_indices[i], loop_indices[i + 1]]
+                            tri_pts = [pts[0], pts[i], pts[i + 1]]
+                            chirality = calc_uv_chirality_triangle(mesh, uv_layer, poly, tri_loop_indices)
+                            if chirality is None:
+                                sign = 0
+                                island_undefined += 1
+                                undefined_tri_count += 1
+                            else:
+                                sign, weight = chirality
+                                island_score += sign * weight
+                                island_defined += 1
+                            island_tris.append((tri_pts, sign))
+
+                    if not island_tris:
+                        continue
+
+                    if island_defined == 0:
+                        island_sign = 0
+                        undefined_island_count += 1
+                    else:
+                        island_sign = 1 if island_score >= 0.0 else -1
+                        if island_undefined > 0:
+                            mixed_island_count += 1
+
+                    if self.invert:
+                        island_sign *= -1
+
+                    if island_sign > 0:
+                        color = (255, 255, 255, 255)
+                    elif island_sign < 0:
+                        color = (0, 0, 0, 255)
+                    else:
+                        color = (128, 128, 128, 255)
+
+                    for tri_pts, _tri_sign in island_tris:
+                        if any(p[0] < 0 or p[0] > width or p[1] < 0 or p[1] > height for p in tri_pts):
+                            out_of_range_tris += 1
+                        if fill_solid_triangle(img_arr, tri_pts, color):
+                            exported_tris += 1
+                        else:
+                            skipped_large_tris += 1
+                    island_count += 1
+            finally:
+                eval_obj.to_mesh_clear()
+
+        if exported_tris == 0:
+            self.report({'ERROR'}, "没有可导出的UV手性数据")
+            return {'CANCELLED'}
+
+        pil_img = Image.fromarray(img_arr, mode="RGBA")
+        pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
+
+        ext = ".png" if self.image_format == 'PNG' else ".jpg"
+        final_path = bpy.path.abspath(self.filepath)
+        if not final_path.lower().endswith(ext):
+            final_path += ext
+        save_img = pil_img if self.image_format == 'PNG' else pil_img.convert("RGB")
+        save_img.save(final_path)
+
+        if skipped_objects:
+            self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
+        self.report(
+            {'INFO'},
+            f"已导出UV手性图: {final_path} | UV岛={island_count} | 混合岛={mixed_island_count} | 未定义岛={undefined_island_count} | 未定义三角面={undefined_tri_count} | UV=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角面={exported_tris} | 越界={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+        )
+        return {'FINISHED'}
+
+
 class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
     """导出MikkTSpace切线或副切线向量图"""
     bl_idname = "ho.uvtools_bake_tangent_image"
@@ -3041,6 +3402,9 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
         uv_max_v = float("-inf")
         out_of_range_tris = 0
         skipped_large_tris = 0
+        tangent_failed_objects = 0
+        triangulated_ngon_objects = 0
+        triangulated_ngon_faces = 0
 
         for obj in selected_objs:
             eval_obj = obj.evaluated_get(depsgraph)
@@ -3069,30 +3433,41 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
 
                     cached_faces.append((loop_indices, pts))
 
+                loop_vector_cache = {}
                 try:
                     mesh.calc_tangents(uvmap=uv_layer.name)
                     tangents_ready = True
-                except RuntimeError as exc:
-                    skipped_objects.append(f"{obj.name}(切线失败:{exc})")
-                    continue
+                    for loop_index in range(len(mesh.loops)):
+                        vec = get_loop_tangent_vector(
+                            mesh.loops[loop_index], self.vector_mode)
+                        loop_vector_cache[loop_index] = (vec.x, vec.y, vec.z)
+                except RuntimeError:
+                    try:
+                        mesh.free_tangents()
+                    except RuntimeError:
+                        pass
+                    tangents_ready = False
+
+                    try:
+                        loop_vector_cache, triangulated_faces = calc_temp_triangulated_loop_vectors(
+                            mesh, uv_layer, self.vector_mode)
+                        triangulated_ngon_objects += 1
+                        triangulated_ngon_faces += triangulated_faces
+                    except RuntimeError as fallback_exc:
+                        skipped_objects.append(f"{obj.name}(切线失败:{fallback_exc})")
+                        tangent_failed_objects += 1
+                        continue
 
                 for loop_indices, pts in cached_faces:
                     vectors = []
                     for loop_index in loop_indices:
-                        loop = mesh.loops[loop_index]
+                        vec = loop_vector_cache.get(loop_index)
+                        if vec is None:
+                            continue
+                        vectors.append(vec)
 
-                        if self.vector_mode == 'BITANGENT':
-                            if hasattr(loop, "bitangent"):
-                                vec = loop.bitangent.copy()
-                            else:
-                                vec = loop.normal.cross(loop.tangent)
-                                vec *= loop.bitangent_sign
-                        else:
-                            vec = loop.tangent.copy()
-
-                        if vec.length > 1e-8:
-                            vec.normalize()
-                        vectors.append((vec.x, vec.y, vec.z))
+                    if len(vectors) != len(loop_indices):
+                        continue
 
                     for i in range(1, len(loop_indices) - 1):
                         tri_pts = [pts[0], pts[i], pts[i + 1]]
@@ -3544,6 +3919,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
     row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text="岛SDF")
     row.operator(OT_UVTools_BakeTangentImage.bl_idname, text="切/副切线")
+    row.operator(OT_UVTools_BakeUVChiralityImage.bl_idname, text="UV手性")
 
     row = col.row(align=True)
     row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
@@ -3562,7 +3938,7 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     return
 
 
-cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeSixDirectionVisibilityImage, OT_UVTools_BakeLightCastImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
+cls = [OT_UVTools_BakeUVIslandImage, OT_UVTools_BakeIslandUVMapImage, OT_UVTools_BakeWorldSpaceTBFlowMapImage, OT_UVTools_BakeGravityFieldMapImage, OT_UVTools_BakeSixDirectionVisibilityImage, OT_UVTools_BakeLightCastImage, OT_UVTools_BakeIslandSDFImage, OT_UVTools_BakeUVChiralityImage, OT_UVTools_BakeTangentImage, OT_UVTools_BakeFaceIDImage, OT_UVTools_BakeObjectIDImage, OT_UVTools_BakeMaterialIDImage, OT_UVTools_BakeMeshIslandImage,
        OT_UVTools_BakeVertexColorImage,
        OT_UVTools_BakeActiveVertexGroupImage,
        OT_UVTools_FastBakeUVImage,
