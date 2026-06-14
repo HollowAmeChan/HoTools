@@ -1,330 +1,496 @@
-from ..OmniNodeSocketMapping import _OmniBone, _OmniCache
+from ..OmniNodeSocketMapping import _OmniBone, _OmniBoneChain, _OmniCache
 from ..FunctionNodeCore import omni
 from . import _Color
 
-import typing
 import bpy
 import mathutils
 
 
-def _require_armature_object(obj, label: str) -> bpy.types.Object:
-    if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "ARMATURE":
-        raise ValueError(f"{label} is not an armature object")
-    return obj
+class _BonePhysics:
+    EPSILON = 0.000001
+    SPRING_CACHE_VERSION = 3
 
+    @staticmethod
+    def require_armature(obj, label: str) -> bpy.types.Object:
+        """
+        校验输入对象确实是 Armature。
+        后续物理逻辑会直接访问 pose bones，提前失败比在中途读到 None 更容易定位。
+        """
+        if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "ARMATURE":
+            raise ValueError(f"{label} is not an armature object")
+        return obj
 
-def _vector3(value, fallback: mathutils.Vector) -> mathutils.Vector:
-    if value is None or value == "":
-        return fallback.copy()
+    @classmethod
+    def vector3(cls, value, fallback: mathutils.Vector) -> mathutils.Vector:
+        """
+        把缓存、socket 或默认值统一转成 3D Vector。
+        解析失败或维度不足时用 fallback 补齐，避免旧 cache / 空输入把模拟打断。
+        """
+        if value is None or value == "":
+            return fallback.copy()
 
-    try:
-        vec = mathutils.Vector(value)
-    except Exception:
-        return fallback.copy()
+        try:
+            vec = mathutils.Vector(value)
+        except Exception:
+            return fallback.copy()
 
-    if len(vec) == 0:
-        return fallback.copy()
-    if len(vec) == 1:
-        return mathutils.Vector((vec[0], fallback[1], fallback[2]))
-    if len(vec) == 2:
-        return mathutils.Vector((vec[0], vec[1], fallback[2]))
-    return vec.to_3d()
+        if len(vec) == 0:
+            return fallback.copy()
+        if len(vec) == 1:
+            return mathutils.Vector((vec[0], fallback[1], fallback[2]))
+        if len(vec) == 2:
+            return mathutils.Vector((vec[0], vec[1], fallback[2]))
+        return vec.to_3d()
 
+    @staticmethod
+    def scene_delta_time() -> float:
+        """
+        从场景输出设置读取真实帧间隔。
+        SpringBone 不暴露 dt 输入，统一跟随 render.fps / render.fps_base。
+        """
+        render = bpy.context.scene.render
+        fps_base = float(render.fps_base) if render.fps_base else 1.0
+        fps = float(render.fps) / fps_base
+        return 1.0 / fps if fps > 0.0 else 0.0
 
-def _scene_delta_time() -> float:
-    render = bpy.context.scene.render
-    fps_base = float(render.fps_base) if render.fps_base else 1.0
-    fps = float(render.fps) / fps_base
-    if fps <= 0.0:
-        return 0.0
-    return 1.0 / fps
+    @staticmethod
+    def cache_frame(cache):
+        """
+        从 runtime cache 中安全读取上一帧帧号。
+        读不到或类型不对时返回 None，让调用方按新 cache 初始化处理。
+        """
+        if not isinstance(cache, dict) or "frame" not in cache:
+            return None
 
+        try:
+            return int(cache.get("frame"))
+        except Exception:
+            return None
 
-def _cache_frame(cache):
-    if not isinstance(cache, dict) or "frame" not in cache:
-        return None
+    @staticmethod
+    def matrix_from_value(value):
+        """
+        把 cache 内保存的矩阵值恢复为 mathutils.Matrix。
+        cache 可能跨运行周期保留为 Matrix 或序列，因此这里做宽松恢复。
+        """
+        if isinstance(value, mathutils.Matrix):
+            return value.copy()
 
-    try:
-        return int(cache.get("frame"))
-    except Exception:
-        return None
+        try:
+            return mathutils.Matrix(value)
+        except Exception:
+            return None
 
+    @staticmethod
+    def quaternion_from_value(value, fallback: mathutils.Quaternion) -> mathutils.Quaternion:
+        """
+        把 cache 内保存的四元数恢复为 mathutils.Quaternion。
+        数据缺失或长度不对时返回 fallback，避免姿态恢复产生非法旋转。
+        """
+        if isinstance(value, mathutils.Quaternion):
+            return value.copy()
 
-def _matrix_from_cache(value):
-    if isinstance(value, mathutils.Matrix):
-        return value.copy()
+        try:
+            values = tuple(value)
+        except Exception:
+            return fallback.copy()
 
-    try:
-        return mathutils.Matrix(value)
-    except Exception:
-        return None
+        if len(values) != 4:
+            return fallback.copy()
 
+        try:
+            return mathutils.Quaternion(values)
+        except Exception:
+            return fallback.copy()
 
-def _quaternion_from_cache(value, fallback: mathutils.Quaternion) -> mathutils.Quaternion:
-    if isinstance(value, mathutils.Quaternion):
-        return value.copy()
+    @staticmethod
+    def bone_socket_value(armature_obj: bpy.types.Object, bone_name: str):
+        """
+        生成 Bone socket 在运行时传递的轻量值。
+        这里不直接传 PoseBone，因为 PoseBone 更容易被模式切换和依赖图刷新影响。
+        """
+        return {
+            "armature": armature_obj,
+            "bone": bone_name,
+        }
 
-    try:
-        values = tuple(value)
-    except Exception:
-        return fallback.copy()
+    @classmethod
+    def resolve_bone_value(cls, value):
+        """
+        从 Bone socket 值中解析出 Armature 和骨骼名。
+        所有使用 Bone socket 的节点都走这里，保证错误信息和校验行为一致。
+        """
+        if not isinstance(value, dict):
+            raise ValueError("bone input is empty")
 
-    if len(values) != 4:
-        return fallback.copy()
+        armature_obj = cls.require_armature(value.get("armature"), "armature")
+        bone_name = str(value.get("bone") or "").strip()
+        if not bone_name:
+            raise ValueError("bone name is empty")
+        return armature_obj, bone_name
 
-    try:
-        return mathutils.Quaternion(values)
-    except Exception:
-        return fallback.copy()
+    @classmethod
+    def flatten_bone_socket_values(cls, values) -> list[dict]:
+        """
+        展平 bake 节点可能收到的多重 Bone 输入。
+        无效项会被跳过，避免一条物理链失效时阻断其他链 K 帧。
+        """
+        result = []
+        if values is None:
+            return result
 
+        stack = list(values) if isinstance(values, (list, tuple)) else [values]
+        while stack:
+            value = stack.pop(0)
+            if isinstance(value, (list, tuple)):
+                stack[0:0] = list(value)
+                continue
 
-def _bone_children(pose_bone):
-    return list(getattr(pose_bone, "children", []) or [])
+            try:
+                armature_obj, bone_name = cls.resolve_bone_value(value)
+            except Exception:
+                continue
+            result.append(cls.bone_socket_value(armature_obj, bone_name))
+        return result
 
+    @staticmethod
+    def chain_is_valid(chain) -> bool:
+        """
+        判断骨链运行时数据是否可用于物理节点。
+        骨链必须包含 Armature 对象和至少一根骨骼名。
+        """
+        return (
+            isinstance(chain, dict)
+            and isinstance(chain.get("armature"), bpy.types.Object)
+            and chain.get("armature").type == "ARMATURE"
+            and isinstance(chain.get("bones"), list)
+            and bool(chain.get("bones"))
+        )
 
-def _collect_bone_names(root_pose_bone, include_branches: bool) -> list[str]:
-    names = []
+    @staticmethod
+    def collect_bone_names(root_pose_bone, include_branches: bool) -> list[str]:
+        """
+        从根 PoseBone 收集骨链名称。
+        include_branches 为 False 时只沿每层第一个子骨走，适合单条发束/挂件链。
+        """
+        names = []
 
-    def visit(pose_bone):
-        names.append(pose_bone.name)
-        children = _bone_children(pose_bone)
-        if not children:
+        def visit(pose_bone):
+            names.append(pose_bone.name)
+            children = list(getattr(pose_bone, "children", []) or [])
+            if not children:
+                return
+
+            if include_branches:
+                for child in children:
+                    visit(child)
+            else:
+                visit(children[0])
+
+        visit(root_pose_bone)
+        return names
+
+    @staticmethod
+    def simulated_bone_names(chain) -> list[str]:
+        """
+        返回真正参与模拟的骨骼名。
+        骨链第一根只作为 center/锚点，不参与 SpringBone Verlet 推进。
+        """
+        return list(chain["bones"])[1:]
+
+    @classmethod
+    def bone_socket_values_from_chain(cls, chain, *, include_root: bool = False) -> list[dict]:
+        """
+        把骨链转换成 Bone socket 列表，主要给 bake 节点消费。
+        默认排除 root，因为 root 只是 center，不应该被 SpringBone bake 输出包含。
+        """
+        if not cls.chain_is_valid(chain):
+            return []
+
+        armature_obj = chain["armature"]
+        bone_names = list(chain["bones"]) if include_root else cls.simulated_bone_names(chain)
+        return [
+            cls.bone_socket_value(armature_obj, bone_name)
+            for bone_name in bone_names
+            if armature_obj.pose.bones.get(bone_name) is not None
+        ]
+
+    @classmethod
+    def pose_head_tail_world(
+        cls,
+        armature_obj: bpy.types.Object,
+        pose_bone,
+    ) -> tuple[mathutils.Vector, mathutils.Vector]:
+        """
+        读取 PoseBone head/tail 的世界空间位置。
+        Blender 的 PoseBone 坐标在 Armature object space，需要乘 armature.matrix_world。
+        """
+        matrix_world = armature_obj.matrix_world
+        return matrix_world @ pose_bone.head.copy(), matrix_world @ pose_bone.tail.copy()
+
+    @classmethod
+    def direction_to_world(cls, armature_obj: bpy.types.Object, direction: mathutils.Vector) -> mathutils.Vector:
+        """
+        把 Armature object space 方向转成世界方向。
+        只使用 3x3 旋转/缩放部分，不引入位置平移。
+        """
+        if direction.length <= cls.EPSILON:
+            return mathutils.Vector((0.0, 0.0, 1.0))
+
+        world_direction = armature_obj.matrix_world.to_3x3() @ direction
+        if world_direction.length <= cls.EPSILON:
+            return direction.normalized()
+        return world_direction.normalized()
+
+    @classmethod
+    def direction_to_armature(cls, armature_obj: bpy.types.Object, direction: mathutils.Vector) -> mathutils.Vector:
+        """
+        把世界方向转回 Armature object space。
+        用于把模拟得到的世界方向写回 PoseBone 的目标姿态矩阵。
+        """
+        if direction.length <= cls.EPSILON:
+            return mathutils.Vector((0.0, 0.0, 1.0))
+
+        local_direction = armature_obj.matrix_world.inverted().to_3x3() @ direction
+        if local_direction.length <= cls.EPSILON:
+            return direction.normalized()
+        return local_direction.normalized()
+
+    @classmethod
+    def spring_joint_from_pose(cls, armature_obj: bpy.types.Object, bone_name: str):
+        """
+        从当前 PoseBone 建立 SpringBone 单节初始状态。
+        缓存 tail、长度、初始轴、初始旋转/缩放和 matrix_basis，供跳帧恢复和连续模拟使用。
+        """
+        pose_bone = armature_obj.pose.bones.get(bone_name)
+        if pose_bone is None:
+            return None
+
+        axis_local = pose_bone.tail.copy() - pose_bone.head.copy()
+        head_world, tail_world = cls.pose_head_tail_world(armature_obj, pose_bone)
+        axis_world = tail_world - head_world
+        length = axis_world.length
+        if length <= cls.EPSILON:
+            return None
+
+        matrix = pose_bone.matrix.copy()
+        init_axis_local = (
+            axis_local.normalized()
+            if axis_local.length > cls.EPSILON
+            else cls.direction_to_armature(armature_obj, axis_world)
+        )
+
+        parent = getattr(pose_bone, "parent", None)
+        init_axis_parent = init_axis_local.normalized()
+        if parent is not None:
+            init_axis_parent = (parent.matrix.to_quaternion().inverted() @ init_axis_local).normalized()
+
+        return {
+            "bone": bone_name,
+            "current_tail": tail_world.copy(),
+            "prev_tail": tail_world.copy(),
+            "init_axis": axis_world.normalized(),
+            "init_axis_local": init_axis_local,
+            "init_axis_parent": init_axis_parent,
+            "length": float(length),
+            "init_rotation": matrix.to_quaternion().copy(),
+            "init_scale": matrix.to_scale().copy(),
+            "init_matrix_basis": pose_bone.matrix_basis.copy(),
+        }
+
+    @classmethod
+    def build_spring_cache(cls, chain):
+        """
+        为整条骨链创建 SpringBone cache。
+        cache 记录链结构和每个模拟骨的初始状态，链或版本变化时会重新生成。
+        """
+        armature_obj = chain["armature"]
+        joints = {}
+        for bone_name in cls.simulated_bone_names(chain):
+            joint = cls.spring_joint_from_pose(armature_obj, bone_name)
+            if joint is not None:
+                joints[bone_name] = joint
+
+        return {
+            "version": cls.SPRING_CACHE_VERSION,
+            "space": "WORLD",
+            "root_as_center": True,
+            "armature_name": armature_obj.name_full,
+            "root_bone": chain.get("root_bone", ""),
+            "bones": list(chain["bones"]),
+            "joints": joints,
+        }
+
+    @classmethod
+    def spring_cache_matches(cls, cache, chain) -> bool:
+        """
+        判断已有 cache 是否仍然匹配当前骨链。
+        版本、Armature、root 和骨骼列表任一变化都需要丢弃旧物理状态。
+        """
+        if not isinstance(cache, dict):
+            return False
+        return (
+            cache.get("version") == cls.SPRING_CACHE_VERSION
+            and cache.get("space") == "WORLD"
+            and cache.get("root_as_center") is True
+            and cache.get("armature_name") == chain["armature"].name_full
+            and cache.get("root_bone") == chain.get("root_bone", "")
+            and cache.get("bones") == list(chain["bones"])
+            and isinstance(cache.get("joints"), dict)
+        )
+
+    @classmethod
+    def restore_initial_pose(cls, armature_obj: bpy.types.Object, cache):
+        """
+        把 cache 中记录的初始 matrix_basis 写回 PoseBone。
+        跳帧时调用它清掉旧速度残留，避免从不连续帧继续模拟造成爆炸。
+        """
+        if not isinstance(cache, dict):
             return
 
-        if include_branches:
-            for child in children:
-                visit(child)
+        joints = cache.get("joints")
+        if not isinstance(joints, dict):
+            return
+
+        for bone_name, joint in joints.items():
+            pose_bone = armature_obj.pose.bones.get(bone_name)
+            if pose_bone is None or not isinstance(joint, dict):
+                continue
+
+            matrix_basis = cls.matrix_from_value(joint.get("init_matrix_basis"))
+            if matrix_basis is not None:
+                pose_bone.matrix_basis = matrix_basis
+
+    @classmethod
+    def joint_tail_state(cls, joint, fallback_tail: mathutils.Vector):
+        """
+        从 joint cache 中读取 current/previous tail。
+        这是 Verlet 速度的来源，缺失时退回当前骨骼 tail 作为静止状态。
+        """
+        if not isinstance(joint, dict):
+            return fallback_tail.copy(), fallback_tail.copy()
+
+        current_tail = cls.vector3(joint.get("current_tail"), fallback_tail)
+        prev_tail = cls.vector3(joint.get("prev_tail"), fallback_tail)
+        return current_tail, prev_tail
+
+    @classmethod
+    def rest_axis_world(cls, armature_obj: bpy.types.Object, pose_bone, joint, target_pose_matrices) -> mathutils.Vector:
+        """
+        计算当前父级目标姿态下的休止方向。
+        父骨可能还没写回 Blender，所以优先使用本帧已经算出的 target_pose_matrices。
+        """
+        fallback = pose_bone.tail.copy() - pose_bone.head.copy()
+        fallback_axis = fallback.normalized() if fallback.length > cls.EPSILON else mathutils.Vector((0.0, 0.0, 1.0))
+        parent_axis = cls.vector3(joint.get("init_axis_parent"), fallback_axis)
+
+        parent = getattr(pose_bone, "parent", None)
+        if parent is not None:
+            parent_matrix = target_pose_matrices.get(parent.name)
+            if parent_matrix is None:
+                parent_matrix = parent.matrix
+            axis_pose = parent_matrix.to_quaternion() @ parent_axis
         else:
-            visit(children[0])
+            axis_pose = parent_axis
 
-    visit(root_pose_bone)
-    return names
+        return cls.direction_to_world(armature_obj, axis_pose)
 
+    @classmethod
+    def target_head_world(
+        cls,
+        armature_obj: bpy.types.Object,
+        pose_bone,
+        target_pose_matrices: dict[str, mathutils.Matrix],
+        target_tail_worlds: dict[str, mathutils.Vector],
+    ) -> mathutils.Vector:
+        """
+        计算本帧模拟时当前骨骼应该使用的 head 世界位置。
+        connected 子骨优先使用父骨本帧目标 tail，避免逐骨写回依赖图导致抽搐。
+        """
+        current_head, _ = cls.pose_head_tail_world(armature_obj, pose_bone)
+        parent = getattr(pose_bone, "parent", None)
+        if parent is None:
+            return current_head
 
-def _chain_is_valid(chain) -> bool:
-    return (
-        isinstance(chain, dict)
-        and isinstance(chain.get("armature"), bpy.types.Object)
-        and chain.get("armature").type == "ARMATURE"
-        and isinstance(chain.get("bones"), list)
-        and bool(chain.get("bones"))
-    )
+        if getattr(getattr(pose_bone, "bone", None), "use_connect", False):
+            parent_tail = target_tail_worlds.get(parent.name)
+            if parent_tail is not None:
+                return parent_tail.copy()
 
+        parent_matrix = target_pose_matrices.get(parent.name)
+        if parent_matrix is None:
+            return current_head
 
-def _resolve_bone_value(value):
-    if not isinstance(value, dict):
-        raise ValueError("bone input is empty")
+        parent_rest = parent.bone.matrix_local
+        bone_rest = pose_bone.bone.matrix_local
+        head_pose = (parent_matrix @ parent_rest.inverted() @ bone_rest).translation
+        return armature_obj.matrix_world @ head_pose
 
-    armature_obj = value.get("armature")
-    bone_name = str(value.get("bone") or "").strip()
-    armature_obj = _require_armature_object(armature_obj, "armature")
-    if not bone_name:
-        raise ValueError("bone name is empty")
-    return armature_obj, bone_name
+    @classmethod
+    def pose_matrix_from_tail_world(
+        cls,
+        armature_obj: bpy.types.Object,
+        pose_bone,
+        joint,
+        head_world: mathutils.Vector,
+        next_tail_world: mathutils.Vector,
+    ) -> mathutils.Matrix | None:
+        """
+        根据模拟后的世界 tail 生成目标 PoseBone matrix。
+        只改变骨骼方向，保留 cache 中记录的初始旋转基准和缩放。
+        """
+        direction_world = next_tail_world - head_world
+        if direction_world.length <= cls.EPSILON:
+            return None
 
+        _, fallback_tail_world = cls.pose_head_tail_world(armature_obj, pose_bone)
+        fallback_axis_local = cls.direction_to_armature(
+            armature_obj,
+            fallback_tail_world - head_world,
+        )
+        init_axis_local = cls.vector3(joint.get("init_axis_local"), fallback_axis_local)
+        if init_axis_local.length <= cls.EPSILON:
+            return None
+        init_axis_local.normalize()
 
-def _pose_bone_head_tail(pose_bone) -> tuple[mathutils.Vector, mathutils.Vector]:
-    return pose_bone.head.copy(), pose_bone.tail.copy()
+        init_rotation = cls.quaternion_from_value(
+            joint.get("init_rotation"),
+            pose_bone.matrix.to_quaternion(),
+        )
+        init_scale = cls.vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
+        desired_direction_pose = cls.direction_to_armature(
+            armature_obj,
+            direction_world.normalized(),
+        )
+        rotation_delta = init_axis_local.rotation_difference(desired_direction_pose)
+        head_pose = armature_obj.matrix_world.inverted() @ head_world
+        return mathutils.Matrix.LocRotScale(
+            head_pose,
+            rotation_delta @ init_rotation,
+            init_scale,
+        )
 
+    @staticmethod
+    def matrix_basis_from_pose_matrix(
+        pose_bone,
+        target_matrix: mathutils.Matrix,
+        target_pose_matrices: dict[str, mathutils.Matrix],
+    ) -> mathutils.Matrix:
+        """
+        把目标 pose-space matrix 转换成可写入的 matrix_basis。
+        connected 子骨不能直接批量写 PoseBone.matrix，所以统一在最后写 matrix_basis。
+        """
+        bone_rest = pose_bone.bone.matrix_local
+        parent = getattr(pose_bone, "parent", None)
+        if parent is None:
+            return bone_rest.inverted() @ target_matrix
 
-def _pose_bone_head_tail_world(
-    armature_obj: bpy.types.Object,
-    pose_bone,
-) -> tuple[mathutils.Vector, mathutils.Vector]:
-    matrix_world = armature_obj.matrix_world
-    return matrix_world @ pose_bone.head.copy(), matrix_world @ pose_bone.tail.copy()
-
-
-def _armature_direction_to_world(
-    armature_obj: bpy.types.Object,
-    direction: mathutils.Vector,
-) -> mathutils.Vector:
-    if direction.length <= 0.000001:
-        return mathutils.Vector((0.0, 0.0, 1.0))
-    world_direction = armature_obj.matrix_world.to_3x3() @ direction
-    if world_direction.length <= 0.000001:
-        return direction.normalized()
-    return world_direction.normalized()
-
-
-def _world_direction_to_armature(
-    armature_obj: bpy.types.Object,
-    direction: mathutils.Vector,
-) -> mathutils.Vector:
-    if direction.length <= 0.000001:
-        return mathutils.Vector((0.0, 0.0, 1.0))
-    local_direction = armature_obj.matrix_world.inverted().to_3x3() @ direction
-    if local_direction.length <= 0.000001:
-        return direction.normalized()
-    return local_direction.normalized()
-
-
-def _simulated_bone_names(chain) -> list[str]:
-    return list(chain["bones"])[1:]
-
-
-def _parent_axis_from_pose_axis(pose_bone, axis: mathutils.Vector) -> mathutils.Vector:
-    parent = getattr(pose_bone, "parent", None)
-    if parent is None:
-        return axis.normalized()
-
-    parent_rotation = parent.matrix.to_quaternion()
-    return (parent_rotation.inverted() @ axis).normalized()
-
-
-def _rest_axis_world(
-    armature_obj: bpy.types.Object,
-    pose_bone,
-    joint,
-) -> mathutils.Vector:
-    fallback = pose_bone.tail.copy() - pose_bone.head.copy()
-    fallback_axis = fallback.normalized() if fallback.length > 0.000001 else mathutils.Vector((0.0, 0.0, 1.0))
-    parent_axis = _vector3(joint.get("init_axis_parent"), fallback_axis)
-
-    parent = getattr(pose_bone, "parent", None)
-    if parent is not None:
-        axis_pose = parent.matrix.to_quaternion() @ parent_axis
-    else:
-        axis_pose = parent_axis
-
-    return _armature_direction_to_world(armature_obj, axis_pose)
-
-
-def _init_joint_state(armature_obj: bpy.types.Object, bone_name: str):
-    pose_bone = armature_obj.pose.bones.get(bone_name)
-    if pose_bone is None:
-        return None
-
-    head, tail = _pose_bone_head_tail(pose_bone)
-    axis_local = tail - head
-    head_world, tail_world = _pose_bone_head_tail_world(armature_obj, pose_bone)
-    axis_world = tail_world - head_world
-    length = axis_world.length
-    if length <= 0.000001:
-        return None
-
-    matrix = pose_bone.matrix.copy()
-    init_axis_local = (
-        axis_local.normalized()
-        if axis_local.length > 0.000001
-        else _world_direction_to_armature(armature_obj, axis_world)
-    )
-    init_axis_parent = _parent_axis_from_pose_axis(pose_bone, init_axis_local)
-    return {
-        "bone": bone_name,
-        "current_tail": tail_world.copy(),
-        "prev_tail": tail_world.copy(),
-        "init_axis": axis_world.normalized(),
-        "init_axis_local": init_axis_local,
-        "init_axis_parent": init_axis_parent,
-        "length": float(length),
-        "init_rotation": matrix.to_quaternion().copy(),
-        "init_scale": matrix.to_scale().copy(),
-        "init_matrix_basis": pose_bone.matrix_basis.copy(),
-    }
-
-
-def _build_initial_cache(chain):
-    armature_obj = chain["armature"]
-    joints = {}
-    for bone_name in _simulated_bone_names(chain):
-        joint = _init_joint_state(armature_obj, bone_name)
-        if joint is not None:
-            joints[bone_name] = joint
-
-    return {
-        "version": 2,
-        "space": "WORLD",
-        "root_as_center": True,
-        "armature_name": armature_obj.name_full,
-        "root_bone": chain.get("root_bone", ""),
-        "bones": list(chain["bones"]),
-        "joints": joints,
-    }
-
-
-def _cache_matches_chain(cache, chain) -> bool:
-    if not isinstance(cache, dict):
-        return False
-    return (
-        cache.get("version") == 2
-        and cache.get("space") == "WORLD"
-        and cache.get("root_as_center") is True
-        and cache.get("armature_name") == chain["armature"].name_full
-        and cache.get("root_bone") == chain.get("root_bone", "")
-        and cache.get("bones") == list(chain["bones"])
-        and isinstance(cache.get("joints"), dict)
-    )
-
-
-def _restore_initial_pose(armature_obj: bpy.types.Object, cache):
-    if not isinstance(cache, dict):
-        return
-
-    joints = cache.get("joints")
-    if not isinstance(joints, dict):
-        return
-
-    for bone_name, joint in joints.items():
-        pose_bone = armature_obj.pose.bones.get(bone_name)
-        if pose_bone is None or not isinstance(joint, dict):
-            continue
-
-        matrix_basis = _matrix_from_cache(joint.get("init_matrix_basis"))
-        if matrix_basis is not None:
-            pose_bone.matrix_basis = matrix_basis
-
-
-def _joint_state_from_cache(joint, fallback_tail: mathutils.Vector):
-    if not isinstance(joint, dict):
-        return fallback_tail.copy(), fallback_tail.copy()
-
-    current_tail = _vector3(joint.get("current_tail"), fallback_tail)
-    prev_tail = _vector3(joint.get("prev_tail"), fallback_tail)
-    return current_tail, prev_tail
-
-
-def _write_pose_bone_tail_world(
-    armature_obj: bpy.types.Object,
-    bone_name: str,
-    joint,
-    next_tail_world: mathutils.Vector,
-) -> bool:
-    pose_bone = armature_obj.pose.bones.get(bone_name)
-    if pose_bone is None:
-        return False
-
-    head_world, fallback_tail_world = _pose_bone_head_tail_world(armature_obj, pose_bone)
-    direction_world = next_tail_world - head_world
-    if direction_world.length <= 0.000001:
-        return False
-
-    fallback_axis_local = _world_direction_to_armature(
-        armature_obj,
-        fallback_tail_world - head_world,
-    )
-    init_axis_local = _vector3(joint.get("init_axis_local"), fallback_axis_local)
-    if init_axis_local.length <= 0.000001:
-        return False
-    init_axis_local.normalize()
-
-    init_rotation = _quaternion_from_cache(
-        joint.get("init_rotation"),
-        pose_bone.matrix.to_quaternion(),
-    )
-    init_scale = _vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
-
-    desired_direction_local = _world_direction_to_armature(
-        armature_obj,
-        direction_world.normalized(),
-    )
-    rotation_delta = init_axis_local.rotation_difference(desired_direction_local)
-    pose_bone.matrix = mathutils.Matrix.LocRotScale(
-        pose_bone.head.copy(),
-        rotation_delta @ init_rotation,
-        init_scale,
-    )
-    return True
+        parent_matrix = target_pose_matrices.get(parent.name)
+        if parent_matrix is None:
+            parent_matrix = parent.matrix
+        parent_rest = parent.bone.matrix_local
+        parent_space = parent_matrix @ parent_rest.inverted() @ bone_rest
+        return parent_space.inverted() @ target_matrix
 
 
 @omni(
@@ -345,8 +511,8 @@ def _write_pose_bone_tail_world(
 def boneChainFromRoot(
     root_bone: _OmniBone,
     include_branches: bool = True,
-) -> typing.Any:
-    armature_obj, root_name = _resolve_bone_value(root_bone)
+) -> _OmniBoneChain:
+    armature_obj, root_name = _BonePhysics.resolve_bone_value(root_bone)
 
     root_pose_bone = armature_obj.pose.bones.get(root_name)
     if root_pose_bone is None:
@@ -355,18 +521,18 @@ def boneChainFromRoot(
     return {
         "armature": armature_obj,
         "root_bone": root_name,
-        "bones": _collect_bone_names(root_pose_bone, include_branches),
+        "bones": _BonePhysics.collect_bone_names(root_pose_bone, include_branches),
     }
 
 
 @omni(
     enable=True,
-    bl_label="无碰撞SpringBone",
+    bl_label="SpringBone",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
+        "缓存",
         "骨链",
-        "缓存状态",
         "启用",
         "刚性",
         "阻力",
@@ -375,113 +541,267 @@ def boneChainFromRoot(
     ],
     input_init={
         "stiffness_force": {
-            "description": "UniVRM stiffnessForce. 越大越倾向回到初始方向。",
+            "description": "回弹刚性。公式里会乘以 dt，常用量级约 0/1/10/30/100。",
             "min_value": 0.0,
+            "max_value": 100.0,
         },
         "drag_force": {
             "description": "UniVRM dragForce. 0 保留惯性，1 直接消除上一帧速度。",
             "min_value": 0.0,
             "max_value": 1.0,
         },
+        "gravity_dir": {
+            "description": "世界空间重力方向。默认 0,0,-1。",
+        },
         "gravity_power": {
             "description": "沿重力方向施加的外力强度。",
             "min_value": 0.0,
+            "max_value": 10.0,
         },
     },
-    _OUTPUT_NAME=["缓存状态", "骨架物体"],
+    omni_presets=[
+        {
+            "name": "极软拖尾",
+            "values": {
+                "stiffness_force": 1.0,
+                "drag_force": 0.15,
+                "gravity_dir": (0.0, 0.0, -1.0),
+                "gravity_power": 0.0,
+            },
+        },
+        {
+            "name": "柔软头发",
+            "values": {
+                "stiffness_force": 8.0,
+                "drag_force": 0.28,
+                "gravity_dir": (0.0, 0.0, -1.0),
+                "gravity_power": 0.08,
+            },
+        },
+        {
+            "name": "布条裙摆",
+            "values": {
+                "stiffness_force": 18.0,
+                "drag_force": 0.38,
+                "gravity_dir": (0.0, 0.0, -1.0),
+                "gravity_power": 0.35,
+            },
+        },
+        {
+            "name": "硬质挂件",
+            "values": {
+                "stiffness_force": 55.0,
+                "drag_force": 0.55,
+                "gravity_dir": (0.0, 0.0, -1.0),
+                "gravity_power": 0.15,
+            },
+        },
+        {
+            "name": "强回弹测试",
+            "values": {
+                "stiffness_force": 100.0,
+                "drag_force": 0.18,
+                "gravity_dir": (0.0, 0.0, -1.0),
+                "gravity_power": 0.0,
+            },
+        },
+    ],
+    _OUTPUT_NAME=["缓存", "骨骼", "骨架"],
     omni_description="""
-    无碰撞 SpringBone，参考 UniVRM 的 Verlet 推进。
+    最简无碰撞 SpringBone，也是后续物理节点的范本。
 
     接法：
     1. 用“从根获取骨链”生成骨链，接到本节点。
     2. 缓存读取和缓存写入使用同一个缓存名，读到的缓存接本节点，输出缓存再写回。
-    3. 每次执行只计算一帧，不做子步补算；时间步长自动使用当前场景输出设置的真实帧率。
-       内部按 render.fps / render.fps_base 计算真实帧率，再取 1 / fps 作为 dt。
+    3. 每次执行只计算一帧，不做子步补算；dt 自动使用 render.fps / render.fps_base 的真实帧间隔。
 
-    规则：
+    工作原理：
     骨链第一根骨骼只作为 center/锚点，不参与模拟；从第二根骨骼开始模拟。
-    本节点在世界空间读取 head/tail 并推进模拟，因此移动整个 Armature 也会产生惯性效果。
-    模拟结果会转换回 Armature pose 空间，直接写回 pose bone 旋转。
-    Blender 写父 PoseBone 后不会立刻刷新子骨 head/tail；本节点会逐骨写入并刷新依赖图后再处理下一根。
-    重力方向按世界空间理解，默认 0,0,-1。
-    跳帧时会恢复 cache 中记录的初始 pose，并输出空 cache，防止旧速度残留。
-    目前不处理碰撞、运行时缩放补偿和多子步。
+    每根模拟骨在世界空间保存 tail 的 current/previous 状态，用 Verlet 推进：
+    next = current + (current - previous) * (1 - drag) + rest_axis * stiffness * dt + gravity * gravity_power * dt。
+    stiffness 会乘以 dt，所以它不是 0-1 参数，常用量级会落在 1、10、30、100 这种范围。
+    计算后按骨长把 next tail 约束回固定长度，再为整条链生成目标 pose-space matrix。
+    最后统一转换并批量写回 PoseBone.matrix_basis。
+
+    Blender 踩坑：
+    Blender 的骨骼不是 Unity Transform。PoseBone 是 head/tail 段，PoseBone.matrix 是 armature object space 的最终矩阵。
+    connected 子骨的 head 由父骨 tail 推导，不能把 Unity 那套逐 Transform 写法直接搬过来。
+    不要在每根骨写完后调用 view_layer.update；播放和姿态模式交互时容易撞上 viewport/selection 读 pose 数据。
+    也不要批量直接写 PoseBone.matrix；connected 子骨会用旧父级求值，最终会跑偏。
+    当前做法是先一次性算完整链的目标 pose matrix，再根据 parent/rest 关系转换成 matrix_basis 批量写入。
+
+    升级版注意：
+    跳帧判定保持 current_frame == cached_frame + 1，失配时清空输出 cache，避免旧速度残留。
+    之后加碰撞、center、缩放补偿、多子步时，都应保持“先模拟完整链，最后批量写 matrix_basis”的结构。
+    若要在 Pose Mode 下交互调试，播放期间同时写同一套 PoseBone 仍可能触发 Blender C 层崩溃，应考虑主动跳过写入或暂停每帧运行。
     """,
 )
-def springBoneNoCollision(
-    bone_chain: typing.Any,
+def springBoneBase(
     cache_state: _OmniCache,
+    bone_chain: _OmniBoneChain,
     enabled: bool = True,
     stiffness_force: float = 1.0,
     drag_force: float = 0.4,
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity_power: float = 0.0,
-) -> tuple[_OmniCache, bpy.types.Object]:
-    if not _chain_is_valid(bone_chain):
+) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object,]:
+    if not _BonePhysics.chain_is_valid(bone_chain):
         raise ValueError("bone_chain is invalid")
 
     armature_obj = bone_chain["armature"]
+    affected_bones = _BonePhysics.bone_socket_values_from_chain(bone_chain)
     current_frame = bpy.context.scene.frame_current
-    cached_frame = _cache_frame(cache_state)
+    cached_frame = _BonePhysics.cache_frame(cache_state)
 
     if cached_frame is not None and current_frame != cached_frame + 1:
-        _restore_initial_pose(armature_obj, cache_state)
-        return None, armature_obj
+        _BonePhysics.restore_initial_pose(armature_obj, cache_state)
+        return None, affected_bones, armature_obj
 
-    if not _cache_matches_chain(cache_state, bone_chain):
-        cache_state = _build_initial_cache(bone_chain)
+    if not _BonePhysics.spring_cache_matches(cache_state, bone_chain):
+        cache_state = _BonePhysics.build_spring_cache(bone_chain)
 
     if not enabled:
         next_cache = dict(cache_state)
         next_cache["frame"] = int(current_frame)
-        return next_cache, armature_obj
+        return next_cache, affected_bones, armature_obj
 
-    dt = _scene_delta_time()
+    dt = _BonePhysics.scene_delta_time()
     stiffness_force = max(float(stiffness_force), 0.0)
     drag_force = max(0.0, min(1.0, float(drag_force)))
     gravity_power = max(float(gravity_power), 0.0)
-    gravity = _vector3(gravity_dir, mathutils.Vector((0.0, 0.0, -1.0)))
-    if gravity.length > 0.000001:
+    gravity = _BonePhysics.vector3(gravity_dir, mathutils.Vector((0.0, 0.0, -1.0)))
+    if gravity.length > _BonePhysics.EPSILON:
         gravity.normalize()
 
     old_joints = cache_state.get("joints", {})
     next_joints = {}
+    target_pose_matrices = {}
+    target_tail_worlds = {}
 
-    for bone_name in _simulated_bone_names(bone_chain):
+    root_pose_bone = armature_obj.pose.bones.get(bone_chain.get("root_bone", ""))
+    if root_pose_bone is not None:
+        target_pose_matrices[root_pose_bone.name] = root_pose_bone.matrix.copy()
+        _, root_tail_world = _BonePhysics.pose_head_tail_world(armature_obj, root_pose_bone)
+        target_tail_worlds[root_pose_bone.name] = root_tail_world
+
+    for bone_name in _BonePhysics.simulated_bone_names(bone_chain):
         pose_bone = armature_obj.pose.bones.get(bone_name)
         joint = old_joints.get(bone_name) if isinstance(old_joints, dict) else None
         if pose_bone is None or not isinstance(joint, dict):
             continue
 
-        head, fallback_tail = _pose_bone_head_tail_world(armature_obj, pose_bone)
-        current_tail, prev_tail = _joint_state_from_cache(joint, fallback_tail)
+        current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+        head = _BonePhysics.target_head_world(
+            armature_obj,
+            pose_bone,
+            target_pose_matrices,
+            target_tail_worlds,
+        )
+        current_tail, prev_tail = _BonePhysics.joint_tail_state(joint, fallback_tail)
 
-        length = float(joint.get("length", (fallback_tail - head).length))
-        if length <= 0.000001:
+        length = float(joint.get("length", (fallback_tail - current_head).length))
+        if length <= _BonePhysics.EPSILON:
             continue
 
-        rest_axis = _rest_axis_world(armature_obj, pose_bone, joint)
+        rest_axis = _BonePhysics.rest_axis_world(armature_obj, pose_bone, joint, target_pose_matrices)
         rest_force = rest_axis * stiffness_force * dt
         external_force = gravity * gravity_power * dt
         inertia = (current_tail - prev_tail) * (1.0 - drag_force)
         next_tail = current_tail + inertia + rest_force + external_force
 
         direction = next_tail - head
-        if direction.length <= 0.000001:
+        if direction.length <= _BonePhysics.EPSILON:
             next_tail = fallback_tail.copy()
         else:
             next_tail = head + direction.normalized() * length
 
-        if _write_pose_bone_tail_world(armature_obj, bone_name, joint, next_tail):
-            bpy.context.view_layer.update()
+        target_matrix = _BonePhysics.pose_matrix_from_tail_world(
+            armature_obj,
+            pose_bone,
+            joint,
+            head,
+            next_tail,
+        )
+        if target_matrix is None:
+            continue
 
         next_joint = dict(joint)
         next_joint["prev_tail"] = current_tail.copy()
         next_joint["current_tail"] = next_tail.copy()
         next_joints[bone_name] = next_joint
+        target_pose_matrices[bone_name] = target_matrix
+        target_tail_worlds[bone_name] = next_tail.copy()
+
+    for bone_name in _BonePhysics.simulated_bone_names(bone_chain):
+        pose_bone = armature_obj.pose.bones.get(bone_name)
+        target_matrix = target_pose_matrices.get(bone_name)
+        if pose_bone is None or target_matrix is None:
+            continue
+        pose_bone.matrix_basis = _BonePhysics.matrix_basis_from_pose_matrix(
+            pose_bone,
+            target_matrix,
+            target_pose_matrices,
+        )
 
     next_cache = dict(cache_state)
     next_cache["frame"] = int(current_frame)
     next_cache["joints"] = next_joints
     armature_obj.update_tag()
-    return next_cache, armature_obj
+    return next_cache, affected_bones, armature_obj
+
+
+@omni(
+    enable=True,
+    bl_label="骨骼姿态K帧",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["骨骼", "启用"],
+    _OUTPUT_NAME=["骨骼", "写入数量"],
+    omni_description="""
+    给输入 Bone 集合中的 PoseBone 在当前帧插入姿态关键帧。
+
+    接法：
+    1. SpringBone 的“骨骼”输出接到本节点“骨骼”输入。
+    2. 本节点的“骨骼”输入是多重输入，可以接一条或多条物理链。
+    3. 启用为 False 时只透传骨骼列表，不写关键帧。
+
+    写入内容：
+    对每根 PoseBone 插入 location、rotation、scale。
+    rotation 会根据当前 rotation_mode 选择 rotation_quaternion、rotation_axis_angle 或 rotation_euler。
+
+    注意：
+    本节点只负责把当前已经写入 PoseBone 的姿态 K 到当前帧。
+    bake 时建议用稳定的逐帧播放/运行流程，不要在同一帧手动反复执行。
+    """,
+)
+def keyframePoseBones(
+    bones: list[_OmniBone],
+    enabled: bool = True,
+) -> tuple[list[_OmniBone], int]:
+    bone_values = _BonePhysics.flatten_bone_socket_values(bones)
+    if not enabled:
+        return bone_values, 0
+
+    frame = bpy.context.scene.frame_current
+    inserted = 0
+    for value in bone_values:
+        try:
+            armature_obj, bone_name = _BonePhysics.resolve_bone_value(value)
+        except Exception:
+            continue
+
+        pose_bone = armature_obj.pose.bones.get(bone_name)
+        if pose_bone is None:
+            continue
+
+        pose_bone.keyframe_insert(data_path="location", frame=frame)
+        if pose_bone.rotation_mode == "QUATERNION":
+            pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+        elif pose_bone.rotation_mode == "AXIS_ANGLE":
+            pose_bone.keyframe_insert(data_path="rotation_axis_angle", frame=frame)
+        else:
+            pose_bone.keyframe_insert(data_path="rotation_euler", frame=frame)
+        pose_bone.keyframe_insert(data_path="scale", frame=frame)
+        inserted += 1
+
+    return bone_values, inserted

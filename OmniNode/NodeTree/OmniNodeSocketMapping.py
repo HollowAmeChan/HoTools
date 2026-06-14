@@ -4,6 +4,7 @@ from .OmniNodeSocket import (
     OmniNodeSocketAny,
     OmniNodeSocketCache,
     OmniNodeSocketBone,
+    OmniNodeSocketBoneChain,
     OmniNodeSocketImageFormat,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,
@@ -64,6 +65,9 @@ class _OmniCache(str):
     def __init__():
         return
 class _OmniBone():
+    def __init__():
+        return
+class _OmniBoneChain():
     def __init__():
         return
 class _OmniColorRGBA():
@@ -148,4 +152,5 @@ SKT_DIC = {
     _OmniGlob: OmniNodeSocketGlob,
     _OmniCache: OmniNodeSocketCache,
     _OmniBone: OmniNodeSocketBone,
+    _OmniBoneChain: OmniNodeSocketBoneChain,
 }
