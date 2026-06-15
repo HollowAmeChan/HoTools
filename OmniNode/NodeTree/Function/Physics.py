@@ -2,12 +2,17 @@ from ..OmniNodeSocketMapping import (
     _OmniBone,
     _OmniBoneChain,
     _OmniCache,
+    _OmniShapeKey,
+    _OmniVertexGroup,
 )
 from ..FunctionNodeCore import omni
 from . import _Color
 
 import bpy
+import hashlib
 import mathutils
+import numpy as np
+import time
 import typing
 
 class _BonePhysics:
@@ -799,6 +804,581 @@ class _BonePhysics:
 
         return projected
 
+
+class _MeshPhysics:
+    EPSILON = 0.000001
+    CACHE_VERSION = 2
+    CACHE_KIND = "MESH_SHAPE_KEY_XPBD"
+    DEBUG_PRINT_INTERVAL = 1.0
+    _debug_profiles = {}
+
+    @staticmethod
+    def begin_timing() -> dict:
+        return {"start": time.perf_counter(), "stages": {}}
+
+    @staticmethod
+    def add_timing(timing: dict | None, stage: str, seconds: float) -> None:
+        if timing is None:
+            return
+        stages = timing.setdefault("stages", {})
+        stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
+
+    @classmethod
+    def publish_debug_timing(
+        cls,
+        obj: bpy.types.Object,
+        shape_key_name: str,
+        frame: int,
+        vertex_count: int,
+        constraint_count: int,
+        timing: dict | None,
+    ) -> None:
+        if timing is None:
+            return
+
+        now = time.perf_counter()
+        stages = dict(timing.get("stages") or {})
+        stages["total"] = max(now - float(timing.get("start", now)), 0.0)
+
+        key = (int(obj.as_pointer()), str(shape_key_name))
+        profile = cls._debug_profiles.setdefault(
+            key,
+            {
+                "last_print": now,
+                "frames": 0,
+                "stages": {},
+            },
+        )
+        profile["frames"] += 1
+        profile["frame"] = int(frame)
+        profile["vertex_count"] = int(vertex_count)
+        profile["constraint_count"] = int(constraint_count)
+
+        totals = profile["stages"]
+        for stage, seconds in stages.items():
+            totals[stage] = totals.get(stage, 0.0) + float(seconds)
+
+        if now - float(profile["last_print"]) < cls.DEBUG_PRINT_INTERVAL:
+            return
+
+        sample_count = max(int(profile["frames"]), 1)
+        ordered_stages = (
+            "validate",
+            "cache",
+            "transform",
+            "restore",
+            "rebuild",
+            "solve_setup",
+            "predict",
+            "pin",
+            "stretch",
+            "bend",
+            "solve_total",
+            "write",
+            "total",
+        )
+        used = set()
+        stage_text = []
+        for stage in ordered_stages:
+            if stage in totals:
+                used.add(stage)
+                stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
+        for stage in sorted(set(totals.keys()) - used):
+            stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
+
+        print(
+            "[MeshShapeKeyXPBD] "
+            f"obj={obj.name_full} key={shape_key_name} frame={profile['frame']} "
+            f"samples={sample_count} verts={profile['vertex_count']} "
+            f"constraints={profile['constraint_count']} "
+            + " ".join(stage_text)
+        )
+
+        cls._debug_profiles[key] = {
+            "last_print": now,
+            "frames": 0,
+            "stages": {},
+        }
+
+    @staticmethod
+    def require_mesh_object(obj, label: str) -> bpy.types.Object:
+        if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "MESH":
+            raise ValueError(f"{label} is not a mesh object")
+        if obj.data is None or len(obj.data.vertices) == 0:
+            raise ValueError(f"{label} mesh has no vertices")
+        return obj
+
+    @classmethod
+    def resolve_shape_key_value(cls, value, fallback_obj: bpy.types.Object) -> tuple[bpy.types.Object, str]:
+        if isinstance(value, dict):
+            obj = value.get("object") or fallback_obj
+            shape_key_name = str(value.get("shape_key") or value.get("shape_key_name") or "").strip()
+            obj = cls.require_mesh_object(obj, "shape key object")
+            if not shape_key_name:
+                raise ValueError("shape key name is empty")
+            return obj, shape_key_name
+
+        if isinstance(value, bpy.types.ShapeKey):
+            key_data = getattr(value, "id_data", None)
+            for obj in bpy.data.objects:
+                if getattr(obj, "type", None) == "MESH" and getattr(obj.data, "shape_keys", None) == key_data:
+                    return obj, value.name
+            raise ValueError("shape key owner object not found")
+
+        raise ValueError("shape key input is empty or invalid")
+
+    @staticmethod
+    def vertex_group_owner(vertex_group: bpy.types.VertexGroup) -> bpy.types.Object:
+        owner = getattr(vertex_group, "id_data", None)
+        if owner is None or not isinstance(owner, bpy.types.Object) or owner.type != "MESH":
+            raise ValueError("pin vertex group owner is not a mesh object")
+        return owner
+
+    @classmethod
+    def validate_pin_group(cls, obj: bpy.types.Object, pin_group) -> bpy.types.VertexGroup | None:
+        if pin_group is None:
+            return None
+        if not isinstance(pin_group, bpy.types.VertexGroup):
+            raise ValueError("pin vertex group input is invalid")
+        owner = cls.vertex_group_owner(pin_group)
+        if owner != obj:
+            raise ValueError(f"pin vertex group '{pin_group.name}' does not belong to object '{obj.name}'")
+        return pin_group
+
+    @staticmethod
+    def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
+        mesh = obj.data
+        if mesh.shape_keys is None:
+            obj.shape_key_add(name="Basis", from_mix=False)
+
+        shape_keys = mesh.shape_keys
+        key = shape_keys.key_blocks.get(shape_key_name)
+        if key is None:
+            key = obj.shape_key_add(name=shape_key_name, from_mix=False)
+
+        if key == shape_keys.reference_key:
+            raise ValueError("target shape key cannot be Basis/reference key")
+
+        key.value = 1.0
+        return key
+
+    @staticmethod
+    def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
+        values = np.empty(vertex_count * 3, dtype=np.float32)
+        key.data.foreach_get("co", values)
+        return values.reshape((vertex_count, 3))
+
+    @classmethod
+    def read_rest_positions(cls, obj: bpy.types.Object) -> np.ndarray:
+        mesh = obj.data
+        vertex_count = len(mesh.vertices)
+        shape_keys = mesh.shape_keys
+        if shape_keys is not None and shape_keys.reference_key is not None:
+            return cls.read_key_positions(shape_keys.reference_key, vertex_count)
+
+        values = np.empty(vertex_count * 3, dtype=np.float32)
+        mesh.vertices.foreach_get("co", values)
+        return values.reshape((vertex_count, 3))
+
+    @staticmethod
+    def matrix_to_numpy(matrix: mathutils.Matrix) -> np.ndarray:
+        return np.asarray(
+            [[float(matrix[row][col]) for col in range(4)] for row in range(4)],
+            dtype=np.float32,
+        )
+
+    @classmethod
+    def local_positions_to_world(cls, obj: bpy.types.Object, positions: np.ndarray) -> np.ndarray:
+        matrix = cls.matrix_to_numpy(obj.matrix_world)
+        values = np.ascontiguousarray(positions, dtype=np.float32)
+        return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+
+    @classmethod
+    def world_positions_to_local(cls, obj: bpy.types.Object, positions: np.ndarray) -> np.ndarray:
+        matrix = cls.matrix_to_numpy(obj.matrix_world.inverted())
+        values = np.ascontiguousarray(positions, dtype=np.float32)
+        return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+
+    @staticmethod
+    def matrix_world_key(obj: bpy.types.Object) -> tuple:
+        matrix = obj.matrix_world
+        return tuple(round(float(matrix[row][col]), 8) for row in range(4) for col in range(4))
+
+    @staticmethod
+    def matrix_world_3x3_key(obj: bpy.types.Object) -> tuple:
+        matrix = obj.matrix_world
+        return tuple(round(float(matrix[row][col]), 8) for row in range(3) for col in range(3))
+
+    @staticmethod
+    def write_shape_key_positions(
+        obj: bpy.types.Object,
+        shape_key: bpy.types.ShapeKey,
+        positions: np.ndarray,
+    ) -> None:
+        flat = np.ascontiguousarray(positions, dtype=np.float32).reshape(-1)
+        shape_key.data.foreach_set("co", flat)
+        obj.data.update()
+        obj.update_tag()
+
+    @classmethod
+    def write_world_positions_to_shape_key(
+        cls,
+        obj: bpy.types.Object,
+        shape_key: bpy.types.ShapeKey,
+        positions: np.ndarray,
+    ) -> None:
+        cls.write_shape_key_positions(obj, shape_key, cls.world_positions_to_local(obj, positions))
+
+    @classmethod
+    def restore_rest_to_shape_key(cls, obj: bpy.types.Object, shape_key: bpy.types.ShapeKey, state=None) -> None:
+        rest_positions = None
+        if isinstance(state, dict):
+            cached_rest = state.get("rest_local_positions")
+            if isinstance(cached_rest, np.ndarray) and cached_rest.shape == (len(obj.data.vertices), 3):
+                rest_positions = cached_rest
+        if rest_positions is None:
+            rest_positions = cls.read_rest_positions(obj)
+        cls.write_shape_key_positions(obj, shape_key, rest_positions)
+
+    @staticmethod
+    def topology_key(obj: bpy.types.Object) -> tuple:
+        mesh = obj.data
+        edge_values = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+        if len(edge_values) > 0:
+            mesh.edges.foreach_get("vertices", edge_values)
+        edge_hash = hashlib.sha1(edge_values.tobytes()).hexdigest()
+        return (
+            int(obj.as_pointer()),
+            int(mesh.as_pointer()),
+            len(mesh.vertices),
+            len(mesh.edges),
+            len(mesh.polygons),
+            edge_hash,
+        )
+
+    @staticmethod
+    def build_inv_masses(obj: bpy.types.Object, pin_group: bpy.types.VertexGroup | None) -> np.ndarray:
+        inv_masses = np.ones(len(obj.data.vertices), dtype=np.float32)
+        if pin_group is None:
+            return inv_masses
+
+        group_index = int(pin_group.index)
+        for vertex in obj.data.vertices:
+            for group in vertex.groups:
+                if group.group == group_index and float(group.weight) > 0.0:
+                    inv_masses[vertex.index] = 0.0
+                    break
+        return inv_masses
+
+    @staticmethod
+    def build_edge_constraints(mesh: bpy.types.Mesh, rest_positions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        edge_count = len(mesh.edges)
+        if edge_count == 0:
+            empty_i = np.empty(0, dtype=np.int32)
+            empty_f = np.empty(0, dtype=np.float32)
+            return empty_i, empty_i.copy(), empty_f
+
+        edges = np.empty(edge_count * 2, dtype=np.int32)
+        mesh.edges.foreach_get("vertices", edges)
+        edges = edges.reshape((edge_count, 2))
+        edge_i = np.ascontiguousarray(edges[:, 0], dtype=np.int32)
+        edge_j = np.ascontiguousarray(edges[:, 1], dtype=np.int32)
+        delta = rest_positions[edge_i] - rest_positions[edge_j]
+        edge_rest = np.ascontiguousarray(np.linalg.norm(delta, axis=1), dtype=np.float32)
+        return edge_i, edge_j, edge_rest
+
+    @staticmethod
+    def constraint_lengths(
+        positions: np.ndarray,
+        index_i: np.ndarray,
+        index_j: np.ndarray,
+    ) -> np.ndarray:
+        if len(index_i) == 0:
+            return np.empty(0, dtype=np.float32)
+        delta = positions[index_i] - positions[index_j]
+        return np.ascontiguousarray(np.linalg.norm(delta, axis=1), dtype=np.float32)
+
+    @staticmethod
+    def build_bend_constraints(mesh: bpy.types.Mesh, rest_positions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        edge_to_opposites = {}
+        try:
+            mesh.calc_loop_triangles()
+        except Exception:
+            pass
+
+        for triangle in mesh.loop_triangles:
+            verts = tuple(int(v) for v in triangle.vertices)
+            if len(verts) != 3:
+                continue
+            a, b, c = verts
+            for i, j, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+                key = (i, j) if i < j else (j, i)
+                edge_to_opposites.setdefault(key, []).append(opposite)
+
+        pairs = []
+        seen = set()
+        for opposites in edge_to_opposites.values():
+            unique = []
+            for vertex_index in opposites:
+                if vertex_index not in unique:
+                    unique.append(vertex_index)
+            if len(unique) < 2:
+                continue
+            i, j = unique[0], unique[1]
+            key = (i, j) if i < j else (j, i)
+            if i == j or key in seen:
+                continue
+            pairs.append((i, j))
+            seen.add(key)
+
+        if not pairs:
+            empty_i = np.empty(0, dtype=np.int32)
+            empty_f = np.empty(0, dtype=np.float32)
+            return empty_i, empty_i.copy(), empty_f
+
+        pair_array = np.asarray(pairs, dtype=np.int32)
+        bend_i = np.ascontiguousarray(pair_array[:, 0], dtype=np.int32)
+        bend_j = np.ascontiguousarray(pair_array[:, 1], dtype=np.int32)
+        delta = rest_positions[bend_i] - rest_positions[bend_j]
+        bend_rest = np.ascontiguousarray(np.linalg.norm(delta, axis=1), dtype=np.float32)
+        return bend_i, bend_j, bend_rest
+
+    @classmethod
+    def build_state(
+        cls,
+        obj: bpy.types.Object,
+        shape_key_name: str,
+        pin_group: bpy.types.VertexGroup | None,
+        topology_key: tuple,
+    ) -> dict:
+        rest_local_positions = cls.read_rest_positions(obj)
+        rest_positions = cls.local_positions_to_world(obj, rest_local_positions)
+        edge_i, edge_j, edge_rest = cls.build_edge_constraints(obj.data, rest_positions)
+        bend_i, bend_j, bend_rest = cls.build_bend_constraints(obj.data, rest_positions)
+        inv_masses = cls.build_inv_masses(obj, pin_group)
+        return {
+            "version": cls.CACHE_VERSION,
+            "kind": cls.CACHE_KIND,
+            "frame": None,
+            "object_name": obj.name_full,
+            "object_ptr": int(obj.as_pointer()),
+            "mesh_ptr": int(obj.data.as_pointer()),
+            "shape_key_name": shape_key_name,
+            "pin_group_name": pin_group.name if pin_group is not None else "",
+            "topology_key": topology_key,
+            "object_matrix_world_key": cls.matrix_world_key(obj),
+            "object_matrix_world_3x3_key": cls.matrix_world_3x3_key(obj),
+            "vertex_count": len(obj.data.vertices),
+            "rest_local_positions": rest_local_positions.copy(),
+            "rest_positions": rest_positions.copy(),
+            "positions": rest_positions.copy(),
+            "prev_positions": rest_positions.copy(),
+            "inv_masses": inv_masses,
+            "edge_i": edge_i,
+            "edge_j": edge_j,
+            "edge_rest": edge_rest,
+            "bend_i": bend_i,
+            "bend_j": bend_j,
+            "bend_rest": bend_rest,
+        }
+
+    @classmethod
+    def sync_state_to_object_transform(cls, state: dict, obj: bpy.types.Object) -> dict:
+        matrix_key = cls.matrix_world_key(obj)
+        matrix_3x3_key = cls.matrix_world_3x3_key(obj)
+        if (
+            state.get("object_matrix_world_key") == matrix_key
+            and state.get("object_matrix_world_3x3_key") == matrix_3x3_key
+        ):
+            return state
+
+        next_state = dict(state)
+        rest_local_positions = np.ascontiguousarray(next_state["rest_local_positions"], dtype=np.float32)
+        rest_positions = cls.local_positions_to_world(obj, rest_local_positions)
+        next_state["rest_positions"] = rest_positions
+        next_state["object_matrix_world_key"] = matrix_key
+
+        if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
+            next_state["edge_rest"] = cls.constraint_lengths(rest_positions, next_state["edge_i"], next_state["edge_j"])
+            next_state["bend_rest"] = cls.constraint_lengths(rest_positions, next_state["bend_i"], next_state["bend_j"])
+            next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
+
+        return next_state
+
+    @classmethod
+    def state_matches(
+        cls,
+        state,
+        obj: bpy.types.Object,
+        shape_key_name: str,
+        pin_group: bpy.types.VertexGroup | None,
+        topology_key: tuple,
+    ) -> bool:
+        if not isinstance(state, dict):
+            return False
+        vertex_count = len(obj.data.vertices)
+        pin_name = pin_group.name if pin_group is not None else ""
+        required = (
+            "rest_local_positions",
+            "rest_positions",
+            "positions",
+            "prev_positions",
+            "inv_masses",
+            "edge_i",
+            "edge_j",
+            "edge_rest",
+            "bend_i",
+            "bend_j",
+            "bend_rest",
+        )
+        if not all(isinstance(state.get(key), np.ndarray) for key in required):
+            return False
+        return (
+            state.get("version") == cls.CACHE_VERSION
+            and state.get("kind") == cls.CACHE_KIND
+            and state.get("object_ptr") == int(obj.as_pointer())
+            and state.get("mesh_ptr") == int(obj.data.as_pointer())
+            and state.get("shape_key_name") == shape_key_name
+            and state.get("pin_group_name") == pin_name
+            and state.get("topology_key") == topology_key
+            and state.get("vertex_count") == vertex_count
+            and state["rest_local_positions"].shape == (vertex_count, 3)
+            and state["rest_positions"].shape == (vertex_count, 3)
+            and state["positions"].shape == (vertex_count, 3)
+            and state["prev_positions"].shape == (vertex_count, 3)
+            and state["inv_masses"].shape == (vertex_count,)
+        )
+
+    @staticmethod
+    def world_gravity(gravity_dir) -> np.ndarray:
+        gravity = _BonePhysics.vector3(gravity_dir, mathutils.Vector((0.0, 0.0, -1.0)))
+        if gravity.length <= _MeshPhysics.EPSILON:
+            return np.zeros(3, dtype=np.float32)
+
+        gravity.normalize()
+        return np.asarray((gravity.x, gravity.y, gravity.z), dtype=np.float32)
+
+    @classmethod
+    def project_distance_constraints(
+        cls,
+        positions: np.ndarray,
+        inv_masses: np.ndarray,
+        index_i: np.ndarray,
+        index_j: np.ndarray,
+        rest_lengths: np.ndarray,
+        compliance: float,
+        dt: float,
+    ) -> None:
+        alpha = max(float(compliance), 0.0) / (dt * dt) if dt > cls.EPSILON else 0.0
+        for constraint_index in range(len(index_i)):
+            i = int(index_i[constraint_index])
+            j = int(index_j[constraint_index])
+            wi = float(inv_masses[i])
+            wj = float(inv_masses[j])
+            wsum = wi + wj
+            if wsum <= cls.EPSILON:
+                continue
+
+            delta = positions[i] - positions[j]
+            length = float(np.linalg.norm(delta))
+            if length <= cls.EPSILON:
+                continue
+
+            c = length - float(rest_lengths[constraint_index])
+            dlambda = -c / (wsum + alpha)
+            normal = delta / length
+            if wi > 0.0:
+                positions[i] += wi * dlambda * normal
+            if wj > 0.0:
+                positions[j] -= wj * dlambda * normal
+
+    @classmethod
+    def solve(
+        cls,
+        state: dict,
+        obj: bpy.types.Object,
+        substeps: int,
+        iterations: int,
+        gravity_dir,
+        gravity_power: float,
+        damping: float,
+        stretch_compliance: float,
+        bend_compliance: float,
+        timing: dict | None = None,
+    ) -> dict:
+        stage_start = time.perf_counter() if timing is not None else None
+        positions = np.ascontiguousarray(state["positions"], dtype=np.float32)
+        prev_positions = np.ascontiguousarray(state["prev_positions"], dtype=np.float32)
+        rest_positions = np.ascontiguousarray(state["rest_positions"], dtype=np.float32)
+        inv_masses = np.ascontiguousarray(state["inv_masses"], dtype=np.float32)
+        pinned = inv_masses <= cls.EPSILON
+        has_pinned = bool(np.any(pinned))
+
+        dt = _BonePhysics.scene_delta_time()
+        substep_count = max(1, min(16, int(substeps)))
+        iteration_count = max(0, min(64, int(iterations)))
+        step_dt = dt / substep_count if substep_count > 0 else dt
+        gravity = cls.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
+        damping = max(0.0, min(1.0, float(damping)))
+        if timing is not None:
+            cls.add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
+
+        for _ in range(substep_count):
+            stage_start = time.perf_counter() if timing is not None else None
+            old_positions = positions.copy()
+            inertia = (positions - prev_positions) * (1.0 - damping)
+            positions += inertia + gravity * (step_dt * step_dt)
+            prev_positions = old_positions
+            if timing is not None:
+                cls.add_timing(timing, "predict", time.perf_counter() - stage_start)
+
+            if has_pinned:
+                stage_start = time.perf_counter() if timing is not None else None
+                positions[pinned] = rest_positions[pinned]
+                prev_positions[pinned] = rest_positions[pinned]
+                if timing is not None:
+                    cls.add_timing(timing, "pin", time.perf_counter() - stage_start)
+
+            for _iteration in range(iteration_count):
+                stage_start = time.perf_counter() if timing is not None else None
+                cls.project_distance_constraints(
+                    positions,
+                    inv_masses,
+                    state["edge_i"],
+                    state["edge_j"],
+                    state["edge_rest"],
+                    stretch_compliance,
+                    step_dt,
+                )
+                if timing is not None:
+                    cls.add_timing(timing, "stretch", time.perf_counter() - stage_start)
+
+                stage_start = time.perf_counter() if timing is not None else None
+                cls.project_distance_constraints(
+                    positions,
+                    inv_masses,
+                    state["bend_i"],
+                    state["bend_j"],
+                    state["bend_rest"],
+                    bend_compliance,
+                    step_dt,
+                )
+                if timing is not None:
+                    cls.add_timing(timing, "bend", time.perf_counter() - stage_start)
+
+                if has_pinned:
+                    stage_start = time.perf_counter() if timing is not None else None
+                    positions[pinned] = rest_positions[pinned]
+                    prev_positions[pinned] = rest_positions[pinned]
+                    if timing is not None:
+                        cls.add_timing(timing, "pin", time.perf_counter() - stage_start)
+
+        next_state = dict(state)
+        next_state["positions"] = np.ascontiguousarray(positions, dtype=np.float32)
+        next_state["prev_positions"] = np.ascontiguousarray(prev_positions, dtype=np.float32)
+        return next_state
+
+
 @omni(
     enable=True,
     bl_label="从根获取骨链",
@@ -1198,6 +1778,142 @@ def springBoneVRM(
     state["chains"] = chains_state
     armature_obj.update_tag()
     return state, affected_bones, armature_obj, len(settings), len(colliders)
+
+
+@omni(
+    enable=True,
+    bl_label="网格形态键XPBD",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "缓存",
+        "物体",
+        "Pin顶点组",
+        "目标形态键",
+        "启用",
+        "重置",
+        "子步数",
+        "迭代",
+        "重力方向",
+        "重力强度",
+        "阻尼",
+        "拉伸顺从度",
+        "弯曲顺从度",
+        "调试输出",
+    ],
+    input_init={
+        "substeps": {"min_value": 1, "max_value": 16},
+        "iterations": {"min_value": 0, "max_value": 64},
+        "gravity_power": {"min_value": 0.0, "max_value": 100.0},
+        "damping": {"min_value": 0.0, "max_value": 1.0},
+        "stretch_compliance": {"min_value": 0.0},
+        "bend_compliance": {"min_value": 0.0},
+        "debug_output": {"description": "开启后每隔约 1 秒在控制台打印本节点各阶段平均耗时。"},
+    },
+    _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
+    omni_description="""
+    第一版无碰撞 mesh 物理节点。节点只写入指定形态键，不直接修改网格顶点。
+
+    接法：
+    1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
+    2. “目标形态键”使用形态键 socket 选择 Mesh Object + shape key 名称；如果目标 key 不存在会自动创建。
+    3. “Pin顶点组”可以为空；权重大于 0 的顶点会固定在 Basis/rest 坐标。
+
+    跳帧规则：
+    与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存。
+    """,
+)
+def meshShapeKeyXPBD(
+    cache_state: _OmniCache,
+    obj: bpy.types.Object,
+    pin_group: _OmniVertexGroup,
+    target_shape_key: _OmniShapeKey,
+    enabled: bool = True,
+    reset: bool = False,
+    substeps: int = 1,
+    iterations: int = 6,
+    gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    gravity_power: float = 9.8,
+    damping: float = 0.02,
+    stretch_compliance: float = 0.0,
+    bend_compliance: float = 0.001,
+    debug_output: bool = False,
+) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+    timing = _MeshPhysics.begin_timing() if debug_output else None
+    stage_start = time.perf_counter() if timing is not None else None
+    obj = _MeshPhysics.require_mesh_object(obj, "obj")
+    shape_obj, shape_key_name = _MeshPhysics.resolve_shape_key_value(target_shape_key, obj)
+    if shape_obj != obj:
+        raise ValueError("target shape key object must be the same as obj")
+
+    pin_group = _MeshPhysics.validate_pin_group(obj, pin_group)
+    target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
+
+    stage_start = time.perf_counter() if timing is not None else None
+    topology_key = _MeshPhysics.topology_key(obj)
+    vertex_count = len(obj.data.vertices)
+    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, pin_group, topology_key) else None
+    cached_frame = _BonePhysics.cache_frame(state)
+    current_frame = int(getattr(bpy.context.scene, "frame_current", 0) or 0)
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "cache", time.perf_counter() - stage_start)
+
+    if cached_frame is not None and current_frame != cached_frame + 1:
+        stage_start = time.perf_counter() if timing is not None else None
+        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
+            _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing)
+        return None, obj, vertex_count, 0
+
+    if reset or not isinstance(state, dict):
+        stage_start = time.perf_counter() if timing is not None else None
+        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
+        state = _MeshPhysics.build_state(obj, shape_key_name, pin_group, topology_key)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "rebuild", time.perf_counter() - stage_start)
+    else:
+        stage_start = time.perf_counter() if timing is not None else None
+        state = _MeshPhysics.sync_state_to_object_transform(state, obj)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "transform", time.perf_counter() - stage_start)
+
+    constraint_count = len(state["edge_i"]) + len(state["bend_i"])
+
+    if not enabled:
+        next_state = dict(state)
+        next_state["frame"] = current_frame
+        _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
+        return next_state, obj, vertex_count, constraint_count
+
+    stage_start = time.perf_counter() if timing is not None else None
+    next_state = _MeshPhysics.solve(
+        state,
+        obj,
+        substeps,
+        iterations,
+        gravity_dir,
+        gravity_power,
+        damping,
+        stretch_compliance,
+        bend_compliance,
+        timing,
+    )
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "solve_total", time.perf_counter() - stage_start)
+    next_state["frame"] = current_frame
+    stage_start = time.perf_counter() if timing is not None else None
+    _MeshPhysics.write_world_positions_to_shape_key(obj, target_key, next_state["positions"])
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "write", time.perf_counter() - stage_start)
+        _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
+    return next_state, obj, vertex_count, constraint_count
 
 
 @omni(
