@@ -26,7 +26,7 @@ omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
 sys.path.append(omni_lib_dir)
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, PhysicsTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
 from . import OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
@@ -163,6 +163,7 @@ def register():
     VertexColorTools.register()
     VertexGroupTools.register()
     ShapekeyTools.register()
+    PhysicsTools.register()
     BoneTools.register()
     AnimationTools.register()
     Exporter.register()
@@ -187,6 +188,7 @@ def unregister():
     VertexGroupTools.unregister()
     ShapekeyTools.unregister()
     BoneTools.unregister()
+    PhysicsTools.unregister()
     AnimationTools.unregister()
     Exporter.unregister()
     NameMapping.unregister()
