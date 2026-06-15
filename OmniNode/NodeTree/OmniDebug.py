@@ -1,9 +1,12 @@
 import os
 import sys
+import time
 
 
 class OmniDebug:
     COLOR_TERMINAL = {"displays_colors": False, "initialized": False}
+    RUNTIME_TIMING_PRINT_INTERVAL = 1.0
+    _runtime_timing_profiles = {}
 
     @staticmethod
     def node_name(node):
@@ -172,3 +175,89 @@ class OmniDebug:
             trace.append(f"{indent}{message}")
 
         return trace, log
+
+    @staticmethod
+    def runtime_timing_key(tree_name, tree_pointer=None):
+        if tree_pointer is not None:
+            return f"tree:{tree_pointer}"
+        return f"name:{tree_name}"
+
+    @classmethod
+    def record_runtime_timing(cls, tree_name, tree_key, stages, interval=None):
+        if not stages:
+            return
+
+        now = time.perf_counter()
+        if tree_key is None:
+            key = cls.runtime_timing_key(tree_name)
+        elif isinstance(tree_key, int):
+            key = cls.runtime_timing_key(tree_name, tree_key)
+        else:
+            key = str(tree_key)
+
+        profile = cls._runtime_timing_profiles.setdefault(
+            key,
+            {
+                "last_print": now,
+                "samples": 0,
+                "stages": {},
+                "tree_name": tree_name,
+                "interval": cls.RUNTIME_TIMING_PRINT_INTERVAL,
+            },
+        )
+        profile["tree_name"] = tree_name
+        if interval is not None:
+            try:
+                profile["interval"] = max(float(interval), 0.05)
+            except Exception:
+                profile["interval"] = cls.RUNTIME_TIMING_PRINT_INTERVAL
+        profile["samples"] += 1
+
+        totals = profile["stages"]
+        for stage, seconds in stages.items():
+            totals[stage] = totals.get(stage, 0.0) + float(seconds)
+
+    @classmethod
+    def flush_runtime_timing(cls, force=False):
+        now = time.perf_counter()
+        ordered_stages = ("total",)
+
+        for key, profile in list(cls._runtime_timing_profiles.items()):
+            elapsed = now - float(profile["last_print"])
+            interval = max(float(profile.get("interval", cls.RUNTIME_TIMING_PRINT_INTERVAL)), 0.05)
+            if not force and elapsed < interval:
+                continue
+
+            sample_count = int(profile["samples"])
+            if sample_count <= 0:
+                continue
+            totals = profile["stages"]
+            used = set()
+            stage_text = []
+            for stage in ordered_stages:
+                if stage in totals:
+                    used.add(stage)
+                    stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
+            for stage in sorted(set(totals.keys()) - used):
+                stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
+
+            hz = sample_count / max(elapsed, 0.000001)
+            tree_name = profile.get("tree_name", key)
+            print(
+                f"[OmniNodeRuntime] tree={tree_name} interval={elapsed * 1000.0:.1f}ms "
+                f"samples={sample_count} hz={hz:.2f} "
+                + " ".join(stage_text)
+            )
+
+            cls._runtime_timing_profiles[key] = {
+                "last_print": now,
+                "samples": 0,
+                "stages": {},
+                "tree_name": tree_name,
+                "interval": interval,
+            }
+
+    @classmethod
+    def publish_runtime_timing(cls, tree_name, tree_key, stages, interval=None):
+        cls.record_runtime_timing(tree_name, tree_key, stages, interval=interval)
+        cls.flush_runtime_timing()

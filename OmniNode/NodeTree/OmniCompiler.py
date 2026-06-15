@@ -82,6 +82,18 @@ class CacheDumpCall:
         self.print_to_console = print_to_console
 
 
+class RuntimeTimingBeginCall:
+    def __init__(self, tree_name, tree_ref):
+        self.tree_name = tree_name
+        self.tree_ref = tree_ref
+
+
+class RuntimeTimingEndCall:
+    def __init__(self, tree_name, tree_ref):
+        self.tree_name = tree_name
+        self.tree_ref = tree_ref
+
+
 class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
     BATCH_GROUP_NODE_IDNAME = "HO_OmniNode_BatchGroupNode"
@@ -170,6 +182,10 @@ class OmniCompiler:
         graph.tree_name = getattr(tree, "name", "")
         graph.tree_ref = tree
         graph.debug_enabled = debug
+        try:
+            graph.runtime_timing_tree_key = f"tree:{int(tree.as_pointer())}"
+        except Exception:
+            graph.runtime_timing_tree_key = f"name:{graph.tree_name}"
 
         OmniDebug.append_compile_trace(graph, f"Start compile tree '{graph.tree_name}'")
 
@@ -645,6 +661,8 @@ class OmniCompiler:
             )
 
         graph.instructions = instructions
+        graph.instructions.insert(0, RuntimeTimingBeginCall(graph.tree_name, tree))
+        graph.instructions.append(RuntimeTimingEndCall(graph.tree_name, tree))
         graph.reg_count = reg_id
         graph.node_order = [node.name for node in topo]
         OmniDebug.append_compile_trace(graph, f"Compile finished with {len(instructions)} instructions")

@@ -70,6 +70,7 @@ def _omni_frame_change_post(scene, depsgraph=None):
                     pass
                 print(f"[OmniNode Frame Run] disabled '{getattr(tree, 'name', '<tree>')}': {exc}")
     finally:
+        OmniDebug.flush_runtime_timing()
         _FRAME_HANDLER_RUNNING = False
 
 
@@ -100,9 +101,26 @@ class OmniNodeTree(NodeTree):
         default=False,
     )  # type: ignore
     debug_compile: bpy.props.BoolProperty(
-        name="Debug Compile",
-        description="打印完整编译过程、寄存器桥和运行顺序",
+        name="Debug编译",
+        description="打印完整编译过程和寄存器桥，只在编译或重编译时输出。",
         default=False,
+    )  # type: ignore
+    debug_runtime_trace: bpy.props.BoolProperty(
+        name="Debug运行",
+        description="打印每次运行的完整指令执行过程。每帧运行时会非常频繁。",
+        default=False,
+    )  # type: ignore
+    debug_runtime_timing: bpy.props.BoolProperty(
+        name="Debug运行时长",
+        description="启用编译期运行时长插桩，并按输出间隔聚合打印。",
+        default=False,
+    )  # type: ignore
+    debug_runtime_timing_interval: bpy.props.FloatProperty(
+        name="输出间隔",
+        description="运行时长统计输出间隔，单位为秒。",
+        default=1.0,
+        min=0.05,
+        soft_max=10.0,
     )  # type: ignore
     doing_initNode: bpy.props.BoolProperty(
         description="阻止新建节点频繁回调",
@@ -167,7 +185,7 @@ class OmniNodeTree(NodeTree):
 
     def _run_compiled_graph(self, compiled):
         self._clear_run_state()
-        debug_enabled = getattr(self, "debug_compile", False)
+        debug_enabled = getattr(self, "debug_runtime_trace", False)
         result = OmniExecutor.run(compiled, debug=debug_enabled)
 
         return result
@@ -177,7 +195,11 @@ class OmniNodeTree(NodeTree):
         if compiled is None:
             raise RuntimeError(f"OmniNodeTree '{self.name}' has not been compiled")
 
-        return self._run_compiled_graph(compiled)
+        try:
+            return self._run_compiled_graph(compiled)
+        finally:
+            if not _FRAME_HANDLER_RUNNING:
+                OmniDebug.flush_runtime_timing()
 
     def run_frame_cached(self):
         compiled = self.compile_cached(force=False)
@@ -244,7 +266,10 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     if tree is None or getattr(tree, "bl_idname", "") != TREE_ID_NAME:
         return
 
-    layout.prop(tree, "debug_compile", text="Debug编译/运行", toggle=True)
+    layout.prop(tree, "debug_compile", text="Debug编译", toggle=True)
+    layout.prop(tree, "debug_runtime_trace", text="Debug运行", toggle=True)
+    layout.prop(tree, "debug_runtime_timing", text="Debug运行时长", toggle=True)
+    layout.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
     layout.label(text=tree.compile_cache_status_label())
     layout.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True)
 

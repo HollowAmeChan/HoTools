@@ -7,9 +7,12 @@ from .OmniCompiler import (
     CacheWriteCall,
     CacheDeleteCall,
     CacheDumpCall,
+    RuntimeTimingBeginCall,
+    RuntimeTimingEndCall,
 )
 from .OmniDebug import OmniDebug
 from . import OmniRuntimeState
+import time
 
 
 class OmniExecutor:
@@ -67,6 +70,7 @@ class OmniExecutor:
         registers = [None] * compiled.reg_count
         provided_inputs = provided_inputs or {}
         trace, log = OmniDebug.make_runtime_logger(depth)
+        timing_start = None
 
         log(f"{OmniDebug.section_label('Run')} Tree: {OmniDebug.tree_label(compiled.tree_name)}")
         for uid, reg in compiled.input_regs.items():
@@ -78,6 +82,28 @@ class OmniExecutor:
                 )
 
         for step_index, op in enumerate(compiled.instructions):
+            if isinstance(op, RuntimeTimingBeginCall):
+                tree_ref = getattr(op, "tree_ref", None)
+                if bool(getattr(tree_ref, "debug_runtime_timing", False)):
+                    timing_start = time.perf_counter()
+                continue
+
+            if isinstance(op, RuntimeTimingEndCall):
+                tree_ref = getattr(op, "tree_ref", None)
+                if timing_start is not None and bool(getattr(tree_ref, "debug_runtime_timing", False)):
+                    try:
+                        interval = float(getattr(tree_ref, "debug_runtime_timing_interval", 1.0))
+                    except Exception:
+                        interval = 1.0
+                    tree_key = getattr(compiled, "runtime_timing_tree_key", None)
+                    OmniDebug.record_runtime_timing(
+                        getattr(op, "tree_name", compiled.tree_name),
+                        tree_key,
+                        {"total": time.perf_counter() - timing_start},
+                        interval=interval,
+                    )
+                continue
+
             if isinstance(op, tuple):
                 _, reg, value = op
                 registers[reg] = value
