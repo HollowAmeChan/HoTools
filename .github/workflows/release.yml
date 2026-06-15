@@ -1,42 +1,86 @@
-name: Auto Release Clean ZIP
+name: Auto Release Install ZIP
 
 on:
   push:
     branches:
       - main
+  # 手动触发入口，方便只创建一次安装包发布，不必额外 push。
+  workflow_dispatch:
+
+# 创建 GitHub Release 并上传安装包需要写权限。
+permissions:
+  contents: write
 
 jobs:
-  build-and-release:
+  build-package-and-release:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up zip tool
-      run: sudo apt-get install zip -y rsync -y
+      - name: Install packaging tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rsync zip
 
+      - name: Create Blender install ZIP and release
+        run: |
+          set -euo pipefail
 
-    - name: Prepare clean folder and create ZIP
-      run: |
-        # 固定压缩包内文件夹名
-        FOLDER_NAME="HoTools"
-        WORK_DIR="$(mktemp -d)"
-        PACKAGE_DIR="$WORK_DIR/$FOLDER_NAME"
-        mkdir -p "$PACKAGE_DIR"
+          # 同一个时间戳同时用于 tag、release 标题和 zip 文件名，避免互相对不上。
+          VERSION="$(date +'%Y%m%d-%H%M%S')"
+          RELEASE_TAG="v${VERSION}"
+          RELEASE_TITLE="HoTools-${VERSION}"
+          ZIP_NAME="HoTools-${VERSION}.zip"
 
-        # 复制文件到文件夹，排除 .git .venv .github .vscode .gitignore __pycache__ *.blend[0-9]
-        # 不能使用*.blend*替代，因为这里的*可以为空，导致.blend文件也被排除掉了
-        rsync -av --exclude=".git" --exclude=".github" --exclude=".vscode" --exclude=".venv" --exclude=".gitignore" --exclude="__pycache__" --exclude="*.blend[0-9]" ./ "$PACKAGE_DIR/"
-        # 压缩包名字用日期
-        ZIP_NAME="HoTools-$(date +'%Y%m%d-%H%M%S').zip"
-        (
-          cd "$WORK_DIR"
-          zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" "$FOLDER_NAME"
-        )
-        rm -rf "$WORK_DIR"
+          # Blender 用户安装 zip 里需要有一个固定的 HoTools 根目录。
+          WORK_DIR="$(mktemp -d)"
+          PACKAGE_DIR="${WORK_DIR}/HoTools"
+          mkdir -p "$PACKAGE_DIR"
+          trap 'rm -rf "$WORK_DIR"' EXIT
 
-        # 创建 Release 并上传 ZIP
-        gh release create "v$(date +'%Y%m%d-%H%M%S')" $ZIP_NAME --title "$ZIP_NAME"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 这里自己打 zip，不使用 GitHub 自动生成的 Source code zip。
+          # Source code zip 会带上开发目录结构，不适合作为 Blender 用户安装包。
+          #
+          # _Lib/py311/HotoolsPackage 和 _Lib/py313/HotoolsPackage 不排除：
+          # 后续 C++ 编译后的 .pyd/.dll 等运行时产物需要跟随安装包发布。
+          #
+          # _native 是 C++ 开发工程目录；最终运行时产物会放到 _Lib/.../HotoolsPackage，
+          # 所以给 Blender 用户的安装包里不需要带 _native 源码和 CMake 中间产物。
+          rsync -a \
+            --exclude=".git/" \
+            --exclude=".github/" \
+            --exclude=".agents/" \
+            --exclude=".codex/" \
+            --exclude=".venv/" \
+            --exclude=".vscode/" \
+            --exclude=".idea/" \
+            --exclude=".vs/" \
+            --exclude=".gitignore" \
+            --exclude="__pycache__/" \
+            --exclude="*.pyc" \
+            --exclude="*.pyo" \
+            --exclude="*.blend[0-9]*" \
+            --exclude="_bin/" \
+            --exclude="_build/" \
+            --exclude="_dist/" \
+            --exclude="_native/" \
+            --exclude="build/" \
+            --exclude="cmake-build-*/" \
+            ./ "$PACKAGE_DIR/"
+
+          (
+            cd "$WORK_DIR"
+            zip -r "$GITHUB_WORKSPACE/$ZIP_NAME" HoTools
+          )
+
+          # 创建 GitHub Release，并上传给 Blender 用户安装的干净 zip。
+          # GitHub 页面仍会自动显示 Source code (zip/tar.gz)，但用户安装应下载这里上传的 ZIP_NAME。
+          gh release create "$RELEASE_TAG" "$ZIP_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes "请下载 ${ZIP_NAME} 作为 Blender 插件安装包。GitHub 自动生成的 Source code zip/tar.gz 不是面向用户安装的干净包。"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

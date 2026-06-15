@@ -1,2 +1,22 @@
 __pycache__/
+*.pyc
+*.pyo
 *.blend*
+
+# Local IDE metadata.
+.idea/
+.vs/
+.vscode/
+
+# Packaging and CMake build outputs.
+_build/
+_dist/
+build/
+cmake-build-*/
+
+# Native backend build/cache directories. Keep _native source tracked.
+_native/build/
+_native/cmake-build-*/
+_native/out/
+_native/install/
+_native/.idea/
