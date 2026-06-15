@@ -897,6 +897,7 @@ class _MeshPhysics:
             "rebuild",
             "colliders",
             "solve_setup",
+            "collision_setup",
             "predict",
             "pin",
             "stretch",
@@ -1593,6 +1594,84 @@ class _MeshPhysicsCppBackend:
             return False
         return hasattr(module, "solve_mesh_shape_key_xpbd")
 
+    @staticmethod
+    def empty_collision_arrays(collision_radii: np.ndarray, collided_by_groups: int) -> tuple:
+        return (
+            collision_radii,
+            int(collided_by_groups),
+            np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.int32),
+            np.empty((0, 3), dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+            np.empty((0, 3), dtype=np.float32),
+            np.empty(0, dtype=np.float32),
+        )
+
+    @classmethod
+    def collision_arrays(cls, state: dict, obj: bpy.types.Object, colliders: list[dict] | None) -> tuple:
+        collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
+        collided_by_groups = _BonePhysics.clamp_group_mask(state.get("collided_by_groups", 0))
+        if not colliders or not collided_by_groups or not bool(np.any(collision_radii > _MeshPhysics.EPSILON)):
+            return cls.empty_collision_arrays(collision_radii, collided_by_groups)
+
+        collider_types = []
+        collider_groups = []
+        collider_centers = []
+        collider_segment_a = []
+        collider_segment_b = []
+        collider_radii = []
+
+        for collider in colliders:
+            if collider.get("owner") is obj:
+                continue
+
+            group = max(1, min(16, int(collider.get("primary_group", 1))))
+            if not collided_by_groups & _BonePhysics.collision_group_bit(group):
+                continue
+
+            radius = max(float(collider.get("radius", 0.0)), 0.0)
+            if radius <= _MeshPhysics.EPSILON:
+                continue
+
+            collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+            center = _MeshPhysics.vector_to_numpy(collider.get("center"))
+            if collider_type == "CAPSULE":
+                segment_a = _MeshPhysics.vector_to_numpy(collider.get("segment_a"))
+                segment_b = _MeshPhysics.vector_to_numpy(collider.get("segment_b"))
+                if segment_a is None or segment_b is None:
+                    continue
+                if center is None:
+                    center = (segment_a + segment_b) * 0.5
+                collider_types.append(1)
+                collider_segment_a.append(segment_a)
+                collider_segment_b.append(segment_b)
+            elif collider_type == "SPHERE":
+                if center is None:
+                    continue
+                collider_types.append(0)
+                collider_segment_a.append(center)
+                collider_segment_b.append(center)
+            else:
+                continue
+
+            collider_groups.append(group)
+            collider_centers.append(center)
+            collider_radii.append(radius)
+
+        if not collider_types:
+            return cls.empty_collision_arrays(collision_radii, collided_by_groups)
+
+        return (
+            collision_radii,
+            int(collided_by_groups),
+            np.ascontiguousarray(collider_types, dtype=np.int32),
+            np.ascontiguousarray(collider_groups, dtype=np.int32),
+            np.ascontiguousarray(collider_centers, dtype=np.float32).reshape((-1, 3)),
+            np.ascontiguousarray(collider_segment_a, dtype=np.float32).reshape((-1, 3)),
+            np.ascontiguousarray(collider_segment_b, dtype=np.float32).reshape((-1, 3)),
+            np.ascontiguousarray(collider_radii, dtype=np.float32),
+        )
+
     @classmethod
     def solve(
         cls,
@@ -1608,8 +1687,6 @@ class _MeshPhysicsCppBackend:
         timing: dict | None = None,
         colliders: list[dict] | None = None,
     ) -> dict:
-        _ = obj
-        _ = colliders
         stage_start = time.perf_counter() if timing is not None else None
         positions = np.ascontiguousarray(state["positions"], dtype=np.float32)
         prev_positions = np.ascontiguousarray(state["prev_positions"], dtype=np.float32)
@@ -1636,6 +1713,20 @@ class _MeshPhysicsCppBackend:
             _MeshPhysics.add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
+        (
+            collision_radii,
+            collided_by_groups,
+            collider_types,
+            collider_groups,
+            collider_centers,
+            collider_segment_a,
+            collider_segment_b,
+            collider_radii,
+        ) = cls.collision_arrays(state, obj, colliders)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "collision_setup", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
         cls.native_module().solve_mesh_shape_key_xpbd(
             positions,
             prev_positions,
@@ -1654,6 +1745,14 @@ class _MeshPhysicsCppBackend:
             int(iteration_count),
             float(stretch_compliance),
             float(bend_compliance),
+            collision_radii,
+            int(collided_by_groups),
+            collider_types,
+            collider_groups,
+            collider_centers,
+            collider_segment_a,
+            collider_segment_b,
+            collider_radii,
         )
         if timing is not None:
             _MeshPhysics.add_timing(timing, "native", time.perf_counter() - stage_start)
@@ -1747,16 +1846,15 @@ def _run_mesh_xpbd_node(
 
     stage_start = time.perf_counter() if timing is not None else None
     backend = _MeshPhysicsCppBackend if use_cpp else _MeshPhysics
-    colliders = None
     if use_cpp:
         if not _MeshPhysicsCppBackend.is_available():
             raise ImportError("hotools_native is not available; build the native backend first")
-    else:
-        stage_start = time.perf_counter() if timing is not None else None
-        collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(bpy.context.scene, True, True, False)
-        colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
-        if timing is not None:
-            _MeshPhysics.add_timing(timing, "colliders", time.perf_counter() - stage_start)
+
+    stage_start = time.perf_counter() if timing is not None else None
+    collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(bpy.context.scene, True, True, False)
+    colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "colliders", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
     next_state = backend.solve(
@@ -2257,7 +2355,7 @@ def springBoneVRM(
     与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存，避免继承旧速度。
 
     升级约定：
-    CPP 后端节点应命名为“网格物理-XPBD-CPP”，并逐步追平本节点的输入、输出、cache 语义和跳帧行为；当前碰撞先在 Python 版本落地。
+    CPP 后端节点命名为“网格物理-XPBD-CPP”，两个节点应保持同一套输入、输出、cache 语义、跳帧行为和被动碰撞规则。
     """,
 )
 def meshPhysicsXPBD(
@@ -2326,7 +2424,7 @@ def meshPhysicsXPBD(
 
     工作原理：
     与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
-    差异在求解器后端：这里把预测、pin、stretch、bend 和循环交给 C++；当前暂未接入 Python 版的被动碰撞投影。
+    差异在求解器后端：这里把预测、pin、stretch、bend、被动碰撞投影和循环交给 C++。
     输出形态键在物体属性的“HoTools网格碰撞”面板中设置；不存在时会自动创建。
     Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
 

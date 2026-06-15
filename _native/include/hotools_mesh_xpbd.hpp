@@ -21,6 +21,16 @@ struct MeshXpbdView {
     const float* bend_rest = nullptr;
     std::int64_t bend_count = 0;
 
+    const float* collision_radii = nullptr;
+    std::int32_t collided_by_groups = 0;
+    const std::int32_t* collider_types = nullptr;
+    const std::int32_t* collider_groups = nullptr;
+    const float* collider_centers = nullptr;
+    const float* collider_segment_a = nullptr;
+    const float* collider_segment_b = nullptr;
+    const float* collider_radii = nullptr;
+    std::int64_t collider_count = 0;
+
     float gravity[3] = {0.0f, 0.0f, 0.0f};
     float dt = 0.0f;
     float damping = 0.0f;

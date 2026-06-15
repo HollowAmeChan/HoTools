@@ -124,7 +124,7 @@ long as_long(PyObject* object, const char* name) {
 }
 
 PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 17;
+    constexpr Py_ssize_t kArgCount = 25;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_mesh_shape_key_xpbd expects %zd arguments", kArgCount);
         return nullptr;
@@ -141,6 +141,13 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
     Buffer bend_j;
     Buffer bend_rest;
     Buffer gravity;
+    Buffer collision_radii;
+    Buffer collider_types;
+    Buffer collider_groups;
+    Buffer collider_centers;
+    Buffer collider_segment_a;
+    Buffer collider_segment_b;
+    Buffer collider_radii;
 
     if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
         !prev_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "prev_positions") ||
@@ -152,7 +159,14 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
         !bend_i.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "bend_i") ||
         !bend_j.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "bend_j") ||
         !bend_rest.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "bend_rest") ||
-        !gravity.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "gravity")) {
+        !gravity.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "gravity") ||
+        !collision_radii.get(PyTuple_GET_ITEM(args, 17), PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
+        !collider_types.get(PyTuple_GET_ITEM(args, 19), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_groups.get(PyTuple_GET_ITEM(args, 20), PyBUF_FORMAT | PyBUF_ND, "collider_groups") ||
+        !collider_centers.get(PyTuple_GET_ITEM(args, 21), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(PyTuple_GET_ITEM(args, 22), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 23), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !collider_radii.get(PyTuple_GET_ITEM(args, 24), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
         return nullptr;
     }
 
@@ -169,7 +183,12 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
         !expect_int32(bend_j, "bend_j") ||
         !expect_float32(bend_rest, "bend_rest") ||
         !expect_float32(gravity, "gravity") ||
-        !expect_1d_array(gravity, "gravity", 3)) {
+        !expect_1d_array(gravity, "gravity", 3) ||
+        !expect_float32(collision_radii, "collision_radii") ||
+        !expect_1d_array(collision_radii, "collision_radii", vertex_count) ||
+        !expect_int32(collider_types, "collider_types") ||
+        !expect_int32(collider_groups, "collider_groups") ||
+        !expect_float32(collider_radii, "collider_radii")) {
         return nullptr;
     }
 
@@ -185,6 +204,24 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
         !expect_indices_in_range(edge_j, "edge_j", vertex_count) ||
         !expect_indices_in_range(bend_i, "bend_i", vertex_count) ||
         !expect_indices_in_range(bend_j, "bend_j", vertex_count)) {
+        return nullptr;
+    }
+
+    Py_ssize_t collider_count = 0;
+    Py_ssize_t collider_segment_a_count = 0;
+    Py_ssize_t collider_segment_b_count = 0;
+    if (!expect_vector3_array(collider_centers, "collider_centers", &collider_count) ||
+        !expect_vector3_array(collider_segment_a, "collider_segment_a", &collider_segment_a_count) ||
+        !expect_vector3_array(collider_segment_b, "collider_segment_b", &collider_segment_b_count)) {
+        return nullptr;
+    }
+    if (collider_segment_a_count != collider_count || collider_segment_b_count != collider_count) {
+        PyErr_SetString(PyExc_ValueError, "collider segment array length mismatch");
+        return nullptr;
+    }
+    if (!expect_1d_array(collider_types, "collider_types", collider_count) ||
+        !expect_1d_array(collider_groups, "collider_groups", collider_count) ||
+        !expect_1d_array(collider_radii, "collider_radii", collider_count)) {
         return nullptr;
     }
 
@@ -212,6 +249,10 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
     if (PyErr_Occurred()) {
         return nullptr;
     }
+    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 18), "collided_by_groups");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
 
     hotools::MeshXpbdView solver_view;
     solver_view.positions = static_cast<float*>(positions.view.buf);
@@ -227,6 +268,15 @@ PyObject* solve_mesh_shape_key_xpbd(PyObject*, PyObject* args) {
     solver_view.bend_j = static_cast<const std::int32_t*>(bend_j.view.buf);
     solver_view.bend_rest = static_cast<const float*>(bend_rest.view.buf);
     solver_view.bend_count = static_cast<std::int64_t>(bend_count);
+    solver_view.collision_radii = static_cast<const float*>(collision_radii.view.buf);
+    solver_view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
+    solver_view.collider_types = static_cast<const std::int32_t*>(collider_types.view.buf);
+    solver_view.collider_groups = static_cast<const std::int32_t*>(collider_groups.view.buf);
+    solver_view.collider_centers = static_cast<const float*>(collider_centers.view.buf);
+    solver_view.collider_segment_a = static_cast<const float*>(collider_segment_a.view.buf);
+    solver_view.collider_segment_b = static_cast<const float*>(collider_segment_b.view.buf);
+    solver_view.collider_radii = static_cast<const float*>(collider_radii.view.buf);
+    solver_view.collider_count = static_cast<std::int64_t>(collider_count);
 
     const float* gravity_values = static_cast<const float*>(gravity.view.buf);
     solver_view.gravity[0] = gravity_values[0];

@@ -373,6 +373,10 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
         col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
         col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
+        if scene.ho_collision_overlay_show_mesh_vertices:
+            hint = col.column(align=True)
+            hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
+            hint.label(text="暂不保证跟随最终变形")
 
 
 def draw_collision_overlay_header(self, context):
