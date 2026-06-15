@@ -1,14 +1,16 @@
 # HoTools
 
-反馈 QQ 群：1017402879。进群问题请填写自己的 B 站昵称，问题和建议尽量在群里集中反馈。
+HoTools 是一组面向 Blender 角色、模型、贴图、动画和自动化流程的工具集合。插件按模块组织，常用工具会出现在 3D 视图侧栏 `HoTools`、右键菜单、属性面板或 OmniNode 节点图里。
 
-本人 B 站：空洞 Hollow，相关教程会发布在空间：
+反馈 QQ 群：`1017402879`。进群问题请填写自己的 B 站昵称，问题和建议尽量在群里集中反馈。
+
+作者 B 站：空洞 Hollow
 
 ```text
 https://space.bilibili.com/60340452
 ```
 
-插件文档：
+在线文档：
 
 ```text
 https://hollowamechan.github.io/HotoolsDoc-Quartz/
@@ -16,289 +18,94 @@ https://hollowamechan.github.io/HotoolsDoc-Quartz/
 
 文档不定期更新，最新功能通常会先在群内快速演示。
 
-## 安装说明
+## 安装
 
-Release 页面里上传的 `HoTools-*.zip` 是给 Blender 用户安装的干净插件包。安装时使用这个 zip，不要优先使用 GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)`。
+Release 页面里上传的 `HoTools-*.zip` 是给 Blender 用户安装的插件包。安装时优先使用这个 zip，不要优先使用 GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)`。
+
+安装步骤：
+
+1. 在 Blender 里打开 `编辑 > 偏好设置 > 插件`。
+2. 点击 `从磁盘安装`，选择 `HoTools-*.zip`。
+3. 启用 `HoTools`。
+4. 需要内置资产时，在插件偏好设置里点击 `注册内置资源库`。
 
 如果下载的是 GitHub 自动生成的源码压缩包，需要确认解压后的主目录名是 `HoTools`，否则 Blender 无法按插件包名正常加载。
 
+## 入口
+
+- 大部分工具在 3D 视图右侧 `N` 面板的 `HoTools` 分类中。
+- 部分建模和骨骼操作会追加到右键菜单、合并菜单、物体转换菜单或 Outliner 菜单。
+- 碰撞相关属性在骨骼、物体、网格的属性面板中。
+- OmniNode 是可选功能，需要在插件偏好设置里开启 `OmniNode`。
+- exIcon 是可选的快捷键/图标叠加显示，也在插件偏好设置里开启。
+
+## 功能模块
+
+### 快速建模与视图工具
+
+包含常用编辑操作和快捷操作，例如填充选择、加选/减选 Ring、点击封闭孔洞、选择底面放置、视图对准面、自定义拆边法线导入导出、面片转参考图、修改器复制和显示同步等。
+
+### 骨骼工具
+
+面向绑定和骨架整理，包含骨骼重命名、骨骼细分并转移权重、骨骼融并并合并权重、Humanoid 映射、按映射添加约束、应用/清理骨骼约束等工具。
+
+### 物理与碰撞工具
+
+提供 HoTools 物理相关属性和预览绘制，包括骨骼碰撞体、被动碰撞体、网格逐顶点碰撞球、碰撞组设置和碰撞预览叠加层。OmniNode 里的弹簧骨、VRM SpringBone、网格物理 XPBD 会消费这些属性。
+
+### 形态键工具
+
+用于形态键制作、清理、镜像、拆分、传递和批量管理。包含形态键复制/粘贴、按规则删除、偏移选择、平滑、镜像、左右拆分、应用修改器并保留形态键、批量添加形态键、多物体形态键流程等。
+
+### 顶点组与顶点色工具
+
+提供顶点组、顶点色相关的辅助操作，例如权重转顶点色、选择相同顶点色面、烘焙自定义法线到顶点色，以及 OmniNode 中的顶点组/顶点色读写节点。
+
+### UV、烘焙与图像工具
+
+包含 UV 层替换、移动活动 UV 层、选中 UV 适配到第一象限、UV 转形态键、贴图烘焙、RT 烘焙、图像选区和遮罩编辑等工具。烘焙模块可导出 UV 岛、网格岛、面 ID、物体 ID、材质 ID、顶点色、顶点组权重、SDF、光照可见度等辅助贴图。
+
+### 动画工具
+
+包含 Action 修复、刚体物理辅助、碰撞体分类、复制刚体约束、生成刚体约束等工具。
+
+### 检查工具
+
+用于检查模型和镜像问题，支持列表刷新、定位对象/面/点/边/骨骼，以及对称点选择、交换、强制对称和自动修复。
+
+### 映射改名工具
+
+用于骨骼、材质等名称映射和批量重命名。支持映射列表编辑、剪贴板复制粘贴、模板文件、自动 Humanoid 映射和批量改名。
+
+### 导出工具
+
+包含 HoTools FBX 导出、仅预处理导出、骨骼约束导出等面向流程的导出辅助。
+
+### RBF 工具
+
+用于生成低模 cage、KNN 传递和清理 RBF 结果键等形变/传递流程。
+
+### OmniNode
+
+OmniNode 是 HoTools 的节点式自动化系统。它提供数据、数学、逻辑、图像、材质、修改器、UV、顶点色、顶点组、物理、缓存、组节点和调试节点等模块。
+
+当前 OmniNode 还包含：
+
+- runtime cache 节点，用于显式保存临时运行状态。
+- 每帧运行和编译缓存，避免重复编译节点图。
+- Debug 编译、Debug 运行、Debug 运行时长等调试模式。
+- `网格物理-XPBD` 和 `网格物理-XPBD-CPP` 两套节点，后者使用 C++ native 后端加速求解。
+
+## 兼容性
+
+当前开发目标是 Blender `4.5`。Release 包会带上插件运行需要的 Python 依赖和 native runtime 产物；普通用户不需要手动编译 C++ 后端。
+
 如果某个 Release 版本出现严重问题，可以临时回退到至少前一天的版本。
 
-## 当前 native 后端状态
+## 开发者文档
 
-仓库已经落地第一版 C++ native 后端：`hotools_native` 模块、`网格物理-XPBD-CPP` 节点、CMake 构建和 smoke test 都已接通。
+根 README 主要面向用户。开发、架构和 native 构建细节请看：
 
-这一版桥接层先用 Python C API / buffer 方式直连，目标是先把 `网格物理-XPBD` / `meshPhysicsXPBD` 节点里最耗时的 XPBD solve 阶段移动到 C++，Python 侧继续负责 Blender 数据读取、cache 管理、shape key 写回和 OmniNode 接口。
-
-这里参考的是 HoCloth 已经跑通的发布流程和 native 构建分层，不是迁移 HoCloth 的业务代码。
-
-## 本机路径
-
-当前机器上已经确认存在的工具路径如下。
-
-```powershell
-$Repo = "C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-
-$Blender = "D:\Blender\Blender 4.5\blender.exe"
-$BlenderPython311 = "D:\Blender\Blender 4.5\4.5\python\bin\python.exe"
-$BlenderPython313 = "D:\Blender\blender-5.1.0-windows-x64\5.1\python\bin\python.exe"
-
-$VsDevCmd = "D:\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-$MSBuild = "D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
-$CMake = "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-```
-
-注意事项：
-
-- 编译 Blender 可加载的 `.pyd` 时，不要依赖系统默认 `python` 或 `py -3.11`。
-- Blender 4.5 使用 Python 3.11 ABI，所以 3.11 产物必须用 Blender 自带 Python 路径参与配置。
-- 后续如果支持 Blender 5.1+ / Python 3.13，需要再补对应的 Blender Python 3.13 路径和构建 preset。
-
-## Python 版本和产物目录
-
-HoTools 已经按 Python 版本划分第三方依赖目录：
-
-```text
-_Lib/
-  py311/
-  py313/
-```
-
-native runtime 不直接混放在 `py311` 或 `py313` 根目录，统一放到单独的 `HotoolsPackage` 子目录：
-
-```text
-_Lib/py311/HotoolsPackage/
-_Lib/py313/HotoolsPackage/
-```
-
-约定：
-
-- `_Lib/py311/HotoolsPackage` 放 Blender 4.1+ / Python 3.11 ABI 的 native 产物。
-- `_Lib/py313/HotoolsPackage` 放 Blender 5.1+ / Python 3.13 ABI 的 native 产物。
-- `HotoolsPackage` 目录只放运行时需要的 `.pyd`、`.dll`、必要的 `.pdb` 等文件。
-- CMake / Visual Studio / Ninja 的中间产物不放进 `HotoolsPackage`。
-
-典型产物示例：
-
-```text
-_Lib/py311/HotoolsPackage/hotools_native.cp311-win_amd64.pyd
-_Lib/py313/HotoolsPackage/hotools_native.cp313-win_amd64.pyd
-```
-
-插件启动时，[`__init__.py`](./__init__.py) 会按当前 Python 版本把对应的 `HotoolsPackage` 插入到 `sys.path` 前面，因此 Python 代码可以稳定：
-
-```python
-import hotools_native
-```
-
-## 目录约定
-
-```text
-HoTools/
-  _Lib/
-    py311/
-      HotoolsPackage/       Python 3.11 native runtime
-    py313/
-      HotoolsPackage/       Python 3.13 native runtime
-  _native/
-    include/                C++ 头文件
-    src/                    C++ native 实现
-    tests/                  smoke test / benchmark
-    build/                  本地 CMake 构建目录，不提交
-  _build/                   本地 staging 或临时构建目录，不提交
-  _dist/                    本地临时输出目录，不提交
-```
-
-核心规则：
-
-- `_native` 是 C++ 开发工程目录。
-- `_Lib/*/HotoolsPackage` 是 Blender 运行时加载目录。
-- Release zip 需要包含 `_Lib/*/HotoolsPackage` 里的最终运行时产物。
-- Release zip 不应该包含 `_native`、`.github`、`.git`、`.vscode`、`.vs`、`_build`、`_dist`、`build`、`cmake-build-*` 等开发目录。
-
-## native 绑定架构
-
-建议拆成三层，避免 C++ 层直接依赖 Blender API。
-
-### 1. Python 节点层
-
-主要位置：
-
-```text
-OmniNode/NodeTree/Function/Physics.py
-```
-
-职责：
-
-- 校验 Blender mesh object、shape key、pin group、frame continuity。
-- 用 `foreach_get` 批量读取 Basis / shape key 坐标。
-- 维护 runtime cache，例如 `positions`、`prev_positions`、`inv_masses`、约束数组。
-- 优先调用 C++ solver，native 不可用时回退 Python solver。
-- 用 `foreach_set` 批量写回目标 shape key。
-
-Python 层负责和 `bpy` 交互，C++ 层不要保存 Blender 对象指针，也不要直接访问 `bpy`。
-
-### 2. native 桥接层
-
-建议模块名：
-
-```text
-hotools_native
-```
-
-第一版先暴露窄接口，当前实现就是这个方向：
-
-```cpp
-solve_mesh_shape_key_xpbd(
-    positions,
-    prev_positions,
-    rest_positions,
-    inv_masses,
-    edge_i,
-    edge_j,
-    edge_rest,
-    bend_i,
-    bend_j,
-    bend_rest,
-    gravity,
-    dt,
-    damping,
-    substeps,
-    iterations,
-    stretch_compliance,
-    bend_compliance
-)
-```
-
-数据约定：
-
-- `positions` / `prev_positions` 使用 `float32`，shape 为 `(vertex_count, 3)`。
-- `rest_positions` 使用 `float32`，shape 为 `(vertex_count, 3)`，用于 pin 顶点回到 rest。
-- `inv_masses` 使用 `float32`，shape 为 `(vertex_count,)`。
-- 约束索引使用 `int32`。
-- rest length 使用 `float32`。
-- C++ 原地更新 `positions` 和 `prev_positions`。
-- C++ 不保存全局 solver 状态，所有跨帧状态由 Python cache 管理。
-
-### 3. C++ solver 层
-
-职责：
-
-- prediction。
-- pin 修正。
-- stretch distance constraint。
-- bend distance constraint。
-- substep / iteration 循环。
-- smoke test / benchmark。
-
-第一阶段重点是迁移 solve 热点，而不是重写整个节点系统。
-
-## 构建流程
-
-当前已经有 `_native/CMakeLists.txt` 和 `_native/CMakePresets.json`。手动编译流程建议按下面的方式执行。
-
-### 1. 打开 VS 构建环境
-
-```powershell
-cmd /k "D:\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64
-```
-
-也可以直接在 PowerShell 里显式调用 VS 自带 CMake，避免依赖 PATH。
-
-### 2. 配置 Python 3.11 构建
-
-```powershell
-cd "C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --preset vs2022-py311
-```
-
-### 3. 编译 Python 3.11 产物
-
-```powershell
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --build --preset vs2022-py311-release
-```
-
-编译完成后，目标产物应该出现在：
-
-```text
-_Lib/py311/HotoolsPackage/
-```
-
-### 4. 配置 Python 3.13 构建
-
-等本机准备好 Blender 5.1+ / Python 3.13 后，再使用同样流程配置 3.13：
-
-```powershell
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --preset vs2022-py313
-```
-
-```powershell
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --build --preset vs2022-py313-release
-```
-
-## 导入验证
-
-Python 3.11：
-
-```powershell
-& "D:\Blender\Blender 4.5\4.5\python\bin\python.exe" -c "import sys; sys.path.insert(0, r'C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools\_Lib\py311\HotoolsPackage'); import hotools_native; print(hotools_native)"
-```
-
-Python 3.13 同理，把 Python 路径和 `HotoolsPackage` 路径切到 `_Lib\py313\HotoolsPackage`。
-
-## 发布流程
-
-发布给用户安装的包由 GitHub Actions workflow 生成，不用开发者手动在本机压缩。
-
-当前约定：
-
-1. 本机或 CI 先把 native 最终运行时产物放入 `_Lib/py311/HotoolsPackage`、`_Lib/py313/HotoolsPackage`。
-2. GitHub Actions 创建一个临时 `HoTools/` staging 目录。
-3. workflow 用 `rsync` 复制仓库内容，同时排除 `.git`、`.github`、IDE 目录、Python 缓存、CMake 构建目录、`_native` 源码目录等开发内容。
-4. workflow 把 staging 后的 `HoTools/` 压缩成 `HoTools-YYYYMMDD-HHMMSS.zip`。
-5. workflow 创建 GitHub Release 并上传这个 zip。
-
-Release 页面仍会显示 GitHub 自动生成的 `Source code (zip)` 和 `Source code (tar.gz)`，但那两个不是面向 Blender 用户安装的干净包。用户安装应下载 workflow 上传的 `HoTools-*.zip`。
-
-## gitignore 和发布包关系
-
-`.gitignore` 只决定哪些本地文件默认不进入 Git，不等于发布 zip 的排除规则。
-
-发布 zip 的排除规则在：
-
-```text
-.github/workflows/release.yml
-```
-
-因此需要同时满足两件事：
-
-- 开发期中间产物通过 `.gitignore` 排除，避免误提交。
-- 用户安装包通过 `release.yml` 的 `rsync --exclude` 排除开发目录，避免 zip 里带上不必要文件。
-
-`HotoolsPackage` 目录里后续如果放入真正需要发布的 `.pyd` / `.dll`，必须确保它们没有被 `.gitignore` 排除，并且能被 release workflow 复制进安装包。
-
-## 本地清理
-
-清理开发期构建缓存：
-
-```powershell
-Remove-Item -LiteralPath "_native\build" -Recurse -Force
-Remove-Item -LiteralPath "_build" -Recurse -Force
-Remove-Item -LiteralPath "_dist" -Recurse -Force
-```
-
-不要清理 `_Lib/py311/HotoolsPackage` 和 `_Lib/py313/HotoolsPackage` 里的正式运行时产物，除非你确定要重新编译替换。
-
-## 下一步
-
-后续开发顺序建议：
-
-1. 视需要再把桥接层从 Python C API 收敛到 nanobind。
-2. 扩展 `hotools_native` 的 benchmark。
-3. 继续打磨 `meshPhysicsXPBDCpp` 的行为对齐和性能。
-4. 最后把 workflow 的发布 zip 规则和真实产物再跑一轮验证。
+- `OmniNode/ARCHITECTURE.md`
+- `_native/README.md`
+- `.github/workflows/release.yml`
