@@ -120,12 +120,13 @@ class _BonePhysics:
         return vec.to_3d()
 
     @staticmethod
-    def scene_delta_time() -> float:
+    def scene_delta_time(scene: bpy.types.Scene = None) -> float:
         """
         从场景输出设置读取真实帧间隔。
         SpringBone 不暴露 dt 输入，统一跟随 render.fps / render.fps_base。
         """
-        render = bpy.context.scene.render
+        scene = scene or bpy.context.scene
+        render = scene.render
         fps_base = float(render.fps_base) if render.fps_base else 1.0
         fps = float(render.fps) / fps_base
         return 1.0 / fps if fps > 0.0 else 0.0
@@ -1534,6 +1535,7 @@ class _MeshPhysics:
         cls,
         state: dict,
         obj: bpy.types.Object,
+        scene: bpy.types.Scene,
         substeps: int,
         iterations: int,
         gravity_dir,
@@ -1555,7 +1557,7 @@ class _MeshPhysics:
         pinned = inv_masses <= cls.EPSILON
         has_pinned = bool(np.any(pinned))
 
-        dt = _BonePhysics.scene_delta_time()
+        dt = _BonePhysics.scene_delta_time(scene)
         substep_count = max(1, min(16, int(substeps)))
         iteration_count = max(0, min(64, int(iterations)))
         step_dt = dt / substep_count if substep_count > 0 else dt
@@ -1748,6 +1750,7 @@ class _MeshPhysicsCppBackend:
         cls,
         state: dict,
         obj: bpy.types.Object,
+        scene: bpy.types.Scene,
         substeps: int,
         iterations: int,
         gravity_dir,
@@ -1770,7 +1773,7 @@ class _MeshPhysicsCppBackend:
         bend_j = np.ascontiguousarray(state["bend_j"], dtype=np.int32)
         bend_rest = np.ascontiguousarray(state["bend_rest"], dtype=np.float32)
 
-        dt = _BonePhysics.scene_delta_time()
+        dt = _BonePhysics.scene_delta_time(scene)
         substep_count = max(1, min(16, int(substeps)))
         iteration_count = max(0, min(64, int(iterations)))
         gravity = np.ascontiguousarray(
@@ -1838,6 +1841,7 @@ def _run_mesh_xpbd_node(
     use_cpp: bool,
     cache_state: _OmniCache,
     obj: bpy.types.Object,
+    scene: bpy.types.Scene,
     enabled: bool,
     reset: bool,
     substeps: int,
@@ -1853,6 +1857,7 @@ def _run_mesh_xpbd_node(
     backend_tag = "cpp" if use_cpp else "py"
     stage_start = time.perf_counter() if timing is not None else None
     obj = _MeshPhysics.require_mesh_object(obj, "obj")
+    scene = scene or bpy.context.scene
     shape_key_name = _MeshPhysics.output_shape_key_name(obj)
     target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
     if timing is not None:
@@ -1863,7 +1868,7 @@ def _run_mesh_xpbd_node(
     vertex_count = len(obj.data.vertices)
     state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, topology_key) else None
     cached_frame = _BonePhysics.cache_frame(state)
-    current_frame = int(getattr(bpy.context.scene, "frame_current", 0) or 0)
+    current_frame = int(getattr(scene, "frame_current", 0) or 0)
     if timing is not None:
         _MeshPhysics.add_timing(timing, "cache", time.perf_counter() - stage_start)
 
@@ -1922,7 +1927,7 @@ def _run_mesh_xpbd_node(
             raise ImportError("hotools_native is not available; build the native backend first")
 
     stage_start = time.perf_counter() if timing is not None else None
-    collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(bpy.context.scene, True, True, False)
+    collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
     colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
     if timing is not None:
         _MeshPhysics.add_timing(timing, "colliders", time.perf_counter() - stage_start)
@@ -1931,6 +1936,7 @@ def _run_mesh_xpbd_node(
     next_state = backend.solve(
         state,
         obj,
+        scene,
         substeps,
         iterations,
         gravity_dir,
@@ -2218,7 +2224,7 @@ def springBoneVRM(
 
     collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
     colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
-    dt = _BonePhysics.scene_delta_time()
+    dt = _BonePhysics.scene_delta_time(scene)
     substep_count = max(1, min(16, int(substeps)))
     step_dt = dt / substep_count if substep_count > 0 else dt
 
@@ -2380,6 +2386,7 @@ def springBoneVRM(
     _INPUT_NAME=[
         "缓存",
         "物体",
+        "场景",
         "启用",
         "重置",
         "子步数",
@@ -2407,37 +2414,41 @@ def springBoneVRM(
     omni_presets=_MESH_XPBD_PRESETS,
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
-    标准 Python 网格物理 XPBD 节点，也是后续 CPP 后端版本的行为蓝本。
-    节点只写入指定形态键，不直接修改 Basis 或网格顶点；当前 Python 版本支持骨骼/Object 被动碰撞，不做自碰撞、网格-网格碰撞或 modifier 后结果解算。
+    Python 参考实现。用于定义网格 XPBD 的输入、输出、cache 协议、跳帧规则与 CPP 后端对齐基准。
 
-    接法：
-    1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
-    2. 输出形态键在物体属性的“HoTools网格碰撞”面板中设置；如果目标 key 不存在会自动创建。
-    3. Pin 顶点也在“HoTools网格碰撞”面板中设置；启用 Pin 且顶点组留空时会固定全部顶点。
+    I/O 约定：
+    缓存必须通过同名缓存读写节点闭环；节点只写目标形态键，不修改 Basis 或 mesh 顶点。
+    场景输入提供 frame_current、render.fps / fps_base，并作为骨骼/Object 被动碰撞体的枚举范围。
+    输出形态键、Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools网格碰撞”。
 
-    工作原理：
-    节点从 Basis/reference key 批量读取 rest 顶点，把坐标转换到世界空间后建立运行时 cache。
-    mesh edges 生成拉伸距离约束，共边三角面的 opposite 顶点生成简化弯曲距离约束。
-    每次执行代表推进一帧：按子步数做 Verlet 预测，再按迭代次数投影拉伸、弯曲和被动碰撞约束，最后把世界空间结果转换回物体局部空间并批量写入目标形态键。
-    stretch_compliance / bend_compliance 越大约束越软；为 0 时接近硬约束。
-    damping 表示每个 Blender 场景帧的速度阻尼；节点会按子步数换算到每个子步，避免子步越多模拟越粘。
+    求解模型：
+    rest 顶点取自 Basis/reference key；mesh edge 生成拉伸距离约束，共边三角面的 opposite 顶点生成弯曲距离约束。
+    每次执行推进一个 Blender 场景帧：Verlet 预测，按迭代次数投影 pin、stretch、bend 与被动碰撞约束，再批量写回目标形态键。
+    damping 是“每场景帧速度阻尼”，内部按 substeps 换算为子步阻尼；stretch_compliance / bend_compliance 为 XPBD 顺从度，0 表示硬约束。
 
-    Blender 边界：
-    Python 侧负责 Blender 数据读取、shape key 创建与写回、cache 管理和跳帧保护。
-    求解过程中不会逐点写 Blender 数据，只在最后使用 foreach_set 批量写目标形态键。
-    物体拓扑或目标形态键变化时会重建 cache；物体缩放变化时会重算 rest 约束长度。
-    Pin、逐顶点碰撞半径和被碰撞组只在 cache 重建时读取，模拟过程中修改不会立即生效。
+    坐标空间：
+    Blender mesh 与 shape key 坐标为物体局部空间；XPBD cache 与求解阶段使用世界空间。
+    cache 重建流程：rest_local_positions = Basis/reference local；rest_positions = matrix_world * rest_local_positions。
+    写回流程：target_shape_key = matrix_world.inverted() * positions。
+    重力方向、被动球/胶囊碰撞体、逐顶点碰撞半径均在世界空间参与求解；局部半径会按 matrix_world 最大轴缩放转换。
 
-    跳帧规则：
-    与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存，避免继承旧速度。
+    数据生命周期：
+    编译期固定节点函数、socket 连线与常量输入；不固化场景状态、mesh 顶点、碰撞体或 Blender 指针。
+    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、输出形态键名称、可见碰撞体及其当前变换。
+    cache 重建时固定 rest_local_positions、topology、约束索引、pin 权重、局部碰撞半径和碰撞组。
+    cache 运行态只推进 positions、prev_positions、frame。matrix_world 变化时重新派生 rest_positions；3x3 部分变化时重算约束长度和世界空间半径。
+    positions / prev_positions 保持世界空间惯性，不随物体变换整体迁移。
 
-    升级约定：
-    CPP 后端节点命名为“网格物理-XPBD-CPP”，两个节点应保持同一套输入、输出、cache 语义、跳帧行为和被动碰撞规则。
+    失效规则：
+    仅接受 current_frame == cached_frame + 1。跳帧、倒放、同帧重复或 reset 时恢复 rest_local_positions 到目标形态键并清空连续速度。
+    topology、pin、碰撞半径、碰撞组或目标形态键配置变化后，需要 reset、跳帧保护或 cache 重建路径生效。
+    当前范围包括骨骼/Object 被动碰撞；不包含自碰撞、mesh-mesh 碰撞或 modifier 结果解算。
     """,
 )
 def meshPhysicsXPBD(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
+    scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
@@ -2453,6 +2464,7 @@ def meshPhysicsXPBD(
         use_cpp=False,
         cache_state=cache_state,
         obj=obj,
+        scene=scene,
         enabled=enabled,
         reset=reset,
         substeps=substeps,
@@ -2474,6 +2486,7 @@ def meshPhysicsXPBD(
     _INPUT_NAME=[
         "缓存",
         "物体",
+        "场景",
         "启用",
         "重置",
         "子步数",
@@ -2501,23 +2514,34 @@ def meshPhysicsXPBD(
     omni_presets=_MESH_XPBD_PRESETS,
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
-    标准网格物理 XPBD 的 C++ 后端节点，和 Python 蓝本保持同样的输入、输出、cache 语义与跳帧规则。
-    Python 侧仍负责 Blender 数据校验、shape key 创建与写回、cache 管理和对象变换同步；本节点只接管求解热路径。
+    C++ 求解后端。与“网格物理-XPBD”共享输入、输出、cache 协议、跳帧规则和 Blender 侧数据生命周期。
 
-    工作原理：
-    与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
-    差异在求解器后端：这里把预测、pin、stretch、bend、被动碰撞投影和循环交给 C++。
-    damping 表示每个 Blender 场景帧的速度阻尼；C++ 求解器会按子步数换算到每个子步，避免子步越多模拟越粘。
-    输出形态键在物体属性的“HoTools网格碰撞”面板中设置；不存在时会自动创建。
-    Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
+    职责划分：
+    Python 层负责 Blender 数据读取、校验、shape key 创建/写回、cache 管理、对象变换同步和碰撞体快照。
+    C++ 层负责预测、pin、stretch、bend、被动碰撞投影和子步/迭代循环。
+    native 不访问 bpy，不保存 Blender 指针，不维护跨帧全局状态。
 
-    升级约定：
-    这是后续 native 优化的正式入口。它不改变节点使用方式，只替换求解实现。
+    坐标空间：
+    Blender mesh 与 shape key 坐标为物体局部空间；传入 native 的 rest_positions、positions、prev_positions、约束长度、碰撞半径和 collider 数组均为世界空间。
+    Python 桥接流程：Basis/reference local -> matrix_world -> world-space arrays -> native solve -> matrix_world.inverted() -> target shape key。
+    reset、跳帧、倒放或同帧重复执行时不调用 native，直接恢复 rest_local_positions 到目标形态键。
+
+    数据生命周期：
+    编译期固定节点函数、socket 连线与常量输入；不固化场景状态、mesh 顶点、碰撞体或 Blender 指针。
+    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、输出形态键名称、可见碰撞体及其当前变换。
+    cache 重建时固定 rest_local_positions、topology、约束索引、pin 权重、局部碰撞半径和碰撞组。
+    cache 运行态只推进 positions、prev_positions、frame。matrix_world 变化时重新派生 rest_positions；3x3 部分变化时重算约束长度和世界空间半径。
+    positions / prev_positions 保持世界空间惯性，不随物体变换整体迁移。
+
+    对齐要求：
+    Python 版是行为参考；CPP 版只能替换求解热路径，不改变节点使用方式、cache 语义、碰撞过滤或跳帧行为。
+    两端结果不一致时，优先检查 Python 桥接层生成的 native 输入数组。
     """,
 )
 def meshPhysicsXPBDCpp(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
+    scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
@@ -2533,6 +2557,7 @@ def meshPhysicsXPBDCpp(
         use_cpp=True,
         cache_state=cache_state,
         obj=obj,
+        scene=scene,
         enabled=enabled,
         reset=reset,
         substeps=substeps,
