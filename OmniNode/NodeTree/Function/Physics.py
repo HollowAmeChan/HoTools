@@ -10,6 +10,7 @@ from . import _Color
 
 import bpy
 import hashlib
+import importlib
 import mathutils
 import numpy as np
 import time
@@ -831,6 +832,7 @@ class _MeshPhysics:
         frame: int,
         vertex_count: int,
         constraint_count: int,
+        backend_tag: str,
         timing: dict | None,
     ) -> None:
         if timing is None:
@@ -840,7 +842,7 @@ class _MeshPhysics:
         stages = dict(timing.get("stages") or {})
         stages["total"] = max(now - float(timing.get("start", now)), 0.0)
 
-        key = (int(obj.as_pointer()), str(shape_key_name))
+        key = (int(obj.as_pointer()), str(shape_key_name), str(backend_tag))
         profile = cls._debug_profiles.setdefault(
             key,
             {
@@ -873,6 +875,7 @@ class _MeshPhysics:
             "pin",
             "stretch",
             "bend",
+            "native",
             "solve_total",
             "write",
             "total",
@@ -887,7 +890,7 @@ class _MeshPhysics:
             stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
 
         print(
-            "[MeshPhysicsXPBD] "
+            f"[MeshPhysicsXPBD:{backend_tag}] "
             f"obj={obj.name_full} key={shape_key_name} frame={profile['frame']} "
             f"samples={sample_count} verts={profile['vertex_count']} "
             f"constraints={profile['constraint_count']} "
@@ -1378,6 +1381,215 @@ class _MeshPhysics:
         next_state["prev_positions"] = np.ascontiguousarray(prev_positions, dtype=np.float32)
         return next_state
 
+class _MeshPhysicsCppBackend:
+    _native_module = None
+
+    @classmethod
+    def native_module(cls):
+        if cls._native_module is None:
+            cls._native_module = importlib.import_module("hotools_native")
+        return cls._native_module
+
+    @classmethod
+    def is_available(cls) -> bool:
+        try:
+            module = cls.native_module()
+        except Exception:
+            return False
+        return hasattr(module, "solve_mesh_shape_key_xpbd")
+
+    @classmethod
+    def solve(
+        cls,
+        state: dict,
+        obj: bpy.types.Object,
+        substeps: int,
+        iterations: int,
+        gravity_dir,
+        gravity_power: float,
+        damping: float,
+        stretch_compliance: float,
+        bend_compliance: float,
+        timing: dict | None = None,
+    ) -> dict:
+        _ = obj
+        stage_start = time.perf_counter() if timing is not None else None
+        positions = np.ascontiguousarray(state["positions"], dtype=np.float32)
+        prev_positions = np.ascontiguousarray(state["prev_positions"], dtype=np.float32)
+        rest_positions = np.ascontiguousarray(state["rest_positions"], dtype=np.float32)
+        inv_masses = np.ascontiguousarray(state["inv_masses"], dtype=np.float32)
+        edge_i = np.ascontiguousarray(state["edge_i"], dtype=np.int32)
+        edge_j = np.ascontiguousarray(state["edge_j"], dtype=np.int32)
+        edge_rest = np.ascontiguousarray(state["edge_rest"], dtype=np.float32)
+        bend_i = np.ascontiguousarray(state["bend_i"], dtype=np.int32)
+        bend_j = np.ascontiguousarray(state["bend_j"], dtype=np.int32)
+        bend_rest = np.ascontiguousarray(state["bend_rest"], dtype=np.float32)
+
+        dt = _BonePhysics.scene_delta_time()
+        substep_count = max(1, min(16, int(substeps)))
+        iteration_count = max(0, min(64, int(iterations)))
+        gravity = np.ascontiguousarray(
+            _MeshPhysics.world_gravity(gravity_dir) * max(float(gravity_power), 0.0),
+            dtype=np.float32,
+        )
+        damping = max(0.0, min(1.0, float(damping)))
+        stretch_compliance = max(float(stretch_compliance), 0.0)
+        bend_compliance = max(float(bend_compliance), 0.0)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
+        cls.native_module().solve_mesh_shape_key_xpbd(
+            positions,
+            prev_positions,
+            rest_positions,
+            inv_masses,
+            edge_i,
+            edge_j,
+            edge_rest,
+            bend_i,
+            bend_j,
+            bend_rest,
+            gravity,
+            float(dt),
+            float(damping),
+            int(substep_count),
+            int(iteration_count),
+            float(stretch_compliance),
+            float(bend_compliance),
+        )
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "native", time.perf_counter() - stage_start)
+
+        next_state = dict(state)
+        next_state["positions"] = np.ascontiguousarray(positions, dtype=np.float32)
+        next_state["prev_positions"] = np.ascontiguousarray(prev_positions, dtype=np.float32)
+        return next_state
+
+
+def _run_mesh_xpbd_node(
+    *,
+    use_cpp: bool,
+    cache_state: _OmniCache,
+    obj: bpy.types.Object,
+    pin_group: _OmniVertexGroup,
+    target_shape_key: _OmniShapeKey,
+    enabled: bool,
+    reset: bool,
+    substeps: int,
+    iterations: int,
+    gravity_dir,
+    gravity_power: float,
+    damping: float,
+    stretch_compliance: float,
+    bend_compliance: float,
+    debug_output: bool,
+) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+    timing = _MeshPhysics.begin_timing() if debug_output else None
+    backend_tag = "cpp" if use_cpp else "py"
+    stage_start = time.perf_counter() if timing is not None else None
+    obj = _MeshPhysics.require_mesh_object(obj, "obj")
+    shape_obj, shape_key_name = _MeshPhysics.resolve_shape_key_value(target_shape_key, obj)
+    if shape_obj != obj:
+        raise ValueError("target shape key object must be the same as obj")
+
+    pin_group = _MeshPhysics.validate_pin_group(obj, pin_group)
+    target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
+
+    stage_start = time.perf_counter() if timing is not None else None
+    topology_key = _MeshPhysics.topology_key(obj)
+    vertex_count = len(obj.data.vertices)
+    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, pin_group, topology_key) else None
+    cached_frame = _BonePhysics.cache_frame(state)
+    current_frame = int(getattr(bpy.context.scene, "frame_current", 0) or 0)
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "cache", time.perf_counter() - stage_start)
+
+    if cached_frame is not None and current_frame != cached_frame + 1:
+        stage_start = time.perf_counter() if timing is not None else None
+        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
+            _MeshPhysics.publish_debug_timing(
+                obj,
+                shape_key_name,
+                current_frame,
+                vertex_count,
+                0,
+                backend_tag,
+                timing,
+            )
+        return None, obj, vertex_count, 0
+
+    if reset or not isinstance(state, dict):
+        stage_start = time.perf_counter() if timing is not None else None
+        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
+        state = _MeshPhysics.build_state(obj, shape_key_name, pin_group, topology_key)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "rebuild", time.perf_counter() - stage_start)
+    else:
+        stage_start = time.perf_counter() if timing is not None else None
+        state = _MeshPhysics.sync_state_to_object_transform(state, obj)
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "transform", time.perf_counter() - stage_start)
+
+    constraint_count = len(state["edge_i"]) + len(state["bend_i"])
+
+    if not enabled:
+        next_state = dict(state)
+        next_state["frame"] = current_frame
+        _MeshPhysics.publish_debug_timing(
+            obj,
+            shape_key_name,
+            current_frame,
+            vertex_count,
+            constraint_count,
+            backend_tag,
+            timing,
+        )
+        return next_state, obj, vertex_count, constraint_count
+
+    stage_start = time.perf_counter() if timing is not None else None
+    backend = _MeshPhysicsCppBackend if use_cpp else _MeshPhysics
+    if use_cpp:
+        if not _MeshPhysicsCppBackend.is_available():
+            raise ImportError("hotools_native is not available; build the native backend first")
+    next_state = backend.solve(
+        state,
+        obj,
+        substeps,
+        iterations,
+        gravity_dir,
+        gravity_power,
+        damping,
+        stretch_compliance,
+        bend_compliance,
+        timing,
+    )
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "solve_total", time.perf_counter() - stage_start)
+    next_state["frame"] = current_frame
+    stage_start = time.perf_counter() if timing is not None else None
+    _MeshPhysics.write_world_positions_to_shape_key(obj, target_key, next_state["positions"])
+    if timing is not None:
+        _MeshPhysics.add_timing(timing, "write", time.perf_counter() - stage_start)
+        _MeshPhysics.publish_debug_timing(
+            obj,
+            shape_key_name,
+            current_frame,
+            vertex_count,
+            constraint_count,
+            backend_tag,
+            timing,
+        )
+    return next_state, obj, vertex_count, constraint_count
+
 
 @omni(
     enable=True,
@@ -1854,81 +2066,101 @@ def meshPhysicsXPBD(
     bend_compliance: float = 0.001,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
-    timing = _MeshPhysics.begin_timing() if debug_output else None
-    stage_start = time.perf_counter() if timing is not None else None
-    obj = _MeshPhysics.require_mesh_object(obj, "obj")
-    shape_obj, shape_key_name = _MeshPhysics.resolve_shape_key_value(target_shape_key, obj)
-    if shape_obj != obj:
-        raise ValueError("target shape key object must be the same as obj")
-
-    pin_group = _MeshPhysics.validate_pin_group(obj, pin_group)
-    target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
-    if timing is not None:
-        _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
-
-    stage_start = time.perf_counter() if timing is not None else None
-    topology_key = _MeshPhysics.topology_key(obj)
-    vertex_count = len(obj.data.vertices)
-    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, pin_group, topology_key) else None
-    cached_frame = _BonePhysics.cache_frame(state)
-    current_frame = int(getattr(bpy.context.scene, "frame_current", 0) or 0)
-    if timing is not None:
-        _MeshPhysics.add_timing(timing, "cache", time.perf_counter() - stage_start)
-
-    if cached_frame is not None and current_frame != cached_frame + 1:
-        stage_start = time.perf_counter() if timing is not None else None
-        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
-        if timing is not None:
-            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
-            _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing)
-        return None, obj, vertex_count, 0
-
-    if reset or not isinstance(state, dict):
-        stage_start = time.perf_counter() if timing is not None else None
-        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
-        if timing is not None:
-            _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
-
-        stage_start = time.perf_counter() if timing is not None else None
-        state = _MeshPhysics.build_state(obj, shape_key_name, pin_group, topology_key)
-        if timing is not None:
-            _MeshPhysics.add_timing(timing, "rebuild", time.perf_counter() - stage_start)
-    else:
-        stage_start = time.perf_counter() if timing is not None else None
-        state = _MeshPhysics.sync_state_to_object_transform(state, obj)
-        if timing is not None:
-            _MeshPhysics.add_timing(timing, "transform", time.perf_counter() - stage_start)
-
-    constraint_count = len(state["edge_i"]) + len(state["bend_i"])
-
-    if not enabled:
-        next_state = dict(state)
-        next_state["frame"] = current_frame
-        _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
-        return next_state, obj, vertex_count, constraint_count
-
-    stage_start = time.perf_counter() if timing is not None else None
-    next_state = _MeshPhysics.solve(
-        state,
-        obj,
-        substeps,
-        iterations,
-        gravity_dir,
-        gravity_power,
-        damping,
-        stretch_compliance,
-        bend_compliance,
-        timing,
+    return _run_mesh_xpbd_node(
+        use_cpp=False,
+        cache_state=cache_state,
+        obj=obj,
+        pin_group=pin_group,
+        target_shape_key=target_shape_key,
+        enabled=enabled,
+        reset=reset,
+        substeps=substeps,
+        iterations=iterations,
+        gravity_dir=gravity_dir,
+        gravity_power=gravity_power,
+        damping=damping,
+        stretch_compliance=stretch_compliance,
+        bend_compliance=bend_compliance,
+        debug_output=debug_output,
     )
-    if timing is not None:
-        _MeshPhysics.add_timing(timing, "solve_total", time.perf_counter() - stage_start)
-    next_state["frame"] = current_frame
-    stage_start = time.perf_counter() if timing is not None else None
-    _MeshPhysics.write_world_positions_to_shape_key(obj, target_key, next_state["positions"])
-    if timing is not None:
-        _MeshPhysics.add_timing(timing, "write", time.perf_counter() - stage_start)
-        _MeshPhysics.publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
-    return next_state, obj, vertex_count, constraint_count
+
+
+@omni(
+    enable=True,
+    bl_label="网格物理-XPBD-CPP",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "缓存",
+        "物体",
+        "Pin顶点组",
+        "目标形态键",
+        "启用",
+        "重置",
+        "子步数",
+        "迭代",
+        "重力方向",
+        "重力强度",
+        "阻尼",
+        "拉伸顺从度",
+        "弯曲顺从度",
+        "调试输出",
+    ],
+    input_init={
+        "substeps": {"min_value": 1, "max_value": 16},
+        "iterations": {"min_value": 0, "max_value": 64},
+        "gravity_power": {"min_value": 0.0, "max_value": 100.0},
+        "damping": {"min_value": 0.0, "max_value": 1.0},
+        "stretch_compliance": {"min_value": 0.0},
+        "bend_compliance": {"min_value": 0.0},
+        "debug_output": {"description": "开启后每隔约 1 秒在控制台打印本节点各阶段平均耗时。"},
+    },
+    _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
+    omni_description="""
+    标准网格物理 XPBD 的 C++ 后端节点，和 Python 蓝本保持同样的输入、输出、cache 语义与跳帧规则。
+    Python 侧仍负责 Blender 数据校验、shape key 创建与写回、cache 管理和对象变换同步；本节点只接管求解热路径。
+
+    工作原理：
+    与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
+    差异只在求解器后端：这里把预测、pin、stretch、bend 和循环全部交给 C++。
+
+    升级约定：
+    这是后续 native 优化的正式入口。它不改变节点使用方式，只替换求解实现。
+    """,
+)
+def meshPhysicsXPBDCpp(
+    cache_state: _OmniCache,
+    obj: bpy.types.Object,
+    pin_group: _OmniVertexGroup,
+    target_shape_key: _OmniShapeKey,
+    enabled: bool = True,
+    reset: bool = False,
+    substeps: int = 1,
+    iterations: int = 6,
+    gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    gravity_power: float = 9.8,
+    damping: float = 0.02,
+    stretch_compliance: float = 0.0,
+    bend_compliance: float = 0.001,
+    debug_output: bool = False,
+) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+    return _run_mesh_xpbd_node(
+        use_cpp=True,
+        cache_state=cache_state,
+        obj=obj,
+        pin_group=pin_group,
+        target_shape_key=target_shape_key,
+        enabled=enabled,
+        reset=reset,
+        substeps=substeps,
+        iterations=iterations,
+        gravity_dir=gravity_dir,
+        gravity_power=gravity_power,
+        damping=damping,
+        stretch_compliance=stretch_compliance,
+        bend_compliance=bend_compliance,
+        debug_output=debug_output,
+    )
 
 
 @omni(

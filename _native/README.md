@@ -1,6 +1,8 @@
 # HoTools 原生后端约定
 
-本目录用于 HoTools 的 C++ / nanobind 原生后端。第一阶段目标是把 `网格物理-XPBD` / `meshPhysicsXPBD` 节点里最耗时的 XPBD solve 阶段移到 C++，Python 侧继续负责 Blender 数据准备、cache 管理、shape key 写回和节点接口。
+本目录用于 HoTools 的 C++ 原生后端。第一阶段已经落地 `hotools_native` 的 XPBD solver 和 `网格物理-XPBD-CPP` 节点，Python 侧继续负责 Blender 数据准备、cache 管理、shape key 写回和节点接口。
+
+当前桥接层先用 Python C API / buffer 方式直连，后续如果需要再收敛到 nanobind。
 
 这里借鉴的是 HoCloth 的“构建层 / 运行时层 / 发布层”分离思路，不是迁移它的业务代码。
 
@@ -102,6 +104,7 @@ $CMake = "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions
 $VsDevCmd = "D:\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
 $MSBuild = "D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
 $BlenderPython311 = "D:\Blender\Blender 4.5\4.5\python\bin\python.exe"
+$BlenderPython313 = "D:\Blender\blender-5.1.0-windows-x64\5.1\python\bin\python.exe"
 ```
 
 注意：
@@ -110,7 +113,7 @@ $BlenderPython311 = "D:\Blender\Blender 4.5\4.5\python\bin\python.exe"
 - Blender 4.5 使用 Python 3.11，`.pyd` 必须按 Blender 自带 Python ABI 编译。
 - 如果以后还要打 3.13 版，就再准备一个对应的 Blender 5.1+ / Python 3.13 路径。
 
-## nanobind 绑定架构
+## native 绑定架构
 
 建议拆成三层。
 
@@ -132,7 +135,7 @@ OmniNode/NodeTree/Function/Physics.py
 
 Python 层不要逐点调用 Blender setter，也不要让 C++ 直接访问 `bpy`。
 
-### 2. nanobind 桥接层
+### 2. native 桥接层
 
 建议模块名：
 
@@ -140,12 +143,13 @@ Python 层不要逐点调用 Blender setter，也不要让 C++ 直接访问 `bpy
 hotools_native
 ```
 
-建议接口先保持窄而直接：
+第一版接口保持窄而直接：
 
 ```cpp
 solve_mesh_shape_key_xpbd(
     positions,
     prev_positions,
+    rest_positions,
     inv_masses,
     edge_i,
     edge_j,
@@ -193,36 +197,26 @@ stretch=10.527ms bend=14.451ms solve_total=25.090ms
 
 ### 本地编译
 
-补上 `CMakeLists.txt` 和 `CMakePresets.json` 后，建议分别为 3.11 和 3.13 编译到不同目录：
+当前已有 `CMakeLists.txt` 和 `CMakePresets.json`。建议分别为 3.11 和 3.13 编译到不同目录：
 
 ```powershell
 # Blender 4.1+ / Python 3.11
 & "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  -S "_native" `
-  -B "_native\build\vs2022-py311" `
-  -G "Visual Studio 17 2022" `
-  -A x64 `
-  -T v143 `
-  -DHOTOOLS_PLUGIN_ROOT="$PWD" `
-  -DHOTOOLS_PYTHON_EXECUTABLE="D:\Blender\Blender 4.5\4.5\python\bin\python.exe" `
-  -DHOTOOLS_RUNTIME_DIR="$PWD\_Lib\py311\HotoolsPackage"
+  --preset vs2022-py311
 
 # Blender 5.1+ / Python 3.13
 & "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  -S "_native" `
-  -B "_native\build\vs2022-py313" `
-  -G "Visual Studio 17 2022" `
-  -A x64 `
-  -T v143 `
-  -DHOTOOLS_PLUGIN_ROOT="$PWD" `
-  -DHOTOOLS_PYTHON_EXECUTABLE="D:\Blender\Blender 5.1\5.1\python\bin\python.exe" `
-  -DHOTOOLS_RUNTIME_DIR="$PWD\_Lib\py313\HotoolsPackage"
+  --preset vs2022-py313
 ```
 
 编译时要带：
 
 ```powershell
---config Release
+& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
+  --build --preset vs2022-py311-release
+
+& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
+  --build --preset vs2022-py313-release
 ```
 
 否则 Visual Studio 多配置生成器不会把 Release 产物放到正确的运行时目录。
@@ -274,8 +268,7 @@ Remove-Item -LiteralPath "_dist" -Recurse -Force
 
 ## 下一步
 
-1. 补 `CMakeLists.txt`。
-2. 补 `CMakePresets.json`。
-3. 接入 `nanobind`。
-4. 让 `hotools_native` 分别输出到 `_Lib/py311/HotoolsPackage` 和 `_Lib/py313/HotoolsPackage`。
-5. 用 release workflow 生成面向 Blender 用户安装的干净 zip。
+1. 视需要再把桥接层从 Python C API 收敛到 nanobind。
+2. 扩展 `hotools_native` 的 benchmark。
+3. 继续打磨 `meshPhysicsXPBDCpp` 的行为对齐和性能。
+4. 用 release workflow 生成面向 Blender 用户安装的干净 zip。

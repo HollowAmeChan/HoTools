@@ -1,0 +1,43 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "vs2022-py311",
+      "displayName": "VS 2022 x64 / Blender Python 3.11",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022-py311",
+      "architecture": "x64",
+      "toolset": "v143",
+      "cacheVariables": {
+        "HOTOOLS_PLUGIN_ROOT": "${sourceDir}/..",
+        "HOTOOLS_PYTHON_EXECUTABLE": "D:/Blender/Blender 4.5/4.5/python/bin/python.exe",
+        "HOTOOLS_RUNTIME_DIR": "${sourceDir}/../_Lib/py311/HotoolsPackage"
+      }
+    },
+    {
+      "name": "vs2022-py313",
+      "displayName": "VS 2022 x64 / Blender Python 3.13",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022-py313",
+      "architecture": "x64",
+      "toolset": "v143",
+      "cacheVariables": {
+        "HOTOOLS_PLUGIN_ROOT": "${sourceDir}/..",
+        "HOTOOLS_PYTHON_EXECUTABLE": "D:/Blender/blender-5.1.0-windows-x64/5.1/python/bin/python.exe",
+        "HOTOOLS_RUNTIME_DIR": "${sourceDir}/../_Lib/py313/HotoolsPackage"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-py311-release",
+      "configurePreset": "vs2022-py311",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-py313-release",
+      "configurePreset": "vs2022-py313",
+      "configuration": "Release"
+    }
+  ]
+}
