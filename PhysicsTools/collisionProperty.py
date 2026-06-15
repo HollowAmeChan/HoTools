@@ -104,6 +104,11 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
 
 
 class PG_Hotools_MeshCollision(PropertyGroup):
+    output_shape_key: StringProperty(
+        name="物理形态键",
+        description="XPBD网格物理解算写入的目标形态键；不存在时会自动创建",
+        default="MeshPhysics",
+    )  # type: ignore
     enabled: BoolProperty(
         name="启用",
         description="启用XPBD网格逐顶点碰撞球",

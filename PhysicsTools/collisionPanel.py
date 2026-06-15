@@ -55,7 +55,7 @@ def _section_box(layout, scene, prop_name: str):
     return layout.box()
 
 
-def _draw_group_buttons(layout, operator_id, *, active_group=None, mask=None):
+def _draw_group_buttons(layout, operator_id, active_group=None, mask=None):
     for row_index in range(2):
         row = layout.row(align=True)
         row.operator_context = "INVOKE_DEFAULT"
@@ -127,6 +127,17 @@ def _draw_object_collision_controls(layout, props):
 
 def _draw_mesh_collision_controls(layout, obj, props):
     collision_box = layout.box()
+    shape_keys = obj.data.shape_keys
+    if shape_keys is not None:
+        collision_box.prop_search(
+            props,
+            "output_shape_key",
+            shape_keys,
+            "key_blocks",
+            text="物理形态键",
+        )
+    else:
+        collision_box.prop(props, "output_shape_key")
     collision_box.prop(props, "enabled")
 
     col = collision_box.column(align=True)
@@ -163,7 +174,6 @@ def _draw_mesh_collision_controls(layout, obj, props):
         "vertex_groups",
         text="Pin顶点组",
     )
-    pin_col.label(text="留空时固定全部顶点", icon="INFO")
 
 
 class PT_Hotools_BoneCollisionPanel(Panel):

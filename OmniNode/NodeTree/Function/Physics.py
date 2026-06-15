@@ -2,7 +2,6 @@ from ..OmniNodeSocketMapping import (
     _OmniBone,
     _OmniBoneChain,
     _OmniCache,
-    _OmniShapeKey,
 )
 from ..FunctionNodeCore import omni
 from . import _Color
@@ -937,24 +936,11 @@ class _MeshPhysics:
             raise ValueError(f"{label} mesh has no vertices")
         return obj
 
-    @classmethod
-    def resolve_shape_key_value(cls, value, fallback_obj: bpy.types.Object) -> tuple[bpy.types.Object, str]:
-        if isinstance(value, dict):
-            obj = value.get("object") or fallback_obj
-            shape_key_name = str(value.get("shape_key") or value.get("shape_key_name") or "").strip()
-            obj = cls.require_mesh_object(obj, "shape key object")
-            if not shape_key_name:
-                raise ValueError("shape key name is empty")
-            return obj, shape_key_name
-
-        if isinstance(value, bpy.types.ShapeKey):
-            key_data = getattr(value, "id_data", None)
-            for obj in bpy.data.objects:
-                if getattr(obj, "type", None) == "MESH" and getattr(obj.data, "shape_keys", None) == key_data:
-                    return obj, value.name
-            raise ValueError("shape key owner object not found")
-
-        raise ValueError("shape key input is empty or invalid")
+    @staticmethod
+    def output_shape_key_name(obj: bpy.types.Object) -> str:
+        props = getattr(obj, "hotools_mesh_collision", None)
+        name = str(getattr(props, "output_shape_key", "") or "").strip()
+        return name or "MeshPhysics"
 
     @staticmethod
     def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
@@ -1488,11 +1474,9 @@ class _MeshPhysicsCppBackend:
 
 
 def _run_mesh_xpbd_node(
-    *,
     use_cpp: bool,
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    target_shape_key: _OmniShapeKey,
     enabled: bool,
     reset: bool,
     substeps: int,
@@ -1508,10 +1492,7 @@ def _run_mesh_xpbd_node(
     backend_tag = "cpp" if use_cpp else "py"
     stage_start = time.perf_counter() if timing is not None else None
     obj = _MeshPhysics.require_mesh_object(obj, "obj")
-    shape_obj, shape_key_name = _MeshPhysics.resolve_shape_key_value(target_shape_key, obj)
-    if shape_obj != obj:
-        raise ValueError("target shape key object must be the same as obj")
-
+    shape_key_name = _MeshPhysics.output_shape_key_name(obj)
     target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
     if timing is not None:
         _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
@@ -2029,7 +2010,6 @@ def springBoneVRM(
     _INPUT_NAME=[
         "缓存",
         "物体",
-        "目标形态键",
         "启用",
         "重置",
         "子步数",
@@ -2057,8 +2037,8 @@ def springBoneVRM(
 
     接法：
     1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
-    2. “目标形态键”使用形态键 socket 选择 Mesh Object + shape key 名称；如果目标 key 不存在会自动创建。
-    3. Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置；启用 Pin 且顶点组留空时会固定全部顶点。
+    2. 输出形态键在物体属性的“HoTools网格碰撞”面板中设置；如果目标 key 不存在会自动创建。
+    3. Pin 顶点也在“HoTools网格碰撞”面板中设置；启用 Pin 且顶点组留空时会固定全部顶点。
 
     工作原理：
     节点从 Basis/reference key 批量读取 rest 顶点，把坐标转换到世界空间后建立运行时 cache。
@@ -2082,7 +2062,6 @@ def springBoneVRM(
 def meshPhysicsXPBD(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    target_shape_key: _OmniShapeKey,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
@@ -2098,7 +2077,6 @@ def meshPhysicsXPBD(
         use_cpp=False,
         cache_state=cache_state,
         obj=obj,
-        target_shape_key=target_shape_key,
         enabled=enabled,
         reset=reset,
         substeps=substeps,
@@ -2120,7 +2098,6 @@ def meshPhysicsXPBD(
     _INPUT_NAME=[
         "缓存",
         "物体",
-        "目标形态键",
         "启用",
         "重置",
         "子步数",
@@ -2149,6 +2126,7 @@ def meshPhysicsXPBD(
     工作原理：
     与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
     差异只在求解器后端：这里把预测、pin、stretch、bend 和循环全部交给 C++。
+    输出形态键在物体属性的“HoTools网格碰撞”面板中设置；不存在时会自动创建。
     Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
 
     升级约定：
@@ -2158,7 +2136,6 @@ def meshPhysicsXPBD(
 def meshPhysicsXPBDCpp(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    target_shape_key: _OmniShapeKey,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
@@ -2174,7 +2151,6 @@ def meshPhysicsXPBDCpp(
         use_cpp=True,
         cache_state=cache_state,
         obj=obj,
-        target_shape_key=target_shape_key,
         enabled=enabled,
         reset=reset,
         substeps=substeps,
