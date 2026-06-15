@@ -17,7 +17,6 @@ from .collisionUtils import (
 
 
 _DRAW_HANDLE = None
-_MESH_VERTEX_COLLISION_COLOR = (0.18, 0.82, 1.0, 0.55)
 _MESH_VERTEX_SPHERE_SEGMENTS = 8
 
 
@@ -251,8 +250,11 @@ def _draw_collision_overlay():
         group: []
         for group in range(1, _COLLISION_GROUP_COUNT + 1)
     }
+    mesh_vertex_lines_by_group = {
+        group: []
+        for group in range(1, _COLLISION_GROUP_COUNT + 1)
+    }
     root_lines = []
-    mesh_vertex_lines = []
 
     if show_bone_collision:
         for armature_obj in _visible_armature_objects(context):
@@ -292,9 +294,10 @@ def _draw_collision_overlay():
         for obj in _visible_mesh_collision_objects(context):
             props = _mesh_collision_props(obj)
             if props is not None:
-                _append_mesh_vertex_collision_lines(mesh_vertex_lines, obj, props, depsgraph)
+                group = min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
+                _append_mesh_vertex_collision_lines(mesh_vertex_lines_by_group[group], obj, props, depsgraph)
 
-    if not any(collision_lines_by_group.values()) and not root_lines and not mesh_vertex_lines:
+    if not any(collision_lines_by_group.values()) and not root_lines and not any(mesh_vertex_lines_by_group.values()):
         return
 
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -304,8 +307,9 @@ def _draw_collision_overlay():
     try:
         for group, group_lines in collision_lines_by_group.items():
             _draw_line_batch(shader, group_lines, _collision_group_color(group), 1.5)
+        for group, group_lines in mesh_vertex_lines_by_group.items():
+            _draw_line_batch(shader, group_lines, _collision_group_color(group), 1.0)
         _draw_line_batch(shader, root_lines, _ROOT_COLOR, 2.0)
-        _draw_line_batch(shader, mesh_vertex_lines, _MESH_VERTEX_COLLISION_COLOR, 1.0)
     finally:
         gpu.state.line_width_set(1.0)
         gpu.state.depth_mask_set(True)

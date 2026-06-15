@@ -1,9 +1,10 @@
 import bpy
 
+
+# 预览绘制常量，由叠加层代码共享。
 _ROOT_COLOR = (0.45, 1.0, 0.25, 0.85)
 _SHAPE_SEGMENTS = 32
 _COLLISION_GROUP_COUNT = 16
-_COLLISION_GROUP_ROW_SIZE = 8
 _ALL_COLLISION_GROUPS_MASK = (1 << _COLLISION_GROUP_COUNT) - 1
 _COLLISION_GROUP_COLORS = (
     (0.10, 0.63, 1.00, 0.86),
@@ -26,6 +27,9 @@ _COLLISION_GROUP_COLORS = (
 
 
 def _tag_view3d_redraw():
+    """
+    标记所有可见的 3D 视图重绘。
+    """
     for window in bpy.context.window_manager.windows:
         screen = window.screen
         if screen is None:
@@ -36,10 +40,16 @@ def _tag_view3d_redraw():
 
 
 def _overlay_show_update(self, context):
+    """
+    叠加层开关变化时刷新 3D 视图。
+    """
     _tag_view3d_redraw()
 
 
 def _active_armature_object(context):
+    """
+    获取当前正在编辑碰撞属性的骨架对象。
+    """
     obj = context.object or context.active_object
     if obj is None or obj.type != "ARMATURE":
         return None
@@ -47,18 +57,30 @@ def _active_armature_object(context):
 
 
 def _collision_props(bone):
+    """
+    读取骨骼上的 HoTools 碰撞属性。
+    """
     return getattr(bone, "hotools_collision", None)
 
 
 def _object_collision_props(obj):
+    """
+    读取物体上的 HoTools 被动碰撞属性。
+    """
     return getattr(obj, "hotools_object_collision", None)
 
 
 def _mesh_collision_props(obj):
+    """
+    读取网格上的 HoTools 逐顶点碰撞属性。
+    """
     return getattr(obj, "hotools_mesh_collision", None)
 
 
 def _active_collision_props(context):
+    """
+    获取当前激活骨骼的碰撞属性。
+    """
     bone = context.active_bone
     if bone is None:
         return None
@@ -66,6 +88,9 @@ def _active_collision_props(context):
 
 
 def _active_object_collision_props(context):
+    """
+    获取当前激活物体的被动碰撞属性。
+    """
     obj = context.object or context.active_object
     if obj is None:
         return None
@@ -73,6 +98,9 @@ def _active_object_collision_props(context):
 
 
 def _active_mesh_collision_props(context):
+    """
+    获取当前激活网格的逐顶点碰撞属性。
+    """
     obj = context.object or context.active_object
     if obj is None or obj.type != "MESH":
         return None
@@ -80,6 +108,9 @@ def _active_mesh_collision_props(context):
 
 
 def _set_collision_group_bit(mask, group, value):
+    """
+    设置或清除碰撞组位掩码中的指定分组。
+    """
     bit = 1 << (group - 1)
     if value:
         return mask | bit
@@ -87,15 +118,24 @@ def _set_collision_group_bit(mask, group, value):
 
 
 def _collision_group_bit(mask, group):
+    """
+    判断碰撞组位掩码中是否包含指定分组。
+    """
     return bool(mask & (1 << (group - 1)))
 
 
 def _collision_group_color(group):
+    """
+    根据碰撞组编号获取预览绘制颜色。
+    """
     index = min(max(int(group), 1), _COLLISION_GROUP_COUNT) - 1
     return _COLLISION_GROUP_COLORS[index]
 
 
 def _collision_group_target_props(context, apply_selected):
+    """
+    收集骨骼碰撞组操作需要修改的目标属性。
+    """
     armature_obj = _active_armature_object(context)
     if armature_obj is None:
         return []
@@ -123,6 +163,9 @@ def _collision_group_target_props(context, apply_selected):
 
 
 def _object_collision_group_target_props(context, apply_selected):
+    """
+    收集物体碰撞组操作需要修改的目标属性。
+    """
     if not apply_selected:
         props = _active_object_collision_props(context)
         return [props] if props is not None else []
@@ -144,29 +187,10 @@ def _object_collision_group_target_props(context, apply_selected):
     return targets
 
 
-def _draw_group_buttons(layout, operator_id, *, active_group=None, mask=None):
-    for row_index in range(2):
-        row = layout.row(align=True)
-        row.operator_context = "INVOKE_DEFAULT"
-        for group in range(
-            row_index * _COLLISION_GROUP_ROW_SIZE + 1,
-            (row_index + 1) * _COLLISION_GROUP_ROW_SIZE + 1,
-        ):
-            if active_group is not None:
-                depress = group == active_group
-            else:
-                icon = "CHECKBOX_HLT" if _collision_group_bit(mask or 0, group) else "CHECKBOX_DEHLT"
-                depress = _collision_group_bit(mask or 0, group)
-
-            op = row.operator(
-                operator_id,
-                text=str(group),
-                depress=depress,
-            )
-            op.group = group
-
-
 def _append_unique_bone_name(names, seen_names, bone):
+    """
+    将骨骼名称加入列表，并避免重复记录。
+    """
     if bone is None or bone.name in seen_names:
         return
     names.append(bone.name)
@@ -174,6 +198,9 @@ def _append_unique_bone_name(names, seen_names, bone):
 
 
 def _selected_bone_names(context, armature_obj) -> list[str]:
+    """
+    统一读取编辑、姿态、物体模式下的骨骼选择结果。
+    """
     mode = getattr(context, "mode", "")
     object_mode = getattr(armature_obj, "mode", "")
     names = []
@@ -227,6 +254,9 @@ def _selected_bone_names(context, armature_obj) -> list[str]:
 
 
 def _spring_root_bones(armature_obj):
+    """
+    获取骨架中启用弹簧根节点标记的碰撞骨骼。
+    """
     return [
         bone
         for bone in armature_obj.data.bones
@@ -235,11 +265,17 @@ def _spring_root_bones(armature_obj):
 
 
 def _bone_topology_data(bones):
+    """
+    构建批量半径渐变需要的骨骼层级拓扑数据。
+    """
     scope_names = {bone.name for bone in bones}
     roots = [bone for bone in bones if bone.parent is None or bone.parent.name not in scope_names]
     topology_data = {}
 
     def scan_topology(bone, root_index, current_chains, depth):
+        """
+        递归扫描骨骼层级并记录链路信息。
+        """
         topology_data[bone.name] = {
             "bone": bone,
             "root_index": root_index,
@@ -261,9 +297,15 @@ def _bone_topology_data(bones):
 
 
 def _clamp01(value):
+    """
+    将数值限制在 0 到 1 的范围内。
+    """
     return min(max(float(value), 0.0), 1.0)
 
 
 def _exponent_factor(value, exponent, offset):
+    """
+    计算带偏移和指数控制的渐变因子。
+    """
     t = _clamp01(float(value) + float(offset))
     return t ** max(float(exponent), 0.001)

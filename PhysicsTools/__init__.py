@@ -9,6 +9,8 @@ from .collisionOperators import (
     OP_Hotools_BoneCollision_SelectSpringRoots,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
+    OP_Hotools_MeshCollision_SetPrimaryGroup,
+    OP_Hotools_MeshCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
 )
 from .collisionPanel import (
@@ -37,6 +39,8 @@ cls = [
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
+    OP_Hotools_MeshCollision_SetPrimaryGroup,
+    OP_Hotools_MeshCollision_ToggleCollidedByGroup,
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
     PT_Hotools_BoneCollisionPanel,

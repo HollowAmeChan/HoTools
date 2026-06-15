@@ -8,19 +8,23 @@ from .collisionOperators import (
     OP_Hotools_BoneCollision_SelectSpringRoots,
 )
 from .collisionUtils import (
+    _COLLISION_GROUP_COUNT,
     _active_armature_object,
     _active_collision_props,
     _active_mesh_collision_props,
     _active_object_collision_props,
+    _collision_group_bit,
     _collision_props,
-    _draw_group_buttons,
     _spring_root_bones,
 )
 
 
+COLLISION_GROUP_ROW_SIZE = 8
 BONE_SET_PRIMARY_GROUP_OPERATOR = "ho.bone_collision_set_primary_group"
 BONE_TOGGLE_COLLIDED_BY_GROUP_OPERATOR = "ho.bone_collision_toggle_collided_by_group"
 OBJECT_SET_PRIMARY_GROUP_OPERATOR = "ho.object_collision_set_primary_group"
+MESH_SET_PRIMARY_GROUP_OPERATOR = "ho.mesh_collision_set_primary_group"
+MESH_TOGGLE_COLLIDED_BY_GROUP_OPERATOR = "ho.mesh_collision_toggle_collided_by_group"
 
 
 def _draw_section_toggles(layout, scene):
@@ -48,6 +52,27 @@ def _section_box(layout, scene, prop_name: str):
     if not bool(getattr(scene, prop_name)):
         return None
     return layout.box()
+
+
+def _draw_group_buttons(layout, operator_id, *, active_group=None, mask=None):
+    for row_index in range(2):
+        row = layout.row(align=True)
+        row.operator_context = "INVOKE_DEFAULT"
+        for group in range(
+            row_index * COLLISION_GROUP_ROW_SIZE + 1,
+            min((row_index + 1) * COLLISION_GROUP_ROW_SIZE, _COLLISION_GROUP_COUNT) + 1,
+        ):
+            if active_group is not None:
+                depress = group == active_group
+            else:
+                depress = _collision_group_bit(mask or 0, group)
+
+            op = row.operator(
+                operator_id,
+                text=str(group),
+                depress=depress,
+            )
+            op.group = group
 
 
 def _draw_collision_controls(layout, props):
@@ -100,6 +125,18 @@ def _draw_mesh_collision_controls(layout, obj, props):
 
     col = layout.column(align=True)
     col.enabled = bool(props.enabled)
+    col.label(text="主碰撞组")
+    _draw_group_buttons(
+        col,
+        MESH_SET_PRIMARY_GROUP_OPERATOR,
+        active_group=props.primary_collision_group,
+    )
+    col.label(text="被碰撞组")
+    _draw_group_buttons(
+        col,
+        MESH_TOGGLE_COLLIDED_BY_GROUP_OPERATOR,
+        mask=props.collided_by_groups,
+    )
     col.prop(props, "radius")
     col.prop_search(
         props,

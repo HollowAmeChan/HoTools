@@ -6,6 +6,7 @@ from .collisionUtils import (
     _COLLISION_GROUP_COUNT,
     _active_armature_object,
     _active_collision_props,
+    _active_mesh_collision_props,
     _active_object_collision_props,
     _bone_topology_data,
     _collision_group_bit,
@@ -237,6 +238,66 @@ class OP_Hotools_ObjectCollision_SetPrimaryGroup(Operator):
         _tag_view3d_redraw()
         if self.apply_selected:
             self.report({"INFO"}, f"已设置 {len(targets)} 个选中Object的主碰撞组")
+        return {"FINISHED"}
+
+
+class OP_Hotools_MeshCollision_SetPrimaryGroup(Operator):
+    bl_idname = "ho.mesh_collision_set_primary_group"
+    bl_label = "设置网格主碰撞组"
+    bl_description = "设置当前Mesh逐顶点碰撞球所属的主碰撞组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    group: IntProperty(
+        name="组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _active_mesh_collision_props(context) is not None
+
+    def execute(self, context):
+        props = _active_mesh_collision_props(context)
+        if props is None:
+            return {"CANCELLED"}
+
+        props.primary_collision_group = min(max(int(self.group), 1), _COLLISION_GROUP_COUNT)
+        _tag_view3d_redraw()
+        return {"FINISHED"}
+
+
+class OP_Hotools_MeshCollision_ToggleCollidedByGroup(Operator):
+    bl_idname = "ho.mesh_collision_toggle_collided_by_group"
+    bl_label = "切换网格被碰撞组"
+    bl_description = "切换允许哪些主碰撞组碰撞到当前Mesh逐顶点碰撞球"
+    bl_options = {"REGISTER", "UNDO"}
+
+    group: IntProperty(
+        name="组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _active_mesh_collision_props(context) is not None
+
+    def execute(self, context):
+        props = _active_mesh_collision_props(context)
+        if props is None:
+            return {"CANCELLED"}
+
+        group = min(max(int(self.group), 1), _COLLISION_GROUP_COUNT)
+        enable = not _collision_group_bit(props.collided_by_groups, group)
+        props.collided_by_groups = _set_collision_group_bit(
+            props.collided_by_groups,
+            group,
+            enable,
+        )
+        _tag_view3d_redraw()
         return {"FINISHED"}
 
 

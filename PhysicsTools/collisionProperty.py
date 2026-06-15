@@ -116,3 +116,17 @@ class PG_Hotools_MeshCollision(PropertyGroup):
         description="用于缩放逐顶点碰撞半径的顶点组；留空时所有顶点使用完整半径",
         default="",
     )  # type: ignore
+    primary_collision_group: IntProperty(
+        name="主碰撞组",
+        description="这个网格的所有逐顶点碰撞球所属的主碰撞组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+    collided_by_groups: IntProperty(
+        name="被碰撞组",
+        description="允许哪些主碰撞组碰撞到这个网格的逐顶点碰撞球",
+        default=0,
+        min=0,
+        max=_ALL_COLLISION_GROUPS_MASK,
+    )  # type: ignore
