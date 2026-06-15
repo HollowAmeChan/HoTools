@@ -80,7 +80,6 @@ jobs:
           # GitHub 页面仍会自动显示 Source code (zip/tar.gz)，但用户安装应下载这里上传的 ZIP_NAME。
           gh release create "$RELEASE_TAG" "$ZIP_NAME" \
             --target "$GITHUB_SHA" \
-            --title "$RELEASE_TITLE" \
-            --notes "请下载 ${ZIP_NAME} 作为 Blender 插件安装包。GitHub 自动生成的 Source code zip/tar.gz 不是面向用户安装的干净包。"
+            --title "$RELEASE_TITLE"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
