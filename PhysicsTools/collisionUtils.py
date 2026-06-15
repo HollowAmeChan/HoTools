@@ -54,6 +54,10 @@ def _object_collision_props(obj):
     return getattr(obj, "hotools_object_collision", None)
 
 
+def _mesh_collision_props(obj):
+    return getattr(obj, "hotools_mesh_collision", None)
+
+
 def _active_collision_props(context):
     bone = context.active_bone
     if bone is None:
@@ -66,6 +70,13 @@ def _active_object_collision_props(context):
     if obj is None:
         return None
     return _object_collision_props(obj)
+
+
+def _active_mesh_collision_props(context):
+    obj = context.object or context.active_object
+    if obj is None or obj.type != "MESH":
+        return None
+    return _mesh_collision_props(obj)
 
 
 def _set_collision_group_bit(mask, group, value):

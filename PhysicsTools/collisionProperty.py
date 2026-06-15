@@ -1,4 +1,4 @@
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from .collisionUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
@@ -95,4 +95,24 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
         default=1,
         min=1,
         max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+
+class PG_Hotools_MeshCollision(PropertyGroup):
+    enabled: BoolProperty(
+        name="启用",
+        description="启用XPBD网格逐顶点碰撞球",
+        default=False,
+    )  # type: ignore
+    radius: FloatProperty(
+        name="半径",
+        description="逐顶点碰撞球的基础半径；最终半径会乘以顶点组权重",
+        default=0.02,
+        min=0.0,
+        soft_max=1.0,
+    )  # type: ignore
+    radius_vertex_group: StringProperty(
+        name="半径顶点组",
+        description="用于缩放逐顶点碰撞半径的顶点组；留空时所有顶点使用完整半径",
+        default="",
     )  # type: ignore

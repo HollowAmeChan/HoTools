@@ -10,6 +10,7 @@ from .collisionOperators import (
 from .collisionUtils import (
     _active_armature_object,
     _active_collision_props,
+    _active_mesh_collision_props,
     _active_object_collision_props,
     _collision_props,
     _draw_group_buttons,
@@ -104,6 +105,23 @@ def _draw_object_collision_controls(layout, props):
     col.prop(props, "offset")
 
 
+def _draw_mesh_collision_controls(layout, obj, props):
+    layout.prop(props, "enabled")
+
+    col = layout.column(align=True)
+    col.enabled = bool(props.enabled)
+    col.prop(props, "radius")
+    col.prop_search(
+        props,
+        "radius_vertex_group",
+        obj,
+        "vertex_groups",
+        text="半径顶点组",
+    )
+    if not props.radius_vertex_group:
+        col.label(text="未指定顶点组时，全部顶点使用完整半径", icon="INFO")
+
+
 class PT_Hotools_BoneCollisionPanel(Panel):
     bl_idname = "BONE_PT_Hotools_BoneCollisionPanel"
     bl_label = "HoTools碰撞体"
@@ -140,6 +158,27 @@ class PT_Hotools_ObjectCollisionPanel(Panel):
         layout = self.layout
 
         _draw_object_collision_controls(layout, props)
+
+
+class PT_Hotools_MeshCollisionPanel(Panel):
+    bl_idname = "OBJECT_PT_Hotools_MeshCollisionPanel"
+    bl_label = "HoTools网格碰撞"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "MESH" and _active_mesh_collision_props(context) is not None
+
+    def draw(self, context):
+        obj = context.object
+        props = _active_mesh_collision_props(context)
+        layout = self.layout
+
+        _draw_mesh_collision_controls(layout, obj, props)
 
 
 class PT_Hotools_ArmatureCollisionPanel(Panel):

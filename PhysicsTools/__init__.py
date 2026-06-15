@@ -14,16 +14,18 @@ from .collisionOperators import (
 from .collisionPanel import (
     PT_Hotools_ArmatureCollisionPanel,
     PT_Hotools_BoneCollisionPanel,
+    PT_Hotools_MeshCollisionPanel,
     PT_Hotools_ObjectCollisionPanel,
 )
 from .collisionPreview import _ensure_draw_handler, _remove_draw_handler
-from .collisionProperty import PG_Hotools_BoneCollision, PG_Hotools_ObjectCollision
+from .collisionProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision
 from .collisionUtils import _overlay_show_update
 
 
 cls = [
     PG_Hotools_BoneCollision,
     PG_Hotools_ObjectCollision,
+    PG_Hotools_MeshCollision,
     OP_Hotools_BoneCollision_AddSelectedSpringRoots,
     OP_Hotools_BoneCollision_ClearAllSpringRoots,
     OP_Hotools_BoneCollision_SelectSpringRoots,
@@ -34,6 +36,7 @@ cls = [
     OP_Hotools_BoneCollision_GradientRadius,
     PT_Hotools_BoneCollisionPanel,
     PT_Hotools_ObjectCollisionPanel,
+    PT_Hotools_MeshCollisionPanel,
     PT_Hotools_ArmatureCollisionPanel,
 ]
 
@@ -46,6 +49,10 @@ def reg_props():
     if hasattr(bpy.types.Object, "hotools_object_collision"):
         del bpy.types.Object.hotools_object_collision
     bpy.types.Object.hotools_object_collision = PointerProperty(type=PG_Hotools_ObjectCollision)
+
+    if hasattr(bpy.types.Object, "hotools_mesh_collision"):
+        del bpy.types.Object.hotools_mesh_collision
+    bpy.types.Object.hotools_mesh_collision = PointerProperty(type=PG_Hotools_MeshCollision)
 
     if hasattr(bpy.types.Scene, "ho_bone_collision_show_overlay_section"):
         del bpy.types.Scene.ho_bone_collision_show_overlay_section
@@ -78,6 +85,8 @@ def ureg_props():
         del bpy.types.Scene.ho_bone_collision_overlay_show
     if hasattr(bpy.types.Object, "hotools_object_collision"):
         del bpy.types.Object.hotools_object_collision
+    if hasattr(bpy.types.Object, "hotools_mesh_collision"):
+        del bpy.types.Object.hotools_mesh_collision
     if hasattr(bpy.types.Bone, "hotools_collision"):
         del bpy.types.Bone.hotools_collision
 
