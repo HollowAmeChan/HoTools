@@ -2,6 +2,7 @@ import bpy
 import gpu
 import math
 import mathutils
+from bpy.types import Panel
 from gpu_extras.batch import batch_for_shader
 
 from .collisionUtils import (
@@ -10,11 +11,14 @@ from .collisionUtils import (
     _SHAPE_SEGMENTS,
     _collision_group_color,
     _collision_props,
+    _mesh_collision_props,
     _object_collision_props,
 )
 
 
 _DRAW_HANDLE = None
+_MESH_VERTEX_COLLISION_COLOR = (0.18, 0.82, 1.0, 0.55)
+_MESH_VERTEX_SPHERE_SEGMENTS = 8
 
 
 def _visible_armature_objects(context):
@@ -40,6 +44,21 @@ def _visible_object_collision_objects(context):
             continue
         props = _object_collision_props(obj)
         if props is not None and props.collision_type != "NONE":
+            result.append(obj)
+    return result
+
+
+def _visible_mesh_collision_objects(context):
+    visible_objects = getattr(context, "visible_objects", None)
+    if visible_objects is None:
+        visible_objects = context.view_layer.objects
+
+    result = []
+    for obj in visible_objects:
+        if obj.type != "MESH" or not obj.visible_get():
+            continue
+        props = _mesh_collision_props(obj)
+        if props is not None and props.enabled and props.radius > 0.0:
             result.append(obj)
     return result
 
@@ -107,15 +126,22 @@ def _append_capsule_profile(lines, matrix, center, side_axis, radius, half_lengt
 
 
 def _append_sphere_lines(lines, matrix, props):
-    center = mathutils.Vector(props.offset)
-    radius = max(float(props.radius), 0.0)
+    _append_sphere_shape_lines(
+        lines,
+        matrix,
+        mathutils.Vector(props.offset),
+        max(float(props.radius), 0.0),
+    )
+
+
+def _append_sphere_shape_lines(lines, matrix, center, radius, segments=_SHAPE_SEGMENTS):
     x_axis = mathutils.Vector((1.0, 0.0, 0.0))
     y_axis = mathutils.Vector((0.0, 1.0, 0.0))
     z_axis = mathutils.Vector((0.0, 0.0, 1.0))
 
-    _append_circle(lines, matrix, center, x_axis, y_axis, radius)
-    _append_circle(lines, matrix, center, x_axis, z_axis, radius)
-    _append_circle(lines, matrix, center, y_axis, z_axis, radius)
+    _append_circle(lines, matrix, center, x_axis, y_axis, radius, segments=segments)
+    _append_circle(lines, matrix, center, x_axis, z_axis, radius, segments=segments)
+    _append_circle(lines, matrix, center, y_axis, z_axis, radius, segments=segments)
 
 
 def _append_capsule_lines(lines, matrix, props):
@@ -159,50 +185,116 @@ def _draw_line_batch(shader, coords, color, line_width):
     batch.draw(shader)
 
 
+def _mesh_vertex_collision_weight(obj, group_name, vertex_index):
+    if not group_name:
+        return 1.0
+
+    vertex_group = obj.vertex_groups.get(group_name)
+    if vertex_group is None:
+        return 0.0
+
+    try:
+        return min(max(float(vertex_group.weight(vertex_index)), 0.0), 1.0)
+    except RuntimeError:
+        return 0.0
+
+
+def _evaluated_mesh_vertices(obj, depsgraph):
+    evaluated_obj = obj.evaluated_get(depsgraph)
+    evaluated_mesh = None
+    try:
+        try:
+            evaluated_mesh = evaluated_obj.to_mesh(depsgraph=depsgraph)
+        except TypeError:
+            evaluated_mesh = evaluated_obj.to_mesh()
+
+        if evaluated_mesh is None or len(evaluated_mesh.vertices) != len(obj.data.vertices):
+            return obj.matrix_world, [vertex.co.copy() for vertex in obj.data.vertices]
+
+        return evaluated_obj.matrix_world.copy(), [vertex.co.copy() for vertex in evaluated_mesh.vertices]
+    finally:
+        if evaluated_mesh is not None:
+            evaluated_obj.to_mesh_clear()
+
+
+def _append_mesh_vertex_collision_lines(lines, obj, props, depsgraph):
+    radius = max(float(props.radius), 0.0)
+    if radius <= 0.0:
+        return
+
+    group_name = str(props.radius_vertex_group or "")
+    matrix, vertex_coords = _evaluated_mesh_vertices(obj, depsgraph)
+    for vertex_index, vertex_co in enumerate(vertex_coords):
+        weight = _mesh_vertex_collision_weight(obj, group_name, vertex_index)
+        if weight <= 0.0:
+            continue
+        _append_sphere_shape_lines(
+            lines,
+            matrix,
+            vertex_co,
+            radius * weight,
+            segments=_MESH_VERTEX_SPHERE_SEGMENTS,
+        )
+
+
 def _draw_collision_overlay():
     context = bpy.context
     scene = context.scene
-    if scene is None or not getattr(scene, "ho_bone_collision_overlay_show", False):
+    if scene is None or not getattr(scene, "ho_collision_overlay_show", False):
         return
+
+    show_bone_collision = bool(getattr(scene, "ho_collision_overlay_show_bone", True))
+    show_object_collision = bool(getattr(scene, "ho_collision_overlay_show_object", True))
+    show_mesh_vertices = bool(getattr(scene, "ho_collision_overlay_show_mesh_vertices", False))
 
     collision_lines_by_group = {
         group: []
         for group in range(1, _COLLISION_GROUP_COUNT + 1)
     }
     root_lines = []
+    mesh_vertex_lines = []
 
-    for armature_obj in _visible_armature_objects(context):
-        for bone in armature_obj.data.bones:
-            props = _collision_props(bone)
+    if show_bone_collision:
+        for armature_obj in _visible_armature_objects(context):
+            for bone in armature_obj.data.bones:
+                props = _collision_props(bone)
+                if props is None:
+                    continue
+
+                matrix = _bone_draw_matrix(armature_obj, bone)
+                if props.spring_root:
+                    _append_spring_root_marker(root_lines, matrix, bone)
+
+                group_lines = collision_lines_by_group[
+                    min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
+                ]
+                if props.collision_type == "SPHERE":
+                    _append_sphere_lines(group_lines, matrix, props)
+                elif props.collision_type == "CAPSULE":
+                    _append_capsule_lines(group_lines, matrix, props)
+
+    if show_object_collision:
+        for obj in _visible_object_collision_objects(context):
+            props = _object_collision_props(obj)
             if props is None:
                 continue
-
-            matrix = _bone_draw_matrix(armature_obj, bone)
-            if props.spring_root:
-                _append_spring_root_marker(root_lines, matrix, bone)
 
             group_lines = collision_lines_by_group[
                 min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
             ]
             if props.collision_type == "SPHERE":
-                _append_sphere_lines(group_lines, matrix, props)
+                _append_sphere_lines(group_lines, obj.matrix_world, props)
             elif props.collision_type == "CAPSULE":
-                _append_capsule_lines(group_lines, matrix, props)
+                _append_capsule_lines(group_lines, obj.matrix_world, props)
 
-    for obj in _visible_object_collision_objects(context):
-        props = _object_collision_props(obj)
-        if props is None:
-            continue
+    if show_mesh_vertices:
+        depsgraph = context.evaluated_depsgraph_get()
+        for obj in _visible_mesh_collision_objects(context):
+            props = _mesh_collision_props(obj)
+            if props is not None:
+                _append_mesh_vertex_collision_lines(mesh_vertex_lines, obj, props, depsgraph)
 
-        group_lines = collision_lines_by_group[
-            min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
-        ]
-        if props.collision_type == "SPHERE":
-            _append_sphere_lines(group_lines, obj.matrix_world, props)
-        elif props.collision_type == "CAPSULE":
-            _append_capsule_lines(group_lines, obj.matrix_world, props)
-
-    if not any(collision_lines_by_group.values()) and not root_lines:
+    if not any(collision_lines_by_group.values()) and not root_lines and not mesh_vertex_lines:
         return
 
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -213,6 +305,7 @@ def _draw_collision_overlay():
         for group, group_lines in collision_lines_by_group.items():
             _draw_line_batch(shader, group_lines, _collision_group_color(group), 1.5)
         _draw_line_batch(shader, root_lines, _ROOT_COLOR, 2.0)
+        _draw_line_batch(shader, mesh_vertex_lines, _MESH_VERTEX_COLLISION_COLOR, 1.0)
     finally:
         gpu.state.line_width_set(1.0)
         gpu.state.depth_mask_set(True)
@@ -236,3 +329,42 @@ def _remove_draw_handler():
     if _DRAW_HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_DRAW_HANDLE, "WINDOW")
         _DRAW_HANDLE = None
+
+
+class PT_Hotools_CollisionOverlayPopover(Panel):
+    bl_idname = "VIEW3D_PT_Hotools_CollisionOverlayPopover"
+    bl_label = "HoTools碰撞预览"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "HEADER"
+    bl_ui_units_x = 12
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+
+        layout.prop(scene, "ho_collision_overlay_show", text="显示碰撞预览")
+
+        col = layout.column(align=True)
+        col.enabled = bool(scene.ho_collision_overlay_show)
+        col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
+        col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
+        col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
+
+
+def draw_collision_overlay_header(self, context):
+    scene = context.scene
+    if scene is None:
+        return
+
+    row = self.layout.row(align=True)
+    row.prop(
+        scene,
+        "ho_collision_overlay_show",
+        text="",
+        icon="MESH_UVSPHERE",
+        toggle=True,
+    )
+    row.popover(
+        panel=PT_Hotools_CollisionOverlayPopover.bl_idname,
+        text="",
+    )

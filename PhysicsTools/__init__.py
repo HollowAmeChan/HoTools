@@ -17,7 +17,12 @@ from .collisionPanel import (
     PT_Hotools_MeshCollisionPanel,
     PT_Hotools_ObjectCollisionPanel,
 )
-from .collisionPreview import _ensure_draw_handler, _remove_draw_handler
+from .collisionPreview import (
+    PT_Hotools_CollisionOverlayPopover,
+    _ensure_draw_handler,
+    _remove_draw_handler,
+    draw_collision_overlay_header,
+)
 from .collisionProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision
 from .collisionUtils import _overlay_show_update
 
@@ -38,29 +43,36 @@ cls = [
     PT_Hotools_ObjectCollisionPanel,
     PT_Hotools_MeshCollisionPanel,
     PT_Hotools_ArmatureCollisionPanel,
+    PT_Hotools_CollisionOverlayPopover,
 ]
 
 
 def reg_props():
-    if hasattr(bpy.types.Bone, "hotools_collision"):
-        del bpy.types.Bone.hotools_collision
     bpy.types.Bone.hotools_collision = PointerProperty(type=PG_Hotools_BoneCollision)
 
-    if hasattr(bpy.types.Object, "hotools_object_collision"):
-        del bpy.types.Object.hotools_object_collision
     bpy.types.Object.hotools_object_collision = PointerProperty(type=PG_Hotools_ObjectCollision)
 
-    if hasattr(bpy.types.Object, "hotools_mesh_collision"):
-        del bpy.types.Object.hotools_mesh_collision
     bpy.types.Object.hotools_mesh_collision = PointerProperty(type=PG_Hotools_MeshCollision)
 
-    if hasattr(bpy.types.Scene, "ho_bone_collision_show_overlay_section"):
-        del bpy.types.Scene.ho_bone_collision_show_overlay_section
-    if hasattr(bpy.types.Scene, "ho_bone_collision_overlay_show"):
-        del bpy.types.Scene.ho_bone_collision_overlay_show
-    bpy.types.Scene.ho_bone_collision_overlay_show = BoolProperty(
-        name="显示HoTools碰撞体",
-        description="在3D视图叠加层中显示HoTools骨骼碰撞范围和Spring Root标记",
+    bpy.types.Scene.ho_collision_overlay_show = BoolProperty(
+        name="HoTools碰撞预览",
+        description="在3D视图中显示HoTools碰撞预览叠加层",
+        default=False,
+        update=_overlay_show_update,
+    )
+    bpy.types.Scene.ho_collision_overlay_show_bone = BoolProperty(
+        name="骨骼碰撞体",
+        default=True,
+        update=_overlay_show_update,
+    )
+    bpy.types.Scene.ho_collision_overlay_show_object = BoolProperty(
+        name="物体碰撞体",
+        default=True,
+        update=_overlay_show_update,
+    )
+    bpy.types.Scene.ho_collision_overlay_show_mesh_vertices = BoolProperty(
+        name="网格逐顶点球",
+        description="显示网格XPBD逐顶点碰撞球；复杂网格上会增加视图绘制开销",
         default=False,
         update=_overlay_show_update,
     )
@@ -75,20 +87,15 @@ def reg_props():
 
 
 def ureg_props():
-    if hasattr(bpy.types.Scene, "ho_bone_collision_show_overlay_section"):
-        del bpy.types.Scene.ho_bone_collision_show_overlay_section
-    if hasattr(bpy.types.Scene, "ho_bone_collision_show_roots_section"):
-        del bpy.types.Scene.ho_bone_collision_show_roots_section
-    if hasattr(bpy.types.Scene, "ho_bone_collision_show_info_section"):
-        del bpy.types.Scene.ho_bone_collision_show_info_section
-    if hasattr(bpy.types.Scene, "ho_bone_collision_overlay_show"):
-        del bpy.types.Scene.ho_bone_collision_overlay_show
-    if hasattr(bpy.types.Object, "hotools_object_collision"):
-        del bpy.types.Object.hotools_object_collision
-    if hasattr(bpy.types.Object, "hotools_mesh_collision"):
-        del bpy.types.Object.hotools_mesh_collision
-    if hasattr(bpy.types.Bone, "hotools_collision"):
-        del bpy.types.Bone.hotools_collision
+    del bpy.types.Scene.ho_bone_collision_show_roots_section
+    del bpy.types.Scene.ho_bone_collision_show_info_section
+    del bpy.types.Scene.ho_collision_overlay_show_mesh_vertices
+    del bpy.types.Scene.ho_collision_overlay_show_object
+    del bpy.types.Scene.ho_collision_overlay_show_bone
+    del bpy.types.Scene.ho_collision_overlay_show
+    del bpy.types.Object.hotools_object_collision
+    del bpy.types.Object.hotools_mesh_collision
+    del bpy.types.Bone.hotools_collision
 
 
 def register():
@@ -96,9 +103,11 @@ def register():
         bpy.utils.register_class(i)
     reg_props()
     _ensure_draw_handler()
+    bpy.types.VIEW3D_HT_header.append(draw_collision_overlay_header)
 
 
 def unregister():
+    bpy.types.VIEW3D_HT_header.remove(draw_collision_overlay_header)
     _remove_draw_handler()
     ureg_props()
     for i in reversed(cls):

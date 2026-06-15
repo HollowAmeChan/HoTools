@@ -25,9 +25,8 @@ OBJECT_SET_PRIMARY_GROUP_OPERATOR = "ho.object_collision_set_primary_group"
 
 def _draw_section_toggles(layout, scene):
     row = layout.row(align=True)
-    left_row = row.row(align=True)
-    left_row.alignment = "LEFT"
-    left_row.prop(
+    row.alignment = "LEFT"
+    row.prop(
         scene,
         "ho_bone_collision_show_info_section",
         text="",
@@ -35,21 +34,12 @@ def _draw_section_toggles(layout, scene):
         icon_only=True,
         toggle=True,
     )
-    left_row.prop(
+    row.prop(
         scene,
         "ho_bone_collision_show_roots_section",
         text="",
         icon="BONE_DATA",
         icon_only=True,
-        toggle=True,
-    )
-    right_row = row.row(align=True)
-    right_row.alignment = "RIGHT"
-    right_row.prop(
-        scene,
-        "ho_bone_collision_overlay_show",
-        text="",
-        icon="MESH_UVSPHERE",
         toggle=True,
     )
 
@@ -62,16 +52,16 @@ def _section_box(layout, scene, prop_name: str):
 
 def _draw_collision_controls(layout, props):
     layout.prop(props, "spring_root")
-    layout.prop(props, "collision_type", text="绫诲瀷")
+    layout.prop(props, "collision_type", text="类型")
 
     col = layout.column(align=True)
-    col.label(text="涓荤鎾炵粍")
+    col.label(text="主碰撞组")
     _draw_group_buttons(
         col,
         BONE_SET_PRIMARY_GROUP_OPERATOR,
         active_group=props.primary_collision_group,
     )
-    col.label(text="琚鎾炵粍")
+    col.label(text="被碰撞组")
     _draw_group_buttons(
         col,
         BONE_TOGGLE_COLLIDED_BY_GROUP_OPERATOR,
@@ -87,10 +77,10 @@ def _draw_collision_controls(layout, props):
 
 
 def _draw_object_collision_controls(layout, props):
-    layout.prop(props, "collision_type", text="绫诲瀷")
+    layout.prop(props, "collision_type", text="类型")
 
     col = layout.column(align=True)
-    col.label(text="涓荤鎾炵粍")
+    col.label(text="主碰撞组")
     _draw_group_buttons(
         col,
         OBJECT_SET_PRIMARY_GROUP_OPERATOR,
@@ -118,8 +108,6 @@ def _draw_mesh_collision_controls(layout, obj, props):
         "vertex_groups",
         text="半径顶点组",
     )
-    if not props.radius_vertex_group:
-        col.label(text="未指定顶点组时，全部顶点使用完整半径", icon="INFO")
 
 
 class PT_Hotools_BoneCollisionPanel(Panel):
