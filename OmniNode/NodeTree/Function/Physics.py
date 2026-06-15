@@ -895,11 +895,13 @@ class _MeshPhysics:
             "transform",
             "restore",
             "rebuild",
+            "colliders",
             "solve_setup",
             "predict",
             "pin",
             "stretch",
             "bend",
+            "collision",
             "native",
             "solve_total",
             "write",
@@ -1060,6 +1062,25 @@ class _MeshPhysics:
             return False, ""
         return True, str(getattr(props, "pin_vertex_group", "") or "")
 
+    @staticmethod
+    def vertex_group_weights(obj: bpy.types.Object, group_name: str) -> np.ndarray:
+        weights = np.zeros(len(obj.data.vertices), dtype=np.float32)
+        if not group_name:
+            weights.fill(1.0)
+            return weights
+
+        vertex_group = obj.vertex_groups.get(group_name)
+        if vertex_group is None:
+            return weights
+
+        group_index = int(vertex_group.index)
+        for vertex in obj.data.vertices:
+            for group in vertex.groups:
+                if group.group == group_index:
+                    weights[vertex.index] = max(0.0, min(1.0, float(group.weight)))
+                    break
+        return weights
+
     @classmethod
     def build_inv_masses(cls, obj: bpy.types.Object) -> np.ndarray:
         inv_masses = np.ones(len(obj.data.vertices), dtype=np.float32)
@@ -1071,17 +1092,33 @@ class _MeshPhysics:
             inv_masses.fill(0.0)
             return inv_masses
 
-        pin_group = obj.vertex_groups.get(pin_group_name)
-        if pin_group is None:
-            return inv_masses
-
-        group_index = int(pin_group.index)
-        for vertex in obj.data.vertices:
-            for group in vertex.groups:
-                if group.group == group_index and float(group.weight) > 0.0:
-                    inv_masses[vertex.index] = 0.0
-                    break
+        inv_masses[cls.vertex_group_weights(obj, pin_group_name) > 0.0] = 0.0
         return inv_masses
+
+    @staticmethod
+    def mesh_collision_props(obj: bpy.types.Object):
+        return getattr(obj, "hotools_mesh_collision", None)
+
+    @classmethod
+    def build_collision_profile(cls, obj: bpy.types.Object) -> tuple[np.ndarray, int]:
+        props = cls.mesh_collision_props(obj)
+        radii = np.zeros(len(obj.data.vertices), dtype=np.float32)
+        if props is None or not bool(getattr(props, "enabled", False)):
+            return radii, 0
+
+        radius = max(float(getattr(props, "radius", 0.0)), 0.0)
+        if radius <= cls.EPSILON:
+            return radii, 0
+
+        weights = cls.vertex_group_weights(obj, str(getattr(props, "radius_vertex_group", "") or ""))
+        radii = np.ascontiguousarray(weights * radius, dtype=np.float32)
+        mask = _BonePhysics.clamp_group_mask(getattr(props, "collided_by_groups", 0))
+        return radii, mask
+
+    @classmethod
+    def collision_radii_to_world(cls, obj: bpy.types.Object, local_radii: np.ndarray) -> np.ndarray:
+        scale = _BonePhysics.matrix_scale_radius(obj.matrix_world)
+        return np.ascontiguousarray(local_radii * scale, dtype=np.float32)
 
     @staticmethod
     def build_edge_constraints(mesh: bpy.types.Mesh, rest_positions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1169,6 +1206,7 @@ class _MeshPhysics:
         bend_i, bend_j, bend_rest = cls.build_bend_constraints(obj.data, rest_positions)
         pin_enabled, pin_group_name = cls.mesh_pin_config(obj)
         inv_masses = cls.build_inv_masses(obj)
+        collision_local_radii, collision_mask = cls.build_collision_profile(obj)
         return {
             "kind": cls.CACHE_KIND,
             "frame": None,
@@ -1178,6 +1216,9 @@ class _MeshPhysics:
             "shape_key_name": shape_key_name,
             "pin_enabled": bool(pin_enabled),
             "pin_group_name": pin_group_name,
+            "collision_local_radii": collision_local_radii,
+            "collision_radii": cls.collision_radii_to_world(obj, collision_local_radii),
+            "collided_by_groups": int(collision_mask),
             "topology_key": topology_key,
             "object_matrix_world_key": cls.matrix_world_key(obj),
             "object_matrix_world_3x3_key": cls.matrix_world_3x3_key(obj),
@@ -1214,6 +1255,7 @@ class _MeshPhysics:
         if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
             next_state["edge_rest"] = cls.constraint_lengths(rest_positions, next_state["edge_i"], next_state["edge_j"])
             next_state["bend_rest"] = cls.constraint_lengths(rest_positions, next_state["bend_i"], next_state["bend_j"])
+            next_state["collision_radii"] = cls.collision_radii_to_world(obj, next_state["collision_local_radii"])
             next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
 
         return next_state
@@ -1241,6 +1283,8 @@ class _MeshPhysics:
             "bend_i",
             "bend_j",
             "bend_rest",
+            "collision_local_radii",
+            "collision_radii",
         )
         if not all(isinstance(state.get(key), np.ndarray) for key in required):
             return False
@@ -1256,6 +1300,8 @@ class _MeshPhysics:
             and state["positions"].shape == (vertex_count, 3)
             and state["prev_positions"].shape == (vertex_count, 3)
             and state["inv_masses"].shape == (vertex_count,)
+            and state["collision_local_radii"].shape == (vertex_count,)
+            and state["collision_radii"].shape == (vertex_count,)
         )
 
     @staticmethod
@@ -1301,6 +1347,117 @@ class _MeshPhysics:
             if wj > 0.0:
                 positions[j] -= wj * dlambda * normal
 
+    @staticmethod
+    def vector_to_numpy(value) -> np.ndarray | None:
+        if value is None:
+            return None
+        return np.asarray((float(value.x), float(value.y), float(value.z)), dtype=np.float32)
+
+    @classmethod
+    def closest_point_on_segment_np(cls, point: np.ndarray, segment_a, segment_b) -> np.ndarray | None:
+        a = cls.vector_to_numpy(segment_a)
+        b = cls.vector_to_numpy(segment_b)
+        if a is None or b is None:
+            return None
+
+        segment = b - a
+        denom = float(np.dot(segment, segment))
+        if denom <= cls.EPSILON:
+            return a
+
+        t = float(np.dot(point - a, segment) / denom)
+        t = max(0.0, min(1.0, t))
+        return a + segment * t
+
+    @classmethod
+    def safe_normal_np(cls, delta: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+        length = float(np.linalg.norm(delta))
+        if length > cls.EPSILON:
+            return delta / length
+
+        fallback_length = float(np.linalg.norm(fallback))
+        if fallback_length > cls.EPSILON:
+            return fallback / fallback_length
+
+        return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+
+    @classmethod
+    def project_vertex_collision(
+        cls,
+        position: np.ndarray,
+        hit_radius: float,
+        collided_by_groups: int,
+        colliders: list[dict],
+        owner_obj: bpy.types.Object,
+        fallback: np.ndarray,
+    ) -> np.ndarray:
+        if hit_radius <= cls.EPSILON or not collided_by_groups:
+            return position
+
+        projected = position.copy()
+        for collider in colliders:
+            if not isinstance(collider, dict):
+                continue
+            if collider.get("owner") is owner_obj:
+                continue
+            if not collided_by_groups & _BonePhysics.collision_group_bit(collider.get("primary_group", 1)):
+                continue
+
+            collider_radius = max(float(collider.get("radius", 0.0)), 0.0)
+            radius = float(hit_radius) + collider_radius
+            if radius <= cls.EPSILON:
+                continue
+
+            if collider.get("type") == "CAPSULE":
+                center = cls.closest_point_on_segment_np(
+                    projected,
+                    collider.get("segment_a"),
+                    collider.get("segment_b"),
+                )
+            else:
+                center = cls.vector_to_numpy(collider.get("center"))
+            if center is None:
+                continue
+
+            delta = projected - center
+            if float(np.dot(delta, delta)) >= radius * radius:
+                continue
+
+            normal = cls.safe_normal_np(delta, fallback)
+            projected = center + normal * radius
+
+        return projected
+
+    @classmethod
+    def project_collisions(
+        cls,
+        positions: np.ndarray,
+        rest_positions: np.ndarray,
+        inv_masses: np.ndarray,
+        collision_radii: np.ndarray,
+        collided_by_groups: int,
+        colliders: list[dict] | None,
+        owner_obj: bpy.types.Object,
+    ) -> None:
+        if not colliders or not collided_by_groups:
+            return
+
+        for vertex_index in range(len(positions)):
+            if float(inv_masses[vertex_index]) <= cls.EPSILON:
+                continue
+            hit_radius = float(collision_radii[vertex_index])
+            if hit_radius <= cls.EPSILON:
+                continue
+
+            positions[vertex_index] = cls.project_vertex_collision(
+                positions[vertex_index],
+                hit_radius,
+                collided_by_groups,
+                colliders,
+                owner_obj,
+                positions[vertex_index] - rest_positions[vertex_index],
+            )
+
     @classmethod
     def solve(
         cls,
@@ -1314,12 +1471,16 @@ class _MeshPhysics:
         stretch_compliance: float,
         bend_compliance: float,
         timing: dict | None = None,
+        colliders: list[dict] | None = None,
     ) -> dict:
         stage_start = time.perf_counter() if timing is not None else None
         positions = np.ascontiguousarray(state["positions"], dtype=np.float32)
         prev_positions = np.ascontiguousarray(state["prev_positions"], dtype=np.float32)
         rest_positions = np.ascontiguousarray(state["rest_positions"], dtype=np.float32)
         inv_masses = np.ascontiguousarray(state["inv_masses"], dtype=np.float32)
+        collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
+        collided_by_groups = _BonePhysics.clamp_group_mask(state.get("collided_by_groups", 0))
+        has_collision = bool(colliders) and bool(collided_by_groups) and bool(np.any(collision_radii > cls.EPSILON))
         pinned = inv_masses <= cls.EPSILON
         has_pinned = bool(np.any(pinned))
 
@@ -1347,6 +1508,20 @@ class _MeshPhysics:
                 prev_positions[pinned] = rest_positions[pinned]
                 if timing is not None:
                     cls.add_timing(timing, "pin", time.perf_counter() - stage_start)
+
+            if has_collision:
+                stage_start = time.perf_counter() if timing is not None else None
+                cls.project_collisions(
+                    positions,
+                    rest_positions,
+                    inv_masses,
+                    collision_radii,
+                    collided_by_groups,
+                    colliders,
+                    obj,
+                )
+                if timing is not None:
+                    cls.add_timing(timing, "collision", time.perf_counter() - stage_start)
 
             for _iteration in range(iteration_count):
                 stage_start = time.perf_counter() if timing is not None else None
@@ -1381,6 +1556,20 @@ class _MeshPhysics:
                     prev_positions[pinned] = rest_positions[pinned]
                     if timing is not None:
                         cls.add_timing(timing, "pin", time.perf_counter() - stage_start)
+
+                if has_collision:
+                    stage_start = time.perf_counter() if timing is not None else None
+                    cls.project_collisions(
+                        positions,
+                        rest_positions,
+                        inv_masses,
+                        collision_radii,
+                        collided_by_groups,
+                        colliders,
+                        obj,
+                    )
+                    if timing is not None:
+                        cls.add_timing(timing, "collision", time.perf_counter() - stage_start)
 
         next_state = dict(state)
         next_state["positions"] = np.ascontiguousarray(positions, dtype=np.float32)
@@ -1417,8 +1606,10 @@ class _MeshPhysicsCppBackend:
         stretch_compliance: float,
         bend_compliance: float,
         timing: dict | None = None,
+        colliders: list[dict] | None = None,
     ) -> dict:
         _ = obj
+        _ = colliders
         stage_start = time.perf_counter() if timing is not None else None
         positions = np.ascontiguousarray(state["positions"], dtype=np.float32)
         prev_positions = np.ascontiguousarray(state["prev_positions"], dtype=np.float32)
@@ -1556,9 +1747,18 @@ def _run_mesh_xpbd_node(
 
     stage_start = time.perf_counter() if timing is not None else None
     backend = _MeshPhysicsCppBackend if use_cpp else _MeshPhysics
+    colliders = None
     if use_cpp:
         if not _MeshPhysicsCppBackend.is_available():
             raise ImportError("hotools_native is not available; build the native backend first")
+    else:
+        stage_start = time.perf_counter() if timing is not None else None
+        collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(bpy.context.scene, True, True, False)
+        colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+        if timing is not None:
+            _MeshPhysics.add_timing(timing, "colliders", time.perf_counter() - stage_start)
+
+    stage_start = time.perf_counter() if timing is not None else None
     next_state = backend.solve(
         state,
         obj,
@@ -1570,6 +1770,7 @@ def _run_mesh_xpbd_node(
         stretch_compliance,
         bend_compliance,
         timing,
+        colliders=colliders,
     )
     if timing is not None:
         _MeshPhysics.add_timing(timing, "solve_total", time.perf_counter() - stage_start)
@@ -2033,7 +2234,7 @@ def springBoneVRM(
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
     标准 Python 网格物理 XPBD 节点，也是后续 CPP 后端版本的行为蓝本。
-    节点只写入指定形态键，不直接修改 Basis 或网格顶点；当前版本不做碰撞、自碰撞或 modifier 后结果解算。
+    节点只写入指定形态键，不直接修改 Basis 或网格顶点；当前 Python 版本支持骨骼/Object 被动碰撞，不做自碰撞、网格-网格碰撞或 modifier 后结果解算。
 
     接法：
     1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
@@ -2043,20 +2244,20 @@ def springBoneVRM(
     工作原理：
     节点从 Basis/reference key 批量读取 rest 顶点，把坐标转换到世界空间后建立运行时 cache。
     mesh edges 生成拉伸距离约束，共边三角面的 opposite 顶点生成简化弯曲距离约束。
-    每次执行代表推进一帧：按子步数做 Verlet 预测，再按迭代次数投影拉伸和弯曲约束，最后把世界空间结果转换回物体局部空间并批量写入目标形态键。
+    每次执行代表推进一帧：按子步数做 Verlet 预测，再按迭代次数投影拉伸、弯曲和被动碰撞约束，最后把世界空间结果转换回物体局部空间并批量写入目标形态键。
     stretch_compliance / bend_compliance 越大约束越软；为 0 时接近硬约束。
 
     Blender 边界：
     Python 侧负责 Blender 数据读取、shape key 创建与写回、cache 管理和跳帧保护。
     求解过程中不会逐点写 Blender 数据，只在最后使用 foreach_set 批量写目标形态键。
     物体拓扑或目标形态键变化时会重建 cache；物体缩放变化时会重算 rest 约束长度。
-    Pin 属性只在 cache 重建时读取，模拟过程中修改不会立即生效。
+    Pin、逐顶点碰撞半径和被碰撞组只在 cache 重建时读取，模拟过程中修改不会立即生效。
 
     跳帧规则：
     与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存，避免继承旧速度。
 
     升级约定：
-    CPP 后端节点应命名为“网格物理-XPBD-CPP”，并保持本节点的输入、输出、cache 语义和跳帧行为一致；差异只应集中在求解后端。
+    CPP 后端节点应命名为“网格物理-XPBD-CPP”，并逐步追平本节点的输入、输出、cache 语义和跳帧行为；当前碰撞先在 Python 版本落地。
     """,
 )
 def meshPhysicsXPBD(
@@ -2125,7 +2326,7 @@ def meshPhysicsXPBD(
 
     工作原理：
     与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
-    差异只在求解器后端：这里把预测、pin、stretch、bend 和循环全部交给 C++。
+    差异在求解器后端：这里把预测、pin、stretch、bend 和循环交给 C++；当前暂未接入 Python 版的被动碰撞投影。
     输出形态键在物体属性的“HoTools网格碰撞”面板中设置；不存在时会自动创建。
     Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
 
