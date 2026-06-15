@@ -3,96 +3,18 @@
 
 from .OmniDebug import OmniDebug
 from . import OmniRuntimeState
-
-
-class CompiledGraph:
-    """Compiled result for a single OmniNode tree."""
-
-    def __init__(self):
-        self.instructions = []
-        self.reg_count = 0
-        self.input_regs = {}
-        self.output_regs = {}
-        self.tree_name = ""
-        self.tree_ref = None
-        self.runtime_timing_tree_key = None
-        self.node_order = []
-        self.compile_trace = []
-        self.register_bridges = []
-        self.function_catalog = []
-        self.debug_enabled = False
-
-
-class OpCall:
-    def __init__(self, func, inputs, outputs, node):
-        self.func = func
-        self.inputs = inputs
-        self.outputs = outputs
-        self.node = node
-
-
-class SubtreeCall:
-    def __init__(self, compiled_graph, inputs, outputs, node):
-        self.compiled_graph = compiled_graph
-        self.inputs = inputs
-        self.outputs = outputs
-        self.node = node
-
-
-class BatchSubtreeCall:
-    def __init__(self, compiled_graph, inputs, outputs, node, batch_input_index):
-        self.compiled_graph = compiled_graph
-        self.inputs = inputs
-        self.outputs = outputs
-        self.node = node
-        self.batch_input_index = batch_input_index
-
-
-class CacheReadCall:
-    def __init__(self, cache_key_input, outputs, node):
-        self.cache_key_input = cache_key_input
-        self.outputs = outputs
-        self.node = node
-
-
-class CacheWriteCall:
-    def __init__(self, cache_key_input, value_input, enabled_input, outputs, node):
-        self.cache_key_input = cache_key_input
-        self.value_input = value_input
-        self.enabled_input = enabled_input
-        self.outputs = outputs
-        self.node = node
-
-
-class CacheDeleteCall:
-    def __init__(self, trigger_input, cache_key_input, delete_all_input, enabled_input, outputs, node):
-        self.trigger_input = trigger_input
-        self.cache_key_input = cache_key_input
-        self.delete_all_input = delete_all_input
-        self.enabled_input = enabled_input
-        self.outputs = outputs
-        self.node = node
-
-
-class CacheDumpCall:
-    def __init__(self, trigger_input, label_input, outputs, node, print_to_console):
-        self.trigger_input = trigger_input
-        self.label_input = label_input
-        self.outputs = outputs
-        self.node = node
-        self.print_to_console = print_to_console
-
-
-class RuntimeTimingBeginCall:
-    def __init__(self, tree_name, tree_ref):
-        self.tree_name = tree_name
-        self.tree_ref = tree_ref
-
-
-class RuntimeTimingEndCall:
-    def __init__(self, tree_name, tree_ref):
-        self.tree_name = tree_name
-        self.tree_ref = tree_ref
+from .OmniIR import (
+    CompiledGraph,
+    OpCall,
+    SubtreeCall,
+    BatchSubtreeCall,
+    CacheReadCall,
+    CacheWriteCall,
+    CacheDeleteCall,
+    CacheDumpCall,
+    RuntimeTimingBeginCall,
+    RuntimeTimingEndCall,
+)
 
 
 class OmniCompiler:
@@ -126,10 +48,6 @@ class OmniCompiler:
     @staticmethod
     def _is_frame_node(node):
         return OmniCompiler._node_idname(node) == OmniCompiler.FRAME_NODE_IDNAME
-
-    @staticmethod
-    def _is_reroute_node(node):
-        return OmniCompiler._node_idname(node) == OmniCompiler.REROUTE_NODE_IDNAME
 
     @staticmethod
     def topo_sort(nodes, links):
@@ -181,6 +99,19 @@ class OmniCompiler:
 
 
 class CompilerContext:
+    SPECIAL_EMITTERS = {
+        OmniCompiler.FRAME_NODE_IDNAME: "emit_frame",
+        OmniCompiler.REROUTE_NODE_IDNAME: "emit_reroute",
+        OmniCompiler.GROUP_INPUTS_IDNAME: "emit_group_inputs",
+        OmniCompiler.GROUP_OUTPUTS_IDNAME: "emit_group_outputs",
+        OmniCompiler.GROUP_NODE_IDNAME: "emit_group",
+        OmniCompiler.BATCH_GROUP_NODE_IDNAME: "emit_batch_group",
+        OmniCompiler.CACHE_READ_NODE_IDNAME: "emit_cache_read",
+        OmniCompiler.CACHE_WRITE_NODE_IDNAME: "emit_cache_write",
+        OmniCompiler.CACHE_DELETE_NODE_IDNAME: "emit_cache_delete",
+        OmniCompiler.CACHE_DUMP_NODE_IDNAME: "emit_cache_dump",
+    }
+
     def __init__(self, tree, compiling_stack, debug=False):
         self.tree = tree
         self.compiling_stack = list(compiling_stack)
@@ -364,48 +295,15 @@ class CompilerContext:
 
     def emit_node(self, node):
         node_idname = OmniCompiler._node_idname(node)
-
-        if OmniCompiler._is_frame_node(node):
-            OmniDebug.append_compile_trace(self.graph, f"Skip FRAME {node.name}")
-            return
-
-        if OmniCompiler._is_reroute_node(node):
-            self.emit_reroute(node)
-            return
-
-        if node_idname == OmniCompiler.GROUP_INPUTS_IDNAME:
-            self.emit_group_inputs(node)
-            return
-
-        if node_idname == OmniCompiler.GROUP_OUTPUTS_IDNAME:
-            self.emit_group_outputs(node)
-            return
-
-        if node_idname == OmniCompiler.GROUP_NODE_IDNAME:
-            self.emit_group(node)
-            return
-
-        if node_idname == OmniCompiler.BATCH_GROUP_NODE_IDNAME:
-            self.emit_batch_group(node)
-            return
-
-        if node_idname == OmniCompiler.CACHE_READ_NODE_IDNAME:
-            self.emit_cache_read(node)
-            return
-
-        if node_idname == OmniCompiler.CACHE_WRITE_NODE_IDNAME:
-            self.emit_cache_write(node)
-            return
-
-        if node_idname == OmniCompiler.CACHE_DELETE_NODE_IDNAME:
-            self.emit_cache_delete(node)
-            return
-
-        if node_idname == OmniCompiler.CACHE_DUMP_NODE_IDNAME:
-            self.emit_cache_dump(node)
+        emitter_name = self.SPECIAL_EMITTERS.get(node_idname)
+        if emitter_name is not None:
+            getattr(self, emitter_name)(node)
             return
 
         self.emit_function_call(node, node_idname)
+
+    def emit_frame(self, node):
+        OmniDebug.append_compile_trace(self.graph, f"Skip FRAME {node.name}")
 
     def emit_reroute(self, node):
         input_sock = node.inputs[0] if len(node.inputs) > 0 else None

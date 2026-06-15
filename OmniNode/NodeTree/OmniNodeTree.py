@@ -5,7 +5,7 @@ from bpy.app.handlers import persistent
 
 from .OmniCompiler import OmniCompiler
 from .OmniExecutor import OmniExecutor
-from .OmniCompiler import SubtreeCall, BatchSubtreeCall
+from .OmniIR import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniNodeDraw
 from .OmniNodeOperator import (

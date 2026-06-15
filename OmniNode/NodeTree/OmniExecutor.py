@@ -1,4 +1,4 @@
-from .OmniCompiler import (
+from .OmniIR import (
     CompiledGraph,
     OpCall,
     SubtreeCall,
