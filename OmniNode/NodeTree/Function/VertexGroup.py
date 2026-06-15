@@ -8,6 +8,8 @@ import bpy
 def _require_object(obj) -> bpy.types.Object:
     if obj is None or not isinstance(obj, bpy.types.Object):
         raise ValueError("物体输入未连接或无效")
+    if obj.type != "MESH":
+        raise ValueError(f"object '{obj.name}' is not a mesh object")
     return obj
 
 
@@ -32,6 +34,8 @@ def _vertex_group_owner(vertex_group: bpy.types.VertexGroup) -> bpy.types.Object
     owner = getattr(vertex_group, "id_data", None)
     if owner is None or not isinstance(owner, bpy.types.Object):
         raise ValueError("顶点组没有有效的所属物体")
+    if owner.type != "MESH":
+        raise ValueError(f"vertex group owner '{owner.name}' is not a mesh object")
     return owner
 
 
@@ -72,7 +76,7 @@ def _get_vertex_group_by_index(obj: bpy.types.Object, group_index: int) -> bpy.t
 def objectCreateVertexGroup(
     obj: bpy.types.Object,
     group_name: str,
-) -> tuple[bpy.types.Object, bpy.types.VertexGroup, str]:
+) -> tuple[bpy.types.Object, _OmniVertexGroup, str]:
     vertex_groups = _get_vertex_groups(obj)
     group_name = _require_vertex_group_name(group_name)
     vertex_group = vertex_groups.get(group_name)
@@ -92,7 +96,7 @@ def objectCreateVertexGroup(
 def objectGetVertexGroupByName(
     obj: bpy.types.Object,
     group_name: str,
-) -> bpy.types.VertexGroup:
+) -> _OmniVertexGroup:
     return _get_vertex_group_by_name(obj, group_name)
 
 
@@ -107,7 +111,7 @@ def objectGetVertexGroupByName(
 def objectGetVertexGroupByIndex(
     obj: bpy.types.Object,
     group_index: int,
-) -> bpy.types.VertexGroup:
+) -> _OmniVertexGroup:
     return _get_vertex_group_by_index(obj, group_index)
 
 
@@ -121,7 +125,7 @@ def objectGetVertexGroupByIndex(
 )
 def objectGetActiveVertexGroup(
     obj: bpy.types.Object,
-) -> bpy.types.VertexGroup:
+) -> _OmniVertexGroup:
     vertex_groups = _get_vertex_groups(obj)
     vertex_group = vertex_groups.active
     if vertex_group is None:
@@ -185,7 +189,7 @@ def vertexGroupGetObject(
 def vertexGroupRename(
     vertex_group: _OmniVertexGroup,
     new_name: str,
-) -> tuple[bpy.types.VertexGroup, str]:
+) -> tuple[_OmniVertexGroup, str]:
     vertex_group = _require_vertex_group(vertex_group)
     new_name = _require_vertex_group_name(new_name)
     vertex_group.name = new_name
@@ -203,7 +207,7 @@ def vertexGroupRename(
 def objectSetActiveVertexGroup(
     obj: bpy.types.Object,
     vertex_group: _OmniVertexGroup,
-) -> tuple[bpy.types.Object, bpy.types.VertexGroup]:
+) -> tuple[bpy.types.Object, _OmniVertexGroup]:
     vertex_group = _require_vertex_group(vertex_group)
     owner = _vertex_group_owner(vertex_group)
     obj = _require_object(obj)
@@ -224,7 +228,7 @@ def objectSetActiveVertexGroup(
 def objectSetActiveVertexGroupByIndex(
     obj: bpy.types.Object,
     group_index: int,
-) -> tuple[bpy.types.Object, bpy.types.VertexGroup]:
+) -> tuple[bpy.types.Object, _OmniVertexGroup]:
     obj = _require_object(obj)
     vertex_group = _get_vertex_group_by_index(obj, group_index)
     obj.vertex_groups.active_index = int(group_index)

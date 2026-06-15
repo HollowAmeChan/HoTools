@@ -40,6 +40,10 @@ def _armature_object_poll(self, obj):
     return obj is not None and getattr(obj, "type", None) == "ARMATURE"
 
 
+def _mesh_object_poll(self, obj):
+    return obj is not None and getattr(obj, "type", None) == "MESH"
+
+
 class OmniNodeSocketScene(NodeSocket):
     bl_label = "场景-Omni"
     bl_idname = "OmniNodeSocketScene"
@@ -362,13 +366,50 @@ class OmniNodeSocketVertexGroup(NodeSocket):
     bl_label = "顶点组-Omni"
     bl_idname = "OmniNodeSocketVertexGroup"
 
-    default_value: bpy.props.StringProperty(  # type: ignore
-        default="",
-        options={"HIDDEN", "SKIP_SAVE"},
-    )
+    mesh_object: bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        poll=_mesh_object_poll,
+        description="Mesh Object",
+    )  # type: ignore
+    group_name: bpy.props.StringProperty(
+        name="Vertex Group",
+    )  # type: ignore
+
+    @property
+    def default_value(self):
+        obj = self.mesh_object
+        group_name = str(self.group_name or "").strip()
+        if obj is None or not group_name:
+            return None
+        if getattr(obj, "type", None) != "MESH":
+            return None
+        return obj.vertex_groups.get(group_name)
+
+    @default_value.setter
+    def default_value(self, value):
+        if not isinstance(value, bpy.types.VertexGroup):
+            return
+
+        obj = getattr(value, "id_data", None)
+        if isinstance(obj, bpy.types.Object) and obj.type == "MESH":
+            self.mesh_object = obj
+        try:
+            self.group_name = value.name
+        except Exception:
+            pass
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+
+        row = layout.row(align=True)
+        row.prop(self, "mesh_object", text=text)
+        obj = self.mesh_object
+        if obj is not None and getattr(obj, "type", None) == "MESH":
+            row.prop_search(self, "group_name", obj, "vertex_groups", text="")
+        else:
+            row.prop(self, "group_name", text="")
 
     @classmethod
     def draw_color_simple(cls):

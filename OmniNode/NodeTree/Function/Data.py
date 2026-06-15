@@ -229,6 +229,8 @@ def colorAttributeInput(v: _OmniColorAttribute) -> _OmniColorAttribute:
       bl_label="顶点组",
       base_color=_Color.colorCat["GetData"],)
 def vertexGroupInput(v: _OmniVertexGroup) -> _OmniVertexGroup:
+    if v is None or not isinstance(v, bpy.types.VertexGroup):
+        raise ValueError("vertex group input is empty or invalid")
     return v
 
 @omni(enable=True,
