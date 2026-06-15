@@ -17,6 +17,61 @@ import time
 
 class OmniExecutor:
     @staticmethod
+    def make_runtime_logger(debug, depth):
+        if debug:
+            return OmniDebug.make_runtime_logger(depth)
+
+        def log(_message):
+            return None
+
+        return [], log
+
+    @staticmethod
+    def timing_token(value, fallback):
+        text = str(value if value not in {None, ""} else fallback)
+        text = "_".join(text.split())
+        return text.replace(":", ".")
+
+    @staticmethod
+    def timing_stage_name(step_index, op):
+        if isinstance(op, RuntimeTimingBeginCall):
+            return None
+        if isinstance(op, RuntimeTimingEndCall):
+            return None
+        if isinstance(op, tuple):
+            return f"step{step_index}:CONST"
+        if isinstance(op, OpCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<node>")
+            func_name = OmniExecutor.timing_token(OmniDebug.func_name(getattr(op, "func", None)), "<func>")
+            return f"step{step_index}:{node_name}:{func_name}"
+        if isinstance(op, SubtreeCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<subtree>")
+            tree_name = OmniExecutor.timing_token(getattr(getattr(op, "compiled_graph", None), "tree_name", None), "<tree>")
+            return f"step{step_index}:{node_name}:SUBTREE:{tree_name}"
+        if isinstance(op, BatchSubtreeCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<batch>")
+            tree_name = OmniExecutor.timing_token(getattr(getattr(op, "compiled_graph", None), "tree_name", None), "<tree>")
+            return f"step{step_index}:{node_name}:BATCH:{tree_name}"
+        if isinstance(op, CacheReadCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<cache>")
+            return f"step{step_index}:{node_name}:CACHE_READ"
+        if isinstance(op, CacheWriteCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<cache>")
+            return f"step{step_index}:{node_name}:CACHE_WRITE"
+        if isinstance(op, CacheDeleteCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<cache>")
+            return f"step{step_index}:{node_name}:CACHE_DELETE"
+        if isinstance(op, CacheDumpCall):
+            node_name = OmniExecutor.timing_token(getattr(getattr(op, "node", None), "name", None), "<cache>")
+            return f"step{step_index}:{node_name}:CACHE_DUMP"
+        return f"step{step_index}:{op.__class__.__name__}"
+
+    @staticmethod
+    def add_timing_stage(timing_stages, stage, seconds):
+        if timing_stages is not None and stage:
+            timing_stages[stage] = timing_stages.get(stage, 0.0) + float(seconds)
+
+    @staticmethod
     def flatten_runtime(values):
         result = []
         for value in values:
@@ -44,6 +99,265 @@ class OmniExecutor:
         return "" if value is None else str(value)
 
     @staticmethod
+    def _record_timing_end(compiled, op, timing_start, timing_stages):
+        tree_ref = getattr(op, "tree_ref", None)
+        if timing_start is None or not bool(getattr(tree_ref, "debug_runtime_timing", False)):
+            return
+
+        try:
+            interval = float(getattr(tree_ref, "debug_runtime_timing_interval", 1.0))
+        except Exception:
+            interval = 1.0
+        tree_key = getattr(compiled, "runtime_timing_tree_key", None)
+        timing_stages = dict(timing_stages or {})
+        timing_stages["total"] = time.perf_counter() - timing_start
+        OmniDebug.record_runtime_timing(
+            getattr(op, "tree_name", compiled.tree_name),
+            tree_key,
+            timing_stages,
+            interval=interval,
+        )
+
+    @staticmethod
+    def _execute_fast(
+        compiled: CompiledGraph,
+        provided_inputs=None,
+        depth=0,
+        runtime_context=None,
+    ):
+        registers = [None] * compiled.reg_count
+        provided_inputs = provided_inputs or {}
+        timing_start = None
+        timing_stages = None
+
+        for uid, reg in compiled.input_regs.items():
+            if uid in provided_inputs:
+                registers[reg] = provided_inputs[uid]
+
+        for step_index, op in enumerate(compiled.instructions):
+            if isinstance(op, RuntimeTimingBeginCall):
+                tree_ref = getattr(op, "tree_ref", None)
+                if bool(getattr(tree_ref, "debug_runtime_timing", False)):
+                    timing_start = time.perf_counter()
+                    timing_stages = {}
+                continue
+
+            if isinstance(op, RuntimeTimingEndCall):
+                OmniExecutor._record_timing_end(compiled, op, timing_start, timing_stages)
+                continue
+
+            op_timing_start = time.perf_counter() if timing_stages is not None else None
+            op_timing_stage = OmniExecutor.timing_stage_name(step_index, op) if timing_stages is not None else None
+
+            if isinstance(op, tuple):
+                _, reg, value = op
+                registers[reg] = value
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, CacheReadCall):
+                key_value = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None))
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, key_value)
+
+                try:
+                    hit, value = OmniRuntimeState.read_cache(runtime_context, cache_key)
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                if len(op.outputs) > 0:
+                    registers[op.outputs[0]] = value
+                if len(op.outputs) > 1:
+                    registers[op.outputs[1]] = hit
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, CacheWriteCall):
+                value = registers[op.value_input] if op.value_input is not None else None
+                enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else True
+                key_value = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None))
+                cache_key = OmniRuntimeState.cache_key_for_node(op.node, key_value)
+
+                if enabled:
+                    try:
+                        OmniRuntimeState.write_cache(runtime_context, cache_key, value)
+                    except Exception as exc:
+                        runtime_context.mark_failed()
+                        op.node.set_bug_state(exc)
+                        break
+
+                for reg in op.outputs:
+                    registers[reg] = value
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, CacheDeleteCall):
+                trigger_value = registers[op.trigger_input] if op.trigger_input is not None else None
+                enabled = bool(registers[op.enabled_input]) if op.enabled_input is not None else False
+                cache_key = OmniExecutor.cache_key_input_value(registers, getattr(op, "cache_key_input", None)).strip()
+                delete_all = bool(registers[op.delete_all_input]) if getattr(op, "delete_all_input", None) is not None else False
+                deleted_count = 0
+
+                try:
+                    if enabled:
+                        if delete_all:
+                            deleted_count = OmniRuntimeState.clear_namespace(runtime_context)
+                        elif cache_key:
+                            deleted_count = OmniRuntimeState.delete_cache(runtime_context, cache_key)
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                output_values = [trigger_value, deleted_count, enabled and (delete_all or bool(cache_key))]
+                for index, reg in enumerate(op.outputs):
+                    registers[reg] = output_values[index] if index < len(output_values) else None
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, CacheDumpCall):
+                trigger_value = registers[op.trigger_input] if op.trigger_input is not None else None
+                label_value = registers[op.label_input] if getattr(op, "label_input", None) is not None else ""
+                label = str(label_value).strip() if label_value is not None else ""
+                title = label or op.node.name
+
+                try:
+                    cache_values = OmniRuntimeState.snapshot_cache(runtime_context)
+                    body = OmniExecutor.format_cache_snapshot(cache_values)
+                    text = f"[OmniNode Cache] {title} ({len(cache_values)} item(s))\n{body}"
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                if getattr(op, "print_to_console", True):
+                    print(text)
+
+                output_values = [trigger_value, text, len(cache_values)]
+                for index, reg in enumerate(op.outputs):
+                    registers[reg] = output_values[index] if index < len(output_values) else None
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, OpCall):
+                args = []
+                for inp in op.inputs:
+                    if isinstance(inp, list):
+                        args.append(OmniExecutor.flatten_runtime([registers[reg] for reg in inp]))
+                    else:
+                        args.append(registers[inp])
+
+                try:
+                    result = op.func(*args)
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                if len(op.outputs) == 1:
+                    registers[op.outputs[0]] = result
+                else:
+                    for index, reg in enumerate(op.outputs):
+                        registers[reg] = result[index]
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, SubtreeCall):
+                subtree_inputs = {}
+                ordered_input_uids = list(op.compiled_graph.input_regs.keys())
+                for index, uid in enumerate(ordered_input_uids):
+                    if index < len(op.inputs):
+                        subtree_inputs[uid] = registers[op.inputs[index]]
+
+                try:
+                    subtree_outputs, _ = OmniExecutor._execute_fast(
+                        op.compiled_graph,
+                        subtree_inputs,
+                        depth=depth + 1,
+                        runtime_context=runtime_context.descend_group(
+                            op.node,
+                            getattr(op.compiled_graph, "tree_ref", None),
+                        ),
+                    )
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                ordered_output_uids = list(op.compiled_graph.output_regs.keys())
+                for index, uid in enumerate(ordered_output_uids):
+                    if index < len(op.outputs):
+                        registers[op.outputs[index]] = subtree_outputs.get(uid)
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+                continue
+
+            if isinstance(op, BatchSubtreeCall):
+                ordered_input_uids = list(op.compiled_graph.input_regs.keys())
+                ordered_output_uids = list(op.compiled_graph.output_regs.keys())
+
+                if op.batch_input_index >= len(op.inputs):
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state("Batch input index out of range")
+                    break
+
+                batch_regs = op.inputs[op.batch_input_index]
+                if not isinstance(batch_regs, list):
+                    batch_regs = [batch_regs]
+
+                batch_values = OmniExecutor.flatten_runtime([registers[reg] for reg in batch_regs])
+
+                base_inputs = {}
+                for index, uid in enumerate(ordered_input_uids):
+                    if index >= len(op.inputs) or index == op.batch_input_index:
+                        continue
+                    base_inputs[uid] = registers[op.inputs[index]]
+
+                collected_outputs = {uid: [] for uid in ordered_output_uids}
+                try:
+                    batch_uid = ordered_input_uids[op.batch_input_index]
+                    for batch_index, batch_value in enumerate(batch_values):
+                        subtree_inputs = dict(base_inputs)
+                        subtree_inputs[batch_uid] = batch_value
+
+                        subtree_outputs, _ = OmniExecutor._execute_fast(
+                            op.compiled_graph,
+                            subtree_inputs,
+                            depth=depth + 1,
+                            runtime_context=runtime_context.descend_batch_item(
+                                op.node,
+                                getattr(op.compiled_graph, "tree_ref", None),
+                                batch_index,
+                            ),
+                        )
+
+                        for uid in ordered_output_uids:
+                            collected_outputs[uid].append(subtree_outputs.get(uid))
+                except Exception as exc:
+                    runtime_context.mark_failed()
+                    op.node.set_bug_state(exc)
+                    break
+
+                for index, uid in enumerate(ordered_output_uids):
+                    if index < len(op.outputs):
+                        registers[op.outputs[index]] = collected_outputs.get(uid, [])
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(timing_stages, op_timing_stage, time.perf_counter() - op_timing_start)
+
+        result = {}
+        for uid, reg in compiled.output_regs.items():
+            result[uid] = registers[reg]
+
+        return result, []
+
+    @staticmethod
     def _execute(
         compiled: CompiledGraph,
         provided_inputs=None,
@@ -67,10 +381,19 @@ class OmniExecutor:
             finally:
                 OmniRuntimeState.finish_run(runtime_context)
 
+        if not debug:
+            return OmniExecutor._execute_fast(
+                compiled,
+                provided_inputs=provided_inputs,
+                depth=depth,
+                runtime_context=runtime_context,
+            )
+
         registers = [None] * compiled.reg_count
         provided_inputs = provided_inputs or {}
-        trace, log = OmniDebug.make_runtime_logger(depth)
+        trace, log = OmniExecutor.make_runtime_logger(debug, depth)
         timing_start = None
+        timing_stages = None
 
         log(f"{OmniDebug.section_label('Run')} Tree: {OmniDebug.tree_label(compiled.tree_name)}")
         for uid, reg in compiled.input_regs.items():
@@ -86,6 +409,7 @@ class OmniExecutor:
                 tree_ref = getattr(op, "tree_ref", None)
                 if bool(getattr(tree_ref, "debug_runtime_timing", False)):
                     timing_start = time.perf_counter()
+                    timing_stages = {}
                 continue
 
             if isinstance(op, RuntimeTimingEndCall):
@@ -96,13 +420,18 @@ class OmniExecutor:
                     except Exception:
                         interval = 1.0
                     tree_key = getattr(compiled, "runtime_timing_tree_key", None)
+                    timing_stages = dict(timing_stages or {})
+                    timing_stages["total"] = time.perf_counter() - timing_start
                     OmniDebug.record_runtime_timing(
                         getattr(op, "tree_name", compiled.tree_name),
                         tree_key,
-                        {"total": time.perf_counter() - timing_start},
+                        timing_stages,
                         interval=interval,
                     )
                 continue
+
+            op_timing_start = time.perf_counter() if timing_stages is not None else None
+            op_timing_stage = OmniExecutor.timing_stage_name(step_index, op) if timing_stages is not None else None
 
             if isinstance(op, tuple):
                 _, reg, value = op
@@ -112,6 +441,12 @@ class OmniExecutor:
                     f"{OmniDebug.func_label('CONST')} {OmniDebug.reg_label(reg)} = "
                     f"{OmniDebug.value_label(OmniDebug.format_value(value))}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, CacheReadCall):
@@ -153,6 +488,12 @@ class OmniExecutor:
                     f"key={OmniDebug.value_label(cache_key)} hit={OmniDebug.value_label(hit)} "
                     f"-> {', '.join(out_desc)}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, CacheWriteCall):
@@ -187,6 +528,12 @@ class OmniExecutor:
                     f"key={OmniDebug.value_label(cache_key)} enabled={OmniDebug.value_label(enabled)} value="
                     f"{OmniDebug.value_label(OmniDebug.format_value(value))} -> {out_desc}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, CacheDeleteCall):
@@ -227,6 +574,12 @@ class OmniExecutor:
                     f"enabled={OmniDebug.value_label(enabled)} target={OmniDebug.value_label(mode)} "
                     f"deleted={OmniDebug.value_label(deleted_count)} -> {out_desc}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, CacheDumpCall):
@@ -265,6 +618,12 @@ class OmniExecutor:
                     f"{OmniDebug.func_label('CACHE DUMP')} {OmniDebug.node_label(op.node.name)} "
                     f"title={OmniDebug.value_label(title)} count={OmniDebug.value_label(len(cache_values))} -> {out_desc}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, OpCall):
@@ -320,6 +679,12 @@ class OmniExecutor:
                     f"@ {OmniDebug.node_label(op.node.name)} "
                     f"args=({', '.join(arg_desc)}) -> {out_desc}"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, SubtreeCall):
@@ -373,6 +738,12 @@ class OmniExecutor:
                     )
                     + ")"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
                 continue
 
             if isinstance(op, BatchSubtreeCall):
@@ -461,6 +832,12 @@ class OmniExecutor:
                     )
                     + ")"
                 )
+                if op_timing_start is not None:
+                    OmniExecutor.add_timing_stage(
+                        timing_stages,
+                        op_timing_stage,
+                        time.perf_counter() - op_timing_start,
+                    )
 
         result = {}
         for uid, reg in compiled.output_regs.items():

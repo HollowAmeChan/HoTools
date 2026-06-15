@@ -15,6 +15,7 @@ class CompiledGraph:
         self.output_regs = {}
         self.tree_name = ""
         self.tree_ref = None
+        self.runtime_timing_tree_key = None
         self.node_order = []
         self.compile_trace = []
         self.register_bridges = []

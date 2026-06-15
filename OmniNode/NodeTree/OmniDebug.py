@@ -6,6 +6,7 @@ import time
 class OmniDebug:
     COLOR_TERMINAL = {"displays_colors": False, "initialized": False}
     RUNTIME_TIMING_PRINT_INTERVAL = 1.0
+    RUNTIME_TIMING_MAX_STAGES = 12
     _runtime_timing_profiles = {}
 
     @staticmethod
@@ -167,6 +168,49 @@ class OmniDebug:
         ]
 
     @staticmethod
+    def format_runtime_timing_report(tree_name, elapsed, sample_count, totals):
+        elapsed_ms = elapsed * 1000.0
+        hz = sample_count / max(elapsed, 0.000001)
+        total_ms = totals.get("total", 0.0) / sample_count * 1000.0
+
+        lines = [
+            "",
+            "-" * 72,
+            f"OMNI DEBUG TIMING   |  Tree: {tree_name}",
+            "-" * 72,
+            f"  {OmniDebug.section_label('Summary')}: "
+            f"interval={OmniDebug.value_label(f'{elapsed_ms:.1f}ms')}  "
+            f"samples={OmniDebug.value_label(sample_count)}  "
+            f"hz={OmniDebug.value_label(f'{hz:.2f}')}  "
+            f"total={OmniDebug.func_label(f'{total_ms:.3f}ms')}",
+        ]
+
+        step_stages = [stage for stage in totals if stage != "total"]
+        step_stages.sort(key=lambda stage: totals[stage], reverse=True)
+        max_stages = max(int(OmniDebug.RUNTIME_TIMING_MAX_STAGES), 1)
+        shown_steps = step_stages[:max_stages]
+        hidden_steps = step_stages[max_stages:]
+
+        if shown_steps:
+            lines.append(f"  {OmniDebug.section_label('Slow Steps')}:")
+            for index, stage in enumerate(shown_steps, start=1):
+                avg_ms = totals[stage] / sample_count * 1000.0
+                lines.append(
+                    f"    {OmniDebug.value_label(f'{index:02d}.')} "
+                    f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
+                )
+
+        if hidden_steps:
+            other_total = sum(totals[stage] for stage in hidden_steps)
+            other_ms = other_total / sample_count * 1000.0
+            lines.append(
+                f"    {OmniDebug.value_label('..')} "
+                f"{OmniDebug.func_label('other_steps')} = {OmniDebug.value_label(f'{other_ms:.3f}ms')}"
+            )
+
+        return lines
+
+    @staticmethod
     def make_runtime_logger(depth):
         trace = []
         indent = "    " * depth
@@ -220,7 +264,6 @@ class OmniDebug:
     @classmethod
     def flush_runtime_timing(cls, force=False):
         now = time.perf_counter()
-        ordered_stages = ("total",)
 
         for key, profile in list(cls._runtime_timing_profiles.items()):
             elapsed = now - float(profile["last_print"])
@@ -232,22 +275,8 @@ class OmniDebug:
             if sample_count <= 0:
                 continue
             totals = profile["stages"]
-            used = set()
-            stage_text = []
-            for stage in ordered_stages:
-                if stage in totals:
-                    used.add(stage)
-                    stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
-            for stage in sorted(set(totals.keys()) - used):
-                stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
-
-            hz = sample_count / max(elapsed, 0.000001)
             tree_name = profile.get("tree_name", key)
-            print(
-                f"[OmniNodeRuntime] tree={tree_name} interval={elapsed * 1000.0:.1f}ms "
-                f"samples={sample_count} hz={hz:.2f} "
-                + " ".join(stage_text)
-            )
+            print("\n".join(cls.format_runtime_timing_report(tree_name, elapsed, sample_count, totals)))
 
             cls._runtime_timing_profiles[key] = {
                 "last_print": now,
