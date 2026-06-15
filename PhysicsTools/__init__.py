@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import BoolProperty, PointerProperty
+from bpy.props import BoolProperty, EnumProperty, PointerProperty
 
 from .collisionOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
@@ -69,6 +69,16 @@ def reg_props():
         default=True,
         update=_overlay_show_update,
     )
+    bpy.types.Scene.ho_collision_overlay_color_mode = EnumProperty(
+        name="颜色模式",
+        description="切换碰撞叠加层的颜色含义",
+        items=[
+            ("GROUP", "主碰撞组", "按主碰撞组显示颜色"),
+            ("PIN", "Pin状态", "按是否固定显示颜色"),
+        ],
+        default="GROUP",
+        update=_overlay_show_update,
+    )
     bpy.types.Scene.ho_collision_overlay_show_object = BoolProperty(
         name="物体碰撞体",
         default=True,
@@ -95,6 +105,7 @@ def ureg_props():
     del bpy.types.Scene.ho_bone_collision_show_info_section
     del bpy.types.Scene.ho_collision_overlay_show_mesh_vertices
     del bpy.types.Scene.ho_collision_overlay_show_object
+    del bpy.types.Scene.ho_collision_overlay_color_mode
     del bpy.types.Scene.ho_collision_overlay_show_bone
     del bpy.types.Scene.ho_collision_overlay_show
     del bpy.types.Object.hotools_object_collision

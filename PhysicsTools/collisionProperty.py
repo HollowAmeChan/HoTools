@@ -10,6 +10,11 @@ class PG_Hotools_BoneCollision(PropertyGroup):
         description="把这根骨骼标记为一条SpringBone链的根；整骨架面板会批量管理这个标记",
         default=False,
     )  # type: ignore
+    pin: BoolProperty(
+        name="Pin",
+        description="固定这根骨骼，让物理解算保持当前姿态；Spring Root 在解算中始终视为Pin，即使这里关闭也不会被推动",
+        default=False,
+    )  # type: ignore
     collision_type: EnumProperty(
         name="碰撞体",
         description="这根骨骼携带的物理碰撞体类型；当前只负责持久化与编辑",
@@ -114,6 +119,16 @@ class PG_Hotools_MeshCollision(PropertyGroup):
     radius_vertex_group: StringProperty(
         name="半径顶点组",
         description="用于缩放逐顶点碰撞半径的顶点组；留空时所有顶点使用完整半径",
+        default="",
+    )  # type: ignore
+    pin_enabled: BoolProperty(
+        name="Pin启用",
+        description="启用XPBD网格Pin顶点；只在物理cache重建时读取，模拟过程中修改不会立即生效",
+        default=False,
+    )  # type: ignore
+    pin_vertex_group: StringProperty(
+        name="Pin顶点组",
+        description="用于指定固定顶点的顶点组；启用Pin且留空时固定全部顶点",
         default="",
     )  # type: ignore
     primary_collision_group: IntProperty(

@@ -3,7 +3,6 @@ from ..OmniNodeSocketMapping import (
     _OmniBoneChain,
     _OmniCache,
     _OmniShapeKey,
-    _OmniVertexGroup,
 )
 from ..FunctionNodeCore import omni
 from . import _Color
@@ -18,9 +17,6 @@ import typing
 
 class _BonePhysics:
     EPSILON = 0.000001
-    SPRING_CACHE_VERSION = 3
-    VRM_SPRING_BONE_CACHE_VERSION = 1
-    COLLISION_SNAPSHOT_VERSION = 1
 
     @staticmethod
     def require_armature(obj, label: str) -> bpy.types.Object:
@@ -127,6 +123,19 @@ class _BonePhysics:
         }
 
     @classmethod
+    def bone_is_effectively_pinned(cls, armature_obj: bpy.types.Object, bone_name: str, root_name: str = "") -> bool:
+        """
+        判断骨骼是否在当前物理链中固定。
+        链 root 是硬 Pin；非 root 只在 cache 构建时读取属性，不在模拟中热更新。
+        """
+        if bone_name and bone_name == root_name:
+            return True
+
+        bone = armature_obj.data.bones.get(bone_name) if armature_obj.data is not None else None
+        props = getattr(bone, "hotools_collision", None) if bone is not None else None
+        return bool(props is not None and getattr(props, "pin", False))
+
+    @classmethod
     def resolve_bone_value(cls, value):
         """
         从 Bone socket 值中解析出 Armature 和骨骼名。
@@ -205,7 +214,7 @@ class _BonePhysics:
         return list(chain["bones"])[1:]
 
     @classmethod
-    def bone_socket_values_from_chain(cls, chain, *, include_root: bool = False) -> list[dict]:
+    def bone_socket_values_from_chain(cls, chain, include_root: bool = False) -> list[dict]:
         """
         把骨链转换成 Bone socket 列表，主要给 bake 节点消费。
         默认排除 root，因为 root 只是 center，不应该被 SpringBone bake 输出包含。
@@ -263,7 +272,7 @@ class _BonePhysics:
         return local_direction.normalized()
 
     @classmethod
-    def spring_joint_from_pose(cls, armature_obj: bpy.types.Object, bone_name: str):
+    def spring_joint_from_pose(cls, armature_obj: bpy.types.Object, bone_name: str, pinned: bool = False):
         """
         从当前 PoseBone 建立 SpringBone 单节初始状态。
         缓存 tail、长度、初始轴、初始旋转/缩放和 matrix_basis，供跳帧恢复和连续模拟使用。
@@ -302,23 +311,28 @@ class _BonePhysics:
             "init_rotation": matrix.to_quaternion().copy(),
             "init_scale": matrix.to_scale().copy(),
             "init_matrix_basis": pose_bone.matrix_basis.copy(),
+            "pinned": bool(pinned),
         }
 
     @classmethod
     def build_spring_cache(cls, chain):
         """
         为整条骨链创建 SpringBone cache。
-        cache 记录链结构和每个模拟骨的初始状态，链或版本变化时会重新生成。
+        cache 记录链结构和每个模拟骨的初始状态，链结构变化时会重新生成。
         """
         armature_obj = chain["armature"]
         joints = {}
+        root_name = str(chain.get("root_bone") or "")
         for bone_name in cls.simulated_bone_names(chain):
-            joint = cls.spring_joint_from_pose(armature_obj, bone_name)
+            joint = cls.spring_joint_from_pose(
+                armature_obj,
+                bone_name,
+                pinned=cls.bone_is_effectively_pinned(armature_obj, bone_name, root_name),
+            )
             if joint is not None:
                 joints[bone_name] = joint
 
         return {
-            "version": cls.SPRING_CACHE_VERSION,
             "space": "WORLD",
             "root_as_center": True,
             "armature_name": armature_obj.name_full,
@@ -331,13 +345,12 @@ class _BonePhysics:
     def spring_cache_matches(cls, cache, chain) -> bool:
         """
         判断已有 cache 是否仍然匹配当前骨链。
-        版本、Armature、root 和骨骼列表任一变化都需要丢弃旧物理状态。
+        Armature、root、骨骼列表或必要字段任一变化都需要丢弃旧物理状态。
         """
         if not isinstance(cache, dict):
             return False
         return (
-            cache.get("version") == cls.SPRING_CACHE_VERSION
-            and cache.get("space") == "WORLD"
+            cache.get("space") == "WORLD"
             and cache.get("root_as_center") is True
             and cache.get("armature_name") == chain["armature"].name_full
             and cache.get("root_bone") == chain.get("root_bone", "")
@@ -379,6 +392,18 @@ class _BonePhysics:
         current_tail = cls.vector3(joint.get("current_tail"), fallback_tail)
         prev_tail = cls.vector3(joint.get("prev_tail"), fallback_tail)
         return current_tail, prev_tail
+
+    @classmethod
+    def pinned_joint_state(cls, armature_obj: bpy.types.Object, pose_bone, joint) -> tuple[mathutils.Matrix, mathutils.Vector, dict]:
+        """
+        生成固定骨骼本帧应该使用的姿态和 joint 状态。
+        Pin 固定的是当前输入姿态，不做 Verlet 推进，并清掉速度残留。
+        """
+        _, tail_world = cls.pose_head_tail_world(armature_obj, pose_bone)
+        next_joint = dict(joint)
+        next_joint["current_tail"] = tail_world.copy()
+        next_joint["prev_tail"] = tail_world.copy()
+        return pose_bone.matrix.copy(), tail_world.copy(), next_joint
 
     @classmethod
     def rest_axis_world(cls, armature_obj: bpy.types.Object, pose_bone, joint, target_pose_matrices) -> mathutils.Vector:
@@ -525,7 +550,12 @@ class _BonePhysics:
             if isinstance(value, (list, tuple)):
                 stack[0:0] = list(value)
                 continue
-            if isinstance(value, dict) and value.get("version") == cls.VRM_SPRING_BONE_CACHE_VERSION:
+            if (
+                isinstance(value, dict)
+                and isinstance(value.get("armature"), bpy.types.Object)
+                and isinstance(value.get("bones"), list)
+                and str(value.get("root_bone") or "")
+            ):
                 result.append(value)
         return result
 
@@ -560,7 +590,6 @@ class _BonePhysics:
             }
 
         return {
-            "version": cls.VRM_SPRING_BONE_CACHE_VERSION,
             "frame": None,
             "armature_name": armature_obj.name_full,
             "topology_key": topology_key,
@@ -572,8 +601,7 @@ class _BonePhysics:
         if not isinstance(cache, dict):
             return False
         return (
-            cache.get("version") == cls.VRM_SPRING_BONE_CACHE_VERSION
-            and cache.get("armature_name") == armature_obj.name_full
+            cache.get("armature_name") == armature_obj.name_full
             and cache.get("topology_key") == topology_key
             and isinstance(cache.get("chains"), dict)
         )
@@ -692,7 +720,6 @@ class _BonePhysics:
 
         frame = int(getattr(scene or bpy.context.scene, "frame_current", 0) or 0)
         return {
-            "version": cls.COLLISION_SNAPSHOT_VERSION,
             "frame": frame,
             "colliders": colliders,
         }
@@ -808,7 +835,6 @@ class _BonePhysics:
 
 class _MeshPhysics:
     EPSILON = 0.000001
-    CACHE_VERSION = 2
     CACHE_KIND = "MESH_PHYSICS_XPBD"
     DEBUG_PRINT_INTERVAL = 1.0
     _debug_profiles = {}
@@ -931,24 +957,6 @@ class _MeshPhysics:
         raise ValueError("shape key input is empty or invalid")
 
     @staticmethod
-    def vertex_group_owner(vertex_group: bpy.types.VertexGroup) -> bpy.types.Object:
-        owner = getattr(vertex_group, "id_data", None)
-        if owner is None or not isinstance(owner, bpy.types.Object) or owner.type != "MESH":
-            raise ValueError("pin vertex group owner is not a mesh object")
-        return owner
-
-    @classmethod
-    def validate_pin_group(cls, obj: bpy.types.Object, pin_group) -> bpy.types.VertexGroup | None:
-        if pin_group is None:
-            return None
-        if not isinstance(pin_group, bpy.types.VertexGroup):
-            raise ValueError("pin vertex group input is invalid")
-        owner = cls.vertex_group_owner(pin_group)
-        if owner != obj:
-            raise ValueError(f"pin vertex group '{pin_group.name}' does not belong to object '{obj.name}'")
-        return pin_group
-
-    @staticmethod
     def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
         mesh = obj.data
         if mesh.shape_keys is None:
@@ -1060,8 +1068,24 @@ class _MeshPhysics:
         )
 
     @staticmethod
-    def build_inv_masses(obj: bpy.types.Object, pin_group: bpy.types.VertexGroup | None) -> np.ndarray:
+    def mesh_pin_config(obj: bpy.types.Object) -> tuple[bool, str]:
+        props = getattr(obj, "hotools_mesh_collision", None)
+        if props is None or not bool(getattr(props, "pin_enabled", False)):
+            return False, ""
+        return True, str(getattr(props, "pin_vertex_group", "") or "")
+
+    @classmethod
+    def build_inv_masses(cls, obj: bpy.types.Object) -> np.ndarray:
         inv_masses = np.ones(len(obj.data.vertices), dtype=np.float32)
+        pin_enabled, pin_group_name = cls.mesh_pin_config(obj)
+        if not pin_enabled:
+            return inv_masses
+
+        if not pin_group_name:
+            inv_masses.fill(0.0)
+            return inv_masses
+
+        pin_group = obj.vertex_groups.get(pin_group_name)
         if pin_group is None:
             return inv_masses
 
@@ -1151,23 +1175,23 @@ class _MeshPhysics:
         cls,
         obj: bpy.types.Object,
         shape_key_name: str,
-        pin_group: bpy.types.VertexGroup | None,
         topology_key: tuple,
     ) -> dict:
         rest_local_positions = cls.read_rest_positions(obj)
         rest_positions = cls.local_positions_to_world(obj, rest_local_positions)
         edge_i, edge_j, edge_rest = cls.build_edge_constraints(obj.data, rest_positions)
         bend_i, bend_j, bend_rest = cls.build_bend_constraints(obj.data, rest_positions)
-        inv_masses = cls.build_inv_masses(obj, pin_group)
+        pin_enabled, pin_group_name = cls.mesh_pin_config(obj)
+        inv_masses = cls.build_inv_masses(obj)
         return {
-            "version": cls.CACHE_VERSION,
             "kind": cls.CACHE_KIND,
             "frame": None,
             "object_name": obj.name_full,
             "object_ptr": int(obj.as_pointer()),
             "mesh_ptr": int(obj.data.as_pointer()),
             "shape_key_name": shape_key_name,
-            "pin_group_name": pin_group.name if pin_group is not None else "",
+            "pin_enabled": bool(pin_enabled),
+            "pin_group_name": pin_group_name,
             "topology_key": topology_key,
             "object_matrix_world_key": cls.matrix_world_key(obj),
             "object_matrix_world_3x3_key": cls.matrix_world_3x3_key(obj),
@@ -1214,13 +1238,11 @@ class _MeshPhysics:
         state,
         obj: bpy.types.Object,
         shape_key_name: str,
-        pin_group: bpy.types.VertexGroup | None,
         topology_key: tuple,
     ) -> bool:
         if not isinstance(state, dict):
             return False
         vertex_count = len(obj.data.vertices)
-        pin_name = pin_group.name if pin_group is not None else ""
         required = (
             "rest_local_positions",
             "rest_positions",
@@ -1237,12 +1259,10 @@ class _MeshPhysics:
         if not all(isinstance(state.get(key), np.ndarray) for key in required):
             return False
         return (
-            state.get("version") == cls.CACHE_VERSION
-            and state.get("kind") == cls.CACHE_KIND
+            state.get("kind") == cls.CACHE_KIND
             and state.get("object_ptr") == int(obj.as_pointer())
             and state.get("mesh_ptr") == int(obj.data.as_pointer())
             and state.get("shape_key_name") == shape_key_name
-            and state.get("pin_group_name") == pin_name
             and state.get("topology_key") == topology_key
             and state.get("vertex_count") == vertex_count
             and state["rest_local_positions"].shape == (vertex_count, 3)
@@ -1472,7 +1492,6 @@ def _run_mesh_xpbd_node(
     use_cpp: bool,
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    pin_group: _OmniVertexGroup,
     target_shape_key: _OmniShapeKey,
     enabled: bool,
     reset: bool,
@@ -1493,7 +1512,6 @@ def _run_mesh_xpbd_node(
     if shape_obj != obj:
         raise ValueError("target shape key object must be the same as obj")
 
-    pin_group = _MeshPhysics.validate_pin_group(obj, pin_group)
     target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
     if timing is not None:
         _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
@@ -1501,7 +1519,7 @@ def _run_mesh_xpbd_node(
     stage_start = time.perf_counter() if timing is not None else None
     topology_key = _MeshPhysics.topology_key(obj)
     vertex_count = len(obj.data.vertices)
-    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, pin_group, topology_key) else None
+    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, topology_key) else None
     cached_frame = _BonePhysics.cache_frame(state)
     current_frame = int(getattr(bpy.context.scene, "frame_current", 0) or 0)
     if timing is not None:
@@ -1530,7 +1548,7 @@ def _run_mesh_xpbd_node(
             _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        state = _MeshPhysics.build_state(obj, shape_key_name, pin_group, topology_key)
+        state = _MeshPhysics.build_state(obj, shape_key_name, topology_key)
         if timing is not None:
             _MeshPhysics.add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
@@ -1719,7 +1737,6 @@ def springBoneVRMChainSetting(
         gravity.normalize()
 
     return {
-        "version": _BonePhysics.VRM_SPRING_BONE_CACHE_VERSION,
         "armature": bone_chain["armature"],
         "root_bone": str(bone_chain.get("root_bone") or ""),
         "bones": list(bone_chain.get("bones") or []),
@@ -1760,6 +1777,7 @@ def springBoneVRMChainSetting(
     运行规则：
     解算器会按 root 名排序设置，拒绝重复 root 或重复模拟同一根骨骼。
     缓存只保存这个骨架的 VRM SpringBone 状态，拓扑变化或打开“重置”时会重建状态。
+    链 root 是硬 Pin；非 root 骨骼的 Pin 属性只在 cache 重建时读取，模拟中修改不会立即生效。
     检测到跳帧或倒放时会先恢复初始姿态，并输出空缓存，让缓存写入节点清掉旧速度。
     同一帧同一骨架只允许一个不同配置的解算器写入，避免多个节点互相覆盖姿态。
 
@@ -1905,6 +1923,17 @@ def springBoneVRM(
                 if pose_bone is None or not isinstance(joint, dict):
                     continue
 
+                if bool(joint.get("pinned", False)):
+                    target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
+                        armature_obj,
+                        pose_bone,
+                        joint,
+                    )
+                    next_joints[bone_name] = next_joint
+                    target_pose_matrices[bone_name] = target_matrix
+                    target_tail_worlds[bone_name] = pinned_tail.copy()
+                    continue
+
                 current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
                 head = _BonePhysics.target_head_world(
                     armature_obj,
@@ -2000,7 +2029,6 @@ def springBoneVRM(
     _INPUT_NAME=[
         "缓存",
         "物体",
-        "Pin顶点组",
         "目标形态键",
         "启用",
         "重置",
@@ -2030,7 +2058,7 @@ def springBoneVRM(
     接法：
     1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
     2. “目标形态键”使用形态键 socket 选择 Mesh Object + shape key 名称；如果目标 key 不存在会自动创建。
-    3. “Pin顶点组”可以为空；权重大于 0 的顶点会固定在 Basis/rest 坐标。
+    3. Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置；启用 Pin 且顶点组留空时会固定全部顶点。
 
     工作原理：
     节点从 Basis/reference key 批量读取 rest 顶点，把坐标转换到世界空间后建立运行时 cache。
@@ -2041,7 +2069,8 @@ def springBoneVRM(
     Blender 边界：
     Python 侧负责 Blender 数据读取、shape key 创建与写回、cache 管理和跳帧保护。
     求解过程中不会逐点写 Blender 数据，只在最后使用 foreach_set 批量写目标形态键。
-    物体拓扑、目标形态键或 Pin 顶点组变化时会重建 cache；物体缩放变化时会重算 rest 约束长度。
+    物体拓扑或目标形态键变化时会重建 cache；物体缩放变化时会重算 rest 约束长度。
+    Pin 属性只在 cache 重建时读取，模拟过程中修改不会立即生效。
 
     跳帧规则：
     与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存，避免继承旧速度。
@@ -2053,7 +2082,6 @@ def springBoneVRM(
 def meshPhysicsXPBD(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    pin_group: _OmniVertexGroup,
     target_shape_key: _OmniShapeKey,
     enabled: bool = True,
     reset: bool = False,
@@ -2070,7 +2098,6 @@ def meshPhysicsXPBD(
         use_cpp=False,
         cache_state=cache_state,
         obj=obj,
-        pin_group=pin_group,
         target_shape_key=target_shape_key,
         enabled=enabled,
         reset=reset,
@@ -2093,7 +2120,6 @@ def meshPhysicsXPBD(
     _INPUT_NAME=[
         "缓存",
         "物体",
-        "Pin顶点组",
         "目标形态键",
         "启用",
         "重置",
@@ -2123,6 +2149,7 @@ def meshPhysicsXPBD(
     工作原理：
     与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
     差异只在求解器后端：这里把预测、pin、stretch、bend 和循环全部交给 C++。
+    Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
 
     升级约定：
     这是后续 native 优化的正式入口。它不改变节点使用方式，只替换求解实现。
@@ -2131,7 +2158,6 @@ def meshPhysicsXPBD(
 def meshPhysicsXPBDCpp(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
-    pin_group: _OmniVertexGroup,
     target_shape_key: _OmniShapeKey,
     enabled: bool = True,
     reset: bool = False,
@@ -2148,7 +2174,6 @@ def meshPhysicsXPBDCpp(
         use_cpp=True,
         cache_state=cache_state,
         obj=obj,
-        pin_group=pin_group,
         target_shape_key=target_shape_key,
         enabled=enabled,
         reset=reset,
@@ -2255,6 +2280,7 @@ def meshPhysicsXPBDCpp(
 
     工作原理：
     骨链第一根骨骼只作为 center/锚点，不参与模拟；从第二根骨骼开始模拟。
+    链 root 永远视为 Pin；非 root 骨骼的 Pin 属性会在 cache 构建时记录，模拟中修改不会热更新。
     每根模拟骨在世界空间保存 tail 的 current/previous 状态，用 Verlet 推进：
     next = current + (current - previous) * (1 - drag) + rest_axis * stiffness * dt + gravity * gravity_power * dt。
     stiffness 会乘以 dt，所以它不是 0-1 参数，常用量级会落在 1、10、30、100 这种范围。
@@ -2326,6 +2352,17 @@ def springBoneBase(
         pose_bone = armature_obj.pose.bones.get(bone_name)
         joint = old_joints.get(bone_name) if isinstance(old_joints, dict) else None
         if pose_bone is None or not isinstance(joint, dict):
+            continue
+
+        if bool(joint.get("pinned", False)):
+            target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
+                armature_obj,
+                pose_bone,
+                joint,
+            )
+            next_joints[bone_name] = next_joint
+            target_pose_matrices[bone_name] = target_matrix
+            target_tail_worlds[bone_name] = pinned_tail.copy()
             continue
 
         current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)

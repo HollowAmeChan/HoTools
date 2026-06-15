@@ -2,7 +2,8 @@ import bpy
 
 
 # 预览绘制常量，由叠加层代码共享。
-_ROOT_COLOR = (0.45, 1.0, 0.25, 0.85)
+_PIN_COLOR = (1.0, 0.82, 0.18, 0.92)
+_UNPIN_COLOR = (0.62, 0.66, 0.72, 0.58)
 _SHAPE_SEGMENTS = 32
 _COLLISION_GROUP_COUNT = 16
 _ALL_COLLISION_GROUPS_MASK = (1 << _COLLISION_GROUP_COUNT) - 1
@@ -61,6 +62,14 @@ def _collision_props(bone):
     读取骨骼上的 HoTools 碰撞属性。
     """
     return getattr(bone, "hotools_collision", None)
+
+
+def _effective_bone_pin(bone) -> bool:
+    """
+    判断骨骼在物理预览中是否应视为固定。
+    """
+    props = _collision_props(bone)
+    return bool(props is not None and (props.spring_root or props.pin))
 
 
 def _object_collision_props(obj):

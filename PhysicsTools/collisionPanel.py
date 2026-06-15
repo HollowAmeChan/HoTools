@@ -15,6 +15,7 @@ from .collisionUtils import (
     _active_object_collision_props,
     _collision_group_bit,
     _collision_props,
+    _effective_bone_pin,
     _spring_root_bones,
 )
 
@@ -77,6 +78,10 @@ def _draw_group_buttons(layout, operator_id, *, active_group=None, mask=None):
 
 def _draw_collision_controls(layout, props):
     layout.prop(props, "spring_root")
+    pin_row = layout.row(align=True)
+    pin_row.prop(props, "pin")
+    if props.spring_root:
+        pin_row.label(text="Root强制Pin", icon="PINNED")
     layout.prop(props, "collision_type", text="类型")
 
     col = layout.column(align=True)
@@ -121,9 +126,10 @@ def _draw_object_collision_controls(layout, props):
 
 
 def _draw_mesh_collision_controls(layout, obj, props):
-    layout.prop(props, "enabled")
+    collision_box = layout.box()
+    collision_box.prop(props, "enabled")
 
-    col = layout.column(align=True)
+    col = collision_box.column(align=True)
     col.enabled = bool(props.enabled)
     col.label(text="主碰撞组")
     _draw_group_buttons(
@@ -145,6 +151,19 @@ def _draw_mesh_collision_controls(layout, obj, props):
         "vertex_groups",
         text="半径顶点组",
     )
+
+    pin_box = layout.box()
+    pin_box.prop(props, "pin_enabled")
+    pin_col = pin_box.column(align=True)
+    pin_col.enabled = bool(props.pin_enabled)
+    pin_col.prop_search(
+        props,
+        "pin_vertex_group",
+        obj,
+        "vertex_groups",
+        text="Pin顶点组",
+    )
+    pin_col.label(text="留空时固定全部顶点", icon="INFO")
 
 
 class PT_Hotools_BoneCollisionPanel(Panel):
@@ -231,6 +250,7 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
             if _collision_props(bone) is not None
             and bone.hotools_collision.collision_type != "NONE"
         )
+        pin_count = sum(1 for bone in armature_obj.data.bones if _effective_bone_pin(bone))
 
         _draw_section_toggles(layout, scene)
 
@@ -248,6 +268,7 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
             row = info_box.row(align=True)
             row.label(text=f"骨骼: {len(armature_obj.data.bones)}")
             row.label(text=f"Spring Root: {len(roots)}")
+            row.label(text=f"Pin: {pin_count}")
             info_box.label(text=f"碰撞体: {collision_count}")
 
             if roots:
@@ -262,7 +283,7 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
             if active_bone is None or active_props is None:
                 root_box.label(text="活动骨骼: 无", icon="INFO")
             else:
-                icon = "PINNED" if active_props.spring_root else "BONE_DATA"
+                icon = "PINNED" if _effective_bone_pin(active_bone) else "BONE_DATA"
                 root_box.label(text=f"活动骨骼: {active_bone.name}", icon=icon)
                 _draw_collision_controls(root_box, active_props)
 
