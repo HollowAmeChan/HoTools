@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup, _OmniShapeKey
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import ast
@@ -231,6 +231,18 @@ def colorAttributeInput(v: _OmniColorAttribute) -> _OmniColorAttribute:
 def vertexGroupInput(v: _OmniVertexGroup) -> _OmniVertexGroup:
     if v is None or not isinstance(v, bpy.types.VertexGroup):
         raise ValueError("vertex group input is empty or invalid")
+    return v
+
+@omni(enable=True,
+      bl_label="形态键",
+      base_color=_Color.colorCat["GetData"],)
+def shapeKeyInput(v: _OmniShapeKey) -> _OmniShapeKey:
+    if not isinstance(v, dict):
+        raise ValueError("shape key input is empty or invalid")
+    obj = v.get("object")
+    shape_key_name = str(v.get("shape_key") or "").strip()
+    if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "MESH" or not shape_key_name:
+        raise ValueError("shape key input is empty or invalid")
     return v
 
 @omni(enable=True,

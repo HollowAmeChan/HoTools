@@ -416,6 +416,76 @@ class OmniNodeSocketVertexGroup(NodeSocket):
         return (0.22, 0.66, 0.26, 1.0)
 
 
+class OmniNodeSocketShapeKey(NodeSocket):
+    bl_label = "形态键-Omni"
+    bl_idname = "OmniNodeSocketShapeKey"
+
+    mesh_object: bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        poll=_mesh_object_poll,
+        description="Mesh Object",
+    )  # type: ignore
+    shape_key_name: bpy.props.StringProperty(
+        name="Shape Key",
+        default="MeshPhysics",
+    )  # type: ignore
+
+    @property
+    def default_value(self):
+        obj = self.mesh_object
+        shape_key_name = str(self.shape_key_name or "").strip()
+        if obj is None or not shape_key_name:
+            return None
+        if getattr(obj, "type", None) != "MESH":
+            return None
+        return {
+            "object": obj,
+            "shape_key": shape_key_name,
+        }
+
+    @default_value.setter
+    def default_value(self, value):
+        if isinstance(value, dict):
+            obj = value.get("object")
+            shape_key_name = str(value.get("shape_key") or value.get("shape_key_name") or "").strip()
+            if isinstance(obj, bpy.types.Object) and obj.type == "MESH":
+                self.mesh_object = obj
+            if shape_key_name:
+                self.shape_key_name = shape_key_name
+            return
+
+        if not isinstance(value, bpy.types.ShapeKey):
+            return
+
+        key_data = getattr(value, "id_data", None)
+        for obj in bpy.data.objects:
+            if getattr(obj, "type", None) == "MESH" and getattr(obj.data, "shape_keys", None) == key_data:
+                self.mesh_object = obj
+                break
+        try:
+            self.shape_key_name = value.name
+        except Exception:
+            pass
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+
+        row = layout.row(align=True)
+        row.prop(self, "mesh_object", text=text)
+        obj = self.mesh_object
+        shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
+        if obj is not None and getattr(obj, "type", None) == "MESH" and shape_keys is not None:
+            row.prop_search(self, "shape_key_name", shape_keys, "key_blocks", text="")
+        else:
+            row.prop(self, "shape_key_name", text="")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.22, 0.52, 0.78, 1.0)
+
+
 cls = [
     OmniNodeSocketScene,
     OmniNodeSocketText,
@@ -433,6 +503,7 @@ cls = [
     OmniNodeSocketUVLayer,
     OmniNodeSocketColorAttribute,
     OmniNodeSocketVertexGroup,
+    OmniNodeSocketShapeKey,
 ]
 
 

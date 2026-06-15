@@ -15,6 +15,7 @@ from .OmniNodeSocket import (
     OmniNodeSocketUVLayer,
     OmniNodeSocketColorAttribute,
     OmniNodeSocketVertexGroup,
+    OmniNodeSocketShapeKey,
 )
 import bpy
 import mathutils
@@ -94,6 +95,9 @@ class _OmniColorAttribute():
 class _OmniVertexGroup():
     def __init__():
         return
+class _OmniShapeKey():
+    def __init__():
+        return
 
 # 函数变量标签类型：blenderSocket类型
 SKT_DIC = {
@@ -140,12 +144,14 @@ SKT_DIC = {
     bpy.types.MeshUVLoopLayer: OmniNodeSocketUVLayer,
     bpy.types.Attribute: OmniNodeSocketColorAttribute,
     bpy.types.VertexGroup: OmniNodeSocketVertexGroup,
+    bpy.types.ShapeKey: OmniNodeSocketShapeKey,
     _OmniDatablock: OmniNodeSocketDatablock,
     _OmniModifier: OmniNodeSocketModifier,
     _OmniMaterialSlot: OmniNodeSocketMaterialSlot,
     _OmniUVLayer: OmniNodeSocketUVLayer,
     _OmniColorAttribute: OmniNodeSocketColorAttribute,
     _OmniVertexGroup: OmniNodeSocketVertexGroup,
+    _OmniShapeKey: OmniNodeSocketShapeKey,
     _OmniModifierType: OmniNodeSocketModifierType,
     _OmniImageFormat: OmniNodeSocketImageFormat,
     _OmniRegex: OmniNodeSocketRegex,
