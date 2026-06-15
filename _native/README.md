@@ -1,6 +1,6 @@
 # HoTools 原生后端约定
 
-本目录用于 HoTools 的 C++ / nanobind 原生后端。第一阶段目标是把 `MeshShapeKeyXPBD` 节点里最耗时的 XPBD solve 阶段移到 C++，Python 侧继续负责 Blender 数据准备、cache 管理、shape key 写回和节点接口。
+本目录用于 HoTools 的 C++ / nanobind 原生后端。第一阶段目标是把 `网格物理-XPBD` / `meshPhysicsXPBD` 节点里最耗时的 XPBD solve 阶段移到 C++，Python 侧继续负责 Blender 数据准备、cache 管理、shape key 写回和节点接口。
 
 这里借鉴的是 HoCloth 的“构建层 / 运行时层 / 发布层”分离思路，不是迁移它的业务代码。
 

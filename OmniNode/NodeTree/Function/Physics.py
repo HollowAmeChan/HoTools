@@ -808,7 +808,7 @@ class _BonePhysics:
 class _MeshPhysics:
     EPSILON = 0.000001
     CACHE_VERSION = 2
-    CACHE_KIND = "MESH_SHAPE_KEY_XPBD"
+    CACHE_KIND = "MESH_PHYSICS_XPBD"
     DEBUG_PRINT_INTERVAL = 1.0
     _debug_profiles = {}
 
@@ -887,7 +887,7 @@ class _MeshPhysics:
             stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
 
         print(
-            "[MeshShapeKeyXPBD] "
+            "[MeshPhysicsXPBD] "
             f"obj={obj.name_full} key={shape_key_name} frame={profile['frame']} "
             f"samples={sample_count} verts={profile['vertex_count']} "
             f"constraints={profile['constraint_count']} "
@@ -1782,7 +1782,7 @@ def springBoneVRM(
 
 @omni(
     enable=True,
-    bl_label="网格形态键XPBD",
+    bl_label="网格物理-XPBD",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
@@ -1812,18 +1812,33 @@ def springBoneVRM(
     },
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
-    第一版无碰撞 mesh 物理节点。节点只写入指定形态键，不直接修改网格顶点。
+    标准 Python 网格物理 XPBD 节点，也是后续 CPP 后端版本的行为蓝本。
+    节点只写入指定形态键，不直接修改 Basis 或网格顶点；当前版本不做碰撞、自碰撞或 modifier 后结果解算。
 
     接法：
     1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再写回同名缓存。
     2. “目标形态键”使用形态键 socket 选择 Mesh Object + shape key 名称；如果目标 key 不存在会自动创建。
     3. “Pin顶点组”可以为空；权重大于 0 的顶点会固定在 Basis/rest 坐标。
 
+    工作原理：
+    节点从 Basis/reference key 批量读取 rest 顶点，把坐标转换到世界空间后建立运行时 cache。
+    mesh edges 生成拉伸距离约束，共边三角面的 opposite 顶点生成简化弯曲距离约束。
+    每次执行代表推进一帧：按子步数做 Verlet 预测，再按迭代次数投影拉伸和弯曲约束，最后把世界空间结果转换回物体局部空间并批量写入目标形态键。
+    stretch_compliance / bend_compliance 越大约束越软；为 0 时接近硬约束。
+
+    Blender 边界：
+    Python 侧负责 Blender 数据读取、shape key 创建与写回、cache 管理和跳帧保护。
+    求解过程中不会逐点写 Blender 数据，只在最后使用 foreach_set 批量写目标形态键。
+    物体拓扑、目标形态键或 Pin 顶点组变化时会重建 cache；物体缩放变化时会重算 rest 约束长度。
+
     跳帧规则：
-    与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存。
+    与基础弹簧骨一致，只接受 current_frame == cached_frame + 1。跳帧、倒放或同帧重复执行时，会把目标形态键恢复到 rest 坐标并输出空缓存，避免继承旧速度。
+
+    升级约定：
+    CPP 后端节点应命名为“网格物理-XPBD-CPP”，并保持本节点的输入、输出、cache 语义和跳帧行为一致；差异只应集中在求解后端。
     """,
 )
-def meshShapeKeyXPBD(
+def meshPhysicsXPBD(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
     pin_group: _OmniVertexGroup,

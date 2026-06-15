@@ -23,7 +23,7 @@
 建议第一版节点名：
 
 ```python
-meshShapeKeyXPBD(
+meshPhysicsXPBD(
     cache_state: _OmniCache,
     obj: bpy.types.Object,
     pin_group: _OmniVertexGroup,
@@ -88,7 +88,7 @@ cache 内建议保留 numpy 加速数据。`OmniRuntimeState._snapshot_value()` 
 ```python
 {
     "version": 1,
-    "kind": "MESH_SHAPE_KEY_XPBD",
+    "kind": "MESH_PHYSICS_XPBD",
     "frame": int | None,
     "object_name": str,
     "object_ptr": int,
