@@ -14,6 +14,76 @@ import numpy as np
 import time
 import typing
 
+
+_MESH_XPBD_PRESETS = [
+    {
+        "name": "高速预览",
+        "values": {
+            "enabled": True,
+            "substeps": 1,
+            "iterations": 3,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 9.8,
+            "damping": 0.02,
+            "stretch_compliance": 0.00192494408,
+            "bend_compliance": 0.01439117011,
+        },
+    },
+    {
+        "name": "柔软形变",
+        "values": {
+            "enabled": True,
+            "substeps": 2,
+            "iterations": 5,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 9.8,
+            "damping": 0.015,
+            "stretch_compliance": 0.00193348828,
+            "bend_compliance": 0.01529983597,
+        },
+    },
+    {
+        "name": "通用布料",
+        "values": {
+            "enabled": True,
+            "substeps": 2,
+            "iterations": 6,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 9.8,
+            "damping": 0.04,
+            "stretch_compliance": 0.001325804863,
+            "bend_compliance": 0.006076554066,
+        },
+    },
+    {
+        "name": "碰撞稳定",
+        "values": {
+            "enabled": True,
+            "substeps": 4,
+            "iterations": 8,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 9.8,
+            "damping": 0.08,
+            "stretch_compliance": 0.0007713117649,
+            "bend_compliance": 0.003137045928,
+        },
+    },
+    {
+        "name": "硬约束",
+        "values": {
+            "enabled": True,
+            "substeps": 4,
+            "iterations": 10,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 9.8,
+            "damping": 0.06,
+            "stretch_compliance": 0.0007368023751,
+            "bend_compliance": 0.002343968898,
+        },
+    },
+]
+
+
 class _BonePhysics:
     EPSILON = 0.000001
 
@@ -1491,13 +1561,14 @@ class _MeshPhysics:
         step_dt = dt / substep_count if substep_count > 0 else dt
         gravity = cls.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
         damping = max(0.0, min(1.0, float(damping)))
+        substep_damping = 1.0 - ((1.0 - damping) ** (1.0 / substep_count))
         if timing is not None:
             cls.add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
         for _ in range(substep_count):
             stage_start = time.perf_counter() if timing is not None else None
             old_positions = positions.copy()
-            inertia = (positions - prev_positions) * (1.0 - damping)
+            inertia = (positions - prev_positions) * (1.0 - substep_damping)
             positions += inertia + gravity * (step_dt * step_dt)
             prev_positions = old_positions
             if timing is not None:
@@ -2324,11 +2395,16 @@ def springBoneVRM(
         "substeps": {"min_value": 1, "max_value": 16},
         "iterations": {"min_value": 0, "max_value": 64},
         "gravity_power": {"min_value": 0.0, "max_value": 100.0},
-        "damping": {"min_value": 0.0, "max_value": 1.0},
+        "damping": {
+            "description": "每个 Blender 场景帧的速度阻尼；求解器会按子步数换算到每个子步。",
+            "min_value": 0.0,
+            "max_value": 1.0,
+        },
         "stretch_compliance": {"min_value": 0.0},
         "bend_compliance": {"min_value": 0.0},
         "debug_output": {"description": "开启后每隔约 1 秒在控制台打印本节点各阶段平均耗时。"},
     },
+    omni_presets=_MESH_XPBD_PRESETS,
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
     标准 Python 网格物理 XPBD 节点，也是后续 CPP 后端版本的行为蓝本。
@@ -2344,6 +2420,7 @@ def springBoneVRM(
     mesh edges 生成拉伸距离约束，共边三角面的 opposite 顶点生成简化弯曲距离约束。
     每次执行代表推进一帧：按子步数做 Verlet 预测，再按迭代次数投影拉伸、弯曲和被动碰撞约束，最后把世界空间结果转换回物体局部空间并批量写入目标形态键。
     stretch_compliance / bend_compliance 越大约束越软；为 0 时接近硬约束。
+    damping 表示每个 Blender 场景帧的速度阻尼；节点会按子步数换算到每个子步，避免子步越多模拟越粘。
 
     Blender 边界：
     Python 侧负责 Blender 数据读取、shape key 创建与写回、cache 管理和跳帧保护。
@@ -2412,11 +2489,16 @@ def meshPhysicsXPBD(
         "substeps": {"min_value": 1, "max_value": 16},
         "iterations": {"min_value": 0, "max_value": 64},
         "gravity_power": {"min_value": 0.0, "max_value": 100.0},
-        "damping": {"min_value": 0.0, "max_value": 1.0},
+        "damping": {
+            "description": "每个 Blender 场景帧的速度阻尼；求解器会按子步数换算到每个子步。",
+            "min_value": 0.0,
+            "max_value": 1.0,
+        },
         "stretch_compliance": {"min_value": 0.0},
         "bend_compliance": {"min_value": 0.0},
         "debug_output": {"description": "开启后每隔约 1 秒在控制台打印本节点各阶段平均耗时。"},
     },
+    omni_presets=_MESH_XPBD_PRESETS,
     _OUTPUT_NAME=["缓存", "物体", "顶点数", "约束数"],
     omni_description="""
     标准网格物理 XPBD 的 C++ 后端节点，和 Python 蓝本保持同样的输入、输出、cache 语义与跳帧规则。
@@ -2425,6 +2507,7 @@ def meshPhysicsXPBD(
     工作原理：
     与网格物理-XPBD 相同，都是基于 Basis/reference key 读取 rest 顶点，建立 world-space cache，按子步数和迭代数推进距离约束。
     差异在求解器后端：这里把预测、pin、stretch、bend、被动碰撞投影和循环交给 C++。
+    damping 表示每个 Blender 场景帧的速度阻尼；C++ 求解器会按子步数换算到每个子步，避免子步越多模拟越粘。
     输出形态键在物体属性的“HoTools网格碰撞”面板中设置；不存在时会自动创建。
     Pin 顶点在物体属性的“HoTools网格碰撞”面板中设置，并且只在 cache 重建时读取。
 

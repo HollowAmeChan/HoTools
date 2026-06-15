@@ -253,6 +253,8 @@ void solve_mesh_shape_key_xpbd(MeshXpbdView& view) {
     const int substep_count = clamp_int(view.substeps, 1, 16);
     const int iteration_count = clamp_int(view.iterations, 0, 64);
     const float damping = clamp_float(view.damping, 0.0f, 1.0f);
+    const float substep_damping = 1.0f - std::pow(1.0f - damping, 1.0f / static_cast<float>(substep_count));
+    const float velocity_keep = 1.0f - substep_damping;
     const float step_dt = substep_count > 0 ? view.dt / static_cast<float>(substep_count) : view.dt;
     const float step_dt_sq = step_dt * step_dt;
     const bool has_pinned = has_pinned_vertices(view);
@@ -273,11 +275,11 @@ void solve_mesh_shape_key_xpbd(MeshXpbdView& view) {
             const float pz = view.positions[offset + 2];
 
             view.positions[offset + 0] +=
-                (px - view.prev_positions[offset + 0]) * (1.0f - damping) + view.gravity[0] * step_dt_sq;
+                (px - view.prev_positions[offset + 0]) * velocity_keep + view.gravity[0] * step_dt_sq;
             view.positions[offset + 1] +=
-                (py - view.prev_positions[offset + 1]) * (1.0f - damping) + view.gravity[1] * step_dt_sq;
+                (py - view.prev_positions[offset + 1]) * velocity_keep + view.gravity[1] * step_dt_sq;
             view.positions[offset + 2] +=
-                (pz - view.prev_positions[offset + 2]) * (1.0f - damping) + view.gravity[2] * step_dt_sq;
+                (pz - view.prev_positions[offset + 2]) * velocity_keep + view.gravity[2] * step_dt_sq;
 
             view.prev_positions[offset + 0] = old_positions[static_cast<std::size_t>(offset + 0)];
             view.prev_positions[offset + 1] = old_positions[static_cast<std::size_t>(offset + 1)];

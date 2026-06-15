@@ -284,10 +284,11 @@ def solve_reference(
     iteration_count = max(0, min(64, int(iterations)))
     step_dt = dt / substep_count if substep_count > 0 else dt
     damping = max(0.0, min(1.0, float(damping)))
+    substep_damping = 1.0 - ((1.0 - damping) ** (1.0 / substep_count))
 
     for _ in range(substep_count):
         old_positions = positions.copy()
-        inertia = (positions - prev_positions) * (1.0 - damping)
+        inertia = (positions - prev_positions) * (1.0 - substep_damping)
         positions += inertia + gravity * (step_dt * step_dt)
         prev_positions = old_positions
 
