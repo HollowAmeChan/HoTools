@@ -424,7 +424,7 @@ def reg_props():
     bpy.types.Scene.hoShapekeyTools_chooseVertexByIndex = IntProperty(
         default=0)  # 按照顶点索引选择顶点的UI参数
     bpy.types.Scene.hoShapekeyTools_selectedBaseShapekey = StringProperty(
-        description="清除形态键时基于的基型")  # 清除形态键数据时依赖的形态键,再UI的绘制
+        description="替换形态键时使用的来源形态键")  # 替换形态键数据时依赖的形态键,在UI中绘制
     bpy.types.Scene.hoShapekeyTools_mirrorAxis = bpy.props.EnumProperty(
         name="轴向",
         description="选择对称轴向",
@@ -584,9 +584,9 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         return {'FINISHED'}
 
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
-    """清除活动形态键中，选择的顶点的偏移"""
+    """将活动形态键中选择的顶点替换为指定形态键的位置"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
-    bl_label = "清除/替换活动形态键中，选择的顶点的偏移"
+    bl_label = "替换活动形态键中，选择的顶点的偏移"
     bl_options = {'REGISTER', 'UNDO'}
 
     shape_key: bpy.props.StringProperty(name="形态键")  # type: ignore
@@ -606,6 +606,50 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
             return {'CANCELLED'}
         bpy.ops.mesh.blend_from_shape(shape=self.shape_key, add=False)
 
+        return {'FINISHED'}
+
+class OP_ClearSelectedVerticesInActiveShapekey(Operator):
+    """用基型清除活动形态键中，选择的顶点的偏移"""
+    bl_idname = "ho.clear_selected_vertices_in_activeshapekey"
+    bl_label = "清除活动形态键中，选择的顶点的偏移"
+    bl_description = "用基型替换活动形态键中选中顶点的偏移；按住 Shift 点击会清除当前活动形态键的全部偏移"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    clear_whole_key: bpy.props.BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj and obj.type == 'MESH' and obj.data.shape_keys and context.mode in {"EDIT_MESH", "OBJECT"}
+
+    def invoke(self, context, event):
+        self.clear_whole_key = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        obj = context.object
+        shape_keys = obj.data.shape_keys
+        active_key = obj.active_shape_key
+        reference_key = shape_keys.reference_key
+        if not active_key or active_key == reference_key:
+            self.report({'WARNING'}, "请选择一个非基型的活动形态键")
+            return {'CANCELLED'}
+        if not reference_key:
+            self.report({'WARNING'}, "未找到基型")
+            return {'CANCELLED'}
+
+        if self.clear_whole_key or context.mode != "EDIT_MESH":
+            old_mode = obj.mode
+            if old_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            for i in range(len(active_key.data)):
+                active_key.data[i].co = reference_key.data[i].co.copy()
+            if old_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=old_mode)
+            self.report({'INFO'}, "已清除当前活动形态键的全部偏移")
+            return {'FINISHED'}
+
+        bpy.ops.mesh.blend_from_shape(shape=reference_key.name, add=False)
         return {'FINISHED'}
 
 class OP_SmoothShapekey(Operator):
@@ -2116,7 +2160,8 @@ def _draw_sk_operators(layout: UILayout,context:Context):
                      text="选择位移点")
         row.operator(OP_SmoothShapekey.bl_idname,text="平滑")
         row.operator(
-            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text="清除/替换").shape_key = context.scene.hoShapekeyTools_selectedBaseShapekey
+            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text="替换").shape_key = context.scene.hoShapekeyTools_selectedBaseShapekey
+        row.operator(OP_ClearSelectedVerticesInActiveShapekey.bl_idname, text="清除")
     # 对称形态键
     row = layout.row(align=True)
     row.scale_y = 2.0
@@ -2168,6 +2213,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
 cls = [PG_ShapeKeyTools_ListenerCache,
     OP_SelectVertexByIndex, OP_SelectShapekeyOffsetedVerticex,
     OP_RemoveEmptyShapekeys, OP_RemoveSelectedVerticesInActiveShapekey,
+    OP_ClearSelectedVerticesInActiveShapekey,
     OP_SmoothShapekey,OP_balanceShapekey, OP_GenerateMirroredShapekey, OP_SplitShapekey,
     OP_ClearAllShapekeyValue, OP_SetBasisShapekeyActive,
     OP_applyShowingModifiersKeepShapekeys, OP_ApplyArmatureModifiersKeepShapekeys,
