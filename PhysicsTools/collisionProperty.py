@@ -4,7 +4,22 @@ from bpy.types import PropertyGroup
 from .collisionUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
 
 
+# 这个文件只定义可保存到 Blender 数据块上的原始配置。
+# 不在 PropertyGroup 里缓存运行时对象、顶点数组或经过矩阵/顶点组加工后的结果；
+# 求解器和预览代码需要在各自运行时解析这些字段，并保持同一套语义。
+
+
 class PG_Hotools_BoneCollision(PropertyGroup):
+    """
+    骨骼碰撞与 SpringBone 固定标记的持久化配置。
+
+    消费约定：
+    1. 碰撞体真实世界空间数据由物理节点按 PoseBone 矩阵解析。
+    2. spring_root 是链 root 标记；解算中链 root 始终硬 Pin。
+    3. 非 root 骨骼是否 Pin 由 pin 字段决定，只在物理 cache 重建时读取。
+    4. 预览侧用 spring_root 或 pin 显示 Pin 状态，和解算语义保持一致。
+    """
+
     spring_root: BoolProperty(
         name="Spring Root",
         description="把这根骨骼标记为一条SpringBone链的根；整骨架面板会批量管理这个标记",
@@ -63,6 +78,14 @@ class PG_Hotools_BoneCollision(PropertyGroup):
 
 
 class PG_Hotools_ObjectCollision(PropertyGroup):
+    """
+    Object 级被动碰撞体的持久化配置。
+
+    消费约定：
+    真实碰撞体由 Object.matrix_world、offset、radius、length 和 collision_type
+    在运行时解析；属性层只保存用户输入，不保存世界空间快照。
+    """
+
     collision_type: EnumProperty(
         name="碰撞体",
         description="这个Object携带的被动碰撞体类型",
@@ -104,6 +127,18 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
 
 
 class PG_Hotools_MeshCollision(PropertyGroup):
+    """
+    网格 XPBD 物理、逐顶点碰撞球和 Pin 的持久化配置。
+
+    消费约定：
+    1. output_shape_key 是目标形态键名；XPBD 节点运行时读取它，缺失时自动创建。
+    2. radius 是逐顶点球基础半径；radius_vertex_group 留空表示所有顶点权重 1。
+    3. 顶点组存在时，权重会被限制在 0..1；顶点不在组内或组名不存在时权重为 0。
+    4. pin_enabled 关闭时没有 Pin 顶点；开启且 pin_vertex_group 留空时所有顶点 Pin。
+    5. Pin 结果由 XPBD 求解器在 cache 重建时转成 inv_masses，模拟中不热更新。
+    6. 预览绘制逐顶点球时使用 evaluated mesh 顶点位置，并按同一顶点组语义计算半径和 Pin 颜色。
+    """
+
     output_shape_key: StringProperty(
         name="物理形态键",
         description="XPBD网格物理解算写入的目标形态键；不存在时会自动创建",
