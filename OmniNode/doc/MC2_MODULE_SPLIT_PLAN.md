@@ -9,10 +9,10 @@
 拆分优先级：
 
 1. 先拆纯工具与数据结构：`constants.py`、`params.py`、`math_utils.py`。已完成。
-2. 再拆 Blender I/O：`blender_io.py`、`mesh_build.py`。`blender_io.py` 已完成，`mesh_build.py` 待拆。
-3. 再拆求解阶段：`constraints.py`、`collision.py`、`solver.py`。`collision.py` 已完成，`constraints.py` 和 `solver.py` 待拆。
-4. 最后拆节点入口与 native 桥：`node.py`、`native_bridge.py`。
-5. 每一步拆完都必须保证 `physicsMC2.__init__.py` 仍导出同一个 `meshClothMC2` 节点函数。
+2. 再拆 Blender I/O：`blender_io.py`、`mesh_build.py`。已完成。
+3. 再拆求解阶段：`constraints.py`、`collision.py`、`solver.py`。已完成。
+4. 节点入口保持在 `__init__.py`，native 桥后续拆为 `native_bridge.py`。
+5. 每一步拆完都必须保证 `physicsMC2.__init__.py` 仍导出同一个 `meshClothMC2` 节点函数。当前已满足。
 
 ## 不变边界
 
@@ -26,7 +26,7 @@
 
 ```text
 OmniNode/NodeTree/Function/physicsMC2/
-  __init__.py          # 公开包入口，只导出 @omni 节点函数和必要兼容符号
+  __init__.py          # OmniNode 节点入口，定义 meshClothMC2 与节点生命周期
   constants.py         # cache kind/version、attr flag、MC2 系统常量、曲线参数名
   params.py            # scalar/curve 参数槽、depth 采样、默认参数集合
   math_utils.py        # numpy/mathutils 转换、safe normal、segment closest point、hash
@@ -37,26 +37,18 @@ OmniNode/NodeTree/Function/physicsMC2/
   constraints.py       # distance/tether/motion/bend distance approximation
   solver.py            # MeshCloth solve 顺序调度、frame/substep/iteration 生命周期
   native_bridge.py     # native import、array ABI 打包、Python fallback 分派
-  node.py              # _run_mesh_cloth_mc2_node 与 meshClothMC2 @omni 定义
 ```
 
 ### `__init__.py`
 
 职责：
 
-- 导入并重新导出 `meshClothMC2`。
-- 尽量不要放 solver 实现。
+- 定义 `meshClothMC2` 与 `_run_mesh_cloth_mc2_node()`。
+- 管理 cache、跳帧、reset、碰撞快照收集和 shape key 写回。
+- 不放约束算法、state 构建或 C++ ABI 打包。
 - 保持 `FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)` 可扫描到节点函数。
 
-推荐内容：
-
-```python
-from .node import meshClothMC2
-
-__all__ = ["meshClothMC2"]
-```
-
-注意：如果旧 `.blend` 或外部脚本引用了内部类名，可以在过渡期从 `__init__.py` re-export `_MC2Common`、`_MC2MeshCloth`，但长期不建议依赖这些私有名。
+注意：`physicsMC2` 本身就是 OmniNode 的函数模块，额外拆 `node.py` 没有收益。入口留在 `__init__.py`，其余实现拆到包内私有模块。
 
 ### `constants.py`
 
@@ -133,7 +125,7 @@ _native/src/mc2/mc2_math.hpp
 原则：
 
 - 这是 Python 独有层，C++ 不应出现任何 Blender 指针或 shape key 逻辑。
-- 跳帧、reset、写回 shape key 的生命周期仍由 `node.py`/`solver.py` 组合管理。
+- 跳帧、reset、写回 shape key 的生命周期仍由 `__init__.py` 入口和 `solver.py` 组合管理。
 
 对应 C++：
 
@@ -276,7 +268,7 @@ _native/src/mc2/mc2_post.cpp
 
 原则：
 
-- 不把 C++ ABI 散落在 `node.py` 或 `solver.py`。
+- 不把 C++ ABI 散落在 `__init__.py` 或 `solver.py`。
 - ABI 变化只改这里、`state.py` 和 C++ binding。
 
 对应 C++：
@@ -285,9 +277,9 @@ _native/src/mc2/mc2_post.cpp
 _native/src/hotools_native.cpp
 ```
 
-### `node.py`
+### 节点入口
 
-放置：
+节点入口保留在 `__init__.py`：
 
 - `_run_mesh_cloth_mc2_node()`。
 - `@omni(...) def meshClothMC2(...)`。
@@ -489,7 +481,7 @@ param arrays/scalars       scalar or sampled float32[n]
 - `__init__.py` 仍 re-export `meshClothMC2`。
 - 跑 `py_compile`。
 
-状态：已完成。`__init__.py` 仍保留 `_MC2Common` 门面，内部转发到新模块，节点入口未变。
+状态：已完成。`__init__.py` 当前保留 OmniNode 节点入口，常量、参数和数学工具已进入独立模块。
 
 ### Step 2: 拆 Blender I/O 和碰撞快照
 
@@ -497,13 +489,15 @@ param arrays/scalars       scalar or sampled float32[n]
 - 拆 `collision.py` 中的 scene snapshot 和 native collider arrays。
 - 确认不引入对 `Physics.py` 的依赖。
 
-状态：已完成 `blender_io.py` 和 `collision.py`。`mesh_build.py` 不在本步处理。
+状态：已完成 `blender_io.py`、`collision.py` 和 `mesh_build.py`。碰撞仍只在 `physicsMC2` 包内部，没有抽公共碰撞文件。
 
 ### Step 3: 拆 mesh/state 构建
 
 - 拆 `mesh_build.py`。
 - 拆 `state.py`。
 - 这一步最影响 cache schema，必须配合 `state_matches()` 测试。
+
+状态：已完成。`mesh_build.py` 负责只读 mesh 连接、pin/碰撞半径配置、edge/bend/tether 预计算；`state.py` 负责 cache state、transform 同步和 schema guard。
 
 风险中等，重点测 reset、跳帧、object scale change。
 
@@ -512,6 +506,8 @@ param arrays/scalars       scalar or sampled float32[n]
 - 拆 `constraints.py`。
 - 拆 `solver.py`。
 - 这一步不能改求解顺序。
+
+状态：已完成。`constraints.py` 承载纯数组约束；`solver.py` 承载当前 Python 求解顺序和 Blender 帧率时间语义。求解顺序未改变。
 
 风险中高，重点测连续播放手感。
 
@@ -555,10 +551,9 @@ Python solver vs C++ solver 同输入数组差异
 
 ## 建议下一步
 
-下一步可以直接执行 Step 3 和 Step 4 的前半部分：
+Python 包内主要拆分已完成，下一步建议按顺序推进：
 
-- `mesh_build.py`
-- `state.py`
-- `constraints.py`
-
-这几块会继续降低 `__init__.py` 体积，但比第一批更接近 cache schema 和求解行为。建议先拆 `mesh_build.py` 和 `state.py`，验证 reset/jump frame/object scale 后，再拆 `constraints.py`。`solver.py` 最后拆。
+- 在 Blender 测试场景里验证 `meshClothMC2` 注册、连续播放、reset、jump frame、object scale、sphere/capsule collision。
+- 新增 `native_bridge.py`，先只做当前 state/collider arrays 的 ABI 打包和 Python fallback，不启用 C++。
+- 开始 C++ 文件骨架：`hotools_mc2_types.hpp`、`mc2_distance.cpp`、`mc2_tether.cpp`、`mc2_motion.cpp`、`mc2_collision.cpp`、`mc2_meshcloth_solver.cpp`。
+- C++ 第一版只对齐当前 Python reference，不直接补完整 Unity MC2。

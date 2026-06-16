@@ -10,7 +10,7 @@ Python/C++ 模块拆分的详细方案见 `MC2_MODULE_SPLIT_PLAN.md`。本文档
 
 必须继续遵守：
 
-- Python 端已经升级为 `Function/physicsMC2/__init__.py` 小模块包；当前实现仍集中在入口文件中，后续可逐步拆包内私有模块。
+- Python 端已经升级为 `Function/physicsMC2/` 小模块包；`__init__.py` 只保留 OmniNode 节点入口，物理实现已拆到包内私有模块。
 - 旧 `Physics.py` 中 SpringBone/XPBD solver 继续作为蓝本隔离，不为了 MC2 抽公共碰撞文件。
 - MeshCloth 输入永远是用户提供的低模代理；不做 reduction、减面、重拓扑、代理生成、高低模 mapping。
 - 先 MeshCloth，后 BoneCloth；共通数据结构和求解设施先在 `physicsMC2` 包内按类/函数分层。
@@ -23,7 +23,7 @@ Python/C++ 模块拆分的详细方案见 `MC2_MODULE_SPLIT_PLAN.md`。本文档
 文件：
 
 ```text
-OmniNode/NodeTree/Function/physicsMC2/__init__.py
+OmniNode/NodeTree/Function/physicsMC2/
 ```
 
 当前已可运行：
@@ -340,7 +340,7 @@ node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
 
 这意味着 `physicsMC2` 可以从单个 `physicsMC2.py` 迁移为目录包 `Function/physicsMC2/__init__.py`，只要包对象继续导出 `@omni(enable=True)` 的 `meshClothMC2` 函数，`loadRegisterFuncNodes()` 就能按模块对象扫描节点。
 
-当前状态：已经完成机械迁移，`Function/physicsMC2/__init__.py` 继续导出原 `meshClothMC2` 节点函数。
+当前状态：已经完成机械迁移，`Function/physicsMC2/__init__.py` 继续直接定义并导出原 `meshClothMC2` 节点函数。
 
 后续拆分规则：
 
@@ -348,17 +348,23 @@ node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
 - 外部入口只通过 `physicsMC2/__init__.py` 暴露。
 - 碰撞、约束、native 打包可以拆成包内私有模块，但不要抽到 `Physics.py` 或公共碰撞层。
 
-推荐包内边界：
+当前包内边界：
 
 ```text
-Function/physicsMC2/__init__.py        # 节点入口与公开函数
-Function/physicsMC2/common.py          # MC2 常量、参数采样、shape key I/O
-Function/physicsMC2/meshcloth.py       # MeshCloth 数据构建和 solve 调度
+Function/physicsMC2/__init__.py        # 节点入口、cache 生命周期、shape key 写回
+Function/physicsMC2/constants.py       # cache/schema/attr flag/MC2 系统常量
+Function/physicsMC2/params.py          # 标量参数槽与未来曲线采样入口
+Function/physicsMC2/math_utils.py      # numpy/mathutils 转换、hash、向量工具
+Function/physicsMC2/blender_io.py      # Blender scene dt、shape key I/O、local/world 转换
+Function/physicsMC2/mesh_build.py      # mesh 连接、pin、碰撞半径、edge/bend/tether 预计算
+Function/physicsMC2/state.py           # cache state 构建、transform 同步、schema guard
+Function/physicsMC2/constraints.py     # distance/tether/motion 纯数组约束
 Function/physicsMC2/collision.py       # MC2 自己的 HoTools 碰撞组适配
-Function/physicsMC2/native_bridge.py   # native 数组打包和 fallback
+Function/physicsMC2/solver.py          # 当前 Python 求解顺序与时间语义
+Function/physicsMC2/native_bridge.py   # 待做：native 数组打包和 fallback
 ```
 
-本次只做入口文件级机械迁移，尚未拆 `common.py`、`meshcloth.py`、`collision.py`、`native_bridge.py`。
+当前 `native_bridge.py` 尚未实现；其它 Python 分层已落地。
 
 ## C++ 端拆分建议
 
@@ -477,7 +483,15 @@ hotools_native_mc2
 2026-06-17
 - 执行第一批 Python 包内拆分。
 - 新增 `constants.py`、`params.py`、`math_utils.py`、`blender_io.py`、`collision.py`。
-- `__init__.py` 继续导出原 `meshClothMC2`，并保留 `_MC2Common` / `_MC2MeshCloth` 作为兼容门面。
+- `__init__.py` 继续导出原 `meshClothMC2`，并临时保留 `_MC2Common` / `_MC2MeshCloth` 作为兼容门面。
 - 碰撞实现已移入 `collision.py`，但仍只属于 `physicsMC2` 包内部，没有抽公共碰撞文件。
 - 物理行为、节点 socket、cache schema 不变。
+
+2026-06-17
+- 继续拆分 Python 包内实现。
+- 新增 `mesh_build.py`、`state.py`、`constraints.py`、`solver.py`。
+- `__init__.py` 保留节点入口、跳帧/reset/cache/shape key 生命周期；算法和状态实现转移到私有模块。
+- 没有新增 `node.py`，因为 `physicsMC2` 包本身就是 OmniNode 扫描的函数模块。
+- 物理行为、节点 socket、cache schema 不变。
+- 影响 C++ ABI：否。只是把已有 ABI 形状集中到 `state.py`，后续 C++ 应以它为准。
 ```
