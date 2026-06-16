@@ -5,7 +5,7 @@
 当前用户约束：
 
 - 第一阶段只实现 MeshCloth。
-- BoneCloth 后续实现，但 MeshCloth/BoneCloth 的共通数据、约束和求解设施要在 `physicsMC2.py` 单文件内提前分层；Python 端不拆多个文件，C++ 端未来可按 native 工程边界拆分。
+- BoneCloth 后续实现，但 MeshCloth/BoneCloth 的共通数据、约束和求解设施要先在 `physicsMC2.py` 内提前分层；如果单文件继续膨胀，允许升级为 `Function/physicsMC2/__init__.py` 同名小模块。无论单文件还是小模块，都不要拆出公共碰撞/公共 solver 依赖；C++ 端未来可按 native 工程边界拆分。
 - MeshCloth 的输入就是用户自己准备的低模代理，插件永远不做 MC2 reduction、减面、重拓扑、代理生成，也不做高低模 mapping。输出永远驱动这个低模代理。
 - 碰撞不照搬 MC2 的显式 collider 列表，直接复用 HoTools/OmniNode 已有碰撞组、骨骼碰撞体和物体碰撞体。
 - MC2 支持按 depth 曲线采样的参数，第一版先用标量值；参数层必须保留升级为曲线输入/采样表的空间。
@@ -91,7 +91,7 @@ OmniNode/NodeTree/Function/physicsMC2.py
 - 曲线参数暂时走 scalar sampler，但 `param_slots` 和采样函数已保留曲线表扩展入口。
 - 自碰撞暂不实现，仅在 cache/native 扩展槽预留。
 
-当前按用户要求保持 `physicsMC2.py` 单文件自包含。Python 端只是行为蓝本和缓冲层，不拆任何额外 Python core 文件，也不把碰撞处理抽成公共模块；旧 `Physics.py` solver 保持蓝本隔离。后续如果需要结构化拆分，只发生在 C++/native 端。
+当前默认保持 `physicsMC2.py` 单文件自包含。Python 端只是行为蓝本和缓冲层，不把碰撞处理抽成公共模块；旧 `Physics.py` solver 保持蓝本隔离。若文件体量继续增长，可先机械迁移为 `Function/physicsMC2/__init__.py` 同名包目录，节点入口、函数名、socket 顺序和 cache schema 不变。后续细分也只在 `physicsMC2` 包内部私有化进行，不影响旧 solver。
 
 ## 第一阶段节点接口
 
@@ -132,6 +132,23 @@ meshClothMC2(
 - `proxy_obj`: 低模代理对象本身，方便串接后续节点。
 - `vertex_count`: 代理顶点数。
 - `constraint_count`: 距离 + 弯曲 + 后续约束数量。
+
+## Python 小模块升级规则
+
+`OmniNodeRegister.py` 当前通过：
+
+```python
+from .Function import ..., physicsMC2
+node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
+```
+
+加载 MC2 节点，因此 `physicsMC2` 既可以是 `physicsMC2.py`，也可以是 `physicsMC2/__init__.py` 包。升级为包时必须满足：
+
+- `__init__.py` 继续导出 `meshClothMC2` 这个 `@omni(enable=True)` 函数。
+- 不改变 `bl_idname`、函数名、输入输出顺序、默认值和 cache schema。
+- 第一次迁移只做机械移动，先验证 Blender 中节点注册和旧 `.blend` 节点可继续识别。
+- 包内可以拆 `common.py`、`meshcloth.py`、`collision.py`、`native_bridge.py` 等私有模块，但不要抽到 `Physics.py` 或跨 solver 公共碰撞文件。
+- 迁移不应与大规模物理语义改动混在同一提交/轮次里。
 
 ## Cache Schema
 

@@ -21,7 +21,7 @@ import numpy as np
 
 
 MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
-MC2_SOLVER_VERSION = 1
+MC2_SOLVER_VERSION = 2
 
 MC2_ATTR_INVALID = 1 << 0
 MC2_ATTR_FIXED = 1 << 1
@@ -33,7 +33,12 @@ MC2_CURVE_READY_PARAMETERS = {
     "bend_stiffness",
     "radius",
     "max_distance",
+    "tether_compression",
+    "tether_stretch",
+    "motion_stiffness",
+    "backstop_radius",
     "backstop_distance",
+    "collider_friction",
     "angle_restoration_stiffness",
     "angle_limit",
     "damping",
@@ -47,7 +52,16 @@ class _MC2Common:
     DEBUG_PRINT_INTERVAL = 1.0
     FRICTION_MASS = 3.0
     DEPTH_MASS = 5.0
-    TETHER_STRETCH_LIMIT = 1.2
+    TETHER_COMPRESSION_LIMIT = 0.4
+    TETHER_STRETCH_LIMIT = 0.03
+    TETHER_STIFFNESS_WIDTH = 0.3
+    TETHER_COMPRESSION_STIFFNESS = 1.0
+    TETHER_STRETCH_STIFFNESS = 1.0
+    TETHER_COMPRESSION_VELOCITY_ATTENUATION = 0.7
+    TETHER_STRETCH_VELOCITY_ATTENUATION = 0.7
+    MOTION_VELOCITY_ATTENUATION = 0.95
+    COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO = 1.0
+    COLLIDER_COLLISION_STATIC_FRICTION_RATIO = 1.0
     _debug_profiles = {}
 
     @staticmethod
@@ -582,6 +596,107 @@ class _MC2MeshCloth:
         scale = _MC2Common.matrix_scale_radius(obj.matrix_world)
         return np.ascontiguousarray(local_radii * scale, dtype=np.float32)
 
+    @classmethod
+    def collider_arrays_for_native(
+        cls,
+        state: dict,
+        obj: bpy.types.Object,
+        colliders: list[dict] | None,
+    ) -> dict:
+        """把当前 HoTools 碰撞组快照打包成未来 native 后端可直接消费的数组。"""
+        empty_vec = np.empty((0, 3), dtype=np.float32)
+        empty_i = np.empty(0, dtype=np.int32)
+        empty_f = np.empty(0, dtype=np.float32)
+        collision_radii = np.ascontiguousarray(state.get("collision_radii", empty_f), dtype=np.float32)
+        collided_by_groups = _MC2Common.clamp_group_mask(state.get("collided_by_groups", 0))
+
+        if not colliders or not collided_by_groups:
+            return {
+                "collision_radii": collision_radii,
+                "collided_by_groups": int(collided_by_groups),
+                "collider_types": empty_i,
+                "collider_groups": empty_i,
+                "collider_group_bits": empty_i,
+                "collider_centers": empty_vec,
+                "collider_segment_a": empty_vec,
+                "collider_segment_b": empty_vec,
+                "collider_radii": empty_f,
+            }
+
+        collider_types = []
+        collider_groups = []
+        collider_group_bits = []
+        collider_centers = []
+        collider_segment_a = []
+        collider_segment_b = []
+        collider_radii = []
+        for collider in colliders:
+            if not isinstance(collider, dict):
+                continue
+            if collider.get("owner") is obj:
+                continue
+
+            try:
+                group = max(1, min(16, int(collider.get("primary_group", 1) or 1)))
+            except Exception:
+                group = 1
+            group_bit = _MC2Common.collision_group_bit(group)
+            if not collided_by_groups & group_bit:
+                continue
+
+            radius = max(float(collider.get("radius", 0.0)), 0.0)
+            if radius <= _MC2Common.EPSILON:
+                continue
+
+            collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+            center = _MC2Common.vector_to_numpy(collider.get("center"))
+            if center is None:
+                continue
+
+            if collider_type == "CAPSULE":
+                seg_a = _MC2Common.vector_to_numpy(collider.get("segment_a"))
+                seg_b = _MC2Common.vector_to_numpy(collider.get("segment_b"))
+                if seg_a is None or seg_b is None:
+                    continue
+                type_code = 1
+            else:
+                seg_a = center
+                seg_b = center
+                type_code = 0
+
+            collider_types.append(type_code)
+            collider_groups.append(group)
+            collider_group_bits.append(group_bit)
+            collider_centers.append(center)
+            collider_segment_a.append(seg_a)
+            collider_segment_b.append(seg_b)
+            collider_radii.append(radius)
+
+        if not collider_types:
+            return {
+                "collision_radii": collision_radii,
+                "collided_by_groups": int(collided_by_groups),
+                "collider_types": empty_i,
+                "collider_groups": empty_i,
+                "collider_group_bits": empty_i,
+                "collider_centers": empty_vec,
+                "collider_segment_a": empty_vec,
+                "collider_segment_b": empty_vec,
+                "collider_radii": empty_f,
+            }
+
+        return {
+            "collision_radii": collision_radii,
+            "collided_by_groups": int(collided_by_groups),
+            "collider_types": np.ascontiguousarray(collider_types, dtype=np.int32),
+            "collider_groups": np.ascontiguousarray(collider_groups, dtype=np.int32),
+            "collider_group_bits": np.ascontiguousarray(collider_group_bits, dtype=np.int32),
+            "collider_centers": np.ascontiguousarray(collider_centers, dtype=np.float32),
+            "collider_segment_a": np.ascontiguousarray(collider_segment_a, dtype=np.float32),
+            "collider_segment_b": np.ascontiguousarray(collider_segment_b, dtype=np.float32),
+            "collider_radii": np.ascontiguousarray(collider_radii, dtype=np.float32),
+        }
+
     @staticmethod
     def mesh_connectivity_arrays(mesh: bpy.types.Mesh) -> tuple[np.ndarray, np.ndarray]:
         """只读取现有 mesh 连接关系；永远不修改、不减面、不重映射。"""
@@ -833,6 +948,16 @@ class _MC2MeshCloth:
             np.ascontiguousarray(root_lengths, dtype=np.float32),
         )
 
+    @staticmethod
+    def build_tether_rest_lengths(positions: np.ndarray, root_indices: np.ndarray) -> np.ndarray:
+        lengths = np.zeros(len(positions), dtype=np.float32)
+        for vertex_index in range(len(positions)):
+            root_index = int(root_indices[vertex_index])
+            if root_index < 0 or root_index >= len(positions):
+                continue
+            lengths[vertex_index] = float(np.linalg.norm(positions[vertex_index] - positions[root_index]))
+        return np.ascontiguousarray(lengths, dtype=np.float32)
+
     @classmethod
     def build_state(
         cls,
@@ -901,6 +1026,7 @@ class _MC2MeshCloth:
             "root_indices": root_indices,
             "parent_indices": parent_indices,
             "root_rest_lengths": root_rest_lengths,
+            "tether_rest_lengths": cls.build_tether_rest_lengths(rest_world, root_indices),
             "inv_masses": inv_masses,
             "edges": edges,
             "triangles": triangles,
@@ -979,6 +1105,7 @@ class _MC2MeshCloth:
                 next_state["parent_indices"],
                 next_state["root_rest_lengths"],
             ) = cls.build_depth_and_roots(next_state["edges"], rest_world, next_state["attributes"])
+            next_state["tether_rest_lengths"] = cls.build_tether_rest_lengths(rest_world, next_state["root_indices"])
             next_state["collision_radii"] = cls.collision_radii_to_world(obj, next_state["collision_local_radii"])
             next_state["inv_masses"] = _MC2Common.calc_inverse_masses(
                 next_state["attributes"],
@@ -1013,11 +1140,17 @@ class _MC2MeshCloth:
             "old_positions": (vertex_count, 3),
             "velocity_positions": (vertex_count, 3),
             "display_positions": (vertex_count, 3),
+            "velocity": (vertex_count, 3),
+            "real_velocity": (vertex_count, 3),
+            "friction": (vertex_count,),
+            "static_friction": (vertex_count,),
+            "collision_normals": (vertex_count, 3),
             "attributes": (vertex_count,),
             "depths": (vertex_count,),
             "root_indices": (vertex_count,),
             "parent_indices": (vertex_count,),
             "root_rest_lengths": (vertex_count,),
+            "tether_rest_lengths": (vertex_count,),
             "inv_masses": (vertex_count,),
             "collision_local_radii": (vertex_count,),
             "collision_radii": (vertex_count,),
@@ -1030,6 +1163,72 @@ class _MC2MeshCloth:
         for key, shape in required_shapes.items():
             value = state.get(key)
             if not isinstance(value, np.ndarray) or value.shape != shape:
+                return False
+
+        try:
+            matrix_3x3_key = tuple(state.get("object_matrix_world_3x3_key"))
+        except Exception:
+            matrix_3x3_key = ()
+        if len(matrix_3x3_key) != 9:
+            return False
+
+        def array_ndim_shape(key: str, ndim: int, tail: tuple[int, ...] = ()) -> np.ndarray | None:
+            value = state.get(key)
+            if not isinstance(value, np.ndarray) or value.ndim != ndim:
+                return None
+            if tail and value.shape[-len(tail):] != tail:
+                return None
+            return value
+
+        edges = array_ndim_shape("edges", 2, (2,))
+        triangles = array_ndim_shape("triangles", 2, (3,))
+        triangle_pairs = array_ndim_shape("triangle_pairs", 2, (4,))
+        if edges is None or triangles is None or triangle_pairs is None:
+            return False
+        if int(edges.size) and (int(np.min(edges)) < 0 or int(np.max(edges)) >= vertex_count):
+            return False
+        if int(triangles.size) and (int(np.min(triangles)) < 0 or int(np.max(triangles)) >= vertex_count):
+            return False
+        if int(triangle_pairs.size) and (int(np.min(triangle_pairs)) < 0 or int(np.max(triangle_pairs)) >= vertex_count):
+            return False
+
+        def same_1d_length(keys: tuple[str, ...]) -> bool:
+            length = None
+            for key in keys:
+                value = state.get(key)
+                if not isinstance(value, np.ndarray) or value.ndim != 1:
+                    return False
+                if length is None:
+                    length = len(value)
+                elif len(value) != length:
+                    return False
+            return True
+
+        if not same_1d_length(("edge_i", "edge_j", "edge_rest")):
+            return False
+        if not same_1d_length(("bend_i", "bend_j", "bend_rest")):
+            return False
+        if not same_1d_length(("distance_data", "distance_rest")):
+            return False
+        if not same_1d_length(("bend_data", "bend_neighbor_rest")):
+            return False
+        if len(state["edge_i"]) != len(edges):
+            return False
+        if len(state["bend_i"]) != len(triangle_pairs):
+            return False
+
+        for index_key in ("edge_i", "edge_j", "bend_i", "bend_j", "distance_data", "bend_data"):
+            indices = state.get(index_key)
+            if not isinstance(indices, np.ndarray) or len(indices) == 0:
+                continue
+            if int(np.min(indices)) < 0 or int(np.max(indices)) >= vertex_count:
+                return False
+
+        param_slots = state.get("param_slots")
+        if not isinstance(param_slots, dict):
+            return False
+        for name in MC2_CURVE_READY_PARAMETERS:
+            if name not in param_slots:
                 return False
 
         return (
@@ -1102,10 +1301,16 @@ class _MC2MeshCloth:
         root_indices: np.ndarray,
         root_rest_lengths: np.ndarray,
         stiffness: float,
+        compression: float,
+        stretch: float,
     ) -> None:
         stiffness = max(0.0, min(1.0, float(stiffness)))
         if stiffness <= _MC2Common.EPSILON:
             return
+
+        compression_limit = 1.0 - max(0.0, min(1.0, float(compression)))
+        stretch_limit = 1.0 + max(0.0, float(stretch))
+        stiffness_width = max(float(_MC2Common.TETHER_STIFFNESS_WIDTH), _MC2Common.EPSILON)
 
         for vertex_index in range(len(positions)):
             if float(inv_masses[vertex_index]) <= _MC2Common.EPSILON:
@@ -1119,11 +1324,25 @@ class _MC2MeshCloth:
 
             delta = positions[root_index] - positions[vertex_index]
             distance = float(np.linalg.norm(delta))
-            limit = rest_length * _MC2Common.TETHER_STRETCH_LIMIT
-            if distance <= limit or distance <= _MC2Common.EPSILON:
+            if distance <= _MC2Common.EPSILON:
                 continue
 
-            positions[vertex_index] += (delta / distance) * ((distance - limit) * stiffness)
+            ratio = distance / rest_length
+            dist = 0.0
+            solve_stiffness = 0.0
+            if ratio < compression_limit:
+                dist = distance - compression_limit * rest_length
+                fade = max(0.0, min(1.0, (compression_limit - ratio) / stiffness_width))
+                solve_stiffness = stiffness * _MC2Common.TETHER_COMPRESSION_STIFFNESS * fade
+            elif ratio > stretch_limit:
+                dist = distance - stretch_limit * rest_length
+                fade = max(0.0, min(1.0, (ratio - stretch_limit) / stiffness_width))
+                solve_stiffness = stiffness * _MC2Common.TETHER_STRETCH_STIFFNESS * fade
+
+            if solve_stiffness <= _MC2Common.EPSILON:
+                continue
+
+            positions[vertex_index] += (delta / distance) * (dist * solve_stiffness)
 
     @classmethod
     def project_motion_constraint(
@@ -1133,10 +1352,15 @@ class _MC2MeshCloth:
         inv_masses: np.ndarray,
         depths: np.ndarray,
         max_distance_param: dict,
+        motion_stiffness_param: dict,
         world_scale: float,
     ) -> None:
-        max_distances = _MC2Common.sample_param(max_distance_param, depths) * max(float(world_scale), 0.0)
+        motion_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32) ** 2, 0.0, 1.0)
+        max_distances = _MC2Common.sample_param(max_distance_param, motion_depths) * max(float(world_scale), 0.0)
+        stiffness_values = np.clip(_MC2Common.sample_param(motion_stiffness_param, motion_depths), 0.0, 1.0)
         if not bool(np.any(max_distances > _MC2Common.EPSILON)):
+            return
+        if not bool(np.any(stiffness_values > _MC2Common.EPSILON)):
             return
 
         for vertex_index in range(len(positions)):
@@ -1145,10 +1369,15 @@ class _MC2MeshCloth:
             limit = float(max_distances[vertex_index])
             if limit <= _MC2Common.EPSILON:
                 continue
-            delta = positions[vertex_index] - base_positions[vertex_index]
+            stiffness = float(stiffness_values[vertex_index])
+            if stiffness <= _MC2Common.EPSILON:
+                continue
+            original_position = positions[vertex_index].copy()
+            delta = original_position - base_positions[vertex_index]
             distance = float(np.linalg.norm(delta))
             if distance > limit and distance > _MC2Common.EPSILON:
-                positions[vertex_index] = base_positions[vertex_index] + (delta / distance) * limit
+                constrained = base_positions[vertex_index] + (delta / distance) * limit
+                positions[vertex_index] = original_position * (1.0 - stiffness) + constrained * stiffness
 
     @classmethod
     def project_vertex_collision(
@@ -1163,8 +1392,10 @@ class _MC2MeshCloth:
         if hit_radius <= _MC2Common.EPSILON or not collided_by_groups:
             return position, np.zeros(3, dtype=np.float32)
 
-        projected = position.copy()
-        collision_normal = np.zeros(3, dtype=np.float32)
+        origin = position.copy()
+        add_position = np.zeros(3, dtype=np.float32)
+        add_normal = np.zeros(3, dtype=np.float32)
+        add_count = 0
         for collider in colliders:
             if not isinstance(collider, dict):
                 continue
@@ -1180,7 +1411,7 @@ class _MC2MeshCloth:
 
             if collider.get("type") == "CAPSULE":
                 center = _MC2Common.closest_point_on_segment_np(
-                    projected,
+                    origin,
                     collider.get("segment_a"),
                     collider.get("segment_b"),
                 )
@@ -1189,15 +1420,26 @@ class _MC2MeshCloth:
             if center is None:
                 continue
 
-            delta = projected - center
+            delta = origin - center
             if float(np.dot(delta, delta)) >= radius * radius:
                 continue
 
             normal = _MC2Common.safe_normal_np(delta, fallback)
-            projected = center + normal * radius
-            collision_normal = normal
+            add_position += center + normal * radius - origin
+            add_normal += normal
+            add_count += 1
 
-        return projected, collision_normal
+        if add_count <= 0:
+            return origin, np.zeros(3, dtype=np.float32)
+
+        add_normal /= float(add_count)
+        normal_length = float(np.linalg.norm(add_normal))
+        if normal_length <= _MC2Common.EPSILON:
+            return origin, np.zeros(3, dtype=np.float32)
+
+        blend = min(normal_length, 1.0)
+        projected = origin + (add_position / float(add_count)) * blend
+        return projected, np.ascontiguousarray(add_normal / normal_length, dtype=np.float32)
 
     @classmethod
     def project_collisions(
@@ -1272,6 +1514,9 @@ class _MC2MeshCloth:
         distance_stiffness = max(0.0, min(1.0, float(distance_stiffness)))
         bend_stiffness = max(0.0, min(1.0, float(bend_stiffness)))
         max_distance_param = _MC2Common.scalar_param(max(float(max_distance), 0.0))
+        tether_compression_param = _MC2Common.scalar_param(_MC2Common.TETHER_COMPRESSION_LIMIT)
+        tether_stretch_param = _MC2Common.scalar_param(_MC2Common.TETHER_STRETCH_LIMIT)
+        motion_stiffness_param = _MC2Common.scalar_param(1.0)
         world_scale = _MC2Common.matrix_scale_radius(obj.matrix_world)
         has_collision = bool(colliders) and bool(collided_by_groups) and bool(np.any(collision_radii > _MC2Common.EPSILON))
         if timing is not None:
@@ -1300,8 +1545,10 @@ class _MC2MeshCloth:
                 positions,
                 inv_masses,
                 state["root_indices"],
-                state["root_rest_lengths"],
-                distance_stiffness,
+                state["tether_rest_lengths"],
+                1.0,
+                float(tether_compression_param["value"]),
+                float(tether_stretch_param["value"]),
             )
             if timing is not None:
                 _MC2Common.add_timing(timing, "tether", time.perf_counter() - stage_start)
@@ -1377,6 +1624,7 @@ class _MC2MeshCloth:
                 inv_masses,
                 depths,
                 max_distance_param,
+                motion_stiffness_param,
                 world_scale,
             )
             if timing is not None:
@@ -1401,6 +1649,19 @@ class _MC2MeshCloth:
         next_state["param_slots"]["distance_stiffness"] = _MC2Common.scalar_param(distance_stiffness)
         next_state["param_slots"]["bend_stiffness"] = _MC2Common.scalar_param(bend_stiffness)
         next_state["param_slots"]["max_distance"] = max_distance_param
+        next_state["param_slots"]["tether_compression"] = tether_compression_param
+        next_state["param_slots"]["tether_stretch"] = tether_stretch_param
+        next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
+        next_state["param_slots"]["damping"] = _MC2Common.scalar_param(damping)
+        next_state["param_slots"]["backstop_radius"] = _MC2Common.scalar_param(10.0)
+        next_state["param_slots"]["backstop_distance"] = _MC2Common.scalar_param(0.0)
+        next_state["param_slots"]["collider_friction"] = _MC2Common.scalar_param(0.05)
+
+        extension_slots = dict(next_state.get("extension_slots") or {})
+        native_slot = dict(extension_slots.get("native") or {})
+        native_slot["collider_arrays"] = cls.collider_arrays_for_native(next_state, obj, colliders)
+        extension_slots["native"] = native_slot
+        next_state["extension_slots"] = extension_slots
         if timing is not None:
             _MC2Common.add_timing(timing, "post", time.perf_counter() - stage_start)
         return next_state
