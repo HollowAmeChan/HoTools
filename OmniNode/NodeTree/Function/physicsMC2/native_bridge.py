@@ -49,8 +49,40 @@ def _array(state: dict, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np
     return value
 
 
-def state_arrays_for_native(state: dict) -> dict:
+def _state_vector(state: dict, key: str, default) -> np.ndarray:
+    value = np.ascontiguousarray(state.get(key, default), dtype=np.float32).reshape(-1)
+    if value.shape != (len(default),):
+        value = np.ascontiguousarray(default, dtype=np.float32)
+    return value
+
+
+def _inertia_state_arrays(state: dict) -> dict:
+    inertia_state = state.get("inertia_state") if isinstance(state.get("inertia_state"), dict) else {}
+    zero3 = np.zeros(3, dtype=np.float32)
+    identity = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
     return {
+        "inertia_old_component_position": _state_vector(inertia_state, "old_component_position", zero3),
+        "inertia_old_component_rotation": _state_vector(inertia_state, "old_component_rotation", identity),
+        "inertia_shift_pivot_position": _state_vector(inertia_state, "shift_pivot_position", zero3),
+        "inertia_smoothing_velocity": _state_vector(inertia_state, "smoothing_velocity", zero3),
+        "inertia_frame_component_shift_vector": _state_vector(inertia_state, "frame_component_shift_vector", zero3),
+        "inertia_frame_component_shift_rotation": _state_vector(inertia_state, "frame_component_shift_rotation", identity),
+        "inertia_old_world_position": _state_vector(inertia_state, "old_world_position", zero3),
+        "inertia_old_world_rotation": _state_vector(inertia_state, "old_world_rotation", identity),
+        "inertia_now_world_position": _state_vector(inertia_state, "now_world_position", zero3),
+        "inertia_now_world_rotation": _state_vector(inertia_state, "now_world_rotation", identity),
+        "inertia_step_vector": _state_vector(inertia_state, "step_vector", zero3),
+        "inertia_step_rotation": _state_vector(inertia_state, "step_rotation", identity),
+        "inertia_vector": _state_vector(inertia_state, "inertia_vector", zero3),
+        "inertia_rotation": _state_vector(inertia_state, "inertia_rotation", identity),
+        "inertia_rotation_axis": _state_vector(inertia_state, "rotation_axis", zero3),
+        "inertia_angular_velocity": float(inertia_state.get("angular_velocity", 0.0) or 0.0),
+        "inertia_teleport_state": int(inertia_state.get("teleport_state", 0) or 0),
+    }
+
+
+def state_arrays_for_native(state: dict) -> dict:
+    arrays = {
         "schema_version": int(MC2_SOLVER_VERSION),
         "vertex_count": int(state["vertex_count"]),
         "positions": _array(state, "next_positions", np.float32, (3,)),
@@ -71,6 +103,15 @@ def state_arrays_for_native(state: dict) -> dict:
         "root_indices": _array(state, "root_indices", np.int32),
         "parent_indices": _array(state, "parent_indices", np.int32),
         "root_rest_lengths": _array(state, "root_rest_lengths", np.float32),
+        "baseline_start": _array(state, "baseline_start", np.int32),
+        "baseline_count": _array(state, "baseline_count", np.int32),
+        "baseline_data": _array(state, "baseline_data", np.int32),
+        "baseline_flags": _array(state, "baseline_flags", np.uint8),
+        "base_rotations": _array(state, "base_rotations", np.float32, (4,)),
+        "step_basic_positions": _array(state, "step_basic_positions", np.float32, (3,)),
+        "step_basic_rotations": _array(state, "step_basic_rotations", np.float32, (4,)),
+        "vertex_local_positions": _array(state, "vertex_local_positions", np.float32, (3,)),
+        "vertex_local_rotations": _array(state, "vertex_local_rotations", np.float32, (4,)),
         "tether_rest_lengths": _array(state, "tether_rest_lengths", np.float32),
         "edge_i": _array(state, "edge_i", np.int32),
         "edge_j": _array(state, "edge_j", np.int32),
@@ -98,6 +139,8 @@ def state_arrays_for_native(state: dict) -> dict:
         "collision_radii": _array(state, "collision_radii", np.float32),
         "collided_by_groups": int(state.get("collided_by_groups", 0)),
     }
+    arrays.update(_inertia_state_arrays(state))
+    return arrays
 
 
 def param_slots_for_native(state: dict) -> dict:

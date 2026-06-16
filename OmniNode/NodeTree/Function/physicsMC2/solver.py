@@ -9,7 +9,7 @@ import time
 import bpy
 import numpy as np
 
-from . import blender_io, collision, constraints, math_utils, native_bridge, params, state as mc2_state
+from . import baseline, blender_io, collision, constraints, inertia, math_utils, native_bridge, params, state as mc2_state
 from .constants import MC2SystemConstants
 
 
@@ -31,6 +31,22 @@ def solve_meshcloth(
     damping: float,
     distance_stiffness: float,
     bend_stiffness: float,
+    angle_restoration_stiffness: float,
+    angle_limit: float,
+    angle_limit_stiffness: float,
+    world_inertia: float,
+    movement_inertia_smoothing: float,
+    local_inertia: float,
+    depth_inertia: float,
+    centrifugal: float,
+    movement_speed_limit: float,
+    rotation_speed_limit: float,
+    local_movement_speed_limit: float,
+    local_rotation_speed_limit: float,
+    particle_speed_limit: float,
+    teleport_mode: int,
+    teleport_distance: float,
+    teleport_rotation: float,
     max_distance: float,
     backstop_radius: float,
     backstop_distance: float,
@@ -43,6 +59,9 @@ def solve_meshcloth(
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
     base_positions = np.ascontiguousarray(state["base_positions"], dtype=np.float32)
     base_normals = np.ascontiguousarray(state["base_normals"], dtype=np.float32)
+    base_rotations = np.ascontiguousarray(state["base_rotations"], dtype=np.float32)
+    step_basic_positions = np.ascontiguousarray(state["step_basic_positions"], dtype=np.float32)
+    step_basic_rotations = np.ascontiguousarray(state["step_basic_rotations"], dtype=np.float32)
     attributes = np.ascontiguousarray(state["attributes"], dtype=np.uint8)
     depths = np.ascontiguousarray(state["depths"], dtype=np.float32)
     friction = np.ascontiguousarray(state["friction"], dtype=np.float32)
@@ -69,8 +88,29 @@ def solve_meshcloth(
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
     distance_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(distance_stiffness))))
     bend_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(bend_stiffness))))
+    angle_restoration_param = params.scalar_param(max(0.0, min(1.0, float(angle_restoration_stiffness))))
+    angle_limit_param = params.scalar_param(max(0.0, min(180.0, float(angle_limit))))
+    angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
+    angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
     distance_stiffness_values = np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
     bend_stiffness_values = np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
+    angle_restoration_values = np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
+    angle_limit_values = np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0)
+    world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
+    movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
+    local_inertia_param = params.scalar_param(max(0.0, min(1.0, float(local_inertia))))
+    depth_inertia_param = params.scalar_param(max(0.0, min(1.0, float(depth_inertia))))
+    centrifugal_param = params.scalar_param(max(0.0, min(1.0, float(centrifugal))))
+    movement_speed_limit_value = float(movement_speed_limit)
+    rotation_speed_limit_value = float(rotation_speed_limit)
+    local_movement_speed_limit_value = float(local_movement_speed_limit)
+    local_rotation_speed_limit_value = float(local_rotation_speed_limit)
+    particle_speed_limit_value = float(particle_speed_limit)
+    movement_speed_limit_param = params.scalar_param(movement_speed_limit_value)
+    rotation_speed_limit_param = params.scalar_param(rotation_speed_limit_value)
+    local_movement_speed_limit_param = params.scalar_param(local_movement_speed_limit_value)
+    local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
+    particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
 
     max_distance_param = params.scalar_param(max(float(max_distance), 0.0))
     backstop_radius_param = params.scalar_param(max(float(backstop_radius), 0.0))
@@ -92,16 +132,81 @@ def solve_meshcloth(
     has_collision = bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
+    inertia_state = inertia.prepare_frame(
+        state.get("inertia_state"),
+        obj,
+        frame_dt,
+        float(world_inertia_param["value"]),
+        float(movement_inertia_smoothing_param["value"]),
+        movement_speed_limit_value * max(float(world_scale), 0.0) if movement_speed_limit_value >= 0.0 else -1.0,
+        rotation_speed_limit_value,
+        int(teleport_mode),
+        float(teleport_distance) * max(float(world_scale), 0.0),
+        float(teleport_rotation),
+    )
+    if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
+        positions = base_positions.copy()
+        old_positions = base_positions.copy()
+        velocity_positions = base_positions.copy()
+        display_positions = base_positions.copy()
+        velocity.fill(0.0)
+        real_velocity.fill(0.0)
+        friction.fill(0.0)
+        static_friction.fill(0.0)
+    else:
+        display_positions = np.ascontiguousarray(state["display_positions"], dtype=np.float32)
+        inertia.apply_frame_shift(
+            old_positions,
+            velocity_positions,
+            display_positions,
+            velocity,
+            real_velocity,
+            inertia_state,
+        )
+        positions = old_positions.copy()
     if timing is not None:
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
     for _substep in range(substep_count):
+        inertia_step = inertia.prepare_substep(
+            inertia_state,
+            _substep,
+            substep_count,
+            step_dt,
+            float(local_inertia_param["value"]),
+            local_movement_speed_limit_value * max(float(world_scale), 0.0)
+            if local_movement_speed_limit_value >= 0.0
+            else -1.0,
+            local_rotation_speed_limit_value,
+        )
+        stage_start = time.perf_counter() if timing is not None else None
+        step_basic_positions, step_basic_rotations = baseline.update_step_basic_pose(
+            base_positions,
+            base_rotations,
+            state["parent_indices"],
+            state["baseline_start"],
+            state["baseline_count"],
+            state["baseline_data"],
+            state["vertex_local_positions"],
+            state["vertex_local_rotations"],
+        )
+        if timing is not None:
+            _add_timing(timing, "baseline", time.perf_counter() - stage_start)
+
         stage_start = time.perf_counter() if timing is not None else None
         inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
         movable = inv_masses > MC2SystemConstants.EPSILON
         fixed = ~movable
-        velocity_positions = old_positions.copy()
         collision_normals.fill(0.0)
+        inertia.apply_substep_inertia(
+            old_positions,
+            velocity,
+            depths,
+            movable,
+            inertia_step,
+            float(depth_inertia_param["value"]),
+        )
+        velocity_positions = old_positions.copy()
         if step_dt > MC2SystemConstants.EPSILON:
             velocity[movable] *= 1.0 - substep_damping
             velocity[movable] += gravity * step_dt
@@ -162,6 +267,29 @@ def solve_meshcloth(
             )
             if timing is not None:
                 _add_timing(timing, "distance", time.perf_counter() - stage_start)
+
+            stage_start = time.perf_counter() if timing is not None else None
+            constraints.project_angle_constraints(
+                positions,
+                inv_masses,
+                depths,
+                state["parent_indices"],
+                state["baseline_start"],
+                state["baseline_count"],
+                state["baseline_data"],
+                step_basic_positions,
+                step_basic_rotations,
+                state["vertex_local_positions"],
+                state["vertex_local_rotations"],
+                angle_restoration_values,
+                velocity_positions,
+                MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+                MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                angle_limit_values,
+                angle_limit_stiffness_value,
+            )
+            if timing is not None:
+                _add_timing(timing, "angle", time.perf_counter() - stage_start)
 
             stage_start = time.perf_counter() if timing is not None else None
             if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
@@ -260,7 +388,19 @@ def solve_meshcloth(
             step_dt,
             dynamic_friction,
             static_friction_speed,
-            MC2SystemConstants.PARTICLE_SPEED_LIMIT * max(float(world_scale), 0.0),
+            (
+                particle_speed_limit_value * max(float(world_scale), 0.0)
+                if particle_speed_limit_value >= 0.0
+                else -1.0
+            ),
+        )
+        inertia.apply_centrifugal_velocity(
+            positions,
+            velocity,
+            depths,
+            movable,
+            inertia_step,
+            float(centrifugal_param["value"]),
         )
         if bool(np.any(fixed)):
             positions[fixed] = base_positions[fixed]
@@ -278,9 +418,12 @@ def solve_meshcloth(
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
     next_state["substep_damping"] = float(substep_damping)
+    next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
     next_state["display_positions"] = np.ascontiguousarray(positions.copy(), dtype=np.float32)
+    next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
+    next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
     next_state["velocity_positions"] = np.ascontiguousarray(velocity_positions, dtype=np.float32)
     next_state["velocity"] = np.ascontiguousarray(velocity, dtype=np.float32)
     next_state["real_velocity"] = np.ascontiguousarray(real_velocity, dtype=np.float32)
@@ -291,6 +434,19 @@ def solve_meshcloth(
     next_state["param_slots"] = dict(next_state.get("param_slots") or {})
     next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
     next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
+    next_state["param_slots"]["angle_restoration_stiffness"] = angle_restoration_param
+    next_state["param_slots"]["angle_limit"] = angle_limit_param
+    next_state["param_slots"]["angle_limit_stiffness"] = angle_limit_stiffness_param
+    next_state["param_slots"]["world_inertia"] = world_inertia_param
+    next_state["param_slots"]["movement_inertia_smoothing"] = movement_inertia_smoothing_param
+    next_state["param_slots"]["local_inertia"] = local_inertia_param
+    next_state["param_slots"]["depth_inertia"] = depth_inertia_param
+    next_state["param_slots"]["centrifugal"] = centrifugal_param
+    next_state["param_slots"]["movement_speed_limit"] = movement_speed_limit_param
+    next_state["param_slots"]["rotation_speed_limit"] = rotation_speed_limit_param
+    next_state["param_slots"]["local_movement_speed_limit"] = local_movement_speed_limit_param
+    next_state["param_slots"]["local_rotation_speed_limit"] = local_rotation_speed_limit_param
+    next_state["param_slots"]["particle_speed_limit"] = particle_speed_limit_param
     next_state["param_slots"]["max_distance"] = max_distance_param
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param

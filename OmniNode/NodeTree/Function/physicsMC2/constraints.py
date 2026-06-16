@@ -6,7 +6,7 @@ distance、tether、motion 行为，再逐步替换 Python 调度层。
 
 import numpy as np
 
-from . import params
+from . import baseline, params
 from .constants import MC2SystemConstants
 from . import math_utils
 
@@ -378,6 +378,280 @@ def _add_bending_corrections(
         add_counts[int(vertex_index)] += 1
 
 
+def _angle_stiffness_values(stiffness, depths: np.ndarray) -> np.ndarray | None:
+    if isinstance(stiffness, dict):
+        values = params.sample_param(stiffness, depths)
+    elif isinstance(stiffness, np.ndarray):
+        values = np.ascontiguousarray(stiffness, dtype=np.float32)
+    else:
+        values = np.full(len(depths), float(stiffness), dtype=np.float32)
+    if len(values) != len(depths):
+        return None
+    values = np.clip(values, 0.0, 1.0)
+    if not bool(np.any(values > MC2SystemConstants.EPSILON)):
+        return None
+    return np.ascontiguousarray(values, dtype=np.float32)
+
+
+def _from_to_rotation(source: np.ndarray, target: np.ndarray, ratio: float = 1.0) -> np.ndarray:
+    ratio = max(0.0, min(1.0, float(ratio)))
+    src = math_utils.safe_normal_np(source, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    dst = math_utils.safe_normal_np(target, src)
+    dot = max(-1.0, min(1.0, float(np.dot(src, dst))))
+    if dot > 1.0 - 1.0e-6 or ratio <= MC2SystemConstants.EPSILON:
+        return np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    if dot < -1.0 + 1.0e-6:
+        helper = (
+            np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+            if float(src[0]) > float(src[1]) and float(src[0]) > float(src[2])
+            else np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+        )
+        axis = math_utils.safe_normal_np(np.cross(src, helper), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+        angle = np.pi * ratio
+    else:
+        axis = math_utils.safe_normal_np(np.cross(src, dst), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+        angle = float(np.arccos(dot)) * ratio
+    half = angle * 0.5
+    s = float(np.sin(half))
+    return np.asarray((axis[0] * s, axis[1] * s, axis[2] * s, float(np.cos(half))), dtype=np.float32)
+
+
+def _clamp_vector_angle(vector: np.ndarray, target: np.ndarray, angle_rad: float) -> np.ndarray:
+    length = float(np.linalg.norm(vector))
+    if length <= MC2SystemConstants.EPSILON:
+        return np.ascontiguousarray(vector, dtype=np.float32)
+    target_length = float(np.linalg.norm(target))
+    if target_length <= MC2SystemConstants.EPSILON:
+        return np.ascontiguousarray(vector, dtype=np.float32)
+    v_dir = vector / length
+    t_dir = target / target_length
+    dot = max(-1.0, min(1.0, float(np.dot(v_dir, t_dir))))
+    current_angle = float(np.arccos(dot))
+    if current_angle <= angle_rad:
+        return np.ascontiguousarray(vector, dtype=np.float32)
+    q = _from_to_rotation(t_dir, v_dir, max(float(angle_rad), 0.0) / max(current_angle, MC2SystemConstants.EPSILON))
+    return np.ascontiguousarray(baseline.quat_rotate(q, t_dir) * length, dtype=np.float32)
+
+
+def project_angle_constraints(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    depths: np.ndarray,
+    parent_indices: np.ndarray,
+    baseline_start: np.ndarray,
+    baseline_count: np.ndarray,
+    baseline_data: np.ndarray,
+    step_basic_positions: np.ndarray,
+    step_basic_rotations: np.ndarray,
+    vertex_local_positions: np.ndarray,
+    vertex_local_rotations: np.ndarray,
+    restoration_stiffness,
+    velocity_positions: np.ndarray | None = None,
+    restoration_velocity_attenuation: float = MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+    restoration_gravity_falloff: float = MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+    limit_angle_degrees=0.0,
+    limit_stiffness: float = MC2SystemConstants.ANGLE_LIMIT_STIFFNESS,
+) -> None:
+    if len(baseline_data) == 0:
+        return
+
+    restoration_values = _angle_stiffness_values(restoration_stiffness, depths)
+    if restoration_values is not None:
+        restoration_values = np.clip(
+            restoration_values * float(MC2SystemConstants.ANGLE_RESTORATION_SCALE),
+            0.0,
+            1.0,
+        )
+
+    if isinstance(limit_angle_degrees, dict):
+        limit_values = params.sample_param(limit_angle_degrees, depths)
+    elif isinstance(limit_angle_degrees, np.ndarray):
+        limit_values = np.ascontiguousarray(limit_angle_degrees, dtype=np.float32)
+    else:
+        limit_values = np.full(len(depths), float(limit_angle_degrees), dtype=np.float32)
+    use_limit = len(limit_values) == len(depths) and bool(np.any(limit_values > MC2SystemConstants.EPSILON))
+    use_restoration = restoration_values is not None
+
+    if not use_restoration and not use_limit:
+        return
+
+    gravity_falloff = max(0.0, min(1.0, 1.0 - float(restoration_gravity_falloff)))
+    restoration_attenuation = max(0.0, min(1.0, float(restoration_velocity_attenuation)))
+    limit_stiffness = max(0.0, min(1.0, float(limit_stiffness)))
+
+    length_buffer = np.zeros(len(positions), dtype=np.float32)
+    local_pos_buffer = np.zeros((len(positions), 3), dtype=np.float32)
+    local_rot_buffer = np.zeros((len(positions), 4), dtype=np.float32)
+    rotation_buffer = np.ascontiguousarray(step_basic_rotations, dtype=np.float32).copy()
+    restoration_vector_buffer = np.zeros((len(positions), 3), dtype=np.float32)
+
+    for line_index in range(len(baseline_start)):
+        start = int(baseline_start[line_index])
+        count = int(baseline_count[line_index])
+        if count <= 1:
+            continue
+
+        for offset in range(count):
+            data_index = start + offset
+            if data_index < 0 or data_index >= len(baseline_data):
+                continue
+            vertex_index = int(baseline_data[data_index])
+            if vertex_index < 0 or vertex_index >= len(positions):
+                continue
+            rotation_buffer[vertex_index] = step_basic_rotations[vertex_index]
+            if offset <= 0:
+                continue
+            parent_index = int(parent_indices[vertex_index])
+            if parent_index < 0 or parent_index >= len(positions):
+                continue
+            base_vector = step_basic_positions[vertex_index] - step_basic_positions[parent_index]
+            if use_limit:
+                current_vector = positions[vertex_index] - positions[parent_index]
+                current_length = float(np.linalg.norm(current_vector))
+                base_length = float(np.linalg.norm(base_vector))
+                if current_length > MC2SystemConstants.EPSILON and base_length > MC2SystemConstants.EPSILON:
+                    parent_rot_inv = baseline.quat_inverse(step_basic_rotations[parent_index])
+                    length_buffer[vertex_index] = current_length
+                    local_pos_buffer[vertex_index] = baseline.quat_rotate(parent_rot_inv, base_vector / base_length)
+                    local_rot_buffer[vertex_index] = baseline.quat_mul(
+                        parent_rot_inv,
+                        step_basic_rotations[vertex_index],
+                    )
+                else:
+                    length_buffer[vertex_index] = 0.0
+                    local_pos_buffer[vertex_index] = 0.0
+                    local_rot_buffer[vertex_index] = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+            if use_restoration:
+                restoration_vector_buffer[vertex_index] = base_vector
+
+        for iteration in range(int(MC2SystemConstants.ANGLE_LIMIT_ITERATION)):
+            iteration_den = max(int(MC2SystemConstants.ANGLE_LIMIT_ITERATION) - 1, 1)
+            iteration_ratio = float(iteration) / float(iteration_den)
+            limit_rot_ratio = 0.4
+            restoration_rot_ratio = 0.1 + (0.5 - 0.1) * iteration_ratio
+
+            for offset in range(1, count):
+                data_index = start + offset
+                if data_index < 0 or data_index >= len(baseline_data):
+                    continue
+                child_index = int(baseline_data[data_index])
+                if child_index < 0 or child_index >= len(positions):
+                    continue
+                parent_index = int(parent_indices[child_index])
+                if parent_index < 0 or parent_index >= len(positions):
+                    continue
+
+                child_inv_mass = float(inv_masses[child_index])
+                parent_inv_mass = float(inv_masses[parent_index])
+                if child_inv_mass <= MC2SystemConstants.EPSILON:
+                    continue
+
+                child_pos = positions[child_index].copy()
+                parent_pos = positions[parent_index].copy()
+
+                if use_limit:
+                    parent_rot = rotation_buffer[parent_index]
+                    local_pos = local_pos_buffer[child_index]
+                    local_rot = local_rot_buffer[child_index]
+                    vector = child_pos - parent_pos
+                    vector_len = float(np.linalg.norm(vector))
+                    target_vector = baseline.quat_rotate(parent_rot, local_pos)
+                    target_len = float(np.linalg.norm(target_vector))
+                    if vector_len > MC2SystemConstants.EPSILON and target_len <= MC2SystemConstants.EPSILON:
+                        add = parent_pos - child_pos
+                        child_pos = parent_pos.copy()
+                        positions[child_index] = child_pos
+                        if velocity_positions is not None:
+                            velocity_positions[child_index] += add
+                        rotation_buffer[child_index] = baseline.quat_mul(parent_rot, local_rot)
+                        vector = None
+                    elif vector_len > MC2SystemConstants.EPSILON and target_len > MC2SystemConstants.EPSILON:
+                        vector_dir = vector / vector_len
+                        target_dir = target_vector / target_len
+                        blend_len = vector_len * 0.5 + float(length_buffer[child_index]) * 0.5
+                        if blend_len > MC2SystemConstants.EPSILON:
+                            vector = vector_dir * blend_len
+                        else:
+                            vector = None
+                    else:
+                        vector = None
+
+                    if vector is not None:
+                        max_angle_rad = np.deg2rad(max(0.0, float(limit_values[child_index])))
+                        angle = float(np.arccos(max(-1.0, min(1.0, float(np.dot(vector_dir, target_dir))))))
+                        result_vector = vector
+                        if angle > max_angle_rad:
+                            recovery_angle = angle * (1.0 - limit_stiffness) + max_angle_rad * limit_stiffness
+                            result_vector = _clamp_vector_angle(vector, target_vector, recovery_angle)
+
+                        rot_pos = parent_pos + vector * limit_rot_ratio
+                        parent_final = rot_pos - result_vector * limit_rot_ratio
+                        child_final = rot_pos + result_vector * (1.0 - limit_rot_ratio)
+                        parent_add = (parent_final - parent_pos) * parent_inv_mass
+                        child_add = (child_final - child_pos) * child_inv_mass
+
+                        child_pos += child_add
+                        positions[child_index] = child_pos
+                        if velocity_positions is not None:
+                            velocity_positions[child_index] += child_add * MC2SystemConstants.ANGLE_LIMIT_ATTENUATION
+                        if parent_inv_mass > MC2SystemConstants.EPSILON:
+                            parent_pos += parent_add
+                            positions[parent_index] = parent_pos
+                            if velocity_positions is not None:
+                                velocity_positions[parent_index] += (
+                                    parent_add * MC2SystemConstants.ANGLE_LIMIT_ATTENUATION
+                                )
+
+                        corrected_vector = child_pos - parent_pos
+                        corrected_len = float(np.linalg.norm(corrected_vector))
+                        if corrected_len > MC2SystemConstants.EPSILON:
+                            next_rot = baseline.quat_mul(parent_rot, local_rot)
+                            q = _from_to_rotation(
+                                target_vector / max(target_len, MC2SystemConstants.EPSILON),
+                                corrected_vector / corrected_len,
+                            )
+                            rotation_buffer[child_index] = baseline.quat_mul(q, next_rot)
+
+                if not use_restoration:
+                    continue
+                restoration_stiffness_value = float(restoration_values[child_index]) * gravity_falloff
+                if restoration_stiffness_value <= MC2SystemConstants.EPSILON:
+                    continue
+
+                child_pos = positions[child_index].copy()
+                parent_pos = positions[parent_index].copy()
+                target_vector = restoration_vector_buffer[child_index]
+                target_len = float(np.linalg.norm(target_vector))
+                vector = child_pos - parent_pos
+                vector_len = float(np.linalg.norm(vector))
+                if target_len <= MC2SystemConstants.EPSILON:
+                    add = parent_pos - child_pos
+                    positions[child_index] = parent_pos
+                    if velocity_positions is not None:
+                        velocity_positions[child_index] += add
+                    continue
+                if vector_len <= MC2SystemConstants.EPSILON:
+                    continue
+
+                q = _from_to_rotation(vector / vector_len, target_vector / target_len, restoration_stiffness_value)
+                result_vector = baseline.quat_rotate(q, vector)
+                rot_pos = parent_pos + vector * restoration_rot_ratio
+                parent_final = rot_pos - result_vector * restoration_rot_ratio
+                child_final = rot_pos + result_vector * (1.0 - restoration_rot_ratio)
+                parent_add = (parent_final - parent_pos) * parent_inv_mass
+                child_add = (child_final - child_pos) * child_inv_mass
+
+                child_pos += child_add
+                positions[child_index] = child_pos
+                if velocity_positions is not None:
+                    velocity_positions[child_index] += child_add * restoration_attenuation
+                if parent_inv_mass > MC2SystemConstants.EPSILON:
+                    parent_pos += parent_add
+                    positions[parent_index] = parent_pos
+                    if velocity_positions is not None:
+                        velocity_positions[parent_index] += parent_add * restoration_attenuation
+
+
 def project_triangle_bending(
     positions: np.ndarray,
     inv_masses: np.ndarray,
@@ -581,7 +855,7 @@ def apply_post_step(
 
     dynamic_friction = max(0.0, min(1.0, float(dynamic_friction)))
     static_friction_speed = max(float(static_friction_speed), 0.0)
-    particle_speed_limit = max(float(particle_speed_limit), 0.0)
+    particle_speed_limit = float(particle_speed_limit)
 
     for vertex_index in range(len(positions)):
         next_position = positions[vertex_index].copy()
@@ -625,7 +899,7 @@ def apply_post_step(
                 attenuation = (1.0 - dot) * max(0.0, min(1.0, contact_friction * dynamic_friction))
                 velocity -= velocity * attenuation
 
-            if particle_speed_limit > MC2SystemConstants.EPSILON:
+            if particle_speed_limit >= 0.0 and particle_speed_limit > MC2SystemConstants.EPSILON:
                 velocity = math_utils.clamp_vector(velocity, particle_speed_limit)
             velocities[vertex_index] = velocity
             friction[vertex_index] = contact_friction * MC2SystemConstants.FRICTION_DAMPING_RATE

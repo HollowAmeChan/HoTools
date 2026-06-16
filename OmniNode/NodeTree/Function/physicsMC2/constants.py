@@ -1,7 +1,7 @@
 """MC2 Python 后端的常量与 cache schema 标识。"""
 
 MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
-MC2_SOLVER_VERSION = 6
+MC2_SOLVER_VERSION = 10
 
 MC2_ATTR_INVALID = 1 << 0
 MC2_ATTR_FIXED = 1 << 1
@@ -28,6 +28,17 @@ MC2_CURVE_READY_PARAMETERS = {
     "collider_friction",
     "angle_restoration_stiffness",
     "angle_limit",
+    "angle_limit_stiffness",
+    "world_inertia",
+    "movement_inertia_smoothing",
+    "local_inertia",
+    "depth_inertia",
+    "centrifugal",
+    "movement_speed_limit",
+    "rotation_speed_limit",
+    "local_movement_speed_limit",
+    "local_rotation_speed_limit",
+    "particle_speed_limit",
     "damping",
 }
 
@@ -53,6 +64,23 @@ class MC2SystemConstants:
     TRIANGLE_VOLUME_MIN_ANGLE = 90.0
     TRIANGLE_VOLUME_MAX_ANGLE = 179.0
     TRIANGLE_VOLUME_SCALE = 1000.0
+    ANGLE_LIMIT_ITERATION = 3
+    ANGLE_LIMIT_ATTENUATION = 0.9
+    ANGLE_RESTORATION_SCALE = 0.2
+    ANGLE_RESTORATION_VELOCITY_ATTENUATION = 0.8
+    ANGLE_RESTORATION_GRAVITY_FALLOFF = 0.0
+    ANGLE_LIMIT_STIFFNESS = 1.0
+    WORLD_INERTIA = 1.0
+    MOVEMENT_INERTIA_SMOOTHING = 0.4
+    LOCAL_INERTIA = 1.0
+    DEPTH_INERTIA = 0.0
+    CENTRIFUGAL_ACCELERATION = 0.0
+    MOVEMENT_SPEED_LIMIT = 5.0
+    ROTATION_SPEED_LIMIT = 720.0
+    LOCAL_MOVEMENT_SPEED_LIMIT = -1.0
+    LOCAL_ROTATION_SPEED_LIMIT = -1.0
+    TELEPORT_DISTANCE = 0.5
+    TELEPORT_ROTATION = 90.0
     MOTION_VELOCITY_ATTENUATION = 0.95
     FRICTION_DAMPING_RATE = 0.6
     STATIC_FRICTION_INCREASE = 0.04

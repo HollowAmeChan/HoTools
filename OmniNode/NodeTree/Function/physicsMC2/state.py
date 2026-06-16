@@ -7,7 +7,7 @@
 import bpy
 import numpy as np
 
-from . import blender_io, math_utils, mesh_build
+from . import baseline, blender_io, inertia, math_utils, mesh_build
 from .constants import (
     MC2_ATTR_MOVE,
     MC2_BEND_KIND_DISTANCE_APPROX,
@@ -47,11 +47,16 @@ def build_state(
     rest_world_normals = math_utils.transform_directions(math_utils.matrix_to_numpy(obj.matrix_world), rest_local_normals)
     edges, triangles = mesh_build.mesh_connectivity_arrays(obj.data)
     attributes = mesh_build.build_attributes(obj)
-    depths, root_indices, parent_indices, root_rest_lengths = mesh_build.build_depth_and_roots(
+    baseline_data = baseline.build_mesh_baseline(
         edges,
         rest_world,
+        rest_world_normals,
         attributes,
     )
+    depths = baseline_data["depths"]
+    root_indices = baseline_data["root_indices"]
+    parent_indices = baseline_data["parent_indices"]
+    root_rest_lengths = baseline_data["root_rest_lengths"]
     friction = np.zeros(len(obj.data.vertices), dtype=np.float32)
     static_friction = np.zeros(len(obj.data.vertices), dtype=np.float32)
     inv_masses = calc_inverse_masses(attributes, depths, friction)
@@ -106,6 +111,9 @@ def build_state(
         "rest_world_normals": np.ascontiguousarray(rest_world_normals, dtype=np.float32),
         "base_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "base_normals": np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32),
+        "base_rotations": baseline_data["base_rotations"],
+        "step_basic_positions": baseline_data["step_basic_positions"],
+        "step_basic_rotations": baseline_data["step_basic_rotations"],
         "next_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "old_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "velocity_positions": zeros3.copy(),
@@ -115,11 +123,18 @@ def build_state(
         "friction": friction,
         "static_friction": static_friction,
         "collision_normals": zeros3.copy(),
+        "inertia_state": inertia.make_runtime_state(obj),
         "attributes": attributes,
         "depths": depths,
         "root_indices": root_indices,
         "parent_indices": parent_indices,
         "root_rest_lengths": root_rest_lengths,
+        "baseline_start": baseline_data["baseline_start"],
+        "baseline_count": baseline_data["baseline_count"],
+        "baseline_data": baseline_data["baseline_data"],
+        "baseline_flags": baseline_data["baseline_flags"],
+        "vertex_local_positions": baseline_data["vertex_local_positions"],
+        "vertex_local_rotations": baseline_data["vertex_local_rotations"],
         "tether_rest_lengths": mesh_build.build_tether_rest_lengths(rest_world, root_indices),
         "inv_masses": inv_masses,
         "edges": edges,
@@ -194,12 +209,25 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
 
     if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
         next_state["edge_rest"] = mesh_build.constraint_lengths(rest_world, next_state["edge_i"], next_state["edge_j"])
-        (
-            next_state["depths"],
-            next_state["root_indices"],
-            next_state["parent_indices"],
-            next_state["root_rest_lengths"],
-        ) = mesh_build.build_depth_and_roots(next_state["edges"], rest_world, next_state["attributes"])
+        baseline_data = baseline.build_mesh_baseline(
+            next_state["edges"],
+            rest_world,
+            rest_world_normals,
+            next_state["attributes"],
+        )
+        next_state["depths"] = baseline_data["depths"]
+        next_state["root_indices"] = baseline_data["root_indices"]
+        next_state["parent_indices"] = baseline_data["parent_indices"]
+        next_state["root_rest_lengths"] = baseline_data["root_rest_lengths"]
+        next_state["baseline_start"] = baseline_data["baseline_start"]
+        next_state["baseline_count"] = baseline_data["baseline_count"]
+        next_state["baseline_data"] = baseline_data["baseline_data"]
+        next_state["baseline_flags"] = baseline_data["baseline_flags"]
+        next_state["base_rotations"] = baseline_data["base_rotations"]
+        next_state["vertex_local_positions"] = baseline_data["vertex_local_positions"]
+        next_state["vertex_local_rotations"] = baseline_data["vertex_local_rotations"]
+        next_state["step_basic_positions"] = baseline_data["step_basic_positions"]
+        next_state["step_basic_rotations"] = baseline_data["step_basic_rotations"]
         next_state["edge_type"] = mesh_build.structural_constraint_types(
             next_state["edge_i"],
             next_state["edge_j"],
@@ -267,6 +295,20 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     next_state["rest_world_normals"] = np.ascontiguousarray(rest_world_normals, dtype=np.float32)
     next_state["base_positions"] = np.ascontiguousarray(rest_world.copy(), dtype=np.float32)
     next_state["base_normals"] = np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32)
+    if next_state.get("object_matrix_world_3x3_key") == matrix_3x3_key:
+        (
+            next_state["step_basic_positions"],
+            next_state["step_basic_rotations"],
+        ) = baseline.update_step_basic_pose(
+            next_state["base_positions"],
+            next_state["base_rotations"],
+            next_state["parent_indices"],
+            next_state["baseline_start"],
+            next_state["baseline_count"],
+            next_state["baseline_data"],
+            next_state["vertex_local_positions"],
+            next_state["vertex_local_rotations"],
+        )
 
     return next_state
 
@@ -289,6 +331,9 @@ def state_matches(
         "rest_world_normals": (vertex_count, 3),
         "base_positions": (vertex_count, 3),
         "base_normals": (vertex_count, 3),
+        "base_rotations": (vertex_count, 4),
+        "step_basic_positions": (vertex_count, 3),
+        "step_basic_rotations": (vertex_count, 4),
         "next_positions": (vertex_count, 3),
         "old_positions": (vertex_count, 3),
         "velocity_positions": (vertex_count, 3),
@@ -303,6 +348,8 @@ def state_matches(
         "root_indices": (vertex_count,),
         "parent_indices": (vertex_count,),
         "root_rest_lengths": (vertex_count,),
+        "vertex_local_positions": (vertex_count, 3),
+        "vertex_local_rotations": (vertex_count, 4),
         "tether_rest_lengths": (vertex_count,),
         "inv_masses": (vertex_count,),
         "collision_local_radii": (vertex_count,),
@@ -381,6 +428,18 @@ def state_matches(
         return False
     if not same_1d_length(("volume_rest",)):
         return False
+    if not same_1d_length(("baseline_start", "baseline_count", "baseline_flags")):
+        return False
+    baseline_data = state.get("baseline_data")
+    if not isinstance(baseline_data, np.ndarray) or baseline_data.ndim != 1:
+        return False
+    if len(baseline_data) > 0 and (int(np.min(baseline_data)) < 0 or int(np.max(baseline_data)) >= vertex_count):
+        return False
+    for start, count in zip(state["baseline_start"], state["baseline_count"]):
+        start_i = int(start)
+        count_i = int(count)
+        if start_i < 0 or count_i < 0 or start_i + count_i > len(baseline_data):
+            return False
     if len(state["edge_i"]) != len(edges):
         return False
     if len(state["bend_i"]) != len(triangle_pairs):
@@ -418,6 +477,10 @@ def state_matches(
     for name in MC2_CURVE_READY_PARAMETERS:
         if name not in param_slots:
             return False
+
+    inertia_state = state.get("inertia_state")
+    if not isinstance(inertia_state, dict):
+        return False
 
     return (
         state.get("kind") == MC2_CACHE_KIND
