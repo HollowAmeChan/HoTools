@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics
+from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2
 from .GraphNode import CLS_GRAPH
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -33,6 +33,7 @@ node_cls_image = FunctionNodeCore.loadRegisterFuncNodes(Image)
 node_cls_debug = FunctionNodeCore.loadRegisterFuncNodes(Debug)
 node_cls_cache = FunctionNodeCore.loadRegisterFuncNodes(Cache)
 node_cls_physics = FunctionNodeCore.loadRegisterFuncNodes(Physics)
+node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
 cls.extend(node_cls_data)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
@@ -48,6 +49,7 @@ cls.extend(node_cls_image)
 cls.extend(node_cls_debug)
 cls.extend(node_cls_cache)
 cls.extend(node_cls_physics)
+cls.extend(node_cls_physics_mc2)
 
 node_categories = [
     OmniNodeCategory("GRAPH", "graph", items=[
@@ -97,6 +99,8 @@ node_categories = [
     ]),
     OmniNodeCategory("PHYSICS", "Physics", items=[
         NodeItem(i.bl_idname) for i in node_cls_physics
+    ] + [
+        NodeItem(i.bl_idname) for i in node_cls_physics_mc2
     ]),
 ]
 
