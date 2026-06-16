@@ -2,6 +2,8 @@
 
 本文档规划 OmniNode 中 MagicaCloth2 风格解算器的实现路线。目标不是把 Unity 版 MC2 的全局 Manager/Job 系统照搬到 Blender，而是在 OmniNode 现有函数节点、逐帧运行、runtime cache、Python/C++ 双端机制下复刻核心 cloth 行为。
 
+模块拆分的详细方案见 `MC2_MODULE_SPLIT_PLAN.md`。本文档继续作为物理功能和总体路线规划，具体 Python/C++ 文件边界以后以拆分规划文档为准。
+
 当前用户约束：
 
 - 第一阶段只实现 MeshCloth。

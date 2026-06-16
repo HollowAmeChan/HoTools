@@ -2,6 +2,8 @@
 
 本文档记录 `Function/physicsMC2/__init__.py` 对 MagicaCloth2 的 Python 复刻进度、当前差异、后续目标，以及进入 C++ 后端前应满足的准入条件。
 
+Python/C++ 模块拆分的详细方案见 `MC2_MODULE_SPLIT_PLAN.md`。本文档只记录复刻状态和差异。
+
 结论先写在前面：建议先把 Python 端作为行为蓝本尽量复刻到稳定状态，再做 C++ 后端。C++ 第一版应以 Python parity 为目标，而不是直接在 C++ 里补完整 MC2；否则 Python/CPP 两端会同时漂移，接口和 cache 协议会很难稳定。
 
 ## 当前边界
@@ -465,4 +467,10 @@ hotools_native_mc2
 - 节点函数、socket、cache schema、物理行为不变。
 - 影响 C++ ABI：否。
 - 待验证：Blender 内重新加载插件后物理分类仍能注册 `meshClothMC2`。
+
+2026-06-17
+- 新增 `MC2_MODULE_SPLIT_PLAN.md`。
+- 规划 Python 包内拆分边界：constants/params/math_utils/blender_io/collision/mesh_build/state/constraints/solver/native_bridge/node。
+- 规划 C++ MC2 native 文件边界：hotools_mc2_types、mc2_math、mc2_distance、mc2_tether、mc2_motion、mc2_bending、mc2_collision、mc2_post、mc2_bindings。
+- 本次只改文档，不改变物理行为。
 ```
