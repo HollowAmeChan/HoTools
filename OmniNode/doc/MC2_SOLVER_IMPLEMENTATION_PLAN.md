@@ -1,725 +1,106 @@
-# OmniNode MC2 Cloth Solver Implementation Plan
-
-本文档规划 OmniNode 中 MagicaCloth2 风格解算器的实现路线。目标不是把 Unity 版 MC2 的全局 Manager/Job 系统照搬到 Blender，而是在 OmniNode 现有函数节点、逐帧运行、runtime cache、Python/C++ 双端机制下复刻核心 cloth 行为。
-
-模块拆分的详细方案见 `MC2_MODULE_SPLIT_PLAN.md`。本文档继续作为物理功能和总体路线规划，具体 Python/C++ 文件边界以后以拆分规划文档为准。
-
-当前用户约束：
-
-- 第一阶段只实现 MeshCloth。
-- BoneCloth 后续实现，但 MeshCloth/BoneCloth 的共通数据、约束和求解设施要先在 `Function/physicsMC2/__init__.py` 内提前分层；后续可继续拆成 `physicsMC2` 包内私有模块。不要拆出公共碰撞/公共 solver 依赖；C++ 端未来可按 native 工程边界拆分。
-- MeshCloth 的输入就是用户自己准备的低模代理，插件永远不做 MC2 reduction、减面、重拓扑、代理生成，也不做高低模 mapping。输出永远驱动这个低模代理。
-- 碰撞不照搬 MC2 的显式 collider 列表，直接复用 HoTools/OmniNode 已有碰撞组、骨骼碰撞体和物体碰撞体。
-- MC2 支持按 depth 曲线采样的参数，第一版先用标量值；参数层必须保留升级为曲线输入/采样表的空间。
-- 自碰撞第一版不做，但 cache、参数和 native 接口必须预留扩展槽。
-- 仍然遵守“先 Python 行为蓝本，再用同接口实现 C++ 后端”的路线。
-- 跳帧和世界坐标系语义要与 SpringBone 蓝本保持一致。
-
-## 源码研究结论
-
-MC2 源码路径：
-
-```text
-D:\Unity_Fork\MagicaCloth2
-```
-
-重点文件：
-
-```text
-Runtime/Cloth/ClothProcess.cs
-Runtime/Cloth/ClothProcessGeneration.cs
-Runtime/Cloth/ClothParameters.cs
-Runtime/Cloth/Constraints/DistanceConstraint.cs
-Runtime/Cloth/Constraints/TetherConstraint.cs
-Runtime/Cloth/Constraints/MotionConstraint.cs
-Runtime/Cloth/Constraints/TriangleBendingConstraint.cs
-Runtime/Cloth/Constraints/AngleConstraint.cs
-Runtime/Cloth/Constraints/ColliderCollisionConstraint.cs
-Runtime/Manager/Simulation/SimulationManager.cs
-Runtime/Manager/Simulation/SimulationManagerNormal.cs
-Runtime/Manager/Simulation/SimulationManagerSplit.cs
-Runtime/Manager/Team/TeamManager.cs
-Runtime/VirtualMesh/VirtualMesh.cs
-Runtime/VirtualMesh/Function/VirtualMeshProxy.cs
-Runtime/VirtualMesh/Function/VirtualMeshMapping.cs
-```
-
-MC2 原架构是“全局 Manager + 每个 cloth 一个 ClothProcess + Burst Job 连续数组”。`ClothProcess` 负责构建 proxy/mapping/constraint data，各 Manager 持有全局 chunk 数组。每帧 `ClothManager.ClothUpdate()` 统一调度 `SimulationManager`，再按 Normal/Split 路径运行 Job。
-
-OmniNode 不应复制这套 Manager：
-
-- OmniNode 的默认扩展点是普通函数节点，不是全局 singleton。
-- 跨帧状态必须显式走 `_OmniCache`。
-- Python 层负责 Blender 对象读取、shape key 写回、cache 生命周期和跳帧保护。
-- C++ 层只替换求解热点，不能持有 Blender 指针或跨帧全局状态。
-
-因此 MC2 在 OmniNode 内部应折叠为：
-
-```text
-函数节点输入
-  -> 校验 Blender mesh / scene / cache
-  -> 读取或重建 MC2ProxyData + MC2ConstraintData
-  -> 每帧读取碰撞组快照和对象变换
-  -> Python solver 原地推进 MC2ParticleState
-  -> 写回低模代理 shape key
-  -> 输出 next cache
-```
-
-## 新文件边界
-
-当前入口文件：
-
-```text
-OmniNode/NodeTree/Function/physicsMC2/__init__.py
-```
-
-当前入口已经进入 Phase 1 Python MVP 实现状态：
-
-- `MC2_CACHE_KIND`
-- `MC2_SOLVER_VERSION`
-- `_MC2Common`：shape key I/O、世界空间转换、帧时间、debug timing、参数采样预留、碰撞组快照。
-- `_MC2MeshCloth`：输入 mesh 连接关系读取、固定点/深度/root 构建、distance/tether/motion/collider 约束、runtime cache schema。
-- `meshClothMC2(..., enable=True)`：第一版可运行 Python 参考节点。
-
-`OmniNode/NodeTree/OmniNodeRegister.py` 已导入 `physicsMC2`，节点现在会进入物理分类菜单，方便直接在 Blender 内验证 MeshCloth 行为。
-
-当前 Python MVP 已实现：
-
-- 直接读取输入 mesh 作为低模代理，不做 reduction，也不做 mapping。
-- 输出写回 `MC2MeshCloth` 或 `hotools_mesh_collision.output_shape_key` 指定的 shape key，不修改 Basis。
-- cache 内部保存 world-space particle state，并在节点边界做 local/world 转换。
-- 帧连续性对齐 SpringBone：只有 `current_frame == cached_frame + 1` 继续推进；跳帧、倒放、同帧重复或 reset 会恢复 rest pose 并清理旧速度。
-- 碰撞逻辑保持在 `physicsMC2` 包内部，直接读取现有 object/bone sphere/capsule 碰撞组快照，不抽公共碰撞模块。
-- 曲线参数暂时走 scalar sampler，但 `param_slots` 和采样函数已保留曲线表扩展入口。
-- 自碰撞暂不实现，仅在 cache/native 扩展槽预留。
-
-当前已经机械迁移为 `Function/physicsMC2/__init__.py` 同名包目录。Python 端只是行为蓝本和缓冲层，不把碰撞处理抽成公共模块；旧 `Physics.py` solver 保持蓝本隔离。后续细分只在 `physicsMC2` 包内部私有化进行，节点入口、函数名、socket 顺序和 cache schema 不变。
-
-## 第一阶段节点接口
-
-目标节点：
-
-```python
-meshClothMC2(
-    cache_state: _OmniCache,
-    proxy_obj: bpy.types.Object,
-    scene: bpy.types.Scene = None,
-    enabled: bool = True,
-    reset: bool = False,
-    substeps: int = 1,
-    iterations: int = 4,
-    gravity_dir: mathutils.Vector = (0, 0, -1),
-    gravity_power: float = 9.8,
-    damping: float = 0.04,
-    distance_stiffness: float = 1.0,
-    bend_stiffness: float = 0.5,
-    max_distance: float = 0.0,
-    collision_radius: float = 0.0,
-    debug_output: bool = False,
-) -> tuple[_OmniCache, bpy.types.Object, int, int]
-```
-
-实际实现时建议把碰撞半径优先对齐现有 HoTools 网格碰撞属性：
-
-- 输出 shape key 名称：`proxy_obj.hotools_mesh_collision.output_shape_key`，默认 `MC2MeshCloth`。
-- per-vertex 碰撞半径：`hotools_mesh_collision.radius * radius_vertex_group_weight`。
-- 被碰撞组：`hotools_mesh_collision.collided_by_groups`。
-- passive collider 来源：现有骨骼/Object 碰撞体场景快照。
-
-节点上的 `collision_radius` 可以作为后续 override 或无属性时 fallback，但第一版不要同时制造两套互相冲突的碰撞配置。
-
-第一版输出：
-
-- `_OmniCache`: 下一帧状态。
-- `proxy_obj`: 低模代理对象本身，方便串接后续节点。
-- `vertex_count`: 代理顶点数。
-- `constraint_count`: 距离 + 弯曲 + 后续约束数量。
-
-## Python 小模块结构规则
-
-`OmniNodeRegister.py` 当前通过：
-
-```python
-from .Function import ..., physicsMC2
-node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
-```
-
-加载 MC2 节点，因此当前 `Function/physicsMC2/__init__.py` 包入口可以继续被当作模块扫描。后续拆分包内文件时必须满足：
-
-- `__init__.py` 继续导出 `meshClothMC2` 这个 `@omni(enable=True)` 函数。
-- 不改变 `bl_idname`、函数名、输入输出顺序、默认值和 cache schema。
-- 包内可以拆 `common.py`、`meshcloth.py`、`collision.py`、`native_bridge.py` 等私有模块，但不要抽到 `Physics.py` 或跨 solver 公共碰撞文件。
-- 后续拆分不应与大规模物理语义改动混在同一提交/轮次里。
-
-## Cache Schema
-
-MeshCloth cache 必须是普通 dict，且只通过 OmniNode runtime cache 节点跨帧传递。
-
-建议结构：
-
-```python
-{
-    "kind": "MESH_PHYSICS_MC2",
-    "solver_version": 1,
-    "frame": int | None,
-    "object_name": str,
-    "object_ptr": int,
-    "mesh_ptr": int,
-    "shape_key_name": str,
-    "mesh_signature_key": tuple,
-    "config_key": tuple,
-    "vertex_count": int,
-
-    "proxy": {
-        "rest_local_positions": float32[n, 3],
-        "rest_world_positions": float32[n, 3],
-        "triangles": int32[m, 3],
-        "edges": int32[e, 2],
-        "attributes": uint8[n],
-        "depths": float32[n],
-        "root_indices": int32[n],
-        "parent_indices": int32[n],
-        "baseline_start": int32[b],
-        "baseline_count": int32[b],
-        "baseline_data": int32[k],
-        "local_positions": float32[n, 3],
-        "local_rotations": float32[n, 4],
-    },
-
-    "constraints": {
-        "distance_index": uint32[n],
-        "distance_data": int32[d],
-        "distance_rest": float32[d],
-        "distance_type": uint8[d],
-        "triangle_pairs": int32[p, 4],
-        "triangle_rest": float32[p],
-        "triangle_sign": int8[p],
-        "angle": None,
-        "self_collision": None,
-    },
-
-    # 当前 Python v3 字段映射：
-    # edge_i/edge_j/edge_rest/edge_type 保存 structural distance。
-    # bend_distance_i/bend_distance_j/bend_distance_rest/bend_distance_type
-    # 保存当前 bend distance approximation，bend_kind="distance_approx"。
-    # C++ binding 可以直接接两个数组视图，也可以合并成统一 distance_* 视图。
-
-    "particles": {
-        "next_positions": float32[n, 3],
-        "old_positions": float32[n, 3],
-        "base_positions": float32[n, 3],
-        "base_rotations": float32[n, 4],
-        "velocity_positions": float32[n, 3],
-        "display_positions": float32[n, 3],
-        "velocity": float32[n, 3],
-        "real_velocity": float32[n, 3],
-        "friction": float32[n],
-        "static_friction": float32[n],
-        "collision_normals": float32[n, 3],
-    },
-
-    "collision": {
-        "local_radii": float32[n],
-        "world_radii": float32[n],
-        "collided_by_groups": int,
-    },
-
-    "extension_slots": {
-        "curves": {},
-        "bonecloth": None,
-        "self_collision": None,
-        "native": None,
-    },
-}
-```
-
-`config_key` 要覆盖会影响重建的数据：
-
-- object/mesh pointer
-- vertex/edge/triangle count
-- edge/triangle connectivity hash
-- pin/fixed vertex group 名称和权重 hash
-- collision radius group 名称和权重 hash
-- 输出 shape key 名称
-- solver schema version
-
-如果 `current_frame != cached_frame + 1`，应恢复 rest 到输出 shape key 并返回 `None` cache，保持现有 XPBD 跳帧保护语义。
-
-### SpringBone 对齐约定
-
-这一点要和现有 SpringBone 蓝本同口径：
-
-- 只接受 `current_frame == cached_frame + 1` 的连续帧推进。
-- 跳帧、倒放、同帧重复执行时，不能拿旧速度继续算。
-- 失配时先恢复初始/静态姿态，再让 runtime cache 节点清掉旧状态。
-- solver 内部状态以 world space 递推，不在 cache 里藏局部空间的半成品速度。
-- 只有在节点边界才做 `local -> world -> solve -> local` 的转换。
-- 每次节点执行只推进一个 Blender 输出帧，不做隐藏的多帧 catch-up。
-
-MeshCloth 里建议把这条语义落实为：
-
-- `rest_local_positions` 只用于重建基准。
-- `rest_world_positions`、`next_positions`、`old_positions`、`velocity_positions`、`display_positions` 都按 world space 存。
-- object `matrix_world` 只影响边界转换和碰撞半径/约束重采样，不改变缓存里“世界空间递推”的主语义。
-
-### 时间定义
-
-时间定义必须跟现有 SpringBone/XPBD 节点保持同口径：
-
-```python
-scene_fps = scene.render.fps / scene.render.fps_base
-frame_dt = 1.0 / scene_fps
-step_dt = frame_dt / substeps
-```
-
-- `frame_dt` 使用 Blender 工程输出帧率，不使用视图播放速度或 wall-clock 时间。
-- `substeps` 只切分当前这一帧；`substeps=4` 表示本节点执行一次时内部跑 4 个 `frame_dt / 4` 子步。
-- `damping` socket 解释为每个 Blender 场景帧的速度阻尼，而不是每个子步阻尼。内部换算为：
-
-```python
-substep_damping = 1.0 - ((1.0 - damping) ** (1.0 / substeps))
-```
-
-这样同一个 `damping` 在不同 `substeps` 下，一个完整场景帧后的总阻尼一致。
-
-SpringBone 基础蓝本把 stiffness/gravity 视作按帧累计的速度式力，使用 `force * dt`。当前 MeshCloth MC2 Python 参考跟现有 XPBD mesh 一样，使用 Verlet 式位置预测：
-
-```python
-inertia = (current - previous) * (1.0 - substep_damping)
-next = current + inertia + gravity_acceleration * step_dt * step_dt
-```
-
-后续 C++ 端若改成更接近 Unity MC2 的显式 velocity buffer，也必须保持这三个外部语义不变：`frame_dt` 来源、跳帧失效规则、每场景帧阻尼换算。
-
-## Proxy Data 构建
-
-OmniNode MC2 solver 永远不做 MC2 reduction。输入 mesh 就是 proxy：
-
-```text
-proxy_obj.data.vertices -> proxy.local_positions
-proxy_obj.data.edges    -> proxy.edges
-proxy_obj.data.polygons/loop_triangles -> proxy.triangles
-```
-
-输入连接关系读取：
-
-1. 读取 mesh edges 构建无向邻接。
-2. 读取 loop triangles 构建 triangle list。
-3. 用 edge -> adjacent triangles 构建 triangle bending pairs。
-4. 用 fixed vertices 作为 root，BFS 得到：
-   - `depths`
-   - `root_indices`
-   - `parent_indices`
-   - baseline lists
-
-fixed 顶点来源：
-
-- 优先沿用现有 `hotools_mesh_collision.pin_enabled` 和 `pin_vertex_group`。
-- 如果未设置 pin group，允许全部为 move，但文档和 debug 输出应提示“无固定点，cloth 会整体下落”。
-- 如果需要 MC2 风格 attribute 绘制工具，后续再单独做，不阻塞第一版。
-
-VertexAttribute 建议先压缩成位标记：
-
-```text
-INVALID = 1 << 0
-FIXED   = 1 << 1
-MOVE    = 1 << 2
-MOTION  = 1 << 3
-```
-
-第一版只需要 `FIXED/MOVE/MOTION`。`MOTION` 默认等于 move，后续可由 max distance/backstop 权重组控制。
-
-## 参数与曲线扩展
-
-MC2 中大量参数是 `CurveSerializeData`，求解时按 `depth` 调用 `MC2EvaluateCurve()`。第一版先实现标量值，但不要把求解函数写死为单个 float。
-
-建议内部参数表示：
-
-```python
-{
-    "distance_stiffness": {"mode": "scalar", "value": 1.0, "samples": None},
-    "radius": {"mode": "scalar", "value": 0.02, "samples": None},
-    "max_distance": {"mode": "scalar", "value": 0.0, "samples": None},
-}
-```
-
-统一访问函数：
-
-```python
-sample_param(param, depths) -> float32[n]
-sample_param_at(param, depth) -> float
-```
-
-第一版 `mode == "scalar"` 只返回常量。后续加曲线输入时，不改 solver 主流程，只让参数构建层把曲线转成采样表或回调。
-
-预留曲线参数：
-
-- distance stiffness
-- particle radius
-- max distance
-- backstop distance
-- angle restoration stiffness
-- angle limit
-- damping
-
-## MeshCloth 求解流程
-
-第一版采用 MC2 Normal 路径的顺序，不实现 Split/self-collision 调度。
-
-每帧流程：
-
-1. Validate
-   - `proxy_obj` 必须是 mesh。
-   - 读取或创建输出 shape key。
-   - 获取 scene frame/fps。
-
-2. Cache
-   - cache 不匹配则重建。
-   - `reset=True` 则重建并清空速度。
-   - 跳帧/倒放/同帧重复执行则恢复 rest，输出空 cache。
-
-3. Sync Base
-   - 第一版 base pose 使用 proxy rest/world positions。
-   - 如果后续要接外部动画/数据输入，应在这里更新 `base_positions/base_rotations`，不要绕过 solver。
-
-4. Collision Snapshot
-   - 复用现有 HoTools 碰撞组。
-   - 收集 scene 中骨骼/Object sphere/capsule collider。
-   - 按 `collided_by_groups` 过滤。
-   - 排除 owner 自身。
-
-5. Substep Loop
-   - `TeamStep` 简化：计算当前 step dt、gravity、damping。
-   - `Prediction`: 推进 `next_positions`。
-   - `TetherConstraint`
-   - `DistanceConstraint`
-   - `TriangleBendingConstraint`
-   - `ColliderCollisionConstraint`
-   - 再跑一次 `DistanceConstraint`，对应 MC2 碰撞后整形。
-   - `MotionConstraint`
-   - `PostTeam`: 更新 old/velocity/friction。
-
-6. Display
-   - 第一版 `display_positions = next_positions`。
-   - 后续再补 frame interpolation 和 blend weight。
-
-7. Writeback
-   - world positions -> proxy object local -> output shape key。
-   - 不写 Basis。
-   - 不写高模 mesh。
-
-## 约束实现优先级
-
-### 必须第一批
-
-`DistanceConstraint`
-
-- 这是 MeshCloth 结构保持的核心。
-- 不能直接复用现有 XPBD distance projector；MC2 是 per-particle 收集邻接修正，平均后写回。
-- 数据要按每个顶点打包为 start/count，保留 vertical/horizontal 类型，horizontal 刚度可先给常量系数。
-
-`TetherConstraint`
-
-- 基于 root particle 限制当前粒子与 root 的伸缩比例。
-- root/parent 由 fixed 顶点 BFS 得到。
-- 如果没有 fixed/root，跳过。
-
-`MotionConstraint`
-
-- 第一版只做 max distance。
-- Backstop 可作为同阶段后半加入。
-- 标量 max distance 先全局生效；后续按 depth/曲线采样。
-
-`ColliderCollisionConstraint`
-
-- 使用现有碰撞组 sphere/capsule。
-- 第一版只做 point collision。
-- Edge collision 与 MC2 collider edge mode 延后。
-
-### 第二批
-
-`TriangleBendingConstraint`
-
-- 需要从 triangle pair 初始化 rest dihedral angle/sign。
-- Python 版先实现 DirectionDihedralAngle。
-- Volume pair 可先保留字段，不作为第一版 MVP 必须项。
-
-`AngleConstraint`
-
-- 依赖 baseline local position/rotation、parent/root 数据。
-- MeshCloth/BoneCloth 共用价值高，但复杂度也高。
-- 建议等 distance/tether/motion/collision 稳定后实现。
-
-`Inertia/Teleport/Scale`
-
-- 第一版保持现有 XPBD 风格跳帧保护。
-- MC2 的 center inertia、negative scale teleport、blend/display interpolation 后续补。
-
-### 暂不做但预留
-
-`SelfCollisionConstraint`
-
-- 需要 primitive grid、contact list、intersect list 和多阶段迭代。
-- 第一版 `self_collision=None`。
-- C++ 接口预留 self-collision pointer/array 槽，但 Python 不传实际数据。
-
-`Split Simulation`
-
-- Unity MC2 为大网格或 self collision 拆 Job。
-- OmniNode 由用户提供低模代理，solver 不通过 reduction 管理复杂度。
-- 如后续需要 split，它也只是求解执行策略或 self-collision 支撑，不是代理生成入口。
-- C++ 后端可直接并行化局部循环，不必复制 Unity Job 阶段。
-
-## 碰撞接入
-
-MC2 碰撞实现应保持在 `physicsMC2` 包自己的文件边界内。现有 `Physics.py` 里的 SpringBone/XPBD solver 是蓝本，保持少依赖、可对照，不为了 MC2 抽公共碰撞模块。
-
-MC2 可以参考并复制必要逻辑：
-
-- `build_collision_snapshot_from_scene(scene, include_bone_colliders=True, include_object_colliders=True, include_mesh_colliders=False)`
-- sphere/capsule 数据结构
-- group mask 过滤
-- matrix scale radius
-
-但不要依赖 `_BonePhysics` 私有类，也不要让 `Physics.py` 反向依赖 MC2。`physicsMC2` 包内部应自带：
-
-- `collision_group_bit`
-- `clamp_group_mask`
-- `matrix_scale_radius`
-- `build_collision_snapshot_from_scene`
-- `collider_arrays_for_native`
-
-这样 XPBD、SpringBone、MC2 三套物理保持隔离：旧 solver 继续作为可对照蓝本，MC2 自己承担碰撞接入的演进成本。
-
-## BoneCloth 预留
-
-BoneCloth 与 MeshCloth 应共享这些设施：
-
-- 参数系统
-- particle state
-- mesh/bone 输入连接关系
-- distance/tether/motion/triangle/angle/collision constraints
-- debug timing
-- native buffer contract
-
-只分离 I/O：
-
-```text
-MeshClothInput
-  Blender mesh -> proxy local/world positions
-  output -> shape key
-
-BoneClothInput
-  Armature bone chains -> proxy particles/lines
-  output -> PoseBone matrix_basis
-```
-
-BoneCloth 需要额外处理：
-
-- bone chain connectivity
-- connected bone head/tail
-- parent-space matrix conversion
-- batch pose writeback
-- root/fixed bone semantics
-
-这些不应进入 MeshCloth solver 核心。MeshCloth solver 只看数组。
-
-## C++ 后端计划
-
-Python reference 稳定后新增 parallel 节点：
-
-```text
-网格布料-MC2
-网格布料-MC2-CPP
-```
-
-两者必须保持相同：
-
-- 输入 socket
-- 输出 socket
-- cache schema
-- 跳帧/重置语义
-- shape key 写回
-- 碰撞组过滤
-- 错误边界
-
-C++ 只接管 solve 热路径。Python 仍负责：
-
-- Blender object/mesh/shape key 校验
-- cache 重建和失效
-- 读取 vertex group/pin/collision profile
-- 场景碰撞体快照
-- ndarray 准备
-- shape key 写回
-
-建议 native 接口：
-
-```cpp
-solve_mc2_meshcloth(
-    next_positions,
-    old_positions,
-    base_positions,
-    base_rotations,
-    velocity_positions,
-    velocity,
-    real_velocity,
-    friction,
-    static_friction,
-    collision_normals,
-    attributes,
-    depths,
-    root_indices,
-    parent_indices,
-    distance_index,
-    distance_data,
-    distance_rest,
-    distance_type,
-    triangle_pairs,
-    triangle_rest,
-    triangle_sign,
-    collision_radii,
-    collided_by_groups,
-    collider_types,
-    collider_groups,
-    collider_centers,
-    collider_segment_a,
-    collider_segment_b,
-    collider_radii,
-    params,
-    frame_delta_time,
-    substeps,
-    iterations
-)
-```
-
-所有数组要求：
-
-- `float32` / `int32` / `uint8`，C contiguous。
-- C++ 原地更新 particle arrays。
-- `frame_delta_time` 必须由 Python 按 Blender `render.fps / render.fps_base` 传入；C++ 内部再计算 `step_delta_time = frame_delta_time / substeps`。
-- `damping` 仍按每个场景帧解释，C++ 内部必须使用同样的 substep damping 换算。
-- C++ 不访问 `bpy`。
-- C++ 不保存全局状态。
-- C++ smoke test 必须用 Python reference 对齐。
-
-目录沿用现有 native 工程：
-
-```text
-_native/include/hotools_mc2.hpp
-_native/src/mc2_meshcloth.cpp
-_native/src/hotools_native.cpp
-_native/tests/test_mc2_meshcloth_native.py
-```
-
-## Debug Timing
-
-参考现有 XPBD 节点的 stage：
-
-```text
-validate
-cache
-restore
-rebuild
-transform
-collision_snapshot
-solve_setup
-predict
-tether
-distance
-triangle_bending
-angle
-collider
-motion
-post
-write
-native
-total
-```
-
-debug 输出每约 1 秒聚合一次，避免逐帧刷屏。
-
-## 验证计划
-
-Python reference smoke:
-
-1. 单条 cloth strip：一端 fixed，重力下垂，距离保持。
-2. 方形 grid：fixed 上边，distance + bending 后不爆炸。
-3. 无 fixed：整体下落，debug 提示无固定点。
-4. 碰撞组过滤：只与目标 group sphere/capsule 相互作用。
-5. 跳帧保护：从 frame 1 跳到 frame 10，输出 rest，cache 清空。
-6. connectivity change：增加/删除边或顶点后重建 cache。
-7. shape key 写回：Basis 不变，目标 key 更新。
-8. scalar parameter sampler：与未来 curve sampler 走同一代码路径。
-
-C++ parity:
-
-1. 距离约束输出与 Python reference `assert_allclose`。
-2. tether/motion/collider 单项测试。
-3. 随机小网格稳定性测试。
-4. 错误输入：非 contiguous、类型错误、索引越界应抛明确异常。
-
-Blender 手工验证：
-
-1. 低模裙摆代理。
-2. 低模披风代理。
-3. 被动骨骼 collider。
-4. 被动物体 collider。
-5. 播放、暂停、倒放、跳帧、重置。
-
-## 分期交付
-
-### Phase 0: 基础落点（已完成）
-
-- 新增 `Function/physicsMC2/__init__.py`。
-- 新增本文档。
-- 注册器导入模块；节点在 Phase 1 可运行后已改为 `enable=True`。
-
-### Phase 1: MeshCloth Python MVP（当前已落地第一版）
-
-- Mesh object 校验。
-- shape key 创建/写回。
-- mesh signature/config hash。
-- cache rebuild/reset/jump-frame 语义。
-- fixed group、depth/root/parent 构建。
-- distance/tether/motion max-distance。
-- 现有碰撞组 point collision。
-- debug timing。
-
-当前 `meshClothMC2(enable=True)`，可进入 OmniNode 物理分类菜单。后续仍需要 Blender 手工场景验证和小网格行为调参。
-
-### Phase 2: MeshCloth Fidelity
-
-- triangle bending DirectionDihedralAngle。
-- backstop。
-- angle restoration/limit。
-- scalar 参数整理成 curve-ready sampler。
-- 更接近 MC2 的 post velocity/friction 处理。
-
-### Phase 3: C++ MeshCloth
-
-- native buffer interface。
-- Python/C++ parity tests。
-- `meshClothMC2Cpp` parallel node。
-
-### Phase 4: BoneCloth
-
-- BoneCloth input/output adapter。
-- 复用 MC2 core solver。
-- PoseBone batch writeback。
-- BoneCloth Python reference。
-- BoneCloth C++ hot path if needed。
-
-### Phase 5: Reserved Features
-
-- self collision。
-- edge collider mode。
-- curve socket/curve asset input。
-
-## 关键取舍
-
-- 永远不做 reduction 是架构边界，不是 MVP 延后项。MC2 的 reduction 是 Unity runtime/editor 构建代理网格的设施；OmniNode 里用户明确提供低模代理，解算器只负责驱动它。
-- 永远不做减面、重拓扑、代理生成和高低模 mapping 也是 solver 边界。它们会引入新的数据生命周期和写回目标，不进入本 MC2 MeshCloth/BoneCloth 解算器规划。
-- 不复制 MC2 collider list。HoTools 已经有碰撞组，继续用同一套场景属性更利于用户维护。
-- 曲线先不做，但参数访问层必须 curve-ready。否则后续会大改 solver 签名。
-- 自碰撞先不做，但 cache/native 参数预留槽。否则后续 C++ ABI 会被迫破坏。
-- BoneCloth 不能等 MeshCloth 完全写死后再考虑。现在就按数组 solver + I/O adapter 分层，后续 BoneCloth 才不会重写一套。
+# OmniNode MC2 Solver 实现工作表
+
+更新日期：2026-06-17
+
+本文只保留当前 Python 复刻状态、与 Unity MagicaCloth2 的差异、C++ 对齐目标和验证工作表。旧的阶段路线、旧单文件结构、旧 cache schema 和已经失效的接口草案不再保留。
+
+## 总体状态
+
+| 域 | 当前状态 | 备注 |
+| --- | --- | --- |
+| 目标范围 | 先 MeshCloth，BoneCloth 后续接入同源设施。 | MeshCloth/BoneCloth 共用 solver 数组层，I/O adapter 分开。 |
+| 输入 mesh | 用户提供的低模代理就是求解目标。 | 永远不做 reduction、减面、重拓扑、代理生成、高低模 mapping。 |
+| Python 后端 | 已可运行，作为行为蓝本。 | C++ 后端必须先对齐 Python，再继续提高 MC2 等价度。 |
+| C++ 后端 | 尚未开始正式求解，只完成 Python 侧 ABI view 打包。 | 下一步先做 binding smoke。 |
+| 碰撞 | 使用 HoTools/OmniNode 现有碰撞组；逻辑留在 `physicsMC2` 包内。 | 不抽公共碰撞函数文件，不改 SpringBone/XPBD 蓝本。 |
+| 时间 | 使用 Blender 工程输出帧率，damping 按每场景帧解释并换算到 substep。 | 与 SpringBone 蓝本语义保持一致。 |
+| cache | runtime cache 以 world-space particle state 递推。 | 跳帧、倒放、同帧重复或 reset 会恢复静态并清旧速度。 |
+
+## MC2 功能对照工作表
+
+| 功能域 | Unity MC2 | 当前 Python | 差异/风险 | 完成度 | 下一步 |
+| --- | --- | --- | --- | --- | --- |
+| Cloth 数据构建 | 通过 ClothProcess/VirtualMesh 构建 proxy、mapping、constraint data。 | 直接读取用户输入 mesh，构建 solver 内部数组。 | OmniNode 不复制 MC2 proxy/mapping 生命周期。 | 已落地 | 保持“不做减面/映射”边界。 |
+| Team/Manager 调度 | 全局 manager + Burst job chunk。 | OmniNode 节点单实例 cache + Python substep loop。 | 不复制全局 manager；C++ 只替换热路径。 | 已落地 | C++ 以 state view 为单位求解。 |
+| 时间步 | MC2 manager 统一传入 simulation dt。 | `frame_dt = fps_base / fps`，`step_dt = frame_dt / substeps`。 | 必须避免 wall-clock 或播放速度影响。 | 已落地 | C++ 使用 Python 传入的 `frame_dt`。 |
+| 跳帧保护 | MC2 有自身 team/teleport 处理。 | 对齐 SpringBone：只接受连续帧推进。 | 不做隐藏多帧 catch-up。 | 已落地 | Blender 场景持续复测。 |
+| 空间语义 | MC2 在 Unity transform/team 数据上运行。 | cache 内为 world space，边界做 local/world 转换。 | object scale/transform 改动需继续重点测。 | 已落地 | C++ 不接触 Blender transform。 |
+| Particle predict | MC2 有显式 team/particle 更新。 | Verlet 式位置预测，含 gravity/damping。 | 与 MC2 velocity buffer 不是完全同构。 | 部分等价 | C++ 先复刻 Python，再决定是否调整到更 MC2。 |
+| Structural distance | MC2 DistanceConstraint。 | `edge_*` + neighbor table，支持 per-depth stiffness sample。 | 类型分层较简化。 | 已落地 | C++ 先对齐当前 projector。 |
+| Tether | MC2 TetherConstraint。 | 基于 fixed/root BFS 的 tether rest length。 | root/parent 生成方式为 OmniNode 简化版。 | 已落地 | 补小网格 parity test。 |
+| Motion/max distance | MC2 MotionConstraint 含 max distance/backstop。 | 已有 max distance/motion 投影。 | backstop 尚未实现。 | 部分完成 | 补 backstop 字段和 projector。 |
+| Bending | MC2 TriangleBendingConstraint/dihedral。 | 当前是 bend distance approximation，`bend_kind = distance_approx`。 | 与 MC2 高保真弯曲差异较大。 | 部分完成 | 后续实现 dihedral bending，保留现有近似模式。 |
+| Angle | MC2 AngleConstraint。 | 尚未实现。 | MeshCloth/BoneCloth 共用价值高，但复杂。 | 待做 | 等 distance/tether/collision C++ 对齐后补。 |
+| Collision | MC2 显式 collider list。 | 读取 HoTools 碰撞组快照，支持 sphere/capsule point collision。 | 不支持 MC2 edge collision/self collision。 | 部分完成 | C++ 复刻现有 point collision。 |
+| Friction/post | MC2 有更完整 post velocity/friction。 | Python 已维护 velocity/friction 字段，但语义仍简化。 | 高速碰撞和贴附手感可能不同。 | 部分完成 | 对照 MC2 post 逻辑补差异。 |
+| Display/interpolation | MC2 有显示插值/混合。 | `display_positions = next_positions`。 | 无插值。 | 简化完成 | 如 Blender 播放需要再补。 |
+| 曲线参数 | MC2 多参数按 depth curve 采样。 | 当前 socket 是标量，内部已 sample 化。 | 用户还不能输入曲线。 | 预留 | 后续新增曲线输入而不改 solver 主流程。 |
+| Self collision | MC2 有 primitive/grid/contact 管线。 | 不实现。 | 复杂度高，C++ ABI 需预留。 | 预留 | MeshCloth parity 稳定后再评估。 |
+| BoneCloth | MC2 与 MeshCloth 共用大量设施。 | 尚未实现 I/O adapter。 | 不能把 MeshCloth 写死成 mesh-only solver core。 | 预留 | 复用 state/constraints/native ABI。 |
+
+## 当前 Python 求解顺序
+
+| 顺序 | 阶段 | 当前行为 |
+| --- | --- | --- |
+| 1 | validate/cache | 校验 mesh、scene、shape key、cache schema、config key。 |
+| 2 | reset/jump-frame | reset 或非连续帧时恢复 rest，清理旧状态。 |
+| 3 | rebuild/sync | 必要时重建 state；object transform 改动时同步 world-space state。 |
+| 4 | collision snapshot | 从 HoTools 碰撞组收集 sphere/capsule 快照。 |
+| 5 | solve setup | 计算 `frame_dt`、`step_dt`、substep damping、gravity、参数采样。 |
+| 6 | predict | 推进 `next_positions`，固定点回 pin。 |
+| 7 | pre constraints | tether、collision。 |
+| 8 | iteration loop | structural distance、bend distance approximation、pin、collision。 |
+| 9 | motion | 执行 max distance/motion constraint。 |
+| 10 | post | 更新 velocity、real_velocity、friction、display state。 |
+| 11 | writeback | world positions 转回 object local，写入目标 shape key。 |
+
+## 当前 State / ABI 工作表
+
+| 域 | 当前字段 | C++ 要求 |
+| --- | --- | --- |
+| 粒子位置 | `next_positions`, `old_positions`, `base_positions`, `rest_world_positions`, `display_positions` | `float32[n, 3]` contiguous，原地更新。 |
+| 速度/后处理 | `velocity`, `real_velocity`, `velocity_positions`, `friction`, `static_friction`, `collision_normals` | C++ 与 Python post 语义逐项对齐。 |
+| 属性/深度 | `attributes`, `depths`, `inv_masses`, `root_indices`, `parent_indices` | dtype/shape 必须严格校验。 |
+| tether | `tether_rest_lengths` | 无 fixed/root 时允许跳过。 |
+| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 当前 Python reference 的主结构约束。 |
+| bend distance | `bend_distance_i/j/rest/type`, `bend_distance_start/count/data`, `bend_distance_neighbor_rest`, `bend_kind` | 当前只要求复刻 `distance_approx`。 |
+| collision | `collision_radii`, `collided_by_groups`, collider arrays | C++ 只消费快照，不读取 Blender。 |
+| params | scalar/sample slot | C++ 先支持 scalar 和已采样数组视图。 |
+| extension | self collision/BoneCloth/native slots | 允许为空，不影响当前 MeshCloth。 |
+
+## C++ 准入工作表
+
+| 工作项 | 准入条件 | 状态 |
+| --- | --- | --- |
+| Buffer binding smoke | C++ 能读取 Python 打包的 state/params/colliders，并报出明确 dtype/shape 错误。 | 待做 |
+| Distance parity | 单独 distance projector 与 Python `assert_allclose`。 | 待做 |
+| Tether parity | root/tether 场景与 Python 对齐。 | 待做 |
+| Motion parity | max distance 投影与 Python 对齐。 | 待做 |
+| Collision parity | sphere/capsule point collision 与 Python 对齐。 | 待做 |
+| Solver parity | 完整 substep/iteration 输出与 Python 小网格接近。 | 待做 |
+| Blender integration | 同一节点接口下可切换 Python/C++，cache 与跳帧语义不变。 | 待做 |
+
+## 验证工作表
+
+| 场景 | 要验证的行为 | 状态 |
+| --- | --- | --- |
+| 单条 cloth strip | 一端 fixed，重力下垂，distance 保持。 | 需复测 |
+| 方形 grid | 上边 fixed，distance + bend 后不炸裂。 | 需复测 |
+| 无 fixed | 整体下落，tether 不产生错误约束。 | 需复测 |
+| 碰撞组过滤 | 只与目标 group 的 sphere/capsule 相互作用。 | 需复测 |
+| 跳帧 | 从 frame 1 跳到 frame 10 时恢复 rest 并清 cache。 | 需复测 |
+| object transform/scale | cache world-space 语义稳定，写回 local 正确。 | 需复测 |
+| shape key 写回 | Basis 不变，只更新目标 key。 | 需复测 |
+| native ABI | Python 打包出的数组能被 C++ smoke 读取。 | 待做 |
+
+## 当前优先级
+
+| 优先级 | 工作 | 目的 |
+| --- | --- | --- |
+| P0 | 保持 Python MeshCloth 行为稳定并继续补 MC2 差异。 | Python 是 C++ 的 reference，不能在 C++ 前失控分叉。 |
+| P0 | 做 native binding smoke。 | 先锁死 ABI，减少后续双端返工。 |
+| P1 | C++ 逐项迁移 distance、tether、motion、collision、post。 | 让 C++ 先等价当前 Python，而不是直接追完整 MC2。 |
+| P1 | 补 backstop 与更完整 post/friction。 | 提升 MC2 行为等价度。 |
+| P2 | 实现 dihedral bending、angle constraint。 | 提升高保真弯曲与 BoneCloth 共用能力。 |
+| P2 | 规划曲线输入 UI/socket。 | 在不改 solver 主流程的前提下接入 depth curve。 |
+| P3 | 自碰撞。 | 复杂度高，等 MeshCloth/BoneCloth 主路径稳定后再做。 |
