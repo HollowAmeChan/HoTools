@@ -102,14 +102,17 @@ def project_vertex_collision(
     colliders: list[dict],
     owner_obj: bpy.types.Object,
     fallback: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, float]:
     if hit_radius <= MC2SystemConstants.EPSILON or not collided_by_groups:
-        return position, np.zeros(3, dtype=np.float32)
+        return position, np.zeros(3, dtype=np.float32), 0.0
 
     origin = position.copy()
     add_position = np.zeros(3, dtype=np.float32)
     add_normal = np.zeros(3, dtype=np.float32)
     add_count = 0
+    friction_normal = np.zeros(3, dtype=np.float32)
+    friction_value = 0.0
+    friction_range = max(float(hit_radius), MC2SystemConstants.EPSILON)
     for collider in colliders:
         if not isinstance(collider, dict):
             continue
@@ -135,25 +138,39 @@ def project_vertex_collision(
             continue
 
         delta = origin - center
-        if float(np.dot(delta, delta)) >= radius * radius:
+        distance = float(np.linalg.norm(delta))
+        if distance <= radius + friction_range:
+            normal = math_utils.safe_normal_np(delta, fallback)
+            collider_distance = max(distance - radius, 0.0)
+            near_friction = 1.0 - max(0.0, min(1.0, collider_distance / friction_range))
+            if near_friction > friction_value:
+                friction_value = near_friction
+            friction_normal += normal
+        if distance >= radius:
             continue
 
-        normal = math_utils.safe_normal_np(delta, fallback)
         add_position += center + normal * radius - origin
         add_normal += normal
         add_count += 1
 
     if add_count <= 0:
-        return origin, np.zeros(3, dtype=np.float32)
+        friction_length = float(np.linalg.norm(friction_normal))
+        if friction_length <= MC2SystemConstants.EPSILON:
+            return origin, np.zeros(3, dtype=np.float32), 0.0
+        return (
+            origin,
+            np.ascontiguousarray(friction_normal / friction_length, dtype=np.float32),
+            float(friction_value),
+        )
 
     add_normal /= float(add_count)
     normal_length = float(np.linalg.norm(add_normal))
     if normal_length <= MC2SystemConstants.EPSILON:
-        return origin, np.zeros(3, dtype=np.float32)
+        return origin, np.zeros(3, dtype=np.float32), float(friction_value)
 
     blend = min(normal_length, 1.0)
     projected = origin + (add_position / float(add_count)) * blend
-    return projected, np.ascontiguousarray(add_normal / normal_length, dtype=np.float32)
+    return projected, np.ascontiguousarray(add_normal / normal_length, dtype=np.float32), max(float(friction_value), 1.0)
 
 
 def project_collisions(
@@ -165,6 +182,7 @@ def project_collisions(
     colliders: list[dict] | None,
     owner_obj: bpy.types.Object,
     collision_normals: np.ndarray,
+    friction: np.ndarray | None = None,
 ) -> None:
     if not colliders or not collided_by_groups:
         return
@@ -176,7 +194,7 @@ def project_collisions(
         if hit_radius <= MC2SystemConstants.EPSILON:
             continue
 
-        projected, normal = project_vertex_collision(
+        projected, normal, collision_friction = project_vertex_collision(
             positions[vertex_index],
             hit_radius,
             collided_by_groups,
@@ -186,6 +204,8 @@ def project_collisions(
         )
         positions[vertex_index] = projected
         collision_normals[vertex_index] = normal
+        if friction is not None and collision_friction > float(friction[vertex_index]):
+            friction[vertex_index] = float(collision_friction)
 
 
 def collider_arrays_for_native(

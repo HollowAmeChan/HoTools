@@ -42,6 +42,8 @@ def build_state(
 ) -> dict:
     rest_local = blender_io.read_rest_positions(obj)
     rest_world = blender_io.local_positions_to_world(obj, rest_local)
+    rest_local_normals = mesh_build.rest_local_normals(obj)
+    rest_world_normals = math_utils.transform_directions(math_utils.matrix_to_numpy(obj.matrix_world), rest_local_normals)
     edges, triangles = mesh_build.mesh_connectivity_arrays(obj.data)
     attributes = mesh_build.build_attributes(obj)
     depths, root_indices, parent_indices, root_rest_lengths = mesh_build.build_depth_and_roots(
@@ -90,7 +92,10 @@ def build_state(
         "substep_damping": 0.0,
         "rest_local_positions": np.ascontiguousarray(rest_local, dtype=np.float32),
         "rest_world_positions": np.ascontiguousarray(rest_world, dtype=np.float32),
+        "rest_local_normals": np.ascontiguousarray(rest_local_normals, dtype=np.float32),
+        "rest_world_normals": np.ascontiguousarray(rest_world_normals, dtype=np.float32),
         "base_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
+        "base_normals": np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32),
         "next_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "old_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "velocity_positions": zeros3.copy(),
@@ -161,6 +166,10 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     new_world = math_utils.matrix_to_numpy(obj.matrix_world)
     rest_local = np.ascontiguousarray(next_state["rest_local_positions"], dtype=np.float32)
     rest_world = blender_io.local_positions_to_world(obj, rest_local)
+    rest_local_normals = np.ascontiguousarray(next_state.get("rest_local_normals"), dtype=np.float32)
+    if rest_local_normals.shape != rest_world.shape:
+        rest_local_normals = mesh_build.rest_local_normals(obj)
+    rest_world_normals = math_utils.transform_directions(new_world, rest_local_normals)
     next_state["object_matrix_world_key"] = matrix_key
     next_state["object_matrix_world"] = new_world
 
@@ -217,7 +226,10 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
         next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
 
     next_state["rest_world_positions"] = np.ascontiguousarray(rest_world, dtype=np.float32)
+    next_state["rest_local_normals"] = np.ascontiguousarray(rest_local_normals, dtype=np.float32)
+    next_state["rest_world_normals"] = np.ascontiguousarray(rest_world_normals, dtype=np.float32)
     next_state["base_positions"] = np.ascontiguousarray(rest_world.copy(), dtype=np.float32)
+    next_state["base_normals"] = np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32)
 
     return next_state
 
@@ -236,7 +248,10 @@ def state_matches(
     required_shapes = {
         "rest_local_positions": (vertex_count, 3),
         "rest_world_positions": (vertex_count, 3),
+        "rest_local_normals": (vertex_count, 3),
+        "rest_world_normals": (vertex_count, 3),
         "base_positions": (vertex_count, 3),
+        "base_normals": (vertex_count, 3),
         "next_positions": (vertex_count, 3),
         "old_positions": (vertex_count, 3),
         "velocity_positions": (vertex_count, 3),

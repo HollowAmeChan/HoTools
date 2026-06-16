@@ -28,11 +28,11 @@
 | Particle predict | MC2 有显式 team/particle 更新。 | Verlet 式位置预测，含 gravity/damping。 | 与 MC2 velocity buffer 不是完全同构。 | 部分等价 | C++ 先复刻 Python，再决定是否调整到更 MC2。 |
 | Structural distance | MC2 DistanceConstraint。 | `edge_*` + neighbor table，支持 per-depth stiffness sample。 | 类型分层较简化。 | 已落地 | C++ 先对齐当前 projector。 |
 | Tether | MC2 TetherConstraint。 | 基于 fixed/root BFS 的 tether rest length。 | root/parent 生成方式为 OmniNode 简化版。 | 已落地 | 补小网格 parity test。 |
-| Motion/max distance | MC2 MotionConstraint 含 max distance/backstop。 | 已有 max distance/motion 投影。 | backstop 尚未实现。 | 部分完成 | 补 backstop 字段和 projector。 |
+| Motion/max distance | MC2 MotionConstraint 含 max distance/backstop。 | 已有 max distance、backstop、motion stiffness lerp，并把修正写入 velocity_positions。 | normal axis/base rotation 简化为输入 mesh 的 base normal。 | 部分偏高 | 后续如需更等价，补外部 base pose rotation。 |
 | Bending | MC2 TriangleBendingConstraint/dihedral。 | 当前是 bend distance approximation，`bend_kind = distance_approx`。 | 与 MC2 高保真弯曲差异较大。 | 部分完成 | 后续实现 dihedral bending，保留现有近似模式。 |
 | Angle | MC2 AngleConstraint。 | 尚未实现。 | MeshCloth/BoneCloth 共用价值高，但复杂。 | 待做 | 等 distance/tether/collision C++ 对齐后补。 |
-| Collision | MC2 显式 collider list。 | 读取 HoTools 碰撞组快照，支持 sphere/capsule point collision。 | 不支持 MC2 edge collision/self collision。 | 部分完成 | C++ 复刻现有 point collision。 |
-| Friction/post | MC2 有更完整 post velocity/friction。 | Python 已维护 velocity/friction 字段，但语义仍简化。 | 高速碰撞和贴附手感可能不同。 | 部分完成 | 对照 MC2 post 逻辑补差异。 |
+| Collision | MC2 显式 collider list。 | 读取 HoTools 碰撞组快照，支持 sphere/capsule point collision、摩擦接近度和 collision normal。 | 不支持 MC2 edge collision/self collision/plane。 | 部分偏高 | C++ 复刻现有 point collision 和 friction 写入。 |
+| Friction/post | MC2 有 PostTeam velocity/friction。 | Python 已按 substep post 更新 velocity、real_velocity、friction、static_friction、old_positions。 | 未实现离心力、velocityWeight 稳定化和完整 inertia。 | 部分偏高 | C++ 先对齐当前 post，再评估 inertia 差异。 |
 | Display/interpolation | MC2 有显示插值/混合。 | `display_positions = next_positions`。 | 无插值。 | 简化完成 | 如 Blender 播放需要再补。 |
 | 曲线参数 | MC2 多参数按 depth curve 采样。 | 当前 socket 是标量，内部已 sample 化。 | 用户还不能输入曲线。 | 预留 | 后续新增曲线输入而不改 solver 主流程。 |
 | Self collision | MC2 有 primitive/grid/contact 管线。 | 不实现。 | 复杂度高，C++ ABI 需预留。 | 预留 | MeshCloth parity 稳定后再评估。 |
@@ -49,16 +49,17 @@
 | 5 | solve setup | 计算 `frame_dt`、`step_dt`、substep damping、gravity、参数采样。 |
 | 6 | predict | 推进 `next_positions`，固定点回 pin。 |
 | 7 | pre constraints | tether、collision。 |
-| 8 | iteration loop | structural distance、bend distance approximation、pin、collision。 |
-| 9 | motion | 执行 max distance/motion constraint。 |
-| 10 | post | 更新 velocity、real_velocity、friction、display state。 |
+| 8 | iteration loop | structural distance、bend distance approximation、collision、collision 后 distance、pin。 |
+| 9 | motion | 执行 max distance/backstop/motion constraint，并写入 velocity_positions。 |
+| 10 | post | 每个 substep 更新 velocity、real_velocity、friction、static_friction、old_positions。 |
 | 11 | writeback | world positions 转回 object local，写入目标 shape key。 |
 
 ## 当前 State / ABI 工作表
 
 | 域 | 当前字段 | C++ 要求 |
 | --- | --- | --- |
-| 粒子位置 | `next_positions`, `old_positions`, `base_positions`, `rest_world_positions`, `display_positions` | `float32[n, 3]` contiguous，原地更新。 |
+| 粒子位置 | `next_positions`, `old_positions`, `velocity_positions`, `base_positions`, `rest_world_positions`, `display_positions` | `float32[n, 3]` contiguous，原地更新。 |
+| 法线 | `base_normals`, `rest_world_normals` | C++ motion/backstop 直接消费，不反查 Blender。 |
 | 速度/后处理 | `velocity`, `real_velocity`, `velocity_positions`, `friction`, `static_friction`, `collision_normals` | C++ 与 Python post 语义逐项对齐。 |
 | 属性/深度 | `attributes`, `depths`, `inv_masses`, `root_indices`, `parent_indices` | dtype/shape 必须严格校验。 |
 | tether | `tether_rest_lengths` | 无 fixed/root 时允许跳过。 |
@@ -75,9 +76,10 @@
 | Buffer binding smoke | C++ 能读取 Python 打包的 state/params/colliders，并报出明确 dtype/shape 错误。 | 待做 |
 | Distance parity | 单独 distance projector 与 Python `assert_allclose`。 | 待做 |
 | Tether parity | root/tether 场景与 Python 对齐。 | 待做 |
-| Motion parity | max distance 投影与 Python 对齐。 | 待做 |
-| Collision parity | sphere/capsule point collision 与 Python 对齐。 | 待做 |
-| Solver parity | 完整 substep/iteration 输出与 Python 小网格接近。 | 待做 |
+| Motion parity | max distance/backstop 投影与 Python 对齐。 | 待做 |
+| Collision parity | sphere/capsule point collision、friction、normal 与 Python 对齐。 | 待做 |
+| Post parity | velocity_positions、dynamic/static friction、real_velocity 与 Python 对齐。 | 待做 |
+| Solver parity | 完整 substep/iteration/post 输出与 Python 小网格接近。 | 待做 |
 | Blender integration | 同一节点接口下可切换 Python/C++，cache 与跳帧语义不变。 | 待做 |
 
 ## 验证工作表
@@ -100,7 +102,7 @@
 | P0 | 保持 Python MeshCloth 行为稳定并继续补 MC2 差异。 | Python 是 C++ 的 reference，不能在 C++ 前失控分叉。 |
 | P0 | 做 native binding smoke。 | 先锁死 ABI，减少后续双端返工。 |
 | P1 | C++ 逐项迁移 distance、tether、motion、collision、post。 | 让 C++ 先等价当前 Python，而不是直接追完整 MC2。 |
-| P1 | 补 backstop 与更完整 post/friction。 | 提升 MC2 行为等价度。 |
+| P1 | C++ 复刻当前 backstop、collision friction、post/friction。 | 先锁住 Python reference 与 C++ parity。 |
 | P2 | 实现 dihedral bending、angle constraint。 | 提升高保真弯曲与 BoneCloth 共用能力。 |
 | P2 | 规划曲线输入 UI/socket。 | 在不改 solver 主流程的前提下接入 depth curve。 |
 | P3 | 自碰撞。 | 复杂度高，等 MeshCloth/BoneCloth 主路径稳定后再做。 |

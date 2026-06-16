@@ -36,6 +36,16 @@ def transform_positions(matrix: np.ndarray, positions: np.ndarray) -> np.ndarray
     return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
 
 
+def transform_directions(matrix: np.ndarray, directions: np.ndarray) -> np.ndarray:
+    values = np.ascontiguousarray(directions, dtype=np.float32)
+    transformed = values @ matrix[:3, :3].T
+    lengths = np.linalg.norm(transformed, axis=1)
+    valid = lengths > MC2SystemConstants.EPSILON
+    result = np.zeros_like(transformed, dtype=np.float32)
+    result[valid] = transformed[valid] / lengths[valid, None]
+    return np.ascontiguousarray(result, dtype=np.float32)
+
+
 def matrix_world_key(obj) -> tuple:
     matrix = obj.matrix_world
     return tuple(round(float(matrix[row][col]), 8) for row in range(4) for col in range(4))
@@ -105,6 +115,21 @@ def safe_normal_np(delta: np.ndarray, fallback: np.ndarray) -> np.ndarray:
         return fallback / fallback_length
 
     return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+
+
+def project_on_plane(vector: np.ndarray, normal: np.ndarray) -> np.ndarray:
+    n = safe_normal_np(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    return np.ascontiguousarray(vector - n * float(np.dot(vector, n)), dtype=np.float32)
+
+
+def clamp_vector(vector: np.ndarray, max_length: float) -> np.ndarray:
+    limit = max(float(max_length), 0.0)
+    if limit <= MC2SystemConstants.EPSILON:
+        return np.zeros_like(vector, dtype=np.float32)
+    length = float(np.linalg.norm(vector))
+    if length <= limit or length <= MC2SystemConstants.EPSILON:
+        return np.ascontiguousarray(vector, dtype=np.float32)
+    return np.ascontiguousarray(vector * (limit / length), dtype=np.float32)
 
 
 def world_gravity(gravity_dir) -> np.ndarray:

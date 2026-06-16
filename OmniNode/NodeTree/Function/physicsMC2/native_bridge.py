@@ -57,6 +57,8 @@ def state_arrays_for_native(state: dict) -> dict:
         "old_positions": _array(state, "old_positions", np.float32, (3,)),
         "base_positions": _array(state, "base_positions", np.float32, (3,)),
         "rest_world_positions": _array(state, "rest_world_positions", np.float32, (3,)),
+        "base_normals": _array(state, "base_normals", np.float32, (3,)),
+        "rest_world_normals": _array(state, "rest_world_normals", np.float32, (3,)),
         "velocity_positions": _array(state, "velocity_positions", np.float32, (3,)),
         "velocity": _array(state, "velocity", np.float32, (3,)),
         "real_velocity": _array(state, "real_velocity", np.float32, (3,)),

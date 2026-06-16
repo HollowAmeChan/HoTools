@@ -121,6 +121,45 @@ def mesh_connectivity_arrays(mesh: bpy.types.Mesh) -> tuple[np.ndarray, np.ndarr
     return np.ascontiguousarray(edges, dtype=np.int32), np.ascontiguousarray(triangle_array, dtype=np.int32)
 
 
+def rest_local_normals(obj: bpy.types.Object) -> np.ndarray:
+    mesh = obj.data
+    vertex_count = len(mesh.vertices)
+    if vertex_count == 0:
+        return np.empty((0, 3), dtype=np.float32)
+
+    try:
+        mesh.calc_normals_split()
+    except Exception:
+        pass
+
+    normals = np.zeros((vertex_count, 3), dtype=np.float32)
+    counts = np.zeros(vertex_count, dtype=np.float32)
+    try:
+        for polygon in mesh.polygons:
+            for loop_index in polygon.loop_indices:
+                loop = mesh.loops[loop_index]
+                vertex_index = int(loop.vertex_index)
+                normal = loop.normal
+                normals[vertex_index] += (float(normal.x), float(normal.y), float(normal.z))
+                counts[vertex_index] += 1.0
+    except Exception:
+        for vertex in mesh.vertices:
+            normal = vertex.normal
+            normals[int(vertex.index)] = (float(normal.x), float(normal.y), float(normal.z))
+            counts[int(vertex.index)] = 1.0
+
+    fallback = np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+    for vertex_index in range(vertex_count):
+        if counts[vertex_index] > 0.0:
+            normals[vertex_index] /= counts[vertex_index]
+        length = float(np.linalg.norm(normals[vertex_index]))
+        if length > MC2SystemConstants.EPSILON:
+            normals[vertex_index] /= length
+        else:
+            normals[vertex_index] = fallback
+    return np.ascontiguousarray(normals, dtype=np.float32)
+
+
 def mesh_signature_key(obj: bpy.types.Object) -> tuple:
     mesh = obj.data
     edges, triangles = mesh_connectivity_arrays(mesh)

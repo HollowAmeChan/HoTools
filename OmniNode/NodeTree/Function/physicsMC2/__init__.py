@@ -125,6 +125,9 @@ def _run_mesh_cloth_mc2_node(
     bend_stiffness: float,
     max_distance: float,
     collision_radius: float,
+    backstop_radius: float,
+    backstop_distance: float,
+    collider_friction: float,
     debug_output: bool,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     timing = _begin_timing() if debug_output else None
@@ -201,6 +204,9 @@ def _run_mesh_cloth_mc2_node(
         distance_stiffness,
         bend_stiffness,
         max_distance,
+        backstop_radius,
+        backstop_distance,
+        collider_friction,
         timing,
         colliders=colliders,
     )
@@ -236,6 +242,9 @@ def _run_mesh_cloth_mc2_node(
         "弯曲刚度",
         "最大距离",
         "碰撞半径",
+        "Backstop半径",
+        "Backstop距离",
+        "碰撞摩擦",
         "调试输出",
     ],
     input_init={
@@ -246,7 +255,10 @@ def _run_mesh_cloth_mc2_node(
         "distance_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "bend_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "max_distance": {"min_value": 0.0},
+        "backstop_radius": {"min_value": 0.0, "max_value": 10.0},
+        "backstop_distance": {"min_value": 0.0},
         "collision_radius": {"min_value": 0.0},
+        "collider_friction": {"min_value": 0.0, "max_value": 0.5},
     },
     _OUTPUT_NAME=["缓存", "低模代理", "顶点数", "约束数"],
     omni_description="""
@@ -271,6 +283,9 @@ def meshClothMC2(
     bend_stiffness: float = 0.5,
     max_distance: float = 0.0,
     collision_radius: float = 0.0,
+    backstop_radius: float = 0.0,
+    backstop_distance: float = 0.0,
+    collider_friction: float = 0.05,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_mesh_cloth_mc2_node(
@@ -288,5 +303,8 @@ def meshClothMC2(
         bend_stiffness,
         max_distance,
         collision_radius,
+        backstop_radius,
+        backstop_distance,
+        collider_friction,
         debug_output,
     )
