@@ -8,9 +8,9 @@
 
 拆分优先级：
 
-1. 先拆纯工具与数据结构：`constants.py`、`params.py`、`math_utils.py`。
-2. 再拆 Blender I/O：`blender_io.py`、`mesh_build.py`。
-3. 再拆求解阶段：`constraints.py`、`collision.py`、`solver.py`。
+1. 先拆纯工具与数据结构：`constants.py`、`params.py`、`math_utils.py`。已完成。
+2. 再拆 Blender I/O：`blender_io.py`、`mesh_build.py`。`blender_io.py` 已完成，`mesh_build.py` 待拆。
+3. 再拆求解阶段：`constraints.py`、`collision.py`、`solver.py`。`collision.py` 已完成，`constraints.py` 和 `solver.py` 待拆。
 4. 最后拆节点入口与 native 桥：`node.py`、`native_bridge.py`。
 5. 每一步拆完都必须保证 `physicsMC2.__init__.py` 仍导出同一个 `meshClothMC2` 节点函数。
 
@@ -489,7 +489,7 @@ param arrays/scalars       scalar or sampled float32[n]
 - `__init__.py` 仍 re-export `meshClothMC2`。
 - 跑 `py_compile`。
 
-风险低，适合马上做。
+状态：已完成。`__init__.py` 仍保留 `_MC2Common` 门面，内部转发到新模块，节点入口未变。
 
 ### Step 2: 拆 Blender I/O 和碰撞快照
 
@@ -497,7 +497,7 @@ param arrays/scalars       scalar or sampled float32[n]
 - 拆 `collision.py` 中的 scene snapshot 和 native collider arrays。
 - 确认不引入对 `Physics.py` 的依赖。
 
-风险中等，重点测 shape key 写回、碰撞组读取。
+状态：已完成 `blender_io.py` 和 `collision.py`。`mesh_build.py` 不在本步处理。
 
 ### Step 3: 拆 mesh/state 构建
 
@@ -555,12 +555,10 @@ Python solver vs C++ solver 同输入数组差异
 
 ## 建议下一步
 
-下一步可以直接执行 Step 1 和 Step 2：
+下一步可以直接执行 Step 3 和 Step 4 的前半部分：
 
-- `constants.py`
-- `params.py`
-- `math_utils.py`
-- `blender_io.py`
-- `collision.py`
+- `mesh_build.py`
+- `state.py`
+- `constraints.py`
 
-这几块对求解顺序影响最小，但能显著降低 `__init__.py` 体积。`mesh_build.py`、`state.py`、`constraints.py`、`solver.py` 建议在 Step 1/2 验证后再拆。
+这几块会继续降低 `__init__.py` 体积，但比第一批更接近 cache schema 和求解行为。建议先拆 `mesh_build.py` 和 `state.py`，验证 reset/jump frame/object scale 后，再拆 `constraints.py`。`solver.py` 最后拆。

@@ -8,60 +8,45 @@ MC2 在此文件内自行管理 Blender I/O、cache、solver 数组和碰撞快�
 """
 
 from collections import deque
-import hashlib
 import time
 
 from ...FunctionNodeCore import omni
 from ...OmniNodeSocketMapping import _OmniCache
 from .. import _Color
+from . import blender_io, collision, math_utils, params
+from .constants import (
+    MC2_ATTR_FIXED,
+    MC2_ATTR_INVALID,
+    MC2_ATTR_MOTION,
+    MC2_ATTR_MOVE,
+    MC2_CACHE_KIND,
+    MC2_CURVE_READY_PARAMETERS,
+    MC2_SOLVER_VERSION,
+    MC2SystemConstants,
+)
 
 import bpy
 import mathutils
 import numpy as np
 
 
-MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
-MC2_SOLVER_VERSION = 2
-
-MC2_ATTR_INVALID = 1 << 0
-MC2_ATTR_FIXED = 1 << 1
-MC2_ATTR_MOVE = 1 << 2
-MC2_ATTR_MOTION = 1 << 3
-
-MC2_CURVE_READY_PARAMETERS = {
-    "distance_stiffness",
-    "bend_stiffness",
-    "radius",
-    "max_distance",
-    "tether_compression",
-    "tether_stretch",
-    "motion_stiffness",
-    "backstop_radius",
-    "backstop_distance",
-    "collider_friction",
-    "angle_restoration_stiffness",
-    "angle_limit",
-    "damping",
-}
-
-
 class _MC2Common:
     """MeshCloth 与未来 BoneCloth 共用的 MC2 风格数据准备工具。"""
 
-    EPSILON = 0.000001
+    EPSILON = MC2SystemConstants.EPSILON
     DEBUG_PRINT_INTERVAL = 1.0
-    FRICTION_MASS = 3.0
-    DEPTH_MASS = 5.0
-    TETHER_COMPRESSION_LIMIT = 0.4
-    TETHER_STRETCH_LIMIT = 0.03
-    TETHER_STIFFNESS_WIDTH = 0.3
-    TETHER_COMPRESSION_STIFFNESS = 1.0
-    TETHER_STRETCH_STIFFNESS = 1.0
-    TETHER_COMPRESSION_VELOCITY_ATTENUATION = 0.7
-    TETHER_STRETCH_VELOCITY_ATTENUATION = 0.7
-    MOTION_VELOCITY_ATTENUATION = 0.95
-    COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO = 1.0
-    COLLIDER_COLLISION_STATIC_FRICTION_RATIO = 1.0
+    FRICTION_MASS = MC2SystemConstants.FRICTION_MASS
+    DEPTH_MASS = MC2SystemConstants.DEPTH_MASS
+    TETHER_COMPRESSION_LIMIT = MC2SystemConstants.TETHER_COMPRESSION_LIMIT
+    TETHER_STRETCH_LIMIT = MC2SystemConstants.TETHER_STRETCH_LIMIT
+    TETHER_STIFFNESS_WIDTH = MC2SystemConstants.TETHER_STIFFNESS_WIDTH
+    TETHER_COMPRESSION_STIFFNESS = MC2SystemConstants.TETHER_COMPRESSION_STIFFNESS
+    TETHER_STRETCH_STIFFNESS = MC2SystemConstants.TETHER_STRETCH_STIFFNESS
+    TETHER_COMPRESSION_VELOCITY_ATTENUATION = MC2SystemConstants.TETHER_COMPRESSION_VELOCITY_ATTENUATION
+    TETHER_STRETCH_VELOCITY_ATTENUATION = MC2SystemConstants.TETHER_STRETCH_VELOCITY_ATTENUATION
+    MOTION_VELOCITY_ATTENUATION = MC2SystemConstants.MOTION_VELOCITY_ATTENUATION
+    COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO = MC2SystemConstants.COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO
+    COLLIDER_COLLISION_STATIC_FRICTION_RATIO = MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
     _debug_profiles = {}
 
     @staticmethod
@@ -159,125 +144,63 @@ class _MC2Common:
 
     @staticmethod
     def scene_delta_time(scene: bpy.types.Scene = None) -> float:
-        scene = scene or bpy.context.scene
-        render = scene.render
-        fps_base = float(render.fps_base) if render.fps_base else 1.0
-        fps = float(render.fps) / fps_base
-        return 1.0 / fps if fps > 0.0 else 0.0
+        return blender_io.scene_delta_time(scene)
 
     @staticmethod
     def substep_damping(frame_damping: float, substeps: int) -> float:
-        """把每场景帧阻尼换算成每子步阻尼。"""
-        damping = max(0.0, min(1.0, float(frame_damping)))
-        substep_count = max(1, int(substeps))
-        return 1.0 - ((1.0 - damping) ** (1.0 / substep_count))
+        return blender_io.substep_damping(frame_damping, substeps)
 
     @staticmethod
     def vector3(value, fallback: mathutils.Vector) -> mathutils.Vector:
-        if value is None or value == "":
-            return fallback.copy()
-        try:
-            vec = mathutils.Vector(value)
-        except Exception:
-            return fallback.copy()
-        if len(vec) == 0:
-            return fallback.copy()
-        if len(vec) == 1:
-            return mathutils.Vector((vec[0], fallback[1], fallback[2]))
-        if len(vec) == 2:
-            return mathutils.Vector((vec[0], vec[1], fallback[2]))
-        return vec.to_3d()
+        return math_utils.vector3(value, fallback)
 
     @staticmethod
     def require_mesh_object(obj, label: str) -> bpy.types.Object:
-        if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "MESH":
-            raise ValueError(f"{label} 不是 Mesh 对象")
-        if obj.data is None or len(obj.data.vertices) == 0:
-            raise ValueError(f"{label} mesh 没有顶点")
-        return obj
+        return blender_io.require_mesh_object(obj, label)
 
     @staticmethod
     def output_shape_key_name(obj: bpy.types.Object) -> str:
-        props = getattr(obj, "hotools_mesh_collision", None)
-        name = str(getattr(props, "output_shape_key", "") or "").strip()
-        return name or "MC2MeshCloth"
+        return blender_io.output_shape_key_name(obj)
 
     @staticmethod
     def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
-        mesh = obj.data
-        if mesh.shape_keys is None:
-            obj.shape_key_add(name="Basis", from_mix=False)
-
-        shape_keys = mesh.shape_keys
-        key = shape_keys.key_blocks.get(shape_key_name)
-        if key is None:
-            key = obj.shape_key_add(name=shape_key_name, from_mix=False)
-
-        if key == shape_keys.reference_key:
-            raise ValueError("目标 shape key 不能是 Basis/reference key")
-
-        key.value = 1.0
-        return key
+        return blender_io.ensure_target_shape_key(obj, shape_key_name)
 
     @staticmethod
     def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
-        values = np.empty(vertex_count * 3, dtype=np.float32)
-        key.data.foreach_get("co", values)
-        return values.reshape((vertex_count, 3))
+        return blender_io.read_key_positions(key, vertex_count)
 
     @classmethod
     def read_rest_positions(cls, obj: bpy.types.Object) -> np.ndarray:
-        mesh = obj.data
-        vertex_count = len(mesh.vertices)
-        shape_keys = mesh.shape_keys
-        if shape_keys is not None and shape_keys.reference_key is not None:
-            return cls.read_key_positions(shape_keys.reference_key, vertex_count)
-
-        values = np.empty(vertex_count * 3, dtype=np.float32)
-        mesh.vertices.foreach_get("co", values)
-        return values.reshape((vertex_count, 3))
+        return blender_io.read_rest_positions(obj)
 
     @staticmethod
     def matrix_to_numpy(matrix: mathutils.Matrix) -> np.ndarray:
-        return np.asarray(
-            [[float(matrix[row][col]) for col in range(4)] for row in range(4)],
-            dtype=np.float32,
-        )
+        return math_utils.matrix_to_numpy(matrix)
 
     @classmethod
     def transform_positions(cls, matrix: np.ndarray, positions: np.ndarray) -> np.ndarray:
-        values = np.ascontiguousarray(positions, dtype=np.float32)
-        return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+        return math_utils.transform_positions(matrix, positions)
 
     @classmethod
     def local_positions_to_world(cls, obj: bpy.types.Object, positions: np.ndarray) -> np.ndarray:
-        matrix = cls.matrix_to_numpy(obj.matrix_world)
-        values = np.ascontiguousarray(positions, dtype=np.float32)
-        return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+        return blender_io.local_positions_to_world(obj, positions)
 
     @classmethod
     def world_positions_to_local(cls, obj: bpy.types.Object, positions: np.ndarray) -> np.ndarray:
-        matrix = cls.matrix_to_numpy(obj.matrix_world.inverted())
-        values = np.ascontiguousarray(positions, dtype=np.float32)
-        return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+        return blender_io.world_positions_to_local(obj, positions)
 
     @staticmethod
     def matrix_world_key(obj: bpy.types.Object) -> tuple:
-        matrix = obj.matrix_world
-        return tuple(round(float(matrix[row][col]), 8) for row in range(4) for col in range(4))
+        return math_utils.matrix_world_key(obj)
 
     @staticmethod
     def matrix_world_3x3_key(obj: bpy.types.Object) -> tuple:
-        matrix = obj.matrix_world
-        return tuple(round(float(matrix[row][col]), 8) for row in range(3) for col in range(3))
+        return math_utils.matrix_world_3x3_key(obj)
 
     @staticmethod
     def matrix_scale_radius(matrix: mathutils.Matrix) -> float:
-        try:
-            scale = matrix.to_scale()
-            return max(abs(float(scale.x)), abs(float(scale.y)), abs(float(scale.z)))
-        except Exception:
-            return 1.0
+        return math_utils.matrix_scale_radius(matrix)
 
     @staticmethod
     def write_shape_key_positions(
@@ -285,10 +208,7 @@ class _MC2Common:
         shape_key: bpy.types.ShapeKey,
         positions: np.ndarray,
     ) -> None:
-        flat = np.ascontiguousarray(positions, dtype=np.float32).reshape(-1)
-        shape_key.data.foreach_set("co", flat)
-        obj.data.update()
-        obj.update_tag()
+        blender_io.write_shape_key_positions(obj, shape_key, positions)
 
     @classmethod
     def write_world_positions_to_shape_key(
@@ -297,84 +217,35 @@ class _MC2Common:
         shape_key: bpy.types.ShapeKey,
         positions: np.ndarray,
     ) -> None:
-        cls.write_shape_key_positions(obj, shape_key, cls.world_positions_to_local(obj, positions))
+        blender_io.write_world_positions_to_shape_key(obj, shape_key, positions)
 
     @classmethod
     def restore_rest_to_shape_key(cls, obj: bpy.types.Object, shape_key: bpy.types.ShapeKey, state=None) -> None:
-        rest_positions = None
-        if isinstance(state, dict):
-            cached_rest = state.get("rest_local_positions")
-            if isinstance(cached_rest, np.ndarray) and cached_rest.shape == (len(obj.data.vertices), 3):
-                rest_positions = cached_rest
-        if rest_positions is None:
-            rest_positions = cls.read_rest_positions(obj)
-        cls.write_shape_key_positions(obj, shape_key, rest_positions)
+        blender_io.restore_rest_to_shape_key(obj, shape_key, state)
 
     @staticmethod
     def cache_frame(cache) -> int | None:
-        if not isinstance(cache, dict) or "frame" not in cache:
-            return None
-        try:
-            return int(cache.get("frame"))
-        except Exception:
-            return None
+        return blender_io.cache_frame(cache)
 
     @staticmethod
     def array_hash(values: np.ndarray) -> str:
-        return hashlib.sha1(np.ascontiguousarray(values).tobytes()).hexdigest()
+        return math_utils.array_hash(values)
 
     @staticmethod
     def clamp_group_mask(value) -> int:
-        try:
-            return max(0, min(0xFFFF, int(value)))
-        except Exception:
-            return 0
+        return math_utils.clamp_group_mask(value)
 
     @staticmethod
     def collision_group_bit(group) -> int:
-        try:
-            group_index = max(1, min(16, int(group)))
-        except Exception:
-            group_index = 1
-        return 1 << (group_index - 1)
+        return math_utils.collision_group_bit(group)
 
     @staticmethod
     def scene_objects(scene) -> list:
-        scene = scene or bpy.context.scene
-        if scene is None:
-            return []
-        return list(getattr(scene, "objects", []) or [])
+        return collision.scene_objects(scene)
 
     @classmethod
     def collider_from_matrix(cls, matrix, props, owner, owner_type: str, bone_name: str = ""):
-        collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
-        if collision_type not in {"SPHERE", "CAPSULE"}:
-            return None
-
-        radius = max(float(getattr(props, "radius", 0.0)), 0.0) * cls.matrix_scale_radius(matrix)
-        if radius <= cls.EPSILON:
-            return None
-
-        offset = cls.vector3(getattr(props, "offset", None), mathutils.Vector((0.0, 0.0, 0.0)))
-        center = matrix @ offset
-        group = max(1, min(16, int(getattr(props, "primary_collision_group", 1))))
-        collider = {
-            "type": collision_type,
-            "owner": owner,
-            "owner_type": owner_type,
-            "bone": bone_name,
-            "primary_group": group,
-            "center": center,
-            "radius": radius,
-        }
-
-        if collision_type == "CAPSULE":
-            half_length = max(float(getattr(props, "length", 0.0)), 0.0) * 0.5
-            axis = mathutils.Vector((0.0, 1.0, 0.0))
-            collider["segment_a"] = matrix @ (offset - axis * half_length)
-            collider["segment_b"] = matrix @ (offset + axis * half_length)
-
-        return collider
+        return collision.collider_from_matrix(matrix, props, owner, owner_type, bone_name)
 
     @classmethod
     def build_collision_snapshot_from_scene(
@@ -384,118 +255,36 @@ class _MC2Common:
         include_object_colliders: bool = True,
         include_hidden: bool = False,
     ) -> dict:
-        colliders = []
-        for obj in cls.scene_objects(scene):
-            if not include_hidden:
-                try:
-                    if not obj.visible_get():
-                        continue
-                except Exception:
-                    pass
-
-            if include_object_colliders:
-                props = getattr(obj, "hotools_object_collision", None)
-                collider = (
-                    cls.collider_from_matrix(obj.matrix_world, props, obj, "OBJECT")
-                    if props is not None
-                    else None
-                )
-                if collider is not None:
-                    colliders.append(collider)
-
-            if include_bone_colliders and getattr(obj, "type", None) == "ARMATURE":
-                for bone in obj.data.bones:
-                    props = getattr(bone, "hotools_collision", None)
-                    if props is None:
-                        continue
-                    pose_bone = obj.pose.bones.get(bone.name) if obj.pose else None
-                    local_matrix = pose_bone.matrix if pose_bone is not None else bone.matrix_local
-                    collider = cls.collider_from_matrix(
-                        obj.matrix_world @ local_matrix,
-                        props,
-                        obj,
-                        "BONE",
-                        bone.name,
-                    )
-                    if collider is not None:
-                        colliders.append(collider)
-
-        frame = int(getattr(scene or bpy.context.scene, "frame_current", 0) or 0)
-        return {
-            "frame": frame,
-            "colliders": colliders,
-        }
+        return collision.build_collision_snapshot_from_scene(
+            scene,
+            include_bone_colliders,
+            include_object_colliders,
+            include_hidden,
+        )
 
     @staticmethod
     def vector_to_numpy(value) -> np.ndarray | None:
-        if value is None:
-            return None
-        return np.asarray((float(value.x), float(value.y), float(value.z)), dtype=np.float32)
+        return math_utils.vector_to_numpy(value)
 
     @classmethod
     def closest_point_on_segment_np(cls, point: np.ndarray, segment_a, segment_b) -> np.ndarray | None:
-        a = cls.vector_to_numpy(segment_a)
-        b = cls.vector_to_numpy(segment_b)
-        if a is None or b is None:
-            return None
-
-        segment = b - a
-        denom = float(np.dot(segment, segment))
-        if denom <= cls.EPSILON:
-            return a
-
-        t = float(np.dot(point - a, segment) / denom)
-        t = max(0.0, min(1.0, t))
-        return a + segment * t
+        return math_utils.closest_point_on_segment_np(point, segment_a, segment_b)
 
     @classmethod
     def safe_normal_np(cls, delta: np.ndarray, fallback: np.ndarray) -> np.ndarray:
-        length = float(np.linalg.norm(delta))
-        if length > cls.EPSILON:
-            return delta / length
-
-        fallback_length = float(np.linalg.norm(fallback))
-        if fallback_length > cls.EPSILON:
-            return fallback / fallback_length
-
-        return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+        return math_utils.safe_normal_np(delta, fallback)
 
     @staticmethod
     def scalar_param(value) -> dict:
-        return {"mode": "scalar", "value": float(value), "samples": None}
+        return params.scalar_param(value)
 
     @staticmethod
     def sample_param(param: dict, depths: np.ndarray) -> np.ndarray:
-        mode = str(param.get("mode", "scalar") if isinstance(param, dict) else "scalar")
-        if mode == "scalar":
-            value = float(param.get("value", 0.0)) if isinstance(param, dict) else float(param)
-            return np.full(len(depths), value, dtype=np.float32)
-
-        samples = param.get("samples") if isinstance(param, dict) else None
-        if samples is None:
-            value = float(param.get("value", 0.0)) if isinstance(param, dict) else 0.0
-            return np.full(len(depths), value, dtype=np.float32)
-
-        table = np.ascontiguousarray(samples, dtype=np.float32).reshape(-1)
-        if len(table) == 0:
-            return np.zeros(len(depths), dtype=np.float32)
-        if len(table) == 1:
-            return np.full(len(depths), float(table[0]), dtype=np.float32)
-
-        x = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0) * float(len(table) - 1)
-        i0 = np.floor(x).astype(np.int32)
-        i1 = np.minimum(i0 + 1, len(table) - 1)
-        t = x - i0
-        return np.ascontiguousarray(table[i0] * (1.0 - t) + table[i1] * t, dtype=np.float32)
+        return params.sample_param(param, depths)
 
     @staticmethod
     def world_gravity(gravity_dir) -> np.ndarray:
-        gravity = _MC2Common.vector3(gravity_dir, mathutils.Vector((0.0, 0.0, -1.0)))
-        if gravity.length <= _MC2Common.EPSILON:
-            return np.zeros(3, dtype=np.float32)
-
-        gravity.normalize()
-        return np.asarray((gravity.x, gravity.y, gravity.z), dtype=np.float32)
+        return math_utils.world_gravity(gravity_dir)
 
     @classmethod
     def calc_inverse_masses(
@@ -603,99 +392,7 @@ class _MC2MeshCloth:
         obj: bpy.types.Object,
         colliders: list[dict] | None,
     ) -> dict:
-        """把当前 HoTools 碰撞组快照打包成未来 native 后端可直接消费的数组。"""
-        empty_vec = np.empty((0, 3), dtype=np.float32)
-        empty_i = np.empty(0, dtype=np.int32)
-        empty_f = np.empty(0, dtype=np.float32)
-        collision_radii = np.ascontiguousarray(state.get("collision_radii", empty_f), dtype=np.float32)
-        collided_by_groups = _MC2Common.clamp_group_mask(state.get("collided_by_groups", 0))
-
-        if not colliders or not collided_by_groups:
-            return {
-                "collision_radii": collision_radii,
-                "collided_by_groups": int(collided_by_groups),
-                "collider_types": empty_i,
-                "collider_groups": empty_i,
-                "collider_group_bits": empty_i,
-                "collider_centers": empty_vec,
-                "collider_segment_a": empty_vec,
-                "collider_segment_b": empty_vec,
-                "collider_radii": empty_f,
-            }
-
-        collider_types = []
-        collider_groups = []
-        collider_group_bits = []
-        collider_centers = []
-        collider_segment_a = []
-        collider_segment_b = []
-        collider_radii = []
-        for collider in colliders:
-            if not isinstance(collider, dict):
-                continue
-            if collider.get("owner") is obj:
-                continue
-
-            try:
-                group = max(1, min(16, int(collider.get("primary_group", 1) or 1)))
-            except Exception:
-                group = 1
-            group_bit = _MC2Common.collision_group_bit(group)
-            if not collided_by_groups & group_bit:
-                continue
-
-            radius = max(float(collider.get("radius", 0.0)), 0.0)
-            if radius <= _MC2Common.EPSILON:
-                continue
-
-            collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
-            center = _MC2Common.vector_to_numpy(collider.get("center"))
-            if center is None:
-                continue
-
-            if collider_type == "CAPSULE":
-                seg_a = _MC2Common.vector_to_numpy(collider.get("segment_a"))
-                seg_b = _MC2Common.vector_to_numpy(collider.get("segment_b"))
-                if seg_a is None or seg_b is None:
-                    continue
-                type_code = 1
-            else:
-                seg_a = center
-                seg_b = center
-                type_code = 0
-
-            collider_types.append(type_code)
-            collider_groups.append(group)
-            collider_group_bits.append(group_bit)
-            collider_centers.append(center)
-            collider_segment_a.append(seg_a)
-            collider_segment_b.append(seg_b)
-            collider_radii.append(radius)
-
-        if not collider_types:
-            return {
-                "collision_radii": collision_radii,
-                "collided_by_groups": int(collided_by_groups),
-                "collider_types": empty_i,
-                "collider_groups": empty_i,
-                "collider_group_bits": empty_i,
-                "collider_centers": empty_vec,
-                "collider_segment_a": empty_vec,
-                "collider_segment_b": empty_vec,
-                "collider_radii": empty_f,
-            }
-
-        return {
-            "collision_radii": collision_radii,
-            "collided_by_groups": int(collided_by_groups),
-            "collider_types": np.ascontiguousarray(collider_types, dtype=np.int32),
-            "collider_groups": np.ascontiguousarray(collider_groups, dtype=np.int32),
-            "collider_group_bits": np.ascontiguousarray(collider_group_bits, dtype=np.int32),
-            "collider_centers": np.ascontiguousarray(collider_centers, dtype=np.float32),
-            "collider_segment_a": np.ascontiguousarray(collider_segment_a, dtype=np.float32),
-            "collider_segment_b": np.ascontiguousarray(collider_segment_b, dtype=np.float32),
-            "collider_radii": np.ascontiguousarray(collider_radii, dtype=np.float32),
-        }
+        return collision.collider_arrays_for_native(state, obj, colliders)
 
     @staticmethod
     def mesh_connectivity_arrays(mesh: bpy.types.Mesh) -> tuple[np.ndarray, np.ndarray]:
@@ -1389,57 +1086,14 @@ class _MC2MeshCloth:
         owner_obj: bpy.types.Object,
         fallback: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        if hit_radius <= _MC2Common.EPSILON or not collided_by_groups:
-            return position, np.zeros(3, dtype=np.float32)
-
-        origin = position.copy()
-        add_position = np.zeros(3, dtype=np.float32)
-        add_normal = np.zeros(3, dtype=np.float32)
-        add_count = 0
-        for collider in colliders:
-            if not isinstance(collider, dict):
-                continue
-            if collider.get("owner") is owner_obj:
-                continue
-            if not collided_by_groups & _MC2Common.collision_group_bit(collider.get("primary_group", 1)):
-                continue
-
-            collider_radius = max(float(collider.get("radius", 0.0)), 0.0)
-            radius = float(hit_radius) + collider_radius
-            if radius <= _MC2Common.EPSILON:
-                continue
-
-            if collider.get("type") == "CAPSULE":
-                center = _MC2Common.closest_point_on_segment_np(
-                    origin,
-                    collider.get("segment_a"),
-                    collider.get("segment_b"),
-                )
-            else:
-                center = _MC2Common.vector_to_numpy(collider.get("center"))
-            if center is None:
-                continue
-
-            delta = origin - center
-            if float(np.dot(delta, delta)) >= radius * radius:
-                continue
-
-            normal = _MC2Common.safe_normal_np(delta, fallback)
-            add_position += center + normal * radius - origin
-            add_normal += normal
-            add_count += 1
-
-        if add_count <= 0:
-            return origin, np.zeros(3, dtype=np.float32)
-
-        add_normal /= float(add_count)
-        normal_length = float(np.linalg.norm(add_normal))
-        if normal_length <= _MC2Common.EPSILON:
-            return origin, np.zeros(3, dtype=np.float32)
-
-        blend = min(normal_length, 1.0)
-        projected = origin + (add_position / float(add_count)) * blend
-        return projected, np.ascontiguousarray(add_normal / normal_length, dtype=np.float32)
+        return collision.project_vertex_collision(
+            position,
+            hit_radius,
+            collided_by_groups,
+            colliders,
+            owner_obj,
+            fallback,
+        )
 
     @classmethod
     def project_collisions(
@@ -1453,26 +1107,16 @@ class _MC2MeshCloth:
         owner_obj: bpy.types.Object,
         collision_normals: np.ndarray,
     ) -> None:
-        if not colliders or not collided_by_groups:
-            return
-
-        for vertex_index in range(len(positions)):
-            if float(inv_masses[vertex_index]) <= _MC2Common.EPSILON:
-                continue
-            hit_radius = float(collision_radii[vertex_index])
-            if hit_radius <= _MC2Common.EPSILON:
-                continue
-
-            projected, normal = cls.project_vertex_collision(
-                positions[vertex_index],
-                hit_radius,
-                collided_by_groups,
-                colliders,
-                owner_obj,
-                positions[vertex_index] - base_positions[vertex_index],
-            )
-            positions[vertex_index] = projected
-            collision_normals[vertex_index] = normal
+        collision.project_collisions(
+            positions,
+            base_positions,
+            inv_masses,
+            collision_radii,
+            collided_by_groups,
+            colliders,
+            owner_obj,
+            collision_normals,
+        )
 
     @classmethod
     def solve(

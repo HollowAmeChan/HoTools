@@ -473,4 +473,11 @@ hotools_native_mc2
 - 规划 Python 包内拆分边界：constants/params/math_utils/blender_io/collision/mesh_build/state/constraints/solver/native_bridge/node。
 - 规划 C++ MC2 native 文件边界：hotools_mc2_types、mc2_math、mc2_distance、mc2_tether、mc2_motion、mc2_bending、mc2_collision、mc2_post、mc2_bindings。
 - 本次只改文档，不改变物理行为。
+
+2026-06-17
+- 执行第一批 Python 包内拆分。
+- 新增 `constants.py`、`params.py`、`math_utils.py`、`blender_io.py`、`collision.py`。
+- `__init__.py` 继续导出原 `meshClothMC2`，并保留 `_MC2Common` / `_MC2MeshCloth` 作为兼容门面。
+- 碰撞实现已移入 `collision.py`，但仍只属于 `physicsMC2` 包内部，没有抽公共碰撞文件。
+- 物理行为、节点 socket、cache schema 不变。
 ```
