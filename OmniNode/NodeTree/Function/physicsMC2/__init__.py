@@ -11,9 +11,9 @@ from collections import deque
 import hashlib
 import time
 
-from ..FunctionNodeCore import omni
-from ..OmniNodeSocketMapping import _OmniCache
-from . import _Color
+from ...FunctionNodeCore import omni
+from ...OmniNodeSocketMapping import _OmniCache
+from .. import _Color
 
 import bpy
 import mathutils

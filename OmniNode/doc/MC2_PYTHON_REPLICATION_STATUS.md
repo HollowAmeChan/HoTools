@@ -1,6 +1,6 @@
 # OmniNode MC2 Python 复刻进度
 
-本文档记录 `physicsMC2.py` 对 MagicaCloth2 的 Python 复刻进度、当前差异、后续目标，以及进入 C++ 后端前应满足的准入条件。
+本文档记录 `Function/physicsMC2/__init__.py` 对 MagicaCloth2 的 Python 复刻进度、当前差异、后续目标，以及进入 C++ 后端前应满足的准入条件。
 
 结论先写在前面：建议先把 Python 端作为行为蓝本尽量复刻到稳定状态，再做 C++ 后端。C++ 第一版应以 Python parity 为目标，而不是直接在 C++ 里补完整 MC2；否则 Python/CPP 两端会同时漂移，接口和 cache 协议会很难稳定。
 
@@ -8,10 +8,10 @@
 
 必须继续遵守：
 
-- Python 端当前保持 `physicsMC2.py` 单文件；若文件继续膨胀，优先规划为 `Function/physicsMC2/__init__.py` 小模块，节点入口仍从包的 `__init__.py` 暴露。
+- Python 端已经升级为 `Function/physicsMC2/__init__.py` 小模块包；当前实现仍集中在入口文件中，后续可逐步拆包内私有模块。
 - 旧 `Physics.py` 中 SpringBone/XPBD solver 继续作为蓝本隔离，不为了 MC2 抽公共碰撞文件。
 - MeshCloth 输入永远是用户提供的低模代理；不做 reduction、减面、重拓扑、代理生成、高低模 mapping。
-- 先 MeshCloth，后 BoneCloth；共通数据结构和求解设施要在 Python 单文件中预先按类/函数分层。
+- 先 MeshCloth，后 BoneCloth；共通数据结构和求解设施先在 `physicsMC2` 包内按类/函数分层。
 - 自碰撞暂不实现，但保留 cache/native 扩展空间。
 - 曲线参数当前可先用标量值，但参数访问层必须保留曲线采样表入口。
 - 时间语义对齐 SpringBone/XPBD：按 Blender 工程输出帧率 `render.fps / render.fps_base` 得到真实 `frame_dt`，每次节点执行只推进一个 Blender 输出帧。
@@ -21,7 +21,7 @@
 文件：
 
 ```text
-OmniNode/NodeTree/Function/physicsMC2.py
+OmniNode/NodeTree/Function/physicsMC2/__init__.py
 ```
 
 当前已可运行：
@@ -213,7 +213,7 @@ Unity MC2：
 
 - Python 负责 Blender I/O、cache 生命周期、shape key 写回和跳帧规则。接口不稳定时先写 C++，会频繁改 C++ ABI。
 - C++ 只能可靠加速已经稳定的数组协议；不适合同时承担物理语义探索。
-- Python 单文件虽然不适合大规模拆分，但可以用类和函数边界把数据构建、参数采样、约束求解、碰撞、native 打包清楚分层。
+- Python 入口文件虽然不适合长期承载全部实现，但可以先用类和函数边界把数据构建、参数采样、约束求解、碰撞、native 打包清楚分层，再逐步拆到包内私有模块。
 - 等 Python 行为接近目标后，C++ 端可以拆很多文件；那时拆分不会反向污染节点接口。
 
 可接受的折中：
@@ -247,7 +247,7 @@ Unity MC2：
   - `static_friction`
   - `collision_normals`
 - 明确 cache schema version 变更规则。
-- 增加 `collider_arrays_for_native()`，但仍放在 `physicsMC2.py` 内部，不抽公共文件。
+- 增加 `collider_arrays_for_native()`，但仍放在 `physicsMC2` 包内部，不抽公共文件。
 - 将当前 bend 明确命名为 bend distance approximation，给未来 dihedral bending 留字段。
 
 当前状态：前三项已完成，bend 命名还未清理。
@@ -327,7 +327,7 @@ display
 
 当前状态：多 collider 推离平均与 collision normal 聚合已完成；friction/edge/self collision 未完成。
 
-## Python 小模块迁移规划
+## Python 小模块迁移状态
 
 当前注册链为 `OmniNodeRegister.py` 中：
 
@@ -338,12 +338,13 @@ node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
 
 这意味着 `physicsMC2` 可以从单个 `physicsMC2.py` 迁移为目录包 `Function/physicsMC2/__init__.py`，只要包对象继续导出 `@omni(enable=True)` 的 `meshClothMC2` 函数，`loadRegisterFuncNodes()` 就能按模块对象扫描节点。
 
-建议迁移时机：
+当前状态：已经完成机械迁移，`Function/physicsMC2/__init__.py` 继续导出原 `meshClothMC2` 节点函数。
 
-- 在 C++ 前，如果 Python 文件继续超过“难以 review 单个约束”的程度，可以先迁移为包。
-- 迁移本身不应改变节点 `bl_idname`、函数名、socket 顺序、cache schema。
-- 第一次迁移只做机械移动：把现有 `physicsMC2.py` 内容放进 `physicsMC2/__init__.py`，确认 Blender 节点注册不变。
-- 之后如需拆子模块，仍应保持外部入口只通过 `physicsMC2/__init__.py` 暴露；碰撞、约束、native 打包可以是包内私有模块，但不要抽到 `Physics.py` 或公共碰撞层。
+后续拆分规则：
+
+- 不改变节点 `bl_idname`、函数名、socket 顺序、cache schema。
+- 外部入口只通过 `physicsMC2/__init__.py` 暴露。
+- 碰撞、约束、native 打包可以拆成包内私有模块，但不要抽到 `Physics.py` 或公共碰撞层。
 
 推荐包内边界：
 
@@ -355,11 +356,11 @@ Function/physicsMC2/collision.py       # MC2 自己的 HoTools 碰撞组适配
 Function/physicsMC2/native_bridge.py   # native 数组打包和 fallback
 ```
 
-是否马上迁移：暂不建议和物理语义改动混在同一轮。先保持当前单文件，完成这轮 parity 与验证；如果下一轮开始补 dihedral bending 或 velocity/post team，再优先做小模块迁移。
+本次只做入口文件级机械迁移，尚未拆 `common.py`、`meshcloth.py`、`collision.py`、`native_bridge.py`。
 
 ## C++ 端拆分建议
 
-Python 端保持单文件；C++ 端建议多拆文件。
+Python 端已经是同名包目录，后续可按需要拆包内私有文件；C++ 端仍建议多拆文件。
 
 推荐 C++ 目录：
 
@@ -453,8 +454,15 @@ hotools_native_mc2
 - 补 Motion stiffness lerp，当前内部默认 1.0，保留曲线参数槽。
 - 补 ColliderCollision 多 collider 平均推离和 collision normal 聚合。
 - 补 state_matches() 对 native/C++ 必需数组的完整形状和索引范围校验。
-- 新增 collider_arrays_for_native()，仍在 physicsMC2.py 内部，不抽公共碰撞文件。
+- 新增 collider_arrays_for_native()，仍在 physicsMC2 包内部，不抽公共碰撞文件。
 - 新增 param_slots：tether_compression、tether_stretch、motion_stiffness、backstop_radius、collider_friction。
 - 影响 C++ ABI：是。C++ 第一版应以 version=2 cache/native arrays 为基准。
 - 待验证：strip root fixed、弯曲链 tether 限位、sphere/capsule 多碰撞体夹挤、reset/jump frame、object scale change。
+
+2026-06-17
+- 将 `OmniNode/NodeTree/Function/physicsMC2.py` 机械迁移为 `OmniNode/NodeTree/Function/physicsMC2/__init__.py`。
+- 修正相对 import 层级：`FunctionNodeCore`/`OmniNodeSocketMapping` 使用 `...`，`_Color` 从父 `Function` 包导入。
+- 节点函数、socket、cache schema、物理行为不变。
+- 影响 C++ ABI：否。
+- 待验证：Blender 内重新加载插件后物理分类仍能注册 `meshClothMC2`。
 ```

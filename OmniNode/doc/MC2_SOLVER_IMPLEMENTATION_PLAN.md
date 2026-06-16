@@ -5,7 +5,7 @@
 当前用户约束：
 
 - 第一阶段只实现 MeshCloth。
-- BoneCloth 后续实现，但 MeshCloth/BoneCloth 的共通数据、约束和求解设施要先在 `physicsMC2.py` 内提前分层；如果单文件继续膨胀，允许升级为 `Function/physicsMC2/__init__.py` 同名小模块。无论单文件还是小模块，都不要拆出公共碰撞/公共 solver 依赖；C++ 端未来可按 native 工程边界拆分。
+- BoneCloth 后续实现，但 MeshCloth/BoneCloth 的共通数据、约束和求解设施要先在 `Function/physicsMC2/__init__.py` 内提前分层；后续可继续拆成 `physicsMC2` 包内私有模块。不要拆出公共碰撞/公共 solver 依赖；C++ 端未来可按 native 工程边界拆分。
 - MeshCloth 的输入就是用户自己准备的低模代理，插件永远不做 MC2 reduction、减面、重拓扑、代理生成，也不做高低模 mapping。输出永远驱动这个低模代理。
 - 碰撞不照搬 MC2 的显式 collider 列表，直接复用 HoTools/OmniNode 已有碰撞组、骨骼碰撞体和物体碰撞体。
 - MC2 支持按 depth 曲线采样的参数，第一版先用标量值；参数层必须保留升级为曲线输入/采样表的空间。
@@ -65,13 +65,13 @@ OmniNode 不应复制这套 Manager：
 
 ## 新文件边界
 
-已新增入口文件：
+当前入口文件：
 
 ```text
-OmniNode/NodeTree/Function/physicsMC2.py
+OmniNode/NodeTree/Function/physicsMC2/__init__.py
 ```
 
-当前文件已经进入 Phase 1 Python MVP 实现状态：
+当前入口已经进入 Phase 1 Python MVP 实现状态：
 
 - `MC2_CACHE_KIND`
 - `MC2_SOLVER_VERSION`
@@ -87,11 +87,11 @@ OmniNode/NodeTree/Function/physicsMC2.py
 - 输出写回 `MC2MeshCloth` 或 `hotools_mesh_collision.output_shape_key` 指定的 shape key，不修改 Basis。
 - cache 内部保存 world-space particle state，并在节点边界做 local/world 转换。
 - 帧连续性对齐 SpringBone：只有 `current_frame == cached_frame + 1` 继续推进；跳帧、倒放、同帧重复或 reset 会恢复 rest pose 并清理旧速度。
-- 碰撞逻辑保持在 `physicsMC2.py` 内部，直接读取现有 object/bone sphere/capsule 碰撞组快照，不抽公共碰撞模块。
+- 碰撞逻辑保持在 `physicsMC2` 包内部，直接读取现有 object/bone sphere/capsule 碰撞组快照，不抽公共碰撞模块。
 - 曲线参数暂时走 scalar sampler，但 `param_slots` 和采样函数已保留曲线表扩展入口。
 - 自碰撞暂不实现，仅在 cache/native 扩展槽预留。
 
-当前默认保持 `physicsMC2.py` 单文件自包含。Python 端只是行为蓝本和缓冲层，不把碰撞处理抽成公共模块；旧 `Physics.py` solver 保持蓝本隔离。若文件体量继续增长，可先机械迁移为 `Function/physicsMC2/__init__.py` 同名包目录，节点入口、函数名、socket 顺序和 cache schema 不变。后续细分也只在 `physicsMC2` 包内部私有化进行，不影响旧 solver。
+当前已经机械迁移为 `Function/physicsMC2/__init__.py` 同名包目录。Python 端只是行为蓝本和缓冲层，不把碰撞处理抽成公共模块；旧 `Physics.py` solver 保持蓝本隔离。后续细分只在 `physicsMC2` 包内部私有化进行，节点入口、函数名、socket 顺序和 cache schema 不变。
 
 ## 第一阶段节点接口
 
@@ -133,7 +133,7 @@ meshClothMC2(
 - `vertex_count`: 代理顶点数。
 - `constraint_count`: 距离 + 弯曲 + 后续约束数量。
 
-## Python 小模块升级规则
+## Python 小模块结构规则
 
 `OmniNodeRegister.py` 当前通过：
 
@@ -142,13 +142,12 @@ from .Function import ..., physicsMC2
 node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2)
 ```
 
-加载 MC2 节点，因此 `physicsMC2` 既可以是 `physicsMC2.py`，也可以是 `physicsMC2/__init__.py` 包。升级为包时必须满足：
+加载 MC2 节点，因此当前 `Function/physicsMC2/__init__.py` 包入口可以继续被当作模块扫描。后续拆分包内文件时必须满足：
 
 - `__init__.py` 继续导出 `meshClothMC2` 这个 `@omni(enable=True)` 函数。
 - 不改变 `bl_idname`、函数名、输入输出顺序、默认值和 cache schema。
-- 第一次迁移只做机械移动，先验证 Blender 中节点注册和旧 `.blend` 节点可继续识别。
 - 包内可以拆 `common.py`、`meshcloth.py`、`collision.py`、`native_bridge.py` 等私有模块，但不要抽到 `Physics.py` 或跨 solver 公共碰撞文件。
-- 迁移不应与大规模物理语义改动混在同一提交/轮次里。
+- 后续拆分不应与大规模物理语义改动混在同一提交/轮次里。
 
 ## Cache Schema
 
@@ -465,7 +464,7 @@ sample_param_at(param, depth) -> float
 
 ## 碰撞接入
 
-MC2 碰撞实现应保持在 `physicsMC2.py` 自己的文件边界内。现有 `Physics.py` 里的 SpringBone/XPBD solver 是蓝本，保持单文件、少依赖、可对照，不为了 MC2 抽公共碰撞模块。
+MC2 碰撞实现应保持在 `physicsMC2` 包自己的文件边界内。现有 `Physics.py` 里的 SpringBone/XPBD solver 是蓝本，保持少依赖、可对照，不为了 MC2 抽公共碰撞模块。
 
 MC2 可以参考并复制必要逻辑：
 
@@ -474,7 +473,7 @@ MC2 可以参考并复制必要逻辑：
 - group mask 过滤
 - matrix scale radius
 
-但不要依赖 `_BonePhysics` 私有类，也不要让 `Physics.py` 反向依赖 MC2。`physicsMC2.py` 内部应自带：
+但不要依赖 `_BonePhysics` 私有类，也不要让 `Physics.py` 反向依赖 MC2。`physicsMC2` 包内部应自带：
 
 - `collision_group_bit`
 - `clamp_group_mask`
@@ -663,7 +662,7 @@ Blender 手工验证：
 
 ### Phase 0: 基础落点（已完成）
 
-- 新增 `physicsMC2.py`。
+- 新增 `Function/physicsMC2/__init__.py`。
 - 新增本文档。
 - 注册器导入模块；节点在 Phase 1 可运行后已改为 `enable=True`。
 
