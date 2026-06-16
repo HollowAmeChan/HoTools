@@ -14,6 +14,8 @@ from .constants import (
     MC2_ATTR_FIXED,
     MC2_ATTR_MOTION,
     MC2_ATTR_MOVE,
+    MC2_DISTANCE_TYPE_BEND_DISTANCE_APPROX,
+    MC2_DISTANCE_TYPE_STRUCTURAL,
     MC2_SOLVER_VERSION,
     MC2SystemConstants,
 )
@@ -242,6 +244,21 @@ def constraint_lengths(
         return np.empty(0, dtype=np.float32)
     delta = positions[index_i] - positions[index_j]
     return np.ascontiguousarray(np.linalg.norm(delta, axis=1), dtype=np.float32)
+
+
+def constraint_types(count: int, constraint_type: int) -> np.ndarray:
+    if count <= 0:
+        return np.empty(0, dtype=np.int32)
+    values = np.full(int(count), int(constraint_type), dtype=np.int32)
+    return np.ascontiguousarray(values, dtype=np.int32)
+
+
+def structural_constraint_types(index_i: np.ndarray) -> np.ndarray:
+    return constraint_types(len(index_i), MC2_DISTANCE_TYPE_STRUCTURAL)
+
+
+def bend_distance_constraint_types(index_i: np.ndarray) -> np.ndarray:
+    return constraint_types(len(index_i), MC2_DISTANCE_TYPE_BEND_DISTANCE_APPROX)
 
 
 def build_neighbor_table(

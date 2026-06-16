@@ -9,7 +9,7 @@ import time
 import bpy
 import numpy as np
 
-from . import blender_io, collision, constraints, math_utils, params, state as mc2_state
+from . import blender_io, collision, constraints, math_utils, native_bridge, params, state as mc2_state
 from .constants import MC2SystemConstants
 
 
@@ -57,6 +57,11 @@ def solve_meshcloth(
     substep_damping = blender_io.substep_damping(damping, substep_count)
     distance_stiffness = max(0.0, min(1.0, float(distance_stiffness)))
     bend_stiffness = max(0.0, min(1.0, float(bend_stiffness)))
+    distance_stiffness_param = params.scalar_param(distance_stiffness)
+    bend_stiffness_param = params.scalar_param(bend_stiffness)
+    stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
+    distance_stiffness_values = np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
+    bend_stiffness_values = np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
     max_distance_param = params.scalar_param(max(float(max_distance), 0.0))
     tether_compression_param = params.scalar_param(MC2SystemConstants.TETHER_COMPRESSION_LIMIT)
     tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT)
@@ -122,7 +127,7 @@ def solve_meshcloth(
                 state["distance_count"],
                 state["distance_data"],
                 state["distance_rest"],
-                distance_stiffness,
+                distance_stiffness_values,
             )
             if timing is not None:
                 _add_timing(timing, "distance", time.perf_counter() - stage_start)
@@ -131,11 +136,11 @@ def solve_meshcloth(
             constraints.project_neighbor_constraints(
                 positions,
                 inv_masses,
-                state["bend_start"],
-                state["bend_count"],
-                state["bend_data"],
-                state["bend_neighbor_rest"],
-                bend_stiffness,
+                state["bend_distance_start"],
+                state["bend_distance_count"],
+                state["bend_distance_data"],
+                state["bend_distance_neighbor_rest"],
+                bend_stiffness_values,
             )
             if timing is not None:
                 _add_timing(timing, "bend", time.perf_counter() - stage_start)
@@ -195,8 +200,8 @@ def solve_meshcloth(
     next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
     next_state["param_slots"] = dict(next_state.get("param_slots") or {})
-    next_state["param_slots"]["distance_stiffness"] = params.scalar_param(distance_stiffness)
-    next_state["param_slots"]["bend_stiffness"] = params.scalar_param(bend_stiffness)
+    next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
+    next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
     next_state["param_slots"]["max_distance"] = max_distance_param
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param
@@ -208,7 +213,8 @@ def solve_meshcloth(
 
     extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = dict(extension_slots.get("native") or {})
-    native_slot["collider_arrays"] = collision.collider_arrays_for_native(next_state, obj, colliders)
+    native_slot["abi_view"] = native_bridge.build_abi_view(next_state, obj, colliders)
+    native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     extension_slots["native"] = native_slot
     next_state["extension_slots"] = extension_slots
     if timing is not None:

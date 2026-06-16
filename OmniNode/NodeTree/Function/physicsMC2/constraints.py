@@ -17,16 +17,32 @@ def project_neighbor_constraints(
     counts: np.ndarray,
     neighbors: np.ndarray,
     rest_lengths: np.ndarray,
-    stiffness: float,
+    stiffness,
 ) -> None:
-    stiffness = max(0.0, min(1.0, float(stiffness)))
-    if stiffness <= MC2SystemConstants.EPSILON or len(neighbors) == 0:
+    if len(neighbors) == 0:
+        return
+    if isinstance(stiffness, np.ndarray):
+        stiffness_values = np.clip(np.ascontiguousarray(stiffness, dtype=np.float32), 0.0, 1.0)
+        if len(stiffness_values) != len(positions):
+            return
+        if not bool(np.any(stiffness_values > MC2SystemConstants.EPSILON)):
+            return
+    else:
+        stiffness_value = max(0.0, min(1.0, float(stiffness)))
+        if stiffness_value <= MC2SystemConstants.EPSILON:
+            return
+        stiffness_values = None
+
+    if stiffness_values is None and stiffness_value <= MC2SystemConstants.EPSILON:
         return
 
     vertex_count = len(positions)
     for vertex_index in range(vertex_count):
         wi = float(inv_masses[vertex_index])
         if wi <= MC2SystemConstants.EPSILON:
+            continue
+        local_stiffness = float(stiffness_values[vertex_index]) if stiffness_values is not None else stiffness_value
+        if local_stiffness <= MC2SystemConstants.EPSILON:
             continue
 
         start = int(starts[vertex_index])
@@ -52,7 +68,7 @@ def project_neighbor_constraints(
                 continue
 
             normal = delta / distance
-            correction = ((distance - rest) * stiffness / wsum) * wi * normal
+            correction = ((distance - rest) * local_stiffness / wsum) * wi * normal
             add += correction
             add_count += 1
 

@@ -26,10 +26,10 @@
 | Blender I/O | `blender_io.py` | 已完成 | 无 | Python 独有层，C++ 不接触 Blender 对象。 |
 | Mesh 构建 | `mesh_build.py` | 已完成 | 可选 `mc2_mesh_build.cpp` | 只读取用户 mesh 并生成内部约束数组；不生成或修改代理。 |
 | State/cache ABI | `state.py` | 已完成 | `Mc2MeshClothView` | 集中维护 cache 字段、shape guard、transform 同步。 |
-| 约束函数 | `constraints.py` | 部分完成 | `mc2_distance.cpp` / `mc2_tether.cpp` / `mc2_motion.cpp` | distance/tether/motion 已有；angle/dihedral bending 未补。 |
+| 约束函数 | `constraints.py` | 部分完成 | `mc2_distance.cpp` / `mc2_tether.cpp` / `mc2_motion.cpp` | distance/tether/motion 已有；distance/bend stiffness 已走 depth sampler；angle/dihedral bending 未补。 |
 | 碰撞 | `collision.py` | 部分完成 | `mc2_collision.cpp` | HoTools sphere/capsule 快照、point collision、native collider arrays 已有；friction/edge/self collision 未做。 |
 | 求解调度 | `solver.py` | 部分完成 | `mc2_meshcloth_solver.cpp` / `mc2_post.cpp` | 当前 Python 顺序稳定，但还不是完整 MC2 Normal 流程。 |
-| Native 桥 | 待建 `native_bridge.py` | 未开始 | `mc2_bindings.cpp` | 下一步应先打包数组和 fallback，不急着启用 C++。 |
+| Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` | 已能打包 ABI view、参数槽、碰撞数组和 native 可用性状态；尚未调用 C++ 求解。 |
 
 ## MC2 行为对照
 
@@ -48,25 +48,25 @@
 | 积分模型 | 显式 velocity buffer：velocity 阻尼、force 积分、PostTeam 重建速度。 | Verlet 风格：`positions - old_positions` 形成惯性，阻尼按子步换算。 | 手感和 velocity 语义不同；`velocity/real_velocity` 目前更多是诊断/预留。 | 部分 | C++ 第一版先对齐 Python；若要切 MC2 velocity，必须先改 Python ABI。 |
 | Base pose 更新 | MC2 每步更新 step basic pose，并参与 tether/motion/backstop。 | 当前 `base_positions` 来自 rest world；object transform 改变时同步 rest/约束长度。 | 外部动画驱动 base pose 的入口还不完整。 | 部分 | 如需要动画驱动，先在 Python 增加 base pose 更新输入。 |
 | Fixed/Move/Motion 属性 | MC2 使用粒子属性和 depth/team 数据。 | 已有 fixed/move/motion、depth、root、parent、root length。 | depth 生成简化，依赖 fixed root 图遍历。 | 部分 | 可作为 C++ parity 基准；后续再补 MC2 depth/attribute 细节。 |
-| DistanceConstraint | vertical/horizontal 分类，horizontal 用负 rest distance，可能补 shear，按 depth curve 采样。 | 基于输入 edge 构建 neighbor table，每顶点平均修正，单标量 stiffness。 | 没有 vertical/horizontal、shear、depth curve，也不更新 velocity position。 | 部分 | 先补 distance type 字段和 depth sampler；是否补 shear 需单独决定。 |
+| DistanceConstraint | vertical/horizontal 分类，horizontal 用负 rest distance，可能补 shear，按 depth curve 采样。 | 基于输入 edge 构建 neighbor table，每顶点平均修正；已保留 `edge_type` 并按 depth 采样 stiffness 数组。 | 仍没有 vertical/horizontal 细分、shear，也不更新 velocity position。 | 部分 | C++ 先对齐当前 structural edge；是否补 shear 需单独决定。 |
 | TetherConstraint | compression/stretch 双侧限制，使用不同 stiffness/attenuation，参考 step basic pose，会影响 velocityPos。 | 已有 compression/stretch；`tether_rest_lengths` 用粒子到 root 的基础姿态直线距离。 | 未写 velocity position；参数还未暴露为节点曲线输入。 | 部分偏高 | 可先做 C++ parity；velocity 模型切换时再同步 velocityPos。 |
 | MotionConstraint | max distance + backstop，依赖 base pose rotation/normal axis，stiffness lerp，影响 velocityPos。 | 已有 max distance 和 motion stiffness lerp；以 base position 为中心。 | 未实现 backstop、normal axis、base rotation、velocityPos 写入。 | 部分 | 先补 backstop 数据结构，再决定 mesh normal 简化策略。 |
-| TriangleBendingConstraint | DirectionDihedralAngle，存 rest angle/volume、sign、triangle pair，SumConstraint 聚合。 | 当前是相邻三角对角点距离约束，属于 bend distance approximation。 | 没有二面角、方向 sign、volume pair，也不是 MC2 真实 triangle bending。 | 部分偏低 | C++ 若先做 parity，命名必须保持 `bend_distance_approx`；高保真前先补 Python dihedral。 |
+| TriangleBendingConstraint | DirectionDihedralAngle，存 rest angle/volume、sign、triangle pair，SumConstraint 聚合。 | 当前显式命名为 `bend_distance_*`，仍是相邻三角对角点距离约束；`bend_kind=distance_approx`。 | 没有二面角、方向 sign、volume pair，也不是 MC2 真实 triangle bending。 | 部分偏低 | C++ 先做 `bend_distance_approx` parity；高保真前先补 Python dihedral。 |
 | Angle constraints | MC2 有 angle restoration / angle limit 相关参数和约束阶段。 | 参数槽预留，求解未实现。 | 求解阶段缺失。 | 未开始 | 先保留 ABI 字段，等 bending/velocity 稳定后再补。 |
 | ColliderCollision | 显式 collider list，point/edge collision，sphere/capsule/plane，多碰撞聚合，计算摩擦。 | 使用 HoTools 碰撞组，支持 object/bone sphere/capsule，point collision，多 collider 平均推离和 normal 聚合。 | 不照搬显式指定 collider；未支持 plane、edge collision、friction。 | 部分 | C++ 只复刻 HoTools collider arrays 和当前 point collision。 |
 | Collision friction | dynamic/static friction 在 PostTeam 影响速度。 | 已有 friction/static_friction/collision_normals 字段，暂未参与求解。 | 摩擦求解缺失。 | 未开始 | 需要和 velocity/PostTeam 一起设计。 |
 | Self collision | MC2 有自碰撞体系。 | 只预留 `extension_slots.self_collision`。 | 未实现。 | 未开始 | 不阻塞第一版 C++，但 ABI 保留扩展位。 |
 | Inertia / Teleport | MC2 处理中心惯性、anchor、速度限制、teleport、negative scale。 | 跳帧/倒放/同帧重复直接 reset cache；object scale 改变时重算约束长度和半径。 | 不复制完整 InertiaConstraint。 | 部分 / 刻意简化 | 先保持 SpringBone 风格行为；C++ 不主动引入 Team inertia。 |
 | Display interpolation | MC2 可用未来预测、blend、display position 插值。 | `display_positions` 当前等于求解后 positions。 | 无插值/混合权重。 | 未开始 | 不阻塞 C++ parity。 |
-| 参数曲线 | 大量参数支持 depth curve。 | `params.sample_param()` 已有入口；节点当前主要传标量。 | 曲线输入 UI/缓存表未做。 | 部分 | C++ ABI 设计为 scalar/array view，Python 后续再接曲线。 |
+| 参数曲线 | 大量参数支持 depth curve。 | `params.sample_param()` 已有入口；distance/bend/motion/max distance 已通过参数采样路径，节点当前主要传标量。 | 曲线输入 UI/缓存表未做。 | 部分 | C++ ABI 设计为 scalar/array view，Python 后续再接曲线。 |
 | Cache/schema guard | MC2 有 TeamData/Chunk 数据版本和运行时状态。 | `state_matches()` 已校验 C++ 必需数组形状、索引范围、schema version。 | 运行时管理体系不同。 | 完成 | C++ 第一版以 `state.py` 为 ABI 真源。 |
-| Native collider arrays | MC2 原生内部直接持有 collider 数据。 | `collision.collider_arrays_for_native()` 已能打包当前 HoTools collider 快照。 | 尚未接入 native bridge。 | 部分 | 下一步做 `native_bridge.py`，只打包和 fallback。 |
+| Native collider arrays | MC2 原生内部直接持有 collider 数据。 | `native_bridge.build_abi_view()` 已合并 state arrays、param slots 和 HoTools collider arrays。 | 尚未调用 C++ 求解。 | 部分偏高 | 下一步在 C++ binding 读取同一份 ABI view。 |
 
 ## C++ 迁移优先级
 
 | 优先级 | 内容 | Python 基准 | C++ 文件建议 | 完成后标准 |
 | --- | --- | --- | --- | --- |
-| P0 | 固定 ABI 和 smoke 输入 | `state.py`、`collision.collider_arrays_for_native()` | `hotools_mc2_types.hpp`、`mc2_bindings.cpp` | C++ 能接收数组并原样返回/做空跑。 |
+| P0 | 固定 ABI 和 smoke 输入 | `state.py`、`native_bridge.py` | `hotools_mc2_types.hpp`、`mc2_bindings.cpp` | C++ 能接收数组并原样返回/做空跑。 |
 | P1 | Distance/Tether/Motion parity | `constraints.py` | `mc2_distance.cpp`、`mc2_tether.cpp`、`mc2_motion.cpp` | 同输入数组下 Python/C++ 输出误差可控。 |
 | P2 | Collision parity | `collision.py` | `mc2_collision.cpp` | sphere/capsule/group filter 与 Python 一致。 |
 | P3 | Solver 调度 parity | `solver.py` | `mc2_meshcloth_solver.cpp`、`mc2_post.cpp` | 连续帧、reset、jump frame 外围仍由 Python 管，单帧 solve 与 Python 对齐。 |
@@ -78,11 +78,11 @@
 | --- | --- | --- |
 | Python 节点能注册 `meshClothMC2` | 已满足 | 否 |
 | Python 包内模块边界稳定 | 已满足 | 否 |
-| Cache schema version 明确 | 已满足，当前 `MC2_SOLVER_VERSION=2` | 否 |
-| Native collider arrays | 已有打包函数，未接 bridge | 不阻塞骨架，阻塞正式 collision native |
+| Cache schema version 明确 | 已满足，当前 `MC2_SOLVER_VERSION=3` | 否 |
+| Native ABI view | 已有 `native_bridge.build_abi_view()`，未接 C++ | 不阻塞骨架，阻塞正式 native 求解 |
 | reset/jump frame 规则 | 已明确 | 否 |
 | object scale change 同步 | 已有 state sync | 否，仍需 Blender 场景验证 |
-| bend 命名清理为 approximation | 未完成 | 不阻塞 parity，阻塞高保真命名 |
+| bend 命名清理为 approximation | 已完成，当前字段为 `bend_distance_*` / `bend_kind=distance_approx` | 否 |
 | velocity 模型是否切 MC2 | 未决定 | 不阻塞 parity，阻塞高保真 MC2 |
 | backstop/dihedral/friction/self collision | 未完成或部分完成 | 不阻塞第一版 C++ parity |
 

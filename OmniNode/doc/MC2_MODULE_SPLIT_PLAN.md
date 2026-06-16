@@ -11,7 +11,7 @@
 1. 先拆纯工具与数据结构：`constants.py`、`params.py`、`math_utils.py`。已完成。
 2. 再拆 Blender I/O：`blender_io.py`、`mesh_build.py`。已完成。
 3. 再拆求解阶段：`constraints.py`、`collision.py`、`solver.py`。已完成。
-4. 节点入口保持在 `__init__.py`，native 桥后续拆为 `native_bridge.py`。
+4. 节点入口保持在 `__init__.py`；`native_bridge.py` 已用于 ABI view 打包，C++ 调用后续启用。
 5. 每一步拆完都必须保证 `physicsMC2.__init__.py` 仍导出同一个 `meshClothMC2` 节点函数。当前已满足。
 
 ## 不变边界
@@ -517,6 +517,8 @@ param arrays/scalars       scalar or sampled float32[n]
 - 暂时只打包 arrays，不调用 C++。
 - 后续 C++ parity 完成后再启用。
 
+状态：已完成 ABI view 打包。当前只记录 native 可用性、state arrays、param slots 和 collider arrays，不调用 C++。
+
 风险低到中。
 
 ### Step 6: C++ 文件骨架
@@ -554,6 +556,6 @@ Python solver vs C++ solver 同输入数组差异
 Python 包内主要拆分已完成，下一步建议按顺序推进：
 
 - 在 Blender 测试场景里验证 `meshClothMC2` 注册、连续播放、reset、jump frame、object scale、sphere/capsule collision。
-- 新增 `native_bridge.py`，先只做当前 state/collider arrays 的 ABI 打包和 Python fallback，不启用 C++。
+- `native_bridge.py` 已能打包当前 state/collider/param ABI view。下一步是按该视图写 C++ binding smoke，不启用正式节点后端。
 - 开始 C++ 文件骨架：`hotools_mc2_types.hpp`、`mc2_distance.cpp`、`mc2_tether.cpp`、`mc2_motion.cpp`、`mc2_collision.cpp`、`mc2_meshcloth_solver.cpp`。
 - C++ 第一版只对齐当前 Python reference，不直接补完整 Unity MC2。
