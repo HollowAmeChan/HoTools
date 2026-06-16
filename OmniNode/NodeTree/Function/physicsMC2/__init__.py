@@ -177,7 +177,14 @@ def _run_mesh_cloth_mc2_node(
         if timing is not None:
             _add_timing(timing, "transform", time.perf_counter() - stage_start)
 
-    constraint_count = len(state["edge_i"]) + len(state["bend_distance_i"])
+    dihedral_constraint_count = len(state.get("dihedral_pairs", ()))
+    volume_constraint_count = len(state.get("volume_pairs", ()))
+    bend_constraint_count = (
+        dihedral_constraint_count + volume_constraint_count
+        if dihedral_constraint_count > 0 or volume_constraint_count > 0
+        else len(state["bend_distance_i"])
+    )
+    constraint_count = len(state["edge_i"]) + bend_constraint_count
 
     if not enabled:
         next_state = dict(state)

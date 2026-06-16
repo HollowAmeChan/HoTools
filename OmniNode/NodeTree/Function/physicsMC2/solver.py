@@ -164,17 +164,29 @@ def solve_meshcloth(
                 _add_timing(timing, "distance", time.perf_counter() - stage_start)
 
             stage_start = time.perf_counter() if timing is not None else None
-            constraints.project_neighbor_constraints(
-                positions,
-                inv_masses,
-                state["bend_distance_start"],
-                state["bend_distance_count"],
-                state["bend_distance_data"],
-                state["bend_distance_neighbor_rest"],
-                bend_stiffness_values,
-                velocity_positions,
-                MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-            )
+            if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
+                constraints.project_triangle_bending(
+                    positions,
+                    inv_masses,
+                    state["dihedral_pairs"],
+                    state["dihedral_rest_angles"],
+                    state["dihedral_signs"],
+                    state["volume_pairs"],
+                    state["volume_rest"],
+                    bend_stiffness_values,
+                )
+            else:
+                constraints.project_neighbor_constraints(
+                    positions,
+                    inv_masses,
+                    state["bend_distance_start"],
+                    state["bend_distance_count"],
+                    state["bend_distance_data"],
+                    state["bend_distance_neighbor_rest"],
+                    bend_stiffness_values,
+                    velocity_positions,
+                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                )
             if timing is not None:
                 _add_timing(timing, "bend", time.perf_counter() - stage_start)
 

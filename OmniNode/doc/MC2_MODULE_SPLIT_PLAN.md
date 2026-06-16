@@ -28,9 +28,9 @@
 | `math_utils.py` | numpy/mathutils 转换、向量安全归一化、hash、最近点等基础函数。 | 已落地 | 可按函数语义迁移到 C++ math helper。 |
 | `blender_io.py` | Blender 帧时间、substep damping、shape key I/O、local/world 转换。 | 已落地 | Python 独有层，C++ 不访问 Blender。 |
 | `collision.py` | HoTools 碰撞组快照、sphere/capsule point collision、collision friction/normal、native collider arrays 打包。 | 已落地 | C++ 复刻 collision projector 和数组视图，不抽公共 Python 模块。 |
-| `mesh_build.py` | mesh 连通性、pin/weight/depth/root/tether、structural distance、bend distance approximation 数据构建。 | 已落地 | 第一版 C++ 不重建 mesh，只消费数组。 |
-| `state.py` | cache state 构建、schema guard、object transform 同步、ABI 字段维护。 | 已落地 | `MC2_SOLVER_VERSION = 4` 是当前 native 对齐基准。 |
-| `constraints.py` | distance、tether、motion、bend distance approximation 等数组约束函数。 | 已落地 | C++ 逐项复刻这些 projector。 |
+| `mesh_build.py` | mesh 连通性、pin/weight/depth/root/tether、structural distance、dihedral/volume bending、bend distance fallback 数据构建。 | 已落地 | 第一版 C++ 不重建 mesh，只消费数组。 |
+| `state.py` | cache state 构建、schema guard、object transform 同步、ABI 字段维护。 | 已落地 | `MC2_SOLVER_VERSION = 6` 是当前 native 对齐基准。 |
+| `constraints.py` | signed distance、triangle bending、tether、motion/backstop、post 等数组约束函数。 | 已落地 | C++ 逐项复刻这些 projector。 |
 | `solver.py` | MeshCloth Python 求解调度、substep/iteration、velocity_positions、motion/backstop、friction/post 语义。 | 已落地 | C++ MeshCloth solver 的直接行为参考。 |
 | `native_bridge.py` | native 可用性检测、state/params/colliders ABI view 打包。 | 部分完成 | 当前只打包和记录状态，尚未调用 C++ 求解。 |
 
@@ -38,11 +38,11 @@
 
 | 域 | 当前字段 | 状态 | 备注 |
 | --- | --- | --- | --- |
-| schema | `kind`, `solver_version`, `vertex_count`, object/mesh/config keys | 已落地 | 当前版本为 `MC2_SOLVER_VERSION = 4`。 |
+| schema | `kind`, `solver_version`, `vertex_count`, object/mesh/config keys | 已落地 | 当前版本为 `MC2_SOLVER_VERSION = 6`。 |
 | particle | `next_positions`, `old_positions`, `velocity_positions`, `base_positions`, `rest_world_positions`, `base_normals`, `rest_world_normals`, `velocity`, `real_velocity`, `display_positions`, `friction`, `static_friction`, `collision_normals` | 已落地 | world-space 递推，写回时再转 local。 |
 | attribute | `attributes`, `depths`, `inv_masses`, `root_indices`, `parent_indices`, `tether_rest_lengths` | 已落地 | MeshCloth/BoneCloth 未来可共用。 |
-| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 已落地 | 代表 MC2 structural distance。 |
-| bend distance approximation | `bend_distance_i/j/rest/type`, `bend_distance_start/count/data`, `bend_distance_neighbor_rest`, `bend_kind` | 已落地 | 当前为距离近似，不是完整 dihedral bending。 |
+| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 已落地 | `distance_rest` 正值为 vertical，负值为 horizontal；未加入 MC2 shear 横向连接。 |
+| triangle bending | `dihedral_pairs`, `dihedral_rest_angles`, `dihedral_signs`, `volume_pairs`, `volume_rest`, `bend_kind` | 已落地 | 主路径为 MC2 DirectionDihedralAngle + Volume；`bend_distance_*` 作为无三角对 fallback 保留。 |
 | collision | `collision_radii`, `collided_by_groups`, native collider arrays | 已落地 | 使用 HoTools 碰撞组，不复制 MC2 显式 collider list 配置方式。 |
 | params | `param_slots`, scalar/sample API | 部分完成 | 目前是标量；distance/bend/max distance/backstop/collider friction 已按实际值进入求解，接口保留曲线采样空间。 |
 | extension | `self_collision`, `bonecloth`, `native` slots | 预留 | 不影响当前 MeshCloth 求解。 |
@@ -58,7 +58,7 @@
 | `mc2_tether.cpp` | tether 限制。 | 待做 | `constraints.project_tether()` |
 | `mc2_motion.cpp` | max distance / motion constraint。 | 待做 | `constraints.project_motion_constraint()` |
 | `mc2_collision.cpp` | sphere/capsule point collision。 | 待做 | `collision.project_collisions()` |
-| `mc2_bending.cpp` | 当前先对齐 bend distance approximation，后续补 dihedral。 | 待做 | `constraints.project_neighbor_constraints()` 的 bend 输入 |
+| `mc2_bending.cpp` | DirectionDihedralAngle + Volume bending，保留 bend distance fallback。 | 待做 | `constraints.project_triangle_bending()` / `mesh_build.build_dihedral_constraints()` |
 | `mc2_post.cpp` | velocity、friction、display/post 更新。 | 待做 | `solver.py` post 段 |
 | `mc2_angle.cpp` | angle restoration / angle limit。 | 预留 | Python 端尚未完成 |
 
@@ -67,10 +67,10 @@
 | 工作项 | 当前结果 | 下一步 |
 | --- | --- | --- |
 | Python 包拆分 | 已从单文件升级为 `physicsMC2` 包，入口在 `__init__.py`。 | 继续只在包内扩展，不再回到单文件。 |
-| Python 求解行为 | MeshCloth 可运行，已支持跳帧保护、世界坐标递推、HoTools 碰撞组、structural distance、tether、motion/backstop、velocity_positions、collision friction、substep post、bend distance approximation。 | 继续补 dihedral bending、angle 和外部 base pose 等高保真差异。 |
+| Python 求解行为 | MeshCloth 可运行，已支持跳帧保护、世界坐标递推、HoTools 碰撞组、signed structural distance、DirectionDihedralAngle + Volume bending、tether、motion/backstop、velocity_positions、collision friction、substep post。 | 继续补 angle、外部 base pose、shear 横向连接和 inertia 等高保真差异。 |
 | native ABI | 已能从 Python state 打包 state/params/colliders view。 | 写 C++ binding smoke，先只验证 buffer 合同。 |
 | C++ 求解 | 尚未开始正式求解实现。 | 先按 Python 当前行为逐项迁移，不直接跳到完整 Unity MC2。 |
-| 高保真 MC2 差异 | dihedral bending、angle、曲线输入、自碰撞、完整 inertia/base pose 尚未完成。 | 按风险逐项补，优先不破坏当前接口。 |
+| 高保真 MC2 差异 | angle、shear 横向连接、曲线输入、自碰撞、完整 inertia/base pose 尚未完成。 | 按风险逐项补，优先不破坏当前接口。 |
 
 ## 验收工作表
 

@@ -15,7 +15,9 @@ from .constants import (
     MC2_ATTR_MOTION,
     MC2_ATTR_MOVE,
     MC2_DISTANCE_TYPE_BEND_DISTANCE_APPROX,
+    MC2_DISTANCE_TYPE_HORIZONTAL,
     MC2_DISTANCE_TYPE_STRUCTURAL,
+    MC2_DISTANCE_TYPE_VERTICAL,
     MC2_SOLVER_VERSION,
     MC2SystemConstants,
 )
@@ -274,6 +276,129 @@ def build_bend_constraints(
     )
 
 
+def _dihedral_rest_angle(
+    rest_positions: np.ndarray,
+    v0: int,
+    v1: int,
+    v2: int,
+    v3: int,
+) -> tuple[float, int] | None:
+    p0 = rest_positions[int(v0)]
+    p1 = rest_positions[int(v1)]
+    p2 = rest_positions[int(v2)]
+    p3 = rest_positions[int(v3)]
+    n1 = np.cross(p2 - p0, p3 - p0)
+    n2 = np.cross(p3 - p1, p2 - p1)
+    n1_length = float(np.linalg.norm(n1))
+    n2_length = float(np.linalg.norm(n2))
+    if n1_length <= MC2SystemConstants.EPSILON or n2_length <= MC2SystemConstants.EPSILON:
+        return None
+    n1 = n1 / n1_length
+    n2 = n2 / n2_length
+    dot = max(-1.0, min(1.0, float(np.dot(n1, n2))))
+    angle = float(np.arccos(dot))
+    edge = p3 - p2
+    sign_value = float(np.dot(np.cross(n1, n2), edge))
+    sign = -1 if sign_value < 0.0 else 1
+    return angle, sign
+
+
+def _volume_rest(
+    rest_positions: np.ndarray,
+    v0: int,
+    v1: int,
+    v2: int,
+    v3: int,
+) -> float:
+    p0 = rest_positions[int(v0)]
+    p1 = rest_positions[int(v1)]
+    p2 = rest_positions[int(v2)]
+    p3 = rest_positions[int(v3)]
+    volume = (1.0 / 6.0) * float(np.dot(np.cross(p1 - p0, p2 - p0), p3 - p0))
+    return volume * float(MC2SystemConstants.TRIANGLE_VOLUME_SCALE)
+
+
+def build_dihedral_constraints(
+    triangles: np.ndarray,
+    rest_positions: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    edge_to_entries = {}
+    for triangle_index, triangle in enumerate(triangles):
+        a, b, c = (int(triangle[0]), int(triangle[1]), int(triangle[2]))
+        for i, j, opposite in ((a, b, c), (b, c, a), (c, a, b)):
+            key = (i, j) if i < j else (j, i)
+            edge_to_entries.setdefault(key, []).append((int(triangle_index), int(opposite)))
+
+    pairs = []
+    rest_angles = []
+    signs = []
+    volume_pairs = []
+    volume_rest = []
+    seen = set()
+    volume_seen = set()
+    max_angle = np.deg2rad(float(MC2SystemConstants.TRIANGLE_BENDING_MAX_ANGLE))
+    min_volume_angle = np.deg2rad(float(MC2SystemConstants.TRIANGLE_VOLUME_MIN_ANGLE))
+    max_volume_angle = np.deg2rad(float(MC2SystemConstants.TRIANGLE_VOLUME_MAX_ANGLE))
+    for edge, entries in edge_to_entries.items():
+        unique = []
+        for triangle_index, opposite in entries:
+            item = (triangle_index, opposite)
+            if item not in unique:
+                unique.append(item)
+        if len(unique) < 2:
+            continue
+        for entry_index in range(len(unique) - 1):
+            opposite0 = int(unique[entry_index][1])
+            for next_index in range(entry_index + 1, len(unique)):
+                opposite1 = int(unique[next_index][1])
+                if opposite0 == opposite1:
+                    continue
+                v0, v1, v2, v3 = opposite0, opposite1, int(edge[0]), int(edge[1])
+                key = tuple(sorted((v0, v1, v2, v3)))
+                if key in seen:
+                    continue
+                rest_data = _dihedral_rest_angle(rest_positions, v0, v1, v2, v3)
+                if rest_data is None:
+                    continue
+                rest_angle, sign = rest_data
+                if abs(rest_angle) >= max_angle:
+                    pass
+                else:
+                    pairs.append((v0, v1, v2, v3))
+                    rest_angles.append(rest_angle)
+                    signs.append(sign)
+                    seen.add(key)
+                if min_volume_angle <= abs(rest_angle) <= max_volume_angle and key not in volume_seen:
+                    volume_pairs.append((v0, v1, v2, v3))
+                    volume_rest.append(_volume_rest(rest_positions, v0, v1, v2, v3))
+                    volume_seen.add(key)
+
+    if not pairs:
+        dihedral_pairs = np.empty((0, 4), dtype=np.int32)
+        dihedral_rest = np.empty(0, dtype=np.float32)
+        dihedral_signs = np.empty(0, dtype=np.int8)
+    else:
+        dihedral_pairs = np.ascontiguousarray(np.asarray(pairs, dtype=np.int32).reshape((-1, 4)), dtype=np.int32)
+        dihedral_rest = np.ascontiguousarray(np.asarray(rest_angles, dtype=np.float32), dtype=np.float32)
+        dihedral_signs = np.ascontiguousarray(np.asarray(signs, dtype=np.int8), dtype=np.int8)
+    if not volume_pairs:
+        volume_pair_array = np.empty((0, 4), dtype=np.int32)
+        volume_rest_array = np.empty(0, dtype=np.float32)
+    else:
+        volume_pair_array = np.ascontiguousarray(
+            np.asarray(volume_pairs, dtype=np.int32).reshape((-1, 4)),
+            dtype=np.int32,
+        )
+        volume_rest_array = np.ascontiguousarray(np.asarray(volume_rest, dtype=np.float32), dtype=np.float32)
+    return (
+        dihedral_pairs,
+        dihedral_rest,
+        dihedral_signs,
+        volume_pair_array,
+        volume_rest_array,
+    )
+
+
 def constraint_lengths(
     positions: np.ndarray,
     index_i: np.ndarray,
@@ -292,8 +417,24 @@ def constraint_types(count: int, constraint_type: int) -> np.ndarray:
     return np.ascontiguousarray(values, dtype=np.int32)
 
 
-def structural_constraint_types(index_i: np.ndarray) -> np.ndarray:
-    return constraint_types(len(index_i), MC2_DISTANCE_TYPE_STRUCTURAL)
+def structural_constraint_types(
+    index_i: np.ndarray,
+    index_j: np.ndarray | None = None,
+    parent_indices: np.ndarray | None = None,
+) -> np.ndarray:
+    if index_j is None or parent_indices is None or len(index_i) == 0:
+        return constraint_types(len(index_i), MC2_DISTANCE_TYPE_STRUCTURAL)
+    if not bool(np.any(np.ascontiguousarray(parent_indices, dtype=np.int32) >= 0)):
+        return constraint_types(len(index_i), MC2_DISTANCE_TYPE_VERTICAL)
+    types = np.full(len(index_i), MC2_DISTANCE_TYPE_HORIZONTAL, dtype=np.int32)
+    for constraint_index in range(len(index_i)):
+        i = int(index_i[constraint_index])
+        j = int(index_j[constraint_index])
+        if i < 0 or j < 0 or i >= len(parent_indices) or j >= len(parent_indices):
+            continue
+        if int(parent_indices[i]) == j or int(parent_indices[j]) == i:
+            types[constraint_index] = MC2_DISTANCE_TYPE_VERTICAL
+    return np.ascontiguousarray(types, dtype=np.int32)
 
 
 def bend_distance_constraint_types(index_i: np.ndarray) -> np.ndarray:
@@ -305,12 +446,15 @@ def build_neighbor_table(
     index_i: np.ndarray,
     index_j: np.ndarray,
     rest_lengths: np.ndarray,
+    constraint_types: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     adjacency = [[] for _ in range(vertex_count)]
     for constraint_index in range(len(index_i)):
         i = int(index_i[constraint_index])
         j = int(index_j[constraint_index])
         rest = float(rest_lengths[constraint_index])
+        if constraint_types is not None and int(constraint_types[constraint_index]) == MC2_DISTANCE_TYPE_HORIZONTAL:
+            rest = -abs(rest)
         if i < 0 or j < 0 or i >= vertex_count or j >= vertex_count or i == j:
             continue
         adjacency[i].append((j, rest))

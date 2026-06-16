@@ -26,9 +26,9 @@
 | Blender I/O | `blender_io.py` | 已完成 | 无 | Python 独有层，C++ 不接触 Blender 对象。 |
 | Mesh 构建 | `mesh_build.py` | 已完成 | 可选 `mc2_mesh_build.cpp` | 只读取用户 mesh 并生成内部约束数组；不生成或修改代理。 |
 | State/cache ABI | `state.py` | 已完成 | `Mc2MeshClothView` | 集中维护 cache 字段、shape guard、transform 同步。 |
-| 约束函数 | `constraints.py` | 部分偏高 | `mc2_distance.cpp` / `mc2_tether.cpp` / `mc2_motion.cpp` / `mc2_post.cpp` | distance/tether/motion/backstop/post 已有；distance/bend stiffness 已走 depth sampler；angle/dihedral bending 未补。 |
+| 约束函数 | `constraints.py` | 部分偏高 | `mc2_distance.cpp` / `mc2_bending.cpp` / `mc2_tether.cpp` / `mc2_motion.cpp` / `mc2_post.cpp` | distance/tether/motion/backstop/post 已有；distance 支持 MC2 正/负 rest length 和固定邻点质量；triangle bending 已接入 DirectionDihedralAngle + volume pair；angle/inertia 未补。 |
 | 碰撞 | `collision.py` | 部分偏高 | `mc2_collision.cpp` | HoTools sphere/capsule 快照、point collision、collision normal/friction、native collider arrays 已有；edge/self collision 未做。 |
-| 求解调度 | `solver.py` | 部分偏高 | `mc2_meshcloth_solver.cpp` / `mc2_post.cpp` | 已按 substep 接入 velocity_positions、collision 后 distance、motion、post；仍缺完整 inertia/angle/dihedral。 |
+| 求解调度 | `solver.py` | 部分偏高 | `mc2_meshcloth_solver.cpp` / `mc2_post.cpp` | 已按 substep 接入 velocity_positions、distance、triangle bending、collision 后 distance、motion、post；仍缺完整 inertia/angle。 |
 | Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` | 已能打包 ABI view、参数槽、碰撞数组和 native 可用性状态；尚未调用 C++ 求解。 |
 
 ## MC2 行为对照
@@ -48,10 +48,10 @@
 | 积分模型 | 显式 velocity buffer：velocity 阻尼、force 积分、PostTeam 重建速度。 | Verlet 风格：`positions - old_positions` 形成惯性，阻尼按子步换算。 | 手感和 velocity 语义不同；`velocity/real_velocity` 目前更多是诊断/预留。 | 部分 | C++ 第一版先对齐 Python；若要切 MC2 velocity，必须先改 Python ABI。 |
 | Base pose 更新 | MC2 每步更新 step basic pose，并参与 tether/motion/backstop。 | 当前 `base_positions` 来自 rest world；object transform 改变时同步 rest/约束长度。 | 外部动画驱动 base pose 的入口还不完整。 | 部分 | 如需要动画驱动，先在 Python 增加 base pose 更新输入。 |
 | Fixed/Move/Motion 属性 | MC2 使用粒子属性和 depth/team 数据。 | 已有 fixed/move/motion、depth、root、parent、root length。 | depth 生成简化，依赖 fixed root 图遍历。 | 部分 | 可作为 C++ parity 基准；后续再补 MC2 depth/attribute 细节。 |
-| DistanceConstraint | vertical/horizontal 分类，horizontal 用负 rest distance，可能补 shear，按 depth curve 采样，并把修正量写入 velocityPos。 | 基于输入 edge 构建 neighbor table，每顶点平均修正；已保留 `edge_type`，按 depth 采样 stiffness 数组，并按 MC2 attenuation 写入 `velocity_positions`。 | 仍没有 vertical/horizontal 细分和 shear。 | 部分偏高 | C++ 先对齐当前 structural edge + velocity_positions；是否补 shear 需单独决定。 |
+| DistanceConstraint | vertical/horizontal 分类，horizontal 用负 rest distance，可能补 shear，按 depth curve 采样，并把修正量写入 velocityPos。 | 基于输入 edge 构建 neighbor table，每顶点平均修正；`edge_type` 由 parent baseline 区分 vertical/horizontal，`distance_rest` 用正/负号编码，horizontal 乘 MC2 `DistanceHorizontalStiffness=0.5`，并按 attenuation 写入 `velocity_positions`。 | 未加入 MC2 shear 横向连接；parent 来源是 OmniNode fixed-root BFS，不复制 MC2 VirtualMesh parent 构建。 | 部分偏高 | C++ 对齐当前 signed rest length projector；shear 若要补，应新增独立 distance constraint 数据而不是改输入 mesh edge 语义。 |
 | TetherConstraint | compression/stretch 双侧限制，使用不同 stiffness/attenuation，参考 step basic pose，会影响 velocityPos。 | 已有 compression/stretch；`tether_rest_lengths` 用粒子到 root 的基础姿态直线距离，并按压缩/拉伸 attenuation 写入 `velocity_positions`。 | 参数还未暴露为节点曲线输入；step basic pose 仍简化为 base/rest。 | 部分偏高 | 可先做 C++ parity；高保真再补动态 base pose。 |
 | MotionConstraint | max distance + backstop，依赖 base pose rotation/normal axis，stiffness lerp，影响 velocityPos。 | 已有 max distance/backstop/motion stiffness lerp；使用输入 mesh 的 base normal 作为 normal axis 简化，并写入 velocity_positions。 | base rotation 与外部动画 base pose 仍简化。 | 部分偏高 | C++ 先对齐当前 base normal 版本；高保真再补 base rotation。 |
-| TriangleBendingConstraint | DirectionDihedralAngle，存 rest angle/volume、sign、triangle pair，SumConstraint 聚合。 | 当前显式命名为 `bend_distance_*`，仍是相邻三角对角点距离约束；`bend_kind=distance_approx`。 | 没有二面角、方向 sign、volume pair，也不是 MC2 真实 triangle bending。 | 部分偏低 | C++ 先做 `bend_distance_approx` parity；高保真前先补 Python dihedral。 |
+| TriangleBendingConstraint | DirectionDihedralAngle，存 rest angle/volume、sign、triangle pair，SumConstraint 聚合。 | 已生成 `dihedral_pairs/rest_angles/signs` 与 `volume_pairs/volume_rest`，按 MC2 `CalcDihedralAngle` / `CalcVolume` 公式共用聚合缓冲；无有效三角对时回退 `bend_distance_*`。 | rest angle/volume 使用 OmniNode world-space rest/base 语义；负 scale sign 由重算 world rest 间接处理，不复制 Team negativeScaleSign。 | 部分偏高 | C++ 第一版 bending 直接对齐 `project_triangle_bending()`，保留 bend-distance fallback。 |
 | Angle constraints | MC2 有 angle restoration / angle limit 相关参数和约束阶段。 | 参数槽预留，求解未实现。 | 求解阶段缺失。 | 未开始 | 先保留 ABI 字段，等 bending/velocity 稳定后再补。 |
 | ColliderCollision | 显式 collider list，point/edge collision，sphere/capsule/plane，多碰撞聚合，计算摩擦。 | 使用 HoTools 碰撞组，支持 object/bone sphere/capsule，point collision，多 collider 平均推离、normal 聚合和接近摩擦。 | 不照搬显式指定 collider；未支持 plane、edge collision。 | 部分偏高 | C++ 只复刻 HoTools collider arrays、point collision、friction/normal。 |
 | Collision friction | dynamic/static friction 在 PostTeam 影响速度。 | 已按 MC2 PostTeam 近似实现 friction/static_friction/collision_normals 对 velocity/real_velocity 的影响。 | 未含完整 inertia velocityWeight、离心力、显示插值。 | 部分偏高 | C++ 先对齐当前 post，再继续补 inertia。 |
@@ -78,13 +78,13 @@
 | --- | --- | --- |
 | Python 节点能注册 `meshClothMC2` | 已满足 | 否 |
 | Python 包内模块边界稳定 | 已满足 | 否 |
-| Cache schema version 明确 | 已满足，当前 `MC2_SOLVER_VERSION=4` | 否 |
+| Cache schema version 明确 | 已满足，当前 `MC2_SOLVER_VERSION=6` | 否 |
 | Native ABI view | 已有 `native_bridge.build_abi_view()`，未接 C++ | 不阻塞骨架，阻塞正式 native 求解 |
 | reset/jump frame 规则 | 已明确 | 否 |
 | object scale change 同步 | 已有 state sync | 否，仍需 Blender 场景验证 |
-| bend 命名清理为 approximation | 已完成，当前字段为 `bend_distance_*` / `bend_kind=distance_approx` | 否 |
+| bend ABI 明确 | 已完成，当前字段同时保留 `bend_distance_*` fallback、`dihedral_*` 与 `volume_*` 主路径；有 triangle bending pair 时 `bend_kind=direction_dihedral` | 否 |
 | velocity 模型是否切 MC2 | 未决定 | 不阻塞 parity，阻塞高保真 MC2 |
-| dihedral/angle/self collision/完整 inertia | 未完成或部分完成 | 不阻塞第一版 C++ parity |
+| angle/self collision/完整 inertia | 未完成或部分完成 | 不阻塞第一版 C++ parity |
 
 ## 建议验证场景
 

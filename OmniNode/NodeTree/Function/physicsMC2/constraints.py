@@ -59,8 +59,16 @@ def project_neighbor_constraints(
         for offset in range(count):
             data_index = start + offset
             neighbor_index = int(neighbors[data_index])
-            rest = abs(float(rest_lengths[data_index]))
-            wj = float(inv_masses[neighbor_index])
+            rest_dist = float(rest_lengths[data_index])
+            rest = abs(rest_dist)
+            final_stiffness = local_stiffness
+            if rest_dist < 0.0:
+                final_stiffness = max(
+                    0.0,
+                    min(1.0, final_stiffness * MC2SystemConstants.DISTANCE_HORIZONTAL_STIFFNESS),
+                )
+            raw_wj = float(inv_masses[neighbor_index])
+            wj = raw_wj if raw_wj > MC2SystemConstants.EPSILON else MC2SystemConstants.DISTANCE_FIXED_INVERSE_MASS
             wsum = wi + wj
             if wsum <= MC2SystemConstants.EPSILON:
                 continue
@@ -75,7 +83,7 @@ def project_neighbor_constraints(
                 continue
 
             normal = delta / distance
-            correction = ((distance - rest) * local_stiffness / wsum) * wi * normal
+            correction = ((distance - rest) * final_stiffness / wsum) * wi * normal
             add += correction
             add_count += 1
 
@@ -84,6 +92,352 @@ def project_neighbor_constraints(
             positions[vertex_index] = current + add_pos
             if velocity_positions is not None and velocity_attenuation > MC2SystemConstants.EPSILON:
                 velocity_positions[vertex_index] += add_pos * float(velocity_attenuation)
+
+
+def _dihedral_angle_correction(
+    pos_buffer: np.ndarray,
+    inv_mass_buffer: np.ndarray,
+    rest_angle: float,
+    sign: float,
+    stiffness: float,
+) -> np.ndarray | None:
+    p0 = pos_buffer[0]
+    p1 = pos_buffer[1]
+    p2 = pos_buffer[2]
+    p3 = pos_buffer[3]
+    edge = p3 - p2
+    edge_length = float(np.linalg.norm(edge))
+    if edge_length < 1.0e-8:
+        return None
+    inv_edge_length = 1.0 / edge_length
+
+    n1 = np.cross(p2 - p0, p3 - p0)
+    n2 = np.cross(p3 - p1, p2 - p1)
+    n1_len_sq = float(np.dot(n1, n1))
+    n2_len_sq = float(np.dot(n2, n2))
+    if n1_len_sq <= MC2SystemConstants.EPSILON or n2_len_sq <= MC2SystemConstants.EPSILON:
+        return None
+
+    n1_grad = n1 / n1_len_sq
+    n2_grad = n2 / n2_len_sq
+    d0 = edge_length * n1_grad
+    d1 = edge_length * n2_grad
+    d2 = (
+        float(np.dot(p0 - p3, edge)) * inv_edge_length * n1_grad
+        + float(np.dot(p1 - p3, edge)) * inv_edge_length * n2_grad
+    )
+    d3 = (
+        float(np.dot(p2 - p0, edge)) * inv_edge_length * n1_grad
+        + float(np.dot(p2 - p1, edge)) * inv_edge_length * n2_grad
+    )
+
+    n1_norm = math_utils.safe_normal_np(n1_grad, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    n2_norm = math_utils.safe_normal_np(n2_grad, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    dot = max(-1.0, min(1.0, float(np.dot(n1_norm, n2_norm))))
+    phi = float(np.arccos(dot))
+
+    gradients = (d0, d1, d2, d3)
+    lamb = 0.0
+    for i in range(4):
+        lamb += float(inv_mass_buffer[i]) * float(np.dot(gradients[i], gradients[i]))
+    if lamb <= MC2SystemConstants.EPSILON:
+        return None
+
+    dir_value = float(np.dot(np.cross(n1_norm, n2_norm), edge))
+    dir_sign = -1.0 if dir_value < 0.0 else 1.0
+    if abs(sign) > MC2SystemConstants.EPSILON:
+        phi *= dir_sign
+    else:
+        lamb *= dir_sign
+
+    lamb = (float(rest_angle) - phi) / lamb * float(stiffness)
+    corrections = np.zeros((4, 3), dtype=np.float32)
+    for i in range(4):
+        corrections[i] = -float(inv_mass_buffer[i]) * lamb * gradients[i]
+    return corrections
+
+
+def project_dihedral_bending(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    pairs: np.ndarray,
+    rest_angles: np.ndarray,
+    signs: np.ndarray,
+    stiffness,
+) -> None:
+    if len(pairs) == 0:
+        return
+    if isinstance(stiffness, np.ndarray):
+        stiffness_values = np.clip(np.ascontiguousarray(stiffness, dtype=np.float32), 0.0, 1.0)
+        if len(stiffness_values) != len(positions):
+            return
+        if not bool(np.any(stiffness_values > MC2SystemConstants.EPSILON)):
+            return
+    else:
+        stiffness_value = max(0.0, min(1.0, float(stiffness)))
+        if stiffness_value <= MC2SystemConstants.EPSILON:
+            return
+        stiffness_values = None
+
+    add_positions = np.zeros_like(positions, dtype=np.float32)
+    add_counts = np.zeros(len(positions), dtype=np.int32)
+    for pair_index, pair in enumerate(pairs):
+        vertices = np.asarray(pair, dtype=np.int32)
+        if int(np.min(vertices)) < 0 or int(np.max(vertices)) >= len(positions):
+            continue
+
+        if stiffness_values is None:
+            local_stiffness = stiffness_value
+        else:
+            local_stiffness = float(np.mean(stiffness_values[vertices]))
+        if local_stiffness <= MC2SystemConstants.EPSILON:
+            continue
+
+        sign = -1.0 if int(signs[pair_index]) < 0 else 1.0
+        rest_angle = float(rest_angles[pair_index]) * sign
+        inv_mass_buffer = np.asarray(
+            [
+                (
+                    MC2SystemConstants.TRIANGLE_BENDING_FIXED_INVERSE_MASS
+                    if float(inv_masses[int(v)]) <= MC2SystemConstants.EPSILON
+                    else float(inv_masses[int(v)])
+                )
+                for v in vertices
+            ],
+            dtype=np.float32,
+        )
+        if float(np.sum(inv_mass_buffer)) <= MC2SystemConstants.EPSILON:
+            continue
+        pos_buffer = np.ascontiguousarray(positions[vertices], dtype=np.float32)
+        corrections = _dihedral_angle_correction(
+            pos_buffer,
+            inv_mass_buffer,
+            rest_angle,
+            sign,
+            local_stiffness,
+        )
+        if corrections is None:
+            continue
+        for local_index, vertex_index in enumerate(vertices):
+            if float(inv_masses[int(vertex_index)]) <= MC2SystemConstants.EPSILON:
+                continue
+            add_positions[int(vertex_index)] += corrections[local_index]
+            add_counts[int(vertex_index)] += 1
+
+    active = add_counts > 0
+    if bool(np.any(active)):
+        positions[active] += add_positions[active] / add_counts[active, None].astype(np.float32)
+
+
+def _volume_correction(
+    pos_buffer: np.ndarray,
+    inv_mass_buffer: np.ndarray,
+    rest_volume: float,
+    stiffness: float,
+) -> np.ndarray | None:
+    p0 = pos_buffer[0]
+    p1 = pos_buffer[1]
+    p2 = pos_buffer[2]
+    p3 = pos_buffer[3]
+    scale = float(MC2SystemConstants.TRIANGLE_VOLUME_SCALE)
+    volume = (1.0 / 6.0) * float(np.dot(np.cross(p1 - p0, p2 - p0), p3 - p0)) * scale
+    grad0 = np.cross(p1 - p2, p3 - p2)
+    grad1 = np.cross(p2 - p0, p3 - p0)
+    grad2 = np.cross(p0 - p1, p3 - p1)
+    grad3 = np.cross(p1 - p0, p2 - p0)
+    gradients = (grad0, grad1, grad2, grad3)
+
+    lamb = 0.0
+    for i in range(4):
+        lamb += float(inv_mass_buffer[i]) * float(np.dot(gradients[i], gradients[i]))
+    lamb *= scale
+    if abs(lamb) <= MC2SystemConstants.EPSILON:
+        return None
+
+    lamb = float(stiffness) * (float(rest_volume) - volume) / lamb
+    corrections = np.zeros((4, 3), dtype=np.float32)
+    for i in range(4):
+        corrections[i] = float(inv_mass_buffer[i]) * lamb * gradients[i]
+    return corrections
+
+
+def project_volume_bending(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    pairs: np.ndarray,
+    rest_volumes: np.ndarray,
+    stiffness,
+) -> None:
+    if len(pairs) == 0:
+        return
+    if isinstance(stiffness, np.ndarray):
+        stiffness_values = np.clip(np.ascontiguousarray(stiffness, dtype=np.float32), 0.0, 1.0)
+        if len(stiffness_values) != len(positions):
+            return
+        if not bool(np.any(stiffness_values > MC2SystemConstants.EPSILON)):
+            return
+    else:
+        stiffness_value = max(0.0, min(1.0, float(stiffness)))
+        if stiffness_value <= MC2SystemConstants.EPSILON:
+            return
+        stiffness_values = None
+
+    add_positions = np.zeros_like(positions, dtype=np.float32)
+    add_counts = np.zeros(len(positions), dtype=np.int32)
+    for pair_index, pair in enumerate(pairs):
+        vertices = np.asarray(pair, dtype=np.int32)
+        if int(np.min(vertices)) < 0 or int(np.max(vertices)) >= len(positions):
+            continue
+        if stiffness_values is None:
+            local_stiffness = stiffness_value
+        else:
+            local_stiffness = float(np.mean(stiffness_values[vertices]))
+        if local_stiffness <= MC2SystemConstants.EPSILON:
+            continue
+
+        inv_mass_buffer = np.asarray(
+            [
+                (
+                    MC2SystemConstants.TRIANGLE_BENDING_FIXED_INVERSE_MASS
+                    if float(inv_masses[int(v)]) <= MC2SystemConstants.EPSILON
+                    else float(inv_masses[int(v)])
+                )
+                for v in vertices
+            ],
+            dtype=np.float32,
+        )
+        if float(np.sum(inv_mass_buffer)) <= MC2SystemConstants.EPSILON:
+            continue
+        corrections = _volume_correction(
+            np.ascontiguousarray(positions[vertices], dtype=np.float32),
+            inv_mass_buffer,
+            float(rest_volumes[pair_index]),
+            local_stiffness,
+        )
+        if corrections is None:
+            continue
+        for local_index, vertex_index in enumerate(vertices):
+            if float(inv_masses[int(vertex_index)]) <= MC2SystemConstants.EPSILON:
+                continue
+            add_positions[int(vertex_index)] += corrections[local_index]
+            add_counts[int(vertex_index)] += 1
+
+    active = add_counts > 0
+    if bool(np.any(active)):
+        positions[active] += add_positions[active] / add_counts[active, None].astype(np.float32)
+
+
+def _resolve_stiffness(positions: np.ndarray, stiffness):
+    if isinstance(stiffness, np.ndarray):
+        stiffness_values = np.clip(np.ascontiguousarray(stiffness, dtype=np.float32), 0.0, 1.0)
+        if len(stiffness_values) != len(positions):
+            return None, None
+        if not bool(np.any(stiffness_values > MC2SystemConstants.EPSILON)):
+            return None, None
+        return stiffness_values, None
+
+    stiffness_value = max(0.0, min(1.0, float(stiffness)))
+    if stiffness_value <= MC2SystemConstants.EPSILON:
+        return None, None
+    return None, stiffness_value
+
+
+def _pair_stiffness(stiffness_values: np.ndarray | None, stiffness_value, vertices: np.ndarray) -> float:
+    if stiffness_values is None:
+        return float(stiffness_value)
+    return float(np.mean(stiffness_values[vertices]))
+
+
+def _bending_inv_mass_buffer(inv_masses: np.ndarray, vertices: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        [
+            (
+                MC2SystemConstants.TRIANGLE_BENDING_FIXED_INVERSE_MASS
+                if float(inv_masses[int(v)]) <= MC2SystemConstants.EPSILON
+                else float(inv_masses[int(v)])
+            )
+            for v in vertices
+        ],
+        dtype=np.float32,
+    )
+
+
+def _add_bending_corrections(
+    add_positions: np.ndarray,
+    add_counts: np.ndarray,
+    inv_masses: np.ndarray,
+    vertices: np.ndarray,
+    corrections: np.ndarray | None,
+) -> None:
+    if corrections is None:
+        return
+    for local_index, vertex_index in enumerate(vertices):
+        if float(inv_masses[int(vertex_index)]) <= MC2SystemConstants.EPSILON:
+            continue
+        add_positions[int(vertex_index)] += corrections[local_index]
+        add_counts[int(vertex_index)] += 1
+
+
+def project_triangle_bending(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    dihedral_pairs: np.ndarray,
+    rest_angles: np.ndarray,
+    signs: np.ndarray,
+    volume_pairs: np.ndarray,
+    rest_volumes: np.ndarray,
+    stiffness,
+) -> None:
+    if len(dihedral_pairs) == 0 and len(volume_pairs) == 0:
+        return
+    stiffness_values, stiffness_value = _resolve_stiffness(positions, stiffness)
+    if stiffness_values is None and stiffness_value is None:
+        return
+
+    add_positions = np.zeros_like(positions, dtype=np.float32)
+    add_counts = np.zeros(len(positions), dtype=np.int32)
+
+    for pair_index, pair in enumerate(dihedral_pairs):
+        vertices = np.asarray(pair, dtype=np.int32)
+        if int(np.min(vertices)) < 0 or int(np.max(vertices)) >= len(positions):
+            continue
+        local_stiffness = _pair_stiffness(stiffness_values, stiffness_value, vertices)
+        if local_stiffness <= MC2SystemConstants.EPSILON:
+            continue
+        inv_mass_buffer = _bending_inv_mass_buffer(inv_masses, vertices)
+        if float(np.sum(inv_mass_buffer)) <= MC2SystemConstants.EPSILON:
+            continue
+        sign = -1.0 if int(signs[pair_index]) < 0 else 1.0
+        corrections = _dihedral_angle_correction(
+            np.ascontiguousarray(positions[vertices], dtype=np.float32),
+            inv_mass_buffer,
+            float(rest_angles[pair_index]) * sign,
+            sign,
+            local_stiffness,
+        )
+        _add_bending_corrections(add_positions, add_counts, inv_masses, vertices, corrections)
+
+    for pair_index, pair in enumerate(volume_pairs):
+        vertices = np.asarray(pair, dtype=np.int32)
+        if int(np.min(vertices)) < 0 or int(np.max(vertices)) >= len(positions):
+            continue
+        local_stiffness = _pair_stiffness(stiffness_values, stiffness_value, vertices)
+        if local_stiffness <= MC2SystemConstants.EPSILON:
+            continue
+        inv_mass_buffer = _bending_inv_mass_buffer(inv_masses, vertices)
+        if float(np.sum(inv_mass_buffer)) <= MC2SystemConstants.EPSILON:
+            continue
+        corrections = _volume_correction(
+            np.ascontiguousarray(positions[vertices], dtype=np.float32),
+            inv_mass_buffer,
+            float(rest_volumes[pair_index]),
+            local_stiffness,
+        )
+        _add_bending_corrections(add_positions, add_counts, inv_masses, vertices, corrections)
+
+    active = add_counts > 0
+    if bool(np.any(active)):
+        positions[active] += add_positions[active] / add_counts[active, None].astype(np.float32)
 
 
 def project_tether(

@@ -11,6 +11,7 @@ from . import blender_io, math_utils, mesh_build
 from .constants import (
     MC2_ATTR_MOVE,
     MC2_BEND_KIND_DISTANCE_APPROX,
+    MC2_BEND_KIND_DIRECTION_DIHEDRAL,
     MC2_CACHE_KIND,
     MC2_CURVE_READY_PARAMETERS,
     MC2_SOLVER_VERSION,
@@ -55,20 +56,29 @@ def build_state(
     static_friction = np.zeros(len(obj.data.vertices), dtype=np.float32)
     inv_masses = calc_inverse_masses(attributes, depths, friction)
     edge_i, edge_j, edge_rest = mesh_build.build_edge_constraints(edges, rest_world)
-    edge_type = mesh_build.structural_constraint_types(edge_i)
+    edge_type = mesh_build.structural_constraint_types(edge_i, edge_j, parent_indices)
     bend_i, bend_j, bend_rest, triangle_pairs = mesh_build.build_bend_constraints(triangles, rest_world)
     bend_type = mesh_build.bend_distance_constraint_types(bend_i)
+    (
+        dihedral_pairs,
+        dihedral_rest_angles,
+        dihedral_signs,
+        volume_pairs,
+        volume_rest,
+    ) = mesh_build.build_dihedral_constraints(triangles, rest_world)
     distance_start, distance_count, distance_data, distance_rest = mesh_build.build_neighbor_table(
         len(obj.data.vertices),
         edge_i,
         edge_j,
         edge_rest,
+        edge_type,
     )
     bend_start, bend_count, bend_data, bend_neighbor_rest = mesh_build.build_neighbor_table(
         len(obj.data.vertices),
         bend_i,
         bend_j,
         bend_rest,
+        bend_type,
     )
     collision_local_radii, collision_mask = mesh_build.build_collision_profile(obj, collision_radius)
     zeros3 = np.zeros((len(obj.data.vertices), 3), dtype=np.float32)
@@ -114,32 +124,41 @@ def build_state(
         "inv_masses": inv_masses,
         "edges": edges,
         "triangles": triangles,
-            "edge_i": edge_i,
-            "edge_j": edge_j,
-            "edge_rest": edge_rest,
-            "edge_type": edge_type,
-            "bend_i": bend_i,
-            "bend_j": bend_j,
-            "bend_rest": bend_rest,
-            "bend_type": bend_type,
-            "triangle_pairs": triangle_pairs,
-            "bend_kind": MC2_BEND_KIND_DISTANCE_APPROX,
-            "bend_distance_i": bend_i,
-            "bend_distance_j": bend_j,
-            "bend_distance_rest": bend_rest,
-            "bend_distance_type": bend_type,
-            "distance_start": distance_start,
-            "distance_count": distance_count,
-            "distance_data": distance_data,
-            "distance_rest": distance_rest,
-            "bend_start": bend_start,
-            "bend_count": bend_count,
-            "bend_data": bend_data,
-            "bend_neighbor_rest": bend_neighbor_rest,
-            "bend_distance_start": bend_start,
-            "bend_distance_count": bend_count,
-            "bend_distance_data": bend_data,
-            "bend_distance_neighbor_rest": bend_neighbor_rest,
+        "edge_i": edge_i,
+        "edge_j": edge_j,
+        "edge_rest": edge_rest,
+        "edge_type": edge_type,
+        "bend_i": bend_i,
+        "bend_j": bend_j,
+        "bend_rest": bend_rest,
+        "bend_type": bend_type,
+        "triangle_pairs": triangle_pairs,
+        "dihedral_pairs": dihedral_pairs,
+        "dihedral_rest_angles": dihedral_rest_angles,
+        "dihedral_signs": dihedral_signs,
+        "volume_pairs": volume_pairs,
+        "volume_rest": volume_rest,
+        "bend_kind": (
+            MC2_BEND_KIND_DIRECTION_DIHEDRAL
+            if len(dihedral_pairs) > 0 or len(volume_pairs) > 0
+            else MC2_BEND_KIND_DISTANCE_APPROX
+        ),
+        "bend_distance_i": bend_i,
+        "bend_distance_j": bend_j,
+        "bend_distance_rest": bend_rest,
+        "bend_distance_type": bend_type,
+        "distance_start": distance_start,
+        "distance_count": distance_count,
+        "distance_data": distance_data,
+        "distance_rest": distance_rest,
+        "bend_start": bend_start,
+        "bend_count": bend_count,
+        "bend_data": bend_data,
+        "bend_neighbor_rest": bend_neighbor_rest,
+        "bend_distance_start": bend_start,
+        "bend_distance_count": bend_count,
+        "bend_distance_data": bend_data,
+        "bend_distance_neighbor_rest": bend_neighbor_rest,
         "collision_local_radii": collision_local_radii,
         "collision_radii": mesh_build.collision_radii_to_world(obj, collision_local_radii),
         "collided_by_groups": int(collision_mask),
@@ -175,11 +194,33 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
 
     if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
         next_state["edge_rest"] = mesh_build.constraint_lengths(rest_world, next_state["edge_i"], next_state["edge_j"])
-        next_state["edge_type"] = mesh_build.structural_constraint_types(next_state["edge_i"])
+        (
+            next_state["depths"],
+            next_state["root_indices"],
+            next_state["parent_indices"],
+            next_state["root_rest_lengths"],
+        ) = mesh_build.build_depth_and_roots(next_state["edges"], rest_world, next_state["attributes"])
+        next_state["edge_type"] = mesh_build.structural_constraint_types(
+            next_state["edge_i"],
+            next_state["edge_j"],
+            next_state["parent_indices"],
+        )
         bend_i = next_state.get("bend_distance_i", next_state["bend_i"])
         bend_j = next_state.get("bend_distance_j", next_state["bend_j"])
         next_state["bend_distance_rest"] = mesh_build.constraint_lengths(rest_world, bend_i, bend_j)
         next_state["bend_distance_type"] = mesh_build.bend_distance_constraint_types(bend_i)
+        (
+            next_state["dihedral_pairs"],
+            next_state["dihedral_rest_angles"],
+            next_state["dihedral_signs"],
+            next_state["volume_pairs"],
+            next_state["volume_rest"],
+        ) = mesh_build.build_dihedral_constraints(next_state["triangles"], rest_world)
+        next_state["bend_kind"] = (
+            MC2_BEND_KIND_DIRECTION_DIHEDRAL
+            if len(next_state["dihedral_pairs"]) > 0 or len(next_state["volume_pairs"]) > 0
+            else MC2_BEND_KIND_DISTANCE_APPROX
+        )
         next_state["bend_i"] = bend_i
         next_state["bend_j"] = bend_j
         next_state["bend_rest"] = next_state["bend_distance_rest"]
@@ -194,6 +235,7 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
             next_state["edge_i"],
             next_state["edge_j"],
             next_state["edge_rest"],
+            next_state["edge_type"],
         )
         (
             next_state["bend_start"],
@@ -205,17 +247,12 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
             bend_i,
             bend_j,
             next_state["bend_distance_rest"],
+            next_state["bend_distance_type"],
         )
         next_state["bend_distance_start"] = next_state["bend_start"]
         next_state["bend_distance_count"] = next_state["bend_count"]
         next_state["bend_distance_data"] = next_state["bend_data"]
         next_state["bend_distance_neighbor_rest"] = next_state["bend_neighbor_rest"]
-        (
-            next_state["depths"],
-            next_state["root_indices"],
-            next_state["parent_indices"],
-            next_state["root_rest_lengths"],
-        ) = mesh_build.build_depth_and_roots(next_state["edges"], rest_world, next_state["attributes"])
         next_state["tether_rest_lengths"] = mesh_build.build_tether_rest_lengths(rest_world, next_state["root_indices"])
         next_state["collision_radii"] = mesh_build.collision_radii_to_world(obj, next_state["collision_local_radii"])
         next_state["inv_masses"] = calc_inverse_masses(
@@ -269,15 +306,15 @@ def state_matches(
         "tether_rest_lengths": (vertex_count,),
         "inv_masses": (vertex_count,),
         "collision_local_radii": (vertex_count,),
-            "collision_radii": (vertex_count,),
-            "distance_start": (vertex_count,),
-            "distance_count": (vertex_count,),
-            "bend_start": (vertex_count,),
-            "bend_count": (vertex_count,),
-            "bend_distance_start": (vertex_count,),
-            "bend_distance_count": (vertex_count,),
-            "object_matrix_world": (4, 4),
-        }
+        "collision_radii": (vertex_count,),
+        "distance_start": (vertex_count,),
+        "distance_count": (vertex_count,),
+        "bend_start": (vertex_count,),
+        "bend_count": (vertex_count,),
+        "bend_distance_start": (vertex_count,),
+        "bend_distance_count": (vertex_count,),
+        "object_matrix_world": (4, 4),
+    }
     for key, shape in required_shapes.items():
         value = state.get(key)
         if not isinstance(value, np.ndarray) or value.shape != shape:
@@ -301,13 +338,19 @@ def state_matches(
     edges = array_ndim_shape("edges", 2, (2,))
     triangles = array_ndim_shape("triangles", 2, (3,))
     triangle_pairs = array_ndim_shape("triangle_pairs", 2, (4,))
-    if edges is None or triangles is None or triangle_pairs is None:
+    dihedral_pairs = array_ndim_shape("dihedral_pairs", 2, (4,))
+    volume_pairs = array_ndim_shape("volume_pairs", 2, (4,))
+    if edges is None or triangles is None or triangle_pairs is None or dihedral_pairs is None or volume_pairs is None:
         return False
     if int(edges.size) and (int(np.min(edges)) < 0 or int(np.max(edges)) >= vertex_count):
         return False
     if int(triangles.size) and (int(np.min(triangles)) < 0 or int(np.max(triangles)) >= vertex_count):
         return False
     if int(triangle_pairs.size) and (int(np.min(triangle_pairs)) < 0 or int(np.max(triangle_pairs)) >= vertex_count):
+        return False
+    if int(dihedral_pairs.size) and (int(np.min(dihedral_pairs)) < 0 or int(np.max(dihedral_pairs)) >= vertex_count):
+        return False
+    if int(volume_pairs.size) and (int(np.min(volume_pairs)) < 0 or int(np.max(volume_pairs)) >= vertex_count):
         return False
 
     def same_1d_length(keys: tuple[str, ...]) -> bool:
@@ -334,14 +377,22 @@ def state_matches(
         return False
     if not same_1d_length(("bend_distance_data", "bend_distance_neighbor_rest")):
         return False
+    if not same_1d_length(("dihedral_rest_angles", "dihedral_signs")):
+        return False
+    if not same_1d_length(("volume_rest",)):
+        return False
     if len(state["edge_i"]) != len(edges):
         return False
     if len(state["bend_i"]) != len(triangle_pairs):
         return False
     if len(state["bend_distance_i"]) != len(triangle_pairs):
         return False
+    if len(state["dihedral_rest_angles"]) != len(dihedral_pairs):
+        return False
+    if len(state["volume_rest"]) != len(volume_pairs):
+        return False
 
-    if state.get("bend_kind") != MC2_BEND_KIND_DISTANCE_APPROX:
+    if state.get("bend_kind") not in {MC2_BEND_KIND_DISTANCE_APPROX, MC2_BEND_KIND_DIRECTION_DIHEDRAL}:
         return False
 
     for index_key in (

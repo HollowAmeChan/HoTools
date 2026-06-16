@@ -90,6 +90,11 @@ def state_arrays_for_native(state: dict) -> dict:
         "bend_distance_data": _array(state, "bend_distance_data", np.int32),
         "bend_distance_neighbor_rest": _array(state, "bend_distance_neighbor_rest", np.float32),
         "triangle_pairs": _array(state, "triangle_pairs", np.int32, (4,)),
+        "dihedral_pairs": _array(state, "dihedral_pairs", np.int32, (4,)),
+        "dihedral_rest_angles": _array(state, "dihedral_rest_angles", np.float32),
+        "dihedral_signs": _array(state, "dihedral_signs", np.int8),
+        "volume_pairs": _array(state, "volume_pairs", np.int32, (4,)),
+        "volume_rest": _array(state, "volume_rest", np.float32),
         "collision_radii": _array(state, "collision_radii", np.float32),
         "collided_by_groups": int(state.get("collided_by_groups", 0)),
     }

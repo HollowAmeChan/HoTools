@@ -26,10 +26,10 @@
 | 跳帧保护 | MC2 有自身 team/teleport 处理。 | 对齐 SpringBone：只接受连续帧推进。 | 不做隐藏多帧 catch-up。 | 已落地 | Blender 场景持续复测。 |
 | 空间语义 | MC2 在 Unity transform/team 数据上运行。 | cache 内为 world space，边界做 local/world 转换。 | object scale/transform 改动需继续重点测。 | 已落地 | C++ 不接触 Blender transform。 |
 | Particle predict | MC2 有显式 team/particle 更新。 | Verlet 式位置预测，含 gravity/damping。 | 与 MC2 velocity buffer 不是完全同构。 | 部分等价 | C++ 先复刻 Python，再决定是否调整到更 MC2。 |
-| Structural distance | MC2 DistanceConstraint。 | `edge_*` + neighbor table，支持 per-depth stiffness sample。 | 类型分层较简化。 | 已落地 | C++ 先对齐当前 projector。 |
+| Structural distance | MC2 DistanceConstraint。 | `edge_*` + neighbor table，支持 per-depth stiffness sample；`distance_rest` 正/负号区分 vertical/horizontal，horizontal 刚度乘 0.5；固定邻点按 `1/50` inverse mass 参与分母。 | 未加入 MC2 shear 横向连接；parent 来源为 OmniNode fixed-root BFS。 | 部分偏高 | C++ 先对齐当前 signed rest projector；shear 单独新增约束数据。 |
 | Tether | MC2 TetherConstraint。 | 基于 fixed/root BFS 的 tether rest length。 | root/parent 生成方式为 OmniNode 简化版。 | 已落地 | 补小网格 parity test。 |
 | Motion/max distance | MC2 MotionConstraint 含 max distance/backstop。 | 已有 max distance、backstop、motion stiffness lerp，并把修正写入 velocity_positions。 | normal axis/base rotation 简化为输入 mesh 的 base normal。 | 部分偏高 | 后续如需更等价，补外部 base pose rotation。 |
-| Bending | MC2 TriangleBendingConstraint/dihedral。 | 当前是 bend distance approximation，`bend_kind = distance_approx`。 | 与 MC2 高保真弯曲差异较大。 | 部分完成 | 后续实现 dihedral bending，保留现有近似模式。 |
+| Bending | MC2 TriangleBendingConstraint/dihedral/volume。 | 已生成 `dihedral_pairs/rest_angles/signs` 与 `volume_pairs/volume_rest`，solver 优先执行同一个 triangle bending 聚合 pass；无有效三角对时回退 bend distance approximation。 | world-space rest/base 语义不同于 MC2 proxy local + Team scale sign。 | 部分偏高 | C++ 先对齐当前 `project_triangle_bending()`。 |
 | Angle | MC2 AngleConstraint。 | 尚未实现。 | MeshCloth/BoneCloth 共用价值高，但复杂。 | 待做 | 等 distance/tether/collision C++ 对齐后补。 |
 | Collision | MC2 显式 collider list。 | 读取 HoTools 碰撞组快照，支持 sphere/capsule point collision、摩擦接近度和 collision normal。 | 不支持 MC2 edge collision/self collision/plane。 | 部分偏高 | C++ 复刻现有 point collision 和 friction 写入。 |
 | Friction/post | MC2 有 PostTeam velocity/friction。 | Python 已按 substep post 更新 velocity、real_velocity、friction、static_friction、old_positions。 | 未实现离心力、velocityWeight 稳定化和完整 inertia。 | 部分偏高 | C++ 先对齐当前 post，再评估 inertia 差异。 |
@@ -49,7 +49,7 @@
 | 5 | solve setup | 计算 `frame_dt`、`step_dt`、substep damping、gravity、参数采样。 |
 | 6 | predict | 推进 `next_positions`，固定点回 pin。 |
 | 7 | pre constraints | tether、collision。 |
-| 8 | iteration loop | structural distance、bend distance approximation、collision、collision 后 distance、pin。 |
+| 8 | iteration loop | signed structural distance、triangle bending、collision、collision 后 distance、pin。 |
 | 9 | motion | 执行 max distance/backstop/motion constraint，并写入 velocity_positions。 |
 | 10 | post | 每个 substep 更新 velocity、real_velocity、friction、static_friction、old_positions。 |
 | 11 | writeback | world positions 转回 object local，写入目标 shape key。 |
@@ -63,8 +63,8 @@
 | 速度/后处理 | `velocity`, `real_velocity`, `velocity_positions`, `friction`, `static_friction`, `collision_normals` | C++ 与 Python post 语义逐项对齐。 |
 | 属性/深度 | `attributes`, `depths`, `inv_masses`, `root_indices`, `parent_indices` | dtype/shape 必须严格校验。 |
 | tether | `tether_rest_lengths` | 无 fixed/root 时允许跳过。 |
-| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 当前 Python reference 的主结构约束。 |
-| bend distance | `bend_distance_i/j/rest/type`, `bend_distance_start/count/data`, `bend_distance_neighbor_rest`, `bend_kind` | 当前只要求复刻 `distance_approx`。 |
+| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 当前 Python reference 的主结构约束；`distance_rest < 0` 表示 horizontal。 |
+| triangle bending | `dihedral_pairs`, `dihedral_rest_angles`, `dihedral_signs`, `volume_pairs`, `volume_rest`, `bend_kind`, `bend_distance_*` | C++ 主路径复刻 dihedral + volume；`bend_distance_*` 只作为 fallback。 |
 | collision | `collision_radii`, `collided_by_groups`, collider arrays | C++ 只消费快照，不读取 Blender。 |
 | params | scalar/sample slot | C++ 先支持 scalar 和已采样数组视图。 |
 | extension | self collision/BoneCloth/native slots | 允许为空，不影响当前 MeshCloth。 |
@@ -103,6 +103,6 @@
 | P0 | 做 native binding smoke。 | 先锁死 ABI，减少后续双端返工。 |
 | P1 | C++ 逐项迁移 distance、tether、motion、collision、post。 | 让 C++ 先等价当前 Python，而不是直接追完整 MC2。 |
 | P1 | C++ 复刻当前 backstop、collision friction、post/friction。 | 先锁住 Python reference 与 C++ parity。 |
-| P2 | 实现 dihedral bending、angle constraint。 | 提升高保真弯曲与 BoneCloth 共用能力。 |
+| P2 | 实现 angle constraint、shear 横向连接。 | 提升高保真弯曲结构与 BoneCloth 共用能力。 |
 | P2 | 规划曲线输入 UI/socket。 | 在不改 solver 主流程的前提下接入 depth curve。 |
 | P3 | 自碰撞。 | 复杂度高，等 MeshCloth/BoneCloth 主路径稳定后再做。 |
