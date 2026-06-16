@@ -7,25 +7,22 @@ def register():
     from .NodeTree import OmniNodeSocket  # NOQA: E402
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     from .NodeTree import OmniNodeDraw  # NOQA: E402
-    import os  # NOQA: E402
-    import sys  # NOQA: E402
-    # 将本地的第三方库导入
-    plugin_dir = os.path.dirname(__file__)
-    lib_dir = os.path.abspath(os.path.join(
-        plugin_dir, ".", "lib"))
-    sys.path.append(lib_dir)
+    from . import OmniNodePanel  # NOQA: E402
     
     OmniNodeDraw.register()
     OmniNodeOperator.register()
     OmniNodeTree.register()
     OmniNodeSocket.register()
     OmniNodeRegister.register()
+    OmniNodePanel.register()
 
 
 def unregister():
     from .NodeTree import OmniNodeSocket  # NOQA: E402
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     from .NodeTree import OmniNodeDraw  # NOQA: E402
+    from . import OmniNodePanel  # NOQA: E402
+    OmniNodePanel.unregister()
     OmniNodeDraw.unregister()
     OmniNodeOperator.unregister()
     OmniNodeTree.unregister()

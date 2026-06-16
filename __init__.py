@@ -21,9 +21,6 @@ else:
 if py_lib_dir:
     sys.path.append(py_lib_dir)
     sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
-#OmniNode的lib
-omni_lib_dir = os.path.join(plugin_dir, "OmniNode","lib")
-sys.path.append(omni_lib_dir)
 
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, PhysicsTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf

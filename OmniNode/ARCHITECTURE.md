@@ -456,7 +456,7 @@ native smoke test：
 
 ### `__init__.py`
 
-OmniNode 模块入口。负责把 `lib` 和版本化 native package 路径加入 `sys.path`，并注册/注销 NodeTree、socket、节点、操作符、绘制辅助等模块。
+OmniNode 模块入口。负责注册/注销 NodeTree、socket、节点、操作符、绘制辅助和侧边栏面板等模块。OmniNode 不再维护自己的子 `lib` 目录，第三方依赖应接到 HoTools 顶层公共库。
 
 ### `NodeTree/OmniNodeTree.py`
 
@@ -560,6 +560,18 @@ Python 类型到 Blender socket 类型的映射表，包含 `_OmniCache`、`_Omn
 ### `NodeTree/OmniNodeDraw.py`
 
 节点图绘制辅助。负责 bug 文本、overlay、绘制状态同步和清理。
+
+### `OmniNodePanel.py`
+
+VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
+
+职责：
+
+- 列出所有 `OmniNodeTree`。
+- 默认只提供每树一行的“编译运行”和“每帧运行”开关。
+- 用一个布尔开关折叠高级操作。
+- 高级模式下提供编译、运行已编译结果、清理编译缓存、清理运行缓存和状态显示。
+- 面板只负责批量入口 UI，具体操作复用 `NodeTree/OmniNodeOperator.py` 中支持 `tree_name` 参数的内部 operator。
 
 ### `NodeTree/OmniNodeRegister.py`
 

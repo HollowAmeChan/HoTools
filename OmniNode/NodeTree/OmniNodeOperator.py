@@ -54,6 +54,11 @@ def _active_omni_tree(context):
     return tree if _is_omni_tree(tree) else None
 
 
+def _operator_omni_tree(context, tree_name=""):
+    tree_name = str(tree_name or "")
+    return _find_omni_tree(tree_name) if tree_name else _active_omni_tree(context)
+
+
 def _find_omni_tree(tree_name):
     tree = bpy.data.node_groups.get(tree_name)
     if _is_omni_tree(tree):
@@ -607,10 +612,14 @@ class LayerRunning(Operator):
     bl_label = "树手动触发回调"
     bl_options = {'REGISTER', 'UNDO'}
     reportInfo: BoolProperty(name="报告pool信息", default=True)  # type: ignore
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
+            if self.tree_name:
+                self.report({'ERROR'}, "找不到 OmniNodeTree")
+                return {'CANCELLED'}
             return {'FINISHED'}
 
         try:
@@ -626,9 +635,10 @@ class OmniTreeCompile(Operator):
     bl_label = "编译OMNI树"
     bl_description = "只编译当前 OmniNodeTree，并缓存编译结果"
     bl_options = {'REGISTER'}
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
             return {'CANCELLED'}
 
@@ -647,9 +657,10 @@ class OmniTreeRunCompiled(Operator):
     bl_label = "运行已编译OMNI树"
     bl_description = "运行当前缓存的编译结果。没有编译缓存时请先编译。"
     bl_options = {'REGISTER', 'UNDO'}
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
             return {'CANCELLED'}
 
@@ -667,9 +678,10 @@ class OmniTreeClearCompileCache(Operator):
     bl_label = "清理编译缓存"
     bl_description = "清理当前 OmniNodeTree 的编译产物缓存"
     bl_options = {'REGISTER'}
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
             return {'CANCELLED'}
 
@@ -683,9 +695,10 @@ class OmniTreeClearRuntimeCache(Operator):
     bl_label = "清理运行缓存"
     bl_description = "清理当前 OmniNodeTree 作为根树运行时保存的缓存数据"
     bl_options = {'REGISTER'}
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
             return {'CANCELLED'}
 
@@ -699,14 +712,21 @@ class OmniTreeDestroy(Operator):
     bl_label = "销毁树"
     bl_description = "销毁当前 OmniNodeTree 数据块"
     bl_options = {'REGISTER', 'UNDO'}
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
+    confirmed: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
 
     def invoke(self, context, event):
+        self.confirmed = True
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context: bpy.types.Context):
-        tree = _active_omni_tree(context)
+        if not self.confirmed:
+            self.report({'ERROR'}, "销毁 OmniNodeTree 需要确认")
+            return {'CANCELLED'}
+
+        tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
-            return {'FINISHED'}
+            return {'CANCELLED'}
 
         tree_name = tree.name
         if hasattr(tree, "clear_compile_cache"):
@@ -1238,7 +1258,9 @@ def draw_in_NODE_HT_header(self, context: Context):
         if stack_label:
             layout.operator(OP_ReturnToParentNodeTree.bl_idname, text=stack_label, icon="FILE_PARENT")
     row = layout.row(align=True)
+    row.operator_context = 'INVOKE_DEFAULT'
     row.operator(OmniTreeDestroy.bl_idname, text="销毁树")
+    row.operator_context = 'EXEC_DEFAULT'
     row.operator(OmniTreeClearCompileCache.bl_idname, text="销毁编译")
     row.operator(OmniTreeClearRuntimeCache.bl_idname, text="销毁缓存")
 
