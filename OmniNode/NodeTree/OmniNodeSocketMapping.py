@@ -63,8 +63,41 @@ class _OmniGlob(str):
     def __init__():
         return
 class _OmniCache(str):
-    def __init__():
-        return
+    """
+    Runtime cache socket 标记类型。
+
+    这个类只用于 @omni 函数签名标注，让 FunctionNodeCore 生成
+    OmniNodeSocketCache。不要把它实例化成真实 cache 值。
+
+    运行值契约：
+    - 裸 Python 值就是 cache payload，Cache Write 默认按 replace 写入。
+      这是 dict/list/array 这类快照式状态的常规路径。
+    - 值也可以是 OmniRuntimeState.OmniCacheWriteIntent，由
+      cache_replace(value) 或 cache_mutate(value) 创建。
+    - cache_replace(value) 表示显式替换 cache owner。
+    - cache_mutate(owner) 表示 committed owner 已被原地更新，并且必须仍然是
+      当前 cache key 绑定的同一个对象。
+    - 如果函数模块只想依赖这个 socket marker，也可以用 _OmniCache(value)
+      构造 replace intent，用 _OmniCache.mutate(owner) 构造 mutate intent。
+    - 资源 owner 可以提供 omni_cache_dispose(reason)，也可以提供可选的
+      omni_cache_debug_snapshot()；runtime cache 按 duck typing 调用。
+    """
+    def __new__(cls, value=None):
+        from .OmniRuntimeState import cache_replace
+
+        return cache_replace(value)
+
+    @staticmethod
+    def replace(value):
+        from .OmniRuntimeState import cache_replace
+
+        return cache_replace(value)
+
+    @staticmethod
+    def mutate(owner):
+        from .OmniRuntimeState import cache_mutate
+
+        return cache_mutate(owner)
 class _OmniBone():
     def __init__():
         return

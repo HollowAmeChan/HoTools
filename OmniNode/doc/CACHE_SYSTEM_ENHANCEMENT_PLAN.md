@@ -34,7 +34,7 @@ Bullet 的最佳使用方式通常是长期持有一个 world：
 1. 不给 Bullet 单独新增专用 GraphNode。
 2. 不改变现有用户图的基本接法：`Cache Read -> 物理节点 -> Cache Write`。
 3. 不给 Cache Write 新增 mode socket，避免让用户理解底层写入策略，也避免改变旧图 socket 拓扑。
-4. 保留普通值 cache 的整值替换行为，保证旧节点兼容。
+4. 保留普通值 cache 的整值替换行为；项目内 `_OmniCache` 输出节点显式返回 `_OmniCache(value)`，裸 Python value 仍作为 runtime replace fallback。
 5. runtime cache 只补“资源销毁”能力和“写入意图解释”能力，不补通用判脏、重建或成功运行回调。
 6. 解算器节点作为高封装功能块，继续拥有构建、运行、判定异常、清理和重建的完整职责。
 7. runtime cache 只负责生命周期边界：覆盖、删除、清空、失败丢弃、插件注销。
@@ -269,11 +269,15 @@ def cache_mutate(value):
     return OmniCacheWriteIntent("mutate", value)
 ```
 
-没有 wrapper 的普通旧 value，默认等价于：
+`_OmniCache` 作为 socket marker，也提供懒加载转发入口，方便函数模块不直接依赖 `OmniRuntimeState`：
 
 ```python
-cache_replace(value)
+_OmniCache(value)          # 等价于 cache_replace(value)
+_OmniCache.replace(value)  # 等价于 cache_replace(value)
+_OmniCache.mutate(owner)   # 等价于 cache_mutate(owner)
 ```
+
+没有 wrapper 的裸 value 默认等价于 replace payload。项目内新节点仍推荐显式 `_OmniCache(value)`，让 cache 输出写法和 socket marker 契约保持一致。
 
 第一版只需要两种 mode。
 
@@ -418,10 +422,10 @@ def write_cache(context, key, value):
     context.run.pending.setdefault(namespace, {})[key] = intent
 ```
 
-普通旧节点输出裸 value，自动成为 replace：
+普通值式 cache 节点显式输出 replace intent：
 
 ```python
-return next_cache
+return _OmniCache(next_cache)
 ```
 
 资源型节点正常连续帧输出 mutate：
@@ -771,6 +775,9 @@ enable
 - 旧图不会因为 socket 变化失效。
 - 编译器仍然只看到同一种 CacheWriteCall。
 - value 是否资源型，只影响 runtime 清理时是否调用 `omni_cache_dispose()`。
+- 裸 payload 默认按 replace 写入，但项目内 `_OmniCache` 输出推荐显式返回 `_OmniCache(value)`。
+- 资源型原地更新才需要返回 `_OmniCache.mutate(owner)` 或 `cache_mutate(owner)`。
+- Cache Write 执行时消费 intent，输出 socket 继续透传真实 value，而不是把 wrapper 继续传给下游。
 
 高级调试需求可以以后加 UI 属性，但不作为第一版必要条件：
 
@@ -881,8 +888,8 @@ Bullet 暴露的问题不是“现有 cache 不能写入特殊值”，而是两
 
 ```text
 保持 Cache Read / Cache Write / Cache Delete 节点形态不变。
-保持普通值 cache 的 replace 语义不变。
-新增内部 cache_replace / cache_mutate 写入意图，不暴露为 socket。
+保持普通值 cache 的整值 replace 语义，当前节点库显式使用 `_OmniCache(value)` 构造 replace intent。
+新增内部 cache_replace / cache_mutate 写入意图，不暴露为 socket，主要服务资源型 owner 的显式替换和原地 mutation；裸 Python value 仍作为 replace fallback。
 为资源型 cache value 增加 duck-typed dispose hook。
 由 OmniRuntimeState 在覆盖、删除、清空、失败丢弃边界调用 dispose。
 由资源生产节点负责 step 前自检、跳帧、topology 变化、清理和重建。

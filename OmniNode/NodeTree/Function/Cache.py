@@ -327,7 +327,7 @@ def softFollow(
 
     if cached_frame is not None and current_frame != cached_frame + 1:
         return (
-            None,
+            _OmniCache(None),
             zero_vector.copy(),
             zero_vector.copy(),
         )
@@ -421,7 +421,7 @@ def softFollow(
     }
 
     return (
-        next_cache_state,
+        _OmniCache(next_cache_state),
         next_position,
         next_rotation_euler,
     )

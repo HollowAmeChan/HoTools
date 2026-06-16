@@ -159,7 +159,7 @@ def _run_mesh_cloth_mc2_node(
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
             _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing)
-        return None, obj, vertex_count, 0
+        return _OmniCache(None), obj, vertex_count, 0
 
     if reset or not isinstance(state, dict):
         stage_start = time.perf_counter() if timing is not None else None
@@ -190,7 +190,7 @@ def _run_mesh_cloth_mc2_node(
         next_state = dict(state)
         next_state["frame"] = current_frame
         _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
-        return next_state, obj, vertex_count, constraint_count
+        return _OmniCache(next_state), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
     collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
@@ -226,7 +226,7 @@ def _run_mesh_cloth_mc2_node(
     if timing is not None:
         _add_timing(timing, "write", time.perf_counter() - stage_start)
         _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
-    return next_state, obj, vertex_count, constraint_count
+    return _OmniCache(next_state), obj, vertex_count, constraint_count
 
 
 @omni(

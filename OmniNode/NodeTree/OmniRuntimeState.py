@@ -4,8 +4,150 @@ import uuid
 _COMMITTED_CACHE = {}
 
 
-def _snapshot_value(value):
+class OmniCacheWriteIntent:
+    def __init__(self, mode, value):
+        self.mode = str(mode or "replace")
+        self.value = value
+
+
+def cache_replace(value):
+    return OmniCacheWriteIntent("replace", value)
+
+
+def cache_mutate(value):
+    return OmniCacheWriteIntent("mutate", value)
+
+
+def _is_write_intent(value):
+    return isinstance(value, OmniCacheWriteIntent)
+
+
+def _decode_write_intent(value):
+    if _is_write_intent(value):
+        return value
+    return cache_replace(value)
+
+
+def _intent_visible_value(value):
+    if _is_write_intent(value):
+        return value.value
+    return value
+
+
+def cache_visible_value(value):
+    return _intent_visible_value(value)
+
+
+def _has_cache_dispose(value):
+    return callable(getattr(value, "omni_cache_dispose", None))
+
+
+def _has_cache_debug_snapshot(value):
+    return callable(getattr(value, "omni_cache_debug_snapshot", None))
+
+
+def _collect_cache_value_ids(value, result=None, seen=None):
+    value = _intent_visible_value(value)
+    if result is None:
+        result = set()
+    if seen is None:
+        seen = set()
+
     if value is None or isinstance(value, (str, bool, int, float)):
+        return result
+
+    value_id = id(value)
+    if value_id in seen:
+        return result
+    seen.add(value_id)
+    result.add(value_id)
+
+    if isinstance(value, dict):
+        for item in value.values():
+            _collect_cache_value_ids(item, result, seen)
+        return result
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _collect_cache_value_ids(item, result, seen)
+
+    return result
+
+
+def _committed_value_ids():
+    result = set()
+    for values in _COMMITTED_CACHE.values():
+        for value in values.values():
+            _collect_cache_value_ids(value, result)
+    return result
+
+
+def _pending_replace_value_ids(run):
+    result = set()
+    for values in run.pending.values():
+        for intent in values.values():
+            intent = _decode_write_intent(intent)
+            if intent.mode == "replace":
+                _collect_cache_value_ids(intent.value, result)
+    return result
+
+
+def _dispose_cache_value(value, reason, seen=None, active_ids=None):
+    value = _intent_visible_value(value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return
+
+    if seen is None:
+        seen = set()
+
+    value_id = id(value)
+    if value_id in seen:
+        return
+    if active_ids and value_id in active_ids:
+        return
+    seen.add(value_id)
+
+    dispose_func = getattr(value, "omni_cache_dispose", None)
+    if callable(dispose_func):
+        dispose_func(str(reason or "dispose"))
+        return
+
+    if isinstance(value, dict):
+        for item in value.values():
+            _dispose_cache_value(item, reason, seen, active_ids)
+        return
+
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _dispose_cache_value(item, reason, seen, active_ids)
+
+
+def _dispose_pending_intent(intent, reason, active_ids=None, seen=None):
+    intent = _decode_write_intent(intent)
+    if intent.mode != "replace":
+        return
+    value = intent.value
+    _dispose_cache_value(value, reason, seen, active_ids)
+
+
+def _debug_snapshot_value(value):
+    value = _intent_visible_value(value)
+    if _has_cache_debug_snapshot(value):
+        debug_func = getattr(value, "omni_cache_debug_snapshot", None)
+        try:
+            return debug_func()
+        except Exception:
+            return repr(value)
+    return _snapshot_value(value)
+
+
+def _snapshot_value(value):
+    value = _intent_visible_value(value)
+
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+
+    if _has_cache_dispose(value):
         return value
 
     if hasattr(value, "as_pointer"):
@@ -98,6 +240,7 @@ class RuntimeCacheRun:
     def __init__(self, root_tree):
         self.root_tree_key = _runtime_tree_key(root_tree)
         self.pending = {}
+        self.discarded_pending = []
         self.deleted_namespaces = set()
         self.deleted_keys = {}
         self.failed = False
@@ -141,13 +284,29 @@ def finish_run(context):
 
     run = context.run
     if run.failed:
+        seen = set()
+        active_ids = _committed_value_ids()
+        for intent in run.discarded_pending:
+            _dispose_pending_intent(intent, "run_failed", active_ids=active_ids, seen=seen)
+        for values in run.pending.values():
+            for intent in values.values():
+                _dispose_pending_intent(intent, "run_failed", active_ids=active_ids, seen=seen)
         run.pending.clear()
+        run.discarded_pending.clear()
         run.deleted_namespaces.clear()
         run.deleted_keys.clear()
         return
 
+    pending_active_ids = _pending_replace_value_ids(run)
+    disposed_seen = set()
+
     for namespace in run.deleted_namespaces:
-        _COMMITTED_CACHE.pop(namespace, None)
+        values = _COMMITTED_CACHE.pop(namespace, None)
+        if values:
+            active_ids = _committed_value_ids()
+            active_ids.update(pending_active_ids)
+            for value in values.values():
+                _dispose_cache_value(value, "clear_namespace", disposed_seen, active_ids=active_ids)
 
     for namespace, keys in run.deleted_keys.items():
         if namespace in run.deleted_namespaces:
@@ -156,15 +315,43 @@ def finish_run(context):
         if not target:
             continue
         for key in keys:
-            target.pop(key, None)
+            value = target.pop(key, None)
+            active_ids = _committed_value_ids()
+            active_ids.update(pending_active_ids)
+            _dispose_cache_value(value, "delete", disposed_seen, active_ids=active_ids)
         if not target:
             _COMMITTED_CACHE.pop(namespace, None)
 
+    active_ids = _committed_value_ids()
+    active_ids.update(pending_active_ids)
+
+    for intent in run.discarded_pending:
+        _dispose_pending_intent(intent, "discard_pending", active_ids=active_ids, seen=disposed_seen)
+
     for namespace, values in run.pending.items():
         target = _COMMITTED_CACHE.setdefault(namespace, {})
-        for key, value in values.items():
-            target[key] = _snapshot_value(value)
+        for key, intent in values.items():
+            intent = _decode_write_intent(intent)
+            if intent.mode == "replace":
+                new_value = _snapshot_value(intent.value)
+                old_value = target.get(key)
+                target[key] = new_value
+                if old_value is not None and old_value is not new_value:
+                    active_ids = _committed_value_ids()
+                    active_ids.update(pending_active_ids)
+                    _dispose_cache_value(old_value, "replace", seen=disposed_seen, active_ids=active_ids)
+                continue
+            if intent.mode == "mutate":
+                if key not in target:
+                    raise RuntimeError("cache_mutate target is missing from committed cache")
+                old_value = target[key]
+                if old_value is not intent.value:
+                    raise RuntimeError("cache_mutate value is not the committed cache owner")
+                target[key] = old_value
+                continue
+            raise RuntimeError(f"unknown cache write mode: {intent.mode}")
     run.pending.clear()
+    run.discarded_pending.clear()
     run.deleted_namespaces.clear()
     run.deleted_keys.clear()
 
@@ -192,8 +379,30 @@ def write_cache(context, key, value):
         return
 
     namespace = context.namespace()
+    intent = _decode_write_intent(value)
+    if intent.mode not in {"replace", "mutate"}:
+        raise ValueError(f"unknown cache write mode: {intent.mode}")
+
+    if intent.mode == "mutate":
+        if namespace in context.run.deleted_namespaces:
+            raise ValueError("cache_mutate cannot target a namespace scheduled for deletion")
+        if key in context.run.deleted_keys.get(namespace, set()):
+            raise ValueError("cache_mutate cannot target a key scheduled for deletion")
+        namespace_values = _COMMITTED_CACHE.get(namespace)
+        if namespace_values is None or key not in namespace_values:
+            raise ValueError("cache_mutate target is missing from committed cache")
+        if namespace_values[key] is not intent.value:
+            raise ValueError("cache_mutate value is not the committed cache owner")
+
     values = context.run.pending.setdefault(namespace, {})
-    values[key] = _snapshot_value(value)
+    previous = values.get(key)
+    if previous is not None:
+        previous_intent = _decode_write_intent(previous)
+        if previous_intent.mode == "replace" and previous_intent.value is not intent.value:
+            context.run.discarded_pending.append(previous_intent)
+    if intent.mode == "replace":
+        intent = cache_replace(_snapshot_value(intent.value))
+    values[key] = intent
 
 
 def snapshot_cache(context):
@@ -209,8 +418,11 @@ def snapshot_cache(context):
     for key in context.run.deleted_keys.get(namespace, set()):
         values.pop(key, None)
 
-    values.update(context.run.pending.get(namespace, {}))
-    return {key: _snapshot_value(value) for key, value in values.items()}
+    values.update({
+        key: _intent_visible_value(value)
+        for key, value in context.run.pending.get(namespace, {}).items()
+    })
+    return {key: _debug_snapshot_value(value) for key, value in values.items()}
 
 
 def delete_cache(context, key):
@@ -222,7 +434,9 @@ def delete_cache(context, key):
 
     pending_values = context.run.pending.get(namespace)
     if pending_values is not None:
-        pending_values.pop(key, None)
+        pending_value = pending_values.pop(key, None)
+        if pending_value is not None:
+            context.run.discarded_pending.append(pending_value)
         if not pending_values:
             context.run.pending.pop(namespace, None)
 
@@ -236,18 +450,31 @@ def clear_namespace(context):
 
     namespace = context.namespace()
     visible_before = snapshot_cache(context)
-    context.run.pending.pop(namespace, None)
+    pending_values = context.run.pending.pop(namespace, None)
+    if pending_values:
+        context.run.discarded_pending.extend(pending_values.values())
     context.run.deleted_keys.pop(namespace, None)
     context.run.deleted_namespaces.add(namespace)
     return len(visible_before)
 
 
 def clear_all():
+    seen = set()
+    for values in _COMMITTED_CACHE.values():
+        for value in values.values():
+            _dispose_cache_value(value, "clear_all", seen)
     _COMMITTED_CACHE.clear()
 
 
 def clear_root_tree(tree):
     root_key = _runtime_tree_key(tree)
+    removed_values = []
     for namespace in list(_COMMITTED_CACHE.keys()):
         if namespace[0] == root_key:
-            del _COMMITTED_CACHE[namespace]
+            values = _COMMITTED_CACHE.pop(namespace, None)
+            if values:
+                removed_values.extend(values.values())
+    active_ids = _committed_value_ids()
+    seen = set()
+    for value in removed_values:
+        _dispose_cache_value(value, "clear_root_tree", seen, active_ids=active_ids)

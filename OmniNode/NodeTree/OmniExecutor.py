@@ -482,10 +482,11 @@ class OmniExecutor:
                         observer.error(step_index, f"ERROR in cache write @ {op.node.name}: {exc}")
                         break
 
+                output_value = OmniRuntimeState.cache_visible_value(value)
                 for reg in op.outputs:
-                    registers[reg] = value
+                    registers[reg] = output_value
 
-                observer.cache_write(step_index, op, cache_key, enabled, value)
+                observer.cache_write(step_index, op, cache_key, enabled, output_value)
                 observer.step_end(step_start, stage)
                 continue
 

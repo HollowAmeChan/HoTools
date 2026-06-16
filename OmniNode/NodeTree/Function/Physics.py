@@ -1886,7 +1886,7 @@ def _run_mesh_xpbd_node(
                 backend_tag,
                 timing,
             )
-        return None, obj, vertex_count, 0
+        return _OmniCache(None), obj, vertex_count, 0
 
     if reset or not isinstance(state, dict):
         stage_start = time.perf_counter() if timing is not None else None
@@ -1918,7 +1918,7 @@ def _run_mesh_xpbd_node(
             backend_tag,
             timing,
         )
-        return next_state, obj, vertex_count, constraint_count
+        return _OmniCache(next_state), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
     backend = _MeshPhysicsCppBackend if use_cpp else _MeshPhysics
@@ -1963,7 +1963,7 @@ def _run_mesh_xpbd_node(
             backend_tag,
             timing,
         )
-    return next_state, obj, vertex_count, constraint_count
+    return _OmniCache(next_state), obj, vertex_count, constraint_count
 
 
 @omni(
@@ -2198,7 +2198,7 @@ def springBoneVRM(
             expected_bones.add(bone_name)
 
     if not settings:
-        return cache_state, affected_bones, armature_obj, 0, 0
+        return _OmniCache(cache_state), affected_bones, armature_obj, 0, 0
 
     topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
     state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
@@ -2209,10 +2209,10 @@ def springBoneVRM(
             last_frame = int(state.get("frame"))
             if current_frame not in {last_frame, last_frame + 1}:
                 _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-                return None, affected_bones, armature_obj, len(settings), 0
+                return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
         except Exception:
             _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-            return None, affected_bones, armature_obj, len(settings), 0
+            return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
 
     if needs_reset:
         _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
@@ -2220,7 +2220,7 @@ def springBoneVRM(
 
     if not enabled:
         state["frame"] = current_frame
-        return state, affected_bones, armature_obj, len(settings), 0
+        return _OmniCache(state), affected_bones, armature_obj, len(settings), 0
 
     collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
     colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
@@ -2375,7 +2375,7 @@ def springBoneVRM(
     state["frame"] = current_frame
     state["chains"] = chains_state
     armature_obj.update_tag()
-    return state, affected_bones, armature_obj, len(settings), len(colliders)
+    return _OmniCache(state), affected_bones, armature_obj, len(settings), len(colliders)
 
 
 @omni(
@@ -2702,7 +2702,7 @@ def springBoneBase(
 
     if cached_frame is not None and current_frame != cached_frame + 1:
         _BonePhysics.restore_initial_pose(armature_obj, cache_state)
-        return None, affected_bones, armature_obj
+        return _OmniCache(None), affected_bones, armature_obj
 
     if not _BonePhysics.spring_cache_matches(cache_state, bone_chain):
         cache_state = _BonePhysics.build_spring_cache(bone_chain)
@@ -2710,7 +2710,7 @@ def springBoneBase(
     if not enabled:
         next_cache = dict(cache_state)
         next_cache["frame"] = int(current_frame)
-        return next_cache, affected_bones, armature_obj
+        return _OmniCache(next_cache), affected_bones, armature_obj
 
     dt = _BonePhysics.scene_delta_time()
     stiffness_force = max(float(stiffness_force), 0.0)
@@ -2805,7 +2805,7 @@ def springBoneBase(
     next_cache["frame"] = int(current_frame)
     next_cache["joints"] = next_joints
     armature_obj.update_tag()
-    return next_cache, affected_bones, armature_obj
+    return _OmniCache(next_cache), affected_bones, armature_obj
 
 
 @omni(
