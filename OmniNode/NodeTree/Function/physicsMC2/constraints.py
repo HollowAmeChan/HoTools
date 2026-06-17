@@ -398,9 +398,9 @@ def _from_to_rotation(source: np.ndarray, target: np.ndarray, ratio: float = 1.0
     src = math_utils.safe_normal_np(source, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
     dst = math_utils.safe_normal_np(target, src)
     dot = max(-1.0, min(1.0, float(np.dot(src, dst))))
-    if dot > 1.0 - 1.0e-6 or ratio <= MC2SystemConstants.EPSILON:
+    if dot > 1.0 - MC2SystemConstants.EPSILON or ratio <= MC2SystemConstants.EPSILON:
         return np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
-    if dot < -1.0 + 1.0e-6:
+    if dot < -1.0 + MC2SystemConstants.EPSILON:
         helper = (
             np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
             if float(src[0]) > float(src[1]) and float(src[0]) > float(src[2])

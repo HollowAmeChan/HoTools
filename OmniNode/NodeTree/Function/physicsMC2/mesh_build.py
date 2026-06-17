@@ -12,6 +12,7 @@ import numpy as np
 from . import math_utils
 from .constants import (
     MC2_ATTR_FIXED,
+    MC2_ATTR_INVALID,
     MC2_ATTR_MOTION,
     MC2_ATTR_MOVE,
     MC2_DISTANCE_TYPE_BEND_DISTANCE_APPROX,
@@ -227,6 +228,127 @@ def build_edge_constraints(
     delta = rest_positions[edge_i] - rest_positions[edge_j]
     rest = np.ascontiguousarray(np.linalg.norm(delta, axis=1), dtype=np.float32)
     return edge_i, edge_j, rest
+
+
+def _triangle_normal(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    normal = np.cross(p1 - p0, p2 - p0)
+    length = float(np.linalg.norm(normal))
+    if length <= MC2SystemConstants.EPSILON:
+        return np.zeros(3, dtype=np.float32)
+    return np.asarray(normal / length, dtype=np.float32)
+
+
+def append_shear_distance_constraints(
+    edge_i: np.ndarray,
+    edge_j: np.ndarray,
+    edge_rest: np.ndarray,
+    edge_type: np.ndarray,
+    triangles: np.ndarray,
+    rest_positions: np.ndarray,
+    attributes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Append MC2-style same-surface shear links between opposite vertices of triangle pairs."""
+    if len(triangles) == 0:
+        return edge_i, edge_j, edge_rest, edge_type
+
+    edge_to_triangles = {}
+    for triangle in np.ascontiguousarray(triangles, dtype=np.int32):
+        a, b, c = (int(triangle[0]), int(triangle[1]), int(triangle[2]))
+        for u, v in ((a, b), (b, c), (c, a)):
+            key = (u, v) if u < v else (v, u)
+            edge_to_triangles.setdefault(key, []).append((a, b, c))
+
+    connected = set()
+    for i, j in zip(edge_i, edge_j):
+        a = int(i)
+        b = int(j)
+        if a == b:
+            continue
+        connected.add((a, b) if a < b else (b, a))
+
+    shear_i = []
+    shear_j = []
+    shear_rest = []
+    attr = np.ascontiguousarray(attributes, dtype=np.uint8)
+    positions = np.ascontiguousarray(rest_positions, dtype=np.float32)
+    same_surface_cos = float(np.cos(np.deg2rad(20.0)))
+
+    for edge, triangle_list in edge_to_triangles.items():
+        if len(triangle_list) < 2:
+            continue
+        p1 = positions[int(edge[0])]
+        p2 = positions[int(edge[1])]
+        edge_length = float(np.linalg.norm(p1 - p2))
+        if edge_length < MC2SystemConstants.EPSILON:
+            continue
+
+        for first_index in range(len(triangle_list) - 1):
+            tri1 = triangle_list[first_index]
+            opposite1 = next((v for v in tri1 if v not in edge), -1)
+            if opposite1 < 0:
+                continue
+            p3 = positions[int(opposite1)]
+            attr1 = int(attr[int(opposite1)])
+            if attr1 & MC2_ATTR_INVALID:
+                continue
+            normal1 = _triangle_normal(p1, p2, p3)
+            if float(np.dot(normal1, normal1)) <= MC2SystemConstants.EPSILON:
+                continue
+
+            for next_index in range(first_index + 1, len(triangle_list)):
+                tri2 = triangle_list[next_index]
+                opposite2 = next((v for v in tri2 if v not in edge), -1)
+                if opposite2 < 0 or opposite1 == opposite2:
+                    continue
+                attr2 = int(attr[int(opposite2)])
+                if attr2 & MC2_ATTR_INVALID:
+                    continue
+                if (
+                    (attr1 & MC2_ATTR_MOVE) == 0
+                    and (attr2 & MC2_ATTR_MOVE) == 0
+                ):
+                    continue
+
+                p4 = positions[int(opposite2)]
+                normal2 = _triangle_normal(p1, p2, p4)
+                if float(np.dot(normal2, normal2)) <= MC2SystemConstants.EPSILON:
+                    continue
+                if abs(float(np.dot(normal1, normal2))) < same_surface_cos:
+                    continue
+
+                diagonal_length = float(np.linalg.norm(p3 - p4))
+                if abs(diagonal_length / edge_length - 1.0) > 0.3:
+                    continue
+
+                key = (
+                    (int(opposite1), int(opposite2))
+                    if int(opposite1) < int(opposite2)
+                    else (int(opposite2), int(opposite1))
+                )
+                if key in connected:
+                    continue
+                connected.add(key)
+                shear_i.append(int(opposite1))
+                shear_j.append(int(opposite2))
+                shear_rest.append(diagonal_length)
+
+    if not shear_i:
+        return edge_i, edge_j, edge_rest, edge_type
+
+    return (
+        np.ascontiguousarray(np.concatenate((edge_i, np.asarray(shear_i, dtype=np.int32))), dtype=np.int32),
+        np.ascontiguousarray(np.concatenate((edge_j, np.asarray(shear_j, dtype=np.int32))), dtype=np.int32),
+        np.ascontiguousarray(np.concatenate((edge_rest, np.asarray(shear_rest, dtype=np.float32))), dtype=np.float32),
+        np.ascontiguousarray(
+            np.concatenate(
+                (
+                    edge_type,
+                    np.full(len(shear_i), MC2_DISTANCE_TYPE_HORIZONTAL, dtype=np.int32),
+                )
+            ),
+            dtype=np.int32,
+        ),
+    )
 
 
 def build_bend_constraints(

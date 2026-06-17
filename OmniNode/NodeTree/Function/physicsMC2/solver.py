@@ -421,7 +421,13 @@ def solve_meshcloth(
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
-    next_state["display_positions"] = np.ascontiguousarray(positions.copy(), dtype=np.float32)
+    display_positions = _calc_display_positions(
+        positions,
+        real_velocity,
+        state["root_indices"],
+        frame_dt,
+    )
+    next_state["display_positions"] = np.ascontiguousarray(display_positions, dtype=np.float32)
     next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
     next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
     next_state["velocity_positions"] = np.ascontiguousarray(velocity_positions, dtype=np.float32)
@@ -465,3 +471,33 @@ def solve_meshcloth(
     if timing is not None:
         _add_timing(timing, "post_pack", time.perf_counter() - stage_start)
     return next_state
+
+
+def _calc_display_positions(
+    positions: np.ndarray,
+    real_velocity: np.ndarray,
+    root_indices: np.ndarray,
+    frame_dt: float,
+) -> np.ndarray:
+    display_positions = np.ascontiguousarray(positions, dtype=np.float32).copy()
+    if frame_dt <= MC2SystemConstants.EPSILON:
+        return display_positions
+
+    future_positions = display_positions + np.ascontiguousarray(real_velocity, dtype=np.float32) * float(frame_dt)
+
+    roots = np.ascontiguousarray(root_indices, dtype=np.int32)
+    for vertex_index in range(len(future_positions)):
+        root_index = int(roots[vertex_index]) if vertex_index < len(roots) else -1
+        if root_index < 0 or root_index >= len(future_positions):
+            continue
+        root_position = display_positions[root_index]
+        original_dist = float(np.linalg.norm(display_positions[vertex_index] - root_position))
+        clamp_dist = original_dist * float(MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION)
+        if clamp_dist <= MC2SystemConstants.EPSILON:
+            continue
+        delta = future_positions[vertex_index] - root_position
+        length = float(np.linalg.norm(delta))
+        if length > clamp_dist and length > MC2SystemConstants.EPSILON:
+            future_positions[vertex_index] = root_position + delta * (clamp_dist / length)
+
+    return np.ascontiguousarray(future_positions, dtype=np.float32)

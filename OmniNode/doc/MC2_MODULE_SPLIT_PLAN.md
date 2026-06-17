@@ -12,7 +12,8 @@
 | Python 包入口 | `physicsMC2/__init__.py` 直接作为 OmniNode 函数模块入口，导出 `meshClothMC2`。 | 已落地 |
 | 蓝本隔离 | 不改 `Physics.py`，SpringBone/XPBD 继续作为可对照蓝本。 | 固定 |
 | 碰撞 | 碰撞适配放在 `physicsMC2` 包内部，不抽公共碰撞文件。 | 已落地 |
-| 时间语义 | 使用 Blender 输出帧率换算真实时间；跳帧、倒放、同帧重复执行会恢复静态并清 cache。 | 已落地 |
+| 时间语义 | 刻意使用 Blender 输出帧率换算真实帧长；不复制 MC2 manager 的 wall-clock/catch-up/timeScale 体系。 | 已落地 |
+| Iterations | 保留 `iterations` 作为 Python/C++ 共享调度参数；当前 C++ parity 目标要复刻 Python 循环语义。 | 已落地 |
 | 参数曲线 | 当前 socket 传标量，内部保留 `ParamSlot`/sample 形式，后续可扩成曲线输入。 | 部分完成 |
 | 自碰撞 | 当前不实现，只保留扩展空间。 | 预留 |
 | C++ 后端 | Python 是行为参考；C++ 使用同一套 state ABI 对齐。 | 准备中 |
@@ -22,28 +23,28 @@
 | 文件 | 当前职责 | 完成度 | C++ 对齐备注 |
 | --- | --- | --- | --- |
 | `__init__.py` | OmniNode 节点入口、cache 生命周期、reset/jump-frame、碰撞快照收集、shape key 写回。 | 已落地 | C++ 不关心节点，只接收 Python 打包后的数组。 |
-| `constants.py` | cache kind/version、属性位、MC2 系统常量、distance/bend 类型、曲线预留参数名。 | 已落地 | 当前 `MC2_SOLVER_VERSION = 10`。 |
+| `constants.py` | cache kind/version、属性位、MC2 系统常量、distance/bend 类型、曲线预留参数名。 | 已落地 | 当前 `MC2_SOLVER_VERSION = 11`；`EPSILON = 1e-8` 对齐 MC2。 |
 | `params.py` | 标量参数与按 depth 采样入口。 | 已落地 | 曲线表也从这里接入。 |
 | `math_utils.py` | numpy/mathutils 转换、向量安全归一化、hash、最近点等基础函数。 | 已落地 | 可迁移为 C++ math helper。 |
 | `blender_io.py` | Blender 帧时间、substep damping、shape key I/O、local/world 转换。 | 已落地 | Python 独有层，C++ 不访问 Blender。 |
 | `collision.py` | HoTools 碰撞组快照、sphere/capsule point collision、collision friction/normal、native collider arrays。 | 已落地 | C++ 复刻 collision projector 和数组视图，不抽公共 Python 模块。 |
-| `mesh_build.py` | mesh 连通性、pin/weight、structural distance、dihedral/volume bending、bend fallback 数据构建。 | 已落地 | 第一版 C++ 不重建 mesh，只消费数组。 |
+| `mesh_build.py` | mesh 连通性、pin/weight、structural distance、MC2 shear 横向连接、dihedral/volume bending、bend fallback 数据构建。 | 已落地 | 第一版 C++ 不重建 mesh，只消费数组。 |
 | `baseline.py` | MeshCloth 固定点出发的父子 baseline、depth/root、local pose、step basic pose。 | 已落地 | BoneCloth 后续替换 builder，求解层消费同一套 baseline 数组。 |
 | `inertia.py` | MC2 风格 center inertia、movement smoothing、速度限制、teleport、depth inertia、centrifugal。 | 部分偏高 | C++ 应单独拆 `mc2_inertia.cpp`。 |
 | `state.py` | cache state 构建、schema guard、object transform 同步、ABI 字段维护。 | 已落地 | state 是 C++ ABI 真源。 |
 | `constraints.py` | signed distance、angle、triangle bending、tether、motion/backstop、post 等数组约束函数。 | 已落地 | C++ 逐项复刻这些 projector。 |
-| `solver.py` | MeshCloth Python 求解调度、substep/iteration、inertia、velocity_positions、post 语义。 | 已落地 | C++ MeshCloth solver 的直接行为参考。 |
+| `solver.py` | MeshCloth Python 求解调度、substep/iteration、inertia、velocity_positions、display future prediction、post 语义。 | 已落地 | C++ MeshCloth solver 的直接行为参考。 |
 | `native_bridge.py` | native 可用性检测、state/params/colliders/inertia ABI view 打包。 | 部分完成 | 当前只打包和记录状态，尚未调用 C++ 求解。 |
 
 ## State / ABI 工作表
 
 | 域 | 当前字段 | 状态 | 备注 |
 | --- | --- | --- | --- |
-| schema | `kind`, `solver_version`, `vertex_count`, object/mesh/config keys | 已落地 | 当前版本 `10`。 |
-| particle | `next_positions`, `old_positions`, `velocity_positions`, `base_positions`, `rest_world_positions`, `display_positions`, `velocity`, `real_velocity`, `friction`, `static_friction`, `collision_normals` | 已落地 | world-space 递推，写回时转 local。 |
+| schema | `kind`, `solver_version`, `vertex_count`, object/mesh/config keys | 已落地 | 当前版本 `11`。 |
+| particle | `next_positions`, `old_positions`, `velocity_positions`, `base_positions`, `rest_world_positions`, `display_positions`, `velocity`, `real_velocity`, `friction`, `static_friction`, `collision_normals` | 已落地 | world-space 递推；`display_positions` 做 MC2 风格未来预测与 root clamp，写回时转 local。 |
 | pose/baseline | `base_normals`, `base_rotations`, `step_basic_positions`, `step_basic_rotations`, `vertex_local_positions`, `vertex_local_rotations` | 已落地 | Angle/Inertia/BoneCloth 共用设施。 |
 | attributes | `attributes`, `depths`, `inv_masses`, `root_indices`, `parent_indices`, `root_rest_lengths`, `baseline_start/count/data/flags`, `tether_rest_lengths` | 已落地 | MeshCloth/BoneCloth 未来共用。 |
-| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 已落地 | `distance_rest < 0` 表示 horizontal；未补 MC2 shear 横向连接。 |
+| structural distance | `edge_i`, `edge_j`, `edge_rest`, `edge_type`, `distance_start/count/data`, `distance_rest` | 已落地 | `distance_rest < 0` 表示 horizontal；已包含 MeshCloth 共享边 shear 横向连接。 |
 | triangle bending | `dihedral_pairs`, `dihedral_rest_angles`, `dihedral_signs`, `volume_pairs`, `volume_rest`, `bend_kind`, `bend_distance_*` | 已落地 | 主路径为 DirectionDihedralAngle + Volume；fallback 保留。 |
 | inertia | `inertia_state` 及 native `inertia_*` fields | 已落地 | 包含 component/world center、shift pivot、smoothing velocity、step/inertia vector/rotation、teleport state。 |
 | collision | `collision_radii`, `collided_by_groups`, native collider arrays | 已落地 | 使用 HoTools 碰撞组，不复制 MC2 显式 collider list。 |
@@ -75,4 +76,4 @@
 | Python MeshCloth 行为 | 已支持跳帧保护、世界坐标递推、HoTools 碰撞组、baseline/depth/root、signed distance、Angle、dihedral/volume bending、tether、motion/backstop、inertia、post。 | 用小场景继续校准 MC2 手感差异。 |
 | native ABI | 已能从 Python state 打包 state/params/baseline/colliders/inertia view。 | 做 C++ binding smoke，先验证 buffer 合同。 |
 | C++ 求解 | 尚未开始正式求解实现。 | 按 Python 当前行为逐项迁移。 |
-| 高保真差异 | shear 横向连接、曲线 UI、自碰撞、BoneCloth、anchor/sync/negative scale、完整 velocityWeight 尚未完成。 | 按风险逐项补，优先不破坏当前接口。 |
+| 高保真差异 | 曲线 UI、自碰撞、BoneCloth、anchor/sync/negative scale、完整 velocityWeight、Unity render interpolation/blendWeight 尚未完成。 | 按风险逐项补，优先不破坏当前接口。 |

@@ -62,6 +62,15 @@ def build_state(
     inv_masses = calc_inverse_masses(attributes, depths, friction)
     edge_i, edge_j, edge_rest = mesh_build.build_edge_constraints(edges, rest_world)
     edge_type = mesh_build.structural_constraint_types(edge_i, edge_j, parent_indices)
+    edge_i, edge_j, edge_rest, edge_type = mesh_build.append_shear_distance_constraints(
+        edge_i,
+        edge_j,
+        edge_rest,
+        edge_type,
+        triangles,
+        rest_world,
+        attributes,
+    )
     bend_i, bend_j, bend_rest, triangle_pairs = mesh_build.build_bend_constraints(triangles, rest_world)
     bend_type = mesh_build.bend_distance_constraint_types(bend_i)
     (
@@ -208,7 +217,7 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     next_state["object_matrix_world"] = new_world
 
     if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
-        next_state["edge_rest"] = mesh_build.constraint_lengths(rest_world, next_state["edge_i"], next_state["edge_j"])
+        edge_i, edge_j, edge_rest = mesh_build.build_edge_constraints(next_state["edges"], rest_world)
         baseline_data = baseline.build_mesh_baseline(
             next_state["edges"],
             rest_world,
@@ -228,11 +237,24 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
         next_state["vertex_local_rotations"] = baseline_data["vertex_local_rotations"]
         next_state["step_basic_positions"] = baseline_data["step_basic_positions"]
         next_state["step_basic_rotations"] = baseline_data["step_basic_rotations"]
-        next_state["edge_type"] = mesh_build.structural_constraint_types(
-            next_state["edge_i"],
-            next_state["edge_j"],
+        edge_type = mesh_build.structural_constraint_types(
+            edge_i,
+            edge_j,
             next_state["parent_indices"],
         )
+        edge_i, edge_j, edge_rest, edge_type = mesh_build.append_shear_distance_constraints(
+            edge_i,
+            edge_j,
+            edge_rest,
+            edge_type,
+            next_state["triangles"],
+            rest_world,
+            next_state["attributes"],
+        )
+        next_state["edge_i"] = edge_i
+        next_state["edge_j"] = edge_j
+        next_state["edge_rest"] = edge_rest
+        next_state["edge_type"] = edge_type
         bend_i = next_state.get("bend_distance_i", next_state["bend_i"])
         bend_j = next_state.get("bend_distance_j", next_state["bend_j"])
         next_state["bend_distance_rest"] = mesh_build.constraint_lengths(rest_world, bend_i, bend_j)
@@ -260,10 +282,10 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
             next_state["distance_rest"],
         ) = mesh_build.build_neighbor_table(
             int(next_state["vertex_count"]),
-            next_state["edge_i"],
-            next_state["edge_j"],
-            next_state["edge_rest"],
-            next_state["edge_type"],
+            edge_i,
+            edge_j,
+            edge_rest,
+            edge_type,
         )
         (
             next_state["bend_start"],
@@ -440,7 +462,7 @@ def state_matches(
         count_i = int(count)
         if start_i < 0 or count_i < 0 or start_i + count_i > len(baseline_data):
             return False
-    if len(state["edge_i"]) != len(edges):
+    if len(state["edge_i"]) < len(edges):
         return False
     if len(state["bend_i"]) != len(triangle_pairs):
         return False
