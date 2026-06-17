@@ -1,0 +1,144 @@
+# OmniNode MC2 设计目标与工作表
+更新日期：2026-06-17
+
+本文合并原来的 `MC2_MODULE_SPLIT_PLAN.md`、`MC2_PYTHON_REPLICATION_STATUS.md`、`MC2_SOLVER_IMPLEMENTATION_PLAN.md`。后续 MC2 相关状态只维护这一份文档。
+
+MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`  
+HoTools 实现根目录：`OmniNode/NodeTree/Function/physicsMC2`，native 后端在 `_native`
+
+## 判定口径
+
+| 术语 | 含义 |
+| --- | --- |
+| 完美对齐 | 只表示“当前 HoTools 支持的输入域和默认/已暴露参数域内，公式、常量、执行含义与 MC2 对应源码一致或等价”。如果 MC2 额外依赖 TeamData、Unity transform、render interpolation、job chunk、BoneCloth、自碰撞等未覆盖上下文，不标为完美对齐。 |
+| 高度对齐 | 数学核心和主要常量已对齐，但仍缺少 MC2 的部分上下文、scale/curve/frame 语义或少量边界分支。 |
+| 部分对齐 | 当前效果可用，并且复刻了主要行为，但 MC2 源码中仍有明确未实现分支。 |
+| 模式不同 | 架构或调度模式刻意不同，不能用“完美/不完美”直接判断，只描述两边模式和边界。 |
+| 未做 | 尚未实现，但后续可能需要。 |
+| 缓做 | 有价值，但不是当前 MeshCloth/C++ 对比节点的阻塞项。 |
+| 不做 | 与当前 Blender/OmniNode 目标冲突，或成本大于收益，明确不实现。 |
+| 额外做 | MC2 没有同形态需求，但为了 Blender/OmniNode/C++ parity 需要额外实现。 |
+
+当前优先顺序是：先保证 `meshClothMC2` Python reference 稳定，再让 `meshClothMC2Cpp` 对齐 Python，最后逐项提高与 MC2 源码的等价度。
+
+## 设计与目标大纲
+
+| 主题 | 当前目标/边界 | 状态 |
+| --- | --- | --- |
+| 第一目标 | 先做 MeshCloth，且输入 mesh 就是用户准备好的低模代理。 | 已落地 |
+| 后续目标 | BoneCloth 后续接入，但复用同一套参数、state、baseline、约束、native ABI。 | 缓做 |
+| Python 后端 | `meshClothMC2` 是行为参考，不是临时草稿。 | 已落地 |
+| C++ 后端 | `meshClothMC2Cpp` 独立节点用于对比；复用 Python 节点的 Blender/cache/collider/writeback 层，只把整帧 solver loop 下沉到 `hotools_native.solve_meshcloth_mc2`。 | 已落地 |
+| 运行空间 | solver state 内部以 world-space particle state 递推；节点边界负责 object local/world 转换和 shape key 写回。 | 已落地 |
+| 时间系统 | 刻意使用 Blender 输出帧率计算真实帧长：`frame_dt = fps_base / fps`，`step_dt = frame_dt / substeps`。不复制 MC2 manager 的 wall-clock/catch-up/timeScale。 | 模式不同 |
+| Iterations | 保留为 Python/C++ 共享调度参数。当前不复制 MC2 job/chunk 体系，但 C++ 必须对齐 Python 循环语义。 | 已落地 |
+| 碰撞系统 | 继续使用 HoTools/OmniNode 碰撞组；MC2 适配逻辑只放在 `physicsMC2` 包内，不抽公共碰撞文件，不改 `Physics.py` 蓝本。 | 模式不同 |
+| 参数曲线 | 节点当前传标量；内部保留 `ParamSlot`/sample 结构，后续可以接 depth curve。 | 部分完成 |
+| 全局 TeamData | 不直接搬 MC2 全局 TeamManager。建议后续把当前 per-node cache 收敛成 TeamState-like schema，而不是做全局单例。 | 缓做 |
+
+## 运行调度对照
+
+| 阶段 | MC2 模式/源码 | HoTools 模式/源码 | 对齐判断 |
+| --- | --- | --- | --- |
+| Manager 入口 | `Runtime/Manager/Cloth/ClothManager.cs`：PreSimulation、Time.FrameUpdate、AlwaysTeamUpdate、WorkBufferUpdate、ClothSimulationSchedule、PostSimulation。 | `physicsMC2/__init__.py`：OmniNode 函数调用、cache 校验、跳帧保护、collider 快照、shape key 写回。 | 模式不同。MC2 是全局 manager；HoTools 是 per-node evaluation。 |
+| Normal solver 顺序 | `Runtime/Manager/Simulation/SimulationManagerNormal.cs`：proxy pre、center/inertia/wind、每 step 里 tether/distance/angle/bending/collision/distance/motion/post，最后 display/proxy post。 | `physicsMC2/solver.py` 与 `_native/src/mc2.cpp::solve_meshcloth_mc2()`：baseline、substep inertia、predict/pin、tether、iteration distance/angle/bending/collision/distance/pin、motion、post、centrifugal、display。 | 高度对齐。核心约束顺序已接近 MC2 normal path；没有 MC2 proxy post、wind、split/self collision/job chunk。 |
+| Split/job 调度 | `Runtime/Manager/Simulation/SimulationManagerSplit.cs`：chunk 化调度、自碰撞和并行 job 分段。 | 当前 C++ core 是单 state view 的连续数组循环。 | 模式不同，缓做。Python/C++ parity 优先，job 化不是当前阻塞项。 |
+| 时间/插值 | `Runtime/Manager/Simulation/TimeManager.cs` 与 `TeamManager.cs`：simulationFrequency、updateCount、frameInterpolation、timeScale、velocityWeight。 | `blender_io.scene_delta_time()` 根据 Blender 输出设置给真实帧长；跳帧/倒放/同帧重复直接 reset 或复用 cache。 | 刻意不同。不按 MC2 wall-clock/catch-up 复制。 |
+| C++ 后端边界 | MC2 C# + Burst job 原生执行。 | Python 负责 Blender 对象、frame dt、collider 快照、frame/substep inertia runtime state 准备；C++ 负责数组热路径。 | 已落地。下一步是场景级 parity，不是继续扩散入口。 |
+
+## 约束与物理算法对齐表
+
+| 功能域 | MC2 源码 | HoTools Python | HoTools C++ | 对齐判断 | 差异/下一步 |
+| --- | --- | --- | --- | --- | --- |
+| 系统常量 | `Runtime/Define/SystemDefine.cs` | `constants.py` | `_native/src/mc2.cpp` | 完美对齐：当前关键常量 `Epsilon=1e-8`、display clamp `1.3`、tether width `0.3`、distance horizontal `0.5`、triangle bending max `120`、volume min `90`、angle limit iteration `3` 已一致。 | 后续新增常量必须同时更新 Python 和 C++。 |
+| MeshCloth 数据构建 | `Runtime/Cloth/ClothProcess.cs`、`Runtime/VirtualMesh/*`、`Editor/PreBuild/PreBuildDataCreation.cs` | `mesh_build.py`、`state.py` | C++ 只消费 Python 打包数组 | 模式不同。 | 不做 MC2 proxy 生成、减面、重拓扑、高低模 mapping。输入低模就是 solver mesh。 |
+| Baseline/step basic pose | `Runtime/Manager/VirtualMesh/VirtualMeshManager.cs`、`SimulationManagerNormal.cs` | `baseline.py` | `update_step_basic_pose_mc2()` | 高度对齐。MeshCloth parent/root/depth/local pose 和 step basic pose 已有 native-first 路径。 | BoneCloth builder、外部 base pose 动画输入还未实现。 |
+| Structural distance | `Runtime/Cloth/Constraints/DistanceConstraint.cs` | `constraints.project_neighbor_constraints()`、`mesh_build.py` | `project_neighbor_constraints_mc2()` | 高度对齐。支持 signed rest、horizontal 负 rest、horizontal stiffness、固定邻点质量、zero rest midpoint、velocity_positions attenuation。 | 不完美点：当前 `animation_pose_ratio` 固定为 0；MC2 可在初始 rest 和动画后 base pose 距离间 lerp；runtime scale/negative scale 语义未完整复制。 |
+| Shear 横向连接 | `DistanceConstraint.CreateData()` 中共享边 triangle pair 的 p3-p4 shear | `mesh_build.append_mc2_shear_links()` | distance projector 消费同一 neighbor table | 高度对齐。按 MC2 的同面 20 度、对角线比例 0.3、horizontal type 生成。 | 不复制 MC2 proxy 生命周期；只在当前输入 mesh 上直接生成。 |
+| Tether | `Runtime/Cloth/Constraints/TetherConstraint.cs` | `constraints.project_tether()` | `project_tether_mc2()` | 高度对齐。compression/stretch limit、stiffness width ramp、velocity attenuation 已对齐。 | 不完美点：MC2 每 step 用 `stepBasicPositionBuffer` 算当前基准距离；当前 HoTools 使用构建出的 root rest length，动态 base pose 场景仍需补。 |
+| Angle restoration/limit | `Runtime/Cloth/Constraints/AngleConstraint.cs` | `constraints.project_angle_constraints()` | `project_angle_constraints_mc2()` | 高度对齐。AngleLimitIteration=3、limit rot ratio、restoration rot ratio、velocity attenuation、0.2 restoration scale、parent/child correction 逻辑已复刻。 | 不完美点：gravity falloff 当前默认常量，未接完整 depth curve UI 和 MC2 TeamData gravityDot。需要链状/网格场景继续校准。 |
+| Triangle bending/volume | `Runtime/Cloth/Constraints/TriangleBendingConstraint.cs` | `mesh_build.build_dihedral_constraints()`、`constraints.project_triangle_bending()` | `project_triangle_bending_mc2()` | 高度对齐。DirectionDihedralAngle、Volume、固定点低逆质量、MaxAngle/VolumeMin/VolumeScale 已对齐。 | 不完美点：runtime scaleRatio、negativeScaleSign、MC2 proxy local/world 生命周期未完整复制。 |
+| Motion/max distance/backstop | `Runtime/Cloth/Constraints/MotionConstraint.cs` | `constraints.project_motion_constraint()` | `project_motion_constraints_mc2()` | 部分到高度对齐。max distance、backstop radius/distance、motion stiffness、velocity attenuation 已有。 | 不完美点：MC2 依赖 baseRot 和 normalAxis；当前主要用 base normal，外部 base pose rotation/axis 还未完整接入。 |
+| Collider point collision | `Runtime/Cloth/Constraints/ColliderCollisionConstraint.cs`、`Runtime/Manager/Simulation/ColliderManager.cs` | `collision.py` | `project_collisions_mc2()` | 部分对齐。sphere/capsule point collision、group filter、collision normal/friction、post friction 语义已可用。 | 不完美点：MC2 使用 old/next collider pose 形成推出平面；当前是 Blender 快照式 collider。plane、edge collision、BoneSpring soft collider 未实现。moving collider 是下一阶段重点。 |
+| Post velocity/friction | `SimulationManagerNormal.cs` post step | `constraints.apply_post_step()` | `apply_post_step_mc2()`/`solve_meshcloth_mc2()` 内 post | 高度对齐。velocity、real_velocity、old_positions、friction、static_friction、particle speed limit 已有。 | 不完美点：MC2 velocityWeight/stabilization、culling/skip/timeScale 相关分支未完整复制。 |
+| Inertia/teleport/centrifugal | `Runtime/Cloth/Constraints/InertiaConstraint.cs`、`Runtime/Manager/Team/TeamManager.cs`、`SimulationManagerNormal.cs` | `inertia.py` | `apply_substep_inertia_mc2()`、`apply_centrifugal_velocity_mc2()` | 部分对齐。world/local/depth inertia、movement smoothing、world/local speed limit、teleport reset/keep、particle speed limit、centrifugal 已有。 | 未完整实现 anchor inertia、sync team、negative scale teleport、velocityWeight、culling/skip/timeScale。frame/object runtime state 暂留 Python。 |
+| Display prediction | `SimulationManagerNormal.cs::SimulationCalcDisplayPosition()`、`Define.System.MaxDistanceRatioFutuerPrediction` | `solver._calc_display_positions()` | `calculate_display_positions_mc2()` | 高度对齐。`position + real_velocity * frame_dt` 和 root distance * 1.3 clamp 已实现。 | 不完美点：Unity render-time interpolation、blendWeight、proxy/render mapping 未复制。 |
+| Self collision | `Runtime/Cloth/Constraints/SelfCollisionConstraint.cs` | 仅保留 extension slot | 未实现 | 未做/缓做。 | 工作量大，先不阻塞 MeshCloth C++ parity。 |
+| Wind | `Runtime/Cloth/Wind/*`、`TeamManager.UpdateWind()` | 未实现 | 未实现 | 未做/缓做。 | 不是当前基础 cloth 约束和 C++ 对比节点阻塞项。 |
+| BoneSpring/BoneCloth | `SpringConstraint.cs`、BoneCloth builder 相关源码 | solver ABI 预留 | 未实现 | 缓做。 | MeshCloth 稳定后再接 I/O adapter 和 builder，solver 数组层尽量复用。 |
+
+严格结论：当前没有把完整 MC2 产品级行为“完美搬完”。在当前 MeshCloth 输入域内，distance/shear/tether/angle/bending/post/display 属于高对齐；collider、inertia、motion/backstop 因 MC2 manager/TeamData/base pose/collider pose 上下文缺失，不能标成全域完美。
+
+## 当前完成工作表
+
+| 类别 | 项目 | 文件 | 状态 |
+| --- | --- | --- | --- |
+| 节点入口 | Python reference `meshClothMC2` | `physicsMC2/__init__.py` | 已完成 |
+| 节点入口 | C++ 对比节点 `meshClothMC2Cpp` | `physicsMC2/__init__.py` | 已完成 |
+| Cache/schema | world-space runtime state、schema guard、jump/reset 保护 | `state.py`、`__init__.py` | 已完成 |
+| Blender I/O | shape key 写回、local/world 转换、scene dt | `blender_io.py` | 已完成 |
+| Mesh 构建 | pin/weight、distance neighbor table、MC2 shear、dihedral/volume、bend fallback | `mesh_build.py` | 已完成当前 MeshCloth 域 |
+| Baseline | parent/root/depth/local pose、step basic pose | `baseline.py`、`_native/src/mc2.cpp` | 已完成当前 MeshCloth 域 |
+| 约束 | distance、tether、angle、triangle bending、motion/backstop、post | `constraints.py`、`_native/src/mc2.cpp` | 已完成当前 Python/C++ parity 域 |
+| 碰撞 | HoTools sphere/capsule point collision、group filter、friction/normal、native collider arrays | `collision.py`、`_native/src/mc2.cpp` | 已完成当前 point collision 域 |
+| Inertia | world/local/depth inertia、movement smoothing、teleport、centrifugal | `inertia.py`、`_native/src/mc2.cpp` | 部分完成 |
+| Native bridge | buffer 校验、state/params/collider/inertia 打包、full-core 调用 | `native_bridge.py`、`_native/src/hotools_native.cpp` | 已完成首版 |
+| Native full core | `solve_meshcloth_mc2` 整帧数组 core | `_native/src/mc2.cpp` | 已完成首版 |
+| 测试 | native kernel smoke、solver core smoke、Blender 最小导入/节点验证 | `_native/tests/*` | 已完成基础 smoke；仍需场景级 parity |
+
+## 未做工作表
+
+| 项目 | 原因 | 建议优先级 |
+| --- | --- | --- |
+| Blender 场景级 Python/C++ parity harness | 当前已有 smoke，但还缺真实场景逐帧 max/RMS delta、stretch error、collision count。 | P0 |
+| moving collider old/next pose ABI | MC2 碰撞体使用 old/next pose；当前快照式 collider 对快速移动碰撞体不够 MC2。 | P0 |
+| Plane collider | MC2 point collision 支持 plane；HoTools 当前 native 只覆盖 sphere/capsule。 | P1 |
+| Edge collision | MC2 有 Edge collision 模式；当前只做 point collision。 | P1/P2 |
+| external base pose rotation/normal axis | Motion/backstop 与 MC2 的 baseRot/normalAxis 仍未完全一致。 | P1 |
+| negative scale teleport/scaleRatio/negativeScaleSign | Distance/bending/inertia 在 runtime scale/negative scale 场景仍不完整。 | P1 |
+| depth curve socket/UI | 内部已 sample 化，但节点仍主要传标量。 | P2 |
+| velocityWeight/stabilization | MC2 reset 后速度权重稳定化未完整复制。 | P2 |
+
+## 不做工作表
+
+| 项目 | 不做原因 |
+| --- | --- |
+| Mesh reduction/减面/重拓扑/代理生成 | 当前工具目标是用户自己准备低模代理；solver 不负责资产生成。 |
+| 高低模 render mapping | Blender 这边当前直接写目标 shape key；不复制 MC2 Unity render mesh mapping 生命周期。 |
+| 复制 MC2 wall-clock/catch-up/timeScale | Blender 输出帧率已经给出真实帧间隔；用 wall-clock 反而会让离线输出不可控。 |
+| 直接搬 MC2 全局 TeamManager 单例 | OmniNode 是 per-node evaluation/cache；全局 manager 会增加状态耦合，不利于节点对比和 C++ parity。 |
+| 修改 `Physics.py` 蓝本或抽公共碰撞模块 | SpringBone/XPBD 继续作为对照蓝本；MC2 碰撞适配只在 `physicsMC2` 内部维护。 |
+
+## 缓做工作表
+
+| 项目 | 缓做原因 | 触发条件 |
+| --- | --- | --- |
+| Self collision | MC2 自碰撞是独立大系统，包含 primitive/grid/contact/intersect 多阶段；不是当前 MeshCloth C++ 对比节点阻塞项。 | 基础 MeshCloth 场景 parity 稳定后。 |
+| Wind | 依赖 TeamData/zone/moving wind 语义；当前约束和碰撞优先。 | Cloth 基础手感稳定后。 |
+| BoneCloth/BoneSpring | 需要新 I/O adapter 和 builder；solver 数组层已尽量预留。 | MeshCloth C++ 后端稳定后。 |
+| Job/chunk/split scheduling | Python 侧没有同构 job 系统；先保证单数组 core 语义正确。 | 性能瓶颈明确或进入并行 C++ 阶段。 |
+| TeamData-like cache 重构 | 方向正确，但不应阻塞当前 C++ 对比节点。 | P0 parity 和 moving collider ABI 后。 |
+| Unity render interpolation/blendWeight | 当前 display prediction 已可用；完整 render 插值与 Blender shape key 工作流不完全同构。 | 用户明确需要 Unity 式显示混合时。 |
+
+## 额外做工作表
+
+| 项目 | 为什么额外做 |
+| --- | --- |
+| `meshClothMC2Cpp` 独立节点 | MC2 没有这个节点形态；这是为了在 Blender 里直接对比 Python/C++ 后端效果。 |
+| Python reference 保留 | C++ 开发需要稳定行为蓝本，避免直接在 C++ 发明新行为。 |
+| HoTools 碰撞组适配 | Blender/OmniNode 已有碰撞组工作流；比复制 MC2 Unity collider list 更符合当前架构。 |
+| jump-frame/reset 保护 | Blender 时间轴可以跳帧、倒放、同帧重复求值；必须额外保护 cache。 |
+| shape key writeback | MC2 Unity 侧不是这个输出形态；Blender 节点需要把结果写回 shape key 才能对比和下游使用。 |
+| `ParamSlot`/sample 内部结构 | 当前 UI 先传标量，但先把 solver 写成可接曲线，避免后续重写核心。 |
+| native full-core + 逐 kernel fallback 并存 | 便于定位 Python/C++ 差异；full-core 用于真实节点，逐 kernel 用于 smoke/parity。 |
+
+## 后续推进建议
+
+| 优先级 | 工作 | 目标 |
+| --- | --- | --- |
+| P0 | 做 Blender 场景级 `meshClothMC2` vs `meshClothMC2Cpp` parity harness。 | 锁住 Python/C++ 后端一致性，输出逐帧 max/RMS delta。 |
+| P0 | 补 moving collider old/next pose ABI。 | 让碰撞更接近 MC2 `ColliderManager`，尤其是快速移动碰撞体。 |
+| P1 | 把 cache/state 命名和结构逐步收敛成 per-node TeamState-like schema。 | 方便继续对照 MC2 TeamData，同时避免全局 manager 耦合。 |
+| P1 | 补 plane/edge collision、negative scale、external base pose rotation。 | 提高 MC2 MeshCloth 行为等价度。 |
+| P2 | 接 depth curve socket/UI。 | 把当前内部 sample 能力暴露给用户。 |
+| P3 | self collision、wind、BoneCloth、job/chunk。 | 等主路径稳定后作为独立阶段推进。 |
