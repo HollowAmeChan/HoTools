@@ -11,6 +11,9 @@ namespace {
 constexpr float kMc2Epsilon = 0.00000001f;
 constexpr float kDistanceHorizontalStiffness = 0.5f;
 constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
+constexpr float kDistanceVelocityAttenuation = 0.3f;
+constexpr float kFrictionMass = 3.0f;
+constexpr float kDepthMass = 5.0f;
 constexpr float kTetherStiffnessWidth = 0.3f;
 constexpr float kTetherCompressionStiffness = 1.0f;
 constexpr float kTetherStretchStiffness = 1.0f;
@@ -26,7 +29,10 @@ constexpr float kTriangleVolumeScale = 1000.0f;
 constexpr int kAngleLimitIteration = 3;
 constexpr float kAngleLimitAttenuation = 0.9f;
 constexpr float kAngleRestorationScale = 0.2f;
+constexpr float kAngleRestorationVelocityAttenuation = 0.8f;
+constexpr float kAngleRestorationGravityFalloff = 0.0f;
 constexpr float kPi = 3.14159265358979323846f;
+constexpr std::uint8_t kMc2AttrMove = 1u << 2u;
 
 float clamp_float(float value, float lo, float hi) {
     return std::max(lo, std::min(hi, value));
@@ -1517,6 +1523,102 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
     }
 }
 
+void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
+    if (view.vertex_count <= 0 || view.base_positions == nullptr || view.base_rotations == nullptr ||
+        view.parent_indices == nullptr || view.baseline_start == nullptr || view.baseline_count == nullptr ||
+        view.baseline_data == nullptr || view.vertex_local_positions == nullptr ||
+        view.vertex_local_rotations == nullptr || view.step_positions == nullptr || view.step_rotations == nullptr) {
+        return;
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int64_t pos_offset = vertex * 3;
+        const std::int64_t rot_offset = vertex * 4;
+        view.step_positions[pos_offset + 0] = view.base_positions[pos_offset + 0];
+        view.step_positions[pos_offset + 1] = view.base_positions[pos_offset + 1];
+        view.step_positions[pos_offset + 2] = view.base_positions[pos_offset + 2];
+        view.step_rotations[rot_offset + 0] = view.base_rotations[rot_offset + 0];
+        view.step_rotations[rot_offset + 1] = view.base_rotations[rot_offset + 1];
+        view.step_rotations[rot_offset + 2] = view.base_rotations[rot_offset + 2];
+        view.step_rotations[rot_offset + 3] = view.base_rotations[rot_offset + 3];
+    }
+
+    const float ratio = clamp_float(view.animation_pose_ratio, 0.0f, 1.0f);
+    if (ratio > 0.99f || view.baseline_data_count <= 0) {
+        return;
+    }
+
+    for (std::int64_t line_index = 0; line_index < view.line_count; ++line_index) {
+        const std::int32_t start = view.baseline_start[line_index];
+        const std::int32_t count = view.baseline_count[line_index];
+        for (std::int32_t data_offset = 0; data_offset < count; ++data_offset) {
+            const std::int64_t data_index = static_cast<std::int64_t>(start) + data_offset;
+            if (data_index < 0 || data_index >= view.baseline_data_count) {
+                continue;
+            }
+            const std::int32_t vertex = view.baseline_data[data_index];
+            if (vertex < 0 || static_cast<std::int64_t>(vertex) >= view.vertex_count) {
+                continue;
+            }
+            const std::int32_t parent = view.parent_indices[vertex];
+            if (parent < 0 || static_cast<std::int64_t>(parent) >= view.vertex_count) {
+                continue;
+            }
+
+            const std::int64_t vertex_pos_offset = static_cast<std::int64_t>(vertex) * 3;
+            const std::int64_t parent_pos_offset = static_cast<std::int64_t>(parent) * 3;
+            const std::int64_t vertex_rot_offset = static_cast<std::int64_t>(vertex) * 4;
+            const std::int64_t parent_rot_offset = static_cast<std::int64_t>(parent) * 4;
+            float rotated_x = 0.0f;
+            float rotated_y = 0.0f;
+            float rotated_z = 0.0f;
+            quat_rotate(&view.step_rotations[parent_rot_offset],
+                        view.vertex_local_positions[vertex_pos_offset + 0],
+                        view.vertex_local_positions[vertex_pos_offset + 1],
+                        view.vertex_local_positions[vertex_pos_offset + 2],
+                        rotated_x, rotated_y, rotated_z);
+            view.step_positions[vertex_pos_offset + 0] = view.step_positions[parent_pos_offset + 0] + rotated_x;
+            view.step_positions[vertex_pos_offset + 1] = view.step_positions[parent_pos_offset + 1] + rotated_y;
+            view.step_positions[vertex_pos_offset + 2] = view.step_positions[parent_pos_offset + 2] + rotated_z;
+            float next_rotation[4];
+            quat_mul(&view.step_rotations[parent_rot_offset], &view.vertex_local_rotations[vertex_rot_offset],
+                     next_rotation);
+            view.step_rotations[vertex_rot_offset + 0] = next_rotation[0];
+            view.step_rotations[vertex_rot_offset + 1] = next_rotation[1];
+            view.step_rotations[vertex_rot_offset + 2] = next_rotation[2];
+            view.step_rotations[vertex_rot_offset + 3] = next_rotation[3];
+        }
+
+        if (ratio <= kMc2Epsilon) {
+            continue;
+        }
+        for (std::int32_t data_offset = 0; data_offset < count; ++data_offset) {
+            const std::int64_t data_index = static_cast<std::int64_t>(start) + data_offset;
+            if (data_index < 0 || data_index >= view.baseline_data_count) {
+                continue;
+            }
+            const std::int32_t vertex = view.baseline_data[data_index];
+            if (vertex < 0 || static_cast<std::int64_t>(vertex) >= view.vertex_count) {
+                continue;
+            }
+            const std::int64_t pos_offset = static_cast<std::int64_t>(vertex) * 3;
+            const std::int64_t rot_offset = static_cast<std::int64_t>(vertex) * 4;
+            view.step_positions[pos_offset + 0] =
+                view.step_positions[pos_offset + 0] * (1.0f - ratio) + view.base_positions[pos_offset + 0] * ratio;
+            view.step_positions[pos_offset + 1] =
+                view.step_positions[pos_offset + 1] * (1.0f - ratio) + view.base_positions[pos_offset + 1] * ratio;
+            view.step_positions[pos_offset + 2] =
+                view.step_positions[pos_offset + 2] * (1.0f - ratio) + view.base_positions[pos_offset + 2] * ratio;
+            float mixed_rotation[4];
+            quat_slerp(&view.step_rotations[rot_offset], &view.base_rotations[rot_offset], ratio, mixed_rotation);
+            view.step_rotations[rot_offset + 0] = mixed_rotation[0];
+            view.step_rotations[rot_offset + 1] = mixed_rotation[1];
+            view.step_rotations[rot_offset + 2] = mixed_rotation[2];
+            view.step_rotations[rot_offset + 3] = mixed_rotation[3];
+        }
+    }
+}
+
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
     if (view.vertex_count <= 0 || view.old_positions == nullptr || view.velocities == nullptr ||
         view.depths == nullptr || view.inv_masses == nullptr) {
@@ -1624,6 +1726,442 @@ void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view) {
         view.velocities[offset + 1] = velocity_y + n_y * add;
         view.velocities[offset + 2] = velocity_z + n_z * add;
     }
+}
+
+void calculate_display_positions_mc2(Mc2DisplayPredictionView& view) {
+    if (view.vertex_count <= 0 || view.positions == nullptr || view.real_velocities == nullptr ||
+        view.root_indices == nullptr || view.display_positions == nullptr) {
+        return;
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int64_t offset = vertex * 3;
+        view.display_positions[offset + 0] = view.positions[offset + 0];
+        view.display_positions[offset + 1] = view.positions[offset + 1];
+        view.display_positions[offset + 2] = view.positions[offset + 2];
+    }
+    if (view.frame_dt <= kMc2Epsilon) {
+        return;
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int64_t offset = vertex * 3;
+        view.display_positions[offset + 0] = view.positions[offset + 0] + view.real_velocities[offset + 0] * view.frame_dt;
+        view.display_positions[offset + 1] = view.positions[offset + 1] + view.real_velocities[offset + 1] * view.frame_dt;
+        view.display_positions[offset + 2] = view.positions[offset + 2] + view.real_velocities[offset + 2] * view.frame_dt;
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int32_t root_index = view.root_indices[vertex];
+        if (root_index < 0 || static_cast<std::int64_t>(root_index) >= view.vertex_count) {
+            continue;
+        }
+
+        const std::int64_t offset = vertex * 3;
+        const std::int64_t root_offset = static_cast<std::int64_t>(root_index) * 3;
+        const float root_x = view.positions[root_offset + 0];
+        const float root_y = view.positions[root_offset + 1];
+        const float root_z = view.positions[root_offset + 2];
+        const float original_x = view.positions[offset + 0] - root_x;
+        const float original_y = view.positions[offset + 1] - root_y;
+        const float original_z = view.positions[offset + 2] - root_z;
+        const float original_dist =
+            std::sqrt(original_x * original_x + original_y * original_y + original_z * original_z);
+        const float clamp_dist = original_dist * view.max_distance_ratio;
+        if (clamp_dist <= kMc2Epsilon) {
+            continue;
+        }
+
+        const float delta_x = view.display_positions[offset + 0] - root_x;
+        const float delta_y = view.display_positions[offset + 1] - root_y;
+        const float delta_z = view.display_positions[offset + 2] - root_z;
+        const float length = std::sqrt(delta_x * delta_x + delta_y * delta_y + delta_z * delta_z);
+        if (length > clamp_dist && length > kMc2Epsilon) {
+            const float scale = clamp_dist / length;
+            view.display_positions[offset + 0] = root_x + delta_x * scale;
+            view.display_positions[offset + 1] = root_y + delta_y * scale;
+            view.display_positions[offset + 2] = root_z + delta_z * scale;
+        }
+    }
+}
+
+namespace {
+
+bool solve_required_buffers_present(const Mc2MeshClothSolveView& view) {
+    return view.vertex_count > 0 && view.positions != nullptr && view.old_positions != nullptr &&
+           view.velocity_positions != nullptr && view.velocities != nullptr && view.real_velocities != nullptr &&
+           view.friction != nullptr && view.static_friction != nullptr && view.collision_normals != nullptr &&
+           view.inv_masses != nullptr && view.step_basic_positions != nullptr && view.step_basic_rotations != nullptr &&
+           view.display_positions != nullptr && view.base_positions != nullptr && view.base_rotations != nullptr &&
+           view.attributes != nullptr && view.depths != nullptr && view.root_indices != nullptr &&
+           view.tether_rest_lengths != nullptr && view.parent_indices != nullptr && view.baseline_start != nullptr &&
+           view.baseline_count != nullptr && view.baseline_data != nullptr && view.vertex_local_positions != nullptr &&
+           view.vertex_local_rotations != nullptr && view.distance_start != nullptr && view.distance_count != nullptr &&
+           view.distance_data != nullptr && view.distance_rest != nullptr &&
+           view.distance_stiffness_values != nullptr;
+}
+
+bool has_positive_value(const float* values, std::int64_t count) {
+    if (values == nullptr || count <= 0) {
+        return false;
+    }
+    for (std::int64_t index = 0; index < count; ++index) {
+        if (values[index] > kMc2Epsilon) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void load_vec3(const float* values, int substep, float out[3]) {
+    if (values == nullptr) {
+        out[0] = 0.0f;
+        out[1] = 0.0f;
+        out[2] = 0.0f;
+        return;
+    }
+    const std::int64_t offset = static_cast<std::int64_t>(substep) * 3;
+    out[0] = values[offset + 0];
+    out[1] = values[offset + 1];
+    out[2] = values[offset + 2];
+}
+
+void load_quat(const float* values, int substep, float out[4]) {
+    if (values == nullptr) {
+        out[0] = 0.0f;
+        out[1] = 0.0f;
+        out[2] = 0.0f;
+        out[3] = 1.0f;
+        return;
+    }
+    const std::int64_t offset = static_cast<std::int64_t>(substep) * 4;
+    out[0] = values[offset + 0];
+    out[1] = values[offset + 1];
+    out[2] = values[offset + 2];
+    out[3] = values[offset + 3];
+}
+
+void calculate_inverse_masses_mc2(Mc2MeshClothSolveView& view) {
+    if (view.attributes == nullptr || view.depths == nullptr || view.friction == nullptr ||
+        view.inv_masses == nullptr) {
+        return;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const float friction = view.friction[vertex];
+        const float depth = clamp_float(view.depths[vertex], 0.0f, 1.0f);
+        const float depth_term = 1.0f - depth;
+        const float mass = 1.0f + friction * kFrictionMass + depth_term * depth_term * kDepthMass;
+        view.inv_masses[vertex] = 1.0f / std::max(mass, kMc2Epsilon);
+        if ((view.attributes[vertex] & kMc2AttrMove) == 0) {
+            view.inv_masses[vertex] = 0.0f;
+        }
+    }
+}
+
+void clear_collision_normals_mc2(Mc2MeshClothSolveView& view) {
+    if (view.collision_normals == nullptr) {
+        return;
+    }
+    for (std::int64_t index = 0; index < view.vertex_count * 3; ++index) {
+        view.collision_normals[index] = 0.0f;
+    }
+}
+
+void copy_vec3_array(float* dst, const float* src, std::int64_t vertex_count) {
+    if (dst == nullptr || src == nullptr) {
+        return;
+    }
+    for (std::int64_t index = 0; index < vertex_count * 3; ++index) {
+        dst[index] = src[index];
+    }
+}
+
+void pin_fixed_vertices_mc2(Mc2MeshClothSolveView& view, bool reset_dynamics) {
+    if (view.base_positions == nullptr || view.inv_masses == nullptr) {
+        return;
+    }
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.inv_masses[vertex] > kMc2Epsilon) {
+            continue;
+        }
+        const std::int64_t offset = vertex * 3;
+        for (int axis = 0; axis < 3; ++axis) {
+            const float base_value = view.base_positions[offset + axis];
+            view.positions[offset + axis] = base_value;
+            view.velocity_positions[offset + axis] = base_value;
+            if (reset_dynamics) {
+                view.old_positions[offset + axis] = base_value;
+                view.velocities[offset + axis] = 0.0f;
+                view.real_velocities[offset + axis] = 0.0f;
+            }
+        }
+        if (reset_dynamics) {
+            view.friction[vertex] = 0.0f;
+            view.static_friction[vertex] = 0.0f;
+        }
+    }
+}
+
+bool has_collision_inputs_mc2(const Mc2MeshClothSolveView& view) {
+    return view.collider_count > 0 && view.collided_by_groups != 0 && view.collision_radii != nullptr &&
+           view.collider_types != nullptr && view.collider_group_bits != nullptr && view.collider_centers != nullptr &&
+           view.collider_segment_a != nullptr && view.collider_segment_b != nullptr && view.collider_radii != nullptr &&
+           has_positive_value(view.collision_radii, view.vertex_count);
+}
+
+}  // namespace
+
+void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
+    if (!solve_required_buffers_present(view)) {
+        return;
+    }
+
+    const int substeps = std::max(1, std::min(16, view.substeps));
+    const int iterations = std::max(0, std::min(64, view.iterations));
+    const float step_dt = view.step_dt;
+    const bool has_collision = has_collision_inputs_mc2(view);
+    const bool has_triangle_bending = (view.dihedral_count > 0 || view.volume_count > 0) &&
+                                      view.dihedral_pairs != nullptr && view.dihedral_rest_angles != nullptr &&
+                                      view.dihedral_signs != nullptr && view.volume_pairs != nullptr &&
+                                      view.volume_rest != nullptr && view.bend_stiffness_values != nullptr;
+
+    for (int substep = 0; substep < substeps; ++substep) {
+        Mc2StepBasicPoseView basic_view;
+        basic_view.base_positions = view.base_positions;
+        basic_view.base_rotations = view.base_rotations;
+        basic_view.parent_indices = view.parent_indices;
+        basic_view.baseline_start = view.baseline_start;
+        basic_view.baseline_count = view.baseline_count;
+        basic_view.baseline_data = view.baseline_data;
+        basic_view.vertex_local_positions = view.vertex_local_positions;
+        basic_view.vertex_local_rotations = view.vertex_local_rotations;
+        basic_view.step_positions = view.step_basic_positions;
+        basic_view.step_rotations = view.step_basic_rotations;
+        basic_view.vertex_count = view.vertex_count;
+        basic_view.line_count = view.line_count;
+        basic_view.baseline_data_count = view.baseline_data_count;
+        basic_view.animation_pose_ratio = view.animation_pose_ratio;
+        update_step_basic_pose_mc2(basic_view);
+
+        calculate_inverse_masses_mc2(view);
+        clear_collision_normals_mc2(view);
+
+        Mc2SubstepInertiaView inertia_view;
+        inertia_view.old_positions = view.old_positions;
+        inertia_view.velocities = view.velocities;
+        inertia_view.depths = view.depths;
+        inertia_view.inv_masses = view.inv_masses;
+        inertia_view.vertex_count = view.vertex_count;
+        load_vec3(view.substep_old_world_positions, substep, inertia_view.old_world_position);
+        load_vec3(view.substep_step_vectors, substep, inertia_view.step_vector);
+        load_quat(view.substep_step_rotations, substep, inertia_view.step_rotation);
+        load_vec3(view.substep_inertia_vectors, substep, inertia_view.inertia_vector);
+        load_quat(view.substep_inertia_rotations, substep, inertia_view.inertia_rotation);
+        inertia_view.depth_inertia = view.depth_inertia;
+        apply_substep_inertia_mc2(inertia_view);
+
+        copy_vec3_array(view.velocity_positions, view.old_positions, view.vertex_count);
+        if (step_dt > kMc2Epsilon) {
+            const float damping_scale = 1.0f - view.substep_damping;
+            for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+                if (view.inv_masses[vertex] <= kMc2Epsilon) {
+                    continue;
+                }
+                const std::int64_t offset = vertex * 3;
+                for (int axis = 0; axis < 3; ++axis) {
+                    view.velocities[offset + axis] *= damping_scale;
+                    view.velocities[offset + axis] += view.gravity[axis] * step_dt;
+                    view.positions[offset + axis] =
+                        view.old_positions[offset + axis] + view.velocities[offset + axis] * step_dt;
+                }
+            }
+        }
+        pin_fixed_vertices_mc2(view, false);
+
+        Mc2TetherConstraintView tether_view;
+        tether_view.positions = view.positions;
+        tether_view.inv_masses = view.inv_masses;
+        tether_view.root_indices = view.root_indices;
+        tether_view.root_rest_lengths = view.tether_rest_lengths;
+        tether_view.velocity_positions = view.velocity_positions;
+        tether_view.vertex_count = view.vertex_count;
+        tether_view.stiffness = 1.0f;
+        tether_view.compression = view.tether_compression;
+        tether_view.stretch = view.tether_stretch;
+        project_tether_mc2(tether_view);
+
+        if (has_collision && iterations == 0) {
+            Mc2CollisionView collision_view;
+            collision_view.positions = view.positions;
+            collision_view.base_positions = view.base_positions;
+            collision_view.inv_masses = view.inv_masses;
+            collision_view.collision_radii = view.collision_radii;
+            collision_view.collision_normals = view.collision_normals;
+            collision_view.friction = view.friction;
+            collision_view.collider_types = view.collider_types;
+            collision_view.collider_group_bits = view.collider_group_bits;
+            collision_view.collider_centers = view.collider_centers;
+            collision_view.collider_segment_a = view.collider_segment_a;
+            collision_view.collider_segment_b = view.collider_segment_b;
+            collision_view.collider_radii = view.collider_radii;
+            collision_view.vertex_count = view.vertex_count;
+            collision_view.collider_count = view.collider_count;
+            collision_view.collided_by_groups = view.collided_by_groups;
+            project_collisions_mc2(collision_view);
+            calculate_inverse_masses_mc2(view);
+        }
+
+        for (int iteration = 0; iteration < iterations; ++iteration) {
+            Mc2NeighborConstraintView distance_view;
+            distance_view.positions = view.positions;
+            distance_view.inv_masses = view.inv_masses;
+            distance_view.starts = view.distance_start;
+            distance_view.counts = view.distance_count;
+            distance_view.neighbors = view.distance_data;
+            distance_view.rest_lengths = view.distance_rest;
+            distance_view.stiffness_values = view.distance_stiffness_values;
+            distance_view.velocity_positions = view.velocity_positions;
+            distance_view.vertex_count = view.vertex_count;
+            distance_view.neighbor_count = view.distance_count_total;
+            distance_view.velocity_attenuation = kDistanceVelocityAttenuation;
+            project_neighbor_constraints_mc2(distance_view);
+
+            Mc2AngleConstraintView angle_view;
+            angle_view.positions = view.positions;
+            angle_view.inv_masses = view.inv_masses;
+            angle_view.parent_indices = view.parent_indices;
+            angle_view.baseline_start = view.baseline_start;
+            angle_view.baseline_count = view.baseline_count;
+            angle_view.baseline_data = view.baseline_data;
+            angle_view.step_basic_positions = view.step_basic_positions;
+            angle_view.step_basic_rotations = view.step_basic_rotations;
+            angle_view.restoration_values = view.angle_restoration_values;
+            angle_view.limit_values = view.angle_limit_values;
+            angle_view.velocity_positions = view.velocity_positions;
+            angle_view.vertex_count = view.vertex_count;
+            angle_view.line_count = view.line_count;
+            angle_view.baseline_data_count = view.baseline_data_count;
+            angle_view.restoration_velocity_attenuation = kAngleRestorationVelocityAttenuation;
+            angle_view.restoration_gravity_falloff = kAngleRestorationGravityFalloff;
+            angle_view.limit_stiffness = view.angle_limit_stiffness;
+            project_angle_constraints_mc2(angle_view);
+
+            if (has_triangle_bending) {
+                Mc2TriangleBendingView triangle_view;
+                triangle_view.positions = view.positions;
+                triangle_view.inv_masses = view.inv_masses;
+                triangle_view.stiffness_values = view.bend_stiffness_values;
+                triangle_view.dihedral_pairs = view.dihedral_pairs;
+                triangle_view.dihedral_rest_angles = view.dihedral_rest_angles;
+                triangle_view.dihedral_signs = view.dihedral_signs;
+                triangle_view.volume_pairs = view.volume_pairs;
+                triangle_view.volume_rest = view.volume_rest;
+                triangle_view.vertex_count = view.vertex_count;
+                triangle_view.dihedral_count = view.dihedral_count;
+                triangle_view.volume_count = view.volume_count;
+                project_triangle_bending_mc2(triangle_view);
+            } else if (view.bend_distance_start != nullptr && view.bend_distance_count != nullptr &&
+                       view.bend_distance_data != nullptr && view.bend_distance_rest != nullptr &&
+                       view.bend_stiffness_values != nullptr) {
+                Mc2NeighborConstraintView bend_view;
+                bend_view.positions = view.positions;
+                bend_view.inv_masses = view.inv_masses;
+                bend_view.starts = view.bend_distance_start;
+                bend_view.counts = view.bend_distance_count;
+                bend_view.neighbors = view.bend_distance_data;
+                bend_view.rest_lengths = view.bend_distance_rest;
+                bend_view.stiffness_values = view.bend_stiffness_values;
+                bend_view.velocity_positions = view.velocity_positions;
+                bend_view.vertex_count = view.vertex_count;
+                bend_view.neighbor_count = view.bend_distance_count_total;
+                bend_view.velocity_attenuation = kDistanceVelocityAttenuation;
+                project_neighbor_constraints_mc2(bend_view);
+            }
+
+            if (has_collision) {
+                Mc2CollisionView collision_view;
+                collision_view.positions = view.positions;
+                collision_view.base_positions = view.base_positions;
+                collision_view.inv_masses = view.inv_masses;
+                collision_view.collision_radii = view.collision_radii;
+                collision_view.collision_normals = view.collision_normals;
+                collision_view.friction = view.friction;
+                collision_view.collider_types = view.collider_types;
+                collision_view.collider_group_bits = view.collider_group_bits;
+                collision_view.collider_centers = view.collider_centers;
+                collision_view.collider_segment_a = view.collider_segment_a;
+                collision_view.collider_segment_b = view.collider_segment_b;
+                collision_view.collider_radii = view.collider_radii;
+                collision_view.vertex_count = view.vertex_count;
+                collision_view.collider_count = view.collider_count;
+                collision_view.collided_by_groups = view.collided_by_groups;
+                project_collisions_mc2(collision_view);
+                calculate_inverse_masses_mc2(view);
+            }
+
+            project_neighbor_constraints_mc2(distance_view);
+            pin_fixed_vertices_mc2(view, false);
+        }
+
+        if (view.base_normals != nullptr && view.max_distances != nullptr &&
+            view.motion_stiffness_values != nullptr && view.backstop_radii != nullptr &&
+            view.backstop_distances != nullptr) {
+            Mc2MotionConstraintView motion_view;
+            motion_view.positions = view.positions;
+            motion_view.base_positions = view.base_positions;
+            motion_view.base_normals = view.base_normals;
+            motion_view.inv_masses = view.inv_masses;
+            motion_view.max_distances = view.max_distances;
+            motion_view.stiffness_values = view.motion_stiffness_values;
+            motion_view.backstop_radii = view.backstop_radii;
+            motion_view.backstop_distances = view.backstop_distances;
+            motion_view.velocity_positions = view.velocity_positions;
+            motion_view.vertex_count = view.vertex_count;
+            project_motion_constraints_mc2(motion_view);
+        }
+
+        Mc2PostStepView post_view;
+        post_view.positions = view.positions;
+        post_view.old_positions = view.old_positions;
+        post_view.velocity_positions = view.velocity_positions;
+        post_view.velocities = view.velocities;
+        post_view.real_velocities = view.real_velocities;
+        post_view.friction = view.friction;
+        post_view.static_friction = view.static_friction;
+        post_view.collision_normals = view.collision_normals;
+        post_view.inv_masses = view.inv_masses;
+        post_view.vertex_count = view.vertex_count;
+        post_view.step_dt = step_dt;
+        post_view.dynamic_friction = view.dynamic_friction;
+        post_view.static_friction_speed = view.static_friction_speed;
+        post_view.particle_speed_limit = view.particle_speed_limit;
+        apply_post_step_mc2(post_view);
+
+        Mc2CentrifugalView centrifugal_view;
+        centrifugal_view.positions = view.positions;
+        centrifugal_view.velocities = view.velocities;
+        centrifugal_view.depths = view.depths;
+        centrifugal_view.inv_masses = view.inv_masses;
+        centrifugal_view.vertex_count = view.vertex_count;
+        load_vec3(view.substep_now_world_positions, substep, centrifugal_view.now_world_position);
+        load_vec3(view.substep_rotation_axes, substep, centrifugal_view.rotation_axis);
+        centrifugal_view.angular_velocity =
+            view.substep_angular_velocities != nullptr ? view.substep_angular_velocities[substep] : 0.0f;
+        centrifugal_view.centrifugal = view.centrifugal;
+        apply_centrifugal_velocity_mc2(centrifugal_view);
+
+        pin_fixed_vertices_mc2(view, true);
+    }
+
+    Mc2DisplayPredictionView display_view;
+    display_view.positions = view.positions;
+    display_view.real_velocities = view.real_velocities;
+    display_view.root_indices = view.root_indices;
+    display_view.display_positions = view.display_positions;
+    display_view.vertex_count = view.vertex_count;
+    display_view.frame_dt = view.frame_dt;
+    display_view.max_distance_ratio = view.display_max_distance_ratio;
+    calculate_display_positions_mc2(display_view);
 }
 
 }  // namespace hotools

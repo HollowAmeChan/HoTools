@@ -3,6 +3,7 @@
 #include "hotools_mc2.hpp"
 #include "hotools_mesh_xpbd.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace {
@@ -55,6 +56,21 @@ bool expect_int32(const Buffer& buffer, const char* name) {
         const char format = buffer.view.format[0];
         if (format != 'i' && format != 'l') {
             PyErr_Format(PyExc_TypeError, "%s must use int32 elements", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool expect_uint8(const Buffer& buffer, const char* name) {
+    if (buffer.view.itemsize != 1) {
+        PyErr_Format(PyExc_TypeError, "%s must use uint8 elements", name);
+        return false;
+    }
+    if (buffer.view.format != nullptr) {
+        const char format = buffer.view.format[0];
+        if (format != 'B') {
+            PyErr_Format(PyExc_TypeError, "%s must use uint8 elements", name);
             return false;
         }
     }
@@ -145,6 +161,17 @@ bool expect_root_indices_or_minus_one(const Buffer& buffer, const char* name, Py
 
 bool expect_int32_scalar_array(const Buffer& buffer, const char* name) {
     if (!expect_int32(buffer, name)) {
+        return false;
+    }
+    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
+        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
+        return false;
+    }
+    return true;
+}
+
+bool expect_uint8_scalar_array(const Buffer& buffer, const char* name) {
+    if (!expect_uint8(buffer, name)) {
         return false;
     }
     if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
@@ -894,6 +921,83 @@ PyObject* project_angle_constraints_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 11;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "update_step_basic_pose_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    Buffer base_positions;
+    Buffer base_rotations;
+    Buffer parent_indices;
+    Buffer baseline_start;
+    Buffer baseline_count;
+    Buffer baseline_data;
+    Buffer vertex_local_positions;
+    Buffer vertex_local_rotations;
+    Buffer step_positions;
+    Buffer step_rotations;
+
+    if (!base_positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_rotations.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !parent_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
+        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
+        !step_positions.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
+        !step_rotations.get(PyTuple_GET_ITEM(args, 9), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    if (!expect_vector3_array(base_positions, "base_positions", &vertex_count) ||
+        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
+        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
+        !expect_same_vertex_count(step_positions, "step_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(step_rotations, "step_rotations", vertex_count) ||
+        !expect_int32_scalar_array(parent_indices, "parent_indices") ||
+        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
+        !expect_root_indices_or_minus_one(parent_indices, "parent_indices", vertex_count) ||
+        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
+        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
+        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
+        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count)) {
+        return nullptr;
+    }
+    const Py_ssize_t line_count = baseline_start.view.shape[0];
+    if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
+        return nullptr;
+    }
+
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 10), "animation_pose_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    hotools::Mc2StepBasicPoseView view;
+    view.base_positions = static_cast<const float*>(base_positions.view.buf);
+    view.base_rotations = static_cast<const float*>(base_rotations.view.buf);
+    view.parent_indices = static_cast<const std::int32_t*>(parent_indices.view.buf);
+    view.baseline_start = static_cast<const std::int32_t*>(baseline_start.view.buf);
+    view.baseline_count = static_cast<const std::int32_t*>(baseline_count.view.buf);
+    view.baseline_data = static_cast<const std::int32_t*>(baseline_data.view.buf);
+    view.vertex_local_positions = static_cast<const float*>(vertex_local_positions.view.buf);
+    view.vertex_local_rotations = static_cast<const float*>(vertex_local_rotations.view.buf);
+    view.step_positions = static_cast<float*>(step_positions.view.buf);
+    view.step_rotations = static_cast<float*>(step_rotations.view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.line_count = static_cast<std::int64_t>(line_count);
+    view.baseline_data_count = static_cast<std::int64_t>(baseline_data.view.shape[0]);
+    view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
+
+    hotools::update_step_basic_pose_mc2(view);
+    Py_RETURN_NONE;
+}
+
 PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
     constexpr Py_ssize_t kArgCount = 10;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
@@ -1039,6 +1143,522 @@ PyObject* apply_centrifugal_velocity_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* calculate_display_positions_mc2(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 6;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "calculate_display_positions_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    Buffer positions;
+    Buffer real_velocities;
+    Buffer root_indices;
+    Buffer display_positions;
+
+    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !real_velocities.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
+        !root_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
+        !display_positions.get(PyTuple_GET_ITEM(args, 3), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                               "display_positions")) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
+        !expect_same_vertex_count(real_velocities, "real_velocities", vertex_count) ||
+        !expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
+        !expect_int32_scalar_array(root_indices, "root_indices") ||
+        !expect_1d_array(root_indices, "root_indices", vertex_count)) {
+        return nullptr;
+    }
+
+    const double frame_dt = as_double(PyTuple_GET_ITEM(args, 4), "frame_dt");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double max_distance_ratio = as_double(PyTuple_GET_ITEM(args, 5), "max_distance_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    hotools::Mc2DisplayPredictionView view;
+    view.positions = static_cast<const float*>(positions.view.buf);
+    view.real_velocities = static_cast<const float*>(real_velocities.view.buf);
+    view.root_indices = static_cast<const std::int32_t*>(root_indices.view.buf);
+    view.display_positions = static_cast<float*>(display_positions.view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.frame_dt = static_cast<float>(frame_dt);
+    view.max_distance_ratio = static_cast<float>(max_distance_ratio);
+
+    hotools::calculate_display_positions_mc2(view);
+    Py_RETURN_NONE;
+}
+
+PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
+    enum SolveArg {
+        APositions = 0,
+        AOldPositions,
+        AVelocityPositions,
+        AVelocities,
+        ARealVelocities,
+        AFriction,
+        AStaticFriction,
+        ACollisionNormals,
+        AInvMasses,
+        AStepBasicPositions,
+        AStepBasicRotations,
+        ADisplayPositions,
+        ABasePositions,
+        ABaseNormals,
+        ABaseRotations,
+        AAttributes,
+        ADepths,
+        ARootIndices,
+        ATetherRestLengths,
+        AParentIndices,
+        ABaselineStart,
+        ABaselineCount,
+        ABaselineData,
+        AVertexLocalPositions,
+        AVertexLocalRotations,
+        ADistanceStart,
+        ADistanceCount,
+        ADistanceData,
+        ADistanceRest,
+        ADistanceStiffnessValues,
+        ABendDistanceStart,
+        ABendDistanceCount,
+        ABendDistanceData,
+        ABendDistanceRest,
+        ABendStiffnessValues,
+        ADihedralPairs,
+        ADihedralRestAngles,
+        ADihedralSigns,
+        AVolumePairs,
+        AVolumeRest,
+        AAngleRestorationValues,
+        AAngleLimitValues,
+        AMaxDistances,
+        AMotionStiffnessValues,
+        ABackstopRadii,
+        ABackstopDistances,
+        ACollisionRadii,
+        AColliderTypes,
+        AColliderGroupBits,
+        AColliderCenters,
+        AColliderSegmentA,
+        AColliderSegmentB,
+        AColliderRadii,
+        ASubstepOldWorldPositions,
+        ASubstepStepVectors,
+        ASubstepStepRotations,
+        ASubstepInertiaVectors,
+        ASubstepInertiaRotations,
+        ASubstepNowWorldPositions,
+        ASubstepRotationAxes,
+        ASubstepAngularVelocities,
+        kSolveBufferCount,
+    };
+    constexpr Py_ssize_t kArgCount = 78;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const char* names[kSolveBufferCount] = {
+        "positions",
+        "old_positions",
+        "velocity_positions",
+        "velocities",
+        "real_velocities",
+        "friction",
+        "static_friction",
+        "collision_normals",
+        "inv_masses",
+        "step_basic_positions",
+        "step_basic_rotations",
+        "display_positions",
+        "base_positions",
+        "base_normals",
+        "base_rotations",
+        "attributes",
+        "depths",
+        "root_indices",
+        "tether_rest_lengths",
+        "parent_indices",
+        "baseline_start",
+        "baseline_count",
+        "baseline_data",
+        "vertex_local_positions",
+        "vertex_local_rotations",
+        "distance_start",
+        "distance_count",
+        "distance_data",
+        "distance_rest",
+        "distance_stiffness_values",
+        "bend_distance_start",
+        "bend_distance_count",
+        "bend_distance_data",
+        "bend_distance_rest",
+        "bend_stiffness_values",
+        "dihedral_pairs",
+        "dihedral_rest_angles",
+        "dihedral_signs",
+        "volume_pairs",
+        "volume_rest",
+        "angle_restoration_values",
+        "angle_limit_values",
+        "max_distances",
+        "motion_stiffness_values",
+        "backstop_radii",
+        "backstop_distances",
+        "collision_radii",
+        "collider_types",
+        "collider_group_bits",
+        "collider_centers",
+        "collider_segment_a",
+        "collider_segment_b",
+        "collider_radii",
+        "substep_old_world_positions",
+        "substep_step_vectors",
+        "substep_step_rotations",
+        "substep_inertia_vectors",
+        "substep_inertia_rotations",
+        "substep_now_world_positions",
+        "substep_rotation_axes",
+        "substep_angular_velocities",
+    };
+
+    Buffer buffers[kSolveBufferCount];
+    for (int index = 0; index < kSolveBufferCount; ++index) {
+        const int flags = index <= ADisplayPositions ? (PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND)
+                                                     : (PyBUF_FORMAT | PyBUF_ND);
+        if (!buffers[index].get(PyTuple_GET_ITEM(args, index), flags, names[index])) {
+            return nullptr;
+        }
+    }
+
+    Py_ssize_t vertex_count = 0;
+    if (!expect_vector3_array(buffers[APositions], "positions", &vertex_count) ||
+        !expect_same_vertex_count(buffers[AOldPositions], "old_positions", vertex_count) ||
+        !expect_same_vertex_count(buffers[AVelocityPositions], "velocity_positions", vertex_count) ||
+        !expect_same_vertex_count(buffers[AVelocities], "velocities", vertex_count) ||
+        !expect_same_vertex_count(buffers[ARealVelocities], "real_velocities", vertex_count) ||
+        !expect_same_vertex_count(buffers[ACollisionNormals], "collision_normals", vertex_count) ||
+        !expect_same_vertex_count(buffers[AStepBasicPositions], "step_basic_positions", vertex_count) ||
+        !expect_same_vertex_count(buffers[ADisplayPositions], "display_positions", vertex_count) ||
+        !expect_same_vertex_count(buffers[ABasePositions], "base_positions", vertex_count) ||
+        !expect_same_vertex_count(buffers[ABaseNormals], "base_normals", vertex_count) ||
+        !expect_same_quat_vertex_count(buffers[AStepBasicRotations], "step_basic_rotations", vertex_count) ||
+        !expect_same_quat_vertex_count(buffers[ABaseRotations], "base_rotations", vertex_count) ||
+        !expect_same_vertex_count(buffers[AVertexLocalPositions], "vertex_local_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(buffers[AVertexLocalRotations], "vertex_local_rotations", vertex_count)) {
+        return nullptr;
+    }
+
+    if (!expect_float32(buffers[AFriction], "friction") ||
+        !expect_1d_array(buffers[AFriction], "friction", vertex_count) ||
+        !expect_float32(buffers[AStaticFriction], "static_friction") ||
+        !expect_1d_array(buffers[AStaticFriction], "static_friction", vertex_count) ||
+        !expect_float32(buffers[AInvMasses], "inv_masses") ||
+        !expect_1d_array(buffers[AInvMasses], "inv_masses", vertex_count) ||
+        !expect_uint8_scalar_array(buffers[AAttributes], "attributes") ||
+        !expect_1d_array(buffers[AAttributes], "attributes", vertex_count) ||
+        !expect_float32(buffers[ADepths], "depths") ||
+        !expect_1d_array(buffers[ADepths], "depths", vertex_count) ||
+        !expect_int32_scalar_array(buffers[ARootIndices], "root_indices") ||
+        !expect_1d_array(buffers[ARootIndices], "root_indices", vertex_count) ||
+        !expect_root_indices_or_minus_one(buffers[ARootIndices], "root_indices", vertex_count) ||
+        !expect_float32(buffers[ATetherRestLengths], "tether_rest_lengths") ||
+        !expect_1d_array(buffers[ATetherRestLengths], "tether_rest_lengths", vertex_count) ||
+        !expect_int32_scalar_array(buffers[AParentIndices], "parent_indices") ||
+        !expect_1d_array(buffers[AParentIndices], "parent_indices", vertex_count) ||
+        !expect_root_indices_or_minus_one(buffers[AParentIndices], "parent_indices", vertex_count)) {
+        return nullptr;
+    }
+
+    if (!expect_int32_scalar_array(buffers[ABaselineStart], "baseline_start") ||
+        !expect_int32_scalar_array(buffers[ABaselineCount], "baseline_count") ||
+        !expect_int32_scalar_array(buffers[ABaselineData], "baseline_data") ||
+        !expect_indices_in_range(buffers[ABaselineData], "baseline_data", vertex_count)) {
+        return nullptr;
+    }
+    const Py_ssize_t line_count = buffers[ABaselineStart].view.shape[0];
+    if (!expect_1d_array(buffers[ABaselineCount], "baseline_count", line_count)) {
+        return nullptr;
+    }
+
+    if (!expect_int32_scalar_array(buffers[ADistanceStart], "distance_start") ||
+        !expect_1d_array(buffers[ADistanceStart], "distance_start", vertex_count) ||
+        !expect_int32_scalar_array(buffers[ADistanceCount], "distance_count") ||
+        !expect_1d_array(buffers[ADistanceCount], "distance_count", vertex_count) ||
+        !expect_int32_scalar_array(buffers[ADistanceData], "distance_data") ||
+        !expect_indices_in_range(buffers[ADistanceData], "distance_data", vertex_count) ||
+        !expect_float32(buffers[ADistanceRest], "distance_rest") ||
+        !expect_1d_array(buffers[ADistanceRest], "distance_rest", buffers[ADistanceData].view.shape[0]) ||
+        !expect_float32(buffers[ADistanceStiffnessValues], "distance_stiffness_values") ||
+        !expect_1d_array(buffers[ADistanceStiffnessValues], "distance_stiffness_values", vertex_count)) {
+        return nullptr;
+    }
+
+    if (!expect_int32_scalar_array(buffers[ABendDistanceStart], "bend_distance_start") ||
+        !expect_1d_array(buffers[ABendDistanceStart], "bend_distance_start", vertex_count) ||
+        !expect_int32_scalar_array(buffers[ABendDistanceCount], "bend_distance_count") ||
+        !expect_1d_array(buffers[ABendDistanceCount], "bend_distance_count", vertex_count) ||
+        !expect_int32_scalar_array(buffers[ABendDistanceData], "bend_distance_data") ||
+        !expect_indices_in_range(buffers[ABendDistanceData], "bend_distance_data", vertex_count) ||
+        !expect_float32(buffers[ABendDistanceRest], "bend_distance_rest") ||
+        !expect_1d_array(buffers[ABendDistanceRest], "bend_distance_rest", buffers[ABendDistanceData].view.shape[0]) ||
+        !expect_float32(buffers[ABendStiffnessValues], "bend_stiffness_values") ||
+        !expect_1d_array(buffers[ABendStiffnessValues], "bend_stiffness_values", vertex_count)) {
+        return nullptr;
+    }
+
+    Py_ssize_t dihedral_count = 0;
+    Py_ssize_t volume_count = 0;
+    if (!expect_int32_quad_array(buffers[ADihedralPairs], "dihedral_pairs", &dihedral_count) ||
+        !expect_float32(buffers[ADihedralRestAngles], "dihedral_rest_angles") ||
+        !expect_1d_array(buffers[ADihedralRestAngles], "dihedral_rest_angles", dihedral_count) ||
+        !expect_int32_scalar_array(buffers[ADihedralSigns], "dihedral_signs") ||
+        !expect_1d_array(buffers[ADihedralSigns], "dihedral_signs", dihedral_count) ||
+        !expect_int32_quad_array(buffers[AVolumePairs], "volume_pairs", &volume_count) ||
+        !expect_float32(buffers[AVolumeRest], "volume_rest") ||
+        !expect_1d_array(buffers[AVolumeRest], "volume_rest", volume_count)) {
+        return nullptr;
+    }
+    if ((dihedral_count > 0 && !expect_quad_indices_in_range(buffers[ADihedralPairs], "dihedral_pairs", vertex_count)) ||
+        (volume_count > 0 && !expect_quad_indices_in_range(buffers[AVolumePairs], "volume_pairs", vertex_count))) {
+        return nullptr;
+    }
+
+    if (!expect_float32(buffers[AAngleRestorationValues], "angle_restoration_values") ||
+        !expect_1d_array(buffers[AAngleRestorationValues], "angle_restoration_values", vertex_count) ||
+        !expect_float32(buffers[AAngleLimitValues], "angle_limit_values") ||
+        !expect_1d_array(buffers[AAngleLimitValues], "angle_limit_values", vertex_count) ||
+        !expect_float32(buffers[AMaxDistances], "max_distances") ||
+        !expect_1d_array(buffers[AMaxDistances], "max_distances", vertex_count) ||
+        !expect_float32(buffers[AMotionStiffnessValues], "motion_stiffness_values") ||
+        !expect_1d_array(buffers[AMotionStiffnessValues], "motion_stiffness_values", vertex_count) ||
+        !expect_float32(buffers[ABackstopRadii], "backstop_radii") ||
+        !expect_1d_array(buffers[ABackstopRadii], "backstop_radii", vertex_count) ||
+        !expect_float32(buffers[ABackstopDistances], "backstop_distances") ||
+        !expect_1d_array(buffers[ABackstopDistances], "backstop_distances", vertex_count) ||
+        !expect_float32(buffers[ACollisionRadii], "collision_radii") ||
+        !expect_1d_array(buffers[ACollisionRadii], "collision_radii", vertex_count)) {
+        return nullptr;
+    }
+
+    if (!expect_int32_scalar_array(buffers[AColliderTypes], "collider_types") ||
+        !expect_int32_scalar_array(buffers[AColliderGroupBits], "collider_group_bits") ||
+        !expect_float32(buffers[AColliderRadii], "collider_radii")) {
+        return nullptr;
+    }
+    const Py_ssize_t collider_count = buffers[AColliderTypes].view.shape[0];
+    Py_ssize_t collider_centers_count = 0;
+    Py_ssize_t collider_segment_a_count = 0;
+    Py_ssize_t collider_segment_b_count = 0;
+    if (!expect_1d_array(buffers[AColliderGroupBits], "collider_group_bits", collider_count) ||
+        !expect_1d_array(buffers[AColliderRadii], "collider_radii", collider_count) ||
+        !expect_vector3_array(buffers[AColliderCenters], "collider_centers", &collider_centers_count) ||
+        !expect_vector3_array(buffers[AColliderSegmentA], "collider_segment_a", &collider_segment_a_count) ||
+        !expect_vector3_array(buffers[AColliderSegmentB], "collider_segment_b", &collider_segment_b_count)) {
+        return nullptr;
+    }
+    if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
+        collider_segment_b_count != collider_count) {
+        PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
+        return nullptr;
+    }
+
+    const double frame_dt = as_double(PyTuple_GET_ITEM(args, 61), "frame_dt");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double step_dt = as_double(PyTuple_GET_ITEM(args, 62), "step_dt");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const long raw_substeps = as_long(PyTuple_GET_ITEM(args, 63), "substeps");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const long raw_iterations = as_long(PyTuple_GET_ITEM(args, 64), "iterations");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    Buffer gravity;
+    if (!gravity.get(PyTuple_GET_ITEM(args, 65), PyBUF_FORMAT | PyBUF_ND, "gravity") ||
+        !expect_float32(gravity, "gravity") ||
+        !expect_1d_array(gravity, "gravity", 3)) {
+        return nullptr;
+    }
+    const int substeps = std::max(1, std::min(16, static_cast<int>(raw_substeps)));
+    Py_ssize_t substep_vec_count = 0;
+    Py_ssize_t substep_quat_count = 0;
+    if (!expect_vector3_array(buffers[ASubstepOldWorldPositions], "substep_old_world_positions", &substep_vec_count) ||
+        substep_vec_count != substeps ||
+        !expect_vector3_array(buffers[ASubstepStepVectors], "substep_step_vectors", &substep_vec_count) ||
+        substep_vec_count != substeps ||
+        !expect_vector4_array(buffers[ASubstepStepRotations], "substep_step_rotations", &substep_quat_count) ||
+        substep_quat_count != substeps ||
+        !expect_vector3_array(buffers[ASubstepInertiaVectors], "substep_inertia_vectors", &substep_vec_count) ||
+        substep_vec_count != substeps ||
+        !expect_vector4_array(buffers[ASubstepInertiaRotations], "substep_inertia_rotations", &substep_quat_count) ||
+        substep_quat_count != substeps ||
+        !expect_vector3_array(buffers[ASubstepNowWorldPositions], "substep_now_world_positions", &substep_vec_count) ||
+        substep_vec_count != substeps ||
+        !expect_vector3_array(buffers[ASubstepRotationAxes], "substep_rotation_axes", &substep_vec_count) ||
+        substep_vec_count != substeps ||
+        !expect_float32(buffers[ASubstepAngularVelocities], "substep_angular_velocities") ||
+        !expect_1d_array(buffers[ASubstepAngularVelocities], "substep_angular_velocities", substeps)) {
+        PyErr_SetString(PyExc_ValueError, "substep inertia array length mismatch");
+        return nullptr;
+    }
+
+    const double substep_damping = as_double(PyTuple_GET_ITEM(args, 66), "substep_damping");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, 67), "depth_inertia");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double centrifugal = as_double(PyTuple_GET_ITEM(args, 68), "centrifugal");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double tether_compression = as_double(PyTuple_GET_ITEM(args, 69), "tether_compression");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double tether_stretch = as_double(PyTuple_GET_ITEM(args, 70), "tether_stretch");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double dynamic_friction = as_double(PyTuple_GET_ITEM(args, 71), "dynamic_friction");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double static_friction_speed = as_double(PyTuple_GET_ITEM(args, 72), "static_friction_speed");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double particle_speed_limit = as_double(PyTuple_GET_ITEM(args, 73), "particle_speed_limit");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double angle_limit_stiffness = as_double(PyTuple_GET_ITEM(args, 74), "angle_limit_stiffness");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 75), "collided_by_groups");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double display_max_distance_ratio = as_double(PyTuple_GET_ITEM(args, 76), "display_max_distance_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 77), "animation_pose_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    hotools::Mc2MeshClothSolveView view;
+    view.positions = static_cast<float*>(buffers[APositions].view.buf);
+    view.old_positions = static_cast<float*>(buffers[AOldPositions].view.buf);
+    view.velocity_positions = static_cast<float*>(buffers[AVelocityPositions].view.buf);
+    view.velocities = static_cast<float*>(buffers[AVelocities].view.buf);
+    view.real_velocities = static_cast<float*>(buffers[ARealVelocities].view.buf);
+    view.friction = static_cast<float*>(buffers[AFriction].view.buf);
+    view.static_friction = static_cast<float*>(buffers[AStaticFriction].view.buf);
+    view.collision_normals = static_cast<float*>(buffers[ACollisionNormals].view.buf);
+    view.inv_masses = static_cast<float*>(buffers[AInvMasses].view.buf);
+    view.step_basic_positions = static_cast<float*>(buffers[AStepBasicPositions].view.buf);
+    view.step_basic_rotations = static_cast<float*>(buffers[AStepBasicRotations].view.buf);
+    view.display_positions = static_cast<float*>(buffers[ADisplayPositions].view.buf);
+    view.base_positions = static_cast<const float*>(buffers[ABasePositions].view.buf);
+    view.base_normals = static_cast<const float*>(buffers[ABaseNormals].view.buf);
+    view.base_rotations = static_cast<const float*>(buffers[ABaseRotations].view.buf);
+    view.attributes = static_cast<const std::uint8_t*>(buffers[AAttributes].view.buf);
+    view.depths = static_cast<const float*>(buffers[ADepths].view.buf);
+    view.root_indices = static_cast<const std::int32_t*>(buffers[ARootIndices].view.buf);
+    view.tether_rest_lengths = static_cast<const float*>(buffers[ATetherRestLengths].view.buf);
+    view.parent_indices = static_cast<const std::int32_t*>(buffers[AParentIndices].view.buf);
+    view.baseline_start = static_cast<const std::int32_t*>(buffers[ABaselineStart].view.buf);
+    view.baseline_count = static_cast<const std::int32_t*>(buffers[ABaselineCount].view.buf);
+    view.baseline_data = static_cast<const std::int32_t*>(buffers[ABaselineData].view.buf);
+    view.vertex_local_positions = static_cast<const float*>(buffers[AVertexLocalPositions].view.buf);
+    view.vertex_local_rotations = static_cast<const float*>(buffers[AVertexLocalRotations].view.buf);
+    view.distance_start = static_cast<const std::int32_t*>(buffers[ADistanceStart].view.buf);
+    view.distance_count = static_cast<const std::int32_t*>(buffers[ADistanceCount].view.buf);
+    view.distance_data = static_cast<const std::int32_t*>(buffers[ADistanceData].view.buf);
+    view.distance_rest = static_cast<const float*>(buffers[ADistanceRest].view.buf);
+    view.distance_stiffness_values = static_cast<const float*>(buffers[ADistanceStiffnessValues].view.buf);
+    view.bend_distance_start = static_cast<const std::int32_t*>(buffers[ABendDistanceStart].view.buf);
+    view.bend_distance_count = static_cast<const std::int32_t*>(buffers[ABendDistanceCount].view.buf);
+    view.bend_distance_data = static_cast<const std::int32_t*>(buffers[ABendDistanceData].view.buf);
+    view.bend_distance_rest = static_cast<const float*>(buffers[ABendDistanceRest].view.buf);
+    view.bend_stiffness_values = static_cast<const float*>(buffers[ABendStiffnessValues].view.buf);
+    view.dihedral_pairs = static_cast<const std::int32_t*>(buffers[ADihedralPairs].view.buf);
+    view.dihedral_rest_angles = static_cast<const float*>(buffers[ADihedralRestAngles].view.buf);
+    view.dihedral_signs = static_cast<const std::int32_t*>(buffers[ADihedralSigns].view.buf);
+    view.volume_pairs = static_cast<const std::int32_t*>(buffers[AVolumePairs].view.buf);
+    view.volume_rest = static_cast<const float*>(buffers[AVolumeRest].view.buf);
+    view.angle_restoration_values = static_cast<const float*>(buffers[AAngleRestorationValues].view.buf);
+    view.angle_limit_values = static_cast<const float*>(buffers[AAngleLimitValues].view.buf);
+    view.max_distances = static_cast<const float*>(buffers[AMaxDistances].view.buf);
+    view.motion_stiffness_values = static_cast<const float*>(buffers[AMotionStiffnessValues].view.buf);
+    view.backstop_radii = static_cast<const float*>(buffers[ABackstopRadii].view.buf);
+    view.backstop_distances = static_cast<const float*>(buffers[ABackstopDistances].view.buf);
+    view.collision_radii = static_cast<const float*>(buffers[ACollisionRadii].view.buf);
+    view.collider_types = static_cast<const std::int32_t*>(buffers[AColliderTypes].view.buf);
+    view.collider_group_bits = static_cast<const std::int32_t*>(buffers[AColliderGroupBits].view.buf);
+    view.collider_centers = static_cast<const float*>(buffers[AColliderCenters].view.buf);
+    view.collider_segment_a = static_cast<const float*>(buffers[AColliderSegmentA].view.buf);
+    view.collider_segment_b = static_cast<const float*>(buffers[AColliderSegmentB].view.buf);
+    view.collider_radii = static_cast<const float*>(buffers[AColliderRadii].view.buf);
+    view.substep_old_world_positions = static_cast<const float*>(buffers[ASubstepOldWorldPositions].view.buf);
+    view.substep_step_vectors = static_cast<const float*>(buffers[ASubstepStepVectors].view.buf);
+    view.substep_step_rotations = static_cast<const float*>(buffers[ASubstepStepRotations].view.buf);
+    view.substep_inertia_vectors = static_cast<const float*>(buffers[ASubstepInertiaVectors].view.buf);
+    view.substep_inertia_rotations = static_cast<const float*>(buffers[ASubstepInertiaRotations].view.buf);
+    view.substep_now_world_positions = static_cast<const float*>(buffers[ASubstepNowWorldPositions].view.buf);
+    view.substep_rotation_axes = static_cast<const float*>(buffers[ASubstepRotationAxes].view.buf);
+    view.substep_angular_velocities = static_cast<const float*>(buffers[ASubstepAngularVelocities].view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.line_count = static_cast<std::int64_t>(line_count);
+    view.baseline_data_count = static_cast<std::int64_t>(buffers[ABaselineData].view.shape[0]);
+    view.distance_count_total = static_cast<std::int64_t>(buffers[ADistanceData].view.shape[0]);
+    view.bend_distance_count_total = static_cast<std::int64_t>(buffers[ABendDistanceData].view.shape[0]);
+    view.dihedral_count = static_cast<std::int64_t>(dihedral_count);
+    view.volume_count = static_cast<std::int64_t>(volume_count);
+    view.collider_count = static_cast<std::int64_t>(collider_count);
+    view.substeps = substeps;
+    view.iterations = std::max(0, std::min(64, static_cast<int>(raw_iterations)));
+    view.frame_dt = static_cast<float>(frame_dt);
+    view.step_dt = static_cast<float>(step_dt);
+    const float* gravity_values = static_cast<const float*>(gravity.view.buf);
+    view.gravity[0] = gravity_values[0];
+    view.gravity[1] = gravity_values[1];
+    view.gravity[2] = gravity_values[2];
+    view.substep_damping = static_cast<float>(substep_damping);
+    view.depth_inertia = static_cast<float>(depth_inertia);
+    view.centrifugal = static_cast<float>(centrifugal);
+    view.tether_compression = static_cast<float>(tether_compression);
+    view.tether_stretch = static_cast<float>(tether_stretch);
+    view.dynamic_friction = static_cast<float>(dynamic_friction);
+    view.static_friction_speed = static_cast<float>(static_friction_speed);
+    view.particle_speed_limit = static_cast<float>(particle_speed_limit);
+    view.angle_limit_stiffness = static_cast<float>(angle_limit_stiffness);
+    view.display_max_distance_ratio = static_cast<float>(display_max_distance_ratio);
+    view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
+    view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
+
+    hotools::solve_meshcloth_mc2(view);
+    Py_RETURN_NONE;
+}
+
 PyMethodDef kMethods[] = {
     {
         "solve_mesh_shape_key_xpbd",
@@ -1089,6 +1709,12 @@ PyMethodDef kMethods[] = {
         "Project MC2 angle restoration and limit constraints in-place.",
     },
     {
+        "update_step_basic_pose_mc2",
+        update_step_basic_pose_mc2,
+        METH_VARARGS,
+        "Update MC2 step basic pose in-place.",
+    },
+    {
         "apply_substep_inertia_mc2",
         apply_substep_inertia_mc2,
         METH_VARARGS,
@@ -1099,6 +1725,18 @@ PyMethodDef kMethods[] = {
         apply_centrifugal_velocity_mc2,
         METH_VARARGS,
         "Apply MC2 centrifugal velocity in-place.",
+    },
+    {
+        "calculate_display_positions_mc2",
+        calculate_display_positions_mc2,
+        METH_VARARGS,
+        "Calculate MC2 display future prediction in-place.",
+    },
+    {
+        "solve_meshcloth_mc2",
+        solve_meshcloth_mc2,
+        METH_VARARGS,
+        "Solve one MC2 MeshCloth array frame in-place.",
     },
     {nullptr, nullptr, 0, nullptr},
 };

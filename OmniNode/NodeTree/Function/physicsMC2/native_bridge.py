@@ -357,6 +357,40 @@ def project_angle_constraints(
     return True
 
 
+def update_step_basic_pose(
+    base_positions: np.ndarray,
+    base_rotations: np.ndarray,
+    parent_indices: np.ndarray,
+    baseline_start: np.ndarray,
+    baseline_count: np.ndarray,
+    baseline_data: np.ndarray,
+    vertex_local_positions: np.ndarray,
+    vertex_local_rotations: np.ndarray,
+    animation_pose_ratio: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    module = native_module()
+    function = getattr(module, "update_step_basic_pose_mc2", None) if module is not None else None
+    if function is None:
+        return None
+
+    step_positions = np.ascontiguousarray(base_positions, dtype=np.float32).copy()
+    step_rotations = np.ascontiguousarray(base_rotations, dtype=np.float32).copy()
+    function(
+        np.ascontiguousarray(base_positions, dtype=np.float32),
+        np.ascontiguousarray(base_rotations, dtype=np.float32),
+        np.ascontiguousarray(parent_indices, dtype=np.int32),
+        np.ascontiguousarray(baseline_start, dtype=np.int32),
+        np.ascontiguousarray(baseline_count, dtype=np.int32),
+        np.ascontiguousarray(baseline_data, dtype=np.int32),
+        np.ascontiguousarray(vertex_local_positions, dtype=np.float32),
+        np.ascontiguousarray(vertex_local_rotations, dtype=np.float32),
+        step_positions,
+        step_rotations,
+        float(animation_pose_ratio),
+    )
+    return step_positions, step_rotations
+
+
 def apply_substep_inertia(
     old_positions: np.ndarray,
     velocity: np.ndarray,
@@ -424,6 +458,204 @@ def apply_centrifugal_velocity(
     return True
 
 
+def calculate_display_positions(
+    positions: np.ndarray,
+    real_velocity: np.ndarray,
+    root_indices: np.ndarray,
+    frame_dt: float,
+    max_distance_ratio: float,
+) -> np.ndarray | None:
+    module = native_module()
+    function = getattr(module, "calculate_display_positions_mc2", None) if module is not None else None
+    if function is None:
+        return None
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    display_positions = positions_view.copy()
+    function(
+        positions_view,
+        np.ascontiguousarray(real_velocity, dtype=np.float32),
+        np.ascontiguousarray(root_indices, dtype=np.int32),
+        display_positions,
+        float(frame_dt),
+        float(max_distance_ratio),
+    )
+    return display_positions
+
+
+def _as_vec3_array(value, dtype=np.float32) -> np.ndarray:
+    return np.ascontiguousarray(value, dtype=dtype).reshape((-1, 3))
+
+
+def _as_vec4_array(value, dtype=np.float32) -> np.ndarray:
+    return np.ascontiguousarray(value, dtype=dtype).reshape((-1, 4))
+
+
+def _substep_array(value, substeps: int, width: int, default_row) -> np.ndarray:
+    if value is None:
+        row = np.ascontiguousarray(default_row, dtype=np.float32).reshape((1, width))
+        return np.ascontiguousarray(np.repeat(row, substeps, axis=0), dtype=np.float32)
+    array = np.ascontiguousarray(value, dtype=np.float32).reshape((-1, width))
+    if len(array) != int(substeps):
+        raise ValueError(f"MC2 native substep array length mismatch: expected {substeps}, got {len(array)}")
+    return array
+
+
+def _substep_scalar_array(value, substeps: int) -> np.ndarray:
+    if value is None:
+        return np.zeros(int(substeps), dtype=np.float32)
+    array = np.ascontiguousarray(value, dtype=np.float32).reshape(-1)
+    if len(array) != int(substeps):
+        raise ValueError(f"MC2 native substep scalar length mismatch: expected {substeps}, got {len(array)}")
+    return array
+
+
+def solve_meshcloth_core(
+    arrays: dict,
+    *,
+    distance_stiffness_values: np.ndarray,
+    bend_stiffness_values: np.ndarray,
+    angle_restoration_values: np.ndarray,
+    angle_limit_values: np.ndarray,
+    max_distances: np.ndarray,
+    motion_stiffness_values: np.ndarray,
+    backstop_radii: np.ndarray,
+    backstop_distances: np.ndarray,
+    collider_arrays: dict | None = None,
+    substep_inertia_arrays: dict | None = None,
+    frame_dt: float,
+    step_dt: float,
+    substeps: int,
+    iterations: int,
+    gravity: np.ndarray,
+    substep_damping: float,
+    depth_inertia: float,
+    centrifugal: float,
+    tether_compression: float,
+    tether_stretch: float,
+    dynamic_friction: float,
+    static_friction_speed: float,
+    particle_speed_limit: float,
+    angle_limit_stiffness: float,
+    collided_by_groups: int = 0,
+    display_max_distance_ratio: float = 1.3,
+    animation_pose_ratio: float = 0.0,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "solve_meshcloth_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    substep_count = max(1, min(16, int(substeps)))
+    inertia_arrays = substep_inertia_arrays or {}
+    colliders = collider_arrays or {}
+    empty_vec3 = np.empty((0, 3), dtype=np.float32)
+    empty_i32 = np.empty(0, dtype=np.int32)
+    empty_i32_quad = np.empty((0, 4), dtype=np.int32)
+    empty_f32 = np.empty(0, dtype=np.float32)
+
+    writable_views = {
+        "positions": np.ascontiguousarray(arrays["positions"], dtype=np.float32),
+        "old_positions": np.ascontiguousarray(arrays["old_positions"], dtype=np.float32),
+        "velocity_positions": np.ascontiguousarray(arrays["velocity_positions"], dtype=np.float32),
+        "velocity": np.ascontiguousarray(arrays["velocity"], dtype=np.float32),
+        "real_velocity": np.ascontiguousarray(arrays["real_velocity"], dtype=np.float32),
+        "friction": np.ascontiguousarray(arrays["friction"], dtype=np.float32),
+        "static_friction": np.ascontiguousarray(arrays["static_friction"], dtype=np.float32),
+        "collision_normals": np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32),
+        "inv_masses": np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32),
+        "step_basic_positions": np.ascontiguousarray(arrays["step_basic_positions"], dtype=np.float32),
+        "step_basic_rotations": np.ascontiguousarray(arrays["step_basic_rotations"], dtype=np.float32),
+        "display_positions": np.ascontiguousarray(arrays["display_positions"], dtype=np.float32),
+    }
+
+    function(
+        writable_views["positions"],
+        writable_views["old_positions"],
+        writable_views["velocity_positions"],
+        writable_views["velocity"],
+        writable_views["real_velocity"],
+        writable_views["friction"],
+        writable_views["static_friction"],
+        writable_views["collision_normals"],
+        writable_views["inv_masses"],
+        writable_views["step_basic_positions"],
+        writable_views["step_basic_rotations"],
+        writable_views["display_positions"],
+        np.ascontiguousarray(arrays["base_positions"], dtype=np.float32),
+        np.ascontiguousarray(arrays["base_normals"], dtype=np.float32),
+        np.ascontiguousarray(arrays["base_rotations"], dtype=np.float32),
+        np.ascontiguousarray(arrays["attributes"], dtype=np.uint8),
+        np.ascontiguousarray(arrays["depths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["root_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["tether_rest_lengths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["parent_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["vertex_local_positions"], dtype=np.float32),
+        np.ascontiguousarray(arrays["vertex_local_rotations"], dtype=np.float32),
+        np.ascontiguousarray(arrays["distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_rest"], dtype=np.float32),
+        np.ascontiguousarray(distance_stiffness_values, dtype=np.float32),
+        np.ascontiguousarray(arrays["bend_distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_neighbor_rest"], dtype=np.float32),
+        np.ascontiguousarray(bend_stiffness_values, dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("dihedral_rest_angles", empty_f32), dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_signs", empty_i32), dtype=np.int32),
+        np.ascontiguousarray(arrays.get("volume_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("volume_rest", empty_f32), dtype=np.float32),
+        np.ascontiguousarray(angle_restoration_values, dtype=np.float32),
+        np.ascontiguousarray(angle_limit_values, dtype=np.float32),
+        np.ascontiguousarray(max_distances, dtype=np.float32),
+        np.ascontiguousarray(motion_stiffness_values, dtype=np.float32),
+        np.ascontiguousarray(backstop_radii, dtype=np.float32),
+        np.ascontiguousarray(backstop_distances, dtype=np.float32),
+        np.ascontiguousarray(arrays["collision_radii"], dtype=np.float32),
+        np.ascontiguousarray(colliders.get("collider_types", empty_i32), dtype=np.int32),
+        np.ascontiguousarray(colliders.get("collider_group_bits", empty_i32), dtype=np.int32),
+        _as_vec3_array(colliders.get("collider_centers", empty_vec3)),
+        _as_vec3_array(colliders.get("collider_segment_a", empty_vec3)),
+        _as_vec3_array(colliders.get("collider_segment_b", empty_vec3)),
+        np.ascontiguousarray(colliders.get("collider_radii", empty_f32), dtype=np.float32),
+        _substep_array(inertia_arrays.get("old_world_positions"), substep_count, 3, (0.0, 0.0, 0.0)),
+        _substep_array(inertia_arrays.get("step_vectors"), substep_count, 3, (0.0, 0.0, 0.0)),
+        _substep_array(inertia_arrays.get("step_rotations"), substep_count, 4, (0.0, 0.0, 0.0, 1.0)),
+        _substep_array(inertia_arrays.get("inertia_vectors"), substep_count, 3, (0.0, 0.0, 0.0)),
+        _substep_array(inertia_arrays.get("inertia_rotations"), substep_count, 4, (0.0, 0.0, 0.0, 1.0)),
+        _substep_array(inertia_arrays.get("now_world_positions"), substep_count, 3, (0.0, 0.0, 0.0)),
+        _substep_array(inertia_arrays.get("rotation_axes"), substep_count, 3, (0.0, 0.0, 0.0)),
+        _substep_scalar_array(inertia_arrays.get("angular_velocities"), substep_count),
+        float(frame_dt),
+        float(step_dt),
+        int(substep_count),
+        int(iterations),
+        np.ascontiguousarray(gravity, dtype=np.float32).reshape(3),
+        float(substep_damping),
+        float(depth_inertia),
+        float(centrifugal),
+        float(tether_compression),
+        float(tether_stretch),
+        float(dynamic_friction),
+        float(static_friction_speed),
+        float(particle_speed_limit),
+        float(angle_limit_stiffness),
+        int(collided_by_groups),
+        float(display_max_distance_ratio),
+        float(animation_pose_ratio),
+    )
+
+    for key, view in writable_views.items():
+        if view is not arrays[key]:
+            arrays[key][...] = view
+    return True
+
+
 def _state_vector(state: dict, key: str, default) -> np.ndarray:
     value = np.ascontiguousarray(state.get(key, default), dtype=np.float32).reshape(-1)
     if value.shape != (len(default),):
@@ -469,6 +701,7 @@ def state_arrays_for_native(state: dict) -> dict:
         "velocity_positions": _array(state, "velocity_positions", np.float32, (3,)),
         "velocity": _array(state, "velocity", np.float32, (3,)),
         "real_velocity": _array(state, "real_velocity", np.float32, (3,)),
+        "display_positions": _array(state, "display_positions", np.float32, (3,)),
         "collision_normals": _array(state, "collision_normals", np.float32, (3,)),
         "attributes": _array(state, "attributes", np.uint8),
         "depths": _array(state, "depths", np.float32),

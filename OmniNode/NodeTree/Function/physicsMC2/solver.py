@@ -185,7 +185,7 @@ def solve_meshcloth(
             local_rotation_speed_limit_value,
         )
         stage_start = time.perf_counter() if timing is not None else None
-        step_basic_positions, step_basic_rotations = baseline.update_step_basic_pose(
+        native_step_basic_pose = native_bridge.update_step_basic_pose(
             base_positions,
             base_rotations,
             state["parent_indices"],
@@ -195,6 +195,19 @@ def solve_meshcloth(
             state["vertex_local_positions"],
             state["vertex_local_rotations"],
         )
+        if native_step_basic_pose is None:
+            step_basic_positions, step_basic_rotations = baseline.update_step_basic_pose(
+                base_positions,
+                base_rotations,
+                state["parent_indices"],
+                state["baseline_start"],
+                state["baseline_count"],
+                state["baseline_data"],
+                state["vertex_local_positions"],
+                state["vertex_local_rotations"],
+            )
+        else:
+            step_basic_positions, step_basic_rotations = native_step_basic_pose
         if timing is not None:
             _add_timing(timing, "baseline", time.perf_counter() - stage_start)
 
@@ -560,12 +573,20 @@ def solve_meshcloth(
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
-    display_positions = _calc_display_positions(
+    display_positions = native_bridge.calculate_display_positions(
         positions,
         real_velocity,
         state["root_indices"],
         frame_dt,
+        MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
     )
+    if display_positions is None:
+        display_positions = _calc_display_positions(
+            positions,
+            real_velocity,
+            state["root_indices"],
+            frame_dt,
+        )
     next_state["display_positions"] = np.ascontiguousarray(display_positions, dtype=np.float32)
     next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
     next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
