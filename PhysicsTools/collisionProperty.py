@@ -18,6 +18,7 @@ class PG_Hotools_BoneCollision(PropertyGroup):
     2. spring_root 是链 root 标记；解算中链 root 始终硬 Pin。
     3. 非 root 骨骼是否 Pin 由 pin 字段决定，只在物理 cache 重建时读取。
     4. 预览侧用 spring_root 或 pin 显示 Pin 状态，和解算语义保持一致。
+    5. 骨骼级碰撞只定义球体和胶囊；平面和长方体碰撞需要完整 Object 变换和父级继承，必须用 Object 级碰撞体表达。
     """
 
     spring_root: BoolProperty(
@@ -32,7 +33,7 @@ class PG_Hotools_BoneCollision(PropertyGroup):
     )  # type: ignore
     collision_type: EnumProperty(
         name="碰撞体",
-        description="这根骨骼携带的物理碰撞体类型；当前只负责持久化与编辑",
+        description="这根骨骼携带的物理碰撞体类型；骨骼级当前只支持球体和胶囊，平面和长方体请使用Object级碰撞体",
         items=[
             ("NONE", "无", "不作为物理碰撞体"),
             ("SPHERE", "球体", "以骨骼局部偏移为中心的球形碰撞体"),
@@ -82,8 +83,14 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
     Object 级被动碰撞体的持久化配置。
 
     消费约定：
-    真实碰撞体由 Object.matrix_world、offset、radius、length 和 collision_type
-    在运行时解析；属性层只保存用户输入，不保存世界空间快照。
+    1. 球体和胶囊由 Object.matrix_world、offset、radius、length 和 collision_type 在运行时解析。
+    2. 平面使用 Object 局部 XY 平面作为碰撞平面，Object 局部 +Z 是平面法线方向。
+    3. 长方体使用 offset 作为局部中心，box_size 作为局部 XYZ 全尺寸；运行时用 Object.matrix_world 把 8 个局部角点转换到世界空间。
+    4. 平面和长方体都应把承载属性的 Object 当作父级下的定位子物体使用；运行时必须逐帧读取 Object.matrix_world，不能拆读 location/rotation/scale，也不能只读本地矩阵。
+    5. 平面世界变换必须按胶囊体同级规则解析：world_origin = matrix_world @ offset；world_tangent_x = matrix_world.to_3x3() @ local_X；world_tangent_y = matrix_world.to_3x3() @ local_Y；world_normal = normalize(cross(world_tangent_x, world_tangent_y))。
+    6. 长方体世界变换必须按同一规则解析：world_center = matrix_world @ offset；world_axes 来自 matrix_world.to_3x3() 变换局部 X/Y/Z；半长使用 box_size * 0.5。
+    7. 上述 matrix_world 已经包含父级、约束和动画后的最终世界变换；求解器、导出和预览必须使用同一套解析规则，避免父级空间与局部空间混用。
+    8. 属性层只保存用户输入，不保存世界空间快照；各求解器在自身节点描述中声明实际消费的碰撞类型。
     """
 
     collision_type: EnumProperty(
@@ -93,29 +100,40 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
             ("NONE", "无", "不作为被动碰撞体"),
             ("SPHERE", "球体", "以Object局部偏移为中心的球形碰撞体"),
             ("CAPSULE", "胶囊", "沿Object局部Y轴延伸的胶囊碰撞体"),
+            ("PLANE", "平面", "以Object局部XY平面为无限碰撞平面；运行时必须用Object.matrix_world求世界原点、切线和法线"),
+            ("BOX", "长方体", "以Object局部偏移为中心、按局部XYZ长度定义的有向长方体；运行时必须用Object.matrix_world求世界角点"),
         ],
         default="NONE",
     )  # type: ignore
     radius: FloatProperty(
         name="半径",
-        description="碰撞体半径，使用Blender单位",
+        description="球体和胶囊半径，使用Blender单位；平面类型不把它作为真实碰撞厚度",
         default=0.05,
         min=0.0,
         soft_max=1.0,
     )  # type: ignore
     length: FloatProperty(
         name="长度",
-        description="胶囊中段长度，球体类型会忽略这个参数",
-        default=0.2,
+        description="胶囊中段长度；平面类型把它作为叠加层方片的预览尺寸，不改变无限平面的物理语义",
+        default=1.0,
         min=0.0,
-        soft_max=2.0,
+        soft_max=10.0,
     )  # type: ignore
     offset: FloatVectorProperty(
-        name="中心偏移",
-        description="碰撞体中心相对Object局部空间的偏移",
+        name="局部偏移",
+        description="球体/胶囊/长方体中心或平面原点相对Object局部空间的偏移",
         size=3,
         subtype="XYZ",
         default=(0.0, 0.0, 0.0),
+    )  # type: ignore
+    box_size: FloatVectorProperty(
+        name="XYZ长度",
+        description="长方体在Object局部X/Y/Z方向上的全尺寸；实际世界尺寸和方向必须通过Object.matrix_world解析",
+        size=3,
+        subtype="XYZ",
+        default=(1.0, 1.0, 1.0),
+        min=0.0,
+        soft_max=10.0,
     )  # type: ignore
     primary_collision_group: IntProperty(
         name="主碰撞组",

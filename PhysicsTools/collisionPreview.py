@@ -161,6 +161,74 @@ def _append_capsule_lines(lines, matrix, props):
     _append_capsule_profile(lines, matrix, center, z_axis, radius, half_length)
 
 
+def _append_plane_lines(lines, matrix, props):
+    # 平面碰撞体本身是无限边界；叠加层只画一个局部 XY 方片和四根 +Z 法线射线帮助用户判断朝向。
+    # matrix 必须传入 Object.matrix_world，和胶囊体一样从最终世界矩阵解析碰撞变换；不要拆读 location/rotation/scale。
+    # 世界原点 = matrix_world @ offset；世界切线来自 matrix_world.to_3x3() 变换局部 X/Y；法线等价于两条世界切线叉乘后的 +Z 方向。
+    # 平面碰撞体通常作为父级下的子物体摆放，父级位移/旋转/缩放都要体现在预览和后续求解器输入里。
+    center = mathutils.Vector(props.offset)
+    half_size = max(float(props.length), 1.0) * 0.5
+    ray_length = max(half_size * 1.25, 0.75)
+    x_axis = mathutils.Vector((1.0, 0.0, 0.0))
+    y_axis = mathutils.Vector((0.0, 1.0, 0.0))
+    z_axis = mathutils.Vector((0.0, 0.0, 1.0))
+
+    corners = [
+        center - x_axis * half_size - y_axis * half_size,
+        center + x_axis * half_size - y_axis * half_size,
+        center + x_axis * half_size + y_axis * half_size,
+        center - x_axis * half_size + y_axis * half_size,
+    ]
+
+    for index, corner in enumerate(corners):
+        _append_line(lines, matrix @ corner, matrix @ corners[(index + 1) % len(corners)])
+        _append_line(lines, matrix @ corner, matrix @ (corner + z_axis * ray_length))
+
+
+def _append_box_lines(lines, matrix, props):
+    # 长方体是 Object 级有向盒；matrix 必须传入 Object.matrix_world，保证父级、约束和动画后的最终世界变换被消费。
+    # 求解器应使用同一规则：world_center = matrix_world @ offset，world_axes 来自 matrix_world.to_3x3()，半长来自 box_size * 0.5。
+    center = mathutils.Vector(props.offset)
+    size = mathutils.Vector(getattr(props, "box_size", (1.0, 1.0, 1.0)))
+    half = mathutils.Vector((
+        max(float(size.x), 0.0) * 0.5,
+        max(float(size.y), 0.0) * 0.5,
+        max(float(size.z), 0.0) * 0.5,
+    ))
+    if half.x <= 0.0 and half.y <= 0.0 and half.z <= 0.0:
+        return
+
+    corners = [
+        center + mathutils.Vector((sx * half.x, sy * half.y, sz * half.z))
+        for sx, sy, sz in (
+            (-1.0, -1.0, -1.0),
+            (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0),
+            (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0),
+            (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
+        )
+    ]
+
+    for start, end in (
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ):
+        _append_line(lines, matrix @ corners[start], matrix @ corners[end])
+
+
 def _draw_line_batch(shader, coords, color, line_width):
     if not coords:
         return
@@ -290,6 +358,10 @@ def _draw_collision_overlay():
                 _append_sphere_lines(group_lines, obj.matrix_world, props)
             elif props.collision_type == "CAPSULE":
                 _append_capsule_lines(group_lines, obj.matrix_world, props)
+            elif props.collision_type == "PLANE":
+                _append_plane_lines(group_lines, obj.matrix_world, props)
+            elif props.collision_type == "BOX":
+                _append_box_lines(group_lines, obj.matrix_world, props)
 
     if show_mesh_vertices:
         depsgraph = context.evaluated_depsgraph_get()

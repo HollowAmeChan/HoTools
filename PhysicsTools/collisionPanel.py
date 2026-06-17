@@ -119,6 +119,22 @@ def _draw_object_collision_controls(layout, props):
     if props.collision_type == "NONE":
         return
 
+    if props.collision_type == "PLANE":
+        col.prop(props, "length", text="预览尺寸")
+        col.prop(props, "offset", text="平面原点偏移")
+        hint = col.column(align=True)
+        hint.label(text="局部XY为平面，局部+Z为法线", icon="INFO")
+        hint.label(text="作为子物体时会继承父级变换")
+        return
+
+    if props.collision_type == "BOX":
+        col.prop(props, "box_size", text="XYZ长度")
+        col.prop(props, "offset", text="中心偏移")
+        hint = col.column(align=True)
+        hint.label(text="局部XYZ长度定义长方体", icon="INFO")
+        hint.label(text="世界碰撞变换读取Object.matrix_world")
+        return
+
     col.prop(props, "radius")
     if props.collision_type == "CAPSULE":
         col.prop(props, "length")

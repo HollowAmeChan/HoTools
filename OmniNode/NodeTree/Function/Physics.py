@@ -714,6 +714,11 @@ class _BonePhysics:
 
     @classmethod
     def collider_from_matrix(cls, matrix, props, owner, owner_type: str, bone_name: str = ""):
+        """
+        旧蓝本碰撞快照消费类型：SPHERE、CAPSULE。
+        数据来源是 PhysicsTools 挂在 Object 上的 hotools_object_collision，以及 Armature Bone 上的 hotools_collision。
+        SPHERE 读取 collision_type、radius、offset、primary_collision_group；CAPSULE 额外读取 length，并沿局部 Y 轴生成世界线段。
+        """
         collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
         if collision_type not in {"SPHERE", "CAPSULE"}:
             return None
@@ -751,6 +756,7 @@ class _BonePhysics:
         include_object_colliders: bool,
         include_hidden: bool,
     ) -> dict:
+        # 快照枚举场景中的 Object 与 Armature Bone；可消费类型和字段集中由 collider_from_matrix 声明。
         colliders = []
         for obj in cls.scene_objects(scene):
             if not include_hidden:
@@ -832,6 +838,10 @@ class _BonePhysics:
 
     @classmethod
     def vrm_spring_bone_collision_profile(cls, armature_obj: bpy.types.Object, bone_name: str) -> tuple[float, int]:
+        """
+        旧 SpringBone 蓝本的骨骼 hit radius 消费类型：SPHERE、CAPSULE。
+        数据来自模拟骨骼自身的 hotools_collision，读取 radius 和 collided_by_groups。
+        """
         bone = armature_obj.data.bones.get(bone_name) if armature_obj.data is not None else None
         props = getattr(bone, "hotools_collision", None) if bone is not None else None
         if props is None:
@@ -861,6 +871,10 @@ class _BonePhysics:
         length: float,
         fallback_axis: mathutils.Vector,
     ) -> mathutils.Vector:
+        """
+        对 SpringBone tail 投影被动碰撞；当前只识别快照中的 SPHERE/CAPSULE。
+        快照来自 build_collision_snapshot_from_scene，读取 Object.hotools_object_collision 和 Bone.hotools_collision。
+        """
         mask = cls.clamp_group_mask(collided_by_groups)
         if not mask:
             return tail
@@ -1463,6 +1477,10 @@ class _MeshPhysics:
         owner_obj: bpy.types.Object,
         fallback: np.ndarray,
     ) -> np.ndarray:
+        """
+        Python 版网格 XPBD 的被动碰撞投影。
+        消费类型：build_collision_snapshot_from_scene 生成的 SPHERE、CAPSULE。
+        """
         if hit_radius <= cls.EPSILON or not collided_by_groups:
             return position
 
@@ -1682,6 +1700,10 @@ class _MeshPhysicsCppBackend:
 
     @classmethod
     def collision_arrays(cls, state: dict, obj: bpy.types.Object, colliders: list[dict] | None) -> tuple:
+        """
+        C++ 后端桥接数组当前编码类型：0=SPHERE，1=CAPSULE。
+        SPHERE/CAPSULE 的 native 输入由 collider_from_matrix 生成，字段包括类型、组、中心、胶囊线段和半径。
+        """
         collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
         collided_by_groups = _BonePhysics.clamp_group_mask(state.get("collided_by_groups", 0))
         if not colliders or not collided_by_groups or not bool(np.any(collision_radii > _MeshPhysics.EPSILON)):
@@ -2075,7 +2097,8 @@ def boneChainFromRoot(
     本节点不写姿态、不推进时间，只打包参数；真正的模拟、缓存读写和碰撞处理都在解算器里完成。
 
     碰撞半径、碰撞体类型和碰撞组不在这里重复配置。
-    解算器会直接读取每根模拟骨骼上的 hotools_collision 设置。
+    解算器会直接读取每根模拟骨骼上的 hotools_collision 设置；当前只消费 SPHERE/CAPSULE 的 radius、offset、length、primary_collision_group、collided_by_groups。
+    Object 级外部碰撞体来自场景中可见对象的 hotools_object_collision；当前旧 SpringBone 蓝本消费类型为 SPHERE、CAPSULE。
     """,
 )
 def springBoneVRMChainSetting(
@@ -2129,11 +2152,13 @@ def springBoneVRMChainSetting(
     接法：
     1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再接缓存写入节点。
     2. 一个 Armature 接一个“弹簧骨-VRM”；多条“弹簧骨-VRM链设置”直接接到“VRM链设置”多重输入。
-    3. 场景直接作为唯一的外部碰撞来源；解算器会在内部从场景生成碰撞快照。
+    3. 场景直接作为唯一的外部碰撞来源；解算器会在内部枚举可见 Object.hotools_object_collision 和 Armature Bone.hotools_collision 生成碰撞快照。
 
     运行规则：
     解算器会按 root 名排序设置，拒绝重复 root 或重复模拟同一根骨骼。
     缓存只保存这个骨架的 VRM SpringBone 状态，拓扑变化或打开“重置”时会重建状态。
+    当前消费类型：SPHERE、CAPSULE。球体读取 radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
+    模拟骨骼自身的 hit radius 和 collided_by_groups 来自该骨骼 hotools_collision；外部被动碰撞体来自场景快照。
     链 root 是硬 Pin；非 root 骨骼的 Pin 属性只在 cache 重建时读取，模拟中修改不会立即生效。
     检测到跳帧或倒放时会先恢复初始姿态，并输出空缓存，让缓存写入节点清掉旧速度。
     同一帧同一骨架只允许一个不同配置的解算器写入，避免多个节点互相覆盖姿态。
@@ -2419,6 +2444,8 @@ def springBoneVRM(
     I/O 约定：
     缓存必须通过同名缓存读写节点闭环；节点只写目标形态键，不修改 Basis 或 mesh 顶点。
     场景输入提供 frame_current、render.fps / fps_base，并作为骨骼/Object 被动碰撞体的枚举范围。
+    被动碰撞体来自可见 Object.hotools_object_collision 和 Armature Bone.hotools_collision；当前旧 XPBD 蓝本消费类型为 SPHERE、CAPSULE。
+    球体读取 collision_type、radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
     输出形态键、Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools网格碰撞”。
 
     求解模型：
@@ -2442,7 +2469,7 @@ def springBoneVRM(
     失效规则：
     仅接受 current_frame == cached_frame + 1。跳帧、倒放、同帧重复或 reset 时恢复 rest_local_positions 到目标形态键并清空连续速度。
     topology、pin、碰撞半径、碰撞组或目标形态键配置变化后，需要 reset、跳帧保护或 cache 重建路径生效。
-    当前范围包括骨骼/Object 被动碰撞；不包含自碰撞、mesh-mesh 碰撞或 modifier 结果解算。
+    当前被动碰撞消费范围包括骨骼/Object 球体与胶囊。
     """,
 )
 def meshPhysicsXPBD(
@@ -2520,6 +2547,7 @@ def meshPhysicsXPBD(
     Python 层负责 Blender 数据读取、校验、shape key 创建/写回、cache 管理、对象变换同步和碰撞体快照。
     C++ 层负责预测、pin、stretch、bend、被动碰撞投影和子步/迭代循环。
     native 不访问 bpy，不保存 Blender 指针，不维护跨帧全局状态。
+    当前传入 native 的被动碰撞数组类型为 SPHERE、CAPSULE。
 
     坐标空间：
     Blender mesh 与 shape key 坐标为物体局部空间；传入 native 的 rest_positions、positions、prev_positions、约束长度、碰撞半径和 collider 数组均为世界空间。
