@@ -15,41 +15,62 @@ def _draw_rgba_column(layout, color):
         row.label(text=f"{value:.4f}", translate=False)
 
 
-def _draw_active_vertex_color(layout, context):
-    obj = context.active_object
-    if obj is None or obj.type != "MESH" or obj.mode != "EDIT":
-        return
+def _draw_active_vertex_color_warning(layout):
+    warn = layout.row()
+    warn.alert = True
+    warn.label(text="警告：此面板会实时读取编辑模式顶点色，受 Blender 内部问题影响容易崩溃，请不要常开。", icon="ERROR")
 
-    try:
-        active_color = get_active_corner_color_attribute(obj.data, create_if_missing=False)
-    except RuntimeError:
-        return
-    if active_color is None:
-        return
 
-    bm = bmesh.from_edit_mesh(obj.data)
-    bm.verts.ensure_lookup_table()
-    color_layer = bm.loops.layers.color.get(active_color.name)
-    if color_layer is None:
-        color_layer = bm.loops.layers.float_color.get(active_color.name)
-
+def _get_single_selected_vertex(bm):
     selected_vert = None
     for vert in bm.verts:
         if not vert.select:
             continue
         if selected_vert is not None:
-            selected_vert = False
-            break
+            return False
         selected_vert = vert
 
+    return selected_vert
+
+
+def _get_active_bmesh_color_layer(bm, color_name):
+    color_layer = bm.loops.layers.color.get(color_name)
+    if color_layer is None:
+        color_layer = bm.loops.layers.float_color.get(color_name)
+    return color_layer
+
+
+def _draw_active_vertex_color(layout, context):
+    obj = context.active_object
+    if obj is None or obj.type != "MESH" or obj.mode != "EDIT":
+        return
+
+    mesh = obj.data
+    try:
+        active_color = get_active_corner_color_attribute(mesh, create_if_missing=False)
+    except RuntimeError:
+        return
+    if active_color is None:
+        return
+
+    try:
+        bm = bmesh.from_edit_mesh(mesh)
+    except RuntimeError:
+        return
+
+    bm.verts.ensure_lookup_table()
+    bm.verts.index_update()
+    color_layer = _get_active_bmesh_color_layer(bm, active_color.name)
+    selected_vert = _get_single_selected_vertex(bm)
+
     box = layout.box()
+    _draw_active_vertex_color_warning(box)
     if selected_vert is None:
-        box.label(text="选择一个顶点")
+        box.label(text="请选择一个顶点")
         return
     if selected_vert is False:
         box.label(text="只能选择一个顶点")
         return
-
     if color_layer is None:
         box.label(text="当前活动颜色层没有可读数据")
         return
