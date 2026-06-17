@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 
 import numpy as np
@@ -6,7 +7,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
-sys.path.insert(0, str(ROOT / "_Lib" / PY_LIB / "HotoolsPackage"))
+sys.path.insert(0, os.environ.get("HOTOOLS_NATIVE_TEST_DIR", str(ROOT / "_Lib" / PY_LIB / "HotoolsPackage")))
 
 import hotools_native  # noqa: E402
 

@@ -203,14 +203,22 @@ def solve_meshcloth(
         movable = inv_masses > MC2SystemConstants.EPSILON
         fixed = ~movable
         collision_normals.fill(0.0)
-        inertia.apply_substep_inertia(
+        if not native_bridge.apply_substep_inertia(
             old_positions,
             velocity,
             depths,
-            movable,
+            inv_masses,
             inertia_step,
             float(depth_inertia_param["value"]),
-        )
+        ):
+            inertia.apply_substep_inertia(
+                old_positions,
+                velocity,
+                depths,
+                movable,
+                inertia_step,
+                float(depth_inertia_param["value"]),
+            )
         velocity_positions = old_positions.copy()
         if step_dt > MC2SystemConstants.EPSILON:
             velocity[movable] *= 1.0 - substep_damping
@@ -305,31 +313,47 @@ def solve_meshcloth(
                 _add_timing(timing, "distance", time.perf_counter() - stage_start)
 
             stage_start = time.perf_counter() if timing is not None else None
-            constraints.project_angle_constraints(
+            if not native_bridge.project_angle_constraints(
                 positions,
                 inv_masses,
-                depths,
                 state["parent_indices"],
                 state["baseline_start"],
                 state["baseline_count"],
                 state["baseline_data"],
                 step_basic_positions,
                 step_basic_rotations,
-                state["vertex_local_positions"],
-                state["vertex_local_rotations"],
                 angle_restoration_values,
+                angle_limit_values,
                 velocity_positions,
                 MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
                 MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
-                angle_limit_values,
                 angle_limit_stiffness_value,
-            )
+            ):
+                constraints.project_angle_constraints(
+                    positions,
+                    inv_masses,
+                    depths,
+                    state["parent_indices"],
+                    state["baseline_start"],
+                    state["baseline_count"],
+                    state["baseline_data"],
+                    step_basic_positions,
+                    step_basic_rotations,
+                    state["vertex_local_positions"],
+                    state["vertex_local_rotations"],
+                    angle_restoration_values,
+                    velocity_positions,
+                    MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+                    MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                    angle_limit_values,
+                    angle_limit_stiffness_value,
+                )
             if timing is not None:
                 _add_timing(timing, "angle", time.perf_counter() - stage_start)
 
             stage_start = time.perf_counter() if timing is not None else None
             if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
-                constraints.project_triangle_bending(
+                if not native_bridge.project_triangle_bending(
                     positions,
                     inv_masses,
                     state["dihedral_pairs"],
@@ -338,7 +362,17 @@ def solve_meshcloth(
                     state["volume_pairs"],
                     state["volume_rest"],
                     bend_stiffness_values,
-                )
+                ):
+                    constraints.project_triangle_bending(
+                        positions,
+                        inv_masses,
+                        state["dihedral_pairs"],
+                        state["dihedral_rest_angles"],
+                        state["dihedral_signs"],
+                        state["volume_pairs"],
+                        state["volume_rest"],
+                        bend_stiffness_values,
+                    )
             else:
                 if not native_bridge.project_neighbor_constraints(
                     positions,
@@ -491,14 +525,22 @@ def solve_meshcloth(
                 static_friction_speed,
                 particle_speed_limit,
             )
-        inertia.apply_centrifugal_velocity(
+        if not native_bridge.apply_centrifugal_velocity(
             positions,
             velocity,
             depths,
-            movable,
+            inv_masses,
             inertia_step,
             float(centrifugal_param["value"]),
-        )
+        ):
+            inertia.apply_centrifugal_velocity(
+                positions,
+                velocity,
+                depths,
+                movable,
+                inertia_step,
+                float(centrifugal_param["value"]),
+            )
         if bool(np.any(fixed)):
             positions[fixed] = base_positions[fixed]
             old_positions[fixed] = base_positions[fixed]

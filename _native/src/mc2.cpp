@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 namespace hotools {
 namespace {
@@ -19,6 +21,12 @@ constexpr float kFrictionDampingRate = 0.6f;
 constexpr float kStaticFrictionIncrease = 0.04f;
 constexpr float kStaticFrictionDecay = 0.05f;
 constexpr float kStaticFrictionVelocityWidth = 0.2f;
+constexpr float kTriangleBendingFixedInverseMass = 0.01f;
+constexpr float kTriangleVolumeScale = 1000.0f;
+constexpr int kAngleLimitIteration = 3;
+constexpr float kAngleLimitAttenuation = 0.9f;
+constexpr float kAngleRestorationScale = 0.2f;
+constexpr float kPi = 3.14159265358979323846f;
 
 float clamp_float(float value, float lo, float hi) {
     return std::max(lo, std::min(hi, value));
@@ -36,6 +44,242 @@ void safe_normal_or_z(float x, float y, float z, float& out_x, float& out_y, flo
     out_x = 0.0f;
     out_y = 0.0f;
     out_z = 1.0f;
+}
+
+float dot3(float ax, float ay, float az, float bx, float by, float bz) {
+    return ax * bx + ay * by + az * bz;
+}
+
+void cross3(float ax, float ay, float az, float bx, float by, float bz, float& out_x, float& out_y, float& out_z) {
+    out_x = ay * bz - az * by;
+    out_y = az * bx - ax * bz;
+    out_z = ax * by - ay * bx;
+}
+
+void quat_normalize(const float in_q[4], float out_q[4]) {
+    const float length =
+        std::sqrt(in_q[0] * in_q[0] + in_q[1] * in_q[1] + in_q[2] * in_q[2] + in_q[3] * in_q[3]);
+    if (length <= kMc2Epsilon) {
+        out_q[0] = 0.0f;
+        out_q[1] = 0.0f;
+        out_q[2] = 0.0f;
+        out_q[3] = 1.0f;
+        return;
+    }
+    const float inv_length = 1.0f / length;
+    out_q[0] = in_q[0] * inv_length;
+    out_q[1] = in_q[1] * inv_length;
+    out_q[2] = in_q[2] * inv_length;
+    out_q[3] = in_q[3] * inv_length;
+}
+
+void quat_mul(const float a[4], const float b[4], float out_q[4]) {
+    const float raw[4] = {
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    };
+    quat_normalize(raw, out_q);
+}
+
+float quat_dot_abs(const float a[4], const float b[4]) {
+    float qa[4];
+    float qb[4];
+    quat_normalize(a, qa);
+    quat_normalize(b, qb);
+    return std::fabs(qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]);
+}
+
+void quat_slerp(const float a[4], const float b[4], float ratio, float out_q[4]) {
+    const float t = clamp_float(ratio, 0.0f, 1.0f);
+    float qa[4];
+    float qb[4];
+    quat_normalize(a, qa);
+    quat_normalize(b, qb);
+    float dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+    if (dot < 0.0f) {
+        qb[0] = -qb[0];
+        qb[1] = -qb[1];
+        qb[2] = -qb[2];
+        qb[3] = -qb[3];
+        dot = -dot;
+    }
+    if (dot > 0.9995f) {
+        const float mixed[4] = {
+            qa[0] + (qb[0] - qa[0]) * t,
+            qa[1] + (qb[1] - qa[1]) * t,
+            qa[2] + (qb[2] - qa[2]) * t,
+            qa[3] + (qb[3] - qa[3]) * t,
+        };
+        quat_normalize(mixed, out_q);
+        return;
+    }
+    const float theta0 = std::acos(clamp_float(dot, -1.0f, 1.0f));
+    const float theta = theta0 * t;
+    const float sin_theta = std::sin(theta);
+    const float sin_theta0 = std::sin(theta0);
+    const float s0 = std::cos(theta) - dot * sin_theta / sin_theta0;
+    const float s1 = sin_theta / sin_theta0;
+    const float mixed[4] = {
+        s0 * qa[0] + s1 * qb[0],
+        s0 * qa[1] + s1 * qb[1],
+        s0 * qa[2] + s1 * qb[2],
+        s0 * qa[3] + s1 * qb[3],
+    };
+    quat_normalize(mixed, out_q);
+}
+
+void quat_inverse(const float q[4], float out_q[4]) {
+    float normalized[4];
+    quat_normalize(q, normalized);
+    out_q[0] = -normalized[0];
+    out_q[1] = -normalized[1];
+    out_q[2] = -normalized[2];
+    out_q[3] = normalized[3];
+}
+
+void quat_rotate(const float quat[4], float vx, float vy, float vz, float& out_x, float& out_y, float& out_z) {
+    float q[4];
+    quat_normalize(quat, q);
+    float uv_x = 0.0f;
+    float uv_y = 0.0f;
+    float uv_z = 0.0f;
+    cross3(q[0], q[1], q[2], vx, vy, vz, uv_x, uv_y, uv_z);
+    float uuv_x = 0.0f;
+    float uuv_y = 0.0f;
+    float uuv_z = 0.0f;
+    cross3(q[0], q[1], q[2], uv_x, uv_y, uv_z, uuv_x, uuv_y, uuv_z);
+    out_x = vx + 2.0f * (q[3] * uv_x + uuv_x);
+    out_y = vy + 2.0f * (q[3] * uv_y + uuv_y);
+    out_z = vz + 2.0f * (q[3] * uv_z + uuv_z);
+}
+
+void safe_normal_with_fallback(float x,
+                              float y,
+                              float z,
+                              float fallback_x,
+                              float fallback_y,
+                              float fallback_z,
+                              float& out_x,
+                              float& out_y,
+                              float& out_z) {
+    const float length = std::sqrt(x * x + y * y + z * z);
+    if (length > kMc2Epsilon) {
+        const float inv_length = 1.0f / length;
+        out_x = x * inv_length;
+        out_y = y * inv_length;
+        out_z = z * inv_length;
+        return;
+    }
+    safe_normal_or_z(fallback_x, fallback_y, fallback_z, out_x, out_y, out_z);
+}
+
+void from_to_rotation(float source_x,
+                      float source_y,
+                      float source_z,
+                      float target_x,
+                      float target_y,
+                      float target_z,
+                      float ratio,
+                      float out_q[4]) {
+    ratio = clamp_float(ratio, 0.0f, 1.0f);
+    float src_x = 0.0f;
+    float src_y = 0.0f;
+    float src_z = 1.0f;
+    safe_normal_or_z(source_x, source_y, source_z, src_x, src_y, src_z);
+    float dst_x = 0.0f;
+    float dst_y = 0.0f;
+    float dst_z = 1.0f;
+    safe_normal_with_fallback(target_x, target_y, target_z, src_x, src_y, src_z, dst_x, dst_y, dst_z);
+    const float dot = clamp_float(dot3(src_x, src_y, src_z, dst_x, dst_y, dst_z), -1.0f, 1.0f);
+    if (dot > 1.0f - kMc2Epsilon || ratio <= kMc2Epsilon) {
+        out_q[0] = 0.0f;
+        out_q[1] = 0.0f;
+        out_q[2] = 0.0f;
+        out_q[3] = 1.0f;
+        return;
+    }
+
+    float axis_x = 0.0f;
+    float axis_y = 0.0f;
+    float axis_z = 1.0f;
+    float angle = 0.0f;
+    if (dot < -1.0f + kMc2Epsilon) {
+        const bool use_y = src_x > src_y && src_x > src_z;
+        const float helper_x = use_y ? 0.0f : 1.0f;
+        const float helper_y = use_y ? 1.0f : 0.0f;
+        const float helper_z = 0.0f;
+        float cross_x = 0.0f;
+        float cross_y = 0.0f;
+        float cross_z = 0.0f;
+        cross3(src_x, src_y, src_z, helper_x, helper_y, helper_z, cross_x, cross_y, cross_z);
+        safe_normal_or_z(cross_x, cross_y, cross_z, axis_x, axis_y, axis_z);
+        angle = kPi * ratio;
+    } else {
+        float cross_x = 0.0f;
+        float cross_y = 0.0f;
+        float cross_z = 0.0f;
+        cross3(src_x, src_y, src_z, dst_x, dst_y, dst_z, cross_x, cross_y, cross_z);
+        safe_normal_or_z(cross_x, cross_y, cross_z, axis_x, axis_y, axis_z);
+        angle = std::acos(dot) * ratio;
+    }
+    const float half = angle * 0.5f;
+    const float s = std::sin(half);
+    out_q[0] = axis_x * s;
+    out_q[1] = axis_y * s;
+    out_q[2] = axis_z * s;
+    out_q[3] = std::cos(half);
+}
+
+void clamp_vector_angle(float vx,
+                        float vy,
+                        float vz,
+                        float target_x,
+                        float target_y,
+                        float target_z,
+                        float angle_rad,
+                        float& out_x,
+                        float& out_y,
+                        float& out_z) {
+    const float length = std::sqrt(vx * vx + vy * vy + vz * vz);
+    if (length <= kMc2Epsilon) {
+        out_x = vx;
+        out_y = vy;
+        out_z = vz;
+        return;
+    }
+    const float target_length = std::sqrt(target_x * target_x + target_y * target_y + target_z * target_z);
+    if (target_length <= kMc2Epsilon) {
+        out_x = vx;
+        out_y = vy;
+        out_z = vz;
+        return;
+    }
+    const float v_dir_x = vx / length;
+    const float v_dir_y = vy / length;
+    const float v_dir_z = vz / length;
+    const float t_dir_x = target_x / target_length;
+    const float t_dir_y = target_y / target_length;
+    const float t_dir_z = target_z / target_length;
+    const float dot = clamp_float(dot3(v_dir_x, v_dir_y, v_dir_z, t_dir_x, t_dir_y, t_dir_z), -1.0f, 1.0f);
+    const float current_angle = std::acos(dot);
+    if (current_angle <= angle_rad) {
+        out_x = vx;
+        out_y = vy;
+        out_z = vz;
+        return;
+    }
+    float q[4];
+    from_to_rotation(t_dir_x, t_dir_y, t_dir_z, v_dir_x, v_dir_y, v_dir_z,
+                     std::max(angle_rad, 0.0f) / std::max(current_angle, kMc2Epsilon), q);
+    float rotated_x = 0.0f;
+    float rotated_y = 0.0f;
+    float rotated_z = 0.0f;
+    quat_rotate(q, t_dir_x, t_dir_y, t_dir_z, rotated_x, rotated_y, rotated_z);
+    out_x = rotated_x * length;
+    out_y = rotated_y * length;
+    out_z = rotated_z * length;
 }
 
 }  // namespace
@@ -613,6 +857,772 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         if (view.friction != nullptr && 1.0f > view.friction[vertex]) {
             view.friction[vertex] = 1.0f;
         }
+    }
+}
+
+void project_triangle_bending_mc2(Mc2TriangleBendingView& view) {
+    if (view.vertex_count <= 0 || (view.dihedral_count <= 0 && view.volume_count <= 0) ||
+        view.positions == nullptr || view.inv_masses == nullptr || view.stiffness_values == nullptr) {
+        return;
+    }
+
+    bool has_stiffness = false;
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.stiffness_values[vertex] > kMc2Epsilon) {
+            has_stiffness = true;
+            break;
+        }
+    }
+    if (!has_stiffness) {
+        return;
+    }
+
+    std::vector<float> add_positions(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
+    std::vector<std::int32_t> add_counts(static_cast<std::size_t>(view.vertex_count), 0);
+
+    auto add_correction = [&](const std::int32_t vertices[4], const float corrections[12]) {
+        for (int local = 0; local < 4; ++local) {
+            const std::int32_t vertex = vertices[local];
+            if (view.inv_masses[vertex] <= kMc2Epsilon) {
+                continue;
+            }
+            const std::int64_t offset = static_cast<std::int64_t>(vertex) * 3;
+            add_positions[static_cast<std::size_t>(offset + 0)] += corrections[local * 3 + 0];
+            add_positions[static_cast<std::size_t>(offset + 1)] += corrections[local * 3 + 1];
+            add_positions[static_cast<std::size_t>(offset + 2)] += corrections[local * 3 + 2];
+            add_counts[static_cast<std::size_t>(vertex)] += 1;
+        }
+    };
+
+    for (std::int64_t pair_index = 0; pair_index < view.dihedral_count; ++pair_index) {
+        if (view.dihedral_pairs == nullptr || view.dihedral_rest_angles == nullptr || view.dihedral_signs == nullptr) {
+            break;
+        }
+        std::int32_t vertices[4];
+        bool valid = true;
+        for (int local = 0; local < 4; ++local) {
+            vertices[local] = view.dihedral_pairs[pair_index * 4 + local];
+            if (vertices[local] < 0 || static_cast<std::int64_t>(vertices[local]) >= view.vertex_count) {
+                valid = false;
+            }
+        }
+        if (!valid) {
+            continue;
+        }
+
+        float local_stiffness = 0.0f;
+        float inv_mass_buffer[4];
+        float inv_mass_sum = 0.0f;
+        for (int local = 0; local < 4; ++local) {
+            local_stiffness += clamp_float(view.stiffness_values[vertices[local]], 0.0f, 1.0f);
+            const float raw_inv_mass = view.inv_masses[vertices[local]];
+            inv_mass_buffer[local] =
+                raw_inv_mass <= kMc2Epsilon ? kTriangleBendingFixedInverseMass : raw_inv_mass;
+            inv_mass_sum += inv_mass_buffer[local];
+        }
+        local_stiffness *= 0.25f;
+        if (local_stiffness <= kMc2Epsilon || inv_mass_sum <= kMc2Epsilon) {
+            continue;
+        }
+
+        float p[12];
+        for (int local = 0; local < 4; ++local) {
+            const std::int64_t offset = static_cast<std::int64_t>(vertices[local]) * 3;
+            p[local * 3 + 0] = view.positions[offset + 0];
+            p[local * 3 + 1] = view.positions[offset + 1];
+            p[local * 3 + 2] = view.positions[offset + 2];
+        }
+
+        const float edge_x = p[9] - p[6];
+        const float edge_y = p[10] - p[7];
+        const float edge_z = p[11] - p[8];
+        const float edge_length = std::sqrt(edge_x * edge_x + edge_y * edge_y + edge_z * edge_z);
+        if (edge_length < kMc2Epsilon) {
+            continue;
+        }
+        const float inv_edge_length = 1.0f / edge_length;
+
+        float n1_x = 0.0f;
+        float n1_y = 0.0f;
+        float n1_z = 0.0f;
+        float n2_x = 0.0f;
+        float n2_y = 0.0f;
+        float n2_z = 0.0f;
+        cross3(p[6] - p[0], p[7] - p[1], p[8] - p[2], p[9] - p[0], p[10] - p[1], p[11] - p[2],
+               n1_x, n1_y, n1_z);
+        cross3(p[9] - p[3], p[10] - p[4], p[11] - p[5], p[6] - p[3], p[7] - p[4], p[8] - p[5],
+               n2_x, n2_y, n2_z);
+        const float n1_len_sq = dot3(n1_x, n1_y, n1_z, n1_x, n1_y, n1_z);
+        const float n2_len_sq = dot3(n2_x, n2_y, n2_z, n2_x, n2_y, n2_z);
+        if (n1_len_sq <= kMc2Epsilon || n2_len_sq <= kMc2Epsilon) {
+            continue;
+        }
+
+        const float n1_grad_x = n1_x / n1_len_sq;
+        const float n1_grad_y = n1_y / n1_len_sq;
+        const float n1_grad_z = n1_z / n1_len_sq;
+        const float n2_grad_x = n2_x / n2_len_sq;
+        const float n2_grad_y = n2_y / n2_len_sq;
+        const float n2_grad_z = n2_z / n2_len_sq;
+
+        float gradients[12];
+        gradients[0] = edge_length * n1_grad_x;
+        gradients[1] = edge_length * n1_grad_y;
+        gradients[2] = edge_length * n1_grad_z;
+        gradients[3] = edge_length * n2_grad_x;
+        gradients[4] = edge_length * n2_grad_y;
+        gradients[5] = edge_length * n2_grad_z;
+        const float dot_p0p3_edge =
+            dot3(p[0] - p[9], p[1] - p[10], p[2] - p[11], edge_x, edge_y, edge_z) * inv_edge_length;
+        const float dot_p1p3_edge =
+            dot3(p[3] - p[9], p[4] - p[10], p[5] - p[11], edge_x, edge_y, edge_z) * inv_edge_length;
+        gradients[6] = dot_p0p3_edge * n1_grad_x + dot_p1p3_edge * n2_grad_x;
+        gradients[7] = dot_p0p3_edge * n1_grad_y + dot_p1p3_edge * n2_grad_y;
+        gradients[8] = dot_p0p3_edge * n1_grad_z + dot_p1p3_edge * n2_grad_z;
+        const float dot_p2p0_edge =
+            dot3(p[6] - p[0], p[7] - p[1], p[8] - p[2], edge_x, edge_y, edge_z) * inv_edge_length;
+        const float dot_p2p1_edge =
+            dot3(p[6] - p[3], p[7] - p[4], p[8] - p[5], edge_x, edge_y, edge_z) * inv_edge_length;
+        gradients[9] = dot_p2p0_edge * n1_grad_x + dot_p2p1_edge * n2_grad_x;
+        gradients[10] = dot_p2p0_edge * n1_grad_y + dot_p2p1_edge * n2_grad_y;
+        gradients[11] = dot_p2p0_edge * n1_grad_z + dot_p2p1_edge * n2_grad_z;
+
+        float n1_norm_x = 0.0f;
+        float n1_norm_y = 0.0f;
+        float n1_norm_z = 1.0f;
+        float n2_norm_x = 0.0f;
+        float n2_norm_y = 0.0f;
+        float n2_norm_z = 1.0f;
+        safe_normal_or_z(n1_grad_x, n1_grad_y, n1_grad_z, n1_norm_x, n1_norm_y, n1_norm_z);
+        safe_normal_or_z(n2_grad_x, n2_grad_y, n2_grad_z, n2_norm_x, n2_norm_y, n2_norm_z);
+        const float dot_norm = clamp_float(dot3(n1_norm_x, n1_norm_y, n1_norm_z, n2_norm_x, n2_norm_y, n2_norm_z),
+                                           -1.0f, 1.0f);
+        float phi = std::acos(dot_norm);
+
+        float lamb = 0.0f;
+        for (int local = 0; local < 4; ++local) {
+            lamb += inv_mass_buffer[local] *
+                     dot3(gradients[local * 3 + 0], gradients[local * 3 + 1], gradients[local * 3 + 2],
+                          gradients[local * 3 + 0], gradients[local * 3 + 1], gradients[local * 3 + 2]);
+        }
+        if (lamb <= kMc2Epsilon) {
+            continue;
+        }
+
+        float cross_norm_x = 0.0f;
+        float cross_norm_y = 0.0f;
+        float cross_norm_z = 0.0f;
+        cross3(n1_norm_x, n1_norm_y, n1_norm_z, n2_norm_x, n2_norm_y, n2_norm_z, cross_norm_x, cross_norm_y,
+               cross_norm_z);
+        const float dir_value = dot3(cross_norm_x, cross_norm_y, cross_norm_z, edge_x, edge_y, edge_z);
+        const float dir_sign = dir_value < 0.0f ? -1.0f : 1.0f;
+        const float sign = view.dihedral_signs[pair_index] < 0 ? -1.0f : 1.0f;
+        if (std::fabs(sign) > kMc2Epsilon) {
+            phi *= dir_sign;
+        } else {
+            lamb *= dir_sign;
+        }
+
+        const float rest_angle = view.dihedral_rest_angles[pair_index] * sign;
+        lamb = (rest_angle - phi) / lamb * local_stiffness;
+        float corrections[12];
+        for (int local = 0; local < 4; ++local) {
+            corrections[local * 3 + 0] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 0];
+            corrections[local * 3 + 1] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 1];
+            corrections[local * 3 + 2] = -inv_mass_buffer[local] * lamb * gradients[local * 3 + 2];
+        }
+        add_correction(vertices, corrections);
+    }
+
+    for (std::int64_t pair_index = 0; pair_index < view.volume_count; ++pair_index) {
+        if (view.volume_pairs == nullptr || view.volume_rest == nullptr) {
+            break;
+        }
+        std::int32_t vertices[4];
+        bool valid = true;
+        for (int local = 0; local < 4; ++local) {
+            vertices[local] = view.volume_pairs[pair_index * 4 + local];
+            if (vertices[local] < 0 || static_cast<std::int64_t>(vertices[local]) >= view.vertex_count) {
+                valid = false;
+            }
+        }
+        if (!valid) {
+            continue;
+        }
+
+        float local_stiffness = 0.0f;
+        float inv_mass_buffer[4];
+        float inv_mass_sum = 0.0f;
+        for (int local = 0; local < 4; ++local) {
+            local_stiffness += clamp_float(view.stiffness_values[vertices[local]], 0.0f, 1.0f);
+            const float raw_inv_mass = view.inv_masses[vertices[local]];
+            inv_mass_buffer[local] =
+                raw_inv_mass <= kMc2Epsilon ? kTriangleBendingFixedInverseMass : raw_inv_mass;
+            inv_mass_sum += inv_mass_buffer[local];
+        }
+        local_stiffness *= 0.25f;
+        if (local_stiffness <= kMc2Epsilon || inv_mass_sum <= kMc2Epsilon) {
+            continue;
+        }
+
+        float p[12];
+        for (int local = 0; local < 4; ++local) {
+            const std::int64_t offset = static_cast<std::int64_t>(vertices[local]) * 3;
+            p[local * 3 + 0] = view.positions[offset + 0];
+            p[local * 3 + 1] = view.positions[offset + 1];
+            p[local * 3 + 2] = view.positions[offset + 2];
+        }
+
+        float cross_p1p0_p2p0_x = 0.0f;
+        float cross_p1p0_p2p0_y = 0.0f;
+        float cross_p1p0_p2p0_z = 0.0f;
+        cross3(p[3] - p[0], p[4] - p[1], p[5] - p[2], p[6] - p[0], p[7] - p[1], p[8] - p[2],
+               cross_p1p0_p2p0_x, cross_p1p0_p2p0_y, cross_p1p0_p2p0_z);
+        const float volume = (1.0f / 6.0f) *
+                             dot3(cross_p1p0_p2p0_x, cross_p1p0_p2p0_y, cross_p1p0_p2p0_z,
+                                  p[9] - p[0], p[10] - p[1], p[11] - p[2]) *
+                             kTriangleVolumeScale;
+
+        float gradients[12];
+        cross3(p[3] - p[6], p[4] - p[7], p[5] - p[8], p[9] - p[6], p[10] - p[7], p[11] - p[8],
+               gradients[0], gradients[1], gradients[2]);
+        cross3(p[6] - p[0], p[7] - p[1], p[8] - p[2], p[9] - p[0], p[10] - p[1], p[11] - p[2],
+               gradients[3], gradients[4], gradients[5]);
+        cross3(p[0] - p[3], p[1] - p[4], p[2] - p[5], p[9] - p[3], p[10] - p[4], p[11] - p[5],
+               gradients[6], gradients[7], gradients[8]);
+        cross3(p[3] - p[0], p[4] - p[1], p[5] - p[2], p[6] - p[0], p[7] - p[1], p[8] - p[2],
+               gradients[9], gradients[10], gradients[11]);
+
+        float lamb = 0.0f;
+        for (int local = 0; local < 4; ++local) {
+            lamb += inv_mass_buffer[local] *
+                     dot3(gradients[local * 3 + 0], gradients[local * 3 + 1], gradients[local * 3 + 2],
+                          gradients[local * 3 + 0], gradients[local * 3 + 1], gradients[local * 3 + 2]);
+        }
+        lamb *= kTriangleVolumeScale;
+        if (std::fabs(lamb) <= kMc2Epsilon) {
+            continue;
+        }
+
+        lamb = local_stiffness * (view.volume_rest[pair_index] - volume) / lamb;
+        float corrections[12];
+        for (int local = 0; local < 4; ++local) {
+            corrections[local * 3 + 0] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 0];
+            corrections[local * 3 + 1] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 1];
+            corrections[local * 3 + 2] = inv_mass_buffer[local] * lamb * gradients[local * 3 + 2];
+        }
+        add_correction(vertices, corrections);
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int32_t count = add_counts[static_cast<std::size_t>(vertex)];
+        if (count <= 0) {
+            continue;
+        }
+        const std::int64_t offset = vertex * 3;
+        const float inv_count = 1.0f / static_cast<float>(count);
+        view.positions[offset + 0] += add_positions[static_cast<std::size_t>(offset + 0)] * inv_count;
+        view.positions[offset + 1] += add_positions[static_cast<std::size_t>(offset + 1)] * inv_count;
+        view.positions[offset + 2] += add_positions[static_cast<std::size_t>(offset + 2)] * inv_count;
+    }
+}
+
+void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
+    if (view.vertex_count <= 0 || view.baseline_data_count <= 0 || view.line_count <= 0 ||
+        view.positions == nullptr || view.inv_masses == nullptr || view.parent_indices == nullptr ||
+        view.baseline_start == nullptr || view.baseline_count == nullptr || view.baseline_data == nullptr ||
+        view.step_basic_positions == nullptr || view.step_basic_rotations == nullptr ||
+        view.velocity_positions == nullptr) {
+        return;
+    }
+
+    bool use_restoration = view.restoration_values != nullptr;
+    bool use_limit = view.limit_values != nullptr;
+    bool has_restoration = false;
+    bool has_limit = false;
+    if (use_restoration) {
+        for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+            if (view.restoration_values[vertex] > kMc2Epsilon) {
+                has_restoration = true;
+                break;
+            }
+        }
+    }
+    if (use_limit) {
+        for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+            if (view.limit_values[vertex] > kMc2Epsilon) {
+                has_limit = true;
+                break;
+            }
+        }
+    }
+    use_restoration = use_restoration && has_restoration;
+    use_limit = use_limit && has_limit;
+    if (!use_restoration && !use_limit) {
+        return;
+    }
+
+    const float gravity_falloff = clamp_float(1.0f - view.restoration_gravity_falloff, 0.0f, 1.0f);
+    const float restoration_attenuation = clamp_float(view.restoration_velocity_attenuation, 0.0f, 1.0f);
+    const float limit_stiffness = clamp_float(view.limit_stiffness, 0.0f, 1.0f);
+
+    std::vector<float> length_buffer(static_cast<std::size_t>(view.vertex_count), 0.0f);
+    std::vector<float> local_pos_buffer(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
+    std::vector<float> local_rot_buffer(static_cast<std::size_t>(view.vertex_count) * 4, 0.0f);
+    std::vector<float> rotation_buffer(static_cast<std::size_t>(view.vertex_count) * 4, 0.0f);
+    std::vector<float> restoration_vector_buffer(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int64_t rot_offset = vertex * 4;
+        rotation_buffer[static_cast<std::size_t>(rot_offset + 0)] = view.step_basic_rotations[rot_offset + 0];
+        rotation_buffer[static_cast<std::size_t>(rot_offset + 1)] = view.step_basic_rotations[rot_offset + 1];
+        rotation_buffer[static_cast<std::size_t>(rot_offset + 2)] = view.step_basic_rotations[rot_offset + 2];
+        rotation_buffer[static_cast<std::size_t>(rot_offset + 3)] = view.step_basic_rotations[rot_offset + 3];
+        local_rot_buffer[static_cast<std::size_t>(rot_offset + 3)] = 1.0f;
+    }
+
+    for (std::int64_t line_index = 0; line_index < view.line_count; ++line_index) {
+        const std::int32_t start = view.baseline_start[line_index];
+        const std::int32_t count = view.baseline_count[line_index];
+        if (start < 0 || count <= 1 || static_cast<std::int64_t>(start) + count > view.baseline_data_count) {
+            continue;
+        }
+
+        for (std::int32_t local = 0; local < count; ++local) {
+            const std::int64_t data_index = static_cast<std::int64_t>(start) + local;
+            const std::int32_t vertex_index = view.baseline_data[data_index];
+            if (vertex_index < 0 || static_cast<std::int64_t>(vertex_index) >= view.vertex_count) {
+                continue;
+            }
+            const std::int64_t rot_offset = static_cast<std::int64_t>(vertex_index) * 4;
+            rotation_buffer[static_cast<std::size_t>(rot_offset + 0)] = view.step_basic_rotations[rot_offset + 0];
+            rotation_buffer[static_cast<std::size_t>(rot_offset + 1)] = view.step_basic_rotations[rot_offset + 1];
+            rotation_buffer[static_cast<std::size_t>(rot_offset + 2)] = view.step_basic_rotations[rot_offset + 2];
+            rotation_buffer[static_cast<std::size_t>(rot_offset + 3)] = view.step_basic_rotations[rot_offset + 3];
+            if (local <= 0) {
+                continue;
+            }
+            const std::int32_t parent_index = view.parent_indices[vertex_index];
+            if (parent_index < 0 || static_cast<std::int64_t>(parent_index) >= view.vertex_count) {
+                continue;
+            }
+            const std::int64_t vertex_offset = static_cast<std::int64_t>(vertex_index) * 3;
+            const std::int64_t parent_offset = static_cast<std::int64_t>(parent_index) * 3;
+            const float base_x = view.step_basic_positions[vertex_offset + 0] - view.step_basic_positions[parent_offset + 0];
+            const float base_y = view.step_basic_positions[vertex_offset + 1] - view.step_basic_positions[parent_offset + 1];
+            const float base_z = view.step_basic_positions[vertex_offset + 2] - view.step_basic_positions[parent_offset + 2];
+
+            if (use_limit) {
+                const float cur_x = view.positions[vertex_offset + 0] - view.positions[parent_offset + 0];
+                const float cur_y = view.positions[vertex_offset + 1] - view.positions[parent_offset + 1];
+                const float cur_z = view.positions[vertex_offset + 2] - view.positions[parent_offset + 2];
+                const float current_length = std::sqrt(cur_x * cur_x + cur_y * cur_y + cur_z * cur_z);
+                const float base_length = std::sqrt(base_x * base_x + base_y * base_y + base_z * base_z);
+                const std::int64_t local_pos_offset = static_cast<std::int64_t>(vertex_index) * 3;
+                const std::int64_t local_rot_offset = static_cast<std::int64_t>(vertex_index) * 4;
+                if (current_length > kMc2Epsilon && base_length > kMc2Epsilon) {
+                    float parent_rot_inv[4];
+                    quat_inverse(&view.step_basic_rotations[static_cast<std::int64_t>(parent_index) * 4], parent_rot_inv);
+                    length_buffer[static_cast<std::size_t>(vertex_index)] = current_length;
+                    float local_x = 0.0f;
+                    float local_y = 0.0f;
+                    float local_z = 0.0f;
+                    quat_rotate(parent_rot_inv, base_x / base_length, base_y / base_length, base_z / base_length,
+                                local_x, local_y, local_z);
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 0)] = local_x;
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 1)] = local_y;
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 2)] = local_z;
+                    float local_rot[4];
+                    quat_mul(parent_rot_inv, &view.step_basic_rotations[rot_offset], local_rot);
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 0)] = local_rot[0];
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 1)] = local_rot[1];
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 2)] = local_rot[2];
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 3)] = local_rot[3];
+                } else {
+                    length_buffer[static_cast<std::size_t>(vertex_index)] = 0.0f;
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 0)] = 0.0f;
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 1)] = 0.0f;
+                    local_pos_buffer[static_cast<std::size_t>(local_pos_offset + 2)] = 0.0f;
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 0)] = 0.0f;
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 1)] = 0.0f;
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 2)] = 0.0f;
+                    local_rot_buffer[static_cast<std::size_t>(local_rot_offset + 3)] = 1.0f;
+                }
+            }
+            if (use_restoration) {
+                restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 0)] = base_x;
+                restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 1)] = base_y;
+                restoration_vector_buffer[static_cast<std::size_t>(vertex_offset + 2)] = base_z;
+            }
+        }
+
+        for (int iteration = 0; iteration < kAngleLimitIteration; ++iteration) {
+            const int iteration_den = std::max(kAngleLimitIteration - 1, 1);
+            const float iteration_ratio = static_cast<float>(iteration) / static_cast<float>(iteration_den);
+            constexpr float limit_rot_ratio = 0.4f;
+            const float restoration_rot_ratio = 0.1f + (0.5f - 0.1f) * iteration_ratio;
+
+            for (std::int32_t local = 1; local < count; ++local) {
+                const std::int64_t data_index = static_cast<std::int64_t>(start) + local;
+                const std::int32_t child_index = view.baseline_data[data_index];
+                if (child_index < 0 || static_cast<std::int64_t>(child_index) >= view.vertex_count) {
+                    continue;
+                }
+                const std::int32_t parent_index = view.parent_indices[child_index];
+                if (parent_index < 0 || static_cast<std::int64_t>(parent_index) >= view.vertex_count) {
+                    continue;
+                }
+                const float child_inv_mass = view.inv_masses[child_index];
+                const float parent_inv_mass = view.inv_masses[parent_index];
+                if (child_inv_mass <= kMc2Epsilon) {
+                    continue;
+                }
+
+                const std::int64_t child_offset = static_cast<std::int64_t>(child_index) * 3;
+                const std::int64_t parent_offset = static_cast<std::int64_t>(parent_index) * 3;
+                float child_x = view.positions[child_offset + 0];
+                float child_y = view.positions[child_offset + 1];
+                float child_z = view.positions[child_offset + 2];
+                float parent_x = view.positions[parent_offset + 0];
+                float parent_y = view.positions[parent_offset + 1];
+                float parent_z = view.positions[parent_offset + 2];
+
+                if (use_limit) {
+                    const std::int64_t parent_rot_offset = static_cast<std::int64_t>(parent_index) * 4;
+                    const std::int64_t child_rot_offset = static_cast<std::int64_t>(child_index) * 4;
+                    const std::int64_t child_local_pos_offset = static_cast<std::int64_t>(child_index) * 3;
+                    const float* parent_rot = &rotation_buffer[static_cast<std::size_t>(parent_rot_offset)];
+                    const float* local_rot = &local_rot_buffer[static_cast<std::size_t>(child_rot_offset)];
+                    float vector_x = child_x - parent_x;
+                    float vector_y = child_y - parent_y;
+                    float vector_z = child_z - parent_z;
+                    const float vector_len = std::sqrt(vector_x * vector_x + vector_y * vector_y + vector_z * vector_z);
+                    float target_x = 0.0f;
+                    float target_y = 0.0f;
+                    float target_z = 0.0f;
+                    quat_rotate(parent_rot,
+                                local_pos_buffer[static_cast<std::size_t>(child_local_pos_offset + 0)],
+                                local_pos_buffer[static_cast<std::size_t>(child_local_pos_offset + 1)],
+                                local_pos_buffer[static_cast<std::size_t>(child_local_pos_offset + 2)],
+                                target_x, target_y, target_z);
+                    const float target_len = std::sqrt(target_x * target_x + target_y * target_y + target_z * target_z);
+                    bool has_vector = false;
+                    float vector_dir_x = 0.0f;
+                    float vector_dir_y = 0.0f;
+                    float vector_dir_z = 0.0f;
+                    float target_dir_x = 0.0f;
+                    float target_dir_y = 0.0f;
+                    float target_dir_z = 0.0f;
+                    if (vector_len > kMc2Epsilon && target_len <= kMc2Epsilon) {
+                        const float add_x = parent_x - child_x;
+                        const float add_y = parent_y - child_y;
+                        const float add_z = parent_z - child_z;
+                        child_x = parent_x;
+                        child_y = parent_y;
+                        child_z = parent_z;
+                        view.positions[child_offset + 0] = child_x;
+                        view.positions[child_offset + 1] = child_y;
+                        view.positions[child_offset + 2] = child_z;
+                        view.velocity_positions[child_offset + 0] += add_x;
+                        view.velocity_positions[child_offset + 1] += add_y;
+                        view.velocity_positions[child_offset + 2] += add_z;
+                        float next_rot[4];
+                        quat_mul(parent_rot, local_rot, next_rot);
+                        rotation_buffer[static_cast<std::size_t>(child_rot_offset + 0)] = next_rot[0];
+                        rotation_buffer[static_cast<std::size_t>(child_rot_offset + 1)] = next_rot[1];
+                        rotation_buffer[static_cast<std::size_t>(child_rot_offset + 2)] = next_rot[2];
+                        rotation_buffer[static_cast<std::size_t>(child_rot_offset + 3)] = next_rot[3];
+                    } else if (vector_len > kMc2Epsilon && target_len > kMc2Epsilon) {
+                        vector_dir_x = vector_x / vector_len;
+                        vector_dir_y = vector_y / vector_len;
+                        vector_dir_z = vector_z / vector_len;
+                        target_dir_x = target_x / target_len;
+                        target_dir_y = target_y / target_len;
+                        target_dir_z = target_z / target_len;
+                        const float blend_len =
+                            vector_len * 0.5f + length_buffer[static_cast<std::size_t>(child_index)] * 0.5f;
+                        if (blend_len > kMc2Epsilon) {
+                            vector_x = vector_dir_x * blend_len;
+                            vector_y = vector_dir_y * blend_len;
+                            vector_z = vector_dir_z * blend_len;
+                            has_vector = true;
+                        }
+                    }
+
+                    if (has_vector) {
+                        const float max_angle_rad =
+                            std::max(0.0f, view.limit_values[child_index]) * kPi / 180.0f;
+                        const float angle = std::acos(
+                            clamp_float(dot3(vector_dir_x, vector_dir_y, vector_dir_z, target_dir_x, target_dir_y,
+                                             target_dir_z),
+                                        -1.0f, 1.0f));
+                        float result_x = vector_x;
+                        float result_y = vector_y;
+                        float result_z = vector_z;
+                        if (angle > max_angle_rad) {
+                            const float recovery_angle = angle * (1.0f - limit_stiffness) + max_angle_rad * limit_stiffness;
+                            clamp_vector_angle(vector_x, vector_y, vector_z, target_x, target_y, target_z,
+                                               recovery_angle, result_x, result_y, result_z);
+                        }
+
+                        const float rot_pos_x = parent_x + vector_x * limit_rot_ratio;
+                        const float rot_pos_y = parent_y + vector_y * limit_rot_ratio;
+                        const float rot_pos_z = parent_z + vector_z * limit_rot_ratio;
+                        const float parent_final_x = rot_pos_x - result_x * limit_rot_ratio;
+                        const float parent_final_y = rot_pos_y - result_y * limit_rot_ratio;
+                        const float parent_final_z = rot_pos_z - result_z * limit_rot_ratio;
+                        const float child_final_x = rot_pos_x + result_x * (1.0f - limit_rot_ratio);
+                        const float child_final_y = rot_pos_y + result_y * (1.0f - limit_rot_ratio);
+                        const float child_final_z = rot_pos_z + result_z * (1.0f - limit_rot_ratio);
+                        const float parent_add_x = (parent_final_x - parent_x) * parent_inv_mass;
+                        const float parent_add_y = (parent_final_y - parent_y) * parent_inv_mass;
+                        const float parent_add_z = (parent_final_z - parent_z) * parent_inv_mass;
+                        const float child_add_x = (child_final_x - child_x) * child_inv_mass;
+                        const float child_add_y = (child_final_y - child_y) * child_inv_mass;
+                        const float child_add_z = (child_final_z - child_z) * child_inv_mass;
+
+                        child_x += child_add_x;
+                        child_y += child_add_y;
+                        child_z += child_add_z;
+                        view.positions[child_offset + 0] = child_x;
+                        view.positions[child_offset + 1] = child_y;
+                        view.positions[child_offset + 2] = child_z;
+                        view.velocity_positions[child_offset + 0] += child_add_x * kAngleLimitAttenuation;
+                        view.velocity_positions[child_offset + 1] += child_add_y * kAngleLimitAttenuation;
+                        view.velocity_positions[child_offset + 2] += child_add_z * kAngleLimitAttenuation;
+                        if (parent_inv_mass > kMc2Epsilon) {
+                            parent_x += parent_add_x;
+                            parent_y += parent_add_y;
+                            parent_z += parent_add_z;
+                            view.positions[parent_offset + 0] = parent_x;
+                            view.positions[parent_offset + 1] = parent_y;
+                            view.positions[parent_offset + 2] = parent_z;
+                            view.velocity_positions[parent_offset + 0] += parent_add_x * kAngleLimitAttenuation;
+                            view.velocity_positions[parent_offset + 1] += parent_add_y * kAngleLimitAttenuation;
+                            view.velocity_positions[parent_offset + 2] += parent_add_z * kAngleLimitAttenuation;
+                        }
+
+                        const float corrected_x = child_x - parent_x;
+                        const float corrected_y = child_y - parent_y;
+                        const float corrected_z = child_z - parent_z;
+                        const float corrected_len =
+                            std::sqrt(corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z);
+                        if (corrected_len > kMc2Epsilon) {
+                            float next_rot[4];
+                            quat_mul(parent_rot, local_rot, next_rot);
+                            float q[4];
+                            from_to_rotation(target_x / std::max(target_len, kMc2Epsilon),
+                                             target_y / std::max(target_len, kMc2Epsilon),
+                                             target_z / std::max(target_len, kMc2Epsilon),
+                                             corrected_x / corrected_len,
+                                             corrected_y / corrected_len,
+                                             corrected_z / corrected_len,
+                                             1.0f, q);
+                            float final_rot[4];
+                            quat_mul(q, next_rot, final_rot);
+                            rotation_buffer[static_cast<std::size_t>(child_rot_offset + 0)] = final_rot[0];
+                            rotation_buffer[static_cast<std::size_t>(child_rot_offset + 1)] = final_rot[1];
+                            rotation_buffer[static_cast<std::size_t>(child_rot_offset + 2)] = final_rot[2];
+                            rotation_buffer[static_cast<std::size_t>(child_rot_offset + 3)] = final_rot[3];
+                        }
+                    }
+                }
+
+                if (!use_restoration) {
+                    continue;
+                }
+                const float restoration_stiffness =
+                    clamp_float(view.restoration_values[child_index] * kAngleRestorationScale, 0.0f, 1.0f) *
+                    gravity_falloff;
+                if (restoration_stiffness <= kMc2Epsilon) {
+                    continue;
+                }
+
+                child_x = view.positions[child_offset + 0];
+                child_y = view.positions[child_offset + 1];
+                child_z = view.positions[child_offset + 2];
+                parent_x = view.positions[parent_offset + 0];
+                parent_y = view.positions[parent_offset + 1];
+                parent_z = view.positions[parent_offset + 2];
+                const float target_x = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 0)];
+                const float target_y = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 1)];
+                const float target_z = restoration_vector_buffer[static_cast<std::size_t>(child_offset + 2)];
+                const float target_len = std::sqrt(target_x * target_x + target_y * target_y + target_z * target_z);
+                const float vector_x = child_x - parent_x;
+                const float vector_y = child_y - parent_y;
+                const float vector_z = child_z - parent_z;
+                const float vector_len = std::sqrt(vector_x * vector_x + vector_y * vector_y + vector_z * vector_z);
+                if (target_len <= kMc2Epsilon) {
+                    const float add_x = parent_x - child_x;
+                    const float add_y = parent_y - child_y;
+                    const float add_z = parent_z - child_z;
+                    view.positions[child_offset + 0] = parent_x;
+                    view.positions[child_offset + 1] = parent_y;
+                    view.positions[child_offset + 2] = parent_z;
+                    view.velocity_positions[child_offset + 0] += add_x;
+                    view.velocity_positions[child_offset + 1] += add_y;
+                    view.velocity_positions[child_offset + 2] += add_z;
+                    continue;
+                }
+                if (vector_len <= kMc2Epsilon) {
+                    continue;
+                }
+
+                float q[4];
+                from_to_rotation(vector_x / vector_len, vector_y / vector_len, vector_z / vector_len,
+                                 target_x / target_len, target_y / target_len, target_z / target_len,
+                                 restoration_stiffness, q);
+                float result_x = 0.0f;
+                float result_y = 0.0f;
+                float result_z = 0.0f;
+                quat_rotate(q, vector_x, vector_y, vector_z, result_x, result_y, result_z);
+                const float rot_pos_x = parent_x + vector_x * restoration_rot_ratio;
+                const float rot_pos_y = parent_y + vector_y * restoration_rot_ratio;
+                const float rot_pos_z = parent_z + vector_z * restoration_rot_ratio;
+                const float parent_final_x = rot_pos_x - result_x * restoration_rot_ratio;
+                const float parent_final_y = rot_pos_y - result_y * restoration_rot_ratio;
+                const float parent_final_z = rot_pos_z - result_z * restoration_rot_ratio;
+                const float child_final_x = rot_pos_x + result_x * (1.0f - restoration_rot_ratio);
+                const float child_final_y = rot_pos_y + result_y * (1.0f - restoration_rot_ratio);
+                const float child_final_z = rot_pos_z + result_z * (1.0f - restoration_rot_ratio);
+                const float parent_add_x = (parent_final_x - parent_x) * parent_inv_mass;
+                const float parent_add_y = (parent_final_y - parent_y) * parent_inv_mass;
+                const float parent_add_z = (parent_final_z - parent_z) * parent_inv_mass;
+                const float child_add_x = (child_final_x - child_x) * child_inv_mass;
+                const float child_add_y = (child_final_y - child_y) * child_inv_mass;
+                const float child_add_z = (child_final_z - child_z) * child_inv_mass;
+
+                child_x += child_add_x;
+                child_y += child_add_y;
+                child_z += child_add_z;
+                view.positions[child_offset + 0] = child_x;
+                view.positions[child_offset + 1] = child_y;
+                view.positions[child_offset + 2] = child_z;
+                view.velocity_positions[child_offset + 0] += child_add_x * restoration_attenuation;
+                view.velocity_positions[child_offset + 1] += child_add_y * restoration_attenuation;
+                view.velocity_positions[child_offset + 2] += child_add_z * restoration_attenuation;
+                if (parent_inv_mass > kMc2Epsilon) {
+                    parent_x += parent_add_x;
+                    parent_y += parent_add_y;
+                    parent_z += parent_add_z;
+                    view.positions[parent_offset + 0] = parent_x;
+                    view.positions[parent_offset + 1] = parent_y;
+                    view.positions[parent_offset + 2] = parent_z;
+                    view.velocity_positions[parent_offset + 0] += parent_add_x * restoration_attenuation;
+                    view.velocity_positions[parent_offset + 1] += parent_add_y * restoration_attenuation;
+                    view.velocity_positions[parent_offset + 2] += parent_add_z * restoration_attenuation;
+                }
+            }
+        }
+    }
+}
+
+void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {
+    if (view.vertex_count <= 0 || view.old_positions == nullptr || view.velocities == nullptr ||
+        view.depths == nullptr || view.inv_masses == nullptr) {
+        return;
+    }
+
+    const float depth_inertia = clamp_float(view.depth_inertia, 0.0f, 1.0f);
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.inv_masses[vertex] <= kMc2Epsilon) {
+            continue;
+        }
+        const float depth = clamp_float(view.depths[vertex], 0.0f, 1.0f);
+        const float ratio = depth_inertia * (1.0f - depth * depth);
+        const float inertia_vector_x = view.inertia_vector[0] * (1.0f - ratio) + view.step_vector[0] * ratio;
+        const float inertia_vector_y = view.inertia_vector[1] * (1.0f - ratio) + view.step_vector[1] * ratio;
+        const float inertia_vector_z = view.inertia_vector[2] * (1.0f - ratio) + view.step_vector[2] * ratio;
+        float inertia_rotation[4];
+        quat_slerp(view.inertia_rotation, view.step_rotation, ratio, inertia_rotation);
+
+        const std::int64_t offset = vertex * 3;
+        const float local_x = view.old_positions[offset + 0] - view.old_world_position[0];
+        const float local_y = view.old_positions[offset + 1] - view.old_world_position[1];
+        const float local_z = view.old_positions[offset + 2] - view.old_world_position[2];
+        float rotated_x = 0.0f;
+        float rotated_y = 0.0f;
+        float rotated_z = 0.0f;
+        quat_rotate(inertia_rotation, local_x, local_y, local_z, rotated_x, rotated_y, rotated_z);
+        view.old_positions[offset + 0] = view.old_world_position[0] + rotated_x + inertia_vector_x;
+        view.old_positions[offset + 1] = view.old_world_position[1] + rotated_y + inertia_vector_y;
+        view.old_positions[offset + 2] = view.old_world_position[2] + rotated_z + inertia_vector_z;
+
+        quat_rotate(inertia_rotation, view.velocities[offset + 0], view.velocities[offset + 1],
+                    view.velocities[offset + 2], rotated_x, rotated_y, rotated_z);
+        view.velocities[offset + 0] = rotated_x;
+        view.velocities[offset + 1] = rotated_y;
+        view.velocities[offset + 2] = rotated_z;
+    }
+}
+
+void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view) {
+    if (view.vertex_count <= 0 || view.positions == nullptr || view.velocities == nullptr ||
+        view.depths == nullptr || view.inv_masses == nullptr) {
+        return;
+    }
+
+    const float centrifugal = clamp_float(view.centrifugal, 0.0f, 1.0f);
+    if (centrifugal <= kMc2Epsilon || view.angular_velocity <= kMc2Epsilon) {
+        return;
+    }
+    const float raw_axis_len =
+        std::sqrt(view.rotation_axis[0] * view.rotation_axis[0] + view.rotation_axis[1] * view.rotation_axis[1] +
+                  view.rotation_axis[2] * view.rotation_axis[2]);
+    if (raw_axis_len <= kMc2Epsilon) {
+        return;
+    }
+    float axis_x = 0.0f;
+    float axis_y = 1.0f;
+    float axis_z = 0.0f;
+    safe_normal_with_fallback(view.rotation_axis[0], view.rotation_axis[1], view.rotation_axis[2],
+                              0.0f, 1.0f, 0.0f, axis_x, axis_y, axis_z);
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        if (view.inv_masses[vertex] <= kMc2Epsilon) {
+            continue;
+        }
+        const std::int64_t offset = vertex * 3;
+        const float velocity_x = view.velocities[offset + 0];
+        const float velocity_y = view.velocities[offset + 1];
+        const float velocity_z = view.velocities[offset + 2];
+        const float speed = std::sqrt(velocity_x * velocity_x + velocity_y * velocity_y + velocity_z * velocity_z);
+        if (speed <= kMc2Epsilon) {
+            continue;
+        }
+
+        const float local_x = view.positions[offset + 0] - view.now_world_position[0];
+        const float local_y = view.positions[offset + 1] - view.now_world_position[1];
+        const float local_z = view.positions[offset + 2] - view.now_world_position[2];
+        const float radial_dot = dot3(local_x, local_y, local_z, axis_x, axis_y, axis_z);
+        const float radial_x = local_x - axis_x * radial_dot;
+        const float radial_y = local_y - axis_y * radial_dot;
+        const float radial_z = local_z - axis_z * radial_dot;
+        const float radius = std::sqrt(radial_x * radial_x + radial_y * radial_y + radial_z * radial_z);
+        if (radius <= kMc2Epsilon) {
+            continue;
+        }
+
+        const float n_x = radial_x / radius;
+        const float n_y = radial_y / radius;
+        const float n_z = radial_z / radius;
+        float tangent_x = 0.0f;
+        float tangent_y = 0.0f;
+        float tangent_z = 0.0f;
+        cross3(axis_x, axis_y, axis_z, n_x, n_y, n_z, tangent_x, tangent_y, tangent_z);
+        safe_normal_with_fallback(tangent_x, tangent_y, tangent_z, 0.0f, 0.0f, 0.0f,
+                                  tangent_x, tangent_y, tangent_z);
+        const float forward_x = velocity_x / speed;
+        const float forward_y = velocity_y / speed;
+        const float forward_z = velocity_z / speed;
+        const float strength = std::max(0.0f, dot3(forward_x, forward_y, forward_z, tangent_x, tangent_y, tangent_z));
+        const float depth = clamp_float(view.depths[vertex], 0.0f, 1.0f);
+        const float mass = 1.0f + (1.0f - depth);
+        const float force = mass * view.angular_velocity * view.angular_velocity * radius;
+        const float add = force * centrifugal * 0.02f * strength;
+        view.velocities[offset + 0] = velocity_x + n_x * add;
+        view.velocities[offset + 1] = velocity_y + n_y * add;
+        view.velocities[offset + 2] = velocity_z + n_z * add;
     }
 }
 

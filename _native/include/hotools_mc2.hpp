@@ -78,10 +78,74 @@ struct Mc2CollisionView {
     std::int32_t collided_by_groups = 0;
 };
 
+struct Mc2TriangleBendingView {
+    float* positions = nullptr;
+    const float* inv_masses = nullptr;
+    const float* stiffness_values = nullptr;
+    const std::int32_t* dihedral_pairs = nullptr;
+    const float* dihedral_rest_angles = nullptr;
+    const std::int32_t* dihedral_signs = nullptr;
+    const std::int32_t* volume_pairs = nullptr;
+    const float* volume_rest = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t dihedral_count = 0;
+    std::int64_t volume_count = 0;
+};
+
+struct Mc2AngleConstraintView {
+    float* positions = nullptr;
+    const float* inv_masses = nullptr;
+    const std::int32_t* parent_indices = nullptr;
+    const std::int32_t* baseline_start = nullptr;
+    const std::int32_t* baseline_count = nullptr;
+    const std::int32_t* baseline_data = nullptr;
+    const float* step_basic_positions = nullptr;
+    const float* step_basic_rotations = nullptr;
+    const float* restoration_values = nullptr;
+    const float* limit_values = nullptr;
+    float* velocity_positions = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t line_count = 0;
+    std::int64_t baseline_data_count = 0;
+    float restoration_velocity_attenuation = 0.0f;
+    float restoration_gravity_falloff = 0.0f;
+    float limit_stiffness = 0.0f;
+};
+
+struct Mc2SubstepInertiaView {
+    float* old_positions = nullptr;
+    float* velocities = nullptr;
+    const float* depths = nullptr;
+    const float* inv_masses = nullptr;
+    std::int64_t vertex_count = 0;
+    float old_world_position[3] = {};
+    float step_vector[3] = {};
+    float step_rotation[4] = {};
+    float inertia_vector[3] = {};
+    float inertia_rotation[4] = {};
+    float depth_inertia = 0.0f;
+};
+
+struct Mc2CentrifugalView {
+    const float* positions = nullptr;
+    float* velocities = nullptr;
+    const float* depths = nullptr;
+    const float* inv_masses = nullptr;
+    std::int64_t vertex_count = 0;
+    float now_world_position[3] = {};
+    float rotation_axis[3] = {};
+    float angular_velocity = 0.0f;
+    float centrifugal = 0.0f;
+};
+
 void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view);
 void project_tether_mc2(Mc2TetherConstraintView& view);
 void project_motion_constraints_mc2(Mc2MotionConstraintView& view);
 void apply_post_step_mc2(Mc2PostStepView& view);
 void project_collisions_mc2(Mc2CollisionView& view);
+void project_triangle_bending_mc2(Mc2TriangleBendingView& view);
+void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
+void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
+void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);
 
 }  // namespace hotools

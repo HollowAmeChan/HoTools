@@ -280,6 +280,150 @@ def project_collisions(
     return True
 
 
+def project_triangle_bending(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    dihedral_pairs: np.ndarray,
+    dihedral_rest_angles: np.ndarray,
+    dihedral_signs: np.ndarray,
+    volume_pairs: np.ndarray,
+    volume_rest: np.ndarray,
+    stiffness_values: np.ndarray,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_triangle_bending_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(dihedral_pairs, dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(dihedral_rest_angles, dtype=np.float32),
+        np.ascontiguousarray(dihedral_signs, dtype=np.int32),
+        np.ascontiguousarray(volume_pairs, dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(volume_rest, dtype=np.float32),
+        np.ascontiguousarray(stiffness_values, dtype=np.float32),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    return True
+
+
+def project_angle_constraints(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    parent_indices: np.ndarray,
+    baseline_start: np.ndarray,
+    baseline_count: np.ndarray,
+    baseline_data: np.ndarray,
+    step_basic_positions: np.ndarray,
+    step_basic_rotations: np.ndarray,
+    restoration_values: np.ndarray,
+    limit_values: np.ndarray,
+    velocity_positions: np.ndarray,
+    restoration_velocity_attenuation: float,
+    restoration_gravity_falloff: float,
+    limit_stiffness: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_angle_constraints_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    velocity_positions_view = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(parent_indices, dtype=np.int32),
+        np.ascontiguousarray(baseline_start, dtype=np.int32),
+        np.ascontiguousarray(baseline_count, dtype=np.int32),
+        np.ascontiguousarray(baseline_data, dtype=np.int32),
+        np.ascontiguousarray(step_basic_positions, dtype=np.float32),
+        np.ascontiguousarray(step_basic_rotations, dtype=np.float32),
+        np.ascontiguousarray(restoration_values, dtype=np.float32),
+        np.ascontiguousarray(limit_values, dtype=np.float32),
+        velocity_positions_view,
+        float(restoration_velocity_attenuation),
+        float(restoration_gravity_falloff),
+        float(limit_stiffness),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if velocity_positions_view is not velocity_positions:
+        velocity_positions[...] = velocity_positions_view
+    return True
+
+
+def apply_substep_inertia(
+    old_positions: np.ndarray,
+    velocity: np.ndarray,
+    depths: np.ndarray,
+    inv_masses: np.ndarray,
+    runtime_step: dict,
+    depth_inertia: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "apply_substep_inertia_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    zero3 = np.zeros(3, dtype=np.float32)
+    identity = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    old_positions_view = np.ascontiguousarray(old_positions, dtype=np.float32)
+    velocity_view = np.ascontiguousarray(velocity, dtype=np.float32)
+    function(
+        old_positions_view,
+        velocity_view,
+        np.ascontiguousarray(depths, dtype=np.float32),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        _state_vector(runtime_step, "old_world_position", zero3),
+        _state_vector(runtime_step, "step_vector", zero3),
+        _state_vector(runtime_step, "step_rotation", identity),
+        _state_vector(runtime_step, "inertia_vector", zero3),
+        _state_vector(runtime_step, "inertia_rotation", identity),
+        float(depth_inertia),
+    )
+    if old_positions_view is not old_positions:
+        old_positions[...] = old_positions_view
+    if velocity_view is not velocity:
+        velocity[...] = velocity_view
+    return True
+
+
+def apply_centrifugal_velocity(
+    positions: np.ndarray,
+    velocity: np.ndarray,
+    depths: np.ndarray,
+    inv_masses: np.ndarray,
+    runtime_step: dict,
+    centrifugal: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "apply_centrifugal_velocity_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    zero3 = np.zeros(3, dtype=np.float32)
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    velocity_view = np.ascontiguousarray(velocity, dtype=np.float32)
+    function(
+        positions_view,
+        velocity_view,
+        np.ascontiguousarray(depths, dtype=np.float32),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        _state_vector(runtime_step, "now_world_position", zero3),
+        _state_vector(runtime_step, "rotation_axis", zero3),
+        float(runtime_step.get("angular_velocity", 0.0) or 0.0),
+        float(centrifugal),
+    )
+    if velocity_view is not velocity:
+        velocity[...] = velocity_view
+    return True
+
+
 def _state_vector(state: dict, key: str, default) -> np.ndarray:
     value = np.ascontiguousarray(state.get(key, default), dtype=np.float32).reshape(-1)
     if value.shape != (len(default),):
