@@ -10,8 +10,8 @@
 | 目标范围 | 先 MeshCloth，BoneCloth 后续接入同源设施。 | MeshCloth/BoneCloth 共用 solver 数组层，I/O adapter 分开。 |
 | 输入 mesh | 用户提供的低模代理就是求解目标。 | 永远不做 reduction、减面、重拓扑、代理生成、高低模 mapping。 |
 | Python 后端 | 已可运行，作为行为蓝本。 | C++ 后端必须先对齐 Python，再继续提高 MC2 等价度。 |
-| C++ 后端 | 已新增首版 `solve_meshcloth_mc2` 整帧数组 core；当前覆盖 baseline step pose、predict/pin、neighbor distance、tether、angle、motion/backstop、collision、triangle bending/fallback、post step、substep inertia、centrifugal、display prediction。 | Python 仍负责 Blender 对象、frame dt、collider 快照和 frame/substep inertia runtime state 准备；现有 `meshClothMC2` 暂不切换。 |
-| C++ OmniNode | 暂不暴露节点；整帧 C++ solver parity 通过后新增独立 `meshClothMC2Cpp`。 | 保留 `meshClothMC2` 作为 Python reference，避免两条后端语义混在同一节点里。 |
+| C++ 后端 | 已新增首版 `solve_meshcloth_mc2` 整帧数组 core；当前覆盖 baseline step pose、predict/pin、neighbor distance、tether、angle、motion/backstop、collision、triangle bending/fallback、post step、substep inertia、centrifugal、display prediction。 | Python 仍负责 Blender 对象、frame dt、collider 快照和 frame/substep inertia runtime state 准备；`meshClothMC2` 保持 Python reference。 |
+| C++ OmniNode | 已暴露独立 `meshClothMC2Cpp`。 | 与 `meshClothMC2` 共用 cache、跳帧、碰撞收集和 shape key 写回，只把 solver loop 切到 `hotools_native.solve_meshcloth_mc2`。 |
 | 碰撞 | 使用 HoTools/OmniNode 现有碰撞组；逻辑留在 `physicsMC2` 包内。 | 不抽公共碰撞函数文件，不改 SpringBone/XPBD 蓝本。 |
 | 时间 | 刻意使用 Blender 工程输出帧率得到真实帧长，damping 按每场景帧解释并换算到 substep。 | 不复制 MC2 manager 的 wall-clock/catch-up/timeScale；C++ 使用 Python 传入 dt。 |
 | iterations | 保留为 Python/C++ 共享调度参数。 | 当前不复制 MC2 job chunk 细节，但 C++ 后端必须对齐 Python 循环语义。 |
@@ -92,7 +92,7 @@
 | Angle parity | restoration/limit、rotation buffer、velocity attenuation 与 Python 对齐。 | 已完成 native smoke |
 | Display parity | future prediction、root distance clamp 与 Python 对齐。 | 已完成 native smoke |
 | Solver parity | 完整 substep/iteration/post 输出与 Python 小网格接近。 | 部分完成：`test_mc2_solver_core_native.py` 已验证新整帧 core 与逐 kernel 调度输出一致；仍需 Blender 场景级 parity |
-| Blender integration | 完成后新增独立 `meshClothMC2Cpp` OmniNode，cache 与跳帧语义对齐 `meshClothMC2`。 | 待做 |
+| Blender integration | 完成后新增独立 `meshClothMC2Cpp` OmniNode，cache 与跳帧语义对齐 `meshClothMC2`。 | 已完成首版接入：Blender 最小导入验证通过，仍需真实场景级 parity |
 
 ## 当前优先级
 
@@ -100,9 +100,9 @@
 | --- | --- | --- |
 | P0 | 保持 Python MeshCloth 行为稳定。 | Python 是 C++ reference，不能在 C++ 前失控分叉。 |
 | P0 | 做 native binding smoke。 | 先锁 ABI，减少后续双端返工。 |
-| P1 | C++ 迁移整帧 solver 调度；distance/tether/angle/motion/collision/bending/post/substep inertia/centrifugal 已有 native kernel。 | 已有首版 `solve_meshcloth_mc2` 数组 core，继续做 Blender 场景级 parity。 |
-| P1 | C++ 迁移整帧 solver pack。 | 子步调度、predict/pin 和参数数组 ABI 已有首版；frame runtime 状态边界仍由 Python 准备，后续再评估是否下沉。 |
-| P1 | 新增 `meshClothMC2Cpp` OmniNode。 | 只在整帧 native solver 和 parity smoke 通过后暴露，保留 Python reference 节点。 |
+| P1 | C++ 迁移整帧 solver 调度；distance/tether/angle/motion/collision/bending/post/substep inertia/centrifugal 已有 native kernel。 | 已有首版 `solve_meshcloth_mc2` 数组 core，并已接入 C++ 对比节点；继续做 Blender 场景级 parity。 |
+| P1 | C++ 迁移整帧 solver pack。 | `solve_meshcloth_native_core()` 已负责 Python 侧打包与 native full-core 调用；frame runtime 状态边界仍由 Python 准备，后续再评估是否下沉。 |
+| P1 | 新增 `meshClothMC2Cpp` OmniNode。 | 已完成首版；保留 Python reference 节点用于逐帧对比。 |
 | P2 | shear 横向连接场景验证。 | 已在 MeshCloth 输入 mesh 上生成 MC2 风格 shear；仍需用 grid/cloth 场景校验手感和 C++ parity。 |
 | P2 | 规划曲线输入 UI/socket。 | 在不改 solver 主流程的前提下接入 depth curve。 |
 | P3 | 自碰撞。 | 复杂度高，等 MeshCloth/BoneCloth 主路径稳定后再做。 |

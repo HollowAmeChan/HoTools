@@ -5,6 +5,8 @@
 """
 
 import importlib
+import sys
+from pathlib import Path
 
 import bpy
 import numpy as np
@@ -16,12 +18,24 @@ _NATIVE_MODULE = None
 _NATIVE_IMPORT_ERROR = None
 
 
+def _ensure_bundled_native_path() -> None:
+    package_root = Path(__file__).resolve().parents[4]
+    py_lib = "py313" if sys.version_info >= (3, 13) else "py311"
+    package_dir = package_root / "_Lib" / py_lib / "HotoolsPackage"
+    if not package_dir.exists():
+        return
+    package_path = str(package_dir)
+    if package_path not in sys.path:
+        sys.path.insert(0, package_path)
+
+
 def native_module():
     global _NATIVE_MODULE
     global _NATIVE_IMPORT_ERROR
     if _NATIVE_MODULE is not None:
         return _NATIVE_MODULE
     try:
+        _ensure_bundled_native_path()
         _NATIVE_MODULE = importlib.import_module("hotools_native")
         _NATIVE_IMPORT_ERROR = None
     except Exception as exc:

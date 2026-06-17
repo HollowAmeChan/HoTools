@@ -9,7 +9,7 @@
 | --- | --- |
 | 推荐路线 | 继续先稳定 Python reference，再做 C++ parity。Python 不是临时草稿，而是 C++ 行为蓝本。 |
 | C++ 第一版目标 | 对齐当前 Python reference，不直接跳到完整 Unity MC2。 |
-| C++ 节点交付 | C++ 后端完成整帧 solver parity 后，新增独立 `meshClothMC2Cpp` OmniNode；不提前注册半成品节点。 |
+| C++ 节点交付 | 已新增独立 `meshClothMC2Cpp` OmniNode 用于对比；它复用 Python 节点的 Blender/cache/writeback 层，只把整帧 solver loop 交给 C++ full-core。 |
 | Mesh 输入边界 | 永远使用用户输入的低模代理；不做 reduction、减面、重拓扑、代理生成、高低模 mapping。 |
 | 碰撞边界 | 继续使用 HoTools 碰撞组；MC2 碰撞适配只放在 `physicsMC2` 包内，不抽公共碰撞模块，不改 `Physics.py` 蓝本。这是架构刻意不同。 |
 | 时间语义 | 对齐 SpringBone/XPBD 蓝本：按 Blender `render.fps / render.fps_base` 得到真实帧长；只有连续下一帧继承 cache 速度。这是刻意不同，不按 MC2 manager wall-clock/catch-up 复制。 |
@@ -20,7 +20,7 @@
 
 | 模块 | 当前文件 | 状态 | C++ 对应 | 说明 |
 | --- | --- | --- | --- | --- |
-| 节点入口 | `__init__.py` | 已落地 | 无 | `meshClothMC2`、cache 生命周期、reset/jump-frame、shape key 写回。 |
+| 节点入口 | `__init__.py` | 已落地 | 无 | `meshClothMC2`、`meshClothMC2Cpp`、cache 生命周期、reset/jump-frame、shape key 写回。 |
 | 常量/schema | `constants.py` | 已落地 | `mc2_constants.hpp` | 当前 `MC2_SOLVER_VERSION = 11`；`EPSILON = 1e-8` 对齐 MC2；包含 Angle/Inertia 参数与曲线预留名。 |
 | 参数槽 | `params.py` | 部分完成 | `mc2_params.cpp` | 当前 socket 传标量；内部保留 scalar/sample 结构，后续可接 depth curve。 |
 | Baseline | `baseline.py` | 部分偏高 | `mc2_baseline.cpp` | MeshCloth 的 parent/depth/root、baseline span、local pose、step basic pose 已落地；step basic pose 已有 native smoke；BoneCloth builder 未做。 |
@@ -28,8 +28,8 @@
 | 约束函数 | `constraints.py` | 部分偏高 | `mc2_distance.cpp` / `mc2_angle.cpp` / `mc2_bending.cpp` / `mc2_tether.cpp` / `mc2_motion.cpp` / `mc2_post.cpp` | distance/tether/motion/backstop/post、Angle restoration/limit、DirectionDihedralAngle + Volume bending 已接入；阈值统一走 MC2 `EPSILON`。 |
 | Inertia | `inertia.py` | 部分偏高 | `mc2_inertia.cpp` | 已实现 world/local/depth inertia、movement smoothing、world/local speed limit、particle speed limit、teleport reset/keep、centrifugal 近似和 ABI state；substep/depth inertia 与 centrifugal 纯数组热路径已有 native kernel。 |
 | 碰撞 | `collision.py` | 部分偏高 | `mc2_collision.cpp` | HoTools sphere/capsule point collision、group filter、collision normal/friction、native collider arrays 已有；edge/self collision 未做。 |
-| 求解调度 | `solver.py` | 部分偏高 | `mc2_meshcloth_solver.cpp` | Python reference 的 substep 顺序已固定：baseline、inertia/predict、tether、iteration distance/angle/bending/collision/distance、motion、post、display；C++ `solve_meshcloth_mc2` 已复刻首版数组 core。 |
-| Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` / `mc2.cpp` | 已打包 state/params/colliders/inertia ABI view；已调用 C++ baseline step pose、neighbor distance、tether、angle、motion/backstop、collision、triangle bending、post step、substep inertia、centrifugal、display，并新增 `solve_meshcloth_core()` 包装首版整帧数组入口；现有节点暂不切换。 |
+| 求解调度 | `solver.py` | 部分偏高 | `mc2_meshcloth_solver.cpp` | Python reference 的 substep 顺序已固定：baseline、inertia/predict、tether、iteration distance/angle/bending/collision/distance、motion、post、display；新增 `solve_meshcloth_native_core()`，为 C++ 节点打包并调用 `solve_meshcloth_mc2`。 |
+| Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` / `mc2.cpp` | 已打包 state/params/colliders/inertia ABI view；已调用 C++ baseline step pose、neighbor distance、tether、angle、motion/backstop、collision、triangle bending、post step、substep inertia、centrifugal、display，并新增 `solve_meshcloth_core()` 包装首版整帧数组入口；`meshClothMC2Cpp` 已接入，`meshClothMC2` 仍保持 Python reference。 |
 
 ## MC2 行为对照
 
@@ -56,10 +56,10 @@
 | 检查项 | 当前状态 | 是否阻塞 C++ parity |
 | --- | --- | --- |
 | Python 节点能注册 `meshClothMC2` | 已满足 | 否 |
-| C++ 节点能注册 `meshClothMC2Cpp` | 待整帧 C++ solver parity 完成后新增 | 是，不能早于 native solver 完成 |
+| C++ 节点能注册 `meshClothMC2Cpp` | 已满足；Blender 最小导入验证为 `HO_OmniNode_meshClothMC2Cpp`，34 输入、4 输出，native status 可用 | 否；后续阻塞项转为 Blender 场景级 parity |
 | Python 包边界稳定 | 已满足 | 否 |
 | Cache schema 明确 | 已满足，当前 `MC2_SOLVER_VERSION = 11` | 否 |
-| Native ABI view | 已有 state/params/colliders/inertia 打包，并接入 MC2 baseline/distance/tether/angle/motion/collision/bending/post/substep inertia/centrifugal/display native kernel；`solve_meshcloth_mc2` 整帧数组 core 已有 smoke | 不阻塞骨架；下一步是 Blender 场景级 parity 和独立 C++ 节点 |
+| Native ABI view | 已有 state/params/colliders/inertia 打包，并接入 MC2 baseline/distance/tether/angle/motion/collision/bending/post/substep inertia/centrifugal/display native kernel；`solve_meshcloth_mc2` 整帧数组 core 已有 smoke，`meshClothMC2Cpp` 已接入 | 不阻塞骨架；下一步是 Blender 场景级 parity |
 | reset/jump frame 规则 | 已明确 | 否 |
 | object transform/scale 同步 | 已有 state sync | 仍需 Blender 场景验证 |
 | Inertia 主流程 | substep/depth inertia 与 centrifugal 已 native；frame shift、teleport、smoothing runtime state 仍 Python | 不阻塞；C++ 必须按当前 Python 复刻 |

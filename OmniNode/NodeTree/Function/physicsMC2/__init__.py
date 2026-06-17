@@ -37,12 +37,14 @@ def _publish_debug_timing(
     vertex_count: int,
     constraint_count: int,
     timing: dict | None,
+    backend_label: str = "py",
 ) -> None:
     if timing is None:
         return
 
     _add_timing(timing, "total", time.perf_counter() - float(timing.get("start", time.perf_counter())))
-    key = (int(obj.as_pointer()), str(shape_key_name), "mc2_py")
+    backend = str(backend_label or "py")
+    key = (int(obj.as_pointer()), str(shape_key_name), f"mc2_{backend}")
     now = time.perf_counter()
     profile = _DEBUG_PROFILES.get(key)
     if profile is None:
@@ -84,10 +86,13 @@ def _publish_debug_timing(
         "angle",
         "bend",
         "collision",
+        "distance_after_collision",
         "motion",
         "inertia",
         "post",
+        "native_core",
         "solve_total",
+        "post_pack",
         "write",
         "total",
     )
@@ -101,7 +106,7 @@ def _publish_debug_timing(
         stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
 
     print(
-        f"[MeshClothMC2:py] obj={obj.name_full} key={shape_key_name} "
+        f"[MeshClothMC2:{backend}] obj={obj.name_full} key={shape_key_name} "
         f"frame={profile['frame']} samples={sample_count} verts={profile['vertex_count']} "
         f"constraints={profile['constraint_count']} "
         + " ".join(stage_text)
@@ -149,7 +154,9 @@ def _run_mesh_cloth_mc2_node(
     backstop_distance: float,
     collider_friction: float,
     debug_output: bool,
+    solver_backend: str = "py",
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+    backend_label = "cpp" if str(solver_backend).lower() in {"cpp", "native", "native_core"} else "py"
     timing = _begin_timing() if debug_output else None
     stage_start = time.perf_counter() if timing is not None else None
     obj = blender_io.require_mesh_object(proxy_obj, "proxy_obj")
@@ -178,7 +185,7 @@ def _run_mesh_cloth_mc2_node(
         blender_io.restore_rest_to_shape_key(obj, target_key, state)
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
-            _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing)
+            _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing, backend_label)
         return _OmniCache(None), obj, vertex_count, 0
 
     if reset or not isinstance(state, dict):
@@ -215,7 +222,7 @@ def _run_mesh_cloth_mc2_node(
     if not enabled:
         next_state = dict(state)
         next_state["frame"] = current_frame
-        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
+        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)
         return _OmniCache(next_state), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
@@ -225,7 +232,8 @@ def _run_mesh_cloth_mc2_node(
         _add_timing(timing, "colliders", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
-    next_state = solver.solve_meshcloth(
+    solve_func = solver.solve_meshcloth_native_core if backend_label == "cpp" else solver.solve_meshcloth
+    next_state = solve_func(
         state,
         obj,
         scene,
@@ -267,7 +275,7 @@ def _run_mesh_cloth_mc2_node(
     blender_io.write_world_positions_to_shape_key(obj, target_key, next_state["display_positions"])
     if timing is not None:
         _add_timing(timing, "write", time.perf_counter() - stage_start)
-        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing)
+        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)
     return _OmniCache(next_state), obj, vertex_count, constraint_count
 
 
@@ -420,4 +428,89 @@ def meshClothMC2(
         backstop_distance,
         collider_friction,
         debug_output,
+    )
+
+
+_MESH_CLOTH_MC2_CPP_META = dict(meshClothMC2.__meta)
+_MESH_CLOTH_MC2_CPP_META["bl_label"] = "网格布料-MC2-CPP"
+_MESH_CLOTH_MC2_CPP_META["omni_description"] = """
+    MC2 MeshCloth C++ full-core backend node.
+    It shares cache, collider collection, frame timing, teleport/inertia preparation, and shape key writeback with
+    meshClothMC2, but delegates the per-frame solver loop to hotools_native.solve_meshcloth_mc2.
+    """
+
+
+@omni(**_MESH_CLOTH_MC2_CPP_META)
+def meshClothMC2Cpp(
+    cache_state: _OmniCache,
+    proxy_obj: bpy.types.Object,
+    scene: bpy.types.Scene = None,
+    enabled: bool = True,
+    reset: bool = False,
+    substeps: int = 1,
+    iterations: int = 4,
+    gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    gravity_power: float = 9.8,
+    damping: float = 0.04,
+    distance_stiffness: float = 1.0,
+    bend_stiffness: float = 0.5,
+    angle_restoration_stiffness: float = 0.2,
+    angle_limit: float = 0.0,
+    angle_limit_stiffness: float = 1.0,
+    world_inertia: float = MC2SystemConstants.WORLD_INERTIA,
+    movement_inertia_smoothing: float = MC2SystemConstants.MOVEMENT_INERTIA_SMOOTHING,
+    local_inertia: float = MC2SystemConstants.LOCAL_INERTIA,
+    depth_inertia: float = MC2SystemConstants.DEPTH_INERTIA,
+    centrifugal: float = MC2SystemConstants.CENTRIFUGAL_ACCELERATION,
+    movement_speed_limit: float = MC2SystemConstants.MOVEMENT_SPEED_LIMIT,
+    rotation_speed_limit: float = MC2SystemConstants.ROTATION_SPEED_LIMIT,
+    local_movement_speed_limit: float = MC2SystemConstants.LOCAL_MOVEMENT_SPEED_LIMIT,
+    local_rotation_speed_limit: float = MC2SystemConstants.LOCAL_ROTATION_SPEED_LIMIT,
+    particle_speed_limit: float = MC2SystemConstants.PARTICLE_SPEED_LIMIT,
+    teleport_mode: int = 0,
+    teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
+    teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
+    max_distance: float = 0.0,
+    collision_radius: float = 0.0,
+    backstop_radius: float = 0.0,
+    backstop_distance: float = 0.0,
+    collider_friction: float = 0.05,
+    debug_output: bool = False,
+) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+    return _run_mesh_cloth_mc2_node(
+        cache_state,
+        proxy_obj,
+        scene,
+        enabled,
+        reset,
+        substeps,
+        iterations,
+        gravity_dir,
+        gravity_power,
+        damping,
+        distance_stiffness,
+        bend_stiffness,
+        angle_restoration_stiffness,
+        angle_limit,
+        angle_limit_stiffness,
+        world_inertia,
+        movement_inertia_smoothing,
+        local_inertia,
+        depth_inertia,
+        centrifugal,
+        movement_speed_limit,
+        rotation_speed_limit,
+        local_movement_speed_limit,
+        local_rotation_speed_limit,
+        particle_speed_limit,
+        teleport_mode,
+        teleport_distance,
+        teleport_rotation,
+        max_distance,
+        collision_radius,
+        backstop_radius,
+        backstop_distance,
+        collider_friction,
+        debug_output,
+        solver_backend="cpp",
     )
