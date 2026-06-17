@@ -666,11 +666,15 @@ PyObject* apply_post_step_mc2(PyObject*, PyObject* args) {
 }
 
 PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 13;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_collisions_mc2 expects %zd arguments", kArgCount);
+    constexpr Py_ssize_t kLegacyArgCount = 13;
+    constexpr Py_ssize_t kArgCount = 16;
+    const Py_ssize_t arg_count = PyTuple_GET_SIZE(args);
+    if (arg_count != kLegacyArgCount && arg_count != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "project_collisions_mc2 expects %zd or %zd arguments", kLegacyArgCount,
+                     kArgCount);
         return nullptr;
     }
+    const bool has_old_pose_args = arg_count == kArgCount;
 
     Buffer positions;
     Buffer base_positions;
@@ -683,6 +687,9 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     Buffer collider_centers;
     Buffer collider_segment_a;
     Buffer collider_segment_b;
+    Buffer collider_old_centers;
+    Buffer collider_old_segment_a;
+    Buffer collider_old_segment_b;
     Buffer collider_radii;
 
     if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
@@ -695,8 +702,20 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
         !collider_group_bits.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
         !collider_centers.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
         !collider_segment_a.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
-        !collider_radii.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b")) {
+        return nullptr;
+    }
+    if (has_old_pose_args) {
+        if (!collider_old_centers.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND,
+                                      "collider_old_centers") ||
+            !collider_old_segment_a.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND,
+                                        "collider_old_segment_a") ||
+            !collider_old_segment_b.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND,
+                                        "collider_old_segment_b") ||
+            !collider_radii.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+            return nullptr;
+        }
+    } else if (!collider_radii.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
         return nullptr;
     }
 
@@ -725,6 +744,9 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     Py_ssize_t collider_centers_count = 0;
     Py_ssize_t collider_segment_a_count = 0;
     Py_ssize_t collider_segment_b_count = 0;
+    Py_ssize_t collider_old_centers_count = collider_count;
+    Py_ssize_t collider_old_segment_a_count = collider_count;
+    Py_ssize_t collider_old_segment_b_count = collider_count;
     if (!expect_1d_array(collider_group_bits, "collider_group_bits", collider_count) ||
         !expect_1d_array(collider_radii, "collider_radii", collider_count) ||
         !expect_vector3_array(collider_centers, "collider_centers", &collider_centers_count) ||
@@ -732,8 +754,15 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
         !expect_vector3_array(collider_segment_b, "collider_segment_b", &collider_segment_b_count)) {
         return nullptr;
     }
+    if (has_old_pose_args &&
+        (!expect_vector3_array(collider_old_centers, "collider_old_centers", &collider_old_centers_count) ||
+         !expect_vector3_array(collider_old_segment_a, "collider_old_segment_a", &collider_old_segment_a_count) ||
+         !expect_vector3_array(collider_old_segment_b, "collider_old_segment_b", &collider_old_segment_b_count))) {
+        return nullptr;
+    }
     if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
-        collider_segment_b_count != collider_count) {
+        collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
+        collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
         PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
         return nullptr;
     }
@@ -750,6 +779,12 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     view.collider_centers = static_cast<const float*>(collider_centers.view.buf);
     view.collider_segment_a = static_cast<const float*>(collider_segment_a.view.buf);
     view.collider_segment_b = static_cast<const float*>(collider_segment_b.view.buf);
+    view.collider_old_centers = has_old_pose_args ? static_cast<const float*>(collider_old_centers.view.buf)
+                                                  : static_cast<const float*>(collider_centers.view.buf);
+    view.collider_old_segment_a = has_old_pose_args ? static_cast<const float*>(collider_old_segment_a.view.buf)
+                                                    : static_cast<const float*>(collider_segment_a.view.buf);
+    view.collider_old_segment_b = has_old_pose_args ? static_cast<const float*>(collider_old_segment_b.view.buf)
+                                                    : static_cast<const float*>(collider_segment_b.view.buf);
     view.collider_radii = static_cast<const float*>(collider_radii.view.buf);
     view.vertex_count = static_cast<std::int64_t>(vertex_count);
     view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -1248,6 +1283,9 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         AColliderCenters,
         AColliderSegmentA,
         AColliderSegmentB,
+        AColliderOldCenters,
+        AColliderOldSegmentA,
+        AColliderOldSegmentB,
         AColliderRadii,
         ASubstepOldWorldPositions,
         ASubstepStepVectors,
@@ -1259,7 +1297,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ASubstepAngularVelocities,
         kSolveBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 78;
+    constexpr Py_ssize_t kArgCount = 81;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -1318,6 +1356,9 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         "collider_centers",
         "collider_segment_a",
         "collider_segment_b",
+        "collider_old_centers",
+        "collider_old_segment_a",
+        "collider_old_segment_b",
         "collider_radii",
         "substep_old_world_positions",
         "substep_step_vectors",
@@ -1457,37 +1498,47 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     Py_ssize_t collider_centers_count = 0;
     Py_ssize_t collider_segment_a_count = 0;
     Py_ssize_t collider_segment_b_count = 0;
+    Py_ssize_t collider_old_centers_count = 0;
+    Py_ssize_t collider_old_segment_a_count = 0;
+    Py_ssize_t collider_old_segment_b_count = 0;
     if (!expect_1d_array(buffers[AColliderGroupBits], "collider_group_bits", collider_count) ||
         !expect_1d_array(buffers[AColliderRadii], "collider_radii", collider_count) ||
         !expect_vector3_array(buffers[AColliderCenters], "collider_centers", &collider_centers_count) ||
         !expect_vector3_array(buffers[AColliderSegmentA], "collider_segment_a", &collider_segment_a_count) ||
-        !expect_vector3_array(buffers[AColliderSegmentB], "collider_segment_b", &collider_segment_b_count)) {
+        !expect_vector3_array(buffers[AColliderSegmentB], "collider_segment_b", &collider_segment_b_count) ||
+        !expect_vector3_array(buffers[AColliderOldCenters], "collider_old_centers", &collider_old_centers_count) ||
+        !expect_vector3_array(buffers[AColliderOldSegmentA], "collider_old_segment_a",
+                              &collider_old_segment_a_count) ||
+        !expect_vector3_array(buffers[AColliderOldSegmentB], "collider_old_segment_b",
+                              &collider_old_segment_b_count)) {
         return nullptr;
     }
     if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
-        collider_segment_b_count != collider_count) {
+        collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
+        collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
         PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
         return nullptr;
     }
 
-    const double frame_dt = as_double(PyTuple_GET_ITEM(args, 61), "frame_dt");
+    constexpr Py_ssize_t kScalarStart = kSolveBufferCount;
+    const double frame_dt = as_double(PyTuple_GET_ITEM(args, kScalarStart + 0), "frame_dt");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double step_dt = as_double(PyTuple_GET_ITEM(args, 62), "step_dt");
+    const double step_dt = as_double(PyTuple_GET_ITEM(args, kScalarStart + 1), "step_dt");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const long raw_substeps = as_long(PyTuple_GET_ITEM(args, 63), "substeps");
+    const long raw_substeps = as_long(PyTuple_GET_ITEM(args, kScalarStart + 2), "substeps");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const long raw_iterations = as_long(PyTuple_GET_ITEM(args, 64), "iterations");
+    const long raw_iterations = as_long(PyTuple_GET_ITEM(args, kScalarStart + 3), "iterations");
     if (PyErr_Occurred()) {
         return nullptr;
     }
     Buffer gravity;
-    if (!gravity.get(PyTuple_GET_ITEM(args, 65), PyBUF_FORMAT | PyBUF_ND, "gravity") ||
+    if (!gravity.get(PyTuple_GET_ITEM(args, kScalarStart + 4), PyBUF_FORMAT | PyBUF_ND, "gravity") ||
         !expect_float32(gravity, "gravity") ||
         !expect_1d_array(gravity, "gravity", 3)) {
         return nullptr;
@@ -1515,51 +1566,53 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double substep_damping = as_double(PyTuple_GET_ITEM(args, 66), "substep_damping");
+    const double substep_damping = as_double(PyTuple_GET_ITEM(args, kScalarStart + 5), "substep_damping");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, 67), "depth_inertia");
+    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, kScalarStart + 6), "depth_inertia");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double centrifugal = as_double(PyTuple_GET_ITEM(args, 68), "centrifugal");
+    const double centrifugal = as_double(PyTuple_GET_ITEM(args, kScalarStart + 7), "centrifugal");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double tether_compression = as_double(PyTuple_GET_ITEM(args, 69), "tether_compression");
+    const double tether_compression = as_double(PyTuple_GET_ITEM(args, kScalarStart + 8), "tether_compression");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double tether_stretch = as_double(PyTuple_GET_ITEM(args, 70), "tether_stretch");
+    const double tether_stretch = as_double(PyTuple_GET_ITEM(args, kScalarStart + 9), "tether_stretch");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double dynamic_friction = as_double(PyTuple_GET_ITEM(args, 71), "dynamic_friction");
+    const double dynamic_friction = as_double(PyTuple_GET_ITEM(args, kScalarStart + 10), "dynamic_friction");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double static_friction_speed = as_double(PyTuple_GET_ITEM(args, 72), "static_friction_speed");
+    const double static_friction_speed = as_double(PyTuple_GET_ITEM(args, kScalarStart + 11), "static_friction_speed");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double particle_speed_limit = as_double(PyTuple_GET_ITEM(args, 73), "particle_speed_limit");
+    const double particle_speed_limit = as_double(PyTuple_GET_ITEM(args, kScalarStart + 12), "particle_speed_limit");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double angle_limit_stiffness = as_double(PyTuple_GET_ITEM(args, 74), "angle_limit_stiffness");
+    const double angle_limit_stiffness =
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 13), "angle_limit_stiffness");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 75), "collided_by_groups");
+    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, kScalarStart + 14), "collided_by_groups");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double display_max_distance_ratio = as_double(PyTuple_GET_ITEM(args, 76), "display_max_distance_ratio");
+    const double display_max_distance_ratio =
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 15), "display_max_distance_ratio");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 77), "animation_pose_ratio");
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, kScalarStart + 16), "animation_pose_ratio");
     if (PyErr_Occurred()) {
         return nullptr;
     }
@@ -1617,6 +1670,9 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.collider_centers = static_cast<const float*>(buffers[AColliderCenters].view.buf);
     view.collider_segment_a = static_cast<const float*>(buffers[AColliderSegmentA].view.buf);
     view.collider_segment_b = static_cast<const float*>(buffers[AColliderSegmentB].view.buf);
+    view.collider_old_centers = static_cast<const float*>(buffers[AColliderOldCenters].view.buf);
+    view.collider_old_segment_a = static_cast<const float*>(buffers[AColliderOldSegmentA].view.buf);
+    view.collider_old_segment_b = static_cast<const float*>(buffers[AColliderOldSegmentB].view.buf);
     view.collider_radii = static_cast<const float*>(buffers[AColliderRadii].view.buf);
     view.substep_old_world_positions = static_cast<const float*>(buffers[ASubstepOldWorldPositions].view.buf);
     view.substep_step_vectors = static_cast<const float*>(buffers[ASubstepStepVectors].view.buf);

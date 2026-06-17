@@ -754,47 +754,77 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 continue;
             }
 
-            float center_x = view.collider_centers[collider_offset + 0];
-            float center_y = view.collider_centers[collider_offset + 1];
-            float center_z = view.collider_centers[collider_offset + 2];
+            float current_center_x = view.collider_centers[collider_offset + 0];
+            float current_center_y = view.collider_centers[collider_offset + 1];
+            float current_center_z = view.collider_centers[collider_offset + 2];
+            float old_center_x = view.collider_old_centers != nullptr
+                                     ? view.collider_old_centers[collider_offset + 0]
+                                     : current_center_x;
+            float old_center_y = view.collider_old_centers != nullptr
+                                     ? view.collider_old_centers[collider_offset + 1]
+                                     : current_center_y;
+            float old_center_z = view.collider_old_centers != nullptr
+                                     ? view.collider_old_centers[collider_offset + 2]
+                                     : current_center_z;
             if (view.collider_types[collider] == 1) {
-                const float ax = view.collider_segment_a[collider_offset + 0];
-                const float ay = view.collider_segment_a[collider_offset + 1];
-                const float az = view.collider_segment_a[collider_offset + 2];
-                const float bx = view.collider_segment_b[collider_offset + 0];
-                const float by = view.collider_segment_b[collider_offset + 1];
-                const float bz = view.collider_segment_b[collider_offset + 2];
-                const float sx = bx - ax;
-                const float sy = by - ay;
-                const float sz = bz - az;
-                const float denom = sx * sx + sy * sy + sz * sz;
+                const float old_ax = view.collider_old_segment_a != nullptr
+                                         ? view.collider_old_segment_a[collider_offset + 0]
+                                         : view.collider_segment_a[collider_offset + 0];
+                const float old_ay = view.collider_old_segment_a != nullptr
+                                         ? view.collider_old_segment_a[collider_offset + 1]
+                                         : view.collider_segment_a[collider_offset + 1];
+                const float old_az = view.collider_old_segment_a != nullptr
+                                         ? view.collider_old_segment_a[collider_offset + 2]
+                                         : view.collider_segment_a[collider_offset + 2];
+                const float old_bx = view.collider_old_segment_b != nullptr
+                                         ? view.collider_old_segment_b[collider_offset + 0]
+                                         : view.collider_segment_b[collider_offset + 0];
+                const float old_by = view.collider_old_segment_b != nullptr
+                                         ? view.collider_old_segment_b[collider_offset + 1]
+                                         : view.collider_segment_b[collider_offset + 1];
+                const float old_bz = view.collider_old_segment_b != nullptr
+                                         ? view.collider_old_segment_b[collider_offset + 2]
+                                         : view.collider_segment_b[collider_offset + 2];
+                const float old_sx = old_bx - old_ax;
+                const float old_sy = old_by - old_ay;
+                const float old_sz = old_bz - old_az;
+                const float denom = old_sx * old_sx + old_sy * old_sy + old_sz * old_sz;
                 float t = 0.0f;
                 if (denom > kMc2Epsilon) {
-                    t = ((origin_x - ax) * sx + (origin_y - ay) * sy + (origin_z - az) * sz) / denom;
+                    t = ((origin_x - old_ax) * old_sx + (origin_y - old_ay) * old_sy +
+                         (origin_z - old_az) * old_sz) /
+                        denom;
                     t = clamp_float(t, 0.0f, 1.0f);
                 }
-                center_x = ax + sx * t;
-                center_y = ay + sy * t;
-                center_z = az + sz * t;
+                old_center_x = old_ax + old_sx * t;
+                old_center_y = old_ay + old_sy * t;
+                old_center_z = old_az + old_sz * t;
+
+                const float current_ax = view.collider_segment_a[collider_offset + 0];
+                const float current_ay = view.collider_segment_a[collider_offset + 1];
+                const float current_az = view.collider_segment_a[collider_offset + 2];
+                const float current_bx = view.collider_segment_b[collider_offset + 0];
+                const float current_by = view.collider_segment_b[collider_offset + 1];
+                const float current_bz = view.collider_segment_b[collider_offset + 2];
+                current_center_x = current_ax + (current_bx - current_ax) * t;
+                current_center_y = current_ay + (current_by - current_ay) * t;
+                current_center_z = current_az + (current_bz - current_az) * t;
             }
 
-            const float dx = origin_x - center_x;
-            const float dy = origin_y - center_y;
-            const float dz = origin_z - center_z;
-            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const float dx = origin_x - old_center_x;
+            const float dy = origin_y - old_center_y;
+            const float dz = origin_z - old_center_z;
             float normal_x = 0.0f;
             float normal_y = 0.0f;
             float normal_z = 1.0f;
-            if (distance <= radius + friction_range) {
-                if (distance > kMc2Epsilon) {
-                    const float inv_distance = 1.0f / distance;
-                    normal_x = dx * inv_distance;
-                    normal_y = dy * inv_distance;
-                    normal_z = dz * inv_distance;
-                } else {
-                    safe_normal_or_z(fallback_x, fallback_y, fallback_z, normal_x, normal_y, normal_z);
-                }
-                const float collider_distance = std::max(distance - radius, 0.0f);
+            safe_normal_with_fallback(dx, dy, dz, fallback_x, fallback_y, fallback_z, normal_x, normal_y, normal_z);
+            const float plane_x = current_center_x + normal_x * radius;
+            const float plane_y = current_center_y + normal_y * radius;
+            const float plane_z = current_center_z + normal_z * radius;
+            const float surface_distance =
+                dot3(origin_x - plane_x, origin_y - plane_y, origin_z - plane_z, normal_x, normal_y, normal_z);
+            if (surface_distance <= friction_range) {
+                const float collider_distance = std::max(surface_distance, 0.0f);
                 const float near_friction = 1.0f - clamp_float(collider_distance / friction_range, 0.0f, 1.0f);
                 if (near_friction > friction_value) {
                     friction_value = near_friction;
@@ -803,13 +833,13 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 friction_normal_y += normal_y;
                 friction_normal_z += normal_z;
             }
-            if (distance >= radius) {
+            if (surface_distance >= 0.0f) {
                 continue;
             }
 
-            add_x += center_x + normal_x * radius - origin_x;
-            add_y += center_y + normal_y * radius - origin_y;
-            add_z += center_z + normal_z * radius - origin_z;
+            add_x += -normal_x * surface_distance;
+            add_y += -normal_y * surface_distance;
+            add_z += -normal_z * surface_distance;
             add_normal_x += normal_x;
             add_normal_y += normal_y;
             add_normal_z += normal_z;
@@ -2003,6 +2033,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             collision_view.collider_centers = view.collider_centers;
             collision_view.collider_segment_a = view.collider_segment_a;
             collision_view.collider_segment_b = view.collider_segment_b;
+            collision_view.collider_old_centers = view.collider_old_centers;
+            collision_view.collider_old_segment_a = view.collider_old_segment_a;
+            collision_view.collider_old_segment_b = view.collider_old_segment_b;
             collision_view.collider_radii = view.collider_radii;
             collision_view.vertex_count = view.vertex_count;
             collision_view.collider_count = view.collider_count;
@@ -2091,6 +2124,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
                 collision_view.collider_centers = view.collider_centers;
                 collision_view.collider_segment_a = view.collider_segment_a;
                 collision_view.collider_segment_b = view.collider_segment_b;
+                collision_view.collider_old_centers = view.collider_old_centers;
+                collision_view.collider_old_segment_a = view.collider_old_segment_a;
+                collision_view.collider_old_segment_b = view.collider_old_segment_b;
                 collision_view.collider_radii = view.collider_radii;
                 collision_view.vertex_count = view.vertex_count;
                 collision_view.collider_count = view.collider_count;

@@ -86,7 +86,15 @@ def collision_group_bit(group) -> int:
 def vector_to_numpy(value) -> np.ndarray | None:
     if value is None:
         return None
-    return np.asarray((float(value.x), float(value.y), float(value.z)), dtype=np.float32)
+    if hasattr(value, "x") and hasattr(value, "y") and hasattr(value, "z"):
+        return np.asarray((float(value.x), float(value.y), float(value.z)), dtype=np.float32)
+    try:
+        array = np.asarray(value, dtype=np.float32).reshape(-1)
+    except Exception:
+        return None
+    if array.size < 3:
+        return None
+    return np.ascontiguousarray(array[:3], dtype=np.float32)
 
 
 def closest_point_on_segment_np(point: np.ndarray, segment_a, segment_b) -> np.ndarray | None:

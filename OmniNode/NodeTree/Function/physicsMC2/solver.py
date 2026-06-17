@@ -55,6 +55,7 @@ def solve_meshcloth(
     colliders: list[dict] | None = None,
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
+    colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
     positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
     base_positions = np.ascontiguousarray(state["base_positions"], dtype=np.float32)
@@ -597,6 +598,7 @@ def solve_meshcloth(
     next_state["static_friction"] = np.ascontiguousarray(static_friction, dtype=np.float32)
     next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
+    next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     next_state["param_slots"] = dict(next_state.get("param_slots") or {})
     next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
     next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
@@ -671,6 +673,7 @@ def solve_meshcloth_native_core(
     if not native_bridge.has_function("solve_meshcloth_mc2"):
         status = native_bridge.native_status("solve_meshcloth_mc2")
         raise RuntimeError(f"MC2 C++ backend is unavailable: {status}")
+    colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
 
     positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
@@ -930,6 +933,7 @@ def solve_meshcloth_native_core(
     next_state["static_friction"] = np.ascontiguousarray(arrays["static_friction"], dtype=np.float32)
     next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
+    next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     next_state["param_slots"] = dict(next_state.get("param_slots") or {})
     next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
     next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param

@@ -8,6 +8,31 @@ from . import math_utils
 from .constants import MC2SystemConstants
 
 
+def _owner_key(owner) -> str:
+    try:
+        return str(int(owner.as_pointer()))
+    except Exception:
+        return str(id(owner))
+
+
+def collider_key(owner, owner_type: str, bone_name: str = "") -> str:
+    return f"{owner_type}:{_owner_key(owner)}:{bone_name or ''}"
+
+
+def _collider_key(collider: dict) -> str | None:
+    key = collider.get("key") if isinstance(collider, dict) else None
+    return str(key) if key else None
+
+
+def _snapshot_vector(value, fallback=None) -> np.ndarray | None:
+    vector = math_utils.vector_to_numpy(value)
+    if vector is None and fallback is not None:
+        vector = math_utils.vector_to_numpy(fallback)
+    if vector is None:
+        return None
+    return np.ascontiguousarray(vector, dtype=np.float32)
+
+
 def scene_objects(scene) -> list:
     scene = scene or bpy.context.scene
     if scene is None:
@@ -32,6 +57,7 @@ def collider_from_matrix(matrix, props, owner, owner_type: str, bone_name: str =
         "owner": owner,
         "owner_type": owner_type,
         "bone": bone_name,
+        "key": collider_key(owner, owner_type, bone_name),
         "primary_group": group,
         "center": center,
         "radius": radius,
@@ -95,6 +121,67 @@ def build_collision_snapshot_from_scene(
     }
 
 
+def compact_collider_snapshot(colliders: list[dict] | None) -> dict:
+    snapshots = {}
+    for collider in colliders or []:
+        if not isinstance(collider, dict):
+            continue
+        key = _collider_key(collider)
+        center = _snapshot_vector(collider.get("center"))
+        if key is None or center is None:
+            continue
+        collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+        if collider_type == "CAPSULE":
+            segment_a = _snapshot_vector(collider.get("segment_a"), center)
+            segment_b = _snapshot_vector(collider.get("segment_b"), center)
+        else:
+            segment_a = center
+            segment_b = center
+        if segment_a is None or segment_b is None:
+            continue
+        snapshots[key] = {
+            "type": collider_type,
+            "center": center,
+            "segment_a": segment_a,
+            "segment_b": segment_b,
+        }
+    return {"colliders": snapshots}
+
+
+def with_previous_collider_pose(colliders: list[dict] | None, previous_snapshot: dict | None) -> list[dict]:
+    previous = {}
+    if isinstance(previous_snapshot, dict):
+        previous = previous_snapshot.get("colliders") or {}
+    enriched = []
+    for collider in colliders or []:
+        if not isinstance(collider, dict):
+            continue
+        current = dict(collider)
+        center = _snapshot_vector(current.get("center"))
+        if center is None:
+            continue
+        if current.get("type") == "CAPSULE":
+            segment_a = _snapshot_vector(current.get("segment_a"), center)
+            segment_b = _snapshot_vector(current.get("segment_b"), center)
+        else:
+            segment_a = center
+            segment_b = center
+        old = previous.get(_collider_key(current))
+        if isinstance(old, dict) and str(old.get("type", "")) == str(current.get("type", "")):
+            old_center = _snapshot_vector(old.get("center"), center)
+            old_segment_a = _snapshot_vector(old.get("segment_a"), segment_a)
+            old_segment_b = _snapshot_vector(old.get("segment_b"), segment_b)
+        else:
+            old_center = center
+            old_segment_a = segment_a
+            old_segment_b = segment_b
+        current["old_center"] = old_center if old_center is not None else center
+        current["old_segment_a"] = old_segment_a if old_segment_a is not None else segment_a
+        current["old_segment_b"] = old_segment_b if old_segment_b is not None else segment_b
+        enriched.append(current)
+    return enriched
+
+
 def project_vertex_collision(
     position: np.ndarray,
     hit_radius: float,
@@ -127,29 +214,39 @@ def project_vertex_collision(
             continue
 
         if collider.get("type") == "CAPSULE":
-            center = math_utils.closest_point_on_segment_np(
-                origin,
-                collider.get("segment_a"),
-                collider.get("segment_b"),
-            )
+            old_segment_a = math_utils.vector_to_numpy(collider.get("old_segment_a", collider.get("segment_a")))
+            old_segment_b = math_utils.vector_to_numpy(collider.get("old_segment_b", collider.get("segment_b")))
+            segment_a = math_utils.vector_to_numpy(collider.get("segment_a"))
+            segment_b = math_utils.vector_to_numpy(collider.get("segment_b"))
+            if old_segment_a is None or old_segment_b is None or segment_a is None or segment_b is None:
+                continue
+            segment = old_segment_b - old_segment_a
+            denom = float(np.dot(segment, segment))
+            ratio = 0.0
+            if denom > MC2SystemConstants.EPSILON:
+                ratio = max(0.0, min(1.0, float(np.dot(origin - old_segment_a, segment) / denom)))
+            old_center = old_segment_a + segment * ratio
+            center = segment_a + (segment_b - segment_a) * ratio
         else:
             center = math_utils.vector_to_numpy(collider.get("center"))
-        if center is None:
+            old_center = math_utils.vector_to_numpy(collider.get("old_center", collider.get("center")))
+        if center is None or old_center is None:
             continue
 
-        delta = origin - center
-        distance = float(np.linalg.norm(delta))
-        if distance <= radius + friction_range:
-            normal = math_utils.safe_normal_np(delta, fallback)
-            collider_distance = max(distance - radius, 0.0)
+        delta = origin - old_center
+        normal = math_utils.safe_normal_np(delta, fallback)
+        surface_point = center + normal * radius
+        surface_distance = float(np.dot(origin - surface_point, normal))
+        if surface_distance <= friction_range:
+            collider_distance = max(surface_distance, 0.0)
             near_friction = 1.0 - max(0.0, min(1.0, collider_distance / friction_range))
             if near_friction > friction_value:
                 friction_value = near_friction
             friction_normal += normal
-        if distance >= radius:
+        if surface_distance >= 0.0:
             continue
 
-        add_position += center + normal * radius - origin
+        add_position += -normal * surface_distance
         add_normal += normal
         add_count += 1
 
@@ -230,6 +327,9 @@ def collider_arrays_for_native(
             "collider_centers": empty_vec,
             "collider_segment_a": empty_vec,
             "collider_segment_b": empty_vec,
+            "collider_old_centers": empty_vec,
+            "collider_old_segment_a": empty_vec,
+            "collider_old_segment_b": empty_vec,
             "collider_radii": empty_f,
         }
 
@@ -239,6 +339,9 @@ def collider_arrays_for_native(
     collider_centers = []
     collider_segment_a = []
     collider_segment_b = []
+    collider_old_centers = []
+    collider_old_segment_a = []
+    collider_old_segment_b = []
     collider_radii = []
     for collider in colliders:
         if not isinstance(collider, dict):
@@ -273,6 +376,15 @@ def collider_arrays_for_native(
             seg_a = center
             seg_b = center
             type_code = 0
+        old_center = math_utils.vector_to_numpy(collider.get("old_center"))
+        old_seg_a = math_utils.vector_to_numpy(collider.get("old_segment_a"))
+        old_seg_b = math_utils.vector_to_numpy(collider.get("old_segment_b"))
+        if old_center is None:
+            old_center = center
+        if old_seg_a is None:
+            old_seg_a = seg_a
+        if old_seg_b is None:
+            old_seg_b = seg_b
 
         collider_types.append(type_code)
         collider_groups.append(group)
@@ -280,6 +392,9 @@ def collider_arrays_for_native(
         collider_centers.append(center)
         collider_segment_a.append(seg_a)
         collider_segment_b.append(seg_b)
+        collider_old_centers.append(old_center)
+        collider_old_segment_a.append(old_seg_a)
+        collider_old_segment_b.append(old_seg_b)
         collider_radii.append(radius)
 
     if not collider_types:
@@ -292,6 +407,9 @@ def collider_arrays_for_native(
             "collider_centers": empty_vec,
             "collider_segment_a": empty_vec,
             "collider_segment_b": empty_vec,
+            "collider_old_centers": empty_vec,
+            "collider_old_segment_a": empty_vec,
+            "collider_old_segment_b": empty_vec,
             "collider_radii": empty_f,
         }
 
@@ -304,5 +422,8 @@ def collider_arrays_for_native(
         "collider_centers": np.ascontiguousarray(collider_centers, dtype=np.float32),
         "collider_segment_a": np.ascontiguousarray(collider_segment_a, dtype=np.float32),
         "collider_segment_b": np.ascontiguousarray(collider_segment_b, dtype=np.float32),
+        "collider_old_centers": np.ascontiguousarray(collider_old_centers, dtype=np.float32),
+        "collider_old_segment_a": np.ascontiguousarray(collider_old_segment_a, dtype=np.float32),
+        "collider_old_segment_b": np.ascontiguousarray(collider_old_segment_b, dtype=np.float32),
         "collider_radii": np.ascontiguousarray(collider_radii, dtype=np.float32),
     }

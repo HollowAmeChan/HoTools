@@ -72,6 +72,9 @@ struct Mc2CollisionView {
     const float* collider_centers = nullptr;
     const float* collider_segment_a = nullptr;
     const float* collider_segment_b = nullptr;
+    const float* collider_old_centers = nullptr;
+    const float* collider_old_segment_a = nullptr;
+    const float* collider_old_segment_b = nullptr;
     const float* collider_radii = nullptr;
     std::int64_t vertex_count = 0;
     std::int64_t collider_count = 0;
@@ -224,6 +227,9 @@ struct Mc2MeshClothSolveView {
     const float* collider_centers = nullptr;
     const float* collider_segment_a = nullptr;
     const float* collider_segment_b = nullptr;
+    const float* collider_old_centers = nullptr;
+    const float* collider_old_segment_a = nullptr;
+    const float* collider_old_segment_b = nullptr;
     const float* collider_radii = nullptr;
 
     const float* substep_old_world_positions = nullptr;

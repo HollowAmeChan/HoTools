@@ -5,6 +5,7 @@
 """
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +20,15 @@ _NATIVE_IMPORT_ERROR = None
 
 
 def _ensure_bundled_native_path() -> None:
+    test_dir = os.environ.get("HOTOOLS_NATIVE_TEST_DIR")
+    if test_dir:
+        test_path = Path(test_dir)
+        if test_path.exists():
+            test_path_string = str(test_path)
+            if test_path_string not in sys.path:
+                sys.path.insert(0, test_path_string)
+            return
+
     package_root = Path(__file__).resolve().parents[4]
     py_lib = "py313" if sys.version_info >= (3, 13) else "py311"
     package_dir = package_root / "_Lib" / py_lib / "HotoolsPackage"
@@ -270,6 +280,9 @@ def project_collisions(
     positions_view = np.ascontiguousarray(positions, dtype=np.float32)
     collision_normals_view = np.ascontiguousarray(collision_normals, dtype=np.float32)
     friction_view = np.ascontiguousarray(friction, dtype=np.float32)
+    collider_centers = _as_vec3_array(collider_arrays.get("collider_centers", ()))
+    collider_segment_a = _as_vec3_array(collider_arrays.get("collider_segment_a", ()))
+    collider_segment_b = _as_vec3_array(collider_arrays.get("collider_segment_b", ()))
     function(
         positions_view,
         np.ascontiguousarray(base_positions, dtype=np.float32),
@@ -280,9 +293,12 @@ def project_collisions(
         int(collided_by_groups),
         collider_types,
         np.ascontiguousarray(collider_arrays.get("collider_group_bits", ()), dtype=np.int32),
-        np.ascontiguousarray(collider_arrays.get("collider_centers", ()), dtype=np.float32),
-        np.ascontiguousarray(collider_arrays.get("collider_segment_a", ()), dtype=np.float32),
-        np.ascontiguousarray(collider_arrays.get("collider_segment_b", ()), dtype=np.float32),
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
+        _as_vec3_array(collider_arrays.get("collider_old_centers", collider_centers)),
+        _as_vec3_array(collider_arrays.get("collider_old_segment_a", collider_segment_a)),
+        _as_vec3_array(collider_arrays.get("collider_old_segment_b", collider_segment_b)),
         np.ascontiguousarray(collider_arrays.get("collider_radii", ()), dtype=np.float32),
     )
     if positions_view is not positions:
@@ -636,6 +652,9 @@ def solve_meshcloth_core(
         _as_vec3_array(colliders.get("collider_centers", empty_vec3)),
         _as_vec3_array(colliders.get("collider_segment_a", empty_vec3)),
         _as_vec3_array(colliders.get("collider_segment_b", empty_vec3)),
+        _as_vec3_array(colliders.get("collider_old_centers", colliders.get("collider_centers", empty_vec3))),
+        _as_vec3_array(colliders.get("collider_old_segment_a", colliders.get("collider_segment_a", empty_vec3))),
+        _as_vec3_array(colliders.get("collider_old_segment_b", colliders.get("collider_segment_b", empty_vec3))),
         np.ascontiguousarray(colliders.get("collider_radii", empty_f32), dtype=np.float32),
         _substep_array(inertia_arrays.get("old_world_positions"), substep_count, 3, (0.0, 0.0, 0.0)),
         _substep_array(inertia_arrays.get("step_vectors"), substep_count, 3, (0.0, 0.0, 0.0)),
