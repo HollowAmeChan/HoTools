@@ -132,6 +132,11 @@ def solve_meshcloth(
     has_collision = bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
+    collider_arrays = (
+        collision.collider_arrays_for_native(state, obj, colliders)
+        if has_collision
+        else None
+    )
     inertia_state = inertia.prepare_frame(
         state.get("inertia_state"),
         obj,
@@ -222,39 +227,59 @@ def solve_meshcloth(
                 _add_timing(timing, "pin", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        constraints.project_tether(
+        if not native_bridge.project_tether(
             positions,
             inv_masses,
             state["root_indices"],
             state["tether_rest_lengths"],
+            velocity_positions,
             1.0,
             float(tether_compression_param["value"]),
             float(tether_stretch_param["value"]),
-            velocity_positions,
-        )
+        ):
+            constraints.project_tether(
+                positions,
+                inv_masses,
+                state["root_indices"],
+                state["tether_rest_lengths"],
+                1.0,
+                float(tether_compression_param["value"]),
+                float(tether_stretch_param["value"]),
+                velocity_positions,
+            )
         if timing is not None:
             _add_timing(timing, "tether", time.perf_counter() - stage_start)
 
         if has_collision and iteration_count == 0:
             stage_start = time.perf_counter() if timing is not None else None
-            collision.project_collisions(
+            if not native_bridge.project_collisions(
                 positions,
                 base_positions,
                 inv_masses,
                 collision_radii,
                 collided_by_groups,
-                colliders,
-                obj,
+                collider_arrays or {},
                 collision_normals,
                 friction,
-            )
+            ):
+                collision.project_collisions(
+                    positions,
+                    base_positions,
+                    inv_masses,
+                    collision_radii,
+                    collided_by_groups,
+                    colliders,
+                    obj,
+                    collision_normals,
+                    friction,
+                )
             if timing is not None:
                 _add_timing(timing, "collision", time.perf_counter() - stage_start)
             inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
 
         for _iteration in range(iteration_count):
             stage_start = time.perf_counter() if timing is not None else None
-            constraints.project_neighbor_constraints(
+            if not native_bridge.project_neighbor_constraints(
                 positions,
                 inv_masses,
                 state["distance_start"],
@@ -264,7 +289,18 @@ def solve_meshcloth(
                 distance_stiffness_values,
                 velocity_positions,
                 MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-            )
+            ):
+                constraints.project_neighbor_constraints(
+                    positions,
+                    inv_masses,
+                    state["distance_start"],
+                    state["distance_count"],
+                    state["distance_data"],
+                    state["distance_rest"],
+                    distance_stiffness_values,
+                    velocity_positions,
+                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                )
             if timing is not None:
                 _add_timing(timing, "distance", time.perf_counter() - stage_start)
 
@@ -304,7 +340,7 @@ def solve_meshcloth(
                     bend_stiffness_values,
                 )
             else:
-                constraints.project_neighbor_constraints(
+                if not native_bridge.project_neighbor_constraints(
                     positions,
                     inv_masses,
                     state["bend_distance_start"],
@@ -314,29 +350,50 @@ def solve_meshcloth(
                     bend_stiffness_values,
                     velocity_positions,
                     MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                )
+                ):
+                    constraints.project_neighbor_constraints(
+                        positions,
+                        inv_masses,
+                        state["bend_distance_start"],
+                        state["bend_distance_count"],
+                        state["bend_distance_data"],
+                        state["bend_distance_neighbor_rest"],
+                        bend_stiffness_values,
+                        velocity_positions,
+                        MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                    )
             if timing is not None:
                 _add_timing(timing, "bend", time.perf_counter() - stage_start)
 
             if has_collision:
                 stage_start = time.perf_counter() if timing is not None else None
-                collision.project_collisions(
+                if not native_bridge.project_collisions(
                     positions,
                     base_positions,
                     inv_masses,
                     collision_radii,
                     collided_by_groups,
-                    colliders,
-                    obj,
+                    collider_arrays or {},
                     collision_normals,
                     friction,
-                )
+                ):
+                    collision.project_collisions(
+                        positions,
+                        base_positions,
+                        inv_masses,
+                        collision_radii,
+                        collided_by_groups,
+                        colliders,
+                        obj,
+                        collision_normals,
+                        friction,
+                    )
                 if timing is not None:
                     _add_timing(timing, "collision", time.perf_counter() - stage_start)
                 inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
 
             stage_start = time.perf_counter() if timing is not None else None
-            constraints.project_neighbor_constraints(
+            if not native_bridge.project_neighbor_constraints(
                 positions,
                 inv_masses,
                 state["distance_start"],
@@ -346,7 +403,18 @@ def solve_meshcloth(
                 distance_stiffness_values,
                 velocity_positions,
                 MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-            )
+            ):
+                constraints.project_neighbor_constraints(
+                    positions,
+                    inv_masses,
+                    state["distance_start"],
+                    state["distance_count"],
+                    state["distance_data"],
+                    state["distance_rest"],
+                    distance_stiffness_values,
+                    velocity_positions,
+                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                )
             if timing is not None:
                 _add_timing(timing, "distance_after_collision", time.perf_counter() - stage_start)
 
@@ -358,7 +426,7 @@ def solve_meshcloth(
                     _add_timing(timing, "pin", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        constraints.project_motion_constraint(
+        if not native_bridge.project_motion_constraint(
             positions,
             base_positions,
             base_normals,
@@ -370,12 +438,30 @@ def solve_meshcloth(
             backstop_distance_param,
             world_scale,
             velocity_positions,
-        )
+        ):
+            constraints.project_motion_constraint(
+                positions,
+                base_positions,
+                base_normals,
+                inv_masses,
+                depths,
+                max_distance_param,
+                motion_stiffness_param,
+                backstop_radius_param,
+                backstop_distance_param,
+                world_scale,
+                velocity_positions,
+            )
         if timing is not None:
             _add_timing(timing, "motion", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        constraints.apply_post_step(
+        particle_speed_limit = (
+            particle_speed_limit_value * max(float(world_scale), 0.0)
+            if particle_speed_limit_value >= 0.0
+            else -1.0
+        )
+        if not native_bridge.apply_post_step(
             positions,
             old_positions,
             velocity_positions,
@@ -388,12 +474,23 @@ def solve_meshcloth(
             step_dt,
             dynamic_friction,
             static_friction_speed,
-            (
-                particle_speed_limit_value * max(float(world_scale), 0.0)
-                if particle_speed_limit_value >= 0.0
-                else -1.0
-            ),
-        )
+            particle_speed_limit,
+        ):
+            constraints.apply_post_step(
+                positions,
+                old_positions,
+                velocity_positions,
+                velocity,
+                real_velocity,
+                friction,
+                static_friction,
+                collision_normals,
+                inv_masses,
+                step_dt,
+                dynamic_friction,
+                static_friction_speed,
+                particle_speed_limit,
+            )
         inertia.apply_centrifugal_velocity(
             positions,
             velocity,

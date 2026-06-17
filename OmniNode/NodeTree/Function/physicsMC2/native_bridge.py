@@ -9,7 +9,7 @@ import importlib
 import bpy
 import numpy as np
 
-from . import collision
+from . import collision, params
 from .constants import MC2_SOLVER_VERSION
 
 _NATIVE_MODULE = None
@@ -42,11 +42,242 @@ def native_status(function_name: str = "solve_meshcloth_mc2") -> dict:
     }
 
 
+def has_function(function_name: str) -> bool:
+    module = native_module()
+    return bool(module is not None and hasattr(module, function_name))
+
+
 def _array(state: dict, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np.ndarray:
     value = np.ascontiguousarray(state[key], dtype=dtype)
     if shape_tail and value.shape[-len(shape_tail):] != shape_tail:
         raise ValueError(f"MC2 native ABI field {key} shape mismatch: {value.shape}")
     return value
+
+
+def project_neighbor_constraints(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    starts: np.ndarray,
+    counts: np.ndarray,
+    neighbors: np.ndarray,
+    rest_lengths: np.ndarray,
+    stiffness_values: np.ndarray,
+    velocity_positions: np.ndarray,
+    velocity_attenuation: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_neighbor_constraints_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    velocity_positions_view = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(starts, dtype=np.int32),
+        np.ascontiguousarray(counts, dtype=np.int32),
+        np.ascontiguousarray(neighbors, dtype=np.int32),
+        np.ascontiguousarray(rest_lengths, dtype=np.float32),
+        np.ascontiguousarray(stiffness_values, dtype=np.float32),
+        velocity_positions_view,
+        float(velocity_attenuation),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if velocity_positions_view is not velocity_positions:
+        velocity_positions[...] = velocity_positions_view
+    return True
+
+
+def project_tether(
+    positions: np.ndarray,
+    inv_masses: np.ndarray,
+    root_indices: np.ndarray,
+    root_rest_lengths: np.ndarray,
+    velocity_positions: np.ndarray,
+    stiffness: float,
+    compression: float,
+    stretch: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_tether_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    velocity_positions_view = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(root_indices, dtype=np.int32),
+        np.ascontiguousarray(root_rest_lengths, dtype=np.float32),
+        velocity_positions_view,
+        float(stiffness),
+        float(compression),
+        float(stretch),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if velocity_positions_view is not velocity_positions:
+        velocity_positions[...] = velocity_positions_view
+    return True
+
+
+def project_motion_constraint(
+    positions: np.ndarray,
+    base_positions: np.ndarray,
+    base_normals: np.ndarray,
+    inv_masses: np.ndarray,
+    depths: np.ndarray,
+    max_distance_param: dict,
+    motion_stiffness_param: dict,
+    backstop_radius_param: dict,
+    backstop_distance_param: dict,
+    world_scale: float,
+    velocity_positions: np.ndarray,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_motion_constraints_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    motion_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32) ** 2, 0.0, 1.0)
+    scale = max(float(world_scale), 0.0)
+    max_distances = np.ascontiguousarray(params.sample_param(max_distance_param, motion_depths) * scale, dtype=np.float32)
+    stiffness_values = np.ascontiguousarray(
+        np.clip(params.sample_param(motion_stiffness_param, motion_depths), 0.0, 1.0),
+        dtype=np.float32,
+    )
+    backstop_radii = np.ascontiguousarray(params.sample_param(backstop_radius_param, motion_depths) * scale, dtype=np.float32)
+    backstop_distances = np.ascontiguousarray(
+        params.sample_param(backstop_distance_param, motion_depths) * scale,
+        dtype=np.float32,
+    )
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    velocity_positions_view = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(base_positions, dtype=np.float32),
+        np.ascontiguousarray(base_normals, dtype=np.float32),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        max_distances,
+        stiffness_values,
+        backstop_radii,
+        backstop_distances,
+        velocity_positions_view,
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if velocity_positions_view is not velocity_positions:
+        velocity_positions[...] = velocity_positions_view
+    return True
+
+
+def apply_post_step(
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    velocity_positions: np.ndarray,
+    velocity: np.ndarray,
+    real_velocity: np.ndarray,
+    friction: np.ndarray,
+    static_friction: np.ndarray,
+    collision_normals: np.ndarray,
+    inv_masses: np.ndarray,
+    step_dt: float,
+    dynamic_friction: float,
+    static_friction_speed: float,
+    particle_speed_limit: float,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "apply_post_step_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    old_positions_view = np.ascontiguousarray(old_positions, dtype=np.float32)
+    velocity_positions_view = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+    velocity_view = np.ascontiguousarray(velocity, dtype=np.float32)
+    real_velocity_view = np.ascontiguousarray(real_velocity, dtype=np.float32)
+    friction_view = np.ascontiguousarray(friction, dtype=np.float32)
+    static_friction_view = np.ascontiguousarray(static_friction, dtype=np.float32)
+    function(
+        positions_view,
+        old_positions_view,
+        velocity_positions_view,
+        velocity_view,
+        real_velocity_view,
+        friction_view,
+        static_friction_view,
+        np.ascontiguousarray(collision_normals, dtype=np.float32),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        float(step_dt),
+        float(dynamic_friction),
+        float(static_friction_speed),
+        float(particle_speed_limit),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if old_positions_view is not old_positions:
+        old_positions[...] = old_positions_view
+    if velocity_positions_view is not velocity_positions:
+        velocity_positions[...] = velocity_positions_view
+    if velocity_view is not velocity:
+        velocity[...] = velocity_view
+    if real_velocity_view is not real_velocity:
+        real_velocity[...] = real_velocity_view
+    if friction_view is not friction:
+        friction[...] = friction_view
+    if static_friction_view is not static_friction:
+        static_friction[...] = static_friction_view
+    return True
+
+
+def project_collisions(
+    positions: np.ndarray,
+    base_positions: np.ndarray,
+    inv_masses: np.ndarray,
+    collision_radii: np.ndarray,
+    collided_by_groups: int,
+    collider_arrays: dict,
+    collision_normals: np.ndarray,
+    friction: np.ndarray,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_collisions_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    collider_types = np.ascontiguousarray(collider_arrays.get("collider_types", ()), dtype=np.int32)
+    if len(collider_types) == 0 or int(collided_by_groups) == 0:
+        return True
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    collision_normals_view = np.ascontiguousarray(collision_normals, dtype=np.float32)
+    friction_view = np.ascontiguousarray(friction, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(base_positions, dtype=np.float32),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(collision_radii, dtype=np.float32),
+        collision_normals_view,
+        friction_view,
+        int(collided_by_groups),
+        collider_types,
+        np.ascontiguousarray(collider_arrays.get("collider_group_bits", ()), dtype=np.int32),
+        np.ascontiguousarray(collider_arrays.get("collider_centers", ()), dtype=np.float32),
+        np.ascontiguousarray(collider_arrays.get("collider_segment_a", ()), dtype=np.float32),
+        np.ascontiguousarray(collider_arrays.get("collider_segment_b", ()), dtype=np.float32),
+        np.ascontiguousarray(collider_arrays.get("collider_radii", ()), dtype=np.float32),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if collision_normals_view is not collision_normals:
+        collision_normals[...] = collision_normals_view
+    if friction_view is not friction:
+        friction[...] = friction_view
+    return True
 
 
 def _state_vector(state: dict, key: str, default) -> np.ndarray:

@@ -28,6 +28,7 @@ endif()
 
 add_library(hotools_native MODULE
     src/hotools_native.cpp
+    src/mc2.cpp
     src/mesh_xpbd.cpp
 )
 

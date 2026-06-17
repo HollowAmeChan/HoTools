@@ -10,7 +10,7 @@
 | 目标范围 | 先 MeshCloth，BoneCloth 后续接入同源设施。 | MeshCloth/BoneCloth 共用 solver 数组层，I/O adapter 分开。 |
 | 输入 mesh | 用户提供的低模代理就是求解目标。 | 永远不做 reduction、减面、重拓扑、代理生成、高低模 mapping。 |
 | Python 后端 | 已可运行，作为行为蓝本。 | C++ 后端必须先对齐 Python，再继续提高 MC2 等价度。 |
-| C++ 后端 | 尚未开始正式求解，只完成 Python 侧 ABI view 打包。 | 下一步先做 binding smoke。 |
+| C++ 后端 | 已开始接入 native kernel；当前覆盖 neighbor distance、tether、motion/backstop、collision、post step。 | 仍未接管整帧 solver，下一步继续迁移 inertia/angle/bending 等热路径。 |
 | 碰撞 | 使用 HoTools/OmniNode 现有碰撞组；逻辑留在 `physicsMC2` 包内。 | 不抽公共碰撞函数文件，不改 SpringBone/XPBD 蓝本。 |
 | 时间 | 刻意使用 Blender 工程输出帧率得到真实帧长，damping 按每场景帧解释并换算到 substep。 | 不复制 MC2 manager 的 wall-clock/catch-up/timeScale；C++ 使用 Python 传入 dt。 |
 | iterations | 保留为 Python/C++ 共享调度参数。 | 当前不复制 MC2 job chunk 细节，但 C++ 后端必须对齐 Python 循环语义。 |
@@ -28,12 +28,12 @@
 | Particle predict | 显式 velocity buffer。 | 显式 velocity + world position predict；post 重建 velocity/real_velocity。 | velocityWeight reset 稳定化未完整复制。 | 部分偏高 | C++ 先复制 Python。 |
 | Baseline | Mesh/Bone builder 不同，求解层共用。 | `baseline.py` 已实现 MeshCloth parent/depth/root、local pose、step basic pose。 | 外部 base pose 和 BoneCloth builder 未做。 | 部分偏高 | 后续补 BoneCloth builder。 |
 | Structural distance | DistanceConstraint，vertical/horizontal、负 rest、velocityPos；MeshCloth proxy triangle 共享边会生成 shear 横向连接。 | `edge_*` + neighbor table，支持 signed rest、固定邻点质量、velocity_positions 写入，并生成 MC2 风格 shear 横向连接。 | 不复制 MC2 proxy/mapping 生命周期；shear 已按当前输入 mesh 直接生成。 | 部分偏高 | C++ 先复刻当前 signed rest + shear projector。 |
-| Tether | compression/stretch，参考 step basic pose。 | 基于 fixed/root BFS 的 tether rest length。 | root/parent 生成是 OmniNode 简化版。 | 部分偏高 | 小网格 parity test。 |
-| Motion/backstop | max distance/backstop，依赖 base pose rotation/normal axis。 | 已有 max distance、backstop、motion stiffness，使用 base normal。 | external base rotation 未接。 | 部分偏高 | 后续补外部 base pose rotation。 |
+| Tether | compression/stretch，参考 step basic pose。 | 基于 fixed/root BFS 的 tether rest length。 | root/parent 生成是 OmniNode 简化版。 | 部分偏高 | native parity smoke 已覆盖；继续小网格场景验证。 |
+| Motion/backstop | max distance/backstop，依赖 base pose rotation/normal axis。 | 已有 max distance、backstop、motion stiffness，使用 base normal。 | external base rotation 未接。 | 部分偏高 | native parity smoke 已覆盖；后续补外部 base pose rotation。 |
 | Bending | TriangleBendingConstraint/dihedral/volume。 | 已生成 `dihedral_pairs/rest_angles/signs` 与 `volume_pairs/volume_rest`。 | world-space rest/base 与 MC2 proxy local 不完全一致。 | 部分偏高 | C++ 对齐 `project_triangle_bending()`。 |
 | Angle | AngleConstraint 基于 baseline/step basic pose 做 restoration/limit。 | 已接入 `project_angle_constraints()`，支持恢复力、限制角、限制刚度、velocity attenuation、0.2 缩放。 | gravity falloff 暂用默认常量，曲线 UI 未做。 | 部分偏高 | 小网格/链状网格校准。 |
-| Collision | 显式 collider list，支持更多 primitive/contact。 | HoTools 碰撞组，sphere/capsule point collision、friction/normal。 | 架构刻意不同；不支持 MC2 edge collision/self collision/plane。 | 部分偏高 | C++ 复刻当前 HoTools point collision。 |
-| Friction/post | PostTeam velocity/friction。 | 已更新 velocity、real_velocity、friction、static_friction、old_positions，并支持 particle speed limit。 | velocityWeight 稳定化未完整复制。 | 部分偏高 | C++ 对齐当前 post。 |
+| Collision | 显式 collider list，支持更多 primitive/contact。 | HoTools 碰撞组，sphere/capsule point collision、friction/normal。 | 架构刻意不同；不支持 MC2 edge collision/self collision/plane。 | 部分偏高 | native parity smoke 已覆盖当前 point collision。 |
+| Friction/post | PostTeam velocity/friction。 | 已更新 velocity、real_velocity、friction、static_friction、old_positions，并支持 particle speed limit。 | velocityWeight 稳定化未完整复制。 | 部分偏高 | native parity smoke 已覆盖；继续整帧场景验证。 |
 | Inertia | center inertia、anchor、smoothing、限速、teleport、negative scale、centrifugal。 | 已实现 world/local/depth inertia、movement smoothing、world/local speed limit、teleport reset/keep、particle speed limit、centrifugal。 | anchor、sync team、negative scale teleport、完整 velocityWeight 未做。 | 部分偏高 | C++ 拆 `mc2_inertia.cpp` 并复刻当前 Python。 |
 | Display/interpolation | 显示插值/混合，并对 future prediction 做 root distance clamp。 | 已做 `position + real_velocity * frame_dt` 未来预测与 root clamp，`MaxDistanceRatioFutuerPrediction = 1.3`。 | Unity render-time interpolation/blendWeight 未复制。 | 部分偏高 | C++ 复刻当前 display future prediction；blendWeight 后续再评估。 |
 | 曲线参数 | 多参数按 depth curve 采样。 | socket 当前传标量，内部已 sample 化。 | 用户还不能输入曲线。 | 预留 | 后续新增曲线输入，不改 solver 主流程。 |
@@ -79,13 +79,13 @@
 
 | 工作项 | 准入条件 | 状态 |
 | --- | --- | --- |
-| Buffer binding smoke | C++ 能读取 Python 打包的 state/params/colliders/inertia，并报出明确 dtype/shape 错误。 | 待做 |
-| Distance parity | 单独 distance projector 与 Python `assert_allclose`。 | 待做 |
+| Buffer binding smoke | C++ 能读取 Python 打包的 state/params/colliders/inertia，并报出明确 dtype/shape 错误。 | 部分完成 |
+| Distance parity | 单独 distance projector 与 Python `assert_allclose`。 | 已完成 native neighbor projector smoke |
 | Inertia parity | frame shift、local/depth inertia、teleport、centrifugal 与 Python 对齐。 | 待做 |
-| Tether parity | root/tether 场景与 Python 对齐。 | 待做 |
-| Motion parity | max distance/backstop 投影与 Python 对齐。 | 待做 |
-| Collision parity | sphere/capsule point collision、friction、normal 与 Python 对齐。 | 待做 |
-| Post parity | velocity_positions、dynamic/static friction、real_velocity 与 Python 对齐。 | 待做 |
+| Tether parity | root/tether 场景与 Python 对齐。 | 已完成 native smoke |
+| Motion parity | max distance/backstop 投影与 Python 对齐。 | 已完成 native smoke |
+| Collision parity | sphere/capsule point collision、friction、normal 与 Python 对齐。 | 已完成 native smoke |
+| Post parity | velocity_positions、dynamic/static friction、real_velocity 与 Python 对齐。 | 已完成 native smoke |
 | Solver parity | 完整 substep/iteration/post 输出与 Python 小网格接近。 | 待做 |
 | Blender integration | 同一节点接口下可切换 Python/C++，cache 与跳帧语义不变。 | 待做 |
 
@@ -95,7 +95,7 @@
 | --- | --- | --- |
 | P0 | 保持 Python MeshCloth 行为稳定。 | Python 是 C++ reference，不能在 C++ 前失控分叉。 |
 | P0 | 做 native binding smoke。 | 先锁 ABI，减少后续双端返工。 |
-| P1 | C++ 迁移 inertia、distance、tether、motion、collision、post。 | 让 C++ 先等价当前 Python。 |
+| P1 | C++ 迁移 inertia、angle、bending；distance/tether/motion/collision/post 已有 native kernel。 | 让 C++ 先等价当前 Python。 |
 | P1 | C++ 迁移 angle 和 bending。 | 当前 Python 已进入 reference，需要同一 projector。 |
 | P2 | shear 横向连接场景验证。 | 已在 MeshCloth 输入 mesh 上生成 MC2 风格 shear；仍需用 grid/cloth 场景校验手感和 C++ parity。 |
 | P2 | 规划曲线输入 UI/socket。 | 在不改 solver 主流程的前提下接入 depth curve。 |

@@ -28,7 +28,7 @@
 | Inertia | `inertia.py` | 部分偏高 | `mc2_inertia.cpp` | 已实现 world/local/depth inertia、movement smoothing、world/local speed limit、particle speed limit、teleport reset/keep、centrifugal 近似和 ABI state。 |
 | 碰撞 | `collision.py` | 部分偏高 | `mc2_collision.cpp` | HoTools sphere/capsule point collision、group filter、collision normal/friction、native collider arrays 已有；edge/self collision 未做。 |
 | 求解调度 | `solver.py` | 部分偏高 | `mc2_meshcloth_solver.cpp` | substep 中已接入 baseline、inertia、predict、tether、distance、angle、bending、collision、motion、post；末尾计算 display future prediction/root clamp。 |
-| Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` | 已打包 state/params/colliders/inertia ABI view；尚未调用 C++ 求解。 |
+| Native 桥 | `native_bridge.py` | 部分完成 | `mc2_bindings.cpp` / `mc2.cpp` | 已打包 state/params/colliders/inertia ABI view；已调用 C++ neighbor distance、tether、motion/backstop、collision、post step，其他约束仍回退 Python。 |
 
 ## MC2 行为对照
 
@@ -57,7 +57,7 @@
 | Python 节点能注册 `meshClothMC2` | 已满足 | 否 |
 | Python 包边界稳定 | 已满足 | 否 |
 | Cache schema 明确 | 已满足，当前 `MC2_SOLVER_VERSION = 11` | 否 |
-| Native ABI view | 已有 state/params/colliders/inertia 打包，未接 C++ 求解 | 不阻塞骨架，阻塞正式 native solve |
+| Native ABI view | 已有 state/params/colliders/inertia 打包，并接入 MC2 distance/tether/motion/collision/post native kernel | 不阻塞骨架；整帧 native solve 仍未完成 |
 | reset/jump frame 规则 | 已明确 | 否 |
 | object transform/scale 同步 | 已有 state sync | 仍需 Blender 场景验证 |
 | Inertia 主流程 | 已进入 Python reference | 不阻塞；C++ 必须按当前 Python 复刻 |
@@ -73,4 +73,4 @@
 | teleport reset/keep | 验证 cache 重置和保留相对状态。 |
 | sphere/capsule collision | 验证 point collision、normal 聚合、friction。 |
 | object scale 改变 | 验证 rest world、约束长度、collision radius 同步。 |
-| native ABI smoke | 验证 C++ 能读取 schema=11 的 state/params/colliders/inertia。 |
+| native ABI smoke | 验证 C++ 能读取 schema=11 的 state/params/colliders/inertia；当前已覆盖 neighbor distance、tether、motion/backstop、collision、post step projector。 |

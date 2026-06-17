@@ -16,7 +16,7 @@
 | Iterations | 保留 `iterations` 作为 Python/C++ 共享调度参数；当前 C++ parity 目标要复刻 Python 循环语义。 | 已落地 |
 | 参数曲线 | 当前 socket 传标量，内部保留 `ParamSlot`/sample 形式，后续可扩成曲线输入。 | 部分完成 |
 | 自碰撞 | 当前不实现，只保留扩展空间。 | 预留 |
-| C++ 后端 | Python 是行为参考；C++ 使用同一套 state ABI 对齐。 | 准备中 |
+| C++ 后端 | Python 是行为参考；C++ 已接入 neighbor distance、tether、motion/backstop、collision、post step native kernel，并继续沿同一套 state ABI 对齐。 | 进行中 |
 
 ## Python 包结构
 
@@ -34,7 +34,7 @@
 | `state.py` | cache state 构建、schema guard、object transform 同步、ABI 字段维护。 | 已落地 | state 是 C++ ABI 真源。 |
 | `constraints.py` | signed distance、angle、triangle bending、tether、motion/backstop、post 等数组约束函数。 | 已落地 | C++ 逐项复刻这些 projector。 |
 | `solver.py` | MeshCloth Python 求解调度、substep/iteration、inertia、velocity_positions、display future prediction、post 语义。 | 已落地 | C++ MeshCloth solver 的直接行为参考。 |
-| `native_bridge.py` | native 可用性检测、state/params/colliders/inertia ABI view 打包。 | 部分完成 | 当前只打包和记录状态，尚未调用 C++ 求解。 |
+| `native_bridge.py` | native 可用性检测、state/params/colliders/inertia ABI view 打包，逐项调用 native kernel 并回退 Python。 | 部分完成 | 已调用 neighbor distance、tether、motion/backstop、collision、post step；整帧 native solver 尚未接管。 |
 
 ## State / ABI 工作表
 
@@ -59,14 +59,14 @@
 | `mc2_bindings.cpp` | Python buffer 校验、dtype/shape/contiguous 检查、组装 view。 | 待做 | `native_bridge.build_abi_view()` |
 | `mc2_meshcloth_solver.cpp` | substep/iteration 主调度。 | 待做 | `solver.solve_meshcloth()` |
 | `mc2_inertia.cpp` | world/local/depth inertia、smoothing、teleport、centrifugal。 | 待做 | `inertia.py` |
-| `mc2_distance.cpp` | structural distance projector。 | 待做 | `constraints.project_neighbor_constraints()` |
+| `mc2_distance.cpp` | structural distance projector。 | 已有首版 kernel | `constraints.project_neighbor_constraints()` |
 | `mc2_baseline.cpp` | step basic pose 更新、baseline view 工具。 | 待做 | `baseline.update_step_basic_pose()` |
-| `mc2_tether.cpp` | tether 限制。 | 待做 | `constraints.project_tether()` |
-| `mc2_motion.cpp` | max distance / backstop。 | 待做 | `constraints.project_motion_constraint()` |
-| `mc2_collision.cpp` | sphere/capsule point collision。 | 待做 | `collision.project_collisions()` |
+| `mc2_tether.cpp` | tether 限制。 | 已有首版 kernel | `constraints.project_tether()` |
+| `mc2_motion.cpp` | max distance / backstop。 | 已有首版 kernel | `constraints.project_motion_constraint()` |
+| `mc2_collision.cpp` | sphere/capsule point collision。 | 已有首版 kernel | `collision.project_collisions()` |
 | `mc2_bending.cpp` | DirectionDihedralAngle + Volume bending，保留 fallback。 | 待做 | `constraints.project_triangle_bending()` |
 | `mc2_angle.cpp` | angle restoration / angle limit。 | 待做 | `constraints.project_angle_constraints()` |
-| `mc2_post.cpp` | velocity、friction、real_velocity、old position 更新。 | 待做 | `constraints.apply_post_step()` |
+| `mc2_post.cpp` | velocity、friction、real_velocity、old position 更新。 | 已有首版 kernel | `constraints.apply_post_step()` |
 
 ## 当前推进表
 
@@ -74,6 +74,6 @@
 | --- | --- | --- |
 | Python 包拆分 | 已从单文件升级为 `physicsMC2` 包，入口在 `__init__.py`。 | 继续只在包内扩展。 |
 | Python MeshCloth 行为 | 已支持跳帧保护、世界坐标递推、HoTools 碰撞组、baseline/depth/root、signed distance、Angle、dihedral/volume bending、tether、motion/backstop、inertia、post。 | 用小场景继续校准 MC2 手感差异。 |
-| native ABI | 已能从 Python state 打包 state/params/baseline/colliders/inertia view。 | 做 C++ binding smoke，先验证 buffer 合同。 |
-| C++ 求解 | 尚未开始正式求解实现。 | 按 Python 当前行为逐项迁移。 |
+| native ABI | 已能从 Python state 打包 state/params/baseline/colliders/inertia view，并接入 distance/tether/motion/collision/post native kernel。 | 继续补 inertia/angle/bending 的 buffer 合同。 |
+| C++ 求解 | 已开始 native kernel 接入，当前覆盖 neighbor distance、tether、motion/backstop、collision、post step。 | 按 Python 当前行为逐项迁移剩余热路径。 |
 | 高保真差异 | 曲线 UI、自碰撞、BoneCloth、anchor/sync/negative scale、完整 velocityWeight、Unity render interpolation/blendWeight 尚未完成。 | 按风险逐项补，优先不破坏当前接口。 |
