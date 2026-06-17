@@ -44,6 +44,59 @@ def closest_point_ratio(point, a, b):
     return max(0.0, min(1.0, t))
 
 
+def project_plane_reference(origin, hit_radius, center, normal):
+    normal = safe_normal(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    plane_point = center + normal * hit_radius
+    surface_distance = float(np.dot(origin - plane_point, normal))
+    return normal, surface_distance
+
+
+def project_box_reference(origin, hit_radius, center, axis_x, axis_y, signed_half_z):
+    half_x = float(np.linalg.norm(axis_x))
+    half_y = float(np.linalg.norm(axis_y))
+    half_z = abs(float(signed_half_z))
+    if half_x <= EPSILON or half_y <= EPSILON or half_z <= EPSILON:
+        return None
+
+    unit_x = axis_x / half_x
+    unit_y = axis_y / half_y
+    unit_z = np.cross(unit_x, unit_y)
+    unit_z_len = float(np.linalg.norm(unit_z))
+    if unit_z_len <= EPSILON:
+        return None
+    unit_z /= unit_z_len
+    if float(signed_half_z) < 0.0:
+        unit_z = -unit_z
+
+    rel = origin - center
+    local = np.asarray(
+        (
+            float(np.dot(rel, unit_x)),
+            float(np.dot(rel, unit_y)),
+            float(np.dot(rel, unit_z)),
+        ),
+        dtype=np.float32,
+    )
+    expanded = np.asarray((half_x + hit_radius, half_y + hit_radius, half_z + hit_radius), dtype=np.float32)
+    outside = np.maximum(np.abs(local) - expanded, 0.0)
+    outside_distance = float(np.linalg.norm(outside))
+    units = (unit_x, unit_y, unit_z)
+
+    if outside_distance > EPSILON:
+        signs = np.where(local >= 0.0, 1.0, -1.0).astype(np.float32)
+        normal = (
+            units[0] * outside[0] * signs[0]
+            + units[1] * outside[1] * signs[1]
+            + units[2] * outside[2] * signs[2]
+        )
+        return safe_normal(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32)), outside_distance
+
+    penetration = expanded - np.abs(local)
+    axis_index = int(np.argmin(penetration))
+    sign = 1.0 if float(local[axis_index]) >= 0.0 else -1.0
+    return np.ascontiguousarray(units[axis_index] * sign, dtype=np.float32), -float(penetration[axis_index])
+
+
 def project_collisions_reference(
     positions,
     base_positions,
@@ -85,38 +138,59 @@ def project_collisions_reference(
             if not collided_by_groups & int(collider_group_bits[collider_index]):
                 continue
 
-            radius = hit_radius + max(float(collider_radii[collider_index]), 0.0)
-            if radius <= EPSILON:
-                continue
-
-            if int(collider_types[collider_index]) == 1:
-                old_a = (
-                    collider_old_segment_a[collider_index]
-                    if collider_old_segment_a is not None
-                    else collider_segment_a[collider_index]
+            collider_type = int(collider_types[collider_index])
+            if collider_type == 2:
+                normal, surface_distance = project_plane_reference(
+                    origin,
+                    hit_radius,
+                    collider_centers[collider_index],
+                    collider_segment_a[collider_index],
                 )
-                old_b = (
-                    collider_old_segment_b[collider_index]
-                    if collider_old_segment_b is not None
-                    else collider_segment_b[collider_index]
+            elif collider_type == 3:
+                surface = project_box_reference(
+                    origin,
+                    hit_radius,
+                    collider_centers[collider_index],
+                    collider_segment_a[collider_index],
+                    collider_segment_b[collider_index],
+                    collider_radii[collider_index],
                 )
-                ratio = closest_point_ratio(origin, old_a, old_b)
-                old_center = old_a + (old_b - old_a) * ratio
-                center = collider_segment_a[collider_index] + (
-                    collider_segment_b[collider_index] - collider_segment_a[collider_index]
-                ) * ratio
+                if surface is None:
+                    continue
+                normal, surface_distance = surface
             else:
-                center = collider_centers[collider_index]
-                old_center = (
-                    collider_old_centers[collider_index]
-                    if collider_old_centers is not None
-                    else center
-                )
+                radius = hit_radius + max(float(collider_radii[collider_index]), 0.0)
+                if radius <= EPSILON:
+                    continue
 
-            delta = origin - old_center
-            normal = safe_normal(delta, fallback)
-            surface_point = center + normal * radius
-            surface_distance = float(np.dot(origin - surface_point, normal))
+                if collider_type == 1:
+                    old_a = (
+                        collider_old_segment_a[collider_index]
+                        if collider_old_segment_a is not None
+                        else collider_segment_a[collider_index]
+                    )
+                    old_b = (
+                        collider_old_segment_b[collider_index]
+                        if collider_old_segment_b is not None
+                        else collider_segment_b[collider_index]
+                    )
+                    ratio = closest_point_ratio(origin, old_a, old_b)
+                    old_center = old_a + (old_b - old_a) * ratio
+                    center = collider_segment_a[collider_index] + (
+                        collider_segment_b[collider_index] - collider_segment_a[collider_index]
+                    ) * ratio
+                else:
+                    center = collider_centers[collider_index]
+                    old_center = (
+                        collider_old_centers[collider_index]
+                        if collider_old_centers is not None
+                        else center
+                    )
+
+                delta = origin - old_center
+                normal = safe_normal(delta, fallback)
+                surface_point = center + normal * radius
+                surface_distance = float(np.dot(origin - surface_point, normal))
             if surface_distance <= friction_range:
                 collider_distance = max(surface_distance, 0.0)
                 near_friction = 1.0 - max(0.0, min(1.0, collider_distance / friction_range))
@@ -162,19 +236,23 @@ def assert_native_matches_reference():
             [0.0, 0.5, 0.0],
             [1.15, 0.0, 0.0],
             [0.2, 0.0, 0.0],
+            [0.0, 3.0, -0.1],
+            [3.6, 0.0, 1.0],
         ],
         dtype=np.float32,
     )
     base_positions = np.zeros_like(positions)
-    inv_masses = np.array([1.0, 1.0, 1.0, 0.0], dtype=np.float32)
-    collision_radii = np.array([0.25, 0.2, 0.25, 0.3], dtype=np.float32)
-    collider_types = np.array([0, 1, 0], dtype=np.int32)
-    collider_group_bits = np.array([1, 1, 2], dtype=np.int32)
+    inv_masses = np.array([1.0, 1.0, 1.0, 0.0, 1.0, 1.0], dtype=np.float32)
+    collision_radii = np.array([0.25, 0.2, 0.25, 0.3, 0.2, 0.2], dtype=np.float32)
+    collider_types = np.array([0, 1, 0, 2, 3], dtype=np.int32)
+    collider_group_bits = np.array([1, 1, 2, 1, 1], dtype=np.int32)
     collider_centers = np.array(
         [
             [0.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
             [0.9, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [3.0, 0.0, 1.0],
         ],
         dtype=np.float32,
     )
@@ -183,6 +261,8 @@ def assert_native_matches_reference():
             [0.0, 0.0, 0.0],
             [0.0, -0.25, 0.0],
             [0.9, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.5, 0.0, 0.0],
         ],
         dtype=np.float32,
     )
@@ -191,10 +271,12 @@ def assert_native_matches_reference():
             [0.0, 0.0, 0.0],
             [0.0, 0.25, 0.0],
             [0.9, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [0.0, 0.5, 0.0],
         ],
         dtype=np.float32,
     )
-    collider_radii = np.array([0.35, 0.35, 0.5], dtype=np.float32)
+    collider_radii = np.array([0.35, 0.35, 0.5, 0.0, 0.5], dtype=np.float32)
 
     expected_positions = positions.copy()
     expected_normals = np.zeros_like(positions)

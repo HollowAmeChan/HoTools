@@ -182,7 +182,7 @@ def _append_plane_lines(lines, matrix, props):
 
     for index, corner in enumerate(corners):
         _append_line(lines, matrix @ corner, matrix @ corners[(index + 1) % len(corners)])
-        _append_line(lines, matrix @ corner, matrix @ (corner + z_axis * ray_length))
+        _append_line(lines, matrix @ corner, matrix @ (corner - z_axis * ray_length))
 
 
 def _append_box_lines(lines, matrix, props):
