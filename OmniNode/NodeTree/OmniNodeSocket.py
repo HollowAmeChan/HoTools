@@ -153,8 +153,7 @@ def _draw_curve_socket_controls(socket, layout, node, text, curve):
     row = layout.row(align=True)
     row.label(text=text or socket.name)
     row.prop(curve, "extend", text="")
-    row.template_icon_view(socket, "preset_id", show_labels=False, scale=2.0)
-    row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+    row.template_icon_view(socket, "preset_id", show_labels=False, scale=1.0)
 
 
 class OmniNodeSocketFloatCurve(NodeSocket):

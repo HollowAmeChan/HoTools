@@ -467,6 +467,9 @@ class PropertyCurveSamplerBackend:
             native_module = importlib.import_module(module_name)
         except Exception:
             return False
+        required = ("sample_property_float_curve", "sample_property_color_curve")
+        if not all(callable(getattr(native_module, name, None)) for name in required):
+            return False
         cls.use_native_backend(native_module)
         return True
 
