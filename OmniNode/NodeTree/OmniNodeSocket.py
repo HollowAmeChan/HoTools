@@ -1,5 +1,18 @@
 import bpy
 from bpy.types import NodeSocket, NodeSocketImage
+from .OmniCurve import (
+    OmniColorCurveData,
+    OmniFloatCurveData,
+    color_curve_payload,
+    float_curve_payload,
+)
+
+
+def _set_curve_preview(sock, context):
+    try:
+        sock.node.omni_sync_socket_draw(sock)
+    except Exception:
+        pass
 
 
 OMNI_MODIFIER_TYPE_ITEMS = [
@@ -42,6 +55,95 @@ def _armature_object_poll(self, obj):
 
 def _mesh_object_poll(self, obj):
     return obj is not None and getattr(obj, "type", None) == "MESH"
+
+
+class OmniNodeSocketFloatCurve(NodeSocket):
+    bl_label = "浮点曲线-Omni"
+    bl_idname = "OmniNodeSocketFloatCurve"
+
+    curve: bpy.props.PointerProperty(type=OmniFloatCurveData)  # type: ignore
+    preview_curve: bpy.props.BoolProperty(name="预览", default=False, update=_set_curve_preview)  # type: ignore
+
+    @property
+    def default_value(self):
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            return float_curve_payload()
+        return curve.as_payload()
+
+    @default_value.setter
+    def default_value(self, value):
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            return
+        if isinstance(value, (int, float)):
+            curve.value = float(value)
+            curve.from_payload([
+                {"x": 0.0, "y": float(value)},
+                {"x": 1.0, "y": float(value)},
+            ])
+            return
+        curve.from_payload(value)
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            layout.label(text=self.name)
+            return
+        row = layout.row(align=True)
+        row.label(text=text or self.name)
+        row.prop(curve, "interpolation", text="")
+        row.prop(curve, "extend", text="")
+        row.prop(self, "preview_curve", text="", icon="HIDE_OFF", toggle=True)
+        row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.38, 0.78, 0.92, 1.0)
+
+
+class OmniNodeSocketColorCurve(NodeSocket):
+    bl_label = "颜色曲线-Omni"
+    bl_idname = "OmniNodeSocketColorCurve"
+
+    curve: bpy.props.PointerProperty(type=OmniColorCurveData)  # type: ignore
+    preview_curve: bpy.props.BoolProperty(name="预览", default=False, update=_set_curve_preview)  # type: ignore
+
+    @property
+    def default_value(self):
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            return color_curve_payload()
+        return curve.as_payload()
+
+    @default_value.setter
+    def default_value(self, value):
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            return
+        curve.from_payload(value)
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+        curve = getattr(self, "curve", None)
+        if curve is None:
+            layout.label(text=self.name)
+            return
+        row = layout.row(align=True)
+        row.label(text=text or self.name)
+        row.prop(curve, "interpolation", text="")
+        row.prop(curve, "extend", text="")
+        row.prop(self, "preview_curve", text="", icon="HIDE_OFF", toggle=True)
+        row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.95, 0.55, 0.28, 1.0)
 
 
 class OmniNodeSocketScene(NodeSocket):
@@ -486,11 +588,13 @@ class OmniNodeSocketShapeKey(NodeSocket):
         return (0.22, 0.52, 0.78, 1.0)
 
 
-cls = [
+socket_cls = [
     OmniNodeSocketScene,
     OmniNodeSocketText,
     OmniNodeSocketAny,
     OmniNodeSocketCache,
+    OmniNodeSocketFloatCurve,
+    OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
     OmniNodeSocketBoneChain,
     OmniNodeSocketImageFormat,
@@ -506,19 +610,22 @@ cls = [
     OmniNodeSocketShapeKey,
 ]
 
+# 保留旧入口，图节点 IO 类型枚举和外部脚本还会读取 OmniNodeSocket.cls。
+cls = socket_cls
+
 
 def register():
     try:
         _refresh_modifier_type_items()
-        for i in cls:
-            bpy.utils.register_class(i)
+        for item in socket_cls:
+            bpy.utils.register_class(item)
     except Exception:
         print(__file__ + " register failed!!!")
 
 
 def unregister():
     try:
-        for i in cls:
-            bpy.utils.unregister_class(i)
+        for item in reversed(socket_cls):
+            bpy.utils.unregister_class(item)
     except Exception:
         print(__file__ + " unregister failed!!!")

@@ -1035,6 +1035,9 @@ class OmniNodeApplyPreset(Operator):
 
             if self._set_socket_default(sock, value):
                 updated_count += 1
+                sync_socket_draw = getattr(node, "omni_sync_socket_draw", None)
+                if callable(sync_socket_draw):
+                    sync_socket_draw(sock)
             else:
                 skipped_count += 1
 

@@ -55,6 +55,7 @@ class OmniNode(Node):
 
     _socket_is_multi = None
     _func = None
+    _curve_preview_socket_types = {"OmniNodeSocketFloatCurve", "OmniNodeSocketColorCurve"}
 
     def size2default(self):
         self.width = self.default_width
@@ -108,6 +109,45 @@ class OmniNode(Node):
 
     def draw_label(self):
         return f"{self.name}"
+
+    def omni_socket_display_order(self, sock):
+        for is_output, sockets in ((False, self.inputs), (True, self.outputs)):
+            for index, item in enumerate(sockets):
+                if item == sock:
+                    side_order = 1 if is_output else 0
+                    return index, side_order, str(getattr(item, "identifier", item.name))
+        return 999999, 999999, str(getattr(sock, "identifier", sock.name))
+
+    def omni_curve_preview_sockets(self, socket_types=None):
+        socket_types = set(socket_types or self._curve_preview_socket_types)
+        sockets = []
+        for item in list(self.inputs) + list(self.outputs):
+            if getattr(item, "hide", False):
+                continue
+            if not getattr(item, "preview_curve", False):
+                continue
+            if getattr(item, "bl_idname", "") not in socket_types:
+                continue
+            sockets.append(item)
+        sockets.sort(key=self.omni_socket_display_order)
+        return sockets
+
+    def omni_curve_preview_index(self, sock, socket_types=None):
+        try:
+            return self.omni_curve_preview_sockets(socket_types).index(sock)
+        except ValueError:
+            return 0
+
+    def omni_sync_socket_draw(self, sock):
+        if sock is None:
+            return
+
+        if getattr(sock, "bl_idname", "") in self._curve_preview_socket_types:
+            OmniNodeDraw.DrawCurveSocket.sync(sock)
+
+    def omni_sync_all_draw(self):
+        for sock in list(self.inputs) + list(self.outputs):
+            self.omni_sync_socket_draw(sock)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         main_row = layout.row(align=False)

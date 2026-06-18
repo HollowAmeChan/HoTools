@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup, _OmniShapeKey
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup, _OmniShapeKey, _OmniFloatCurve, _OmniColorCurve
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import ast
@@ -291,6 +291,188 @@ def imageInput(img: bpy.types.Image) -> bpy.types.Image:
       base_color=_Color.colorCat["GetData"],)
 def textureInput(tex: bpy.types.Texture) -> bpy.types.Texture:
     return tex
+
+@omni(enable=True,
+      bl_label="浮点曲线",
+      base_color=_Color.colorCat["GetData"],
+      omni_description="透传浮点曲线数据。",
+      _INPUT_NAME=["曲线"],
+      _OUTPUT_NAME=["曲线"],
+      )
+def floatCurveInput(v: _OmniFloatCurve) -> _OmniFloatCurve:
+    return v
+
+@omni(enable=True,
+      bl_label="颜色曲线",
+      base_color=_Color.colorCat["GetData"],
+      omni_description="透传颜色曲线数据。",
+      _INPUT_NAME=["曲线"],
+      _OUTPUT_NAME=["曲线"],
+      )
+def colorCurveInput(v: _OmniColorCurve) -> _OmniColorCurve:
+    return v
+
+_CURVE_PREVIEW_STACK_PRESETS = [
+    {
+        "name": "折线 / RGB 渐变",
+        "description": "四个曲线输入都填入线性曲线，方便测试预览刷新。",
+        "values": {
+            "float_a": {
+                "kind": "float_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "y": 0.0},
+                    {"x": 0.35, "y": 0.85},
+                    {"x": 0.7, "y": 0.25},
+                    {"x": 1.0, "y": 1.0},
+                ],
+            },
+            "color_a": {
+                "kind": "color_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "color": (1.0, 0.0, 0.0, 1.0)},
+                    {"x": 0.5, "color": (0.0, 1.0, 0.0, 1.0)},
+                    {"x": 1.0, "color": (0.0, 0.2, 1.0, 1.0)},
+                ],
+            },
+            "float_b": {
+                "kind": "float_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "y": 1.0},
+                    {"x": 0.5, "y": 0.0},
+                    {"x": 1.0, "y": 1.0},
+                ],
+            },
+            "color_b": {
+                "kind": "color_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "color": (0.0, 0.0, 0.0, 1.0)},
+                    {"x": 0.5, "color": (1.0, 0.8, 0.0, 1.0)},
+                    {"x": 1.0, "color": (1.0, 1.0, 1.0, 1.0)},
+                ],
+            },
+        },
+    },
+    {
+        "name": "阶梯 / 重复",
+        "description": "使用常量插值和重复/镜像越界，方便观察曲线形状变化。",
+        "values": {
+            "float_a": {
+                "kind": "float_curve",
+                "interpolation": "CONSTANT",
+                "extend": "REPEAT",
+                "points": [
+                    {"x": 0.0, "y": -0.2},
+                    {"x": 0.25, "y": 0.8},
+                    {"x": 0.6, "y": 0.1},
+                    {"x": 1.0, "y": 1.2},
+                ],
+            },
+            "color_a": {
+                "kind": "color_curve",
+                "interpolation": "CONSTANT",
+                "extend": "REPEAT",
+                "points": [
+                    {"x": 0.0, "color": (1.0, 0.1, 0.1, 1.0)},
+                    {"x": 0.33, "color": (0.1, 1.0, 0.1, 1.0)},
+                    {"x": 0.66, "color": (0.1, 0.2, 1.0, 1.0)},
+                    {"x": 1.0, "color": (1.0, 1.0, 1.0, 1.0)},
+                ],
+            },
+            "float_b": {
+                "kind": "float_curve",
+                "interpolation": "CONSTANT",
+                "extend": "MIRROR",
+                "points": [
+                    {"x": 0.0, "y": 1.0},
+                    {"x": 0.25, "y": -0.35},
+                    {"x": 0.6, "y": 0.55},
+                    {"x": 1.0, "y": -0.1},
+                ],
+            },
+            "color_b": {
+                "kind": "color_curve",
+                "interpolation": "CONSTANT",
+                "extend": "REPEAT",
+                "points": [
+                    {"x": 0.0, "color": (0.0, 0.0, 0.0, 1.0)},
+                    {"x": 0.33, "color": (1.0, 0.8, 0.0, 1.0)},
+                    {"x": 0.66, "color": (0.7, 0.0, 1.0, 1.0)},
+                    {"x": 1.0, "color": (1.0, 1.0, 1.0, 1.0)},
+                ],
+            },
+        },
+    },
+    {
+        "name": "反向 / 高低范围",
+        "description": "数值范围更大，方便测试坐标轴自适应。",
+        "values": {
+            "float_a": {
+                "kind": "float_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "y": 1.5},
+                    {"x": 0.4, "y": -1.0},
+                    {"x": 1.0, "y": 0.3},
+                ],
+            },
+            "color_a": {
+                "kind": "color_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "color": (0.0, 0.0, 1.0, 1.0)},
+                    {"x": 0.5, "color": (1.0, 0.0, 1.0, 1.0)},
+                    {"x": 1.0, "color": (1.0, 0.0, 0.0, 1.0)},
+                ],
+            },
+            "float_b": {
+                "kind": "float_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "y": -1.0},
+                    {"x": 0.5, "y": 1.4},
+                    {"x": 1.0, "y": -0.6},
+                ],
+            },
+            "color_b": {
+                "kind": "color_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "color": (1.0, 1.0, 1.0, 1.0)},
+                    {"x": 0.5, "color": (0.0, 0.6, 1.0, 1.0)},
+                    {"x": 1.0, "color": (0.0, 0.0, 0.0, 1.0)},
+                ],
+            },
+        },
+    },
+]
+
+@omni(enable=True,
+      bl_label="测试多曲线预览",
+      base_color=_Color.colorCat["GetData"],
+      omni_description="用于测试同一个节点上多个曲线预览的从上到下排列。",
+      _INPUT_NAME=["浮点曲线 A", "颜色曲线 A", "浮点曲线 B", "颜色曲线 B"],
+      _OUTPUT_NAME=["浮点曲线", "颜色曲线"],
+      omni_presets=_CURVE_PREVIEW_STACK_PRESETS,
+      )
+def curvePreviewStackTest(
+        float_a: _OmniFloatCurve,
+        color_a: _OmniColorCurve,
+        float_b: _OmniFloatCurve,
+        color_b: _OmniColorCurve,
+) -> tuple[_OmniFloatCurve, _OmniColorCurve]:
+    return float_a or float_b, color_a or color_b
 
 # @meta(enable=True, 
 #       bl_label="Mesh",

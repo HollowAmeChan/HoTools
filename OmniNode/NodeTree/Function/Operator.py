@@ -1,4 +1,5 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniColorCurve
+from ..OmniCurve import resolve_color_curve
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -192,6 +193,33 @@ def objectWriteFullTransform(
 
 
 @omni(enable=True,
+      bl_label="按曲线设置位置",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="GEOMETRY",
+      bl_icon="OBJECT_DATAMODE",
+      _INPUT_NAME=["物体", "采样位置", "颜色曲线", "越界方式"],
+      _OUTPUT_NAME=["物体", "位置"],
+      omni_description="""
+      在颜色曲线上采样 RGB，并把 RGB 写入 object.location 的 XYZ。
+      越界方式为空时使用曲线设置；也可输入 钳制/重复/镜像 或 CLAMP/REPEAT/MIRROR。
+      颜色 Alpha 暂不使用。
+      """,
+      )
+def objectSetLocationByColorCurve(
+    obj: bpy.types.Object,
+    sample_position: float,
+    curve: _OmniColorCurve,
+    extend_mode: str = "",
+) -> tuple[bpy.types.Object, mathutils.Vector]:
+    obj = _require_object(obj, "obj")
+    color = resolve_color_curve(curve).sample(sample_position, extend=extend_mode)
+    location = mathutils.Vector((color[0], color[1], color[2]))
+    obj.location = location
+    return obj, location
+
+
+@omni(enable=True,
       bl_label="变换合成",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
@@ -370,5 +398,3 @@ def scanFilePath(
     )
 def combineStrs(str1: str, str2: str) -> str:
     return str1 + str2
-
-
