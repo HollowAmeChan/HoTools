@@ -1,5 +1,5 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniColorCurve
-from ..OmniCurve import resolve_color_curve
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniFloatCurve, _OmniColorCurve
+from ..OmniCurve import resolve_color_curve, resolve_float_curve
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -193,6 +193,55 @@ def objectWriteFullTransform(
 
 
 @omni(enable=True,
+      bl_label="采样浮点曲线",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="CONVERTER",
+      bl_icon="IPO_BEZIER",
+      _INPUT_NAME=["采样位置", "浮点曲线"],
+      _OUTPUT_NAME=["数值"],
+      omni_description="""
+      在浮点曲线上按位置采样并输出数值。
+      越界方式使用曲线自身设置。
+      """,
+      )
+def sampleFloatCurve(
+    sample_position: float,
+    curve: _OmniFloatCurve,
+) -> float:
+    return float(resolve_float_curve(curve).sample(sample_position))
+
+
+@omni(enable=True,
+      bl_label="采样颜色曲线",
+      base_color=_Color.colorCat["Operator"],
+      is_output_node=False,
+      color_tag="CONVERTER",
+      bl_icon="IPO_BEZIER",
+      _INPUT_NAME=["采样位置", "颜色曲线"],
+      _OUTPUT_NAME=["颜色", "向量", "R", "G", "B", "A"],
+      omni_description="""
+      在颜色曲线上按位置采样，输出颜色、RGB 向量和 RGBA 拆分值。
+      越界方式使用曲线自身设置。
+      """,
+      )
+def sampleColorCurve(
+    sample_position: float,
+    curve: _OmniColorCurve,
+) -> tuple[_OmniColorRGBA, mathutils.Vector, float, float, float, float]:
+    color = resolve_color_curve(curve).sample(sample_position)
+    rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
+    return (
+        rgba,
+        mathutils.Vector((rgba[0], rgba[1], rgba[2])),
+        rgba[0],
+        rgba[1],
+        rgba[2],
+        rgba[3],
+    )
+
+
+@omni(enable=False,
       bl_label="按曲线设置位置",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
