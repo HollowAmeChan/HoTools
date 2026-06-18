@@ -16,6 +16,7 @@ CURVE_HANDLE_TYPE_ITEMS = [
     ("AUTO", "自动", "根据相邻控制点自动计算切线"),
     ("VECTOR", "向量", "使用当前曲线段方向作为切线"),
     ("FREE", "自由", "使用预设写入的切线数据"),
+    ("COORD", "坐标", "使用预设写入的控制柄坐标"),
 ]
 
 CURVE_EXTEND_ITEMS = [
@@ -48,11 +49,11 @@ class OmniCurveCoerce:
     @staticmethod
     def handle_type(value, fallback="AUTO") -> str:
         fallback_key = str(fallback or "AUTO").strip().upper()
-        if fallback_key not in {"AUTO", "VECTOR", "FREE"}:
+        if fallback_key not in {"AUTO", "VECTOR", "FREE", "COORD"}:
             fallback_key = "AUTO"
 
         key = str(value or "").strip().upper()
-        if key in {"AUTO", "VECTOR", "FREE"}:
+        if key in {"AUTO", "VECTOR", "FREE", "COORD"}:
             return key
         return fallback_key
 
@@ -169,6 +170,45 @@ class OmniCurvePointCodec:
         return OmniCurveCoerce.color_tangent(None, fallback)
 
     @staticmethod
+    def handle_delta(point, side, point_x, point_y) -> tuple[float, float]:
+        if not isinstance(point, dict):
+            return (0.0, 0.0)
+
+        handle = point.get(f"{side}_handle")
+        if handle is not None:
+            try:
+                handle_x = float(handle[0]) - float(point_x)
+            except Exception:
+                handle_x = OmniCurvePointCodec.point_float(point, f"{side}_handle_x", 0.0)
+            try:
+                handle_y = float(handle[1]) - float(point_y)
+            except Exception:
+                handle_y = OmniCurvePointCodec.point_float(point, f"{side}_handle_y", 0.0)
+            return (handle_x, handle_y)
+
+        return (
+            OmniCurvePointCodec.point_float(point, f"{side}_handle_x", 0.0),
+            OmniCurvePointCodec.point_float(point, f"{side}_handle_y", 0.0),
+        )
+
+    @staticmethod
+    def color_handle_y(point, side, point_color) -> tuple[float, float, float, float]:
+        if not isinstance(point, dict):
+            return (0.0, 0.0, 0.0, 0.0)
+
+        handle = point.get(f"{side}_handle")
+        if handle is not None:
+            try:
+                values = list(handle[1])
+                while len(values) < 4:
+                    values.append(point_color[len(values)])
+                return tuple(float(values[index]) - float(point_color[index]) for index in range(4))
+            except Exception:
+                pass
+
+        return OmniCurveCoerce.color_tangent(point.get(f"{side}_handle_y"), 0.0)
+
+    @staticmethod
     def base_point_data(point, default_interpolation) -> dict:
         return {
             "interpolation": OmniCurvePointCodec.interpolation(point, default_interpolation),
@@ -194,6 +234,8 @@ class OmniCurvePointCodec:
                 item = OmniCurvePointCodec.base_point_data(point, default_interpolation)
                 item["left_tangent"] = OmniCurvePointCodec.point_float(point, "left_tangent", 0.0)
                 item["right_tangent"] = OmniCurvePointCodec.point_float(point, "right_tangent", 0.0)
+                item["left_handle_x"], item["left_handle_y"] = OmniCurvePointCodec.handle_delta(point, "left", x, y)
+                item["right_handle_x"], item["right_handle_y"] = OmniCurvePointCodec.handle_delta(point, "right", x, y)
             else:
                 try:
                     x, y = point[0], point[1]
@@ -206,6 +248,10 @@ class OmniCurvePointCodec:
                     pass
                 item["left_tangent"] = 0.0
                 item["right_tangent"] = 0.0
+                item["left_handle_x"] = 0.0
+                item["left_handle_y"] = 0.0
+                item["right_handle_x"] = 0.0
+                item["right_handle_y"] = 0.0
             item["x"] = OmniCurveCoerce.clamp_float(x, 0.0, 1.0)
             item["y"] = float(y)
             result.append(item)
@@ -222,6 +268,10 @@ class OmniCurvePointCodec:
                     "right_tangent": 1.0,
                     "left_weight": 1.0,
                     "right_weight": 1.0,
+                    "left_handle_x": 0.0,
+                    "left_handle_y": 0.0,
+                    "right_handle_x": 0.0,
+                    "right_handle_y": 0.0,
                 },
                 {
                     "x": 1.0,
@@ -233,6 +283,10 @@ class OmniCurvePointCodec:
                     "right_tangent": 1.0,
                     "left_weight": 1.0,
                     "right_weight": 1.0,
+                    "left_handle_x": 0.0,
+                    "left_handle_y": 0.0,
+                    "right_handle_x": 0.0,
+                    "right_handle_y": 0.0,
                 },
             ]
         if len(result) == 1:
@@ -256,9 +310,14 @@ class OmniCurvePointCodec:
             if isinstance(point, dict):
                 x = point.get("x", point.get("position", 0.0))
                 color = point.get("color", point.get("value", (1.0, 1.0, 1.0, 1.0)))
+                color = OmniCurveCoerce.color(color)
                 item = OmniCurvePointCodec.base_point_data(point, default_interpolation)
                 item["left_tangent"] = OmniCurvePointCodec.color_tangent(point, "left_tangent", 0.0)
                 item["right_tangent"] = OmniCurvePointCodec.color_tangent(point, "right_tangent", 0.0)
+                item["left_handle_x"], _left_handle_y = OmniCurvePointCodec.handle_delta(point, "left", x, 0.0)
+                item["right_handle_x"], _right_handle_y = OmniCurvePointCodec.handle_delta(point, "right", x, 0.0)
+                item["left_handle_y"] = OmniCurvePointCodec.color_handle_y(point, "left", color)
+                item["right_handle_y"] = OmniCurvePointCodec.color_handle_y(point, "right", color)
             else:
                 try:
                     x, color = point[0], point[1]
@@ -271,6 +330,10 @@ class OmniCurvePointCodec:
                     pass
                 item["left_tangent"] = (0.0, 0.0, 0.0, 0.0)
                 item["right_tangent"] = (0.0, 0.0, 0.0, 0.0)
+                item["left_handle_x"] = 0.0
+                item["right_handle_x"] = 0.0
+                item["left_handle_y"] = (0.0, 0.0, 0.0, 0.0)
+                item["right_handle_y"] = (0.0, 0.0, 0.0, 0.0)
             item["x"] = OmniCurveCoerce.clamp_float(x, 0.0, 1.0)
             item["color"] = OmniCurveCoerce.color(color)
             result.append(item)
@@ -287,6 +350,10 @@ class OmniCurvePointCodec:
                     "right_tangent": (1.0, 1.0, 1.0, 1.0),
                     "left_weight": 1.0,
                     "right_weight": 1.0,
+                    "left_handle_x": 0.0,
+                    "right_handle_x": 0.0,
+                    "left_handle_y": (0.0, 0.0, 0.0, 0.0),
+                    "right_handle_y": (0.0, 0.0, 0.0, 0.0),
                 },
                 {
                     "x": 1.0,
@@ -298,6 +365,10 @@ class OmniCurvePointCodec:
                     "right_tangent": (1.0, 1.0, 1.0, 1.0),
                     "left_weight": 1.0,
                     "right_weight": 1.0,
+                    "left_handle_x": 0.0,
+                    "right_handle_x": 0.0,
+                    "left_handle_y": (0.0, 0.0, 0.0, 0.0),
+                    "right_handle_y": (0.0, 0.0, 0.0, 0.0),
                 },
             ]
         if len(result) == 1:
@@ -320,6 +391,10 @@ class OmniCurvePointCodec:
             "right_tangent": float(getattr(point, "right_tangent", 0.0)),
             "left_weight": OmniCurvePointCodec.weight({"left_weight": getattr(point, "left_weight", 1.0)}, "left_weight"),
             "right_weight": OmniCurvePointCodec.weight({"right_weight": getattr(point, "right_weight", 1.0)}, "right_weight"),
+            "left_handle_x": float(getattr(point, "left_handle_x", 0.0)),
+            "left_handle_y": float(getattr(point, "left_handle_y", 0.0)),
+            "right_handle_x": float(getattr(point, "right_handle_x", 0.0)),
+            "right_handle_y": float(getattr(point, "right_handle_y", 0.0)),
         }
 
     @staticmethod
@@ -334,6 +409,10 @@ class OmniCurvePointCodec:
             "right_tangent": OmniCurveCoerce.color_tangent(getattr(point, "right_tangent", None)),
             "left_weight": OmniCurvePointCodec.weight({"left_weight": getattr(point, "left_weight", 1.0)}, "left_weight"),
             "right_weight": OmniCurvePointCodec.weight({"right_weight": getattr(point, "right_weight", 1.0)}, "right_weight"),
+            "left_handle_x": float(getattr(point, "left_handle_x", 0.0)),
+            "right_handle_x": float(getattr(point, "right_handle_x", 0.0)),
+            "left_handle_y": OmniCurveCoerce.color_tangent(getattr(point, "left_handle_y", None)),
+            "right_handle_y": OmniCurveCoerce.color_tangent(getattr(point, "right_handle_y", None)),
         }
 
     @staticmethod
@@ -347,6 +426,10 @@ class OmniCurvePointCodec:
         item.right_tangent = point["right_tangent"]
         item.left_weight = point["left_weight"]
         item.right_weight = point["right_weight"]
+        item.left_handle_x = point["left_handle_x"]
+        item.left_handle_y = point["left_handle_y"]
+        item.right_handle_x = point["right_handle_x"]
+        item.right_handle_y = point["right_handle_y"]
 
     @staticmethod
     def apply_color_point(item, point):
@@ -359,6 +442,10 @@ class OmniCurvePointCodec:
         item.right_tangent = point["right_tangent"]
         item.left_weight = point["left_weight"]
         item.right_weight = point["right_weight"]
+        item.left_handle_x = point["left_handle_x"]
+        item.right_handle_x = point["right_handle_x"]
+        item.left_handle_y = point["left_handle_y"]
+        item.right_handle_y = point["right_handle_y"]
 
 
 class OmniCurvePayload:
@@ -432,26 +519,119 @@ class OmniCurvePreset:
         return cls.payload(curve_kind=curve_kind, extend="CLAMP")
 
 
-class OmniCurveClearPreset(OmniCurvePreset):
-    identifier = "CLEAR"
-    name = "清空"
-    description = "恢复这个曲线 socket 的默认值"
-    preserve_extend = False
+class OmniCurvePresetFactory:
+    @staticmethod
+    def supported_kinds(support_color_curve=True, curve_kinds=None):
+        if curve_kinds is not None:
+            return set(curve_kinds)
+        return {"float_curve", "color_curve"} if support_color_curve else {"float_curve"}
 
-    @classmethod
-    def payload(cls, curve_kind="float_curve", extend="CLAMP"):
+    @staticmethod
+    def float_point(
+        x,
+        y,
+        tangent=None,
+        left_tangent=None,
+        right_tangent=None,
+        left_weight=1.0,
+        right_weight=1.0,
+        left_handle=None,
+        right_handle=None,
+        left_handle_x=0.0,
+        left_handle_y=0.0,
+        right_handle_x=0.0,
+        right_handle_y=0.0,
+        interpolation="BEZIER",
+    ) -> dict:
+        tangent = 0.0 if tangent is None else float(tangent)
+        if left_tangent is None:
+            left_tangent = tangent
+        if right_tangent is None:
+            right_tangent = tangent
+        if left_handle is not None:
+            left_handle_x = float(left_handle[0]) - float(x)
+            left_handle_y = float(left_handle[1]) - float(y)
+        if right_handle is not None:
+            right_handle_x = float(right_handle[0]) - float(x)
+            right_handle_y = float(right_handle[1]) - float(y)
+        left_handle_x = float(left_handle_x)
+        left_handle_y = float(left_handle_y)
+        right_handle_x = float(right_handle_x)
+        right_handle_y = float(right_handle_y)
+        left_handle_type = "COORD" if left_handle is not None or left_handle_x != 0.0 or left_handle_y != 0.0 else "FREE"
+        right_handle_type = "COORD" if right_handle is not None or right_handle_x != 0.0 or right_handle_y != 0.0 else "FREE"
+        return {
+            "x": float(x),
+            "y": float(y),
+            "interpolation": interpolation,
+            "left_handle_type": left_handle_type,
+            "right_handle_type": right_handle_type,
+            "left_tangent": float(left_tangent),
+            "right_tangent": float(right_tangent),
+            "left_weight": float(left_weight),
+            "right_weight": float(right_weight),
+            "left_handle_x": left_handle_x,
+            "left_handle_y": left_handle_y,
+            "right_handle_x": right_handle_x,
+            "right_handle_y": right_handle_y,
+        }
+
+    @staticmethod
+    def bezier_points_payload(x1, y1, x2, y2, extend="CLAMP"):
+        return float_curve_payload(
+            points=[
+                OmniCurvePresetFactory.float_point(
+                    0.0,
+                    0.0,
+                    right_handle=(float(x1), float(y1)),
+                    interpolation="BEZIER",
+                ),
+                OmniCurvePresetFactory.float_point(
+                    1.0,
+                    1.0,
+                    left_handle=(float(x2), float(y2)),
+                    interpolation="BEZIER",
+                ),
+            ],
+            interpolation="BEZIER",
+            extend=extend,
+        )
+
+    @staticmethod
+    def make_bezier_payload(x1, y1, x2, y2):
+        def payload(curve_kind="float_curve", extend="CLAMP"):
+            return OmniCurvePresetFactory.bezier_points_payload(x1, y1, x2, y2, extend=extend)
+        return payload
+
+    @staticmethod
+    def float_points_payload(point_specs, extend="CLAMP"):
+        points = []
+        for spec in point_specs:
+            if isinstance(spec, dict):
+                points.append(OmniCurvePresetFactory.float_point(**spec))
+            else:
+                x, y, tangent = spec[:3]
+                points.append(OmniCurvePresetFactory.float_point(x, y, tangent))
+        return float_curve_payload(
+            points=points,
+            interpolation="BEZIER",
+            extend=extend,
+        )
+
+    @staticmethod
+    def make_float_points_payload(point_specs):
+        def payload(curve_kind="float_curve", extend="CLAMP"):
+            return OmniCurvePresetFactory.float_points_payload(point_specs, extend=extend)
+        return payload
+
+    @staticmethod
+    def clear_payload(curve_kind="float_curve", extend="CLAMP"):
         if curve_kind == "color_curve":
             return color_curve_payload()
         return float_curve_payload()
 
-
-class OmniCurveRampUpPreset(OmniCurvePreset):
-    identifier = "RAMP_0_1"
-    name = "0 → 1"
-    description = "从 0 线性变化到 1"
-
-    @classmethod
-    def payload(cls, curve_kind="float_curve", extend="CLAMP"):
+    @staticmethod
+    def linear_payload(curve_kind="float_curve", extend="CLAMP"):
         if curve_kind == "color_curve":
             return color_curve_payload(
                 points=[
@@ -471,14 +651,8 @@ class OmniCurveRampUpPreset(OmniCurvePreset):
             extend=extend,
         )
 
-
-class OmniCurveRampDownPreset(OmniCurvePreset):
-    identifier = "RAMP_1_0"
-    name = "1 → 0"
-    description = "从 1 线性变化到 0"
-
-    @classmethod
-    def payload(cls, curve_kind="float_curve", extend="CLAMP"):
+    @staticmethod
+    def reverse_linear_payload(curve_kind="float_curve", extend="CLAMP"):
         if curve_kind == "color_curve":
             return color_curve_payload(
                 points=[
@@ -498,14 +672,8 @@ class OmniCurveRampDownPreset(OmniCurvePreset):
             extend=extend,
         )
 
-
-class OmniCurveEaseInOutPreset(OmniCurvePreset):
-    identifier = "EASE_IN_OUT"
-    name = "缓进缓出"
-    description = "从 0 平滑变化到 1"
-
-    @classmethod
-    def payload(cls, curve_kind="float_curve", extend="CLAMP"):
+    @staticmethod
+    def ease_in_out_payload(curve_kind="float_curve", extend="CLAMP"):
         if curve_kind == "color_curve":
             return color_curve_payload(
                 points=[
@@ -552,6 +720,147 @@ class OmniCurveEaseInOutPreset(OmniCurvePreset):
             interpolation="BEZIER",
             extend=extend,
         )
+
+    @staticmethod
+    def make_fixed_preset(
+        identifier,
+        name,
+        description,
+        payload_func,
+        support_color_curve=True,
+        preserve_extend=True,
+        curve_kinds=None,
+    ):
+        supported_kinds = OmniCurvePresetFactory.supported_kinds(
+            support_color_curve=support_color_curve,
+            curve_kinds=curve_kinds,
+        )
+
+        def payload(cls, curve_kind="float_curve", extend="CLAMP"):
+            return payload_func(curve_kind=curve_kind, extend=extend)
+
+        return type(
+            f"OmniCurvePreset_{identifier}",
+            (OmniCurvePreset,),
+            {
+                "__module__": __name__,
+                "identifier": identifier,
+                "name": name,
+                "description": description,
+                "supported_kinds": supported_kinds,
+                "preserve_extend": bool(preserve_extend),
+                "payload": classmethod(payload),
+            },
+        )
+
+FLOAT_CURVE_PRESET_CLASSES = [
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CLEAR",
+        "清空",
+        "恢复这个曲线 socket 的默认值",
+        OmniCurvePresetFactory.clear_payload,
+        preserve_extend=False,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "RAMP_0_1",
+        "0 → 1",
+        "从 0 线性变化到 1",
+        OmniCurvePresetFactory.linear_payload,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "RAMP_1_0",
+        "1 → 0",
+        "从 1 线性变化到 0",
+        OmniCurvePresetFactory.reverse_linear_payload,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "EASE_IN_OUT",
+        "缓进缓出",
+        "从 0 平滑变化到 1",
+        OmniCurvePresetFactory.ease_in_out_payload,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CSS_EASE",
+        "CSS Ease",
+        "CSS 默认 ease 曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.25, 0.1, 0.25, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CSS_EASE_IN",
+        "CSS Ease In",
+        "CSS ease-in 曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.42, 0.0, 1.0, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CSS_EASE_OUT",
+        "CSS Ease Out",
+        "CSS ease-out 曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.0, 0.0, 0.58, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CSS_EASE_IN_OUT",
+        "CSS Ease In Out",
+        "CSS ease-in-out 曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.42, 0.0, 0.58, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "MATERIAL_STANDARD",
+        "Material 标准",
+        "Material Design 标准曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 0.2, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "MATERIAL_ACCELERATE",
+        "Material 加速",
+        "Material Design 加速曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 1.0, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "MATERIAL_DECELERATE",
+        "Material 减速",
+        "Material Design 减速曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.0, 0.0, 0.2, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "MATERIAL_SHARP",
+        "Material 锐利",
+        "Material Design 锐利曲线",
+        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 0.6, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "OVERSHOOT",
+        "Overshoot",
+        "越过目标后回落",
+        OmniCurvePresetFactory.make_bezier_payload(0.34, 1.56, 0.64, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "ANTICIPATE",
+        "Anticipate",
+        "先反向再进入",
+        OmniCurvePresetFactory.make_bezier_payload(0.36, 0.0, 0.66, -0.56),
+        curve_kinds={"float_curve"},
+    ),
+]
+
+RGB_CURVE_PRESET_CLASSES = []
+
+CURVE_PRESET_CLASSES = [
+    *FLOAT_CURVE_PRESET_CLASSES,
+    *RGB_CURVE_PRESET_CLASSES,
+]
 
 
 class OmniCurvePresetRegistry:
@@ -612,10 +921,7 @@ class OmniCurvePresetRegistry:
 
 
 for _preset_cls in (
-    OmniCurveClearPreset,
-    OmniCurveRampUpPreset,
-    OmniCurveRampDownPreset,
-    OmniCurveEaseInOutPreset,
+    *CURVE_PRESET_CLASSES,
 ):
     OmniCurvePresetRegistry.register(_preset_cls)
 
@@ -645,6 +951,10 @@ class OmniFloatCurvePoint(PropertyGroup):
     right_tangent: bpy.props.FloatProperty(name="右切线", default=0.0)  # type: ignore
     left_weight: bpy.props.FloatProperty(name="左权重", default=1.0, min=0.0)  # type: ignore
     right_weight: bpy.props.FloatProperty(name="右权重", default=1.0, min=0.0)  # type: ignore
+    left_handle_x: bpy.props.FloatProperty(name="左柄X", default=0.0)  # type: ignore
+    left_handle_y: bpy.props.FloatProperty(name="左柄Y", default=0.0)  # type: ignore
+    right_handle_x: bpy.props.FloatProperty(name="右柄X", default=0.0)  # type: ignore
+    right_handle_y: bpy.props.FloatProperty(name="右柄Y", default=0.0)  # type: ignore
 
 
 class OmniColorCurvePoint(PropertyGroup):
@@ -656,6 +966,10 @@ class OmniColorCurvePoint(PropertyGroup):
     right_tangent: bpy.props.FloatVectorProperty(name="右切线", default=(0.0, 0.0, 0.0, 0.0), size=4)  # type: ignore
     left_weight: bpy.props.FloatProperty(name="左权重", default=1.0, min=0.0)  # type: ignore
     right_weight: bpy.props.FloatProperty(name="右权重", default=1.0, min=0.0)  # type: ignore
+    left_handle_x: bpy.props.FloatProperty(name="左柄X", default=0.0)  # type: ignore
+    right_handle_x: bpy.props.FloatProperty(name="右柄X", default=0.0)  # type: ignore
+    left_handle_y: bpy.props.FloatVectorProperty(name="左柄Y", default=(0.0, 0.0, 0.0, 0.0), size=4)  # type: ignore
+    right_handle_y: bpy.props.FloatVectorProperty(name="右柄Y", default=(0.0, 0.0, 0.0, 0.0), size=4)  # type: ignore
     color: bpy.props.FloatVectorProperty(  # type: ignore
         name="颜色",
         default=(1.0, 1.0, 1.0, 1.0),
@@ -795,6 +1109,94 @@ class OmniCurveSampler:
         )
 
     @staticmethod
+    def cubic(v0, v1, v2, v3, t) -> float:
+        u = 1.0 - t
+        return (
+            u * u * u * v0
+            + 3.0 * u * u * t * v1
+            + 3.0 * u * t * t * v2
+            + t * t * t * v3
+        )
+
+    @staticmethod
+    def cubic_derivative(v0, v1, v2, v3, t) -> float:
+        u = 1.0 - t
+        return (
+            3.0 * u * u * (v1 - v0)
+            + 6.0 * u * t * (v2 - v1)
+            + 3.0 * t * t * (v3 - v2)
+        )
+
+    @staticmethod
+    def solve_cubic_x(x0, x1, x2, x3, x) -> float:
+        if abs(x3 - x0) < 0.000001:
+            return 0.0
+
+        t = OmniCurveCoerce.clamp_float((x - x0) / (x3 - x0), 0.0, 1.0)
+        for _index in range(8):
+            value = OmniCurveSampler.cubic(x0, x1, x2, x3, t) - x
+            derivative = OmniCurveSampler.cubic_derivative(x0, x1, x2, x3, t)
+            if abs(derivative) < 0.000001:
+                break
+            next_t = t - value / derivative
+            if next_t < 0.0 or next_t > 1.0:
+                break
+            t = next_t
+
+        low = 0.0
+        high = 1.0
+        for _index in range(24):
+            value = OmniCurveSampler.cubic(x0, x1, x2, x3, t)
+            if abs(value - x) < 0.000001:
+                return OmniCurveCoerce.clamp_float(t, 0.0, 1.0)
+            if value < x:
+                low = t
+            else:
+                high = t
+            t = (low + high) * 0.5
+        return OmniCurveCoerce.clamp_float(t, 0.0, 1.0)
+
+    @staticmethod
+    def has_coord_handles(left, right) -> bool:
+        return (
+            coerce_handle_type(left.get("right_handle_type", "AUTO")) == "COORD"
+            or coerce_handle_type(right.get("left_handle_type", "AUTO")) == "COORD"
+        )
+
+    @staticmethod
+    def float_coord_handles(left, right):
+        return (
+            {
+                "x": float(left["x"]) + float(left.get("right_handle_x", 0.0)),
+                "y": float(left["y"]) + float(left.get("right_handle_y", 0.0)),
+            },
+            {
+                "x": float(right["x"]) + float(right.get("left_handle_x", 0.0)),
+                "y": float(right["y"]) + float(right.get("left_handle_y", 0.0)),
+            },
+        )
+
+    @staticmethod
+    def color_coord_handles(left, right, channel):
+        left_handle_y = left.get("right_handle_y", (0.0, 0.0, 0.0, 0.0))
+        right_handle_y = right.get("left_handle_y", (0.0, 0.0, 0.0, 0.0))
+        return (
+            {
+                "x": float(left["x"]) + float(left.get("right_handle_x", 0.0)),
+                "y": float(left["color"][channel]) + float(left_handle_y[channel]),
+            },
+            {
+                "x": float(right["x"]) + float(right.get("left_handle_x", 0.0)),
+                "y": float(right["color"][channel]) + float(right_handle_y[channel]),
+            },
+        )
+
+    @staticmethod
+    def bezier_y_at_x(x0, y0, handle0, handle1, x1, y1, x) -> float:
+        t = OmniCurveSampler.solve_cubic_x(x0, handle0["x"], handle1["x"], x1, x)
+        return OmniCurveSampler.cubic(y0, handle0["y"], handle1["y"], y1, t)
+
+    @staticmethod
     def float_slope(points, left_index, right_index) -> float:
         left = points[left_index]
         right = points[right_index]
@@ -862,6 +1264,12 @@ class OmniCurveSampler:
 _find_segment = OmniCurveSampler.find_segment
 _safe_slope = OmniCurveSampler.safe_slope
 _hermite = OmniCurveSampler.hermite
+_cubic = OmniCurveSampler.cubic
+_solve_cubic_x = OmniCurveSampler.solve_cubic_x
+_has_coord_handles = OmniCurveSampler.has_coord_handles
+_float_coord_handles = OmniCurveSampler.float_coord_handles
+_color_coord_handles = OmniCurveSampler.color_coord_handles
+_bezier_y_at_x = OmniCurveSampler.bezier_y_at_x
 _float_slope = OmniCurveSampler.float_slope
 _float_auto_tangent = OmniCurveSampler.float_auto_tangent
 _float_out_tangent = OmniCurveSampler.float_out_tangent
@@ -909,6 +1317,9 @@ class OmniFloatCurveValue:
         if self.segment_interpolation(index) != "BEZIER" or dx <= 0.0:
             return None
 
+        if _has_coord_handles(left, right):
+            return _float_coord_handles(left, right)
+
         out_tangent = _float_out_tangent(self.points, index, left, right)
         in_tangent = _float_in_tangent(self.points, index + 1, left, right)
         right_weight = float(left.get("right_weight", 1.0))
@@ -940,6 +1351,18 @@ class OmniFloatCurveValue:
 
         factor = (x - left["x"]) / dx
         if segment_interpolation == "BEZIER":
+            if _has_coord_handles(left, right):
+                left_handle, right_handle = _float_coord_handles(left, right)
+                return float(_bezier_y_at_x(
+                    left["x"],
+                    left["y"],
+                    left_handle,
+                    right_handle,
+                    right["x"],
+                    right["y"],
+                    x,
+                ))
+
             out_tangent = _float_out_tangent(points, point_index, left, right)
             in_tangent = _float_in_tangent(points, point_index + 1, left, right)
             m0 = out_tangent * dx * float(left.get("right_weight", 1.0))
@@ -989,6 +1412,9 @@ class OmniColorCurveValue:
         if self.segment_interpolation(index) != "BEZIER" or dx <= 0.0:
             return None
 
+        if _has_coord_handles(left, right):
+            return _color_coord_handles(left, right, channel)
+
         out_tangent = _color_out_tangent(self.points, index, left, right, channel)
         in_tangent = _color_in_tangent(self.points, index + 1, left, right, channel)
         right_weight = float(left.get("right_weight", 1.0))
@@ -1020,6 +1446,21 @@ class OmniColorCurveValue:
 
         factor = (x - left["x"]) / dx
         if segment_interpolation == "BEZIER":
+            if _has_coord_handles(left, right):
+                values = []
+                for channel in range(4):
+                    left_handle, right_handle = _color_coord_handles(left, right, channel)
+                    values.append(_bezier_y_at_x(
+                        left["x"],
+                        left["color"][channel],
+                        left_handle,
+                        right_handle,
+                        right["x"],
+                        right["color"][channel],
+                        x,
+                    ))
+                return tuple(float(value) for value in values)
+
             values = []
             for channel in range(4):
                 out_tangent = _color_out_tangent(points, point_index, left, right, channel)

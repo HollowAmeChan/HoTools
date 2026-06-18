@@ -119,7 +119,7 @@ def _draw_curve_socket_controls(socket, layout, node, text, curve):
     row = layout.row(align=True)
     row.label(text=text or socket.name)
     row.prop(curve, "extend", text="")
-    operator = row.operator(OmniNodeOpenCurvePresetPopup.bl_idname, text="预设", icon="PRESET")
+    operator = row.operator(OmniNodeOpenCurvePresetPopup.bl_idname, text="", icon="PRESET")
     operator.tree_name = getattr(getattr(node, "id_data", None), "name", "")
     operator.node_name = getattr(node, "name", "")
     operator.socket_identifier = getattr(socket, "identifier", "")
@@ -154,7 +154,14 @@ class OmniNodeOpenCurvePresetPopup(bpy.types.Operator):
 
         layout = self.layout
         box = layout.box()
-        box.label(text="曲线预设")
+        if curve_kind == "color_curve":
+            box.label(text="RGB 曲线预设")
+        else:
+            box.label(text="浮点曲线预设")
+
+        if not presets:
+            box.label(text="暂无 RGB 曲线预设")
+            return
 
         columns = 4
         grid = box.grid_flow(columns=columns, even_columns=True, even_rows=True, align=True)

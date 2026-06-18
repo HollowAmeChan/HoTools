@@ -194,7 +194,7 @@ class OmniNode(Node):
         preset_items = node_omni_preset_items(self)
         if len(preset_items) > 1:
             row_R.prop(self, "omni_preset_id", text="")
-            op = row_R.operator(OmniNodeApplyPreset.bl_idname, text="", icon="PRESET")
+            op = row_R.operator(OmniNodeApplyPreset.bl_idname, text="", icon="CHECKMARK")
             op.node_tree_name = getattr(self.id_data, "name_full", self.id_data.name)
             op.node_name = self.name
             op.preset_id = self.omni_preset_id
