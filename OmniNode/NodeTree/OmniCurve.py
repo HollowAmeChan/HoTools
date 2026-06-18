@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import bpy
 from bpy.types import PropertyGroup
 
@@ -520,6 +522,9 @@ class OmniCurvePreset:
 
 
 class OmniCurvePresetFactory:
+    DERIVATIVE_EPSILON = 0.0001
+    DERIVATIVE_LIMIT = 12.0
+
     @staticmethod
     def supported_kinds(support_color_curve=True, curve_kinds=None):
         if curve_kinds is not None:
@@ -601,6 +606,91 @@ class OmniCurvePresetFactory:
     def make_bezier_payload(x1, y1, x2, y2):
         def payload(curve_kind="float_curve", extend="CLAMP"):
             return OmniCurvePresetFactory.bezier_points_payload(x1, y1, x2, y2, extend=extend)
+        return payload
+
+    @staticmethod
+    def _function_value(func, x) -> float:
+        return float(func(OmniCurveCoerce.clamp_float(x, 0.0, 1.0)))
+
+    @staticmethod
+    def _function_slope(func, x) -> float:
+        epsilon = OmniCurvePresetFactory.DERIVATIVE_EPSILON
+        left = max(0.0, float(x) - epsilon)
+        right = min(1.0, float(x) + epsilon)
+        if right <= left:
+            return 0.0
+        return (
+            OmniCurvePresetFactory._function_value(func, right)
+            - OmniCurvePresetFactory._function_value(func, left)
+        ) / (right - left)
+
+    @staticmethod
+    def _limited_slope(func, x) -> float:
+        return OmniCurveCoerce.clamp_float(
+            OmniCurvePresetFactory._function_slope(func, x),
+            -OmniCurvePresetFactory.DERIVATIVE_LIMIT,
+            OmniCurvePresetFactory.DERIVATIVE_LIMIT,
+        )
+
+    @staticmethod
+    def _function_positions(samples=6, positions=None) -> list[float]:
+        if positions is None:
+            count = max(2, min(6, int(samples)))
+            return [index / float(count - 1) for index in range(count)]
+
+        result = []
+        for value in positions:
+            x = OmniCurveCoerce.clamp_float(value, 0.0, 1.0)
+            if not any(abs(x - existing) <= 0.000001 for existing in result):
+                result.append(x)
+        result.append(0.0)
+        result.append(1.0)
+        result = sorted(result)
+        unique = []
+        for x in result:
+            if not unique or abs(x - unique[-1]) > 0.000001:
+                unique.append(x)
+        if len(unique) > 6:
+            unique = unique[:5] + [unique[-1]]
+        return unique
+
+    @staticmethod
+    def function_points_payload(func, samples=6, positions=None, extend="CLAMP"):
+        positions = OmniCurvePresetFactory._function_positions(samples=samples, positions=positions)
+        last_index = len(positions) - 1
+        points = []
+        for index, x in enumerate(positions):
+            y = OmniCurvePresetFactory._function_value(func, x)
+            slope = OmniCurvePresetFactory._limited_slope(func, x)
+            point_spec = {
+                "x": x,
+                "y": y,
+                "interpolation": "BEZIER",
+            }
+            if index > 0:
+                previous_x = positions[index - 1]
+                left_x = x - (x - previous_x) / 3.0
+                point_spec["left_handle"] = (left_x, y - slope * (x - left_x))
+            if index < last_index:
+                next_x = positions[index + 1]
+                right_x = x + (next_x - x) / 3.0
+                point_spec["right_handle"] = (right_x, y + slope * (right_x - x))
+            points.append(OmniCurvePresetFactory.float_point(**point_spec))
+        return float_curve_payload(
+            points=points,
+            interpolation="BEZIER",
+            extend=extend,
+        )
+
+    @staticmethod
+    def make_function_payload(func, samples=6, positions=None):
+        def payload(curve_kind="float_curve", extend="CLAMP"):
+            return OmniCurvePresetFactory.function_points_payload(
+                func,
+                samples=samples,
+                positions=positions,
+                extend=extend,
+            )
         return payload
 
     @staticmethod
@@ -697,29 +787,7 @@ class OmniCurvePresetFactory:
                 interpolation="BEZIER",
                 extend=extend,
             )
-        return float_curve_payload(
-            points=[
-                {
-                    "x": 0.0,
-                    "y": 0.0,
-                    "interpolation": "BEZIER",
-                    "right_handle_type": "FREE",
-                    "right_tangent": 0.0,
-                    "right_weight": 1.0,
-                },
-                {
-                    "x": 1.0,
-                    "y": 1.0,
-                    "interpolation": "BEZIER",
-                    "left_handle_type": "FREE",
-                    "left_tangent": 0.0,
-                    "left_weight": 1.0,
-                },
-            ],
-            value=0.0,
-            interpolation="BEZIER",
-            extend=extend,
-        )
+        return OmniCurvePresetFactory.bezier_points_payload(0.42, 0.0, 0.58, 1.0, extend=extend)
 
     @staticmethod
     def make_fixed_preset(
@@ -753,6 +821,202 @@ class OmniCurvePresetFactory:
             },
         )
 
+    @staticmethod
+    def make_float_bezier_preset(identifier, name, description, x1, y1, x2, y2):
+        return OmniCurvePresetFactory.make_fixed_preset(
+            identifier,
+            name,
+            description,
+            OmniCurvePresetFactory.make_bezier_payload(x1, y1, x2, y2),
+            curve_kinds={"float_curve"},
+        )
+
+    @staticmethod
+    def make_float_function_preset(identifier, name, description, func, samples=6, positions=None):
+        return OmniCurvePresetFactory.make_fixed_preset(
+            identifier,
+            name,
+            description,
+            OmniCurvePresetFactory.make_function_payload(func, samples=samples, positions=positions),
+            curve_kinds={"float_curve"},
+        )
+
+    @staticmethod
+    def make_float_points_preset(identifier, name, description, point_specs):
+        return OmniCurvePresetFactory.make_fixed_preset(
+            identifier,
+            name,
+            description,
+            OmniCurvePresetFactory.make_float_points_payload(point_specs),
+            curve_kinds={"float_curve"},
+        )
+
+
+class OmniCurveEaseFunctions:
+    @staticmethod
+    def sine_in(x):
+        return 1.0 - math.cos((x * math.pi) * 0.5)
+
+    @staticmethod
+    def sine_out(x):
+        return math.sin((x * math.pi) * 0.5)
+
+    @staticmethod
+    def sine_in_out(x):
+        return -(math.cos(math.pi * x) - 1.0) * 0.5
+
+    @staticmethod
+    def quad_in(x):
+        return x * x
+
+    @staticmethod
+    def quad_out(x):
+        return 1.0 - (1.0 - x) * (1.0 - x)
+
+    @staticmethod
+    def quad_in_out(x):
+        if x < 0.5:
+            return 2.0 * x * x
+        return 1.0 - pow(-2.0 * x + 2.0, 2.0) * 0.5
+
+    @staticmethod
+    def cubic_in(x):
+        return x * x * x
+
+    @staticmethod
+    def cubic_out(x):
+        return 1.0 - pow(1.0 - x, 3.0)
+
+    @staticmethod
+    def cubic_in_out(x):
+        if x < 0.5:
+            return 4.0 * x * x * x
+        return 1.0 - pow(-2.0 * x + 2.0, 3.0) * 0.5
+
+    @staticmethod
+    def quart_in(x):
+        return x * x * x * x
+
+    @staticmethod
+    def quart_out(x):
+        return 1.0 - pow(1.0 - x, 4.0)
+
+    @staticmethod
+    def quart_in_out(x):
+        if x < 0.5:
+            return 8.0 * x * x * x * x
+        return 1.0 - pow(-2.0 * x + 2.0, 4.0) * 0.5
+
+    @staticmethod
+    def quint_in(x):
+        return x * x * x * x * x
+
+    @staticmethod
+    def quint_out(x):
+        return 1.0 - pow(1.0 - x, 5.0)
+
+    @staticmethod
+    def quint_in_out(x):
+        if x < 0.5:
+            return 16.0 * x * x * x * x * x
+        return 1.0 - pow(-2.0 * x + 2.0, 5.0) * 0.5
+
+    @staticmethod
+    def expo_in(x):
+        if x <= 0.0:
+            return 0.0
+        return pow(2.0, 10.0 * x - 10.0)
+
+    @staticmethod
+    def expo_out(x):
+        if x >= 1.0:
+            return 1.0
+        return 1.0 - pow(2.0, -10.0 * x)
+
+    @staticmethod
+    def expo_in_out(x):
+        if x <= 0.0:
+            return 0.0
+        if x >= 1.0:
+            return 1.0
+        if x < 0.5:
+            return pow(2.0, 20.0 * x - 10.0) * 0.5
+        return (2.0 - pow(2.0, -20.0 * x + 10.0)) * 0.5
+
+    @staticmethod
+    def circ_in(x):
+        return 1.0 - math.sqrt(max(0.0, 1.0 - x * x))
+
+    @staticmethod
+    def circ_out(x):
+        value = x - 1.0
+        return math.sqrt(max(0.0, 1.0 - value * value))
+
+    @staticmethod
+    def circ_in_out(x):
+        if x < 0.5:
+            return (1.0 - math.sqrt(max(0.0, 1.0 - pow(2.0 * x, 2.0)))) * 0.5
+        return (math.sqrt(max(0.0, 1.0 - pow(-2.0 * x + 2.0, 2.0))) + 1.0) * 0.5
+
+    @staticmethod
+    def smoothstep(x):
+        return x * x * (3.0 - 2.0 * x)
+
+    @staticmethod
+    def smootherstep(x):
+        return x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
+
+
+class OmniCurveMotionPresetSpecs:
+    POP = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.16, 0.0)},
+        {"x": 0.48, "y": 1.18, "left_handle": (0.34, 1.18), "right_handle": (0.58, 1.18)},
+        {"x": 0.74, "y": 0.94, "left_handle": (0.66, 0.94), "right_handle": (0.82, 0.94)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.92, 1.0)},
+    ]
+
+    SETTLE = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.18, 0.0)},
+        {"x": 0.42, "y": 1.08, "left_handle": (0.28, 1.08), "right_handle": (0.54, 1.08)},
+        {"x": 0.68, "y": 0.98, "left_handle": (0.60, 0.98), "right_handle": (0.76, 0.98)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.90, 1.0)},
+    ]
+
+    PUNCH = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.10, 0.0)},
+        {"x": 0.25, "y": 1.24, "left_handle": (0.17, 1.24), "right_handle": (0.34, 1.24)},
+        {"x": 0.52, "y": 0.86, "left_handle": (0.42, 0.86), "right_handle": (0.62, 0.86)},
+        {"x": 0.78, "y": 1.04, "left_handle": (0.70, 1.04), "right_handle": (0.86, 1.04)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.94, 1.0)},
+    ]
+
+    BOUNCE_OUT = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.12, 0.0)},
+        {"x": 0.36, "y": 1.0, "left_handle": (0.26, 1.0), "right_handle": (0.43, 1.0)},
+        {"x": 0.55, "y": 0.74, "left_handle": (0.49, 0.74), "right_handle": (0.62, 0.74)},
+        {"x": 0.72, "y": 1.0, "left_handle": (0.66, 1.0), "right_handle": (0.78, 1.0)},
+        {"x": 0.86, "y": 0.92, "left_handle": (0.81, 0.92), "right_handle": (0.92, 0.92)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.96, 1.0)},
+    ]
+
+    ELASTIC_OUT = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.08, 0.0)},
+        {"x": 0.18, "y": 1.22, "left_handle": (0.12, 1.22), "right_handle": (0.25, 1.22)},
+        {"x": 0.36, "y": 0.88, "left_handle": (0.30, 0.88), "right_handle": (0.43, 0.88)},
+        {"x": 0.56, "y": 1.06, "left_handle": (0.49, 1.06), "right_handle": (0.64, 1.06)},
+        {"x": 0.78, "y": 0.99, "left_handle": (0.70, 0.99), "right_handle": (0.88, 0.99)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.94, 1.0)},
+    ]
+
+    ELASTIC_IN_OUT = [
+        {"x": 0.0, "y": 0.0, "right_handle": (0.08, 0.0)},
+        {"x": 0.20, "y": -0.08, "left_handle": (0.14, -0.08), "right_handle": (0.28, -0.08)},
+        {"x": 0.40, "y": 0.58, "left_handle": (0.32, 0.58), "right_handle": (0.48, 0.58)},
+        {"x": 0.60, "y": 1.12, "left_handle": (0.52, 1.12), "right_handle": (0.68, 1.12)},
+        {"x": 0.82, "y": 0.98, "left_handle": (0.74, 0.98), "right_handle": (0.90, 0.98)},
+        {"x": 1.0, "y": 1.0, "left_handle": (0.94, 1.0)},
+    ]
+
 FLOAT_CURVE_PRESET_CLASSES = [
     OmniCurvePresetFactory.make_fixed_preset(
         "CLEAR",
@@ -783,75 +1047,298 @@ FLOAT_CURVE_PRESET_CLASSES = [
         OmniCurvePresetFactory.ease_in_out_payload,
         curve_kinds={"float_curve"},
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "CSS_EASE",
         "CSS Ease",
         "CSS 默认 ease 曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.25, 0.1, 0.25, 1.0),
-        curve_kinds={"float_curve"},
+        0.25, 0.1, 0.25, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "CSS_EASE_IN",
         "CSS Ease In",
         "CSS ease-in 曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.42, 0.0, 1.0, 1.0),
-        curve_kinds={"float_curve"},
+        0.42, 0.0, 1.0, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "CSS_EASE_OUT",
         "CSS Ease Out",
         "CSS ease-out 曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.0, 0.0, 0.58, 1.0),
-        curve_kinds={"float_curve"},
+        0.0, 0.0, 0.58, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "CSS_EASE_IN_OUT",
         "CSS Ease In Out",
         "CSS ease-in-out 曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.42, 0.0, 0.58, 1.0),
-        curve_kinds={"float_curve"},
+        0.42, 0.0, 0.58, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "MATERIAL_STANDARD",
         "Material 标准",
         "Material Design 标准曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 0.2, 1.0),
-        curve_kinds={"float_curve"},
+        0.4, 0.0, 0.2, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "MATERIAL_ACCELERATE",
         "Material 加速",
         "Material Design 加速曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 1.0, 1.0),
-        curve_kinds={"float_curve"},
+        0.4, 0.0, 1.0, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "MATERIAL_DECELERATE",
         "Material 减速",
         "Material Design 减速曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.0, 0.0, 0.2, 1.0),
-        curve_kinds={"float_curve"},
+        0.0, 0.0, 0.2, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "MATERIAL_SHARP",
         "Material 锐利",
         "Material Design 锐利曲线",
-        OmniCurvePresetFactory.make_bezier_payload(0.4, 0.0, 0.6, 1.0),
-        curve_kinds={"float_curve"},
+        0.4, 0.0, 0.6, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "FLOW_SNAPPY",
+        "Snappy",
+        "快速进入并柔和落位",
+        0.22, 1.0, 0.36, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "FLOW_SOFT",
+        "Soft",
+        "柔和的通用缓动",
+        0.25, 0.1, 0.35, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "FLOW_SMOOTH",
+        "Smooth",
+        "平滑稳定的动效曲线",
+        0.37, 0.0, 0.63, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "OVERSHOOT",
         "Overshoot",
         "越过目标后回落",
-        OmniCurvePresetFactory.make_bezier_payload(0.34, 1.56, 0.64, 1.0),
-        curve_kinds={"float_curve"},
+        0.34, 1.56, 0.64, 1.0,
     ),
-    OmniCurvePresetFactory.make_fixed_preset(
+    OmniCurvePresetFactory.make_float_bezier_preset(
         "ANTICIPATE",
         "Anticipate",
         "先反向再进入",
-        OmniCurvePresetFactory.make_bezier_payload(0.36, 0.0, 0.66, -0.56),
-        curve_kinds={"float_curve"},
+        0.36, 0.0, 0.66, -0.56,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "BACK_IN",
+        "Back In",
+        "先回撤再加速进入",
+        0.36, 0.0, 0.66, -0.56,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "BACK_OUT",
+        "Back Out",
+        "越过目标后回收",
+        0.34, 1.56, 0.64, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_preset(
+        "BACK_IN_OUT",
+        "Back In Out",
+        "两端都有回撤感",
+        0.68, -0.60, 0.32, 1.60,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "SINE_IN",
+        "Sine In",
+        "正弦加速",
+        OmniCurveEaseFunctions.sine_in,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "SINE_OUT",
+        "Sine Out",
+        "正弦减速",
+        OmniCurveEaseFunctions.sine_out,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "SINE_IN_OUT",
+        "Sine In Out",
+        "正弦缓进缓出",
+        OmniCurveEaseFunctions.sine_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUAD_IN",
+        "Quad In",
+        "二次方加速",
+        OmniCurveEaseFunctions.quad_in,
+        samples=3,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUAD_OUT",
+        "Quad Out",
+        "二次方减速",
+        OmniCurveEaseFunctions.quad_out,
+        samples=3,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUAD_IN_OUT",
+        "Quad In Out",
+        "二次方缓进缓出",
+        OmniCurveEaseFunctions.quad_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CUBIC_IN",
+        "Cubic In",
+        "三次方加速",
+        OmniCurveEaseFunctions.cubic_in,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CUBIC_OUT",
+        "Cubic Out",
+        "三次方减速",
+        OmniCurveEaseFunctions.cubic_out,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CUBIC_IN_OUT",
+        "Cubic In Out",
+        "三次方缓进缓出",
+        OmniCurveEaseFunctions.cubic_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUART_IN",
+        "Quart In",
+        "四次方加速",
+        OmniCurveEaseFunctions.quart_in,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUART_OUT",
+        "Quart Out",
+        "四次方减速",
+        OmniCurveEaseFunctions.quart_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUART_IN_OUT",
+        "Quart In Out",
+        "四次方缓进缓出",
+        OmniCurveEaseFunctions.quart_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUINT_IN",
+        "Quint In",
+        "五次方加速",
+        OmniCurveEaseFunctions.quint_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUINT_OUT",
+        "Quint Out",
+        "五次方减速",
+        OmniCurveEaseFunctions.quint_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "QUINT_IN_OUT",
+        "Quint In Out",
+        "五次方缓进缓出",
+        OmniCurveEaseFunctions.quint_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "EXPO_IN",
+        "Expo In",
+        "指数加速",
+        OmniCurveEaseFunctions.expo_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "EXPO_OUT",
+        "Expo Out",
+        "指数减速",
+        OmniCurveEaseFunctions.expo_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "EXPO_IN_OUT",
+        "Expo In Out",
+        "指数缓进缓出",
+        OmniCurveEaseFunctions.expo_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CIRC_IN",
+        "Circ In",
+        "圆形加速",
+        OmniCurveEaseFunctions.circ_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CIRC_OUT",
+        "Circ Out",
+        "圆形减速",
+        OmniCurveEaseFunctions.circ_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "CIRC_IN_OUT",
+        "Circ In Out",
+        "圆形缓进缓出",
+        OmniCurveEaseFunctions.circ_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "SMOOTHSTEP",
+        "Smoothstep",
+        "平滑阶跃",
+        OmniCurveEaseFunctions.smoothstep,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_function_preset(
+        "SMOOTHERSTEP",
+        "Smootherstep",
+        "更平滑的阶跃",
+        OmniCurveEaseFunctions.smootherstep,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "POP",
+        "Pop",
+        "快速越界后回落",
+        OmniCurveMotionPresetSpecs.POP,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "SETTLE",
+        "Settle",
+        "轻微越界后稳定",
+        OmniCurveMotionPresetSpecs.SETTLE,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "PUNCH",
+        "Punch",
+        "强冲击后多次收敛",
+        OmniCurveMotionPresetSpecs.PUNCH,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "BOUNCE_OUT",
+        "Bounce Out",
+        "落地回弹近似",
+        OmniCurveMotionPresetSpecs.BOUNCE_OUT,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "ELASTIC_OUT",
+        "Elastic Out",
+        "弹性减速近似",
+        OmniCurveMotionPresetSpecs.ELASTIC_OUT,
+    ),
+    OmniCurvePresetFactory.make_float_points_preset(
+        "ELASTIC_IN_OUT",
+        "Elastic In Out",
+        "双端弹性近似",
+        OmniCurveMotionPresetSpecs.ELASTIC_IN_OUT,
     ),
 ]
 
