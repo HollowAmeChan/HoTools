@@ -1,9 +1,11 @@
 import bpy
 from bpy.types import NodeSocket, NodeSocketImage
 from .OmniCurve import (
+    OmniCurvePresetRegistry,
     OmniColorCurveData,
     OmniFloatCurveData,
     color_curve_payload,
+    curve_preset_payload,
     float_curve_payload,
 )
 
@@ -50,6 +52,158 @@ def _mesh_object_poll(self, obj):
     return obj is not None and getattr(obj, "type", None) == "MESH"
 
 
+def _curve_socket_extend(socket):
+    curve = getattr(socket, "curve", None)
+    return getattr(curve, "extend", "CLAMP") if curve is not None else "CLAMP"
+
+
+def _curve_socket_preset_payload(socket, preset_id):
+    curve_kind = "color_curve" if getattr(socket, "bl_idname", "") == "OmniNodeSocketColorCurve" else "float_curve"
+    extend = _curve_socket_extend(socket)
+    return curve_preset_payload(preset_id, curve_kind=curve_kind, extend=extend)
+
+
+def _curve_socket_kind(socket):
+    return "color_curve" if getattr(socket, "bl_idname", "") == "OmniNodeSocketColorCurve" else "float_curve"
+
+
+def _find_node_socket(node, socket_identifier, socket_name):
+    for collection in (getattr(node, "inputs", ()), getattr(node, "outputs", ())):
+        for socket in collection:
+            if socket_identifier and getattr(socket, "identifier", "") == socket_identifier:
+                return socket
+        if socket_name:
+            socket = collection.get(socket_name)
+            if socket is not None:
+                return socket
+    return None
+
+
+def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name):
+    tree = bpy.data.node_groups.get(tree_name)
+    if tree is None:
+        space = getattr(context, "space_data", None)
+        tree = getattr(space, "edit_tree", None) or getattr(space, "node_tree", None)
+    if tree is None:
+        return None, None, None
+
+    node = tree.nodes.get(node_name)
+    if node is None:
+        return tree, None, None
+
+    socket = _find_node_socket(node, socket_identifier, socket_name)
+    return tree, node, socket
+
+
+def _apply_curve_socket_preset(context, tree_name, node_name, socket_identifier, socket_name, preset_id):
+    tree, node, socket = _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name)
+    if tree is None:
+        return False, "找不到节点树"
+    if node is None:
+        return False, "找不到节点"
+    if socket is None:
+        return False, "找不到曲线 socket"
+
+    payload = _curve_socket_preset_payload(socket, preset_id)
+    if payload is None:
+        return False, "找不到曲线预设"
+
+    socket.default_value = payload
+    area = getattr(context, "area", None)
+    if area is not None:
+        area.tag_redraw()
+    return True, ""
+
+
+def _draw_curve_socket_controls(socket, layout, node, text, curve):
+    row = layout.row(align=True)
+    row.label(text=text or socket.name)
+    row.prop(curve, "extend", text="")
+    operator = row.operator(OmniNodeOpenCurvePresetPopup.bl_idname, text="预设", icon="PRESET")
+    operator.tree_name = getattr(getattr(node, "id_data", None), "name", "")
+    operator.node_name = getattr(node, "name", "")
+    operator.socket_identifier = getattr(socket, "identifier", "")
+    operator.socket_name = getattr(socket, "name", "")
+    row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+
+
+class OmniNodeOpenCurvePresetPopup(bpy.types.Operator):
+    bl_idname = "ho_tools.omni_open_curve_preset_popup"
+    bl_label = "曲线预设"
+    bl_description = "打开曲线预设选择窗口"
+    bl_options = {"UNDO"}
+
+    tree_name: bpy.props.StringProperty(default="")  # type: ignore
+    node_name: bpy.props.StringProperty(default="")  # type: ignore
+    socket_identifier: bpy.props.StringProperty(default="")  # type: ignore
+    socket_name: bpy.props.StringProperty(default="")  # type: ignore
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_popup(self, width=520)
+
+    def draw(self, context):
+        _, _, socket = _find_curve_socket(
+            context,
+            self.tree_name,
+            self.node_name,
+            self.socket_identifier,
+            self.socket_name,
+        )
+        curve_kind = _curve_socket_kind(socket) if socket is not None else "float_curve"
+        presets = OmniCurvePresetRegistry.classes(curve_kind)
+
+        layout = self.layout
+        box = layout.box()
+        box.label(text="曲线预设")
+
+        columns = 4
+        grid = box.grid_flow(columns=columns, even_columns=True, even_rows=True, align=True)
+        for preset_cls in presets:
+            cell = grid.box()
+            cell.scale_y = 2.0
+            cell.alignment = "CENTER"
+            operator = cell.operator(
+                OmniNodeApplyCurveSocketPreset.bl_idname,
+                text=preset_cls.name,
+            )
+            operator.tree_name = self.tree_name
+            operator.node_name = self.node_name
+            operator.socket_identifier = self.socket_identifier
+            operator.socket_name = self.socket_name
+            operator.preset_id = preset_cls.identifier
+
+    def execute(self, context):
+        return {"FINISHED"}
+
+
+class OmniNodeApplyCurveSocketPreset(bpy.types.Operator):
+    bl_idname = "ho_tools.omni_apply_curve_socket_preset"
+    bl_label = "应用曲线预设"
+    bl_description = "把当前预设写入曲线"
+    bl_options = {"UNDO"}
+
+    tree_name: bpy.props.StringProperty(default="")  # type: ignore
+    node_name: bpy.props.StringProperty(default="")  # type: ignore
+    socket_identifier: bpy.props.StringProperty(default="")  # type: ignore
+    socket_name: bpy.props.StringProperty(default="")  # type: ignore
+    preset_id: bpy.props.StringProperty(default="CLEAR")  # type: ignore
+
+    def execute(self, context):
+        ok, message = _apply_curve_socket_preset(
+            context,
+            self.tree_name,
+            self.node_name,
+            self.socket_identifier,
+            self.socket_name,
+            self.preset_id,
+        )
+        if not ok:
+            if message:
+                self.report({"WARNING"}, message)
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class OmniNodeSocketFloatCurve(NodeSocket):
     bl_label = "浮点曲线-Omni"
     bl_idname = "OmniNodeSocketFloatCurve"
@@ -85,10 +239,7 @@ class OmniNodeSocketFloatCurve(NodeSocket):
         if curve is None:
             layout.label(text=self.name)
             return
-        row = layout.row(align=True)
-        row.label(text=text or self.name)
-        row.prop(curve, "extend", text="")
-        row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+        _draw_curve_socket_controls(self, layout, node, text, curve)
 
     @classmethod
     def draw_color_simple(cls):
@@ -123,10 +274,7 @@ class OmniNodeSocketColorCurve(NodeSocket):
         if curve is None:
             layout.label(text=self.name)
             return
-        row = layout.row(align=True)
-        row.label(text=text or self.name)
-        row.prop(curve, "extend", text="")
-        row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
+        _draw_curve_socket_controls(self, layout, node, text, curve)
 
     @classmethod
     def draw_color_simple(cls):
@@ -597,6 +745,11 @@ socket_cls = [
     OmniNodeSocketShapeKey,
 ]
 
+operator_cls = [
+    OmniNodeOpenCurvePresetPopup,
+    OmniNodeApplyCurveSocketPreset,
+]
+
 # 保留旧入口，图节点 IO 类型枚举和外部脚本还会读取 OmniNodeSocket.cls。
 cls = socket_cls
 
@@ -604,6 +757,8 @@ cls = socket_cls
 def register():
     try:
         _refresh_modifier_type_items()
+        for item in operator_cls:
+            bpy.utils.register_class(item)
         for item in socket_cls:
             bpy.utils.register_class(item)
     except Exception:
@@ -613,6 +768,8 @@ def register():
 def unregister():
     try:
         for item in reversed(socket_cls):
+            bpy.utils.unregister_class(item)
+        for item in reversed(operator_cls):
             bpy.utils.unregister_class(item)
     except Exception:
         print(__file__ + " unregister failed!!!")
