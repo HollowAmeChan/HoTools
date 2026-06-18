@@ -86,26 +86,15 @@ def _format_debug_timing_report(
 
     step_stages = [stage for stage in totals if stage != "total"]
     step_stages.sort(key=lambda stage: totals[stage], reverse=True)
-    max_stages = max(int(OmniDebug.RUNTIME_TIMING_MAX_STAGES), 1)
-    shown_steps = step_stages[:max_stages]
-    hidden_steps = step_stages[max_stages:]
 
-    if shown_steps:
+    if step_stages:
         lines.append(f"  {OmniDebug.section_label('Slow Steps')}:")
-        for index, stage in enumerate(shown_steps, start=1):
+        for index, stage in enumerate(step_stages, start=1):
             avg_ms = totals[stage] / sample_count * 1000.0
             lines.append(
                 f"    {OmniDebug.value_label(f'{index:02d}.')} "
                 f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
             )
-
-    if hidden_steps:
-        other_total = sum(totals[stage] for stage in hidden_steps)
-        other_ms = other_total / sample_count * 1000.0
-        lines.append(
-            f"    {OmniDebug.value_label('..')} "
-            f"{OmniDebug.func_label('other_steps')} = {OmniDebug.value_label(f'{other_ms:.3f}ms')}"
-        )
 
     return lines
 
