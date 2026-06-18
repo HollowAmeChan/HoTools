@@ -59,6 +59,8 @@ def _omni_frame_change_post(scene, depsgraph=None):
         for tree in list(bpy.data.node_groups):
             if not _is_omni_node_tree(tree):
                 continue
+            if not getattr(tree, "is_execution_enabled", True):
+                continue
             if not getattr(tree, "is_frame_run_enabled", False):
                 continue
             try:
@@ -91,6 +93,11 @@ class OmniNodeTree(NodeTree):
     bl_label = "Omni节点图"
     bl_icon = "NODETREE"
 
+    is_execution_enabled: BoolProperty(
+        name="启用",
+        description="关闭后只能编译，不能手动运行、运行已编译结果、自动更新或每帧运行",
+        default=True,
+    )  # type: ignore
     is_auto_update: bpy.props.BoolProperty(
         description="是否实时刷新",
         default=False,
@@ -138,7 +145,7 @@ class OmniNodeTree(NodeTree):
     def update(self):
         if self.doing_initNode:
             return
-        if self.is_auto_update:
+        if self.is_execution_enabled and self.is_auto_update:
             print("树自动运行:", self.name, "\t", time.ctime())
             self.run()
         if not self.use_fake_user:
@@ -159,6 +166,10 @@ class OmniNodeTree(NodeTree):
 
     def compile_cache_status_label(self):
         return "已缓存" if _cached_compiled_graph(self) is not None else "无缓存"
+
+    def _ensure_execution_enabled(self):
+        if not getattr(self, "is_execution_enabled", True):
+            raise RuntimeError(f"OmniNodeTree '{self.name}' is disabled")
 
     def compile_cached(self, force=False):
         cache_key = _tree_cache_key(self)
@@ -184,6 +195,7 @@ class OmniNodeTree(NodeTree):
         clear_tree_compile_cache(self)
 
     def _run_compiled_graph(self, compiled):
+        self._ensure_execution_enabled()
         self._clear_run_state()
         debug_enabled = getattr(self, "debug_runtime_trace", False)
         result = OmniExecutor.run(compiled, debug=debug_enabled)
@@ -191,6 +203,7 @@ class OmniNodeTree(NodeTree):
         return result
 
     def run_compiled(self):
+        self._ensure_execution_enabled()
         compiled = _cached_compiled_graph(self)
         if compiled is None:
             raise RuntimeError(f"OmniNodeTree '{self.name}' has not been compiled")
@@ -202,10 +215,12 @@ class OmniNodeTree(NodeTree):
                 OmniDebug.flush_runtime_timing()
 
     def run_frame_cached(self):
+        self._ensure_execution_enabled()
         compiled = self.compile_cached(force=False)
         return self._run_compiled_graph(compiled)
 
     def run(self):
+        self._ensure_execution_enabled()
         self.compile_cached(force=True)
         return self.run_compiled()
 
@@ -266,19 +281,25 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     if tree is None or getattr(tree, "bl_idname", "") != TREE_ID_NAME:
         return
 
+    layout.prop(tree, "is_execution_enabled", text="", toggle=True,icon_only=True)
     layout.prop(tree, "debug_compile", text="Debug编译", toggle=True)
     layout.prop(tree, "debug_runtime_trace", text="Debug运行", toggle=True)
     layout.prop(tree, "debug_runtime_timing", text="Debug运行时长", toggle=True)
     layout.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
     layout.label(text=tree.compile_cache_status_label())
-    layout.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True)
 
+    execution_enabled = bool(getattr(tree, "is_execution_enabled", True))
+    frame_row = layout.row()
+    frame_row.enabled = execution_enabled
+    frame_row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True)
+
+    auto_row = layout.row()
+    auto_row.enabled = execution_enabled
     if tree.is_auto_update:
-        layout.alert = True
-        layout.prop(tree,"is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
-        layout.alert = False
+        auto_row.alert = True
+        auto_row.prop(tree, "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
     else:
-        layout.prop(tree,"is_auto_update", text="树自动更新", icon="UNLINKED")
+        auto_row.prop(tree, "is_auto_update", text="树自动更新", icon="UNLINKED")
 
     draw_OmniTreeInputs(layout, tree)
     draw_OmniTreeOutputs(layout, tree)

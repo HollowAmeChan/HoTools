@@ -262,6 +262,13 @@ class RuntimeObserver:
 
 class OmniExecutor:
     @staticmethod
+    def ensure_compiled_graph_enabled(compiled):
+        tree_ref = getattr(compiled, "tree_ref", None)
+        if tree_ref is not None and not bool(getattr(tree_ref, "is_execution_enabled", True)):
+            tree_name = getattr(tree_ref, "name", None) or getattr(compiled, "tree_name", "<tree>")
+            raise RuntimeError(f"OmniNodeTree '{tree_name}' is disabled")
+
+    @staticmethod
     def timing_token(value, fallback):
         text = str(value if value not in {None, ""} else fallback)
         text = "_".join(text.split())
@@ -419,6 +426,7 @@ class OmniExecutor:
 
     @staticmethod
     def _execute_core(compiled, provided_inputs, runtime_context, observer):
+        OmniExecutor.ensure_compiled_graph_enabled(compiled)
         registers = [None] * compiled.reg_count
         provided_inputs = provided_inputs or {}
 

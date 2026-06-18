@@ -54,6 +54,7 @@ class HO_PT_omni_node_panel(Panel):
     def draw_tree_row(self, layout, tree, show_advanced):
         tree_name = _tree_name_key(tree)
         should_alert_compile = _should_alert_compile_button(tree)
+        execution_enabled = bool(getattr(tree, "is_execution_enabled", True))
         status = "状态未知"
         try:
             status = tree.compile_cache_status_label()
@@ -74,15 +75,21 @@ class HO_PT_omni_node_panel(Panel):
         status_col.alignment = 'RIGHT'
         status_col.label(text="", icon=_compiled_status_icon(tree))
 
+        enable_col = top.row(align=True)
+        enable_col.scale_x = 0.9
+        enable_col.prop(tree, "is_execution_enabled", text="", toggle=True, icon="CHECKMARK",icon_only=True)
+
         frame_col = top.row(align=True)
         frame_col.scale_x = 0.8
+        frame_col.enabled = execution_enabled
         frame_col.prop(tree, "is_frame_run_enabled", text="帧运行", toggle=True, icon="TIME")
 
         if not show_advanced:
             run_row = col.row(align=True)
             run_row.scale_y = 1.25
             compile_run = run_row.row(align=True)
-            compile_run.alert = should_alert_compile
+            compile_run.enabled = execution_enabled
+            compile_run.alert = should_alert_compile and execution_enabled
             _tree_operator(
                 compile_run,
                 LayerRunning.bl_idname,
@@ -90,21 +97,30 @@ class HO_PT_omni_node_panel(Panel):
                 text="编译运行",
                 icon="FILE_REFRESH",
             )
-            _tree_operator(compile_run, OmniTreeClearRuntimeCache.bl_idname, tree_name, text="清缓存", icon="X")
+            compile_button = run_row.row(align=True)
+            compile_button.alert = should_alert_compile
+            _tree_operator(compile_button, OmniTreeCompile.bl_idname, tree_name, text="编译", icon="FILE_TICK")
+            clear_runtime = run_row.row(align=True)
+            clear_runtime.enabled = execution_enabled
+            _tree_operator(clear_runtime, OmniTreeClearRuntimeCache.bl_idname, tree_name, text="清缓存", icon="X")
             return
 
         op_row = col.row(align=True)
         op_row.scale_y = 1.15
         compile_run = op_row.row(align=True)
-        compile_run.alert = should_alert_compile
+        compile_run.enabled = execution_enabled
+        compile_run.alert = should_alert_compile and execution_enabled
         _tree_operator(compile_run, LayerRunning.bl_idname, tree_name, text="编译运行", icon="FILE_REFRESH")
         compile_button = op_row.row(align=True)
         compile_button.alert = should_alert_compile
         _tree_operator(compile_button, OmniTreeCompile.bl_idname, tree_name, text="编译", icon="FILE_TICK")
-        _tree_operator(op_row, OmniTreeClearRuntimeCache.bl_idname, tree_name, text="清缓存", icon="X")
+        clear_runtime = op_row.row(align=True)
+        clear_runtime.enabled = execution_enabled
+        _tree_operator(clear_runtime, OmniTreeClearRuntimeCache.bl_idname, tree_name, text="清缓存", icon="X")
 
         sub = col.row(align=True)
         sub.scale_y = 1.15
+        sub.enabled = execution_enabled
         _tree_operator(sub, OmniTreeRunCompiled.bl_idname, tree_name, text="运行", icon="PLAY")
         _tree_operator(sub, OmniTreeClearRuntimeCache.bl_idname, tree_name, text="清缓存", icon="X")
         _tree_operator(sub, OmniTreeClearCompileCache.bl_idname, tree_name, text="清编译", icon="TRASH")

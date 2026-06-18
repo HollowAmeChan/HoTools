@@ -60,6 +60,10 @@ def _operator_omni_tree(context, tree_name=""):
     return _find_omni_tree(tree_name) if tree_name else _active_omni_tree(context)
 
 
+def _tree_execution_enabled(tree):
+    return bool(getattr(tree, "is_execution_enabled", True))
+
+
 def _find_omni_tree(tree_name):
     tree = bpy.data.node_groups.get(tree_name)
     if _is_omni_tree(tree):
@@ -1486,13 +1490,25 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
         return
 
     layout: bpy.types.UILayout = self.layout
-    layout.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
+    execution_enabled = bool(getattr(tree, "is_execution_enabled", True))
+
+    enable_row = layout.row(align=True)
+    enable_row.prop(tree, "is_execution_enabled", text="", toggle=True, icon="CHECKMARK",icon_only=True)
+
+    run_now = layout.row(align=True)
+    run_now.enabled = execution_enabled
+    run_now.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
+
     row = layout.row(align=True)
     compile_button = row.row(align=True)
-    compile_button.alert = _should_alert_compile_button(tree)
+    compile_button.alert = execution_enabled and _should_alert_compile_button(tree)
     compile_button.operator(OmniTreeCompile.bl_idname, text="编译", icon="FILE_TICK")
-    row.operator(OmniTreeRunCompiled.bl_idname, text="运行", icon="PLAY")
-    row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
+    run_button = row.row(align=True)
+    run_button.enabled = execution_enabled
+    run_button.operator(OmniTreeRunCompiled.bl_idname, text="运行", icon="PLAY")
+    frame_button = row.row(align=True)
+    frame_button.enabled = execution_enabled
+    frame_button.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
     row.label(text=tree.compile_cache_status_label())
     return
 
