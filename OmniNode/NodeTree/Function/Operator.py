@@ -1,5 +1,5 @@
 from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob,_OmniColorRGBA,_OmniDatablock, _OmniFloatCurve, _OmniColorCurve
-from ..OmniCurve import resolve_color_curve, resolve_float_curve
+from ....PropertyCurve import sample_color_curve, sample_float_curve
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -209,7 +209,7 @@ def sampleFloatCurve(
     sample_position: float,
     curve: _OmniFloatCurve,
 ) -> float:
-    return float(resolve_float_curve(curve).sample(sample_position))
+    return float(sample_float_curve(curve, sample_position))
 
 
 @omni(enable=True,
@@ -229,7 +229,7 @@ def sampleColorCurve(
     sample_position: float,
     curve: _OmniColorCurve,
 ) -> tuple[_OmniColorRGBA, mathutils.Vector, float, float, float, float]:
-    color = resolve_color_curve(curve).sample(sample_position)
+    color = sample_color_curve(curve, sample_position)
     rgba = (float(color[0]), float(color[1]), float(color[2]), float(color[3]))
     return (
         rgba,
@@ -262,7 +262,7 @@ def objectSetLocationByColorCurve(
     extend_mode: str = "",
 ) -> tuple[bpy.types.Object, mathutils.Vector]:
     obj = _require_object(obj, "obj")
-    color = resolve_color_curve(curve).sample(sample_position, extend=extend_mode)
+    color = sample_color_curve(curve, sample_position, extend=extend_mode)
     location = mathutils.Vector((color[0], color[1], color[2]))
     obj.location = location
     return obj, location

@@ -7,7 +7,7 @@ from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
 from . import OmniNodeDraw
 from . import OmniRuntimeState
-from .OmniCurve import color_curve_payload, float_curve_payload
+from ...PropertyCurve import color_curve_payload, float_curve_payload
 from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
 

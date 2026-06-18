@@ -1,9 +1,9 @@
 import bpy
 from bpy.types import NodeSocket, NodeSocketImage
-from .OmniCurve import (
-    OmniCurvePresetRegistry,
+from ...PropertyCurve import (
     OmniColorCurveData,
     OmniFloatCurveData,
+    PropertyCurvePresetRegistry,
     color_curve_payload,
     curve_preset_payload,
     float_curve_payload,
@@ -150,7 +150,7 @@ class OmniNodeOpenCurvePresetPopup(bpy.types.Operator):
             self.socket_name,
         )
         curve_kind = _curve_socket_kind(socket) if socket is not None else "float_curve"
-        presets = OmniCurvePresetRegistry.classes(curve_kind)
+        presets = PropertyCurvePresetRegistry.classes(curve_kind)
 
         layout = self.layout
         box = layout.box()
