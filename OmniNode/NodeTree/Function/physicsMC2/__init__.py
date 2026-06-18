@@ -9,14 +9,29 @@ import time
 import bpy
 import mathutils
 
+from .....PropertyCurve import float_curve_payload
 from ...FunctionNodeCore import omni
-from ...OmniNodeSocketMapping import _OmniCache
+from ...OmniDebug import OmniDebug
+from ...OmniNodeSocketMapping import _OmniCache, _OmniFloatCurve
 from .. import _Color
-from . import blender_io, collision, mesh_build, solver, state as mc2_state
+from . import blender_io, collision, mesh_build, params, solver, state as mc2_state
 from .constants import MC2SystemConstants
 
 
 _DEBUG_PROFILES = {}
+
+
+def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", extend: str = "CLAMP") -> dict:
+    value = float(value)
+    return float_curve_payload(
+        [
+            {"x": 0.0, "y": value, "interpolation": interpolation},
+            {"x": 1.0, "y": value, "interpolation": interpolation},
+        ],
+        value=1.0,
+        interpolation=interpolation,
+        extend=extend,
+    )
 
 
 def _begin_timing() -> dict:
@@ -28,6 +43,71 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
         return
     stages = timing.setdefault("stages", {})
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
+
+
+def _format_debug_timing_report(
+    backend: str,
+    obj_name: str,
+    shape_key_name: str,
+    frame: int,
+    vertex_count: int,
+    constraint_count: int,
+    elapsed: float,
+    sample_count: int,
+    totals: dict,
+) -> list[str]:
+    elapsed_ms = max(float(elapsed), 0.000001) * 1000.0
+    hz = sample_count / max(float(elapsed), 0.000001)
+    total_ms = totals.get("total", 0.0) / sample_count * 1000.0
+    divider = OmniDebug.str_color("-" * 72, 90)
+    title = (
+        f"{OmniDebug.str_color('OMNI DEBUG TIMING', 97)}"
+        f"  |  {OmniDebug.section_label('MC2')} "
+        f"{OmniDebug.func_label(str(backend).upper())}"
+    )
+
+    lines = [
+        "",
+        divider,
+        title,
+        divider,
+        f"  {OmniDebug.section_label('Summary')}: "
+        f"interval={OmniDebug.value_label(f'{elapsed_ms:.1f}ms')}  "
+        f"samples={OmniDebug.value_label(sample_count)}  "
+        f"hz={OmniDebug.value_label(f'{hz:.2f}')}  "
+        f"total={OmniDebug.func_label(f'{total_ms:.3f}ms')}",
+        f"  {OmniDebug.section_label('Context')}: "
+        f"obj={OmniDebug.node_label(obj_name)}  "
+        f"key={OmniDebug.value_label(shape_key_name)}  "
+        f"frame={OmniDebug.value_label(frame)}  "
+        f"verts={OmniDebug.value_label(vertex_count)}  "
+        f"constraints={OmniDebug.value_label(constraint_count)}",
+    ]
+
+    step_stages = [stage for stage in totals if stage != "total"]
+    step_stages.sort(key=lambda stage: totals[stage], reverse=True)
+    max_stages = max(int(OmniDebug.RUNTIME_TIMING_MAX_STAGES), 1)
+    shown_steps = step_stages[:max_stages]
+    hidden_steps = step_stages[max_stages:]
+
+    if shown_steps:
+        lines.append(f"  {OmniDebug.section_label('Slow Steps')}:")
+        for index, stage in enumerate(shown_steps, start=1):
+            avg_ms = totals[stage] / sample_count * 1000.0
+            lines.append(
+                f"    {OmniDebug.value_label(f'{index:02d}.')} "
+                f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
+            )
+
+    if hidden_steps:
+        other_total = sum(totals[stage] for stage in hidden_steps)
+        other_ms = other_total / sample_count * 1000.0
+        lines.append(
+            f"    {OmniDebug.value_label('..')} "
+            f"{OmniDebug.func_label('other_steps')} = {OmniDebug.value_label(f'{other_ms:.3f}ms')}"
+        )
+
+    return lines
 
 
 def _publish_debug_timing(
@@ -47,9 +127,10 @@ def _publish_debug_timing(
     key = (int(obj.as_pointer()), str(shape_key_name), f"mc2_{backend}")
     now = time.perf_counter()
     profile = _DEBUG_PROFILES.get(key)
+    first_publish = profile is None
     if profile is None:
         profile = {
-            "last_print": now,
+            "last_print": 0.0,
             "frames": 0,
             "frame": frame,
             "vertex_count": vertex_count,
@@ -66,50 +147,29 @@ def _publish_debug_timing(
     for stage, seconds in timing.get("stages", {}).items():
         totals[stage] = totals.get(stage, 0.0) + float(seconds)
 
-    if now - float(profile["last_print"]) < 1.0:
+    if not first_publish and now - float(profile["last_print"]) < 1.0:
         return
 
     sample_count = max(int(profile["frames"]), 1)
-    ordered_stages = (
-        "validate",
-        "cache",
-        "restore",
-        "rebuild",
-        "transform",
-        "colliders",
-        "solve_setup",
-        "baseline",
-        "predict",
-        "pin",
-        "tether",
-        "distance",
-        "angle",
-        "bend",
-        "collision",
-        "distance_after_collision",
-        "motion",
-        "inertia",
-        "post",
-        "native_core",
-        "solve_total",
-        "post_pack",
-        "write",
-        "total",
+    elapsed = (
+        max(float(totals.get("total", 0.0)) / sample_count, 0.000001)
+        if first_publish
+        else max(now - float(profile["last_print"]), 0.000001)
     )
-    used = set()
-    stage_text = []
-    for stage in ordered_stages:
-        if stage in totals:
-            used.add(stage)
-            stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
-    for stage in sorted(set(totals.keys()) - used):
-        stage_text.append(f"{stage}={totals[stage] / sample_count * 1000.0:.3f}ms")
-
     print(
-        f"[MeshClothMC2:{backend}] obj={obj.name_full} key={shape_key_name} "
-        f"frame={profile['frame']} samples={sample_count} verts={profile['vertex_count']} "
-        f"constraints={profile['constraint_count']} "
-        + " ".join(stage_text)
+        "\n".join(
+            _format_debug_timing_report(
+                backend,
+                obj.name_full,
+                shape_key_name,
+                int(profile["frame"]),
+                int(profile["vertex_count"]),
+                int(profile["constraint_count"]),
+                elapsed,
+                sample_count,
+                totals,
+            )
+        )
     )
 
     _DEBUG_PROFILES[key] = {
@@ -131,9 +191,13 @@ def _run_mesh_cloth_mc2_node(
     gravity_power: float,
     damping: float,
     distance_stiffness: float,
+    distance_stiffness_curve,
     bend_stiffness: float,
+    bend_stiffness_curve,
     angle_restoration_stiffness: float,
+    angle_restoration_stiffness_curve,
     angle_limit: float,
+    angle_limit_curve,
     angle_limit_stiffness: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
@@ -149,9 +213,11 @@ def _run_mesh_cloth_mc2_node(
     teleport_distance: float,
     teleport_rotation: float,
     max_distance: float,
+    max_distance_curve,
     collision_radius: float,
     backstop_radius: float,
     backstop_distance: float,
+    backstop_distance_curve,
     collider_friction: float,
     collider_collision_mode: int,
     debug_output: bool,
@@ -168,17 +234,23 @@ def _run_mesh_cloth_mc2_node(
         _add_timing(timing, "validate", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
-    mesh_signature_key = mesh_build.mesh_signature_key(obj)
-    config_key = mesh_build.config_key(obj, shape_key_name, mesh_signature_key, collision_radius)
+    cache_substage_start = time.perf_counter() if timing is not None else None
+    mesh_light_key = mesh_build.mesh_light_key(obj)
+    if timing is not None:
+        _add_timing(timing, "cache_light_key", time.perf_counter() - cache_substage_start)
+
     vertex_count = len(obj.data.vertices)
-    state = (
-        cache_state
-        if mc2_state.state_matches(cache_state, obj, shape_key_name, mesh_signature_key, config_key)
-        else None
-    )
+    cache_substage_start = time.perf_counter() if timing is not None else None
+    state_matches = mc2_state.state_matches(cache_state, obj, shape_key_name, mesh_light_key)
+    if timing is not None:
+        _add_timing(timing, "cache_match", time.perf_counter() - cache_substage_start)
+    state = cache_state if state_matches else None
+
+    cache_substage_start = time.perf_counter() if timing is not None else None
     cached_frame = blender_io.cache_frame(state)
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
     if timing is not None:
+        _add_timing(timing, "cache_frame", time.perf_counter() - cache_substage_start)
         _add_timing(timing, "cache", time.perf_counter() - stage_start)
 
     if not reset and cached_frame is not None and current_frame != cached_frame + 1:
@@ -195,8 +267,28 @@ def _run_mesh_cloth_mc2_node(
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
 
+        # MC2 运行期优先复用缓存：连续帧只用轻量结构键判断。
+        # 只有 reset、跳帧清缓存、对象/mesh/顶点-loop-面数量变化时才重建完整拓扑签名。
+        # 同数量但拓扑重排不会自动失效，用户需要手动 reset/清缓存。
+        cache_substage_start = time.perf_counter() if timing is not None else None
+        mesh_signature_key = mesh_build.mesh_signature_key(obj)
+        if timing is not None:
+            _add_timing(timing, "cache_mesh_signature", time.perf_counter() - cache_substage_start)
+
+        cache_substage_start = time.perf_counter() if timing is not None else None
+        config_key = mesh_build.config_key(obj, shape_key_name, mesh_signature_key, collision_radius)
+        if timing is not None:
+            _add_timing(timing, "cache_config", time.perf_counter() - cache_substage_start)
+
         stage_start = time.perf_counter() if timing is not None else None
-        state = mc2_state.build_state(obj, shape_key_name, mesh_signature_key, config_key, collision_radius)
+        state = mc2_state.build_state(
+            obj,
+            shape_key_name,
+            mesh_light_key,
+            mesh_signature_key,
+            config_key,
+            collision_radius,
+        )
         if timing is not None:
             _add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
@@ -214,8 +306,22 @@ def _run_mesh_cloth_mc2_node(
     )
     angle_constraint_count = 0
     if (
-        float(angle_restoration_stiffness) > 0.0
-        or float(angle_limit) > 0.0
+        params.param_has_positive(
+            params.curve_value_param(
+                angle_restoration_stiffness,
+                angle_restoration_stiffness_curve,
+                minimum=0.0,
+                maximum=1.0,
+            )
+        )
+        or params.param_has_positive(
+            params.curve_value_param(
+                angle_limit,
+                angle_limit_curve,
+                minimum=0.0,
+                maximum=180.0,
+            )
+        )
     ):
         angle_constraint_count = max(0, len(state.get("baseline_data", ())) - len(state.get("baseline_start", ())))
     constraint_count = len(state["edge_i"]) + bend_constraint_count + angle_constraint_count
@@ -244,9 +350,13 @@ def _run_mesh_cloth_mc2_node(
         gravity_power,
         damping,
         distance_stiffness,
+        distance_stiffness_curve,
         bend_stiffness,
+        bend_stiffness_curve,
         angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
         angle_limit,
+        angle_limit_curve,
         angle_limit_stiffness,
         world_inertia,
         movement_inertia_smoothing,
@@ -262,8 +372,10 @@ def _run_mesh_cloth_mc2_node(
         teleport_distance,
         teleport_rotation,
         max_distance,
+        max_distance_curve,
         backstop_radius,
         backstop_distance,
+        backstop_distance_curve,
         collider_friction,
         collider_collision_mode,
         timing,
@@ -298,9 +410,13 @@ def _run_mesh_cloth_mc2_node(
         "重力强度",
         "阻尼",
         "距离刚度",
+        "距离刚度曲线",
         "弯曲刚度",
+        "弯曲刚度曲线",
         "角度恢复",
+        "角度恢复曲线",
         "角度限制",
+        "角度限制曲线",
         "角度限制刚度",
         "World惯性",
         "World惯性平滑",
@@ -316,9 +432,11 @@ def _run_mesh_cloth_mc2_node(
         "Teleport距离",
         "Teleport旋转",
         "最大距离",
+        "最大距离曲线",
         "碰撞半径",
         "Backstop半径",
         "Backstop距离",
+        "Backstop距离曲线",
         "碰撞摩擦",
         "碰撞模式",
         "调试输出",
@@ -329,9 +447,13 @@ def _run_mesh_cloth_mc2_node(
         "gravity_power": {"min_value": 0.0, "max_value": 100.0},
         "damping": {"min_value": 0.0, "max_value": 1.0},
         "distance_stiffness": {"min_value": 0.0, "max_value": 1.0},
+        "distance_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "bend_stiffness": {"min_value": 0.0, "max_value": 1.0},
+        "bend_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "angle_restoration_stiffness": {"min_value": 0.0, "max_value": 1.0},
+        "angle_restoration_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "angle_limit": {"min_value": 0.0, "max_value": 180.0},
+        "angle_limit_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "angle_limit_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "world_inertia": {"min_value": 0.0, "max_value": 1.0},
         "movement_inertia_smoothing": {"min_value": 0.0, "max_value": 1.0},
@@ -347,8 +469,10 @@ def _run_mesh_cloth_mc2_node(
         "teleport_distance": {"min_value": 0.0},
         "teleport_rotation": {"min_value": 0.0},
         "max_distance": {"min_value": 0.0},
+        "max_distance_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "backstop_radius": {"min_value": 0.0, "max_value": 10.0},
         "backstop_distance": {"min_value": 0.0},
+        "backstop_distance_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "collision_radius": {"min_value": 0.0},
         "collider_friction": {"min_value": 0.0, "max_value": 0.5},
         "collider_collision_mode": {
@@ -377,9 +501,13 @@ def meshClothMC2(
     gravity_power: float = 9.8,
     damping: float = 0.04,
     distance_stiffness: float = 1.0,
+    distance_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     bend_stiffness: float = 0.5,
+    bend_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_restoration_stiffness: float = 0.2,
+    angle_restoration_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit: float = 0.0,
+    angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit_stiffness: float = 1.0,
     world_inertia: float = MC2SystemConstants.WORLD_INERTIA,
     movement_inertia_smoothing: float = MC2SystemConstants.MOVEMENT_INERTIA_SMOOTHING,
@@ -395,9 +523,11 @@ def meshClothMC2(
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
     max_distance: float = 0.0,
+    max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collision_radius: float = 0.0,
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
+    backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
     debug_output: bool = False,
@@ -414,9 +544,13 @@ def meshClothMC2(
         gravity_power,
         damping,
         distance_stiffness,
+        distance_stiffness_curve,
         bend_stiffness,
+        bend_stiffness_curve,
         angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
         angle_limit,
+        angle_limit_curve,
         angle_limit_stiffness,
         world_inertia,
         movement_inertia_smoothing,
@@ -432,9 +566,11 @@ def meshClothMC2(
         teleport_distance,
         teleport_rotation,
         max_distance,
+        max_distance_curve,
         collision_radius,
         backstop_radius,
         backstop_distance,
+        backstop_distance_curve,
         collider_friction,
         collider_collision_mode,
         debug_output,
@@ -463,9 +599,13 @@ def meshClothMC2Cpp(
     gravity_power: float = 9.8,
     damping: float = 0.04,
     distance_stiffness: float = 1.0,
+    distance_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     bend_stiffness: float = 0.5,
+    bend_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_restoration_stiffness: float = 0.2,
+    angle_restoration_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit: float = 0.0,
+    angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit_stiffness: float = 1.0,
     world_inertia: float = MC2SystemConstants.WORLD_INERTIA,
     movement_inertia_smoothing: float = MC2SystemConstants.MOVEMENT_INERTIA_SMOOTHING,
@@ -481,9 +621,11 @@ def meshClothMC2Cpp(
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
     max_distance: float = 0.0,
+    max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collision_radius: float = 0.0,
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
+    backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
     debug_output: bool = False,
@@ -500,9 +642,13 @@ def meshClothMC2Cpp(
         gravity_power,
         damping,
         distance_stiffness,
+        distance_stiffness_curve,
         bend_stiffness,
+        bend_stiffness_curve,
         angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
         angle_limit,
+        angle_limit_curve,
         angle_limit_stiffness,
         world_inertia,
         movement_inertia_smoothing,
@@ -518,9 +664,11 @@ def meshClothMC2Cpp(
         teleport_distance,
         teleport_rotation,
         max_distance,
+        max_distance_curve,
         collision_radius,
         backstop_radius,
         backstop_distance,
+        backstop_distance_curve,
         collider_friction,
         collider_collision_mode,
         debug_output,

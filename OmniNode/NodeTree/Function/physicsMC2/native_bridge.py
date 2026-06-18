@@ -860,7 +860,12 @@ def param_slots_for_native(state: dict) -> dict:
         result[name] = {
             "mode": mode,
             "value": value,
+            "base_value": slot.get("base_value"),
             "samples": sample_array,
+            "payload": slot.get("payload"),
+            "minimum": slot.get("minimum"),
+            "maximum": slot.get("maximum"),
+            "sample_count": int(slot.get("sample_count", len(sample_array)) or len(sample_array)),
         }
     return result
 

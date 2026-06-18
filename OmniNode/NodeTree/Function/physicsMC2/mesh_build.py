@@ -177,6 +177,22 @@ def mesh_signature_key(obj: bpy.types.Object) -> tuple:
     )
 
 
+def mesh_light_key(obj: bpy.types.Object) -> tuple:
+    """MC2 每帧缓存只使用轻量结构键。
+
+    这里故意只看对象/mesh 标识与顶点、loop、面数量，不扫描边表和三角面 hash。
+    同数量但拓扑重排的情况不会自动失效，需要用户通过 reset/清缓存触发重建。
+    """
+    mesh = obj.data
+    return (
+        int(obj.as_pointer()),
+        int(mesh.as_pointer()),
+        len(mesh.vertices),
+        len(mesh.loops),
+        len(mesh.polygons),
+    )
+
+
 def config_key(
     obj: bpy.types.Object,
     shape_key_name: str,

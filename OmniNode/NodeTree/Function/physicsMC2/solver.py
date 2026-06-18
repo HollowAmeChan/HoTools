@@ -30,9 +30,13 @@ def solve_meshcloth(
     gravity_power: float,
     damping: float,
     distance_stiffness: float,
+    distance_stiffness_curve,
     bend_stiffness: float,
+    bend_stiffness_curve,
     angle_restoration_stiffness: float,
+    angle_restoration_stiffness_curve,
     angle_limit: float,
+    angle_limit_curve,
     angle_limit_stiffness: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
@@ -48,8 +52,10 @@ def solve_meshcloth(
     teleport_distance: float,
     teleport_rotation: float,
     max_distance: float,
+    max_distance_curve,
     backstop_radius: float,
     backstop_distance: float,
+    backstop_distance_curve,
     collider_friction: float,
     collider_collision_mode: int,
     timing: dict | None = None,
@@ -87,17 +93,48 @@ def solve_meshcloth(
     substep_damping = blender_io.substep_damping(damping, substep_count)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
 
+    curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
-    distance_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(distance_stiffness))))
-    bend_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(bend_stiffness))))
-    angle_restoration_param = params.scalar_param(max(0.0, min(1.0, float(angle_restoration_stiffness))))
-    angle_limit_param = params.scalar_param(max(0.0, min(180.0, float(angle_limit))))
+    distance_stiffness_param = params.curve_value_param(
+        distance_stiffness,
+        distance_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    bend_stiffness_param = params.curve_value_param(
+        bend_stiffness,
+        bend_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    angle_restoration_param = params.curve_value_param(
+        angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    angle_limit_param = params.curve_value_param(
+        angle_limit,
+        angle_limit_curve,
+        minimum=0.0,
+        maximum=180.0,
+    )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
+    max_distance_param = params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0)
+    backstop_distance_param = params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+    if timing is not None:
+        _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
+
+    curve_stage_start = time.perf_counter() if timing is not None else None
     distance_stiffness_values = np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
     bend_stiffness_values = np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
     angle_restoration_values = np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
     angle_limit_values = np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0)
+    if timing is not None:
+        _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
+
     world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
     movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
     local_inertia_param = params.scalar_param(max(0.0, min(1.0, float(local_inertia))))
@@ -114,9 +151,6 @@ def solve_meshcloth(
     local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
     particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
 
-    max_distance_param = params.scalar_param(max(float(max_distance), 0.0))
-    backstop_radius_param = params.scalar_param(max(float(backstop_radius), 0.0))
-    backstop_distance_param = params.scalar_param(max(float(backstop_distance), 0.0))
     tether_compression_param = params.scalar_param(MC2SystemConstants.TETHER_COMPRESSION_LIMIT)
     tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT)
     motion_stiffness_param = params.scalar_param(1.0)
@@ -696,9 +730,13 @@ def solve_meshcloth_native_core(
     gravity_power: float,
     damping: float,
     distance_stiffness: float,
+    distance_stiffness_curve,
     bend_stiffness: float,
+    bend_stiffness_curve,
     angle_restoration_stiffness: float,
+    angle_restoration_stiffness_curve,
     angle_limit: float,
+    angle_limit_curve,
     angle_limit_stiffness: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
@@ -714,8 +752,10 @@ def solve_meshcloth_native_core(
     teleport_distance: float,
     teleport_rotation: float,
     max_distance: float,
+    max_distance_curve,
     backstop_radius: float,
     backstop_distance: float,
+    backstop_distance_curve,
     collider_friction: float,
     collider_collision_mode: int,
     timing: dict | None = None,
@@ -755,13 +795,41 @@ def solve_meshcloth_native_core(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
 
+    curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
-    distance_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(distance_stiffness))))
-    bend_stiffness_param = params.scalar_param(max(0.0, min(1.0, float(bend_stiffness))))
-    angle_restoration_param = params.scalar_param(max(0.0, min(1.0, float(angle_restoration_stiffness))))
-    angle_limit_param = params.scalar_param(max(0.0, min(180.0, float(angle_limit))))
+    distance_stiffness_param = params.curve_value_param(
+        distance_stiffness,
+        distance_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    bend_stiffness_param = params.curve_value_param(
+        bend_stiffness,
+        bend_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    angle_restoration_param = params.curve_value_param(
+        angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    angle_limit_param = params.curve_value_param(
+        angle_limit,
+        angle_limit_curve,
+        minimum=0.0,
+        maximum=180.0,
+    )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
+    max_distance_param = params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0)
+    backstop_distance_param = params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+    if timing is not None:
+        _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
+
+    curve_stage_start = time.perf_counter() if timing is not None else None
     distance_stiffness_values = np.ascontiguousarray(
         np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0),
         dtype=np.float32,
@@ -778,6 +846,8 @@ def solve_meshcloth_native_core(
         np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0),
         dtype=np.float32,
     )
+    if timing is not None:
+        _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
 
     world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
     movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
@@ -795,9 +865,6 @@ def solve_meshcloth_native_core(
     local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
     particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
 
-    max_distance_param = params.scalar_param(max(float(max_distance), 0.0))
-    backstop_radius_param = params.scalar_param(max(float(backstop_radius), 0.0))
-    backstop_distance_param = params.scalar_param(max(float(backstop_distance), 0.0))
     tether_compression_param = params.scalar_param(MC2SystemConstants.TETHER_COMPRESSION_LIMIT)
     tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT)
     motion_stiffness_param = params.scalar_param(1.0)
@@ -890,6 +957,7 @@ def solve_meshcloth_native_core(
         for key, value in substep_inertia_lists.items()
     }
 
+    curve_stage_start = time.perf_counter() if timing is not None else None
     motion_depths = np.clip(depths * depths, 0.0, 1.0)
     max_distances = np.ascontiguousarray(
         params.sample_param(max_distance_param, motion_depths) * world_scale_nonnegative,
@@ -907,6 +975,8 @@ def solve_meshcloth_native_core(
         params.sample_param(backstop_distance_param, motion_depths) * world_scale_nonnegative,
         dtype=np.float32,
     )
+    if timing is not None:
+        _add_timing(timing, "motion_curves", time.perf_counter() - curve_stage_start)
     particle_speed_limit_scaled = (
         particle_speed_limit_value * world_scale_nonnegative
         if particle_speed_limit_value >= 0.0

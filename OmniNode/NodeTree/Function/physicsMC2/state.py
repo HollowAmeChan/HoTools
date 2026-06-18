@@ -37,6 +37,7 @@ def calc_inverse_masses(
 def build_state(
     obj: bpy.types.Object,
     shape_key_name: str,
+    mesh_light_key: tuple,
     mesh_signature_key: tuple,
     config_key: tuple,
     collision_radius: float,
@@ -105,6 +106,7 @@ def build_state(
         "object_ptr": int(obj.as_pointer()),
         "mesh_ptr": int(obj.data.as_pointer()),
         "shape_key_name": shape_key_name,
+        "mesh_light_key": mesh_light_key,
         "mesh_signature_key": mesh_signature_key,
         "config_key": config_key,
         "object_matrix_world_key": math_utils.matrix_world_key(obj),
@@ -339,8 +341,7 @@ def state_matches(
     state,
     obj: bpy.types.Object,
     shape_key_name: str,
-    mesh_signature_key: tuple,
-    config_key: tuple,
+    mesh_light_key: tuple,
 ) -> bool:
     if not isinstance(state, dict):
         return False
@@ -510,7 +511,6 @@ def state_matches(
         and state.get("object_ptr") == int(obj.as_pointer())
         and state.get("mesh_ptr") == int(obj.data.as_pointer())
         and state.get("shape_key_name") == shape_key_name
-        and state.get("mesh_signature_key") == mesh_signature_key
-        and state.get("config_key") == config_key
+        and state.get("mesh_light_key") == mesh_light_key
         and state.get("vertex_count") == vertex_count
     )

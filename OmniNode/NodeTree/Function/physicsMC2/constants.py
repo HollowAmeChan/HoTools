@@ -1,7 +1,7 @@
 """MC2 Python 后端的常量与 cache schema 标识。"""
 
 MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
-MC2_SOLVER_VERSION = 12
+MC2_SOLVER_VERSION = 13
 
 MC2_ATTR_INVALID = 1 << 0
 MC2_ATTR_FIXED = 1 << 1
