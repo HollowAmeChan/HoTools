@@ -51,6 +51,7 @@ def solve_meshcloth(
     backstop_radius: float,
     backstop_distance: float,
     collider_friction: float,
+    collider_collision_mode: int,
     timing: dict | None = None,
     colliders: list[dict] | None = None,
 ) -> dict:
@@ -129,8 +130,9 @@ def solve_meshcloth(
         * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
         * max(float(world_scale), 0.0)
     )
+    collision_mode = max(0, min(2, int(collider_collision_mode)))
 
-    has_collision = bool(colliders) and bool(collided_by_groups) and bool(
+    has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
@@ -274,27 +276,51 @@ def solve_meshcloth(
 
         if has_collision and iteration_count == 0:
             stage_start = time.perf_counter() if timing is not None else None
-            if not native_bridge.project_collisions(
-                positions,
-                base_positions,
-                inv_masses,
-                collision_radii,
-                collided_by_groups,
-                collider_arrays or {},
-                collision_normals,
-                friction,
-            ):
-                collision.project_collisions(
+            if collision_mode == 2:
+                if not native_bridge.project_edge_collisions(
+                    positions,
+                    state["edges"],
+                    attributes,
+                    inv_masses,
+                    collision_radii,
+                    collided_by_groups,
+                    collider_arrays or {},
+                    collision_normals,
+                    friction,
+                ):
+                    collision.project_edge_collisions(
+                        positions,
+                        state["edges"],
+                        attributes,
+                        collision_radii,
+                        collided_by_groups,
+                        colliders,
+                        obj,
+                        collision_normals,
+                        friction,
+                    )
+            else:
+                if not native_bridge.project_collisions(
                     positions,
                     base_positions,
                     inv_masses,
                     collision_radii,
                     collided_by_groups,
-                    colliders,
-                    obj,
+                    collider_arrays or {},
                     collision_normals,
                     friction,
-                )
+                ):
+                    collision.project_collisions(
+                        positions,
+                        base_positions,
+                        inv_masses,
+                        collision_radii,
+                        collided_by_groups,
+                        colliders,
+                        obj,
+                        collision_normals,
+                        friction,
+                    )
             if timing is not None:
                 _add_timing(timing, "collision", time.perf_counter() - stage_start)
             inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
@@ -415,27 +441,51 @@ def solve_meshcloth(
 
             if has_collision:
                 stage_start = time.perf_counter() if timing is not None else None
-                if not native_bridge.project_collisions(
-                    positions,
-                    base_positions,
-                    inv_masses,
-                    collision_radii,
-                    collided_by_groups,
-                    collider_arrays or {},
-                    collision_normals,
-                    friction,
-                ):
-                    collision.project_collisions(
+                if collision_mode == 2:
+                    if not native_bridge.project_edge_collisions(
+                        positions,
+                        state["edges"],
+                        attributes,
+                        inv_masses,
+                        collision_radii,
+                        collided_by_groups,
+                        collider_arrays or {},
+                        collision_normals,
+                        friction,
+                    ):
+                        collision.project_edge_collisions(
+                            positions,
+                            state["edges"],
+                            attributes,
+                            collision_radii,
+                            collided_by_groups,
+                            colliders,
+                            obj,
+                            collision_normals,
+                            friction,
+                        )
+                else:
+                    if not native_bridge.project_collisions(
                         positions,
                         base_positions,
                         inv_masses,
                         collision_radii,
                         collided_by_groups,
-                        colliders,
-                        obj,
+                        collider_arrays or {},
                         collision_normals,
                         friction,
-                    )
+                    ):
+                        collision.project_collisions(
+                            positions,
+                            base_positions,
+                            inv_masses,
+                            collision_radii,
+                            collided_by_groups,
+                            colliders,
+                            obj,
+                            collision_normals,
+                            friction,
+                        )
                 if timing is not None:
                     _add_timing(timing, "collision", time.perf_counter() - stage_start)
                 inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
@@ -623,6 +673,7 @@ def solve_meshcloth(
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param
+    next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
 
     extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = dict(extension_slots.get("native") or {})
@@ -666,6 +717,7 @@ def solve_meshcloth_native_core(
     backstop_radius: float,
     backstop_distance: float,
     collider_friction: float,
+    collider_collision_mode: int,
     timing: dict | None = None,
     colliders: list[dict] | None = None,
 ) -> dict:
@@ -759,8 +811,9 @@ def solve_meshcloth_native_core(
         * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
         * world_scale_nonnegative
     )
+    collision_mode = max(0, min(2, int(collider_collision_mode)))
 
-    has_collision = bool(colliders) and bool(collided_by_groups) and bool(
+    has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
@@ -906,6 +959,7 @@ def solve_meshcloth_native_core(
         particle_speed_limit=particle_speed_limit_scaled,
         angle_limit_stiffness=angle_limit_stiffness_value,
         collided_by_groups=collided_by_groups,
+        collider_collision_mode=collision_mode,
         display_max_distance_ratio=MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
         animation_pose_ratio=0.0,
     )
@@ -958,6 +1012,7 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param
+    next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
 
     extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = dict(extension_slots.get("native") or {})

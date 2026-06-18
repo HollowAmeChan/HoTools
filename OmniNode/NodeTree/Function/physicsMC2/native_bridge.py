@@ -310,6 +310,60 @@ def project_collisions(
     return True
 
 
+def project_edge_collisions(
+    positions: np.ndarray,
+    edges: np.ndarray,
+    attributes: np.ndarray,
+    inv_masses: np.ndarray,
+    collision_radii: np.ndarray,
+    collided_by_groups: int,
+    collider_arrays: dict,
+    collision_normals: np.ndarray,
+    friction: np.ndarray,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_edge_collisions_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    collider_types = np.ascontiguousarray(collider_arrays.get("collider_types", ()), dtype=np.int32)
+    if len(collider_types) == 0 or int(collided_by_groups) == 0:
+        return True
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    collision_normals_view = np.ascontiguousarray(collision_normals, dtype=np.float32)
+    friction_view = np.ascontiguousarray(friction, dtype=np.float32)
+    collider_centers = _as_vec3_array(collider_arrays.get("collider_centers", ()))
+    collider_segment_a = _as_vec3_array(collider_arrays.get("collider_segment_a", ()))
+    collider_segment_b = _as_vec3_array(collider_arrays.get("collider_segment_b", ()))
+    function(
+        positions_view,
+        np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(attributes, dtype=np.uint8),
+        np.ascontiguousarray(inv_masses, dtype=np.float32),
+        np.ascontiguousarray(collision_radii, dtype=np.float32),
+        collision_normals_view,
+        friction_view,
+        int(collided_by_groups),
+        collider_types,
+        np.ascontiguousarray(collider_arrays.get("collider_group_bits", ()), dtype=np.int32),
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
+        _as_vec3_array(collider_arrays.get("collider_old_centers", collider_centers)),
+        _as_vec3_array(collider_arrays.get("collider_old_segment_a", collider_segment_a)),
+        _as_vec3_array(collider_arrays.get("collider_old_segment_b", collider_segment_b)),
+        np.ascontiguousarray(collider_arrays.get("collider_radii", ()), dtype=np.float32),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if collision_normals_view is not collision_normals:
+        collision_normals[...] = collision_normals_view
+    if friction_view is not friction:
+        friction[...] = friction_view
+    return True
+
+
 def project_triangle_bending(
     positions: np.ndarray,
     inv_masses: np.ndarray,
@@ -568,6 +622,7 @@ def solve_meshcloth_core(
     particle_speed_limit: float,
     angle_limit_stiffness: float,
     collided_by_groups: int = 0,
+    collider_collision_mode: int = 1,
     display_max_distance_ratio: float = 1.3,
     animation_pose_ratio: float = 0.0,
 ) -> bool:
@@ -646,6 +701,7 @@ def solve_meshcloth_core(
         np.ascontiguousarray(motion_stiffness_values, dtype=np.float32),
         np.ascontiguousarray(backstop_radii, dtype=np.float32),
         np.ascontiguousarray(backstop_distances, dtype=np.float32),
+        np.ascontiguousarray(arrays.get("edges", empty_i32), dtype=np.int32).reshape((-1, 2)),
         np.ascontiguousarray(arrays["collision_radii"], dtype=np.float32),
         np.ascontiguousarray(colliders.get("collider_types", empty_i32), dtype=np.int32),
         np.ascontiguousarray(colliders.get("collider_group_bits", empty_i32), dtype=np.int32),
@@ -679,6 +735,7 @@ def solve_meshcloth_core(
         float(particle_speed_limit),
         float(angle_limit_stiffness),
         int(collided_by_groups),
+        int(collider_collision_mode),
         float(display_max_distance_ratio),
         float(animation_pose_ratio),
     )
@@ -754,6 +811,7 @@ def state_arrays_for_native(state: dict) -> dict:
         "vertex_local_positions": _array(state, "vertex_local_positions", np.float32, (3,)),
         "vertex_local_rotations": _array(state, "vertex_local_rotations", np.float32, (4,)),
         "tether_rest_lengths": _array(state, "tether_rest_lengths", np.float32),
+        "edges": _array(state, "edges", np.int32, (2,)),
         "edge_i": _array(state, "edge_i", np.int32),
         "edge_j": _array(state, "edge_j", np.int32),
         "edge_rest": _array(state, "edge_rest", np.float32),

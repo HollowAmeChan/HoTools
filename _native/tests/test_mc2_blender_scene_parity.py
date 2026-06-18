@@ -105,6 +105,17 @@ def make_collider():
     return collider
 
 
+def make_box_collider():
+    collider = bpy.data.objects.new("MC2ParityBox", None)
+    bpy.context.collection.objects.link(collider)
+    props = collider.hotools_object_collision
+    props.collision_type = "BOX"
+    props.box_size = (0.6, 0.6, 0.6)
+    props.offset = (0.15, -0.2, 0.0)
+    props.primary_collision_group = 1
+    return collider
+
+
 def clone_state(value):
     result = {}
     for key, item in value.items():
@@ -147,7 +158,7 @@ def collision_count(state):
     return int(np.count_nonzero(np.linalg.norm(normals, axis=1) > MC2SystemConstants.EPSILON))
 
 
-def solve_one(state, obj, scene, colliders, cpp):
+def solve_one(state, obj, scene, colliders, cpp, collider_collision_mode):
     func = solver.solve_meshcloth_native_core if cpp else solver.solve_meshcloth
     return func(
         state,
@@ -180,12 +191,13 @@ def solve_one(state, obj, scene, colliders, cpp):
         0.0,
         0.0,
         0.18,
+        collider_collision_mode,
         None,
         colliders,
     )
 
 
-def run_parity():
+def run_parity_for_mode(collider_collision_mode):
     ensure_physics_props()
     clear_scene()
     scene = bpy.context.scene
@@ -194,6 +206,7 @@ def run_parity():
 
     cloth = make_grid_object()
     collider = make_collider()
+    box_collider = make_box_collider()
     bpy.context.view_layer.update()
     initial = build_initial_state(cloth)
     py_state = clone_state(initial)
@@ -206,11 +219,12 @@ def run_parity():
     for frame in range(1, 13):
         scene.frame_set(frame)
         collider.location = (0.12 * np.sin(frame * 0.55), -0.18, -0.42 + frame * 0.01)
+        box_collider.rotation_euler = (0.0, 0.0, frame * 0.07)
         bpy.context.view_layer.update()
         colliders = scene_colliders(scene)
 
-        py_state = solve_one(py_state, cloth, scene, colliders, False)
-        cpp_state = solve_one(cpp_state, cloth, scene, colliders, True)
+        py_state = solve_one(py_state, cloth, scene, colliders, False, collider_collision_mode)
+        cpp_state = solve_one(cpp_state, cloth, scene, colliders, True, collider_collision_mode)
 
         delta = np.ascontiguousarray(py_state["display_positions"] - cpp_state["display_positions"], dtype=np.float32)
         frame_max = float(np.max(np.linalg.norm(delta, axis=1)))
@@ -222,7 +236,8 @@ def run_parity():
 
     print(
         "MC2 Blender scene parity: "
-        f"frames=12 max_delta={max_delta:.8f} rms={max_rms:.8f} "
+        f"collision_mode={collider_collision_mode} frames=12 "
+        f"max_delta={max_delta:.8f} rms={max_rms:.8f} "
         f"stretch_delta={max_stretch_delta:.8f} collision_count_delta={max_collision_delta}"
     )
     if max_delta > 5e-4 or max_rms > 2e-4:
@@ -231,6 +246,11 @@ def run_parity():
         raise AssertionError(f"stretch error parity failed: {max_stretch_delta}")
     if max_collision_delta != 0:
         raise AssertionError(f"collision count parity failed: {max_collision_delta}")
+
+
+def run_parity():
+    for collider_collision_mode in (1, 2):
+        run_parity_for_mode(collider_collision_mode)
 
 
 if __name__ == "__main__":

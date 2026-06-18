@@ -193,9 +193,33 @@ bool expect_int32_quad_array(const Buffer& buffer, const char* name, Py_ssize_t*
     return true;
 }
 
+bool expect_int32_pair_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
+    if (!expect_int32(buffer, name)) {
+        return false;
+    }
+    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 2) {
+        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 2)", name);
+        return false;
+    }
+    *count = buffer.view.shape[0];
+    return true;
+}
+
 bool expect_quad_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
     const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
     const Py_ssize_t count = buffer.view.shape[0] * 4;
+    for (Py_ssize_t index = 0; index < count; ++index) {
+        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
+            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool expect_pair_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
+    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
+    const Py_ssize_t count = buffer.view.shape[0] * 2;
     for (Py_ssize_t index = 0; index < count; ++index) {
         if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
             PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
@@ -794,6 +818,128 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 17;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "project_edge_collisions_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    Buffer positions;
+    Buffer edges;
+    Buffer attributes;
+    Buffer inv_masses;
+    Buffer collision_radii;
+    Buffer collision_normals;
+    Buffer friction;
+    Buffer collider_types;
+    Buffer collider_group_bits;
+    Buffer collider_centers;
+    Buffer collider_segment_a;
+    Buffer collider_segment_b;
+    Buffer collider_old_centers;
+    Buffer collider_old_segment_a;
+    Buffer collider_old_segment_b;
+    Buffer collider_radii;
+
+    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !edges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "edges") ||
+        !attributes.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "attributes") ||
+        !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !collision_radii.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
+        !collision_normals.get(PyTuple_GET_ITEM(args, 5), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                               "collision_normals") ||
+        !friction.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
+        !collider_types.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_group_bits.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
+        !collider_centers.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !collider_old_centers.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND,
+                                  "collider_old_centers") ||
+        !collider_old_segment_a.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND,
+                                    "collider_old_segment_a") ||
+        !collider_old_segment_b.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND,
+                                    "collider_old_segment_b") ||
+        !collider_radii.get(PyTuple_GET_ITEM(args, 16), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    Py_ssize_t edge_count = 0;
+    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
+        !expect_int32_pair_array(edges, "edges", &edge_count) ||
+        !expect_pair_indices_in_range(edges, "edges", vertex_count) ||
+        !expect_uint8_scalar_array(attributes, "attributes") ||
+        !expect_1d_array(attributes, "attributes", vertex_count) ||
+        !expect_float32(inv_masses, "inv_masses") ||
+        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
+        !expect_float32(collision_radii, "collision_radii") ||
+        !expect_1d_array(collision_radii, "collision_radii", vertex_count) ||
+        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
+        !expect_float32(friction, "friction") ||
+        !expect_1d_array(friction, "friction", vertex_count) ||
+        !expect_int32_scalar_array(collider_types, "collider_types") ||
+        !expect_int32_scalar_array(collider_group_bits, "collider_group_bits") ||
+        !expect_float32(collider_radii, "collider_radii")) {
+        return nullptr;
+    }
+
+    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 7), "collided_by_groups");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    const Py_ssize_t collider_count = collider_types.view.shape[0];
+    Py_ssize_t collider_centers_count = 0;
+    Py_ssize_t collider_segment_a_count = 0;
+    Py_ssize_t collider_segment_b_count = 0;
+    Py_ssize_t collider_old_centers_count = 0;
+    Py_ssize_t collider_old_segment_a_count = 0;
+    Py_ssize_t collider_old_segment_b_count = 0;
+    if (!expect_1d_array(collider_group_bits, "collider_group_bits", collider_count) ||
+        !expect_1d_array(collider_radii, "collider_radii", collider_count) ||
+        !expect_vector3_array(collider_centers, "collider_centers", &collider_centers_count) ||
+        !expect_vector3_array(collider_segment_a, "collider_segment_a", &collider_segment_a_count) ||
+        !expect_vector3_array(collider_segment_b, "collider_segment_b", &collider_segment_b_count) ||
+        !expect_vector3_array(collider_old_centers, "collider_old_centers", &collider_old_centers_count) ||
+        !expect_vector3_array(collider_old_segment_a, "collider_old_segment_a", &collider_old_segment_a_count) ||
+        !expect_vector3_array(collider_old_segment_b, "collider_old_segment_b", &collider_old_segment_b_count)) {
+        return nullptr;
+    }
+    if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
+        collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
+        collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
+        PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
+        return nullptr;
+    }
+
+    hotools::Mc2EdgeCollisionView view;
+    view.positions = static_cast<float*>(positions.view.buf);
+    view.edges = static_cast<const std::int32_t*>(edges.view.buf);
+    view.attributes = static_cast<const std::uint8_t*>(attributes.view.buf);
+    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
+    view.collision_radii = static_cast<const float*>(collision_radii.view.buf);
+    view.collision_normals = static_cast<float*>(collision_normals.view.buf);
+    view.friction = static_cast<float*>(friction.view.buf);
+    view.collider_types = static_cast<const std::int32_t*>(collider_types.view.buf);
+    view.collider_group_bits = static_cast<const std::int32_t*>(collider_group_bits.view.buf);
+    view.collider_centers = static_cast<const float*>(collider_centers.view.buf);
+    view.collider_segment_a = static_cast<const float*>(collider_segment_a.view.buf);
+    view.collider_segment_b = static_cast<const float*>(collider_segment_b.view.buf);
+    view.collider_old_centers = static_cast<const float*>(collider_old_centers.view.buf);
+    view.collider_old_segment_a = static_cast<const float*>(collider_old_segment_a.view.buf);
+    view.collider_old_segment_b = static_cast<const float*>(collider_old_segment_b.view.buf);
+    view.collider_radii = static_cast<const float*>(collider_radii.view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.edge_count = static_cast<std::int64_t>(edge_count);
+    view.collider_count = static_cast<std::int64_t>(collider_count);
+    view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
+
+    hotools::project_edge_collisions_mc2(view);
+    Py_RETURN_NONE;
+}
+
 PyObject* project_triangle_bending_mc2(PyObject*, PyObject* args) {
     constexpr Py_ssize_t kArgCount = 8;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
@@ -1277,6 +1423,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         AMotionStiffnessValues,
         ABackstopRadii,
         ABackstopDistances,
+        AEdges,
         ACollisionRadii,
         AColliderTypes,
         AColliderGroupBits,
@@ -1297,7 +1444,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ASubstepAngularVelocities,
         kSolveBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 81;
+    constexpr Py_ssize_t kArgCount = 83;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -1350,6 +1497,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         "motion_stiffness_values",
         "backstop_radii",
         "backstop_distances",
+        "edges",
         "collision_radii",
         "collider_types",
         "collider_group_bits",
@@ -1472,6 +1620,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
+    Py_ssize_t edge_count = 0;
     if (!expect_float32(buffers[AAngleRestorationValues], "angle_restoration_values") ||
         !expect_1d_array(buffers[AAngleRestorationValues], "angle_restoration_values", vertex_count) ||
         !expect_float32(buffers[AAngleLimitValues], "angle_limit_values") ||
@@ -1484,6 +1633,8 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(buffers[ABackstopRadii], "backstop_radii", vertex_count) ||
         !expect_float32(buffers[ABackstopDistances], "backstop_distances") ||
         !expect_1d_array(buffers[ABackstopDistances], "backstop_distances", vertex_count) ||
+        !expect_int32_pair_array(buffers[AEdges], "edges", &edge_count) ||
+        !expect_pair_indices_in_range(buffers[AEdges], "edges", vertex_count) ||
         !expect_float32(buffers[ACollisionRadii], "collision_radii") ||
         !expect_1d_array(buffers[ACollisionRadii], "collision_radii", vertex_count)) {
         return nullptr;
@@ -1607,12 +1758,17 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double display_max_distance_ratio =
-        as_double(PyTuple_GET_ITEM(args, kScalarStart + 15), "display_max_distance_ratio");
+    const long collider_collision_mode =
+        as_long(PyTuple_GET_ITEM(args, kScalarStart + 15), "collider_collision_mode");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, kScalarStart + 16), "animation_pose_ratio");
+    const double display_max_distance_ratio =
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 16), "display_max_distance_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, kScalarStart + 17), "animation_pose_ratio");
     if (PyErr_Occurred()) {
         return nullptr;
     }
@@ -1664,6 +1820,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.motion_stiffness_values = static_cast<const float*>(buffers[AMotionStiffnessValues].view.buf);
     view.backstop_radii = static_cast<const float*>(buffers[ABackstopRadii].view.buf);
     view.backstop_distances = static_cast<const float*>(buffers[ABackstopDistances].view.buf);
+    view.edges = static_cast<const std::int32_t*>(buffers[AEdges].view.buf);
     view.collision_radii = static_cast<const float*>(buffers[ACollisionRadii].view.buf);
     view.collider_types = static_cast<const std::int32_t*>(buffers[AColliderTypes].view.buf);
     view.collider_group_bits = static_cast<const std::int32_t*>(buffers[AColliderGroupBits].view.buf);
@@ -1687,6 +1844,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.baseline_data_count = static_cast<std::int64_t>(buffers[ABaselineData].view.shape[0]);
     view.distance_count_total = static_cast<std::int64_t>(buffers[ADistanceData].view.shape[0]);
     view.bend_distance_count_total = static_cast<std::int64_t>(buffers[ABendDistanceData].view.shape[0]);
+    view.edge_count = static_cast<std::int64_t>(edge_count);
     view.dihedral_count = static_cast<std::int64_t>(dihedral_count);
     view.volume_count = static_cast<std::int64_t>(volume_count);
     view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -1710,6 +1868,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.display_max_distance_ratio = static_cast<float>(display_max_distance_ratio);
     view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
     view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
+    view.collider_collision_mode = std::max(0, std::min(2, static_cast<int>(collider_collision_mode)));
 
     hotools::solve_meshcloth_mc2(view);
     Py_RETURN_NONE;
@@ -1751,6 +1910,12 @@ PyMethodDef kMethods[] = {
         project_collisions_mc2,
         METH_VARARGS,
         "Project MC2 point collisions in-place.",
+    },
+    {
+        "project_edge_collisions_mc2",
+        project_edge_collisions_mc2,
+        METH_VARARGS,
+        "Project MC2 edge collisions in-place.",
     },
     {
         "project_triangle_bending_mc2",

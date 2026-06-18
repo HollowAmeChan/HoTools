@@ -153,6 +153,7 @@ def _run_mesh_cloth_mc2_node(
     backstop_radius: float,
     backstop_distance: float,
     collider_friction: float,
+    collider_collision_mode: int,
     debug_output: bool,
     solver_backend: str = "py",
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
@@ -264,6 +265,7 @@ def _run_mesh_cloth_mc2_node(
         backstop_radius,
         backstop_distance,
         collider_friction,
+        collider_collision_mode,
         timing,
         colliders=colliders,
     )
@@ -318,6 +320,7 @@ def _run_mesh_cloth_mc2_node(
         "Backstop半径",
         "Backstop距离",
         "碰撞摩擦",
+        "碰撞模式",
         "调试输出",
     ],
     input_init={
@@ -348,6 +351,11 @@ def _run_mesh_cloth_mc2_node(
         "backstop_distance": {"min_value": 0.0},
         "collision_radius": {"min_value": 0.0},
         "collider_friction": {"min_value": 0.0, "max_value": 0.5},
+        "collider_collision_mode": {
+            "min_value": 0,
+            "max_value": 2,
+            "description": "0关闭；1点碰撞；2边碰撞。球/胶囊/平面按MC2；Box为HoTools扩展。",
+        },
     },
     _OUTPUT_NAME=["缓存", "低模代理", "顶点数", "约束数"],
     omni_description="""
@@ -391,6 +399,7 @@ def meshClothMC2(
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
     collider_friction: float = 0.05,
+    collider_collision_mode: int = 1,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_mesh_cloth_mc2_node(
@@ -427,6 +436,7 @@ def meshClothMC2(
         backstop_radius,
         backstop_distance,
         collider_friction,
+        collider_collision_mode,
         debug_output,
     )
 
@@ -475,6 +485,7 @@ def meshClothMC2Cpp(
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
     collider_friction: float = 0.05,
+    collider_collision_mode: int = 1,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_mesh_cloth_mc2_node(
@@ -511,6 +522,7 @@ def meshClothMC2Cpp(
         backstop_radius,
         backstop_distance,
         collider_friction,
+        collider_collision_mode,
         debug_output,
         solver_backend="cpp",
     )

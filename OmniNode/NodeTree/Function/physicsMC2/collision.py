@@ -5,13 +5,79 @@ import mathutils
 import numpy as np
 
 from . import math_utils
-from .constants import MC2SystemConstants
+from .constants import MC2_ATTR_MOVE, MC2SystemConstants
 
 
 COLLIDER_SPHERE = 0
 COLLIDER_CAPSULE = 1
 COLLIDER_PLANE = 2
 COLLIDER_BOX = 3
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _closest_point_segment_ratio(point: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    segment = b - a
+    denom = float(np.dot(segment, segment))
+    if denom <= MC2SystemConstants.EPSILON:
+        return 0.0
+    return _clamp01(float(np.dot(point - a, segment) / denom))
+
+
+def _closest_segment_segment(
+    p1: np.ndarray,
+    q1: np.ndarray,
+    p2: np.ndarray,
+    q2: np.ndarray,
+) -> tuple[float, float, np.ndarray, np.ndarray, float]:
+    d1 = q1 - p1
+    d2 = q2 - p2
+    r = p1 - p2
+    a = float(np.dot(d1, d1))
+    e = float(np.dot(d2, d2))
+    f = float(np.dot(d2, r))
+    if a <= MC2SystemConstants.EPSILON and e <= MC2SystemConstants.EPSILON:
+        s = 0.0
+        t = 0.0
+    elif a <= MC2SystemConstants.EPSILON:
+        s = 0.0
+        t = _clamp01(f / e) if e > MC2SystemConstants.EPSILON else 0.0
+    else:
+        c = float(np.dot(d1, r))
+        if e <= MC2SystemConstants.EPSILON:
+            t = 0.0
+            s = _clamp01(-c / a)
+        else:
+            b = float(np.dot(d1, d2))
+            denom = a * e - b * b
+            s = _clamp01((b * f - c * e) / denom) if denom != 0.0 else 0.0
+            t = (b * s + f) / e
+            if t < 0.0:
+                t = 0.0
+                s = _clamp01(-c / a)
+            elif t > 1.0:
+                t = 1.0
+                s = _clamp01((b - c) / a)
+    c1 = p1 + d1 * s
+    c2 = p2 + d2 * t
+    dist_sq = float(np.dot(c1 - c2, c1 - c2))
+    return s, t, c1, c2, dist_sq
+
+
+def _intersect_point_plane_dist(
+    plane_pos: np.ndarray,
+    plane_dir: np.ndarray,
+    pos: np.ndarray,
+) -> tuple[float, np.ndarray]:
+    normal = math_utils.safe_normal_np(plane_dir, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    v = pos - plane_pos
+    gv = normal * float(np.dot(v, normal))
+    length = float(np.linalg.norm(gv))
+    if float(np.dot(normal, v)) < 0.0:
+        return -length, np.ascontiguousarray(pos - gv, dtype=np.float32)
+    return length, np.ascontiguousarray(pos, dtype=np.float32)
 
 
 def _owner_key(owner) -> str:
@@ -513,6 +579,282 @@ def project_collisions(
         collision_normals[vertex_index] = normal
         if friction is not None and collision_friction > float(friction[vertex_index]):
             friction[vertex_index] = float(collision_friction)
+
+
+def _edge_sphere_detection(
+    next_pos0: np.ndarray,
+    next_pos1: np.ndarray,
+    radius0: float,
+    radius1: float,
+    cfr: float,
+    collider: dict,
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray] | None:
+    coldpos = math_utils.vector_to_numpy(collider.get("old_center", collider.get("center")))
+    cpos = math_utils.vector_to_numpy(collider.get("center"))
+    if coldpos is None or cpos is None:
+        return None
+    cradius = max(float(collider.get("radius", 0.0)), 0.0)
+    s = _closest_point_segment_ratio(coldpos, next_pos0, next_pos1)
+    c = next_pos0 + (next_pos1 - next_pos0) * s
+    delta = c - coldpos
+    clen = float(np.linalg.norm(delta))
+    if clen < 1e-9:
+        return None
+    normal = np.ascontiguousarray(delta / clen, dtype=np.float32)
+    db = cpos - coldpos
+    projected_movement = float(np.dot(normal, db))
+    movement_adjusted_dist = clen - projected_movement
+    thickness = (radius0 + (radius1 - radius0) * s) + cradius
+    if movement_adjusted_dist > thickness + cfr:
+        return None
+    current_delta = c - cpos
+    current_dist = float(np.dot(normal, current_delta))
+    if current_dist > thickness:
+        return current_dist - thickness, next_pos0, next_pos1, normal
+    separation = thickness - current_dist
+    b0 = 1.0 - s
+    b1 = s
+    denom = b0 * b0 + b1 * b1
+    if denom == 0.0:
+        return None
+    scale = separation / denom
+    out0 = next_pos0 + normal * b0 * scale
+    out1 = next_pos1 + normal * b1 * scale
+    return -separation, np.ascontiguousarray(out0, dtype=np.float32), np.ascontiguousarray(out1, dtype=np.float32), normal
+
+
+def _edge_capsule_detection(
+    next_pos0: np.ndarray,
+    next_pos1: np.ndarray,
+    radius0: float,
+    radius1: float,
+    cfr: float,
+    collider: dict,
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray] | None:
+    old_a = math_utils.vector_to_numpy(collider.get("old_segment_a", collider.get("segment_a")))
+    old_b = math_utils.vector_to_numpy(collider.get("old_segment_b", collider.get("segment_b")))
+    current_a = math_utils.vector_to_numpy(collider.get("segment_a"))
+    current_b = math_utils.vector_to_numpy(collider.get("segment_b"))
+    if old_a is None or old_b is None or current_a is None or current_b is None:
+        return None
+    sr = max(float(collider.get("radius", 0.0)), 0.0)
+    er = sr
+    s, t, cloth_point, collider_point, dist_sq = _closest_segment_segment(next_pos0, next_pos1, old_a, old_b)
+    clen = float(np.sqrt(max(dist_sq, 0.0)))
+    if clen < 1e-9:
+        return None
+    normal = np.ascontiguousarray((cloth_point - collider_point) / clen, dtype=np.float32)
+    if sr != er:
+        shifted_a = old_a + normal * sr
+        shifted_b = old_b + normal * er
+        s, t, _, _, _ = _closest_segment_segment(next_pos0, next_pos1, shifted_a, shifted_b)
+        cloth_point = next_pos0 + (next_pos1 - next_pos0) * s
+        collider_point = old_a + (old_b - old_a) * t
+        delta = cloth_point - collider_point
+        clen = float(np.linalg.norm(delta))
+        if clen < 1e-9:
+            return None
+        normal = np.ascontiguousarray(delta / clen, dtype=np.float32)
+    movement0 = current_a - old_a
+    movement1 = current_b - old_b
+    db = movement0 + (movement1 - movement0) * t
+    movement_adjusted_dist = clen - float(np.dot(normal, db))
+    cloth_radius = radius0 + (radius1 - radius0) * s
+    collider_radius = sr + (er - sr) * t
+    thickness = cloth_radius + collider_radius
+    if movement_adjusted_dist > thickness + cfr:
+        return None
+    current_collider_point = current_a + (current_b - current_a) * t
+    current_dist = float(np.dot(normal, cloth_point - current_collider_point))
+    if current_dist > thickness:
+        return current_dist - thickness, next_pos0, next_pos1, normal
+    separation = thickness - current_dist
+    b0 = 1.0 - s
+    b1 = s
+    denom = b0 * b0 + b1 * b1
+    if denom == 0.0:
+        return None
+    scale = separation / denom
+    out0 = next_pos0 + normal * b0 * scale
+    out1 = next_pos1 + normal * b1 * scale
+    return -separation, np.ascontiguousarray(out0, dtype=np.float32), np.ascontiguousarray(out1, dtype=np.float32), normal
+
+
+def _edge_plane_detection(
+    next_pos0: np.ndarray,
+    next_pos1: np.ndarray,
+    radius0: float,
+    radius1: float,
+    collider: dict,
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray] | None:
+    center = math_utils.vector_to_numpy(collider.get("center"))
+    normal = math_utils.vector_to_numpy(collider.get("normal"))
+    if center is None or normal is None:
+        return None
+    normal = math_utils.safe_normal_np(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    dist0, out0 = _intersect_point_plane_dist(center + normal * float(radius0), normal, next_pos0)
+    dist1, out1 = _intersect_point_plane_dist(center + normal * float(radius1), normal, next_pos1)
+    return min(dist0, dist1), out0, out1, normal
+
+
+def _edge_box_detection(
+    next_pos0: np.ndarray,
+    next_pos1: np.ndarray,
+    radius0: float,
+    radius1: float,
+    cfr: float,
+    collider: dict,
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray] | None:
+    best: tuple[float, float, np.ndarray, float] | None = None
+    for s in (0.0, 0.5, 1.0):
+        radius = radius0 + (radius1 - radius0) * s
+        point = next_pos0 + (next_pos1 - next_pos0) * s
+        surface = _box_collision_surface(collider, point, float(radius))
+        if surface is None:
+            continue
+        normal, dist = surface
+        score = dist
+        if dist > 0.0:
+            score = dist - cfr
+        if best is None or score < best[0]:
+            best = (score, s, normal, dist)
+    if best is None:
+        return None
+
+    _, s, normal, dist = best
+    if dist > cfr:
+        return None
+    if dist > 0.0:
+        return dist, next_pos0, next_pos1, normal
+
+    separation = -dist
+    b0 = 1.0 - s
+    b1 = s
+    denom = b0 * b0 + b1 * b1
+    if denom <= MC2SystemConstants.EPSILON:
+        return None
+    scale = separation / denom
+    out0 = next_pos0 + normal * b0 * scale
+    out1 = next_pos1 + normal * b1 * scale
+    return dist, np.ascontiguousarray(out0, dtype=np.float32), np.ascontiguousarray(out1, dtype=np.float32), normal
+
+
+def project_edge_collisions(
+    positions: np.ndarray,
+    edges: np.ndarray,
+    attributes: np.ndarray,
+    collision_radii: np.ndarray,
+    collided_by_groups: int,
+    colliders: list[dict] | None,
+    owner_obj,
+    collision_normals: np.ndarray,
+    friction: np.ndarray | None = None,
+) -> None:
+    if not colliders or not collided_by_groups:
+        return
+    vertex_count = int(len(positions))
+    if vertex_count <= 0:
+        return
+    edge_array = np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2))
+    radii = np.ascontiguousarray(collision_radii, dtype=np.float32)
+    attr = np.ascontiguousarray(attributes, dtype=np.uint8)
+    add_positions = np.zeros_like(positions, dtype=np.float32)
+    add_normals = np.zeros_like(positions, dtype=np.float32)
+    add_counts = np.zeros(vertex_count, dtype=np.int32)
+    friction_values = np.zeros(vertex_count, dtype=np.float32)
+
+    # 注意：这里的 edge 是“外部碰撞模式 2”里的线段检测单元。
+    # 它当前复用 mesh edges 作为几何线段，但语义上不等同于 distance/shear/bending 等结构约束里的 edge，
+    # 不要把这里的修正、摩擦和法线汇总规则混用到结构约束求解中。
+    for edge in edge_array:
+        v0 = int(edge[0])
+        v1 = int(edge[1])
+        if v0 < 0 or v1 < 0 or v0 >= vertex_count or v1 >= vertex_count or v0 == v1:
+            continue
+        is_move0 = bool(int(attr[v0]) & MC2_ATTR_MOVE)
+        is_move1 = bool(int(attr[v1]) & MC2_ATTR_MOVE)
+        if not is_move0 and not is_move1:
+            continue
+        next0 = np.ascontiguousarray(positions[v0], dtype=np.float32)
+        next1 = np.ascontiguousarray(positions[v1], dtype=np.float32)
+        radius0 = float(radii[v0]) if v0 < len(radii) else 0.0
+        radius1 = float(radii[v1]) if v1 < len(radii) else 0.0
+        if radius0 <= MC2SystemConstants.EPSILON and radius1 <= MC2SystemConstants.EPSILON:
+            continue
+        cfr = (radius0 + radius1) * 0.5
+        min_dist = float("inf")
+        has_friction_contact = False
+        collision_normal = np.zeros(3, dtype=np.float32)
+        add_pos0 = np.zeros(3, dtype=np.float32)
+        add_pos1 = np.zeros(3, dtype=np.float32)
+        add_n = np.zeros(3, dtype=np.float32)
+        add_count = 0
+
+        for collider in colliders:
+            if not isinstance(collider, dict):
+                continue
+            if collider.get("owner") is owner_obj:
+                continue
+            if not collided_by_groups & math_utils.collision_group_bit(collider.get("primary_group", 1)):
+                continue
+            collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+            if collider_type == "SPHERE":
+                result = _edge_sphere_detection(next0, next1, radius0, radius1, cfr, collider)
+            elif collider_type == "CAPSULE":
+                result = _edge_capsule_detection(next0, next1, radius0, radius1, cfr, collider)
+            elif collider_type == "PLANE":
+                result = _edge_plane_detection(next0, next1, radius0, radius1, collider)
+            elif collider_type == "BOX":
+                result = _edge_box_detection(next0, next1, radius0, radius1, cfr, collider)
+            else:
+                result = None
+            if result is None:
+                continue
+            dist, out0, out1, normal = result
+            if dist <= 0.0:
+                add_pos0 += out0 - next0
+                add_pos1 += out1 - next1
+                add_n += normal
+                add_count += 1
+            if dist <= cfr:
+                has_friction_contact = True
+                collision_normal += normal
+                min_dist = min(min_dist, float(dist))
+
+        if add_count > 0:
+            add_n /= float(add_count)
+            normal_len = float(np.linalg.norm(add_n))
+            if normal_len > MC2SystemConstants.EPSILON:
+                blend = min(normal_len, 1.0)
+                add_pos0 = (add_pos0 / float(add_count)) * blend
+                add_pos1 = (add_pos1 / float(add_count)) * blend
+                add_positions[v0] += add_pos0
+                add_positions[v1] += add_pos1
+                add_counts[v0] += 1
+                add_counts[v1] += 1
+
+        normal_len_sq = float(np.dot(collision_normal, collision_normal))
+        if has_friction_contact and cfr > 0.0 and normal_len_sq > 1e-6:
+            near_friction = 1.0 - max(0.0, min(1.0, float(min_dist) / cfr))
+            collision_normal = collision_normal / float(np.sqrt(normal_len_sq))
+            if is_move0:
+                friction_values[v0] = max(float(friction_values[v0]), float(near_friction))
+                add_normals[v0] += collision_normal
+            if is_move1:
+                friction_values[v1] = max(float(friction_values[v1]), float(near_friction))
+                add_normals[v1] += collision_normal
+
+    moved = add_counts > 0
+    if bool(np.any(moved)):
+        positions[moved] += add_positions[moved] / add_counts[moved, None].astype(np.float32)
+    if friction is not None:
+        friction[:] = np.maximum(friction, friction_values)
+    normal_lengths = np.linalg.norm(add_normals, axis=1)
+    valid_normals = normal_lengths > MC2SystemConstants.EPSILON
+    if bool(np.any(valid_normals)):
+        collision_normals[valid_normals] = (
+            add_normals[valid_normals] / normal_lengths[valid_normals, None]
+        ).astype(np.float32)
 
 
 def collider_arrays_for_native(

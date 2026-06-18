@@ -251,6 +251,7 @@ def solve_args(state, params):
         params["motion_stiffness_values"],
         params["backstop_radii"],
         params["backstop_distances"],
+        state["edges"],
         state["collision_radii"],
         params["collider_types"],
         params["collider_group_bits"],
@@ -284,6 +285,7 @@ def solve_args(state, params):
         params["particle_speed_limit"],
         params["angle_limit_stiffness"],
         params["collided_by_groups"],
+        params.get("collider_collision_mode", 1),
         MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
         params["animation_pose_ratio"],
     )
@@ -333,6 +335,7 @@ def make_state_and_params():
         "bend_distance_count": np.zeros(3, dtype=np.int32),
         "bend_distance_data": np.empty(0, dtype=np.int32),
         "bend_distance_neighbor_rest": np.empty(0, dtype=np.float32),
+        "edges": np.asarray(((0, 1), (1, 2)), dtype=np.int32),
         "collision_radii": np.asarray((0.0, 0.18, 0.18), dtype=np.float32),
     }
     frame_dt = np.float32(1.0 / 30.0)
@@ -353,6 +356,7 @@ def make_state_and_params():
         "particle_speed_limit": 4.0,
         "angle_limit_stiffness": 0.75,
         "collided_by_groups": 1,
+        "collider_collision_mode": 1,
         "animation_pose_ratio": 0.0,
         "distance_stiffness_values": np.asarray((1.0, 0.8, 0.65), dtype=np.float32),
         "bend_stiffness_values": np.zeros(3, dtype=np.float32),

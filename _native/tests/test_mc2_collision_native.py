@@ -392,9 +392,101 @@ def assert_native_matches_moving_collider_reference():
     np.testing.assert_allclose(actual_positions[0], np.asarray((0.0, 0.6, 0.0), dtype=np.float32), atol=1e-6)
 
 
+def assert_edge_collision_smoke():
+    positions = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, -0.05, 0.0)), dtype=np.float32)
+    edges = np.asarray(((0, 1), (0, 2)), dtype=np.int32)
+    attributes = np.asarray((4, 4, 4), dtype=np.uint8)
+    inv_masses = np.ones(3, dtype=np.float32)
+    collision_radii = np.asarray((0.12, 0.24, 0.16), dtype=np.float32)
+    collision_normals = np.zeros_like(positions)
+    friction = np.zeros(3, dtype=np.float32)
+
+    collider_types = np.asarray((0, 2), dtype=np.int32)
+    collider_group_bits = np.asarray((1, 1), dtype=np.int32)
+    collider_centers = np.asarray(((0.5, -0.1, 0.0), (0.0, -0.2, 0.0)), dtype=np.float32)
+    collider_segment_a = np.asarray(((0.5, -0.1, 0.0), (0.0, 1.0, 0.0)), dtype=np.float32)
+    collider_segment_b = collider_segment_a.copy()
+    collider_old_centers = collider_centers.copy()
+    collider_old_segment_a = collider_segment_a.copy()
+    collider_old_segment_b = collider_segment_b.copy()
+    collider_radii = np.asarray((0.15, 0.0), dtype=np.float32)
+
+    before = positions.copy()
+    hotools_native.project_edge_collisions_mc2(
+        positions,
+        edges,
+        attributes,
+        inv_masses,
+        collision_radii,
+        collision_normals,
+        friction,
+        1,
+        collider_types,
+        collider_group_bits,
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
+        collider_old_centers,
+        collider_old_segment_a,
+        collider_old_segment_b,
+        collider_radii,
+    )
+
+    assert np.max(np.linalg.norm(positions - before, axis=1)) > 0.0
+    assert float(np.max(friction)) > 0.0
+    assert float(np.max(np.linalg.norm(collision_normals, axis=1))) > 0.0
+
+
+def assert_edge_box_collision_smoke():
+    positions = np.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)), dtype=np.float32)
+    edges = np.asarray(((0, 1),), dtype=np.int32)
+    attributes = np.asarray((4, 4), dtype=np.uint8)
+    inv_masses = np.ones(2, dtype=np.float32)
+    collision_radii = np.asarray((0.12, 0.12), dtype=np.float32)
+    collision_normals = np.zeros_like(positions)
+    friction = np.zeros(2, dtype=np.float32)
+
+    collider_types = np.asarray((3,), dtype=np.int32)
+    collider_group_bits = np.asarray((1,), dtype=np.int32)
+    collider_centers = np.asarray(((0.5, 0.0, 0.0),), dtype=np.float32)
+    collider_segment_a = np.asarray(((0.45, 0.0, 0.0),), dtype=np.float32)
+    collider_segment_b = np.asarray(((0.0, 0.04, 0.0),), dtype=np.float32)
+    collider_old_centers = collider_centers.copy()
+    collider_old_segment_a = collider_segment_a.copy()
+    collider_old_segment_b = collider_segment_b.copy()
+    collider_radii = np.asarray((0.45,), dtype=np.float32)
+
+    before = positions.copy()
+    hotools_native.project_edge_collisions_mc2(
+        positions,
+        edges,
+        attributes,
+        inv_masses,
+        collision_radii,
+        collision_normals,
+        friction,
+        1,
+        collider_types,
+        collider_group_bits,
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
+        collider_old_centers,
+        collider_old_segment_a,
+        collider_old_segment_b,
+        collider_radii,
+    )
+
+    assert np.max(np.linalg.norm(positions - before, axis=1)) > 0.0
+    assert float(np.max(friction)) > 0.0
+    assert float(np.max(np.linalg.norm(collision_normals, axis=1))) > 0.0
+
+
 def main():
     assert_native_matches_reference()
     assert_native_matches_moving_collider_reference()
+    assert_edge_collision_smoke()
+    assert_edge_box_collision_smoke()
     print("mc2 collision native smoke test passed")
 
 

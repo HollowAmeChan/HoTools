@@ -81,6 +81,29 @@ struct Mc2CollisionView {
     std::int32_t collided_by_groups = 0;
 };
 
+struct Mc2EdgeCollisionView {
+    float* positions = nullptr;
+    const std::int32_t* edges = nullptr;
+    const std::uint8_t* attributes = nullptr;
+    const float* inv_masses = nullptr;
+    const float* collision_radii = nullptr;
+    float* collision_normals = nullptr;
+    float* friction = nullptr;
+    const std::int32_t* collider_types = nullptr;
+    const std::int32_t* collider_group_bits = nullptr;
+    const float* collider_centers = nullptr;
+    const float* collider_segment_a = nullptr;
+    const float* collider_segment_b = nullptr;
+    const float* collider_old_centers = nullptr;
+    const float* collider_old_segment_a = nullptr;
+    const float* collider_old_segment_b = nullptr;
+    const float* collider_radii = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t edge_count = 0;
+    std::int64_t collider_count = 0;
+    std::int32_t collided_by_groups = 0;
+};
+
 struct Mc2TriangleBendingView {
     float* positions = nullptr;
     const float* inv_masses = nullptr;
@@ -221,6 +244,7 @@ struct Mc2MeshClothSolveView {
     const float* backstop_radii = nullptr;
     const float* backstop_distances = nullptr;
 
+    const std::int32_t* edges = nullptr;
     const float* collision_radii = nullptr;
     const std::int32_t* collider_types = nullptr;
     const std::int32_t* collider_group_bits = nullptr;
@@ -246,6 +270,7 @@ struct Mc2MeshClothSolveView {
     std::int64_t baseline_data_count = 0;
     std::int64_t distance_count_total = 0;
     std::int64_t bend_distance_count_total = 0;
+    std::int64_t edge_count = 0;
     std::int64_t dihedral_count = 0;
     std::int64_t volume_count = 0;
     std::int64_t collider_count = 0;
@@ -267,6 +292,7 @@ struct Mc2MeshClothSolveView {
     float display_max_distance_ratio = 1.3f;
     float animation_pose_ratio = 0.0f;
     std::int32_t collided_by_groups = 0;
+    int collider_collision_mode = 1;
 };
 
 void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view);
@@ -274,6 +300,7 @@ void project_tether_mc2(Mc2TetherConstraintView& view);
 void project_motion_constraints_mc2(Mc2MotionConstraintView& view);
 void apply_post_step_mc2(Mc2PostStepView& view);
 void project_collisions_mc2(Mc2CollisionView& view);
+void project_edge_collisions_mc2(Mc2EdgeCollisionView& view);
 void project_triangle_bending_mc2(Mc2TriangleBendingView& view);
 void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);

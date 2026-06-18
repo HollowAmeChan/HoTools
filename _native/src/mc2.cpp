@@ -60,10 +60,236 @@ float dot3(float ax, float ay, float az, float bx, float by, float bz) {
     return ax * bx + ay * by + az * bz;
 }
 
+float length3(float x, float y, float z) {
+    return std::sqrt(x * x + y * y + z * z);
+}
+
 void cross3(float ax, float ay, float az, float bx, float by, float bz, float& out_x, float& out_y, float& out_z) {
     out_x = ay * bz - az * by;
     out_y = az * bx - ax * bz;
     out_z = ax * by - ay * bx;
+}
+
+bool box_collision_surface(float origin_x,
+                           float origin_y,
+                           float origin_z,
+                           float hit_radius,
+                           float center_x,
+                           float center_y,
+                           float center_z,
+                           float axis_xx,
+                           float axis_xy,
+                           float axis_xz,
+                           float axis_yx,
+                           float axis_yy,
+                           float axis_yz,
+                           float signed_half_z,
+                           float& out_normal_x,
+                           float& out_normal_y,
+                           float& out_normal_z,
+                           float& out_surface_distance) {
+    const float half_x = std::sqrt(axis_xx * axis_xx + axis_xy * axis_xy + axis_xz * axis_xz);
+    const float half_y = std::sqrt(axis_yx * axis_yx + axis_yy * axis_yy + axis_yz * axis_yz);
+    const float half_z = std::fabs(signed_half_z);
+    if (half_x <= kMc2Epsilon || half_y <= kMc2Epsilon || half_z <= kMc2Epsilon) {
+        return false;
+    }
+
+    const float ux_x = axis_xx / half_x;
+    const float ux_y = axis_xy / half_x;
+    const float ux_z = axis_xz / half_x;
+    const float uy_x = axis_yx / half_y;
+    const float uy_y = axis_yy / half_y;
+    const float uy_z = axis_yz / half_y;
+    float uz_x = 0.0f;
+    float uz_y = 0.0f;
+    float uz_z = 1.0f;
+    cross3(ux_x, ux_y, ux_z, uy_x, uy_y, uy_z, uz_x, uz_y, uz_z);
+    const float uz_len = std::sqrt(uz_x * uz_x + uz_y * uz_y + uz_z * uz_z);
+    if (uz_len <= kMc2Epsilon) {
+        return false;
+    }
+    uz_x /= uz_len;
+    uz_y /= uz_len;
+    uz_z /= uz_len;
+    if (signed_half_z < 0.0f) {
+        uz_x = -uz_x;
+        uz_y = -uz_y;
+        uz_z = -uz_z;
+    }
+
+    const float rel_x = origin_x - center_x;
+    const float rel_y = origin_y - center_y;
+    const float rel_z = origin_z - center_z;
+    const float local_x = dot3(rel_x, rel_y, rel_z, ux_x, ux_y, ux_z);
+    const float local_y = dot3(rel_x, rel_y, rel_z, uy_x, uy_y, uy_z);
+    const float local_z = dot3(rel_x, rel_y, rel_z, uz_x, uz_y, uz_z);
+    const float expanded_x = half_x + hit_radius;
+    const float expanded_y = half_y + hit_radius;
+    const float expanded_z = half_z + hit_radius;
+    const float outside_x = std::max(std::fabs(local_x) - expanded_x, 0.0f);
+    const float outside_y = std::max(std::fabs(local_y) - expanded_y, 0.0f);
+    const float outside_z = std::max(std::fabs(local_z) - expanded_z, 0.0f);
+    const float outside_distance = std::sqrt(outside_x * outside_x + outside_y * outside_y + outside_z * outside_z);
+    if (outside_distance > kMc2Epsilon) {
+        const float sign_x = local_x >= 0.0f ? 1.0f : -1.0f;
+        const float sign_y = local_y >= 0.0f ? 1.0f : -1.0f;
+        const float sign_z = local_z >= 0.0f ? 1.0f : -1.0f;
+        out_normal_x = ux_x * outside_x * sign_x + uy_x * outside_y * sign_y + uz_x * outside_z * sign_z;
+        out_normal_y = ux_y * outside_x * sign_x + uy_y * outside_y * sign_y + uz_y * outside_z * sign_z;
+        out_normal_z = ux_z * outside_x * sign_x + uy_z * outside_y * sign_y + uz_z * outside_z * sign_z;
+        safe_normal_or_z(out_normal_x, out_normal_y, out_normal_z, out_normal_x, out_normal_y, out_normal_z);
+        out_surface_distance = outside_distance;
+        return true;
+    }
+
+    const float penetration_x = expanded_x - std::fabs(local_x);
+    const float penetration_y = expanded_y - std::fabs(local_y);
+    const float penetration_z = expanded_z - std::fabs(local_z);
+    const float sign_x = local_x >= 0.0f ? 1.0f : -1.0f;
+    const float sign_y = local_y >= 0.0f ? 1.0f : -1.0f;
+    const float sign_z = local_z >= 0.0f ? 1.0f : -1.0f;
+    if (penetration_x <= penetration_y && penetration_x <= penetration_z) {
+        out_normal_x = ux_x * sign_x;
+        out_normal_y = ux_y * sign_x;
+        out_normal_z = ux_z * sign_x;
+        out_surface_distance = -penetration_x;
+    } else if (penetration_y <= penetration_z) {
+        out_normal_x = uy_x * sign_y;
+        out_normal_y = uy_y * sign_y;
+        out_normal_z = uy_z * sign_y;
+        out_surface_distance = -penetration_y;
+    } else {
+        out_normal_x = uz_x * sign_z;
+        out_normal_y = uz_y * sign_z;
+        out_normal_z = uz_z * sign_z;
+        out_surface_distance = -penetration_z;
+    }
+    return true;
+}
+
+float closest_point_segment_ratio(float px,
+                                  float py,
+                                  float pz,
+                                  float ax,
+                                  float ay,
+                                  float az,
+                                  float bx,
+                                  float by,
+                                  float bz) {
+    const float ab_x = bx - ax;
+    const float ab_y = by - ay;
+    const float ab_z = bz - az;
+    const float denom = dot3(ab_x, ab_y, ab_z, ab_x, ab_y, ab_z);
+    if (denom <= kMc2Epsilon) {
+        return 0.0f;
+    }
+    return clamp_float(dot3(px - ax, py - ay, pz - az, ab_x, ab_y, ab_z) / denom, 0.0f, 1.0f);
+}
+
+float closest_segment_segment(float p1x,
+                              float p1y,
+                              float p1z,
+                              float q1x,
+                              float q1y,
+                              float q1z,
+                              float p2x,
+                              float p2y,
+                              float p2z,
+                              float q2x,
+                              float q2y,
+                              float q2z,
+                              float& out_s,
+                              float& out_t,
+                              float& out_c1x,
+                              float& out_c1y,
+                              float& out_c1z,
+                              float& out_c2x,
+                              float& out_c2y,
+                              float& out_c2z) {
+    const float d1x = q1x - p1x;
+    const float d1y = q1y - p1y;
+    const float d1z = q1z - p1z;
+    const float d2x = q2x - p2x;
+    const float d2y = q2y - p2y;
+    const float d2z = q2z - p2z;
+    const float rx = p1x - p2x;
+    const float ry = p1y - p2y;
+    const float rz = p1z - p2z;
+    const float a = dot3(d1x, d1y, d1z, d1x, d1y, d1z);
+    const float e = dot3(d2x, d2y, d2z, d2x, d2y, d2z);
+    const float f = dot3(d2x, d2y, d2z, rx, ry, rz);
+    float s = 0.0f;
+    float t = 0.0f;
+    if (a <= kMc2Epsilon && e <= kMc2Epsilon) {
+        s = 0.0f;
+        t = 0.0f;
+    } else if (a <= kMc2Epsilon) {
+        s = 0.0f;
+        t = e > kMc2Epsilon ? clamp_float(f / e, 0.0f, 1.0f) : 0.0f;
+    } else {
+        const float c = dot3(d1x, d1y, d1z, rx, ry, rz);
+        if (e <= kMc2Epsilon) {
+            t = 0.0f;
+            s = clamp_float(-c / a, 0.0f, 1.0f);
+        } else {
+            const float b = dot3(d1x, d1y, d1z, d2x, d2y, d2z);
+            const float denom = a * e - b * b;
+            s = denom != 0.0f ? clamp_float((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+            t = (b * s + f) / e;
+            if (t < 0.0f) {
+                t = 0.0f;
+                s = clamp_float(-c / a, 0.0f, 1.0f);
+            } else if (t > 1.0f) {
+                t = 1.0f;
+                s = clamp_float((b - c) / a, 0.0f, 1.0f);
+            }
+        }
+    }
+    out_s = s;
+    out_t = t;
+    out_c1x = p1x + d1x * s;
+    out_c1y = p1y + d1y * s;
+    out_c1z = p1z + d1z * s;
+    out_c2x = p2x + d2x * t;
+    out_c2y = p2y + d2y * t;
+    out_c2z = p2z + d2z * t;
+    const float dx = out_c1x - out_c2x;
+    const float dy = out_c1y - out_c2y;
+    const float dz = out_c1z - out_c2z;
+    return dot3(dx, dy, dz, dx, dy, dz);
+}
+
+float intersect_point_plane_dist(float plane_x,
+                                 float plane_y,
+                                 float plane_z,
+                                 float normal_x,
+                                 float normal_y,
+                                 float normal_z,
+                                 float pos_x,
+                                 float pos_y,
+                                 float pos_z,
+                                 float& out_x,
+                                 float& out_y,
+                                 float& out_z) {
+    const float vx = pos_x - plane_x;
+    const float vy = pos_y - plane_y;
+    const float vz = pos_z - plane_z;
+    const float projected = dot3(vx, vy, vz, normal_x, normal_y, normal_z);
+    const float gv_x = normal_x * projected;
+    const float gv_y = normal_y * projected;
+    const float gv_z = normal_z * projected;
+    const float len = length3(gv_x, gv_y, gv_z);
+    if (dot3(normal_x, normal_y, normal_z, vx, vy, vz) < 0.0f) {
+        out_x = pos_x - gv_x;
+        out_y = pos_y - gv_y;
+        out_z = pos_z - gv_z;
+        return -len;
+    }
+    out_x = pos_x;
+    out_y = pos_y;
+    out_z = pos_z;
+    return len;
 }
 
 void quat_normalize(const float in_q[4], float out_q[4]) {
@@ -780,82 +1006,26 @@ void project_collisions_mc2(Mc2CollisionView& view) {
                 const float axis_yx = view.collider_segment_b[collider_offset + 0];
                 const float axis_yy = view.collider_segment_b[collider_offset + 1];
                 const float axis_yz = view.collider_segment_b[collider_offset + 2];
-                const float half_x = std::sqrt(axis_xx * axis_xx + axis_xy * axis_xy + axis_xz * axis_xz);
-                const float half_y = std::sqrt(axis_yx * axis_yx + axis_yy * axis_yy + axis_yz * axis_yz);
                 const float signed_half_z = view.collider_radii[collider];
-                const float half_z = std::fabs(signed_half_z);
-                if (half_x <= kMc2Epsilon || half_y <= kMc2Epsilon || half_z <= kMc2Epsilon) {
+                if (!box_collision_surface(origin_x,
+                                           origin_y,
+                                           origin_z,
+                                           hit_radius,
+                                           center_x,
+                                           center_y,
+                                           center_z,
+                                           axis_xx,
+                                           axis_xy,
+                                           axis_xz,
+                                           axis_yx,
+                                           axis_yy,
+                                           axis_yz,
+                                           signed_half_z,
+                                           normal_x,
+                                           normal_y,
+                                           normal_z,
+                                           surface_distance)) {
                     continue;
-                }
-                const float ux_x = axis_xx / half_x;
-                const float ux_y = axis_xy / half_x;
-                const float ux_z = axis_xz / half_x;
-                const float uy_x = axis_yx / half_y;
-                const float uy_y = axis_yy / half_y;
-                const float uy_z = axis_yz / half_y;
-                float uz_x = 0.0f;
-                float uz_y = 0.0f;
-                float uz_z = 1.0f;
-                cross3(ux_x, ux_y, ux_z, uy_x, uy_y, uy_z, uz_x, uz_y, uz_z);
-                const float uz_len = std::sqrt(uz_x * uz_x + uz_y * uz_y + uz_z * uz_z);
-                if (uz_len <= kMc2Epsilon) {
-                    continue;
-                }
-                uz_x /= uz_len;
-                uz_y /= uz_len;
-                uz_z /= uz_len;
-                if (signed_half_z < 0.0f) {
-                    uz_x = -uz_x;
-                    uz_y = -uz_y;
-                    uz_z = -uz_z;
-                }
-
-                const float rel_x = origin_x - center_x;
-                const float rel_y = origin_y - center_y;
-                const float rel_z = origin_z - center_z;
-                const float local_x = dot3(rel_x, rel_y, rel_z, ux_x, ux_y, ux_z);
-                const float local_y = dot3(rel_x, rel_y, rel_z, uy_x, uy_y, uy_z);
-                const float local_z = dot3(rel_x, rel_y, rel_z, uz_x, uz_y, uz_z);
-                const float expanded_x = half_x + hit_radius;
-                const float expanded_y = half_y + hit_radius;
-                const float expanded_z = half_z + hit_radius;
-                const float outside_x = std::max(std::fabs(local_x) - expanded_x, 0.0f);
-                const float outside_y = std::max(std::fabs(local_y) - expanded_y, 0.0f);
-                const float outside_z = std::max(std::fabs(local_z) - expanded_z, 0.0f);
-                const float outside_distance =
-                    std::sqrt(outside_x * outside_x + outside_y * outside_y + outside_z * outside_z);
-                if (outside_distance > kMc2Epsilon) {
-                    const float sign_x = local_x >= 0.0f ? 1.0f : -1.0f;
-                    const float sign_y = local_y >= 0.0f ? 1.0f : -1.0f;
-                    const float sign_z = local_z >= 0.0f ? 1.0f : -1.0f;
-                    normal_x = ux_x * outside_x * sign_x + uy_x * outside_y * sign_y + uz_x * outside_z * sign_z;
-                    normal_y = ux_y * outside_x * sign_x + uy_y * outside_y * sign_y + uz_y * outside_z * sign_z;
-                    normal_z = ux_z * outside_x * sign_x + uy_z * outside_y * sign_y + uz_z * outside_z * sign_z;
-                    safe_normal_or_z(normal_x, normal_y, normal_z, normal_x, normal_y, normal_z);
-                    surface_distance = outside_distance;
-                } else {
-                    const float penetration_x = expanded_x - std::fabs(local_x);
-                    const float penetration_y = expanded_y - std::fabs(local_y);
-                    const float penetration_z = expanded_z - std::fabs(local_z);
-                    const float sign_x = local_x >= 0.0f ? 1.0f : -1.0f;
-                    const float sign_y = local_y >= 0.0f ? 1.0f : -1.0f;
-                    const float sign_z = local_z >= 0.0f ? 1.0f : -1.0f;
-                    if (penetration_x <= penetration_y && penetration_x <= penetration_z) {
-                        normal_x = ux_x * sign_x;
-                        normal_y = ux_y * sign_x;
-                        normal_z = ux_z * sign_x;
-                        surface_distance = -penetration_x;
-                    } else if (penetration_y <= penetration_z) {
-                        normal_x = uy_x * sign_y;
-                        normal_y = uy_y * sign_y;
-                        normal_z = uy_z * sign_y;
-                        surface_distance = -penetration_y;
-                    } else {
-                        normal_x = uz_x * sign_z;
-                        normal_y = uz_y * sign_z;
-                        normal_z = uz_z * sign_z;
-                        surface_distance = -penetration_z;
-                    }
                 }
             } else {
                 const float collider_radius = std::max(view.collider_radii[collider], 0.0f);
@@ -1000,6 +1170,526 @@ void project_collisions_mc2(Mc2CollisionView& view) {
         view.collision_normals[offset + 2] = add_normal_z * inv_normal_length;
         if (view.friction != nullptr && 1.0f > view.friction[vertex]) {
             view.friction[vertex] = 1.0f;
+        }
+    }
+}
+
+bool edge_sphere_detection(const Mc2EdgeCollisionView& view,
+                           std::int64_t collider,
+                           float p0x,
+                           float p0y,
+                           float p0z,
+                           float p1x,
+                           float p1y,
+                           float p1z,
+                           float radius0,
+                           float radius1,
+                           float cfr,
+                           float& out_dist,
+                           float out_p0[3],
+                           float out_p1[3],
+                           float out_normal[3]) {
+    const std::int64_t co = collider * 3;
+    const float cold_x = view.collider_old_centers != nullptr ? view.collider_old_centers[co + 0]
+                                                              : view.collider_centers[co + 0];
+    const float cold_y = view.collider_old_centers != nullptr ? view.collider_old_centers[co + 1]
+                                                              : view.collider_centers[co + 1];
+    const float cold_z = view.collider_old_centers != nullptr ? view.collider_old_centers[co + 2]
+                                                              : view.collider_centers[co + 2];
+    const float cpos_x = view.collider_centers[co + 0];
+    const float cpos_y = view.collider_centers[co + 1];
+    const float cpos_z = view.collider_centers[co + 2];
+    const float cradius = std::max(view.collider_radii[collider], 0.0f);
+    const float s = closest_point_segment_ratio(cold_x, cold_y, cold_z, p0x, p0y, p0z, p1x, p1y, p1z);
+    const float cx = p0x + (p1x - p0x) * s;
+    const float cy = p0y + (p1y - p0y) * s;
+    const float cz = p0z + (p1z - p0z) * s;
+    const float vx = cx - cold_x;
+    const float vy = cy - cold_y;
+    const float vz = cz - cold_z;
+    const float clen = length3(vx, vy, vz);
+    if (clen < 1e-9f) {
+        return false;
+    }
+    const float nx = vx / clen;
+    const float ny = vy / clen;
+    const float nz = vz / clen;
+    out_normal[0] = nx;
+    out_normal[1] = ny;
+    out_normal[2] = nz;
+    const float db_x = cpos_x - cold_x;
+    const float db_y = cpos_y - cold_y;
+    const float db_z = cpos_z - cold_z;
+    const float l1 = dot3(nx, ny, nz, db_x, db_y, db_z);
+    const float l = clen - l1;
+    const float rA = radius0 + (radius1 - radius0) * s;
+    const float thickness = rA + cradius;
+    if (l > thickness + cfr) {
+        return false;
+    }
+    const float current_l = dot3(nx, ny, nz, cx - cpos_x, cy - cpos_y, cz - cpos_z);
+    if (current_l > thickness) {
+        out_dist = current_l - thickness;
+        out_p0[0] = p0x;
+        out_p0[1] = p0y;
+        out_p0[2] = p0z;
+        out_p1[0] = p1x;
+        out_p1[1] = p1y;
+        out_p1[2] = p1z;
+        return true;
+    }
+    const float separation = thickness - current_l;
+    const float b0 = 1.0f - s;
+    const float b1 = s;
+    const float denom = b0 * b0 + b1 * b1;
+    if (denom == 0.0f) {
+        return false;
+    }
+    const float scale = separation / denom;
+    out_p0[0] = p0x + nx * b0 * scale;
+    out_p0[1] = p0y + ny * b0 * scale;
+    out_p0[2] = p0z + nz * b0 * scale;
+    out_p1[0] = p1x + nx * b1 * scale;
+    out_p1[1] = p1y + ny * b1 * scale;
+    out_p1[2] = p1z + nz * b1 * scale;
+    out_dist = -separation;
+    return true;
+}
+
+bool edge_capsule_detection(const Mc2EdgeCollisionView& view,
+                            std::int64_t collider,
+                            float p0x,
+                            float p0y,
+                            float p0z,
+                            float p1x,
+                            float p1y,
+                            float p1z,
+                            float radius0,
+                            float radius1,
+                            float cfr,
+                            float& out_dist,
+                            float out_p0[3],
+                            float out_p1[3],
+                            float out_normal[3]) {
+    const std::int64_t co = collider * 3;
+    const float old_ax = view.collider_old_segment_a != nullptr ? view.collider_old_segment_a[co + 0]
+                                                                : view.collider_segment_a[co + 0];
+    const float old_ay = view.collider_old_segment_a != nullptr ? view.collider_old_segment_a[co + 1]
+                                                                : view.collider_segment_a[co + 1];
+    const float old_az = view.collider_old_segment_a != nullptr ? view.collider_old_segment_a[co + 2]
+                                                                : view.collider_segment_a[co + 2];
+    const float old_bx = view.collider_old_segment_b != nullptr ? view.collider_old_segment_b[co + 0]
+                                                                : view.collider_segment_b[co + 0];
+    const float old_by = view.collider_old_segment_b != nullptr ? view.collider_old_segment_b[co + 1]
+                                                                : view.collider_segment_b[co + 1];
+    const float old_bz = view.collider_old_segment_b != nullptr ? view.collider_old_segment_b[co + 2]
+                                                                : view.collider_segment_b[co + 2];
+    const float cur_ax = view.collider_segment_a[co + 0];
+    const float cur_ay = view.collider_segment_a[co + 1];
+    const float cur_az = view.collider_segment_a[co + 2];
+    const float cur_bx = view.collider_segment_b[co + 0];
+    const float cur_by = view.collider_segment_b[co + 1];
+    const float cur_bz = view.collider_segment_b[co + 2];
+    const float sr = std::max(view.collider_radii[collider], 0.0f);
+    const float er = sr;
+    float s = 0.0f;
+    float t = 0.0f;
+    float cax = 0.0f;
+    float cay = 0.0f;
+    float caz = 0.0f;
+    float cbx = 0.0f;
+    float cby = 0.0f;
+    float cbz = 0.0f;
+    const float dist_sq = closest_segment_segment(p0x, p0y, p0z, p1x, p1y, p1z, old_ax, old_ay, old_az, old_bx, old_by,
+                                                  old_bz, s, t, cax, cay, caz, cbx, cby, cbz);
+    float clen = std::sqrt(std::max(dist_sq, 0.0f));
+    if (clen < 1e-9f) {
+        return false;
+    }
+    float nx = (cax - cbx) / clen;
+    float ny = (cay - cby) / clen;
+    float nz = (caz - cbz) / clen;
+    if (sr != er) {
+        float dummy_c1x = 0.0f;
+        float dummy_c1y = 0.0f;
+        float dummy_c1z = 0.0f;
+        float dummy_c2x = 0.0f;
+        float dummy_c2y = 0.0f;
+        float dummy_c2z = 0.0f;
+        closest_segment_segment(p0x, p0y, p0z, p1x, p1y, p1z, old_ax + nx * sr, old_ay + ny * sr,
+                                old_az + nz * sr, old_bx + nx * er, old_by + ny * er, old_bz + nz * er, s, t,
+                                dummy_c1x, dummy_c1y, dummy_c1z, dummy_c2x, dummy_c2y, dummy_c2z);
+        cax = p0x + (p1x - p0x) * s;
+        cay = p0y + (p1y - p0y) * s;
+        caz = p0z + (p1z - p0z) * s;
+        cbx = old_ax + (old_bx - old_ax) * t;
+        cby = old_ay + (old_by - old_ay) * t;
+        cbz = old_az + (old_bz - old_az) * t;
+        clen = length3(cax - cbx, cay - cby, caz - cbz);
+        if (clen < 1e-9f) {
+            return false;
+        }
+        nx = (cax - cbx) / clen;
+        ny = (cay - cby) / clen;
+        nz = (caz - cbz) / clen;
+    }
+    out_normal[0] = nx;
+    out_normal[1] = ny;
+    out_normal[2] = nz;
+    const float d0x = cur_ax - old_ax;
+    const float d0y = cur_ay - old_ay;
+    const float d0z = cur_az - old_az;
+    const float d1x = cur_bx - old_bx;
+    const float d1y = cur_by - old_by;
+    const float d1z = cur_bz - old_bz;
+    const float db_x = d0x + (d1x - d0x) * t;
+    const float db_y = d0y + (d1y - d0y) * t;
+    const float db_z = d0z + (d1z - d0z) * t;
+    const float l = clen - dot3(nx, ny, nz, db_x, db_y, db_z);
+    const float rA = radius0 + (radius1 - radius0) * s;
+    const float rB = sr + (er - sr) * t;
+    const float thickness = rA + rB;
+    if (l > thickness + cfr) {
+        return false;
+    }
+    const float current_collider_x = cur_ax + (cur_bx - cur_ax) * t;
+    const float current_collider_y = cur_ay + (cur_by - cur_ay) * t;
+    const float current_collider_z = cur_az + (cur_bz - cur_az) * t;
+    const float current_l = dot3(nx, ny, nz, cax - current_collider_x, cay - current_collider_y,
+                                 caz - current_collider_z);
+    if (current_l > thickness) {
+        out_dist = current_l - thickness;
+        out_p0[0] = p0x;
+        out_p0[1] = p0y;
+        out_p0[2] = p0z;
+        out_p1[0] = p1x;
+        out_p1[1] = p1y;
+        out_p1[2] = p1z;
+        return true;
+    }
+    const float separation = thickness - current_l;
+    const float b0 = 1.0f - s;
+    const float b1 = s;
+    const float denom = b0 * b0 + b1 * b1;
+    if (denom == 0.0f) {
+        return false;
+    }
+    const float scale = separation / denom;
+    out_p0[0] = p0x + nx * b0 * scale;
+    out_p0[1] = p0y + ny * b0 * scale;
+    out_p0[2] = p0z + nz * b0 * scale;
+    out_p1[0] = p1x + nx * b1 * scale;
+    out_p1[1] = p1y + ny * b1 * scale;
+    out_p1[2] = p1z + nz * b1 * scale;
+    out_dist = -separation;
+    return true;
+}
+
+bool edge_plane_detection(const Mc2EdgeCollisionView& view,
+                          std::int64_t collider,
+                          float p0x,
+                          float p0y,
+                          float p0z,
+                          float p1x,
+                          float p1y,
+                          float p1z,
+                          float radius0,
+                          float radius1,
+                          float& out_dist,
+                          float out_p0[3],
+                          float out_p1[3],
+                          float out_normal[3]) {
+    const std::int64_t co = collider * 3;
+    float nx = 0.0f;
+    float ny = 0.0f;
+    float nz = 1.0f;
+    safe_normal_or_z(view.collider_segment_a[co + 0], view.collider_segment_a[co + 1],
+                     view.collider_segment_a[co + 2], nx, ny, nz);
+    out_normal[0] = nx;
+    out_normal[1] = ny;
+    out_normal[2] = nz;
+    const float center_x = view.collider_centers[co + 0];
+    const float center_y = view.collider_centers[co + 1];
+    const float center_z = view.collider_centers[co + 2];
+    const float dist0 = intersect_point_plane_dist(center_x + nx * radius0, center_y + ny * radius0,
+                                                   center_z + nz * radius0, nx, ny, nz, p0x, p0y, p0z, out_p0[0],
+                                                   out_p0[1], out_p0[2]);
+    const float dist1 = intersect_point_plane_dist(center_x + nx * radius1, center_y + ny * radius1,
+                                                   center_z + nz * radius1, nx, ny, nz, p1x, p1y, p1z, out_p1[0],
+                                                   out_p1[1], out_p1[2]);
+    out_dist = std::min(dist0, dist1);
+    return true;
+}
+
+bool edge_box_detection(const Mc2EdgeCollisionView& view,
+                        std::int64_t collider,
+                        float p0x,
+                        float p0y,
+                        float p0z,
+                        float p1x,
+                        float p1y,
+                        float p1z,
+                        float radius0,
+                        float radius1,
+                        float cfr,
+                        float& out_dist,
+                        float out_p0[3],
+                        float out_p1[3],
+                        float out_normal[3]) {
+    const std::int64_t co = collider * 3;
+    const float center_x = view.collider_centers[co + 0];
+    const float center_y = view.collider_centers[co + 1];
+    const float center_z = view.collider_centers[co + 2];
+    const float axis_xx = view.collider_segment_a[co + 0];
+    const float axis_xy = view.collider_segment_a[co + 1];
+    const float axis_xz = view.collider_segment_a[co + 2];
+    const float axis_yx = view.collider_segment_b[co + 0];
+    const float axis_yy = view.collider_segment_b[co + 1];
+    const float axis_yz = view.collider_segment_b[co + 2];
+    const float signed_half_z = view.collider_radii[collider];
+
+    const float candidates[3] = {0.0f, 0.5f, 1.0f};
+    bool found = false;
+    float best_score = 3.402823466e+38F;
+    float best_s = 0.0f;
+    float best_dist = 0.0f;
+    float best_normal[3] = {0.0f, 0.0f, 1.0f};
+
+    for (float s : candidates) {
+        const float point_x = p0x + (p1x - p0x) * s;
+        const float point_y = p0y + (p1y - p0y) * s;
+        const float point_z = p0z + (p1z - p0z) * s;
+        const float radius = radius0 + (radius1 - radius0) * s;
+        float normal_x = 0.0f;
+        float normal_y = 0.0f;
+        float normal_z = 1.0f;
+        float dist = 0.0f;
+        if (!box_collision_surface(point_x,
+                                   point_y,
+                                   point_z,
+                                   radius,
+                                   center_x,
+                                   center_y,
+                                   center_z,
+                                   axis_xx,
+                                   axis_xy,
+                                   axis_xz,
+                                   axis_yx,
+                                   axis_yy,
+                                   axis_yz,
+                                   signed_half_z,
+                                   normal_x,
+                                   normal_y,
+                                   normal_z,
+                                   dist)) {
+            continue;
+        }
+        const float score = dist > 0.0f ? dist - cfr : dist;
+        if (!found || score < best_score) {
+            found = true;
+            best_score = score;
+            best_s = s;
+            best_dist = dist;
+            best_normal[0] = normal_x;
+            best_normal[1] = normal_y;
+            best_normal[2] = normal_z;
+        }
+    }
+
+    if (!found || best_dist > cfr) {
+        return false;
+    }
+
+    out_normal[0] = best_normal[0];
+    out_normal[1] = best_normal[1];
+    out_normal[2] = best_normal[2];
+    if (best_dist > 0.0f) {
+        out_dist = best_dist;
+        out_p0[0] = p0x;
+        out_p0[1] = p0y;
+        out_p0[2] = p0z;
+        out_p1[0] = p1x;
+        out_p1[1] = p1y;
+        out_p1[2] = p1z;
+        return true;
+    }
+
+    const float separation = -best_dist;
+    const float b0 = 1.0f - best_s;
+    const float b1 = best_s;
+    const float denom = b0 * b0 + b1 * b1;
+    if (denom <= kMc2Epsilon) {
+        return false;
+    }
+    const float scale = separation / denom;
+    out_p0[0] = p0x + best_normal[0] * b0 * scale;
+    out_p0[1] = p0y + best_normal[1] * b0 * scale;
+    out_p0[2] = p0z + best_normal[2] * b0 * scale;
+    out_p1[0] = p1x + best_normal[0] * b1 * scale;
+    out_p1[1] = p1y + best_normal[1] * b1 * scale;
+    out_p1[2] = p1z + best_normal[2] * b1 * scale;
+    out_dist = best_dist;
+    return true;
+}
+
+void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
+    if (view.vertex_count <= 0 || view.edge_count <= 0 || view.collider_count <= 0 || view.positions == nullptr ||
+        view.edges == nullptr || view.attributes == nullptr || view.collision_radii == nullptr ||
+        view.collision_normals == nullptr || view.collider_types == nullptr || view.collider_group_bits == nullptr ||
+        view.collider_centers == nullptr || view.collider_segment_a == nullptr || view.collider_segment_b == nullptr ||
+        view.collider_radii == nullptr || view.collided_by_groups == 0) {
+        return;
+    }
+    std::vector<float> add_positions(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
+    std::vector<float> add_normals(static_cast<std::size_t>(view.vertex_count) * 3, 0.0f);
+    std::vector<std::int32_t> add_counts(static_cast<std::size_t>(view.vertex_count), 0);
+    std::vector<float> friction_values(static_cast<std::size_t>(view.vertex_count), 0.0f);
+
+    // 注意：这里的 edge 是外部碰撞模式里的线段检测单元。
+    // 虽然当前传入的是 mesh edges，但它不等同于 distance/shear/bending 的结构约束边；
+    // 本函数的位移、摩擦和法线汇总只服务 collider collision，不能和结构约束语义混用。
+    for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
+        const std::int32_t v0 = view.edges[edge_index * 2 + 0];
+        const std::int32_t v1 = view.edges[edge_index * 2 + 1];
+        if (v0 < 0 || v1 < 0 || static_cast<std::int64_t>(v0) >= view.vertex_count ||
+            static_cast<std::int64_t>(v1) >= view.vertex_count || v0 == v1) {
+            continue;
+        }
+        const bool move0 = (view.attributes[v0] & kMc2AttrMove) != 0;
+        const bool move1 = (view.attributes[v1] & kMc2AttrMove) != 0;
+        if (!move0 && !move1) {
+            continue;
+        }
+        const float radius0 = view.collision_radii[v0];
+        const float radius1 = view.collision_radii[v1];
+        if (radius0 <= kMc2Epsilon && radius1 <= kMc2Epsilon) {
+            continue;
+        }
+        const float cfr = (radius0 + radius1) * 0.5f;
+        const std::int64_t o0 = static_cast<std::int64_t>(v0) * 3;
+        const std::int64_t o1 = static_cast<std::int64_t>(v1) * 3;
+        const float p0x = view.positions[o0 + 0];
+        const float p0y = view.positions[o0 + 1];
+        const float p0z = view.positions[o0 + 2];
+        const float p1x = view.positions[o1 + 0];
+        const float p1y = view.positions[o1 + 1];
+        const float p1z = view.positions[o1 + 2];
+        float add0[3] = {};
+        float add1[3] = {};
+        float add_normal[3] = {};
+        int add_count = 0;
+        bool has_friction_contact = false;
+        float min_dist = 3.402823466e+38F;
+        float collision_normal[3] = {};
+
+        for (std::int64_t collider = 0; collider < view.collider_count; ++collider) {
+            if ((view.collided_by_groups & view.collider_group_bits[collider]) == 0) {
+                continue;
+            }
+            float dist = 0.0f;
+            float out0[3] = {p0x, p0y, p0z};
+            float out1[3] = {p1x, p1y, p1z};
+            float normal[3] = {0.0f, 0.0f, 1.0f};
+            bool hit = false;
+            const int collider_type = view.collider_types[collider];
+            if (collider_type == kColliderSphere) {
+                hit = edge_sphere_detection(view, collider, p0x, p0y, p0z, p1x, p1y, p1z, radius0, radius1, cfr,
+                                            dist, out0, out1, normal);
+            } else if (collider_type == kColliderCapsule) {
+                hit = edge_capsule_detection(view, collider, p0x, p0y, p0z, p1x, p1y, p1z, radius0, radius1, cfr,
+                                             dist, out0, out1, normal);
+            } else if (collider_type == kColliderPlane) {
+                hit = edge_plane_detection(view, collider, p0x, p0y, p0z, p1x, p1y, p1z, radius0, radius1, dist,
+                                           out0, out1, normal);
+            } else if (collider_type == kColliderBox) {
+                hit = edge_box_detection(view, collider, p0x, p0y, p0z, p1x, p1y, p1z, radius0, radius1, cfr, dist,
+                                         out0, out1, normal);
+            }
+            if (!hit) {
+                continue;
+            }
+            if (dist <= 0.0f) {
+                add0[0] += out0[0] - p0x;
+                add0[1] += out0[1] - p0y;
+                add0[2] += out0[2] - p0z;
+                add1[0] += out1[0] - p1x;
+                add1[1] += out1[1] - p1y;
+                add1[2] += out1[2] - p1z;
+                add_normal[0] += normal[0];
+                add_normal[1] += normal[1];
+                add_normal[2] += normal[2];
+                ++add_count;
+            }
+            if (dist <= cfr) {
+                has_friction_contact = true;
+                collision_normal[0] += normal[0];
+                collision_normal[1] += normal[1];
+                collision_normal[2] += normal[2];
+                min_dist = std::min(min_dist, dist);
+            }
+        }
+
+        if (add_count > 0) {
+            const float inv_count = 1.0f / static_cast<float>(add_count);
+            const float avg_nx = add_normal[0] * inv_count;
+            const float avg_ny = add_normal[1] * inv_count;
+            const float avg_nz = add_normal[2] * inv_count;
+            const float normal_len = length3(avg_nx, avg_ny, avg_nz);
+            if (normal_len > kMc2Epsilon) {
+                const float blend = std::min(normal_len, 1.0f);
+                add_positions[o0 + 0] += add0[0] * inv_count * blend;
+                add_positions[o0 + 1] += add0[1] * inv_count * blend;
+                add_positions[o0 + 2] += add0[2] * inv_count * blend;
+                add_positions[o1 + 0] += add1[0] * inv_count * blend;
+                add_positions[o1 + 1] += add1[1] * inv_count * blend;
+                add_positions[o1 + 2] += add1[2] * inv_count * blend;
+                ++add_counts[v0];
+                ++add_counts[v1];
+            }
+        }
+
+        const float collision_normal_len_sq =
+            dot3(collision_normal[0], collision_normal[1], collision_normal[2], collision_normal[0],
+                 collision_normal[1], collision_normal[2]);
+        if (has_friction_contact && cfr > 0.0f && collision_normal_len_sq > 1e-6f) {
+            const float friction_value = 1.0f - clamp_float(min_dist / cfr, 0.0f, 1.0f);
+            const float inv_len = 1.0f / std::sqrt(collision_normal_len_sq);
+            const float nx = collision_normal[0] * inv_len;
+            const float ny = collision_normal[1] * inv_len;
+            const float nz = collision_normal[2] * inv_len;
+            if (move0) {
+                friction_values[v0] = std::max(friction_values[v0], friction_value);
+                add_normals[o0 + 0] += nx;
+                add_normals[o0 + 1] += ny;
+                add_normals[o0 + 2] += nz;
+            }
+            if (move1) {
+                friction_values[v1] = std::max(friction_values[v1], friction_value);
+                add_normals[o1 + 0] += nx;
+                add_normals[o1 + 1] += ny;
+                add_normals[o1 + 2] += nz;
+            }
+        }
+    }
+
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const std::int64_t offset = vertex * 3;
+        const int count = add_counts[vertex];
+        if (count > 0) {
+            const float inv_count = 1.0f / static_cast<float>(count);
+            view.positions[offset + 0] += add_positions[offset + 0] * inv_count;
+            view.positions[offset + 1] += add_positions[offset + 1] * inv_count;
+            view.positions[offset + 2] += add_positions[offset + 2] * inv_count;
+        }
+        if (view.friction != nullptr && friction_values[vertex] > view.friction[vertex]) {
+            view.friction[vertex] = friction_values[vertex];
+        }
+        const float normal_len = length3(add_normals[offset + 0], add_normals[offset + 1], add_normals[offset + 2]);
+        if (normal_len > kMc2Epsilon) {
+            const float inv_len = 1.0f / normal_len;
+            view.collision_normals[offset + 0] = add_normals[offset + 0] * inv_len;
+            view.collision_normals[offset + 1] = add_normals[offset + 1] * inv_len;
+            view.collision_normals[offset + 2] = add_normals[offset + 2] * inv_len;
         }
     }
 }
@@ -2047,6 +2737,58 @@ bool has_collision_inputs_mc2(const Mc2MeshClothSolveView& view) {
            has_positive_value(view.collision_radii, view.vertex_count);
 }
 
+void project_collider_collision_mc2(Mc2MeshClothSolveView& view, int collision_mode) {
+    if (collision_mode == 2) {
+        if (view.edges == nullptr || view.edge_count <= 0 || view.attributes == nullptr) {
+            return;
+        }
+        Mc2EdgeCollisionView edge_view;
+        edge_view.positions = view.positions;
+        edge_view.edges = view.edges;
+        edge_view.attributes = view.attributes;
+        edge_view.inv_masses = view.inv_masses;
+        edge_view.collision_radii = view.collision_radii;
+        edge_view.collision_normals = view.collision_normals;
+        edge_view.friction = view.friction;
+        edge_view.collider_types = view.collider_types;
+        edge_view.collider_group_bits = view.collider_group_bits;
+        edge_view.collider_centers = view.collider_centers;
+        edge_view.collider_segment_a = view.collider_segment_a;
+        edge_view.collider_segment_b = view.collider_segment_b;
+        edge_view.collider_old_centers = view.collider_old_centers;
+        edge_view.collider_old_segment_a = view.collider_old_segment_a;
+        edge_view.collider_old_segment_b = view.collider_old_segment_b;
+        edge_view.collider_radii = view.collider_radii;
+        edge_view.vertex_count = view.vertex_count;
+        edge_view.edge_count = view.edge_count;
+        edge_view.collider_count = view.collider_count;
+        edge_view.collided_by_groups = view.collided_by_groups;
+        project_edge_collisions_mc2(edge_view);
+        return;
+    }
+
+    Mc2CollisionView collision_view;
+    collision_view.positions = view.positions;
+    collision_view.base_positions = view.base_positions;
+    collision_view.inv_masses = view.inv_masses;
+    collision_view.collision_radii = view.collision_radii;
+    collision_view.collision_normals = view.collision_normals;
+    collision_view.friction = view.friction;
+    collision_view.collider_types = view.collider_types;
+    collision_view.collider_group_bits = view.collider_group_bits;
+    collision_view.collider_centers = view.collider_centers;
+    collision_view.collider_segment_a = view.collider_segment_a;
+    collision_view.collider_segment_b = view.collider_segment_b;
+    collision_view.collider_old_centers = view.collider_old_centers;
+    collision_view.collider_old_segment_a = view.collider_old_segment_a;
+    collision_view.collider_old_segment_b = view.collider_old_segment_b;
+    collision_view.collider_radii = view.collider_radii;
+    collision_view.vertex_count = view.vertex_count;
+    collision_view.collider_count = view.collider_count;
+    collision_view.collided_by_groups = view.collided_by_groups;
+    project_collisions_mc2(collision_view);
+}
+
 }  // namespace
 
 void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
@@ -2056,8 +2798,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
 
     const int substeps = std::max(1, std::min(16, view.substeps));
     const int iterations = std::max(0, std::min(64, view.iterations));
+    const int collision_mode = std::max(0, std::min(2, view.collider_collision_mode));
     const float step_dt = view.step_dt;
-    const bool has_collision = has_collision_inputs_mc2(view);
+    const bool has_collision = collision_mode != 0 && has_collision_inputs_mc2(view);
     const bool has_triangle_bending = (view.dihedral_count > 0 || view.volume_count > 0) &&
                                       view.dihedral_pairs != nullptr && view.dihedral_rest_angles != nullptr &&
                                       view.dihedral_signs != nullptr && view.volume_pairs != nullptr &&
@@ -2129,26 +2872,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
         project_tether_mc2(tether_view);
 
         if (has_collision && iterations == 0) {
-            Mc2CollisionView collision_view;
-            collision_view.positions = view.positions;
-            collision_view.base_positions = view.base_positions;
-            collision_view.inv_masses = view.inv_masses;
-            collision_view.collision_radii = view.collision_radii;
-            collision_view.collision_normals = view.collision_normals;
-            collision_view.friction = view.friction;
-            collision_view.collider_types = view.collider_types;
-            collision_view.collider_group_bits = view.collider_group_bits;
-            collision_view.collider_centers = view.collider_centers;
-            collision_view.collider_segment_a = view.collider_segment_a;
-            collision_view.collider_segment_b = view.collider_segment_b;
-            collision_view.collider_old_centers = view.collider_old_centers;
-            collision_view.collider_old_segment_a = view.collider_old_segment_a;
-            collision_view.collider_old_segment_b = view.collider_old_segment_b;
-            collision_view.collider_radii = view.collider_radii;
-            collision_view.vertex_count = view.vertex_count;
-            collision_view.collider_count = view.collider_count;
-            collision_view.collided_by_groups = view.collided_by_groups;
-            project_collisions_mc2(collision_view);
+            project_collider_collision_mc2(view, collision_mode);
             calculate_inverse_masses_mc2(view);
         }
 
@@ -2220,26 +2944,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             }
 
             if (has_collision) {
-                Mc2CollisionView collision_view;
-                collision_view.positions = view.positions;
-                collision_view.base_positions = view.base_positions;
-                collision_view.inv_masses = view.inv_masses;
-                collision_view.collision_radii = view.collision_radii;
-                collision_view.collision_normals = view.collision_normals;
-                collision_view.friction = view.friction;
-                collision_view.collider_types = view.collider_types;
-                collision_view.collider_group_bits = view.collider_group_bits;
-                collision_view.collider_centers = view.collider_centers;
-                collision_view.collider_segment_a = view.collider_segment_a;
-                collision_view.collider_segment_b = view.collider_segment_b;
-                collision_view.collider_old_centers = view.collider_old_centers;
-                collision_view.collider_old_segment_a = view.collider_old_segment_a;
-                collision_view.collider_old_segment_b = view.collider_old_segment_b;
-                collision_view.collider_radii = view.collider_radii;
-                collision_view.vertex_count = view.vertex_count;
-                collision_view.collider_count = view.collider_count;
-                collision_view.collided_by_groups = view.collided_by_groups;
-                project_collisions_mc2(collision_view);
+                project_collider_collision_mc2(view, collision_mode);
                 calculate_inverse_masses_mc2(view);
             }
 

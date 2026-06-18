@@ -40,7 +40,7 @@ target_link_libraries(hotools_native PRIVATE Python3::Module)
 target_compile_definitions(hotools_native PRIVATE PY_SSIZE_T_CLEAN)
 
 if(MSVC)
-    target_compile_options(hotools_native PRIVATE /W4 /permissive-)
+    target_compile_options(hotools_native PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(hotools_native PRIVATE -Wall -Wextra -Wpedantic)
 endif()
