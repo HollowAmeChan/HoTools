@@ -5,9 +5,11 @@ from bpy.types import Panel
 from .NodeTree.OmniNodeOperator import (
     LayerRunning,
     OmniTreeClearCompileCache,
+    OmniTreeCreate,
     OmniTreeClearRuntimeCache,
     OmniTreeCompile,
     OmniTreeDestroy,
+    OmniTreeOpen,
     OmniTreeRunCompiled,
     _should_alert_compile_button,
 )
@@ -65,7 +67,8 @@ class HO_PT_omni_node_panel(Panel):
         top = col.row(align=True)
         name_col = top.row(align=True)
         name_col.scale_x = 1.6
-        name_col.label(text=tree.name, icon="NODETREE")
+        open_op = name_col.operator(OmniTreeOpen.bl_idname, text=tree.name, icon="NODETREE", emboss=False)
+        open_op.tree_name = tree_name
 
         status_col = top.row(align=True)
         status_col.alignment = 'RIGHT'
@@ -117,6 +120,7 @@ class HO_PT_omni_node_panel(Panel):
 
         header = layout.row(align=True)
         header.label(text="OmniNode 树")
+        header.operator(OmniTreeCreate.bl_idname, text="", icon="ADD")
         header.prop(scene, "ho_omni_panel_show_advanced", text="高级", toggle=True)
 
         trees = _iter_omni_trees()
@@ -128,7 +132,9 @@ class HO_PT_omni_node_panel(Panel):
             self.draw_tree_row(layout, tree, show_advanced)
 
 
-classes = [HO_PT_omni_node_panel]
+classes = [
+    HO_PT_omni_node_panel,
+]
 
 
 def register_props():

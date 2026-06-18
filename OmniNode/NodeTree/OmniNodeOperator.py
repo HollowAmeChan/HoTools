@@ -243,6 +243,96 @@ def _activate_tree_in_space(space, tree):
     return _resolve_space_tree(space) == tree or getattr(space, "node_tree", None) == tree
 
 
+def _space_has_tree(space, tree):
+    return _resolve_space_tree(space) == tree or getattr(space, "node_tree", None) == tree
+
+
+def _set_node_editor_type(area, space):
+    for owner, attr_name in ((area, "ui_type"), (space, "tree_type")):
+        if owner is None or not hasattr(owner, attr_name):
+            continue
+        try:
+            if getattr(owner, attr_name) != "OmniNodeTree":
+                setattr(owner, attr_name, "OmniNodeTree")
+        except Exception:
+            pass
+
+
+def _activate_tree_in_editor(area, space, tree):
+    if space is None or getattr(space, "type", None) != 'NODE_EDITOR' or not _is_omni_tree(tree):
+        return False
+
+    _set_node_editor_type(area, space)
+
+    attempts = [lambda: setattr(space, "node_tree", tree)]
+    path = getattr(space, "path", None)
+    if path is not None:
+        attempts.extend((
+            lambda: path.start(tree),
+            lambda: path.clear(),
+            lambda: setattr(space, "node_tree", tree),
+        ))
+
+    for attempt in attempts:
+        try:
+            attempt()
+        except Exception:
+            pass
+        if _space_has_tree(space, tree):
+            if area is not None:
+                area.tag_redraw()
+            return True
+
+    if _activate_tree_in_space(space, tree):
+        if area is not None:
+            area.tag_redraw()
+        return True
+    return False
+
+
+def _iter_node_editor_spaces(context):
+    space = getattr(context, "space_data", None)
+    area = getattr(context, "area", None)
+    if space is not None and getattr(space, "type", None) == 'NODE_EDITOR':
+        yield area, space
+
+    screen = getattr(getattr(context, "window", None), "screen", None)
+    if screen is None:
+        return
+
+    for area in screen.areas:
+        if getattr(area, "type", None) != 'NODE_EDITOR':
+            continue
+        space = getattr(area.spaces, "active", None)
+        if space is not None:
+            yield area, space
+
+
+def _activate_tree_in_current_window(context, tree):
+    seen = set()
+    spaces = []
+    for area, space in _iter_node_editor_spaces(context):
+        try:
+            key = int(space.as_pointer())
+        except Exception:
+            key = id(space)
+        if key in seen:
+            continue
+        seen.add(key)
+        spaces.append((area, space))
+
+    omni_spaces = [
+        (area, space)
+        for area, space in spaces
+        if _is_omni_tree(_resolve_space_tree(space))
+    ]
+
+    for area, space in omni_spaces + spaces:
+        if _activate_tree_in_editor(area, space, tree):
+            return True
+    return False
+
+
 def full_socket_type_items():
     items = []
     for idname, label in BLENDER_SOCKET_TYPES.items():
@@ -605,6 +695,47 @@ class NodeSetBiggerSize(Operator):
             return {'FINISHED'}
         except Exception:
             return {'FINISHED'}
+
+
+class OmniTreeCreate(Operator):
+    bl_idname = "ho.omnitree_create"
+    bl_label = "新建 OmniNodeTree"
+    bl_description = "快速创建新的 OmniNodeTree，并在当前窗口的 Node Editor 中打开"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    tree_name: StringProperty(default="OmniNodeTree", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context: bpy.types.Context):
+        tree = bpy.data.node_groups.new(name=self.tree_name or "OmniNodeTree", type="OmniNodeTree")
+        tree.use_fake_user = True
+
+        if _activate_tree_in_current_window(context, tree):
+            self.report({'INFO'}, f"已创建并打开 OmniNodeTree: {tree.name}")
+        else:
+            self.report({'INFO'}, f"已创建 OmniNodeTree: {tree.name}，当前窗口没有可切换的 Node Editor")
+        return {'FINISHED'}
+
+
+class OmniTreeOpen(Operator):
+    bl_idname = "ho.omnitree_open"
+    bl_label = "打开 OmniNodeTree"
+    bl_description = "在当前窗口已有的 Node Editor 中打开指定 OmniNodeTree"
+    bl_options = {'REGISTER'}
+
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context: bpy.types.Context):
+        tree = _find_omni_tree(self.tree_name)
+        if tree is None:
+            self.report({'WARNING'}, "找不到 OmniNodeTree")
+            return {'CANCELLED'}
+
+        if not _activate_tree_in_current_window(context, tree):
+            self.report({'WARNING'}, "当前窗口没有可切换的 Node Editor")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"已打开 OmniNodeTree: {tree.name}")
+        return {'FINISHED'}
 
 
 class LayerRunning(Operator):
@@ -1268,6 +1399,8 @@ def draw_in_NODE_HT_header(self, context: Context):
 clss = [
     NodeSetDefaultSize,
     NodeSetBiggerSize,
+    OmniTreeCreate,
+    OmniTreeOpen,
     LayerRunning,
     OmniTreeCompile,
     OmniTreeRunCompiled,
