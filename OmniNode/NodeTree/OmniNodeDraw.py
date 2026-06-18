@@ -367,6 +367,91 @@ class DrawSocketView:
         DrawSocketView.draw_batch('LINES', segments, color, width=width)
 
     @staticmethod
+    def draw_square(cx, cy, size, color):
+        half = size * 0.5
+        DrawSocketView.draw_rect(cx - half, cy - half, cx + half, cy + half, color)
+
+    @staticmethod
+    def draw_curve_segment(curve, index, sx, sy, channel=None, color=(1.0, 1.0, 1.0, 1.0), width=1.0):
+        points = curve.points
+        if index < 0 or index >= len(points) - 1:
+            return
+        left = points[index]
+        right = points[index + 1]
+        x0 = float(left["x"])
+        x1 = float(right["x"])
+        if x1 < x0:
+            return
+
+        segment_interpolation = curve.segment_interpolation(index)
+        if channel is None:
+            y0 = float(left["y"])
+            y1 = float(right["y"])
+            sample_value = lambda x: curve.sample(x)
+        else:
+            y0 = float(left["color"][channel])
+            y1 = float(right["color"][channel])
+            sample_value = lambda x: curve.sample(x)[channel]
+
+        if segment_interpolation == "CONSTANT":
+            DrawSocketView.draw_polyline([(sx(x0), sy(y0)), (sx(x1), sy(y0))], color, width=width)
+            DrawSocketView.draw_polyline([(sx(x1), sy(y0)), (sx(x1), sy(y1))], color, width=1.0)
+            return
+
+        if segment_interpolation == "LINEAR" or abs(x1 - x0) < 0.000001:
+            DrawSocketView.draw_polyline([(sx(x0), sy(y0)), (sx(x1), sy(y1))], color, width=width)
+            return
+
+        sample_count = 24
+        segment_points = []
+        for sample_index in range(sample_count):
+            factor = sample_index / float(sample_count - 1)
+            x = x0 * (1.0 - factor) + x1 * factor
+            segment_points.append((sx(x), sy(sample_value(x))))
+        DrawSocketView.draw_polyline(segment_points, color, width=width)
+
+    @staticmethod
+    def draw_curve_handles(curve, sx, sy, channel=None, color=(0.75, 0.82, 0.92, 0.72)):
+        points = curve.points
+        for index in range(max(0, len(points) - 1)):
+            if curve.segment_interpolation(index) != "BEZIER":
+                continue
+
+            if channel is None:
+                left_value = float(points[index]["y"])
+                right_value = float(points[index + 1]["y"])
+                handles = curve.segment_handles(index)
+            else:
+                left_value = float(points[index]["color"][channel])
+                right_value = float(points[index + 1]["color"][channel])
+                handles = curve.segment_handles(index, channel)
+            if not handles:
+                continue
+
+            left_handle, right_handle = handles
+            left_point = (sx(points[index]["x"]), sy(left_value))
+            right_point = (sx(points[index + 1]["x"]), sy(right_value))
+            left_handle_point = (sx(left_handle["x"]), sy(left_handle["y"]))
+            right_handle_point = (sx(right_handle["x"]), sy(right_handle["y"]))
+
+            DrawSocketView.draw_polyline([left_point, left_handle_point], color, width=1.0)
+            DrawSocketView.draw_polyline([right_point, right_handle_point], color, width=1.0)
+            DrawSocketView.draw_square(left_handle_point[0], left_handle_point[1], 4, color)
+            DrawSocketView.draw_square(right_handle_point[0], right_handle_point[1], 4, color)
+
+    @staticmethod
+    def draw_curve_points(curve, sx, sy, channel=None, color=(1.0, 1.0, 1.0, 1.0)):
+        for point in curve.points:
+            if channel is None:
+                value = point["y"]
+            else:
+                value = point["color"][channel]
+            x = sx(point["x"])
+            y = sy(value)
+            DrawSocketView.draw_square(x, y, 7, (0.02, 0.025, 0.032, 0.9))
+            DrawSocketView.draw_square(x, y, 5, color)
+
+    @staticmethod
     def draw_label(text, x, y, color=(0.88, 0.92, 1.0, 1.0), size=11, align="CENTER"):
         if text is None:
             return
@@ -503,14 +588,35 @@ class DrawSocketView:
                 (2, (0.32, 0.55, 1.0, 1.0), "B"),
             ]
             for channel, color, _label in channels:
-                points = [(sx(x), sy(curve.sample(x)[channel])) for x in xs]
-                DrawSocketView.draw_polyline(points, color, width=1.8)
+                handle_color = (color[0], color[1], color[2], 0.45)
+                DrawSocketView.draw_curve_handles(curve, sx, sy, channel=channel, color=handle_color)
+                for point_index in range(len(curve.points) - 1):
+                    DrawSocketView.draw_curve_segment(
+                        curve,
+                        point_index,
+                        sx,
+                        sy,
+                        channel=channel,
+                        color=color,
+                        width=1.8,
+                    )
+                DrawSocketView.draw_curve_points(curve, sx, sy, channel=channel, color=color)
             DrawSocketView.draw_label("R", right - 39, top - 16, (1.0, 0.25, 0.22, 1.0), size=9)
             DrawSocketView.draw_label("G", right - 26, top - 16, (0.3, 0.95, 0.42, 1.0), size=9)
             DrawSocketView.draw_label("B", right - 13, top - 16, (0.32, 0.55, 1.0, 1.0), size=9)
         else:
-            points = [(sx(x), sy(curve.sample(x))) for x in xs]
-            DrawSocketView.draw_polyline(points, (0.38, 0.86, 1.0, 1.0), width=2.0)
+            curve_color = (0.38, 0.86, 1.0, 1.0)
+            DrawSocketView.draw_curve_handles(curve, sx, sy, color=(0.68, 0.84, 0.96, 0.72))
+            for point_index in range(len(curve.points) - 1):
+                DrawSocketView.draw_curve_segment(
+                    curve,
+                    point_index,
+                    sx,
+                    sy,
+                    color=curve_color,
+                    width=2.0,
+                )
+            DrawSocketView.draw_curve_points(curve, sx, sy, color=curve_color)
 
         preview_title = str(title or "曲线")
         DrawSocketView.draw_label(preview_title, left + 8, top - 15, (0.88, 0.93, 1.0, 1.0), size=10, align="LEFT")

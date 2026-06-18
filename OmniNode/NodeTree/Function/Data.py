@@ -456,6 +456,56 @@ _CURVE_PREVIEW_STACK_PRESETS = [
             },
         },
     },
+    {
+        "name": "点插值 / 手柄",
+        "description": "测试每个控制点自己的插值模式和手柄数据。",
+        "values": {
+            "float_a": {
+                "kind": "float_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "y": 0.0, "interpolation": "CONSTANT"},
+                    {"x": 0.28, "y": 0.8, "interpolation": "BEZIER", "right_handle_type": "FREE", "right_tangent": -1.8, "right_weight": 0.7},
+                    {"x": 0.72, "y": -0.35, "interpolation": "LINEAR", "left_handle_type": "FREE", "left_tangent": -1.8, "left_weight": 0.7},
+                    {"x": 1.0, "y": 1.0, "interpolation": "LINEAR"},
+                ],
+            },
+            "color_a": {
+                "kind": "color_curve",
+                "interpolation": "LINEAR",
+                "extend": "CLAMP",
+                "points": [
+                    {"x": 0.0, "color": (1.0, 0.0, 0.0, 1.0), "interpolation": "BEZIER", "right_handle_type": "FREE", "right_tangent": (-2.0, 2.0, 0.0, 0.0), "right_weight": 0.55},
+                    {"x": 0.4, "color": (0.0, 1.0, 0.0, 1.0), "interpolation": "CONSTANT", "left_handle_type": "FREE", "left_tangent": (-2.0, 2.0, 0.0, 0.0), "left_weight": 0.55},
+                    {"x": 0.7, "color": (0.0, 0.2, 1.0, 1.0), "interpolation": "LINEAR"},
+                    {"x": 1.0, "color": (1.0, 1.0, 1.0, 1.0), "interpolation": "LINEAR"},
+                ],
+            },
+            "float_b": {
+                "kind": "float_curve",
+                "interpolation": "BEZIER",
+                "extend": "MIRROR",
+                "points": [
+                    {"x": 0.0, "y": -0.7, "interpolation": "BEZIER", "right_handle_type": "AUTO"},
+                    {"x": 0.5, "y": 1.2, "interpolation": "BEZIER", "left_handle_type": "AUTO", "right_handle_type": "AUTO"},
+                    {"x": 1.0, "y": -0.7, "interpolation": "BEZIER", "left_handle_type": "AUTO"},
+                ],
+            },
+            "color_b": {
+                "kind": "color_curve",
+                "interpolation": "CONSTANT",
+                "extend": "REPEAT",
+                "points": [
+                    {"x": 0.0, "color": (0.0, 0.0, 0.0, 1.0), "interpolation": "CONSTANT"},
+                    {"x": 0.25, "color": (1.0, 0.0, 0.0, 1.0), "interpolation": "CONSTANT"},
+                    {"x": 0.5, "color": (0.0, 1.0, 0.0, 1.0), "interpolation": "CONSTANT"},
+                    {"x": 0.75, "color": (0.0, 0.0, 1.0, 1.0), "interpolation": "CONSTANT"},
+                    {"x": 1.0, "color": (1.0, 1.0, 1.0, 1.0), "interpolation": "LINEAR"},
+                ],
+            },
+        },
+    },
 ]
 
 @omni(enable=True,

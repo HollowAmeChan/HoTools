@@ -87,7 +87,6 @@ class OmniNodeSocketFloatCurve(NodeSocket):
             return
         row = layout.row(align=True)
         row.label(text=text or self.name)
-        row.prop(curve, "interpolation", text="")
         row.prop(curve, "extend", text="")
         row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
 
@@ -126,7 +125,6 @@ class OmniNodeSocketColorCurve(NodeSocket):
             return
         row = layout.row(align=True)
         row.label(text=text or self.name)
-        row.prop(curve, "interpolation", text="")
         row.prop(curve, "extend", text="")
         row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
 
