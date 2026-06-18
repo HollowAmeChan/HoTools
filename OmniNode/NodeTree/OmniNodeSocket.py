@@ -8,13 +8,6 @@ from .OmniCurve import (
 )
 
 
-def _set_curve_preview(sock, context):
-    try:
-        sock.node.omni_sync_socket_draw(sock)
-    except Exception:
-        pass
-
-
 OMNI_MODIFIER_TYPE_ITEMS = [
     ("SUBSURF", "Subdivision Surface", ""),
     ("BOOLEAN", "Boolean", ""),
@@ -62,7 +55,6 @@ class OmniNodeSocketFloatCurve(NodeSocket):
     bl_idname = "OmniNodeSocketFloatCurve"
 
     curve: bpy.props.PointerProperty(type=OmniFloatCurveData)  # type: ignore
-    preview_curve: bpy.props.BoolProperty(name="预览", default=False, update=_set_curve_preview)  # type: ignore
 
     @property
     def default_value(self):
@@ -97,7 +89,6 @@ class OmniNodeSocketFloatCurve(NodeSocket):
         row.label(text=text or self.name)
         row.prop(curve, "interpolation", text="")
         row.prop(curve, "extend", text="")
-        row.prop(self, "preview_curve", text="", icon="HIDE_OFF", toggle=True)
         row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
 
     @classmethod
@@ -110,7 +101,6 @@ class OmniNodeSocketColorCurve(NodeSocket):
     bl_idname = "OmniNodeSocketColorCurve"
 
     curve: bpy.props.PointerProperty(type=OmniColorCurveData)  # type: ignore
-    preview_curve: bpy.props.BoolProperty(name="预览", default=False, update=_set_curve_preview)  # type: ignore
 
     @property
     def default_value(self):
@@ -138,7 +128,6 @@ class OmniNodeSocketColorCurve(NodeSocket):
         row.label(text=text or self.name)
         row.prop(curve, "interpolation", text="")
         row.prop(curve, "extend", text="")
-        row.prop(self, "preview_curve", text="", icon="HIDE_OFF", toggle=True)
         row.label(text=f"{len(curve.points)} 点" if len(curve.points) else "默认")
 
     @classmethod

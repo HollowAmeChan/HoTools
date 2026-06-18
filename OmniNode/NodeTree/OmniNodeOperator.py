@@ -2,11 +2,12 @@ from typing import Set
 import bpy
 import os
 import sys
-from bpy.props import BoolProperty, StringProperty, EnumProperty, IntProperty
+from bpy.props import BoolProperty, StringProperty, EnumProperty
 from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
 from . import OmniNodeDraw
 from . import OmniRuntimeState
+from .OmniCurve import color_curve_payload, float_curve_payload
 from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
 
@@ -386,6 +387,14 @@ def _node_omni_presets(node):
         if normalized is not None:
             presets.append(normalized)
     return presets
+
+
+def node_omni_preset_items(node):
+    items = [("NONE", "清空", "将全部输入 Socket 重置为默认值")]
+    for index, preset in enumerate(_node_omni_presets(node)):
+        description = str(preset.get("description") or "")
+        items.append((str(index), preset["name"], description))
+    return items
 
 
 def sync_tree_io(tree):
@@ -922,7 +931,7 @@ class OmniNodeToggleDescription(Operator):
 
         nodes_with_description = [
             node for node in nodes
-            if OmniNodeDraw.description_text(node)
+            if OmniNodeDraw.DrawDescription.text(node)
         ]
         if not nodes_with_description:
             self.report({'WARNING'}, "所选节点没有描述")
@@ -930,28 +939,24 @@ class OmniNodeToggleDescription(Operator):
 
         shown_count = 0
         hidden_count = 0
-        skipped_bug_count = 0
 
         for node in nodes_with_description:
-            if getattr(node, "is_bug", False) and getattr(node, "bug_text", ""):
-                OmniNodeDraw.clear_description(node)
-                skipped_bug_count += 1
-                continue
-
             if self.show_description:
-                OmniNodeDraw.draw_description(node)
+                OmniNodeDraw.DrawDescription.draw(node)
                 shown_count += 1
             else:
-                OmniNodeDraw.clear_description(node)
+                OmniNodeDraw.DrawDescription.clear(node)
                 hidden_count += 1
+
+            sync_all_draw = getattr(node, "omni_sync_all_draw", None)
+            if callable(sync_all_draw):
+                sync_all_draw()
 
         parts = []
         if shown_count:
             parts.append(f"显示 {shown_count} 个")
         if hidden_count:
             parts.append(f"隐藏 {hidden_count} 个")
-        if skipped_bug_count:
-            parts.append(f"跳过 Bug {skipped_bug_count} 个")
         self.report({'INFO'}, "节点描述: " + "，".join(parts))
         return {'FINISHED'}
 
@@ -964,7 +969,7 @@ class OmniNodeApplyPreset(Operator):
 
     node_tree_name: StringProperty(default="")  # type: ignore
     node_name: StringProperty(default="")  # type: ignore
-    preset_index: IntProperty(default=0, min=0)  # type: ignore
+    preset_id: StringProperty(default="NONE")  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1011,6 +1016,161 @@ class OmniNodeApplyPreset(Operator):
         except Exception:
             return False
 
+    @staticmethod
+    def _declared_socket_defaults(node):
+        defaults = getattr(node, "_omni_socket_defaults", None)
+        return defaults if isinstance(defaults, dict) else {}
+
+    @staticmethod
+    def _rna_default(sock):
+        try:
+            prop = sock.bl_rna.properties.get("default_value")
+        except Exception:
+            return None
+        if prop is None:
+            return None
+
+        try:
+            if prop.type == 'ENUM':
+                enum_items = list(prop.enum_items)
+                if enum_items:
+                    return enum_items[0].identifier
+        except Exception:
+            pass
+
+        try:
+            return prop.default
+        except Exception:
+            return None
+
+    @staticmethod
+    def _socket_type_default(sock):
+        socket_type = getattr(sock, "bl_idname", type(sock).__name__)
+        if socket_type == "OmniNodeSocketFloatCurve":
+            return float_curve_payload()
+        if socket_type == "OmniNodeSocketColorCurve":
+            return color_curve_payload()
+
+        defaults = {
+            "NodeSocketFloat": 0.0,
+            "NodeSocketInt": 0,
+            "NodeSocketBool": False,
+            "NodeSocketString": "",
+            "NodeSocketStringFilePath": "",
+            "NodeSocketVector": (0.0, 0.0, 0.0),
+            "NodeSocketRotation": (0.0, 0.0, 0.0),
+            "NodeSocketColor": (0.0, 0.0, 0.0, 1.0),
+            "OmniNodeSocketAny": 0.0,
+            "OmniNodeSocketCache": "",
+            "OmniNodeSocketBoneChain": "",
+            "OmniNodeSocketImageFormat": "PNG",
+            "OmniNodeSocketRegex": "",
+            "OmniNodeSocketGlob": "",
+            "OmniNodeSocketModifier": "",
+            "OmniNodeSocketMaterialSlot": "",
+            "OmniNodeSocketUVLayer": "",
+            "OmniNodeSocketColorAttribute": "",
+        }
+        if socket_type in defaults:
+            return defaults[socket_type]
+
+        rna_default = OmniNodeApplyPreset._rna_default(sock)
+        if rna_default is not None:
+            return rna_default
+        return None
+
+    @staticmethod
+    def _clear_compound_socket(sock):
+        socket_type = getattr(sock, "bl_idname", type(sock).__name__)
+        cleared = False
+
+        for attr_name in (
+            "armature_object",
+            "mesh_object",
+            "bone_name",
+            "group_name",
+            "shape_key_name",
+        ):
+            if not hasattr(sock, attr_name):
+                continue
+            try:
+                current = getattr(sock, attr_name)
+                if isinstance(current, bpy.types.ID):
+                    reset_value = None
+                else:
+                    try:
+                        reset_value = sock.bl_rna.properties[attr_name].default
+                    except Exception:
+                        reset_value = ""
+                setattr(sock, attr_name, reset_value)
+                cleared = True
+            except Exception:
+                pass
+
+        if socket_type in {
+            "NodeSocketObject",
+            "NodeSocketImage",
+            "NodeSocketCollection",
+            "NodeSocketMaterial",
+            "NodeSocketTexture",
+            "OmniNodeSocketScene",
+            "OmniNodeSocketText",
+            "OmniNodeSocketDatablock",
+        }:
+            try:
+                sock.default_value = None
+                cleared = True
+            except Exception:
+                pass
+
+        return cleared
+
+    @staticmethod
+    def _apply_reset_value(sock, value):
+        if value is None and OmniNodeApplyPreset._clear_compound_socket(sock):
+            return True
+        return OmniNodeApplyPreset._set_socket_default(sock, value)
+
+    @staticmethod
+    def _reset_socket_default(sock, declared_defaults):
+        identifier = getattr(sock, "identifier", "")
+        if identifier in declared_defaults:
+            return OmniNodeApplyPreset._apply_reset_value(sock, declared_defaults[identifier])
+
+        name = getattr(sock, "name", "")
+        if name in declared_defaults:
+            return OmniNodeApplyPreset._apply_reset_value(sock, declared_defaults[name])
+
+        value = OmniNodeApplyPreset._socket_type_default(sock)
+        if OmniNodeApplyPreset._apply_reset_value(sock, value):
+            return True
+
+        return OmniNodeApplyPreset._clear_compound_socket(sock)
+
+    @staticmethod
+    def _reset_node_inputs(node):
+        declared_defaults = OmniNodeApplyPreset._declared_socket_defaults(node)
+        updated_count = 0
+        skipped_count = 0
+
+        for sock in getattr(node, "inputs", ()):
+            if OmniNodeApplyPreset._reset_socket_default(sock, declared_defaults):
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+        return updated_count, skipped_count
+
+    @staticmethod
+    def _sync_node_after_default_change(context, node):
+        sync_all_draw = getattr(node, "omni_sync_all_draw", None)
+        if callable(sync_all_draw):
+            sync_all_draw()
+
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
+
     def execute(self, context):
         node = self._resolve_node(context)
         if node is None:
@@ -1018,11 +1178,27 @@ class OmniNodeApplyPreset(Operator):
             return {'CANCELLED'}
 
         presets = _node_omni_presets(node)
-        if self.preset_index < 0 or self.preset_index >= len(presets):
+        if self.preset_id == "NONE":
+            updated_count, skipped_count = self._reset_node_inputs(node)
+            self._sync_node_after_default_change(context, node)
+
+            parts = [f"重置 {updated_count} 项"]
+            if skipped_count:
+                parts.append(f"跳过 {skipped_count} 项")
+            self.report({'INFO'}, "已清空预设: " + ", ".join(parts))
+            return {'FINISHED'}
+
+        try:
+            preset_index = int(self.preset_id)
+        except ValueError:
             self.report({'WARNING'}, "找不到预设")
             return {'CANCELLED'}
 
-        preset = presets[self.preset_index]
+        if preset_index < 0 or preset_index >= len(presets):
+            self.report({'WARNING'}, "找不到预设")
+            return {'CANCELLED'}
+
+        preset = presets[preset_index]
         updated_count = 0
         missing_count = 0
         skipped_count = 0
@@ -1035,15 +1211,10 @@ class OmniNodeApplyPreset(Operator):
 
             if self._set_socket_default(sock, value):
                 updated_count += 1
-                sync_socket_draw = getattr(node, "omni_sync_socket_draw", None)
-                if callable(sync_socket_draw):
-                    sync_socket_draw(sock)
             else:
                 skipped_count += 1
 
-        area = getattr(context, "area", None)
-        if area is not None:
-            area.tag_redraw()
+        self._sync_node_after_default_change(context, node)
 
         parts = [f"更新 {updated_count} 项"]
         if missing_count:
@@ -1346,10 +1517,10 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
     target_nodes = selected_nodes if selected_nodes else ([active_node] if active_node is not None else [])
     target_nodes = [
         node for node in target_nodes
-        if getattr(node, "id_data", None) == tree and OmniNodeDraw.description_text(node)
+        if getattr(node, "id_data", None) == tree and OmniNodeDraw.DrawDescription.text(node)
     ]
     if target_nodes:
-        all_visible = all(OmniNodeDraw.is_description_visible(node) for node in target_nodes)
+        all_visible = all(OmniNodeDraw.DrawDescription.is_visible(node) for node in target_nodes)
         multi_target = len(target_nodes) > 1
         text = ("隐藏所选描述" if multi_target else "隐藏描述") if all_visible else (
             "查看所选描述" if multi_target else "查看描述"
@@ -1368,12 +1539,12 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
         presets = _node_omni_presets(preset_node)
         if presets:
             layout.separator()
-            layout.label(text="填入预设", icon="PRESET")
-            for index, preset in enumerate(presets):
-                op = layout.operator(OmniNodeApplyPreset.bl_idname, text=preset["name"], icon="PRESET")
-                op.node_tree_name = getattr(tree, "name_full", tree.name)
-                op.node_name = preset_node.name
-                op.preset_index = index
+            row = layout.row(align=True)
+            row.prop(preset_node, "omni_preset_id", text="预设")
+            op = row.operator(OmniNodeApplyPreset.bl_idname, text="", icon="PRESET")
+            op.node_tree_name = getattr(tree, "name_full", tree.name)
+            op.node_name = preset_node.name
+            op.preset_id = getattr(preset_node, "omni_preset_id", "NONE")
 
     label = "重建所选节点" if target_count > 1 else "重建节点"
     layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")

@@ -227,9 +227,24 @@ def PutInitMetaInfo(node: OmniNode, NodeInfo, SocketInMetaDict, SocketOutMetaDic
     return
 
 
+def _compose_input_default_dict(SocketDefaultDict, SocketInputSettings):
+    defaults = {
+        identifier: value
+        for identifier, value in SocketDefaultDict.items()
+        if value is not None
+    }
+    for identifier, settings in SocketInputSettings.items():
+        if not isinstance(settings, dict):
+            continue
+        if "default_value" in settings:
+            defaults[identifier] = settings["default_value"]
+    return defaults
+
+
 def CreateNodeClass(func) -> OmniNode:
     NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti,SocketInputSettings = CheckMetaInfo(func)
     func_meta = getattr(func, "__meta", {})
+    SocketResetDefaultDict = _compose_input_default_dict(SocketDefaultDict, SocketInputSettings)
 
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
@@ -239,6 +254,7 @@ def CreateNodeClass(func) -> OmniNode:
         _meta = func_meta
         _omni_presets = NodeInfo.get("omni_presets", [])
         _socket_is_multi = SocketIsMulti
+        _omni_socket_defaults = SocketResetDefaultDict
 
         def build(self):
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,

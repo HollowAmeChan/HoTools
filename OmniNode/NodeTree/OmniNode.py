@@ -2,7 +2,14 @@ import bpy
 from bpy.types import Node, NodeSocket
 
 from . import OmniNodeDraw
-from .OmniNodeOperator import OmniNodeRebuild, NodeSetDefaultSize, NodeSetBiggerSize
+from .OmniNodeOperator import (
+    OmniNodeApplyPreset,
+    OmniNodeRebuild,
+    OmniNodeToggleDescription,
+    NodeSetDefaultSize,
+    NodeSetBiggerSize,
+    node_omni_preset_items,
+)
 import json
 import uuid
 
@@ -13,11 +20,21 @@ def setOutputNode(node: Node, context):
 
 def setBugNode(node: Node, context):
     node.updateColor()
-    OmniNodeDraw.sync_bug_text(node)
+    OmniNodeDraw.DrawBug.sync(node)
+    node.omni_sync_all_draw()
 
 
 def setBugText(node: Node, context):
-    OmniNodeDraw.sync_bug_text(node)
+    OmniNodeDraw.DrawBug.sync(node)
+    node.omni_sync_all_draw()
+
+
+def setNodeSidePreview(node: Node, context):
+    node.omni_sync_all_draw()
+
+
+def omniPresetItems(node, context):
+    return node_omni_preset_items(node)
 
 
 class OmniNode(Node):
@@ -52,6 +69,12 @@ class OmniNode(Node):
     omni_runtime_uid: bpy.props.StringProperty(
         name="Runtime UID", default="", options={'HIDDEN'}
     )  # type: ignore
+    omni_view_preview: bpy.props.BoolProperty(
+        name="侧栏预览", default=False, update=setNodeSidePreview
+    )  # type: ignore
+    omni_preset_id: bpy.props.EnumProperty(
+        name="预设", items=omniPresetItems
+    )  # type: ignore
 
     _socket_is_multi = None
     _func = None
@@ -79,7 +102,8 @@ class OmniNode(Node):
     def clear_bug_state(self):
         self.is_bug = False
         self.bug_text = ""
-        OmniNodeDraw.sync_bug_text(self)
+        OmniNodeDraw.DrawBug.sync(self)
+        self.omni_sync_all_draw()
 
     def build(self):
         """
@@ -111,20 +135,16 @@ class OmniNode(Node):
         return f"{self.name}"
 
     def omni_socket_display_order(self, sock):
-        for is_output, sockets in ((False, self.inputs), (True, self.outputs)):
-            for index, item in enumerate(sockets):
-                if item == sock:
-                    side_order = 1 if is_output else 0
-                    return index, side_order, str(getattr(item, "identifier", item.name))
-        return 999999, 999999, str(getattr(sock, "identifier", sock.name))
+        for index, item in enumerate(self.inputs):
+            if item == sock:
+                return index, str(getattr(item, "identifier", item.name))
+        return 999999, str(getattr(sock, "identifier", sock.name))
 
     def omni_curve_preview_sockets(self, socket_types=None):
         socket_types = set(socket_types or self._curve_preview_socket_types)
         sockets = []
-        for item in list(self.inputs) + list(self.outputs):
+        for item in self.inputs:
             if getattr(item, "hide", False):
-                continue
-            if not getattr(item, "preview_curve", False):
                 continue
             if getattr(item, "bl_idname", "") not in socket_types:
                 continue
@@ -139,15 +159,10 @@ class OmniNode(Node):
             return 0
 
     def omni_sync_socket_draw(self, sock):
-        if sock is None:
-            return
-
-        if getattr(sock, "bl_idname", "") in self._curve_preview_socket_types:
-            OmniNodeDraw.DrawCurveSocket.sync(sock)
+        OmniNodeDraw.DrawSidePanel.sync_node(self)
 
     def omni_sync_all_draw(self):
-        for sock in list(self.inputs) + list(self.outputs):
-            self.omni_sync_socket_draw(sock)
+        OmniNodeDraw.DrawSidePanel.sync_node(self)
 
     def draw_buttons(self, context, layout: bpy.types.UILayout):
         main_row = layout.row(align=False)
@@ -159,6 +174,30 @@ class OmniNode(Node):
 
         if self.debug:
             pass
+
+        row_L.prop(
+            self,
+            "omni_view_preview",
+            text="",
+            icon="HIDE_OFF" if self.omni_view_preview else "HIDE_ON",
+            toggle=True,
+        )
+
+        if OmniNodeDraw.DrawDescription.text(self):
+            op = row_L.operator(OmniNodeToggleDescription.bl_idname, text="", icon="INFO")
+            op.node_tree_name = getattr(self.id_data, "name_full", self.id_data.name)
+            op.node_name = self.name
+            op.show_description = not OmniNodeDraw.DrawDescription.is_visible(self)
+
+        row_R = main_row.row(align=True)
+        row_R.alignment = 'RIGHT'
+        preset_items = node_omni_preset_items(self)
+        if len(preset_items) > 1:
+            row_R.prop(self, "omni_preset_id", text="")
+            op = row_R.operator(OmniNodeApplyPreset.bl_idname, text="", icon="PRESET")
+            op.node_tree_name = getattr(self.id_data, "name_full", self.id_data.name)
+            op.node_name = self.name
+            op.preset_id = self.omni_preset_id
 
     def draw_buttons_ext(self, context, layout: bpy.types.UILayout):
         lines = self.omni_description.splitlines()

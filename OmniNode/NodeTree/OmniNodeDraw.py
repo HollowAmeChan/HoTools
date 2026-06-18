@@ -1,7 +1,7 @@
 import bpy
 import blf
-import textwrap
 import gpu
+import textwrap
 from gpu_extras.batch import batch_for_shader
 
 from .OmniCurve import resolve_color_curve, resolve_float_curve
@@ -20,7 +20,7 @@ def _warn_once(key, message):
     print(message)
 
 
-def _overlay_id(node, kind="error"):
+def _overlay_id(node, kind):
     return f"omni_{kind}::{node.id_data.name_full}::{node.name}"
 
 
@@ -123,8 +123,8 @@ def _get_text_location(node, text, scale, align='UP'):
             max_sock_num = max(visible_inputs, visible_outputs)
             gap += (max_sock_num * 0.3) * max_sock_num
         line_height = _get_line_height(scale)
-        n = len(text.split('\n'))
-        x, y = int(x), int(y + (n - 1) * line_height + gap)
+        line_count = len(text.split('\n'))
+        x, y = int(x), int(y + (line_count - 1) * line_height + gap)
     elif align == "DOWN":
         line_height = _get_line_height(scale)
         x, y = int(x), int(y - dy - line_height)
@@ -133,7 +133,7 @@ def _get_text_location(node, text, scale, align='UP'):
     return x, y
 
 
-def _draw_text_handler(overlay_id):
+def _draw_text_overlay_handler(overlay_id):
     payload = _PAYLOADS.get(overlay_id)
     if payload is None:
         return
@@ -173,17 +173,140 @@ def _draw_text_handler(overlay_id):
     blf.disable(font_id, blf.SHADOW)
 
 
-class DrawCurveSocket:
-    """曲线 socket 的只读预览绘制。"""
+def _clear_overlay(overlay_id):
+    handle = _HANDLES.pop(overlay_id, None)
+    payload = _PAYLOADS.pop(overlay_id, None)
+    if handle is not None:
+        bpy.types.SpaceNodeEditor.draw_handler_remove(handle, 'WINDOW')
+    if payload is not None:
+        _tag_node_editors(payload.get("tree_name"))
 
-    GLOBAL_OVERLAY_ID = "omni_curve_preview::global"
-    SOCKET_TYPES = {"OmniNodeSocketFloatCurve", "OmniNodeSocketColorCurve"}
+
+def _draw_text_overlay(node, text, color=(1.0, 0.35, 0.35, 1.0), scale=1.3, align="UP", kind="error"):
+    overlay_id = _overlay_id(node, kind)
+    _clear_overlay(overlay_id)
+    _PAYLOADS[overlay_id] = {
+        "tree_name": node.id_data.name_full,
+        "node_name": node.name,
+        "text": text,
+        "color": color,
+        "scale": scale,
+        "align": align,
+    }
+    _HANDLES[overlay_id] = bpy.types.SpaceNodeEditor.draw_handler_add(
+        _draw_text_overlay_handler,
+        (overlay_id,),
+        'WINDOW',
+        'POST_VIEW',
+    )
+    _tag_node_editors(node.id_data.name_full)
+
+
+def _clear_text_tree(tree, kinds):
+    prefixes = tuple(f"omni_{kind}::{tree.name_full}::" for kind in kinds)
+    overlay_ids = set(_HANDLES.keys()) | set(_PAYLOADS.keys())
+    for overlay_id in list(overlay_ids):
+        if overlay_id.startswith(prefixes):
+            _clear_overlay(overlay_id)
+
+
+class DrawBug:
+    """绘制节点 Bug 信息。"""
+
+    KIND = "error"
+    COLOR = (1.0, 0.35, 0.35, 1.0)
 
     @staticmethod
-    def overlay_id(sock, kind="curve_preview"):
-        node = sock.node
-        direction = "OUT" if sock in node.outputs[:] else "IN"
-        return f"omni_{kind}::{node.id_data.name_full}::{node.name}::{direction}::{sock.identifier}"
+    def text(node):
+        if not getattr(node, "is_bug", False):
+            return ""
+        return str(getattr(node, "bug_text", "") or "").strip()
+
+    @staticmethod
+    def clear(node):
+        _clear_overlay(_overlay_id(node, DrawBug.KIND))
+
+    @staticmethod
+    def draw(node):
+        text = DrawBug.text(node)
+        if not text:
+            DrawBug.clear(node)
+            return False
+
+        wrapped = _wrap_text(text, width=36) or text
+        _draw_text_overlay(node, wrapped, color=DrawBug.COLOR, kind=DrawBug.KIND)
+        return True
+
+    @staticmethod
+    def sync(node):
+        return DrawBug.draw(node)
+
+    @staticmethod
+    def clear_tree(tree):
+        _clear_text_tree(tree, (DrawBug.KIND,))
+
+    @staticmethod
+    def side_panel_block(node):
+        text = DrawBug.text(node)
+        if not text:
+            return None
+        return {
+            "kind": "text",
+            "title": "错误",
+            "text": text,
+            "height": 115,
+            "color": DrawBug.COLOR,
+        }
+
+
+class DrawDescription:
+    """绘制节点说明。"""
+
+    KIND = "description"
+    COLOR = (0.62, 0.82, 1.0, 1.0)
+
+    @staticmethod
+    def text(node):
+        text = str(getattr(node, "omni_description", "") or "").strip()
+        if not text or text == "No description":
+            return ""
+        return text
+
+    @staticmethod
+    def clear(node):
+        _clear_overlay(_overlay_id(node, DrawDescription.KIND))
+
+    @staticmethod
+    def is_visible(node):
+        return _overlay_id(node, DrawDescription.KIND) in _PAYLOADS
+
+    @staticmethod
+    def draw(node):
+        text = DrawDescription.text(node)
+        if not text:
+            DrawDescription.clear(node)
+            return False
+
+        wrapped = _wrap_text(text, width=120) or text
+        _draw_text_overlay(
+            node,
+            wrapped,
+            color=DrawDescription.COLOR,
+            scale=1.05,
+            align="RIGHT",
+            kind=DrawDescription.KIND,
+        )
+        return True
+
+    @staticmethod
+    def clear_tree(tree):
+        _clear_text_tree(tree, (DrawDescription.KIND,))
+
+
+class DrawSocketView:
+    """绘制节点侧栏 socket 预览。"""
+
+    SOCKET_TYPES = {"OmniNodeSocketFloatCurve", "OmniNodeSocketColorCurve"}
 
     @staticmethod
     def draw_batch(kind, points, color, width=1.0):
@@ -217,8 +340,8 @@ class DrawCurveSocket:
                     pass
 
         _warn_once(
-            "curve_preview_draw_batch",
-            f"OmniNode 曲线预览绘制失败：{last_error}",
+            "socket_view_draw_batch",
+            f"OmniNode 侧栏预览绘制失败：{last_error}",
         )
 
     @staticmethod
@@ -231,7 +354,7 @@ class DrawCurveSocket:
             (right, top),
             (left, top),
         ]
-        DrawCurveSocket.draw_batch('TRIS', points, color)
+        DrawSocketView.draw_batch('TRIS', points, color)
 
     @staticmethod
     def draw_polyline(points, color, width=1.0):
@@ -241,7 +364,7 @@ class DrawCurveSocket:
         for index in range(len(points) - 1):
             segments.append(points[index])
             segments.append(points[index + 1])
-        DrawCurveSocket.draw_batch('LINES', segments, color, width=width)
+        DrawSocketView.draw_batch('LINES', segments, color, width=width)
 
     @staticmethod
     def draw_label(text, x, y, color=(0.88, 0.92, 1.0, 1.0), size=11, align="CENTER"):
@@ -284,66 +407,6 @@ class DrawCurveSocket:
         return None, None
 
     @staticmethod
-    def socket_from_payload(node, payload):
-        sockets = node.outputs if payload.get("socket_is_output") else node.inputs
-        socket_name = payload.get("socket_name")
-        socket_identifier = payload.get("socket_identifier")
-        socket_index = payload.get("socket_index")
-
-        if socket_name:
-            sock = sockets.get(socket_name)
-            if sock is not None:
-                return sock
-
-        if socket_identifier:
-            sock = sockets.get(socket_identifier)
-            if sock is not None:
-                return sock
-            for item in sockets:
-                if getattr(item, "identifier", None) == socket_identifier:
-                    return item
-
-        if socket_index is not None:
-            try:
-                return sockets[int(socket_index)]
-            except Exception:
-                pass
-
-        return None
-
-    @staticmethod
-    def stack_index(node, sock):
-        get_index = getattr(node, "omni_curve_preview_index", None)
-        if callable(get_index):
-            return max(0, int(get_index(sock, DrawCurveSocket.SOCKET_TYPES)))
-
-        visible = DrawCurveSocket.preview_sockets_for_node(node)
-        try:
-            return max(0, visible.index(sock))
-        except ValueError:
-            return 0
-
-    @staticmethod
-    def node_rect(node, sock):
-        x, y = _get_text_location(node, "", 1.0, align="RIGHT")
-        ui_scale = bpy.context.preferences.system.ui_scale
-        x *= ui_scale
-        y *= ui_scale
-
-        preview_width = 210
-        preview_height = 145
-        stack_gap = 14
-        stack_index = DrawCurveSocket.stack_index(node, sock)
-        left = float(x)
-        top = float(y) - stack_index * (preview_height + stack_gap)
-        return left, top, left + preview_width, top - preview_height
-
-    @staticmethod
-    def region_rect(node, sock):
-        left, top, right, bottom = DrawCurveSocket.node_rect(node, sock)
-        return min(left, right), min(bottom, top), max(left, right), max(bottom, top)
-
-    @staticmethod
     def axis_values(minimum, maximum):
         values = [float(minimum), float(maximum)]
         for value in (-1.0, 0.0, 1.0):
@@ -357,7 +420,7 @@ class DrawCurveSocket:
 
     @staticmethod
     def draw_preview(payload, rect, title=""):
-        curve, curve_type = DrawCurveSocket.curve_from_payload(payload)
+        curve, curve_type = DrawSocketView.curve_from_payload(payload)
         if curve is None:
             return
 
@@ -365,8 +428,8 @@ class DrawCurveSocket:
         if right - left < 12 or top - bottom < 12:
             return
 
-        DrawCurveSocket.draw_rect(left, bottom, right, top, (0.045, 0.052, 0.065, 0.88))
-        DrawCurveSocket.draw_polyline(
+        DrawSocketView.draw_rect(left, bottom, right, top, (0.045, 0.052, 0.065, 0.88))
+        DrawSocketView.draw_polyline(
             [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)],
             (0.35, 0.42, 0.52, 0.95),
             width=1.0,
@@ -411,21 +474,21 @@ class DrawCurveSocket:
         axis_color = (0.62, 0.68, 0.76, 0.9)
         for x_value in (0.0, 1.0):
             x = sx(x_value)
-            DrawCurveSocket.draw_polyline([(x, plot_bottom), (x, plot_top)], axis_color, width=1.0)
-            DrawCurveSocket.draw_label(
-                DrawCurveSocket.format_axis_value(x_value),
+            DrawSocketView.draw_polyline([(x, plot_bottom), (x, plot_top)], axis_color, width=1.0)
+            DrawSocketView.draw_label(
+                DrawSocketView.format_axis_value(x_value),
                 x,
                 bottom + 7,
                 (0.72, 0.78, 0.86, 1.0),
                 size=9,
             )
 
-        for y_value in DrawCurveSocket.axis_values(y_min, y_max):
+        for y_value in DrawSocketView.axis_values(y_min, y_max):
             y = sy(y_value)
             color = axis_color if abs(y_value) < 0.000001 else grid_color
-            DrawCurveSocket.draw_polyline([(plot_left, y), (plot_right, y)], color, width=1.0)
-            DrawCurveSocket.draw_label(
-                DrawCurveSocket.format_axis_value(y_value),
+            DrawSocketView.draw_polyline([(plot_left, y), (plot_right, y)], color, width=1.0)
+            DrawSocketView.draw_label(
+                DrawSocketView.format_axis_value(y_value),
                 plot_left - 5,
                 y - 4,
                 (0.72, 0.78, 0.86, 1.0),
@@ -441,36 +504,129 @@ class DrawCurveSocket:
             ]
             for channel, color, _label in channels:
                 points = [(sx(x), sy(curve.sample(x)[channel])) for x in xs]
-                DrawCurveSocket.draw_polyline(points, color, width=1.8)
-            DrawCurveSocket.draw_label("R", right - 39, top - 16, (1.0, 0.25, 0.22, 1.0), size=9)
-            DrawCurveSocket.draw_label("G", right - 26, top - 16, (0.3, 0.95, 0.42, 1.0), size=9)
-            DrawCurveSocket.draw_label("B", right - 13, top - 16, (0.32, 0.55, 1.0, 1.0), size=9)
+                DrawSocketView.draw_polyline(points, color, width=1.8)
+            DrawSocketView.draw_label("R", right - 39, top - 16, (1.0, 0.25, 0.22, 1.0), size=9)
+            DrawSocketView.draw_label("G", right - 26, top - 16, (0.3, 0.95, 0.42, 1.0), size=9)
+            DrawSocketView.draw_label("B", right - 13, top - 16, (0.32, 0.55, 1.0, 1.0), size=9)
         else:
             points = [(sx(x), sy(curve.sample(x))) for x in xs]
-            DrawCurveSocket.draw_polyline(points, (0.38, 0.86, 1.0, 1.0), width=2.0)
+            DrawSocketView.draw_polyline(points, (0.38, 0.86, 1.0, 1.0), width=2.0)
 
         preview_title = str(title or "曲线")
-        DrawCurveSocket.draw_label(preview_title, left + 8, top - 15, (0.88, 0.93, 1.0, 1.0), size=10, align="LEFT")
+        DrawSocketView.draw_label(preview_title, left + 8, top - 15, (0.88, 0.93, 1.0, 1.0), size=10, align="LEFT")
 
-    @staticmethod
-    def iter_preview_sockets(tree):
-        for node in getattr(tree, "nodes", ()):
-            for sock in DrawCurveSocket.preview_sockets_for_node(node):
-                yield node, sock
-
-    @staticmethod
     def preview_sockets_for_node(node):
         get_sockets = getattr(node, "omni_curve_preview_sockets", None)
         if callable(get_sockets):
-            return list(get_sockets(DrawCurveSocket.SOCKET_TYPES))
+            return list(get_sockets(DrawSocketView.SOCKET_TYPES))
 
-        sockets = list(getattr(node, "inputs", ())) + list(getattr(node, "outputs", ()))
-        visible = [
-            item for item in sockets
-            if getattr(item, "preview_curve", False)
-            and getattr(item, "bl_idname", "") in DrawCurveSocket.SOCKET_TYPES
+        return [
+            item for item in getattr(node, "inputs", ())
+            if getattr(item, "bl_idname", "") in DrawSocketView.SOCKET_TYPES
         ]
-        return visible
+
+    @staticmethod
+    def side_panel_blocks(node):
+        return [
+            {
+                "kind": "curve",
+                "title": sock.name,
+                "socket": sock,
+                "height": 145,
+            }
+            for sock in DrawSocketView.preview_sockets_for_node(node)
+        ]
+
+    @staticmethod
+    def draw_block(block, rect):
+        sock = block["socket"]
+        DrawSocketView.draw_preview(sock.default_value, rect, title=block["title"])
+
+
+class DrawSidePanel:
+    """统一管理节点侧栏区块排列。"""
+
+    GLOBAL_OVERLAY_ID = "omni_node_side_panel::global"
+    WIDTH = 210
+    STACK_GAP = 14
+
+    @staticmethod
+    def node_anchor(node):
+        x, y = _get_text_location(node, "", 1.0, align="RIGHT")
+        ui_scale = bpy.context.preferences.system.ui_scale
+        return float(x * ui_scale), float(y * ui_scale)
+
+    @staticmethod
+    def item_rect(node, index, item_height, item_width=None):
+        x, y = DrawSidePanel.node_anchor(node)
+        left = float(x)
+        top = float(y) - index * (item_height + DrawSidePanel.STACK_GAP)
+        width = float(item_width or DrawSidePanel.WIDTH)
+        return left, top, left + width, top - item_height
+
+    @staticmethod
+    def region_rect(node, index, block):
+        left, top, right, bottom = DrawSidePanel.item_rect(
+            node,
+            index,
+            block["height"],
+            block.get("width"),
+        )
+        return min(left, right), min(bottom, top), max(left, right), max(bottom, top)
+
+    @staticmethod
+    def iter_nodes(tree):
+        for node in getattr(tree, "nodes", ()):
+            if (
+                getattr(node, "omni_view_preview", False)
+                or bool(DrawBug.text(node))
+            ):
+                yield node
+
+    @staticmethod
+    def blocks_for_node(node):
+        blocks = []
+        for block in (DrawBug.side_panel_block(node),):
+            if block:
+                blocks.append(block)
+        if getattr(node, "omni_view_preview", False):
+            blocks.extend(DrawSocketView.side_panel_blocks(node))
+        return blocks
+
+    @staticmethod
+    def draw_text_panel(text, rect, title="说明", color=(0.62, 0.82, 1.0, 1.0)):
+        left, bottom, right, top = rect
+        DrawSocketView.draw_rect(left, bottom, right, top, (0.045, 0.052, 0.065, 0.88))
+        DrawSocketView.draw_polyline(
+            [(left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)],
+            (0.35, 0.42, 0.52, 0.95),
+            width=1.0,
+        )
+        DrawSocketView.draw_label(title, left + 8, top - 15, color, size=10, align="LEFT")
+
+        wrap_width = max(22, int((right - left - 20) / 7.0))
+        wrapped = _wrap_text(text, width=wrap_width)
+        y = top - 34
+        max_lines = max(1, int((top - bottom - 44) / 16))
+        for line in wrapped.splitlines()[:max_lines]:
+            DrawSocketView.draw_label(line, left + 10, y, (0.78, 0.86, 0.96, 1.0), size=9, align="LEFT")
+            y -= 16
+
+    @staticmethod
+    def draw_text_block(block, rect):
+        DrawSidePanel.draw_text_panel(
+            block["text"],
+            rect,
+            title=block["title"],
+            color=block["color"],
+        )
+
+    @staticmethod
+    def draw_block(block, rect):
+        if block["kind"] == "curve":
+            DrawSocketView.draw_block(block, rect)
+        elif block["kind"] == "text":
+            DrawSidePanel.draw_text_block(block, rect)
 
     @staticmethod
     def handler(*_args):
@@ -482,134 +638,67 @@ class DrawCurveSocket:
         if edit_tree is None:
             return
 
-        for node, sock in DrawCurveSocket.iter_preview_sockets(edit_tree):
-            try:
-                curve_payload = sock.default_value
-                rect = DrawCurveSocket.region_rect(node, sock)
+        for node in DrawSidePanel.iter_nodes(edit_tree):
+            blocks = DrawSidePanel.blocks_for_node(node)
+            if not blocks:
+                continue
+
+            for index, block in enumerate(blocks):
+                rect = DrawSidePanel.region_rect(node, index, block)
                 if rect is None:
                     continue
-                DrawCurveSocket.draw_preview(curve_payload, rect, title=sock.name)
-            except Exception as exc:
-                _warn_once(
-                    "curve_preview_handler",
-                    f"OmniNode 曲线预览回调失败：{exc}",
-                )
+
+                try:
+                    DrawSidePanel.draw_block(block, rect)
+                except Exception as exc:
+                    _warn_once(
+                        "side_panel_handler",
+                        f"OmniNode 侧栏绘制回调失败：{exc}",
+                    )
 
     @staticmethod
     def ensure_handler():
-        if DrawCurveSocket.GLOBAL_OVERLAY_ID in _HANDLES:
+        if DrawSidePanel.GLOBAL_OVERLAY_ID in _HANDLES:
             return
-        _PAYLOADS[DrawCurveSocket.GLOBAL_OVERLAY_ID] = {"tree_name": None}
-        _HANDLES[DrawCurveSocket.GLOBAL_OVERLAY_ID] = bpy.types.SpaceNodeEditor.draw_handler_add(
-            DrawCurveSocket.handler,
+        _PAYLOADS[DrawSidePanel.GLOBAL_OVERLAY_ID] = {"tree_name": None}
+        _HANDLES[DrawSidePanel.GLOBAL_OVERLAY_ID] = bpy.types.SpaceNodeEditor.draw_handler_add(
+            DrawSidePanel.handler,
             (),
             'WINDOW',
             'POST_VIEW',
         )
 
     @staticmethod
-    def clear(sock):
-        _tag_node_editors(sock.node.id_data.name_full)
+    def clear_node(node):
+        _tag_node_editors(node.id_data.name_full)
 
     @staticmethod
-    def is_visible(sock):
-        return bool(getattr(sock, "preview_curve", False))
+    def is_visible(node):
+        return bool(getattr(node, "omni_view_preview", False))
 
     @staticmethod
-    def draw(sock):
-        DrawCurveSocket.ensure_handler()
-        _tag_node_editors(sock.node.id_data.name_full)
+    def draw_node(node):
+        DrawSidePanel.ensure_handler()
+        _tag_node_editors(node.id_data.name_full)
 
     @staticmethod
-    def sync(sock):
-        if getattr(sock, "preview_curve", False):
-            DrawCurveSocket.draw(sock)
+    def sync_node(node):
+        if getattr(node, "omni_view_preview", False):
+            DrawSidePanel.draw_node(node)
         else:
-            DrawCurveSocket.clear(sock)
-
-
-def callback_disable(overlay_id):
-    handle = _HANDLES.pop(overlay_id, None)
-    payload = _PAYLOADS.pop(overlay_id, None)
-    if handle is not None:
-        bpy.types.SpaceNodeEditor.draw_handler_remove(handle, 'WINDOW')
-    if payload is not None:
-        _tag_node_editors(payload["tree_name"])
-
-
-def draw_text(node, text, color=(1.0, 0.35, 0.35, 1.0), scale=1.3, align="UP", kind="error"):
-    overlay_id = _overlay_id(node, kind)
-    callback_disable(overlay_id)
-    _PAYLOADS[overlay_id] = {
-        "tree_name": node.id_data.name_full,
-        "node_name": node.name,
-        "text": text,
-        "color": color,
-        "scale": scale,
-        "align": align,
-    }
-    _HANDLES[overlay_id] = bpy.types.SpaceNodeEditor.draw_handler_add(
-        _draw_text_handler,
-        (overlay_id,),
-        'WINDOW',
-        'POST_VIEW',
-    )
-    _tag_node_editors(node.id_data.name_full)
-
-
-def clear_description(node):
-    callback_disable(_overlay_id(node, "description"))
-
-
-def is_description_visible(node):
-    return _overlay_id(node, "description") in _PAYLOADS
-
-
-def description_text(node):
-    text = str(getattr(node, "omni_description", "") or "").strip()
-    if not text or text == "No description":
-        return ""
-    return text
-
-
-def draw_description(node):
-    text = description_text(node)
-    if not text:
-        clear_description(node)
-        return False
-
-    wrapped = _wrap_text(text, width=48) or text
-    draw_text(
-        node,
-        wrapped,
-        color=(0.62, 0.82, 1.0, 1.0),
-        scale=1.05,
-        align="RIGHT",
-        kind="description",
-    )
-    return True
-
-
-def sync_bug_text(node):
-    if getattr(node, "is_bug", False) and getattr(node, "bug_text", ""):
-        clear_description(node)
-        wrapped = _wrap_text(node.bug_text, width=36) or node.bug_text
-        draw_text(node, wrapped, kind="error")
-    else:
-        callback_disable(_overlay_id(node, "error"))
+            DrawSidePanel.clear_node(node)
 
 
 def clear_tree(tree):
-    prefix = f"omni_error::{tree.name_full}::"
-    for overlay_id in list(_HANDLES.keys()):
-        if overlay_id.startswith(prefix):
-            callback_disable(overlay_id)
+    DrawDescription.clear_tree(tree)
+    DrawBug.clear_tree(tree)
 
 
 def register():
-    DrawCurveSocket.ensure_handler()
+    DrawSidePanel.ensure_handler()
 
 
 def unregister():
-    for overlay_id in list(_HANDLES.keys()):
-        callback_disable(overlay_id)
+    overlay_ids = set(_HANDLES.keys()) | set(_PAYLOADS.keys())
+    for overlay_id in list(overlay_ids):
+        _clear_overlay(overlay_id)
