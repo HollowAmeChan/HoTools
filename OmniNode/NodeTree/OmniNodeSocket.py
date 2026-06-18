@@ -1,5 +1,5 @@
 import bpy
-from bpy.types import NodeSocket, NodeSocketImage
+from bpy.types import NodeSocket, NodeSocketImage, Operator
 from ...PropertyCurve import (
     OmniColorCurveData,
     OmniFloatCurveData,
@@ -149,11 +149,87 @@ def _curve_socket_preset_update(socket, context):
         area.tag_redraw()
 
 
+def _curve_socket_preset_popup_socket(operator, context):
+    _tree, _node, socket = _find_curve_socket(
+        context,
+        getattr(operator, "node_tree_name", ""),
+        getattr(operator, "node_name", ""),
+        getattr(operator, "socket_identifier", ""),
+        getattr(operator, "socket_name", ""),
+    )
+    return socket
+
+
+def _curve_socket_preset_popup_items(operator, context):
+    socket = _curve_socket_preset_popup_socket(operator, context)
+    if socket is None:
+        return [("NONE", "", "No presets", 0, 0)]
+    return _curve_socket_preset_items(socket, context)
+
+
+def _curve_socket_preset_popup_update(operator, context):
+    socket = _curve_socket_preset_popup_socket(operator, context)
+    if socket is None:
+        return
+
+    preset_id = getattr(operator, "preset_id", "")
+    if not preset_id:
+        return
+
+    if getattr(socket, "preset_id", "") == preset_id:
+        return
+
+    try:
+        socket.preset_id = preset_id
+    except Exception:
+        pass
+
+
+class OmniCurveSocketPresetPopup(Operator):
+    bl_idname = "ho.omni_curve_socket_preset_popup"
+    bl_label = "Curve Presets"
+    bl_description = "打开曲线socket预设面板"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    node_tree_name: bpy.props.StringProperty(default="")  # type: ignore
+    node_name: bpy.props.StringProperty(default="")  # type: ignore
+    socket_identifier: bpy.props.StringProperty(default="")  # type: ignore
+    socket_name: bpy.props.StringProperty(default="")  # type: ignore
+    preset_id: bpy.props.EnumProperty(  # type: ignore
+        name="Curve Preset",
+        items=_curve_socket_preset_popup_items,
+        update=_curve_socket_preset_popup_update,
+    )
+
+    def invoke(self, context, event):
+        socket = _curve_socket_preset_popup_socket(self, context)
+        if socket is None:
+            self.report({'WARNING'}, "Curve socket not found")
+            return {'CANCELLED'}
+
+        self.preset_id = getattr(socket, "preset_id", "NONE") or "NONE"
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        socket = _curve_socket_preset_popup_socket(self, context)
+        layout.label(text=getattr(socket, "name", self.socket_name) or "Curve Preset")
+        layout.template_icon_view(self, "preset_id", show_labels=False, scale=6.0)
+
+    def execute(self, context):
+        _curve_socket_preset_popup_update(self, context)
+        return {'FINISHED'}
+
+
 def _draw_curve_socket_controls(socket, layout, node, text, curve):
     row = layout.row(align=True)
     row.label(text=text or socket.name)
     row.prop(curve, "extend", text="")
-    row.template_icon_view(socket, "preset_id", show_labels=False, scale=1.0)
+    op = row.operator(OmniCurveSocketPresetPopup.bl_idname, text="", icon="PRESET")
+    op.node_tree_name = getattr(node.id_data, "name_full", "")
+    op.node_name = getattr(node, "name", "")
+    op.socket_identifier = getattr(socket, "identifier", "")
+    op.socket_name = getattr(socket, "name", "")
 
 
 class OmniNodeSocketFloatCurve(NodeSocket):
@@ -707,7 +783,7 @@ socket_cls = [
     OmniNodeSocketShapeKey,
 ]
 
-operator_cls = []
+operator_cls = [OmniCurveSocketPresetPopup]
 
 # 保留旧入口，图节点 IO 类型枚举和外部脚本还会读取 OmniNodeSocket.cls。
 cls = socket_cls

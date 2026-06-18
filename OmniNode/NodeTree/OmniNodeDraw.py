@@ -457,18 +457,12 @@ class DrawSidePanel:
     @staticmethod
     def iter_nodes(tree):
         for node in getattr(tree, "nodes", ()):
-            if (
-                getattr(node, "omni_view_preview", False)
-                or bool(DrawBug.text(node))
-            ):
+            if getattr(node, "omni_view_preview", False):
                 yield node
 
     @staticmethod
     def blocks_for_node(node):
         blocks = []
-        for block in (DrawBug.side_panel_block(node),):
-            if block:
-                blocks.append(block)
         if getattr(node, "omni_view_preview", False):
             blocks.extend(DrawSocketView.side_panel_blocks(node))
         return blocks
