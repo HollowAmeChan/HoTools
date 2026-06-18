@@ -1,4 +1,4 @@
-"""MeshCloth Python 求解调度。
+﻿"""MeshCloth Python 求解调度。
 
 本模块只处理单帧内的 predict / constraint / collision / motion / post 顺序。
 节点入口负责 Blender cache、跳帧、reset、碰撞快照收集和 shape key 写回。
@@ -20,6 +20,21 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
 
 
+def _zero_values_like(values: np.ndarray) -> np.ndarray:
+    return np.zeros(len(values), dtype=np.float32)
+
+
+def _component_slot(enabled: bool) -> dict:
+    return params.scalar_param(1.0 if enabled else 0.0)
+
+
+# 运行顺序说明：
+# 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
+# 2. 每个 substep 内固定顺序为：
+#    baseline -> predict -> pin/tether -> 初始碰撞 -> iteration 循环 -> motion -> post。
+# 3. iteration 循环内固定顺序为：
+#    distance -> angle -> bend -> collision -> distance_after_collision -> pin。
+# 4. 最后统一打包 next_state / param_slots / native 扩展数据。
 def solve_meshcloth(
     state: dict,
     obj: bpy.types.Object,
@@ -29,12 +44,18 @@ def solve_meshcloth(
     gravity_dir,
     gravity_power: float,
     damping: float,
+    use_tether: bool,
+    tether_compression: float,
+    use_distance: bool,
     distance_stiffness: float,
     distance_stiffness_curve,
+    use_bend: bool,
     bend_stiffness: float,
     bend_stiffness_curve,
+    use_angle_restoration: bool,
     angle_restoration_stiffness: float,
     angle_restoration_stiffness_curve,
+    use_angle_limit: bool,
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
@@ -51,11 +72,15 @@ def solve_meshcloth(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
+    use_backstop: bool,
     backstop_radius: float,
     backstop_distance: float,
     backstop_distance_curve,
+    motion_stiffness: float,
+    use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
     timing: dict | None = None,
@@ -92,46 +117,69 @@ def solve_meshcloth(
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     substep_damping = blender_io.substep_damping(damping, substep_count)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
-
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
-    distance_stiffness_param = params.curve_value_param(
-        distance_stiffness,
-        distance_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    distance_stiffness_param = (
+        params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
+        if use_distance
+        else params.scalar_param(0.0)
     )
-    bend_stiffness_param = params.curve_value_param(
-        bend_stiffness,
-        bend_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    bend_stiffness_param = (
+        params.curve_value_param(bend_stiffness, bend_stiffness_curve, minimum=0.0, maximum=1.0)
+        if use_bend
+        else params.scalar_param(0.0)
     )
-    angle_restoration_param = params.curve_value_param(
-        angle_restoration_stiffness,
-        angle_restoration_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    angle_restoration_param = (
+        params.curve_value_param(
+            angle_restoration_stiffness,
+            angle_restoration_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
     )
-    angle_limit_param = params.curve_value_param(
-        angle_limit,
-        angle_limit_curve,
-        minimum=0.0,
-        maximum=180.0,
+    angle_limit_param = (
+        params.curve_value_param(angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
+        if use_angle_limit
+        else params.scalar_param(0.0)
     )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
-    max_distance_param = params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
-    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0)
-    backstop_distance_param = params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+    max_distance_param = (
+        params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+        if use_max_distance
+        else params.scalar_param(0.0)
+    )
+    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0) if use_backstop else params.scalar_param(0.0)
+    backstop_distance_param = (
+        params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+        if use_backstop
+        else params.scalar_param(0.0)
+    )
     if timing is not None:
         _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
-
     curve_stage_start = time.perf_counter() if timing is not None else None
-    distance_stiffness_values = np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
-    bend_stiffness_values = np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
-    angle_restoration_values = np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
-    angle_limit_values = np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0)
+    distance_stiffness_values = (
+        np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
+        if use_distance
+        else _zero_values_like(stiffness_depths)
+    )
+    bend_stiffness_values = (
+        np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
+        if use_bend
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_restoration_values = (
+        np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_limit_values = (
+        np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0)
+        if use_angle_limit
+        else _zero_values_like(stiffness_depths)
+    )
     if timing is not None:
         _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
 
@@ -151,9 +199,14 @@ def solve_meshcloth(
     local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
     particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
 
-    tether_compression_param = params.scalar_param(MC2SystemConstants.TETHER_COMPRESSION_LIMIT)
-    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT)
-    motion_stiffness_param = params.scalar_param(1.0)
+    tether_compression_param = params.scalar_param(
+        max(0.0, float(tether_compression)) if use_tether else 0.0
+    )
+    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT if use_tether else 0.0)
+    motion_enabled = bool(use_max_distance or use_backstop)
+    motion_stiffness_param = params.scalar_param(
+        max(0.0, min(1.0, float(motion_stiffness))) if motion_enabled else 0.0
+    )
     collider_friction_param = params.scalar_param(max(0.0, min(0.5, float(collider_friction))))
     dynamic_friction = (
         float(collider_friction_param["value"])
@@ -164,7 +217,7 @@ def solve_meshcloth(
         * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
         * max(float(world_scale), 0.0)
     )
-    collision_mode = max(0, min(2, int(collider_collision_mode)))
+    collision_mode = max(0, min(2, int(collider_collision_mode))) if use_collider_collision else 0
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -210,6 +263,7 @@ def solve_meshcloth(
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
     for _substep in range(substep_count):
+        # 每个 substep 的第一段：更新基础骨架，再做惯性与重力预测。
         inertia_step = inertia.prepare_substep(
             inertia_state,
             _substep,
@@ -285,30 +339,34 @@ def solve_meshcloth(
                 _add_timing(timing, "pin", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        if not native_bridge.project_tether(
-            positions,
-            inv_masses,
-            state["root_indices"],
-            state["tether_rest_lengths"],
-            velocity_positions,
-            1.0,
-            float(tether_compression_param["value"]),
-            float(tether_stretch_param["value"]),
-        ):
-            constraints.project_tether(
+        if use_tether:
+            # Tether 只在开启时执行一次；关闭时完全跳过，不参与后续迭代。
+            stage_start = time.perf_counter() if timing is not None else None
+            if not native_bridge.project_tether(
                 positions,
                 inv_masses,
                 state["root_indices"],
                 state["tether_rest_lengths"],
+                velocity_positions,
                 1.0,
                 float(tether_compression_param["value"]),
                 float(tether_stretch_param["value"]),
-                velocity_positions,
-            )
-        if timing is not None:
-            _add_timing(timing, "tether", time.perf_counter() - stage_start)
+            ):
+                constraints.project_tether(
+                    positions,
+                    inv_masses,
+                    state["root_indices"],
+                    state["tether_rest_lengths"],
+                    1.0,
+                    float(tether_compression_param["value"]),
+                    float(tether_stretch_param["value"]),
+                    velocity_positions,
+                )
+            if timing is not None:
+                _add_timing(timing, "tether", time.perf_counter() - stage_start)
 
         if has_collision and iteration_count == 0:
+            # 首轮先做一次碰撞预投影，减少迭代开始时的穿插量。
             stage_start = time.perf_counter() if timing is not None else None
             if collision_mode == 2:
                 if not native_bridge.project_edge_collisions(
@@ -360,19 +418,10 @@ def solve_meshcloth(
             inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
 
         for _iteration in range(iteration_count):
-            stage_start = time.perf_counter() if timing is not None else None
-            if not native_bridge.project_neighbor_constraints(
-                positions,
-                inv_masses,
-                state["distance_start"],
-                state["distance_count"],
-                state["distance_data"],
-                state["distance_rest"],
-                distance_stiffness_values,
-                velocity_positions,
-                MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-            ):
-                constraints.project_neighbor_constraints(
+            if use_distance:
+                # distance 是迭代中的第一道约束，碰撞后还会再补一次。
+                stage_start = time.perf_counter() if timing is not None else None
+                if not native_bridge.project_neighbor_constraints(
                     positions,
                     inv_masses,
                     state["distance_start"],
@@ -382,62 +431,67 @@ def solve_meshcloth(
                     distance_stiffness_values,
                     velocity_positions,
                     MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                )
-            if timing is not None:
-                _add_timing(timing, "distance", time.perf_counter() - stage_start)
+                ):
+                    constraints.project_neighbor_constraints(
+                        positions,
+                        inv_masses,
+                        state["distance_start"],
+                        state["distance_count"],
+                        state["distance_data"],
+                        state["distance_rest"],
+                        distance_stiffness_values,
+                        velocity_positions,
+                        MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                    )
+                if timing is not None:
+                    _add_timing(timing, "distance", time.perf_counter() - stage_start)
 
-            stage_start = time.perf_counter() if timing is not None else None
-            if not native_bridge.project_angle_constraints(
-                positions,
-                inv_masses,
-                state["parent_indices"],
-                state["baseline_start"],
-                state["baseline_count"],
-                state["baseline_data"],
-                step_basic_positions,
-                step_basic_rotations,
-                angle_restoration_values,
-                angle_limit_values,
-                velocity_positions,
-                MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
-                MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
-                angle_limit_stiffness_value,
-            ):
-                constraints.project_angle_constraints(
+            if use_angle_restoration or use_angle_limit:
+                # angle 复用同一批 baseline / step_basic 数据，恢复与限制共用一轮求解。
+                stage_start = time.perf_counter() if timing is not None else None
+                if not native_bridge.project_angle_constraints(
                     positions,
                     inv_masses,
-                    depths,
                     state["parent_indices"],
                     state["baseline_start"],
                     state["baseline_count"],
                     state["baseline_data"],
                     step_basic_positions,
                     step_basic_rotations,
-                    state["vertex_local_positions"],
-                    state["vertex_local_rotations"],
                     angle_restoration_values,
+                    angle_limit_values,
                     velocity_positions,
                     MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
                     MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
-                    angle_limit_values,
                     angle_limit_stiffness_value,
-                )
-            if timing is not None:
-                _add_timing(timing, "angle", time.perf_counter() - stage_start)
-
-            stage_start = time.perf_counter() if timing is not None else None
-            if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
-                if not native_bridge.project_triangle_bending(
-                    positions,
-                    inv_masses,
-                    state["dihedral_pairs"],
-                    state["dihedral_rest_angles"],
-                    state["dihedral_signs"],
-                    state["volume_pairs"],
-                    state["volume_rest"],
-                    bend_stiffness_values,
                 ):
-                    constraints.project_triangle_bending(
+                    constraints.project_angle_constraints(
+                        positions,
+                        inv_masses,
+                        depths,
+                        state["parent_indices"],
+                        state["baseline_start"],
+                        state["baseline_count"],
+                        state["baseline_data"],
+                        step_basic_positions,
+                        step_basic_rotations,
+                        state["vertex_local_positions"],
+                        state["vertex_local_rotations"],
+                        angle_restoration_values,
+                        velocity_positions,
+                        MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+                        MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                        angle_limit_values,
+                        angle_limit_stiffness_value,
+                    )
+                if timing is not None:
+                    _add_timing(timing, "angle", time.perf_counter() - stage_start)
+
+            if use_bend:
+                # bend 在 angle 之后执行，优先走面内/二面角，再回退到邻接近似。
+                stage_start = time.perf_counter() if timing is not None else None
+                if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
+                    if not native_bridge.project_triangle_bending(
                         positions,
                         inv_masses,
                         state["dihedral_pairs"],
@@ -446,20 +500,19 @@ def solve_meshcloth(
                         state["volume_pairs"],
                         state["volume_rest"],
                         bend_stiffness_values,
-                    )
-            else:
-                if not native_bridge.project_neighbor_constraints(
-                    positions,
-                    inv_masses,
-                    state["bend_distance_start"],
-                    state["bend_distance_count"],
-                    state["bend_distance_data"],
-                    state["bend_distance_neighbor_rest"],
-                    bend_stiffness_values,
-                    velocity_positions,
-                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                ):
-                    constraints.project_neighbor_constraints(
+                    ):
+                        constraints.project_triangle_bending(
+                            positions,
+                            inv_masses,
+                            state["dihedral_pairs"],
+                            state["dihedral_rest_angles"],
+                            state["dihedral_signs"],
+                            state["volume_pairs"],
+                            state["volume_rest"],
+                            bend_stiffness_values,
+                        )
+                else:
+                    if not native_bridge.project_neighbor_constraints(
                         positions,
                         inv_masses,
                         state["bend_distance_start"],
@@ -469,11 +522,23 @@ def solve_meshcloth(
                         bend_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                    )
-            if timing is not None:
-                _add_timing(timing, "bend", time.perf_counter() - stage_start)
+                    ):
+                        constraints.project_neighbor_constraints(
+                            positions,
+                            inv_masses,
+                            state["bend_distance_start"],
+                            state["bend_distance_count"],
+                            state["bend_distance_data"],
+                            state["bend_distance_neighbor_rest"],
+                            bend_stiffness_values,
+                            velocity_positions,
+                            MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                        )
+                if timing is not None:
+                    _add_timing(timing, "bend", time.perf_counter() - stage_start)
 
             if has_collision:
+                # collision 插在迭代中部，保证后续约束能继续修正碰撞后的结果。
                 stage_start = time.perf_counter() if timing is not None else None
                 if collision_mode == 2:
                     if not native_bridge.project_edge_collisions(
@@ -524,19 +589,10 @@ def solve_meshcloth(
                     _add_timing(timing, "collision", time.perf_counter() - stage_start)
                 inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
 
-            stage_start = time.perf_counter() if timing is not None else None
-            if not native_bridge.project_neighbor_constraints(
-                positions,
-                inv_masses,
-                state["distance_start"],
-                state["distance_count"],
-                state["distance_data"],
-                state["distance_rest"],
-                distance_stiffness_values,
-                velocity_positions,
-                MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-            ):
-                constraints.project_neighbor_constraints(
+            if use_distance:
+                # collision 之后再补一次 distance，减少碰撞修正后拉断的问题。
+                stage_start = time.perf_counter() if timing is not None else None
+                if not native_bridge.project_neighbor_constraints(
                     positions,
                     inv_masses,
                     state["distance_start"],
@@ -546,9 +602,20 @@ def solve_meshcloth(
                     distance_stiffness_values,
                     velocity_positions,
                     MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                )
-            if timing is not None:
-                _add_timing(timing, "distance_after_collision", time.perf_counter() - stage_start)
+                ):
+                    constraints.project_neighbor_constraints(
+                        positions,
+                        inv_masses,
+                        state["distance_start"],
+                        state["distance_count"],
+                        state["distance_data"],
+                        state["distance_rest"],
+                        distance_stiffness_values,
+                        velocity_positions,
+                        MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                    )
+                if timing is not None:
+                    _add_timing(timing, "distance_after_collision", time.perf_counter() - stage_start)
 
             if bool(np.any(fixed)):
                 stage_start = time.perf_counter() if timing is not None else None
@@ -557,21 +624,11 @@ def solve_meshcloth(
                 if timing is not None:
                     _add_timing(timing, "pin", time.perf_counter() - stage_start)
 
+        # motion 只在 substep 结束后统一执行一次，属于收尾约束。
         stage_start = time.perf_counter() if timing is not None else None
-        if not native_bridge.project_motion_constraint(
-            positions,
-            base_positions,
-            base_normals,
-            inv_masses,
-            depths,
-            max_distance_param,
-            motion_stiffness_param,
-            backstop_radius_param,
-            backstop_distance_param,
-            world_scale,
-            velocity_positions,
-        ):
-            constraints.project_motion_constraint(
+        if motion_enabled:
+            stage_start = time.perf_counter() if timing is not None else None
+            if not native_bridge.project_motion_constraint(
                 positions,
                 base_positions,
                 base_normals,
@@ -583,9 +640,22 @@ def solve_meshcloth(
                 backstop_distance_param,
                 world_scale,
                 velocity_positions,
-            )
-        if timing is not None:
-            _add_timing(timing, "motion", time.perf_counter() - stage_start)
+            ):
+                constraints.project_motion_constraint(
+                    positions,
+                    base_positions,
+                    base_normals,
+                    inv_masses,
+                    depths,
+                    max_distance_param,
+                    motion_stiffness_param,
+                    backstop_radius_param,
+                    backstop_distance_param,
+                    world_scale,
+                    velocity_positions,
+                )
+            if timing is not None:
+                _add_timing(timing, "motion", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
         particle_speed_limit = (
@@ -650,6 +720,7 @@ def solve_meshcloth(
         if timing is not None:
             _add_timing(timing, "post", time.perf_counter() - stage_start)
 
+    # 最后一段只负责把运行结果打包回 state，不再做新的求解。
     stage_start = time.perf_counter() if timing is not None else None
     next_state = dict(state)
     next_state["frame_delta_time"] = float(frame_dt)
@@ -708,6 +779,14 @@ def solve_meshcloth(
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param
     next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
+    next_state["param_slots"]["use_tether"] = _component_slot(use_tether)
+    next_state["param_slots"]["use_distance"] = _component_slot(use_distance)
+    next_state["param_slots"]["use_bend"] = _component_slot(use_bend)
+    next_state["param_slots"]["use_angle_restoration"] = _component_slot(use_angle_restoration)
+    next_state["param_slots"]["use_angle_limit"] = _component_slot(use_angle_limit)
+    next_state["param_slots"]["use_max_distance"] = _component_slot(use_max_distance)
+    next_state["param_slots"]["use_backstop"] = _component_slot(use_backstop)
+    next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
 
     extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = dict(extension_slots.get("native") or {})
@@ -729,12 +808,18 @@ def solve_meshcloth_native_core(
     gravity_dir,
     gravity_power: float,
     damping: float,
+    use_tether: bool,
+    tether_compression: float,
+    use_distance: bool,
     distance_stiffness: float,
     distance_stiffness_curve,
+    use_bend: bool,
     bend_stiffness: float,
     bend_stiffness_curve,
+    use_angle_restoration: bool,
     angle_restoration_stiffness: float,
     angle_restoration_stiffness_curve,
+    use_angle_limit: bool,
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
@@ -751,16 +836,22 @@ def solve_meshcloth_native_core(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
+    use_backstop: bool,
     backstop_radius: float,
     backstop_distance: float,
     backstop_distance_curve,
+    motion_stiffness: float,
+    use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
     timing: dict | None = None,
     colliders: list[dict] | None = None,
 ) -> dict:
+    # native_core 路径尽量保持和 Python 求解同一套顺序：
+    # 输入整理 -> 曲线采样 -> substep inertia -> motion 采样 -> C++ 核心求解 -> 状态回填。
     stage_start = time.perf_counter() if timing is not None else None
     if not native_bridge.has_function("solve_meshcloth_mc2"):
         status = native_bridge.native_status("solve_meshcloth_mc2")
@@ -794,57 +885,74 @@ def solve_meshcloth_native_core(
     substep_damping = blender_io.substep_damping(damping, substep_count)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
-
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
-    distance_stiffness_param = params.curve_value_param(
-        distance_stiffness,
-        distance_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    distance_stiffness_param = (
+        params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
+        if use_distance
+        else params.scalar_param(0.0)
     )
-    bend_stiffness_param = params.curve_value_param(
-        bend_stiffness,
-        bend_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    bend_stiffness_param = (
+        params.curve_value_param(bend_stiffness, bend_stiffness_curve, minimum=0.0, maximum=1.0)
+        if use_bend
+        else params.scalar_param(0.0)
     )
-    angle_restoration_param = params.curve_value_param(
-        angle_restoration_stiffness,
-        angle_restoration_stiffness_curve,
-        minimum=0.0,
-        maximum=1.0,
+    angle_restoration_param = (
+        params.curve_value_param(
+            angle_restoration_stiffness,
+            angle_restoration_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
     )
-    angle_limit_param = params.curve_value_param(
-        angle_limit,
-        angle_limit_curve,
-        minimum=0.0,
-        maximum=180.0,
+    angle_limit_param = (
+        params.curve_value_param(angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
+        if use_angle_limit
+        else params.scalar_param(0.0)
     )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
-    max_distance_param = params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
-    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0)
-    backstop_distance_param = params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+    max_distance_param = (
+        params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+        if use_max_distance
+        else params.scalar_param(0.0)
+    )
+    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0) if use_backstop else params.scalar_param(0.0)
+    backstop_distance_param = (
+        params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+        if use_backstop
+        else params.scalar_param(0.0)
+    )
     if timing is not None:
         _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
-
     curve_stage_start = time.perf_counter() if timing is not None else None
-    distance_stiffness_values = np.ascontiguousarray(
-        np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0),
-        dtype=np.float32,
+    distance_stiffness_values = (
+        np.ascontiguousarray(np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0), dtype=np.float32)
+        if use_distance
+        else _zero_values_like(stiffness_depths)
     )
-    bend_stiffness_values = np.ascontiguousarray(
-        np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0),
-        dtype=np.float32,
+    bend_stiffness_values = (
+        np.ascontiguousarray(np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0), dtype=np.float32)
+        if use_bend
+        else _zero_values_like(stiffness_depths)
     )
-    angle_restoration_values = np.ascontiguousarray(
-        np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0),
-        dtype=np.float32,
+    angle_restoration_values = (
+        np.ascontiguousarray(
+            np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0),
+            dtype=np.float32,
+        )
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
     )
-    angle_limit_values = np.ascontiguousarray(
-        np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0),
-        dtype=np.float32,
+    angle_limit_values = (
+        np.ascontiguousarray(
+            np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0),
+            dtype=np.float32,
+        )
+        if use_angle_limit
+        else _zero_values_like(stiffness_depths)
     )
     if timing is not None:
         _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
@@ -865,9 +973,14 @@ def solve_meshcloth_native_core(
     local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
     particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
 
-    tether_compression_param = params.scalar_param(MC2SystemConstants.TETHER_COMPRESSION_LIMIT)
-    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT)
-    motion_stiffness_param = params.scalar_param(1.0)
+    tether_compression_param = params.scalar_param(max(0.0, float(tether_compression)) if use_tether else 0.0)
+    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT if use_tether else 0.0)
+    tether_compression_effective = float(tether_compression_param["value"]) if use_tether else 1.0
+    tether_stretch_effective = float(tether_stretch_param["value"]) if use_tether else 1.0e9
+    motion_enabled = bool(use_max_distance or use_backstop)
+    motion_stiffness_param = params.scalar_param(
+        max(0.0, min(1.0, float(motion_stiffness))) if motion_enabled else 0.0
+    )
     collider_friction_param = params.scalar_param(max(0.0, min(0.5, float(collider_friction))))
     dynamic_friction = (
         float(collider_friction_param["value"])
@@ -878,7 +991,7 @@ def solve_meshcloth_native_core(
         * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
         * world_scale_nonnegative
     )
-    collision_mode = max(0, min(2, int(collider_collision_mode)))
+    collision_mode = max(0, min(2, int(collider_collision_mode))) if use_collider_collision else 0
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -956,25 +1069,30 @@ def solve_meshcloth_native_core(
         key: np.ascontiguousarray(value, dtype=np.float32)
         for key, value in substep_inertia_lists.items()
     }
-
     curve_stage_start = time.perf_counter() if timing is not None else None
     motion_depths = np.clip(depths * depths, 0.0, 1.0)
-    max_distances = np.ascontiguousarray(
-        params.sample_param(max_distance_param, motion_depths) * world_scale_nonnegative,
-        dtype=np.float32,
-    )
-    motion_stiffness_values = np.ascontiguousarray(
-        np.clip(params.sample_param(motion_stiffness_param, motion_depths), 0.0, 1.0),
-        dtype=np.float32,
-    )
-    backstop_radii = np.ascontiguousarray(
-        params.sample_param(backstop_radius_param, motion_depths) * world_scale_nonnegative,
-        dtype=np.float32,
-    )
-    backstop_distances = np.ascontiguousarray(
-        params.sample_param(backstop_distance_param, motion_depths) * world_scale_nonnegative,
-        dtype=np.float32,
-    )
+    if motion_enabled:
+        max_distances = np.ascontiguousarray(
+            params.sample_param(max_distance_param, motion_depths) * world_scale_nonnegative,
+            dtype=np.float32,
+        )
+        motion_stiffness_values = np.ascontiguousarray(
+            np.clip(params.sample_param(motion_stiffness_param, motion_depths), 0.0, 1.0),
+            dtype=np.float32,
+        )
+        backstop_radii = np.ascontiguousarray(
+            params.sample_param(backstop_radius_param, motion_depths) * world_scale_nonnegative,
+            dtype=np.float32,
+        )
+        backstop_distances = np.ascontiguousarray(
+            params.sample_param(backstop_distance_param, motion_depths) * world_scale_nonnegative,
+            dtype=np.float32,
+        )
+    else:
+        max_distances = _zero_values_like(motion_depths)
+        motion_stiffness_values = _zero_values_like(motion_depths)
+        backstop_radii = _zero_values_like(motion_depths)
+        backstop_distances = _zero_values_like(motion_depths)
     if timing is not None:
         _add_timing(timing, "motion_curves", time.perf_counter() - curve_stage_start)
     particle_speed_limit_scaled = (
@@ -1001,6 +1119,7 @@ def solve_meshcloth_native_core(
     if timing is not None:
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
+    # C++ 核心前先构建与 Python 路径同构的运行时数组。
     stage_start = time.perf_counter() if timing is not None else None
     solved = native_bridge.solve_meshcloth_core(
         arrays,
@@ -1022,8 +1141,8 @@ def solve_meshcloth_native_core(
         substep_damping=substep_damping,
         depth_inertia=float(depth_inertia_param["value"]),
         centrifugal=float(centrifugal_param["value"]),
-        tether_compression=float(tether_compression_param["value"]),
-        tether_stretch=float(tether_stretch_param["value"]),
+        tether_compression=tether_compression_effective,
+        tether_stretch=tether_stretch_effective,
         dynamic_friction=dynamic_friction,
         static_friction_speed=static_friction_speed,
         particle_speed_limit=particle_speed_limit_scaled,
@@ -1083,6 +1202,14 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param
     next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
+    next_state["param_slots"]["use_tether"] = _component_slot(use_tether)
+    next_state["param_slots"]["use_distance"] = _component_slot(use_distance)
+    next_state["param_slots"]["use_bend"] = _component_slot(use_bend)
+    next_state["param_slots"]["use_angle_restoration"] = _component_slot(use_angle_restoration)
+    next_state["param_slots"]["use_angle_limit"] = _component_slot(use_angle_limit)
+    next_state["param_slots"]["use_max_distance"] = _component_slot(use_max_distance)
+    next_state["param_slots"]["use_backstop"] = _component_slot(use_backstop)
+    next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
 
     extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = dict(extension_slots.get("native") or {})

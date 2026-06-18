@@ -179,12 +179,18 @@ def _run_mesh_cloth_mc2_node(
     gravity_dir,
     gravity_power: float,
     damping: float,
+    use_tether: bool,
+    tether_compression: float,
+    use_distance: bool,
     distance_stiffness: float,
     distance_stiffness_curve,
+    use_bend: bool,
     bend_stiffness: float,
     bend_stiffness_curve,
+    use_angle_restoration: bool,
     angle_restoration_stiffness: float,
     angle_restoration_stiffness_curve,
+    use_angle_limit: bool,
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
@@ -201,12 +207,16 @@ def _run_mesh_cloth_mc2_node(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
     collision_radius: float,
+    use_backstop: bool,
     backstop_radius: float,
     backstop_distance: float,
     backstop_distance_curve,
+    motion_stiffness: float,
+    use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
     debug_output: bool,
@@ -288,32 +298,34 @@ def _run_mesh_cloth_mc2_node(
 
     dihedral_constraint_count = len(state.get("dihedral_pairs", ()))
     volume_constraint_count = len(state.get("volume_pairs", ()))
-    bend_constraint_count = (
-        dihedral_constraint_count + volume_constraint_count
-        if dihedral_constraint_count > 0 or volume_constraint_count > 0
-        else len(state["bend_distance_i"])
-    )
+    if use_bend:
+        bend_constraint_count = (
+            dihedral_constraint_count + volume_constraint_count
+            if dihedral_constraint_count > 0 or volume_constraint_count > 0
+            else len(state["bend_distance_i"])
+        )
+    else:
+        bend_constraint_count = 0
     angle_constraint_count = 0
-    if (
-        params.param_has_positive(
-            params.curve_value_param(
-                angle_restoration_stiffness,
-                angle_restoration_stiffness_curve,
-                minimum=0.0,
-                maximum=1.0,
-            )
+    angle_restoration_enabled = use_angle_restoration and params.param_has_positive(
+        params.curve_value_param(
+            angle_restoration_stiffness,
+            angle_restoration_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
         )
-        or params.param_has_positive(
-            params.curve_value_param(
-                angle_limit,
-                angle_limit_curve,
-                minimum=0.0,
-                maximum=180.0,
-            )
+    )
+    angle_limit_enabled = use_angle_limit and params.param_has_positive(
+        params.curve_value_param(
+            angle_limit,
+            angle_limit_curve,
+            minimum=0.0,
+            maximum=180.0,
         )
-    ):
+    )
+    if angle_restoration_enabled or angle_limit_enabled:
         angle_constraint_count = max(0, len(state.get("baseline_data", ())) - len(state.get("baseline_start", ())))
-    constraint_count = len(state["edge_i"]) + bend_constraint_count + angle_constraint_count
+    constraint_count = (len(state["edge_i"]) if use_distance else 0) + bend_constraint_count + angle_constraint_count
 
     if not enabled:
         next_state = dict(state)
@@ -322,8 +334,11 @@ def _run_mesh_cloth_mc2_node(
         return _OmniCache(next_state), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
-    collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
-    colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+    if use_collider_collision and int(collider_collision_mode) != 0:
+        collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
+        colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+    else:
+        colliders = []
     if timing is not None:
         _add_timing(timing, "colliders", time.perf_counter() - stage_start)
 
@@ -338,12 +353,18 @@ def _run_mesh_cloth_mc2_node(
         gravity_dir,
         gravity_power,
         damping,
+        use_tether,
+        tether_compression,
+        use_distance,
         distance_stiffness,
         distance_stiffness_curve,
+        use_bend,
         bend_stiffness,
         bend_stiffness_curve,
+        use_angle_restoration,
         angle_restoration_stiffness,
         angle_restoration_stiffness_curve,
+        use_angle_limit,
         angle_limit,
         angle_limit_curve,
         angle_limit_stiffness,
@@ -360,11 +381,15 @@ def _run_mesh_cloth_mc2_node(
         teleport_mode,
         teleport_distance,
         teleport_rotation,
+        use_max_distance,
         max_distance,
         max_distance_curve,
+        use_backstop,
         backstop_radius,
         backstop_distance,
         backstop_distance_curve,
+        motion_stiffness,
+        use_collider_collision,
         collider_friction,
         collider_collision_mode,
         timing,
@@ -398,12 +423,18 @@ def _run_mesh_cloth_mc2_node(
         "重力方向",
         "重力强度",
         "阻尼",
+        "Tether启用",
+        "Tether压缩",
+        "距离启用",
         "距离刚度",
         "距离刚度曲线",
+        "弯曲启用",
         "弯曲刚度",
         "弯曲刚度曲线",
+        "角度恢复启用",
         "角度恢复",
         "角度恢复曲线",
+        "角度限制启用",
         "角度限制",
         "角度限制曲线",
         "角度限制刚度",
@@ -420,12 +451,16 @@ def _run_mesh_cloth_mc2_node(
         "Teleport模式",
         "Teleport距离",
         "Teleport旋转",
+        "最大距离启用",
         "最大距离",
         "最大距离曲线",
         "碰撞半径",
+        "Backstop启用",
         "Backstop半径",
         "Backstop距离",
         "Backstop距离曲线",
+        "Motion刚度",
+        "碰撞启用",
         "碰撞摩擦",
         "碰撞模式",
         "调试输出",
@@ -435,6 +470,7 @@ def _run_mesh_cloth_mc2_node(
         "iterations": {"min_value": 0, "max_value": 64},
         "gravity_power": {"min_value": 0.0, "max_value": 100.0},
         "damping": {"min_value": 0.0, "max_value": 1.0},
+        "tether_compression": {"min_value": 0.0, "max_value": 1.0},
         "distance_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "distance_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "bend_stiffness": {"min_value": 0.0, "max_value": 1.0},
@@ -462,6 +498,7 @@ def _run_mesh_cloth_mc2_node(
         "backstop_radius": {"min_value": 0.0, "max_value": 10.0},
         "backstop_distance": {"min_value": 0.0},
         "backstop_distance_curve": {"default_value": _mc2_curve_multiplier(1.0)},
+        "motion_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "collision_radius": {"min_value": 0.0},
         "collider_friction": {"min_value": 0.0, "max_value": 0.5},
         "collider_collision_mode": {
@@ -489,12 +526,18 @@ def meshClothMC2(
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity_power: float = 9.8,
     damping: float = 0.04,
+    use_tether: bool = True,
+    tether_compression: float = MC2SystemConstants.TETHER_COMPRESSION_LIMIT,
+    use_distance: bool = True,
     distance_stiffness: float = 1.0,
     distance_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_bend: bool = True,
     bend_stiffness: float = 0.5,
     bend_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_angle_restoration: bool = True,
     angle_restoration_stiffness: float = 0.2,
     angle_restoration_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_angle_limit: bool = False,
     angle_limit: float = 0.0,
     angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit_stiffness: float = 1.0,
@@ -511,12 +554,16 @@ def meshClothMC2(
     teleport_mode: int = 0,
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
+    use_max_distance: bool = False,
     max_distance: float = 0.0,
     max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collision_radius: float = 0.0,
+    use_backstop: bool = False,
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
     backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    motion_stiffness: float = 1.0,
+    use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
     debug_output: bool = False,
@@ -532,12 +579,18 @@ def meshClothMC2(
         gravity_dir,
         gravity_power,
         damping,
+        use_tether,
+        tether_compression,
+        use_distance,
         distance_stiffness,
         distance_stiffness_curve,
+        use_bend,
         bend_stiffness,
         bend_stiffness_curve,
+        use_angle_restoration,
         angle_restoration_stiffness,
         angle_restoration_stiffness_curve,
+        use_angle_limit,
         angle_limit,
         angle_limit_curve,
         angle_limit_stiffness,
@@ -554,12 +607,16 @@ def meshClothMC2(
         teleport_mode,
         teleport_distance,
         teleport_rotation,
+        use_max_distance,
         max_distance,
         max_distance_curve,
         collision_radius,
+        use_backstop,
         backstop_radius,
         backstop_distance,
         backstop_distance_curve,
+        motion_stiffness,
+        use_collider_collision,
         collider_friction,
         collider_collision_mode,
         debug_output,
@@ -587,12 +644,18 @@ def meshClothMC2Cpp(
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity_power: float = 9.8,
     damping: float = 0.04,
+    use_tether: bool = True,
+    tether_compression: float = MC2SystemConstants.TETHER_COMPRESSION_LIMIT,
+    use_distance: bool = True,
     distance_stiffness: float = 1.0,
     distance_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_bend: bool = True,
     bend_stiffness: float = 0.5,
     bend_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_angle_restoration: bool = True,
     angle_restoration_stiffness: float = 0.2,
     angle_restoration_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_angle_limit: bool = False,
     angle_limit: float = 0.0,
     angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit_stiffness: float = 1.0,
@@ -609,12 +672,16 @@ def meshClothMC2Cpp(
     teleport_mode: int = 0,
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
+    use_max_distance: bool = False,
     max_distance: float = 0.0,
     max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     collision_radius: float = 0.0,
+    use_backstop: bool = False,
     backstop_radius: float = 0.0,
     backstop_distance: float = 0.0,
     backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    motion_stiffness: float = 1.0,
+    use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
     debug_output: bool = False,
@@ -630,12 +697,18 @@ def meshClothMC2Cpp(
         gravity_dir,
         gravity_power,
         damping,
+        use_tether,
+        tether_compression,
+        use_distance,
         distance_stiffness,
         distance_stiffness_curve,
+        use_bend,
         bend_stiffness,
         bend_stiffness_curve,
+        use_angle_restoration,
         angle_restoration_stiffness,
         angle_restoration_stiffness_curve,
+        use_angle_limit,
         angle_limit,
         angle_limit_curve,
         angle_limit_stiffness,
@@ -652,12 +725,16 @@ def meshClothMC2Cpp(
         teleport_mode,
         teleport_distance,
         teleport_rotation,
+        use_max_distance,
         max_distance,
         max_distance_curve,
         collision_radius,
+        use_backstop,
         backstop_radius,
         backstop_distance,
         backstop_distance_curve,
+        motion_stiffness,
+        use_collider_collision,
         collider_friction,
         collider_collision_mode,
         debug_output,
