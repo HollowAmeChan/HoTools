@@ -19,6 +19,7 @@ from .collisionUtils import (
     _spring_root_bones,
     _tag_view3d_redraw,
 )
+from .collisionBasePose import ensure_base_pose_proxy
 
 
 class OP_Hotools_BoneCollision_AddSelectedSpringRoots(Operator):
@@ -298,6 +299,44 @@ class OP_Hotools_MeshCollision_ToggleCollidedByGroup(Operator):
             enable,
         )
         _tag_view3d_redraw()
+        return {"FINISHED"}
+
+
+class OP_Hotools_MeshCollision_CreateBasePoseProxy(Operator):
+    bl_idname = "ho.mesh_collision_create_base_pose_proxy"
+    bl_label = "创建/刷新BasePose只读对象"
+    bl_description = "复制或刷新当前Mesh的MC2只读BasePose对象，并写入当前物体碰撞属性"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "MESH" and _active_mesh_collision_props(context) is not None
+
+    def execute(self, context):
+        obj = context.object
+        props = _active_mesh_collision_props(context)
+        if obj is None or obj.type != "MESH" or props is None:
+            return {"CANCELLED"}
+
+        shape_key_name = str(getattr(props, "output_shape_key", "") or "").strip()
+        try:
+            base_obj = ensure_base_pose_proxy(
+                obj,
+                shape_key_name or "MeshPhysics",
+                context.scene,
+                refresh=True,
+            )
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+        obj.select_set(True)
+        base_obj.select_set(False)
+        context.view_layer.objects.active = obj
+
+        _tag_view3d_redraw()
+        self.report({"INFO"}, f"已创建/刷新BasePose只读对象：{base_obj.name}")
         return {"FINISHED"}
 
 

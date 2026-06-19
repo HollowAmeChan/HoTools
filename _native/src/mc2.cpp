@@ -391,6 +391,104 @@ void quat_rotate(const float quat[4], float vx, float vy, float vz, float& out_x
     out_z = vz + 2.0f * (q[3] * uv_z + uuv_z);
 }
 
+void safe_normal_with_fallback(float x,
+                              float y,
+                              float z,
+                              float fallback_x,
+                              float fallback_y,
+                              float fallback_z,
+                              float& out_x,
+                              float& out_y,
+                              float& out_z);
+
+void quat_from_matrix3(const float m[9], float out_q[4]) {
+    const float trace = m[0] + m[4] + m[8];
+    float raw[4];
+    if (trace > 0.0f) {
+        const float s = std::sqrt(trace + 1.0f) * 2.0f;
+        raw[0] = (m[7] - m[5]) / s;
+        raw[1] = (m[2] - m[6]) / s;
+        raw[2] = (m[3] - m[1]) / s;
+        raw[3] = 0.25f * s;
+    } else if (m[0] > m[4] && m[0] > m[8]) {
+        const float s = std::sqrt(1.0f + m[0] - m[4] - m[8]) * 2.0f;
+        raw[0] = 0.25f * s;
+        raw[1] = (m[1] + m[3]) / s;
+        raw[2] = (m[2] + m[6]) / s;
+        raw[3] = (m[7] - m[5]) / s;
+    } else if (m[4] > m[8]) {
+        const float s = std::sqrt(1.0f + m[4] - m[0] - m[8]) * 2.0f;
+        raw[0] = (m[1] + m[3]) / s;
+        raw[1] = 0.25f * s;
+        raw[2] = (m[5] + m[7]) / s;
+        raw[3] = (m[2] - m[6]) / s;
+    } else {
+        const float s = std::sqrt(1.0f + m[8] - m[0] - m[4]) * 2.0f;
+        raw[0] = (m[2] + m[6]) / s;
+        raw[1] = (m[5] + m[7]) / s;
+        raw[2] = 0.25f * s;
+        raw[3] = (m[3] - m[1]) / s;
+    }
+    quat_normalize(raw, out_q);
+}
+
+void perpendicular(float vx, float vy, float vz, float& out_x, float& out_y, float& out_z) {
+    float axis_x = 1.0f;
+    float axis_y = 0.0f;
+    float axis_z = 0.0f;
+    float nx = 0.0f;
+    float ny = 0.0f;
+    float nz = 1.0f;
+    safe_normal_or_z(vx, vy, vz, nx, ny, nz);
+    if (std::fabs(dot3(nx, ny, nz, axis_x, axis_y, axis_z)) > 0.85f) {
+        axis_x = 0.0f;
+        axis_y = 1.0f;
+        axis_z = 0.0f;
+    }
+    float cross_x = 0.0f;
+    float cross_y = 0.0f;
+    float cross_z = 0.0f;
+    cross3(nx, ny, nz, axis_x, axis_y, axis_z, cross_x, cross_y, cross_z);
+    safe_normal_or_z(cross_x, cross_y, cross_z, out_x, out_y, out_z);
+}
+
+void frame_rotation(float forward_x,
+                    float forward_y,
+                    float forward_z,
+                    float normal_x,
+                    float normal_y,
+                    float normal_z,
+                    float out_q[4]) {
+    float z_x = 0.0f;
+    float z_y = 0.0f;
+    float z_z = 1.0f;
+    safe_normal_with_fallback(forward_x, forward_y, forward_z, normal_x, normal_y, normal_z, z_x, z_y, z_z);
+    float up_x = 0.0f;
+    float up_y = 0.0f;
+    float up_z = 1.0f;
+    safe_normal_or_z(normal_x, normal_y, normal_z, up_x, up_y, up_z);
+    float x_x = 0.0f;
+    float x_y = 0.0f;
+    float x_z = 0.0f;
+    cross3(up_x, up_y, up_z, z_x, z_y, z_z, x_x, x_y, x_z);
+    if (length3(x_x, x_y, x_z) <= kMc2Epsilon) {
+        perpendicular(z_x, z_y, z_z, x_x, x_y, x_z);
+    } else {
+        safe_normal_or_z(x_x, x_y, x_z, x_x, x_y, x_z);
+    }
+    float y_x = 0.0f;
+    float y_y = 0.0f;
+    float y_z = 0.0f;
+    cross3(z_x, z_y, z_z, x_x, x_y, x_z, y_x, y_y, y_z);
+    safe_normal_with_fallback(y_x, y_y, y_z, up_x, up_y, up_z, y_x, y_y, y_z);
+    const float matrix[9] = {
+        x_x, y_x, z_x,
+        x_y, y_y, z_y,
+        x_z, y_z, z_z,
+    };
+    quat_from_matrix3(matrix, out_q);
+}
+
 void motion_axis_vector(int normal_axis, float& out_x, float& out_y, float& out_z) {
     out_x = 0.0f;
     out_y = 1.0f;
@@ -2495,6 +2593,77 @@ void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view) {
             view.step_rotations[rot_offset + 3] = mixed_rotation[3];
         }
     }
+}
+
+void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view) {
+    if (view.vertex_count <= 0 || view.base_positions == nullptr || view.base_normals == nullptr ||
+        view.parent_indices == nullptr || view.base_rotations == nullptr || view.step_positions == nullptr ||
+        view.step_rotations == nullptr) {
+        return;
+    }
+
+    const auto vertex_count = view.vertex_count;
+    for (std::int64_t vertex = 0; vertex < vertex_count; ++vertex) {
+        const auto offset = vertex * 3;
+        float forward_x = 0.0f;
+        float forward_y = 0.0f;
+        float forward_z = 0.0f;
+        bool has_child = false;
+        for (std::int64_t child = 0; child < vertex_count; ++child) {
+            if (view.parent_indices[child] != vertex) {
+                continue;
+            }
+            const auto child_offset = child * 3;
+            forward_x += view.base_positions[child_offset + 0] - view.base_positions[offset + 0];
+            forward_y += view.base_positions[child_offset + 1] - view.base_positions[offset + 1];
+            forward_z += view.base_positions[child_offset + 2] - view.base_positions[offset + 2];
+            has_child = true;
+        }
+        if (!has_child) {
+            const std::int32_t parent = view.parent_indices[vertex];
+            if (parent >= 0 && parent < vertex_count) {
+                const auto parent_offset = static_cast<std::int64_t>(parent) * 3;
+                forward_x = view.base_positions[offset + 0] - view.base_positions[parent_offset + 0];
+                forward_y = view.base_positions[offset + 1] - view.base_positions[parent_offset + 1];
+                forward_z = view.base_positions[offset + 2] - view.base_positions[parent_offset + 2];
+            } else {
+                forward_x = view.base_normals[offset + 0];
+                forward_y = view.base_normals[offset + 1];
+                forward_z = view.base_normals[offset + 2];
+            }
+        }
+
+        float rotation[4];
+        frame_rotation(forward_x,
+                       forward_y,
+                       forward_z,
+                       view.base_normals[offset + 0],
+                       view.base_normals[offset + 1],
+                       view.base_normals[offset + 2],
+                       rotation);
+        const auto rot_offset = vertex * 4;
+        view.base_rotations[rot_offset + 0] = rotation[0];
+        view.base_rotations[rot_offset + 1] = rotation[1];
+        view.base_rotations[rot_offset + 2] = rotation[2];
+        view.base_rotations[rot_offset + 3] = rotation[3];
+    }
+
+    Mc2StepBasicPoseView step_view;
+    step_view.base_positions = view.base_positions;
+    step_view.base_rotations = view.base_rotations;
+    step_view.parent_indices = view.parent_indices;
+    step_view.baseline_start = view.baseline_start;
+    step_view.baseline_count = view.baseline_count;
+    step_view.baseline_data = view.baseline_data;
+    step_view.vertex_local_positions = view.vertex_local_positions;
+    step_view.vertex_local_rotations = view.vertex_local_rotations;
+    step_view.step_positions = view.step_positions;
+    step_view.step_rotations = view.step_rotations;
+    step_view.vertex_count = view.vertex_count;
+    step_view.line_count = view.line_count;
+    step_view.baseline_data_count = view.baseline_data_count;
+    step_view.animation_pose_ratio = view.animation_pose_ratio;
+    update_step_basic_pose_mc2(step_view);
 }
 
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view) {

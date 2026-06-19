@@ -479,6 +479,44 @@ def update_step_basic_pose(
     return step_positions, step_rotations
 
 
+def update_base_pose_from_pose(
+    base_positions: np.ndarray,
+    base_normals: np.ndarray,
+    parent_indices: np.ndarray,
+    baseline_start: np.ndarray,
+    baseline_count: np.ndarray,
+    baseline_data: np.ndarray,
+    vertex_local_positions: np.ndarray,
+    vertex_local_rotations: np.ndarray,
+    animation_pose_ratio: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    module = native_module()
+    function = getattr(module, "update_base_pose_from_pose_mc2", None) if module is not None else None
+    if function is None:
+        return None
+
+    positions_view = np.ascontiguousarray(base_positions, dtype=np.float32)
+    normals_view = np.ascontiguousarray(base_normals, dtype=np.float32)
+    base_rotations = np.empty((len(positions_view), 4), dtype=np.float32)
+    step_positions = positions_view.copy()
+    step_rotations = np.empty((len(positions_view), 4), dtype=np.float32)
+    function(
+        positions_view,
+        normals_view,
+        np.ascontiguousarray(parent_indices, dtype=np.int32),
+        np.ascontiguousarray(baseline_start, dtype=np.int32),
+        np.ascontiguousarray(baseline_count, dtype=np.int32),
+        np.ascontiguousarray(baseline_data, dtype=np.int32),
+        np.ascontiguousarray(vertex_local_positions, dtype=np.float32),
+        np.ascontiguousarray(vertex_local_rotations, dtype=np.float32),
+        base_rotations,
+        step_positions,
+        step_rotations,
+        float(animation_pose_ratio),
+    )
+    return base_rotations, step_positions, step_rotations
+
+
 def apply_substep_inertia(
     old_positions: np.ndarray,
     velocity: np.ndarray,

@@ -158,6 +158,24 @@ struct Mc2StepBasicPoseView {
     float animation_pose_ratio = 0.0f;
 };
 
+struct Mc2BasePoseFromPoseView {
+    const float* base_positions = nullptr;
+    const float* base_normals = nullptr;
+    const std::int32_t* parent_indices = nullptr;
+    const std::int32_t* baseline_start = nullptr;
+    const std::int32_t* baseline_count = nullptr;
+    const std::int32_t* baseline_data = nullptr;
+    const float* vertex_local_positions = nullptr;
+    const float* vertex_local_rotations = nullptr;
+    float* base_rotations = nullptr;
+    float* step_positions = nullptr;
+    float* step_rotations = nullptr;
+    std::int64_t vertex_count = 0;
+    std::int64_t line_count = 0;
+    std::int64_t baseline_data_count = 0;
+    float animation_pose_ratio = 0.0f;
+};
+
 struct Mc2SubstepInertiaView {
     float* old_positions = nullptr;
     float* velocities = nullptr;
@@ -311,6 +329,7 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view);
 void project_triangle_bending_mc2(Mc2TriangleBendingView& view);
 void project_angle_constraints_mc2(Mc2AngleConstraintView& view);
 void update_step_basic_pose_mc2(Mc2StepBasicPoseView& view);
+void update_base_pose_from_pose_mc2(Mc2BasePoseFromPoseView& view);
 void apply_substep_inertia_mc2(Mc2SubstepInertiaView& view);
 void apply_centrifugal_velocity_mc2(Mc2CentrifugalView& view);
 void calculate_display_positions_mc2(Mc2DisplayPredictionView& view);

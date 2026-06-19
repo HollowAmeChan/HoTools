@@ -2256,6 +2256,87 @@ PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* update_base_pose_from_pose_mc2(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 12;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "update_base_pose_from_pose_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    Buffer base_positions;
+    Buffer base_normals;
+    Buffer parent_indices;
+    Buffer baseline_start;
+    Buffer baseline_count;
+    Buffer baseline_data;
+    Buffer vertex_local_positions;
+    Buffer vertex_local_rotations;
+    Buffer base_rotations;
+    Buffer step_positions;
+    Buffer step_rotations;
+
+    if (!base_positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_normals.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_normals") ||
+        !parent_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
+        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
+        !base_rotations.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !step_positions.get(PyTuple_GET_ITEM(args, 9), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
+        !step_rotations.get(PyTuple_GET_ITEM(args, 10), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    if (!expect_vector3_array(base_positions, "base_positions", &vertex_count) ||
+        !expect_same_vertex_count(base_normals, "base_normals", vertex_count) ||
+        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
+        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
+        !expect_same_vertex_count(step_positions, "step_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(step_rotations, "step_rotations", vertex_count) ||
+        !expect_int32_scalar_array(parent_indices, "parent_indices") ||
+        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
+        !expect_root_indices_or_minus_one(parent_indices, "parent_indices", vertex_count) ||
+        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
+        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
+        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
+        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count)) {
+        return nullptr;
+    }
+    const Py_ssize_t line_count = baseline_start.view.shape[0];
+    if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
+        return nullptr;
+    }
+
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 11), "animation_pose_ratio");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    hotools::Mc2BasePoseFromPoseView view;
+    view.base_positions = static_cast<const float*>(base_positions.view.buf);
+    view.base_normals = static_cast<const float*>(base_normals.view.buf);
+    view.parent_indices = static_cast<const std::int32_t*>(parent_indices.view.buf);
+    view.baseline_start = static_cast<const std::int32_t*>(baseline_start.view.buf);
+    view.baseline_count = static_cast<const std::int32_t*>(baseline_count.view.buf);
+    view.baseline_data = static_cast<const std::int32_t*>(baseline_data.view.buf);
+    view.vertex_local_positions = static_cast<const float*>(vertex_local_positions.view.buf);
+    view.vertex_local_rotations = static_cast<const float*>(vertex_local_rotations.view.buf);
+    view.base_rotations = static_cast<float*>(base_rotations.view.buf);
+    view.step_positions = static_cast<float*>(step_positions.view.buf);
+    view.step_rotations = static_cast<float*>(step_rotations.view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.line_count = static_cast<std::int64_t>(line_count);
+    view.baseline_data_count = static_cast<std::int64_t>(baseline_data.view.shape[0]);
+    view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
+
+    hotools::update_base_pose_from_pose_mc2(view);
+    Py_RETURN_NONE;
+}
+
 PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
     constexpr Py_ssize_t kArgCount = 10;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
@@ -3085,6 +3166,12 @@ PyMethodDef kMethods[] = {
         update_step_basic_pose_mc2,
         METH_VARARGS,
         "Update MC2 step basic pose in-place.",
+    },
+    {
+        "update_base_pose_from_pose_mc2",
+        update_base_pose_from_pose_mc2,
+        METH_VARARGS,
+        "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.",
     },
     {
         "apply_substep_inertia_mc2",

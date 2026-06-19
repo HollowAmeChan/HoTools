@@ -10,12 +10,15 @@ import bpy
 import mathutils
 
 from .....PropertyCurve import float_curve_payload
+from .....PhysicsTools.collisionBasePose import ensure_base_pose_proxy, ensure_delta_output
 from ...FunctionNodeCore import omni
 from ...OmniDebug import OmniDebug
 from ...OmniNodeSocketMapping import _OmniCache, _OmniFloatCurve
 from .. import _Color
 from . import blender_io, collision, mesh_build, params, solver, state as mc2_state
 from .constants import MC2SystemConstants
+
+blender_io.ensure_base_pose_cache_handler()
 
 
 _DEBUG_PROFILES = {}
@@ -265,6 +268,20 @@ def _run_mesh_cloth_mc2_node(
             _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing, backend_label)
         return _OmniCache(None), obj, vertex_count, 0
 
+    base_pose_proxy = None
+    if enabled:
+        stage_start = time.perf_counter() if timing is not None else None
+        blender_io.ensure_base_pose_cache_handler()
+        ensure_base_pose_proxy(obj, shape_key_name, scene, refresh=False)
+        ensure_delta_output(obj)
+        if timing is not None:
+            _add_timing(timing, "base_proxy_ensure", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
+        base_pose_proxy = blender_io.base_pose_proxy_object(obj)
+        if timing is not None:
+            _add_timing(timing, "base_proxy_validate", time.perf_counter() - stage_start)
+
     if reset or not isinstance(state, dict):
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.restore_rest_to_shape_key(obj, target_key, state)
@@ -297,7 +314,10 @@ def _run_mesh_cloth_mc2_node(
             _add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
         stage_start = time.perf_counter() if timing is not None else None
-        state = mc2_state.sync_state_to_object_transform(state, obj)
+        if base_pose_proxy is not None:
+            state = mc2_state.sync_state_to_base_pose_write_container(state, obj)
+        else:
+            state = mc2_state.sync_state_to_object_transform(state, obj)
         if timing is not None:
             _add_timing(timing, "transform", time.perf_counter() - stage_start)
 
@@ -337,6 +357,11 @@ def _run_mesh_cloth_mc2_node(
         next_state["frame"] = current_frame
         _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)
         return _OmniCache(next_state), obj, vertex_count, constraint_count
+
+    stage_start = time.perf_counter() if timing is not None else None
+    state = mc2_state.sync_state_to_base_pose_proxy(state, obj, base_pose_proxy, current_frame, timing)
+    if timing is not None:
+        _add_timing(timing, "base_pose_sync", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
     if use_collider_collision and int(collider_collision_mode) != 0:
@@ -410,7 +435,11 @@ def _run_mesh_cloth_mc2_node(
 
     next_state["frame"] = current_frame
     stage_start = time.perf_counter() if timing is not None else None
-    blender_io.write_world_positions_to_shape_key(obj, target_key, next_state["display_positions"])
+    if base_pose_proxy is not None:
+        blender_io.ensure_shape_key_rest(obj, target_key, next_state)
+        blender_io.write_world_delta_attribute(obj, next_state["display_positions"], next_state["base_positions"])
+    else:
+        blender_io.write_world_positions_to_shape_key(obj, target_key, next_state["display_positions"])
     if timing is not None:
         _add_timing(timing, "write", time.perf_counter() - stage_start)
         _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)

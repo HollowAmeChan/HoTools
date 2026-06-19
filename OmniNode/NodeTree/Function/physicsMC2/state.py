@@ -6,8 +6,9 @@
 
 import bpy
 import numpy as np
+import time
 
-from . import baseline, blender_io, inertia, math_utils, mesh_build
+from . import baseline, blender_io, inertia, math_utils, mesh_build, native_bridge
 from .constants import (
     MC2_ATTR_MOVE,
     MC2_BEND_KIND_DISTANCE_APPROX,
@@ -122,6 +123,9 @@ def build_state(
         "rest_world_normals": np.ascontiguousarray(rest_world_normals, dtype=np.float32),
         "base_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
         "base_normals": np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32),
+        "base_pose_proxy_ptr": 0,
+        "base_pose_proxy_name": "",
+        "base_pose_proxy_frame": None,
         "base_rotations": baseline_data["base_rotations"],
         "step_basic_positions": baseline_data["step_basic_positions"],
         "step_basic_rotations": baseline_data["step_basic_rotations"],
@@ -319,6 +323,9 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     next_state["rest_world_normals"] = np.ascontiguousarray(rest_world_normals, dtype=np.float32)
     next_state["base_positions"] = np.ascontiguousarray(rest_world.copy(), dtype=np.float32)
     next_state["base_normals"] = np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32)
+    next_state["base_pose_proxy_ptr"] = 0
+    next_state["base_pose_proxy_name"] = ""
+    next_state["base_pose_proxy_frame"] = None
     if next_state.get("object_matrix_world_3x3_key") == matrix_3x3_key:
         (
             next_state["step_basic_positions"],
@@ -334,6 +341,126 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
             next_state["vertex_local_rotations"],
         )
 
+    return next_state
+
+
+def sync_state_to_base_pose_write_container(state: dict, obj: bpy.types.Object) -> dict:
+    matrix_key = math_utils.matrix_world_key(obj)
+    matrix_3x3_key = math_utils.matrix_world_3x3_key(obj)
+    if (
+        state.get("object_matrix_world_key") == matrix_key
+        and state.get("object_matrix_world_3x3_key") == matrix_3x3_key
+    ):
+        return state
+
+    # BasePose 模式下，当前物体只是 shape key 写入容器。
+    # 动画姿态来自 BasePose 只读对象，不能在这里用写入容器的对象矩阵重建 rest/约束，
+    # 否则移动骨架对象会触发整套约束热重算，并且和 BasePose evaluated 坐标形成双重变换。
+    next_state = dict(state)
+    next_state["object_matrix_world_key"] = matrix_key
+    next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
+    next_state["object_matrix_world"] = math_utils.matrix_to_numpy(obj.matrix_world)
+    next_state["collision_radii"] = mesh_build.collision_radii_to_world(obj, next_state["collision_local_radii"])
+    return next_state
+
+
+def _apply_base_pose_arrays(
+    state: dict,
+    positions: np.ndarray,
+    normals: np.ndarray,
+    proxy_ptr: int,
+    proxy_name: str,
+    frame: int | None,
+) -> dict:
+    vertex_count = int(state.get("vertex_count", 0))
+    base_positions = np.ascontiguousarray(positions, dtype=np.float32)
+    base_normals = np.ascontiguousarray(normals, dtype=np.float32)
+    if base_positions.shape != (vertex_count, 3) or base_normals.shape != (vertex_count, 3):
+        raise ValueError("MC2 BasePose只读对象顶点数必须与当前物理对象一致")
+
+    next_state = dict(state)
+    native_base_pose = native_bridge.update_base_pose_from_pose(
+        base_positions,
+        base_normals,
+        next_state["parent_indices"],
+        next_state["baseline_start"],
+        next_state["baseline_count"],
+        next_state["baseline_data"],
+        next_state["vertex_local_positions"],
+        next_state["vertex_local_rotations"],
+    )
+    next_state["base_positions"] = base_positions
+    next_state["base_normals"] = base_normals
+    if native_base_pose is not None:
+        base_rotations, step_positions, step_rotations = native_base_pose
+        next_state["base_rotations"] = base_rotations
+        next_state["step_basic_positions"] = step_positions
+        next_state["step_basic_rotations"] = step_rotations
+    else:
+        # 旧 native 后端不存在 update_base_pose_from_pose_mc2 时的降级路径。
+        # 不在 Python 热路径里重算整套四元数链，避免回到 20ms+ 的卡顿/崩溃风险。
+        next_state["step_basic_positions"] = base_positions.copy()
+    next_state["base_pose_proxy_ptr"] = int(proxy_ptr)
+    next_state["base_pose_proxy_name"] = str(proxy_name or "")
+    next_state["base_pose_proxy_frame"] = frame
+    return next_state
+
+
+def sync_state_to_base_pose_proxy(
+    state: dict,
+    obj: bpy.types.Object,
+    base_pose_proxy: bpy.types.Object | None,
+    current_frame: int,
+    timing: dict | None = None,
+) -> dict:
+    if base_pose_proxy is None:
+        if int(state.get("base_pose_proxy_ptr", 0) or 0) == 0:
+            return state
+        return _apply_base_pose_arrays(
+            state,
+            state["rest_world_positions"],
+            state["rest_world_normals"],
+            0,
+            "",
+            None,
+        )
+
+    vertex_count = int(state.get("vertex_count", len(obj.data.vertices)))
+    if len(base_pose_proxy.data.vertices) != vertex_count:
+        raise ValueError("MC2 BasePose只读对象顶点数必须与当前物理对象一致")
+
+    proxy_ptr = int(base_pose_proxy.as_pointer())
+    if (
+        int(state.get("base_pose_proxy_ptr", 0) or 0) == proxy_ptr
+        and state.get("base_pose_proxy_frame") == current_frame
+    ):
+        return state
+
+    stage_start = time.perf_counter() if timing is not None else None
+    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame)
+    if timing is not None:
+        timing["stages"]["base_proxy_read"] = timing["stages"].get("base_proxy_read", 0.0) + (
+            time.perf_counter() - stage_start
+        )
+    if cached_pose is None:
+        return state
+    positions, normals = cached_pose
+    if positions.shape != (vertex_count, 3) or normals.shape != (vertex_count, 3):
+        raise ValueError("MC2 BasePose只读对象 evaluated mesh 顶点数必须与当前物理对象一致")
+
+    stage_start = time.perf_counter() if timing is not None else None
+    next_state = _apply_base_pose_arrays(
+        state,
+        positions,
+        normals,
+        proxy_ptr,
+        base_pose_proxy.name_full,
+        current_frame,
+    )
+    if timing is not None:
+        timing["stages"]["base_pose_apply"] = timing["stages"].get("base_pose_apply", 0.0) + (
+            time.perf_counter() - stage_start
+        )
     return next_state
 
 

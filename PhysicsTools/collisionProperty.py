@@ -1,7 +1,12 @@
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
+import bpy
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from .collisionUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
+
+
+def _mesh_object_poll(self, obj):
+    return obj is not None and obj.type == "MESH"
 
 
 # 这个文件只定义可保存到 Blender 数据块上的原始配置。
@@ -161,6 +166,12 @@ class PG_Hotools_MeshCollision(PropertyGroup):
         name="物理形态键",
         description="XPBD网格物理解算写入的目标形态键；不存在时会自动创建",
         default="MeshPhysics",
+    )  # type: ignore
+    mc2_base_pose_proxy: PointerProperty(
+        type=bpy.types.Object,
+        name="BasePose只读对象",
+        description="MC2每帧只读这个Mesh对象的骨架/修改器变形结果作为基础姿态；不要指向当前物理写入对象",
+        poll=_mesh_object_poll,
     )  # type: ignore
     enabled: BoolProperty(
         name="启用",

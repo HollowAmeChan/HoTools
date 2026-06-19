@@ -131,6 +131,7 @@ def solve_meshcloth(
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
+    base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     normal_axis_value = max(0, min(5, int(normal_axis)))
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
@@ -274,18 +275,34 @@ def solve_meshcloth(
         if has_collision
         else None
     )
-    inertia_state = inertia.prepare_frame(
-        state.get("inertia_state"),
-        obj,
-        frame_dt,
-        float(world_inertia_param["value"]),
-        float(movement_inertia_smoothing_param["value"]),
-        movement_speed_limit_value * max(float(world_scale), 0.0) if movement_speed_limit_value >= 0.0 else -1.0,
-        rotation_speed_limit_value,
-        int(teleport_mode),
-        float(teleport_distance) * max(float(world_scale), 0.0),
-        float(teleport_rotation),
-    )
+    if base_pose_mode:
+        # BasePose 模式下，骨架/对象级基础运动已经通过 base_positions 输入。
+        # 这里禁止再把写入对象矩阵变化当作整体惯性位移，避免双重变换和 Python 顶点循环卡顿。
+        inertia_state = inertia.prepare_frame(
+            state.get("inertia_state"),
+            obj,
+            frame_dt,
+            1.0,
+            0.0,
+            -1.0,
+            -1.0,
+            inertia.TELEPORT_NONE,
+            0.0,
+            0.0,
+        )
+    else:
+        inertia_state = inertia.prepare_frame(
+            state.get("inertia_state"),
+            obj,
+            frame_dt,
+            float(world_inertia_param["value"]),
+            float(movement_inertia_smoothing_param["value"]),
+            movement_speed_limit_value * max(float(world_scale), 0.0) if movement_speed_limit_value >= 0.0 else -1.0,
+            rotation_speed_limit_value,
+            int(teleport_mode),
+            float(teleport_distance) * max(float(world_scale), 0.0),
+            float(teleport_rotation),
+        )
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
         old_positions = base_positions.copy()
@@ -941,6 +958,7 @@ def solve_meshcloth_native_core(
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
+    base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     normal_axis_value = max(0, min(5, int(normal_axis)))
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
@@ -1095,18 +1113,34 @@ def solve_meshcloth_native_core(
         else None
     )
 
-    inertia_state = inertia.prepare_frame(
-        state.get("inertia_state"),
-        obj,
-        frame_dt,
-        float(world_inertia_param["value"]),
-        float(movement_inertia_smoothing_param["value"]),
-        movement_speed_limit_value * world_scale_nonnegative if movement_speed_limit_value >= 0.0 else -1.0,
-        rotation_speed_limit_value,
-        int(teleport_mode),
-        float(teleport_distance) * world_scale_nonnegative,
-        float(teleport_rotation),
-    )
+    if base_pose_mode:
+        # BasePose 模式下基础动画来自只读代理，写入对象矩阵不再驱动物理整体惯性。
+        # 这能避免移动骨架对象时 solve_setup 进入 apply_frame_shift 顶点循环。
+        inertia_state = inertia.prepare_frame(
+            state.get("inertia_state"),
+            obj,
+            frame_dt,
+            1.0,
+            0.0,
+            -1.0,
+            -1.0,
+            inertia.TELEPORT_NONE,
+            0.0,
+            0.0,
+        )
+    else:
+        inertia_state = inertia.prepare_frame(
+            state.get("inertia_state"),
+            obj,
+            frame_dt,
+            float(world_inertia_param["value"]),
+            float(movement_inertia_smoothing_param["value"]),
+            movement_speed_limit_value * world_scale_nonnegative if movement_speed_limit_value >= 0.0 else -1.0,
+            rotation_speed_limit_value,
+            int(teleport_mode),
+            float(teleport_distance) * world_scale_nonnegative,
+            float(teleport_rotation),
+        )
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
         old_positions = base_positions.copy()

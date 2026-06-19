@@ -77,6 +77,84 @@ def axis_angle_quat(axis, angle_rad):
     return np.asarray((axis[0] * s, axis[1] * s, axis[2] * s, float(np.cos(half))), dtype=np.float32)
 
 
+def safe_normal(vector, fallback):
+    vector = np.asarray(vector, dtype=np.float32)
+    length = float(np.linalg.norm(vector))
+    if length > EPSILON:
+        return np.asarray(vector / length, dtype=np.float32)
+    fallback = np.asarray(fallback, dtype=np.float32)
+    fallback_length = float(np.linalg.norm(fallback))
+    if fallback_length > EPSILON:
+        return np.asarray(fallback / fallback_length, dtype=np.float32)
+    return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+
+
+def perpendicular(vector):
+    axis = np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+    if abs(float(np.dot(safe_normal(vector, axis), axis))) > 0.85:
+        axis = np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+    return safe_normal(np.cross(vector, axis), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+
+
+def quat_from_matrix(matrix):
+    m = np.asarray(matrix, dtype=np.float32)
+    trace = float(m[0, 0] + m[1, 1] + m[2, 2])
+    if trace > 0.0:
+        s = float(np.sqrt(trace + 1.0) * 2.0)
+        return quat_normalize(
+            np.asarray(((m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s, 0.25 * s), dtype=np.float32)
+        )
+    if m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = float(np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2.0)
+        return quat_normalize(
+            np.asarray((0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s, (m[2, 1] - m[1, 2]) / s), dtype=np.float32)
+        )
+    if m[1, 1] > m[2, 2]:
+        s = float(np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2.0)
+        return quat_normalize(
+            np.asarray(((m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s, (m[0, 2] - m[2, 0]) / s), dtype=np.float32)
+        )
+    s = float(np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2.0)
+    return quat_normalize(
+        np.asarray(((m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s, (m[1, 0] - m[0, 1]) / s), dtype=np.float32)
+    )
+
+
+def frame_rotation(forward, normal):
+    z_axis = safe_normal(forward, normal)
+    up_hint = safe_normal(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+    x_axis = np.cross(up_hint, z_axis)
+    if float(np.linalg.norm(x_axis)) <= EPSILON:
+        x_axis = perpendicular(z_axis)
+    else:
+        x_axis = safe_normal(x_axis, np.asarray((1.0, 0.0, 0.0), dtype=np.float32))
+    y_axis = safe_normal(np.cross(z_axis, x_axis), up_hint)
+    matrix = np.asarray(
+        (
+            (x_axis[0], y_axis[0], z_axis[0]),
+            (x_axis[1], y_axis[1], z_axis[1]),
+            (x_axis[2], y_axis[2], z_axis[2]),
+        ),
+        dtype=np.float32,
+    )
+    return quat_from_matrix(matrix)
+
+
+def base_rotations_reference(positions, normals, parents):
+    rotations = np.repeat(np.asarray(((0.0, 0.0, 0.0, 1.0),), dtype=np.float32), len(positions), axis=0)
+    for vertex_index in range(len(positions)):
+        children = [index for index, parent in enumerate(parents) if int(parent) == vertex_index]
+        if children:
+            forward = np.zeros(3, dtype=np.float32)
+            for child in children:
+                forward += positions[child] - positions[vertex_index]
+        else:
+            parent = int(parents[vertex_index])
+            forward = positions[vertex_index] - positions[parent] if 0 <= parent < len(positions) else normals[vertex_index]
+        rotations[vertex_index] = frame_rotation(forward, normals[vertex_index])
+    return np.ascontiguousarray(rotations, dtype=np.float32)
+
+
 def update_step_basic_reference(
     base_positions,
     base_rotations,
@@ -211,10 +289,94 @@ def assert_native_matches_reference(animation_pose_ratio):
     np.testing.assert_allclose(actual_rotations, expected_rotations, rtol=2e-5, atol=2e-5)
 
 
+def assert_base_pose_from_pose_matches_reference():
+    base_positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.1),
+            (2.0, 0.4, 0.0),
+            (1.0, 1.0, 0.2),
+            (-1.0, 0.0, 0.0),
+            (-1.2, 1.0, 0.3),
+        ),
+        dtype=np.float32,
+    )
+    base_normals = np.asarray(
+        (
+            (0.0, 0.0, 1.0),
+            (0.1, 0.0, 1.0),
+            (0.0, 0.2, 1.0),
+            (0.0, 0.0, 1.0),
+            (0.0, 0.0, 1.0),
+            (-0.1, 0.0, 1.0),
+        ),
+        dtype=np.float32,
+    )
+    parents = np.asarray((-1, 0, 1, 1, -1, 4), dtype=np.int32)
+    baseline_start = np.asarray((0, 4, 5), dtype=np.int32)
+    baseline_count = np.asarray((4, 1, 1), dtype=np.int32)
+    baseline_data = np.asarray((0, 1, 2, 3, 4, 5), dtype=np.int32)
+    expected_base_rotations = base_rotations_reference(base_positions, base_normals, parents)
+    vertex_local_positions = np.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (0.9, 0.0, 0.0),
+            (1.0, 0.2, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.1, 1.0, 0.0),
+        ),
+        dtype=np.float32,
+    )
+    vertex_local_rotations = np.asarray(
+        (
+            (0.0, 0.0, 0.0, 1.0),
+            axis_angle_quat((0.0, 0.0, 1.0), 0.15),
+            axis_angle_quat((0.0, 1.0, 0.0), -0.35),
+            axis_angle_quat((1.0, 0.0, 0.0), 0.25),
+            (0.0, 0.0, 0.0, 1.0),
+            axis_angle_quat((0.0, 0.0, 1.0), -0.45),
+        ),
+        dtype=np.float32,
+    )
+    expected_step_positions, expected_step_rotations = update_step_basic_reference(
+        base_positions,
+        expected_base_rotations,
+        parents,
+        baseline_start,
+        baseline_count,
+        baseline_data,
+        vertex_local_positions,
+        vertex_local_rotations,
+        0.0,
+    )
+    actual_base_rotations = np.zeros_like(expected_base_rotations)
+    actual_step_positions = np.zeros_like(base_positions)
+    actual_step_rotations = np.zeros_like(expected_base_rotations)
+    hotools_native.update_base_pose_from_pose_mc2(
+        base_positions,
+        base_normals,
+        parents,
+        baseline_start,
+        baseline_count,
+        baseline_data,
+        vertex_local_positions,
+        vertex_local_rotations,
+        actual_base_rotations,
+        actual_step_positions,
+        actual_step_rotations,
+        0.0,
+    )
+    np.testing.assert_allclose(actual_base_rotations, expected_base_rotations, rtol=2e-5, atol=2e-5)
+    np.testing.assert_allclose(actual_step_positions, expected_step_positions, rtol=2e-5, atol=2e-5)
+    np.testing.assert_allclose(actual_step_rotations, expected_step_rotations, rtol=2e-5, atol=2e-5)
+
+
 def main():
     assert_native_matches_reference(0.0)
     assert_native_matches_reference(0.35)
     assert_native_matches_reference(1.0)
+    assert_base_pose_from_pose_matches_reference()
     print("mc2 baseline native smoke test passed")
 
 

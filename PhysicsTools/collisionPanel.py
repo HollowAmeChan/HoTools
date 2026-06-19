@@ -6,7 +6,9 @@ from .collisionOperators import (
     OP_Hotools_BoneCollision_ClearAllSpringRoots,
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_BoneCollision_SelectSpringRoots,
+    OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
+from .collisionBasePose import mesh_light_key
 from .collisionUtils import (
     _COLLISION_GROUP_COUNT,
     _active_armature_object,
@@ -154,6 +156,18 @@ def _draw_mesh_collision_controls(layout, obj, props):
         )
     else:
         collision_box.prop(props, "output_shape_key")
+    base_pose_row = collision_box.row(align=True)
+    base_pose_row.prop(props, "mc2_base_pose_proxy", text="BasePose只读对象")
+    base_pose_row.operator(
+        OP_Hotools_MeshCollision_CreateBasePoseProxy.bl_idname,
+        text="",
+        icon="DUPLICATE",
+    )
+    base_proxy = props.mc2_base_pose_proxy
+    if base_proxy is obj:
+        collision_box.label(text="BasePose不能指向当前物理写入对象", icon="ERROR")
+    elif base_proxy is not None and mesh_light_key(base_proxy) != mesh_light_key(obj):
+        collision_box.label(text="BasePose顶点/Loop/面数量不一致", icon="ERROR")
     collision_box.prop(props, "enabled")
 
     col = collision_box.column(align=True)

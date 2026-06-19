@@ -378,6 +378,14 @@ def _base_rotations(
     return np.ascontiguousarray(rotations, dtype=np.float32)
 
 
+def base_rotations_from_pose(
+    positions: np.ndarray,
+    normals: np.ndarray,
+    parents: np.ndarray,
+) -> np.ndarray:
+    return _base_rotations(positions, normals, parents)
+
+
 def _local_pose(
     positions: np.ndarray,
     base_rotations: np.ndarray,
