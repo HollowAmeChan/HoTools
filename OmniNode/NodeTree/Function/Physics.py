@@ -3,6 +3,10 @@ from ..OmniNodeSocketMapping import (
     _OmniBoneChain,
     _OmniCache,
 )
+from ....PhysicsTools.deltaOutput import PhysicsDeltaOutputSpec
+from ....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
+from ....PhysicsTools.deltaOutput import ensure_delta_output as _ensure_delta_output
+from ....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -921,6 +925,16 @@ class _MeshPhysics:
     EPSILON = 0.000001
     CACHE_KIND = "MESH_PHYSICS_XPBD"
     DEBUG_PRINT_INTERVAL = 1.0
+    OUTPUT_KEY = "XPBDDelta"
+    DELTA_ATTRIBUTE_NAME = "xpbd_delta"
+    DELTA_MODIFIER_NAME = "XPBD 后置位移"
+    DELTA_NODE_GROUP_NAME = "HoTools_XPBD_ApplyDelta"
+    DELTA_OUTPUT_SPEC = PhysicsDeltaOutputSpec(
+        attribute_name=DELTA_ATTRIBUTE_NAME,
+        modifier_name=DELTA_MODIFIER_NAME,
+        node_group_name=DELTA_NODE_GROUP_NAME,
+        label="XPBD 后置位移",
+    )
     _debug_profiles = {}
 
     @staticmethod
@@ -938,7 +952,7 @@ class _MeshPhysics:
     def publish_debug_timing(
         cls,
         obj: bpy.types.Object,
-        shape_key_name: str,
+        output_key: str,
         frame: int,
         vertex_count: int,
         constraint_count: int,
@@ -952,7 +966,7 @@ class _MeshPhysics:
         stages = dict(timing.get("stages") or {})
         stages["total"] = max(now - float(timing.get("start", now)), 0.0)
 
-        key = (int(obj.as_pointer()), str(shape_key_name), str(backend_tag))
+        key = (int(obj.as_pointer()), str(output_key), str(backend_tag))
         profile = cls._debug_profiles.setdefault(
             key,
             {
@@ -1004,7 +1018,7 @@ class _MeshPhysics:
 
         print(
             f"[MeshPhysicsXPBD:{backend_tag}] "
-            f"obj={obj.name_full} key={shape_key_name} frame={profile['frame']} "
+            f"obj={obj.name_full} key={output_key} frame={profile['frame']} "
             f"samples={sample_count} verts={profile['vertex_count']} "
             f"constraints={profile['constraint_count']} "
             + " ".join(stage_text)
@@ -1023,29 +1037,6 @@ class _MeshPhysics:
         if obj.data is None or len(obj.data.vertices) == 0:
             raise ValueError(f"{label} mesh has no vertices")
         return obj
-
-    @staticmethod
-    def output_shape_key_name(obj: bpy.types.Object) -> str:
-        props = getattr(obj, "hotools_mesh_collision", None)
-        name = str(getattr(props, "output_shape_key", "") or "").strip()
-        return name or "MeshPhysics"
-
-    @staticmethod
-    def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
-        mesh = obj.data
-        if mesh.shape_keys is None:
-            obj.shape_key_add(name="Basis", from_mix=False)
-
-        shape_keys = mesh.shape_keys
-        key = shape_keys.key_blocks.get(shape_key_name)
-        if key is None:
-            key = obj.shape_key_add(name=shape_key_name, from_mix=False)
-
-        if key == shape_keys.reference_key:
-            raise ValueError("target shape key cannot be Basis/reference key")
-
-        key.value = 1.0
-        return key
 
     @staticmethod
     def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
@@ -1094,36 +1085,22 @@ class _MeshPhysics:
         matrix = obj.matrix_world
         return tuple(round(float(matrix[row][col]), 8) for row in range(3) for col in range(3))
 
-    @staticmethod
-    def write_shape_key_positions(
-        obj: bpy.types.Object,
-        shape_key: bpy.types.ShapeKey,
-        positions: np.ndarray,
-    ) -> None:
-        flat = np.ascontiguousarray(positions, dtype=np.float32).reshape(-1)
-        shape_key.data.foreach_set("co", flat)
-        obj.data.update()
-        obj.update_tag()
+    @classmethod
+    def ensure_delta_output(cls, obj: bpy.types.Object) -> None:
+        _ensure_delta_output(obj, cls.DELTA_OUTPUT_SPEC)
 
     @classmethod
-    def write_world_positions_to_shape_key(
+    def clear_delta_attribute(cls, obj: bpy.types.Object) -> None:
+        _clear_delta_attribute(obj, cls.DELTA_OUTPUT_SPEC)
+
+    @classmethod
+    def write_world_delta_attribute(
         cls,
         obj: bpy.types.Object,
-        shape_key: bpy.types.ShapeKey,
         positions: np.ndarray,
+        base_positions: np.ndarray,
     ) -> None:
-        cls.write_shape_key_positions(obj, shape_key, cls.world_positions_to_local(obj, positions))
-
-    @classmethod
-    def restore_rest_to_shape_key(cls, obj: bpy.types.Object, shape_key: bpy.types.ShapeKey, state=None) -> None:
-        rest_positions = None
-        if isinstance(state, dict):
-            cached_rest = state.get("rest_local_positions")
-            if isinstance(cached_rest, np.ndarray) and cached_rest.shape == (len(obj.data.vertices), 3):
-                rest_positions = cached_rest
-        if rest_positions is None:
-            rest_positions = cls.read_rest_positions(obj)
-        cls.write_shape_key_positions(obj, shape_key, rest_positions)
+        _write_world_delta_attribute(obj, cls.DELTA_OUTPUT_SPEC, positions, base_positions)
 
     @staticmethod
     def topology_key(obj: bpy.types.Object) -> tuple:
@@ -1283,7 +1260,6 @@ class _MeshPhysics:
     def build_state(
         cls,
         obj: bpy.types.Object,
-        shape_key_name: str,
         topology_key: tuple,
     ) -> dict:
         rest_local_positions = cls.read_rest_positions(obj)
@@ -1299,7 +1275,6 @@ class _MeshPhysics:
             "object_name": obj.name_full,
             "object_ptr": int(obj.as_pointer()),
             "mesh_ptr": int(obj.data.as_pointer()),
-            "shape_key_name": shape_key_name,
             "pin_enabled": bool(pin_enabled),
             "pin_group_name": pin_group_name,
             "collision_local_radii": collision_local_radii,
@@ -1351,7 +1326,6 @@ class _MeshPhysics:
         cls,
         state,
         obj: bpy.types.Object,
-        shape_key_name: str,
         topology_key: tuple,
     ) -> bool:
         if not isinstance(state, dict):
@@ -1378,7 +1352,6 @@ class _MeshPhysics:
             state.get("kind") == cls.CACHE_KIND
             and state.get("object_ptr") == int(obj.as_pointer())
             and state.get("mesh_ptr") == int(obj.data.as_pointer())
-            and state.get("shape_key_name") == shape_key_name
             and state.get("topology_key") == topology_key
             and state.get("vertex_count") == vertex_count
             and state["rest_local_positions"].shape == (vertex_count, 3)
@@ -1880,15 +1853,15 @@ def _run_mesh_xpbd_node(
     stage_start = time.perf_counter() if timing is not None else None
     obj = _MeshPhysics.require_mesh_object(obj, "obj")
     scene = scene or bpy.context.scene
-    shape_key_name = _MeshPhysics.output_shape_key_name(obj)
-    target_key = _MeshPhysics.ensure_target_shape_key(obj, shape_key_name)
+    output_key = _MeshPhysics.OUTPUT_KEY
+    _MeshPhysics.ensure_delta_output(obj)
     if timing is not None:
         _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
     topology_key = _MeshPhysics.topology_key(obj)
     vertex_count = len(obj.data.vertices)
-    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, shape_key_name, topology_key) else None
+    state = cache_state if _MeshPhysics.state_matches(cache_state, obj, topology_key) else None
     cached_frame = _BonePhysics.cache_frame(state)
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
     if timing is not None:
@@ -1896,12 +1869,12 @@ def _run_mesh_xpbd_node(
 
     if cached_frame is not None and current_frame != cached_frame + 1:
         stage_start = time.perf_counter() if timing is not None else None
-        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        _MeshPhysics.clear_delta_attribute(obj)
         if timing is not None:
             _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
             _MeshPhysics.publish_debug_timing(
                 obj,
-                shape_key_name,
+                output_key,
                 current_frame,
                 vertex_count,
                 0,
@@ -1912,12 +1885,12 @@ def _run_mesh_xpbd_node(
 
     if reset or not isinstance(state, dict):
         stage_start = time.perf_counter() if timing is not None else None
-        _MeshPhysics.restore_rest_to_shape_key(obj, target_key, state)
+        _MeshPhysics.clear_delta_attribute(obj)
         if timing is not None:
             _MeshPhysics.add_timing(timing, "restore", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        state = _MeshPhysics.build_state(obj, shape_key_name, topology_key)
+        state = _MeshPhysics.build_state(obj, topology_key)
         if timing is not None:
             _MeshPhysics.add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
@@ -1931,9 +1904,10 @@ def _run_mesh_xpbd_node(
     if not enabled:
         next_state = dict(state)
         next_state["frame"] = current_frame
+        _MeshPhysics.clear_delta_attribute(obj)
         _MeshPhysics.publish_debug_timing(
             obj,
-            shape_key_name,
+            output_key,
             current_frame,
             vertex_count,
             constraint_count,
@@ -1973,12 +1947,12 @@ def _run_mesh_xpbd_node(
         _MeshPhysics.add_timing(timing, "solve_total", time.perf_counter() - stage_start)
     next_state["frame"] = current_frame
     stage_start = time.perf_counter() if timing is not None else None
-    _MeshPhysics.write_world_positions_to_shape_key(obj, target_key, next_state["positions"])
+    _MeshPhysics.write_world_delta_attribute(obj, next_state["positions"], next_state["rest_positions"])
     if timing is not None:
         _MeshPhysics.add_timing(timing, "write", time.perf_counter() - stage_start)
         _MeshPhysics.publish_debug_timing(
             obj,
-            shape_key_name,
+            output_key,
             current_frame,
             vertex_count,
             constraint_count,
@@ -2442,33 +2416,33 @@ def springBoneVRM(
     Python 参考实现。用于定义网格 XPBD 的输入、输出、cache 协议、跳帧规则与 CPP 后端对齐基准。
 
     I/O 约定：
-    缓存必须通过同名缓存读写节点闭环；节点只写目标形态键，不修改 Basis 或 mesh 顶点。
+    缓存必须通过同名缓存读写节点闭环；节点只写 `xpbd_delta` 点域属性，并由自身创建的 GN 后置位移修改器消费；不修改 Basis 或 mesh 顶点。
     场景输入提供 frame_current、render.fps / fps_base，并作为骨骼/Object 被动碰撞体的枚举范围。
     被动碰撞体来自可见 Object.hotools_object_collision 和 Armature Bone.hotools_collision；当前旧 XPBD 蓝本消费类型为 SPHERE、CAPSULE。
     球体读取 collision_type、radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
-    输出形态键、Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools网格碰撞”。
+    Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools网格碰撞”；输出属性与 GN 修改器由本 solver 自己维护。
 
     求解模型：
     rest 顶点取自 Basis/reference key；mesh edge 生成拉伸距离约束，共边三角面的 opposite 顶点生成弯曲距离约束。
-    每次执行推进一个 Blender 场景帧：Verlet 预测，按迭代次数投影 pin、stretch、bend 与被动碰撞约束，再批量写回目标形态键。
+    每次执行推进一个 Blender 场景帧：Verlet 预测，按迭代次数投影 pin、stretch、bend 与被动碰撞约束，再批量写回 `xpbd_delta`。
     damping 是“每场景帧速度阻尼”，内部按 substeps 换算为子步阻尼；stretch_compliance / bend_compliance 为 XPBD 顺从度，0 表示硬约束。
 
     坐标空间：
-    Blender mesh 与 shape key 坐标为物体局部空间；XPBD cache 与求解阶段使用世界空间。
+    Blender mesh 坐标与 `xpbd_delta` 属性为物体局部空间；XPBD cache 与求解阶段使用世界空间。
     cache 重建流程：rest_local_positions = Basis/reference local；rest_positions = matrix_world * rest_local_positions。
-    写回流程：target_shape_key = matrix_world.inverted() * positions。
+    写回流程：world_delta = positions - rest_positions；xpbd_delta = matrix_world.inverted().to_3x3() * world_delta。
     重力方向、被动球/胶囊碰撞体、逐顶点碰撞半径均在世界空间参与求解；局部半径会按 matrix_world 最大轴缩放转换。
 
     数据生命周期：
     编译期固定节点函数、socket 连线与常量输入；不固化场景状态、mesh 顶点、碰撞体或 Blender 指针。
-    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、输出形态键名称、可见碰撞体及其当前变换。
+    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、可见碰撞体及其当前变换。
     cache 重建时固定 rest_local_positions、topology、约束索引、pin 权重、局部碰撞半径和碰撞组。
     cache 运行态只推进 positions、prev_positions、frame。matrix_world 变化时重新派生 rest_positions；3x3 部分变化时重算约束长度和世界空间半径。
     positions / prev_positions 保持世界空间惯性，不随物体变换整体迁移。
 
     失效规则：
-    仅接受 current_frame == cached_frame + 1。跳帧、倒放、同帧重复或 reset 时恢复 rest_local_positions 到目标形态键并清空连续速度。
-    topology、pin、碰撞半径、碰撞组或目标形态键配置变化后，需要 reset、跳帧保护或 cache 重建路径生效。
+    仅接受 current_frame == cached_frame + 1。跳帧、倒放、同帧重复或 reset 时清空 `xpbd_delta` 并清空连续速度。
+    topology、pin、碰撞半径或碰撞组配置变化后，需要 reset、跳帧保护或 cache 重建路径生效。
     当前被动碰撞消费范围包括骨骼/Object 球体与胶囊。
     """,
 )
@@ -2544,19 +2518,19 @@ def meshPhysicsXPBD(
     C++ 求解后端。与“网格物理-XPBD”共享输入、输出、cache 协议、跳帧规则和 Blender 侧数据生命周期。
 
     职责划分：
-    Python 层负责 Blender 数据读取、校验、shape key 创建/写回、cache 管理、对象变换同步和碰撞体快照。
+    Python 层负责 Blender 数据读取、校验、`xpbd_delta`/GN 输出、cache 管理、对象变换同步和碰撞体快照。
     C++ 层负责预测、pin、stretch、bend、被动碰撞投影和子步/迭代循环。
     native 不访问 bpy，不保存 Blender 指针，不维护跨帧全局状态。
     当前传入 native 的被动碰撞数组类型为 SPHERE、CAPSULE。
 
     坐标空间：
-    Blender mesh 与 shape key 坐标为物体局部空间；传入 native 的 rest_positions、positions、prev_positions、约束长度、碰撞半径和 collider 数组均为世界空间。
-    Python 桥接流程：Basis/reference local -> matrix_world -> world-space arrays -> native solve -> matrix_world.inverted() -> target shape key。
-    reset、跳帧、倒放或同帧重复执行时不调用 native，直接恢复 rest_local_positions 到目标形态键。
+    Blender mesh 坐标与 `xpbd_delta` 属性为物体局部空间；传入 native 的 rest_positions、positions、prev_positions、约束长度、碰撞半径和 collider 数组均为世界空间。
+    Python 桥接流程：Basis/reference local -> matrix_world -> world-space arrays -> native solve -> world delta -> xpbd_delta。
+    reset、跳帧、倒放或同帧重复执行时不调用 native，直接清空 `xpbd_delta`。
 
     数据生命周期：
     编译期固定节点函数、socket 连线与常量输入；不固化场景状态、mesh 顶点、碰撞体或 Blender 指针。
-    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、输出形态键名称、可见碰撞体及其当前变换。
+    每帧读取运行时 socket 值、scene frame/fps、object matrix_world、可见碰撞体及其当前变换。
     cache 重建时固定 rest_local_positions、topology、约束索引、pin 权重、局部碰撞半径和碰撞组。
     cache 运行态只推进 positions、prev_positions、frame。matrix_world 变化时重新派生 rest_positions；3x3 部分变化时重算约束长度和世界空间半径。
     positions / prev_positions 保持世界空间惯性，不随物体变换整体迁移。

@@ -4,7 +4,7 @@ MC2 BasePose 只读对象的集中管理模块。
 这个文件只处理物理缓存对象的生命周期和轻量校验：
 1. 创建/刷新当前物理 Mesh 对应的 BasePose 只读对象。
 2. 将自动生成的对象统一归档到场景集合 HoPhysicsCache。
-3. 移除复制体上的 MC2 输出 shape key，避免只读输入混入物理写回结果。
+3. 移除复制体上的物理解算后置 delta 输出，避免只读输入混入写回结果。
 4. 检查当前物理对象与 BasePose 对象的顶点数、Loop 数、面数是否一致。
 
 它不负责读取 evaluated mesh、构建 solver state 或执行物理解算；这些仍由
@@ -13,6 +13,12 @@ OmniNode/physicsMC2 后端处理。
 
 import bpy
 
+from .deltaOutput import PhysicsDeltaOutputSpec
+from .deltaOutput import ensure_delta_attribute as _ensure_delta_attribute
+from .deltaOutput import ensure_delta_modifier as _ensure_delta_modifier
+from .deltaOutput import ensure_delta_output as _ensure_delta_output
+from .deltaOutput import remove_delta_output as _remove_delta_output_by_spec
+
 
 CACHE_COLLECTION_NAME = "HoPhysicsCache"
 CACHE_OBJECT_FLAG = "hotools_base_pose_cache"
@@ -20,6 +26,12 @@ CACHE_SOURCE_KEY = "hotools_base_pose_source"
 DELTA_ATTRIBUTE_NAME = "mc2_delta"
 DELTA_MODIFIER_NAME = "MC2 后置位移"
 DELTA_NODE_GROUP_NAME = "HoTools_MC2_ApplyDelta"
+MC2_DELTA_SPEC = PhysicsDeltaOutputSpec(
+    attribute_name=DELTA_ATTRIBUTE_NAME,
+    modifier_name=DELTA_MODIFIER_NAME,
+    node_group_name=DELTA_NODE_GROUP_NAME,
+    label="MC2 后置位移",
+)
 
 
 def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
@@ -73,108 +85,21 @@ def move_to_cache_collection(obj: bpy.types.Object, scene: bpy.types.Scene = Non
     _unlink_from_other_collections(obj, collection)
 
 
-def _new_geometry_nodes_group() -> bpy.types.NodeTree:
-    group = bpy.data.node_groups.new(DELTA_NODE_GROUP_NAME, "GeometryNodeTree")
-    if hasattr(group, "interface"):
-        group.interface.new_socket(name="Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
-        group.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
-    else:
-        group.inputs.new("NodeSocketGeometry", "Geometry")
-        group.outputs.new("NodeSocketGeometry", "Geometry")
-
-    nodes = group.nodes
-    links = group.links
-    input_node = nodes.new("NodeGroupInput")
-    output_node = nodes.new("NodeGroupOutput")
-    named_attr = nodes.new("GeometryNodeInputNamedAttribute")
-    set_position = nodes.new("GeometryNodeSetPosition")
-
-    input_node.location = (-600, 0)
-    named_attr.location = (-600, -180)
-    set_position.location = (-260, 0)
-    output_node.location = (80, 0)
-
-    named_attr.data_type = "FLOAT_VECTOR"
-    if "Name" in named_attr.inputs:
-        named_attr.inputs["Name"].default_value = DELTA_ATTRIBUTE_NAME
-
-    links.new(input_node.outputs["Geometry"], set_position.inputs["Geometry"])
-    links.new(named_attr.outputs["Attribute"], set_position.inputs["Offset"])
-    links.new(set_position.outputs["Geometry"], output_node.inputs["Geometry"])
-    return group
-
-
-def ensure_delta_node_group() -> bpy.types.NodeTree:
-    group = bpy.data.node_groups.get(DELTA_NODE_GROUP_NAME)
-    if group is not None and getattr(group, "bl_idname", "") == "GeometryNodeTree":
-        return group
-    return _new_geometry_nodes_group()
-
-
-def _move_modifier_to_bottom(obj: bpy.types.Object, modifier) -> None:
-    modifiers = obj.modifiers
-    index = modifiers.find(modifier.name)
-    if index < 0 or index >= len(modifiers) - 1:
-        return
-    if hasattr(modifiers, "move"):
-        modifiers.move(index, len(modifiers) - 1)
-        return
-    active = bpy.context.view_layer.objects.active
-    try:
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.modifier_move_to_index(modifier=modifier.name, index=len(modifiers) - 1)
-    finally:
-        bpy.context.view_layer.objects.active = active
-
-
 def ensure_delta_modifier(obj: bpy.types.Object) -> bpy.types.Modifier:
-    if obj is None or obj.type != "MESH":
-        raise ValueError("MC2 后置位移只能添加到 Mesh 对象")
-    group = ensure_delta_node_group()
-    modifier = obj.modifiers.get(DELTA_MODIFIER_NAME)
-    if modifier is None:
-        modifier = obj.modifiers.new(DELTA_MODIFIER_NAME, "NODES")
-    modifier.node_group = group
     # 这个修改器必须位于 Armature/基础变形之后；运行时只写 mc2_delta 顶点属性。
-    _move_modifier_to_bottom(obj, modifier)
-    return modifier
+    return _ensure_delta_modifier(obj, MC2_DELTA_SPEC)
 
 
 def ensure_delta_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
-    if obj is None or obj.type != "MESH" or obj.data is None:
-        raise ValueError("MC2 后置位移属性只能写入 Mesh 对象")
-    mesh = obj.data
-    attr = mesh.attributes.get(DELTA_ATTRIBUTE_NAME)
-    if attr is not None and (attr.domain != "POINT" or attr.data_type != "FLOAT_VECTOR"):
-        mesh.attributes.remove(attr)
-        attr = None
-    if attr is None:
-        attr = mesh.attributes.new(DELTA_ATTRIBUTE_NAME, "FLOAT_VECTOR", "POINT")
-    return attr
+    return _ensure_delta_attribute(obj, MC2_DELTA_SPEC)
 
 
 def ensure_delta_output(obj: bpy.types.Object) -> None:
-    ensure_delta_attribute(obj)
-    ensure_delta_modifier(obj)
-
-
-def _remove_shape_key(obj: bpy.types.Object, shape_key_name: str) -> None:
-    if not shape_key_name or obj.data.shape_keys is None:
-        return
-    key = obj.data.shape_keys.key_blocks.get(shape_key_name)
-    if key is None or key == obj.data.shape_keys.reference_key:
-        return
-    obj.shape_key_remove(key)
+    _ensure_delta_output(obj, MC2_DELTA_SPEC)
 
 
 def _remove_delta_output(obj: bpy.types.Object) -> None:
-    modifier = obj.modifiers.get(DELTA_MODIFIER_NAME)
-    if modifier is not None:
-        obj.modifiers.remove(modifier)
-    if obj.data is not None:
-        attr = obj.data.attributes.get(DELTA_ATTRIBUTE_NAME)
-        if attr is not None:
-            obj.data.attributes.remove(attr)
+    _remove_delta_output_by_spec(obj, MC2_DELTA_SPEC)
 
 
 def _disable_runtime_flags(obj: bpy.types.Object) -> None:
@@ -187,7 +112,6 @@ def _disable_runtime_flags(obj: bpy.types.Object) -> None:
 
 def create_base_pose_proxy(
     source_obj: bpy.types.Object,
-    shape_key_name: str,
     scene: bpy.types.Scene = None,
 ) -> bpy.types.Object:
     if source_obj is None or source_obj.type != "MESH":
@@ -199,7 +123,6 @@ def create_base_pose_proxy(
     base_obj.data.name = f"{source_obj.data.name}_BasePose"
     try:
         ensure_cache_collection(scene).objects.link(base_obj)
-        _remove_shape_key(base_obj, shape_key_name)
         _remove_delta_output(base_obj)
         _disable_runtime_flags(base_obj)
         base_obj.display_type = "WIRE"
@@ -221,7 +144,6 @@ def create_base_pose_proxy(
 def refresh_base_pose_proxy(
     source_obj: bpy.types.Object,
     base_obj: bpy.types.Object,
-    shape_key_name: str,
     scene: bpy.types.Scene = None,
 ) -> bpy.types.Object:
     if base_obj is not None and base_obj != source_obj and base_obj.type == "MESH":
@@ -235,12 +157,11 @@ def refresh_base_pose_proxy(
         if old_mesh is not None and old_mesh.users == 0:
             bpy.data.meshes.remove(old_mesh)
 
-    return create_base_pose_proxy(source_obj, shape_key_name, scene)
+    return create_base_pose_proxy(source_obj, scene)
 
 
 def ensure_base_pose_proxy(
     source_obj: bpy.types.Object,
-    shape_key_name: str,
     scene: bpy.types.Scene = None,
     refresh: bool = False,
 ) -> bpy.types.Object:
@@ -250,7 +171,7 @@ def ensure_base_pose_proxy(
 
     base_obj = getattr(props, "mc2_base_pose_proxy", None)
     if refresh or base_obj is None:
-        base_obj = refresh_base_pose_proxy(source_obj, base_obj, shape_key_name, scene)
+        base_obj = refresh_base_pose_proxy(source_obj, base_obj, scene)
         props.mc2_base_pose_proxy = base_obj
         return base_obj
 

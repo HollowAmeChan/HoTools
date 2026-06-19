@@ -1,7 +1,7 @@
 """MeshCloth MC2 的 OmniNode 节点入口。
 
 这里只管理 Blender 节点生命周期：cache、跳帧、reset、碰撞快照收集和
-shape key 写回。物理数组构建与求解分别由 state.py 和 solver.py 负责。
+GN delta 写回。物理数组构建与求解分别由 state.py 和 solver.py 负责。
 """
 
 import time
@@ -51,7 +51,7 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
 def _format_debug_timing_report(
     backend: str,
     obj_name: str,
-    shape_key_name: str,
+    output_key: str,
     frame: int,
     vertex_count: int,
     constraint_count: int,
@@ -81,7 +81,7 @@ def _format_debug_timing_report(
         f"total={OmniDebug.func_label(f'{total_ms:.3f}ms')}",
         f"  {OmniDebug.section_label('Context')}: "
         f"obj={OmniDebug.node_label(obj_name)}  "
-        f"key={OmniDebug.value_label(shape_key_name)}  "
+        f"key={OmniDebug.value_label(output_key)}  "
         f"frame={OmniDebug.value_label(frame)}  "
         f"verts={OmniDebug.value_label(vertex_count)}  "
         f"constraints={OmniDebug.value_label(constraint_count)}",
@@ -104,7 +104,7 @@ def _format_debug_timing_report(
 
 def _publish_debug_timing(
     obj: bpy.types.Object,
-    shape_key_name: str,
+    output_key: str,
     frame: int,
     vertex_count: int,
     constraint_count: int,
@@ -116,7 +116,7 @@ def _publish_debug_timing(
 
     _add_timing(timing, "total", time.perf_counter() - float(timing.get("start", time.perf_counter())))
     backend = str(backend_label or "py")
-    key = (int(obj.as_pointer()), str(shape_key_name), f"mc2_{backend}")
+    key = (int(obj.as_pointer()), str(output_key), f"mc2_{backend}")
     now = time.perf_counter()
     profile = _DEBUG_PROFILES.get(key)
     first_publish = profile is None
@@ -153,7 +153,7 @@ def _publish_debug_timing(
             _format_debug_timing_report(
                 backend,
                 obj.name_full,
-                shape_key_name,
+                output_key,
                 int(profile["frame"]),
                 int(profile["vertex_count"]),
                 int(profile["constraint_count"]),
@@ -235,8 +235,8 @@ def _run_mesh_cloth_mc2_node(
     stage_start = time.perf_counter() if timing is not None else None
     obj = blender_io.require_mesh_object(proxy_obj, "proxy_obj")
     scene = scene or bpy.context.scene
-    shape_key_name = blender_io.output_shape_key_name(obj)
-    target_key = blender_io.ensure_target_shape_key(obj, shape_key_name)
+    output_key = blender_io.output_key_name(obj)
+    ensure_delta_output(obj)
     if timing is not None:
         _add_timing(timing, "validate", time.perf_counter() - stage_start)
 
@@ -248,7 +248,7 @@ def _run_mesh_cloth_mc2_node(
 
     vertex_count = len(obj.data.vertices)
     cache_substage_start = time.perf_counter() if timing is not None else None
-    state_matches = mc2_state.state_matches(cache_state, obj, shape_key_name, mesh_light_key)
+    state_matches = mc2_state.state_matches(cache_state, obj, output_key, mesh_light_key)
     if timing is not None:
         _add_timing(timing, "cache_match", time.perf_counter() - cache_substage_start)
     state = cache_state if state_matches else None
@@ -262,17 +262,17 @@ def _run_mesh_cloth_mc2_node(
 
     if not reset and cached_frame is not None and current_frame != cached_frame + 1:
         stage_start = time.perf_counter() if timing is not None else None
-        blender_io.restore_rest_to_shape_key(obj, target_key, state)
+        blender_io.clear_delta_attribute(obj)
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
-            _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, 0, timing, backend_label)
+            _publish_debug_timing(obj, output_key, current_frame, vertex_count, 0, timing, backend_label)
         return _OmniCache(None), obj, vertex_count, 0
 
     base_pose_proxy = None
     if enabled:
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.ensure_base_pose_cache_handler()
-        ensure_base_pose_proxy(obj, shape_key_name, scene, refresh=False)
+        ensure_base_pose_proxy(obj, scene, refresh=False)
         ensure_delta_output(obj)
         if timing is not None:
             _add_timing(timing, "base_proxy_ensure", time.perf_counter() - stage_start)
@@ -284,7 +284,7 @@ def _run_mesh_cloth_mc2_node(
 
     if reset or not isinstance(state, dict):
         stage_start = time.perf_counter() if timing is not None else None
-        blender_io.restore_rest_to_shape_key(obj, target_key, state)
+        blender_io.clear_delta_attribute(obj)
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
 
@@ -297,14 +297,14 @@ def _run_mesh_cloth_mc2_node(
             _add_timing(timing, "cache_mesh_signature", time.perf_counter() - cache_substage_start)
 
         cache_substage_start = time.perf_counter() if timing is not None else None
-        config_key = mesh_build.config_key(obj, shape_key_name, mesh_signature_key, collision_radius)
+        config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
         if timing is not None:
             _add_timing(timing, "cache_config", time.perf_counter() - cache_substage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
         state = mc2_state.build_state(
             obj,
-            shape_key_name,
+            output_key,
             mesh_light_key,
             mesh_signature_key,
             config_key,
@@ -355,7 +355,8 @@ def _run_mesh_cloth_mc2_node(
     if not enabled:
         next_state = dict(state)
         next_state["frame"] = current_frame
-        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)
+        blender_io.clear_delta_attribute(obj)
+        _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
         return _OmniCache(next_state), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
@@ -435,14 +436,11 @@ def _run_mesh_cloth_mc2_node(
 
     next_state["frame"] = current_frame
     stage_start = time.perf_counter() if timing is not None else None
-    if base_pose_proxy is not None:
-        blender_io.ensure_shape_key_rest(obj, target_key, next_state)
-        blender_io.write_world_delta_attribute(obj, next_state["display_positions"], next_state["base_positions"])
-    else:
-        blender_io.write_world_positions_to_shape_key(obj, target_key, next_state["display_positions"])
+    base_positions = next_state["base_positions"] if base_pose_proxy is not None else next_state["rest_world_positions"]
+    blender_io.write_world_delta_attribute(obj, next_state["display_positions"], base_positions)
     if timing is not None:
         _add_timing(timing, "write", time.perf_counter() - stage_start)
-        _publish_debug_timing(obj, shape_key_name, current_frame, vertex_count, constraint_count, timing, backend_label)
+        _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
     return _OmniCache(next_state), obj, vertex_count, constraint_count
 
 
@@ -690,7 +688,7 @@ _MESH_CLOTH_MC2_CPP_META = dict(meshClothMC2.__meta)
 _MESH_CLOTH_MC2_CPP_META["bl_label"] = "网格布料-MC2-CPP"
 _MESH_CLOTH_MC2_CPP_META["omni_description"] = """
     MC2 MeshCloth C++ full-core backend node.
-    It shares cache, collider collection, frame timing, teleport/inertia preparation, and shape key writeback with
+    It shares cache, collider collection, frame timing, teleport/inertia preparation, and GN delta writeback with
     meshClothMC2, but delegates the per-frame solver loop to hotools_native.solve_meshcloth_mc2.
     """
 

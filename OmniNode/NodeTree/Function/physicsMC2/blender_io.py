@@ -4,12 +4,9 @@ import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from .....PhysicsTools.collisionBasePose import (
-    DELTA_ATTRIBUTE_NAME,
-    ensure_delta_attribute,
-    ensure_delta_output,
-    validate_base_pose_proxy,
-)
+from .....PhysicsTools.collisionBasePose import MC2_DELTA_SPEC, validate_base_pose_proxy
+from .....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
+from .....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
 from . import math_utils
 
 _BASE_POSE_FRAME_CACHE = {}
@@ -39,10 +36,8 @@ def require_mesh_object(obj, label: str) -> bpy.types.Object:
     return obj
 
 
-def output_shape_key_name(obj: bpy.types.Object) -> str:
-    props = getattr(obj, "hotools_mesh_collision", None)
-    name = str(getattr(props, "output_shape_key", "") or "").strip()
-    return name or "MC2MeshCloth"
+def output_key_name(obj: bpy.types.Object) -> str:
+    return "MC2Delta"
 
 
 def base_pose_proxy_object(obj: bpy.types.Object) -> bpy.types.Object | None:
@@ -155,23 +150,6 @@ def ensure_base_pose_cache_handler() -> None:
     _BASE_POSE_CACHE_HANDLER_REGISTERED = True
 
 
-def ensure_target_shape_key(obj: bpy.types.Object, shape_key_name: str) -> bpy.types.ShapeKey:
-    mesh = obj.data
-    if mesh.shape_keys is None:
-        obj.shape_key_add(name="Basis", from_mix=False)
-
-    shape_keys = mesh.shape_keys
-    key = shape_keys.key_blocks.get(shape_key_name)
-    if key is None:
-        key = obj.shape_key_add(name=shape_key_name, from_mix=False)
-
-    if key == shape_keys.reference_key:
-        raise ValueError("目标 shape key 不能是 Basis/reference key")
-
-    key.value = 1.0
-    return key
-
-
 def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
     values = np.empty(vertex_count * 3, dtype=np.float32)
     key.data.foreach_get("co", values)
@@ -202,33 +180,8 @@ def world_positions_to_local(obj: bpy.types.Object, positions: np.ndarray) -> np
     return np.ascontiguousarray(values @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
 
 
-def write_shape_key_positions(
-    obj: bpy.types.Object,
-    shape_key: bpy.types.ShapeKey,
-    positions: np.ndarray,
-) -> None:
-    flat = np.ascontiguousarray(positions, dtype=np.float32).reshape(-1)
-    shape_key.data.foreach_set("co", flat)
-    obj.data.update()
-    obj.update_tag()
-
-
-def write_world_positions_to_shape_key(
-    obj: bpy.types.Object,
-    shape_key: bpy.types.ShapeKey,
-    positions: np.ndarray,
-) -> None:
-    write_shape_key_positions(obj, shape_key, world_positions_to_local(obj, positions))
-
-
 def clear_delta_attribute(obj: bpy.types.Object) -> None:
-    attr = obj.data.attributes.get(DELTA_ATTRIBUTE_NAME) if obj is not None and obj.type == "MESH" else None
-    if attr is None or attr.domain != "POINT" or attr.data_type != "FLOAT_VECTOR":
-        return
-    zeros = np.zeros(len(obj.data.vertices) * 3, dtype=np.float32)
-    attr.data.foreach_set("vector", zeros)
-    obj.data.update()
-    obj.update_tag()
+    _clear_delta_attribute(obj, MC2_DELTA_SPEC)
 
 
 def write_world_delta_attribute(
@@ -236,47 +189,7 @@ def write_world_delta_attribute(
     display_positions: np.ndarray,
     base_positions: np.ndarray,
 ) -> None:
-    ensure_delta_output(obj)
-    attr = ensure_delta_attribute(obj)
-    vertex_count = len(obj.data.vertices)
-    display = np.ascontiguousarray(display_positions, dtype=np.float32)
-    base = np.ascontiguousarray(base_positions, dtype=np.float32)
-    if display.shape != (vertex_count, 3) or base.shape != (vertex_count, 3):
-        raise ValueError("MC2 后置位移写入要求 display/base 顶点数量一致")
-    world_delta = np.ascontiguousarray(display - base, dtype=np.float32)
-    inv_basis = math_utils.matrix_to_numpy(obj.matrix_world.inverted())[:3, :3]
-    delta = np.ascontiguousarray(world_delta @ inv_basis.T, dtype=np.float32)
-    attr.data.foreach_set("vector", delta.reshape(-1))
-    obj.data.update()
-    obj.update_tag()
-
-
-def ensure_shape_key_rest(obj: bpy.types.Object, shape_key: bpy.types.ShapeKey, state=None) -> None:
-    vertex_count = len(obj.data.vertices)
-    if isinstance(state, dict):
-        cached_rest = state.get("rest_local_positions")
-        if isinstance(cached_rest, np.ndarray) and cached_rest.shape == (vertex_count, 3):
-            rest_positions = cached_rest
-        else:
-            rest_positions = read_rest_positions(obj)
-    else:
-        rest_positions = read_rest_positions(obj)
-    current = read_key_positions(shape_key, vertex_count)
-    if current.shape == rest_positions.shape and np.allclose(current, rest_positions, rtol=0.0, atol=1e-7):
-        return
-    write_shape_key_positions(obj, shape_key, rest_positions)
-
-
-def restore_rest_to_shape_key(obj: bpy.types.Object, shape_key: bpy.types.ShapeKey, state=None) -> None:
-    rest_positions = None
-    if isinstance(state, dict):
-        cached_rest = state.get("rest_local_positions")
-        if isinstance(cached_rest, np.ndarray) and cached_rest.shape == (len(obj.data.vertices), 3):
-            rest_positions = cached_rest
-    if rest_positions is None:
-        rest_positions = read_rest_positions(obj)
-    write_shape_key_positions(obj, shape_key, rest_positions)
-    clear_delta_attribute(obj)
+    _write_world_delta_attribute(obj, MC2_DELTA_SPEC, display_positions, base_positions)
 
 
 def cache_frame(cache) -> int | None:

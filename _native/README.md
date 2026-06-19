@@ -1,6 +1,6 @@
 # HoTools 原生后端约定
 
-本目录用于 HoTools 的 C++ 原生后端。第一阶段已经落地 `hotools_native` 的 XPBD solver 和 `网格物理-XPBD-CPP` 节点，Python 侧继续负责 Blender 数据准备、cache 管理、shape key 写回和节点接口。
+本目录用于 HoTools 的 C++ 原生后端。第一阶段已经落地 `hotools_native` 的 XPBD solver 和 `网格物理-XPBD-CPP` 节点，Python 侧继续负责 Blender 数据准备、cache 管理、GN delta 写回和节点接口。
 
 当前桥接层先用 Python C API / buffer 方式直连，后续如果需要再收敛到 nanobind。
 
@@ -127,11 +127,11 @@ OmniNode/NodeTree/Function/Physics.py
 
 职责：
 
-- 校验 Blender mesh object、shape key、pin group 和 frame continuity。
-- 用 `foreach_get` 批量读取 Basis / shape key 坐标。
+- 校验 Blender mesh object、pin group 和 frame continuity。
+- 用 `foreach_get` 批量读取 Basis/reference 坐标。
 - 维护 runtime cache，保存 `positions`、`prev_positions`、`inv_masses` 和约束数组。
 - 优先调用 C++ solve，native 不可用时回退 Python solver。
-- 用 `foreach_set` 批量写回目标 shape key。
+- 用 `foreach_set` 批量写回 solver 自己维护的点域 delta 属性，并由对应 GN 后置位移修改器消费。
 
 Python 层不要逐点调用 Blender setter，也不要让 C++ 直接访问 `bpy`。
 

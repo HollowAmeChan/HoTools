@@ -86,7 +86,6 @@ def make_grid_object(cols=5, rows=5, spacing=0.22):
     pin_group.add(list(range(cols)), 1.0, "ADD")
 
     props = obj.hotools_mesh_collision
-    props.output_shape_key = "MC2Parity"
     props.enabled = True
     props.radius = 0.045
     props.pin_enabled = True
@@ -129,10 +128,11 @@ def clone_state(value):
 
 
 def build_initial_state(obj):
+    mesh_light = mesh_build.mesh_light_key(obj)
     mesh_signature = mesh_build.mesh_signature_key(obj)
-    shape_key_name = "MC2Parity"
-    config = mesh_build.config_key(obj, shape_key_name, mesh_signature, 0.0)
-    return mc2_state.build_state(obj, shape_key_name, mesh_signature, config, 0.0)
+    output_key = "MC2Delta"
+    config = mesh_build.config_key(obj, output_key, mesh_signature, 0.0)
+    return mc2_state.build_state(obj, output_key, mesh_light, mesh_signature, config, 0.0)
 
 
 def scene_colliders(scene):

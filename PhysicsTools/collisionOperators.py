@@ -319,11 +319,9 @@ class OP_Hotools_MeshCollision_CreateBasePoseProxy(Operator):
         if obj is None or obj.type != "MESH" or props is None:
             return {"CANCELLED"}
 
-        shape_key_name = str(getattr(props, "output_shape_key", "") or "").strip()
         try:
             base_obj = ensure_base_pose_proxy(
                 obj,
-                shape_key_name or "MeshPhysics",
                 context.scene,
                 refresh=True,
             )

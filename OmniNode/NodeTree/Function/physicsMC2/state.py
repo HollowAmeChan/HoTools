@@ -1,6 +1,6 @@
 """MeshCloth 缓存状态与 Python/C++ ABI 形状守卫。
 
-这里维护的是求解器真实运行状态。Blender 对象、shape key 与场景生命周期仍由
+这里维护的是求解器真实运行状态。Blender 对象、GN delta 输出与场景生命周期仍由
 节点入口调度；本模块只负责把当前 mesh 输入整理成可复用的数组状态。
 """
 
@@ -37,7 +37,7 @@ def calc_inverse_masses(
 
 def build_state(
     obj: bpy.types.Object,
-    shape_key_name: str,
+    output_key: str,
     mesh_light_key: tuple,
     mesh_signature_key: tuple,
     config_key: tuple,
@@ -106,7 +106,7 @@ def build_state(
         "object_name": obj.name_full,
         "object_ptr": int(obj.as_pointer()),
         "mesh_ptr": int(obj.data.as_pointer()),
-        "shape_key_name": shape_key_name,
+        "output_key": output_key,
         "mesh_light_key": mesh_light_key,
         "mesh_signature_key": mesh_signature_key,
         "config_key": config_key,
@@ -353,7 +353,7 @@ def sync_state_to_base_pose_write_container(state: dict, obj: bpy.types.Object) 
     ):
         return state
 
-    # BasePose 模式下，当前物体只是 shape key 写入容器。
+    # BasePose 模式下，当前物体只是 GN delta 写入容器。
     # 动画姿态来自 BasePose 只读对象，不能在这里用写入容器的对象矩阵重建 rest/约束，
     # 否则移动骨架对象会触发整套约束热重算，并且和 BasePose evaluated 坐标形成双重变换。
     next_state = dict(state)
@@ -467,7 +467,7 @@ def sync_state_to_base_pose_proxy(
 def state_matches(
     state,
     obj: bpy.types.Object,
-    shape_key_name: str,
+    output_key: str,
     mesh_light_key: tuple,
 ) -> bool:
     if not isinstance(state, dict):
@@ -637,7 +637,7 @@ def state_matches(
         and state.get("solver_version") == MC2_SOLVER_VERSION
         and state.get("object_ptr") == int(obj.as_pointer())
         and state.get("mesh_ptr") == int(obj.data.as_pointer())
-        and state.get("shape_key_name") == shape_key_name
+        and state.get("output_key") == output_key
         and state.get("mesh_light_key") == mesh_light_key
         and state.get("vertex_count") == vertex_count
     )

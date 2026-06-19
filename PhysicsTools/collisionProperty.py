@@ -154,19 +154,13 @@ class PG_Hotools_MeshCollision(PropertyGroup):
     网格 XPBD 物理、逐顶点碰撞球和 Pin 的持久化配置。
 
     消费约定：
-    1. output_shape_key 是目标形态键名；XPBD 节点运行时读取它，缺失时自动创建。
+    1. Mesh 物理解算输出由各 solver 写入自己的 GN 后置位移属性。
     2. radius 是逐顶点球基础半径；radius_vertex_group 留空表示所有顶点权重 1。
     3. 顶点组存在时，权重会被限制在 0..1；顶点不在组内或组名不存在时权重为 0。
     4. pin_enabled 关闭时没有 Pin 顶点；开启且 pin_vertex_group 留空时所有顶点 Pin。
     5. Pin 结果由 XPBD 求解器在 cache 重建时转成 inv_masses，模拟中不热更新。
     6. 预览绘制逐顶点球时使用 evaluated mesh 顶点位置，并按同一顶点组语义计算半径和 Pin 颜色。
     """
-
-    output_shape_key: StringProperty(
-        name="物理形态键",
-        description="XPBD网格物理解算写入的目标形态键；不存在时会自动创建",
-        default="MeshPhysics",
-    )  # type: ignore
     mc2_base_pose_proxy: PointerProperty(
         type=bpy.types.Object,
         name="BasePose只读对象",

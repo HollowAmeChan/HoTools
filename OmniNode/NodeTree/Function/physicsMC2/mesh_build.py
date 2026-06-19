@@ -195,7 +195,7 @@ def mesh_light_key(obj: bpy.types.Object) -> tuple:
 
 def config_key(
     obj: bpy.types.Object,
-    shape_key_name: str,
+    output_key: str,
     mesh_signature_key_value: tuple,
     collision_radius: float,
 ) -> tuple:
@@ -217,7 +217,7 @@ def config_key(
     )
     return (
         MC2_SOLVER_VERSION,
-        shape_key_name,
+        output_key,
         mesh_signature_key_value,
         bool(pin_enabled),
         pin_group,

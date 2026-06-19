@@ -145,17 +145,6 @@ def _draw_object_collision_controls(layout, props):
 
 def _draw_mesh_collision_controls(layout, obj, props):
     collision_box = layout.box()
-    shape_keys = obj.data.shape_keys
-    if shape_keys is not None:
-        collision_box.prop_search(
-            props,
-            "output_shape_key",
-            shape_keys,
-            "key_blocks",
-            text="物理形态键",
-        )
-    else:
-        collision_box.prop(props, "output_shape_key")
     base_pose_row = collision_box.row(align=True)
     base_pose_row.prop(props, "mc2_base_pose_proxy", text="BasePose只读对象")
     base_pose_row.operator(

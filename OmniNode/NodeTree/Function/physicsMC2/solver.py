@@ -1,7 +1,7 @@
 ﻿"""MeshCloth Python 求解调度。
 
 本模块只处理单帧内的 predict / constraint / collision / motion / post 顺序。
-节点入口负责 Blender cache、跳帧、reset、碰撞快照收集和 shape key 写回。
+节点入口负责 Blender cache、跳帧、reset、碰撞快照收集和 GN delta 写回。
 """
 
 import time
