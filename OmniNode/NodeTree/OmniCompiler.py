@@ -15,6 +15,7 @@ from .OmniIR import (
     RuntimeTimingBeginCall,
     RuntimeTimingEndCall,
 )
+import inspect
 
 
 class OmniCompiler:
@@ -268,10 +269,119 @@ class CompilerContext:
         return input_regs
 
     def input_socket(self, node, identifier):
+        for sock in getattr(node, "inputs", ()):
+            if getattr(sock, "identifier", None) == identifier:
+                return sock
         try:
             return node.inputs.get(identifier)
         except Exception:
             return None
+
+    def compile_missing_input_default(self, node, identifier, default_value):
+        reg = self.new_reg()
+        self.instructions.append(("CONST", reg, default_value))
+        OmniDebug.append_compile_trace(
+            self.graph,
+            f"Emit CONST r{reg} = {OmniDebug.format_value(default_value)} for "
+            f"{OmniDebug.node_name(node)}.{identifier} (missing socket, function default)",
+        )
+        OmniDebug.add_register_bridge(
+            self.graph,
+            reg,
+            OmniDebug.node_name(node),
+            identifier,
+            source=OmniDebug.format_value(default_value),
+            note="missing socket default",
+        )
+        return reg
+
+    def function_missing_input_default(self, node, param):
+        identifier = param.name
+        declared_defaults = getattr(node, "_omni_socket_defaults", None)
+        if isinstance(declared_defaults, dict) and identifier in declared_defaults:
+            return declared_defaults[identifier]
+        if param.default is not inspect._empty:
+            return param.default
+
+        message = (
+            f"Missing required input socket '{identifier}' on {OmniDebug.node_name(node)}; "
+            "rebuild this node after changing the function signature"
+        )
+        OmniCompiler._set_node_bug_state(node, message)
+        raise RuntimeError(message)
+
+    def validate_function_param(self, node, param):
+        if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            return
+
+        message = (
+            f"Unsupported function parameter '{param.name}' ({param.kind.description}) on "
+            f"{OmniDebug.node_name(node)}; Omni function nodes must use positional parameters"
+        )
+        OmniCompiler._set_node_bug_state(node, message)
+        raise RuntimeError(message)
+
+    def validate_stale_inputs(self, node, stale_socks):
+        linked_stale_ids = [
+            getattr(sock, "identifier", getattr(sock, "name", ""))
+            for sock in stale_socks
+            if len(getattr(sock, "links", ())) > 0
+        ]
+        if not linked_stale_ids:
+            return
+
+        message = (
+            f"Stale linked input socket(s) on {OmniDebug.node_name(node)}: "
+            f"{', '.join(map(str, linked_stale_ids))}; rebuild this node after changing the function signature"
+        )
+        OmniCompiler._set_node_bug_state(node, message)
+        raise RuntimeError(message)
+
+    def compile_function_inputs(self, node, func):
+        try:
+            parameters = list(inspect.signature(func).parameters.values())
+        except Exception:
+            return self.compile_node_inputs(node)
+
+        input_regs = []
+        socket_is_multi = getattr(node, "_socket_is_multi", None) or {}
+        signature_ids = set()
+
+        for param in parameters:
+            self.validate_function_param(node, param)
+            identifier = param.name
+            signature_ids.add(identifier)
+            is_multi = socket_is_multi.get(identifier, False)
+            sock = self.input_socket(node, identifier)
+            if sock is None:
+                default_value = self.function_missing_input_default(node, param)
+                reg = self.compile_missing_input_default(node, identifier, default_value)
+                input_regs.append([reg] if is_multi else reg)
+                continue
+
+            if is_multi:
+                input_regs.append(self.compile_multi_input(sock, trace_kind="multi"))
+            else:
+                input_regs.append(self.compile_single_input(sock))
+
+        stale_socks = [
+            sock
+            for sock in getattr(node, "inputs", ())
+            if getattr(sock, "identifier", None) not in signature_ids
+        ]
+        self.validate_stale_inputs(node, stale_socks)
+
+        stale_ids = [
+            getattr(sock, "identifier", getattr(sock, "name", ""))
+            for sock in stale_socks
+        ]
+        if stale_ids:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                f"Ignore stale inputs on {OmniDebug.node_name(node)}: {', '.join(map(str, stale_ids))}",
+            )
+
+        return input_regs
 
     def compile_optional_input(self, node, identifier):
         sock = self.input_socket(node, identifier)
@@ -523,7 +633,7 @@ class CompilerContext:
             OmniCompiler._set_node_bug_state(node, message)
             raise RuntimeError(f"{message} ({node.name})")
 
-        input_regs = self.compile_node_inputs(node)
+        input_regs = self.compile_function_inputs(node, func)
         output_regs = self.allocate_outputs(node, source=OmniDebug.func_name(func), note="node output")
 
         self.instructions.append(OpCall(func, input_regs, output_regs, node))
