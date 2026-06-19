@@ -156,10 +156,14 @@ def shift_position(position: np.ndarray, pivot: np.ndarray, shift_vector: np.nda
 
 def capture_object_pose(obj: bpy.types.Object) -> dict:
     matrix = math_utils.matrix_to_numpy(obj.matrix_world)
+    scale_radius = math_utils.matrix_scale_radius(obj.matrix_world)
     return {
         "matrix": matrix,
         "position": _matrix_translation(matrix),
         "rotation": _matrix_rotation_quat(matrix),
+        "scale_radius": scale_radius,
+        "negative_scale_sign": math_utils.object_negative_scale_sign(obj),
+        "negative_scale_direction": math_utils.object_negative_scale_direction(obj),
     }
 
 
@@ -174,6 +178,16 @@ def make_runtime_state(obj: bpy.types.Object) -> dict:
         "frame_component_shift_rotation": _identity_quat(),
         "old_world_position": pose["position"],
         "old_world_rotation": pose["rotation"],
+        "old_component_matrix": pose["matrix"],
+        "now_component_matrix": pose["matrix"],
+        "old_scale_radius": pose["scale_radius"],
+        "init_scale_radius": pose["scale_radius"],
+        "scale_ratio": 1.0,
+        "negative_scale_sign": pose["negative_scale_sign"],
+        "negative_scale_direction": pose["negative_scale_direction"],
+        "old_negative_scale_sign": pose["negative_scale_sign"],
+        "old_negative_scale_direction": pose["negative_scale_direction"],
+        "negative_scale_changed": False,
         "now_world_position": pose["position"],
         "now_world_rotation": pose["rotation"],
         "step_vector": np.zeros(3, dtype=np.float32),
@@ -216,6 +230,24 @@ def prepare_frame(
     old_rot = np.asarray(next_state["old_component_rotation"], dtype=np.float32)
     now_pos = pose["position"]
     now_rot = pose["rotation"]
+    now_scale_radius = float(pose["scale_radius"])
+    init_scale_radius = max(
+        float(next_state.get("init_scale_radius", now_scale_radius) or now_scale_radius),
+        MC2SystemConstants.EPSILON,
+    )
+    old_negative_scale_sign = int(next_state.get("old_negative_scale_sign", pose["negative_scale_sign"]) or 1)
+    now_negative_scale_sign = int(pose["negative_scale_sign"])
+    old_negative_scale_direction = np.asarray(
+        next_state.get("old_negative_scale_direction", pose["negative_scale_direction"]),
+        dtype=np.float32,
+    ).reshape(3)
+    now_negative_scale_direction = np.asarray(pose["negative_scale_direction"], dtype=np.float32).reshape(3)
+    negative_scale_changed = bool(np.any(old_negative_scale_direction != now_negative_scale_direction))
+    if negative_scale_changed:
+        # 负缩放翻转帧只做历史坐标系矫正，不再叠加普通对象位移惯性。
+        old_component_pos = now_pos.copy()
+        work_old_pos = old_component_pos.copy()
+        old_rot = now_rot.copy()
     delta = now_pos - work_old_pos
     delta_angle = quat_angle(old_rot, now_rot)
 
@@ -229,6 +261,7 @@ def prepare_frame(
     if teleport_state == TELEPORT_RESET:
         next_state = make_runtime_state(obj)
         next_state["teleport_state"] = TELEPORT_RESET
+        next_state["negative_scale_changed"] = negative_scale_changed
         return next_state
 
     smooth_delta = np.zeros(3, dtype=np.float32)
@@ -285,6 +318,14 @@ def prepare_frame(
     next_state["frame_component_shift_rotation"] = np.ascontiguousarray(shift_rotation, dtype=np.float32)
     next_state["old_component_position"] = np.ascontiguousarray(old_component_pos, dtype=np.float32)
     next_state["old_component_rotation"] = np.ascontiguousarray(old_rot, dtype=np.float32)
+    next_state["old_component_matrix"] = np.ascontiguousarray(next_state.get("old_component_matrix", pose["matrix"]), dtype=np.float32)
+    next_state["now_component_matrix"] = np.ascontiguousarray(pose["matrix"], dtype=np.float32)
+    next_state["old_scale_radius"] = float(next_state.get("old_scale_radius", now_scale_radius) or now_scale_radius)
+    next_state["init_scale_radius"] = float(init_scale_radius)
+    next_state["scale_ratio"] = float(max(now_scale_radius / init_scale_radius, MC2SystemConstants.EPSILON))
+    next_state["negative_scale_sign"] = now_negative_scale_sign
+    next_state["negative_scale_direction"] = np.ascontiguousarray(now_negative_scale_direction, dtype=np.float32)
+    next_state["negative_scale_changed"] = bool(negative_scale_changed)
     next_state["old_world_position"] = np.ascontiguousarray(shifted_old_center, dtype=np.float32)
     next_state["old_world_rotation"] = np.ascontiguousarray(shifted_old_rotation, dtype=np.float32)
     next_state["now_world_position"] = np.ascontiguousarray(now_pos, dtype=np.float32)
@@ -298,6 +339,22 @@ def commit_frame(runtime_state: dict, obj: bpy.types.Object) -> dict:
     pose = capture_object_pose(obj)
     next_state["old_component_position"] = np.ascontiguousarray(pose["position"], dtype=np.float32)
     next_state["old_component_rotation"] = np.ascontiguousarray(pose["rotation"], dtype=np.float32)
+    next_state["old_component_matrix"] = np.ascontiguousarray(pose["matrix"], dtype=np.float32)
+    next_state["old_scale_radius"] = float(pose["scale_radius"])
+    next_state["init_scale_radius"] = float(
+        max(
+            float(next_state.get("init_scale_radius", pose["scale_radius"]) or pose["scale_radius"]),
+            MC2SystemConstants.EPSILON,
+        )
+    )
+    next_state["scale_ratio"] = float(
+        max(float(pose["scale_radius"]) / float(next_state["init_scale_radius"]), MC2SystemConstants.EPSILON)
+    )
+    next_state["negative_scale_sign"] = int(pose["negative_scale_sign"])
+    next_state["negative_scale_direction"] = np.ascontiguousarray(pose["negative_scale_direction"], dtype=np.float32)
+    next_state["old_negative_scale_sign"] = int(pose["negative_scale_sign"])
+    next_state["old_negative_scale_direction"] = np.ascontiguousarray(pose["negative_scale_direction"], dtype=np.float32)
+    next_state["negative_scale_changed"] = False
     next_state["shift_pivot_position"] = np.ascontiguousarray(pose["position"], dtype=np.float32)
     next_state["smoothing_velocity"] = np.asarray(next_state.get("smoothing_velocity"), dtype=np.float32)
     next_state["frame_component_shift_vector"] = np.zeros(3, dtype=np.float32)
@@ -308,6 +365,31 @@ def commit_frame(runtime_state: dict, obj: bpy.types.Object) -> dict:
     next_state["now_world_rotation"] = np.ascontiguousarray(pose["rotation"], dtype=np.float32)
     next_state["teleport_state"] = TELEPORT_NONE
     return next_state
+
+
+def apply_negative_scale_teleport(
+    old_positions: np.ndarray,
+    velocity_positions: np.ndarray,
+    display_positions: np.ndarray,
+    velocities: np.ndarray,
+    real_velocities: np.ndarray,
+    runtime_state: dict,
+) -> None:
+    if not bool(runtime_state.get("negative_scale_changed", False)):
+        return
+    old_matrix = np.ascontiguousarray(runtime_state.get("old_component_matrix"), dtype=np.float32)
+    now_matrix = np.ascontiguousarray(runtime_state.get("now_component_matrix"), dtype=np.float32)
+    if old_matrix.shape != (4, 4) or now_matrix.shape != (4, 4):
+        return
+    try:
+        negative_matrix = np.ascontiguousarray(now_matrix @ np.linalg.inv(old_matrix), dtype=np.float32)
+    except Exception:
+        return
+    old_positions[...] = math_utils.transform_positions(negative_matrix, old_positions)
+    velocity_positions[...] = math_utils.transform_positions(negative_matrix, velocity_positions)
+    display_positions[...] = math_utils.transform_positions(negative_matrix, display_positions)
+    velocities[...] = math_utils.transform_vectors(negative_matrix, velocities)
+    real_velocities[...] = math_utils.transform_vectors(negative_matrix, real_velocities)
 
 
 def apply_frame_shift(

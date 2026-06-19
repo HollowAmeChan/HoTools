@@ -314,6 +314,14 @@ def solve_meshcloth(
         static_friction.fill(0.0)
     else:
         display_positions = np.ascontiguousarray(state["display_positions"], dtype=np.float32)
+        inertia.apply_negative_scale_teleport(
+            old_positions,
+            velocity_positions,
+            display_positions,
+            velocity,
+            real_velocity,
+            inertia_state,
+        )
         inertia.apply_frame_shift(
             old_positions,
             velocity_positions,
@@ -793,6 +801,8 @@ def solve_meshcloth(
     next_state["step_delta_time"] = float(step_dt)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
+    next_state["scale_ratio"] = float(next_state["inertia_state"].get("scale_ratio", world_scale) or world_scale)
+    next_state["negative_scale_sign"] = int(next_state["inertia_state"].get("negative_scale_sign", 1) or 1)
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
     display_positions = native_bridge.calculate_display_positions(
@@ -1152,6 +1162,14 @@ def solve_meshcloth_native_core(
         static_friction.fill(0.0)
     else:
         display_positions = np.ascontiguousarray(state["display_positions"], dtype=np.float32)
+        inertia.apply_negative_scale_teleport(
+            old_positions,
+            velocity_positions,
+            display_positions,
+            velocity,
+            real_velocity,
+            inertia_state,
+        )
         inertia.apply_frame_shift(
             old_positions,
             velocity_positions,
@@ -1295,6 +1313,10 @@ def solve_meshcloth_native_core(
     next_state["step_delta_time"] = float(step_dt)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
+    next_state["scale_ratio"] = float(
+        next_state["inertia_state"].get("scale_ratio", world_scale_nonnegative) or world_scale_nonnegative
+    )
+    next_state["negative_scale_sign"] = int(next_state["inertia_state"].get("negative_scale_sign", 1) or 1)
     next_state["next_positions"] = np.ascontiguousarray(arrays["positions"], dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(arrays["old_positions"], dtype=np.float32)
     next_state["display_positions"] = np.ascontiguousarray(arrays["display_positions"], dtype=np.float32)

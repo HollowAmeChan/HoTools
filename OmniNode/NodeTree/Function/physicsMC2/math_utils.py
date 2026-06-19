@@ -46,6 +46,11 @@ def transform_directions(matrix: np.ndarray, directions: np.ndarray) -> np.ndarr
     return np.ascontiguousarray(result, dtype=np.float32)
 
 
+def transform_vectors(matrix: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    values = np.ascontiguousarray(vectors, dtype=np.float32)
+    return np.ascontiguousarray(values @ matrix[:3, :3].T, dtype=np.float32)
+
+
 def matrix_world_key(obj) -> tuple:
     matrix = obj.matrix_world
     return tuple(round(float(matrix[row][col]), 8) for row in range(4) for col in range(4))
@@ -58,10 +63,48 @@ def matrix_world_3x3_key(obj) -> tuple:
 
 def matrix_scale_radius(matrix: mathutils.Matrix) -> float:
     try:
-        scale = matrix.to_scale()
-        return max(abs(float(scale.x)), abs(float(scale.y)), abs(float(scale.z)))
+        values = matrix_to_numpy(matrix)[:3, :3]
+        axis_lengths = np.linalg.norm(values, axis=0)
+        return float(np.max(axis_lengths))
     except Exception:
         return 1.0
+
+
+def matrix_scale_ratio(matrix: mathutils.Matrix, init_scale_radius: float) -> float:
+    base = max(abs(float(init_scale_radius)), MC2SystemConstants.EPSILON)
+    return max(matrix_scale_radius(matrix) / base, MC2SystemConstants.EPSILON)
+
+
+def matrix_negative_scale_sign(matrix: mathutils.Matrix) -> int:
+    try:
+        return -1 if float(matrix.to_3x3().determinant()) < 0.0 else 1
+    except Exception:
+        return 1
+
+
+def object_negative_scale_sign(obj) -> int:
+    direction = object_negative_scale_direction(obj)
+    return -1 if np.any(direction < 0.0) else 1
+
+
+def object_negative_scale_direction(obj) -> np.ndarray:
+    direction = np.ones(3, dtype=np.float32)
+    current = obj
+    while current is not None:
+        scale = getattr(current, "scale", None)
+        if scale is not None:
+            direction *= np.asarray(
+                (
+                    -1.0 if float(scale.x) < 0.0 else 1.0,
+                    -1.0 if float(scale.y) < 0.0 else 1.0,
+                    -1.0 if float(scale.z) < 0.0 else 1.0,
+                ),
+                dtype=np.float32,
+            )
+        current = getattr(current, "parent", None)
+    if np.all(direction > 0.0) and matrix_negative_scale_sign(obj.matrix_world) < 0:
+        direction[0] = -1.0
+    return np.ascontiguousarray(direction, dtype=np.float32)
 
 
 def array_hash(values: np.ndarray) -> str:

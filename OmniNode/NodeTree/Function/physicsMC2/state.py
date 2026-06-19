@@ -113,6 +113,9 @@ def build_state(
         "object_matrix_world_key": math_utils.matrix_world_key(obj),
         "object_matrix_world_3x3_key": math_utils.matrix_world_3x3_key(obj),
         "object_matrix_world": math_utils.matrix_to_numpy(obj.matrix_world),
+        "init_scale_radius": math_utils.matrix_scale_radius(obj.matrix_world),
+        "scale_ratio": 1.0,
+        "negative_scale_sign": math_utils.object_negative_scale_sign(obj),
         "vertex_count": len(obj.data.vertices),
         "frame_delta_time": 0.0,
         "step_delta_time": 0.0,
@@ -221,6 +224,11 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     rest_world_normals = math_utils.transform_directions(new_world, rest_local_normals)
     next_state["object_matrix_world_key"] = matrix_key
     next_state["object_matrix_world"] = new_world
+    next_state["scale_ratio"] = math_utils.matrix_scale_ratio(
+        obj.matrix_world,
+        next_state.get("init_scale_radius", math_utils.matrix_scale_radius(obj.matrix_world)),
+    )
+    next_state["negative_scale_sign"] = math_utils.object_negative_scale_sign(obj)
 
     if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
         edge_i, edge_j, edge_rest = mesh_build.build_edge_constraints(next_state["edges"], rest_world)
@@ -360,6 +368,11 @@ def sync_state_to_base_pose_write_container(state: dict, obj: bpy.types.Object) 
     next_state["object_matrix_world_key"] = matrix_key
     next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
     next_state["object_matrix_world"] = math_utils.matrix_to_numpy(obj.matrix_world)
+    next_state["scale_ratio"] = math_utils.matrix_scale_ratio(
+        obj.matrix_world,
+        next_state.get("init_scale_radius", math_utils.matrix_scale_radius(obj.matrix_world)),
+    )
+    next_state["negative_scale_sign"] = math_utils.object_negative_scale_sign(obj)
     next_state["collision_radii"] = mesh_build.collision_radii_to_world(obj, next_state["collision_local_radii"])
     return next_state
 

@@ -835,6 +835,16 @@ def _inertia_state_arrays(state: dict) -> dict:
         "inertia_rotation_axis": _state_vector(inertia_state, "rotation_axis", zero3),
         "inertia_angular_velocity": float(inertia_state.get("angular_velocity", 0.0) or 0.0),
         "inertia_teleport_state": int(inertia_state.get("teleport_state", 0) or 0),
+        "inertia_scale_ratio": float(inertia_state.get("scale_ratio", state.get("scale_ratio", 1.0)) or 1.0),
+        "inertia_negative_scale_sign": int(
+            inertia_state.get("negative_scale_sign", state.get("negative_scale_sign", 1)) or 1
+        ),
+        "inertia_negative_scale_direction": _state_vector(
+            inertia_state,
+            "negative_scale_direction",
+            np.ones(3, dtype=np.float32),
+        ),
+        "inertia_negative_scale_changed": bool(inertia_state.get("negative_scale_changed", False)),
     }
 
 
@@ -842,6 +852,8 @@ def state_arrays_for_native(state: dict) -> dict:
     arrays = {
         "schema_version": int(MC2_SOLVER_VERSION),
         "vertex_count": int(state["vertex_count"]),
+        "scale_ratio": float(state.get("scale_ratio", 1.0) or 1.0),
+        "negative_scale_sign": int(state.get("negative_scale_sign", 1) or 1),
         "positions": _array(state, "next_positions", np.float32, (3,)),
         "old_positions": _array(state, "old_positions", np.float32, (3,)),
         "base_positions": _array(state, "base_positions", np.float32, (3,)),
