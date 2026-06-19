@@ -128,6 +128,8 @@ struct Mc2AngleConstraintView {
     const float* step_basic_positions = nullptr;
     const float* step_basic_rotations = nullptr;
     const float* restoration_values = nullptr;
+    const float* restoration_velocity_attenuation_values = nullptr;
+    const float* restoration_gravity_falloff_values = nullptr;
     const float* limit_values = nullptr;
     float* velocity_positions = nullptr;
     std::int64_t vertex_count = 0;
@@ -238,7 +240,10 @@ struct Mc2MeshClothSolveView {
     const float* volume_rest = nullptr;
 
     const float* angle_restoration_values = nullptr;
+    const float* angle_restoration_velocity_attenuation_values = nullptr;
+    const float* angle_restoration_gravity_falloff_values = nullptr;
     const float* angle_limit_values = nullptr;
+    const float* substep_damping_values = nullptr;
     const float* max_distances = nullptr;
     const float* motion_stiffness_values = nullptr;
     const float* backstop_radii = nullptr;
@@ -280,9 +285,9 @@ struct Mc2MeshClothSolveView {
     float frame_dt = 0.0f;
     float step_dt = 0.0f;
     float gravity[3] = {};
-    float substep_damping = 0.0f;
     float depth_inertia = 0.0f;
     float centrifugal = 0.0f;
+    bool use_tether = true;
     float tether_compression = 0.0f;
     float tether_stretch = 0.0f;
     float dynamic_friction = 0.0f;

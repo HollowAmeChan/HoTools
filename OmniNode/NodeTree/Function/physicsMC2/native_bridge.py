@@ -411,6 +411,8 @@ def project_angle_constraints(
     restoration_gravity_falloff: float,
     limit_stiffness: float,
 ) -> bool:
+    if np.ndim(restoration_velocity_attenuation) > 0 or np.ndim(restoration_gravity_falloff) > 0:
+        return False
     module = native_module()
     function = getattr(module, "project_angle_constraints_mc2", None) if module is not None else None
     if function is None:
@@ -600,7 +602,10 @@ def solve_meshcloth_core(
     distance_stiffness_values: np.ndarray,
     bend_stiffness_values: np.ndarray,
     angle_restoration_values: np.ndarray,
+    angle_restoration_velocity_attenuation_values: np.ndarray,
+    angle_restoration_gravity_falloff_values: np.ndarray,
     angle_limit_values: np.ndarray,
+    substep_damping_values: np.ndarray,
     max_distances: np.ndarray,
     motion_stiffness_values: np.ndarray,
     backstop_radii: np.ndarray,
@@ -612,9 +617,9 @@ def solve_meshcloth_core(
     substeps: int,
     iterations: int,
     gravity: np.ndarray,
-    substep_damping: float,
     depth_inertia: float,
     centrifugal: float,
+    use_tether: bool,
     tether_compression: float,
     tether_stretch: float,
     dynamic_friction: float,
@@ -696,7 +701,10 @@ def solve_meshcloth_core(
         np.ascontiguousarray(arrays.get("volume_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
         np.ascontiguousarray(arrays.get("volume_rest", empty_f32), dtype=np.float32),
         np.ascontiguousarray(angle_restoration_values, dtype=np.float32),
+        np.ascontiguousarray(angle_restoration_velocity_attenuation_values, dtype=np.float32),
+        np.ascontiguousarray(angle_restoration_gravity_falloff_values, dtype=np.float32),
         np.ascontiguousarray(angle_limit_values, dtype=np.float32),
+        np.ascontiguousarray(substep_damping_values, dtype=np.float32),
         np.ascontiguousarray(max_distances, dtype=np.float32),
         np.ascontiguousarray(motion_stiffness_values, dtype=np.float32),
         np.ascontiguousarray(backstop_radii, dtype=np.float32),
@@ -725,9 +733,9 @@ def solve_meshcloth_core(
         int(substep_count),
         int(iterations),
         np.ascontiguousarray(gravity, dtype=np.float32).reshape(3),
-        float(substep_damping),
         float(depth_inertia),
         float(centrifugal),
+        bool(use_tether),
         float(tether_compression),
         float(tether_stretch),
         float(dynamic_friction),

@@ -1996,8 +1996,6 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
         return;
     }
 
-    const float gravity_falloff = clamp_float(1.0f - view.restoration_gravity_falloff, 0.0f, 1.0f);
-    const float restoration_attenuation = clamp_float(view.restoration_velocity_attenuation, 0.0f, 1.0f);
     const float limit_stiffness = clamp_float(view.limit_stiffness, 0.0f, 1.0f);
 
     std::vector<float> length_buffer(static_cast<std::size_t>(view.vertex_count), 0.0f);
@@ -2265,6 +2263,12 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 if (!use_restoration) {
                     continue;
                 }
+                const float gravity_falloff = clamp_float(
+                    1.0f - (view.restoration_gravity_falloff_values != nullptr
+                                ? view.restoration_gravity_falloff_values[child_index]
+                                : view.restoration_gravity_falloff),
+                    0.0f,
+                    1.0f);
                 const float restoration_stiffness =
                     clamp_float(view.restoration_values[child_index] * kAngleRestorationScale, 0.0f, 1.0f) *
                     gravity_falloff;
@@ -2332,6 +2336,12 @@ void project_angle_constraints_mc2(Mc2AngleConstraintView& view) {
                 view.positions[child_offset + 0] = child_x;
                 view.positions[child_offset + 1] = child_y;
                 view.positions[child_offset + 2] = child_z;
+                const float restoration_attenuation =
+                    clamp_float(view.restoration_velocity_attenuation_values != nullptr
+                                    ? view.restoration_velocity_attenuation_values[child_index]
+                                    : view.restoration_velocity_attenuation,
+                                0.0f,
+                                1.0f);
                 view.velocity_positions[child_offset + 0] += child_add_x * restoration_attenuation;
                 view.velocity_positions[child_offset + 1] += child_add_y * restoration_attenuation;
                 view.velocity_positions[child_offset + 2] += child_add_z * restoration_attenuation;
@@ -2843,11 +2853,14 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
 
         copy_vec3_array(view.velocity_positions, view.old_positions, view.vertex_count);
         if (step_dt > kMc2Epsilon) {
-            const float damping_scale = 1.0f - view.substep_damping;
             for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
                 if (view.inv_masses[vertex] <= kMc2Epsilon) {
                     continue;
                 }
+                const float damping = view.substep_damping_values != nullptr
+                                          ? clamp_float(view.substep_damping_values[vertex], 0.0f, 1.0f)
+                                          : 0.0f;
+                const float damping_scale = 1.0f - damping;
                 const std::int64_t offset = vertex * 3;
                 for (int axis = 0; axis < 3; ++axis) {
                     view.velocities[offset + axis] *= damping_scale;
@@ -2859,17 +2872,19 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
         }
         pin_fixed_vertices_mc2(view, false);
 
-        Mc2TetherConstraintView tether_view;
-        tether_view.positions = view.positions;
-        tether_view.inv_masses = view.inv_masses;
-        tether_view.root_indices = view.root_indices;
-        tether_view.root_rest_lengths = view.tether_rest_lengths;
-        tether_view.velocity_positions = view.velocity_positions;
-        tether_view.vertex_count = view.vertex_count;
-        tether_view.stiffness = 1.0f;
-        tether_view.compression = view.tether_compression;
-        tether_view.stretch = view.tether_stretch;
-        project_tether_mc2(tether_view);
+        if (view.use_tether) {
+            Mc2TetherConstraintView tether_view;
+            tether_view.positions = view.positions;
+            tether_view.inv_masses = view.inv_masses;
+            tether_view.root_indices = view.root_indices;
+            tether_view.root_rest_lengths = view.tether_rest_lengths;
+            tether_view.velocity_positions = view.velocity_positions;
+            tether_view.vertex_count = view.vertex_count;
+            tether_view.stiffness = 1.0f;
+            tether_view.compression = view.tether_compression;
+            tether_view.stretch = view.tether_stretch;
+            project_tether_mc2(tether_view);
+        }
 
         if (has_collision && iterations == 0) {
             project_collider_collision_mc2(view, collision_mode);
@@ -2901,13 +2916,13 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             angle_view.step_basic_positions = view.step_basic_positions;
             angle_view.step_basic_rotations = view.step_basic_rotations;
             angle_view.restoration_values = view.angle_restoration_values;
+            angle_view.restoration_velocity_attenuation_values = view.angle_restoration_velocity_attenuation_values;
+            angle_view.restoration_gravity_falloff_values = view.angle_restoration_gravity_falloff_values;
             angle_view.limit_values = view.angle_limit_values;
             angle_view.velocity_positions = view.velocity_positions;
             angle_view.vertex_count = view.vertex_count;
             angle_view.line_count = view.line_count;
             angle_view.baseline_data_count = view.baseline_data_count;
-            angle_view.restoration_velocity_attenuation = kAngleRestorationVelocityAttenuation;
-            angle_view.restoration_gravity_falloff = kAngleRestorationGravityFalloff;
             angle_view.limit_stiffness = view.angle_limit_stiffness;
             project_angle_constraints_mc2(angle_view);
 

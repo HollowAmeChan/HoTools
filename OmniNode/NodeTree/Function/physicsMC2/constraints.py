@@ -393,6 +393,18 @@ def _angle_stiffness_values(stiffness, depths: np.ndarray) -> np.ndarray | None:
     return np.ascontiguousarray(values, dtype=np.float32)
 
 
+def _angle_param_values(value, depths: np.ndarray, *, default: float = 0.0) -> np.ndarray:
+    if isinstance(value, dict):
+        values = params.sample_param(value, depths)
+    elif isinstance(value, np.ndarray):
+        values = np.ascontiguousarray(value, dtype=np.float32)
+    else:
+        values = np.full(len(depths), float(value), dtype=np.float32)
+    if len(values) != len(depths):
+        return np.full(len(depths), float(default), dtype=np.float32)
+    return np.ascontiguousarray(np.clip(values, 0.0, 1.0), dtype=np.float32)
+
+
 def _from_to_rotation(source: np.ndarray, target: np.ndarray, ratio: float = 1.0) -> np.ndarray:
     ratio = max(0.0, min(1.0, float(ratio)))
     src = math_utils.safe_normal_np(source, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
@@ -475,8 +487,19 @@ def project_angle_constraints(
     if not use_restoration and not use_limit:
         return
 
-    gravity_falloff = max(0.0, min(1.0, 1.0 - float(restoration_gravity_falloff)))
-    restoration_attenuation = max(0.0, min(1.0, float(restoration_velocity_attenuation)))
+    gravity_falloff_values = np.ascontiguousarray(
+        1.0 - _angle_param_values(
+            restoration_gravity_falloff,
+            depths,
+            default=MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+        ),
+        dtype=np.float32,
+    )
+    restoration_attenuation_values = _angle_param_values(
+        restoration_velocity_attenuation,
+        depths,
+        default=MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+    )
     limit_stiffness = max(0.0, min(1.0, float(limit_stiffness)))
 
     length_buffer = np.zeros(len(positions), dtype=np.float32)
@@ -614,7 +637,9 @@ def project_angle_constraints(
 
                 if not use_restoration:
                     continue
-                restoration_stiffness_value = float(restoration_values[child_index]) * gravity_falloff
+                restoration_stiffness_value = float(restoration_values[child_index]) * float(
+                    gravity_falloff_values[child_index]
+                )
                 if restoration_stiffness_value <= MC2SystemConstants.EPSILON:
                     continue
 
@@ -643,6 +668,7 @@ def project_angle_constraints(
 
                 child_pos += child_add
                 positions[child_index] = child_pos
+                restoration_attenuation = float(restoration_attenuation_values[child_index])
                 if velocity_positions is not None:
                     velocity_positions[child_index] += child_add * restoration_attenuation
                 if parent_inv_mass > MC2SystemConstants.EPSILON:

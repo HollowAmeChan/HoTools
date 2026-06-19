@@ -1,7 +1,7 @@
 """MC2 Python 后端的常量与 cache schema 标识。"""
 
 MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
-MC2_SOLVER_VERSION = 13
+MC2_SOLVER_VERSION = 14
 
 MC2_ATTR_INVALID = 1 << 0
 MC2_ATTR_FIXED = 1 << 1
@@ -18,7 +18,6 @@ MC2_BEND_KIND_DIRECTION_DIHEDRAL = "direction_dihedral"
 MC2_CURVE_READY_PARAMETERS = {
     "distance_stiffness",
     "bend_stiffness",
-    "radius",
     "max_distance",
     "tether_compression",
     "tether_stretch",
@@ -40,6 +39,8 @@ MC2_CURVE_READY_PARAMETERS = {
     "local_rotation_speed_limit",
     "particle_speed_limit",
     "damping",
+    "angle_restoration_velocity_attenuation",
+    "angle_restoration_gravity_falloff",
 }
 
 
@@ -57,6 +58,7 @@ class MC2SystemConstants:
     TETHER_STRETCH_STIFFNESS = 1.0
     TETHER_COMPRESSION_VELOCITY_ATTENUATION = 0.7
     TETHER_STRETCH_VELOCITY_ATTENUATION = 0.7
+    DAMPING_SCALE = 0.2
     DISTANCE_VELOCITY_ATTENUATION = 0.3
     DISTANCE_HORIZONTAL_STIFFNESS = 0.5
     DISTANCE_FIXED_INVERSE_MASS = 1.0 / 50.0

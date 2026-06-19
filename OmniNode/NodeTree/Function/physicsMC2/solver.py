@@ -28,6 +28,16 @@ def _component_slot(enabled: bool) -> dict:
     return params.scalar_param(1.0 if enabled else 0.0)
 
 
+def _scalar_values_like(values: np.ndarray, value: float) -> np.ndarray:
+    return np.full(len(values), float(value), dtype=np.float32)
+
+
+def _substep_damping_values(frame_damping_values: np.ndarray, substeps: int) -> np.ndarray:
+    values = np.clip(np.ascontiguousarray(frame_damping_values, dtype=np.float32), 0.0, 1.0)
+    substep_count = max(1, int(substeps))
+    return np.ascontiguousarray(1.0 - np.power(1.0 - values, 1.0 / float(substep_count)), dtype=np.float32)
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -44,6 +54,7 @@ def solve_meshcloth(
     gravity_dir,
     gravity_power: float,
     damping: float,
+    damping_curve,
     use_tether: bool,
     tether_compression: float,
     use_distance: bool,
@@ -55,6 +66,9 @@ def solve_meshcloth(
     use_angle_restoration: bool,
     angle_restoration_stiffness: float,
     angle_restoration_stiffness_curve,
+    angle_restoration_velocity_attenuation: float,
+    angle_restoration_velocity_attenuation_curve,
+    angle_restoration_gravity_falloff: float,
     use_angle_limit: bool,
     angle_limit: float,
     angle_limit_curve,
@@ -115,10 +129,10 @@ def solve_meshcloth(
     iteration_count = max(0, min(64, int(iterations)))
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
-    substep_damping = blender_io.substep_damping(damping, substep_count)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
+    damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
     distance_stiffness_param = (
         params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
         if use_distance
@@ -136,6 +150,21 @@ def solve_meshcloth(
             minimum=0.0,
             maximum=1.0,
         )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
+    )
+    angle_restoration_velocity_attenuation_param = (
+        params.curve_value_param(
+            angle_restoration_velocity_attenuation,
+            angle_restoration_velocity_attenuation_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
+    )
+    angle_restoration_gravity_falloff_param = (
+        params.scalar_param(max(0.0, min(1.0, float(angle_restoration_gravity_falloff))))
         if use_angle_restoration
         else params.scalar_param(0.0)
     )
@@ -160,6 +189,12 @@ def solve_meshcloth(
     if timing is not None:
         _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
     curve_stage_start = time.perf_counter() if timing is not None else None
+    damping_values = np.clip(
+        params.sample_param(damping_param, stiffness_depths) * float(MC2SystemConstants.DAMPING_SCALE),
+        0.0,
+        1.0,
+    )
+    substep_damping_values = _substep_damping_values(damping_values, substep_count)
     distance_stiffness_values = (
         np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
         if use_distance
@@ -172,6 +207,16 @@ def solve_meshcloth(
     )
     angle_restoration_values = (
         np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_restoration_velocity_attenuation_values = (
+        np.clip(params.sample_param(angle_restoration_velocity_attenuation_param, stiffness_depths), 0.0, 1.0)
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_restoration_gravity_falloff_values = (
+        _scalar_values_like(stiffness_depths, angle_restoration_gravity_falloff_param["value"])
         if use_angle_restoration
         else _zero_values_like(stiffness_depths)
     )
@@ -325,7 +370,7 @@ def solve_meshcloth(
             )
         velocity_positions = old_positions.copy()
         if step_dt > MC2SystemConstants.EPSILON:
-            velocity[movable] *= 1.0 - substep_damping
+            velocity[movable] *= (1.0 - substep_damping_values[movable])[:, None]
             velocity[movable] += gravity * step_dt
             positions[movable] = old_positions[movable] + velocity[movable] * step_dt
         if timing is not None:
@@ -461,8 +506,8 @@ def solve_meshcloth(
                     angle_restoration_values,
                     angle_limit_values,
                     velocity_positions,
-                    MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
-                    MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                    angle_restoration_velocity_attenuation_values,
+                    angle_restoration_gravity_falloff_values,
                     angle_limit_stiffness_value,
                 ):
                     constraints.project_angle_constraints(
@@ -479,8 +524,8 @@ def solve_meshcloth(
                         state["vertex_local_rotations"],
                         angle_restoration_values,
                         velocity_positions,
-                        MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
-                        MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                        angle_restoration_velocity_attenuation_values,
+                        angle_restoration_gravity_falloff_values,
                         angle_limit_values,
                         angle_limit_stiffness_value,
                     )
@@ -725,7 +770,7 @@ def solve_meshcloth(
     next_state = dict(state)
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
-    next_state["substep_damping"] = float(substep_damping)
+    next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
@@ -758,6 +803,8 @@ def solve_meshcloth(
     next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
     next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
     next_state["param_slots"]["angle_restoration_stiffness"] = angle_restoration_param
+    next_state["param_slots"]["angle_restoration_velocity_attenuation"] = angle_restoration_velocity_attenuation_param
+    next_state["param_slots"]["angle_restoration_gravity_falloff"] = angle_restoration_gravity_falloff_param
     next_state["param_slots"]["angle_limit"] = angle_limit_param
     next_state["param_slots"]["angle_limit_stiffness"] = angle_limit_stiffness_param
     next_state["param_slots"]["world_inertia"] = world_inertia_param
@@ -774,7 +821,7 @@ def solve_meshcloth(
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param
     next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
-    next_state["param_slots"]["damping"] = params.scalar_param(damping)
+    next_state["param_slots"]["damping"] = damping_param
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param
@@ -808,6 +855,7 @@ def solve_meshcloth_native_core(
     gravity_dir,
     gravity_power: float,
     damping: float,
+    damping_curve,
     use_tether: bool,
     tether_compression: float,
     use_distance: bool,
@@ -819,6 +867,9 @@ def solve_meshcloth_native_core(
     use_angle_restoration: bool,
     angle_restoration_stiffness: float,
     angle_restoration_stiffness_curve,
+    angle_restoration_velocity_attenuation: float,
+    angle_restoration_velocity_attenuation_curve,
+    angle_restoration_gravity_falloff: float,
     use_angle_limit: bool,
     angle_limit: float,
     angle_limit_curve,
@@ -882,11 +933,11 @@ def solve_meshcloth_native_core(
     iteration_count = max(0, min(64, int(iterations)))
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
-    substep_damping = blender_io.substep_damping(damping, substep_count)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
+    damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
     distance_stiffness_param = (
         params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
         if use_distance
@@ -904,6 +955,21 @@ def solve_meshcloth_native_core(
             minimum=0.0,
             maximum=1.0,
         )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
+    )
+    angle_restoration_velocity_attenuation_param = (
+        params.curve_value_param(
+            angle_restoration_velocity_attenuation,
+            angle_restoration_velocity_attenuation_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
+        if use_angle_restoration
+        else params.scalar_param(0.0)
+    )
+    angle_restoration_gravity_falloff_param = (
+        params.scalar_param(max(0.0, min(1.0, float(angle_restoration_gravity_falloff))))
         if use_angle_restoration
         else params.scalar_param(0.0)
     )
@@ -928,6 +994,15 @@ def solve_meshcloth_native_core(
     if timing is not None:
         _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
     curve_stage_start = time.perf_counter() if timing is not None else None
+    damping_values = np.ascontiguousarray(
+        np.clip(
+            params.sample_param(damping_param, stiffness_depths) * float(MC2SystemConstants.DAMPING_SCALE),
+            0.0,
+            1.0,
+        ),
+        dtype=np.float32,
+    )
+    substep_damping_values = _substep_damping_values(damping_values, substep_count)
     distance_stiffness_values = (
         np.ascontiguousarray(np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0), dtype=np.float32)
         if use_distance
@@ -943,6 +1018,19 @@ def solve_meshcloth_native_core(
             np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0),
             dtype=np.float32,
         )
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_restoration_velocity_attenuation_values = (
+        np.ascontiguousarray(
+            np.clip(params.sample_param(angle_restoration_velocity_attenuation_param, stiffness_depths), 0.0, 1.0),
+            dtype=np.float32,
+        )
+        if use_angle_restoration
+        else _zero_values_like(stiffness_depths)
+    )
+    angle_restoration_gravity_falloff_values = (
+        _scalar_values_like(stiffness_depths, angle_restoration_gravity_falloff_param["value"])
         if use_angle_restoration
         else _zero_values_like(stiffness_depths)
     )
@@ -975,8 +1063,6 @@ def solve_meshcloth_native_core(
 
     tether_compression_param = params.scalar_param(max(0.0, float(tether_compression)) if use_tether else 0.0)
     tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT if use_tether else 0.0)
-    tether_compression_effective = float(tether_compression_param["value"]) if use_tether else 1.0
-    tether_stretch_effective = float(tether_stretch_param["value"]) if use_tether else 1.0e9
     motion_enabled = bool(use_max_distance or use_backstop)
     motion_stiffness_param = params.scalar_param(
         max(0.0, min(1.0, float(motion_stiffness))) if motion_enabled else 0.0
@@ -1126,7 +1212,10 @@ def solve_meshcloth_native_core(
         distance_stiffness_values=distance_stiffness_values,
         bend_stiffness_values=bend_stiffness_values,
         angle_restoration_values=angle_restoration_values,
+        angle_restoration_velocity_attenuation_values=angle_restoration_velocity_attenuation_values,
+        angle_restoration_gravity_falloff_values=angle_restoration_gravity_falloff_values,
         angle_limit_values=angle_limit_values,
+        substep_damping_values=substep_damping_values,
         max_distances=max_distances,
         motion_stiffness_values=motion_stiffness_values,
         backstop_radii=backstop_radii,
@@ -1138,11 +1227,11 @@ def solve_meshcloth_native_core(
         substeps=substep_count,
         iterations=iteration_count,
         gravity=gravity,
-        substep_damping=substep_damping,
         depth_inertia=float(depth_inertia_param["value"]),
         centrifugal=float(centrifugal_param["value"]),
-        tether_compression=tether_compression_effective,
-        tether_stretch=tether_stretch_effective,
+        use_tether=bool(use_tether),
+        tether_compression=float(tether_compression_param["value"]),
+        tether_stretch=float(tether_stretch_param["value"]),
         dynamic_friction=dynamic_friction,
         static_friction_speed=static_friction_speed,
         particle_speed_limit=particle_speed_limit_scaled,
@@ -1162,7 +1251,7 @@ def solve_meshcloth_native_core(
     next_state = dict(state)
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
-    next_state["substep_damping"] = float(substep_damping)
+    next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["next_positions"] = np.ascontiguousarray(arrays["positions"], dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(arrays["old_positions"], dtype=np.float32)
@@ -1181,6 +1270,8 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
     next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
     next_state["param_slots"]["angle_restoration_stiffness"] = angle_restoration_param
+    next_state["param_slots"]["angle_restoration_velocity_attenuation"] = angle_restoration_velocity_attenuation_param
+    next_state["param_slots"]["angle_restoration_gravity_falloff"] = angle_restoration_gravity_falloff_param
     next_state["param_slots"]["angle_limit"] = angle_limit_param
     next_state["param_slots"]["angle_limit_stiffness"] = angle_limit_stiffness_param
     next_state["param_slots"]["world_inertia"] = world_inertia_param
@@ -1197,7 +1288,7 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param
     next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
-    next_state["param_slots"]["damping"] = params.scalar_param(damping)
+    next_state["param_slots"]["damping"] = damping_param
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
     next_state["param_slots"]["collider_friction"] = collider_friction_param

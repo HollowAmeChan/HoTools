@@ -2490,7 +2490,10 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         AVolumePairs,
         AVolumeRest,
         AAngleRestorationValues,
+        AAngleRestorationVelocityAttenuationValues,
+        AAngleRestorationGravityFalloffValues,
         AAngleLimitValues,
+        ASubstepDampingValues,
         AMaxDistances,
         AMotionStiffnessValues,
         ABackstopRadii,
@@ -2516,7 +2519,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ASubstepAngularVelocities,
         kSolveBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 83;
+    constexpr Py_ssize_t kArgCount = 86;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -2564,7 +2567,10 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         "volume_pairs",
         "volume_rest",
         "angle_restoration_values",
+        "angle_restoration_velocity_attenuation_values",
+        "angle_restoration_gravity_falloff_values",
         "angle_limit_values",
+        "substep_damping_values",
         "max_distances",
         "motion_stiffness_values",
         "backstop_radii",
@@ -2695,8 +2701,18 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     Py_ssize_t edge_count = 0;
     if (!expect_float32(buffers[AAngleRestorationValues], "angle_restoration_values") ||
         !expect_1d_array(buffers[AAngleRestorationValues], "angle_restoration_values", vertex_count) ||
+        !expect_float32(buffers[AAngleRestorationVelocityAttenuationValues],
+                        "angle_restoration_velocity_attenuation_values") ||
+        !expect_1d_array(buffers[AAngleRestorationVelocityAttenuationValues],
+                         "angle_restoration_velocity_attenuation_values", vertex_count) ||
+        !expect_float32(buffers[AAngleRestorationGravityFalloffValues],
+                        "angle_restoration_gravity_falloff_values") ||
+        !expect_1d_array(buffers[AAngleRestorationGravityFalloffValues],
+                         "angle_restoration_gravity_falloff_values", vertex_count) ||
         !expect_float32(buffers[AAngleLimitValues], "angle_limit_values") ||
         !expect_1d_array(buffers[AAngleLimitValues], "angle_limit_values", vertex_count) ||
+        !expect_float32(buffers[ASubstepDampingValues], "substep_damping_values") ||
+        !expect_1d_array(buffers[ASubstepDampingValues], "substep_damping_values", vertex_count) ||
         !expect_float32(buffers[AMaxDistances], "max_distances") ||
         !expect_1d_array(buffers[AMaxDistances], "max_distances", vertex_count) ||
         !expect_float32(buffers[AMotionStiffnessValues], "motion_stiffness_values") ||
@@ -2789,15 +2805,15 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double substep_damping = as_double(PyTuple_GET_ITEM(args, kScalarStart + 5), "substep_damping");
+    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, kScalarStart + 5), "depth_inertia");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, kScalarStart + 6), "depth_inertia");
+    const double centrifugal = as_double(PyTuple_GET_ITEM(args, kScalarStart + 6), "centrifugal");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double centrifugal = as_double(PyTuple_GET_ITEM(args, kScalarStart + 7), "centrifugal");
+    const bool use_tether = PyObject_IsTrue(PyTuple_GET_ITEM(args, kScalarStart + 7)) == 1;
     if (PyErr_Occurred()) {
         return nullptr;
     }
@@ -2887,7 +2903,12 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.volume_pairs = static_cast<const std::int32_t*>(buffers[AVolumePairs].view.buf);
     view.volume_rest = static_cast<const float*>(buffers[AVolumeRest].view.buf);
     view.angle_restoration_values = static_cast<const float*>(buffers[AAngleRestorationValues].view.buf);
+    view.angle_restoration_velocity_attenuation_values =
+        static_cast<const float*>(buffers[AAngleRestorationVelocityAttenuationValues].view.buf);
+    view.angle_restoration_gravity_falloff_values =
+        static_cast<const float*>(buffers[AAngleRestorationGravityFalloffValues].view.buf);
     view.angle_limit_values = static_cast<const float*>(buffers[AAngleLimitValues].view.buf);
+    view.substep_damping_values = static_cast<const float*>(buffers[ASubstepDampingValues].view.buf);
     view.max_distances = static_cast<const float*>(buffers[AMaxDistances].view.buf);
     view.motion_stiffness_values = static_cast<const float*>(buffers[AMotionStiffnessValues].view.buf);
     view.backstop_radii = static_cast<const float*>(buffers[ABackstopRadii].view.buf);
@@ -2928,9 +2949,9 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.gravity[0] = gravity_values[0];
     view.gravity[1] = gravity_values[1];
     view.gravity[2] = gravity_values[2];
-    view.substep_damping = static_cast<float>(substep_damping);
     view.depth_inertia = static_cast<float>(depth_inertia);
     view.centrifugal = static_cast<float>(centrifugal);
+    view.use_tether = use_tether;
     view.tether_compression = static_cast<float>(tether_compression);
     view.tether_stretch = static_cast<float>(tether_stretch);
     view.dynamic_friction = static_cast<float>(dynamic_friction);

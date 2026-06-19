@@ -77,21 +77,22 @@ def run_reference(state, params):
         state["velocity_positions"][:] = state["old_positions"]
         if params["step_dt"] > EPSILON:
             movable = state["inv_masses"] > EPSILON
-            state["velocity"][movable] *= 1.0 - params["substep_damping"]
+            state["velocity"][movable] *= (1.0 - params["substep_damping_values"][movable])[:, None]
             state["velocity"][movable] += params["gravity"] * params["step_dt"]
             state["positions"][movable] = state["old_positions"][movable] + state["velocity"][movable] * params["step_dt"]
         pin_fixed(state, False)
 
-        hotools_native.project_tether_mc2(
-            state["positions"],
-            state["inv_masses"],
-            state["root_indices"],
-            state["tether_rest_lengths"],
-            state["velocity_positions"],
-            1.0,
-            params["tether_compression"],
-            params["tether_stretch"],
-        )
+        if params.get("use_tether", True):
+            hotools_native.project_tether_mc2(
+                state["positions"],
+                state["inv_masses"],
+                state["root_indices"],
+                state["tether_rest_lengths"],
+                state["velocity_positions"],
+                1.0,
+                params["tether_compression"],
+                params["tether_stretch"],
+            )
 
         for _ in range(params["iterations"]):
             hotools_native.project_neighbor_constraints_mc2(
@@ -117,8 +118,8 @@ def run_reference(state, params):
                 params["angle_restoration_values"],
                 params["angle_limit_values"],
                 state["velocity_positions"],
-                ANGLE_RESTORATION_VELOCITY_ATTENUATION,
-                ANGLE_RESTORATION_GRAVITY_FALLOFF,
+                params["angle_restoration_velocity_attenuation"],
+                params["angle_restoration_gravity_falloff"],
                 params["angle_limit_stiffness"],
             )
             hotools_native.project_collisions_mc2(
@@ -246,7 +247,10 @@ def solve_args(state, params):
         empty_i32_quad,
         empty_f32,
         params["angle_restoration_values"],
+        params["angle_restoration_velocity_attenuation_values"],
+        params["angle_restoration_gravity_falloff_values"],
         params["angle_limit_values"],
+        params["substep_damping_values"],
         params["max_distances"],
         params["motion_stiffness_values"],
         params["backstop_radii"],
@@ -275,9 +279,9 @@ def solve_args(state, params):
         params["substeps"],
         params["iterations"],
         params["gravity"],
-        params["substep_damping"],
         params["depth_inertia"],
         params["centrifugal"],
+        params.get("use_tether", True),
         params["tether_compression"],
         params["tether_stretch"],
         params["dynamic_friction"],
@@ -346,9 +350,10 @@ def make_state_and_params():
         "substeps": substeps,
         "iterations": 2,
         "gravity": np.asarray((0.0, -2.0, 0.0), dtype=np.float32),
-        "substep_damping": 0.04,
+        "substep_damping_values": np.full(3, 0.04, dtype=np.float32),
         "depth_inertia": 0.2,
         "centrifugal": 0.0,
+        "use_tether": True,
         "tether_compression": 0.4,
         "tether_stretch": 0.03,
         "dynamic_friction": 0.35,
@@ -361,6 +366,18 @@ def make_state_and_params():
         "distance_stiffness_values": np.asarray((1.0, 0.8, 0.65), dtype=np.float32),
         "bend_stiffness_values": np.zeros(3, dtype=np.float32),
         "angle_restoration_values": np.asarray((0.0, 0.15, 0.1), dtype=np.float32),
+        "angle_restoration_velocity_attenuation": ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+        "angle_restoration_gravity_falloff": ANGLE_RESTORATION_GRAVITY_FALLOFF,
+        "angle_restoration_velocity_attenuation_values": np.full(
+            3,
+            ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+            dtype=np.float32,
+        ),
+        "angle_restoration_gravity_falloff_values": np.full(
+            3,
+            ANGLE_RESTORATION_GRAVITY_FALLOFF,
+            dtype=np.float32,
+        ),
         "angle_limit_values": np.asarray((0.0, 80.0, 70.0), dtype=np.float32),
         "max_distances": np.asarray((0.0, 1.2, 1.4), dtype=np.float32),
         "motion_stiffness_values": np.ones(3, dtype=np.float32),
