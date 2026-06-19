@@ -32,6 +32,15 @@ def _scalar_values_like(values: np.ndarray, value: float) -> np.ndarray:
     return np.full(len(values), float(value), dtype=np.float32)
 
 
+def _native_slot_from_state(state: dict) -> dict:
+    cache = mc2_state.native_cache(state)
+    slot = cache.get("abi")
+    if not isinstance(slot, dict):
+        slot = {}
+        cache["abi"] = slot
+    return slot
+
+
 def _substep_damping_values(frame_damping_values: np.ndarray, substeps: int) -> np.ndarray:
     values = np.clip(np.ascontiguousarray(frame_damping_values, dtype=np.float32), 0.0, 1.0)
     substep_count = max(1, int(substeps))
@@ -133,21 +142,38 @@ def solve_meshcloth(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     normal_axis_value = max(0, min(5, int(normal_axis)))
+    curve_cache = mc2_state.curve_cache(state)
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
-    damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
+    damping_param = params.curve_value_param_cached(curve_cache, "damping", damping, damping_curve, minimum=0.0, maximum=1.0)
     distance_stiffness_param = (
-        params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
+        params.curve_value_param_cached(
+            curve_cache,
+            "distance_stiffness",
+            distance_stiffness,
+            distance_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
         if use_distance
         else params.scalar_param(0.0)
     )
     bend_stiffness_param = (
-        params.curve_value_param(bend_stiffness, bend_stiffness_curve, minimum=0.0, maximum=1.0)
+        params.curve_value_param_cached(
+            curve_cache,
+            "bend_stiffness",
+            bend_stiffness,
+            bend_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
         if use_bend
         else params.scalar_param(0.0)
     )
     angle_restoration_param = (
-        params.curve_value_param(
+        params.curve_value_param_cached(
+            curve_cache,
+            "angle_restoration_stiffness",
             angle_restoration_stiffness,
             angle_restoration_stiffness_curve,
             minimum=0.0,
@@ -157,7 +183,9 @@ def solve_meshcloth(
         else params.scalar_param(0.0)
     )
     angle_restoration_velocity_attenuation_param = (
-        params.curve_value_param(
+        params.curve_value_param_cached(
+            curve_cache,
+            "angle_restoration_velocity_attenuation",
             angle_restoration_velocity_attenuation,
             angle_restoration_velocity_attenuation_curve,
             minimum=0.0,
@@ -172,20 +200,24 @@ def solve_meshcloth(
         else params.scalar_param(0.0)
     )
     angle_limit_param = (
-        params.curve_value_param(angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
+        params.curve_value_param_cached(curve_cache, "angle_limit", angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
         if use_angle_limit
         else params.scalar_param(0.0)
     )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
     max_distance_param = (
-        params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+        params.curve_value_param_cached(curve_cache, "max_distance", max_distance, max_distance_curve, minimum=0.0)
         if use_max_distance
         else params.scalar_param(0.0)
     )
-    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0) if use_backstop else params.scalar_param(0.0)
+    backstop_radius_param = (
+        params.float_param_cached(curve_cache, "backstop_radius", backstop_radius, minimum=0.0)
+        if use_backstop
+        else params.scalar_param(0.0)
+    )
     backstop_distance_param = (
-        params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+        params.curve_value_param_cached(curve_cache, "backstop_distance", backstop_distance, backstop_distance_curve, minimum=0.0)
         if use_backstop
         else params.scalar_param(0.0)
     )
@@ -193,28 +225,38 @@ def solve_meshcloth(
         _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
     curve_stage_start = time.perf_counter() if timing is not None else None
     damping_values = np.clip(
-        params.sample_param(damping_param, stiffness_depths) * float(MC2SystemConstants.DAMPING_SCALE),
+        params.sample_param_cached(curve_cache, "damping", damping_param, stiffness_depths)
+        * float(MC2SystemConstants.DAMPING_SCALE),
         0.0,
         1.0,
     )
     substep_damping_values = _substep_damping_values(damping_values, substep_count)
     distance_stiffness_values = (
-        np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0)
+        np.clip(params.sample_param_cached(curve_cache, "distance_stiffness", distance_stiffness_param, stiffness_depths), 0.0, 1.0)
         if use_distance
         else _zero_values_like(stiffness_depths)
     )
     bend_stiffness_values = (
-        np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0)
+        np.clip(params.sample_param_cached(curve_cache, "bend_stiffness", bend_stiffness_param, stiffness_depths), 0.0, 1.0)
         if use_bend
         else _zero_values_like(stiffness_depths)
     )
     angle_restoration_values = (
-        np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0)
+        np.clip(params.sample_param_cached(curve_cache, "angle_restoration_stiffness", angle_restoration_param, stiffness_depths), 0.0, 1.0)
         if use_angle_restoration
         else _zero_values_like(stiffness_depths)
     )
     angle_restoration_velocity_attenuation_values = (
-        np.clip(params.sample_param(angle_restoration_velocity_attenuation_param, stiffness_depths), 0.0, 1.0)
+        np.clip(
+            params.sample_param_cached(
+                curve_cache,
+                "angle_restoration_velocity_attenuation",
+                angle_restoration_velocity_attenuation_param,
+                stiffness_depths,
+            ),
+            0.0,
+            1.0,
+        )
         if use_angle_restoration
         else _zero_values_like(stiffness_depths)
     )
@@ -224,7 +266,7 @@ def solve_meshcloth(
         else _zero_values_like(stiffness_depths)
     )
     angle_limit_values = (
-        np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0)
+        np.clip(params.sample_param_cached(curve_cache, "angle_limit", angle_limit_param, stiffness_depths), 0.0, 180.0)
         if use_angle_limit
         else _zero_values_like(stiffness_depths)
     )
@@ -868,7 +910,7 @@ def solve_meshcloth(
     next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
 
     extension_slots = dict(next_state.get("extension_slots") or {})
-    native_slot = dict(extension_slots.get("native") or {})
+    native_slot = _native_slot_from_state(next_state)
     native_slot["abi_view"] = native_bridge.build_abi_view(next_state, obj, colliders)
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     extension_slots["native"] = native_slot
@@ -970,21 +1012,38 @@ def solve_meshcloth_native_core(
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     normal_axis_value = max(0, min(5, int(normal_axis)))
+    curve_cache = mc2_state.curve_cache(state)
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
-    damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
+    damping_param = params.curve_value_param_cached(curve_cache, "damping", damping, damping_curve, minimum=0.0, maximum=1.0)
     distance_stiffness_param = (
-        params.curve_value_param(distance_stiffness, distance_stiffness_curve, minimum=0.0, maximum=1.0)
+        params.curve_value_param_cached(
+            curve_cache,
+            "distance_stiffness",
+            distance_stiffness,
+            distance_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
         if use_distance
         else params.scalar_param(0.0)
     )
     bend_stiffness_param = (
-        params.curve_value_param(bend_stiffness, bend_stiffness_curve, minimum=0.0, maximum=1.0)
+        params.curve_value_param_cached(
+            curve_cache,
+            "bend_stiffness",
+            bend_stiffness,
+            bend_stiffness_curve,
+            minimum=0.0,
+            maximum=1.0,
+        )
         if use_bend
         else params.scalar_param(0.0)
     )
     angle_restoration_param = (
-        params.curve_value_param(
+        params.curve_value_param_cached(
+            curve_cache,
+            "angle_restoration_stiffness",
             angle_restoration_stiffness,
             angle_restoration_stiffness_curve,
             minimum=0.0,
@@ -994,7 +1053,9 @@ def solve_meshcloth_native_core(
         else params.scalar_param(0.0)
     )
     angle_restoration_velocity_attenuation_param = (
-        params.curve_value_param(
+        params.curve_value_param_cached(
+            curve_cache,
+            "angle_restoration_velocity_attenuation",
             angle_restoration_velocity_attenuation,
             angle_restoration_velocity_attenuation_curve,
             minimum=0.0,
@@ -1009,20 +1070,24 @@ def solve_meshcloth_native_core(
         else params.scalar_param(0.0)
     )
     angle_limit_param = (
-        params.curve_value_param(angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
+        params.curve_value_param_cached(curve_cache, "angle_limit", angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
         if use_angle_limit
         else params.scalar_param(0.0)
     )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
     max_distance_param = (
-        params.curve_value_param(max_distance, max_distance_curve, minimum=0.0)
+        params.curve_value_param_cached(curve_cache, "max_distance", max_distance, max_distance_curve, minimum=0.0)
         if use_max_distance
         else params.scalar_param(0.0)
     )
-    backstop_radius_param = params.float_param(backstop_radius, minimum=0.0) if use_backstop else params.scalar_param(0.0)
+    backstop_radius_param = (
+        params.float_param_cached(curve_cache, "backstop_radius", backstop_radius, minimum=0.0)
+        if use_backstop
+        else params.scalar_param(0.0)
+    )
     backstop_distance_param = (
-        params.curve_value_param(backstop_distance, backstop_distance_curve, minimum=0.0)
+        params.curve_value_param_cached(curve_cache, "backstop_distance", backstop_distance, backstop_distance_curve, minimum=0.0)
         if use_backstop
         else params.scalar_param(0.0)
     )
@@ -1031,7 +1096,8 @@ def solve_meshcloth_native_core(
     curve_stage_start = time.perf_counter() if timing is not None else None
     damping_values = np.ascontiguousarray(
         np.clip(
-            params.sample_param(damping_param, stiffness_depths) * float(MC2SystemConstants.DAMPING_SCALE),
+            params.sample_param_cached(curve_cache, "damping", damping_param, stiffness_depths)
+            * float(MC2SystemConstants.DAMPING_SCALE),
             0.0,
             1.0,
         ),
@@ -1039,18 +1105,32 @@ def solve_meshcloth_native_core(
     )
     substep_damping_values = _substep_damping_values(damping_values, substep_count)
     distance_stiffness_values = (
-        np.ascontiguousarray(np.clip(params.sample_param(distance_stiffness_param, stiffness_depths), 0.0, 1.0), dtype=np.float32)
+        np.ascontiguousarray(
+            np.clip(
+                params.sample_param_cached(curve_cache, "distance_stiffness", distance_stiffness_param, stiffness_depths),
+                0.0,
+                1.0,
+            ),
+            dtype=np.float32,
+        )
         if use_distance
         else _zero_values_like(stiffness_depths)
     )
     bend_stiffness_values = (
-        np.ascontiguousarray(np.clip(params.sample_param(bend_stiffness_param, stiffness_depths), 0.0, 1.0), dtype=np.float32)
+        np.ascontiguousarray(
+            np.clip(params.sample_param_cached(curve_cache, "bend_stiffness", bend_stiffness_param, stiffness_depths), 0.0, 1.0),
+            dtype=np.float32,
+        )
         if use_bend
         else _zero_values_like(stiffness_depths)
     )
     angle_restoration_values = (
         np.ascontiguousarray(
-            np.clip(params.sample_param(angle_restoration_param, stiffness_depths), 0.0, 1.0),
+            np.clip(
+                params.sample_param_cached(curve_cache, "angle_restoration_stiffness", angle_restoration_param, stiffness_depths),
+                0.0,
+                1.0,
+            ),
             dtype=np.float32,
         )
         if use_angle_restoration
@@ -1058,7 +1138,16 @@ def solve_meshcloth_native_core(
     )
     angle_restoration_velocity_attenuation_values = (
         np.ascontiguousarray(
-            np.clip(params.sample_param(angle_restoration_velocity_attenuation_param, stiffness_depths), 0.0, 1.0),
+            np.clip(
+                params.sample_param_cached(
+                    curve_cache,
+                    "angle_restoration_velocity_attenuation",
+                    angle_restoration_velocity_attenuation_param,
+                    stiffness_depths,
+                ),
+                0.0,
+                1.0,
+            ),
             dtype=np.float32,
         )
         if use_angle_restoration
@@ -1071,7 +1160,7 @@ def solve_meshcloth_native_core(
     )
     angle_limit_values = (
         np.ascontiguousarray(
-            np.clip(params.sample_param(angle_limit_param, stiffness_depths), 0.0, 180.0),
+            np.clip(params.sample_param_cached(curve_cache, "angle_limit", angle_limit_param, stiffness_depths), 0.0, 180.0),
             dtype=np.float32,
         )
         if use_angle_limit
@@ -1218,19 +1307,22 @@ def solve_meshcloth_native_core(
     motion_depths = np.clip(depths * depths, 0.0, 1.0)
     if motion_enabled:
         max_distances = np.ascontiguousarray(
-            params.sample_param(max_distance_param, motion_depths) * world_scale_nonnegative,
+            params.sample_param_cached(curve_cache, "max_distance_motion", max_distance_param, motion_depths)
+            * world_scale_nonnegative,
             dtype=np.float32,
         )
         motion_stiffness_values = np.ascontiguousarray(
-            np.clip(params.sample_param(motion_stiffness_param, motion_depths), 0.0, 1.0),
+            np.clip(params.sample_param_cached(curve_cache, "motion_stiffness", motion_stiffness_param, motion_depths), 0.0, 1.0),
             dtype=np.float32,
         )
         backstop_radii = np.ascontiguousarray(
-            params.sample_param(backstop_radius_param, motion_depths) * world_scale_nonnegative,
+            params.sample_param_cached(curve_cache, "backstop_radius_motion", backstop_radius_param, motion_depths)
+            * world_scale_nonnegative,
             dtype=np.float32,
         )
         backstop_distances = np.ascontiguousarray(
-            params.sample_param(backstop_distance_param, motion_depths) * world_scale_nonnegative,
+            params.sample_param_cached(curve_cache, "backstop_distance_motion", backstop_distance_param, motion_depths)
+            * world_scale_nonnegative,
             dtype=np.float32,
         )
     else:
@@ -1368,7 +1460,7 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
 
     extension_slots = dict(next_state.get("extension_slots") or {})
-    native_slot = dict(extension_slots.get("native") or {})
+    native_slot = _native_slot_from_state(next_state)
     native_slot["abi_view"] = native_bridge.build_abi_view(next_state, obj, colliders)
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     native_slot["solver"] = "cpp_core"

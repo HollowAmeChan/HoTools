@@ -251,7 +251,9 @@ def _run_mesh_cloth_mc2_node(
     state_matches = mc2_state.state_matches(cache_state, obj, output_key, mesh_light_key)
     if timing is not None:
         _add_timing(timing, "cache_match", time.perf_counter() - cache_substage_start)
-    state = cache_state if state_matches else None
+    state = mc2_state.unwrap_state(cache_state) if state_matches else None
+    cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) and state_matches else None
+    replace_cache = cache_owner is None
 
     cache_substage_start = time.perf_counter() if timing is not None else None
     cached_frame = blender_io.cache_frame(state)
@@ -266,7 +268,7 @@ def _run_mesh_cloth_mc2_node(
         if timing is not None:
             _add_timing(timing, "restore", time.perf_counter() - stage_start)
             _publish_debug_timing(obj, output_key, current_frame, vertex_count, 0, timing, backend_label)
-        return _OmniCache(None), obj, vertex_count, 0
+        return _OmniCache.replace(None), obj, vertex_count, 0
 
     base_pose_proxy = None
     if enabled:
@@ -283,6 +285,7 @@ def _run_mesh_cloth_mc2_node(
             _add_timing(timing, "base_proxy_validate", time.perf_counter() - stage_start)
 
     if reset or not isinstance(state, dict):
+        replace_cache = True
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.clear_delta_attribute(obj)
         if timing is not None:
@@ -310,9 +313,11 @@ def _run_mesh_cloth_mc2_node(
             config_key,
             collision_radius,
         )
+        cache_owner = mc2_state.MC2RuntimeOwner(state)
         if timing is not None:
             _add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
+        cache_owner = mc2_state.ensure_runtime_owner(cache_owner)
         stage_start = time.perf_counter() if timing is not None else None
         if base_pose_proxy is not None:
             state = mc2_state.sync_state_to_base_pose_write_container(state, obj)
@@ -357,7 +362,9 @@ def _run_mesh_cloth_mc2_node(
         next_state["frame"] = current_frame
         blender_io.clear_delta_attribute(obj)
         _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
-        return _OmniCache(next_state), obj, vertex_count, constraint_count
+        cache_owner.replace_state(next_state)
+        cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
+        return cache_value, obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
     state = mc2_state.sync_state_to_base_pose_proxy(state, obj, base_pose_proxy, current_frame, timing)
@@ -441,7 +448,9 @@ def _run_mesh_cloth_mc2_node(
     if timing is not None:
         _add_timing(timing, "write", time.perf_counter() - stage_start)
         _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
-    return _OmniCache(next_state), obj, vertex_count, constraint_count
+    cache_owner.replace_state(next_state)
+    cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
+    return cache_value, obj, vertex_count, constraint_count
 
 
 @omni(

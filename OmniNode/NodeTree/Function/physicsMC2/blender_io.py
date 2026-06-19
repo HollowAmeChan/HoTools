@@ -65,8 +65,14 @@ def cached_base_pose_world_pose(
     obj: bpy.types.Object,
     proxy: bpy.types.Object,
     frame: int,
+    cache: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    value = _BASE_POSE_FRAME_CACHE.get(_base_pose_cache_key(obj, proxy, frame))
+    key = _base_pose_cache_key(obj, proxy, frame)
+    value = cache.get(key) if isinstance(cache, dict) else None
+    if value is None:
+        value = _BASE_POSE_FRAME_CACHE.get(key)
+        if value is not None and isinstance(cache, dict):
+            cache[key] = value
     if value is None:
         return None
     positions, normals = value
@@ -193,6 +199,8 @@ def write_world_delta_attribute(
 
 
 def cache_frame(cache) -> int | None:
+    state = getattr(cache, "state", cache)
+    cache = state if isinstance(state, dict) else cache
     if not isinstance(cache, dict) or "frame" not in cache:
         return None
     try:

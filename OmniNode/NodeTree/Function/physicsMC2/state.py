@@ -7,6 +7,8 @@
 import bpy
 import numpy as np
 import time
+from collections.abc import MutableMapping
+from dataclasses import dataclass, field
 
 from . import baseline, blender_io, inertia, math_utils, mesh_build, native_bridge
 from .constants import (
@@ -18,6 +20,178 @@ from .constants import (
     MC2_SOLVER_VERSION,
     MC2SystemConstants,
 )
+
+
+@dataclass
+class MC2CenterState:
+    """单个 MeshCloth center 的运行状态容器。
+
+    当前仍以 legacy_state 承载既有 dict，后续逐步把拓扑、粒子、曲线缓存拆成明确字段。
+    """
+
+    legacy_state: dict = field(default_factory=dict)
+    curve_cache: dict = field(default_factory=dict)
+    topology_cache: dict = field(default_factory=dict)
+    io_cache: dict = field(default_factory=dict)
+    native_cache: dict = field(default_factory=dict)
+    native_context: object | None = None
+
+    def replace_legacy_state(self, state: dict) -> None:
+        self.legacy_state = state if isinstance(state, dict) else {}
+        extension_slots = dict(self.legacy_state.get("extension_slots") or {})
+        extension_slots["curve_cache"] = self.curve_cache
+        extension_slots["topology_cache"] = self.topology_cache
+        extension_slots["io_cache"] = self.io_cache
+        extension_slots["native_cache"] = self.native_cache
+        extension_slots["native_context"] = self.native_context
+        self.legacy_state["extension_slots"] = extension_slots
+
+    def debug_snapshot(self) -> dict:
+        state = self.legacy_state if isinstance(self.legacy_state, dict) else {}
+        return {
+            "object": state.get("object_name", ""),
+            "frame": state.get("frame"),
+            "verts": state.get("vertex_count", 0),
+            "solver_version": state.get("solver_version"),
+            "curve_cache": len(self.curve_cache),
+            "topology_cache": len(self.topology_cache),
+            "io_cache": len(self.io_cache),
+            "native_cache": len(self.native_cache),
+            "has_native_context": self.native_context is not None,
+        }
+
+    def dispose(self) -> None:
+        self.native_context = None
+        self.curve_cache.clear()
+        self.topology_cache.clear()
+        self.io_cache.clear()
+        self.native_cache.clear()
+
+
+@dataclass
+class MC2TeamState:
+    """per-node TeamState。
+
+    它不是 MC2 全局 TeamManager，只是 OmniNode cache 中的运行期 schema。
+    """
+
+    centers: dict[str, MC2CenterState] = field(default_factory=dict)
+
+    def ensure_center(self, key: str = "main") -> MC2CenterState:
+        key = str(key or "main")
+        center = self.centers.get(key)
+        if center is None:
+            center = MC2CenterState()
+            self.centers[key] = center
+        return center
+
+    def dispose(self) -> None:
+        for center in self.centers.values():
+            center.dispose()
+        self.centers.clear()
+
+    def debug_snapshot(self) -> dict:
+        return {
+            "centers": {name: center.debug_snapshot() for name, center in self.centers.items()},
+        }
+
+
+class MC2RuntimeOwner(MutableMapping):
+    """MC2 运行期缓存 owner。
+
+    当前仍对外表现得像 dict，内部已经按 TeamState/CenterState 承载。
+    该对象必须作为 OmniNode cache 的实际 payload 保存，连续帧才能使用 mutate 模式。
+    """
+
+    def __init__(self, state: dict | None = None):
+        self.team_state = MC2TeamState()
+        self.center_key = "main"
+        self.center_state.replace_legacy_state(state if isinstance(state, dict) else {})
+
+    def __getitem__(self, key):
+        return self.state[key]
+
+    def __setitem__(self, key, value) -> None:
+        self.state[key] = value
+
+    def __delitem__(self, key) -> None:
+        del self.state[key]
+
+    def __iter__(self):
+        return iter(self.state)
+
+    def __len__(self) -> int:
+        return len(self.state)
+
+    @property
+    def center_state(self) -> MC2CenterState:
+        return self.team_state.ensure_center(self.center_key)
+
+    @property
+    def state(self) -> dict:
+        return self.center_state.legacy_state
+
+    @state.setter
+    def state(self, value: dict) -> None:
+        self.center_state.replace_legacy_state(value)
+
+    def replace_state(self, state: dict) -> None:
+        self.center_state.replace_legacy_state(state)
+
+    def omni_cache_dispose(self, reason: str = "") -> None:
+        # 后续 persistent native context 挂在 CenterState 上，由这里统一释放。
+        self.team_state.dispose()
+
+    def omni_cache_debug_snapshot(self) -> dict:
+        center_snapshot = self.center_state.debug_snapshot()
+        return {
+            "kind": "MC2RuntimeOwner",
+            "active_center": self.center_key,
+            "center": center_snapshot,
+            "team": self.team_state.debug_snapshot(),
+        }
+
+
+def unwrap_state(value) -> dict | None:
+    if isinstance(value, MC2RuntimeOwner):
+        return value.state if isinstance(value.state, dict) else None
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def ensure_runtime_owner(value=None) -> MC2RuntimeOwner:
+    if isinstance(value, MC2RuntimeOwner):
+        return value
+    return MC2RuntimeOwner(unwrap_state(value))
+
+
+def extension_cache(state: dict, name: str) -> dict:
+    extension_slots = state.get("extension_slots")
+    if not isinstance(extension_slots, dict):
+        extension_slots = {}
+        state["extension_slots"] = extension_slots
+    cache = extension_slots.get(name)
+    if not isinstance(cache, dict):
+        cache = {}
+        extension_slots[name] = cache
+    return cache
+
+
+def curve_cache(state: dict) -> dict:
+    return extension_cache(state, "curve_cache")
+
+
+def topology_cache(state: dict) -> dict:
+    return extension_cache(state, "topology_cache")
+
+
+def io_cache(state: dict) -> dict:
+    return extension_cache(state, "io_cache")
+
+
+def native_cache(state: dict) -> dict:
+    return extension_cache(state, "native_cache")
 
 
 def calc_inverse_masses(
@@ -450,7 +624,10 @@ def sync_state_to_base_pose_proxy(
         return state
 
     stage_start = time.perf_counter() if timing is not None else None
-    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame)
+    cache = io_cache(state)
+    if len(cache) > 12:
+        cache.clear()
+    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame, cache)
     if timing is not None:
         timing["stages"]["base_proxy_read"] = timing["stages"].get("base_proxy_read", 0.0) + (
             time.perf_counter() - stage_start
@@ -483,6 +660,7 @@ def state_matches(
     output_key: str,
     mesh_light_key: tuple,
 ) -> bool:
+    state = unwrap_state(state)
     if not isinstance(state, dict):
         return False
 

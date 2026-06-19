@@ -5,6 +5,49 @@ import numpy as np
 from .....PropertyCurve import resolve_float_curve
 
 
+_CACHE_BUCKET_LIMIT = 256
+
+
+def _freeze_cache_value(value):
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, np.ndarray):
+        array = np.ascontiguousarray(value)
+        return ("ndarray", str(array.dtype), tuple(array.shape), bytes(array.reshape(-1).tobytes()))
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _freeze_cache_value(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_cache_value(item) for item in value)
+    try:
+        return _freeze_cache_value(value.to_payload())
+    except Exception:
+        return (type(value).__name__, id(value))
+
+
+def _cache_bucket(cache: dict | None, name: str) -> dict | None:
+    if not isinstance(cache, dict):
+        return None
+    bucket = cache.setdefault(str(name), {})
+    if not isinstance(bucket, dict):
+        bucket = {}
+        cache[str(name)] = bucket
+    if len(bucket) > _CACHE_BUCKET_LIMIT:
+        bucket.clear()
+    return bucket
+
+
+def _remember(bucket: dict | None, key, factory):
+    if bucket is None:
+        return factory()
+    if key in bucket:
+        return bucket[key]
+    value = factory()
+    if len(bucket) > _CACHE_BUCKET_LIMIT:
+        bucket.clear()
+    bucket[key] = value
+    return value
+
+
 def _curve_value_at(curve, position: float) -> float:
     try:
         return float(curve.sample(position))
@@ -19,7 +62,8 @@ def _is_float_curve_value(value) -> bool:
 
 
 def scalar_param(value) -> dict:
-    return {"mode": "scalar", "value": float(value), "samples": None}
+    numeric = float(value)
+    return {"mode": "scalar", "value": numeric, "samples": None, "cache_key": ("scalar", numeric)}
 
 
 def _clamp_value(value, minimum=None, maximum=None) -> float:
@@ -48,6 +92,27 @@ def float_curve_param(value, sample_count: int = 65) -> dict:
     }
 
 
+def float_curve_param_cached(cache: dict | None, slot: str, value, sample_count: int = 65) -> dict:
+    curve = resolve_float_curve(value)
+    sample_count = max(2, int(sample_count))
+    payload = curve.to_payload()
+    key = ("float_curve", str(slot), _freeze_cache_value(payload), int(sample_count))
+
+    def factory():
+        samples = np.ascontiguousarray(curve.sample_many(sample_count), dtype=np.float32)
+        return {
+            "mode": "curve",
+            "value": _curve_value_at(curve, 0.0),
+            "samples": samples,
+            "payload": payload,
+            "curve": curve,
+            "sample_count": int(sample_count),
+            "cache_key": key,
+        }
+
+    return _remember(_cache_bucket(cache, "params"), key, factory)
+
+
 def float_param(value, minimum=None, maximum=None, sample_count: int = 65) -> dict:
     if _is_float_curve_value(value):
         param = float_curve_param(value, sample_count=sample_count)
@@ -56,6 +121,13 @@ def float_param(value, minimum=None, maximum=None, sample_count: int = 65) -> di
 
     if minimum is None and maximum is None:
         return param
+    return clamp_param(param, minimum=minimum, maximum=maximum)
+
+
+def float_param_cached(cache: dict | None, slot: str, value, minimum=None, maximum=None, sample_count: int = 65) -> dict:
+    if not _is_float_curve_value(value):
+        return clamp_param(scalar_param(value), minimum=minimum, maximum=maximum)
+    param = float_curve_param_cached(cache, slot, value, sample_count=sample_count)
     return clamp_param(param, minimum=minimum, maximum=maximum)
 
 
@@ -86,6 +158,53 @@ def curve_value_param(value, curve, minimum=None, maximum=None, sample_count: in
     return clamp_param(param, minimum=minimum, maximum=maximum)
 
 
+def curve_value_param_cached(
+    cache: dict | None,
+    slot: str,
+    value,
+    curve,
+    minimum=None,
+    maximum=None,
+    sample_count: int = 65,
+) -> dict:
+    base_value = _clamp_value(value, minimum=minimum, maximum=maximum)
+    if not _is_float_curve_value(curve):
+        return clamp_param(scalar_param(base_value), minimum=minimum, maximum=maximum)
+
+    curve_value = resolve_float_curve(curve)
+    sample_count = max(2, int(sample_count))
+    payload = curve_value.to_payload()
+    key = (
+        "curve_value",
+        str(slot),
+        float(base_value),
+        _freeze_cache_value(payload),
+        minimum,
+        maximum,
+        int(sample_count),
+    )
+
+    def factory():
+        curve_samples = np.ascontiguousarray(curve_value.sample_many(sample_count), dtype=np.float32)
+        samples = np.ascontiguousarray(base_value * curve_samples, dtype=np.float32)
+        first_curve_value = _curve_value_at(curve_value, 0.0)
+        param = {
+            "mode": "curve_value",
+            "value": base_value * first_curve_value,
+            "base_value": base_value,
+            "curve_value": first_curve_value,
+            "samples": samples,
+            "curve_samples": curve_samples,
+            "payload": payload,
+            "curve": curve_value,
+            "sample_count": int(sample_count),
+            "cache_key": key,
+        }
+        return clamp_param(param, minimum=minimum, maximum=maximum)
+
+    return _remember(_cache_bucket(cache, "params"), key, factory)
+
+
 def clamp_param(param: dict, minimum=None, maximum=None) -> dict:
     result = dict(param)
     result["minimum"] = minimum
@@ -106,6 +225,13 @@ def clamp_param(param: dict, minimum=None, maximum=None) -> dict:
         if maximum is not None:
             array = np.minimum(array, float(maximum))
         result["samples"] = np.ascontiguousarray(array, dtype=np.float32)
+    result["cache_key"] = (
+        "clamp",
+        _freeze_cache_value(result.get("cache_key")),
+        minimum,
+        maximum,
+        float(result.get("value", 0.0)),
+    )
     return result
 
 
@@ -185,3 +311,21 @@ def sample_param(param: dict, depths: np.ndarray) -> np.ndarray:
     i1 = np.minimum(i0 + 1, len(table) - 1)
     t = x - i0
     return np.ascontiguousarray(table[i0] * (1.0 - t) + table[i1] * t, dtype=np.float32)
+
+
+def sample_param_cached(cache: dict | None, slot: str, param: dict, depths: np.ndarray) -> np.ndarray:
+    depths_array = np.ascontiguousarray(depths, dtype=np.float32)
+    param_key = param.get("cache_key") if isinstance(param, dict) else ("raw", _freeze_cache_value(param))
+    key = (
+        "sample",
+        str(slot),
+        _freeze_cache_value(param_key),
+        str(depths_array.dtype),
+        tuple(depths_array.shape),
+        bytes(depths_array.reshape(-1).tobytes()),
+    )
+    return _remember(
+        _cache_bucket(cache, "samples"),
+        key,
+        lambda: sample_param(param, depths_array),
+    )
