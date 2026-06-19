@@ -163,10 +163,10 @@ def rest_local_normals(obj: bpy.types.Object) -> np.ndarray:
     return np.ascontiguousarray(normals, dtype=np.float32)
 
 
-def mesh_signature_key(obj: bpy.types.Object) -> tuple:
+def mesh_signature_key(obj: bpy.types.Object, cache: dict | None = None) -> tuple:
     mesh = obj.data
     edges, triangles = mesh_connectivity_arrays(mesh)
-    return (
+    signature = (
         int(obj.as_pointer()),
         int(mesh.as_pointer()),
         len(mesh.vertices),
@@ -175,6 +175,22 @@ def mesh_signature_key(obj: bpy.types.Object) -> tuple:
         math_utils.array_hash(edges),
         math_utils.array_hash(triangles),
     )
+    if isinstance(cache, dict):
+        cache[("connectivity", signature)] = (edges, triangles)
+    return signature
+
+
+def cached_connectivity_arrays(
+    mesh: bpy.types.Mesh,
+    mesh_signature_key_value: tuple,
+    cache: dict | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(cache, dict):
+        cached = cache.get(("connectivity", mesh_signature_key_value))
+        if cached is not None:
+            edges, triangles = cached
+            return edges, triangles
+    return mesh_connectivity_arrays(mesh)
 
 
 def mesh_light_key(obj: bpy.types.Object) -> tuple:

@@ -9,7 +9,7 @@ import time
 import bpy
 import numpy as np
 
-from . import baseline, blender_io, collision, constraints, inertia, math_utils, native_bridge, params, state as mc2_state
+from . import baseline, blender_io, collision, constraints, inertia, math_utils, native_bridge, runtime_params, state as mc2_state
 from .constants import MC2SystemConstants
 
 
@@ -18,18 +18,6 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
         return
     stages = timing.setdefault("stages", {})
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
-
-
-def _zero_values_like(values: np.ndarray) -> np.ndarray:
-    return np.zeros(len(values), dtype=np.float32)
-
-
-def _component_slot(enabled: bool) -> dict:
-    return params.scalar_param(1.0 if enabled else 0.0)
-
-
-def _scalar_values_like(values: np.ndarray, value: float) -> np.ndarray:
-    return np.full(len(values), float(value), dtype=np.float32)
 
 
 def _native_slot_from_state(state: dict) -> dict:
@@ -41,10 +29,20 @@ def _native_slot_from_state(state: dict) -> dict:
     return slot
 
 
-def _substep_damping_values(frame_damping_values: np.ndarray, substeps: int) -> np.ndarray:
-    values = np.clip(np.ascontiguousarray(frame_damping_values, dtype=np.float32), 0.0, 1.0)
-    substep_count = max(1, int(substeps))
-    return np.ascontiguousarray(1.0 - np.power(1.0 - values, 1.0 / float(substep_count)), dtype=np.float32)
+def _native_abi_view_from_cache(
+    state: dict,
+    obj: bpy.types.Object,
+    colliders: list[dict] | None,
+    solver_name: str,
+) -> dict:
+    slot = _native_slot_from_state(state)
+    value = native_bridge.build_abi_view(state, obj, colliders)
+    slot["abi_view_current"] = {
+        "solver": solver_name,
+        "frame": state.get("frame"),
+        "value": value,
+    }
+    return value
 
 
 # 运行顺序说明：
@@ -140,174 +138,87 @@ def solve_meshcloth(
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
+    world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
-    normal_axis_value = max(0, min(5, int(normal_axis)))
-    curve_cache = mc2_state.curve_cache(state)
-    curve_stage_start = time.perf_counter() if timing is not None else None
-    stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
-    damping_param = params.curve_value_param_cached(curve_cache, "damping", damping, damping_curve, minimum=0.0, maximum=1.0)
-    distance_stiffness_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "distance_stiffness",
-            distance_stiffness,
-            distance_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_distance
-        else params.scalar_param(0.0)
+    runtime = runtime_params.build_runtime_params(
+        state,
+        depths,
+        substep_count,
+        world_scale_nonnegative,
+        damping,
+        damping_curve,
+        use_tether,
+        tether_compression,
+        use_distance,
+        distance_stiffness,
+        distance_stiffness_curve,
+        use_bend,
+        bend_stiffness,
+        bend_stiffness_curve,
+        use_angle_restoration,
+        angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
+        angle_restoration_velocity_attenuation,
+        angle_restoration_velocity_attenuation_curve,
+        angle_restoration_gravity_falloff,
+        use_angle_limit,
+        angle_limit,
+        angle_limit_curve,
+        angle_limit_stiffness,
+        world_inertia,
+        movement_inertia_smoothing,
+        local_inertia,
+        depth_inertia,
+        centrifugal,
+        movement_speed_limit,
+        rotation_speed_limit,
+        local_movement_speed_limit,
+        local_rotation_speed_limit,
+        particle_speed_limit,
+        use_max_distance,
+        max_distance,
+        max_distance_curve,
+        use_backstop,
+        backstop_radius,
+        backstop_distance,
+        backstop_distance_curve,
+        motion_stiffness,
+        normal_axis,
+        use_collider_collision,
+        collider_friction,
+        collider_collision_mode,
+        timing,
+        _add_timing,
     )
-    bend_stiffness_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "bend_stiffness",
-            bend_stiffness,
-            bend_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_bend
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "angle_restoration_stiffness",
-            angle_restoration_stiffness,
-            angle_restoration_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_velocity_attenuation_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "angle_restoration_velocity_attenuation",
-            angle_restoration_velocity_attenuation,
-            angle_restoration_velocity_attenuation_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_gravity_falloff_param = (
-        params.scalar_param(max(0.0, min(1.0, float(angle_restoration_gravity_falloff))))
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_limit_param = (
-        params.curve_value_param_cached(curve_cache, "angle_limit", angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
-        if use_angle_limit
-        else params.scalar_param(0.0)
-    )
-    angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
-    angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
-    max_distance_param = (
-        params.curve_value_param_cached(curve_cache, "max_distance", max_distance, max_distance_curve, minimum=0.0)
-        if use_max_distance
-        else params.scalar_param(0.0)
-    )
-    backstop_radius_param = (
-        params.float_param_cached(curve_cache, "backstop_radius", backstop_radius, minimum=0.0)
-        if use_backstop
-        else params.scalar_param(0.0)
-    )
-    backstop_distance_param = (
-        params.curve_value_param_cached(curve_cache, "backstop_distance", backstop_distance, backstop_distance_curve, minimum=0.0)
-        if use_backstop
-        else params.scalar_param(0.0)
-    )
-    if timing is not None:
-        _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
-    curve_stage_start = time.perf_counter() if timing is not None else None
-    damping_values = np.clip(
-        params.sample_param_cached(curve_cache, "damping", damping_param, stiffness_depths)
-        * float(MC2SystemConstants.DAMPING_SCALE),
-        0.0,
-        1.0,
-    )
-    substep_damping_values = _substep_damping_values(damping_values, substep_count)
-    distance_stiffness_values = (
-        np.clip(params.sample_param_cached(curve_cache, "distance_stiffness", distance_stiffness_param, stiffness_depths), 0.0, 1.0)
-        if use_distance
-        else _zero_values_like(stiffness_depths)
-    )
-    bend_stiffness_values = (
-        np.clip(params.sample_param_cached(curve_cache, "bend_stiffness", bend_stiffness_param, stiffness_depths), 0.0, 1.0)
-        if use_bend
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_values = (
-        np.clip(params.sample_param_cached(curve_cache, "angle_restoration_stiffness", angle_restoration_param, stiffness_depths), 0.0, 1.0)
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_velocity_attenuation_values = (
-        np.clip(
-            params.sample_param_cached(
-                curve_cache,
-                "angle_restoration_velocity_attenuation",
-                angle_restoration_velocity_attenuation_param,
-                stiffness_depths,
-            ),
-            0.0,
-            1.0,
-        )
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_gravity_falloff_values = (
-        _scalar_values_like(stiffness_depths, angle_restoration_gravity_falloff_param["value"])
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_limit_values = (
-        np.clip(params.sample_param_cached(curve_cache, "angle_limit", angle_limit_param, stiffness_depths), 0.0, 180.0)
-        if use_angle_limit
-        else _zero_values_like(stiffness_depths)
-    )
-    if timing is not None:
-        _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
-
-    world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
-    movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
-    local_inertia_param = params.scalar_param(max(0.0, min(1.0, float(local_inertia))))
-    depth_inertia_param = params.scalar_param(max(0.0, min(1.0, float(depth_inertia))))
-    centrifugal_param = params.scalar_param(max(0.0, min(1.0, float(centrifugal))))
-    movement_speed_limit_value = float(movement_speed_limit)
-    rotation_speed_limit_value = float(rotation_speed_limit)
-    local_movement_speed_limit_value = float(local_movement_speed_limit)
-    local_rotation_speed_limit_value = float(local_rotation_speed_limit)
-    particle_speed_limit_value = float(particle_speed_limit)
-    movement_speed_limit_param = params.scalar_param(movement_speed_limit_value)
-    rotation_speed_limit_param = params.scalar_param(rotation_speed_limit_value)
-    local_movement_speed_limit_param = params.scalar_param(local_movement_speed_limit_value)
-    local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
-    particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
-
-    tether_compression_param = params.scalar_param(
-        max(0.0, float(tether_compression)) if use_tether else 0.0
-    )
-    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT if use_tether else 0.0)
-    motion_enabled = bool(use_max_distance or use_backstop)
-    motion_stiffness_param = params.scalar_param(
-        max(0.0, min(1.0, float(motion_stiffness))) if motion_enabled else 0.0
-    )
-    collider_friction_param = params.scalar_param(max(0.0, min(0.5, float(collider_friction))))
-    dynamic_friction = (
-        float(collider_friction_param["value"])
-        * MC2SystemConstants.COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO
-    )
-    static_friction_speed = (
-        float(collider_friction_param["value"])
-        * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
-        * max(float(world_scale), 0.0)
-    )
-    collision_mode = max(0, min(2, int(collider_collision_mode))) if use_collider_collision else 0
+    substep_damping_values = runtime.substep_damping_values
+    distance_stiffness_values = runtime.distance_stiffness_values
+    bend_stiffness_values = runtime.bend_stiffness_values
+    angle_restoration_values = runtime.angle_restoration_values
+    angle_restoration_velocity_attenuation_values = runtime.angle_restoration_velocity_attenuation_values
+    angle_restoration_gravity_falloff_values = runtime.angle_restoration_gravity_falloff_values
+    angle_limit_values = runtime.angle_limit_values
+    angle_limit_stiffness_value = runtime.angle_limit_stiffness
+    normal_axis_value = runtime.normal_axis
+    world_inertia_param = runtime.world_inertia_param
+    movement_inertia_smoothing_param = runtime.movement_inertia_smoothing_param
+    local_inertia_param = runtime.local_inertia_param
+    depth_inertia_param = runtime.depth_inertia_param
+    centrifugal_param = runtime.centrifugal_param
+    movement_speed_limit_value = runtime.movement_speed_limit
+    rotation_speed_limit_value = runtime.rotation_speed_limit
+    local_movement_speed_limit_value = runtime.local_movement_speed_limit
+    local_rotation_speed_limit_value = runtime.local_rotation_speed_limit
+    particle_speed_limit_value = runtime.particle_speed_limit
+    tether_compression_param = runtime.tether_compression_param
+    tether_stretch_param = runtime.tether_stretch_param
+    max_distance_param = runtime.max_distance_param
+    motion_stiffness_param = runtime.motion_stiffness_param
+    backstop_radius_param = runtime.backstop_radius_param
+    backstop_distance_param = runtime.backstop_distance_param
+    motion_enabled = runtime.motion_enabled
+    dynamic_friction = runtime.dynamic_friction
+    static_friction_speed = runtime.static_friction_speed
+    collision_mode = runtime.collision_mode
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -838,7 +749,7 @@ def solve_meshcloth(
 
     # 最后一段只负责把运行结果打包回 state，不再做新的求解。
     stage_start = time.perf_counter() if timing is not None else None
-    next_state = dict(state)
+    next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
@@ -872,49 +783,12 @@ def solve_meshcloth(
     next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
-    next_state["param_slots"] = dict(next_state.get("param_slots") or {})
-    next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
-    next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
-    next_state["param_slots"]["angle_restoration_stiffness"] = angle_restoration_param
-    next_state["param_slots"]["angle_restoration_velocity_attenuation"] = angle_restoration_velocity_attenuation_param
-    next_state["param_slots"]["angle_restoration_gravity_falloff"] = angle_restoration_gravity_falloff_param
-    next_state["param_slots"]["angle_limit"] = angle_limit_param
-    next_state["param_slots"]["angle_limit_stiffness"] = angle_limit_stiffness_param
-    next_state["param_slots"]["world_inertia"] = world_inertia_param
-    next_state["param_slots"]["movement_inertia_smoothing"] = movement_inertia_smoothing_param
-    next_state["param_slots"]["local_inertia"] = local_inertia_param
-    next_state["param_slots"]["depth_inertia"] = depth_inertia_param
-    next_state["param_slots"]["centrifugal"] = centrifugal_param
-    next_state["param_slots"]["movement_speed_limit"] = movement_speed_limit_param
-    next_state["param_slots"]["rotation_speed_limit"] = rotation_speed_limit_param
-    next_state["param_slots"]["local_movement_speed_limit"] = local_movement_speed_limit_param
-    next_state["param_slots"]["local_rotation_speed_limit"] = local_rotation_speed_limit_param
-    next_state["param_slots"]["particle_speed_limit"] = particle_speed_limit_param
-    next_state["param_slots"]["max_distance"] = max_distance_param
-    next_state["param_slots"]["tether_compression"] = tether_compression_param
-    next_state["param_slots"]["tether_stretch"] = tether_stretch_param
-    next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
-    next_state["param_slots"]["normal_axis"] = params.scalar_param(float(normal_axis_value))
-    next_state["param_slots"]["damping"] = damping_param
-    next_state["param_slots"]["backstop_radius"] = backstop_radius_param
-    next_state["param_slots"]["backstop_distance"] = backstop_distance_param
-    next_state["param_slots"]["collider_friction"] = collider_friction_param
-    next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
-    next_state["param_slots"]["use_tether"] = _component_slot(use_tether)
-    next_state["param_slots"]["use_distance"] = _component_slot(use_distance)
-    next_state["param_slots"]["use_bend"] = _component_slot(use_bend)
-    next_state["param_slots"]["use_angle_restoration"] = _component_slot(use_angle_restoration)
-    next_state["param_slots"]["use_angle_limit"] = _component_slot(use_angle_limit)
-    next_state["param_slots"]["use_max_distance"] = _component_slot(use_max_distance)
-    next_state["param_slots"]["use_backstop"] = _component_slot(use_backstop)
-    next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
+    runtime_params.write_param_slots(next_state, runtime)
 
-    extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = _native_slot_from_state(next_state)
-    native_slot["abi_view"] = native_bridge.build_abi_view(next_state, obj, colliders)
+    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "py")
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
-    extension_slots["native"] = native_slot
-    next_state["extension_slots"] = extension_slots
+    mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
         _add_timing(timing, "post_pack", time.perf_counter() - stage_start)
     return next_state
@@ -1011,197 +885,85 @@ def solve_meshcloth_native_core(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
-    normal_axis_value = max(0, min(5, int(normal_axis)))
-    curve_cache = mc2_state.curve_cache(state)
-    curve_stage_start = time.perf_counter() if timing is not None else None
-    stiffness_depths = np.clip(depths, 0.0, 1.0)
-    damping_param = params.curve_value_param_cached(curve_cache, "damping", damping, damping_curve, minimum=0.0, maximum=1.0)
-    distance_stiffness_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "distance_stiffness",
-            distance_stiffness,
-            distance_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_distance
-        else params.scalar_param(0.0)
+    runtime = runtime_params.build_runtime_params(
+        state,
+        depths,
+        substep_count,
+        world_scale_nonnegative,
+        damping,
+        damping_curve,
+        use_tether,
+        tether_compression,
+        use_distance,
+        distance_stiffness,
+        distance_stiffness_curve,
+        use_bend,
+        bend_stiffness,
+        bend_stiffness_curve,
+        use_angle_restoration,
+        angle_restoration_stiffness,
+        angle_restoration_stiffness_curve,
+        angle_restoration_velocity_attenuation,
+        angle_restoration_velocity_attenuation_curve,
+        angle_restoration_gravity_falloff,
+        use_angle_limit,
+        angle_limit,
+        angle_limit_curve,
+        angle_limit_stiffness,
+        world_inertia,
+        movement_inertia_smoothing,
+        local_inertia,
+        depth_inertia,
+        centrifugal,
+        movement_speed_limit,
+        rotation_speed_limit,
+        local_movement_speed_limit,
+        local_rotation_speed_limit,
+        particle_speed_limit,
+        use_max_distance,
+        max_distance,
+        max_distance_curve,
+        use_backstop,
+        backstop_radius,
+        backstop_distance,
+        backstop_distance_curve,
+        motion_stiffness,
+        normal_axis,
+        use_collider_collision,
+        collider_friction,
+        collider_collision_mode,
+        timing,
+        _add_timing,
     )
-    bend_stiffness_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "bend_stiffness",
-            bend_stiffness,
-            bend_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_bend
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "angle_restoration_stiffness",
-            angle_restoration_stiffness,
-            angle_restoration_stiffness_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_velocity_attenuation_param = (
-        params.curve_value_param_cached(
-            curve_cache,
-            "angle_restoration_velocity_attenuation",
-            angle_restoration_velocity_attenuation,
-            angle_restoration_velocity_attenuation_curve,
-            minimum=0.0,
-            maximum=1.0,
-        )
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_restoration_gravity_falloff_param = (
-        params.scalar_param(max(0.0, min(1.0, float(angle_restoration_gravity_falloff))))
-        if use_angle_restoration
-        else params.scalar_param(0.0)
-    )
-    angle_limit_param = (
-        params.curve_value_param_cached(curve_cache, "angle_limit", angle_limit, angle_limit_curve, minimum=0.0, maximum=180.0)
-        if use_angle_limit
-        else params.scalar_param(0.0)
-    )
-    angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
-    angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
-    max_distance_param = (
-        params.curve_value_param_cached(curve_cache, "max_distance", max_distance, max_distance_curve, minimum=0.0)
-        if use_max_distance
-        else params.scalar_param(0.0)
-    )
-    backstop_radius_param = (
-        params.float_param_cached(curve_cache, "backstop_radius", backstop_radius, minimum=0.0)
-        if use_backstop
-        else params.scalar_param(0.0)
-    )
-    backstop_distance_param = (
-        params.curve_value_param_cached(curve_cache, "backstop_distance", backstop_distance, backstop_distance_curve, minimum=0.0)
-        if use_backstop
-        else params.scalar_param(0.0)
-    )
-    if timing is not None:
-        _add_timing(timing, "param_curves", time.perf_counter() - curve_stage_start)
-    curve_stage_start = time.perf_counter() if timing is not None else None
-    damping_values = np.ascontiguousarray(
-        np.clip(
-            params.sample_param_cached(curve_cache, "damping", damping_param, stiffness_depths)
-            * float(MC2SystemConstants.DAMPING_SCALE),
-            0.0,
-            1.0,
-        ),
-        dtype=np.float32,
-    )
-    substep_damping_values = _substep_damping_values(damping_values, substep_count)
-    distance_stiffness_values = (
-        np.ascontiguousarray(
-            np.clip(
-                params.sample_param_cached(curve_cache, "distance_stiffness", distance_stiffness_param, stiffness_depths),
-                0.0,
-                1.0,
-            ),
-            dtype=np.float32,
-        )
-        if use_distance
-        else _zero_values_like(stiffness_depths)
-    )
-    bend_stiffness_values = (
-        np.ascontiguousarray(
-            np.clip(params.sample_param_cached(curve_cache, "bend_stiffness", bend_stiffness_param, stiffness_depths), 0.0, 1.0),
-            dtype=np.float32,
-        )
-        if use_bend
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_values = (
-        np.ascontiguousarray(
-            np.clip(
-                params.sample_param_cached(curve_cache, "angle_restoration_stiffness", angle_restoration_param, stiffness_depths),
-                0.0,
-                1.0,
-            ),
-            dtype=np.float32,
-        )
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_velocity_attenuation_values = (
-        np.ascontiguousarray(
-            np.clip(
-                params.sample_param_cached(
-                    curve_cache,
-                    "angle_restoration_velocity_attenuation",
-                    angle_restoration_velocity_attenuation_param,
-                    stiffness_depths,
-                ),
-                0.0,
-                1.0,
-            ),
-            dtype=np.float32,
-        )
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_restoration_gravity_falloff_values = (
-        _scalar_values_like(stiffness_depths, angle_restoration_gravity_falloff_param["value"])
-        if use_angle_restoration
-        else _zero_values_like(stiffness_depths)
-    )
-    angle_limit_values = (
-        np.ascontiguousarray(
-            np.clip(params.sample_param_cached(curve_cache, "angle_limit", angle_limit_param, stiffness_depths), 0.0, 180.0),
-            dtype=np.float32,
-        )
-        if use_angle_limit
-        else _zero_values_like(stiffness_depths)
-    )
-    if timing is not None:
-        _add_timing(timing, "stiffness_curves", time.perf_counter() - curve_stage_start)
-
-    world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
-    movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
-    local_inertia_param = params.scalar_param(max(0.0, min(1.0, float(local_inertia))))
-    depth_inertia_param = params.scalar_param(max(0.0, min(1.0, float(depth_inertia))))
-    centrifugal_param = params.scalar_param(max(0.0, min(1.0, float(centrifugal))))
-    movement_speed_limit_value = float(movement_speed_limit)
-    rotation_speed_limit_value = float(rotation_speed_limit)
-    local_movement_speed_limit_value = float(local_movement_speed_limit)
-    local_rotation_speed_limit_value = float(local_rotation_speed_limit)
-    particle_speed_limit_value = float(particle_speed_limit)
-    movement_speed_limit_param = params.scalar_param(movement_speed_limit_value)
-    rotation_speed_limit_param = params.scalar_param(rotation_speed_limit_value)
-    local_movement_speed_limit_param = params.scalar_param(local_movement_speed_limit_value)
-    local_rotation_speed_limit_param = params.scalar_param(local_rotation_speed_limit_value)
-    particle_speed_limit_param = params.scalar_param(particle_speed_limit_value)
-
-    tether_compression_param = params.scalar_param(max(0.0, float(tether_compression)) if use_tether else 0.0)
-    tether_stretch_param = params.scalar_param(MC2SystemConstants.TETHER_STRETCH_LIMIT if use_tether else 0.0)
-    motion_enabled = bool(use_max_distance or use_backstop)
-    motion_stiffness_param = params.scalar_param(
-        max(0.0, min(1.0, float(motion_stiffness))) if motion_enabled else 0.0
-    )
-    collider_friction_param = params.scalar_param(max(0.0, min(0.5, float(collider_friction))))
-    dynamic_friction = (
-        float(collider_friction_param["value"])
-        * MC2SystemConstants.COLLIDER_COLLISION_DYNAMIC_FRICTION_RATIO
-    )
-    static_friction_speed = (
-        float(collider_friction_param["value"])
-        * MC2SystemConstants.COLLIDER_COLLISION_STATIC_FRICTION_RATIO
-        * world_scale_nonnegative
-    )
-    collision_mode = max(0, min(2, int(collider_collision_mode))) if use_collider_collision else 0
+    substep_damping_values = runtime.substep_damping_values
+    distance_stiffness_values = runtime.distance_stiffness_values
+    bend_stiffness_values = runtime.bend_stiffness_values
+    angle_restoration_values = runtime.angle_restoration_values
+    angle_restoration_velocity_attenuation_values = runtime.angle_restoration_velocity_attenuation_values
+    angle_restoration_gravity_falloff_values = runtime.angle_restoration_gravity_falloff_values
+    angle_limit_values = runtime.angle_limit_values
+    angle_limit_stiffness_value = runtime.angle_limit_stiffness
+    normal_axis_value = runtime.normal_axis
+    world_inertia_param = runtime.world_inertia_param
+    movement_inertia_smoothing_param = runtime.movement_inertia_smoothing_param
+    local_inertia_param = runtime.local_inertia_param
+    depth_inertia_param = runtime.depth_inertia_param
+    centrifugal_param = runtime.centrifugal_param
+    movement_speed_limit_value = runtime.movement_speed_limit
+    rotation_speed_limit_value = runtime.rotation_speed_limit
+    local_movement_speed_limit_value = runtime.local_movement_speed_limit
+    local_rotation_speed_limit_value = runtime.local_rotation_speed_limit
+    particle_speed_limit_value = runtime.particle_speed_limit
+    tether_compression_param = runtime.tether_compression_param
+    tether_stretch_param = runtime.tether_stretch_param
+    max_distance_param = runtime.max_distance_param
+    motion_stiffness_param = runtime.motion_stiffness_param
+    backstop_radius_param = runtime.backstop_radius_param
+    backstop_distance_param = runtime.backstop_distance_param
+    motion_enabled = runtime.motion_enabled
+    dynamic_friction = runtime.dynamic_friction
+    static_friction_speed = runtime.static_friction_speed
+    collision_mode = runtime.collision_mode
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -1303,35 +1065,14 @@ def solve_meshcloth_native_core(
         key: np.ascontiguousarray(value, dtype=np.float32)
         for key, value in substep_inertia_lists.items()
     }
-    curve_stage_start = time.perf_counter() if timing is not None else None
-    motion_depths = np.clip(depths * depths, 0.0, 1.0)
-    if motion_enabled:
-        max_distances = np.ascontiguousarray(
-            params.sample_param_cached(curve_cache, "max_distance_motion", max_distance_param, motion_depths)
-            * world_scale_nonnegative,
-            dtype=np.float32,
-        )
-        motion_stiffness_values = np.ascontiguousarray(
-            np.clip(params.sample_param_cached(curve_cache, "motion_stiffness", motion_stiffness_param, motion_depths), 0.0, 1.0),
-            dtype=np.float32,
-        )
-        backstop_radii = np.ascontiguousarray(
-            params.sample_param_cached(curve_cache, "backstop_radius_motion", backstop_radius_param, motion_depths)
-            * world_scale_nonnegative,
-            dtype=np.float32,
-        )
-        backstop_distances = np.ascontiguousarray(
-            params.sample_param_cached(curve_cache, "backstop_distance_motion", backstop_distance_param, motion_depths)
-            * world_scale_nonnegative,
-            dtype=np.float32,
-        )
-    else:
-        max_distances = _zero_values_like(motion_depths)
-        motion_stiffness_values = _zero_values_like(motion_depths)
-        backstop_radii = _zero_values_like(motion_depths)
-        backstop_distances = _zero_values_like(motion_depths)
-    if timing is not None:
-        _add_timing(timing, "motion_curves", time.perf_counter() - curve_stage_start)
+    motion_samples = runtime_params.sample_motion_params(
+        state,
+        runtime,
+        depths,
+        world_scale_nonnegative,
+        timing,
+        _add_timing,
+    )
     particle_speed_limit_scaled = (
         particle_speed_limit_value * world_scale_nonnegative
         if particle_speed_limit_value >= 0.0
@@ -1367,10 +1108,10 @@ def solve_meshcloth_native_core(
         angle_restoration_gravity_falloff_values=angle_restoration_gravity_falloff_values,
         angle_limit_values=angle_limit_values,
         substep_damping_values=substep_damping_values,
-        max_distances=max_distances,
-        motion_stiffness_values=motion_stiffness_values,
-        backstop_radii=backstop_radii,
-        backstop_distances=backstop_distances,
+        max_distances=motion_samples.max_distances,
+        motion_stiffness_values=motion_samples.motion_stiffness_values,
+        backstop_radii=motion_samples.backstop_radii,
+        backstop_distances=motion_samples.backstop_distances,
         collider_arrays=collider_arrays,
         substep_inertia_arrays=substep_inertia_arrays,
         frame_dt=frame_dt,
@@ -1400,7 +1141,7 @@ def solve_meshcloth_native_core(
         raise RuntimeError(f"MC2 C++ backend solve failed or is unavailable: {status}")
 
     stage_start = time.perf_counter() if timing is not None else None
-    next_state = dict(state)
+    next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
@@ -1422,50 +1163,13 @@ def solve_meshcloth_native_core(
     next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
-    next_state["param_slots"] = dict(next_state.get("param_slots") or {})
-    next_state["param_slots"]["distance_stiffness"] = distance_stiffness_param
-    next_state["param_slots"]["bend_stiffness"] = bend_stiffness_param
-    next_state["param_slots"]["angle_restoration_stiffness"] = angle_restoration_param
-    next_state["param_slots"]["angle_restoration_velocity_attenuation"] = angle_restoration_velocity_attenuation_param
-    next_state["param_slots"]["angle_restoration_gravity_falloff"] = angle_restoration_gravity_falloff_param
-    next_state["param_slots"]["angle_limit"] = angle_limit_param
-    next_state["param_slots"]["angle_limit_stiffness"] = angle_limit_stiffness_param
-    next_state["param_slots"]["world_inertia"] = world_inertia_param
-    next_state["param_slots"]["movement_inertia_smoothing"] = movement_inertia_smoothing_param
-    next_state["param_slots"]["local_inertia"] = local_inertia_param
-    next_state["param_slots"]["depth_inertia"] = depth_inertia_param
-    next_state["param_slots"]["centrifugal"] = centrifugal_param
-    next_state["param_slots"]["movement_speed_limit"] = movement_speed_limit_param
-    next_state["param_slots"]["rotation_speed_limit"] = rotation_speed_limit_param
-    next_state["param_slots"]["local_movement_speed_limit"] = local_movement_speed_limit_param
-    next_state["param_slots"]["local_rotation_speed_limit"] = local_rotation_speed_limit_param
-    next_state["param_slots"]["particle_speed_limit"] = particle_speed_limit_param
-    next_state["param_slots"]["max_distance"] = max_distance_param
-    next_state["param_slots"]["tether_compression"] = tether_compression_param
-    next_state["param_slots"]["tether_stretch"] = tether_stretch_param
-    next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
-    next_state["param_slots"]["normal_axis"] = params.scalar_param(float(normal_axis_value))
-    next_state["param_slots"]["damping"] = damping_param
-    next_state["param_slots"]["backstop_radius"] = backstop_radius_param
-    next_state["param_slots"]["backstop_distance"] = backstop_distance_param
-    next_state["param_slots"]["collider_friction"] = collider_friction_param
-    next_state["param_slots"]["collider_collision_mode"] = params.scalar_param(float(collision_mode))
-    next_state["param_slots"]["use_tether"] = _component_slot(use_tether)
-    next_state["param_slots"]["use_distance"] = _component_slot(use_distance)
-    next_state["param_slots"]["use_bend"] = _component_slot(use_bend)
-    next_state["param_slots"]["use_angle_restoration"] = _component_slot(use_angle_restoration)
-    next_state["param_slots"]["use_angle_limit"] = _component_slot(use_angle_limit)
-    next_state["param_slots"]["use_max_distance"] = _component_slot(use_max_distance)
-    next_state["param_slots"]["use_backstop"] = _component_slot(use_backstop)
-    next_state["param_slots"]["use_collider_collision"] = _component_slot(use_collider_collision)
+    runtime_params.write_param_slots(next_state, runtime)
 
-    extension_slots = dict(next_state.get("extension_slots") or {})
     native_slot = _native_slot_from_state(next_state)
-    native_slot["abi_view"] = native_bridge.build_abi_view(next_state, obj, colliders)
+    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "cpp_core")
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     native_slot["solver"] = "cpp_core"
-    extension_slots["native"] = native_slot
-    next_state["extension_slots"] = extension_slots
+    mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
         _add_timing(timing, "post_pack", time.perf_counter() - stage_start)
     return next_state

@@ -286,6 +286,8 @@ def _run_mesh_cloth_mc2_node(
 
     if reset or not isinstance(state, dict):
         replace_cache = True
+        cache_owner = mc2_state.MC2RuntimeOwner()
+        topology_cache = mc2_state.topology_cache(cache_owner.state)
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.clear_delta_attribute(obj)
         if timing is not None:
@@ -295,7 +297,7 @@ def _run_mesh_cloth_mc2_node(
         # 只有 reset、跳帧清缓存、对象/mesh/顶点-loop-面数量变化时才重建完整拓扑签名。
         # 同数量但拓扑重排不会自动失效，用户需要手动 reset/清缓存。
         cache_substage_start = time.perf_counter() if timing is not None else None
-        mesh_signature_key = mesh_build.mesh_signature_key(obj)
+        mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
         if timing is not None:
             _add_timing(timing, "cache_mesh_signature", time.perf_counter() - cache_substage_start)
 
@@ -312,8 +314,9 @@ def _run_mesh_cloth_mc2_node(
             mesh_signature_key,
             config_key,
             collision_radius,
+            topology_cache,
         )
-        cache_owner = mc2_state.MC2RuntimeOwner(state)
+        cache_owner.replace_state(state)
         if timing is not None:
             _add_timing(timing, "rebuild", time.perf_counter() - stage_start)
     else:
@@ -358,7 +361,7 @@ def _run_mesh_cloth_mc2_node(
     constraint_count = (len(state["edge_i"]) if use_distance else 0) + bend_constraint_count + angle_constraint_count
 
     if not enabled:
-        next_state = dict(state)
+        next_state = mc2_state.inherit_runtime_slots(state, dict(state))
         next_state["frame"] = current_frame
         blender_io.clear_delta_attribute(obj)
         _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)

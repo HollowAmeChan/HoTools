@@ -1039,7 +1039,7 @@ class _MeshPhysics:
         return obj
 
     @staticmethod
-    def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
+    def read_reference_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:
         values = np.empty(vertex_count * 3, dtype=np.float32)
         key.data.foreach_get("co", values)
         return values.reshape((vertex_count, 3))
@@ -1050,7 +1050,7 @@ class _MeshPhysics:
         vertex_count = len(mesh.vertices)
         shape_keys = mesh.shape_keys
         if shape_keys is not None and shape_keys.reference_key is not None:
-            return cls.read_key_positions(shape_keys.reference_key, vertex_count)
+            return cls.read_reference_key_positions(shape_keys.reference_key, vertex_count)
 
         values = np.empty(vertex_count * 3, dtype=np.float32)
         mesh.vertices.foreach_get("co", values)
@@ -1656,7 +1656,16 @@ class _MeshPhysicsCppBackend:
             module = cls.native_module()
         except Exception:
             return False
-        return hasattr(module, "solve_mesh_shape_key_xpbd")
+        return hasattr(module, "solve_mesh_delta_xpbd") or hasattr(module, "solve_mesh_shape_key_xpbd")
+
+    @classmethod
+    def solve_mesh_delta_xpbd(cls, *args) -> None:
+        module = cls.native_module()
+        if hasattr(module, "solve_mesh_delta_xpbd"):
+            module.solve_mesh_delta_xpbd(*args)
+            return
+        # 旧 native 导出名来自形态键写回时代；当前 Python 层已经统一走 GN delta 输出。
+        module.solve_mesh_shape_key_xpbd(*args)
 
     @staticmethod
     def empty_collision_arrays(collision_radii: np.ndarray, collided_by_groups: int) -> tuple:
@@ -1796,7 +1805,7 @@ class _MeshPhysicsCppBackend:
             _MeshPhysics.add_timing(timing, "collision_setup", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        cls.native_module().solve_mesh_shape_key_xpbd(
+        cls.solve_mesh_delta_xpbd(
             positions,
             prev_positions,
             rest_positions,

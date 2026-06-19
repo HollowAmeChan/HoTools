@@ -22,6 +22,16 @@ from .constants import (
 )
 
 
+MC2_RUNTIME_CACHE_SLOT = "runtime_cache"
+MC2_RUNTIME_CACHE_NAMES = (
+    "curve_cache",
+    "topology_cache",
+    "io_cache",
+    "native_cache",
+    "native_context",
+)
+
+
 @dataclass
 class MC2CenterState:
     """单个 MeshCloth center 的运行状态容器。
@@ -38,13 +48,44 @@ class MC2CenterState:
 
     def replace_legacy_state(self, state: dict) -> None:
         self.legacy_state = state if isinstance(state, dict) else {}
-        extension_slots = dict(self.legacy_state.get("extension_slots") or {})
-        extension_slots["curve_cache"] = self.curve_cache
-        extension_slots["topology_cache"] = self.topology_cache
-        extension_slots["io_cache"] = self.io_cache
-        extension_slots["native_cache"] = self.native_cache
-        extension_slots["native_context"] = self.native_context
+        self._migrate_flat_runtime_cache()
+        extension_slots = self._extension_slots()
+        extension_slots[MC2_RUNTIME_CACHE_SLOT] = self.runtime_cache_slots()
         self.legacy_state["extension_slots"] = extension_slots
+
+    def _extension_slots(self) -> dict:
+        extension_slots = self.legacy_state.get("extension_slots")
+        if not isinstance(extension_slots, dict):
+            extension_slots = {}
+        return dict(extension_slots)
+
+    def _migrate_flat_runtime_cache(self) -> None:
+        extension_slots = self._extension_slots()
+        runtime_slots = extension_slots.get(MC2_RUNTIME_CACHE_SLOT)
+        if isinstance(runtime_slots, dict):
+            self.curve_cache = runtime_slots.get("curve_cache") if isinstance(runtime_slots.get("curve_cache"), dict) else self.curve_cache
+            self.topology_cache = runtime_slots.get("topology_cache") if isinstance(runtime_slots.get("topology_cache"), dict) else self.topology_cache
+            self.io_cache = runtime_slots.get("io_cache") if isinstance(runtime_slots.get("io_cache"), dict) else self.io_cache
+            self.native_cache = runtime_slots.get("native_cache") if isinstance(runtime_slots.get("native_cache"), dict) else self.native_cache
+            if "native_context" in runtime_slots:
+                self.native_context = runtime_slots.get("native_context")
+        else:
+            # 旧过渡版本曾把 runtime cache 平铺在 extension_slots 下；这里只迁移，不再继续写回平铺 key。
+            self.curve_cache = extension_slots.get("curve_cache") if isinstance(extension_slots.get("curve_cache"), dict) else self.curve_cache
+            self.topology_cache = extension_slots.get("topology_cache") if isinstance(extension_slots.get("topology_cache"), dict) else self.topology_cache
+            self.io_cache = extension_slots.get("io_cache") if isinstance(extension_slots.get("io_cache"), dict) else self.io_cache
+            self.native_cache = extension_slots.get("native_cache") if isinstance(extension_slots.get("native_cache"), dict) else self.native_cache
+            if "native_context" in extension_slots:
+                self.native_context = extension_slots.get("native_context")
+
+    def runtime_cache_slots(self) -> dict:
+        return {
+            "curve_cache": self.curve_cache,
+            "topology_cache": self.topology_cache,
+            "io_cache": self.io_cache,
+            "native_cache": self.native_cache,
+            "native_context": self.native_context,
+        }
 
     def debug_snapshot(self) -> dict:
         state = self.legacy_state if isinstance(self.legacy_state, dict) else {}
@@ -166,16 +207,96 @@ def ensure_runtime_owner(value=None) -> MC2RuntimeOwner:
     return MC2RuntimeOwner(unwrap_state(value))
 
 
-def extension_cache(state: dict, name: str) -> dict:
+def _extension_slots(state: dict) -> dict:
     extension_slots = state.get("extension_slots")
     if not isinstance(extension_slots, dict):
         extension_slots = {}
         state["extension_slots"] = extension_slots
-    cache = extension_slots.get(name)
+    return extension_slots
+
+
+def runtime_cache_slots(state: dict) -> dict:
+    """返回当前 center 的 runtime cache namespace。
+
+    新路径只在 extension_slots["runtime_cache"] 下暴露 cache；旧平铺 key 会被迁移进来，避免
+    后续 Team/Center 扩展继续把 cache 和 solver feature slot 混在同一层。
+    """
+    extension_slots = _extension_slots(state)
+    runtime_slots = extension_slots.get(MC2_RUNTIME_CACHE_SLOT)
+    if not isinstance(runtime_slots, dict):
+        runtime_slots = {}
+        extension_slots[MC2_RUNTIME_CACHE_SLOT] = runtime_slots
+    for name in MC2_RUNTIME_CACHE_NAMES:
+        if name in runtime_slots:
+            continue
+        legacy_value = extension_slots.get(name)
+        if isinstance(legacy_value, dict) or name == "native_context":
+            runtime_slots[name] = legacy_value
+    return runtime_slots
+
+
+def extension_cache(state: dict, name: str) -> dict:
+    runtime_slots = runtime_cache_slots(state)
+    cache = runtime_slots.get(name)
     if not isinstance(cache, dict):
         cache = {}
-        extension_slots[name] = cache
+        runtime_slots[name] = cache
     return cache
+
+
+def set_runtime_cache_value(state: dict, name: str, value) -> None:
+    runtime_cache_slots(state)[name] = value
+
+
+def native_context(state: dict):
+    return runtime_cache_slots(state).get("native_context")
+
+
+def set_native_context(state: dict, value) -> None:
+    set_runtime_cache_value(state, "native_context", value)
+
+
+def feature_slots(state: dict) -> dict:
+    extension_slots = _extension_slots(state)
+    feature = extension_slots.get("features")
+    if not isinstance(feature, dict):
+        feature = {}
+        extension_slots["features"] = feature
+    for name in ("bonecloth", "curves", "self_collision", "native"):
+        if name in feature:
+            continue
+        legacy_value = extension_slots.get(name)
+        if isinstance(legacy_value, dict):
+            feature[name] = legacy_value
+        elif legacy_value is not None:
+            feature[name] = {"value": legacy_value}
+    return feature
+
+
+def feature_slot(state: dict, name: str) -> dict:
+    slots = feature_slots(state)
+    slot = slots.get(name)
+    if not isinstance(slot, dict):
+        slot = {}
+        slots[name] = slot
+    return slot
+
+
+def inherit_runtime_slots(source: dict, target: dict) -> dict:
+    if not isinstance(source, dict) or not isinstance(target, dict):
+        return target
+    source_extension = source.get("extension_slots")
+    if not isinstance(source_extension, dict):
+        return target
+    target_extension = _extension_slots(target)
+    runtime_slots = source_extension.get(MC2_RUNTIME_CACHE_SLOT)
+    if isinstance(runtime_slots, dict):
+        target_extension[MC2_RUNTIME_CACHE_SLOT] = runtime_slots
+    features = source_extension.get("features")
+    if isinstance(features, dict):
+        target_extension["features"] = features
+    target["extension_slots"] = target_extension
+    return target
 
 
 def curve_cache(state: dict) -> dict:
@@ -216,12 +337,13 @@ def build_state(
     mesh_signature_key: tuple,
     config_key: tuple,
     collision_radius: float,
+    cache: dict | None = None,
 ) -> dict:
     rest_local = blender_io.read_rest_positions(obj)
     rest_world = blender_io.local_positions_to_world(obj, rest_local)
     rest_local_normals = mesh_build.rest_local_normals(obj)
     rest_world_normals = math_utils.transform_directions(math_utils.matrix_to_numpy(obj.matrix_world), rest_local_normals)
-    edges, triangles = mesh_build.mesh_connectivity_arrays(obj.data)
+    edges, triangles = mesh_build.cached_connectivity_arrays(obj.data, mesh_signature_key, cache)
     attributes = mesh_build.build_attributes(obj)
     baseline_data = baseline.build_mesh_baseline(
         edges,
@@ -371,10 +493,13 @@ def build_state(
         "collided_by_groups": int(collision_mask),
         "param_slots": {name: None for name in MC2_CURVE_READY_PARAMETERS},
         "extension_slots": {
-            "bonecloth": None,
-            "curves": {},
-            "self_collision": None,
-            "native": None,
+            MC2_RUNTIME_CACHE_SLOT: {},
+            "features": {
+                "bonecloth": {},
+                "curves": {},
+                "self_collision": {},
+                "native": {},
+            },
         },
     }
 
@@ -388,7 +513,7 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
     ):
         return state
 
-    next_state = dict(state)
+    next_state = inherit_runtime_slots(state, dict(state))
     new_world = math_utils.matrix_to_numpy(obj.matrix_world)
     rest_local = np.ascontiguousarray(next_state["rest_local_positions"], dtype=np.float32)
     rest_world = blender_io.local_positions_to_world(obj, rest_local)
@@ -538,7 +663,7 @@ def sync_state_to_base_pose_write_container(state: dict, obj: bpy.types.Object) 
     # BasePose 模式下，当前物体只是 GN delta 写入容器。
     # 动画姿态来自 BasePose 只读对象，不能在这里用写入容器的对象矩阵重建 rest/约束，
     # 否则移动骨架对象会触发整套约束热重算，并且和 BasePose evaluated 坐标形成双重变换。
-    next_state = dict(state)
+    next_state = inherit_runtime_slots(state, dict(state))
     next_state["object_matrix_world_key"] = matrix_key
     next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
     next_state["object_matrix_world"] = math_utils.matrix_to_numpy(obj.matrix_world)
@@ -565,7 +690,7 @@ def _apply_base_pose_arrays(
     if base_positions.shape != (vertex_count, 3) or base_normals.shape != (vertex_count, 3):
         raise ValueError("MC2 BasePose只读对象顶点数必须与当前物理对象一致")
 
-    next_state = dict(state)
+    next_state = inherit_runtime_slots(state, dict(state))
     native_base_pose = native_bridge.update_base_pose_from_pose(
         base_positions,
         base_normals,
