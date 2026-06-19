@@ -182,6 +182,7 @@ MC2 后续如果继续补 TeamData、CenterData、gravityDot、velocityWeight、
 6. 不引入 MC2 全局 TeamManager 单例；TeamState 是 per-node runtime schema，用来对齐 MC2 语义和管理生命周期，不改变 OmniNode 的显式 cache 读写模型。
 7. 该重构的直接收益是减少每帧 state 复制、拆装和重复判断；更大的收益是为曲线采样缓存、固定拓扑缓存、按需 ABI 构造和 persistent native context 打地基。
 8. 所有会复制 state 的路径都必须调用 `inherit_runtime_slots()` 继承 runtime cache/features 引用，避免连续帧把 CenterState 持有的缓存对象断开。
+9. 节点入口优先从 `MC2RuntimeOwner` 直接传递 `topology_cache/io_cache/runtime_cache_slots()`；state 级 cache helper 只作为非 owner 调用和旧结构迁移的 fallback。
 
 ### P0：BasePose 与 GN 后置输出约定
 

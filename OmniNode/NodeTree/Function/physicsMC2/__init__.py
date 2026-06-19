@@ -287,7 +287,7 @@ def _run_mesh_cloth_mc2_node(
     if reset or not isinstance(state, dict):
         replace_cache = True
         cache_owner = mc2_state.MC2RuntimeOwner()
-        topology_cache = mc2_state.topology_cache(cache_owner.state)
+        topology_cache = cache_owner.topology_cache
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.clear_delta_attribute(obj)
         if timing is not None:
@@ -370,7 +370,14 @@ def _run_mesh_cloth_mc2_node(
         return cache_value, obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
-    state = mc2_state.sync_state_to_base_pose_proxy(state, obj, base_pose_proxy, current_frame, timing)
+    state = mc2_state.sync_state_to_base_pose_proxy(
+        state,
+        obj,
+        base_pose_proxy,
+        current_frame,
+        timing,
+        cache_owner.io_cache,
+    )
     if timing is not None:
         _add_timing(timing, "base_pose_sync", time.perf_counter() - stage_start)
 
@@ -440,6 +447,7 @@ def _run_mesh_cloth_mc2_node(
         collider_collision_mode,
         timing,
         colliders=colliders,
+        runtime_caches=cache_owner.runtime_cache_slots(),
     )
     if timing is not None:
         _add_timing(timing, "solve_total", time.perf_counter() - stage_start)

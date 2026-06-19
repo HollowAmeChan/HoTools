@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import params, state as mc2_state
+from . import params
 from .constants import MC2SystemConstants
 
 
@@ -147,7 +147,7 @@ class MC2MotionSamples:
 
 
 def build_runtime_params(
-    state: dict,
+    curve_cache: dict,
     depths: np.ndarray,
     substep_count: int,
     world_scale_nonnegative: float,
@@ -196,7 +196,6 @@ def build_runtime_params(
     timing: dict | None = None,
     add_timing=None,
 ) -> MC2RuntimeParams:
-    curve_cache = mc2_state.curve_cache(state)
     normal_axis_value = max(0, min(5, int(normal_axis)))
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
 
@@ -443,14 +442,13 @@ def build_runtime_params(
 
 
 def sample_motion_params(
-    state: dict,
+    curve_cache: dict,
     runtime: MC2RuntimeParams,
     depths: np.ndarray,
     world_scale_nonnegative: float,
     timing: dict | None = None,
     add_timing=None,
 ) -> MC2MotionSamples:
-    curve_cache = mc2_state.curve_cache(state)
     stage_start = time.perf_counter() if timing is not None else None
     motion_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32) * np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
     if runtime.motion_enabled:

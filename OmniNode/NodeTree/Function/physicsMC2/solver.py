@@ -20,8 +20,22 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
 
 
-def _native_slot_from_state(state: dict) -> dict:
-    cache = mc2_state.native_cache(state)
+def _runtime_cache(runtime_caches: dict | None, state: dict, name: str) -> dict:
+    if isinstance(runtime_caches, dict):
+        cache = runtime_caches.get(name)
+        if not isinstance(cache, dict):
+            cache = {}
+            runtime_caches[name] = cache
+        return cache
+    if name == "curve_cache":
+        return mc2_state.curve_cache(state)
+    if name == "native_cache":
+        return mc2_state.native_cache(state)
+    return mc2_state.extension_cache(state, name)
+
+
+def _native_runtime_slot(state: dict, runtime_caches: dict | None = None) -> dict:
+    cache = _runtime_cache(runtime_caches, state, "native_cache")
     slot = cache.get("abi")
     if not isinstance(slot, dict):
         slot = {}
@@ -34,8 +48,9 @@ def _native_abi_view_from_cache(
     obj: bpy.types.Object,
     colliders: list[dict] | None,
     solver_name: str,
+    runtime_caches: dict | None = None,
 ) -> dict:
-    slot = _native_slot_from_state(state)
+    slot = _native_runtime_slot(state, runtime_caches)
     value = native_bridge.build_abi_view(state, obj, colliders)
     slot["abi_view_current"] = {
         "solver": solver_name,
@@ -107,6 +122,7 @@ def solve_meshcloth(
     collider_collision_mode: int,
     timing: dict | None = None,
     colliders: list[dict] | None = None,
+    runtime_caches: dict | None = None,
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
     colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
@@ -140,8 +156,9 @@ def solve_meshcloth(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     runtime = runtime_params.build_runtime_params(
-        state,
+        curve_cache,
         depths,
         substep_count,
         world_scale_nonnegative,
@@ -785,8 +802,8 @@ def solve_meshcloth(
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     runtime_params.write_param_slots(next_state, runtime)
 
-    native_slot = _native_slot_from_state(next_state)
-    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "py")
+    native_slot = _native_runtime_slot(next_state, runtime_caches)
+    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "py", runtime_caches)
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
@@ -849,6 +866,7 @@ def solve_meshcloth_native_core(
     collider_collision_mode: int,
     timing: dict | None = None,
     colliders: list[dict] | None = None,
+    runtime_caches: dict | None = None,
 ) -> dict:
     # native_core 路径尽量保持和 Python 求解同一套顺序：
     # 输入整理 -> 曲线采样 -> substep inertia -> motion 采样 -> C++ 核心求解 -> 状态回填。
@@ -885,8 +903,9 @@ def solve_meshcloth_native_core(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     runtime = runtime_params.build_runtime_params(
-        state,
+        curve_cache,
         depths,
         substep_count,
         world_scale_nonnegative,
@@ -1066,7 +1085,7 @@ def solve_meshcloth_native_core(
         for key, value in substep_inertia_lists.items()
     }
     motion_samples = runtime_params.sample_motion_params(
-        state,
+        curve_cache,
         runtime,
         depths,
         world_scale_nonnegative,
@@ -1165,8 +1184,8 @@ def solve_meshcloth_native_core(
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     runtime_params.write_param_slots(next_state, runtime)
 
-    native_slot = _native_slot_from_state(next_state)
-    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "cpp_core")
+    native_slot = _native_runtime_slot(next_state, runtime_caches)
+    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "cpp_core", runtime_caches)
     native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
     native_slot["solver"] = "cpp_core"
     mc2_state.feature_slots(next_state)["native"] = native_slot

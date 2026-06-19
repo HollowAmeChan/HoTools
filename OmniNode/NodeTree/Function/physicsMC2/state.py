@@ -87,6 +87,14 @@ class MC2CenterState:
             "native_context": self.native_context,
         }
 
+    def runtime_cache(self, name: str) -> dict:
+        value = self.runtime_cache_slots().get(name)
+        if isinstance(value, dict):
+            return value
+        cache = {}
+        setattr(self, name, cache)
+        return cache
+
     def debug_snapshot(self) -> dict:
         state = self.legacy_state if isinstance(self.legacy_state, dict) else {}
         return {
@@ -178,6 +186,36 @@ class MC2RuntimeOwner(MutableMapping):
 
     def replace_state(self, state: dict) -> None:
         self.center_state.replace_legacy_state(state)
+
+    def runtime_cache(self, name: str) -> dict:
+        return self.center_state.runtime_cache(name)
+
+    def runtime_cache_slots(self) -> dict:
+        return self.center_state.runtime_cache_slots()
+
+    @property
+    def curve_cache(self) -> dict:
+        return self.center_state.curve_cache
+
+    @property
+    def topology_cache(self) -> dict:
+        return self.center_state.topology_cache
+
+    @property
+    def io_cache(self) -> dict:
+        return self.center_state.io_cache
+
+    @property
+    def native_cache(self) -> dict:
+        return self.center_state.native_cache
+
+    @property
+    def native_context(self):
+        return self.center_state.native_context
+
+    @native_context.setter
+    def native_context(self, value) -> None:
+        self.center_state.native_context = value
 
     def omni_cache_dispose(self, reason: str = "") -> None:
         # 后续 persistent native context 挂在 CenterState 上，由这里统一释放。
@@ -724,6 +762,7 @@ def sync_state_to_base_pose_proxy(
     base_pose_proxy: bpy.types.Object | None,
     current_frame: int,
     timing: dict | None = None,
+    cache: dict | None = None,
 ) -> dict:
     if base_pose_proxy is None:
         if int(state.get("base_pose_proxy_ptr", 0) or 0) == 0:
@@ -749,10 +788,10 @@ def sync_state_to_base_pose_proxy(
         return state
 
     stage_start = time.perf_counter() if timing is not None else None
-    cache = io_cache(state)
-    if len(cache) > 12:
-        cache.clear()
-    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame, cache)
+    pose_cache = cache if isinstance(cache, dict) else io_cache(state)
+    if len(pose_cache) > 12:
+        pose_cache.clear()
+    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame, pose_cache)
     if timing is not None:
         timing["stages"]["base_proxy_read"] = timing["stages"].get("base_proxy_read", 0.0) + (
             time.perf_counter() - stage_start
