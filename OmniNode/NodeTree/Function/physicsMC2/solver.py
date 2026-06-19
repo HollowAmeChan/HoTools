@@ -60,6 +60,27 @@ def _native_abi_view_from_cache(
     return value
 
 
+def _write_native_debug_view(
+    native_slot: dict,
+    state: dict,
+    obj: bpy.types.Object,
+    colliders: list[dict] | None,
+    solver_name: str,
+    runtime_caches: dict | None,
+    enabled: bool,
+) -> None:
+    native_slot["solver"] = solver_name
+    if not enabled:
+        # ABI 视图只用于调试检查，正常播放不能每帧重建这份大结构。
+        native_slot.pop("abi_view", None)
+        native_slot.pop("abi_view_current", None)
+        native_slot.pop("collider_arrays", None)
+        return
+    abi_view = _native_abi_view_from_cache(state, obj, colliders, solver_name, runtime_caches)
+    native_slot["abi_view"] = abi_view
+    native_slot["collider_arrays"] = abi_view["colliders"]
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -123,6 +144,7 @@ def solve_meshcloth(
     timing: dict | None = None,
     colliders: list[dict] | None = None,
     runtime_caches: dict | None = None,
+    debug_native_view: bool = False,
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
     colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
@@ -803,8 +825,15 @@ def solve_meshcloth(
     runtime_params.write_param_slots(next_state, runtime)
 
     native_slot = _native_runtime_slot(next_state, runtime_caches)
-    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "py", runtime_caches)
-    native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
+    _write_native_debug_view(
+        native_slot,
+        next_state,
+        obj,
+        colliders,
+        "py",
+        runtime_caches,
+        debug_native_view,
+    )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
         _add_timing(timing, "post_pack", time.perf_counter() - stage_start)
@@ -867,6 +896,7 @@ def solve_meshcloth_native_core(
     timing: dict | None = None,
     colliders: list[dict] | None = None,
     runtime_caches: dict | None = None,
+    debug_native_view: bool = False,
 ) -> dict:
     # native_core 路径尽量保持和 Python 求解同一套顺序：
     # 输入整理 -> 曲线采样 -> substep inertia -> motion 采样 -> C++ 核心求解 -> 状态回填。
@@ -1185,9 +1215,15 @@ def solve_meshcloth_native_core(
     runtime_params.write_param_slots(next_state, runtime)
 
     native_slot = _native_runtime_slot(next_state, runtime_caches)
-    native_slot["abi_view"] = _native_abi_view_from_cache(next_state, obj, colliders, "cpp_core", runtime_caches)
-    native_slot["collider_arrays"] = native_slot["abi_view"]["colliders"]
-    native_slot["solver"] = "cpp_core"
+    _write_native_debug_view(
+        native_slot,
+        next_state,
+        obj,
+        colliders,
+        "cpp_core",
+        runtime_caches,
+        debug_native_view,
+    )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
         _add_timing(timing, "post_pack", time.perf_counter() - stage_start)
