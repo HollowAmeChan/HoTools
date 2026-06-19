@@ -33,7 +33,7 @@ struct Mc2TetherConstraintView {
 struct Mc2MotionConstraintView {
     float* positions = nullptr;
     const float* base_positions = nullptr;
-    const float* base_normals = nullptr;
+    const float* base_rotations = nullptr;
     const float* inv_masses = nullptr;
     const float* max_distances = nullptr;
     const float* stiffness_values = nullptr;
@@ -41,6 +41,7 @@ struct Mc2MotionConstraintView {
     const float* backstop_distances = nullptr;
     float* velocity_positions = nullptr;
     std::int64_t vertex_count = 0;
+    int normal_axis = 1;
 };
 
 struct Mc2PostStepView {
@@ -294,6 +295,7 @@ struct Mc2MeshClothSolveView {
     float static_friction_speed = 0.0f;
     float particle_speed_limit = -1.0f;
     float angle_limit_stiffness = 0.0f;
+    int normal_axis = 1;
     float display_max_distance_ratio = 1.3f;
     float animation_pose_ratio = 0.0f;
     std::int32_t collided_by_groups = 0;

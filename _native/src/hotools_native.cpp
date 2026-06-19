@@ -1617,7 +1617,7 @@ PyObject* project_tether_mc2(PyObject*, PyObject* args) {
 }
 
 PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 9;
+    constexpr Py_ssize_t kArgCount = 10;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "project_motion_constraints_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -1625,7 +1625,7 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
 
     Buffer positions;
     Buffer base_positions;
-    Buffer base_normals;
+    Buffer base_rotations;
     Buffer inv_masses;
     Buffer max_distances;
     Buffer stiffness_values;
@@ -1635,7 +1635,7 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
 
     if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
         !base_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_normals.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "base_normals") ||
+        !base_rotations.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
         !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
         !max_distances.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "max_distances") ||
         !stiffness_values.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
@@ -1644,11 +1644,15 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
         !velocity_positions.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions")) {
         return nullptr;
     }
+    const long normal_axis = as_long(PyTuple_GET_ITEM(args, 9), "normal_axis");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
 
     Py_ssize_t vertex_count = 0;
     if (!expect_vector3_array(positions, "positions", &vertex_count) ||
         !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
-        !expect_same_vertex_count(base_normals, "base_normals", vertex_count) ||
+        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
         !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
         !expect_float32(inv_masses, "inv_masses") ||
         !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
@@ -1666,7 +1670,7 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
     hotools::Mc2MotionConstraintView view;
     view.positions = static_cast<float*>(positions.view.buf);
     view.base_positions = static_cast<const float*>(base_positions.view.buf);
-    view.base_normals = static_cast<const float*>(base_normals.view.buf);
+    view.base_rotations = static_cast<const float*>(base_rotations.view.buf);
     view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
     view.max_distances = static_cast<const float*>(max_distances.view.buf);
     view.stiffness_values = static_cast<const float*>(stiffness_values.view.buf);
@@ -1674,6 +1678,7 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
     view.backstop_distances = static_cast<const float*>(backstop_distances.view.buf);
     view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
     view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.normal_axis = std::max(0, std::min(5, static_cast<int>(normal_axis)));
 
     hotools::project_motion_constraints_mc2(view);
     Py_RETURN_NONE;
@@ -2519,7 +2524,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ASubstepAngularVelocities,
         kSolveBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 86;
+    constexpr Py_ssize_t kArgCount = 87;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -2842,21 +2847,25 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, kScalarStart + 14), "collided_by_groups");
+    const long normal_axis = as_long(PyTuple_GET_ITEM(args, kScalarStart + 14), "normal_axis");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, kScalarStart + 15), "collided_by_groups");
     if (PyErr_Occurred()) {
         return nullptr;
     }
     const long collider_collision_mode =
-        as_long(PyTuple_GET_ITEM(args, kScalarStart + 15), "collider_collision_mode");
+        as_long(PyTuple_GET_ITEM(args, kScalarStart + 16), "collider_collision_mode");
     if (PyErr_Occurred()) {
         return nullptr;
     }
     const double display_max_distance_ratio =
-        as_double(PyTuple_GET_ITEM(args, kScalarStart + 16), "display_max_distance_ratio");
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 17), "display_max_distance_ratio");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, kScalarStart + 17), "animation_pose_ratio");
+    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, kScalarStart + 18), "animation_pose_ratio");
     if (PyErr_Occurred()) {
         return nullptr;
     }
@@ -2958,6 +2967,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.static_friction_speed = static_cast<float>(static_friction_speed);
     view.particle_speed_limit = static_cast<float>(particle_speed_limit);
     view.angle_limit_stiffness = static_cast<float>(angle_limit_stiffness);
+    view.normal_axis = std::max(0, std::min(5, static_cast<int>(normal_axis)));
     view.display_max_distance_ratio = static_cast<float>(display_max_distance_ratio);
     view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
     view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);

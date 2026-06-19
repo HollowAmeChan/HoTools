@@ -13,7 +13,7 @@ import bpy
 import numpy as np
 
 from . import collision, params
-from .constants import MC2_SOLVER_VERSION
+from .constants import MC2_NORMAL_AXIS_UP, MC2_SOLVER_VERSION
 
 _NATIVE_MODULE = None
 _NATIVE_IMPORT_ERROR = None
@@ -151,7 +151,7 @@ def project_tether(
 def project_motion_constraint(
     positions: np.ndarray,
     base_positions: np.ndarray,
-    base_normals: np.ndarray,
+    base_rotations: np.ndarray,
     inv_masses: np.ndarray,
     depths: np.ndarray,
     max_distance_param: dict,
@@ -160,6 +160,7 @@ def project_motion_constraint(
     backstop_distance_param: dict,
     world_scale: float,
     velocity_positions: np.ndarray,
+    normal_axis: int = MC2_NORMAL_AXIS_UP,
 ) -> bool:
     module = native_module()
     function = getattr(module, "project_motion_constraints_mc2", None) if module is not None else None
@@ -184,13 +185,14 @@ def project_motion_constraint(
     function(
         positions_view,
         np.ascontiguousarray(base_positions, dtype=np.float32),
-        np.ascontiguousarray(base_normals, dtype=np.float32),
+        np.ascontiguousarray(base_rotations, dtype=np.float32),
         np.ascontiguousarray(inv_masses, dtype=np.float32),
         max_distances,
         stiffness_values,
         backstop_radii,
         backstop_distances,
         velocity_positions_view,
+        int(normal_axis),
     )
     if positions_view is not positions:
         positions[...] = positions_view
@@ -626,6 +628,7 @@ def solve_meshcloth_core(
     static_friction_speed: float,
     particle_speed_limit: float,
     angle_limit_stiffness: float,
+    normal_axis: int,
     collided_by_groups: int = 0,
     collider_collision_mode: int = 1,
     display_max_distance_ratio: float = 1.3,
@@ -659,7 +662,7 @@ def solve_meshcloth_core(
         "display_positions": np.ascontiguousarray(arrays["display_positions"], dtype=np.float32),
     }
 
-    function(
+    call_args = (
         writable_views["positions"],
         writable_views["old_positions"],
         writable_views["velocity_positions"],
@@ -742,11 +745,22 @@ def solve_meshcloth_core(
         float(static_friction_speed),
         float(particle_speed_limit),
         float(angle_limit_stiffness),
+        int(normal_axis),
         int(collided_by_groups),
         int(collider_collision_mode),
         float(display_max_distance_ratio),
         float(animation_pose_ratio),
     )
+    try:
+        function(*call_args)
+    except TypeError as exc:
+        # 运行中的 Blender 可能仍锁定/加载旧 py311 native 模块。
+        # 旧 solve_meshcloth_mc2 只有 86 个参数，不认识 normal_axis；这里退回旧 ABI，
+        # 避免节点直接报错。关闭 Blender 并重编 py311 后会自动走新 ABI。
+        if "solve_meshcloth_mc2 expects 86" not in str(exc):
+            raise
+        old_abi_args = call_args[:-4] + call_args[-3:]
+        function(*old_abi_args)
 
     for key, view in writable_views.items():
         if view is not arrays[key]:

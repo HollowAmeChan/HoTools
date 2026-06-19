@@ -20,19 +20,44 @@ def safe_normal(delta):
     length = float(np.linalg.norm(delta))
     if length > EPSILON:
         return delta / length
-    return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+    return np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+
+
+def quat_rotate(quat, vector):
+    q = np.asarray(quat, dtype=np.float32)
+    q = q / max(float(np.linalg.norm(q)), EPSILON)
+    v = np.asarray(vector, dtype=np.float32)
+    uv = np.cross(q[:3], v)
+    uuv = np.cross(q[:3], uv)
+    return np.asarray(v + 2.0 * (q[3] * uv + uuv), dtype=np.float32)
+
+
+def motion_axis_vector(normal_axis):
+    axis = int(normal_axis)
+    if axis == 0:
+        return np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+    if axis == 2:
+        return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+    if axis == 3:
+        return np.asarray((-1.0, 0.0, 0.0), dtype=np.float32)
+    if axis == 4:
+        return np.asarray((0.0, -1.0, 0.0), dtype=np.float32)
+    if axis == 5:
+        return np.asarray((0.0, 0.0, -1.0), dtype=np.float32)
+    return np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
 
 
 def project_motion_reference(
     positions,
     base_positions,
-    base_normals,
+    base_rotations,
     inv_masses,
     max_distances,
     stiffness_values,
     backstop_radii,
     backstop_distances,
     velocity_positions,
+    normal_axis,
 ):
     use_max_distance = bool(np.any(max_distances > EPSILON))
     use_backstop = bool(np.any(backstop_radii > EPSILON))
@@ -61,7 +86,7 @@ def project_motion_reference(
                 constrained = base_positions[vertex_index] + (delta / distance) * limit
 
         if use_backstop and backstop_radius > EPSILON:
-            normal = safe_normal(base_normals[vertex_index])
+            normal = safe_normal(quat_rotate(base_rotations[vertex_index], motion_axis_vector(normal_axis)))
             backstop_distance = max(float(backstop_distances[vertex_index]), 0.0)
             center = base_positions[vertex_index] - normal * (backstop_distance + backstop_radius)
             delta = constrained - center
@@ -94,15 +119,9 @@ def assert_native_matches_reference():
         ],
         dtype=np.float32,
     )
-    base_normals = np.array(
-        [
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-        ],
-        dtype=np.float32,
-    )
+    identity = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    base_rotations = np.repeat(identity.reshape(1, 4), 4, axis=0).astype(np.float32, copy=True)
+    normal_axis = 1
     inv_masses = np.array([1.0, 1.0, 1.0, 0.0], dtype=np.float32)
     max_distances = np.array([1.0, 0.0, 0.6, 0.5], dtype=np.float32)
     stiffness_values = np.array([1.0, 0.75, 0.5, 1.0], dtype=np.float32)
@@ -117,25 +136,27 @@ def assert_native_matches_reference():
     project_motion_reference(
         expected_positions,
         base_positions,
-        base_normals,
+        base_rotations,
         inv_masses,
         max_distances,
         stiffness_values,
         backstop_radii,
         backstop_distances,
         expected_velocity_positions,
+        normal_axis,
     )
 
     hotools_native.project_motion_constraints_mc2(
         actual_positions,
         base_positions,
-        base_normals,
+        base_rotations,
         inv_masses,
         max_distances,
         stiffness_values,
         backstop_radii,
         backstop_distances,
         actual_velocity_positions,
+        normal_axis,
     )
 
     np.testing.assert_allclose(actual_positions, expected_positions, rtol=1e-6, atol=1e-6)

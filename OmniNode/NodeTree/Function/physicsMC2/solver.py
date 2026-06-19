@@ -94,6 +94,7 @@ def solve_meshcloth(
     backstop_distance: float,
     backstop_distance_curve,
     motion_stiffness: float,
+    normal_axis: int,
     use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
@@ -130,6 +131,7 @@ def solve_meshcloth(
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
+    normal_axis_value = max(0, min(5, int(normal_axis)))
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
     damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
@@ -676,7 +678,7 @@ def solve_meshcloth(
             if not native_bridge.project_motion_constraint(
                 positions,
                 base_positions,
-                base_normals,
+                base_rotations,
                 inv_masses,
                 depths,
                 max_distance_param,
@@ -685,11 +687,12 @@ def solve_meshcloth(
                 backstop_distance_param,
                 world_scale,
                 velocity_positions,
+                normal_axis_value,
             ):
                 constraints.project_motion_constraint(
                     positions,
                     base_positions,
-                    base_normals,
+                    base_rotations,
                     inv_masses,
                     depths,
                     max_distance_param,
@@ -697,6 +700,7 @@ def solve_meshcloth(
                     backstop_radius_param,
                     backstop_distance_param,
                     world_scale,
+                    normal_axis_value,
                     velocity_positions,
                 )
             if timing is not None:
@@ -821,6 +825,7 @@ def solve_meshcloth(
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param
     next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
+    next_state["param_slots"]["normal_axis"] = params.scalar_param(float(normal_axis_value))
     next_state["param_slots"]["damping"] = damping_param
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param
@@ -895,6 +900,7 @@ def solve_meshcloth_native_core(
     backstop_distance: float,
     backstop_distance_curve,
     motion_stiffness: float,
+    normal_axis: int,
     use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
@@ -935,6 +941,7 @@ def solve_meshcloth_native_core(
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
+    normal_axis_value = max(0, min(5, int(normal_axis)))
     curve_stage_start = time.perf_counter() if timing is not None else None
     stiffness_depths = np.clip(depths, 0.0, 1.0)
     damping_param = params.curve_value_param(damping, damping_curve, minimum=0.0, maximum=1.0)
@@ -1236,6 +1243,7 @@ def solve_meshcloth_native_core(
         static_friction_speed=static_friction_speed,
         particle_speed_limit=particle_speed_limit_scaled,
         angle_limit_stiffness=angle_limit_stiffness_value,
+        normal_axis=normal_axis_value,
         collided_by_groups=collided_by_groups,
         collider_collision_mode=collision_mode,
         display_max_distance_ratio=MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
@@ -1288,6 +1296,7 @@ def solve_meshcloth_native_core(
     next_state["param_slots"]["tether_compression"] = tether_compression_param
     next_state["param_slots"]["tether_stretch"] = tether_stretch_param
     next_state["param_slots"]["motion_stiffness"] = motion_stiffness_param
+    next_state["param_slots"]["normal_axis"] = params.scalar_param(float(normal_axis_value))
     next_state["param_slots"]["damping"] = damping_param
     next_state["param_slots"]["backstop_radius"] = backstop_radius_param
     next_state["param_slots"]["backstop_distance"] = backstop_distance_param

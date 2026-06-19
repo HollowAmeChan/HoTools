@@ -7,7 +7,15 @@ distance、tether、motion 行为，再逐步替换 Python 调度层。
 import numpy as np
 
 from . import baseline, params
-from .constants import MC2SystemConstants
+from .constants import (
+    MC2_NORMAL_AXIS_FORWARD,
+    MC2_NORMAL_AXIS_INVERSE_FORWARD,
+    MC2_NORMAL_AXIS_INVERSE_RIGHT,
+    MC2_NORMAL_AXIS_INVERSE_UP,
+    MC2_NORMAL_AXIS_RIGHT,
+    MC2_NORMAL_AXIS_UP,
+    MC2SystemConstants,
+)
 from . import math_utils
 
 
@@ -800,7 +808,7 @@ def project_tether(
 def project_motion_constraint(
     positions: np.ndarray,
     base_positions: np.ndarray,
-    base_normals: np.ndarray,
+    base_rotations: np.ndarray,
     inv_masses: np.ndarray,
     depths: np.ndarray,
     max_distance_param: dict,
@@ -808,6 +816,7 @@ def project_motion_constraint(
     backstop_radius_param: dict,
     backstop_distance_param: dict,
     world_scale: float,
+    normal_axis: int = MC2_NORMAL_AXIS_UP,
     velocity_positions: np.ndarray | None = None,
 ) -> None:
     motion_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32) ** 2, 0.0, 1.0)
@@ -843,10 +852,7 @@ def project_motion_constraint(
 
         if use_backstop:
             if backstop_radius > MC2SystemConstants.EPSILON:
-                normal = math_utils.safe_normal_np(
-                    base_normals[vertex_index],
-                    np.asarray((0.0, 0.0, 1.0), dtype=np.float32),
-                )
+                normal = motion_normal_from_base_rotation(base_rotations[vertex_index], normal_axis)
                 backstop_distance = max(float(backstop_distances[vertex_index]), 0.0)
                 center = base_positions[vertex_index] - normal * (backstop_distance + backstop_radius)
                 delta = constrained - center
@@ -859,6 +865,29 @@ def project_motion_constraint(
         positions[vertex_index] = next_position
         if velocity_positions is not None:
             velocity_positions[vertex_index] += add * MC2SystemConstants.MOTION_VELOCITY_ATTENUATION
+
+
+def motion_axis_vector(normal_axis: int) -> np.ndarray:
+    axis = int(normal_axis)
+    if axis == MC2_NORMAL_AXIS_RIGHT:
+        return np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+    if axis == MC2_NORMAL_AXIS_FORWARD:
+        return np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+    if axis == MC2_NORMAL_AXIS_INVERSE_RIGHT:
+        return np.asarray((-1.0, 0.0, 0.0), dtype=np.float32)
+    if axis == MC2_NORMAL_AXIS_INVERSE_UP:
+        return np.asarray((0.0, -1.0, 0.0), dtype=np.float32)
+    if axis == MC2_NORMAL_AXIS_INVERSE_FORWARD:
+        return np.asarray((0.0, 0.0, -1.0), dtype=np.float32)
+    return np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+
+
+def motion_normal_from_base_rotation(base_rotation: np.ndarray, normal_axis: int) -> np.ndarray:
+    # MC2 MotionConstraint 使用 baseRot * normalAxis，本地轴默认 Up。
+    return math_utils.safe_normal_np(
+        baseline.quat_rotate(base_rotation, motion_axis_vector(normal_axis)),
+        np.asarray((0.0, 1.0, 0.0), dtype=np.float32),
+    )
 
 
 def apply_post_step(

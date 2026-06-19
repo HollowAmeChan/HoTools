@@ -157,13 +157,14 @@ def run_reference(state, params):
         hotools_native.project_motion_constraints_mc2(
             state["positions"],
             state["base_positions"],
-            state["base_normals"],
+            state["base_rotations"],
             state["inv_masses"],
             params["max_distances"],
             params["motion_stiffness_values"],
             params["backstop_radii"],
             params["backstop_distances"],
             state["velocity_positions"],
+            params["normal_axis"],
         )
         hotools_native.apply_post_step_mc2(
             state["positions"],
@@ -288,6 +289,7 @@ def solve_args(state, params):
         params["static_friction_speed"],
         params["particle_speed_limit"],
         params["angle_limit_stiffness"],
+        params["normal_axis"],
         params["collided_by_groups"],
         params.get("collider_collision_mode", 1),
         MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
@@ -360,6 +362,7 @@ def make_state_and_params():
         "static_friction_speed": 0.2,
         "particle_speed_limit": 4.0,
         "angle_limit_stiffness": 0.75,
+        "normal_axis": 1,
         "collided_by_groups": 1,
         "collider_collision_mode": 1,
         "animation_pose_ratio": 0.0,

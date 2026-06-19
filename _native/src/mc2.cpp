@@ -391,6 +391,41 @@ void quat_rotate(const float quat[4], float vx, float vy, float vz, float& out_x
     out_z = vz + 2.0f * (q[3] * uv_z + uuv_z);
 }
 
+void motion_axis_vector(int normal_axis, float& out_x, float& out_y, float& out_z) {
+    out_x = 0.0f;
+    out_y = 1.0f;
+    out_z = 0.0f;
+    switch (normal_axis) {
+    case 0:
+        out_x = 1.0f;
+        out_y = 0.0f;
+        out_z = 0.0f;
+        break;
+    case 2:
+        out_x = 0.0f;
+        out_y = 0.0f;
+        out_z = 1.0f;
+        break;
+    case 3:
+        out_x = -1.0f;
+        out_y = 0.0f;
+        out_z = 0.0f;
+        break;
+    case 4:
+        out_x = 0.0f;
+        out_y = -1.0f;
+        out_z = 0.0f;
+        break;
+    case 5:
+        out_x = 0.0f;
+        out_y = 0.0f;
+        out_z = -1.0f;
+        break;
+    default:
+        break;
+    }
+}
+
 void safe_normal_with_fallback(float x,
                               float y,
                               float z,
@@ -702,7 +737,7 @@ void project_tether_mc2(Mc2TetherConstraintView& view) {
 
 void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
     if (view.vertex_count <= 0 || view.positions == nullptr || view.base_positions == nullptr ||
-        view.base_normals == nullptr || view.inv_masses == nullptr || view.max_distances == nullptr ||
+        view.base_rotations == nullptr || view.inv_masses == nullptr || view.max_distances == nullptr ||
         view.stiffness_values == nullptr || view.backstop_radii == nullptr || view.backstop_distances == nullptr) {
         return;
     }
@@ -762,11 +797,16 @@ void project_motion_constraints_mc2(Mc2MotionConstraintView& view) {
         }
 
         if (use_backstop && backstop_radius > kMc2Epsilon) {
+            float axis_x = 0.0f;
+            float axis_y = 1.0f;
+            float axis_z = 0.0f;
+            motion_axis_vector(view.normal_axis, axis_x, axis_y, axis_z);
+            const float* base_rot = &view.base_rotations[vertex * 4];
             float nx = 0.0f;
-            float ny = 0.0f;
-            float nz = 1.0f;
-            safe_normal_or_z(view.base_normals[offset + 0], view.base_normals[offset + 1], view.base_normals[offset + 2],
-                             nx, ny, nz);
+            float ny = 1.0f;
+            float nz = 0.0f;
+            quat_rotate(base_rot, axis_x, axis_y, axis_z, nx, ny, nz);
+            safe_normal_with_fallback(nx, ny, nz, 0.0f, 1.0f, 0.0f, nx, ny, nz);
             const float backstop_distance = std::max(view.backstop_distances[vertex], 0.0f);
             const float center_x = view.base_positions[offset + 0] - nx * (backstop_distance + backstop_radius);
             const float center_y = view.base_positions[offset + 1] - ny * (backstop_distance + backstop_radius);
@@ -2967,13 +3007,13 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             pin_fixed_vertices_mc2(view, false);
         }
 
-        if (view.base_normals != nullptr && view.max_distances != nullptr &&
+        if (view.base_rotations != nullptr && view.max_distances != nullptr &&
             view.motion_stiffness_values != nullptr && view.backstop_radii != nullptr &&
             view.backstop_distances != nullptr) {
             Mc2MotionConstraintView motion_view;
             motion_view.positions = view.positions;
             motion_view.base_positions = view.base_positions;
-            motion_view.base_normals = view.base_normals;
+            motion_view.base_rotations = view.base_rotations;
             motion_view.inv_masses = view.inv_masses;
             motion_view.max_distances = view.max_distances;
             motion_view.stiffness_values = view.motion_stiffness_values;
@@ -2981,6 +3021,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             motion_view.backstop_distances = view.backstop_distances;
             motion_view.velocity_positions = view.velocity_positions;
             motion_view.vertex_count = view.vertex_count;
+            motion_view.normal_axis = view.normal_axis;
             project_motion_constraints_mc2(motion_view);
         }
 
