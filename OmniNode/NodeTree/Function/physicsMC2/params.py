@@ -55,6 +55,55 @@ def _curve_value_at(curve, position: float) -> float:
         return float(getattr(curve, "value", 0.0))
 
 
+def _constant_curve_value(curve, epsilon: float = 0.000001):
+    points = getattr(curve, "points", None)
+    if not points:
+        return None
+
+    try:
+        first_y = float(points[0].get("y", 0.0))
+    except Exception:
+        return None
+
+    for point in points:
+        try:
+            y = float(point.get("y", first_y))
+        except Exception:
+            return None
+        if abs(y - first_y) > epsilon:
+            return None
+
+    curve_interpolation = str(getattr(curve, "interpolation", "LINEAR") or "LINEAR").upper()
+    for index in range(len(points) - 1):
+        left = points[index]
+        right = points[index + 1]
+        interpolation = str(left.get("interpolation", curve_interpolation) or curve_interpolation).upper()
+        if interpolation != "BEZIER":
+            continue
+
+        left_handle = str(left.get("right_handle_type", "AUTO") or "AUTO").upper()
+        right_handle = str(right.get("left_handle_type", "AUTO") or "AUTO").upper()
+        if left_handle == "COORD" or right_handle == "COORD":
+            if abs(float(left.get("right_handle_y", 0.0))) > epsilon:
+                return None
+            if abs(float(right.get("left_handle_y", 0.0))) > epsilon:
+                return None
+            continue
+
+        if left_handle == "FREE":
+            tangent = float(left.get("right_tangent", 0.0))
+            weight = float(left.get("right_weight", 1.0))
+            if abs(tangent * weight) > epsilon:
+                return None
+        if right_handle == "FREE":
+            tangent = float(right.get("left_tangent", 0.0))
+            weight = float(right.get("left_weight", 1.0))
+            if abs(tangent * weight) > epsilon:
+                return None
+
+    return first_y
+
+
 def _is_float_curve_value(value) -> bool:
     if isinstance(value, dict):
         return str(value.get("kind", "")).lower() == "float_curve"
@@ -77,6 +126,10 @@ def _clamp_value(value, minimum=None, maximum=None) -> float:
 
 def float_curve_param(value, sample_count: int = 65) -> dict:
     curve = resolve_float_curve(value)
+    constant_value = _constant_curve_value(curve)
+    if constant_value is not None:
+        return scalar_param(constant_value)
+
     sample_count = max(2, int(sample_count))
     samples = np.ascontiguousarray(
         curve.sample_many(sample_count),
@@ -94,6 +147,10 @@ def float_curve_param(value, sample_count: int = 65) -> dict:
 
 def float_curve_param_cached(cache: dict | None, slot: str, value, sample_count: int = 65) -> dict:
     curve = resolve_float_curve(value)
+    constant_value = _constant_curve_value(curve)
+    if constant_value is not None:
+        return scalar_param(constant_value)
+
     sample_count = max(2, int(sample_count))
     payload = curve.to_payload()
     key = ("float_curve", str(slot), _freeze_cache_value(payload), int(sample_count))
@@ -137,6 +194,10 @@ def curve_value_param(value, curve, minimum=None, maximum=None, sample_count: in
         return clamp_param(scalar_param(base_value), minimum=minimum, maximum=maximum)
 
     curve_value = resolve_float_curve(curve)
+    constant_multiplier = _constant_curve_value(curve_value)
+    if constant_multiplier is not None:
+        return clamp_param(scalar_param(base_value * constant_multiplier), minimum=minimum, maximum=maximum)
+
     sample_count = max(2, int(sample_count))
     curve_samples = np.ascontiguousarray(
         curve_value.sample_many(sample_count),
@@ -172,6 +233,10 @@ def curve_value_param_cached(
         return clamp_param(scalar_param(base_value), minimum=minimum, maximum=maximum)
 
     curve_value = resolve_float_curve(curve)
+    constant_multiplier = _constant_curve_value(curve_value)
+    if constant_multiplier is not None:
+        return clamp_param(scalar_param(base_value * constant_multiplier), minimum=minimum, maximum=maximum)
+
     sample_count = max(2, int(sample_count))
     payload = curve_value.to_payload()
     key = (
@@ -316,6 +381,21 @@ def sample_param(param: dict, depths: np.ndarray) -> np.ndarray:
 def sample_param_cached(cache: dict | None, slot: str, param: dict, depths: np.ndarray) -> np.ndarray:
     depths_array = np.ascontiguousarray(depths, dtype=np.float32)
     param_key = param.get("cache_key") if isinstance(param, dict) else ("raw", _freeze_cache_value(param))
+    mode = str(param.get("mode", "scalar") if isinstance(param, dict) else "scalar")
+    if mode == "scalar":
+        key = (
+            "sample_scalar",
+            str(slot),
+            _freeze_cache_value(param_key),
+            str(depths_array.dtype),
+            tuple(depths_array.shape),
+        )
+        return _remember(
+            _cache_bucket(cache, "samples"),
+            key,
+            lambda: sample_param(param, depths_array),
+        )
+
     key = (
         "sample",
         str(slot),
