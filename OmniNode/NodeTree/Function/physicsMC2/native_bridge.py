@@ -1,7 +1,6 @@
 """MC2 native 后端的 Python ABI 打包层。
 
-当前只做数组视图打包和 native 可用性探测，不调用 C++ 求解。正式 C++ 后端
-应从这里接入，避免把 buffer contract 散落到节点入口或 solver 调度里。
+这里统一维护 Python 与 C++ 的 buffer contract，避免把 native 参数形状散落到节点入口或 solver 调度里。
 """
 
 import importlib
@@ -652,6 +651,7 @@ def solve_meshcloth_core(
     backstop_distances: np.ndarray,
     collider_arrays: dict | None = None,
     substep_inertia_arrays: dict | None = None,
+    substep_velocity_weights: np.ndarray | None = None,
     frame_dt: float,
     step_dt: float,
     substeps: int,
@@ -671,6 +671,7 @@ def solve_meshcloth_core(
     collider_collision_mode: int = 1,
     display_max_distance_ratio: float = 1.3,
     animation_pose_ratio: float = 0.0,
+    blend_weight: float = 1.0,
 ) -> bool:
     module = native_module()
     function = getattr(module, "solve_meshcloth_mc2", None) if module is not None else None
@@ -769,6 +770,7 @@ def solve_meshcloth_core(
         _substep_array(inertia_arrays.get("now_world_positions"), substep_count, 3, (0.0, 0.0, 0.0)),
         _substep_array(inertia_arrays.get("rotation_axes"), substep_count, 3, (0.0, 0.0, 0.0)),
         _substep_scalar_array(inertia_arrays.get("angular_velocities"), substep_count),
+        _substep_scalar_array(substep_velocity_weights, substep_count) if substep_velocity_weights is not None else np.ones(substep_count, dtype=np.float32),
         float(frame_dt),
         float(step_dt),
         int(substep_count),
@@ -788,17 +790,9 @@ def solve_meshcloth_core(
         int(collider_collision_mode),
         float(display_max_distance_ratio),
         float(animation_pose_ratio),
+        float(blend_weight),
     )
-    try:
-        function(*call_args)
-    except TypeError as exc:
-        # 运行中的 Blender 可能仍锁定/加载旧 py311 native 模块。
-        # 旧 solve_meshcloth_mc2 只有 86 个参数，不认识 normal_axis；这里退回旧 ABI，
-        # 避免节点直接报错。关闭 Blender 并重编 py311 后会自动走新 ABI。
-        if "solve_meshcloth_mc2 expects 86" not in str(exc):
-            raise
-        old_abi_args = call_args[:-4] + call_args[-3:]
-        function(*old_abi_args)
+    function(*call_args)
 
     for key, view in writable_views.items():
         if view is not arrays[key]:

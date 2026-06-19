@@ -705,7 +705,17 @@ void project_neighbor_constraints_mc2(Mc2NeighborConstraintView& view) {
             }
 
             const float rest_dist = view.rest_lengths[data_index];
-            const float rest = std::fabs(rest_dist);
+            float rest = std::fabs(rest_dist);
+            const float animation_pose_ratio = clamp_float(view.animation_pose_ratio, 0.0f, 1.0f);
+            if (view.base_positions != nullptr && animation_pose_ratio > kMc2Epsilon) {
+                const std::int64_t base_offset = vertex * 3;
+                const std::int64_t base_neighbor_offset = static_cast<std::int64_t>(neighbor) * 3;
+                const float bdx = view.base_positions[base_neighbor_offset + 0] - view.base_positions[base_offset + 0];
+                const float bdy = view.base_positions[base_neighbor_offset + 1] - view.base_positions[base_offset + 1];
+                const float bdz = view.base_positions[base_neighbor_offset + 2] - view.base_positions[base_offset + 2];
+                const float animated_rest = std::sqrt(bdx * bdx + bdy * bdy + bdz * bdz);
+                rest = rest * (1.0f - animation_pose_ratio) + animated_rest * animation_pose_ratio;
+            }
             float final_stiffness = local_stiffness;
             if (rest_dist < 0.0f) {
                 final_stiffness = clamp_float(final_stiffness * kDistanceHorizontalStiffness, 0.0f, 1.0f);
@@ -3019,6 +3029,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
     const int iterations = std::max(0, std::min(64, view.iterations));
     const int collision_mode = std::max(0, std::min(2, view.collider_collision_mode));
     const float step_dt = view.step_dt;
+    const float blend_weight = clamp_float(view.blend_weight, 0.0f, 1.0f);
     const bool has_collision = collision_mode != 0 && has_collision_inputs_mc2(view);
     const bool has_triangle_bending = (view.dihedral_count > 0 || view.volume_count > 0) &&
                                       view.dihedral_pairs != nullptr && view.dihedral_rest_angles != nullptr &&
@@ -3026,6 +3037,10 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
                                       view.volume_rest != nullptr && view.bend_stiffness_values != nullptr;
 
     for (int substep = 0; substep < substeps; ++substep) {
+        const float velocity_weight = view.substep_velocity_weights != nullptr
+                                          ? clamp_float(view.substep_velocity_weights[substep], 0.0f, 1.0f)
+                                          : 1.0f;
+
         Mc2StepBasicPoseView basic_view;
         basic_view.base_positions = view.base_positions;
         basic_view.base_rotations = view.base_rotations;
@@ -3072,6 +3087,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
                 const float damping_scale = 1.0f - damping;
                 const std::int64_t offset = vertex * 3;
                 for (int axis = 0; axis < 3; ++axis) {
+                    view.velocities[offset + axis] *= velocity_weight;
                     view.velocities[offset + axis] *= damping_scale;
                     view.velocities[offset + axis] += view.gravity[axis] * step_dt;
                     view.positions[offset + axis] =
@@ -3103,6 +3119,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
         for (int iteration = 0; iteration < iterations; ++iteration) {
             Mc2NeighborConstraintView distance_view;
             distance_view.positions = view.positions;
+            distance_view.base_positions = view.base_positions;
             distance_view.inv_masses = view.inv_masses;
             distance_view.starts = view.distance_start;
             distance_view.counts = view.distance_count;
@@ -3113,6 +3130,7 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             distance_view.vertex_count = view.vertex_count;
             distance_view.neighbor_count = view.distance_count_total;
             distance_view.velocity_attenuation = kDistanceVelocityAttenuation;
+            distance_view.animation_pose_ratio = view.animation_pose_ratio;
             project_neighbor_constraints_mc2(distance_view);
 
             Mc2AngleConstraintView angle_view;
@@ -3223,6 +3241,17 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             view.substep_angular_velocities != nullptr ? view.substep_angular_velocities[substep] : 0.0f;
         centrifugal_view.centrifugal = view.centrifugal;
         apply_centrifugal_velocity_mc2(centrifugal_view);
+        if (velocity_weight < 1.0f - kMc2Epsilon) {
+            for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+                if (view.inv_masses[vertex] <= kMc2Epsilon) {
+                    continue;
+                }
+                const std::int64_t offset = vertex * 3;
+                view.velocities[offset + 0] *= velocity_weight;
+                view.velocities[offset + 1] *= velocity_weight;
+                view.velocities[offset + 2] *= velocity_weight;
+            }
+        }
 
         pin_fixed_vertices_mc2(view, true);
     }
@@ -3236,6 +3265,20 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
     display_view.frame_dt = view.frame_dt;
     display_view.max_distance_ratio = view.display_max_distance_ratio;
     calculate_display_positions_mc2(display_view);
+    if (blend_weight < 1.0f - kMc2Epsilon) {
+        for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+            const std::int64_t offset = vertex * 3;
+            view.display_positions[offset + 0] =
+                view.base_positions[offset + 0] +
+                (view.display_positions[offset + 0] - view.base_positions[offset + 0]) * blend_weight;
+            view.display_positions[offset + 1] =
+                view.base_positions[offset + 1] +
+                (view.display_positions[offset + 1] - view.base_positions[offset + 1]) * blend_weight;
+            view.display_positions[offset + 2] =
+                view.base_positions[offset + 2] +
+                (view.display_positions[offset + 2] - view.base_positions[offset + 2]) * blend_weight;
+        }
+    }
 }
 
 }  // namespace hotools

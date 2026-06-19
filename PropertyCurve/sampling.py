@@ -1,4 +1,4 @@
-"""PropertyCurve ???????????"""
+"""PropertyCurve 统一曲线采样入口。"""
 
 from __future__ import annotations
 

@@ -275,6 +275,7 @@ def solve_args(state, params):
         params["substep_now_world_positions"],
         params["substep_rotation_axes"],
         params["substep_angular_velocities"],
+        params["substep_velocity_weights"],
         params["frame_dt"],
         params["step_dt"],
         params["substeps"],
@@ -294,6 +295,7 @@ def solve_args(state, params):
         params.get("collider_collision_mode", 1),
         MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
         params["animation_pose_ratio"],
+        params["blend_weight"],
     )
 
 
@@ -403,6 +405,8 @@ def make_state_and_params():
         "substep_now_world_positions": np.asarray(((0.005, 0.0, 0.0), (0.01, 0.0, 0.0)), dtype=np.float32),
         "substep_rotation_axes": np.zeros((substeps, 3), dtype=np.float32),
         "substep_angular_velocities": np.zeros(substeps, dtype=np.float32),
+        "substep_velocity_weights": np.ones(substeps, dtype=np.float32),
+        "blend_weight": 1.0,
     }
     return state, params
 

@@ -81,6 +81,96 @@ def _write_native_debug_view(
     native_slot["collider_arrays"] = abi_view["colliders"]
 
 
+def _team_gravity_context(
+    gravity_dir,
+    gravity_power: float,
+    gravity_falloff: float,
+    inertia_state: dict,
+) -> tuple[np.ndarray, float, float]:
+    world_gravity_dir = math_utils.world_gravity(gravity_dir)
+    gravity_power_value = max(float(gravity_power), 0.0)
+    falloff = max(0.0, min(1.0, float(gravity_falloff)))
+    gravity_dot = 1.0
+    if float(np.dot(world_gravity_dir, world_gravity_dir)) > MC2SystemConstants.EPSILON:
+        now_rotation = np.asarray(
+            inertia_state.get("now_world_rotation", (0.0, 0.0, 0.0, 1.0)),
+            dtype=np.float32,
+        ).reshape(4)
+        init_local = inertia_state.get("init_local_gravity_direction")
+        if init_local is None:
+            init_local = baseline.quat_rotate(baseline.quat_inverse(now_rotation), world_gravity_dir)
+            inertia_state["init_local_gravity_direction"] = np.ascontiguousarray(init_local, dtype=np.float32)
+        init_local = math_utils.safe_normal_np(
+            np.asarray(init_local, dtype=np.float32).reshape(3),
+            world_gravity_dir,
+        )
+        negative_direction = np.asarray(
+            inertia_state.get("negative_scale_direction", (1.0, 1.0, 1.0)),
+            dtype=np.float32,
+        ).reshape(3)
+        falloff_local = init_local.copy()
+        if float(negative_direction[1]) < 0.0:
+            falloff_local[1] *= -1.0
+        falloff_world = math_utils.safe_normal_np(
+            baseline.quat_rotate(now_rotation, falloff_local),
+            world_gravity_dir,
+        )
+        gravity_dot = max(0.0, min(1.0, float(np.dot(falloff_world, world_gravity_dir)) * 0.5 + 0.5))
+    # MC2 TeamStepUpdate: lerp(saturate(1 - gravityFalloff), 1, saturate(1 - gravityDot)).
+    gravity_ratio = 1.0 - falloff * gravity_dot if gravity_power_value > 1.0e-6 else 1.0
+    gravity_ratio = max(0.0, min(1.0, float(gravity_ratio)))
+    return world_gravity_dir * gravity_power_value * gravity_ratio, gravity_dot, gravity_ratio
+
+
+def _sync_gravity_runtime(runtime, depths: np.ndarray, gravity_dot: float, gravity_ratio: float) -> np.ndarray:
+    # gravityDot 依赖当前 Center/inertia rotation，不能在参数曲线采样阶段提前解析。
+    # 这里统一把 Team gravity 上下文同步回 runtime，并生成 angle restoration 消费的最终 falloff 数组。
+    runtime.gravity_dot = max(0.0, min(1.0, float(gravity_dot)))
+    runtime.gravity_ratio = max(0.0, float(gravity_ratio))
+    adjusted_falloff = max(
+        0.0,
+        min(
+            1.0,
+            float(runtime.angle_restoration_gravity_falloff_param["value"]) * (1.0 - runtime.gravity_dot),
+        ),
+    )
+    runtime.angle_restoration_gravity_falloff_values = runtime_params.scalar_values_like(depths, adjusted_falloff)
+    return runtime.angle_restoration_gravity_falloff_values
+
+
+def _team_blend_context(
+    state: dict,
+    step_dt: float,
+    substep_count: int,
+    stablization_time_after_reset: float,
+    blend_weight: float,
+) -> tuple[np.ndarray, float, float]:
+    previous_velocity = max(0.0, min(1.0, float(state.get("velocity_weight", 0.0))))
+    stabilize_time = max(0.0, min(1.0, float(stablization_time_after_reset)))
+    weights = np.empty(max(1, int(substep_count)), dtype=np.float32)
+    for index in range(len(weights)):
+        if previous_velocity < 1.0:
+            add_weight = float(step_dt) / stabilize_time if stabilize_time > 1.0e-6 else 1.0
+            previous_velocity = max(0.0, min(1.0, previous_velocity + add_weight))
+        weights[index] = previous_velocity
+    user_blend = max(0.0, min(1.0, float(blend_weight)))
+    distance_weight = max(0.0, min(1.0, float(state.get("distance_weight", 1.0))))
+    return (
+        np.ascontiguousarray(weights, dtype=np.float32),
+        previous_velocity,
+        max(0.0, min(1.0, previous_velocity * user_blend * distance_weight)),
+    )
+
+
+def _blend_display_positions(base_positions: np.ndarray, display_positions: np.ndarray, blend_weight: float) -> np.ndarray:
+    weight = max(0.0, min(1.0, float(blend_weight)))
+    if weight >= 1.0 - MC2SystemConstants.EPSILON:
+        return np.ascontiguousarray(display_positions, dtype=np.float32)
+    base = np.ascontiguousarray(base_positions, dtype=np.float32)
+    display = np.ascontiguousarray(display_positions, dtype=np.float32)
+    return np.ascontiguousarray(base + (display - base) * weight, dtype=np.float32)
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -96,6 +186,9 @@ def solve_meshcloth(
     iterations: int,
     gravity_dir,
     gravity_power: float,
+    gravity_falloff: float,
+    stablization_time_after_reset: float,
+    blend_weight: float,
     damping: float,
     damping_curve,
     use_tether: bool,
@@ -116,6 +209,8 @@ def solve_meshcloth(
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
+    anchor_obj: bpy.types.Object | None,
+    anchor_inertia: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
     local_inertia: float,
@@ -129,6 +224,7 @@ def solve_meshcloth(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    animation_pose_ratio: float,
     use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
@@ -178,6 +274,14 @@ def solve_meshcloth(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
+    substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
+        state,
+        step_dt,
+        substep_count,
+        stablization_time_after_reset,
+        blend_weight,
+    )
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     runtime = runtime_params.build_runtime_params(
         curve_cache,
@@ -204,6 +308,7 @@ def solve_meshcloth(
         angle_limit,
         angle_limit_curve,
         angle_limit_stiffness,
+        anchor_inertia,
         world_inertia,
         movement_inertia_smoothing,
         local_inertia,
@@ -214,6 +319,9 @@ def solve_meshcloth(
         local_movement_speed_limit,
         local_rotation_speed_limit,
         particle_speed_limit,
+        animation_pose_ratio_value,
+        velocity_weight_value,
+        blend_weight_value,
         use_max_distance,
         max_distance,
         max_distance_curve,
@@ -258,6 +366,8 @@ def solve_meshcloth(
     dynamic_friction = runtime.dynamic_friction
     static_friction_speed = runtime.static_friction_speed
     collision_mode = runtime.collision_mode
+    runtime.velocity_weight = velocity_weight_value
+    runtime.blend_weight = blend_weight_value
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -294,6 +404,8 @@ def solve_meshcloth(
             int(teleport_mode),
             float(teleport_distance) * max(float(world_scale), 0.0),
             float(teleport_rotation),
+            anchor_obj,
+            float(runtime.anchor_inertia_param["value"]),
         )
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
@@ -323,11 +435,24 @@ def solve_meshcloth(
             inertia_state,
         )
         positions = old_positions.copy()
+    gravity, gravity_dot, gravity_ratio = _team_gravity_context(
+        gravity_dir,
+        gravity_power,
+        gravity_falloff,
+        inertia_state,
+    )
+    angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
+        runtime,
+        depths,
+        gravity_dot,
+        gravity_ratio,
+    )
     if timing is not None:
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
     for _substep in range(substep_count):
-        # 每个 substep 的第一段：更新基础骨架，再做惯性与重力预测。
+        # MC2 的 AnimationPoseRatio 同时影响 baseline pose 与 distance rest lerp。
+        # ratio>0 时独立 native distance kernel 暂不支持 animated rest，走 Python fallback。
         inertia_step = inertia.prepare_substep(
             inertia_state,
             _substep,
@@ -349,6 +474,7 @@ def solve_meshcloth(
             state["baseline_data"],
             state["vertex_local_positions"],
             state["vertex_local_rotations"],
+            animation_pose_ratio_value,
         )
         if native_step_basic_pose is None:
             step_basic_positions, step_basic_rotations = baseline.update_step_basic_pose(
@@ -360,6 +486,7 @@ def solve_meshcloth(
                 state["baseline_data"],
                 state["vertex_local_positions"],
                 state["vertex_local_rotations"],
+                animation_pose_ratio_value,
             )
         else:
             step_basic_positions, step_basic_rotations = native_step_basic_pose
@@ -390,6 +517,7 @@ def solve_meshcloth(
         velocity_positions = old_positions.copy()
         if step_dt > MC2SystemConstants.EPSILON:
             velocity[movable] *= (1.0 - substep_damping_values[movable])[:, None]
+            velocity[movable] *= float(substep_velocity_weights[_substep])
             velocity[movable] += gravity * step_dt
             positions[movable] = old_positions[movable] + velocity[movable] * step_dt
         if timing is not None:
@@ -485,17 +613,20 @@ def solve_meshcloth(
             if use_distance:
                 # distance 是迭代中的第一道约束，碰撞后还会再补一次。
                 stage_start = time.perf_counter() if timing is not None else None
-                if not native_bridge.project_neighbor_constraints(
-                    positions,
-                    inv_masses,
-                    state["distance_start"],
-                    state["distance_count"],
-                    state["distance_data"],
-                    state["distance_rest"],
-                    distance_stiffness_values,
-                    velocity_positions,
-                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                ):
+                projected = False
+                if animation_pose_ratio_value <= MC2SystemConstants.EPSILON:
+                    projected = native_bridge.project_neighbor_constraints(
+                        positions,
+                        inv_masses,
+                        state["distance_start"],
+                        state["distance_count"],
+                        state["distance_data"],
+                        state["distance_rest"],
+                        distance_stiffness_values,
+                        velocity_positions,
+                        MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                    )
+                if not projected:
                     constraints.project_neighbor_constraints(
                         positions,
                         inv_masses,
@@ -506,6 +637,8 @@ def solve_meshcloth(
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                        base_positions,
+                        animation_pose_ratio_value,
                     )
                 if timing is not None:
                     _add_timing(timing, "distance", time.perf_counter() - stage_start)
@@ -656,17 +789,20 @@ def solve_meshcloth(
             if use_distance:
                 # collision 之后再补一次 distance，减少碰撞修正后拉断的问题。
                 stage_start = time.perf_counter() if timing is not None else None
-                if not native_bridge.project_neighbor_constraints(
-                    positions,
-                    inv_masses,
-                    state["distance_start"],
-                    state["distance_count"],
-                    state["distance_data"],
-                    state["distance_rest"],
-                    distance_stiffness_values,
-                    velocity_positions,
-                    MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
-                ):
+                projected = False
+                if animation_pose_ratio_value <= MC2SystemConstants.EPSILON:
+                    projected = native_bridge.project_neighbor_constraints(
+                        positions,
+                        inv_masses,
+                        state["distance_start"],
+                        state["distance_count"],
+                        state["distance_data"],
+                        state["distance_rest"],
+                        distance_stiffness_values,
+                        velocity_positions,
+                        MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                    )
+                if not projected:
                     constraints.project_neighbor_constraints(
                         positions,
                         inv_masses,
@@ -677,6 +813,8 @@ def solve_meshcloth(
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
+                        base_positions,
+                        animation_pose_ratio_value,
                     )
                 if timing is not None:
                     _add_timing(timing, "distance_after_collision", time.perf_counter() - stage_start)
@@ -775,6 +913,9 @@ def solve_meshcloth(
                 inertia_step,
                 float(centrifugal_param["value"]),
             )
+        substep_velocity_weight = float(substep_velocity_weights[_substep])
+        if substep_velocity_weight < 1.0 - MC2SystemConstants.EPSILON:
+            velocity[movable] *= substep_velocity_weight
         if bool(np.any(fixed)):
             positions[fixed] = base_positions[fixed]
             old_positions[fixed] = base_positions[fixed]
@@ -791,6 +932,11 @@ def solve_meshcloth(
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
+    next_state["animation_pose_ratio"] = float(animation_pose_ratio_value)
+    next_state["gravity_dot"] = float(runtime.gravity_dot)
+    next_state["gravity_ratio"] = float(runtime.gravity_ratio)
+    next_state["velocity_weight"] = float(runtime.velocity_weight)
+    next_state["blend_weight"] = float(runtime.blend_weight)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["scale_ratio"] = float(next_state["inertia_state"].get("scale_ratio", world_scale) or world_scale)
@@ -811,6 +957,7 @@ def solve_meshcloth(
             state["root_indices"],
             frame_dt,
         )
+    display_positions = _blend_display_positions(base_positions, display_positions, blend_weight_value)
     next_state["display_positions"] = np.ascontiguousarray(display_positions, dtype=np.float32)
     next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
     next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
@@ -848,6 +995,9 @@ def solve_meshcloth_native_core(
     iterations: int,
     gravity_dir,
     gravity_power: float,
+    gravity_falloff: float,
+    stablization_time_after_reset: float,
+    blend_weight: float,
     damping: float,
     damping_curve,
     use_tether: bool,
@@ -868,6 +1018,8 @@ def solve_meshcloth_native_core(
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
+    anchor_obj: bpy.types.Object | None,
+    anchor_inertia: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
     local_inertia: float,
@@ -881,6 +1033,7 @@ def solve_meshcloth_native_core(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    animation_pose_ratio: float,
     use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
@@ -933,6 +1086,14 @@ def solve_meshcloth_native_core(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
+    substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
+        state,
+        step_dt,
+        substep_count,
+        stablization_time_after_reset,
+        blend_weight,
+    )
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     runtime = runtime_params.build_runtime_params(
         curve_cache,
@@ -959,6 +1120,7 @@ def solve_meshcloth_native_core(
         angle_limit,
         angle_limit_curve,
         angle_limit_stiffness,
+        anchor_inertia,
         world_inertia,
         movement_inertia_smoothing,
         local_inertia,
@@ -969,6 +1131,9 @@ def solve_meshcloth_native_core(
         local_movement_speed_limit,
         local_rotation_speed_limit,
         particle_speed_limit,
+        animation_pose_ratio_value,
+        velocity_weight_value,
+        blend_weight_value,
         use_max_distance,
         max_distance,
         max_distance_curve,
@@ -1013,6 +1178,8 @@ def solve_meshcloth_native_core(
     dynamic_friction = runtime.dynamic_friction
     static_friction_speed = runtime.static_friction_speed
     collision_mode = runtime.collision_mode
+    runtime.velocity_weight = velocity_weight_value
+    runtime.blend_weight = blend_weight_value
 
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
@@ -1050,6 +1217,8 @@ def solve_meshcloth_native_core(
             int(teleport_mode),
             float(teleport_distance) * world_scale_nonnegative,
             float(teleport_rotation),
+            anchor_obj,
+            float(runtime.anchor_inertia_param["value"]),
         )
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
@@ -1079,6 +1248,19 @@ def solve_meshcloth_native_core(
             inertia_state,
         )
         positions = old_positions.copy()
+
+    gravity, gravity_dot, gravity_ratio = _team_gravity_context(
+        gravity_dir,
+        gravity_power,
+        gravity_falloff,
+        inertia_state,
+    )
+    angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
+        runtime,
+        depths,
+        gravity_dot,
+        gravity_ratio,
+    )
 
     substep_inertia_lists = {
         "old_world_positions": [],
@@ -1163,6 +1345,7 @@ def solve_meshcloth_native_core(
         backstop_distances=motion_samples.backstop_distances,
         collider_arrays=collider_arrays,
         substep_inertia_arrays=substep_inertia_arrays,
+        substep_velocity_weights=substep_velocity_weights,
         frame_dt=frame_dt,
         step_dt=step_dt,
         substeps=substep_count,
@@ -1181,7 +1364,8 @@ def solve_meshcloth_native_core(
         collided_by_groups=collided_by_groups,
         collider_collision_mode=collision_mode,
         display_max_distance_ratio=MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
-        animation_pose_ratio=0.0,
+        animation_pose_ratio=animation_pose_ratio_value,
+        blend_weight=blend_weight_value,
     )
     if timing is not None:
         _add_timing(timing, "native_core", time.perf_counter() - stage_start)
@@ -1193,6 +1377,11 @@ def solve_meshcloth_native_core(
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
+    next_state["animation_pose_ratio"] = float(animation_pose_ratio_value)
+    next_state["gravity_dot"] = float(runtime.gravity_dot)
+    next_state["gravity_ratio"] = float(runtime.gravity_ratio)
+    next_state["velocity_weight"] = float(runtime.velocity_weight)
+    next_state["blend_weight"] = float(runtime.blend_weight)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
     next_state["scale_ratio"] = float(

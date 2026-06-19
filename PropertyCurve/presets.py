@@ -1,4 +1,4 @@
-"""PropertyCurve ?????"""
+"""PropertyCurve 曲线预设。"""
 
 from __future__ import annotations
 

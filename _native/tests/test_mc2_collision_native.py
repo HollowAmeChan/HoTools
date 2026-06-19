@@ -319,6 +319,9 @@ def assert_native_matches_reference():
         collider_centers,
         collider_segment_a,
         collider_segment_b,
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
         collider_radii,
     )
 

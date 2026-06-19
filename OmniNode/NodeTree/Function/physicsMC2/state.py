@@ -45,13 +45,29 @@ class MC2CenterState:
     io_cache: dict = field(default_factory=dict)
     native_cache: dict = field(default_factory=dict)
     native_context: object | None = None
+    inertia_state: dict = field(default_factory=dict)
+    init_local_gravity_direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
     def replace_legacy_state(self, state: dict) -> None:
         self.legacy_state = state if isinstance(state, dict) else {}
+        self.sync_runtime_fields_from_legacy()
         self._migrate_flat_runtime_cache()
         extension_slots = self._extension_slots()
         extension_slots[MC2_RUNTIME_CACHE_SLOT] = self.runtime_cache_slots()
         self.legacy_state["extension_slots"] = extension_slots
+
+    def sync_runtime_fields_from_legacy(self) -> None:
+        """把当前仍存放在 legacy dict 里的 CenterData 字段同步到正式容器。"""
+
+        inertia_state = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
+        self.inertia_state = inertia_state if isinstance(inertia_state, dict) else {}
+        direction = self.legacy_state.get("init_local_gravity_direction") if isinstance(self.legacy_state, dict) else None
+        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
+            self.init_local_gravity_direction = (
+                float(direction[0]),
+                float(direction[1]),
+                float(direction[2]),
+            )
 
     def _extension_slots(self) -> dict:
         extension_slots = self.legacy_state.get("extension_slots")
@@ -102,6 +118,9 @@ class MC2CenterState:
             "frame": state.get("frame"),
             "verts": state.get("vertex_count", 0),
             "solver_version": state.get("solver_version"),
+            "scale_ratio": state.get("scale_ratio", 1.0),
+            "negative_scale_sign": state.get("negative_scale_sign", 1),
+            "has_inertia_state": bool(self.inertia_state),
             "curve_cache": len(self.curve_cache),
             "topology_cache": len(self.topology_cache),
             "io_cache": len(self.io_cache),
@@ -125,6 +144,15 @@ class MC2TeamState:
     """
 
     centers: dict[str, MC2CenterState] = field(default_factory=dict)
+    frame_interpolation: float = 1.0
+    scale_ratio: float = 1.0
+    negative_scale_sign: int = 1
+    negative_scale_direction: tuple[int, int, int] = (1, 1, 1)
+    animation_pose_ratio: float = 0.0
+    gravity_dot: float = 1.0
+    gravity_ratio: float = 1.0
+    velocity_weight: float = 1.0
+    blend_weight: float = 1.0
 
     def ensure_center(self, key: str = "main") -> MC2CenterState:
         key = str(key or "main")
@@ -139,8 +167,38 @@ class MC2TeamState:
             center.dispose()
         self.centers.clear()
 
+    def sync_from_legacy_state(self, legacy_state: dict) -> None:
+        """从 legacy state 提取源码 TeamData 对应字段，便于逐步迁移调用点。"""
+
+        if not isinstance(legacy_state, dict):
+            return
+        self.scale_ratio = float(legacy_state.get("scale_ratio", self.scale_ratio))
+        self.negative_scale_sign = int(legacy_state.get("negative_scale_sign", self.negative_scale_sign))
+        direction = legacy_state.get("negative_scale_direction")
+        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
+            self.negative_scale_direction = (
+                int(direction[0]) if int(direction[0]) != 0 else 1,
+                int(direction[1]) if int(direction[1]) != 0 else 1,
+                int(direction[2]) if int(direction[2]) != 0 else 1,
+            )
+        self.animation_pose_ratio = max(
+            0.0,
+            min(1.0, float(legacy_state.get("animation_pose_ratio", self.animation_pose_ratio))),
+        )
+        self.gravity_dot = max(0.0, min(1.0, float(legacy_state.get("gravity_dot", self.gravity_dot))))
+        self.gravity_ratio = max(0.0, float(legacy_state.get("gravity_ratio", self.gravity_ratio)))
+        self.velocity_weight = max(0.0, min(1.0, float(legacy_state.get("velocity_weight", self.velocity_weight))))
+        self.blend_weight = max(0.0, min(1.0, float(legacy_state.get("blend_weight", self.blend_weight))))
+
     def debug_snapshot(self) -> dict:
         return {
+            "animation_pose_ratio": self.animation_pose_ratio,
+            "gravity_dot": self.gravity_dot,
+            "gravity_ratio": self.gravity_ratio,
+            "velocity_weight": self.velocity_weight,
+            "blend_weight": self.blend_weight,
+            "scale_ratio": self.scale_ratio,
+            "negative_scale_sign": self.negative_scale_sign,
             "centers": {name: center.debug_snapshot() for name, center in self.centers.items()},
         }
 
@@ -156,6 +214,7 @@ class MC2RuntimeOwner(MutableMapping):
         self.team_state = MC2TeamState()
         self.center_key = "main"
         self.center_state.replace_legacy_state(state if isinstance(state, dict) else {})
+        self.team_state.sync_from_legacy_state(self.state)
 
     def __getitem__(self, key):
         return self.state[key]
@@ -186,6 +245,7 @@ class MC2RuntimeOwner(MutableMapping):
 
     def replace_state(self, state: dict) -> None:
         self.center_state.replace_legacy_state(state)
+        self.team_state.sync_from_legacy_state(self.state)
 
     def runtime_cache(self, name: str) -> dict:
         return self.center_state.runtime_cache(name)
@@ -450,6 +510,9 @@ def build_state(
         "init_scale_radius": math_utils.matrix_scale_radius(obj.matrix_world),
         "scale_ratio": 1.0,
         "negative_scale_sign": math_utils.object_negative_scale_sign(obj),
+        "velocity_weight": 0.0,
+        "blend_weight": 0.0,
+        "distance_weight": 1.0,
         "vertex_count": len(obj.data.vertices),
         "frame_delta_time": 0.0,
         "step_delta_time": 0.0,

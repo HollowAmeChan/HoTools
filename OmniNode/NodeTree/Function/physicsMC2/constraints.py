@@ -29,6 +29,8 @@ def project_neighbor_constraints(
     stiffness,
     velocity_positions: np.ndarray | None = None,
     velocity_attenuation: float = 0.0,
+    base_positions: np.ndarray | None = None,
+    animation_pose_ratio: float = 0.0,
 ) -> None:
     if len(neighbors) == 0:
         return
@@ -48,6 +50,12 @@ def project_neighbor_constraints(
         return
 
     vertex_count = len(positions)
+    ratio = max(0.0, min(1.0, float(animation_pose_ratio)))
+    animated_base_positions = (
+        np.ascontiguousarray(base_positions, dtype=np.float32)
+        if ratio > MC2SystemConstants.EPSILON and base_positions is not None and len(base_positions) == vertex_count
+        else None
+    )
     for vertex_index in range(vertex_count):
         wi = float(inv_masses[vertex_index])
         if wi <= MC2SystemConstants.EPSILON:
@@ -69,6 +77,10 @@ def project_neighbor_constraints(
             neighbor_index = int(neighbors[data_index])
             rest_dist = float(rest_lengths[data_index])
             rest = abs(rest_dist)
+            if animated_base_positions is not None:
+                animated_delta = animated_base_positions[neighbor_index] - animated_base_positions[vertex_index]
+                animated_rest = float(np.linalg.norm(animated_delta))
+                rest = rest * (1.0 - ratio) + animated_rest * ratio
             final_stiffness = local_stiffness
             if rest_dist < 0.0:
                 final_stiffness = max(

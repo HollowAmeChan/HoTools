@@ -45,6 +45,11 @@ def substep_damping_values(frame_damping_values: np.ndarray, substeps: int) -> n
 
 @dataclass(slots=True)
 class MC2RuntimeParams:
+    animation_pose_ratio: float
+    gravity_dot: float
+    gravity_ratio: float
+    velocity_weight: float
+    blend_weight: float
     normal_axis: int
     motion_enabled: bool
     collision_mode: int
@@ -64,6 +69,7 @@ class MC2RuntimeParams:
     angle_restoration_gravity_falloff_param: dict
     angle_limit_param: dict
     angle_limit_stiffness_param: dict
+    anchor_inertia_param: dict
     world_inertia_param: dict
     movement_inertia_smoothing_param: dict
     local_inertia_param: dict
@@ -107,6 +113,7 @@ class MC2RuntimeParams:
             "angle_restoration_gravity_falloff": self.angle_restoration_gravity_falloff_param,
             "angle_limit": self.angle_limit_param,
             "angle_limit_stiffness": self.angle_limit_stiffness_param,
+            "anchor_inertia": self.anchor_inertia_param,
             "world_inertia": self.world_inertia_param,
             "movement_inertia_smoothing": self.movement_inertia_smoothing_param,
             "local_inertia": self.local_inertia_param,
@@ -127,6 +134,11 @@ class MC2RuntimeParams:
             "backstop_distance": self.backstop_distance_param,
             "collider_friction": self.collider_friction_param,
             "collider_collision_mode": self.collider_collision_mode_param,
+            "animation_pose_ratio": params.scalar_param(float(self.animation_pose_ratio)),
+            "gravity_dot": params.scalar_param(float(self.gravity_dot)),
+            "gravity_ratio": params.scalar_param(float(self.gravity_ratio)),
+            "velocity_weight": params.scalar_param(float(self.velocity_weight)),
+            "blend_weight": params.scalar_param(float(self.blend_weight)),
             "use_tether": self.use_tether_param,
             "use_distance": self.use_distance_param,
             "use_bend": self.use_bend_param,
@@ -171,6 +183,7 @@ def build_runtime_params(
     angle_limit: float,
     angle_limit_curve,
     angle_limit_stiffness: float,
+    anchor_inertia: float,
     world_inertia: float,
     movement_inertia_smoothing: float,
     local_inertia: float,
@@ -181,6 +194,9 @@ def build_runtime_params(
     local_movement_speed_limit: float,
     local_rotation_speed_limit: float,
     particle_speed_limit: float,
+    animation_pose_ratio: float,
+    velocity_weight: float,
+    blend_weight: float,
     use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
@@ -197,6 +213,9 @@ def build_runtime_params(
     add_timing=None,
 ) -> MC2RuntimeParams:
     normal_axis_value = max(0, min(5, int(normal_axis)))
+    animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
+    velocity_weight_value = max(0.0, min(1.0, float(velocity_weight)))
+    blend_weight_value = max(0.0, min(1.0, float(blend_weight)))
     stiffness_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
 
     stage_start = time.perf_counter() if timing is not None else None
@@ -261,6 +280,7 @@ def build_runtime_params(
     )
     angle_limit_stiffness_value = max(0.0, min(1.0, float(angle_limit_stiffness)))
     angle_limit_stiffness_param = params.scalar_param(angle_limit_stiffness_value)
+    anchor_inertia_param = params.scalar_param(max(0.0, min(1.0, float(anchor_inertia))))
     max_distance_param = (
         params.curve_value_param_cached(curve_cache, "max_distance", max_distance, max_distance_curve, minimum=0.0)
         if use_max_distance
@@ -386,6 +406,11 @@ def build_runtime_params(
     collision_mode = max(0, min(2, int(collider_collision_mode))) if use_collider_collision else 0
 
     return MC2RuntimeParams(
+        animation_pose_ratio=animation_pose_ratio_value,
+        gravity_dot=1.0,
+        gravity_ratio=1.0,
+        velocity_weight=velocity_weight_value,
+        blend_weight=blend_weight_value,
         normal_axis=normal_axis_value,
         motion_enabled=motion_enabled,
         collision_mode=collision_mode,
@@ -405,6 +430,7 @@ def build_runtime_params(
         angle_restoration_gravity_falloff_param=angle_restoration_gravity_falloff_param,
         angle_limit_param=angle_limit_param,
         angle_limit_stiffness_param=angle_limit_stiffness_param,
+        anchor_inertia_param=anchor_inertia_param,
         world_inertia_param=world_inertia_param,
         movement_inertia_smoothing_param=movement_inertia_smoothing_param,
         local_inertia_param=local_inertia_param,

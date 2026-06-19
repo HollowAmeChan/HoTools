@@ -1,8 +1,8 @@
-"""MC2 风格的世界/局部惯性补偿。
+"""MC2 ??? Center/Inertia ???
 
-这里先复刻 InertiaConstraint 中对 MeshCloth 最关键的部分：对象整体位移/旋转造成的
-inertia shift、teleport 判定、depth inertia、粒子速度上限和离心力近似。完整的 anchor、
-sync team、负缩放和稳定化时间后续仍可在同一接口上继续扩展。
+???? MeshCloth ?????????????teleport?anchor ?????
+depth inertia????????????BasePose ??????? solver ??????
+world inertia?????????????????????
 """
 
 import math
@@ -167,6 +167,27 @@ def capture_object_pose(obj: bpy.types.Object) -> dict:
     }
 
 
+def _capture_anchor_pose(anchor_obj: bpy.types.Object | None) -> dict | None:
+    if anchor_obj is None:
+        return None
+    try:
+        return capture_object_pose(anchor_obj)
+    except Exception:
+        return None
+
+
+def _inverse_transform_point(position: np.ndarray, origin: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    local = np.asarray(position, dtype=np.float32) - np.asarray(origin, dtype=np.float32)
+    return np.ascontiguousarray(baseline.quat_rotate(baseline.quat_inverse(rotation), local), dtype=np.float32)
+
+
+def _transform_point(local_position: np.ndarray, origin: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(
+        np.asarray(origin, dtype=np.float32) + baseline.quat_rotate(rotation, local_position),
+        dtype=np.float32,
+    )
+
+
 def make_runtime_state(obj: bpy.types.Object) -> dict:
     pose = capture_object_pose(obj)
     return {
@@ -176,6 +197,13 @@ def make_runtime_state(obj: bpy.types.Object) -> dict:
         "smoothing_velocity": np.zeros(3, dtype=np.float32),
         "frame_component_shift_vector": np.zeros(3, dtype=np.float32),
         "frame_component_shift_rotation": _identity_quat(),
+        "anchor_active": False,
+        "anchor_name": "",
+        "anchor_position": np.zeros(3, dtype=np.float32),
+        "anchor_rotation": _identity_quat(),
+        "old_anchor_position": np.zeros(3, dtype=np.float32),
+        "old_anchor_rotation": _identity_quat(),
+        "anchor_component_local_position": np.zeros(3, dtype=np.float32),
         "old_world_position": pose["position"],
         "old_world_rotation": pose["rotation"],
         "old_component_matrix": pose["matrix"],
@@ -222,6 +250,8 @@ def prepare_frame(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation_degrees: float,
+    anchor_obj: bpy.types.Object | None = None,
+    anchor_inertia: float = 0.0,
 ) -> dict:
     next_state = sanitize_runtime_state(runtime_state, obj)
     pose = capture_object_pose(obj)
@@ -230,6 +260,36 @@ def prepare_frame(
     old_rot = np.asarray(next_state["old_component_rotation"], dtype=np.float32)
     now_pos = pose["position"]
     now_rot = pose["rotation"]
+    anchor_delta_vector = np.zeros(3, dtype=np.float32)
+    anchor_delta_rotation = _identity_quat()
+    anchor_pose = _capture_anchor_pose(anchor_obj)
+    old_anchor_active = bool(next_state.get("anchor_active", False))
+    anchor_active = anchor_pose is not None
+    anchor_name = anchor_obj.name if anchor_obj is not None else ""
+    anchor_reset = anchor_active and (
+        not old_anchor_active
+        or str(next_state.get("anchor_name", "")) != anchor_name
+        or "anchor_component_local_position" not in next_state
+    )
+    if anchor_active:
+        anchor_pos = np.asarray(anchor_pose["position"], dtype=np.float32)
+        anchor_rot = np.asarray(anchor_pose["rotation"], dtype=np.float32)
+        if anchor_reset:
+            next_state["old_anchor_position"] = np.ascontiguousarray(anchor_pos, dtype=np.float32)
+            next_state["old_anchor_rotation"] = np.ascontiguousarray(anchor_rot, dtype=np.float32)
+            next_state["anchor_component_local_position"] = _inverse_transform_point(now_pos, anchor_pos, anchor_rot)
+        old_anchor_rot = np.asarray(next_state.get("old_anchor_rotation", anchor_rot), dtype=np.float32)
+        anchor_local = np.asarray(next_state.get("anchor_component_local_position"), dtype=np.float32)
+        anchor_center_pos = _transform_point(anchor_local, anchor_pos, anchor_rot)
+        anchor_ratio = 1.0 - max(0.0, min(1.0, float(anchor_inertia)))
+        anchor_delta_vector = (anchor_center_pos - old_component_pos) * anchor_ratio
+        anchor_delta_rotation = quat_slerp(_identity_quat(), quat_from_to(old_anchor_rot, anchor_rot), anchor_ratio)
+        work_old_pos = work_old_pos + anchor_delta_vector
+        old_rot = baseline.quat_mul(anchor_delta_rotation, old_rot)
+        next_state["anchor_position"] = np.ascontiguousarray(anchor_pos, dtype=np.float32)
+        next_state["anchor_rotation"] = np.ascontiguousarray(anchor_rot, dtype=np.float32)
+    next_state["anchor_active"] = bool(anchor_active)
+    next_state["anchor_name"] = anchor_name
     now_scale_radius = float(pose["scale_radius"])
     init_scale_radius = max(
         float(next_state.get("init_scale_radius", now_scale_radius) or now_scale_radius),
@@ -248,6 +308,9 @@ def prepare_frame(
         old_component_pos = now_pos.copy()
         work_old_pos = old_component_pos.copy()
         old_rot = now_rot.copy()
+    if negative_scale_changed:
+        anchor_delta_vector = np.zeros(3, dtype=np.float32)
+        anchor_delta_rotation = _identity_quat()
     delta = now_pos - work_old_pos
     delta_angle = quat_angle(old_rot, now_rot)
 
@@ -307,8 +370,11 @@ def prepare_frame(
             limit_ratio = max(0.0, min(1.0, max(rotation_speed - rotation_speed_limit, 0.0) / rotation_speed))
             rotation_shift_ratio = rotation_shift_ratio * (1.0 - limit_ratio) + limit_ratio
 
-    shift_vector = delta * move_shift_ratio + smooth_delta
-    shift_rotation = quat_slerp(_identity_quat(), quat_from_to(old_rot, now_rot), rotation_shift_ratio)
+    shift_vector = delta * move_shift_ratio + smooth_delta + anchor_delta_vector
+    shift_rotation = baseline.quat_mul(
+        anchor_delta_rotation,
+        quat_slerp(_identity_quat(), quat_from_to(old_rot, now_rot), rotation_shift_ratio),
+    )
 
     shifted_old_center = shift_position(old_component_pos, old_component_pos, shift_vector, shift_rotation)
     shifted_old_rotation = baseline.quat_mul(shift_rotation, old_rot)
@@ -359,6 +425,11 @@ def commit_frame(runtime_state: dict, obj: bpy.types.Object) -> dict:
     next_state["smoothing_velocity"] = np.asarray(next_state.get("smoothing_velocity"), dtype=np.float32)
     next_state["frame_component_shift_vector"] = np.zeros(3, dtype=np.float32)
     next_state["frame_component_shift_rotation"] = _identity_quat()
+    if bool(next_state.get("anchor_active", False)):
+        next_state["old_anchor_position"] = np.asarray(next_state.get("anchor_position"), dtype=np.float32)
+        next_state["old_anchor_rotation"] = np.asarray(next_state.get("anchor_rotation"), dtype=np.float32)
+    else:
+        next_state["anchor_name"] = ""
     next_state["old_world_position"] = np.ascontiguousarray(pose["position"], dtype=np.float32)
     next_state["old_world_rotation"] = np.ascontiguousarray(pose["rotation"], dtype=np.float32)
     next_state["now_world_position"] = np.ascontiguousarray(pose["position"], dtype=np.float32)

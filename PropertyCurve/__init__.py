@@ -1,4 +1,4 @@
-"""HoTools ?????????"""
+"""HoTools 通用属性曲线模块。"""
 
 from . import definitions as _definitions
 from . import icons as _icons

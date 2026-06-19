@@ -6,6 +6,7 @@ namespace hotools {
 
 struct Mc2NeighborConstraintView {
     float* positions = nullptr;
+    const float* base_positions = nullptr;
     const float* inv_masses = nullptr;
     const std::int32_t* starts = nullptr;
     const std::int32_t* counts = nullptr;
@@ -16,6 +17,7 @@ struct Mc2NeighborConstraintView {
     std::int64_t vertex_count = 0;
     std::int64_t neighbor_count = 0;
     float velocity_attenuation = 0.0f;
+    float animation_pose_ratio = 0.0f;
 };
 
 struct Mc2TetherConstraintView {
@@ -288,6 +290,7 @@ struct Mc2MeshClothSolveView {
     const float* substep_now_world_positions = nullptr;
     const float* substep_rotation_axes = nullptr;
     const float* substep_angular_velocities = nullptr;
+    const float* substep_velocity_weights = nullptr;
 
     std::int64_t vertex_count = 0;
     std::int64_t line_count = 0;
@@ -316,6 +319,7 @@ struct Mc2MeshClothSolveView {
     int normal_axis = 1;
     float display_max_distance_ratio = 1.3f;
     float animation_pose_ratio = 0.0f;
+    float blend_weight = 1.0f;
     std::int32_t collided_by_groups = 0;
     int collider_collision_mode = 1;
 };
