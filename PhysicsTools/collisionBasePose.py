@@ -34,17 +34,47 @@ MC2_DELTA_SPEC = PhysicsDeltaOutputSpec(
 )
 
 
+def _is_live_id(value) -> bool:
+    if value is None:
+        return False
+    try:
+        value.as_pointer()
+        return True
+    except ReferenceError:
+        return False
+    except Exception:
+        return False
+
+
+def _is_live_mesh_object(value) -> bool:
+    if not _is_live_id(value) or not isinstance(value, bpy.types.Object):
+        return False
+    try:
+        return value.type == "MESH" and value.data is not None and _is_live_id(value.data)
+    except ReferenceError:
+        return False
+
+
+def _is_generated_cache_object(value) -> bool:
+    if not _is_live_id(value):
+        return False
+    try:
+        return bool(value.get(CACHE_OBJECT_FLAG, False))
+    except ReferenceError:
+        return False
+
+
 def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
     mesh = getattr(obj, "data", None)
-    if obj is None or obj.type != "MESH" or mesh is None:
+    if not _is_live_mesh_object(obj) or mesh is None:
         return (0, 0, 0)
     return (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
 
 
 def validate_base_pose_proxy(source_obj: bpy.types.Object, base_obj: bpy.types.Object) -> None:
-    if source_obj is None or source_obj.type != "MESH":
+    if not _is_live_mesh_object(source_obj):
         raise ValueError("当前物理对象必须是Mesh")
-    if base_obj is None or base_obj.type != "MESH":
+    if not _is_live_mesh_object(base_obj):
         raise ValueError("BasePose只读对象必须是Mesh")
     if base_obj == source_obj:
         raise ValueError("BasePose只读对象不能指向当前物理写入对象")
@@ -114,7 +144,7 @@ def create_base_pose_proxy(
     source_obj: bpy.types.Object,
     scene: bpy.types.Scene = None,
 ) -> bpy.types.Object:
-    if source_obj is None or source_obj.type != "MESH":
+    if not _is_live_mesh_object(source_obj):
         raise ValueError("当前物理对象必须是Mesh")
 
     base_obj = source_obj.copy()
@@ -146,10 +176,14 @@ def refresh_base_pose_proxy(
     base_obj: bpy.types.Object,
     scene: bpy.types.Scene = None,
 ) -> bpy.types.Object:
-    if base_obj is not None and base_obj != source_obj and base_obj.type == "MESH":
-        remove_old = bool(base_obj.get(CACHE_OBJECT_FLAG, False))
-    else:
-        remove_old = False
+    base_obj_live = _is_live_mesh_object(base_obj)
+    same_object = False
+    if base_obj_live:
+        try:
+            same_object = bool(base_obj == source_obj)
+        except ReferenceError:
+            same_object = False
+    remove_old = base_obj_live and not same_object and _is_generated_cache_object(base_obj)
 
     if remove_old and base_obj is not None:
         old_mesh = base_obj.data
@@ -169,11 +203,25 @@ def ensure_base_pose_proxy(
     if props is None:
         raise ValueError("当前物体没有HoTools网格碰撞属性")
 
-    base_obj = getattr(props, "mc2_base_pose_proxy", None)
+    try:
+        base_obj = getattr(props, "mc2_base_pose_proxy", None)
+    except ReferenceError:
+        base_obj = None
     if refresh or base_obj is None:
         base_obj = refresh_base_pose_proxy(source_obj, base_obj, scene)
         props.mc2_base_pose_proxy = base_obj
         return base_obj
 
-    validate_base_pose_proxy(source_obj, base_obj)
+    try:
+        validate_base_pose_proxy(source_obj, base_obj)
+    except ReferenceError:
+        base_obj = refresh_base_pose_proxy(source_obj, None, scene)
+        props.mc2_base_pose_proxy = base_obj
+        return base_obj
+    except ValueError:
+        if _is_generated_cache_object(base_obj):
+            base_obj = refresh_base_pose_proxy(source_obj, base_obj, scene)
+            props.mc2_base_pose_proxy = base_obj
+            return base_obj
+        raise
     return base_obj

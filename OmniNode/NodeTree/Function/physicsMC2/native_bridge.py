@@ -195,6 +195,13 @@ def _array(state: dict, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np
     return value
 
 
+def _member_array(source, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np.ndarray:
+    value = np.ascontiguousarray(getattr(source, key), dtype=dtype)
+    if shape_tail and value.shape[-len(shape_tail):] != shape_tail:
+        raise ValueError(f"MC2 native ABI field {key} shape mismatch: {value.shape}")
+    return value
+
+
 def project_neighbor_constraints(
     positions: np.ndarray,
     inv_masses: np.ndarray,
@@ -992,6 +999,67 @@ def _inertia_state_arrays(state: dict) -> dict:
     }
 
 
+def static_topology_arrays_for_native(topology_state, base_pose_state=None) -> dict:
+    vertex_count = int(getattr(topology_state, "vertex_count", 0) or 0)
+    if base_pose_state is not None:
+        base_rotations = _member_array(base_pose_state, "base_rotations", np.float32, (4,))
+        step_basic_positions = _member_array(base_pose_state, "step_basic_positions", np.float32, (3,))
+        step_basic_rotations = _member_array(base_pose_state, "step_basic_rotations", np.float32, (4,))
+    else:
+        base_rotations = np.zeros((vertex_count, 4), dtype=np.float32)
+        step_basic_positions = _member_array(topology_state, "rest_world_positions", np.float32, (3,)).copy()
+        step_basic_rotations = np.zeros((vertex_count, 4), dtype=np.float32)
+        if vertex_count:
+            base_rotations[:, 3] = 1.0
+            step_basic_rotations[:, 3] = 1.0
+    return {
+        "schema_version": int(MC2_SOLVER_VERSION),
+        "vertex_count": vertex_count,
+        "rest_world_positions": _member_array(topology_state, "rest_world_positions", np.float32, (3,)),
+        "rest_world_normals": _member_array(topology_state, "rest_world_normals", np.float32, (3,)),
+        "attributes": _member_array(topology_state, "attributes", np.uint8),
+        "depths": _member_array(topology_state, "depths", np.float32),
+        "root_indices": _member_array(topology_state, "root_indices", np.int32),
+        "parent_indices": _member_array(topology_state, "parent_indices", np.int32),
+        "root_rest_lengths": _member_array(topology_state, "root_rest_lengths", np.float32),
+        "baseline_start": _member_array(topology_state, "baseline_start", np.int32),
+        "baseline_count": _member_array(topology_state, "baseline_count", np.int32),
+        "baseline_data": _member_array(topology_state, "baseline_data", np.int32),
+        "baseline_flags": _member_array(topology_state, "baseline_flags", np.uint8),
+        "base_rotations": base_rotations,
+        "step_basic_positions": step_basic_positions,
+        "step_basic_rotations": step_basic_rotations,
+        "vertex_local_positions": _member_array(topology_state, "vertex_local_positions", np.float32, (3,)),
+        "vertex_local_rotations": _member_array(topology_state, "vertex_local_rotations", np.float32, (4,)),
+        "tether_rest_lengths": _member_array(topology_state, "tether_rest_lengths", np.float32),
+        "edges": _member_array(topology_state, "edges", np.int32, (2,)),
+        "edge_i": _member_array(topology_state, "edge_i", np.int32),
+        "edge_j": _member_array(topology_state, "edge_j", np.int32),
+        "edge_rest": _member_array(topology_state, "edge_rest", np.float32),
+        "edge_type": _member_array(topology_state, "edge_type", np.int32),
+        "distance_start": _member_array(topology_state, "distance_start", np.int32),
+        "distance_count": _member_array(topology_state, "distance_count", np.int32),
+        "distance_data": _member_array(topology_state, "distance_data", np.int32),
+        "distance_rest": _member_array(topology_state, "distance_rest", np.float32),
+        "bend_kind": str(getattr(topology_state, "bend_kind", "") or ""),
+        "bend_distance_i": _member_array(topology_state, "bend_distance_i", np.int32),
+        "bend_distance_j": _member_array(topology_state, "bend_distance_j", np.int32),
+        "bend_distance_rest": _member_array(topology_state, "bend_distance_rest", np.float32),
+        "bend_distance_type": _member_array(topology_state, "bend_distance_type", np.int32),
+        "bend_distance_start": _member_array(topology_state, "bend_distance_start", np.int32),
+        "bend_distance_count": _member_array(topology_state, "bend_distance_count", np.int32),
+        "bend_distance_data": _member_array(topology_state, "bend_distance_data", np.int32),
+        "bend_distance_neighbor_rest": _member_array(topology_state, "bend_distance_neighbor_rest", np.float32),
+        "triangle_pairs": _member_array(topology_state, "triangle_pairs", np.int32, (4,)),
+        "dihedral_pairs": _member_array(topology_state, "dihedral_pairs", np.int32, (4,)),
+        "dihedral_rest_angles": _member_array(topology_state, "dihedral_rest_angles", np.float32),
+        "dihedral_signs": _member_array(topology_state, "dihedral_signs", np.int8),
+        "volume_pairs": _member_array(topology_state, "volume_pairs", np.int32, (4,)),
+        "volume_rest": _member_array(topology_state, "volume_rest", np.float32),
+        "collided_by_groups": int(getattr(topology_state, "collided_by_groups", 0) or 0),
+    }
+
+
 def static_state_arrays_for_native(state: dict) -> dict:
     return {
         "schema_version": int(MC2_SOLVER_VERSION),
@@ -1066,8 +1134,10 @@ def dynamic_state_arrays_for_native(state: dict) -> dict:
     return arrays
 
 
-def state_arrays_for_native(state: dict) -> dict:
-    arrays = static_state_arrays_for_native(state)
+def state_arrays_for_native(state: dict, topology_state=None, base_pose_state=None) -> dict:
+    if topology_state is None:
+        raise RuntimeError("MC2 native ABI view requires MC2TopologyState")
+    arrays = static_topology_arrays_for_native(topology_state, base_pose_state)
     arrays.update(dynamic_state_arrays_for_native(state))
     return arrays
 
@@ -1105,10 +1175,12 @@ def build_abi_view(
     obj: bpy.types.Object,
     colliders: list[dict] | None,
     function_name: str = "solve_meshcloth_mc2",
+    topology_state=None,
+    base_pose_state=None,
 ) -> dict:
     return {
         "status": native_status(function_name),
-        "state": state_arrays_for_native(state),
+        "state": state_arrays_for_native(state, topology_state, base_pose_state),
         "params": param_slots_for_native(state),
         "colliders": collision.collider_arrays_for_native(state, obj, colliders),
     }

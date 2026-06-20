@@ -59,9 +59,17 @@ def _native_abi_view_from_cache(
     colliders: list[dict] | None,
     solver_name: str,
     runtime_caches: dict | None = None,
+    topology_state=None,
+    base_pose_state=None,
 ) -> dict:
     slot = _native_runtime_slot(state, runtime_caches)
-    value = native_bridge.build_abi_view(state, obj, colliders)
+    value = native_bridge.build_abi_view(
+        state,
+        obj,
+        colliders,
+        topology_state=topology_state,
+        base_pose_state=base_pose_state,
+    )
     slot["abi_view_current"] = {
         "solver": solver_name,
         "frame": state.get("frame"),
@@ -78,6 +86,8 @@ def _write_native_debug_view(
     solver_name: str,
     runtime_caches: dict | None,
     enabled: bool,
+    topology_state=None,
+    base_pose_state=None,
 ) -> None:
     native_slot["solver"] = solver_name
     if not enabled:
@@ -86,7 +96,15 @@ def _write_native_debug_view(
         native_slot.pop("abi_view_current", None)
         native_slot.pop("collider_arrays", None)
         return
-    abi_view = _native_abi_view_from_cache(state, obj, colliders, solver_name, runtime_caches)
+    abi_view = _native_abi_view_from_cache(
+        state,
+        obj,
+        colliders,
+        solver_name,
+        runtime_caches,
+        topology_state,
+        base_pose_state,
+    )
     native_slot["abi_view"] = abi_view
     native_slot["collider_arrays"] = abi_view["colliders"]
 
@@ -191,6 +209,50 @@ def _base_pose_array(base_pose_state, state: dict, key: str) -> np.ndarray:
     return np.ascontiguousarray(value, dtype=np.float32)
 
 
+def _topology_array(topology_state, state: dict, key: str, dtype) -> np.ndarray:
+    value = getattr(topology_state, key) if topology_state is not None else state[key]
+    return np.ascontiguousarray(value, dtype=dtype)
+
+
+def _team_time_scale(team_state) -> float:
+    try:
+        value = float(getattr(team_state, "time_scale", 1.0))
+    except (TypeError, ValueError):
+        value = 1.0
+    if not np.isfinite(value):
+        return 1.0
+    return max(0.0, value)
+
+
+def _team_frame_delta_time(scene: bpy.types.Scene, team_state) -> float:
+    return blender_io.scene_delta_time(scene) * _team_time_scale(team_state)
+
+
+def _paused_state_for_time_scale(
+    state: dict,
+    team_state,
+    frame_dt: float,
+    step_dt: float,
+    substep_count: int,
+    timing: dict | None,
+) -> dict:
+    stage_start = time.perf_counter() if timing is not None else None
+    next_state = mc2_state.inherit_runtime_slots(state, dict(state))
+    team_state.apply_frame_context(
+        frame_dt,
+        step_dt,
+        0,
+        0,
+        team_state.frame_interpolation,
+        next_state,
+        substep_count=substep_count,
+    )
+    team_state.mirror_to_legacy(next_state)
+    if timing is not None:
+        _add_timing(timing, "time_scale_pause", time.perf_counter() - stage_start)
+    return next_state
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -272,6 +334,7 @@ def solve_meshcloth(
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
     particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
     base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
+    topology_state_ref = mc2_state.topology_state_for_center(state, center_state_ref)
     positions = _particle_array(particle_state_ref, state, "next_positions")
     old_positions = _particle_array(particle_state_ref, state, "old_positions")
     base_positions = _base_pose_array(base_pose_state_ref, state, "base_positions")
@@ -279,27 +342,53 @@ def solve_meshcloth(
     base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
     step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
     step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
-    attributes = np.ascontiguousarray(state["attributes"], dtype=np.uint8)
-    depths = np.ascontiguousarray(state["depths"], dtype=np.float32)
+    attributes = _topology_array(topology_state_ref, state, "attributes", np.uint8)
+    depths = _topology_array(topology_state_ref, state, "depths", np.float32)
     friction = _particle_array(particle_state_ref, state, "friction")
     static_friction = _particle_array(particle_state_ref, state, "static_friction")
     velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
     velocity = _particle_array(particle_state_ref, state, "velocity")
     real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
-    collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
-    collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
+    collision_radii = _topology_array(topology_state_ref, state, "collision_radii", np.float32)
+    collided_by_groups = math_utils.clamp_group_mask(
+        topology_state_ref.collided_by_groups if topology_state_ref is not None else state.get("collided_by_groups", 0)
+    )
     collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
     collision_normals.fill(0.0)
+    parent_indices = _topology_array(topology_state_ref, state, "parent_indices", np.int32)
+    root_indices = _topology_array(topology_state_ref, state, "root_indices", np.int32)
+    tether_rest_lengths = _topology_array(topology_state_ref, state, "tether_rest_lengths", np.float32)
+    baseline_start = _topology_array(topology_state_ref, state, "baseline_start", np.int32)
+    baseline_count = _topology_array(topology_state_ref, state, "baseline_count", np.int32)
+    baseline_data = _topology_array(topology_state_ref, state, "baseline_data", np.int32)
+    vertex_local_positions = _topology_array(topology_state_ref, state, "vertex_local_positions", np.float32)
+    vertex_local_rotations = _topology_array(topology_state_ref, state, "vertex_local_rotations", np.float32)
+    distance_start = _topology_array(topology_state_ref, state, "distance_start", np.int32)
+    distance_count = _topology_array(topology_state_ref, state, "distance_count", np.int32)
+    distance_data = _topology_array(topology_state_ref, state, "distance_data", np.int32)
+    distance_rest = _topology_array(topology_state_ref, state, "distance_rest", np.float32)
+    bend_distance_start = _topology_array(topology_state_ref, state, "bend_distance_start", np.int32)
+    bend_distance_count = _topology_array(topology_state_ref, state, "bend_distance_count", np.int32)
+    bend_distance_data = _topology_array(topology_state_ref, state, "bend_distance_data", np.int32)
+    bend_distance_neighbor_rest = _topology_array(topology_state_ref, state, "bend_distance_neighbor_rest", np.float32)
+    dihedral_pairs = _topology_array(topology_state_ref, state, "dihedral_pairs", np.int32)
+    dihedral_rest_angles = _topology_array(topology_state_ref, state, "dihedral_rest_angles", np.float32)
+    dihedral_signs = _topology_array(topology_state_ref, state, "dihedral_signs", np.int8)
+    volume_pairs = _topology_array(topology_state_ref, state, "volume_pairs", np.int32)
+    volume_rest = _topology_array(topology_state_ref, state, "volume_rest", np.float32)
+    edges = _topology_array(topology_state_ref, state, "edges", np.int32)
     movable = inv_masses > MC2SystemConstants.EPSILON
     fixed = ~movable
     _end_stage(timing, "solve_setup.arrays", substage_start)
 
     substage_start = _stage_start(timing)
-    frame_dt = blender_io.scene_delta_time(scene)
+    frame_dt = _team_frame_delta_time(scene, team_state_ref)
     substep_count = max(1, min(16, int(substeps)))
     iteration_count = max(0, min(64, int(iterations)))
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
+    if frame_dt <= MC2SystemConstants.EPSILON:
+        return _paused_state_for_time_scale(state, team_state_ref, frame_dt, step_dt, substep_count, timing)
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
@@ -520,24 +609,24 @@ def solve_meshcloth(
         native_step_basic_pose = native_bridge.update_step_basic_pose(
             base_positions,
             base_rotations,
-            state["parent_indices"],
-            state["baseline_start"],
-            state["baseline_count"],
-            state["baseline_data"],
-            state["vertex_local_positions"],
-            state["vertex_local_rotations"],
+            parent_indices,
+            baseline_start,
+            baseline_count,
+            baseline_data,
+            vertex_local_positions,
+            vertex_local_rotations,
             animation_pose_ratio_value,
         )
         if native_step_basic_pose is None:
             step_basic_positions, step_basic_rotations = baseline.update_step_basic_pose(
                 base_positions,
                 base_rotations,
-                state["parent_indices"],
-                state["baseline_start"],
-                state["baseline_count"],
-                state["baseline_data"],
-                state["vertex_local_positions"],
-                state["vertex_local_rotations"],
+                parent_indices,
+                baseline_start,
+                baseline_count,
+                baseline_data,
+                vertex_local_positions,
+                vertex_local_rotations,
                 animation_pose_ratio_value,
             )
         else:
@@ -589,8 +678,8 @@ def solve_meshcloth(
             if not native_bridge.project_tether(
                 positions,
                 inv_masses,
-                state["root_indices"],
-                state["tether_rest_lengths"],
+                root_indices,
+                tether_rest_lengths,
                 velocity_positions,
                 1.0,
                 float(tether_compression_param["value"]),
@@ -599,8 +688,8 @@ def solve_meshcloth(
                 constraints.project_tether(
                     positions,
                     inv_masses,
-                    state["root_indices"],
-                    state["tether_rest_lengths"],
+                    root_indices,
+                    tether_rest_lengths,
                     1.0,
                     float(tether_compression_param["value"]),
                     float(tether_stretch_param["value"]),
@@ -615,7 +704,7 @@ def solve_meshcloth(
             if collision_mode == 2:
                 if not native_bridge.project_edge_collisions(
                     positions,
-                    state["edges"],
+                    edges,
                     attributes,
                     inv_masses,
                     collision_radii,
@@ -626,7 +715,7 @@ def solve_meshcloth(
                 ):
                     collision.project_edge_collisions(
                         positions,
-                        state["edges"],
+                        edges,
                         attributes,
                         collision_radii,
                         collided_by_groups,
@@ -670,10 +759,10 @@ def solve_meshcloth(
                     projected = native_bridge.project_neighbor_constraints(
                         positions,
                         inv_masses,
-                        state["distance_start"],
-                        state["distance_count"],
-                        state["distance_data"],
-                        state["distance_rest"],
+                        distance_start,
+                        distance_count,
+                        distance_data,
+                        distance_rest,
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -682,10 +771,10 @@ def solve_meshcloth(
                     constraints.project_neighbor_constraints(
                         positions,
                         inv_masses,
-                        state["distance_start"],
-                        state["distance_count"],
-                        state["distance_data"],
-                        state["distance_rest"],
+                        distance_start,
+                        distance_count,
+                        distance_data,
+                        distance_rest,
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -701,10 +790,10 @@ def solve_meshcloth(
                 if not native_bridge.project_angle_constraints(
                     positions,
                     inv_masses,
-                    state["parent_indices"],
-                    state["baseline_start"],
-                    state["baseline_count"],
-                    state["baseline_data"],
+                    parent_indices,
+                    baseline_start,
+                    baseline_count,
+                    baseline_data,
                     step_basic_positions,
                     step_basic_rotations,
                     angle_restoration_values,
@@ -718,14 +807,14 @@ def solve_meshcloth(
                         positions,
                         inv_masses,
                         depths,
-                        state["parent_indices"],
-                        state["baseline_start"],
-                        state["baseline_count"],
-                        state["baseline_data"],
+                        parent_indices,
+                        baseline_start,
+                        baseline_count,
+                        baseline_data,
                         step_basic_positions,
                         step_basic_rotations,
-                        state["vertex_local_positions"],
-                        state["vertex_local_rotations"],
+                        vertex_local_positions,
+                        vertex_local_rotations,
                         angle_restoration_values,
                         velocity_positions,
                         angle_restoration_velocity_attenuation_values,
@@ -739,35 +828,35 @@ def solve_meshcloth(
             if use_bend:
                 # bend 在 angle 之后执行，优先走面内/二面角，再回退到邻接近似。
                 stage_start = time.perf_counter() if timing is not None else None
-                if len(state.get("dihedral_pairs", ())) > 0 or len(state.get("volume_pairs", ())) > 0:
+                if len(dihedral_pairs) > 0 or len(volume_pairs) > 0:
                     if not native_bridge.project_triangle_bending(
                         positions,
                         inv_masses,
-                        state["dihedral_pairs"],
-                        state["dihedral_rest_angles"],
-                        state["dihedral_signs"],
-                        state["volume_pairs"],
-                        state["volume_rest"],
+                        dihedral_pairs,
+                        dihedral_rest_angles,
+                        dihedral_signs,
+                        volume_pairs,
+                        volume_rest,
                         bend_stiffness_values,
                     ):
                         constraints.project_triangle_bending(
                             positions,
                             inv_masses,
-                            state["dihedral_pairs"],
-                            state["dihedral_rest_angles"],
-                            state["dihedral_signs"],
-                            state["volume_pairs"],
-                            state["volume_rest"],
+                            dihedral_pairs,
+                            dihedral_rest_angles,
+                            dihedral_signs,
+                            volume_pairs,
+                            volume_rest,
                             bend_stiffness_values,
                         )
                 else:
                     if not native_bridge.project_neighbor_constraints(
                         positions,
                         inv_masses,
-                        state["bend_distance_start"],
-                        state["bend_distance_count"],
-                        state["bend_distance_data"],
-                        state["bend_distance_neighbor_rest"],
+                        bend_distance_start,
+                        bend_distance_count,
+                        bend_distance_data,
+                        bend_distance_neighbor_rest,
                         bend_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -775,10 +864,10 @@ def solve_meshcloth(
                         constraints.project_neighbor_constraints(
                             positions,
                             inv_masses,
-                            state["bend_distance_start"],
-                            state["bend_distance_count"],
-                            state["bend_distance_data"],
-                            state["bend_distance_neighbor_rest"],
+                            bend_distance_start,
+                            bend_distance_count,
+                            bend_distance_data,
+                            bend_distance_neighbor_rest,
                             bend_stiffness_values,
                             velocity_positions,
                             MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -792,7 +881,7 @@ def solve_meshcloth(
                 if collision_mode == 2:
                     if not native_bridge.project_edge_collisions(
                         positions,
-                        state["edges"],
+                        edges,
                         attributes,
                         inv_masses,
                         collision_radii,
@@ -803,7 +892,7 @@ def solve_meshcloth(
                     ):
                         collision.project_edge_collisions(
                             positions,
-                            state["edges"],
+                            edges,
                             attributes,
                             collision_radii,
                             collided_by_groups,
@@ -846,10 +935,10 @@ def solve_meshcloth(
                     projected = native_bridge.project_neighbor_constraints(
                         positions,
                         inv_masses,
-                        state["distance_start"],
-                        state["distance_count"],
-                        state["distance_data"],
-                        state["distance_rest"],
+                        distance_start,
+                        distance_count,
+                        distance_data,
+                        distance_rest,
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -858,10 +947,10 @@ def solve_meshcloth(
                     constraints.project_neighbor_constraints(
                         positions,
                         inv_masses,
-                        state["distance_start"],
-                        state["distance_count"],
-                        state["distance_data"],
-                        state["distance_rest"],
+                        distance_start,
+                        distance_count,
+                        distance_data,
+                        distance_rest,
                         distance_stiffness_values,
                         velocity_positions,
                         MC2SystemConstants.DISTANCE_VELOCITY_ATTENUATION,
@@ -1017,7 +1106,7 @@ def solve_meshcloth(
     display_positions = native_bridge.calculate_display_positions(
         positions,
         real_velocity,
-        state["root_indices"],
+        root_indices,
         frame_dt,
         MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
     )
@@ -1025,7 +1114,7 @@ def solve_meshcloth(
         display_positions = _calc_display_positions(
             positions,
             real_velocity,
-            state["root_indices"],
+            root_indices,
             frame_dt,
         )
     display_positions = _blend_display_positions(base_positions, display_positions, blend_weight_value)
@@ -1081,6 +1170,8 @@ def solve_meshcloth(
         "py",
         runtime_caches,
         debug_native_view,
+        topology_state_ref,
+        base_pose_state_ref,
     )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
@@ -1167,6 +1258,7 @@ def solve_meshcloth_native_core(
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
     particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
     base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
+    topology_state_ref = mc2_state.topology_state_for_center(state, center_state_ref)
 
     positions = _particle_array(particle_state_ref, state, "next_positions")
     old_positions = _particle_array(particle_state_ref, state, "old_positions")
@@ -1175,28 +1267,33 @@ def solve_meshcloth_native_core(
     base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
     step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
     step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
-    depths = np.ascontiguousarray(state["depths"], dtype=np.float32)
+    attributes = _topology_array(topology_state_ref, state, "attributes", np.uint8)
+    depths = _topology_array(topology_state_ref, state, "depths", np.float32)
     friction = _particle_array(particle_state_ref, state, "friction")
     static_friction = _particle_array(particle_state_ref, state, "static_friction")
     velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
     velocity = _particle_array(particle_state_ref, state, "velocity")
     real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(
-        np.ascontiguousarray(state["attributes"], dtype=np.uint8),
+        attributes,
         depths,
         friction,
     )
-    collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
-    collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
+    collision_radii = _topology_array(topology_state_ref, state, "collision_radii", np.float32)
+    collided_by_groups = math_utils.clamp_group_mask(
+        topology_state_ref.collided_by_groups if topology_state_ref is not None else state.get("collided_by_groups", 0)
+    )
     collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
     collision_normals.fill(0.0)
     _end_stage(timing, "solve_setup.arrays", substage_start)
 
     substage_start = _stage_start(timing)
-    frame_dt = blender_io.scene_delta_time(scene)
+    frame_dt = _team_frame_delta_time(scene, team_state_ref)
     substep_count = max(1, min(16, int(substeps)))
     iteration_count = max(0, min(64, int(iterations)))
     step_dt = frame_dt / substep_count if substep_count > 0 else frame_dt
+    if frame_dt <= MC2SystemConstants.EPSILON:
+        return _paused_state_for_time_scale(state, team_state_ref, frame_dt, step_dt, substep_count, timing)
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
@@ -1273,7 +1370,12 @@ def solve_meshcloth_native_core(
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)
-    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
+    native_param_context = mc2_state.update_native_context_keys(
+        state,
+        runtime,
+        center_state_ref,
+        topology_state_ref,
+    )
     _end_stage(timing, "solve_setup.native_context", substage_start)
 
     substage_start = _stage_start(timing)
@@ -1472,8 +1574,13 @@ def solve_meshcloth_native_core(
     }
     context_stage_start = _stage_start(timing)
     native_context = mc2_state.ensure_native_context_for_center(state, center_state_ref)
-    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
-    static_arrays = native_context.upload_static_arrays(state)
+    native_param_context = mc2_state.update_native_context_keys(
+        state,
+        runtime,
+        center_state_ref,
+        topology_state_ref,
+    )
+    static_arrays = native_context.upload_static_arrays(state, topology_state_ref, base_pose_state_ref)
     native_params_ready = bool(
         native_context.upload_param_arrays(param_arrays)
         and native_bridge.has_function("solve_meshcloth_mc2_context_cached_params")
@@ -1644,6 +1751,8 @@ def solve_meshcloth_native_core(
         "cpp_core",
         runtime_caches,
         debug_native_view,
+        topology_state_ref,
+        base_pose_state_ref,
     )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:

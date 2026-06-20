@@ -46,6 +46,28 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
 
 
+def _dispose_cache_value(cache_state) -> None:
+    if cache_state is None or isinstance(cache_state, (str, bool, int, float)):
+        return
+    if hasattr(cache_state, "value"):
+        _dispose_cache_value(getattr(cache_state, "value", None))
+        return
+    dispose = getattr(cache_state, "omni_cache_dispose", None)
+    if callable(dispose):
+        try:
+            dispose("mc2 invalid RNA input")
+        except Exception:
+            pass
+        return
+    if isinstance(cache_state, dict):
+        for value in cache_state.values():
+            _dispose_cache_value(value)
+        return
+    if isinstance(cache_state, (list, tuple, set)):
+        for value in cache_state:
+            _dispose_cache_value(value)
+
+
 _MC2_TIMING_SUM_STAGES = {
     "cache",
     "base_proxy",
@@ -268,13 +290,19 @@ def _run_mesh_cloth_mc2_node(
     use_collider_collision: bool,
     collider_friction: float,
     collider_collision_mode: int,
+    time_scale: float,
+    skip_writing: bool,
     debug_output: bool,
     solver_backend: str = "py",
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     backend_label = "cpp" if str(solver_backend).lower() in {"cpp", "native", "native_core"} else "py"
     timing = _begin_timing() if debug_output else None
     stage_start = time.perf_counter() if timing is not None else None
-    obj = blender_io.require_mesh_object(proxy_obj, "proxy_obj")
+    try:
+        obj = blender_io.require_mesh_object(proxy_obj, "proxy_obj")
+    except ValueError:
+        _dispose_cache_value(cache_state)
+        return _OmniCache.replace(None), None, 0, 0
     scene = scene or bpy.context.scene
     output_key = blender_io.output_key_name(obj)
     ensure_delta_output(obj)
@@ -289,12 +317,15 @@ def _run_mesh_cloth_mc2_node(
 
     vertex_count = len(obj.data.vertices)
     cache_substage_start = time.perf_counter() if timing is not None else None
-    state_matches = mc2_state.state_matches(cache_state, obj, output_key, mesh_light_key)
+    cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) else None
+    state_matches = (
+        cache_owner is not None
+        and mc2_state.state_matches(cache_owner, obj, output_key, mesh_light_key)
+    )
     if timing is not None:
         _add_timing(timing, "cache.match", time.perf_counter() - cache_substage_start)
-    state = mc2_state.unwrap_state(cache_state) if state_matches else None
-    cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) and state_matches else None
-    replace_cache = cache_owner is None
+    state = cache_owner.state if state_matches else None
+    replace_cache = cache_owner is None or not state_matches
 
     cache_substage_start = time.perf_counter() if timing is not None else None
     cached_frame = blender_io.cache_frame(state)
@@ -315,13 +346,14 @@ def _run_mesh_cloth_mc2_node(
     if enabled:
         base_proxy_stage_start = time.perf_counter() if timing is not None else None
         stage_start = time.perf_counter() if timing is not None else None
-        ensure_base_pose_proxy(obj, scene, refresh=False)
+        base_pose_proxy = ensure_base_pose_proxy(obj, scene, refresh=False)
         ensure_delta_output(obj)
         if timing is not None:
             _add_timing(timing, "base_proxy.ensure", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
-        base_pose_proxy = blender_io.base_pose_proxy_object(obj)
+        if not blender_io.is_live_mesh_object(base_pose_proxy):
+            base_pose_proxy = ensure_base_pose_proxy(obj, scene, refresh=True)
         if timing is not None:
             _add_timing(timing, "base_proxy.validate", time.perf_counter() - stage_start)
             _add_timing(timing, "base_proxy", time.perf_counter() - base_proxy_stage_start)
@@ -373,6 +405,12 @@ def _run_mesh_cloth_mc2_node(
         cache_owner.replace_state(state)
         if timing is not None:
             _add_timing(timing, "transform", time.perf_counter() - stage_start)
+
+    cache_owner.team_state.apply_lifecycle_context(
+        state,
+        time_scale=time_scale,
+        skip_writing=skip_writing,
+    )
 
     dihedral_constraint_count = len(state.get("dihedral_pairs", ()))
     volume_constraint_count = len(state.get("volume_pairs", ()))
@@ -515,9 +553,14 @@ def _run_mesh_cloth_mc2_node(
         _add_timing(timing, "write.base_positions", time.perf_counter() - write_substage_start)
 
     write_substage_start = time.perf_counter() if timing is not None else None
-    blender_io.write_world_delta_attribute(obj, next_state["display_positions"], base_positions)
+    if cache_owner.team_state.skip_writing:
+        if timing is not None:
+            _add_timing(timing, "write.skip_writing", time.perf_counter() - write_substage_start)
+    else:
+        blender_io.write_world_delta_attribute(obj, next_state["display_positions"], base_positions)
+        if timing is not None:
+            _add_timing(timing, "write.delta_attribute", time.perf_counter() - write_substage_start)
     if timing is not None:
-        _add_timing(timing, "write.delta_attribute", time.perf_counter() - write_substage_start)
         _add_timing(timing, "write", time.perf_counter() - stage_start)
         _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
     cache_owner.replace_state(next_state)
@@ -592,6 +635,8 @@ def _run_mesh_cloth_mc2_node(
         "碰撞启用",
         "碰撞摩擦",
         "碰撞模式",
+        "时间缩放",
+        "跳过写回",
         "调试输出",
     ],
     input_init={
@@ -669,6 +714,7 @@ def _run_mesh_cloth_mc2_node(
             "max_value": 2,
             "description": "0关闭，1点碰撞，2边碰撞。球/胶囊/平面按 MC2；Box 为 HoTools 扩展。",
         },
+        "time_scale": {"min_value": 0.0, "max_value": 1.0},
     },
     _OUTPUT_NAME=["缓存", "低模代理", "顶点数", "约束数"],
     omni_description="""
@@ -740,6 +786,8 @@ def meshClothMC2(
     use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
+    time_scale: float = 1.0,
+    skip_writing: bool = False,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_mesh_cloth_mc2_node(
@@ -804,6 +852,8 @@ def meshClothMC2(
         use_collider_collision,
         collider_friction,
         collider_collision_mode,
+        time_scale,
+        skip_writing,
         debug_output,
     )
 
@@ -880,6 +930,8 @@ def meshClothMC2Cpp(
     use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
+    time_scale: float = 1.0,
+    skip_writing: bool = False,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_mesh_cloth_mc2_node(
@@ -944,6 +996,8 @@ def meshClothMC2Cpp(
         use_collider_collision,
         collider_friction,
         collider_collision_mode,
+        time_scale,
+        skip_writing,
         debug_output,
         solver_backend="cpp",
     )

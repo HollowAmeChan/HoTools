@@ -11,6 +11,27 @@ from . import math_utils
 _BASE_POSE_CACHE_PREFIX = "mc2_base_pose_world_pose"
 
 
+def is_live_id(value) -> bool:
+    if value is None:
+        return False
+    try:
+        value.as_pointer()
+        return True
+    except ReferenceError:
+        return False
+    except Exception:
+        return False
+
+
+def is_live_mesh_object(value) -> bool:
+    if not is_live_id(value) or not isinstance(value, bpy.types.Object):
+        return False
+    try:
+        return value.type == "MESH" and value.data is not None and is_live_id(value.data)
+    except ReferenceError:
+        return False
+
+
 def scene_delta_time(scene: bpy.types.Scene = None) -> float:
     scene = scene or bpy.context.scene
     render = scene.render
@@ -27,9 +48,13 @@ def substep_damping(frame_damping: float, substeps: int) -> float:
 
 
 def require_mesh_object(obj, label: str) -> bpy.types.Object:
-    if obj is None or not isinstance(obj, bpy.types.Object) or obj.type != "MESH":
+    if not is_live_mesh_object(obj):
         raise ValueError(f"{label} 不是 Mesh 对象")
-    if obj.data is None or len(obj.data.vertices) == 0:
+    try:
+        vertex_count = len(obj.data.vertices)
+    except ReferenceError as exc:
+        raise ValueError(f"{label} 不是 Mesh 对象") from exc
+    if vertex_count == 0:
         raise ValueError(f"{label} mesh 没有顶点")
     return obj
 
@@ -40,12 +65,15 @@ def output_key_name(obj: bpy.types.Object) -> str:
 
 def base_pose_proxy_object(obj: bpy.types.Object) -> bpy.types.Object | None:
     props = getattr(obj, "hotools_mesh_collision", None)
-    proxy = getattr(props, "mc2_base_pose_proxy", None) if props is not None else None
+    try:
+        proxy = getattr(props, "mc2_base_pose_proxy", None) if props is not None else None
+    except ReferenceError:
+        proxy = None
     if proxy is None:
         return None
     if proxy == obj:
         raise ValueError("MC2 BasePose只读对象不能指向当前物理写入对象")
-    if not isinstance(proxy, bpy.types.Object) or proxy.type != "MESH" or proxy.data is None:
+    if not is_live_mesh_object(proxy):
         raise ValueError("MC2 BasePose只读对象必须是Mesh对象")
     if len(proxy.data.vertices) == 0:
         raise ValueError("MC2 BasePose只读对象没有顶点")

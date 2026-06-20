@@ -39,6 +39,10 @@ def _safe_float(value, default: float = 0.0) -> float:
         return float(default)
 
 
+def _safe_unit_float(value, default: float = 0.0) -> float:
+    return max(0.0, min(1.0, _safe_float(value, default)))
+
+
 def _safe_int(value, default: int = 0) -> int:
     try:
         return int(value)
@@ -166,6 +170,56 @@ def _safe_shaped_array(value, shape: tuple[int, ...], dtype=np.float32, default=
     return np.zeros(shape, dtype=dtype)
 
 
+def _safe_flat_array(value, dtype=np.float32, default=None) -> np.ndarray:
+    def coerce(candidate) -> np.ndarray | None:
+        if candidate is None:
+            return None
+        try:
+            return np.ascontiguousarray(np.asarray(candidate, dtype=dtype).reshape(-1), dtype=dtype)
+        except Exception:
+            return None
+
+    result = coerce(value)
+    if result is not None:
+        return result
+    result = coerce(default)
+    if result is not None:
+        return result
+    return np.empty(0, dtype=dtype)
+
+
+def _safe_tailed_array(value, tail: tuple[int, ...], dtype=np.float32, default=None) -> np.ndarray:
+    tail = tuple(max(0, int(dim)) for dim in tail)
+    tail_size = int(np.prod(tail, dtype=np.int64)) if tail else 1
+
+    def empty() -> np.ndarray:
+        return np.empty((0, *tail), dtype=dtype) if tail else np.empty(0, dtype=dtype)
+
+    def coerce(candidate) -> np.ndarray | None:
+        if candidate is None:
+            return None
+        try:
+            array = np.asarray(candidate, dtype=dtype)
+            if not tail:
+                return np.ascontiguousarray(array.reshape(-1), dtype=dtype)
+            if array.ndim >= len(tail) + 1 and array.shape[-len(tail):] == tail:
+                return np.ascontiguousarray(array.reshape((-1, *tail)), dtype=dtype)
+            flat = array.reshape(-1)
+            if tail_size > 0 and int(flat.size) % tail_size == 0:
+                return np.ascontiguousarray(flat.reshape((-1, *tail)), dtype=dtype)
+        except Exception:
+            return None
+        return None
+
+    result = coerce(value)
+    if result is not None:
+        return result
+    result = coerce(default)
+    if result is not None:
+        return result
+    return empty()
+
+
 def _safe_particle_array(value, count: int, width: int = 3, default=None) -> np.ndarray:
     return _safe_shaped_array(value, (count, width), np.float32, default)
 
@@ -211,22 +265,51 @@ class MC2NativeContext:
         except Exception:
             return 0
 
-    def update_static_keys(self, state: dict) -> None:
-        topology_key = state.get("mesh_signature_key")
-        config_key = state.get("config_key")
-        next_topology_key = tuple(topology_key) if isinstance(topology_key, (list, tuple)) else topology_key
-        next_config_key = tuple(config_key) if isinstance(config_key, (list, tuple)) else config_key
+    @staticmethod
+    def _normalize_key(value):
+        if isinstance(value, np.ndarray):
+            value = value.reshape(-1).tolist()
+        if isinstance(value, (list, tuple)):
+            return tuple(MC2NativeContext._normalize_key(item) for item in value)
+        return value
+
+    def update_static_keys(self, state: dict, topology_state=None) -> None:
+        if topology_state is not None:
+            topology_key = (
+                getattr(topology_state, "mesh_signature_key", None),
+                getattr(topology_state, "object_matrix_world_3x3_key", None),
+            )
+            config_key = getattr(topology_state, "config_key", None)
+            next_vertex_count = int(getattr(topology_state, "vertex_count", 0) or 0)
+            next_distance_count = self._safe_len(getattr(topology_state, "distance_data", None))
+            next_bend_count = self._safe_len(getattr(topology_state, "bend_distance_data", None))
+            next_collider_radius_count = self._safe_len(getattr(topology_state, "collision_local_radii", None))
+        else:
+            topology_key = (
+                state.get("mesh_signature_key"),
+                state.get("object_matrix_world_3x3_key"),
+            )
+            config_key = state.get("config_key")
+            next_vertex_count = int(state.get("vertex_count", 0) or 0)
+            next_distance_count = self._safe_len(state.get("distance_data"))
+            next_bend_count = self._safe_len(state.get("bend_distance_data"))
+            next_collider_radius_count = self._safe_len(state.get("collision_local_radii"))
+        next_topology_key = self._normalize_key(topology_key)
+        next_config_key = self._normalize_key(config_key)
         topology_dirty = (
             self.topology_key != next_topology_key
             or self.config_key != next_config_key
-            or self.vertex_count != int(state.get("vertex_count", 0) or 0)
+            or self.vertex_count != next_vertex_count
+            or self.distance_count != next_distance_count
+            or self.bend_count != next_bend_count
+            or self.collider_radius_count != next_collider_radius_count
         )
         self.topology_key = next_topology_key
         self.config_key = next_config_key
-        self.vertex_count = int(state.get("vertex_count", 0) or 0)
-        self.distance_count = self._safe_len(state.get("distance_data"))
-        self.bend_count = self._safe_len(state.get("bend_distance_data"))
-        self.collider_radius_count = self._safe_len(state.get("collision_local_radii"))
+        self.vertex_count = next_vertex_count
+        self.distance_count = next_distance_count
+        self.bend_count = next_bend_count
+        self.collider_radius_count = next_collider_radius_count
         self.topology_dirty = bool(topology_dirty)
         if self.handle is None:
             self.handle = native_bridge.create_meshcloth_context(
@@ -251,9 +334,12 @@ class MC2NativeContext:
             self.param_arrays_key = None
         self.native_info = native_bridge.meshcloth_context_info(self.handle)
 
-    def upload_static_arrays(self, state: dict) -> dict:
+    def upload_static_arrays(self, state: dict, topology_state=None, base_pose_state=None) -> dict:
         if self.topology_dirty or not isinstance(self.static_arrays, dict):
-            self.static_arrays = native_bridge.static_state_arrays_for_native(state)
+            if topology_state is not None and hasattr(topology_state, "to_native_static_arrays"):
+                self.static_arrays = topology_state.to_native_static_arrays(base_pose_state)
+            else:
+                raise RuntimeError("MC2 native static arrays require MC2TopologyState")
             self.native_static_ready = False
         if self.handle is not None and not self.native_static_ready:
             self.native_static_ready = native_bridge.update_meshcloth_context_static_arrays(
@@ -563,6 +649,378 @@ class MC2BasePoseState:
 
 
 @dataclass
+class MC2TopologyState:
+    vertex_count: int = 0
+    mesh_signature_key: object | None = None
+    config_key: object | None = None
+    object_matrix_world_3x3_key: object | None = None
+    bend_kind: str = MC2_BEND_KIND_DISTANCE_APPROX
+    collided_by_groups: int = 0
+    rest_world_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    rest_world_normals: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    attributes: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.uint8))
+    depths: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    root_indices: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    parent_indices: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    root_rest_lengths: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    baseline_start: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    baseline_count: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    baseline_data: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    baseline_flags: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.uint8))
+    vertex_local_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    vertex_local_rotations: np.ndarray = field(default_factory=lambda: np.zeros((0, 4), dtype=np.float32))
+    tether_rest_lengths: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    edges: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int32))
+    triangles: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.int32))
+    edge_i: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    edge_j: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    edge_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    edge_type: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_i: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_j: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    bend_type: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    triangle_pairs: np.ndarray = field(default_factory=lambda: np.empty((0, 4), dtype=np.int32))
+    dihedral_pairs: np.ndarray = field(default_factory=lambda: np.empty((0, 4), dtype=np.int32))
+    dihedral_rest_angles: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    dihedral_signs: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int8))
+    volume_pairs: np.ndarray = field(default_factory=lambda: np.empty((0, 4), dtype=np.int32))
+    volume_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    bend_distance_i: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_distance_j: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_distance_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    bend_distance_type: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    distance_start: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    distance_count: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    distance_data: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    distance_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    bend_start: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_count: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_data: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_neighbor_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    bend_distance_start: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_distance_count: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_distance_data: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
+    bend_distance_neighbor_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    collision_local_radii: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    collision_radii: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+
+    @staticmethod
+    def _key_equal(left, right) -> bool:
+        return MC2NativeContext._normalize_key(left) == MC2NativeContext._normalize_key(right)
+
+    def matches_state_header(self, state: dict, vertex_count: int | None = None) -> bool:
+        if not isinstance(state, dict):
+            return False
+        count = int(vertex_count if vertex_count is not None else state.get("vertex_count", self.vertex_count) or 0)
+        if self.vertex_count != max(0, count):
+            return False
+        if not self._key_equal(self.mesh_signature_key, state.get("mesh_signature_key")):
+            return False
+        if not self._key_equal(self.config_key, state.get("config_key")):
+            return False
+        if not self._key_equal(self.object_matrix_world_3x3_key, state.get("object_matrix_world_3x3_key")):
+            return False
+        expected = {
+            "attributes": (self.vertex_count,),
+            "depths": (self.vertex_count,),
+            "distance_start": (self.vertex_count,),
+            "distance_count": (self.vertex_count,),
+            "bend_distance_start": (self.vertex_count,),
+            "bend_distance_count": (self.vertex_count,),
+            "collision_local_radii": (self.vertex_count,),
+            "collision_radii": (self.vertex_count,),
+        }
+        for key, shape in expected.items():
+            value = state.get(key)
+            current = getattr(self, key)
+            if not isinstance(value, np.ndarray) or not isinstance(current, np.ndarray):
+                return False
+            if value.shape != shape or current.shape != shape:
+                return False
+        counted = {
+            "distance_data": self.distance_data,
+            "bend_distance_data": self.bend_distance_data,
+            "baseline_data": self.baseline_data,
+            "edge_i": self.edge_i,
+            "bend_distance_i": self.bend_distance_i,
+            "dihedral_pairs": self.dihedral_pairs,
+            "volume_pairs": self.volume_pairs,
+            "edges": self.edges,
+        }
+        for key, current in counted.items():
+            value = state.get(key)
+            if not isinstance(value, np.ndarray) or not isinstance(current, np.ndarray):
+                return False
+            if value.shape != current.shape:
+                return False
+        return True
+
+    def replace_from_state(self, state: dict, vertex_count: int | None = None) -> None:
+        if not isinstance(state, dict):
+            return
+        count = int(vertex_count if vertex_count is not None else state.get("vertex_count", self.vertex_count) or 0)
+        self.vertex_count = max(0, count)
+        self.mesh_signature_key = state.get("mesh_signature_key", self.mesh_signature_key)
+        self.config_key = state.get("config_key", self.config_key)
+        self.object_matrix_world_3x3_key = state.get(
+            "object_matrix_world_3x3_key",
+            self.object_matrix_world_3x3_key,
+        )
+        raw_bend_kind = str(state.get("bend_kind", self.bend_kind) or "")
+        self.bend_kind = (
+            raw_bend_kind
+            if raw_bend_kind in {MC2_BEND_KIND_DISTANCE_APPROX, MC2_BEND_KIND_DIRECTION_DIHEDRAL}
+            else MC2_BEND_KIND_DISTANCE_APPROX
+        )
+        self.collided_by_groups = _safe_int(state.get("collided_by_groups", self.collided_by_groups), 0)
+        self.rest_world_positions = _safe_particle_array(
+            state.get("rest_world_positions"),
+            self.vertex_count,
+            3,
+            self.rest_world_positions,
+        )
+        self.rest_world_normals = _safe_particle_array(
+            state.get("rest_world_normals"),
+            self.vertex_count,
+            3,
+            self.rest_world_normals,
+        )
+        self.attributes = _safe_shaped_array(state.get("attributes"), (self.vertex_count,), np.uint8, self.attributes)
+        self.depths = _safe_shaped_array(state.get("depths"), (self.vertex_count,), np.float32, self.depths)
+        self.root_indices = _safe_shaped_array(
+            state.get("root_indices"),
+            (self.vertex_count,),
+            np.int32,
+            self.root_indices,
+        )
+        self.parent_indices = _safe_shaped_array(
+            state.get("parent_indices"),
+            (self.vertex_count,),
+            np.int32,
+            self.parent_indices,
+        )
+        self.root_rest_lengths = _safe_shaped_array(
+            state.get("root_rest_lengths"),
+            (self.vertex_count,),
+            np.float32,
+            self.root_rest_lengths,
+        )
+        self.baseline_start = _safe_flat_array(state.get("baseline_start"), np.int32, self.baseline_start)
+        self.baseline_count = _safe_flat_array(state.get("baseline_count"), np.int32, self.baseline_count)
+        self.baseline_data = _safe_flat_array(state.get("baseline_data"), np.int32, self.baseline_data)
+        self.baseline_flags = _safe_flat_array(state.get("baseline_flags"), np.uint8, self.baseline_flags)
+        self.vertex_local_positions = _safe_particle_array(
+            state.get("vertex_local_positions"),
+            self.vertex_count,
+            3,
+            self.vertex_local_positions,
+        )
+        self.vertex_local_rotations = _safe_particle_array(
+            state.get("vertex_local_rotations"),
+            self.vertex_count,
+            4,
+            self.vertex_local_rotations if len(self.vertex_local_rotations) else _identity_quat_array(self.vertex_count),
+        )
+        self.tether_rest_lengths = _safe_shaped_array(
+            state.get("tether_rest_lengths"),
+            (self.vertex_count,),
+            np.float32,
+            self.tether_rest_lengths,
+        )
+        self.edges = _safe_tailed_array(state.get("edges"), (2,), np.int32, self.edges)
+        self.triangles = _safe_tailed_array(state.get("triangles"), (3,), np.int32, self.triangles)
+        self.edge_i = _safe_flat_array(state.get("edge_i"), np.int32, self.edge_i)
+        self.edge_j = _safe_flat_array(state.get("edge_j"), np.int32, self.edge_j)
+        self.edge_rest = _safe_flat_array(state.get("edge_rest"), np.float32, self.edge_rest)
+        self.edge_type = _safe_flat_array(state.get("edge_type"), np.int32, self.edge_type)
+        self.bend_i = _safe_flat_array(state.get("bend_i"), np.int32, self.bend_i)
+        self.bend_j = _safe_flat_array(state.get("bend_j"), np.int32, self.bend_j)
+        self.bend_rest = _safe_flat_array(state.get("bend_rest"), np.float32, self.bend_rest)
+        self.bend_type = _safe_flat_array(state.get("bend_type"), np.int32, self.bend_type)
+        self.triangle_pairs = _safe_tailed_array(state.get("triangle_pairs"), (4,), np.int32, self.triangle_pairs)
+        self.dihedral_pairs = _safe_tailed_array(state.get("dihedral_pairs"), (4,), np.int32, self.dihedral_pairs)
+        self.dihedral_rest_angles = _safe_flat_array(
+            state.get("dihedral_rest_angles"),
+            np.float32,
+            self.dihedral_rest_angles,
+        )
+        self.dihedral_signs = _safe_flat_array(state.get("dihedral_signs"), np.int8, self.dihedral_signs)
+        self.volume_pairs = _safe_tailed_array(state.get("volume_pairs"), (4,), np.int32, self.volume_pairs)
+        self.volume_rest = _safe_flat_array(state.get("volume_rest"), np.float32, self.volume_rest)
+        self.bend_distance_i = _safe_flat_array(state.get("bend_distance_i"), np.int32, self.bend_distance_i)
+        self.bend_distance_j = _safe_flat_array(state.get("bend_distance_j"), np.int32, self.bend_distance_j)
+        self.bend_distance_rest = _safe_flat_array(
+            state.get("bend_distance_rest"),
+            np.float32,
+            self.bend_distance_rest,
+        )
+        self.bend_distance_type = _safe_flat_array(
+            state.get("bend_distance_type"),
+            np.int32,
+            self.bend_distance_type,
+        )
+        self.distance_start = _safe_shaped_array(
+            state.get("distance_start"),
+            (self.vertex_count,),
+            np.int32,
+            self.distance_start,
+        )
+        self.distance_count = _safe_shaped_array(
+            state.get("distance_count"),
+            (self.vertex_count,),
+            np.int32,
+            self.distance_count,
+        )
+        self.distance_data = _safe_flat_array(state.get("distance_data"), np.int32, self.distance_data)
+        self.distance_rest = _safe_flat_array(state.get("distance_rest"), np.float32, self.distance_rest)
+        self.bend_start = _safe_shaped_array(
+            state.get("bend_start"),
+            (self.vertex_count,),
+            np.int32,
+            self.bend_start,
+        )
+        self.bend_count = _safe_shaped_array(
+            state.get("bend_count"),
+            (self.vertex_count,),
+            np.int32,
+            self.bend_count,
+        )
+        self.bend_data = _safe_flat_array(state.get("bend_data"), np.int32, self.bend_data)
+        self.bend_neighbor_rest = _safe_flat_array(
+            state.get("bend_neighbor_rest"),
+            np.float32,
+            self.bend_neighbor_rest,
+        )
+        self.bend_distance_start = _safe_shaped_array(
+            state.get("bend_distance_start"),
+            (self.vertex_count,),
+            np.int32,
+            self.bend_distance_start,
+        )
+        self.bend_distance_count = _safe_shaped_array(
+            state.get("bend_distance_count"),
+            (self.vertex_count,),
+            np.int32,
+            self.bend_distance_count,
+        )
+        self.bend_distance_data = _safe_flat_array(
+            state.get("bend_distance_data"),
+            np.int32,
+            self.bend_distance_data,
+        )
+        self.bend_distance_neighbor_rest = _safe_flat_array(
+            state.get("bend_distance_neighbor_rest"),
+            np.float32,
+            self.bend_distance_neighbor_rest,
+        )
+        self.collision_local_radii = _safe_shaped_array(
+            state.get("collision_local_radii"),
+            (self.vertex_count,),
+            np.float32,
+            self.collision_local_radii,
+        )
+        self.collision_radii = _safe_shaped_array(
+            state.get("collision_radii"),
+            (self.vertex_count,),
+            np.float32,
+            self.collision_radii,
+        )
+    def mirror_to_state(self, state: dict | None) -> None:
+        if not isinstance(state, dict):
+            return
+        state["mesh_signature_key"] = self.mesh_signature_key
+        state["config_key"] = self.config_key
+        state["object_matrix_world_3x3_key"] = self.object_matrix_world_3x3_key
+        state["vertex_count"] = int(self.vertex_count)
+        state["bend_kind"] = self.bend_kind
+        state["collided_by_groups"] = int(self.collided_by_groups)
+        for key in (
+            "rest_world_positions",
+            "rest_world_normals",
+            "attributes",
+            "depths",
+            "root_indices",
+            "parent_indices",
+            "root_rest_lengths",
+            "baseline_start",
+            "baseline_count",
+            "baseline_data",
+            "baseline_flags",
+            "vertex_local_positions",
+            "vertex_local_rotations",
+            "tether_rest_lengths",
+            "edges",
+            "triangles",
+            "edge_i",
+            "edge_j",
+            "edge_rest",
+            "edge_type",
+            "bend_i",
+            "bend_j",
+            "bend_rest",
+            "bend_type",
+            "triangle_pairs",
+            "dihedral_pairs",
+            "dihedral_rest_angles",
+            "dihedral_signs",
+            "volume_pairs",
+            "volume_rest",
+            "bend_distance_i",
+            "bend_distance_j",
+            "bend_distance_rest",
+            "bend_distance_type",
+            "distance_start",
+            "distance_count",
+            "distance_data",
+            "distance_rest",
+            "bend_start",
+            "bend_count",
+            "bend_data",
+            "bend_neighbor_rest",
+            "bend_distance_start",
+            "bend_distance_count",
+            "bend_distance_data",
+            "bend_distance_neighbor_rest",
+            "collision_local_radii",
+            "collision_radii",
+        ):
+            state[key] = np.ascontiguousarray(getattr(self, key))
+
+    def to_legacy_state(self, base_pose_state: MC2BasePoseState | None = None) -> dict:
+        state = {}
+        self.mirror_to_state(state)
+        if base_pose_state is not None:
+            base_pose_state.mirror_to_state(state)
+        else:
+            state["base_rotations"] = _identity_quat_array(self.vertex_count)
+            state["step_basic_positions"] = np.ascontiguousarray(self.rest_world_positions.copy(), dtype=np.float32)
+            state["step_basic_rotations"] = _identity_quat_array(self.vertex_count)
+        return state
+
+    def to_native_static_arrays(self, base_pose_state: MC2BasePoseState | None = None) -> dict:
+        return native_bridge.static_topology_arrays_for_native(self, base_pose_state)
+
+    def debug_snapshot(self) -> dict:
+        return {
+            "verts": self.vertex_count,
+            "mesh_signature_key": self.mesh_signature_key,
+            "config_key": self.config_key,
+            "rest_world_positions": tuple(self.rest_world_positions.shape),
+            "attributes": tuple(self.attributes.shape),
+            "edges": tuple(self.edges.shape),
+            "triangles": tuple(self.triangles.shape),
+            "distance_items": int(len(self.distance_data)),
+            "bend_items": int(len(self.bend_distance_data)),
+            "dihedral_pairs": tuple(self.dihedral_pairs.shape),
+            "volume_pairs": tuple(self.volume_pairs.shape),
+            "collision_radii": int(len(self.collision_local_radii)),
+            "bend_kind": self.bend_kind,
+            "collided_by_groups": int(self.collided_by_groups),
+        }
+
+
+@dataclass
 class MC2CenterState:
     """单个 MeshCloth center 的运行状态容器。
 
@@ -575,6 +1033,7 @@ class MC2CenterState:
     io_cache: dict = field(default_factory=dict)
     native_cache: dict = field(default_factory=dict)
     native_context: MC2NativeContext | object | None = None
+    topology_state: MC2TopologyState = field(default_factory=MC2TopologyState)
     particle_state: MC2ParticleState = field(default_factory=MC2ParticleState)
     base_pose_state: MC2BasePoseState = field(default_factory=MC2BasePoseState)
     inertia_state: dict = field(default_factory=dict)
@@ -646,6 +1105,7 @@ class MC2CenterState:
         inertia_state = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
         self.inertia_state = inertia_state if isinstance(inertia_state, dict) else {}
         self._sync_inertia_summary_from_state()
+        self.topology_state.replace_from_state(self.legacy_state, self.vertex_count)
         self.base_pose_state.replace_from_state(self.legacy_state, self.vertex_count)
         self.particle_state.replace_from_state(self.legacy_state, self.vertex_count)
 
@@ -793,6 +1253,26 @@ class MC2CenterState:
         self.base_pose_state.mirror_to_state(target)
         return self.base_pose_state
 
+    def sync_topology_state_from_legacy(self) -> MC2TopologyState:
+        if isinstance(self.legacy_state, dict):
+            self.vertex_count = max(0, _safe_int(self.legacy_state.get("vertex_count", self.vertex_count), self.vertex_count))
+            self.mesh_signature_key = self.legacy_state.get("mesh_signature_key", self.mesh_signature_key)
+            self.config_key = self.legacy_state.get("config_key", self.config_key)
+        if self.topology_state.matches_state_header(self.legacy_state, self.vertex_count):
+            return self.topology_state
+        self.topology_state.replace_from_state(self.legacy_state, self.vertex_count)
+        return self.topology_state
+
+    def commit_topology_state(self, legacy_state: dict | None = None) -> MC2TopologyState:
+        target = legacy_state if isinstance(legacy_state, dict) else self.legacy_state
+        if isinstance(target, dict):
+            self.vertex_count = max(0, _safe_int(target.get("vertex_count", self.vertex_count), self.vertex_count))
+            self.mesh_signature_key = target.get("mesh_signature_key", self.mesh_signature_key)
+            self.config_key = target.get("config_key", self.config_key)
+        self.topology_state.replace_from_state(target, self.vertex_count)
+        self.topology_state.mirror_to_state(target)
+        return self.topology_state
+
     def _mirror_center_fields_to_inertia_state(self) -> None:
         if not isinstance(self.inertia_state, dict):
             return
@@ -930,6 +1410,7 @@ class MC2CenterState:
             "step_vector_length": self.step_vector_length,
             "inertia_vector_length": self.inertia_vector_length,
             "angular_velocity": self.angular_velocity,
+            "topology_state": self.topology_state.debug_snapshot(),
             "base_pose_state": self.base_pose_state.debug_snapshot(),
             "particle_state": self.particle_state.debug_snapshot(),
             "has_inertia_state": bool(self.inertia_state),
@@ -953,6 +1434,7 @@ class MC2CenterState:
         self.topology_cache.clear()
         self.io_cache.clear()
         self.native_cache.clear()
+        self.topology_state = MC2TopologyState()
         self.base_pose_state = MC2BasePoseState()
         self.particle_state = MC2ParticleState()
 
@@ -1033,7 +1515,7 @@ class MC2TeamState:
                 ),
             ),
         )
-        self.time_scale = max(0.0, _safe_float(legacy_state.get("time_scale", self.time_scale), self.time_scale))
+        self.time_scale = _safe_unit_float(legacy_state.get("time_scale", self.time_scale), self.time_scale)
         self.skip_writing = _safe_bool(
             legacy_state.get("skip_writing", legacy_state.get("skipWriting")),
             self.skip_writing,
@@ -1126,7 +1608,7 @@ class MC2TeamState:
         if scale_suspend is not None:
             self.scale_suspend = _safe_bool(scale_suspend, self.scale_suspend)
         if time_scale is not None:
-            self.time_scale = max(0.0, _safe_float(time_scale, self.time_scale))
+            self.time_scale = _safe_unit_float(time_scale, self.time_scale)
         if isinstance(legacy_state, dict):
             legacy_state["skip_writing"] = self.skip_writing
             legacy_state["culling"] = self.culling
@@ -1465,6 +1947,30 @@ def commit_base_pose_state_for_center(
     return center.commit_base_pose_state(state, **arrays)
 
 
+def topology_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2TopologyState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.sync_topology_state_from_legacy()
+
+
+def commit_topology_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2TopologyState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.commit_topology_state(state)
+
+
 def _extension_slots(state: dict) -> dict:
     extension_slots = state.get("extension_slots")
     if not isinstance(extension_slots, dict):
@@ -1569,9 +2075,11 @@ def update_native_context_keys(
     state: dict,
     runtime=None,
     center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+    topology_state: MC2TopologyState | None = None,
 ) -> MC2NativeContext:
     context = ensure_native_context_for_center(state, center_state)
-    context.update_static_keys(state)
+    topology_ref = topology_state if topology_state is not None else topology_state_for_center(state, center_state)
+    context.update_static_keys(state, topology_ref)
     param_key = None
     param_slots = None
     if runtime is not None:
@@ -1860,6 +2368,7 @@ def sync_state_to_object_transform(
         state.get("object_matrix_world_key") == matrix_key
         and state.get("object_matrix_world_3x3_key") == matrix_3x3_key
     ):
+        topology_state_for_center(state, center_state)
         base_pose_state_for_center(state, center_state)
         return state
 
@@ -2010,6 +2519,7 @@ def sync_state_to_object_transform(
         proxy_name="",
         proxy_frame=None,
     )
+    commit_topology_state_for_center(next_state, center_state)
     return next_state
 
 
@@ -2170,12 +2680,22 @@ def state_matches(
     output_key: str,
     mesh_light_key: tuple,
 ) -> bool:
+    try:
+        object_ptr = int(obj.as_pointer())
+        mesh_ptr = int(obj.data.as_pointer())
+        vertex_count = len(obj.data.vertices)
+    except ReferenceError:
+        return False
+    except Exception:
+        return False
+
     owner = state if isinstance(state, MC2RuntimeOwner) else None
-    state = unwrap_state(state)
+    if owner is None:
+        return False
+    state = owner.state
     if not isinstance(state, dict):
         return False
 
-    vertex_count = len(obj.data.vertices)
     required_shapes = {
         "rest_local_positions": (vertex_count, 3),
         "rest_world_positions": (vertex_count, 3),
@@ -2219,6 +2739,31 @@ def state_matches(
         if not isinstance(value, np.ndarray) or value.shape != shape:
             return False
     if owner is not None:
+        topology_state = owner.center_state.topology_state
+        topology_shapes = {
+            "rest_world_positions": (vertex_count, 3),
+            "rest_world_normals": (vertex_count, 3),
+            "attributes": (vertex_count,),
+            "depths": (vertex_count,),
+            "root_indices": (vertex_count,),
+            "parent_indices": (vertex_count,),
+            "root_rest_lengths": (vertex_count,),
+            "vertex_local_positions": (vertex_count, 3),
+            "vertex_local_rotations": (vertex_count, 4),
+            "tether_rest_lengths": (vertex_count,),
+            "distance_start": (vertex_count,),
+            "distance_count": (vertex_count,),
+            "bend_start": (vertex_count,),
+            "bend_count": (vertex_count,),
+            "bend_distance_start": (vertex_count,),
+            "bend_distance_count": (vertex_count,),
+            "collision_local_radii": (vertex_count,),
+            "collision_radii": (vertex_count,),
+        }
+        for key, shape in topology_shapes.items():
+            value = getattr(topology_state, key)
+            if not isinstance(value, np.ndarray) or value.shape != shape:
+                return False
         base_pose_state = owner.center_state.base_pose_state
         base_pose_shapes = {
             "base_positions": (vertex_count, 3),
@@ -2367,8 +2912,8 @@ def state_matches(
     return (
         state.get("kind") == MC2_CACHE_KIND
         and state.get("solver_version") == MC2_SOLVER_VERSION
-        and state.get("object_ptr") == int(obj.as_pointer())
-        and state.get("mesh_ptr") == int(obj.data.as_pointer())
+        and state.get("object_ptr") == object_ptr
+        and state.get("mesh_ptr") == mesh_ptr
         and state.get("output_key") == output_key
         and state.get("mesh_light_key") == mesh_light_key
         and state.get("vertex_count") == vertex_count
