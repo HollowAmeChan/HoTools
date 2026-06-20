@@ -3,10 +3,12 @@
 #include "hotools_mc2.hpp"
 #include "hotools_mesh_xpbd.hpp"
 #include "hotools_property_curve.hpp"
+#include "mc2_context.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -2043,6 +2045,42 @@ PyMethodDef kMethods[] = {
         "Solve one mesh shape-key XPBD step in-place.",
     },
     {
+        "create_meshcloth_mc2_context",
+        hotools::create_meshcloth_mc2_context,
+        METH_VARARGS,
+        "Create an MC2 MeshCloth native context handle.",
+    },
+    {
+        "update_meshcloth_mc2_context_static",
+        hotools::update_meshcloth_mc2_context_static,
+        METH_VARARGS,
+        "Update MC2 MeshCloth native context static metadata.",
+    },
+    {
+        "update_meshcloth_mc2_context_static_arrays",
+        hotools::update_meshcloth_mc2_context_static_arrays,
+        METH_VARARGS,
+        "Upload MC2 MeshCloth static topology arrays into a native context.",
+    },
+    {
+        "update_meshcloth_mc2_context_params",
+        hotools::update_meshcloth_mc2_context_params,
+        METH_VARARGS,
+        "Update MC2 MeshCloth native context parameter metadata.",
+    },
+    {
+        "meshcloth_mc2_context_info",
+        hotools::meshcloth_mc2_context_info,
+        METH_VARARGS,
+        "Return MC2 MeshCloth native context metadata.",
+    },
+    {
+        "free_meshcloth_mc2_context",
+        hotools::free_meshcloth_mc2_context,
+        METH_VARARGS,
+        "Release MC2 MeshCloth native context resources.",
+    },
+    {
         "project_neighbor_constraints_mc2",
         project_neighbor_constraints_mc2,
         METH_VARARGS,
@@ -2125,6 +2163,12 @@ PyMethodDef kMethods[] = {
         solve_meshcloth_mc2,
         METH_VARARGS,
         "Solve one MC2 MeshCloth array frame in-place.",
+    },
+    {
+        "solve_meshcloth_mc2_context",
+        hotools::solve_meshcloth_mc2_context,
+        METH_VARARGS,
+        "Solve one MC2 MeshCloth frame using a native context for static arrays.",
     },
     {nullptr, nullptr, 0, nullptr},
 };

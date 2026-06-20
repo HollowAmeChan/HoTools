@@ -518,7 +518,7 @@ def sample_motion_params(
     )
 
 
-def write_param_slots(next_state: dict, runtime: MC2RuntimeParams) -> None:
+def write_param_slots(next_state: dict, runtime: MC2RuntimeParams, param_slots_cache: dict | None = None) -> None:
     param_slots = dict(next_state.get("param_slots") or {})
-    param_slots.update(runtime.param_slots())
+    param_slots.update(param_slots_cache if isinstance(param_slots_cache, dict) else runtime.param_slots())
     next_state["param_slots"] = param_slots

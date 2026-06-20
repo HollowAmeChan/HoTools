@@ -251,10 +251,15 @@ def solve_meshcloth(
     colliders: list[dict] | None = None,
     runtime_caches: dict | None = None,
     debug_native_view: bool = False,
+    center_state: mc2_state.MC2CenterState | mc2_state.MC2RuntimeOwner | None = None,
+    team_state: mc2_state.MC2TeamState | mc2_state.MC2RuntimeOwner | None = None,
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
     substage_start = _stage_start(timing)
     colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
+    team_state_ref = mc2_state.team_state_for_solver(state, team_state)
+    center_state_ref = mc2_state.coerce_center_state(center_state)
+    frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
     positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
     base_positions = np.ascontiguousarray(state["base_positions"], dtype=np.float32)
@@ -288,6 +293,7 @@ def solve_meshcloth(
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
+    team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
         state,
         step_dt,
@@ -295,6 +301,7 @@ def solve_meshcloth(
         stablization_time_after_reset,
         blend_weight,
     )
+    team_state_ref.apply_blend_context(velocity_weight_value, blend_weight_value, state)
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     _end_stage(timing, "solve_setup.team", substage_start)
 
@@ -357,6 +364,10 @@ def solve_meshcloth(
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)
+    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
+    _end_stage(timing, "solve_setup.native_context", substage_start)
+
+    substage_start = _stage_start(timing)
     substep_damping_values = runtime.substep_damping_values
     distance_stiffness_values = runtime.distance_stiffness_values
     bend_stiffness_values = runtime.bend_stiffness_values
@@ -406,7 +417,7 @@ def solve_meshcloth(
         # BasePose 模式下，骨架/对象级基础运动已经通过 base_positions 输入。
         # 这里禁止再把写入对象矩阵变化当作整体惯性位移，避免双重变换和 Python 顶点循环卡顿。
         inertia_state = inertia.prepare_frame(
-            state.get("inertia_state"),
+            frame_inertia_state,
             obj,
             frame_dt,
             1.0,
@@ -419,7 +430,7 @@ def solve_meshcloth(
         )
     else:
         inertia_state = inertia.prepare_frame(
-            state.get("inertia_state"),
+            frame_inertia_state,
             obj,
             frame_dt,
             float(world_inertia_param["value"]),
@@ -432,6 +443,7 @@ def solve_meshcloth(
             anchor_obj,
             float(runtime.anchor_inertia_param["value"]),
         )
+    mc2_state.set_inertia_state_for_center(state, inertia_state, center_state_ref)
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
         old_positions = base_positions.copy()
@@ -469,11 +481,12 @@ def solve_meshcloth(
         gravity_falloff,
         inertia_state,
     )
+    team_state_ref.apply_gravity_context(gravity_dot, gravity_ratio, state)
     angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
         runtime,
         depths,
-        gravity_dot,
-        gravity_ratio,
+        team_state_ref.gravity_dot,
+        team_state_ref.gravity_ratio,
     )
     _end_stage(timing, "solve_setup.gravity", substage_start)
     if timing is not None:
@@ -961,15 +974,26 @@ def solve_meshcloth(
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
-    next_state["animation_pose_ratio"] = float(animation_pose_ratio_value)
-    next_state["gravity_dot"] = float(runtime.gravity_dot)
-    next_state["gravity_ratio"] = float(runtime.gravity_ratio)
-    next_state["velocity_weight"] = float(runtime.velocity_weight)
-    next_state["blend_weight"] = float(runtime.blend_weight)
+    next_state["animation_pose_ratio"] = float(team_state_ref.animation_pose_ratio)
+    next_state["gravity_dot"] = float(team_state_ref.gravity_dot)
+    next_state["gravity_ratio"] = float(team_state_ref.gravity_ratio)
+    next_state["velocity_weight"] = float(team_state_ref.velocity_weight)
+    next_state["blend_weight"] = float(team_state_ref.blend_weight)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
-    next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
-    next_state["scale_ratio"] = float(next_state["inertia_state"].get("scale_ratio", world_scale) or world_scale)
-    next_state["negative_scale_sign"] = int(next_state["inertia_state"].get("negative_scale_sign", 1) or 1)
+    committed_inertia_state = mc2_state.commit_inertia_state_for_center(
+        next_state,
+        inertia_state,
+        obj,
+        center_state_ref,
+    )
+    next_state["scale_ratio"] = float(committed_inertia_state.get("scale_ratio", world_scale) or world_scale)
+    next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+    team_state_ref.apply_scale_context(
+        next_state["scale_ratio"],
+        next_state["negative_scale_sign"],
+        next_state,
+        committed_inertia_state.get("negative_scale_direction"),
+    )
     next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
     display_positions = native_bridge.calculate_display_positions(
@@ -998,7 +1022,7 @@ def solve_meshcloth(
     next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
-    runtime_params.write_param_slots(next_state, runtime)
+    runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
     native_slot = _native_runtime_slot(next_state, runtime_caches)
     _write_native_debug_view(
@@ -1079,6 +1103,8 @@ def solve_meshcloth_native_core(
     colliders: list[dict] | None = None,
     runtime_caches: dict | None = None,
     debug_native_view: bool = False,
+    center_state: mc2_state.MC2CenterState | mc2_state.MC2RuntimeOwner | None = None,
+    team_state: mc2_state.MC2TeamState | mc2_state.MC2RuntimeOwner | None = None,
 ) -> dict:
     # native_core 路径尽量保持和 Python 求解同一套顺序：
     # 输入整理 -> 曲线采样 -> substep inertia -> motion 采样 -> C++ 核心求解 -> 状态回填。
@@ -1088,6 +1114,9 @@ def solve_meshcloth_native_core(
         status = native_bridge.native_status("solve_meshcloth_mc2")
         raise RuntimeError(f"MC2 C++ backend is unavailable: {status}")
     colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
+    team_state_ref = mc2_state.team_state_for_solver(state, team_state)
+    center_state_ref = mc2_state.coerce_center_state(center_state)
+    frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
 
     positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
@@ -1119,6 +1148,7 @@ def solve_meshcloth_native_core(
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
+    team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
         state,
         step_dt,
@@ -1126,6 +1156,7 @@ def solve_meshcloth_native_core(
         stablization_time_after_reset,
         blend_weight,
     )
+    team_state_ref.apply_blend_context(velocity_weight_value, blend_weight_value, state)
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
     _end_stage(timing, "solve_setup.team", substage_start)
 
@@ -1188,6 +1219,10 @@ def solve_meshcloth_native_core(
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)
+    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
+    _end_stage(timing, "solve_setup.native_context", substage_start)
+
+    substage_start = _stage_start(timing)
     substep_damping_values = runtime.substep_damping_values
     distance_stiffness_values = runtime.distance_stiffness_values
     bend_stiffness_values = runtime.bend_stiffness_values
@@ -1237,7 +1272,7 @@ def solve_meshcloth_native_core(
         # BasePose 模式下基础动画来自只读代理，写入对象矩阵不再驱动物理整体惯性。
         # 这能避免移动骨架对象时 solve_setup 进入 apply_frame_shift 顶点循环。
         inertia_state = inertia.prepare_frame(
-            state.get("inertia_state"),
+            frame_inertia_state,
             obj,
             frame_dt,
             1.0,
@@ -1250,7 +1285,7 @@ def solve_meshcloth_native_core(
         )
     else:
         inertia_state = inertia.prepare_frame(
-            state.get("inertia_state"),
+            frame_inertia_state,
             obj,
             frame_dt,
             float(world_inertia_param["value"]),
@@ -1263,6 +1298,7 @@ def solve_meshcloth_native_core(
             anchor_obj,
             float(runtime.anchor_inertia_param["value"]),
         )
+    mc2_state.set_inertia_state_for_center(state, inertia_state, center_state_ref)
     if int(inertia_state.get("teleport_state", 0)) == inertia.TELEPORT_RESET:
         positions = base_positions.copy()
         old_positions = base_positions.copy()
@@ -1300,11 +1336,12 @@ def solve_meshcloth_native_core(
         gravity_falloff,
         inertia_state,
     )
+    team_state_ref.apply_gravity_context(gravity_dot, gravity_ratio, state)
     angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
         runtime,
         depths,
-        gravity_dot,
-        gravity_ratio,
+        team_state_ref.gravity_dot,
+        team_state_ref.gravity_ratio,
     )
     _end_stage(timing, "solve_setup.gravity", substage_start)
 
@@ -1364,7 +1401,15 @@ def solve_meshcloth_native_core(
         else -1.0
     )
 
-    arrays = native_bridge.state_arrays_for_native(state)
+    native_context = mc2_state.ensure_native_context_for_center(state, center_state_ref)
+    static_arrays = native_context.upload_static_arrays(state)
+    use_native_context_solve = bool(
+        native_context.handle is not None
+        and native_context.native_static_ready
+        and native_bridge.has_function("solve_meshcloth_mc2_context")
+    )
+    arrays = {} if use_native_context_solve else dict(static_arrays)
+    arrays.update(native_bridge.dynamic_state_arrays_for_native(state))
     arrays.update(
         {
             "positions": np.ascontiguousarray(positions, dtype=np.float32),
@@ -1387,6 +1432,7 @@ def solve_meshcloth_native_core(
     stage_start = time.perf_counter() if timing is not None else None
     solved = native_bridge.solve_meshcloth_core(
         arrays,
+        context_handle=native_context.handle if use_native_context_solve else None,
         distance_stiffness_values=distance_stiffness_values,
         bend_stiffness_values=bend_stiffness_values,
         angle_restoration_values=angle_restoration_values,
@@ -1432,17 +1478,28 @@ def solve_meshcloth_native_core(
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
     next_state["frame_delta_time"] = float(frame_dt)
     next_state["step_delta_time"] = float(step_dt)
-    next_state["animation_pose_ratio"] = float(animation_pose_ratio_value)
-    next_state["gravity_dot"] = float(runtime.gravity_dot)
-    next_state["gravity_ratio"] = float(runtime.gravity_ratio)
-    next_state["velocity_weight"] = float(runtime.velocity_weight)
-    next_state["blend_weight"] = float(runtime.blend_weight)
+    next_state["animation_pose_ratio"] = float(team_state_ref.animation_pose_ratio)
+    next_state["gravity_dot"] = float(team_state_ref.gravity_dot)
+    next_state["gravity_ratio"] = float(team_state_ref.gravity_ratio)
+    next_state["velocity_weight"] = float(team_state_ref.velocity_weight)
+    next_state["blend_weight"] = float(team_state_ref.blend_weight)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
-    next_state["inertia_state"] = inertia.commit_frame(inertia_state, obj)
-    next_state["scale_ratio"] = float(
-        next_state["inertia_state"].get("scale_ratio", world_scale_nonnegative) or world_scale_nonnegative
+    committed_inertia_state = mc2_state.commit_inertia_state_for_center(
+        next_state,
+        inertia_state,
+        obj,
+        center_state_ref,
     )
-    next_state["negative_scale_sign"] = int(next_state["inertia_state"].get("negative_scale_sign", 1) or 1)
+    next_state["scale_ratio"] = float(
+        committed_inertia_state.get("scale_ratio", world_scale_nonnegative) or world_scale_nonnegative
+    )
+    next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+    team_state_ref.apply_scale_context(
+        next_state["scale_ratio"],
+        next_state["negative_scale_sign"],
+        next_state,
+        committed_inertia_state.get("negative_scale_direction"),
+    )
     next_state["next_positions"] = np.ascontiguousarray(arrays["positions"], dtype=np.float32)
     next_state["old_positions"] = np.ascontiguousarray(arrays["old_positions"], dtype=np.float32)
     next_state["display_positions"] = np.ascontiguousarray(arrays["display_positions"], dtype=np.float32)
@@ -1456,7 +1513,7 @@ def solve_meshcloth_native_core(
     next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
     next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
-    runtime_params.write_param_slots(next_state, runtime)
+    runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
     native_slot = _native_runtime_slot(next_state, runtime_caches)
     _write_native_debug_view(

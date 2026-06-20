@@ -33,6 +33,119 @@ MC2_RUNTIME_CACHE_NAMES = (
 
 
 @dataclass
+class MC2NativeContext:
+    """未来 C++ persistent context 的 Python 生命周期占位。"""
+
+    topology_key: tuple | None = None
+    config_key: tuple | None = None
+    param_key: tuple | None = None
+    vertex_count: int = 0
+    distance_count: int = 0
+    bend_count: int = 0
+    collider_radius_count: int = 0
+    handle: object | None = None
+    static_arrays: dict | None = None
+    param_slots: dict | None = None
+    native_info: dict | None = None
+    native_static_ready: bool = False
+    topology_dirty: bool = True
+    params_dirty: bool = True
+    frame_serial: int = 0
+
+    @staticmethod
+    def _safe_len(value) -> int:
+        try:
+            return int(len(value))
+        except Exception:
+            return 0
+
+    def update_static_keys(self, state: dict) -> None:
+        topology_key = state.get("mesh_signature_key")
+        config_key = state.get("config_key")
+        next_topology_key = tuple(topology_key) if isinstance(topology_key, (list, tuple)) else topology_key
+        next_config_key = tuple(config_key) if isinstance(config_key, (list, tuple)) else config_key
+        topology_dirty = (
+            self.topology_key != next_topology_key
+            or self.config_key != next_config_key
+            or self.vertex_count != int(state.get("vertex_count", 0) or 0)
+        )
+        self.topology_key = next_topology_key
+        self.config_key = next_config_key
+        self.vertex_count = int(state.get("vertex_count", 0) or 0)
+        self.distance_count = self._safe_len(state.get("distance_data"))
+        self.bend_count = self._safe_len(state.get("bend_distance_data"))
+        self.collider_radius_count = self._safe_len(state.get("collision_local_radii"))
+        self.topology_dirty = bool(topology_dirty)
+        if self.handle is None:
+            self.handle = native_bridge.create_meshcloth_context(
+                self.vertex_count,
+                self.distance_count,
+                self.bend_count,
+                self.collider_radius_count,
+            )
+            self.native_static_ready = False
+        elif self.topology_dirty:
+            native_bridge.update_meshcloth_context_static(
+                self.handle,
+                self.vertex_count,
+                self.distance_count,
+                self.bend_count,
+                self.collider_radius_count,
+            )
+            self.native_static_ready = False
+        self.native_info = native_bridge.meshcloth_context_info(self.handle)
+
+    def upload_static_arrays(self, state: dict) -> dict:
+        if self.topology_dirty or not isinstance(self.static_arrays, dict):
+            self.static_arrays = native_bridge.static_state_arrays_for_native(state)
+            self.native_static_ready = False
+        if self.handle is not None and not self.native_static_ready:
+            self.native_static_ready = native_bridge.update_meshcloth_context_static_arrays(
+                self.handle,
+                self.static_arrays,
+            )
+            self.native_info = native_bridge.meshcloth_context_info(self.handle)
+        return self.static_arrays
+
+    def update_param_key(self, param_key: tuple | None, param_slots: dict | None = None) -> None:
+        next_key = tuple(param_key) if isinstance(param_key, (list, tuple)) else param_key
+        self.params_dirty = self.param_key != next_key
+        self.param_key = next_key
+        if param_slots is not None:
+            self.param_slots = param_slots
+        if self.handle is not None and self.params_dirty:
+            native_bridge.update_meshcloth_context_params(
+                self.handle,
+                len(self.param_slots) if isinstance(self.param_slots, dict) else 0,
+            )
+            self.native_info = native_bridge.meshcloth_context_info(self.handle)
+        self.frame_serial += 1
+
+    def debug_snapshot(self) -> dict:
+        return {
+            "has_handle": self.handle is not None,
+            "native_static_ready": self.native_static_ready,
+            "topology_dirty": self.topology_dirty,
+            "params_dirty": self.params_dirty,
+            "frame_serial": self.frame_serial,
+            "verts": self.vertex_count,
+            "distance_items": self.distance_count,
+            "bend_items": self.bend_count,
+            "collision_radii": self.collider_radius_count,
+            "param_slots": len(self.param_slots) if isinstance(self.param_slots, dict) else 0,
+            "native_info": self.native_info,
+        }
+
+    def dispose(self) -> None:
+        native_bridge.free_meshcloth_context(self.handle)
+        self.handle = None
+        self.static_arrays = None
+        self.native_static_ready = False
+        self.param_slots = None
+        self.native_info = None
+
+
+@dataclass
 class MC2CenterState:
     """单个 MeshCloth center 的运行状态容器。
 
@@ -44,7 +157,7 @@ class MC2CenterState:
     topology_cache: dict = field(default_factory=dict)
     io_cache: dict = field(default_factory=dict)
     native_cache: dict = field(default_factory=dict)
-    native_context: object | None = None
+    native_context: MC2NativeContext | object | None = None
     inertia_state: dict = field(default_factory=dict)
     init_local_gravity_direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
@@ -62,12 +175,59 @@ class MC2CenterState:
         inertia_state = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
         self.inertia_state = inertia_state if isinstance(inertia_state, dict) else {}
         direction = self.legacy_state.get("init_local_gravity_direction") if isinstance(self.legacy_state, dict) else None
+        if direction is None and isinstance(self.inertia_state, dict):
+            direction = self.inertia_state.get("init_local_gravity_direction")
+        if isinstance(direction, np.ndarray):
+            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
         if isinstance(direction, (list, tuple)) and len(direction) >= 3:
             self.init_local_gravity_direction = (
                 float(direction[0]),
                 float(direction[1]),
                 float(direction[2]),
             )
+
+    def ensure_inertia_state(self, obj: bpy.types.Object | None = None) -> dict:
+        """返回 CenterState 权威 inertia 字段，并镜像到 legacy dict。"""
+
+        if not isinstance(self.inertia_state, dict) or not self.inertia_state:
+            legacy_value = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
+            if isinstance(legacy_value, dict) and legacy_value:
+                self.inertia_state = legacy_value
+            elif obj is not None:
+                self.inertia_state = inertia.make_runtime_state(obj)
+            else:
+                self.inertia_state = {}
+        self._mirror_inertia_to_legacy()
+        return self.inertia_state
+
+    def set_inertia_state(self, value: dict | None) -> dict:
+        """更新 CenterState 权威 inertia 字段，并保持 legacy state 兼容。"""
+
+        self.inertia_state = value if isinstance(value, dict) else {}
+        self._mirror_inertia_to_legacy()
+        return self.inertia_state
+
+    def _mirror_inertia_to_legacy(self) -> None:
+        if not isinstance(self.legacy_state, dict):
+            return
+        self.legacy_state["inertia_state"] = self.inertia_state
+        if not isinstance(self.inertia_state, dict):
+            return
+        for key in ("scale_ratio", "negative_scale_sign", "negative_scale_direction"):
+            if key in self.inertia_state:
+                self.legacy_state[key] = self.inertia_state[key]
+        direction = self.inertia_state.get("init_local_gravity_direction")
+        if isinstance(direction, np.ndarray):
+            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
+        if isinstance(direction, np.ndarray):
+            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
+        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
+            self.init_local_gravity_direction = (
+                float(direction[0]),
+                float(direction[1]),
+                float(direction[2]),
+            )
+            self.legacy_state["init_local_gravity_direction"] = self.init_local_gravity_direction
 
     def _extension_slots(self) -> dict:
         extension_slots = self.legacy_state.get("extension_slots")
@@ -93,6 +253,11 @@ class MC2CenterState:
             self.native_cache = extension_slots.get("native_cache") if isinstance(extension_slots.get("native_cache"), dict) else self.native_cache
             if "native_context" in extension_slots:
                 self.native_context = extension_slots.get("native_context")
+
+    def ensure_native_context(self) -> MC2NativeContext:
+        if not isinstance(self.native_context, MC2NativeContext):
+            self.native_context = MC2NativeContext()
+        return self.native_context
 
     def runtime_cache_slots(self) -> dict:
         return {
@@ -126,9 +291,16 @@ class MC2CenterState:
             "io_cache": len(self.io_cache),
             "native_cache": len(self.native_cache),
             "has_native_context": self.native_context is not None,
+            "native_context": (
+                self.native_context.debug_snapshot()
+                if isinstance(self.native_context, MC2NativeContext)
+                else None
+            ),
         }
 
     def dispose(self) -> None:
+        if isinstance(self.native_context, MC2NativeContext):
+            self.native_context.dispose()
         self.native_context = None
         self.curve_cache.clear()
         self.topology_cache.clear()
@@ -189,6 +361,69 @@ class MC2TeamState:
         self.gravity_ratio = max(0.0, float(legacy_state.get("gravity_ratio", self.gravity_ratio)))
         self.velocity_weight = max(0.0, min(1.0, float(legacy_state.get("velocity_weight", self.velocity_weight))))
         self.blend_weight = max(0.0, min(1.0, float(legacy_state.get("blend_weight", self.blend_weight))))
+
+    def apply_solver_inputs(self, animation_pose_ratio: float, blend_weight: float, legacy_state: dict | None) -> None:
+        self.animation_pose_ratio = max(0.0, min(1.0, float(animation_pose_ratio)))
+        self.blend_weight = max(0.0, min(1.0, float(blend_weight)))
+        if isinstance(legacy_state, dict):
+            legacy_state["animation_pose_ratio"] = self.animation_pose_ratio
+            legacy_state["blend_weight"] = self.blend_weight
+
+    def apply_blend_context(
+        self,
+        velocity_weight: float,
+        blend_weight: float,
+        legacy_state: dict | None,
+    ) -> None:
+        self.velocity_weight = max(0.0, min(1.0, float(velocity_weight)))
+        self.blend_weight = max(0.0, min(1.0, float(blend_weight)))
+        if isinstance(legacy_state, dict):
+            legacy_state["velocity_weight"] = self.velocity_weight
+            legacy_state["blend_weight"] = self.blend_weight
+
+    def apply_gravity_context(self, gravity_dot: float, gravity_ratio: float, legacy_state: dict | None) -> None:
+        self.gravity_dot = max(0.0, min(1.0, float(gravity_dot)))
+        self.gravity_ratio = max(0.0, float(gravity_ratio))
+        if isinstance(legacy_state, dict):
+            legacy_state["gravity_dot"] = self.gravity_dot
+            legacy_state["gravity_ratio"] = self.gravity_ratio
+
+    def apply_scale_context(
+        self,
+        scale_ratio: float,
+        negative_scale_sign: int,
+        legacy_state: dict | None,
+        negative_scale_direction=None,
+    ) -> None:
+        self.scale_ratio = max(0.0, float(scale_ratio))
+        self.negative_scale_sign = int(negative_scale_sign) if int(negative_scale_sign) != 0 else 1
+        if negative_scale_direction is not None:
+            try:
+                direction = np.asarray(negative_scale_direction).reshape(-1)
+                if len(direction) >= 3:
+                    self.negative_scale_direction = (
+                        int(direction[0]) if int(direction[0]) != 0 else 1,
+                        int(direction[1]) if int(direction[1]) != 0 else 1,
+                        int(direction[2]) if int(direction[2]) != 0 else 1,
+                    )
+            except Exception:
+                pass
+        if isinstance(legacy_state, dict):
+            legacy_state["scale_ratio"] = self.scale_ratio
+            legacy_state["negative_scale_sign"] = self.negative_scale_sign
+            legacy_state["negative_scale_direction"] = self.negative_scale_direction
+
+    def mirror_to_legacy(self, legacy_state: dict | None) -> None:
+        if not isinstance(legacy_state, dict):
+            return
+        legacy_state["animation_pose_ratio"] = self.animation_pose_ratio
+        legacy_state["gravity_dot"] = self.gravity_dot
+        legacy_state["gravity_ratio"] = self.gravity_ratio
+        legacy_state["velocity_weight"] = self.velocity_weight
+        legacy_state["blend_weight"] = self.blend_weight
+        legacy_state["scale_ratio"] = self.scale_ratio
+        legacy_state["negative_scale_sign"] = self.negative_scale_sign
+        legacy_state["negative_scale_direction"] = self.negative_scale_direction
 
     def debug_snapshot(self) -> dict:
         return {
@@ -305,6 +540,84 @@ def ensure_runtime_owner(value=None) -> MC2RuntimeOwner:
     return MC2RuntimeOwner(unwrap_state(value))
 
 
+def coerce_center_state(value=None) -> MC2CenterState | None:
+    if isinstance(value, MC2CenterState):
+        return value
+    if isinstance(value, MC2RuntimeOwner):
+        return value.center_state
+    return None
+
+
+def coerce_team_state(value=None) -> MC2TeamState | None:
+    if isinstance(value, MC2TeamState):
+        return value
+    if isinstance(value, MC2RuntimeOwner):
+        return value.team_state
+    return None
+
+
+def team_state_for_solver(state: dict, team_state: MC2TeamState | MC2RuntimeOwner | None = None) -> MC2TeamState:
+    team = coerce_team_state(team_state)
+    if team is None:
+        team = MC2TeamState()
+    team.sync_from_legacy_state(state)
+    return team
+
+
+def mirror_team_state_to_legacy(state: dict, team_state: MC2TeamState | MC2RuntimeOwner | None = None) -> MC2TeamState:
+    team = team_state_for_solver(state, team_state)
+    team.mirror_to_legacy(state)
+    return team
+
+
+def inertia_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+    obj: bpy.types.Object | None = None,
+) -> dict:
+    center = coerce_center_state(center_state)
+    if center is not None:
+        inertia_state = center.ensure_inertia_state(obj)
+        if isinstance(state, dict):
+            state["inertia_state"] = inertia_state
+        return inertia_state
+
+    inertia_state = state.get("inertia_state") if isinstance(state, dict) else None
+    if isinstance(inertia_state, dict) and inertia_state:
+        return inertia_state
+    inertia_state = inertia.make_runtime_state(obj) if obj is not None else {}
+    if isinstance(state, dict):
+        state["inertia_state"] = inertia_state
+    return inertia_state
+
+
+def set_inertia_state_for_center(
+    state: dict,
+    inertia_state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> dict:
+    center = coerce_center_state(center_state)
+    if center is not None:
+        inertia_state = center.set_inertia_state(inertia_state)
+    if isinstance(state, dict):
+        state["inertia_state"] = inertia_state
+        if isinstance(inertia_state, dict):
+            for key in ("scale_ratio", "negative_scale_sign", "negative_scale_direction"):
+                if key in inertia_state:
+                    state[key] = inertia_state[key]
+    return inertia_state
+
+
+def commit_inertia_state_for_center(
+    state: dict,
+    inertia_state: dict,
+    obj: bpy.types.Object,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> dict:
+    committed = inertia.commit_frame(inertia_state, obj)
+    return set_inertia_state_for_center(state, committed, center_state)
+
+
 def _extension_slots(state: dict) -> dict:
     extension_slots = state.get("extension_slots")
     if not isinstance(extension_slots, dict):
@@ -352,6 +665,47 @@ def native_context(state: dict):
 
 def set_native_context(state: dict, value) -> None:
     set_runtime_cache_value(state, "native_context", value)
+
+
+def ensure_native_context_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2NativeContext:
+    center = coerce_center_state(center_state)
+    if center is not None:
+        context = center.ensure_native_context()
+        if isinstance(state, dict):
+            set_native_context(state, context)
+        return context
+    context = native_context(state)
+    if not isinstance(context, MC2NativeContext):
+        context = MC2NativeContext()
+        set_native_context(state, context)
+    return context
+
+
+def update_native_context_keys(
+    state: dict,
+    runtime=None,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2NativeContext:
+    context = ensure_native_context_for_center(state, center_state)
+    context.update_static_keys(state)
+    param_key = None
+    param_slots = None
+    if runtime is not None:
+        try:
+            param_slots = runtime.param_slots()
+            param_key = tuple(
+                (name, slot.get("mode"), slot.get("value"), slot.get("base_value"), len(slot.get("samples", ())))
+                for name, slot in sorted(param_slots.items())
+                if isinstance(slot, dict)
+            )
+        except Exception:
+            param_key = None
+            param_slots = None
+    context.update_param_key(param_key, param_slots)
+    return context
 
 
 def feature_slots(state: dict) -> dict:

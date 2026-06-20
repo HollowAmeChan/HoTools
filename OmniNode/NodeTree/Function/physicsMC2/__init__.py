@@ -55,6 +55,7 @@ _MC2_TIMING_SUM_STAGES = {
     "solve_setup",
     "solve_setup.params",
     "solve_setup.motion_samples",
+    "solve_setup.native_context",
     "write",
 }
 
@@ -369,6 +370,7 @@ def _run_mesh_cloth_mc2_node(
             state = mc2_state.sync_state_to_base_pose_write_container(state, obj)
         else:
             state = mc2_state.sync_state_to_object_transform(state, obj)
+        cache_owner.replace_state(state)
         if timing is not None:
             _add_timing(timing, "transform", time.perf_counter() - stage_start)
 
@@ -421,6 +423,7 @@ def _run_mesh_cloth_mc2_node(
         timing,
         cache_owner.io_cache,
     )
+    cache_owner.replace_state(state)
     if timing is not None:
         _add_timing(timing, "base_pose_sync", time.perf_counter() - stage_start)
 
@@ -497,6 +500,8 @@ def _run_mesh_cloth_mc2_node(
         timing,
         colliders=colliders,
         runtime_caches=cache_owner.runtime_cache_slots(),
+        center_state=cache_owner.center_state,
+        team_state=cache_owner.team_state,
     )
     if timing is not None:
         _add_timing(timing, "solve_total", time.perf_counter() - stage_start)

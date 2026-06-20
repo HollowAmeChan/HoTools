@@ -70,6 +70,102 @@ def has_function(function_name: str) -> bool:
     return bool(module is not None and hasattr(module, function_name))
 
 
+def create_meshcloth_context(vertex_count: int, distance_count: int, bend_count: int, collider_radius_count: int):
+    module = native_module()
+    function = getattr(module, "create_meshcloth_mc2_context", None) if module is not None else None
+    if function is None:
+        return None
+    return function(
+        int(vertex_count),
+        int(distance_count),
+        int(bend_count),
+        int(collider_radius_count),
+    )
+
+
+def update_meshcloth_context_static(
+    handle,
+    vertex_count: int,
+    distance_count: int,
+    bend_count: int,
+    collider_radius_count: int,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "update_meshcloth_mc2_context_static", None) if module is not None else None
+    if function is None or handle is None:
+        return False
+    function(
+        handle,
+        int(vertex_count),
+        int(distance_count),
+        int(bend_count),
+        int(collider_radius_count),
+    )
+    return True
+
+
+def update_meshcloth_context_static_arrays(handle, arrays: dict) -> bool:
+    module = native_module()
+    function = getattr(module, "update_meshcloth_mc2_context_static_arrays", None) if module is not None else None
+    if function is None or handle is None:
+        return False
+    function(
+        handle,
+        np.ascontiguousarray(arrays["attributes"], dtype=np.uint8),
+        np.ascontiguousarray(arrays["depths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["root_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["tether_rest_lengths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["parent_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["vertex_local_positions"], dtype=np.float32),
+        np.ascontiguousarray(arrays["vertex_local_rotations"], dtype=np.float32),
+        np.ascontiguousarray(arrays["distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_rest"], dtype=np.float32),
+        np.ascontiguousarray(arrays["bend_distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_neighbor_rest"], dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_pairs", ()), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("dihedral_rest_angles", ()), dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_signs", ()), dtype=np.int32),
+        np.ascontiguousarray(arrays.get("volume_pairs", ()), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("volume_rest", ()), dtype=np.float32),
+        np.ascontiguousarray(arrays.get("edges", ()), dtype=np.int32).reshape((-1, 2)),
+    )
+    return True
+
+
+def update_meshcloth_context_params(handle, param_slot_count: int) -> bool:
+    module = native_module()
+    function = getattr(module, "update_meshcloth_mc2_context_params", None) if module is not None else None
+    if function is None or handle is None:
+        return False
+    function(handle, int(param_slot_count))
+    return True
+
+
+def meshcloth_context_info(handle) -> dict | None:
+    module = native_module()
+    function = getattr(module, "meshcloth_mc2_context_info", None) if module is not None else None
+    if function is None or handle is None:
+        return None
+    value = function(handle)
+    return value if isinstance(value, dict) else None
+
+
+def free_meshcloth_context(handle) -> bool:
+    module = native_module()
+    function = getattr(module, "free_meshcloth_mc2_context", None) if module is not None else None
+    if function is None or handle is None:
+        return False
+    function(handle)
+    return True
+
+
 def _array(state: dict, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np.ndarray:
     value = np.ascontiguousarray(state[key], dtype=dtype)
     if shape_tail and value.shape[-len(shape_tail):] != shape_tail:
@@ -638,6 +734,7 @@ def _substep_scalar_array(value, substeps: int) -> np.ndarray:
 def solve_meshcloth_core(
     arrays: dict,
     *,
+    context_handle=None,
     distance_stiffness_values: np.ndarray,
     bend_stiffness_values: np.ndarray,
     angle_restoration_values: np.ndarray,
@@ -674,7 +771,8 @@ def solve_meshcloth_core(
     blend_weight: float = 1.0,
 ) -> bool:
     module = native_module()
-    function = getattr(module, "solve_meshcloth_mc2", None) if module is not None else None
+    function_name = "solve_meshcloth_mc2_context" if context_handle is not None else "solve_meshcloth_mc2"
+    function = getattr(module, function_name, None) if module is not None else None
     if function is None:
         return False
 
@@ -792,7 +890,19 @@ def solve_meshcloth_core(
         float(animation_pose_ratio),
         float(blend_weight),
     )
-    function(*call_args)
+    if context_handle is not None:
+        context_call_args = (
+            context_handle,
+            *call_args[0:15],
+            call_args[29],
+            call_args[34],
+            *call_args[40:49],
+            call_args[50],
+            *call_args[51:],
+        )
+        function(*context_call_args)
+    else:
+        function(*call_args)
 
     for key, view in writable_views.items():
         if view is not arrays[key]:
@@ -842,28 +952,14 @@ def _inertia_state_arrays(state: dict) -> dict:
     }
 
 
-def state_arrays_for_native(state: dict) -> dict:
-    arrays = {
+def static_state_arrays_for_native(state: dict) -> dict:
+    return {
         "schema_version": int(MC2_SOLVER_VERSION),
         "vertex_count": int(state["vertex_count"]),
-        "scale_ratio": float(state.get("scale_ratio", 1.0) or 1.0),
-        "negative_scale_sign": int(state.get("negative_scale_sign", 1) or 1),
-        "positions": _array(state, "next_positions", np.float32, (3,)),
-        "old_positions": _array(state, "old_positions", np.float32, (3,)),
-        "base_positions": _array(state, "base_positions", np.float32, (3,)),
         "rest_world_positions": _array(state, "rest_world_positions", np.float32, (3,)),
-        "base_normals": _array(state, "base_normals", np.float32, (3,)),
         "rest_world_normals": _array(state, "rest_world_normals", np.float32, (3,)),
-        "velocity_positions": _array(state, "velocity_positions", np.float32, (3,)),
-        "velocity": _array(state, "velocity", np.float32, (3,)),
-        "real_velocity": _array(state, "real_velocity", np.float32, (3,)),
-        "display_positions": _array(state, "display_positions", np.float32, (3,)),
-        "collision_normals": _array(state, "collision_normals", np.float32, (3,)),
         "attributes": _array(state, "attributes", np.uint8),
         "depths": _array(state, "depths", np.float32),
-        "inv_masses": _array(state, "inv_masses", np.float32),
-        "friction": _array(state, "friction", np.float32),
-        "static_friction": _array(state, "static_friction", np.float32),
         "root_indices": _array(state, "root_indices", np.int32),
         "parent_indices": _array(state, "parent_indices", np.int32),
         "root_rest_lengths": _array(state, "root_rest_lengths", np.float32),
@@ -901,10 +997,38 @@ def state_arrays_for_native(state: dict) -> dict:
         "dihedral_signs": _array(state, "dihedral_signs", np.int8),
         "volume_pairs": _array(state, "volume_pairs", np.int32, (4,)),
         "volume_rest": _array(state, "volume_rest", np.float32),
-        "collision_radii": _array(state, "collision_radii", np.float32),
         "collided_by_groups": int(state.get("collided_by_groups", 0)),
     }
+
+
+def dynamic_state_arrays_for_native(state: dict) -> dict:
+    arrays = {
+        "scale_ratio": float(state.get("scale_ratio", 1.0) or 1.0),
+        "negative_scale_sign": int(state.get("negative_scale_sign", 1) or 1),
+        "positions": _array(state, "next_positions", np.float32, (3,)),
+        "old_positions": _array(state, "old_positions", np.float32, (3,)),
+        "base_positions": _array(state, "base_positions", np.float32, (3,)),
+        "base_normals": _array(state, "base_normals", np.float32, (3,)),
+        "base_rotations": _array(state, "base_rotations", np.float32, (4,)),
+        "step_basic_positions": _array(state, "step_basic_positions", np.float32, (3,)),
+        "step_basic_rotations": _array(state, "step_basic_rotations", np.float32, (4,)),
+        "velocity_positions": _array(state, "velocity_positions", np.float32, (3,)),
+        "velocity": _array(state, "velocity", np.float32, (3,)),
+        "real_velocity": _array(state, "real_velocity", np.float32, (3,)),
+        "display_positions": _array(state, "display_positions", np.float32, (3,)),
+        "collision_normals": _array(state, "collision_normals", np.float32, (3,)),
+        "collision_radii": _array(state, "collision_radii", np.float32),
+        "inv_masses": _array(state, "inv_masses", np.float32),
+        "friction": _array(state, "friction", np.float32),
+        "static_friction": _array(state, "static_friction", np.float32),
+    }
     arrays.update(_inertia_state_arrays(state))
+    return arrays
+
+
+def state_arrays_for_native(state: dict) -> dict:
+    arrays = static_state_arrays_for_native(state)
+    arrays.update(dynamic_state_arrays_for_native(state))
     return arrays
 
 
