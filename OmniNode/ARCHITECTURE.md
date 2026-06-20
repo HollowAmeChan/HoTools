@@ -18,6 +18,40 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 - 读写已有 Blender 数据或已有数据块不属于临时 cache 约束。
 - 少数性能热点可以提供 C++ backend 节点，但 Python 节点层仍负责 Blender 数据和节点接口。
 
+## 性能结论和排查优先级
+
+2026-06 的 MC2 精细计时测试结论：这次掉帧主因不在 OmniNode 执行器、MC2 C++ 求解、BasePose evaluated mesh 读取或 delta 写回，而在 Blender 编辑器 UI 刷新，尤其是 Outliner 在大量对象/空物体场景下的刷新和绘制。
+
+实测参考数据：
+
+- `Tree Handler` 每帧约 `3.1-3.5ms`。
+- 树级 runtime timing 每帧约 `2.6-2.8ms`，主要耗时是 `meshClothMC2Cpp`。
+- `MC2 CPP` 节点内部每帧约 `2.5-2.7ms`。
+- `BASEPOSE_HANDLER` 每帧约 `0.45-0.60ms`。
+- BasePose `read_to_mesh` 约 `0.02-0.04ms`。
+- delta 写回里的 `write_mesh_update` / `write_obj_update_tag` 约 `0.003-0.006ms`。
+- 全屏显示 3D Region 或把 Outliner 切换成其他 editor 后，帧率可直接上涨几十 FPS。
+- 不同 Outliner 显示模式、过滤模式、展开层级和可见列的帧率也不同。
+- 关闭/开启全局撤销、切换渲染后端 OpenGL/Vulkan，对该问题域没有明显影响。
+
+维护判断：
+
+- 看到节点 debug 里的 `outside=...ms` 时，不能直接判定 MC2 或 OmniNode 慢。`outside` 是按采样频率反推的帧间墙钟剩余时间，可能包含 Blender 播放节奏、viewport 绘制、Outliner 刷新、depsgraph 评估和 UI 同步。
+- 如果 `Tree Handler` 和树级 timing 仍在数毫秒级，而 FPS 很低，应优先检查 Blender 外部因素：Outliner、3D View overlay、视图模式、场景对象数量、空物体数量、骨架/约束评估、播放同步模式。
+- Outliner 对场景对象数量非常敏感。大量空物体、导入 mesh、运行时代理对象或频繁标脏对象，都会放大 Outliner 的 redraw 成本；这类成本不一定会出现在 OmniNode/MC2 内部计时里。
+- 当前精细测试中，已排除全局撤销和渲染后端作为主因；强相关变量是 Outliner 是否显示、Outliner 当前模式，以及 Outliner 当前需要追踪的场景对象规模。
+- 性能优化优先级应是：先隔离 editor/UI redraw，再看 depsgraph，再看 Blender 数据写回，最后才看 solver 内部循环。
+- 不应为解决低帧率而盲目把 MC2 求解、BasePose 或 cache 逻辑改成跳帧/静态化。BasePose 如果依赖骨骼动画，第一帧静态缓存会破坏姿态驱动。
+
+建议排查流程：
+
+1. 打开 `debug_runtime_timing`、节点级 `debug_output`，同时观察 `Tree Handler`、树级 timing、MC2 timing、BasePose handler timing。
+2. 全屏 3D View 或临时切走 Outliner，对比 FPS。如果帧率大幅上升，先按 UI/editor redraw 处理。
+3. 切换 Outliner 显示模式、过滤模式、折叠展开层级和可见列，对比 FPS。
+4. 关闭 overlay、切换 Solid/Wire、隐藏导入集合或空物体集合，对比 FPS。
+5. 只有当 `Tree Handler` 或 MC2 内部 timing 本身明显升高时，才进入 OmniNode/MC2 代码路径优化。
+6. 设计运行时辅助对象时，默认假设 Outliner 会为每个场景对象付出刷新成本；能不注册新对象就不要注册，必须注册时应控制数量、隐藏显示并避免每帧改名、增删或改变层级关系。
+
 ## 核心边界
 
 ### 1. 函数生成是默认节点模型
