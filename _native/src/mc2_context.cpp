@@ -42,9 +42,11 @@ struct Mc2NativeContext {
     std::int64_t dihedral_count = 0;
     std::int64_t volume_count = 0;
     std::int64_t param_slot_count = 0;
+    std::int64_t param_array_count = 0;
     std::int64_t topology_serial = 0;
     std::int64_t param_serial = 0;
     bool static_ready = false;
+    bool param_arrays_ready = false;
     bool released = false;
 
     std::vector<std::uint8_t> attributes;
@@ -71,6 +73,17 @@ struct Mc2NativeContext {
     std::vector<std::int32_t> volume_pairs;
     std::vector<float> volume_rest;
     std::vector<std::int32_t> edges;
+    std::vector<float> distance_stiffness_values;
+    std::vector<float> bend_stiffness_values;
+    std::vector<float> angle_restoration_values;
+    std::vector<float> angle_restoration_velocity_attenuation_values;
+    std::vector<float> angle_restoration_gravity_falloff_values;
+    std::vector<float> angle_limit_values;
+    std::vector<float> substep_damping_values;
+    std::vector<float> max_distances;
+    std::vector<float> motion_stiffness_values;
+    std::vector<float> backstop_radii;
+    std::vector<float> backstop_distances;
 };
 
 Mc2NativeContext* get_mc2_context(PyObject* capsule) {
@@ -139,6 +152,22 @@ void copy_buffer_values(const Buffer& buffer, std::vector<T>& target) {
     target.assign(begin, begin + count);
 }
 
+void clear_param_storage(Mc2NativeContext& context) {
+    context.param_arrays_ready = false;
+    context.param_array_count = 0;
+    context.distance_stiffness_values.clear();
+    context.bend_stiffness_values.clear();
+    context.angle_restoration_values.clear();
+    context.angle_restoration_velocity_attenuation_values.clear();
+    context.angle_restoration_gravity_falloff_values.clear();
+    context.angle_limit_values.clear();
+    context.substep_damping_values.clear();
+    context.max_distances.clear();
+    context.motion_stiffness_values.clear();
+    context.backstop_radii.clear();
+    context.backstop_distances.clear();
+}
+
 void clear_static_storage(Mc2NativeContext& context) {
     context.static_ready = false;
     context.line_count = 0;
@@ -172,6 +201,7 @@ void clear_static_storage(Mc2NativeContext& context) {
     context.volume_pairs.clear();
     context.volume_rest.clear();
     context.edges.clear();
+    clear_param_storage(context);
 }
 
 PyObject* mc2_context_to_dict(const Mc2NativeContext& context) {
@@ -189,14 +219,46 @@ PyObject* mc2_context_to_dict(const Mc2NativeContext& context) {
         !dict_set_i64(result, "dihedral_count", context.dihedral_count) ||
         !dict_set_i64(result, "volume_count", context.volume_count) ||
         !dict_set_i64(result, "param_slot_count", context.param_slot_count) ||
+        !dict_set_i64(result, "param_array_count", context.param_array_count) ||
         !dict_set_i64(result, "topology_serial", context.topology_serial) ||
         !dict_set_i64(result, "param_serial", context.param_serial) ||
         !dict_set_bool(result, "static_ready", context.static_ready) ||
+        !dict_set_bool(result, "param_arrays_ready", context.param_arrays_ready) ||
         !dict_set_bool(result, "released", context.released)) {
         Py_DECREF(result);
         return nullptr;
     }
     return result;
+}
+
+bool expect_param_array_size(const std::vector<float>& values, Py_ssize_t vertex_count, const char* name) {
+    if (static_cast<Py_ssize_t>(values.size()) != vertex_count) {
+        PyErr_Format(PyExc_ValueError, "%s length mismatch", name);
+        return false;
+    }
+    return true;
+}
+
+bool ensure_context_param_arrays_ready(const Mc2NativeContext& context, Py_ssize_t vertex_count) {
+    if (!context.param_arrays_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 context parameter arrays have not been uploaded");
+        return false;
+    }
+    return expect_param_array_size(context.distance_stiffness_values, vertex_count, "distance_stiffness_values") &&
+           expect_param_array_size(context.bend_stiffness_values, vertex_count, "bend_stiffness_values") &&
+           expect_param_array_size(context.angle_restoration_values, vertex_count, "angle_restoration_values") &&
+           expect_param_array_size(context.angle_restoration_velocity_attenuation_values,
+                                   vertex_count,
+                                   "angle_restoration_velocity_attenuation_values") &&
+           expect_param_array_size(context.angle_restoration_gravity_falloff_values,
+                                   vertex_count,
+                                   "angle_restoration_gravity_falloff_values") &&
+           expect_param_array_size(context.angle_limit_values, vertex_count, "angle_limit_values") &&
+           expect_param_array_size(context.substep_damping_values, vertex_count, "substep_damping_values") &&
+           expect_param_array_size(context.max_distances, vertex_count, "max_distances") &&
+           expect_param_array_size(context.motion_stiffness_values, vertex_count, "motion_stiffness_values") &&
+           expect_param_array_size(context.backstop_radii, vertex_count, "backstop_radii") &&
+           expect_param_array_size(context.backstop_distances, vertex_count, "backstop_distances");
 }
 
 }  // namespace
@@ -468,6 +530,84 @@ PyObject* update_meshcloth_mc2_context_params(PyObject*, PyObject* args) {
     if (PyErr_Occurred()) {
         return nullptr;
     }
+    clear_param_storage(*context);
+    context->param_serial += 1;
+    Py_RETURN_NONE;
+}
+
+PyObject* update_meshcloth_mc2_context_param_arrays(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArrayCount = 11;
+    constexpr Py_ssize_t kArgCount = kArrayCount + 1;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "update_meshcloth_mc2_context_param_arrays expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+    auto* context = get_mc2_context(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_context_live(context)) {
+        return nullptr;
+    }
+
+    enum ParamArg {
+        ADistanceStiffness = 0,
+        ABendStiffness,
+        AAngleRestoration,
+        AAngleRestorationVelocityAttenuation,
+        AAngleRestorationGravityFalloff,
+        AAngleLimit,
+        ASubstepDamping,
+        AMaxDistances,
+        AMotionStiffness,
+        ABackstopRadii,
+        ABackstopDistances,
+    };
+    const char* names[kArrayCount] = {
+        "distance_stiffness_values",
+        "bend_stiffness_values",
+        "angle_restoration_values",
+        "angle_restoration_velocity_attenuation_values",
+        "angle_restoration_gravity_falloff_values",
+        "angle_limit_values",
+        "substep_damping_values",
+        "max_distances",
+        "motion_stiffness_values",
+        "backstop_radii",
+        "backstop_distances",
+    };
+
+    Buffer buffers[kArrayCount];
+    for (int index = 0; index < kArrayCount; ++index) {
+        if (!buffers[index].get(PyTuple_GET_ITEM(args, index + 1), PyBUF_FORMAT | PyBUF_ND, names[index])) {
+            return nullptr;
+        }
+    }
+
+    const Py_ssize_t vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (vertex_count <= 0) {
+        PyErr_SetString(PyExc_ValueError, "MC2 context vertex_count must be positive before parameter array upload");
+        return nullptr;
+    }
+    for (int index = 0; index < kArrayCount; ++index) {
+        if (!expect_float32(buffers[index], names[index]) || !expect_1d_array(buffers[index], names[index], vertex_count)) {
+            return nullptr;
+        }
+    }
+
+    clear_param_storage(*context);
+    copy_buffer_values(buffers[ADistanceStiffness], context->distance_stiffness_values);
+    copy_buffer_values(buffers[ABendStiffness], context->bend_stiffness_values);
+    copy_buffer_values(buffers[AAngleRestoration], context->angle_restoration_values);
+    copy_buffer_values(buffers[AAngleRestorationVelocityAttenuation],
+                       context->angle_restoration_velocity_attenuation_values);
+    copy_buffer_values(buffers[AAngleRestorationGravityFalloff],
+                       context->angle_restoration_gravity_falloff_values);
+    copy_buffer_values(buffers[AAngleLimit], context->angle_limit_values);
+    copy_buffer_values(buffers[ASubstepDamping], context->substep_damping_values);
+    copy_buffer_values(buffers[AMaxDistances], context->max_distances);
+    copy_buffer_values(buffers[AMotionStiffness], context->motion_stiffness_values);
+    copy_buffer_values(buffers[ABackstopRadii], context->backstop_radii);
+    copy_buffer_values(buffers[ABackstopDistances], context->backstop_distances);
+    context->param_array_count = vertex_count;
+    context->param_arrays_ready = true;
     context->param_serial += 1;
     Py_RETURN_NONE;
 }
@@ -506,7 +646,7 @@ PyObject* free_meshcloth_mc2_context(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
+PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_params, const char* function_name) {
     enum DynamicArg {
         APositions = 0,
         AOldPositions,
@@ -555,9 +695,14 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
         ASubstepVelocityWeights,
         kDynamicBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 1 + kDynamicBufferCount + 20;
+    constexpr int kCachedParamStart = ADistanceStiffnessValues;
+    constexpr int kCachedParamEnd = ABackstopDistances;
+    constexpr int kCachedParamCount = kCachedParamEnd - kCachedParamStart + 1;
+    const Py_ssize_t dynamic_arg_count =
+        use_cached_params ? kDynamicBufferCount - kCachedParamCount : kDynamicBufferCount;
+    const Py_ssize_t kArgCount = 1 + dynamic_arg_count + 20;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2_context expects %zd arguments", kArgCount);
+        PyErr_Format(PyExc_TypeError, "%s expects %zd arguments", function_name, kArgCount);
         return nullptr;
     }
 
@@ -620,9 +765,14 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
 
     Buffer buffers[kDynamicBufferCount];
     for (int index = 0; index < kDynamicBufferCount; ++index) {
+        if (use_cached_params && index >= kCachedParamStart && index <= kCachedParamEnd) {
+            continue;
+        }
         const int flags = index <= ADisplayPositions ? (PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND)
                                                      : (PyBUF_FORMAT | PyBUF_ND);
-        if (!buffers[index].get(PyTuple_GET_ITEM(args, index + 1), flags, names[index])) {
+        const Py_ssize_t tuple_index =
+            index + 1 - ((use_cached_params && index > kCachedParamEnd) ? kCachedParamCount : 0);
+        if (!buffers[index].get(PyTuple_GET_ITEM(args, tuple_index), flags, names[index])) {
             return nullptr;
         }
     }
@@ -652,8 +802,14 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
         !expect_float32(buffers[AStaticFriction], "static_friction") ||
         !expect_1d_array(buffers[AStaticFriction], "static_friction", vertex_count) ||
         !expect_float32(buffers[AInvMasses], "inv_masses") ||
-        !expect_1d_array(buffers[AInvMasses], "inv_masses", vertex_count) ||
-        !expect_float32(buffers[ADistanceStiffnessValues], "distance_stiffness_values") ||
+        !expect_1d_array(buffers[AInvMasses], "inv_masses", vertex_count)) {
+        return nullptr;
+    }
+    if (use_cached_params) {
+        if (!ensure_context_param_arrays_ready(*context, vertex_count)) {
+            return nullptr;
+        }
+    } else if (!expect_float32(buffers[ADistanceStiffnessValues], "distance_stiffness_values") ||
         !expect_1d_array(buffers[ADistanceStiffnessValues], "distance_stiffness_values", vertex_count) ||
         !expect_float32(buffers[ABendStiffnessValues], "bend_stiffness_values") ||
         !expect_1d_array(buffers[ABendStiffnessValues], "bend_stiffness_values", vertex_count) ||
@@ -678,8 +834,10 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
         !expect_float32(buffers[ABackstopRadii], "backstop_radii") ||
         !expect_1d_array(buffers[ABackstopRadii], "backstop_radii", vertex_count) ||
         !expect_float32(buffers[ABackstopDistances], "backstop_distances") ||
-        !expect_1d_array(buffers[ABackstopDistances], "backstop_distances", vertex_count) ||
-        !expect_float32(buffers[ACollisionRadii], "collision_radii") ||
+        !expect_1d_array(buffers[ABackstopDistances], "backstop_distances", vertex_count)) {
+        return nullptr;
+    }
+    if (!expect_float32(buffers[ACollisionRadii], "collision_radii") ||
         !expect_1d_array(buffers[ACollisionRadii], "collision_radii", vertex_count)) {
         return nullptr;
     }
@@ -715,7 +873,7 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    constexpr Py_ssize_t kScalarStart = 1 + kDynamicBufferCount;
+    const Py_ssize_t kScalarStart = 1 + dynamic_arg_count;
     const double frame_dt = as_double(PyTuple_GET_ITEM(args, kScalarStart + 0), "frame_dt");
     if (PyErr_Occurred()) {
         return nullptr;
@@ -857,28 +1015,50 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
     view.distance_count = data_or_dummy(context->distance_count_values);
     view.distance_data = data_or_dummy(context->distance_data);
     view.distance_rest = data_or_dummy(context->distance_rest);
-    view.distance_stiffness_values = static_cast<const float*>(buffers[ADistanceStiffnessValues].view.buf);
+    view.distance_stiffness_values = use_cached_params
+                                         ? data_or_dummy(context->distance_stiffness_values)
+                                         : static_cast<const float*>(buffers[ADistanceStiffnessValues].view.buf);
     view.bend_distance_start = data_or_dummy(context->bend_distance_start);
     view.bend_distance_count = data_or_dummy(context->bend_distance_count);
     view.bend_distance_data = data_or_dummy(context->bend_distance_data);
     view.bend_distance_rest = data_or_dummy(context->bend_distance_rest);
-    view.bend_stiffness_values = static_cast<const float*>(buffers[ABendStiffnessValues].view.buf);
+    view.bend_stiffness_values = use_cached_params
+                                     ? data_or_dummy(context->bend_stiffness_values)
+                                     : static_cast<const float*>(buffers[ABendStiffnessValues].view.buf);
     view.dihedral_pairs = data_or_dummy(context->dihedral_pairs);
     view.dihedral_rest_angles = data_or_dummy(context->dihedral_rest_angles);
     view.dihedral_signs = data_or_dummy(context->dihedral_signs);
     view.volume_pairs = data_or_dummy(context->volume_pairs);
     view.volume_rest = data_or_dummy(context->volume_rest);
-    view.angle_restoration_values = static_cast<const float*>(buffers[AAngleRestorationValues].view.buf);
+    view.angle_restoration_values = use_cached_params
+                                        ? data_or_dummy(context->angle_restoration_values)
+                                        : static_cast<const float*>(buffers[AAngleRestorationValues].view.buf);
     view.angle_restoration_velocity_attenuation_values =
-        static_cast<const float*>(buffers[AAngleRestorationVelocityAttenuationValues].view.buf);
+        use_cached_params
+            ? data_or_dummy(context->angle_restoration_velocity_attenuation_values)
+            : static_cast<const float*>(buffers[AAngleRestorationVelocityAttenuationValues].view.buf);
     view.angle_restoration_gravity_falloff_values =
-        static_cast<const float*>(buffers[AAngleRestorationGravityFalloffValues].view.buf);
-    view.angle_limit_values = static_cast<const float*>(buffers[AAngleLimitValues].view.buf);
-    view.substep_damping_values = static_cast<const float*>(buffers[ASubstepDampingValues].view.buf);
-    view.max_distances = static_cast<const float*>(buffers[AMaxDistances].view.buf);
-    view.motion_stiffness_values = static_cast<const float*>(buffers[AMotionStiffnessValues].view.buf);
-    view.backstop_radii = static_cast<const float*>(buffers[ABackstopRadii].view.buf);
-    view.backstop_distances = static_cast<const float*>(buffers[ABackstopDistances].view.buf);
+        use_cached_params
+            ? data_or_dummy(context->angle_restoration_gravity_falloff_values)
+            : static_cast<const float*>(buffers[AAngleRestorationGravityFalloffValues].view.buf);
+    view.angle_limit_values = use_cached_params
+                                  ? data_or_dummy(context->angle_limit_values)
+                                  : static_cast<const float*>(buffers[AAngleLimitValues].view.buf);
+    view.substep_damping_values = use_cached_params
+                                      ? data_or_dummy(context->substep_damping_values)
+                                      : static_cast<const float*>(buffers[ASubstepDampingValues].view.buf);
+    view.max_distances = use_cached_params
+                             ? data_or_dummy(context->max_distances)
+                             : static_cast<const float*>(buffers[AMaxDistances].view.buf);
+    view.motion_stiffness_values = use_cached_params
+                                       ? data_or_dummy(context->motion_stiffness_values)
+                                       : static_cast<const float*>(buffers[AMotionStiffnessValues].view.buf);
+    view.backstop_radii = use_cached_params
+                              ? data_or_dummy(context->backstop_radii)
+                              : static_cast<const float*>(buffers[ABackstopRadii].view.buf);
+    view.backstop_distances = use_cached_params
+                                  ? data_or_dummy(context->backstop_distances)
+                                  : static_cast<const float*>(buffers[ABackstopDistances].view.buf);
     view.edges = data_or_dummy(context->edges);
     view.collision_radii = static_cast<const float*>(buffers[ACollisionRadii].view.buf);
     view.collider_types = static_cast<const std::int32_t*>(buffers[AColliderTypes].view.buf);
@@ -934,6 +1114,14 @@ PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
 
     solve_meshcloth_mc2(view);
     Py_RETURN_NONE;
+}
+
+PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args) {
+    return solve_meshcloth_mc2_context_impl(args, false, "solve_meshcloth_mc2_context");
+}
+
+PyObject* solve_meshcloth_mc2_context_cached_params(PyObject*, PyObject* args) {
+    return solve_meshcloth_mc2_context_impl(args, true, "solve_meshcloth_mc2_context_cached_params");
 }
 
 }  // namespace hotools

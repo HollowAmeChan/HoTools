@@ -46,8 +46,11 @@ class MC2NativeContext:
     handle: object | None = None
     static_arrays: dict | None = None
     param_slots: dict | None = None
+    param_arrays: dict | None = None
+    param_arrays_key: tuple | None = None
     native_info: dict | None = None
     native_static_ready: bool = False
+    native_params_ready: bool = False
     topology_dirty: bool = True
     params_dirty: bool = True
     frame_serial: int = 0
@@ -84,6 +87,7 @@ class MC2NativeContext:
                 self.collider_radius_count,
             )
             self.native_static_ready = False
+            self.native_params_ready = False
         elif self.topology_dirty:
             native_bridge.update_meshcloth_context_static(
                 self.handle,
@@ -93,6 +97,9 @@ class MC2NativeContext:
                 self.collider_radius_count,
             )
             self.native_static_ready = False
+            self.native_params_ready = False
+            self.param_arrays = None
+            self.param_arrays_key = None
         self.native_info = native_bridge.meshcloth_context_info(self.handle)
 
     def upload_static_arrays(self, state: dict) -> dict:
@@ -114,6 +121,9 @@ class MC2NativeContext:
         if param_slots is not None:
             self.param_slots = param_slots
         if self.handle is not None and self.params_dirty:
+            self.native_params_ready = False
+            self.param_arrays = None
+            self.param_arrays_key = None
             native_bridge.update_meshcloth_context_params(
                 self.handle,
                 len(self.param_slots) if isinstance(self.param_slots, dict) else 0,
@@ -121,10 +131,29 @@ class MC2NativeContext:
             self.native_info = native_bridge.meshcloth_context_info(self.handle)
         self.frame_serial += 1
 
+    def upload_param_arrays(self, arrays: dict) -> bool:
+        next_key = _native_param_arrays_key(arrays)
+        arrays_dirty = self.param_arrays_key != next_key
+        self.param_arrays_key = next_key
+        self.param_arrays = arrays
+        if self.handle is None:
+            self.native_params_ready = False
+            return False
+        if arrays_dirty:
+            self.native_params_ready = False
+        if self.params_dirty or not self.native_params_ready:
+            self.native_params_ready = native_bridge.update_meshcloth_context_param_arrays(
+                self.handle,
+                arrays,
+            )
+            self.native_info = native_bridge.meshcloth_context_info(self.handle)
+        return bool(self.native_params_ready)
+
     def debug_snapshot(self) -> dict:
         return {
             "has_handle": self.handle is not None,
             "native_static_ready": self.native_static_ready,
+            "native_params_ready": self.native_params_ready,
             "topology_dirty": self.topology_dirty,
             "params_dirty": self.params_dirty,
             "frame_serial": self.frame_serial,
@@ -133,6 +162,8 @@ class MC2NativeContext:
             "bend_items": self.bend_count,
             "collision_radii": self.collider_radius_count,
             "param_slots": len(self.param_slots) if isinstance(self.param_slots, dict) else 0,
+            "param_arrays": len(self.param_arrays) if isinstance(self.param_arrays, dict) else 0,
+            "has_param_arrays_key": self.param_arrays_key is not None,
             "native_info": self.native_info,
         }
 
@@ -142,6 +173,9 @@ class MC2NativeContext:
         self.static_arrays = None
         self.native_static_ready = False
         self.param_slots = None
+        self.param_arrays = None
+        self.param_arrays_key = None
+        self.native_params_ready = False
         self.native_info = None
 
 
@@ -684,6 +718,40 @@ def ensure_native_context_for_center(
     return context
 
 
+def _native_param_slot_key(name: str, slot: dict) -> tuple:
+    samples = slot.get("samples")
+    if samples is None:
+        sample_key = None
+    else:
+        array = np.ascontiguousarray(samples, dtype=np.float32).reshape(-1)
+        sample_key = (str(array.dtype), tuple(array.shape), bytes(array.tobytes()))
+    return (
+        str(name),
+        slot.get("cache_key"),
+        slot.get("mode"),
+        slot.get("value"),
+        slot.get("base_value"),
+        slot.get("minimum"),
+        slot.get("maximum"),
+        int(slot.get("sample_count", 0) or 0),
+        sample_key,
+    )
+
+
+def _native_param_array_key(name: str, value) -> tuple:
+    array = np.ascontiguousarray(value, dtype=np.float32).reshape(-1)
+    return (str(name), str(array.dtype), tuple(array.shape), bytes(array.tobytes()))
+
+
+def _native_param_arrays_key(arrays: dict) -> tuple:
+    if not isinstance(arrays, dict):
+        return ()
+    return tuple(
+        _native_param_array_key(name, arrays[name])
+        for name in sorted(arrays.keys())
+    )
+
+
 def update_native_context_keys(
     state: dict,
     runtime=None,
@@ -697,7 +765,7 @@ def update_native_context_keys(
         try:
             param_slots = runtime.param_slots()
             param_key = tuple(
-                (name, slot.get("mode"), slot.get("value"), slot.get("base_value"), len(slot.get("samples", ())))
+                _native_param_slot_key(name, slot)
                 for name, slot in sorted(param_slots.items())
                 if isinstance(slot, dict)
             )

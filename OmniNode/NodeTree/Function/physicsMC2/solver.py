@@ -364,10 +364,6 @@ def solve_meshcloth(
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)
-    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
-    _end_stage(timing, "solve_setup.native_context", substage_start)
-
-    substage_start = _stage_start(timing)
     substep_damping_values = runtime.substep_damping_values
     distance_stiffness_values = runtime.distance_stiffness_values
     bend_stiffness_values = runtime.bend_stiffness_values
@@ -1401,8 +1397,28 @@ def solve_meshcloth_native_core(
         else -1.0
     )
 
+    param_arrays = {
+        "distance_stiffness_values": distance_stiffness_values,
+        "bend_stiffness_values": bend_stiffness_values,
+        "angle_restoration_values": angle_restoration_values,
+        "angle_restoration_velocity_attenuation_values": angle_restoration_velocity_attenuation_values,
+        "angle_restoration_gravity_falloff_values": angle_restoration_gravity_falloff_values,
+        "angle_limit_values": angle_limit_values,
+        "substep_damping_values": substep_damping_values,
+        "max_distances": motion_samples.max_distances,
+        "motion_stiffness_values": motion_samples.motion_stiffness_values,
+        "backstop_radii": motion_samples.backstop_radii,
+        "backstop_distances": motion_samples.backstop_distances,
+    }
+    context_stage_start = _stage_start(timing)
     native_context = mc2_state.ensure_native_context_for_center(state, center_state_ref)
+    native_param_context = mc2_state.update_native_context_keys(state, runtime, center_state_ref)
     static_arrays = native_context.upload_static_arrays(state)
+    native_params_ready = bool(
+        native_context.upload_param_arrays(param_arrays)
+        and native_bridge.has_function("solve_meshcloth_mc2_context_cached_params")
+    )
+    _end_stage(timing, "solve_setup.native_context", context_stage_start)
     use_native_context_solve = bool(
         native_context.handle is not None
         and native_context.native_static_ready
@@ -1433,6 +1449,7 @@ def solve_meshcloth_native_core(
     solved = native_bridge.solve_meshcloth_core(
         arrays,
         context_handle=native_context.handle if use_native_context_solve else None,
+        context_params_cached=native_params_ready if use_native_context_solve else False,
         distance_stiffness_values=distance_stiffness_values,
         bend_stiffness_values=bend_stiffness_values,
         angle_restoration_values=angle_restoration_values,

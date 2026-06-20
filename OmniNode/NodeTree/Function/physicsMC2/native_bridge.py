@@ -148,6 +148,28 @@ def update_meshcloth_context_params(handle, param_slot_count: int) -> bool:
     return True
 
 
+def update_meshcloth_context_param_arrays(handle, arrays: dict) -> bool:
+    module = native_module()
+    function = getattr(module, "update_meshcloth_mc2_context_param_arrays", None) if module is not None else None
+    if function is None or handle is None:
+        return False
+    function(
+        handle,
+        np.ascontiguousarray(arrays["distance_stiffness_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["bend_stiffness_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["angle_restoration_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["angle_restoration_velocity_attenuation_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["angle_restoration_gravity_falloff_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["angle_limit_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["substep_damping_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["max_distances"], dtype=np.float32),
+        np.ascontiguousarray(arrays["motion_stiffness_values"], dtype=np.float32),
+        np.ascontiguousarray(arrays["backstop_radii"], dtype=np.float32),
+        np.ascontiguousarray(arrays["backstop_distances"], dtype=np.float32),
+    )
+    return True
+
+
 def meshcloth_context_info(handle) -> dict | None:
     module = native_module()
     function = getattr(module, "meshcloth_mc2_context_info", None) if module is not None else None
@@ -735,6 +757,7 @@ def solve_meshcloth_core(
     arrays: dict,
     *,
     context_handle=None,
+    context_params_cached: bool = False,
     distance_stiffness_values: np.ndarray,
     bend_stiffness_values: np.ndarray,
     angle_restoration_values: np.ndarray,
@@ -771,7 +794,13 @@ def solve_meshcloth_core(
     blend_weight: float = 1.0,
 ) -> bool:
     module = native_module()
-    function_name = "solve_meshcloth_mc2_context" if context_handle is not None else "solve_meshcloth_mc2"
+    function_name = (
+        "solve_meshcloth_mc2_context_cached_params"
+        if context_handle is not None and context_params_cached
+        else "solve_meshcloth_mc2_context"
+        if context_handle is not None
+        else "solve_meshcloth_mc2"
+    )
     function = getattr(module, function_name, None) if module is not None else None
     if function is None:
         return False
@@ -799,7 +828,7 @@ def solve_meshcloth_core(
         "display_positions": np.ascontiguousarray(arrays["display_positions"], dtype=np.float32),
     }
 
-    call_args = (
+    dynamic_prefix_args = (
         writable_views["positions"],
         writable_views["old_positions"],
         writable_views["velocity_positions"],
@@ -815,31 +844,10 @@ def solve_meshcloth_core(
         np.ascontiguousarray(arrays["base_positions"], dtype=np.float32),
         np.ascontiguousarray(arrays["base_normals"], dtype=np.float32),
         np.ascontiguousarray(arrays["base_rotations"], dtype=np.float32),
-        np.ascontiguousarray(arrays["attributes"], dtype=np.uint8),
-        np.ascontiguousarray(arrays["depths"], dtype=np.float32),
-        np.ascontiguousarray(arrays["root_indices"], dtype=np.int32),
-        np.ascontiguousarray(arrays["tether_rest_lengths"], dtype=np.float32),
-        np.ascontiguousarray(arrays["parent_indices"], dtype=np.int32),
-        np.ascontiguousarray(arrays["baseline_start"], dtype=np.int32),
-        np.ascontiguousarray(arrays["baseline_count"], dtype=np.int32),
-        np.ascontiguousarray(arrays["baseline_data"], dtype=np.int32),
-        np.ascontiguousarray(arrays["vertex_local_positions"], dtype=np.float32),
-        np.ascontiguousarray(arrays["vertex_local_rotations"], dtype=np.float32),
-        np.ascontiguousarray(arrays["distance_start"], dtype=np.int32),
-        np.ascontiguousarray(arrays["distance_count"], dtype=np.int32),
-        np.ascontiguousarray(arrays["distance_data"], dtype=np.int32),
-        np.ascontiguousarray(arrays["distance_rest"], dtype=np.float32),
+    )
+    param_args = (
         np.ascontiguousarray(distance_stiffness_values, dtype=np.float32),
-        np.ascontiguousarray(arrays["bend_distance_start"], dtype=np.int32),
-        np.ascontiguousarray(arrays["bend_distance_count"], dtype=np.int32),
-        np.ascontiguousarray(arrays["bend_distance_data"], dtype=np.int32),
-        np.ascontiguousarray(arrays["bend_distance_neighbor_rest"], dtype=np.float32),
         np.ascontiguousarray(bend_stiffness_values, dtype=np.float32),
-        np.ascontiguousarray(arrays.get("dihedral_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
-        np.ascontiguousarray(arrays.get("dihedral_rest_angles", empty_f32), dtype=np.float32),
-        np.ascontiguousarray(arrays.get("dihedral_signs", empty_i32), dtype=np.int32),
-        np.ascontiguousarray(arrays.get("volume_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
-        np.ascontiguousarray(arrays.get("volume_rest", empty_f32), dtype=np.float32),
         np.ascontiguousarray(angle_restoration_values, dtype=np.float32),
         np.ascontiguousarray(angle_restoration_velocity_attenuation_values, dtype=np.float32),
         np.ascontiguousarray(angle_restoration_gravity_falloff_values, dtype=np.float32),
@@ -849,7 +857,8 @@ def solve_meshcloth_core(
         np.ascontiguousarray(motion_stiffness_values, dtype=np.float32),
         np.ascontiguousarray(backstop_radii, dtype=np.float32),
         np.ascontiguousarray(backstop_distances, dtype=np.float32),
-        np.ascontiguousarray(arrays.get("edges", empty_i32), dtype=np.int32).reshape((-1, 2)),
+    )
+    collider_and_inertia_args = (
         np.ascontiguousarray(arrays["collision_radii"], dtype=np.float32),
         np.ascontiguousarray(colliders.get("collider_types", empty_i32), dtype=np.int32),
         np.ascontiguousarray(colliders.get("collider_group_bits", empty_i32), dtype=np.int32),
@@ -890,19 +899,50 @@ def solve_meshcloth_core(
         float(animation_pose_ratio),
         float(blend_weight),
     )
+
     if context_handle is not None:
-        context_call_args = (
-            context_handle,
-            *call_args[0:15],
-            call_args[29],
-            call_args[34],
-            *call_args[40:49],
-            call_args[50],
-            *call_args[51:],
-        )
-        function(*context_call_args)
+        if context_params_cached:
+            function(context_handle, *dynamic_prefix_args, *collider_and_inertia_args)
+        else:
+            function(context_handle, *dynamic_prefix_args, *param_args, *collider_and_inertia_args)
     else:
-        function(*call_args)
+        static_args = (
+        np.ascontiguousarray(arrays["attributes"], dtype=np.uint8),
+        np.ascontiguousarray(arrays["depths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["root_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["tether_rest_lengths"], dtype=np.float32),
+        np.ascontiguousarray(arrays["parent_indices"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["baseline_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["vertex_local_positions"], dtype=np.float32),
+        np.ascontiguousarray(arrays["vertex_local_rotations"], dtype=np.float32),
+        np.ascontiguousarray(arrays["distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["distance_rest"], dtype=np.float32),
+        np.ascontiguousarray(arrays["bend_distance_start"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_count"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_data"], dtype=np.int32),
+        np.ascontiguousarray(arrays["bend_distance_neighbor_rest"], dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("dihedral_rest_angles", empty_f32), dtype=np.float32),
+        np.ascontiguousarray(arrays.get("dihedral_signs", empty_i32), dtype=np.int32),
+        np.ascontiguousarray(arrays.get("volume_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
+        np.ascontiguousarray(arrays.get("volume_rest", empty_f32), dtype=np.float32),
+        np.ascontiguousarray(arrays.get("edges", empty_i32), dtype=np.int32).reshape((-1, 2)),
+        )
+        function(
+            *dynamic_prefix_args,
+            *static_args[0:14],
+            param_args[0],
+            *static_args[14:18],
+            param_args[1],
+            *static_args[18:23],
+            *param_args[2:],
+            static_args[23],
+            *collider_and_inertia_args,
+        )
 
     for key, view in writable_views.items():
         if view is not arrays[key]:

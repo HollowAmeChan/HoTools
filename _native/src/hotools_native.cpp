@@ -2069,6 +2069,12 @@ PyMethodDef kMethods[] = {
         "Update MC2 MeshCloth native context parameter metadata.",
     },
     {
+        "update_meshcloth_mc2_context_param_arrays",
+        hotools::update_meshcloth_mc2_context_param_arrays,
+        METH_VARARGS,
+        "Upload MC2 MeshCloth parameter sample arrays into a native context.",
+    },
+    {
         "meshcloth_mc2_context_info",
         hotools::meshcloth_mc2_context_info,
         METH_VARARGS,
@@ -2169,6 +2175,12 @@ PyMethodDef kMethods[] = {
         hotools::solve_meshcloth_mc2_context,
         METH_VARARGS,
         "Solve one MC2 MeshCloth frame using a native context for static arrays.",
+    },
+    {
+        "solve_meshcloth_mc2_context_cached_params",
+        hotools::solve_meshcloth_mc2_context_cached_params,
+        METH_VARARGS,
+        "Solve one MC2 MeshCloth frame using native context static and parameter arrays.",
     },
     {nullptr, nullptr, 0, nullptr},
 };
