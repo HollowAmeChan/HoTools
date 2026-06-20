@@ -46,6 +46,41 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
 
 
+_MC2_TIMING_SUM_STAGES = {
+    "cache",
+    "base_proxy",
+    "base_pose_sync",
+    "rebuild",
+    "solve_total",
+    "solve_setup",
+    "solve_setup.params",
+    "solve_setup.motion_samples",
+    "write",
+}
+
+
+def _timing_stage_is_sum(stage: str) -> bool:
+    return str(stage) in _MC2_TIMING_SUM_STAGES
+
+
+def _timing_role_label(stage: str) -> str:
+    if _timing_stage_is_sum(stage):
+        return OmniDebug.str_color("[sum]", 93)
+    return OmniDebug.str_color("[step]", 95)
+
+
+def _timing_stage_label(stage: str) -> str:
+    if _timing_stage_is_sum(stage):
+        return OmniDebug.str_color(stage, 93)
+    return OmniDebug.func_label(stage)
+
+
+def _timing_value_label(stage: str, text: str) -> str:
+    if _timing_stage_is_sum(stage):
+        return OmniDebug.str_color(text, 93)
+    return OmniDebug.value_label(text)
+
+
 def _format_debug_timing_report(
     backend: str,
     obj_name: str,
@@ -94,7 +129,8 @@ def _format_debug_timing_report(
             avg_ms = totals[stage] / sample_count * 1000.0
             lines.append(
                 f"    {OmniDebug.value_label(f'{index:02d}.')} "
-                f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
+                f"{_timing_role_label(stage)} "
+                f"{_timing_stage_label(stage)} = {_timing_value_label(stage, f'{avg_ms:.3f}ms')}"
             )
 
     return lines
@@ -248,13 +284,13 @@ def _run_mesh_cloth_mc2_node(
     cache_substage_start = time.perf_counter() if timing is not None else None
     mesh_light_key = mesh_build.mesh_light_key(obj)
     if timing is not None:
-        _add_timing(timing, "cache_light_key", time.perf_counter() - cache_substage_start)
+        _add_timing(timing, "cache.light_key", time.perf_counter() - cache_substage_start)
 
     vertex_count = len(obj.data.vertices)
     cache_substage_start = time.perf_counter() if timing is not None else None
     state_matches = mc2_state.state_matches(cache_state, obj, output_key, mesh_light_key)
     if timing is not None:
-        _add_timing(timing, "cache_match", time.perf_counter() - cache_substage_start)
+        _add_timing(timing, "cache.match", time.perf_counter() - cache_substage_start)
     state = mc2_state.unwrap_state(cache_state) if state_matches else None
     cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) and state_matches else None
     replace_cache = cache_owner is None
@@ -263,7 +299,7 @@ def _run_mesh_cloth_mc2_node(
     cached_frame = blender_io.cache_frame(state)
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
     if timing is not None:
-        _add_timing(timing, "cache_frame", time.perf_counter() - cache_substage_start)
+        _add_timing(timing, "cache.frame", time.perf_counter() - cache_substage_start)
         _add_timing(timing, "cache", time.perf_counter() - stage_start)
 
     if not reset and cached_frame is not None and current_frame != cached_frame + 1:
@@ -276,25 +312,28 @@ def _run_mesh_cloth_mc2_node(
 
     base_pose_proxy = None
     if enabled:
+        base_proxy_stage_start = time.perf_counter() if timing is not None else None
         stage_start = time.perf_counter() if timing is not None else None
         ensure_base_pose_proxy(obj, scene, refresh=False)
         ensure_delta_output(obj)
         if timing is not None:
-            _add_timing(timing, "base_proxy_ensure", time.perf_counter() - stage_start)
+            _add_timing(timing, "base_proxy.ensure", time.perf_counter() - stage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
         base_pose_proxy = blender_io.base_pose_proxy_object(obj)
         if timing is not None:
-            _add_timing(timing, "base_proxy_validate", time.perf_counter() - stage_start)
+            _add_timing(timing, "base_proxy.validate", time.perf_counter() - stage_start)
+            _add_timing(timing, "base_proxy", time.perf_counter() - base_proxy_stage_start)
 
     if reset or not isinstance(state, dict):
         replace_cache = True
         cache_owner = mc2_state.MC2RuntimeOwner()
         topology_cache = cache_owner.topology_cache
+        rebuild_stage_start = time.perf_counter() if timing is not None else None
         stage_start = time.perf_counter() if timing is not None else None
         blender_io.clear_delta_attribute(obj)
         if timing is not None:
-            _add_timing(timing, "restore", time.perf_counter() - stage_start)
+            _add_timing(timing, "rebuild.restore", time.perf_counter() - stage_start)
 
         # MC2 运行期优先复用缓存：连续帧只用轻量结构键判断。
         # 只有 reset、跳帧清缓存、对象/mesh/顶点-loop-面数量变化时才重建完整拓扑签名。
@@ -302,12 +341,12 @@ def _run_mesh_cloth_mc2_node(
         cache_substage_start = time.perf_counter() if timing is not None else None
         mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
         if timing is not None:
-            _add_timing(timing, "cache_mesh_signature", time.perf_counter() - cache_substage_start)
+            _add_timing(timing, "rebuild.mesh_signature", time.perf_counter() - cache_substage_start)
 
         cache_substage_start = time.perf_counter() if timing is not None else None
         config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
         if timing is not None:
-            _add_timing(timing, "cache_config", time.perf_counter() - cache_substage_start)
+            _add_timing(timing, "rebuild.config", time.perf_counter() - cache_substage_start)
 
         stage_start = time.perf_counter() if timing is not None else None
         state = mc2_state.build_state(
@@ -321,7 +360,8 @@ def _run_mesh_cloth_mc2_node(
         )
         cache_owner.replace_state(state)
         if timing is not None:
-            _add_timing(timing, "rebuild", time.perf_counter() - stage_start)
+            _add_timing(timing, "rebuild.build_state", time.perf_counter() - stage_start)
+            _add_timing(timing, "rebuild", time.perf_counter() - rebuild_stage_start)
     else:
         cache_owner = mc2_state.ensure_runtime_owner(cache_owner)
         stage_start = time.perf_counter() if timing is not None else None
@@ -463,9 +503,15 @@ def _run_mesh_cloth_mc2_node(
 
     next_state["frame"] = current_frame
     stage_start = time.perf_counter() if timing is not None else None
+    write_substage_start = time.perf_counter() if timing is not None else None
     base_positions = next_state["base_positions"] if base_pose_proxy is not None else next_state["rest_world_positions"]
+    if timing is not None:
+        _add_timing(timing, "write.base_positions", time.perf_counter() - write_substage_start)
+
+    write_substage_start = time.perf_counter() if timing is not None else None
     blender_io.write_world_delta_attribute(obj, next_state["display_positions"], base_positions)
     if timing is not None:
+        _add_timing(timing, "write.delta_attribute", time.perf_counter() - write_substage_start)
         _add_timing(timing, "write", time.perf_counter() - stage_start)
         _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
     cache_owner.replace_state(next_state)

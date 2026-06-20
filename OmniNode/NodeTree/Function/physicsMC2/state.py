@@ -861,7 +861,8 @@ def sync_state_to_base_pose_proxy(
         cache=pose_cache,
     )
     if timing is not None:
-        timing["stages"]["base_proxy_read"] = timing["stages"].get("base_proxy_read", 0.0) + (
+        stage_name = "base_pose_sync.proxy_read"
+        timing["stages"][stage_name] = timing["stages"].get(stage_name, 0.0) + (
             time.perf_counter() - stage_start
         )
     if positions.shape != (vertex_count, 3) or normals.shape != (vertex_count, 3):
@@ -877,7 +878,8 @@ def sync_state_to_base_pose_proxy(
         current_frame,
     )
     if timing is not None:
-        timing["stages"]["base_pose_apply"] = timing["stages"].get("base_pose_apply", 0.0) + (
+        stage_name = "base_pose_sync.apply"
+        timing["stages"][stage_name] = timing["stages"].get(stage_name, 0.0) + (
             time.perf_counter() - stage_start
         )
     return next_state

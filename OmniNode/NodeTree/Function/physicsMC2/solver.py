@@ -20,6 +20,16 @@ def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
     stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
 
 
+def _stage_start(timing: dict | None) -> float | None:
+    return time.perf_counter() if timing is not None else None
+
+
+def _end_stage(timing: dict | None, stage: str, start: float | None) -> None:
+    if timing is None or start is None:
+        return
+    _add_timing(timing, stage, time.perf_counter() - start)
+
+
 def _runtime_cache(runtime_caches: dict | None, state: dict, name: str) -> dict:
     if isinstance(runtime_caches, dict):
         cache = runtime_caches.get(name)
@@ -243,6 +253,7 @@ def solve_meshcloth(
     debug_native_view: bool = False,
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
+    substage_start = _stage_start(timing)
     colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
     positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
     old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
@@ -265,7 +276,9 @@ def solve_meshcloth(
     collision_normals.fill(0.0)
     movable = inv_masses > MC2SystemConstants.EPSILON
     fixed = ~movable
+    _end_stage(timing, "solve_setup.arrays", substage_start)
 
+    substage_start = _stage_start(timing)
     frame_dt = blender_io.scene_delta_time(scene)
     substep_count = max(1, min(16, int(substeps)))
     iteration_count = max(0, min(64, int(iterations)))
@@ -283,6 +296,9 @@ def solve_meshcloth(
         blend_weight,
     )
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
+    _end_stage(timing, "solve_setup.team", substage_start)
+
+    substage_start = _stage_start(timing)
     runtime = runtime_params.build_runtime_params(
         curve_cache,
         depths,
@@ -336,7 +352,11 @@ def solve_meshcloth(
         collider_collision_mode,
         timing,
         _add_timing,
+        timing_prefix="solve_setup.params",
     )
+    _end_stage(timing, "solve_setup.params", substage_start)
+
+    substage_start = _stage_start(timing)
     substep_damping_values = runtime.substep_damping_values
     distance_stiffness_values = runtime.distance_stiffness_values
     bend_stiffness_values = runtime.bend_stiffness_values
@@ -368,7 +388,9 @@ def solve_meshcloth(
     collision_mode = runtime.collision_mode
     runtime.velocity_weight = velocity_weight_value
     runtime.blend_weight = blend_weight_value
+    _end_stage(timing, "solve_setup.param_unpack", substage_start)
 
+    substage_start = _stage_start(timing)
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
@@ -377,6 +399,9 @@ def solve_meshcloth(
         if has_collision
         else None
     )
+    _end_stage(timing, "solve_setup.collider_abi", substage_start)
+
+    substage_start = _stage_start(timing)
     if base_pose_mode:
         # BasePose 模式下，骨架/对象级基础运动已经通过 base_positions 输入。
         # 这里禁止再把写入对象矩阵变化当作整体惯性位移，避免双重变换和 Python 顶点循环卡顿。
@@ -435,6 +460,9 @@ def solve_meshcloth(
             inertia_state,
         )
         positions = old_positions.copy()
+    _end_stage(timing, "solve_setup.inertia", substage_start)
+
+    substage_start = _stage_start(timing)
     gravity, gravity_dot, gravity_ratio = _team_gravity_context(
         gravity_dir,
         gravity_power,
@@ -447,6 +475,7 @@ def solve_meshcloth(
         gravity_dot,
         gravity_ratio,
     )
+    _end_stage(timing, "solve_setup.gravity", substage_start)
     if timing is not None:
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 
@@ -1054,6 +1083,7 @@ def solve_meshcloth_native_core(
     # native_core 路径尽量保持和 Python 求解同一套顺序：
     # 输入整理 -> 曲线采样 -> substep inertia -> motion 采样 -> C++ 核心求解 -> 状态回填。
     stage_start = time.perf_counter() if timing is not None else None
+    substage_start = _stage_start(timing)
     if not native_bridge.has_function("solve_meshcloth_mc2"):
         status = native_bridge.native_status("solve_meshcloth_mc2")
         raise RuntimeError(f"MC2 C++ backend is unavailable: {status}")
@@ -1077,7 +1107,9 @@ def solve_meshcloth_native_core(
     collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
     collision_normals = np.ascontiguousarray(state["collision_normals"], dtype=np.float32)
     collision_normals.fill(0.0)
+    _end_stage(timing, "solve_setup.arrays", substage_start)
 
+    substage_start = _stage_start(timing)
     frame_dt = blender_io.scene_delta_time(scene)
     substep_count = max(1, min(16, int(substeps)))
     iteration_count = max(0, min(64, int(iterations)))
@@ -1095,6 +1127,9 @@ def solve_meshcloth_native_core(
         blend_weight,
     )
     curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
+    _end_stage(timing, "solve_setup.team", substage_start)
+
+    substage_start = _stage_start(timing)
     runtime = runtime_params.build_runtime_params(
         curve_cache,
         depths,
@@ -1148,7 +1183,11 @@ def solve_meshcloth_native_core(
         collider_collision_mode,
         timing,
         _add_timing,
+        timing_prefix="solve_setup.params",
     )
+    _end_stage(timing, "solve_setup.params", substage_start)
+
+    substage_start = _stage_start(timing)
     substep_damping_values = runtime.substep_damping_values
     distance_stiffness_values = runtime.distance_stiffness_values
     bend_stiffness_values = runtime.bend_stiffness_values
@@ -1180,7 +1219,9 @@ def solve_meshcloth_native_core(
     collision_mode = runtime.collision_mode
     runtime.velocity_weight = velocity_weight_value
     runtime.blend_weight = blend_weight_value
+    _end_stage(timing, "solve_setup.param_unpack", substage_start)
 
+    substage_start = _stage_start(timing)
     has_collision = collision_mode != 0 and bool(colliders) and bool(collided_by_groups) and bool(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
@@ -1189,7 +1230,9 @@ def solve_meshcloth_native_core(
         if has_collision
         else None
     )
+    _end_stage(timing, "solve_setup.collider_abi", substage_start)
 
+    substage_start = _stage_start(timing)
     if base_pose_mode:
         # BasePose 模式下基础动画来自只读代理，写入对象矩阵不再驱动物理整体惯性。
         # 这能避免移动骨架对象时 solve_setup 进入 apply_frame_shift 顶点循环。
@@ -1248,7 +1291,9 @@ def solve_meshcloth_native_core(
             inertia_state,
         )
         positions = old_positions.copy()
+    _end_stage(timing, "solve_setup.inertia", substage_start)
 
+    substage_start = _stage_start(timing)
     gravity, gravity_dot, gravity_ratio = _team_gravity_context(
         gravity_dir,
         gravity_power,
@@ -1261,7 +1306,9 @@ def solve_meshcloth_native_core(
         gravity_dot,
         gravity_ratio,
     )
+    _end_stage(timing, "solve_setup.gravity", substage_start)
 
+    substage_start = _stage_start(timing)
     substep_inertia_lists = {
         "old_world_positions": [],
         "step_vectors": [],
@@ -1296,6 +1343,9 @@ def solve_meshcloth_native_core(
         key: np.ascontiguousarray(value, dtype=np.float32)
         for key, value in substep_inertia_lists.items()
     }
+    _end_stage(timing, "solve_setup.substep_inertia", substage_start)
+
+    substage_start = _stage_start(timing)
     motion_samples = runtime_params.sample_motion_params(
         curve_cache,
         runtime,
@@ -1303,7 +1353,11 @@ def solve_meshcloth_native_core(
         world_scale_nonnegative,
         timing,
         _add_timing,
+        timing_prefix="solve_setup.motion_samples",
     )
+    _end_stage(timing, "solve_setup.motion_samples", substage_start)
+
+    substage_start = _stage_start(timing)
     particle_speed_limit_scaled = (
         particle_speed_limit_value * world_scale_nonnegative
         if particle_speed_limit_value >= 0.0
@@ -1325,6 +1379,7 @@ def solve_meshcloth_native_core(
             "display_positions": np.ascontiguousarray(display_positions, dtype=np.float32),
         }
     )
+    _end_stage(timing, "solve_setup.native_arrays", substage_start)
     if timing is not None:
         _add_timing(timing, "solve_setup", time.perf_counter() - stage_start)
 

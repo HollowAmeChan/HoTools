@@ -25,6 +25,11 @@ def _add_timing(timing: dict | None, add_timing, stage: str, start: float | None
     add_timing(timing, stage, time.perf_counter() - start)
 
 
+def _prefixed_stage(prefix: str | None, stage: str) -> str:
+    prefix = str(prefix or "").strip(".")
+    return f"{prefix}.{stage}" if prefix else str(stage)
+
+
 def zero_values_like(values: np.ndarray) -> np.ndarray:
     return np.zeros(len(values), dtype=np.float32)
 
@@ -211,6 +216,7 @@ def build_runtime_params(
     collider_collision_mode: int,
     timing: dict | None = None,
     add_timing=None,
+    timing_prefix: str | None = None,
 ) -> MC2RuntimeParams:
     normal_axis_value = max(0, min(5, int(normal_axis)))
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
@@ -296,7 +302,7 @@ def build_runtime_params(
         if use_backstop
         else params.scalar_param(0.0)
     )
-    _add_timing(timing, add_timing, "param_curves", stage_start)
+    _add_timing(timing, add_timing, _prefixed_stage(timing_prefix, "param_curves"), stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
     damping_values = np.ascontiguousarray(
@@ -370,7 +376,7 @@ def build_runtime_params(
         if use_angle_limit
         else zero_values_like(stiffness_depths)
     )
-    _add_timing(timing, add_timing, "stiffness_curves", stage_start)
+    _add_timing(timing, add_timing, _prefixed_stage(timing_prefix, "stiffness_curves"), stage_start)
 
     world_inertia_param = params.scalar_param(max(0.0, min(1.0, float(world_inertia))))
     movement_inertia_smoothing_param = params.scalar_param(max(0.0, min(1.0, float(movement_inertia_smoothing))))
@@ -474,6 +480,7 @@ def sample_motion_params(
     world_scale_nonnegative: float,
     timing: dict | None = None,
     add_timing=None,
+    timing_prefix: str | None = None,
 ) -> MC2MotionSamples:
     stage_start = time.perf_counter() if timing is not None else None
     motion_depths = np.clip(np.ascontiguousarray(depths, dtype=np.float32) * np.ascontiguousarray(depths, dtype=np.float32), 0.0, 1.0)
@@ -502,7 +509,7 @@ def sample_motion_params(
         motion_stiffness_values = zero_values_like(motion_depths)
         backstop_radii = zero_values_like(motion_depths)
         backstop_distances = zero_values_like(motion_depths)
-    _add_timing(timing, add_timing, "motion_curves", stage_start)
+    _add_timing(timing, add_timing, _prefixed_stage(timing_prefix, "motion_curves"), stage_start)
     return MC2MotionSamples(
         max_distances=max_distances,
         motion_stiffness_values=motion_stiffness_values,
