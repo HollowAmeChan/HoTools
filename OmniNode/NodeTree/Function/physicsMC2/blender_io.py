@@ -2,15 +2,13 @@
 
 import bpy
 import numpy as np
-from bpy.app.handlers import persistent
 
 from .....PhysicsTools.collisionBasePose import MC2_DELTA_SPEC, validate_base_pose_proxy
 from .....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
 from .....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
 from . import math_utils
 
-_BASE_POSE_FRAME_CACHE = {}
-_BASE_POSE_CACHE_HANDLER_REGISTERED = False
+_BASE_POSE_CACHE_PREFIX = "mc2_base_pose_world_pose"
 
 
 def scene_delta_time(scene: bpy.types.Scene = None) -> float:
@@ -57,8 +55,8 @@ def base_pose_proxy_object(obj: bpy.types.Object) -> bpy.types.Object | None:
     return proxy
 
 
-def _base_pose_cache_key(obj: bpy.types.Object, proxy: bpy.types.Object, frame: int) -> tuple[int, int, int]:
-    return (int(obj.as_pointer()), int(proxy.as_pointer()), int(frame))
+def _base_pose_cache_key(obj: bpy.types.Object, proxy: bpy.types.Object, frame: int) -> tuple[str, int, int, int]:
+    return (_BASE_POSE_CACHE_PREFIX, int(obj.as_pointer()), int(proxy.as_pointer()), int(frame))
 
 
 def cached_base_pose_world_pose(
@@ -67,16 +65,34 @@ def cached_base_pose_world_pose(
     frame: int,
     cache: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
+    if not isinstance(cache, dict):
+        return None
     key = _base_pose_cache_key(obj, proxy, frame)
-    value = cache.get(key) if isinstance(cache, dict) else None
-    if value is None:
-        value = _BASE_POSE_FRAME_CACHE.get(key)
-        if value is not None and isinstance(cache, dict):
-            cache[key] = value
+    value = cache.get(key)
     if value is None:
         return None
     positions, normals = value
     return positions.copy(), normals.copy()
+
+
+def read_cached_base_pose_world_pose(
+    obj: bpy.types.Object,
+    proxy: bpy.types.Object,
+    frame: int,
+    depsgraph=None,
+    cache: dict | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    cached = cached_base_pose_world_pose(obj, proxy, frame, cache)
+    if cached is not None:
+        return cached
+
+    validate_base_pose_proxy(obj, proxy)
+    positions, normals = read_evaluated_mesh_world_pose(proxy, depsgraph)
+    if isinstance(cache, dict):
+        cache[_base_pose_cache_key(obj, proxy, frame)] = (positions, normals)
+        _trim_base_pose_cache(cache, frame)
+        return positions.copy(), normals.copy()
+    return positions, normals
 
 
 def read_evaluated_mesh_world_pose(
@@ -113,47 +129,15 @@ def _mesh_world_pose_from_data(eval_obj: bpy.types.Object, mesh: bpy.types.Mesh)
     )
 
 
-def _trim_base_pose_cache(frame: int) -> None:
-    old_keys = [key for key in _BASE_POSE_FRAME_CACHE if abs(int(key[2]) - int(frame)) > 3]
+def _trim_base_pose_cache(cache: dict, frame: int) -> None:
+    old_keys = []
+    for key in cache:
+        if not isinstance(key, tuple) or len(key) != 4 or key[0] != _BASE_POSE_CACHE_PREFIX:
+            continue
+        if abs(int(key[3]) - int(frame)) > 3:
+            old_keys.append(key)
     for key in old_keys:
-        _BASE_POSE_FRAME_CACHE.pop(key, None)
-
-
-@persistent
-def _cache_base_pose_on_frame_change(scene, depsgraph=None):
-    frame = int(getattr(scene, "frame_current", 0) or 0)
-    depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
-    for obj in tuple(getattr(scene, "objects", ()) or ()):
-        if obj is None or obj.type != "MESH":
-            continue
-        props = getattr(obj, "hotools_mesh_collision", None)
-        proxy = getattr(props, "mc2_base_pose_proxy", None) if props is not None else None
-        if proxy is None or proxy == obj or proxy.type != "MESH":
-            continue
-        try:
-            validate_base_pose_proxy(obj, proxy)
-            _BASE_POSE_FRAME_CACHE[_base_pose_cache_key(obj, proxy, frame)] = read_evaluated_mesh_world_pose(
-                proxy,
-                depsgraph,
-            )
-        except Exception:
-            continue
-    _trim_base_pose_cache(frame)
-
-
-def ensure_base_pose_cache_handler() -> None:
-    global _BASE_POSE_CACHE_HANDLER_REGISTERED
-    handlers = bpy.app.handlers.frame_change_post
-    for handler in list(handlers):
-        if (
-            getattr(handler, "__name__", "") == "_cache_base_pose_on_frame_change"
-            and getattr(handler, "__module__", "") == __name__
-            and handler is not _cache_base_pose_on_frame_change
-        ):
-            handlers.remove(handler)
-    if _cache_base_pose_on_frame_change not in handlers:
-        handlers.append(_cache_base_pose_on_frame_change)
-    _BASE_POSE_CACHE_HANDLER_REGISTERED = True
+        cache.pop(key, None)
 
 
 def read_key_positions(key: bpy.types.ShapeKey, vertex_count: int) -> np.ndarray:

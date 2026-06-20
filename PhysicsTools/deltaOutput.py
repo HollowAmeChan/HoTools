@@ -119,8 +119,9 @@ def clear_delta_attribute(obj: bpy.types.Object, spec: PhysicsDeltaOutputSpec) -
         return
     zeros = np.zeros(len(obj.data.vertices) * 3, dtype=np.float32)
     attr.data.foreach_set("vector", zeros)
-    obj.data.update()
-    obj.update_tag()
+    # 不需要刷新 刷新拖累性能
+    # obj.data.update()
+    # obj.update_tag()
 
 
 def write_world_delta_attribute(

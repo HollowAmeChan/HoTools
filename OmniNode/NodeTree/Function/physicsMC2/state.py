@@ -854,14 +854,16 @@ def sync_state_to_base_pose_proxy(
     pose_cache = cache if isinstance(cache, dict) else io_cache(state)
     if len(pose_cache) > 12:
         pose_cache.clear()
-    cached_pose = blender_io.cached_base_pose_world_pose(obj, base_pose_proxy, current_frame, pose_cache)
+    positions, normals = blender_io.read_cached_base_pose_world_pose(
+        obj,
+        base_pose_proxy,
+        current_frame,
+        cache=pose_cache,
+    )
     if timing is not None:
         timing["stages"]["base_proxy_read"] = timing["stages"].get("base_proxy_read", 0.0) + (
             time.perf_counter() - stage_start
         )
-    if cached_pose is None:
-        return state
-    positions, normals = cached_pose
     if positions.shape != (vertex_count, 3) or normals.shape != (vertex_count, 3):
         raise ValueError("MC2 BasePose只读对象 evaluated mesh 顶点数必须与当前物理对象一致")
 

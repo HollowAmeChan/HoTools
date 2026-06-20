@@ -18,8 +18,6 @@ from .. import _Color
 from . import blender_io, collision, mesh_build, params, solver, state as mc2_state
 from .constants import MC2SystemConstants
 
-blender_io.ensure_base_pose_cache_handler()
-
 
 _DEBUG_PROFILES = {}
 
@@ -279,7 +277,6 @@ def _run_mesh_cloth_mc2_node(
     base_pose_proxy = None
     if enabled:
         stage_start = time.perf_counter() if timing is not None else None
-        blender_io.ensure_base_pose_cache_handler()
         ensure_base_pose_proxy(obj, scene, refresh=False)
         ensure_delta_output(obj)
         if timing is not None:
