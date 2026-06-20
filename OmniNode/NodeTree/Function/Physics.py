@@ -1158,6 +1158,26 @@ class _MeshPhysics:
         inv_masses[cls.vertex_group_weights(obj, pin_group_name) > 0.0] = 0.0
         return inv_masses
 
+    @classmethod
+    def build_self_collision_inv_masses(cls, obj: bpy.types.Object) -> np.ndarray:
+        props = cls.mesh_collision_props(obj)
+        inv_masses = np.ones(len(obj.data.vertices), dtype=np.float32)
+        if props is None:
+            return inv_masses
+        if not bool(getattr(props, "self_collision_enabled", False)):
+            return inv_masses
+
+        friction = np.zeros(len(obj.data.vertices), dtype=np.float32)
+        cloth_mass = max(float(getattr(props, "mass", 0.0)), 0.0)
+        fixed = cls.build_inv_masses(obj) <= cls.EPSILON
+        inv_masses[fixed] = 0.0
+        movable = ~fixed
+        inv_masses[movable] = 1.0 / np.maximum(
+            1.0 + friction[movable] * 10.0 + cloth_mass * 50.0,
+            cls.EPSILON,
+        )
+        return inv_masses
+
     @staticmethod
     def mesh_collision_props(obj: bpy.types.Object):
         return getattr(obj, "hotools_mesh_collision", None)

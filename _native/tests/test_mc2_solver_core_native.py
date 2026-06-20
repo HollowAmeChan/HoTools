@@ -257,6 +257,7 @@ def solve_args(state, params):
         params["backstop_radii"],
         params["backstop_distances"],
         state["edges"],
+        state.get("triangles", np.empty((0, 3), dtype=np.int32)),
         state["collision_radii"],
         params["collider_types"],
         params["collider_group_bits"],
@@ -296,6 +297,9 @@ def solve_args(state, params):
         MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
         params["animation_pose_ratio"],
         params["blend_weight"],
+        params.get("self_collision_enabled", False),
+        params.get("self_collision_surface_thickness", 0.0),
+        params.get("self_collision_mass", 0.0),
     )
 
 
@@ -344,6 +348,7 @@ def make_state_and_params():
         "bend_distance_data": np.empty(0, dtype=np.int32),
         "bend_distance_neighbor_rest": np.empty(0, dtype=np.float32),
         "edges": np.asarray(((0, 1), (1, 2)), dtype=np.int32),
+        "triangles": np.empty((0, 3), dtype=np.int32),
         "collision_radii": np.asarray((0.0, 0.18, 0.18), dtype=np.float32),
     }
     frame_dt = np.float32(1.0 / 30.0)
@@ -434,8 +439,124 @@ def assert_native_solver_matches_scheduled_reference():
         np.testing.assert_allclose(native_state[key], reference_state[key], rtol=2e-5, atol=2e-5, err_msg=key)
 
 
+def assert_context_solver_accepts_self_collision_abi():
+    state, params = make_state_and_params()
+    handle = hotools_native.create_meshcloth_mc2_context(
+        int(len(state["positions"])),
+        int(len(state["distance_data"])),
+        int(len(state["bend_distance_data"])),
+        int(len(state["collision_radii"])),
+    )
+    hotools_native.update_meshcloth_mc2_context_static_arrays(
+        handle,
+        state["attributes"],
+        state["depths"],
+        state["root_indices"],
+        state["tether_rest_lengths"],
+        state["parent_indices"],
+        state["baseline_start"],
+        state["baseline_count"],
+        state["baseline_data"],
+        state["vertex_local_positions"],
+        state["vertex_local_rotations"],
+        state["distance_start"],
+        state["distance_count"],
+        state["distance_data"],
+        state["distance_rest"],
+        state["bend_distance_start"],
+        state["bend_distance_count"],
+        state["bend_distance_data"],
+        state["bend_distance_neighbor_rest"],
+        np.empty((0, 4), dtype=np.int32),
+        np.empty(0, dtype=np.float32),
+        np.empty(0, dtype=np.int32),
+        np.empty((0, 4), dtype=np.int32),
+        np.empty(0, dtype=np.float32),
+        state["edges"],
+        state["triangles"],
+    )
+    hotools_native.update_meshcloth_mc2_context_param_arrays(
+        handle,
+        params["distance_stiffness_values"],
+        params["bend_stiffness_values"],
+        params["angle_restoration_values"],
+        params["angle_restoration_velocity_attenuation_values"],
+        params["angle_restoration_gravity_falloff_values"],
+        params["angle_limit_values"],
+        params["substep_damping_values"],
+        params["max_distances"],
+        params["motion_stiffness_values"],
+        params["backstop_radii"],
+        params["backstop_distances"],
+    )
+    hotools_native.solve_meshcloth_mc2_context_cached_params(
+        handle,
+        state["positions"],
+        state["old_positions"],
+        state["velocity_positions"],
+        state["velocity"],
+        state["real_velocity"],
+        state["friction"],
+        state["static_friction"],
+        state["collision_normals"],
+        state["inv_masses"],
+        state["step_basic_positions"],
+        state["step_basic_rotations"],
+        state["display_positions"],
+        state["base_positions"],
+        state["base_normals"],
+        state["base_rotations"],
+        state["collision_radii"],
+        params["collider_types"],
+        params["collider_group_bits"],
+        params["collider_centers"],
+        params["collider_segment_a"],
+        params["collider_segment_b"],
+        params["collider_old_centers"],
+        params["collider_old_segment_a"],
+        params["collider_old_segment_b"],
+        params["collider_radii"],
+        params["substep_old_world_positions"],
+        params["substep_step_vectors"],
+        params["substep_step_rotations"],
+        params["substep_inertia_vectors"],
+        params["substep_inertia_rotations"],
+        params["substep_now_world_positions"],
+        params["substep_rotation_axes"],
+        params["substep_angular_velocities"],
+        params["substep_velocity_weights"],
+        params["frame_dt"],
+        params["step_dt"],
+        params["substeps"],
+        params["iterations"],
+        params["gravity"],
+        params["depth_inertia"],
+        params["centrifugal"],
+        params.get("use_tether", True),
+        params["tether_compression"],
+        params["tether_stretch"],
+        params["dynamic_friction"],
+        params["static_friction_speed"],
+        params["particle_speed_limit"],
+        params["angle_limit_stiffness"],
+        params["normal_axis"],
+        params["collided_by_groups"],
+        params.get("collider_collision_mode", 1),
+        MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
+        params["animation_pose_ratio"],
+        params["blend_weight"],
+        True,
+        0.02,
+        0.0,
+    )
+    info = hotools_native.meshcloth_mc2_context_info(handle)
+    assert info["triangle_count"] == 0
+    hotools_native.free_meshcloth_mc2_context(handle)
+
+
 def main():
     assert_native_solver_matches_scheduled_reference()
+    assert_context_solver_accepts_self_collision_abi()
     print("mc2 solver core native smoke test passed")
 
 

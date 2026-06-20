@@ -231,6 +231,17 @@ def config_key(
         if collision_enabled
         else (0xFFFF if float(collision_radius) > MC2SystemConstants.EPSILON else 0)
     )
+    self_collision_enabled = bool(props is not None and getattr(props, "self_collision_enabled", False))
+    self_collision_surface_thickness = (
+        round(max(float(getattr(props, "self_collision_surface_thickness", 0.0)), 0.0), 8)
+        if props is not None
+        else 0.0
+    )
+    self_collision_mass = (
+        round(max(float(getattr(props, "mass", 0.0)), 0.0), 8)
+        if props is not None
+        else 0.0
+    )
     return (
         MC2_SOLVER_VERSION,
         output_key,
@@ -243,6 +254,9 @@ def config_key(
         radius_group,
         math_utils.array_hash(radius_weights),
         configured_mask,
+        self_collision_enabled,
+        self_collision_surface_thickness,
+        self_collision_mass,
     )
 
 

@@ -20,11 +20,13 @@ using py::expect_indices_in_range;
 using py::expect_int32_pair_array;
 using py::expect_int32_quad_array;
 using py::expect_int32_scalar_array;
+using py::expect_int32_triple_array;
 using py::expect_pair_indices_in_range;
 using py::expect_quad_indices_in_range;
 using py::expect_root_indices_or_minus_one;
 using py::expect_same_quat_vertex_count;
 using py::expect_same_vertex_count;
+using py::expect_triple_indices_in_range;
 using py::expect_uint8_scalar_array;
 using py::expect_vector3_array;
 using py::expect_vector4_array;
@@ -39,6 +41,7 @@ struct Mc2NativeContext {
     std::int64_t bend_count = 0;
     std::int64_t collider_radius_count = 0;
     std::int64_t edge_count = 0;
+    std::int64_t triangle_count = 0;
     std::int64_t dihedral_count = 0;
     std::int64_t volume_count = 0;
     std::int64_t param_slot_count = 0;
@@ -73,6 +76,7 @@ struct Mc2NativeContext {
     std::vector<std::int32_t> volume_pairs;
     std::vector<float> volume_rest;
     std::vector<std::int32_t> edges;
+    std::vector<std::int32_t> triangles;
     std::vector<float> distance_stiffness_values;
     std::vector<float> bend_stiffness_values;
     std::vector<float> angle_restoration_values;
@@ -175,6 +179,7 @@ void clear_static_storage(Mc2NativeContext& context) {
     context.distance_count = 0;
     context.bend_count = 0;
     context.edge_count = 0;
+    context.triangle_count = 0;
     context.dihedral_count = 0;
     context.volume_count = 0;
     context.attributes.clear();
@@ -201,6 +206,7 @@ void clear_static_storage(Mc2NativeContext& context) {
     context.volume_pairs.clear();
     context.volume_rest.clear();
     context.edges.clear();
+    context.triangles.clear();
     clear_param_storage(context);
 }
 
@@ -216,6 +222,7 @@ PyObject* mc2_context_to_dict(const Mc2NativeContext& context) {
         !dict_set_i64(result, "bend_count", context.bend_count) ||
         !dict_set_i64(result, "collider_radius_count", context.collider_radius_count) ||
         !dict_set_i64(result, "edge_count", context.edge_count) ||
+        !dict_set_i64(result, "triangle_count", context.triangle_count) ||
         !dict_set_i64(result, "dihedral_count", context.dihedral_count) ||
         !dict_set_i64(result, "volume_count", context.volume_count) ||
         !dict_set_i64(result, "param_slot_count", context.param_slot_count) ||
@@ -331,7 +338,7 @@ PyObject* update_meshcloth_mc2_context_static(PyObject*, PyObject* args) {
 }
 
 PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArrayCount = 24;
+    constexpr Py_ssize_t kArrayCount = 25;
     constexpr Py_ssize_t kArgCount = kArrayCount + 1;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "update_meshcloth_mc2_context_static_arrays expects %zd arguments", kArgCount);
@@ -367,6 +374,7 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
         AVolumePairs,
         AVolumeRest,
         AEdges,
+        ATriangles,
     };
     const char* names[kArrayCount] = {
         "attributes",
@@ -393,6 +401,7 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
         "volume_pairs",
         "volume_rest",
         "edges",
+        "triangles",
     };
 
     Buffer buffers[kArrayCount];
@@ -460,6 +469,7 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
     Py_ssize_t dihedral_count = 0;
     Py_ssize_t volume_count = 0;
     Py_ssize_t edge_count = 0;
+    Py_ssize_t triangle_count = 0;
     if (!expect_int32_quad_array(buffers[ADihedralPairs], "dihedral_pairs", &dihedral_count) ||
         !expect_float32(buffers[ADihedralRestAngles], "dihedral_rest_angles") ||
         !expect_1d_array(buffers[ADihedralRestAngles], "dihedral_rest_angles", dihedral_count) ||
@@ -468,12 +478,14 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
         !expect_int32_quad_array(buffers[AVolumePairs], "volume_pairs", &volume_count) ||
         !expect_float32(buffers[AVolumeRest], "volume_rest") ||
         !expect_1d_array(buffers[AVolumeRest], "volume_rest", volume_count) ||
-        !expect_int32_pair_array(buffers[AEdges], "edges", &edge_count)) {
+        !expect_int32_pair_array(buffers[AEdges], "edges", &edge_count) ||
+        !expect_int32_triple_array(buffers[ATriangles], "triangles", &triangle_count)) {
         return nullptr;
     }
     if ((dihedral_count > 0 && !expect_quad_indices_in_range(buffers[ADihedralPairs], "dihedral_pairs", vertex_count)) ||
         (volume_count > 0 && !expect_quad_indices_in_range(buffers[AVolumePairs], "volume_pairs", vertex_count)) ||
-        (edge_count > 0 && !expect_pair_indices_in_range(buffers[AEdges], "edges", vertex_count))) {
+        (edge_count > 0 && !expect_pair_indices_in_range(buffers[AEdges], "edges", vertex_count)) ||
+        (triangle_count > 0 && !expect_triple_indices_in_range(buffers[ATriangles], "triangles", vertex_count))) {
         return nullptr;
     }
 
@@ -484,6 +496,7 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
     context->distance_count = static_cast<std::int64_t>(buffers[ADistanceData].view.shape[0]);
     context->bend_count = static_cast<std::int64_t>(buffers[ABendDistanceData].view.shape[0]);
     context->edge_count = static_cast<std::int64_t>(edge_count);
+    context->triangle_count = static_cast<std::int64_t>(triangle_count);
     context->dihedral_count = static_cast<std::int64_t>(dihedral_count);
     context->volume_count = static_cast<std::int64_t>(volume_count);
 
@@ -511,6 +524,7 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
     copy_buffer_values(buffers[AVolumePairs], context->volume_pairs);
     copy_buffer_values(buffers[AVolumeRest], context->volume_rest);
     copy_buffer_values(buffers[AEdges], context->edges);
+    copy_buffer_values(buffers[ATriangles], context->triangles);
     context->static_ready = true;
     context->topology_serial += 1;
     Py_RETURN_NONE;
@@ -700,7 +714,7 @@ PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_param
     constexpr int kCachedParamCount = kCachedParamEnd - kCachedParamStart + 1;
     const Py_ssize_t dynamic_arg_count =
         use_cached_params ? kDynamicBufferCount - kCachedParamCount : kDynamicBufferCount;
-    const Py_ssize_t kArgCount = 1 + dynamic_arg_count + 20;
+    const Py_ssize_t kArgCount = 1 + dynamic_arg_count + 23;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "%s expects %zd arguments", function_name, kArgCount);
         return nullptr;
@@ -984,6 +998,19 @@ PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_param
     if (PyErr_Occurred()) {
         return nullptr;
     }
+    const bool self_collision_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, kScalarStart + 20)) == 1;
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double self_collision_surface_thickness =
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 21), "self_collision_surface_thickness");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double self_collision_mass = as_double(PyTuple_GET_ITEM(args, kScalarStart + 22), "self_collision_mass");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
 
     Mc2MeshClothSolveView view;
     view.positions = static_cast<float*>(buffers[APositions].view.buf);
@@ -1060,6 +1087,7 @@ PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_param
                                   ? data_or_dummy(context->backstop_distances)
                                   : static_cast<const float*>(buffers[ABackstopDistances].view.buf);
     view.edges = data_or_dummy(context->edges);
+    view.triangles = data_or_dummy(context->triangles);
     view.collision_radii = static_cast<const float*>(buffers[ACollisionRadii].view.buf);
     view.collider_types = static_cast<const std::int32_t*>(buffers[AColliderTypes].view.buf);
     view.collider_group_bits = static_cast<const std::int32_t*>(buffers[AColliderGroupBits].view.buf);
@@ -1085,6 +1113,7 @@ PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_param
     view.distance_count_total = context->distance_count;
     view.bend_distance_count_total = context->bend_count;
     view.edge_count = context->edge_count;
+    view.triangle_count = context->triangle_count;
     view.dihedral_count = context->dihedral_count;
     view.volume_count = context->volume_count;
     view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -1111,6 +1140,9 @@ PyObject* solve_meshcloth_mc2_context_impl(PyObject* args, bool use_cached_param
     view.blend_weight = static_cast<float>(blend_weight);
     view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
     view.collider_collision_mode = std::max(0, std::min(2, static_cast<int>(collider_collision_mode)));
+    view.self_collision_enabled = self_collision_enabled;
+    view.self_collision_surface_thickness = static_cast<float>(self_collision_surface_thickness);
+    view.self_collision_mass = static_cast<float>(self_collision_mass);
 
     solve_meshcloth_mc2(view);
     Py_RETURN_NONE;

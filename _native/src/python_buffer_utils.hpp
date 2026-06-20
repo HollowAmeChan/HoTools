@@ -203,9 +203,33 @@ inline bool expect_int32_pair_array(const Buffer& buffer, const char* name, Py_s
     return true;
 }
 
+inline bool expect_int32_triple_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
+    if (!expect_int32(buffer, name)) {
+        return false;
+    }
+    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 3) {
+        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 3)", name);
+        return false;
+    }
+    *count = buffer.view.shape[0];
+    return true;
+}
+
 inline bool expect_quad_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
     const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
     const Py_ssize_t count = buffer.view.shape[0] * 4;
+    for (Py_ssize_t index = 0; index < count; ++index) {
+        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
+            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool expect_triple_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
+    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
+    const Py_ssize_t count = buffer.view.shape[0] * 3;
     for (Py_ssize_t index = 0; index < count; ++index) {
         if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
             PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);

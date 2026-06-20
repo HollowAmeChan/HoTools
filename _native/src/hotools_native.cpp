@@ -213,9 +213,33 @@ bool expect_int32_pair_array(const Buffer& buffer, const char* name, Py_ssize_t*
     return true;
 }
 
+bool expect_int32_triple_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
+    if (!expect_int32(buffer, name)) {
+        return false;
+    }
+    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 3) {
+        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 3)", name);
+        return false;
+    }
+    *count = buffer.view.shape[0];
+    return true;
+}
+
 bool expect_quad_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
     const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
     const Py_ssize_t count = buffer.view.shape[0] * 4;
+    for (Py_ssize_t index = 0; index < count; ++index) {
+        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
+            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool expect_triple_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
+    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
+    const Py_ssize_t count = buffer.view.shape[0] * 3;
     for (Py_ssize_t index = 0; index < count; ++index) {
         if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
             PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
@@ -938,6 +962,78 @@ PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* project_self_collisions_mc2(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 9;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "project_self_collisions_mc2 expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    Buffer positions;
+    Buffer old_positions;
+    Buffer inv_masses;
+    Buffer edges;
+    Buffer triangles;
+    Buffer attributes;
+    Buffer collision_normals;
+    Buffer friction;
+
+    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !old_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
+        !inv_masses.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !edges.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "edges") ||
+        !triangles.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "triangles") ||
+        !attributes.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "attributes") ||
+        !collision_normals.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                               "collision_normals") ||
+        !friction.get(PyTuple_GET_ITEM(args, 7), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction")) {
+        return nullptr;
+    }
+
+    Py_ssize_t vertex_count = 0;
+    Py_ssize_t edge_count = 0;
+    Py_ssize_t triangle_count = 0;
+    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
+        !expect_same_vertex_count(old_positions, "old_positions", vertex_count) ||
+        !expect_float32(inv_masses, "inv_masses") ||
+        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
+        !expect_int32_pair_array(edges, "edges", &edge_count) ||
+        !expect_int32_triple_array(triangles, "triangles", &triangle_count) ||
+        !expect_uint8_scalar_array(attributes, "attributes") ||
+        !expect_1d_array(attributes, "attributes", vertex_count) ||
+        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
+        !expect_float32(friction, "friction") ||
+        !expect_1d_array(friction, "friction", vertex_count)) {
+        return nullptr;
+    }
+    if ((edge_count > 0 && !expect_pair_indices_in_range(edges, "edges", vertex_count)) ||
+        (triangle_count > 0 && !expect_triple_indices_in_range(triangles, "triangles", vertex_count))) {
+        return nullptr;
+    }
+
+    const double surface_thickness = as_double(PyTuple_GET_ITEM(args, 8), "surface_thickness");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    hotools::Mc2SelfCollisionView view;
+    view.positions = static_cast<float*>(positions.view.buf);
+    view.old_positions = static_cast<const float*>(old_positions.view.buf);
+    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
+    view.edges = static_cast<const std::int32_t*>(edges.view.buf);
+    view.triangles = static_cast<const std::int32_t*>(triangles.view.buf);
+    view.attributes = static_cast<const std::uint8_t*>(attributes.view.buf);
+    view.collision_normals = static_cast<float*>(collision_normals.view.buf);
+    view.friction = static_cast<float*>(friction.view.buf);
+    view.vertex_count = static_cast<std::int64_t>(vertex_count);
+    view.edge_count = static_cast<std::int64_t>(edge_count);
+    view.triangle_count = static_cast<std::int64_t>(triangle_count);
+    view.surface_thickness = static_cast<float>(surface_thickness);
+
+    hotools::project_self_collisions_mc2(view);
+    Py_RETURN_NONE;
+}
+
 PyObject* project_triangle_bending_mc2(PyObject*, PyObject* args) {
     constexpr Py_ssize_t kArgCount = 8;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
@@ -1506,6 +1602,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ABackstopRadii,
         ABackstopDistances,
         AEdges,
+        ATriangles,
         ACollisionRadii,
         AColliderTypes,
         AColliderGroupBits,
@@ -1527,7 +1624,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         ASubstepVelocityWeights,
         kSolveBufferCount,
     };
-    constexpr Py_ssize_t kArgCount = 89;
+    constexpr Py_ssize_t kArgCount = 93;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_meshcloth_mc2 expects %zd arguments", kArgCount);
         return nullptr;
@@ -1584,6 +1681,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         "backstop_radii",
         "backstop_distances",
         "edges",
+        "triangles",
         "collision_radii",
         "collider_types",
         "collider_group_bits",
@@ -1708,6 +1806,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     }
 
     Py_ssize_t edge_count = 0;
+    Py_ssize_t triangle_count = 0;
     if (!expect_float32(buffers[AAngleRestorationValues], "angle_restoration_values") ||
         !expect_1d_array(buffers[AAngleRestorationValues], "angle_restoration_values", vertex_count) ||
         !expect_float32(buffers[AAngleRestorationVelocityAttenuationValues],
@@ -1732,6 +1831,8 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(buffers[ABackstopDistances], "backstop_distances", vertex_count) ||
         !expect_int32_pair_array(buffers[AEdges], "edges", &edge_count) ||
         !expect_pair_indices_in_range(buffers[AEdges], "edges", vertex_count) ||
+        !expect_int32_triple_array(buffers[ATriangles], "triangles", &triangle_count) ||
+        !expect_triple_indices_in_range(buffers[ATriangles], "triangles", vertex_count) ||
         !expect_float32(buffers[ACollisionRadii], "collision_radii") ||
         !expect_1d_array(buffers[ACollisionRadii], "collision_radii", vertex_count)) {
         return nullptr;
@@ -1879,6 +1980,19 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     if (PyErr_Occurred()) {
         return nullptr;
     }
+    const bool self_collision_enabled = PyObject_IsTrue(PyTuple_GET_ITEM(args, kScalarStart + 20)) == 1;
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double self_collision_surface_thickness =
+        as_double(PyTuple_GET_ITEM(args, kScalarStart + 21), "self_collision_surface_thickness");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    const double self_collision_mass = as_double(PyTuple_GET_ITEM(args, kScalarStart + 22), "self_collision_mass");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
 
     hotools::Mc2MeshClothSolveView view;
     view.positions = static_cast<float*>(buffers[APositions].view.buf);
@@ -1933,6 +2047,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.backstop_radii = static_cast<const float*>(buffers[ABackstopRadii].view.buf);
     view.backstop_distances = static_cast<const float*>(buffers[ABackstopDistances].view.buf);
     view.edges = static_cast<const std::int32_t*>(buffers[AEdges].view.buf);
+    view.triangles = static_cast<const std::int32_t*>(buffers[ATriangles].view.buf);
     view.collision_radii = static_cast<const float*>(buffers[ACollisionRadii].view.buf);
     view.collider_types = static_cast<const std::int32_t*>(buffers[AColliderTypes].view.buf);
     view.collider_group_bits = static_cast<const std::int32_t*>(buffers[AColliderGroupBits].view.buf);
@@ -1958,6 +2073,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.distance_count_total = static_cast<std::int64_t>(buffers[ADistanceData].view.shape[0]);
     view.bend_distance_count_total = static_cast<std::int64_t>(buffers[ABendDistanceData].view.shape[0]);
     view.edge_count = static_cast<std::int64_t>(edge_count);
+    view.triangle_count = static_cast<std::int64_t>(triangle_count);
     view.dihedral_count = static_cast<std::int64_t>(dihedral_count);
     view.volume_count = static_cast<std::int64_t>(volume_count);
     view.collider_count = static_cast<std::int64_t>(collider_count);
@@ -1984,6 +2100,9 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.blend_weight = static_cast<float>(blend_weight);
     view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
     view.collider_collision_mode = std::max(0, std::min(2, static_cast<int>(collider_collision_mode)));
+    view.self_collision_enabled = self_collision_enabled;
+    view.self_collision_surface_thickness = static_cast<float>(self_collision_surface_thickness);
+    view.self_collision_mass = static_cast<float>(self_collision_mass);
 
     hotools::solve_meshcloth_mc2(view);
     Py_RETURN_NONE;
@@ -2121,6 +2240,12 @@ PyMethodDef kMethods[] = {
         project_edge_collisions_mc2,
         METH_VARARGS,
         "Project MC2 edge collisions in-place.",
+    },
+    {
+        "project_self_collisions_mc2",
+        project_self_collisions_mc2,
+        METH_VARARGS,
+        "Project MC2 self collisions in-place.",
     },
     {
         "project_triangle_bending_mc2",

@@ -441,7 +441,25 @@ def _run_mesh_cloth_mc2_node(
     )
     if angle_restoration_enabled or angle_limit_enabled:
         angle_constraint_count = max(0, len(state.get("baseline_data", ())) - len(state.get("baseline_start", ())))
-    constraint_count = (len(state["edge_i"]) if use_distance else 0) + bend_constraint_count + angle_constraint_count
+    try:
+        self_collision_thickness = float(state.get("self_collision_surface_thickness", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        self_collision_thickness = 0.0
+    self_collision_active = (
+        bool(state.get("self_collision_enabled", False))
+        and self_collision_thickness > MC2SystemConstants.EPSILON
+    )
+    self_collision_constraint_count = (
+        vertex_count + len(state.get("edges", ())) + len(state.get("triangles", ()))
+        if self_collision_active
+        else 0
+    )
+    constraint_count = (
+        (len(state["edge_i"]) if use_distance else 0)
+        + bend_constraint_count
+        + angle_constraint_count
+        + self_collision_constraint_count
+    )
 
     if not enabled:
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))

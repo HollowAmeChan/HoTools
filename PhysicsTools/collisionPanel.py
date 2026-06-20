@@ -194,6 +194,13 @@ def _draw_mesh_collision_controls(layout, obj, props):
         text="Pin顶点组",
     )
 
+    self_box = layout.box()
+    self_box.prop(props, "self_collision_enabled")
+    self_col = self_box.column(align=True)
+    self_col.enabled = bool(props.self_collision_enabled)
+    self_col.prop(props, "self_collision_surface_thickness")
+    self_col.prop(props, "mass")
+
 
 class PT_Hotools_BoneCollisionPanel(Panel):
     bl_idname = "BONE_PT_Hotools_BoneCollisionPanel"

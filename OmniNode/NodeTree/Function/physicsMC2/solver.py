@@ -364,6 +364,7 @@ def solve_meshcloth(
     real_velocity = _particle_array(particle_state_ref, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
     collision_radii = _topology_array(topology_state_ref, "collision_radii", np.float32)
+    self_collision_inv_masses = _topology_array(topology_state_ref, "self_collision_inv_masses", np.float32)
     collided_by_groups = math_utils.clamp_group_mask(topology_state_ref.collided_by_groups)
     collision_normals = _particle_array(particle_state_ref, "collision_normals")
     collision_normals.fill(0.0)
@@ -404,6 +405,9 @@ def solve_meshcloth(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = mc2_state.base_pose_proxy_active(state, base_pose_state_ref)
+    self_collision_enabled = bool(getattr(topology_state_ref, "self_collision_enabled", False))
+    self_collision_surface_thickness = max(float(getattr(topology_state_ref, "self_collision_surface_thickness", 0.0)), 0.0)
+    self_collision_mass = max(float(getattr(topology_state_ref, "self_collision_mass", 0.0)), 0.0)
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
     team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
@@ -647,6 +651,13 @@ def solve_meshcloth(
 
         stage_start = time.perf_counter() if timing is not None else None
         inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
+        if self_collision_enabled:
+            self_collision_inv_masses = mc2_state.calc_self_collision_inverse_masses(
+                attributes,
+                depths,
+                friction,
+                getattr(topology_state_ref, "self_collision_mass", 0.0),
+            )
         movable = inv_masses > MC2SystemConstants.EPSILON
         fixed = ~movable
         collision_normals.fill(0.0)
@@ -1013,6 +1024,28 @@ def solve_meshcloth(
             if timing is not None:
                 _add_timing(timing, "motion", time.perf_counter() - stage_start)
 
+        has_self_collision = (
+            self_collision_enabled
+            and self_collision_surface_thickness > MC2SystemConstants.EPSILON
+            and bool(np.any(self_collision_inv_masses > MC2SystemConstants.EPSILON))
+            and (len(topology_state_ref.edges) > 0 or len(topology_state_ref.triangles) > 0)
+        )
+        if has_self_collision:
+            stage_start = time.perf_counter() if timing is not None else None
+            collision.project_self_collisions(
+                positions,
+                old_positions,
+                self_collision_inv_masses,
+                topology_state_ref.edges,
+                topology_state_ref.triangles,
+                attributes,
+                self_collision_surface_thickness * world_scale_nonnegative,
+                collision_normals,
+                friction,
+            )
+            if timing is not None:
+                _add_timing(timing, "self_collision", time.perf_counter() - stage_start)
+
         stage_start = time.perf_counter() if timing is not None else None
         particle_speed_limit = (
             particle_speed_limit_value * max(float(world_scale), 0.0)
@@ -1175,7 +1208,8 @@ def solve_meshcloth(
         collision.compact_collider_snapshot(colliders),
         center_state_ref,
     )
-    runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
+    param_slots = runtime.param_slots()
+    runtime_params.write_param_slots(next_state, runtime, param_slots)
 
     native_slot = _native_runtime_slot(runtime_caches)
     _write_native_debug_view(
@@ -1190,7 +1224,7 @@ def solve_meshcloth(
         base_pose_state_ref,
         particle_state_ref,
         center_state_ref,
-        native_param_context.param_slots,
+        param_slots,
     )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
@@ -1318,6 +1352,9 @@ def solve_meshcloth_native_core(
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
     base_pose_mode = mc2_state.base_pose_proxy_active(state, base_pose_state_ref)
+    self_collision_enabled = bool(getattr(topology_state_ref, "self_collision_enabled", False))
+    self_collision_surface_thickness = max(float(getattr(topology_state_ref, "self_collision_surface_thickness", 0.0)), 0.0)
+    self_collision_mass = max(float(getattr(topology_state_ref, "self_collision_mass", 0.0)), 0.0)
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
     team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
@@ -1683,6 +1720,9 @@ def solve_meshcloth_native_core(
         display_max_distance_ratio=MC2SystemConstants.MAX_DISTANCE_RATIO_FUTURE_PREDICTION,
         animation_pose_ratio=animation_pose_ratio_value,
         blend_weight=blend_weight_value,
+        self_collision_enabled=self_collision_enabled,
+        self_collision_surface_thickness=self_collision_surface_thickness * world_scale_nonnegative,
+        self_collision_mass=self_collision_mass,
     )
     if timing is not None:
         _add_timing(timing, "native_core", time.perf_counter() - stage_start)

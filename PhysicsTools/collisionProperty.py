@@ -151,7 +151,7 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
 
 class PG_Hotools_MeshCollision(PropertyGroup):
     """
-    网格 XPBD 物理、逐顶点碰撞球和 Pin 的持久化配置。
+    网格 XPBD 物理、逐顶点碰撞球、Pin 和自碰撞的持久化配置。
 
     消费约定：
     1. Mesh 物理解算输出由各 solver 写入自己的 GN 后置位移属性。
@@ -159,7 +159,8 @@ class PG_Hotools_MeshCollision(PropertyGroup):
     3. 顶点组存在时，权重会被限制在 0..1；顶点不在组内或组名不存在时权重为 0。
     4. pin_enabled 关闭时没有 Pin 顶点；开启且 pin_vertex_group 留空时所有顶点 Pin。
     5. Pin 结果由 XPBD 求解器在 cache 重建时转成 inv_masses，模拟中不热更新。
-    6. 预览绘制逐顶点球时使用 evaluated mesh 顶点位置，并按同一顶点组语义计算半径和 Pin 颜色。
+    6. mass 只用于自碰撞的质量加权，不是通用刚体质量；对象间碰撞仍走主/被碰撞组。
+    7. 预览绘制逐顶点球时使用 evaluated mesh 顶点位置，并按同一顶点组语义计算半径和 Pin 颜色。
     """
     mc2_base_pose_proxy: PointerProperty(
         type=bpy.types.Object,
@@ -193,6 +194,25 @@ class PG_Hotools_MeshCollision(PropertyGroup):
         name="Pin顶点组",
         description="用于指定固定顶点的顶点组；启用Pin且留空时固定全部顶点",
         default="",
+    )  # type: ignore
+    self_collision_enabled: BoolProperty(
+        name="自碰撞",
+        description="启用当前网格内部的自碰撞检测；对象间碰撞仍然使用主/被碰撞组",
+        default=False,
+    )  # type: ignore
+    self_collision_surface_thickness: FloatProperty(
+        name="表面厚度",
+        description="自碰撞接触厚度；这是接触包裹层，不是网格实际尺寸",
+        default=0.005,
+        min=0.0,
+        soft_max=0.05,
+    )  # type: ignore
+    mass: FloatProperty(
+        name="质量",
+        description="自碰撞用布料质量系数；数值越大，自碰撞修正越保守",
+        default=0.0,
+        min=0.0,
+        soft_max=1.0,
     )  # type: ignore
     primary_collision_group: IntProperty(
         name="主碰撞组",

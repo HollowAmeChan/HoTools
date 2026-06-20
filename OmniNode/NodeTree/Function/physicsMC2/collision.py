@@ -5,7 +5,7 @@ import mathutils
 import numpy as np
 
 from . import math_utils
-from .constants import MC2_ATTR_MOVE, MC2SystemConstants
+from .constants import MC2_ATTR_INVALID, MC2_ATTR_MOVE, MC2SystemConstants
 
 
 COLLIDER_SPHERE = 0
@@ -64,6 +64,65 @@ def _closest_segment_segment(
     c2 = p2 + d2 * t
     dist_sq = float(np.dot(c1 - c2, c1 - c2))
     return s, t, c1, c2, dist_sq
+
+
+def _triangle_normal_np(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    normal = np.cross(p1 - p0, p2 - p0)
+    return math_utils.safe_normal_np(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+
+
+def _closest_point_triangle(
+    point: np.ndarray,
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    ab = b - a
+    ac = c - a
+    ap = point - a
+    d1 = float(np.dot(ab, ap))
+    d2 = float(np.dot(ac, ap))
+    if d1 <= 0.0 and d2 <= 0.0:
+        return a, np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+
+    bp = point - b
+    d3 = float(np.dot(ab, bp))
+    d4 = float(np.dot(ac, bp))
+    if d3 >= 0.0 and d4 <= d3:
+        return b, np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+        denom = d1 - d3
+        v = d1 / denom if abs(denom) > MC2SystemConstants.EPSILON else 0.0
+        return a + ab * v, np.asarray((1.0 - v, v, 0.0), dtype=np.float32)
+
+    cp = point - c
+    d5 = float(np.dot(ab, cp))
+    d6 = float(np.dot(ac, cp))
+    if d6 >= 0.0 and d5 <= d6:
+        return c, np.asarray((0.0, 0.0, 1.0), dtype=np.float32)
+
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+        denom = d2 - d6
+        w = d2 / denom if abs(denom) > MC2SystemConstants.EPSILON else 0.0
+        return a + ac * w, np.asarray((1.0 - w, 0.0, w), dtype=np.float32)
+
+    va = d3 * d6 - d5 * d4
+    if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+        denom = (d4 - d3) + (d5 - d6)
+        w = (d4 - d3) / denom if abs(denom) > MC2SystemConstants.EPSILON else 0.0
+        return b + (c - b) * w, np.asarray((0.0, 1.0 - w, w), dtype=np.float32)
+
+    denom = va + vb + vc
+    if abs(denom) <= MC2SystemConstants.EPSILON:
+        return a, np.asarray((1.0, 0.0, 0.0), dtype=np.float32)
+    inv_denom = 1.0 / denom
+    v = vb * inv_denom
+    w = vc * inv_denom
+    u = 1.0 - v - w
+    return a * u + b * v + c * w, np.asarray((u, v, w), dtype=np.float32)
 
 
 def _intersect_point_plane_dist(
@@ -855,6 +914,487 @@ def project_edge_collisions(
         collision_normals[valid_normals] = (
             add_normals[valid_normals] / normal_lengths[valid_normals, None]
         ).astype(np.float32)
+
+
+def _iter_grid_cells(aabb_min: np.ndarray, aabb_max: np.ndarray, cell_size: float):
+    min_cell = np.floor(np.ascontiguousarray(aabb_min, dtype=np.float32) / float(cell_size)).astype(np.int32)
+    max_cell = np.floor(np.ascontiguousarray(aabb_max, dtype=np.float32) / float(cell_size)).astype(np.int32)
+    for x in range(int(min_cell[0]), int(max_cell[0]) + 1):
+        for y in range(int(min_cell[1]), int(max_cell[1]) + 1):
+            for z in range(int(min_cell[2]), int(max_cell[2]) + 1):
+                yield (x, y, z)
+
+
+def _edge_edge_contact(
+    edge_a: np.ndarray,
+    edge_b: np.ndarray,
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    inv_masses: np.ndarray,
+    thickness: float,
+) -> dict | None:
+    a0, a1 = int(edge_a[0]), int(edge_a[1])
+    b0, b1 = int(edge_b[0]), int(edge_b[1])
+    if len({a0, a1, b0, b1}) < 4:
+        return None
+    old_a0 = np.ascontiguousarray(old_positions[a0], dtype=np.float32)
+    old_a1 = np.ascontiguousarray(old_positions[a1], dtype=np.float32)
+    old_b0 = np.ascontiguousarray(old_positions[b0], dtype=np.float32)
+    old_b1 = np.ascontiguousarray(old_positions[b1], dtype=np.float32)
+    s, t, c_a, c_b, dist_sq = _closest_segment_segment(old_a0, old_a1, old_b0, old_b1)
+    dist = float(np.sqrt(max(dist_sq, 0.0)))
+    if dist <= MC2SystemConstants.EPSILON:
+        return None
+
+    normal = np.ascontiguousarray((c_a - c_b) / dist, dtype=np.float32)
+    d_a0 = np.ascontiguousarray(positions[a0] - old_a0, dtype=np.float32)
+    d_a1 = np.ascontiguousarray(positions[a1] - old_a1, dtype=np.float32)
+    d_b0 = np.ascontiguousarray(positions[b0] - old_b0, dtype=np.float32)
+    d_b1 = np.ascontiguousarray(positions[b1] - old_b1, dtype=np.float32)
+    delta_a = d_a0 * (1.0 - s) + d_a1 * s
+    delta_b = d_b0 * (1.0 - t) + d_b1 * t
+    movement_adjusted = dist + float(np.dot(normal, delta_a)) - float(np.dot(normal, delta_b))
+    if movement_adjusted > thickness + thickness * MC2SystemConstants.SELF_COLLISION_SCR:
+        return None
+
+    cur_a = np.ascontiguousarray(positions[a0] * (1.0 - s) + positions[a1] * s, dtype=np.float32)
+    cur_b = np.ascontiguousarray(positions[b0] * (1.0 - t) + positions[b1] * t, dtype=np.float32)
+    current_dist = float(np.dot(normal, cur_a - cur_b))
+    if current_dist >= thickness:
+        return None
+
+    inv_a0 = float(inv_masses[a0])
+    inv_a1 = float(inv_masses[a1])
+    inv_b0 = float(inv_masses[b0])
+    inv_b1 = float(inv_masses[b1])
+    denom = inv_a0 * (1.0 - s) ** 2 + inv_a1 * s**2 + inv_b0 * (1.0 - t) ** 2 + inv_b1 * t**2
+    if denom <= MC2SystemConstants.EPSILON:
+        return None
+
+    return {
+        "type": "edge_edge",
+        "edge_a": np.asarray((a0, a1), dtype=np.int32),
+        "edge_b": np.asarray((b0, b1), dtype=np.int32),
+        "s": float(s),
+        "t": float(t),
+        "normal": normal,
+        "thickness": float(thickness),
+        "distance": float(current_dist),
+    }
+
+
+def _point_triangle_contact(
+    point_index: int,
+    triangle: np.ndarray,
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    inv_masses: np.ndarray,
+    attributes: np.ndarray,
+    thickness: float,
+) -> dict | None:
+    a, b, c = int(triangle[0]), int(triangle[1]), int(triangle[2])
+    if point_index in {a, b, c}:
+        return None
+    if (
+        int(attributes[point_index]) & MC2_ATTR_INVALID
+        or int(attributes[a]) & MC2_ATTR_INVALID
+        or int(attributes[b]) & MC2_ATTR_INVALID
+        or int(attributes[c]) & MC2_ATTR_INVALID
+    ):
+        return None
+
+    old_point = np.ascontiguousarray(old_positions[point_index], dtype=np.float32)
+    old_a = np.ascontiguousarray(old_positions[a], dtype=np.float32)
+    old_b = np.ascontiguousarray(old_positions[b], dtype=np.float32)
+    old_c = np.ascontiguousarray(old_positions[c], dtype=np.float32)
+    closest, uvw = _closest_point_triangle(old_point, old_a, old_b, old_c)
+    delta = closest - old_point
+    delta_length = float(np.linalg.norm(delta))
+    if delta_length <= MC2SystemConstants.EPSILON:
+        return None
+
+    old_normal = _triangle_normal_np(old_a, old_b, old_c)
+    point_dir = math_utils.safe_normal_np(old_point - closest, old_normal)
+    dot = float(np.dot(old_normal, point_dir))
+    if abs(dot) < MC2SystemConstants.SELF_COLLISION_POINT_TRIANGLE_ANGLE_COS:
+        return None
+    sign = 1.0 if dot >= 0.0 else -1.0
+
+    d_point = np.ascontiguousarray(positions[point_index] - old_point, dtype=np.float32)
+    d_tri = (
+        np.ascontiguousarray(positions[a] - old_a, dtype=np.float32) * float(uvw[0])
+        + np.ascontiguousarray(positions[b] - old_b, dtype=np.float32) * float(uvw[1])
+        + np.ascontiguousarray(positions[c] - old_c, dtype=np.float32) * float(uvw[2])
+    )
+    n = old_normal * sign
+    current_dist = delta_length - float(np.dot(n, d_point)) + float(np.dot(n, d_tri))
+    if current_dist >= thickness + thickness * MC2SystemConstants.SELF_COLLISION_SCR:
+        return None
+
+    tri_current = np.ascontiguousarray(
+        positions[a] * float(uvw[0]) + positions[b] * float(uvw[1]) + positions[c] * float(uvw[2]),
+        dtype=np.float32,
+    )
+    signed_dist = float(np.dot(n, positions[point_index] - tri_current))
+    if signed_dist >= thickness:
+        return None
+
+    inv_point = float(inv_masses[point_index])
+    inv_a = float(inv_masses[a])
+    inv_b = float(inv_masses[b])
+    inv_c = float(inv_masses[c])
+    denom = inv_point + inv_a * float(uvw[0]) ** 2 + inv_b * float(uvw[1]) ** 2 + inv_c * float(uvw[2]) ** 2
+    if denom <= MC2SystemConstants.EPSILON:
+        return None
+
+    return {
+        "type": "point_triangle",
+        "point": int(point_index),
+        "triangle": np.asarray((a, b, c), dtype=np.int32),
+        "uvw": np.ascontiguousarray(uvw, dtype=np.float32),
+        "sign": float(sign),
+        "normal": np.ascontiguousarray(n, dtype=np.float32),
+        "thickness": float(thickness),
+        "distance": float(signed_dist),
+    }
+
+
+def _build_self_collision_contacts(
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    inv_masses: np.ndarray,
+    edges: np.ndarray,
+    triangles: np.ndarray,
+    attributes: np.ndarray,
+    thickness: float,
+) -> tuple[list[dict], float]:
+    vertex_count = int(len(positions))
+    if vertex_count <= 0 or thickness <= MC2SystemConstants.EPSILON:
+        return [], float(thickness)
+
+    edge_array = np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2))
+    triangle_array = np.ascontiguousarray(triangles, dtype=np.int32).reshape((-1, 3))
+    if len(edge_array) == 0 and len(triangle_array) == 0:
+        return [], float(thickness)
+
+    attr = np.ascontiguousarray(attributes, dtype=np.uint8)
+    max_primitive_size = float(thickness)
+    edge_cells: dict[tuple[int, int, int], list[int]] = {}
+    triangle_cells: dict[tuple[int, int, int], list[int]] = {}
+    edge_bounds: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    triangle_bounds: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+    for edge_index, edge in enumerate(edge_array):
+        a, b = int(edge[0]), int(edge[1])
+        if a < 0 or b < 0 or a >= vertex_count or b >= vertex_count or a == b:
+            continue
+        if int(attr[a]) & MC2_ATTR_INVALID or int(attr[b]) & MC2_ATTR_INVALID:
+            continue
+        cur_a = np.ascontiguousarray(positions[a], dtype=np.float32)
+        cur_b = np.ascontiguousarray(positions[b], dtype=np.float32)
+        old_a = np.ascontiguousarray(old_positions[a], dtype=np.float32)
+        old_b = np.ascontiguousarray(old_positions[b], dtype=np.float32)
+        raw_min = np.minimum(np.minimum(cur_a, cur_b), np.minimum(old_a, old_b))
+        raw_max = np.maximum(np.maximum(cur_a, cur_b), np.maximum(old_a, old_b))
+        size = max(
+            float(np.linalg.norm(cur_b - cur_a)),
+            float(np.linalg.norm(old_b - old_a)),
+        )
+        max_primitive_size = max(max_primitive_size, size)
+        min_bound = raw_min - float(thickness)
+        max_bound = raw_max + float(thickness)
+        edge_bounds[edge_index] = (min_bound, max_bound)
+
+    for tri_index, tri in enumerate(triangle_array):
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        if a < 0 or b < 0 or c < 0 or a >= vertex_count or b >= vertex_count or c >= vertex_count:
+            continue
+        if (
+            int(attr[a]) & MC2_ATTR_INVALID
+            or int(attr[b]) & MC2_ATTR_INVALID
+            or int(attr[c]) & MC2_ATTR_INVALID
+        ):
+            continue
+        cur_a = np.ascontiguousarray(positions[a], dtype=np.float32)
+        cur_b = np.ascontiguousarray(positions[b], dtype=np.float32)
+        cur_c = np.ascontiguousarray(positions[c], dtype=np.float32)
+        old_a = np.ascontiguousarray(old_positions[a], dtype=np.float32)
+        old_b = np.ascontiguousarray(old_positions[b], dtype=np.float32)
+        old_c = np.ascontiguousarray(old_positions[c], dtype=np.float32)
+        raw_min = np.minimum.reduce((cur_a, cur_b, cur_c, old_a, old_b, old_c))
+        raw_max = np.maximum.reduce((cur_a, cur_b, cur_c, old_a, old_b, old_c))
+        size = max(
+            float(np.linalg.norm(cur_b - cur_a)),
+            float(np.linalg.norm(cur_c - cur_a)),
+            float(np.linalg.norm(cur_c - cur_b)),
+            float(np.linalg.norm(old_b - old_a)),
+            float(np.linalg.norm(old_c - old_a)),
+            float(np.linalg.norm(old_c - old_b)),
+        )
+        max_primitive_size = max(max_primitive_size, size)
+        min_bound = raw_min - float(thickness)
+        max_bound = raw_max + float(thickness)
+        triangle_bounds[tri_index] = (min_bound, max_bound)
+
+    cell_size = max(max_primitive_size * float(MC2SystemConstants.SELF_COLLISION_GRID_SCALE), float(thickness), MC2SystemConstants.EPSILON)
+
+    for edge_index, bounds in edge_bounds.items():
+        for cell in _iter_grid_cells(bounds[0], bounds[1], cell_size):
+            edge_cells.setdefault(cell, []).append(edge_index)
+
+    for tri_index, bounds in triangle_bounds.items():
+        for cell in _iter_grid_cells(bounds[0], bounds[1], cell_size):
+            triangle_cells.setdefault(cell, []).append(tri_index)
+
+    contacts: list[dict] = []
+    seen_point_triangle: set[tuple[int, int]] = set()
+    seen_edge_edge: set[tuple[int, int]] = set()
+
+    for point_index in range(vertex_count):
+        if int(attr[point_index]) & MC2_ATTR_INVALID:
+            continue
+        point_pos = np.ascontiguousarray(positions[point_index], dtype=np.float32)
+        point_min = point_pos - float(thickness)
+        point_max = point_pos + float(thickness)
+        candidate_triangles: set[int] = set()
+        for cell in _iter_grid_cells(point_min, point_max, cell_size):
+            candidate_triangles.update(triangle_cells.get(cell, ()))
+        for tri_index in candidate_triangles:
+            key = (point_index, tri_index)
+            if key in seen_point_triangle:
+                continue
+            seen_point_triangle.add(key)
+            contact = _point_triangle_contact(
+                point_index,
+                triangle_array[tri_index],
+                positions,
+                old_positions,
+                inv_masses,
+                attr,
+                float(thickness),
+            )
+            if contact is not None:
+                contacts.append(contact)
+
+    for edge_index, edge in enumerate(edge_array):
+        if edge_index not in edge_bounds:
+            continue
+        candidate_edges: set[int] = set()
+        bounds = edge_bounds[edge_index]
+        for cell in _iter_grid_cells(bounds[0], bounds[1], cell_size):
+            candidate_edges.update(edge_cells.get(cell, ()))
+        for other_index in candidate_edges:
+            if other_index <= edge_index:
+                continue
+            key = (edge_index, other_index)
+            if key in seen_edge_edge:
+                continue
+            seen_edge_edge.add(key)
+            contact = _edge_edge_contact(
+                edge_array[edge_index],
+                edge_array[other_index],
+                positions,
+                old_positions,
+                inv_masses,
+                float(thickness),
+            )
+            if contact is not None:
+                contacts.append(contact)
+
+    return contacts, float(cell_size)
+
+
+def project_self_collisions(
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    self_collision_inv_masses: np.ndarray,
+    edges: np.ndarray,
+    triangles: np.ndarray,
+    attributes: np.ndarray,
+    surface_thickness: float,
+    collision_normals: np.ndarray | None = None,
+    friction: np.ndarray | None = None,
+) -> None:
+    thickness = max(float(surface_thickness), 0.0)
+    if thickness <= MC2SystemConstants.EPSILON:
+        return
+    if len(positions) == 0:
+        return
+
+    if collision_normals is not None and friction is not None:
+        try:
+            from . import native_bridge
+
+            if native_bridge.project_self_collisions(
+                positions,
+                old_positions,
+                self_collision_inv_masses,
+                edges,
+                triangles,
+                attributes,
+                thickness,
+                collision_normals,
+                friction,
+            ):
+                return
+        except Exception:
+            pass
+
+    move_mask = (np.ascontiguousarray(attributes, dtype=np.uint8) & MC2_ATTR_MOVE) != 0
+    if not bool(np.any(move_mask)):
+        return
+
+    contacts, _cell_size = _build_self_collision_contacts(
+        positions,
+        old_positions,
+        self_collision_inv_masses,
+        edges,
+        triangles,
+        attributes,
+        thickness,
+    )
+    if not contacts:
+        return
+
+    vertex_count = int(len(positions))
+    add_positions = np.zeros_like(positions, dtype=np.float32)
+    add_normals = np.zeros_like(positions, dtype=np.float32)
+    add_counts = np.zeros(vertex_count, dtype=np.int32)
+    normal_totals = np.zeros_like(positions, dtype=np.float32)
+    normal_counts = np.zeros(vertex_count, dtype=np.int32)
+    friction_values = np.zeros(vertex_count, dtype=np.float32)
+
+    point_triangle_iterations = max(1, int(MC2SystemConstants.SELF_COLLISION_SOLVER_ITERATION))
+    for _iteration in range(point_triangle_iterations):
+        add_positions.fill(0.0)
+        add_normals.fill(0.0)
+        add_counts.fill(0)
+        friction_values.fill(0.0)
+
+        for contact in contacts:
+            contact_type = contact.get("type")
+            if contact_type == "edge_edge":
+                edge_a = np.ascontiguousarray(contact["edge_a"], dtype=np.int32)
+                edge_b = np.ascontiguousarray(contact["edge_b"], dtype=np.int32)
+                a0, a1 = int(edge_a[0]), int(edge_a[1])
+                b0, b1 = int(edge_b[0]), int(edge_b[1])
+                s = float(contact["s"])
+                t = float(contact["t"])
+                normal = np.ascontiguousarray(contact["normal"], dtype=np.float32)
+                inv_a0 = float(self_collision_inv_masses[a0])
+                inv_a1 = float(self_collision_inv_masses[a1])
+                inv_b0 = float(self_collision_inv_masses[b0])
+                inv_b1 = float(self_collision_inv_masses[b1])
+                cur_a = np.ascontiguousarray(positions[a0] * (1.0 - s) + positions[a1] * s, dtype=np.float32)
+                cur_b = np.ascontiguousarray(positions[b0] * (1.0 - t) + positions[b1] * t, dtype=np.float32)
+                current_dist = float(np.dot(normal, cur_a - cur_b))
+                if current_dist >= thickness:
+                    continue
+                b0w = 1.0 - s
+                b1w = s
+                b2w = 1.0 - t
+                b3w = t
+                denom = inv_a0 * b0w * b0w + inv_a1 * b1w * b1w + inv_b0 * b2w * b2w + inv_b1 * b3w * b3w
+                if denom <= MC2SystemConstants.EPSILON:
+                    continue
+                lam = (thickness - current_dist) / denom
+                corr_a0 = normal * (lam * inv_a0 * b0w)
+                corr_a1 = normal * (lam * inv_a1 * b1w)
+                corr_b0 = -normal * (lam * inv_b0 * b2w)
+                corr_b1 = -normal * (lam * inv_b1 * b3w)
+                if inv_a0 > MC2SystemConstants.EPSILON and bool(move_mask[a0]):
+                    add_positions[a0] += corr_a0
+                    add_normals[a0] += normal
+                    add_counts[a0] += 1
+                    friction_values[a0] = max(friction_values[a0], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_a1 > MC2SystemConstants.EPSILON and bool(move_mask[a1]):
+                    add_positions[a1] += corr_a1
+                    add_normals[a1] += normal
+                    add_counts[a1] += 1
+                    friction_values[a1] = max(friction_values[a1], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_b0 > MC2SystemConstants.EPSILON and bool(move_mask[b0]):
+                    add_positions[b0] += corr_b0
+                    add_normals[b0] -= normal
+                    add_counts[b0] += 1
+                    friction_values[b0] = max(friction_values[b0], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_b1 > MC2SystemConstants.EPSILON and bool(move_mask[b1]):
+                    add_positions[b1] += corr_b1
+                    add_normals[b1] -= normal
+                    add_counts[b1] += 1
+                    friction_values[b1] = max(friction_values[b1], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+
+            elif contact_type == "point_triangle":
+                point_index = int(contact["point"])
+                tri = np.ascontiguousarray(contact["triangle"], dtype=np.int32)
+                a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+                uvw = np.ascontiguousarray(contact["uvw"], dtype=np.float32)
+                sign = float(contact["sign"])
+                normal = _triangle_normal_np(
+                    np.ascontiguousarray(positions[a], dtype=np.float32),
+                    np.ascontiguousarray(positions[b], dtype=np.float32),
+                    np.ascontiguousarray(positions[c], dtype=np.float32),
+                ) * sign
+                if float(np.dot(normal, normal)) <= MC2SystemConstants.EPSILON:
+                    continue
+                p = np.ascontiguousarray(positions[point_index], dtype=np.float32)
+                tri_point = (
+                    np.ascontiguousarray(positions[a], dtype=np.float32) * float(uvw[0])
+                    + np.ascontiguousarray(positions[b], dtype=np.float32) * float(uvw[1])
+                    + np.ascontiguousarray(positions[c], dtype=np.float32) * float(uvw[2])
+                )
+                current_dist = float(np.dot(normal, p - tri_point))
+                if current_dist >= thickness:
+                    continue
+                inv_point = float(self_collision_inv_masses[point_index])
+                inv_a = float(self_collision_inv_masses[a])
+                inv_b = float(self_collision_inv_masses[b])
+                inv_c = float(self_collision_inv_masses[c])
+                denom = inv_point + inv_a * float(uvw[0]) ** 2 + inv_b * float(uvw[1]) ** 2 + inv_c * float(uvw[2]) ** 2
+                if denom <= MC2SystemConstants.EPSILON:
+                    continue
+                lam = (thickness - current_dist) / denom
+                corr_p = normal * (lam * inv_point)
+                corr_a = -normal * (lam * inv_a * float(uvw[0]))
+                corr_b = -normal * (lam * inv_b * float(uvw[1]))
+                corr_c = -normal * (lam * inv_c * float(uvw[2]))
+                if inv_point > MC2SystemConstants.EPSILON and bool(move_mask[point_index]):
+                    add_positions[point_index] += corr_p
+                    add_normals[point_index] += normal
+                    add_counts[point_index] += 1
+                    friction_values[point_index] = max(friction_values[point_index], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_a > MC2SystemConstants.EPSILON and bool(move_mask[a]):
+                    add_positions[a] += corr_a
+                    add_normals[a] -= normal
+                    add_counts[a] += 1
+                    friction_values[a] = max(friction_values[a], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_b > MC2SystemConstants.EPSILON and bool(move_mask[b]):
+                    add_positions[b] += corr_b
+                    add_normals[b] -= normal
+                    add_counts[b] += 1
+                    friction_values[b] = max(friction_values[b], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+                if inv_c > MC2SystemConstants.EPSILON and bool(move_mask[c]):
+                    add_positions[c] += corr_c
+                    add_normals[c] -= normal
+                    add_counts[c] += 1
+                    friction_values[c] = max(friction_values[c], 1.0 - max(0.0, min(1.0, current_dist / max(thickness, MC2SystemConstants.EPSILON))))
+
+        active = add_counts > 0
+        if bool(np.any(active)):
+            positions[active] += add_positions[active] / add_counts[active, None].astype(np.float32)
+            normal_totals[active] += add_normals[active] / add_counts[active, None].astype(np.float32)
+            normal_counts[active] += 1
+        if friction is not None:
+            friction[:] = np.maximum(np.asarray(friction, dtype=np.float32), friction_values)
+
+    if collision_normals is not None:
+        active_normals = normal_counts > 0
+        if bool(np.any(active_normals)):
+            self_normals = normal_totals[active_normals] / normal_counts[active_normals, None].astype(np.float32)
+            lengths = np.linalg.norm(self_normals, axis=1)
+            valid = lengths > MC2SystemConstants.EPSILON
+            if bool(np.any(valid)):
+                indices = np.flatnonzero(active_normals)[valid]
+                collision_normals[indices] += (self_normals[valid] / lengths[valid, None]).astype(np.float32)
 
 
 def collider_arrays_for_native(

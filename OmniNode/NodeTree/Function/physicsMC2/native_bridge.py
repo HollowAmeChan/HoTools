@@ -135,6 +135,7 @@ def update_meshcloth_context_static_arrays(handle, arrays: dict) -> bool:
         np.ascontiguousarray(arrays.get("volume_pairs", ()), dtype=np.int32).reshape((-1, 4)),
         np.ascontiguousarray(arrays.get("volume_rest", ()), dtype=np.float32),
         np.ascontiguousarray(arrays.get("edges", ()), dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(arrays.get("triangles", ()), dtype=np.int32).reshape((-1, 3)),
     )
     return True
 
@@ -490,6 +491,45 @@ def project_edge_collisions(
     return True
 
 
+def project_self_collisions(
+    positions: np.ndarray,
+    old_positions: np.ndarray,
+    self_collision_inv_masses: np.ndarray,
+    edges: np.ndarray,
+    triangles: np.ndarray,
+    attributes: np.ndarray,
+    surface_thickness: float,
+    collision_normals: np.ndarray,
+    friction: np.ndarray,
+) -> bool:
+    module = native_module()
+    function = getattr(module, "project_self_collisions_mc2", None) if module is not None else None
+    if function is None:
+        return False
+
+    positions_view = np.ascontiguousarray(positions, dtype=np.float32)
+    collision_normals_view = np.ascontiguousarray(collision_normals, dtype=np.float32)
+    friction_view = np.ascontiguousarray(friction, dtype=np.float32)
+    function(
+        positions_view,
+        np.ascontiguousarray(old_positions, dtype=np.float32),
+        np.ascontiguousarray(self_collision_inv_masses, dtype=np.float32),
+        np.ascontiguousarray(edges, dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(triangles, dtype=np.int32).reshape((-1, 3)),
+        np.ascontiguousarray(attributes, dtype=np.uint8),
+        collision_normals_view,
+        friction_view,
+        float(surface_thickness),
+    )
+    if positions_view is not positions:
+        positions[...] = positions_view
+    if collision_normals_view is not collision_normals:
+        collision_normals[...] = collision_normals_view
+    if friction_view is not friction:
+        friction[...] = friction_view
+    return True
+
+
 def project_triangle_bending(
     positions: np.ndarray,
     inv_masses: np.ndarray,
@@ -799,6 +839,9 @@ def solve_meshcloth_core(
     display_max_distance_ratio: float = 1.3,
     animation_pose_ratio: float = 0.0,
     blend_weight: float = 1.0,
+    self_collision_enabled: bool = False,
+    self_collision_surface_thickness: float = 0.0,
+    self_collision_mass: float = 0.0,
 ) -> bool:
     module = native_module()
     function_name = (
@@ -905,6 +948,9 @@ def solve_meshcloth_core(
         float(display_max_distance_ratio),
         float(animation_pose_ratio),
         float(blend_weight),
+        bool(self_collision_enabled),
+        float(self_collision_surface_thickness),
+        float(self_collision_mass),
     )
 
     if context_handle is not None:
@@ -938,6 +984,7 @@ def solve_meshcloth_core(
         np.ascontiguousarray(arrays.get("volume_pairs", empty_i32_quad), dtype=np.int32).reshape((-1, 4)),
         np.ascontiguousarray(arrays.get("volume_rest", empty_f32), dtype=np.float32),
         np.ascontiguousarray(arrays.get("edges", empty_i32), dtype=np.int32).reshape((-1, 2)),
+        np.ascontiguousarray(arrays.get("triangles", empty_i32), dtype=np.int32).reshape((-1, 3)),
         )
         function(
             *dynamic_prefix_args,
@@ -947,7 +994,7 @@ def solve_meshcloth_core(
             param_args[1],
             *static_args[18:23],
             *param_args[2:],
-            static_args[23],
+            *static_args[23:25],
             *collider_and_inertia_args,
         )
 
@@ -1044,6 +1091,7 @@ def static_topology_arrays_for_native(topology_state, base_pose_state=None) -> d
         "vertex_local_rotations": _member_array(topology_state, "vertex_local_rotations", np.float32, (4,)),
         "tether_rest_lengths": _member_array(topology_state, "tether_rest_lengths", np.float32),
         "edges": _member_array(topology_state, "edges", np.int32, (2,)),
+        "triangles": _member_array(topology_state, "triangles", np.int32, (3,)),
         "edge_i": _member_array(topology_state, "edge_i", np.int32),
         "edge_j": _member_array(topology_state, "edge_j", np.int32),
         "edge_rest": _member_array(topology_state, "edge_rest", np.float32),

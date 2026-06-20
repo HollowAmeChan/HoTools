@@ -91,6 +91,9 @@ def make_grid_object(cols=5, rows=5, spacing=0.22):
     props.pin_enabled = True
     props.pin_vertex_group = "PinTop"
     props.collided_by_groups = 1
+    props.self_collision_enabled = True
+    props.self_collision_surface_thickness = 0.005
+    props.mass = 0.0
     return obj
 
 
@@ -132,7 +135,12 @@ def build_initial_state(obj):
     mesh_signature = mesh_build.mesh_signature_key(obj)
     output_key = "MC2Delta"
     config = mesh_build.config_key(obj, output_key, mesh_signature, 0.0)
-    return mc2_state.build_state(obj, output_key, mesh_light, mesh_signature, config, 0.0)
+    state = mc2_state.build_state(obj, output_key, mesh_light, mesh_signature, config, 0.0)
+    assert "self_collision_inv_masses" in state
+    assert "self_collision_enabled" in state
+    assert "self_collision_surface_thickness" in state
+    assert "self_collision_mass" in state
+    return state
 
 
 def scene_colliders(scene):

@@ -640,6 +640,9 @@ class MC2TopologyState:
     object_matrix_world_3x3_key: object | None = None
     bend_kind: str = MC2_BEND_KIND_DISTANCE_APPROX
     collided_by_groups: int = 0
+    self_collision_enabled: bool = False
+    self_collision_surface_thickness: float = 0.0
+    self_collision_mass: float = 0.0
     rest_world_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
     rest_world_normals: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
     attributes: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.uint8))
@@ -688,6 +691,7 @@ class MC2TopologyState:
     bend_distance_neighbor_rest: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
     collision_local_radii: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
     collision_radii: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    self_collision_inv_masses: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
 
     @staticmethod
     def _key_equal(left, right) -> bool:
@@ -714,6 +718,7 @@ class MC2TopologyState:
             "bend_distance_count": (self.vertex_count,),
             "collision_local_radii": (self.vertex_count,),
             "collision_radii": (self.vertex_count,),
+            "self_collision_inv_masses": (self.vertex_count,),
         }
         for key, shape in expected.items():
             value = state.get(key)
@@ -758,6 +763,21 @@ class MC2TopologyState:
             else MC2_BEND_KIND_DISTANCE_APPROX
         )
         self.collided_by_groups = _safe_int(state.get("collided_by_groups", self.collided_by_groups), 0)
+        self.self_collision_enabled = _safe_bool(
+            state.get("self_collision_enabled", self.self_collision_enabled),
+            self.self_collision_enabled,
+        )
+        self.self_collision_surface_thickness = max(
+            0.0,
+            _safe_float(
+                state.get("self_collision_surface_thickness", self.self_collision_surface_thickness),
+                self.self_collision_surface_thickness,
+            ),
+        )
+        self.self_collision_mass = max(
+            0.0,
+            _safe_float(state.get("self_collision_mass", self.self_collision_mass), self.self_collision_mass),
+        )
         self.rest_world_positions = _safe_particle_array(
             state.get("rest_world_positions"),
             self.vertex_count,
@@ -910,6 +930,12 @@ class MC2TopologyState:
             np.float32,
             self.collision_radii,
         )
+        self.self_collision_inv_masses = _safe_shaped_array(
+            state.get("self_collision_inv_masses"),
+            (self.vertex_count,),
+            np.float32,
+            self.self_collision_inv_masses,
+        )
     def mirror_to_state(self, state: dict | None) -> None:
         if not isinstance(state, dict):
             return
@@ -919,6 +945,9 @@ class MC2TopologyState:
         state["vertex_count"] = int(self.vertex_count)
         state["bend_kind"] = self.bend_kind
         state["collided_by_groups"] = int(self.collided_by_groups)
+        state["self_collision_enabled"] = bool(self.self_collision_enabled)
+        state["self_collision_surface_thickness"] = float(self.self_collision_surface_thickness)
+        state["self_collision_mass"] = float(self.self_collision_mass)
         for key in (
             "rest_world_positions",
             "rest_world_normals",
@@ -968,6 +997,7 @@ class MC2TopologyState:
             "bend_distance_neighbor_rest",
             "collision_local_radii",
             "collision_radii",
+            "self_collision_inv_masses",
         ):
             state[key] = np.ascontiguousarray(getattr(self, key))
 
@@ -999,8 +1029,12 @@ class MC2TopologyState:
             "dihedral_pairs": tuple(self.dihedral_pairs.shape),
             "volume_pairs": tuple(self.volume_pairs.shape),
             "collision_radii": int(len(self.collision_local_radii)),
+            "self_collision_inv_masses": int(len(self.self_collision_inv_masses)),
             "bend_kind": self.bend_kind,
             "collided_by_groups": int(self.collided_by_groups),
+            "self_collision_enabled": bool(self.self_collision_enabled),
+            "self_collision_surface_thickness": float(self.self_collision_surface_thickness),
+            "self_collision_mass": float(self.self_collision_mass),
         }
 
 
@@ -2188,6 +2222,25 @@ def calc_inverse_masses(
     return inv
 
 
+def calc_self_collision_inverse_masses(
+    attributes: np.ndarray,
+    depths: np.ndarray,
+    friction: np.ndarray | None = None,
+    cloth_mass: float = 0.0,
+) -> np.ndarray:
+    _ = depths
+    count = len(attributes)
+    fr = np.zeros(count, dtype=np.float32) if friction is None else np.ascontiguousarray(friction, dtype=np.float32)
+    fixed = (np.ascontiguousarray(attributes, dtype=np.uint8) & MC2_ATTR_MOVE) == 0
+    mass = np.where(
+        fixed,
+        MC2SystemConstants.SELF_COLLISION_FIXED_MASS,
+        1.0 + fr * MC2SystemConstants.SELF_COLLISION_FRICTION_MASS + float(cloth_mass) * MC2SystemConstants.SELF_COLLISION_CLOTH_MASS,
+    )
+    inv = np.ascontiguousarray(1.0 / np.maximum(mass, MC2SystemConstants.EPSILON), dtype=np.float32)
+    return inv
+
+
 def build_state(
     obj: bpy.types.Object,
     output_key: str,
@@ -2251,6 +2304,24 @@ def build_state(
         bend_type,
     )
     collision_local_radii, collision_mask = mesh_build.build_collision_profile(obj, collision_radius)
+    mesh_collision_props = mesh_build.mesh_collision_props(obj)
+    self_collision_enabled = bool(mesh_collision_props is not None and getattr(mesh_collision_props, "self_collision_enabled", False))
+    self_collision_surface_thickness = (
+        max(float(getattr(mesh_collision_props, "self_collision_surface_thickness", 0.0)), 0.0)
+        if mesh_collision_props is not None
+        else 0.0
+    )
+    self_collision_mass = (
+        max(float(getattr(mesh_collision_props, "mass", 0.0)), 0.0)
+        if mesh_collision_props is not None
+        else 0.0
+    )
+    self_collision_inv_masses = calc_self_collision_inverse_masses(
+        attributes,
+        depths,
+        friction,
+        self_collision_mass,
+    )
     zeros3 = np.zeros((len(obj.data.vertices), 3), dtype=np.float32)
 
     return {
@@ -2307,6 +2378,7 @@ def build_state(
         "friction": friction,
         "static_friction": static_friction,
         "collision_normals": zeros3.copy(),
+        "self_collision_inv_masses": self_collision_inv_masses,
         "inertia_state": inertia.make_runtime_state(obj),
         "attributes": attributes,
         "depths": depths,
@@ -2361,6 +2433,9 @@ def build_state(
         "collision_local_radii": collision_local_radii,
         "collision_radii": mesh_build.collision_radii_to_world(obj, collision_local_radii),
         "collided_by_groups": int(collision_mask),
+        "self_collision_enabled": bool(self_collision_enabled),
+        "self_collision_surface_thickness": float(self_collision_surface_thickness),
+        "self_collision_mass": float(self_collision_mass),
         "param_slots": {name: None for name in MC2_CURVE_READY_PARAMETERS},
         "extension_slots": {
             MC2_RUNTIME_CACHE_SLOT: {},
@@ -2494,10 +2569,30 @@ def sync_state_to_object_transform(
         next_state["bend_distance_neighbor_rest"] = next_state["bend_neighbor_rest"]
         next_state["tether_rest_lengths"] = mesh_build.build_tether_rest_lengths(rest_world, next_state["root_indices"])
         next_state["collision_radii"] = mesh_build.collision_radii_to_world(obj, next_state["collision_local_radii"])
+        mesh_collision_props = mesh_build.mesh_collision_props(obj)
+        next_state["self_collision_enabled"] = bool(
+            mesh_collision_props is not None and getattr(mesh_collision_props, "self_collision_enabled", False)
+        )
+        next_state["self_collision_surface_thickness"] = (
+            max(float(getattr(mesh_collision_props, "self_collision_surface_thickness", 0.0)), 0.0)
+            if mesh_collision_props is not None
+            else 0.0
+        )
+        next_state["self_collision_mass"] = (
+            max(float(getattr(mesh_collision_props, "mass", 0.0)), 0.0)
+            if mesh_collision_props is not None
+            else 0.0
+        )
         next_state["inv_masses"] = calc_inverse_masses(
             next_state["attributes"],
             next_state["depths"],
             next_state["friction"],
+        )
+        next_state["self_collision_inv_masses"] = calc_self_collision_inverse_masses(
+            next_state["attributes"],
+            next_state["depths"],
+            next_state["friction"],
+            next_state.get("self_collision_mass", 0.0),
         )
         next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
 

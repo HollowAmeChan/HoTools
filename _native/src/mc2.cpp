@@ -14,6 +14,9 @@ constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
 constexpr float kDistanceVelocityAttenuation = 0.3f;
 constexpr float kFrictionMass = 3.0f;
 constexpr float kDepthMass = 5.0f;
+constexpr float kSelfCollisionFixedMass = 100.0f;
+constexpr float kSelfCollisionFrictionMass = 10.0f;
+constexpr float kSelfCollisionClothMass = 50.0f;
 constexpr float kTetherStiffnessWidth = 0.3f;
 constexpr float kTetherCompressionStiffness = 1.0f;
 constexpr float kTetherStretchStiffness = 1.0f;
@@ -26,6 +29,7 @@ constexpr float kStaticFrictionDecay = 0.05f;
 constexpr float kStaticFrictionVelocityWidth = 0.2f;
 constexpr float kTriangleBendingFixedInverseMass = 0.01f;
 constexpr float kTriangleVolumeScale = 1000.0f;
+
 constexpr int kAngleLimitIteration = 3;
 constexpr float kAngleLimitAttenuation = 0.9f;
 constexpr float kAngleRestorationScale = 0.2f;
@@ -1693,9 +1697,7 @@ void project_edge_collisions_mc2(Mc2EdgeCollisionView& view) {
     std::vector<std::int32_t> add_counts(static_cast<std::size_t>(view.vertex_count), 0);
     std::vector<float> friction_values(static_cast<std::size_t>(view.vertex_count), 0.0f);
 
-    // 注意：这里的 edge 是外部碰撞模式里的线段检测单元。
-    // 虽然当前传入的是 mesh edges，但它不等同于 distance/shear/bending 的结构约束边；
-    // 本函数的位移、摩擦和法线汇总只服务 collider collision，不能和结构约束语义混用。
+    // Edge collision uses mesh edges as collider segments, not structural constraints.
     for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
         const std::int32_t v0 = view.edges[edge_index * 2 + 0];
         const std::int32_t v1 = view.edges[edge_index * 2 + 1];
@@ -2915,6 +2917,23 @@ void calculate_inverse_masses_mc2(Mc2MeshClothSolveView& view) {
     }
 }
 
+void calculate_self_collision_inverse_masses_mc2(const Mc2MeshClothSolveView& view,
+                                                 std::vector<float>& self_collision_inv_masses) {
+    self_collision_inv_masses.assign(static_cast<std::size_t>(view.vertex_count), 0.0f);
+    if (view.attributes == nullptr || view.friction == nullptr) {
+        return;
+    }
+    const float cloth_mass = std::max(view.self_collision_mass, 0.0f);
+    for (std::int64_t vertex = 0; vertex < view.vertex_count; ++vertex) {
+        const bool movable = (view.attributes[vertex] & kMc2AttrMove) != 0;
+        const float mass = movable
+                               ? 1.0f + view.friction[vertex] * kSelfCollisionFrictionMass +
+                                     cloth_mass * kSelfCollisionClothMass
+                               : kSelfCollisionFixedMass;
+        self_collision_inv_masses[static_cast<std::size_t>(vertex)] = 1.0f / std::max(mass, kMc2Epsilon);
+    }
+}
+
 void clear_collision_normals_mc2(Mc2MeshClothSolveView& view) {
     if (view.collision_normals == nullptr) {
         return;
@@ -2964,6 +2983,12 @@ bool has_collision_inputs_mc2(const Mc2MeshClothSolveView& view) {
            view.collider_types != nullptr && view.collider_group_bits != nullptr && view.collider_centers != nullptr &&
            view.collider_segment_a != nullptr && view.collider_segment_b != nullptr && view.collider_radii != nullptr &&
            has_positive_value(view.collision_radii, view.vertex_count);
+}
+
+bool has_self_collision_inputs_mc2(const Mc2MeshClothSolveView& view) {
+    return view.self_collision_enabled && view.self_collision_surface_thickness > kMc2Epsilon &&
+           view.attributes != nullptr && view.old_positions != nullptr && view.triangles != nullptr &&
+           view.edge_count + view.triangle_count > 0 && view.vertex_count > 0;
 }
 
 void project_collider_collision_mc2(Mc2MeshClothSolveView& view, int collision_mode) {
@@ -3031,10 +3056,12 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
     const float step_dt = view.step_dt;
     const float blend_weight = clamp_float(view.blend_weight, 0.0f, 1.0f);
     const bool has_collision = collision_mode != 0 && has_collision_inputs_mc2(view);
+    const bool has_self_collision = has_self_collision_inputs_mc2(view);
     const bool has_triangle_bending = (view.dihedral_count > 0 || view.volume_count > 0) &&
                                       view.dihedral_pairs != nullptr && view.dihedral_rest_angles != nullptr &&
                                       view.dihedral_signs != nullptr && view.volume_pairs != nullptr &&
                                       view.volume_rest != nullptr && view.bend_stiffness_values != nullptr;
+    std::vector<float> self_collision_inv_masses;
 
     for (int substep = 0; substep < substeps; ++substep) {
         const float velocity_weight = view.substep_velocity_weights != nullptr
@@ -3059,6 +3086,9 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
         update_step_basic_pose_mc2(basic_view);
 
         calculate_inverse_masses_mc2(view);
+        if (has_self_collision) {
+            calculate_self_collision_inverse_masses_mc2(view, self_collision_inv_masses);
+        }
         clear_collision_normals_mc2(view);
 
         Mc2SubstepInertiaView inertia_view;
@@ -3210,6 +3240,23 @@ void solve_meshcloth_mc2(Mc2MeshClothSolveView& view) {
             motion_view.vertex_count = view.vertex_count;
             motion_view.normal_axis = view.normal_axis;
             project_motion_constraints_mc2(motion_view);
+        }
+
+        if (has_self_collision && !self_collision_inv_masses.empty()) {
+            Mc2SelfCollisionView self_view;
+            self_view.positions = view.positions;
+            self_view.old_positions = view.old_positions;
+            self_view.inv_masses = self_collision_inv_masses.data();
+            self_view.edges = view.edges;
+            self_view.triangles = view.triangles;
+            self_view.attributes = view.attributes;
+            self_view.collision_normals = view.collision_normals;
+            self_view.friction = view.friction;
+            self_view.vertex_count = view.vertex_count;
+            self_view.edge_count = view.edge_count;
+            self_view.triangle_count = view.triangle_count;
+            self_view.surface_thickness = view.self_collision_surface_thickness;
+            project_self_collisions_mc2(self_view);
         }
 
         Mc2PostStepView post_view;
