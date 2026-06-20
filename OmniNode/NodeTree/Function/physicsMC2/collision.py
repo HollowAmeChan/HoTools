@@ -858,16 +858,20 @@ def project_edge_collisions(
 
 
 def collider_arrays_for_native(
-    state: dict,
     obj: bpy.types.Object,
     colliders: list[dict] | None,
+    topology_state=None,
 ) -> dict:
     """把当前 HoTools 碰撞组快照打包成未来 native 后端可直接消费的数组。"""
+    if topology_state is None:
+        raise RuntimeError("MC2 collider ABI requires MC2TopologyState")
     empty_vec = np.empty((0, 3), dtype=np.float32)
     empty_i = np.empty(0, dtype=np.int32)
     empty_f = np.empty(0, dtype=np.float32)
-    collision_radii = np.ascontiguousarray(state.get("collision_radii", empty_f), dtype=np.float32)
-    collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
+    collision_radii_source = getattr(topology_state, "collision_radii", empty_f)
+    collided_by_groups_source = getattr(topology_state, "collided_by_groups", 0)
+    collision_radii = np.ascontiguousarray(collision_radii_source, dtype=np.float32)
+    collided_by_groups = math_utils.clamp_group_mask(collided_by_groups_source)
 
     if not colliders or not collided_by_groups:
         return {

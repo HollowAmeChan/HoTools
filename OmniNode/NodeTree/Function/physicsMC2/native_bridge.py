@@ -964,10 +964,21 @@ def _state_vector(state: dict, key: str, default) -> np.ndarray:
     return value
 
 
-def _inertia_state_arrays(state: dict) -> dict:
-    inertia_state = state.get("inertia_state") if isinstance(state.get("inertia_state"), dict) else {}
+def _source_array(source, key: str, dtype, shape_tail: tuple[int, ...] = ()) -> np.ndarray:
+    if source is not None and hasattr(source, key):
+        return _member_array(source, key, dtype, shape_tail)
+    raise RuntimeError(f"MC2 native ABI requires structured state for '{key}'")
+
+
+def _inertia_state_arrays(center_state) -> dict:
+    if center_state is None:
+        raise RuntimeError("MC2 native ABI requires MC2CenterState")
+    center_inertia = getattr(center_state, "inertia_state", None)
+    inertia_state = center_inertia if isinstance(center_inertia, dict) else {}
     zero3 = np.zeros(3, dtype=np.float32)
     identity = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    scale_ratio = float(getattr(center_state, "scale_ratio", 1.0) or 1.0)
+    negative_scale_sign = int(getattr(center_state, "negative_scale_sign", 1) or 1)
     return {
         "inertia_old_component_position": _state_vector(inertia_state, "old_component_position", zero3),
         "inertia_old_component_rotation": _state_vector(inertia_state, "old_component_rotation", identity),
@@ -986,9 +997,9 @@ def _inertia_state_arrays(state: dict) -> dict:
         "inertia_rotation_axis": _state_vector(inertia_state, "rotation_axis", zero3),
         "inertia_angular_velocity": float(inertia_state.get("angular_velocity", 0.0) or 0.0),
         "inertia_teleport_state": int(inertia_state.get("teleport_state", 0) or 0),
-        "inertia_scale_ratio": float(inertia_state.get("scale_ratio", state.get("scale_ratio", 1.0)) or 1.0),
+        "inertia_scale_ratio": float(inertia_state.get("scale_ratio", scale_ratio) or scale_ratio),
         "inertia_negative_scale_sign": int(
-            inertia_state.get("negative_scale_sign", state.get("negative_scale_sign", 1)) or 1
+            inertia_state.get("negative_scale_sign", negative_scale_sign) or negative_scale_sign
         ),
         "inertia_negative_scale_direction": _state_vector(
             inertia_state,
@@ -1060,90 +1071,55 @@ def static_topology_arrays_for_native(topology_state, base_pose_state=None) -> d
     }
 
 
-def static_state_arrays_for_native(state: dict) -> dict:
-    return {
-        "schema_version": int(MC2_SOLVER_VERSION),
-        "vertex_count": int(state["vertex_count"]),
-        "rest_world_positions": _array(state, "rest_world_positions", np.float32, (3,)),
-        "rest_world_normals": _array(state, "rest_world_normals", np.float32, (3,)),
-        "attributes": _array(state, "attributes", np.uint8),
-        "depths": _array(state, "depths", np.float32),
-        "root_indices": _array(state, "root_indices", np.int32),
-        "parent_indices": _array(state, "parent_indices", np.int32),
-        "root_rest_lengths": _array(state, "root_rest_lengths", np.float32),
-        "baseline_start": _array(state, "baseline_start", np.int32),
-        "baseline_count": _array(state, "baseline_count", np.int32),
-        "baseline_data": _array(state, "baseline_data", np.int32),
-        "baseline_flags": _array(state, "baseline_flags", np.uint8),
-        "base_rotations": _array(state, "base_rotations", np.float32, (4,)),
-        "step_basic_positions": _array(state, "step_basic_positions", np.float32, (3,)),
-        "step_basic_rotations": _array(state, "step_basic_rotations", np.float32, (4,)),
-        "vertex_local_positions": _array(state, "vertex_local_positions", np.float32, (3,)),
-        "vertex_local_rotations": _array(state, "vertex_local_rotations", np.float32, (4,)),
-        "tether_rest_lengths": _array(state, "tether_rest_lengths", np.float32),
-        "edges": _array(state, "edges", np.int32, (2,)),
-        "edge_i": _array(state, "edge_i", np.int32),
-        "edge_j": _array(state, "edge_j", np.int32),
-        "edge_rest": _array(state, "edge_rest", np.float32),
-        "edge_type": _array(state, "edge_type", np.int32),
-        "distance_start": _array(state, "distance_start", np.int32),
-        "distance_count": _array(state, "distance_count", np.int32),
-        "distance_data": _array(state, "distance_data", np.int32),
-        "distance_rest": _array(state, "distance_rest", np.float32),
-        "bend_kind": str(state.get("bend_kind", "")),
-        "bend_distance_i": _array(state, "bend_distance_i", np.int32),
-        "bend_distance_j": _array(state, "bend_distance_j", np.int32),
-        "bend_distance_rest": _array(state, "bend_distance_rest", np.float32),
-        "bend_distance_type": _array(state, "bend_distance_type", np.int32),
-        "bend_distance_start": _array(state, "bend_distance_start", np.int32),
-        "bend_distance_count": _array(state, "bend_distance_count", np.int32),
-        "bend_distance_data": _array(state, "bend_distance_data", np.int32),
-        "bend_distance_neighbor_rest": _array(state, "bend_distance_neighbor_rest", np.float32),
-        "triangle_pairs": _array(state, "triangle_pairs", np.int32, (4,)),
-        "dihedral_pairs": _array(state, "dihedral_pairs", np.int32, (4,)),
-        "dihedral_rest_angles": _array(state, "dihedral_rest_angles", np.float32),
-        "dihedral_signs": _array(state, "dihedral_signs", np.int8),
-        "volume_pairs": _array(state, "volume_pairs", np.int32, (4,)),
-        "volume_rest": _array(state, "volume_rest", np.float32),
-        "collided_by_groups": int(state.get("collided_by_groups", 0)),
-    }
-
-
-def dynamic_state_arrays_for_native(state: dict) -> dict:
+def dynamic_state_arrays_for_native(
+    particle_state=None,
+    base_pose_state=None,
+    topology_state=None,
+    center_state=None,
+) -> dict:
+    if center_state is None:
+        raise RuntimeError("MC2 native ABI requires MC2CenterState")
+    scale_ratio = float(getattr(center_state, "scale_ratio", 1.0) or 1.0)
+    negative_scale_sign = int(getattr(center_state, "negative_scale_sign", 1) or 1)
     arrays = {
-        "scale_ratio": float(state.get("scale_ratio", 1.0) or 1.0),
-        "negative_scale_sign": int(state.get("negative_scale_sign", 1) or 1),
-        "positions": _array(state, "next_positions", np.float32, (3,)),
-        "old_positions": _array(state, "old_positions", np.float32, (3,)),
-        "base_positions": _array(state, "base_positions", np.float32, (3,)),
-        "base_normals": _array(state, "base_normals", np.float32, (3,)),
-        "base_rotations": _array(state, "base_rotations", np.float32, (4,)),
-        "step_basic_positions": _array(state, "step_basic_positions", np.float32, (3,)),
-        "step_basic_rotations": _array(state, "step_basic_rotations", np.float32, (4,)),
-        "velocity_positions": _array(state, "velocity_positions", np.float32, (3,)),
-        "velocity": _array(state, "velocity", np.float32, (3,)),
-        "real_velocity": _array(state, "real_velocity", np.float32, (3,)),
-        "display_positions": _array(state, "display_positions", np.float32, (3,)),
-        "collision_normals": _array(state, "collision_normals", np.float32, (3,)),
-        "collision_radii": _array(state, "collision_radii", np.float32),
-        "inv_masses": _array(state, "inv_masses", np.float32),
-        "friction": _array(state, "friction", np.float32),
-        "static_friction": _array(state, "static_friction", np.float32),
+        "scale_ratio": scale_ratio,
+        "negative_scale_sign": negative_scale_sign,
+        "positions": _source_array(particle_state, "next_positions", np.float32, (3,)),
+        "old_positions": _source_array(particle_state, "old_positions", np.float32, (3,)),
+        "base_positions": _source_array(base_pose_state, "base_positions", np.float32, (3,)),
+        "base_normals": _source_array(base_pose_state, "base_normals", np.float32, (3,)),
+        "base_rotations": _source_array(base_pose_state, "base_rotations", np.float32, (4,)),
+        "step_basic_positions": _source_array(base_pose_state, "step_basic_positions", np.float32, (3,)),
+        "step_basic_rotations": _source_array(base_pose_state, "step_basic_rotations", np.float32, (4,)),
+        "velocity_positions": _source_array(particle_state, "velocity_positions", np.float32, (3,)),
+        "velocity": _source_array(particle_state, "velocity", np.float32, (3,)),
+        "real_velocity": _source_array(particle_state, "real_velocity", np.float32, (3,)),
+        "display_positions": _source_array(particle_state, "display_positions", np.float32, (3,)),
+        "collision_normals": _source_array(particle_state, "collision_normals", np.float32, (3,)),
+        "collision_radii": _source_array(topology_state, "collision_radii", np.float32),
+        "inv_masses": _source_array(particle_state, "inv_masses", np.float32),
+        "friction": _source_array(particle_state, "friction", np.float32),
+        "static_friction": _source_array(particle_state, "static_friction", np.float32),
     }
-    arrays.update(_inertia_state_arrays(state))
+    arrays.update(_inertia_state_arrays(center_state))
     return arrays
 
 
-def state_arrays_for_native(state: dict, topology_state=None, base_pose_state=None) -> dict:
+def state_arrays_for_native(
+    topology_state=None,
+    base_pose_state=None,
+    particle_state=None,
+    center_state=None,
+) -> dict:
     if topology_state is None:
         raise RuntimeError("MC2 native ABI view requires MC2TopologyState")
     arrays = static_topology_arrays_for_native(topology_state, base_pose_state)
-    arrays.update(dynamic_state_arrays_for_native(state))
+    arrays.update(dynamic_state_arrays_for_native(particle_state, base_pose_state, topology_state, center_state))
     return arrays
 
 
-def param_slots_for_native(state: dict) -> dict:
-    slots = dict(state.get("param_slots") or {})
+def param_slots_for_native(param_slots: dict | None = None) -> dict:
+    slots = dict(param_slots or {})
     result = {}
     for name, slot in slots.items():
         if not isinstance(slot, dict):
@@ -1171,16 +1147,20 @@ def param_slots_for_native(state: dict) -> dict:
 
 
 def build_abi_view(
-    state: dict,
     obj: bpy.types.Object,
     colliders: list[dict] | None,
     function_name: str = "solve_meshcloth_mc2",
     topology_state=None,
     base_pose_state=None,
+    particle_state=None,
+    center_state=None,
+    param_slots: dict | None = None,
 ) -> dict:
+    if topology_state is None:
+        raise RuntimeError("MC2 native ABI view requires MC2TopologyState")
     return {
         "status": native_status(function_name),
-        "state": state_arrays_for_native(state, topology_state, base_pose_state),
-        "params": param_slots_for_native(state),
-        "colliders": collision.collider_arrays_for_native(state, obj, colliders),
+        "state": state_arrays_for_native(topology_state, base_pose_state, particle_state, center_state),
+        "params": param_slots_for_native(param_slots),
+        "colliders": collision.collider_arrays_for_native(obj, colliders, topology_state),
     }

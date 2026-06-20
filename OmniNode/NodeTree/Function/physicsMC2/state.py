@@ -23,13 +23,6 @@ from .constants import (
 
 
 MC2_RUNTIME_CACHE_SLOT = "runtime_cache"
-MC2_RUNTIME_CACHE_NAMES = (
-    "curve_cache",
-    "topology_cache",
-    "io_cache",
-    "native_cache",
-    "native_context",
-)
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -273,27 +266,18 @@ class MC2NativeContext:
             return tuple(MC2NativeContext._normalize_key(item) for item in value)
         return value
 
-    def update_static_keys(self, state: dict, topology_state=None) -> None:
-        if topology_state is not None:
-            topology_key = (
-                getattr(topology_state, "mesh_signature_key", None),
-                getattr(topology_state, "object_matrix_world_3x3_key", None),
-            )
-            config_key = getattr(topology_state, "config_key", None)
-            next_vertex_count = int(getattr(topology_state, "vertex_count", 0) or 0)
-            next_distance_count = self._safe_len(getattr(topology_state, "distance_data", None))
-            next_bend_count = self._safe_len(getattr(topology_state, "bend_distance_data", None))
-            next_collider_radius_count = self._safe_len(getattr(topology_state, "collision_local_radii", None))
-        else:
-            topology_key = (
-                state.get("mesh_signature_key"),
-                state.get("object_matrix_world_3x3_key"),
-            )
-            config_key = state.get("config_key")
-            next_vertex_count = int(state.get("vertex_count", 0) or 0)
-            next_distance_count = self._safe_len(state.get("distance_data"))
-            next_bend_count = self._safe_len(state.get("bend_distance_data"))
-            next_collider_radius_count = self._safe_len(state.get("collision_local_radii"))
+    def update_static_keys(self, topology_state) -> None:
+        if topology_state is None:
+            raise RuntimeError("MC2 native context requires MC2TopologyState")
+        topology_key = (
+            getattr(topology_state, "mesh_signature_key", None),
+            getattr(topology_state, "object_matrix_world_3x3_key", None),
+        )
+        config_key = getattr(topology_state, "config_key", None)
+        next_vertex_count = int(getattr(topology_state, "vertex_count", 0) or 0)
+        next_distance_count = self._safe_len(getattr(topology_state, "distance_data", None))
+        next_bend_count = self._safe_len(getattr(topology_state, "bend_distance_data", None))
+        next_collider_radius_count = self._safe_len(getattr(topology_state, "collision_local_radii", None))
         next_topology_key = self._normalize_key(topology_key)
         next_config_key = self._normalize_key(config_key)
         topology_dirty = (
@@ -334,7 +318,7 @@ class MC2NativeContext:
             self.param_arrays_key = None
         self.native_info = native_bridge.meshcloth_context_info(self.handle)
 
-    def upload_static_arrays(self, state: dict, topology_state=None, base_pose_state=None) -> dict:
+    def upload_static_arrays(self, topology_state=None, base_pose_state=None) -> dict:
         if self.topology_dirty or not isinstance(self.static_arrays, dict):
             if topology_state is not None and hasattr(topology_state, "to_native_static_arrays"):
                 self.static_arrays = topology_state.to_native_static_arrays(base_pose_state)
@@ -1077,11 +1061,11 @@ class MC2CenterState:
     step_vector_length: float = 0.0
     inertia_vector_length: float = 0.0
     angular_velocity: float = 0.0
+    previous_collider_snapshot: object | None = None
 
     def replace_legacy_state(self, state: dict) -> None:
         self.legacy_state = state if isinstance(state, dict) else {}
         self.sync_runtime_fields_from_legacy()
-        self._migrate_flat_runtime_cache()
         extension_slots = self._extension_slots()
         extension_slots[MC2_RUNTIME_CACHE_SLOT] = self.runtime_cache_slots()
         self.legacy_state["extension_slots"] = extension_slots
@@ -1104,6 +1088,8 @@ class MC2CenterState:
             self.config_key = self.legacy_state.get("config_key", self.config_key)
         inertia_state = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
         self.inertia_state = inertia_state if isinstance(inertia_state, dict) else {}
+        if isinstance(self.legacy_state, dict) and "previous_collider_snapshot" in self.legacy_state:
+            self.previous_collider_snapshot = self.legacy_state.get("previous_collider_snapshot")
         self._sync_inertia_summary_from_state()
         self.topology_state.replace_from_state(self.legacy_state, self.vertex_count)
         self.base_pose_state.replace_from_state(self.legacy_state, self.vertex_count)
@@ -1273,6 +1259,18 @@ class MC2CenterState:
         self.topology_state.mirror_to_state(target)
         return self.topology_state
 
+    def get_previous_collider_snapshot(self, legacy_state: dict | None = None):
+        target = legacy_state if isinstance(legacy_state, dict) else self.legacy_state
+        if self.previous_collider_snapshot is None and isinstance(target, dict):
+            self.previous_collider_snapshot = target.get("previous_collider_snapshot")
+        return self.previous_collider_snapshot
+
+    def set_previous_collider_snapshot(self, legacy_state: dict | None, snapshot) -> None:
+        self.previous_collider_snapshot = snapshot
+        target = legacy_state if isinstance(legacy_state, dict) else self.legacy_state
+        if isinstance(target, dict):
+            target["previous_collider_snapshot"] = snapshot
+
     def _mirror_center_fields_to_inertia_state(self) -> None:
         if not isinstance(self.inertia_state, dict):
             return
@@ -1335,25 +1333,6 @@ class MC2CenterState:
         if not isinstance(extension_slots, dict):
             extension_slots = {}
         return dict(extension_slots)
-
-    def _migrate_flat_runtime_cache(self) -> None:
-        extension_slots = self._extension_slots()
-        runtime_slots = extension_slots.get(MC2_RUNTIME_CACHE_SLOT)
-        if isinstance(runtime_slots, dict):
-            self.curve_cache = runtime_slots.get("curve_cache") if isinstance(runtime_slots.get("curve_cache"), dict) else self.curve_cache
-            self.topology_cache = runtime_slots.get("topology_cache") if isinstance(runtime_slots.get("topology_cache"), dict) else self.topology_cache
-            self.io_cache = runtime_slots.get("io_cache") if isinstance(runtime_slots.get("io_cache"), dict) else self.io_cache
-            self.native_cache = runtime_slots.get("native_cache") if isinstance(runtime_slots.get("native_cache"), dict) else self.native_cache
-            if "native_context" in runtime_slots:
-                self.native_context = runtime_slots.get("native_context")
-        else:
-            # 旧过渡版本曾把 runtime cache 平铺在 extension_slots 下；这里只迁移，不再继续写回平铺 key。
-            self.curve_cache = extension_slots.get("curve_cache") if isinstance(extension_slots.get("curve_cache"), dict) else self.curve_cache
-            self.topology_cache = extension_slots.get("topology_cache") if isinstance(extension_slots.get("topology_cache"), dict) else self.topology_cache
-            self.io_cache = extension_slots.get("io_cache") if isinstance(extension_slots.get("io_cache"), dict) else self.io_cache
-            self.native_cache = extension_slots.get("native_cache") if isinstance(extension_slots.get("native_cache"), dict) else self.native_cache
-            if "native_context" in extension_slots:
-                self.native_context = extension_slots.get("native_context")
 
     def ensure_native_context(self) -> MC2NativeContext:
         if not isinstance(self.native_context, MC2NativeContext):
@@ -1465,6 +1444,7 @@ class MC2TeamState:
     gravity_dot: float = 1.0
     gravity_ratio: float = 1.0
     velocity_weight: float = 1.0
+    distance_weight: float = 1.0
     blend_weight: float = 1.0
 
     def ensure_center(self, key: str = "main") -> MC2CenterState:
@@ -1558,6 +1538,10 @@ class MC2TeamState:
         self.velocity_weight = max(
             0.0,
             min(1.0, _safe_float(legacy_state.get("velocity_weight", self.velocity_weight), self.velocity_weight)),
+        )
+        self.distance_weight = max(
+            0.0,
+            min(1.0, _safe_float(legacy_state.get("distance_weight", self.distance_weight), self.distance_weight)),
         )
         self.blend_weight = max(
             0.0,
@@ -1681,6 +1665,7 @@ class MC2TeamState:
         legacy_state["gravity_dot"] = self.gravity_dot
         legacy_state["gravity_ratio"] = self.gravity_ratio
         legacy_state["velocity_weight"] = self.velocity_weight
+        legacy_state["distance_weight"] = self.distance_weight
         legacy_state["blend_weight"] = self.blend_weight
         legacy_state["scale_ratio"] = self.scale_ratio
         legacy_state["negative_scale_sign"] = self.negative_scale_sign
@@ -1703,6 +1688,7 @@ class MC2TeamState:
             "gravity_dot": self.gravity_dot,
             "gravity_ratio": self.gravity_ratio,
             "velocity_weight": self.velocity_weight,
+            "distance_weight": self.distance_weight,
             "blend_weight": self.blend_weight,
             "scale_ratio": self.scale_ratio,
             "negative_scale_sign": self.negative_scale_sign,
@@ -1971,6 +1957,63 @@ def commit_topology_state_for_center(
     return center.commit_topology_state(state)
 
 
+def base_pose_proxy_active(
+    state: dict,
+    base_pose_state: MC2BasePoseState | MC2RuntimeOwner | None = None,
+) -> bool:
+    if isinstance(base_pose_state, MC2RuntimeOwner):
+        base_pose_state = base_pose_state.center_state.base_pose_state
+    if isinstance(base_pose_state, MC2BasePoseState):
+        return int(base_pose_state.proxy_ptr or 0) != 0
+    return int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+
+
+def base_pose_proxy_metadata(
+    state: dict,
+    base_pose_state: MC2BasePoseState | MC2RuntimeOwner | None = None,
+) -> tuple[int, str, int | None]:
+    if isinstance(base_pose_state, MC2RuntimeOwner):
+        base_pose_state = base_pose_state.center_state.base_pose_state
+    if isinstance(base_pose_state, MC2BasePoseState):
+        return (
+            int(base_pose_state.proxy_ptr or 0),
+            str(base_pose_state.proxy_name or ""),
+            base_pose_state.proxy_frame,
+        )
+    return (
+        int(state.get("base_pose_proxy_ptr", 0) or 0),
+        str(state.get("base_pose_proxy_name", "") or ""),
+        state.get("base_pose_proxy_frame"),
+    )
+
+
+def previous_collider_snapshot_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+):
+    center = coerce_center_state(center_state)
+    if center is None:
+        return state.get("previous_collider_snapshot") if isinstance(state, dict) else None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.get_previous_collider_snapshot(state)
+
+
+def set_previous_collider_snapshot_for_center(
+    state: dict,
+    snapshot,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        if isinstance(state, dict):
+            state["previous_collider_snapshot"] = snapshot
+        return
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    center.set_previous_collider_snapshot(state, snapshot)
+
+
 def _extension_slots(state: dict) -> dict:
     extension_slots = state.get("extension_slots")
     if not isinstance(extension_slots, dict):
@@ -1980,22 +2023,12 @@ def _extension_slots(state: dict) -> dict:
 
 
 def runtime_cache_slots(state: dict) -> dict:
-    """返回当前 center 的 runtime cache namespace。
-
-    新路径只在 extension_slots["runtime_cache"] 下暴露 cache；旧平铺 key 会被迁移进来，避免
-    后续 Team/Center 扩展继续把 cache 和 solver feature slot 混在同一层。
-    """
+    """返回当前 center 的 runtime cache namespace。"""
     extension_slots = _extension_slots(state)
     runtime_slots = extension_slots.get(MC2_RUNTIME_CACHE_SLOT)
     if not isinstance(runtime_slots, dict):
         runtime_slots = {}
         extension_slots[MC2_RUNTIME_CACHE_SLOT] = runtime_slots
-    for name in MC2_RUNTIME_CACHE_NAMES:
-        if name in runtime_slots:
-            continue
-        legacy_value = extension_slots.get(name)
-        if isinstance(legacy_value, dict) or name == "native_context":
-            runtime_slots[name] = legacy_value
     return runtime_slots
 
 
@@ -2079,7 +2112,7 @@ def update_native_context_keys(
 ) -> MC2NativeContext:
     context = ensure_native_context_for_center(state, center_state)
     topology_ref = topology_state if topology_state is not None else topology_state_for_center(state, center_state)
-    context.update_static_keys(state, topology_ref)
+    context.update_static_keys(topology_ref)
     param_key = None
     param_slots = None
     if runtime is not None:
@@ -2138,22 +2171,6 @@ def inherit_runtime_slots(source: dict, target: dict) -> dict:
         target_extension["features"] = features
     target["extension_slots"] = target_extension
     return target
-
-
-def curve_cache(state: dict) -> dict:
-    return extension_cache(state, "curve_cache")
-
-
-def topology_cache(state: dict) -> dict:
-    return extension_cache(state, "topology_cache")
-
-
-def io_cache(state: dict) -> dict:
-    return extension_cache(state, "io_cache")
-
-
-def native_cache(state: dict) -> dict:
-    return extension_cache(state, "native_cache")
 
 
 def calc_inverse_masses(

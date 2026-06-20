@@ -30,22 +30,18 @@ def _end_stage(timing: dict | None, stage: str, start: float | None) -> None:
     _add_timing(timing, stage, time.perf_counter() - start)
 
 
-def _runtime_cache(runtime_caches: dict | None, state: dict, name: str) -> dict:
+def _runtime_cache(runtime_caches: dict | None, name: str) -> dict:
     if isinstance(runtime_caches, dict):
         cache = runtime_caches.get(name)
         if not isinstance(cache, dict):
             cache = {}
             runtime_caches[name] = cache
         return cache
-    if name == "curve_cache":
-        return mc2_state.curve_cache(state)
-    if name == "native_cache":
-        return mc2_state.native_cache(state)
-    return mc2_state.extension_cache(state, name)
+    raise RuntimeError("MC2 solver requires runtime cache slots from MC2RuntimeOwner")
 
 
-def _native_runtime_slot(state: dict, runtime_caches: dict | None = None) -> dict:
-    cache = _runtime_cache(runtime_caches, state, "native_cache")
+def _native_runtime_slot(runtime_caches: dict | None = None) -> dict:
+    cache = _runtime_cache(runtime_caches, "native_cache")
     slot = cache.get("abi")
     if not isinstance(slot, dict):
         slot = {}
@@ -61,14 +57,19 @@ def _native_abi_view_from_cache(
     runtime_caches: dict | None = None,
     topology_state=None,
     base_pose_state=None,
+    particle_state=None,
+    center_state=None,
+    param_slots: dict | None = None,
 ) -> dict:
-    slot = _native_runtime_slot(state, runtime_caches)
+    slot = _native_runtime_slot(runtime_caches)
     value = native_bridge.build_abi_view(
-        state,
         obj,
         colliders,
         topology_state=topology_state,
         base_pose_state=base_pose_state,
+        particle_state=particle_state,
+        center_state=center_state,
+        param_slots=param_slots,
     )
     slot["abi_view_current"] = {
         "solver": solver_name,
@@ -88,6 +89,9 @@ def _write_native_debug_view(
     enabled: bool,
     topology_state=None,
     base_pose_state=None,
+    particle_state=None,
+    center_state=None,
+    param_slots: dict | None = None,
 ) -> None:
     native_slot["solver"] = solver_name
     if not enabled:
@@ -104,6 +108,9 @@ def _write_native_debug_view(
         runtime_caches,
         topology_state,
         base_pose_state,
+        particle_state,
+        center_state,
+        param_slots,
     )
     native_slot["abi_view"] = abi_view
     native_slot["collider_arrays"] = abi_view["colliders"]
@@ -167,13 +174,13 @@ def _sync_gravity_runtime(runtime, depths: np.ndarray, gravity_dot: float, gravi
 
 
 def _team_blend_context(
-    state: dict,
+    team_state: mc2_state.MC2TeamState,
     step_dt: float,
     substep_count: int,
     stablization_time_after_reset: float,
     blend_weight: float,
 ) -> tuple[np.ndarray, float, float]:
-    previous_velocity = max(0.0, min(1.0, float(state.get("velocity_weight", 0.0))))
+    previous_velocity = max(0.0, min(1.0, float(team_state.velocity_weight)))
     stabilize_time = max(0.0, min(1.0, float(stablization_time_after_reset)))
     weights = np.empty(max(1, int(substep_count)), dtype=np.float32)
     for index in range(len(weights)):
@@ -182,7 +189,7 @@ def _team_blend_context(
             previous_velocity = max(0.0, min(1.0, previous_velocity + add_weight))
         weights[index] = previous_velocity
     user_blend = max(0.0, min(1.0, float(blend_weight)))
-    distance_weight = max(0.0, min(1.0, float(state.get("distance_weight", 1.0))))
+    distance_weight = max(0.0, min(1.0, float(team_state.distance_weight)))
     return (
         np.ascontiguousarray(weights, dtype=np.float32),
         previous_velocity,
@@ -199,19 +206,22 @@ def _blend_display_positions(base_positions: np.ndarray, display_positions: np.n
     return np.ascontiguousarray(base + (display - base) * weight, dtype=np.float32)
 
 
-def _particle_array(particle_state, state: dict, key: str) -> np.ndarray:
-    value = getattr(particle_state, key) if particle_state is not None else state[key]
-    return np.ascontiguousarray(value, dtype=np.float32)
+def _particle_array(particle_state, key: str) -> np.ndarray:
+    if particle_state is None:
+        raise RuntimeError("MC2 solver requires MC2ParticleState")
+    return np.ascontiguousarray(getattr(particle_state, key), dtype=np.float32)
 
 
-def _base_pose_array(base_pose_state, state: dict, key: str) -> np.ndarray:
-    value = getattr(base_pose_state, key) if base_pose_state is not None else state[key]
-    return np.ascontiguousarray(value, dtype=np.float32)
+def _base_pose_array(base_pose_state, key: str) -> np.ndarray:
+    if base_pose_state is None:
+        raise RuntimeError("MC2 solver requires MC2BasePoseState")
+    return np.ascontiguousarray(getattr(base_pose_state, key), dtype=np.float32)
 
 
-def _topology_array(topology_state, state: dict, key: str, dtype) -> np.ndarray:
-    value = getattr(topology_state, key) if topology_state is not None else state[key]
-    return np.ascontiguousarray(value, dtype=dtype)
+def _topology_array(topology_state, key: str, dtype) -> np.ndarray:
+    if topology_state is None:
+        raise RuntimeError("MC2 solver requires MC2TopologyState")
+    return np.ascontiguousarray(getattr(topology_state, key), dtype=dtype)
 
 
 def _team_time_scale(team_state) -> float:
@@ -328,56 +338,57 @@ def solve_meshcloth(
 ) -> dict:
     stage_start = time.perf_counter() if timing is not None else None
     substage_start = _stage_start(timing)
-    colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
     team_state_ref = mc2_state.team_state_for_solver(state, team_state)
     center_state_ref = mc2_state.coerce_center_state(center_state)
+    colliders = collision.with_previous_collider_pose(
+        colliders,
+        mc2_state.previous_collider_snapshot_for_center(state, center_state_ref),
+    )
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
     particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
     base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
     topology_state_ref = mc2_state.topology_state_for_center(state, center_state_ref)
-    positions = _particle_array(particle_state_ref, state, "next_positions")
-    old_positions = _particle_array(particle_state_ref, state, "old_positions")
-    base_positions = _base_pose_array(base_pose_state_ref, state, "base_positions")
-    base_normals = _base_pose_array(base_pose_state_ref, state, "base_normals")
-    base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
-    step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
-    step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
-    attributes = _topology_array(topology_state_ref, state, "attributes", np.uint8)
-    depths = _topology_array(topology_state_ref, state, "depths", np.float32)
-    friction = _particle_array(particle_state_ref, state, "friction")
-    static_friction = _particle_array(particle_state_ref, state, "static_friction")
-    velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
-    velocity = _particle_array(particle_state_ref, state, "velocity")
-    real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
+    positions = _particle_array(particle_state_ref, "next_positions")
+    old_positions = _particle_array(particle_state_ref, "old_positions")
+    base_positions = _base_pose_array(base_pose_state_ref, "base_positions")
+    base_normals = _base_pose_array(base_pose_state_ref, "base_normals")
+    base_rotations = _base_pose_array(base_pose_state_ref, "base_rotations")
+    step_basic_positions = _base_pose_array(base_pose_state_ref, "step_basic_positions")
+    step_basic_rotations = _base_pose_array(base_pose_state_ref, "step_basic_rotations")
+    attributes = _topology_array(topology_state_ref, "attributes", np.uint8)
+    depths = _topology_array(topology_state_ref, "depths", np.float32)
+    friction = _particle_array(particle_state_ref, "friction")
+    static_friction = _particle_array(particle_state_ref, "static_friction")
+    velocity_positions = _particle_array(particle_state_ref, "velocity_positions")
+    velocity = _particle_array(particle_state_ref, "velocity")
+    real_velocity = _particle_array(particle_state_ref, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
-    collision_radii = _topology_array(topology_state_ref, state, "collision_radii", np.float32)
-    collided_by_groups = math_utils.clamp_group_mask(
-        topology_state_ref.collided_by_groups if topology_state_ref is not None else state.get("collided_by_groups", 0)
-    )
-    collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
+    collision_radii = _topology_array(topology_state_ref, "collision_radii", np.float32)
+    collided_by_groups = math_utils.clamp_group_mask(topology_state_ref.collided_by_groups)
+    collision_normals = _particle_array(particle_state_ref, "collision_normals")
     collision_normals.fill(0.0)
-    parent_indices = _topology_array(topology_state_ref, state, "parent_indices", np.int32)
-    root_indices = _topology_array(topology_state_ref, state, "root_indices", np.int32)
-    tether_rest_lengths = _topology_array(topology_state_ref, state, "tether_rest_lengths", np.float32)
-    baseline_start = _topology_array(topology_state_ref, state, "baseline_start", np.int32)
-    baseline_count = _topology_array(topology_state_ref, state, "baseline_count", np.int32)
-    baseline_data = _topology_array(topology_state_ref, state, "baseline_data", np.int32)
-    vertex_local_positions = _topology_array(topology_state_ref, state, "vertex_local_positions", np.float32)
-    vertex_local_rotations = _topology_array(topology_state_ref, state, "vertex_local_rotations", np.float32)
-    distance_start = _topology_array(topology_state_ref, state, "distance_start", np.int32)
-    distance_count = _topology_array(topology_state_ref, state, "distance_count", np.int32)
-    distance_data = _topology_array(topology_state_ref, state, "distance_data", np.int32)
-    distance_rest = _topology_array(topology_state_ref, state, "distance_rest", np.float32)
-    bend_distance_start = _topology_array(topology_state_ref, state, "bend_distance_start", np.int32)
-    bend_distance_count = _topology_array(topology_state_ref, state, "bend_distance_count", np.int32)
-    bend_distance_data = _topology_array(topology_state_ref, state, "bend_distance_data", np.int32)
-    bend_distance_neighbor_rest = _topology_array(topology_state_ref, state, "bend_distance_neighbor_rest", np.float32)
-    dihedral_pairs = _topology_array(topology_state_ref, state, "dihedral_pairs", np.int32)
-    dihedral_rest_angles = _topology_array(topology_state_ref, state, "dihedral_rest_angles", np.float32)
-    dihedral_signs = _topology_array(topology_state_ref, state, "dihedral_signs", np.int8)
-    volume_pairs = _topology_array(topology_state_ref, state, "volume_pairs", np.int32)
-    volume_rest = _topology_array(topology_state_ref, state, "volume_rest", np.float32)
-    edges = _topology_array(topology_state_ref, state, "edges", np.int32)
+    parent_indices = _topology_array(topology_state_ref, "parent_indices", np.int32)
+    root_indices = _topology_array(topology_state_ref, "root_indices", np.int32)
+    tether_rest_lengths = _topology_array(topology_state_ref, "tether_rest_lengths", np.float32)
+    baseline_start = _topology_array(topology_state_ref, "baseline_start", np.int32)
+    baseline_count = _topology_array(topology_state_ref, "baseline_count", np.int32)
+    baseline_data = _topology_array(topology_state_ref, "baseline_data", np.int32)
+    vertex_local_positions = _topology_array(topology_state_ref, "vertex_local_positions", np.float32)
+    vertex_local_rotations = _topology_array(topology_state_ref, "vertex_local_rotations", np.float32)
+    distance_start = _topology_array(topology_state_ref, "distance_start", np.int32)
+    distance_count = _topology_array(topology_state_ref, "distance_count", np.int32)
+    distance_data = _topology_array(topology_state_ref, "distance_data", np.int32)
+    distance_rest = _topology_array(topology_state_ref, "distance_rest", np.float32)
+    bend_distance_start = _topology_array(topology_state_ref, "bend_distance_start", np.int32)
+    bend_distance_count = _topology_array(topology_state_ref, "bend_distance_count", np.int32)
+    bend_distance_data = _topology_array(topology_state_ref, "bend_distance_data", np.int32)
+    bend_distance_neighbor_rest = _topology_array(topology_state_ref, "bend_distance_neighbor_rest", np.float32)
+    dihedral_pairs = _topology_array(topology_state_ref, "dihedral_pairs", np.int32)
+    dihedral_rest_angles = _topology_array(topology_state_ref, "dihedral_rest_angles", np.float32)
+    dihedral_signs = _topology_array(topology_state_ref, "dihedral_signs", np.int8)
+    volume_pairs = _topology_array(topology_state_ref, "volume_pairs", np.int32)
+    volume_rest = _topology_array(topology_state_ref, "volume_rest", np.float32)
+    edges = _topology_array(topology_state_ref, "edges", np.int32)
     movable = inv_masses > MC2SystemConstants.EPSILON
     fixed = ~movable
     _end_stage(timing, "solve_setup.arrays", substage_start)
@@ -392,18 +403,18 @@ def solve_meshcloth(
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
-    base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    base_pose_mode = mc2_state.base_pose_proxy_active(state, base_pose_state_ref)
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
     team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
-        state,
+        team_state_ref,
         step_dt,
         substep_count,
         stablization_time_after_reset,
         blend_weight,
     )
     team_state_ref.apply_blend_context(velocity_weight_value, blend_weight_value, state)
-    curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
+    curve_cache = _runtime_cache(runtime_caches, "curve_cache")
     _end_stage(timing, "solve_setup.team", substage_start)
 
     substage_start = _stage_start(timing)
@@ -503,7 +514,7 @@ def solve_meshcloth(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
-        collision.collider_arrays_for_native(state, obj, colliders)
+        collision.collider_arrays_for_native(obj, colliders, topology_state_ref)
         if has_collision
         else None
     )
@@ -551,7 +562,7 @@ def solve_meshcloth(
         friction.fill(0.0)
         static_friction.fill(0.0)
     else:
-        display_positions = np.ascontiguousarray(state["display_positions"], dtype=np.float32)
+        display_positions = _particle_array(particle_state_ref, "display_positions")
         inertia.apply_negative_scale_teleport(
             old_positions,
             velocity_positions,
@@ -1143,6 +1154,7 @@ def solve_meshcloth(
         next_state["static_friction"] = np.ascontiguousarray(static_friction, dtype=np.float32)
         next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
         next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
+    proxy_ptr, proxy_name, proxy_frame = mc2_state.base_pose_proxy_metadata(state, base_pose_state_ref)
     mc2_state.commit_base_pose_state_for_center(
         next_state,
         center_state_ref,
@@ -1151,17 +1163,21 @@ def solve_meshcloth(
         base_rotations=base_rotations,
         step_basic_positions=step_basic_positions,
         step_basic_rotations=step_basic_rotations,
-        proxy_ptr=state.get("base_pose_proxy_ptr", 0),
-        proxy_name=state.get("base_pose_proxy_name", ""),
-        proxy_frame=state.get("base_pose_proxy_frame"),
+        proxy_ptr=proxy_ptr,
+        proxy_name=proxy_name,
+        proxy_frame=proxy_frame,
     )
     if center_state_ref is None:
         next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
         next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
-    next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
+    mc2_state.set_previous_collider_snapshot_for_center(
+        next_state,
+        collision.compact_collider_snapshot(colliders),
+        center_state_ref,
+    )
     runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
-    native_slot = _native_runtime_slot(next_state, runtime_caches)
+    native_slot = _native_runtime_slot(runtime_caches)
     _write_native_debug_view(
         native_slot,
         next_state,
@@ -1172,6 +1188,9 @@ def solve_meshcloth(
         debug_native_view,
         topology_state_ref,
         base_pose_state_ref,
+        particle_state_ref,
+        center_state_ref,
+        native_param_context.param_slots,
     )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
@@ -1252,38 +1271,39 @@ def solve_meshcloth_native_core(
     if not native_bridge.has_function("solve_meshcloth_mc2"):
         status = native_bridge.native_status("solve_meshcloth_mc2")
         raise RuntimeError(f"MC2 C++ backend is unavailable: {status}")
-    colliders = collision.with_previous_collider_pose(colliders, state.get("previous_collider_snapshot"))
     team_state_ref = mc2_state.team_state_for_solver(state, team_state)
     center_state_ref = mc2_state.coerce_center_state(center_state)
+    colliders = collision.with_previous_collider_pose(
+        colliders,
+        mc2_state.previous_collider_snapshot_for_center(state, center_state_ref),
+    )
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
     particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
     base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
     topology_state_ref = mc2_state.topology_state_for_center(state, center_state_ref)
 
-    positions = _particle_array(particle_state_ref, state, "next_positions")
-    old_positions = _particle_array(particle_state_ref, state, "old_positions")
-    base_positions = _base_pose_array(base_pose_state_ref, state, "base_positions")
-    base_normals = _base_pose_array(base_pose_state_ref, state, "base_normals")
-    base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
-    step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
-    step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
-    attributes = _topology_array(topology_state_ref, state, "attributes", np.uint8)
-    depths = _topology_array(topology_state_ref, state, "depths", np.float32)
-    friction = _particle_array(particle_state_ref, state, "friction")
-    static_friction = _particle_array(particle_state_ref, state, "static_friction")
-    velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
-    velocity = _particle_array(particle_state_ref, state, "velocity")
-    real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
+    positions = _particle_array(particle_state_ref, "next_positions")
+    old_positions = _particle_array(particle_state_ref, "old_positions")
+    base_positions = _base_pose_array(base_pose_state_ref, "base_positions")
+    base_normals = _base_pose_array(base_pose_state_ref, "base_normals")
+    base_rotations = _base_pose_array(base_pose_state_ref, "base_rotations")
+    step_basic_positions = _base_pose_array(base_pose_state_ref, "step_basic_positions")
+    step_basic_rotations = _base_pose_array(base_pose_state_ref, "step_basic_rotations")
+    attributes = _topology_array(topology_state_ref, "attributes", np.uint8)
+    depths = _topology_array(topology_state_ref, "depths", np.float32)
+    friction = _particle_array(particle_state_ref, "friction")
+    static_friction = _particle_array(particle_state_ref, "static_friction")
+    velocity_positions = _particle_array(particle_state_ref, "velocity_positions")
+    velocity = _particle_array(particle_state_ref, "velocity")
+    real_velocity = _particle_array(particle_state_ref, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(
         attributes,
         depths,
         friction,
     )
-    collision_radii = _topology_array(topology_state_ref, state, "collision_radii", np.float32)
-    collided_by_groups = math_utils.clamp_group_mask(
-        topology_state_ref.collided_by_groups if topology_state_ref is not None else state.get("collided_by_groups", 0)
-    )
-    collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
+    collision_radii = _topology_array(topology_state_ref, "collision_radii", np.float32)
+    collided_by_groups = math_utils.clamp_group_mask(topology_state_ref.collided_by_groups)
+    collision_normals = _particle_array(particle_state_ref, "collision_normals")
     collision_normals.fill(0.0)
     _end_stage(timing, "solve_setup.arrays", substage_start)
 
@@ -1297,18 +1317,18 @@ def solve_meshcloth_native_core(
     gravity = math_utils.world_gravity(gravity_dir) * max(float(gravity_power), 0.0)
     world_scale = math_utils.matrix_scale_radius(obj.matrix_world)
     world_scale_nonnegative = max(float(world_scale), 0.0)
-    base_pose_mode = int(state.get("base_pose_proxy_ptr", 0) or 0) != 0
+    base_pose_mode = mc2_state.base_pose_proxy_active(state, base_pose_state_ref)
     animation_pose_ratio_value = max(0.0, min(1.0, float(animation_pose_ratio)))
     team_state_ref.apply_solver_inputs(animation_pose_ratio_value, blend_weight, state)
     substep_velocity_weights, velocity_weight_value, blend_weight_value = _team_blend_context(
-        state,
+        team_state_ref,
         step_dt,
         substep_count,
         stablization_time_after_reset,
         blend_weight,
     )
     team_state_ref.apply_blend_context(velocity_weight_value, blend_weight_value, state)
-    curve_cache = _runtime_cache(runtime_caches, state, "curve_cache")
+    curve_cache = _runtime_cache(runtime_caches, "curve_cache")
     _end_stage(timing, "solve_setup.team", substage_start)
 
     substage_start = _stage_start(timing)
@@ -1417,7 +1437,7 @@ def solve_meshcloth_native_core(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
-        collision.collider_arrays_for_native(state, obj, colliders)
+        collision.collider_arrays_for_native(obj, colliders, topology_state_ref)
         if has_collision
         else None
     )
@@ -1465,7 +1485,7 @@ def solve_meshcloth_native_core(
         friction.fill(0.0)
         static_friction.fill(0.0)
     else:
-        display_positions = np.ascontiguousarray(state["display_positions"], dtype=np.float32)
+        display_positions = _particle_array(particle_state_ref, "display_positions")
         inertia.apply_negative_scale_teleport(
             old_positions,
             velocity_positions,
@@ -1580,7 +1600,7 @@ def solve_meshcloth_native_core(
         center_state_ref,
         topology_state_ref,
     )
-    static_arrays = native_context.upload_static_arrays(state, topology_state_ref, base_pose_state_ref)
+    static_arrays = native_context.upload_static_arrays(topology_state_ref, base_pose_state_ref)
     native_params_ready = bool(
         native_context.upload_param_arrays(param_arrays)
         and native_bridge.has_function("solve_meshcloth_mc2_context_cached_params")
@@ -1592,7 +1612,14 @@ def solve_meshcloth_native_core(
         and native_bridge.has_function("solve_meshcloth_mc2_context")
     )
     arrays = {} if use_native_context_solve else dict(static_arrays)
-    arrays.update(native_bridge.dynamic_state_arrays_for_native(state))
+    arrays.update(
+        native_bridge.dynamic_state_arrays_for_native(
+            particle_state_ref,
+            base_pose_state_ref,
+            topology_state_ref,
+            center_state_ref,
+        )
+    )
     arrays.update(
         {
             "positions": np.ascontiguousarray(positions, dtype=np.float32),
@@ -1724,6 +1751,7 @@ def solve_meshcloth_native_core(
         next_state["static_friction"] = np.ascontiguousarray(arrays["static_friction"], dtype=np.float32)
         next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
         next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
+    proxy_ptr, proxy_name, proxy_frame = mc2_state.base_pose_proxy_metadata(state, base_pose_state_ref)
     mc2_state.commit_base_pose_state_for_center(
         next_state,
         center_state_ref,
@@ -1732,17 +1760,21 @@ def solve_meshcloth_native_core(
         base_rotations=arrays["base_rotations"],
         step_basic_positions=arrays["step_basic_positions"],
         step_basic_rotations=arrays["step_basic_rotations"],
-        proxy_ptr=state.get("base_pose_proxy_ptr", 0),
-        proxy_name=state.get("base_pose_proxy_name", ""),
-        proxy_frame=state.get("base_pose_proxy_frame"),
+        proxy_ptr=proxy_ptr,
+        proxy_name=proxy_name,
+        proxy_frame=proxy_frame,
     )
     if center_state_ref is None:
         next_state["step_basic_positions"] = np.ascontiguousarray(arrays["step_basic_positions"], dtype=np.float32)
         next_state["step_basic_rotations"] = np.ascontiguousarray(arrays["step_basic_rotations"], dtype=np.float32)
-    next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
+    mc2_state.set_previous_collider_snapshot_for_center(
+        next_state,
+        collision.compact_collider_snapshot(colliders),
+        center_state_ref,
+    )
     runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
-    native_slot = _native_runtime_slot(next_state, runtime_caches)
+    native_slot = _native_runtime_slot(runtime_caches)
     _write_native_debug_view(
         native_slot,
         next_state,
@@ -1753,6 +1785,9 @@ def solve_meshcloth_native_core(
         debug_native_view,
         topology_state_ref,
         base_pose_state_ref,
+        particle_state_ref,
+        center_state_ref,
+        native_param_context.param_slots,
     )
     mc2_state.feature_slots(next_state)["native"] = native_slot
     if timing is not None:
