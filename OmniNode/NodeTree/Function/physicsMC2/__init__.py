@@ -369,7 +369,7 @@ def _run_mesh_cloth_mc2_node(
         if base_pose_proxy is not None:
             state = mc2_state.sync_state_to_base_pose_write_container(state, obj)
         else:
-            state = mc2_state.sync_state_to_object_transform(state, obj)
+            state = mc2_state.sync_state_to_object_transform(state, obj, cache_owner.center_state)
         cache_owner.replace_state(state)
         if timing is not None:
             _add_timing(timing, "transform", time.perf_counter() - stage_start)
@@ -422,6 +422,7 @@ def _run_mesh_cloth_mc2_node(
         current_frame,
         timing,
         cache_owner.io_cache,
+        cache_owner.center_state,
     )
     cache_owner.replace_state(state)
     if timing is not None:

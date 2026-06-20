@@ -32,6 +32,155 @@ MC2_RUNTIME_CACHE_NAMES = (
 )
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _safe_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return bool(default)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+        return bool(default)
+    return bool(value)
+
+
+def _safe_direction3(value, default: tuple[int, int, int] = (1, 1, 1)) -> tuple[int, int, int]:
+    if isinstance(value, np.ndarray):
+        value = value.reshape(-1)
+    if isinstance(value, (list, tuple, np.ndarray)) and len(value) >= 3:
+        result = []
+        for item in value[:3]:
+            sign = _safe_int(item, 1)
+            result.append(sign if sign != 0 else 1)
+        return (result[0], result[1], result[2])
+    return default
+
+
+def _safe_tuple3(value, default: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    if isinstance(value, np.ndarray):
+        value = value.reshape(-1)
+    if isinstance(value, (list, tuple, np.ndarray)) and len(value) >= 3:
+        return (
+            _safe_float(value[0], default[0]),
+            _safe_float(value[1], default[1]),
+            _safe_float(value[2], default[2]),
+        )
+    return default
+
+
+def _safe_vector_length(value, default: float = 0.0) -> float:
+    try:
+        vector = np.asarray(value, dtype=np.float32).reshape(-1)
+        if len(vector) < 3:
+            return float(default)
+        return float(np.linalg.norm(vector[:3]))
+    except Exception:
+        return float(default)
+
+
+def _safe_vector3_array(value, default=None) -> np.ndarray:
+    if default is None:
+        default = np.zeros(3, dtype=np.float32)
+    try:
+        vector = np.asarray(value, dtype=np.float32).reshape(-1)
+        if len(vector) >= 3:
+            return np.ascontiguousarray(vector[:3], dtype=np.float32)
+    except Exception:
+        pass
+    return np.ascontiguousarray(np.asarray(default, dtype=np.float32).reshape(-1)[:3], dtype=np.float32)
+
+
+def _safe_quat_array(value, default=None) -> np.ndarray:
+    if default is None:
+        default = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    try:
+        quat = np.asarray(value, dtype=np.float32).reshape(-1)
+        if len(quat) >= 4:
+            return np.ascontiguousarray(quat[:4], dtype=np.float32)
+    except Exception:
+        pass
+    return np.ascontiguousarray(np.asarray(default, dtype=np.float32).reshape(-1)[:4], dtype=np.float32)
+
+
+def _safe_matrix4_array(value, default=None) -> np.ndarray:
+    if default is None:
+        default = np.eye(4, dtype=np.float32)
+    try:
+        matrix = np.asarray(value, dtype=np.float32)
+        if matrix.shape == (4, 4):
+            return np.ascontiguousarray(matrix, dtype=np.float32)
+        flat = matrix.reshape(-1)
+        if len(flat) >= 16:
+            return np.ascontiguousarray(flat[:16].reshape(4, 4), dtype=np.float32)
+    except Exception:
+        pass
+    return np.ascontiguousarray(np.asarray(default, dtype=np.float32).reshape(4, 4), dtype=np.float32)
+
+
+def _tuple3_for_debug(value) -> tuple[float, float, float]:
+    vector = _safe_vector3_array(value)
+    return (float(vector[0]), float(vector[1]), float(vector[2]))
+
+
+def _safe_shaped_array(value, shape: tuple[int, ...], dtype=np.float32, default=None) -> np.ndarray:
+    shape = tuple(max(0, int(dim)) for dim in shape)
+    expected_size = int(np.prod(shape, dtype=np.int64)) if shape else 1
+
+    def coerce(candidate) -> np.ndarray | None:
+        if candidate is None:
+            return None
+        try:
+            array = np.asarray(candidate, dtype=dtype)
+            if array.shape == shape:
+                return np.ascontiguousarray(array, dtype=dtype)
+            flat = array.reshape(-1)
+            if int(flat.size) == expected_size:
+                return np.ascontiguousarray(flat.reshape(shape), dtype=dtype)
+        except Exception:
+            return None
+        return None
+
+    result = coerce(value)
+    if result is not None:
+        return result
+    result = coerce(default)
+    if result is not None:
+        return result
+    return np.zeros(shape, dtype=dtype)
+
+
+def _safe_particle_array(value, count: int, width: int = 3, default=None) -> np.ndarray:
+    return _safe_shaped_array(value, (count, width), np.float32, default)
+
+
+def _safe_particle_scalar_array(value, count: int, default=None) -> np.ndarray:
+    return _safe_shaped_array(value, (count,), np.float32, default)
+
+
+def _identity_quat_array(count: int) -> np.ndarray:
+    quats = np.zeros((max(0, int(count)), 4), dtype=np.float32)
+    if len(quats):
+        quats[:, 3] = 1.0
+    return quats
+
+
 @dataclass
 class MC2NativeContext:
     """未来 C++ persistent context 的 Python 生命周期占位。"""
@@ -180,6 +329,240 @@ class MC2NativeContext:
 
 
 @dataclass
+class MC2ParticleState:
+    vertex_count: int = 0
+    next_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    old_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    velocity_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    display_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    velocity: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    real_velocity: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    friction: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
+    static_friction: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
+    collision_normals: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    inv_masses: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float32))
+
+    def replace_from_state(self, state: dict, vertex_count: int | None = None) -> None:
+        if not isinstance(state, dict):
+            return
+        count = int(vertex_count if vertex_count is not None else state.get("vertex_count", self.vertex_count) or 0)
+        self.vertex_count = max(0, count)
+        self.next_positions = _safe_particle_array(state.get("next_positions"), self.vertex_count, 3, self.next_positions)
+        self.old_positions = _safe_particle_array(state.get("old_positions"), self.vertex_count, 3, self.old_positions)
+        self.velocity_positions = _safe_particle_array(
+            state.get("velocity_positions"),
+            self.vertex_count,
+            3,
+            self.velocity_positions,
+        )
+        self.display_positions = _safe_particle_array(
+            state.get("display_positions"),
+            self.vertex_count,
+            3,
+            self.display_positions,
+        )
+        self.velocity = _safe_particle_array(state.get("velocity"), self.vertex_count, 3, self.velocity)
+        self.real_velocity = _safe_particle_array(state.get("real_velocity"), self.vertex_count, 3, self.real_velocity)
+        self.friction = _safe_particle_scalar_array(state.get("friction"), self.vertex_count, self.friction)
+        self.static_friction = _safe_particle_scalar_array(
+            state.get("static_friction"),
+            self.vertex_count,
+            self.static_friction,
+        )
+        self.collision_normals = _safe_particle_array(
+            state.get("collision_normals"),
+            self.vertex_count,
+            3,
+            self.collision_normals,
+        )
+        self.inv_masses = _safe_particle_scalar_array(state.get("inv_masses"), self.vertex_count, self.inv_masses)
+
+    def mirror_to_state(self, state: dict | None) -> None:
+        if not isinstance(state, dict):
+            return
+        state["next_positions"] = np.ascontiguousarray(self.next_positions, dtype=np.float32)
+        state["old_positions"] = np.ascontiguousarray(self.old_positions, dtype=np.float32)
+        state["velocity_positions"] = np.ascontiguousarray(self.velocity_positions, dtype=np.float32)
+        state["display_positions"] = np.ascontiguousarray(self.display_positions, dtype=np.float32)
+        state["velocity"] = np.ascontiguousarray(self.velocity, dtype=np.float32)
+        state["real_velocity"] = np.ascontiguousarray(self.real_velocity, dtype=np.float32)
+        state["friction"] = np.ascontiguousarray(self.friction, dtype=np.float32)
+        state["static_friction"] = np.ascontiguousarray(self.static_friction, dtype=np.float32)
+        state["collision_normals"] = np.ascontiguousarray(self.collision_normals, dtype=np.float32)
+        state["inv_masses"] = np.ascontiguousarray(self.inv_masses, dtype=np.float32)
+
+    def update_from_arrays(
+        self,
+        *,
+        next_positions,
+        old_positions,
+        velocity_positions,
+        display_positions,
+        velocity,
+        real_velocity,
+        friction,
+        static_friction,
+        collision_normals,
+        inv_masses,
+    ) -> None:
+        count = int(len(next_positions))
+        self.vertex_count = max(0, count)
+        self.next_positions = _safe_particle_array(next_positions, self.vertex_count, 3, self.next_positions)
+        self.old_positions = _safe_particle_array(old_positions, self.vertex_count, 3, self.old_positions)
+        self.velocity_positions = _safe_particle_array(velocity_positions, self.vertex_count, 3, self.velocity_positions)
+        self.display_positions = _safe_particle_array(display_positions, self.vertex_count, 3, self.display_positions)
+        self.velocity = _safe_particle_array(velocity, self.vertex_count, 3, self.velocity)
+        self.real_velocity = _safe_particle_array(real_velocity, self.vertex_count, 3, self.real_velocity)
+        self.friction = _safe_particle_scalar_array(friction, self.vertex_count, self.friction)
+        self.static_friction = _safe_particle_scalar_array(static_friction, self.vertex_count, self.static_friction)
+        self.collision_normals = _safe_particle_array(collision_normals, self.vertex_count, 3, self.collision_normals)
+        self.inv_masses = _safe_particle_scalar_array(inv_masses, self.vertex_count, self.inv_masses)
+
+    def debug_snapshot(self) -> dict:
+        velocity_max = 0.0
+        real_velocity_max = 0.0
+        if self.velocity.size:
+            velocity_max = float(np.max(np.linalg.norm(self.velocity.reshape((-1, 3)), axis=1)))
+        if self.real_velocity.size:
+            real_velocity_max = float(np.max(np.linalg.norm(self.real_velocity.reshape((-1, 3)), axis=1)))
+        return {
+            "verts": self.vertex_count,
+            "next_positions": tuple(self.next_positions.shape),
+            "old_positions": tuple(self.old_positions.shape),
+            "display_positions": tuple(self.display_positions.shape),
+            "velocity_max": velocity_max,
+            "real_velocity_max": real_velocity_max,
+            "friction_max": float(np.max(self.friction)) if self.friction.size else 0.0,
+            "static_friction_max": float(np.max(self.static_friction)) if self.static_friction.size else 0.0,
+            "collision_normal_max": (
+                float(np.max(np.linalg.norm(self.collision_normals.reshape((-1, 3)), axis=1)))
+                if self.collision_normals.size
+                else 0.0
+            ),
+        }
+
+
+@dataclass
+class MC2BasePoseState:
+    vertex_count: int = 0
+    base_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    base_normals: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    base_rotations: np.ndarray = field(default_factory=lambda: np.zeros((0, 4), dtype=np.float32))
+    step_basic_positions: np.ndarray = field(default_factory=lambda: np.zeros((0, 3), dtype=np.float32))
+    step_basic_rotations: np.ndarray = field(default_factory=lambda: np.zeros((0, 4), dtype=np.float32))
+    proxy_ptr: int = 0
+    proxy_name: str = ""
+    proxy_frame: int | None = None
+
+    def replace_from_state(self, state: dict, vertex_count: int | None = None) -> None:
+        if not isinstance(state, dict):
+            return
+        count = int(vertex_count if vertex_count is not None else state.get("vertex_count", self.vertex_count) or 0)
+        self.vertex_count = max(0, count)
+        rest_positions = state.get("rest_world_positions", self.base_positions)
+        rest_normals = state.get("rest_world_normals", self.base_normals)
+        self.base_positions = _safe_particle_array(
+            state.get("base_positions"),
+            self.vertex_count,
+            3,
+            rest_positions,
+        )
+        self.base_normals = _safe_particle_array(
+            state.get("base_normals"),
+            self.vertex_count,
+            3,
+            rest_normals,
+        )
+        self.base_rotations = _safe_particle_array(
+            state.get("base_rotations"),
+            self.vertex_count,
+            4,
+            self.base_rotations if len(self.base_rotations) else _identity_quat_array(self.vertex_count),
+        )
+        self.step_basic_positions = _safe_particle_array(
+            state.get("step_basic_positions"),
+            self.vertex_count,
+            3,
+            self.base_positions,
+        )
+        self.step_basic_rotations = _safe_particle_array(
+            state.get("step_basic_rotations"),
+            self.vertex_count,
+            4,
+            self.base_rotations,
+        )
+        self.proxy_ptr = _safe_int(state.get("base_pose_proxy_ptr", self.proxy_ptr), self.proxy_ptr)
+        self.proxy_name = str(state.get("base_pose_proxy_name", self.proxy_name) or "")
+        self.proxy_frame = state.get("base_pose_proxy_frame", self.proxy_frame)
+
+    def mirror_to_state(self, state: dict | None) -> None:
+        if not isinstance(state, dict):
+            return
+        state["base_positions"] = np.ascontiguousarray(self.base_positions, dtype=np.float32)
+        state["base_normals"] = np.ascontiguousarray(self.base_normals, dtype=np.float32)
+        state["base_rotations"] = np.ascontiguousarray(self.base_rotations, dtype=np.float32)
+        state["step_basic_positions"] = np.ascontiguousarray(self.step_basic_positions, dtype=np.float32)
+        state["step_basic_rotations"] = np.ascontiguousarray(self.step_basic_rotations, dtype=np.float32)
+        state["base_pose_proxy_ptr"] = int(self.proxy_ptr)
+        state["base_pose_proxy_name"] = str(self.proxy_name or "")
+        state["base_pose_proxy_frame"] = self.proxy_frame
+
+    def update_from_arrays(
+        self,
+        *,
+        base_positions=None,
+        base_normals=None,
+        base_rotations=None,
+        step_basic_positions=None,
+        step_basic_rotations=None,
+        proxy_ptr=None,
+        proxy_name=None,
+        proxy_frame=None,
+    ) -> None:
+        count_source = base_positions if base_positions is not None else self.base_positions
+        self.vertex_count = max(0, int(len(count_source)))
+        self.base_positions = _safe_particle_array(base_positions, self.vertex_count, 3, self.base_positions)
+        self.base_normals = _safe_particle_array(base_normals, self.vertex_count, 3, self.base_normals)
+        self.base_rotations = _safe_particle_array(
+            base_rotations,
+            self.vertex_count,
+            4,
+            self.base_rotations if len(self.base_rotations) else _identity_quat_array(self.vertex_count),
+        )
+        self.step_basic_positions = _safe_particle_array(
+            step_basic_positions,
+            self.vertex_count,
+            3,
+            self.step_basic_positions if len(self.step_basic_positions) else self.base_positions,
+        )
+        self.step_basic_rotations = _safe_particle_array(
+            step_basic_rotations,
+            self.vertex_count,
+            4,
+            self.step_basic_rotations if len(self.step_basic_rotations) else self.base_rotations,
+        )
+        if proxy_ptr is not None:
+            self.proxy_ptr = _safe_int(proxy_ptr, self.proxy_ptr)
+        if proxy_name is not None:
+            self.proxy_name = str(proxy_name or "")
+        if proxy_frame is not None or self.proxy_ptr == 0:
+            self.proxy_frame = proxy_frame
+
+    def debug_snapshot(self) -> dict:
+        return {
+            "verts": self.vertex_count,
+            "base_positions": tuple(self.base_positions.shape),
+            "base_normals": tuple(self.base_normals.shape),
+            "base_rotations": tuple(self.base_rotations.shape),
+            "step_basic_positions": tuple(self.step_basic_positions.shape),
+            "step_basic_rotations": tuple(self.step_basic_rotations.shape),
+            "proxy_ptr": int(self.proxy_ptr),
+            "proxy_name": self.proxy_name,
+            "proxy_frame": self.proxy_frame,
+        }
+
+
+@dataclass
 class MC2CenterState:
     """单个 MeshCloth center 的运行状态容器。
 
@@ -192,8 +575,49 @@ class MC2CenterState:
     io_cache: dict = field(default_factory=dict)
     native_cache: dict = field(default_factory=dict)
     native_context: MC2NativeContext | object | None = None
+    particle_state: MC2ParticleState = field(default_factory=MC2ParticleState)
+    base_pose_state: MC2BasePoseState = field(default_factory=MC2BasePoseState)
     inertia_state: dict = field(default_factory=dict)
     init_local_gravity_direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
+    object_name: str = ""
+    frame: int | None = None
+    vertex_count: int = 0
+    solver_version: int | None = None
+    mesh_signature_key: object | None = None
+    config_key: object | None = None
+    scale_ratio: float = 1.0
+    negative_scale_sign: int = 1
+    negative_scale_direction: tuple[int, int, int] = (1, 1, 1)
+    negative_scale_changed: bool = False
+    anchor_active: bool = False
+    anchor_name: str = ""
+    teleport_state: int = 0
+    old_component_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    old_component_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    now_world_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    now_world_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    old_world_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    old_world_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    old_component_matrix: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=np.float32))
+    now_component_matrix: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=np.float32))
+    shift_pivot_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    smoothing_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    frame_component_shift_vector: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    frame_component_shift_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    anchor_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    anchor_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    old_anchor_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    old_anchor_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    anchor_component_local_position: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    step_vector: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    step_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    inertia_vector: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    inertia_rotation: np.ndarray = field(default_factory=lambda: np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32))
+    rotation_axis: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    frame_shift_length: float = 0.0
+    step_vector_length: float = 0.0
+    inertia_vector_length: float = 0.0
+    angular_velocity: float = 0.0
 
     def replace_legacy_state(self, state: dict) -> None:
         self.legacy_state = state if isinstance(state, dict) else {}
@@ -206,19 +630,118 @@ class MC2CenterState:
     def sync_runtime_fields_from_legacy(self) -> None:
         """把当前仍存放在 legacy dict 里的 CenterData 字段同步到正式容器。"""
 
+        if isinstance(self.legacy_state, dict):
+            self.object_name = str(self.legacy_state.get("object_name", self.object_name) or "")
+            raw_frame = self.legacy_state.get("frame", self.frame)
+            self.frame = None if raw_frame is None else _safe_int(raw_frame, self.frame or 0)
+            self.vertex_count = max(0, _safe_int(self.legacy_state.get("vertex_count", self.vertex_count), self.vertex_count))
+            raw_solver_version = self.legacy_state.get("solver_version", self.solver_version)
+            self.solver_version = (
+                None
+                if raw_solver_version is None
+                else _safe_int(raw_solver_version, self.solver_version or 0)
+            )
+            self.mesh_signature_key = self.legacy_state.get("mesh_signature_key", self.mesh_signature_key)
+            self.config_key = self.legacy_state.get("config_key", self.config_key)
         inertia_state = self.legacy_state.get("inertia_state") if isinstance(self.legacy_state, dict) else None
         self.inertia_state = inertia_state if isinstance(inertia_state, dict) else {}
-        direction = self.legacy_state.get("init_local_gravity_direction") if isinstance(self.legacy_state, dict) else None
-        if direction is None and isinstance(self.inertia_state, dict):
-            direction = self.inertia_state.get("init_local_gravity_direction")
-        if isinstance(direction, np.ndarray):
-            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
-        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
-            self.init_local_gravity_direction = (
-                float(direction[0]),
-                float(direction[1]),
-                float(direction[2]),
-            )
+        self._sync_inertia_summary_from_state()
+        self.base_pose_state.replace_from_state(self.legacy_state, self.vertex_count)
+        self.particle_state.replace_from_state(self.legacy_state, self.vertex_count)
+
+    def _sync_inertia_summary_from_state(self) -> None:
+        state = self.legacy_state if isinstance(self.legacy_state, dict) else {}
+        inertia_state = self.inertia_state if isinstance(self.inertia_state, dict) else {}
+        self.scale_ratio = max(
+            0.0,
+            _safe_float(inertia_state.get("scale_ratio", state.get("scale_ratio", self.scale_ratio)), self.scale_ratio),
+        )
+        self.negative_scale_sign = _safe_int(
+            inertia_state.get("negative_scale_sign", state.get("negative_scale_sign", self.negative_scale_sign)),
+            self.negative_scale_sign,
+        )
+        if self.negative_scale_sign == 0:
+            self.negative_scale_sign = 1
+        self.negative_scale_direction = _safe_direction3(
+            inertia_state.get("negative_scale_direction", state.get("negative_scale_direction")),
+            self.negative_scale_direction,
+        )
+        self.negative_scale_changed = _safe_bool(
+            inertia_state.get("negative_scale_changed"),
+            self.negative_scale_changed,
+        )
+        direction = state.get("init_local_gravity_direction")
+        if direction is None:
+            direction = inertia_state.get("init_local_gravity_direction")
+        self.init_local_gravity_direction = _safe_tuple3(
+            direction,
+            self.init_local_gravity_direction,
+        )
+        self.anchor_active = _safe_bool(inertia_state.get("anchor_active"), self.anchor_active)
+        self.anchor_name = str(inertia_state.get("anchor_name", self.anchor_name) or "")
+        self.teleport_state = _safe_int(inertia_state.get("teleport_state", self.teleport_state), self.teleport_state)
+        self.old_component_position = _safe_vector3_array(
+            inertia_state.get("old_component_position"),
+            self.old_component_position,
+        )
+        self.old_component_rotation = _safe_quat_array(
+            inertia_state.get("old_component_rotation"),
+            self.old_component_rotation,
+        )
+        self.now_world_position = _safe_vector3_array(inertia_state.get("now_world_position"), self.now_world_position)
+        self.now_world_rotation = _safe_quat_array(inertia_state.get("now_world_rotation"), self.now_world_rotation)
+        self.old_world_position = _safe_vector3_array(inertia_state.get("old_world_position"), self.old_world_position)
+        self.old_world_rotation = _safe_quat_array(inertia_state.get("old_world_rotation"), self.old_world_rotation)
+        self.old_component_matrix = _safe_matrix4_array(
+            inertia_state.get("old_component_matrix"),
+            self.old_component_matrix,
+        )
+        self.now_component_matrix = _safe_matrix4_array(
+            inertia_state.get("now_component_matrix"),
+            self.now_component_matrix,
+        )
+        self.shift_pivot_position = _safe_vector3_array(
+            inertia_state.get("shift_pivot_position"),
+            self.shift_pivot_position,
+        )
+        self.smoothing_velocity = _safe_vector3_array(
+            inertia_state.get("smoothing_velocity"),
+            self.smoothing_velocity,
+        )
+        self.frame_component_shift_vector = _safe_vector3_array(
+            inertia_state.get("frame_component_shift_vector"),
+            self.frame_component_shift_vector,
+        )
+        self.frame_component_shift_rotation = _safe_quat_array(
+            inertia_state.get("frame_component_shift_rotation"),
+            self.frame_component_shift_rotation,
+        )
+        self.anchor_position = _safe_vector3_array(inertia_state.get("anchor_position"), self.anchor_position)
+        self.anchor_rotation = _safe_quat_array(inertia_state.get("anchor_rotation"), self.anchor_rotation)
+        self.old_anchor_position = _safe_vector3_array(
+            inertia_state.get("old_anchor_position"),
+            self.old_anchor_position,
+        )
+        self.old_anchor_rotation = _safe_quat_array(
+            inertia_state.get("old_anchor_rotation"),
+            self.old_anchor_rotation,
+        )
+        self.anchor_component_local_position = _safe_vector3_array(
+            inertia_state.get("anchor_component_local_position"),
+            self.anchor_component_local_position,
+        )
+        self.step_vector = _safe_vector3_array(inertia_state.get("step_vector"), self.step_vector)
+        self.step_rotation = _safe_quat_array(inertia_state.get("step_rotation"), self.step_rotation)
+        self.inertia_vector = _safe_vector3_array(inertia_state.get("inertia_vector"), self.inertia_vector)
+        self.inertia_rotation = _safe_quat_array(inertia_state.get("inertia_rotation"), self.inertia_rotation)
+        self.rotation_axis = _safe_vector3_array(inertia_state.get("rotation_axis"), self.rotation_axis)
+        self.frame_shift_length = _safe_vector_length(self.frame_component_shift_vector, self.frame_shift_length)
+        self.step_vector_length = _safe_vector_length(self.step_vector, self.step_vector_length)
+        self.inertia_vector_length = _safe_vector_length(self.inertia_vector, self.inertia_vector_length)
+        self.angular_velocity = _safe_float(
+            inertia_state.get("angular_velocity", self.angular_velocity),
+            self.angular_velocity,
+        )
 
     def ensure_inertia_state(self, obj: bpy.types.Object | None = None) -> dict:
         """返回 CenterState 权威 inertia 字段，并镜像到 legacy dict。"""
@@ -241,27 +764,91 @@ class MC2CenterState:
         self._mirror_inertia_to_legacy()
         return self.inertia_state
 
+    def refresh_inertia_summary(self) -> None:
+        self._sync_inertia_summary_from_state()
+        self._mirror_center_fields_to_inertia_state()
+        if isinstance(self.legacy_state, dict):
+            self.legacy_state["scale_ratio"] = self.scale_ratio
+            self.legacy_state["negative_scale_sign"] = self.negative_scale_sign
+            self.legacy_state["negative_scale_direction"] = self.negative_scale_direction
+            self.legacy_state["init_local_gravity_direction"] = self.init_local_gravity_direction
+
+    def sync_particle_state_from_legacy(self) -> MC2ParticleState:
+        self.particle_state.replace_from_state(self.legacy_state, self.vertex_count)
+        return self.particle_state
+
+    def commit_particle_state(self, legacy_state: dict | None = None, **arrays) -> MC2ParticleState:
+        self.particle_state.update_from_arrays(**arrays)
+        target = legacy_state if isinstance(legacy_state, dict) else self.legacy_state
+        self.particle_state.mirror_to_state(target)
+        return self.particle_state
+
+    def sync_base_pose_state_from_legacy(self) -> MC2BasePoseState:
+        self.base_pose_state.replace_from_state(self.legacy_state, self.vertex_count)
+        return self.base_pose_state
+
+    def commit_base_pose_state(self, legacy_state: dict | None = None, **arrays) -> MC2BasePoseState:
+        self.base_pose_state.update_from_arrays(**arrays)
+        target = legacy_state if isinstance(legacy_state, dict) else self.legacy_state
+        self.base_pose_state.mirror_to_state(target)
+        return self.base_pose_state
+
+    def _mirror_center_fields_to_inertia_state(self) -> None:
+        if not isinstance(self.inertia_state, dict):
+            return
+        self.inertia_state["init_local_gravity_direction"] = np.ascontiguousarray(
+            self.init_local_gravity_direction,
+            dtype=np.float32,
+        )
+        self.inertia_state["scale_ratio"] = float(self.scale_ratio)
+        self.inertia_state["negative_scale_sign"] = int(self.negative_scale_sign)
+        self.inertia_state["negative_scale_direction"] = np.ascontiguousarray(
+            self.negative_scale_direction,
+            dtype=np.float32,
+        )
+        self.inertia_state["negative_scale_changed"] = bool(self.negative_scale_changed)
+        self.inertia_state["anchor_active"] = bool(self.anchor_active)
+        self.inertia_state["anchor_name"] = self.anchor_name
+        self.inertia_state["teleport_state"] = int(self.teleport_state)
+        for key in (
+            "old_component_position",
+            "old_component_rotation",
+            "now_world_position",
+            "now_world_rotation",
+            "old_world_position",
+            "old_world_rotation",
+            "old_component_matrix",
+            "now_component_matrix",
+            "shift_pivot_position",
+            "smoothing_velocity",
+            "frame_component_shift_vector",
+            "frame_component_shift_rotation",
+            "anchor_position",
+            "anchor_rotation",
+            "old_anchor_position",
+            "old_anchor_rotation",
+            "anchor_component_local_position",
+            "step_vector",
+            "step_rotation",
+            "inertia_vector",
+            "inertia_rotation",
+            "rotation_axis",
+        ):
+            self.inertia_state[key] = np.ascontiguousarray(getattr(self, key), dtype=np.float32)
+        self.inertia_state["angular_velocity"] = float(self.angular_velocity)
+
     def _mirror_inertia_to_legacy(self) -> None:
         if not isinstance(self.legacy_state, dict):
             return
         self.legacy_state["inertia_state"] = self.inertia_state
         if not isinstance(self.inertia_state, dict):
             return
-        for key in ("scale_ratio", "negative_scale_sign", "negative_scale_direction"):
-            if key in self.inertia_state:
-                self.legacy_state[key] = self.inertia_state[key]
-        direction = self.inertia_state.get("init_local_gravity_direction")
-        if isinstance(direction, np.ndarray):
-            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
-        if isinstance(direction, np.ndarray):
-            direction = tuple(float(v) for v in direction.reshape(-1)[:3])
-        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
-            self.init_local_gravity_direction = (
-                float(direction[0]),
-                float(direction[1]),
-                float(direction[2]),
-            )
-            self.legacy_state["init_local_gravity_direction"] = self.init_local_gravity_direction
+        self._sync_inertia_summary_from_state()
+        self._mirror_center_fields_to_inertia_state()
+        self.legacy_state["scale_ratio"] = self.scale_ratio
+        self.legacy_state["negative_scale_sign"] = self.negative_scale_sign
+        self.legacy_state["negative_scale_direction"] = self.negative_scale_direction
+        self.legacy_state["init_local_gravity_direction"] = self.init_local_gravity_direction
 
     def _extension_slots(self) -> dict:
         extension_slots = self.legacy_state.get("extension_slots")
@@ -313,12 +900,38 @@ class MC2CenterState:
     def debug_snapshot(self) -> dict:
         state = self.legacy_state if isinstance(self.legacy_state, dict) else {}
         return {
-            "object": state.get("object_name", ""),
-            "frame": state.get("frame"),
-            "verts": state.get("vertex_count", 0),
-            "solver_version": state.get("solver_version"),
-            "scale_ratio": state.get("scale_ratio", 1.0),
-            "negative_scale_sign": state.get("negative_scale_sign", 1),
+            "object": self.object_name or state.get("object_name", ""),
+            "frame": self.frame if self.frame is not None else state.get("frame"),
+            "verts": self.vertex_count or state.get("vertex_count", 0),
+            "solver_version": self.solver_version if self.solver_version is not None else state.get("solver_version"),
+            "mesh_signature_key": self.mesh_signature_key,
+            "config_key": self.config_key,
+            "scale_ratio": self.scale_ratio,
+            "negative_scale_sign": self.negative_scale_sign,
+            "negative_scale_direction": self.negative_scale_direction,
+            "negative_scale_changed": self.negative_scale_changed,
+            "init_local_gravity_direction": self.init_local_gravity_direction,
+            "anchor_active": self.anchor_active,
+            "anchor_name": self.anchor_name,
+            "teleport_state": self.teleport_state,
+            "old_component_position": _tuple3_for_debug(self.old_component_position),
+            "now_world_position": _tuple3_for_debug(self.now_world_position),
+            "old_world_position": _tuple3_for_debug(self.old_world_position),
+            "shift_pivot_position": _tuple3_for_debug(self.shift_pivot_position),
+            "smoothing_velocity": _tuple3_for_debug(self.smoothing_velocity),
+            "frame_component_shift_vector": _tuple3_for_debug(self.frame_component_shift_vector),
+            "anchor_position": _tuple3_for_debug(self.anchor_position),
+            "old_anchor_position": _tuple3_for_debug(self.old_anchor_position),
+            "anchor_component_local_position": _tuple3_for_debug(self.anchor_component_local_position),
+            "step_vector": _tuple3_for_debug(self.step_vector),
+            "inertia_vector": _tuple3_for_debug(self.inertia_vector),
+            "rotation_axis": _tuple3_for_debug(self.rotation_axis),
+            "frame_shift_length": self.frame_shift_length,
+            "step_vector_length": self.step_vector_length,
+            "inertia_vector_length": self.inertia_vector_length,
+            "angular_velocity": self.angular_velocity,
+            "base_pose_state": self.base_pose_state.debug_snapshot(),
+            "particle_state": self.particle_state.debug_snapshot(),
             "has_inertia_state": bool(self.inertia_state),
             "curve_cache": len(self.curve_cache),
             "topology_cache": len(self.topology_cache),
@@ -340,6 +953,8 @@ class MC2CenterState:
         self.topology_cache.clear()
         self.io_cache.clear()
         self.native_cache.clear()
+        self.base_pose_state = MC2BasePoseState()
+        self.particle_state = MC2ParticleState()
 
 
 @dataclass
@@ -350,7 +965,17 @@ class MC2TeamState:
     """
 
     centers: dict[str, MC2CenterState] = field(default_factory=dict)
+    frame_delta_time: float = 0.0
+    step_delta_time: float = 0.0
+    update_count: int = 0
+    skip_count: int = 0
+    substep_count: int = 1
     frame_interpolation: float = 1.0
+    time_scale: float = 1.0
+    skip_writing: bool = False
+    culling: bool = False
+    sync: bool = True
+    scale_suspend: bool = False
     scale_ratio: float = 1.0
     negative_scale_sign: int = 1
     negative_scale_direction: tuple[int, int, int] = (1, 1, 1)
@@ -378,27 +1003,140 @@ class MC2TeamState:
 
         if not isinstance(legacy_state, dict):
             return
-        self.scale_ratio = float(legacy_state.get("scale_ratio", self.scale_ratio))
-        self.negative_scale_sign = int(legacy_state.get("negative_scale_sign", self.negative_scale_sign))
-        direction = legacy_state.get("negative_scale_direction")
-        if isinstance(direction, (list, tuple)) and len(direction) >= 3:
-            self.negative_scale_direction = (
-                int(direction[0]) if int(direction[0]) != 0 else 1,
-                int(direction[1]) if int(direction[1]) != 0 else 1,
-                int(direction[2]) if int(direction[2]) != 0 else 1,
-            )
+        self.frame_delta_time = max(
+            0.0,
+            _safe_float(legacy_state.get("frame_delta_time", self.frame_delta_time), self.frame_delta_time),
+        )
+        self.step_delta_time = max(
+            0.0,
+            _safe_float(legacy_state.get("step_delta_time", self.step_delta_time), self.step_delta_time),
+        )
+        self.update_count = max(
+            0,
+            _safe_int(legacy_state.get("update_count", self.update_count), self.update_count),
+        )
+        self.skip_count = max(
+            0,
+            _safe_int(legacy_state.get("skip_count", self.skip_count), self.skip_count),
+        )
+        self.substep_count = max(
+            1,
+            _safe_int(legacy_state.get("substep_count", self.substep_count), self.substep_count),
+        )
+        self.frame_interpolation = max(
+            0.0,
+            min(
+                1.0,
+                _safe_float(
+                    legacy_state.get("frame_interpolation", self.frame_interpolation),
+                    self.frame_interpolation,
+                ),
+            ),
+        )
+        self.time_scale = max(0.0, _safe_float(legacy_state.get("time_scale", self.time_scale), self.time_scale))
+        self.skip_writing = _safe_bool(
+            legacy_state.get("skip_writing", legacy_state.get("skipWriting")),
+            self.skip_writing,
+        )
+        self.culling = _safe_bool(legacy_state.get("culling"), self.culling)
+        self.sync = _safe_bool(legacy_state.get("sync"), self.sync)
+        self.scale_suspend = _safe_bool(
+            legacy_state.get("scale_suspend", legacy_state.get("scaleSuspend")),
+            self.scale_suspend,
+        )
+        self.scale_ratio = _safe_float(legacy_state.get("scale_ratio", self.scale_ratio), self.scale_ratio)
+        self.negative_scale_sign = _safe_int(
+            legacy_state.get("negative_scale_sign", self.negative_scale_sign),
+            self.negative_scale_sign,
+        )
+        if self.negative_scale_sign == 0:
+            self.negative_scale_sign = 1
+        self.negative_scale_direction = _safe_direction3(
+            legacy_state.get("negative_scale_direction"),
+            self.negative_scale_direction,
+        )
         self.animation_pose_ratio = max(
             0.0,
-            min(1.0, float(legacy_state.get("animation_pose_ratio", self.animation_pose_ratio))),
+            min(
+                1.0,
+                _safe_float(
+                    legacy_state.get("animation_pose_ratio", self.animation_pose_ratio),
+                    self.animation_pose_ratio,
+                ),
+            ),
         )
-        self.gravity_dot = max(0.0, min(1.0, float(legacy_state.get("gravity_dot", self.gravity_dot))))
-        self.gravity_ratio = max(0.0, float(legacy_state.get("gravity_ratio", self.gravity_ratio)))
-        self.velocity_weight = max(0.0, min(1.0, float(legacy_state.get("velocity_weight", self.velocity_weight))))
-        self.blend_weight = max(0.0, min(1.0, float(legacy_state.get("blend_weight", self.blend_weight))))
+        self.gravity_dot = max(
+            0.0,
+            min(1.0, _safe_float(legacy_state.get("gravity_dot", self.gravity_dot), self.gravity_dot)),
+        )
+        self.gravity_ratio = max(
+            0.0,
+            _safe_float(legacy_state.get("gravity_ratio", self.gravity_ratio), self.gravity_ratio),
+        )
+        self.velocity_weight = max(
+            0.0,
+            min(1.0, _safe_float(legacy_state.get("velocity_weight", self.velocity_weight), self.velocity_weight)),
+        )
+        self.blend_weight = max(
+            0.0,
+            min(1.0, _safe_float(legacy_state.get("blend_weight", self.blend_weight), self.blend_weight)),
+        )
+
+    def apply_frame_context(
+        self,
+        frame_delta_time: float,
+        step_delta_time: float,
+        update_count: int,
+        skip_count: int,
+        frame_interpolation: float,
+        legacy_state: dict | None,
+        substep_count: int | None = None,
+    ) -> None:
+        self.frame_delta_time = max(0.0, _safe_float(frame_delta_time, self.frame_delta_time))
+        self.step_delta_time = max(0.0, _safe_float(step_delta_time, self.step_delta_time))
+        self.update_count = max(0, _safe_int(update_count, self.update_count))
+        self.skip_count = max(0, _safe_int(skip_count, self.skip_count))
+        if substep_count is not None:
+            self.substep_count = max(1, _safe_int(substep_count, self.substep_count))
+        self.frame_interpolation = max(0.0, min(1.0, _safe_float(frame_interpolation, self.frame_interpolation)))
+        if isinstance(legacy_state, dict):
+            legacy_state["frame_delta_time"] = self.frame_delta_time
+            legacy_state["step_delta_time"] = self.step_delta_time
+            legacy_state["update_count"] = self.update_count
+            legacy_state["skip_count"] = self.skip_count
+            legacy_state["substep_count"] = self.substep_count
+            legacy_state["frame_interpolation"] = self.frame_interpolation
+
+    def apply_lifecycle_context(
+        self,
+        legacy_state: dict | None,
+        *,
+        skip_writing=None,
+        culling=None,
+        sync=None,
+        scale_suspend=None,
+        time_scale=None,
+    ) -> None:
+        if skip_writing is not None:
+            self.skip_writing = _safe_bool(skip_writing, self.skip_writing)
+        if culling is not None:
+            self.culling = _safe_bool(culling, self.culling)
+        if sync is not None:
+            self.sync = _safe_bool(sync, self.sync)
+        if scale_suspend is not None:
+            self.scale_suspend = _safe_bool(scale_suspend, self.scale_suspend)
+        if time_scale is not None:
+            self.time_scale = max(0.0, _safe_float(time_scale, self.time_scale))
+        if isinstance(legacy_state, dict):
+            legacy_state["skip_writing"] = self.skip_writing
+            legacy_state["culling"] = self.culling
+            legacy_state["sync"] = self.sync
+            legacy_state["scale_suspend"] = self.scale_suspend
+            legacy_state["time_scale"] = self.time_scale
 
     def apply_solver_inputs(self, animation_pose_ratio: float, blend_weight: float, legacy_state: dict | None) -> None:
-        self.animation_pose_ratio = max(0.0, min(1.0, float(animation_pose_ratio)))
-        self.blend_weight = max(0.0, min(1.0, float(blend_weight)))
+        self.animation_pose_ratio = max(0.0, min(1.0, _safe_float(animation_pose_ratio, self.animation_pose_ratio)))
+        self.blend_weight = max(0.0, min(1.0, _safe_float(blend_weight, self.blend_weight)))
         if isinstance(legacy_state, dict):
             legacy_state["animation_pose_ratio"] = self.animation_pose_ratio
             legacy_state["blend_weight"] = self.blend_weight
@@ -409,15 +1147,15 @@ class MC2TeamState:
         blend_weight: float,
         legacy_state: dict | None,
     ) -> None:
-        self.velocity_weight = max(0.0, min(1.0, float(velocity_weight)))
-        self.blend_weight = max(0.0, min(1.0, float(blend_weight)))
+        self.velocity_weight = max(0.0, min(1.0, _safe_float(velocity_weight, self.velocity_weight)))
+        self.blend_weight = max(0.0, min(1.0, _safe_float(blend_weight, self.blend_weight)))
         if isinstance(legacy_state, dict):
             legacy_state["velocity_weight"] = self.velocity_weight
             legacy_state["blend_weight"] = self.blend_weight
 
     def apply_gravity_context(self, gravity_dot: float, gravity_ratio: float, legacy_state: dict | None) -> None:
-        self.gravity_dot = max(0.0, min(1.0, float(gravity_dot)))
-        self.gravity_ratio = max(0.0, float(gravity_ratio))
+        self.gravity_dot = max(0.0, min(1.0, _safe_float(gravity_dot, self.gravity_dot)))
+        self.gravity_ratio = max(0.0, _safe_float(gravity_ratio, self.gravity_ratio))
         if isinstance(legacy_state, dict):
             legacy_state["gravity_dot"] = self.gravity_dot
             legacy_state["gravity_ratio"] = self.gravity_ratio
@@ -429,19 +1167,15 @@ class MC2TeamState:
         legacy_state: dict | None,
         negative_scale_direction=None,
     ) -> None:
-        self.scale_ratio = max(0.0, float(scale_ratio))
-        self.negative_scale_sign = int(negative_scale_sign) if int(negative_scale_sign) != 0 else 1
+        self.scale_ratio = max(0.0, _safe_float(scale_ratio, self.scale_ratio))
+        self.negative_scale_sign = _safe_int(negative_scale_sign, self.negative_scale_sign)
+        if self.negative_scale_sign == 0:
+            self.negative_scale_sign = 1
         if negative_scale_direction is not None:
-            try:
-                direction = np.asarray(negative_scale_direction).reshape(-1)
-                if len(direction) >= 3:
-                    self.negative_scale_direction = (
-                        int(direction[0]) if int(direction[0]) != 0 else 1,
-                        int(direction[1]) if int(direction[1]) != 0 else 1,
-                        int(direction[2]) if int(direction[2]) != 0 else 1,
-                    )
-            except Exception:
-                pass
+            self.negative_scale_direction = _safe_direction3(
+                negative_scale_direction,
+                self.negative_scale_direction,
+            )
         if isinstance(legacy_state, dict):
             legacy_state["scale_ratio"] = self.scale_ratio
             legacy_state["negative_scale_sign"] = self.negative_scale_sign
@@ -450,6 +1184,17 @@ class MC2TeamState:
     def mirror_to_legacy(self, legacy_state: dict | None) -> None:
         if not isinstance(legacy_state, dict):
             return
+        legacy_state["frame_delta_time"] = self.frame_delta_time
+        legacy_state["step_delta_time"] = self.step_delta_time
+        legacy_state["update_count"] = self.update_count
+        legacy_state["skip_count"] = self.skip_count
+        legacy_state["substep_count"] = self.substep_count
+        legacy_state["frame_interpolation"] = self.frame_interpolation
+        legacy_state["time_scale"] = self.time_scale
+        legacy_state["skip_writing"] = self.skip_writing
+        legacy_state["culling"] = self.culling
+        legacy_state["sync"] = self.sync
+        legacy_state["scale_suspend"] = self.scale_suspend
         legacy_state["animation_pose_ratio"] = self.animation_pose_ratio
         legacy_state["gravity_dot"] = self.gravity_dot
         legacy_state["gravity_ratio"] = self.gravity_ratio
@@ -461,6 +1206,17 @@ class MC2TeamState:
 
     def debug_snapshot(self) -> dict:
         return {
+            "frame_delta_time": self.frame_delta_time,
+            "step_delta_time": self.step_delta_time,
+            "update_count": self.update_count,
+            "skip_count": self.skip_count,
+            "substep_count": self.substep_count,
+            "frame_interpolation": self.frame_interpolation,
+            "time_scale": self.time_scale,
+            "skip_writing": self.skip_writing,
+            "culling": self.culling,
+            "sync": self.sync,
+            "scale_suspend": self.scale_suspend,
             "animation_pose_ratio": self.animation_pose_ratio,
             "gravity_dot": self.gravity_dot,
             "gravity_ratio": self.gravity_ratio,
@@ -633,6 +1389,13 @@ def set_inertia_state_for_center(
     center = coerce_center_state(center_state)
     if center is not None:
         inertia_state = center.set_inertia_state(inertia_state)
+        if isinstance(state, dict):
+            state["inertia_state"] = inertia_state
+            state["scale_ratio"] = center.scale_ratio
+            state["negative_scale_sign"] = center.negative_scale_sign
+            state["negative_scale_direction"] = center.negative_scale_direction
+            state["init_local_gravity_direction"] = center.init_local_gravity_direction
+        return inertia_state
     if isinstance(state, dict):
         state["inertia_state"] = inertia_state
         if isinstance(inertia_state, dict):
@@ -650,6 +1413,56 @@ def commit_inertia_state_for_center(
 ) -> dict:
     committed = inertia.commit_frame(inertia_state, obj)
     return set_inertia_state_for_center(state, committed, center_state)
+
+
+def particle_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2ParticleState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.sync_particle_state_from_legacy()
+
+
+def commit_particle_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+    **arrays,
+) -> MC2ParticleState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.commit_particle_state(state, **arrays)
+
+
+def base_pose_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> MC2BasePoseState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.sync_base_pose_state_from_legacy()
+
+
+def commit_base_pose_state_for_center(
+    state: dict,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+    **arrays,
+) -> MC2BasePoseState | None:
+    center = coerce_center_state(center_state)
+    if center is None:
+        return None
+    if isinstance(state, dict) and state is not center.legacy_state:
+        center.legacy_state = state
+    return center.commit_base_pose_state(state, **arrays)
 
 
 def _extension_slots(state: dict) -> dict:
@@ -938,6 +1751,15 @@ def build_state(
         "vertex_count": len(obj.data.vertices),
         "frame_delta_time": 0.0,
         "step_delta_time": 0.0,
+        "update_count": 0,
+        "skip_count": 0,
+        "substep_count": 1,
+        "frame_interpolation": 1.0,
+        "time_scale": 1.0,
+        "skip_writing": False,
+        "culling": False,
+        "sync": True,
+        "scale_suspend": False,
         "substep_damping": 0.0,
         "rest_local_positions": np.ascontiguousarray(rest_local, dtype=np.float32),
         "rest_world_positions": np.ascontiguousarray(rest_world, dtype=np.float32),
@@ -1027,13 +1849,18 @@ def build_state(
     }
 
 
-def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
+def sync_state_to_object_transform(
+    state: dict,
+    obj: bpy.types.Object,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
+) -> dict:
     matrix_key = math_utils.matrix_world_key(obj)
     matrix_3x3_key = math_utils.matrix_world_3x3_key(obj)
     if (
         state.get("object_matrix_world_key") == matrix_key
         and state.get("object_matrix_world_3x3_key") == matrix_3x3_key
     ):
+        base_pose_state_for_center(state, center_state)
         return state
 
     next_state = inherit_runtime_slots(state, dict(state))
@@ -1171,6 +1998,18 @@ def sync_state_to_object_transform(state: dict, obj: bpy.types.Object) -> dict:
             next_state["vertex_local_rotations"],
         )
 
+    commit_base_pose_state_for_center(
+        next_state,
+        center_state,
+        base_positions=next_state["base_positions"],
+        base_normals=next_state["base_normals"],
+        base_rotations=next_state["base_rotations"],
+        step_basic_positions=next_state["step_basic_positions"],
+        step_basic_rotations=next_state["step_basic_rotations"],
+        proxy_ptr=0,
+        proxy_name="",
+        proxy_frame=None,
+    )
     return next_state
 
 
@@ -1206,6 +2045,7 @@ def _apply_base_pose_arrays(
     proxy_ptr: int,
     proxy_name: str,
     frame: int | None,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
 ) -> dict:
     vertex_count = int(state.get("vertex_count", 0))
     base_positions = np.ascontiguousarray(positions, dtype=np.float32)
@@ -1238,6 +2078,18 @@ def _apply_base_pose_arrays(
     next_state["base_pose_proxy_ptr"] = int(proxy_ptr)
     next_state["base_pose_proxy_name"] = str(proxy_name or "")
     next_state["base_pose_proxy_frame"] = frame
+    commit_base_pose_state_for_center(
+        next_state,
+        center_state,
+        base_positions=next_state["base_positions"],
+        base_normals=next_state["base_normals"],
+        base_rotations=next_state["base_rotations"],
+        step_basic_positions=next_state["step_basic_positions"],
+        step_basic_rotations=next_state["step_basic_rotations"],
+        proxy_ptr=proxy_ptr,
+        proxy_name=proxy_name,
+        proxy_frame=frame,
+    )
     return next_state
 
 
@@ -1248,9 +2100,11 @@ def sync_state_to_base_pose_proxy(
     current_frame: int,
     timing: dict | None = None,
     cache: dict | None = None,
+    center_state: MC2CenterState | MC2RuntimeOwner | None = None,
 ) -> dict:
     if base_pose_proxy is None:
         if int(state.get("base_pose_proxy_ptr", 0) or 0) == 0:
+            base_pose_state_for_center(state, center_state)
             return state
         return _apply_base_pose_arrays(
             state,
@@ -1259,6 +2113,7 @@ def sync_state_to_base_pose_proxy(
             0,
             "",
             None,
+            center_state,
         )
 
     vertex_count = int(state.get("vertex_count", len(obj.data.vertices)))
@@ -1270,6 +2125,7 @@ def sync_state_to_base_pose_proxy(
         int(state.get("base_pose_proxy_ptr", 0) or 0) == proxy_ptr
         and state.get("base_pose_proxy_frame") == current_frame
     ):
+        base_pose_state_for_center(state, center_state)
         return state
 
     stage_start = time.perf_counter() if timing is not None else None
@@ -1298,6 +2154,7 @@ def sync_state_to_base_pose_proxy(
         proxy_ptr,
         base_pose_proxy.name_full,
         current_frame,
+        center_state,
     )
     if timing is not None:
         stage_name = "base_pose_sync.apply"
@@ -1313,6 +2170,7 @@ def state_matches(
     output_key: str,
     mesh_light_key: tuple,
 ) -> bool:
+    owner = state if isinstance(state, MC2RuntimeOwner) else None
     state = unwrap_state(state)
     if not isinstance(state, dict):
         return False
@@ -1360,6 +2218,36 @@ def state_matches(
         value = state.get(key)
         if not isinstance(value, np.ndarray) or value.shape != shape:
             return False
+    if owner is not None:
+        base_pose_state = owner.center_state.base_pose_state
+        base_pose_shapes = {
+            "base_positions": (vertex_count, 3),
+            "base_normals": (vertex_count, 3),
+            "base_rotations": (vertex_count, 4),
+            "step_basic_positions": (vertex_count, 3),
+            "step_basic_rotations": (vertex_count, 4),
+        }
+        for key, shape in base_pose_shapes.items():
+            value = getattr(base_pose_state, key)
+            if not isinstance(value, np.ndarray) or value.shape != shape:
+                return False
+        particle_state = owner.center_state.particle_state
+        particle_shapes = {
+            "next_positions": (vertex_count, 3),
+            "old_positions": (vertex_count, 3),
+            "velocity_positions": (vertex_count, 3),
+            "display_positions": (vertex_count, 3),
+            "velocity": (vertex_count, 3),
+            "real_velocity": (vertex_count, 3),
+            "friction": (vertex_count,),
+            "static_friction": (vertex_count,),
+            "collision_normals": (vertex_count, 3),
+            "inv_masses": (vertex_count,),
+        }
+        for key, shape in particle_shapes.items():
+            value = getattr(particle_state, key)
+            if not isinstance(value, np.ndarray) or value.shape != shape:
+                return False
 
     try:
         matrix_3x3_key = tuple(state.get("object_matrix_world_3x3_key"))

@@ -181,6 +181,16 @@ def _blend_display_positions(base_positions: np.ndarray, display_positions: np.n
     return np.ascontiguousarray(base + (display - base) * weight, dtype=np.float32)
 
 
+def _particle_array(particle_state, state: dict, key: str) -> np.ndarray:
+    value = getattr(particle_state, key) if particle_state is not None else state[key]
+    return np.ascontiguousarray(value, dtype=np.float32)
+
+
+def _base_pose_array(base_pose_state, state: dict, key: str) -> np.ndarray:
+    value = getattr(base_pose_state, key) if base_pose_state is not None else state[key]
+    return np.ascontiguousarray(value, dtype=np.float32)
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -260,24 +270,26 @@ def solve_meshcloth(
     team_state_ref = mc2_state.team_state_for_solver(state, team_state)
     center_state_ref = mc2_state.coerce_center_state(center_state)
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
-    positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
-    old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
-    base_positions = np.ascontiguousarray(state["base_positions"], dtype=np.float32)
-    base_normals = np.ascontiguousarray(state["base_normals"], dtype=np.float32)
-    base_rotations = np.ascontiguousarray(state["base_rotations"], dtype=np.float32)
-    step_basic_positions = np.ascontiguousarray(state["step_basic_positions"], dtype=np.float32)
-    step_basic_rotations = np.ascontiguousarray(state["step_basic_rotations"], dtype=np.float32)
+    particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
+    base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
+    positions = _particle_array(particle_state_ref, state, "next_positions")
+    old_positions = _particle_array(particle_state_ref, state, "old_positions")
+    base_positions = _base_pose_array(base_pose_state_ref, state, "base_positions")
+    base_normals = _base_pose_array(base_pose_state_ref, state, "base_normals")
+    base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
+    step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
+    step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
     attributes = np.ascontiguousarray(state["attributes"], dtype=np.uint8)
     depths = np.ascontiguousarray(state["depths"], dtype=np.float32)
-    friction = np.ascontiguousarray(state["friction"], dtype=np.float32)
-    static_friction = np.ascontiguousarray(state["static_friction"], dtype=np.float32)
-    velocity_positions = np.ascontiguousarray(state["velocity_positions"], dtype=np.float32)
-    velocity = np.ascontiguousarray(state["velocity"], dtype=np.float32)
-    real_velocity = np.ascontiguousarray(state["real_velocity"], dtype=np.float32)
+    friction = _particle_array(particle_state_ref, state, "friction")
+    static_friction = _particle_array(particle_state_ref, state, "static_friction")
+    velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
+    velocity = _particle_array(particle_state_ref, state, "velocity")
+    real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(attributes, depths, friction)
     collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
     collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
-    collision_normals = np.ascontiguousarray(state["collision_normals"], dtype=np.float32)
+    collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
     collision_normals.fill(0.0)
     movable = inv_masses > MC2SystemConstants.EPSILON
     fixed = ~movable
@@ -477,6 +489,8 @@ def solve_meshcloth(
         gravity_falloff,
         inertia_state,
     )
+    if center_state_ref is not None:
+        center_state_ref.refresh_inertia_summary()
     team_state_ref.apply_gravity_context(gravity_dot, gravity_ratio, state)
     angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
         runtime,
@@ -968,13 +982,16 @@ def solve_meshcloth(
     # 最后一段只负责把运行结果打包回 state，不再做新的求解。
     stage_start = time.perf_counter() if timing is not None else None
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
-    next_state["frame_delta_time"] = float(frame_dt)
-    next_state["step_delta_time"] = float(step_dt)
-    next_state["animation_pose_ratio"] = float(team_state_ref.animation_pose_ratio)
-    next_state["gravity_dot"] = float(team_state_ref.gravity_dot)
-    next_state["gravity_ratio"] = float(team_state_ref.gravity_ratio)
-    next_state["velocity_weight"] = float(team_state_ref.velocity_weight)
-    next_state["blend_weight"] = float(team_state_ref.blend_weight)
+    team_state_ref.apply_frame_context(
+        frame_dt,
+        step_dt,
+        1,
+        0,
+        team_state_ref.frame_interpolation,
+        next_state,
+        substep_count=substep_count,
+    )
+    team_state_ref.mirror_to_legacy(next_state)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     committed_inertia_state = mc2_state.commit_inertia_state_for_center(
         next_state,
@@ -982,16 +999,21 @@ def solve_meshcloth(
         obj,
         center_state_ref,
     )
-    next_state["scale_ratio"] = float(committed_inertia_state.get("scale_ratio", world_scale) or world_scale)
-    next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+    if center_state_ref is not None:
+        center_state_ref.refresh_inertia_summary()
+        next_state["scale_ratio"] = float(center_state_ref.scale_ratio or world_scale)
+        next_state["negative_scale_sign"] = int(center_state_ref.negative_scale_sign or 1)
+        negative_scale_direction = center_state_ref.negative_scale_direction
+    else:
+        next_state["scale_ratio"] = float(committed_inertia_state.get("scale_ratio", world_scale) or world_scale)
+        next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+        negative_scale_direction = committed_inertia_state.get("negative_scale_direction")
     team_state_ref.apply_scale_context(
         next_state["scale_ratio"],
         next_state["negative_scale_sign"],
         next_state,
-        committed_inertia_state.get("negative_scale_direction"),
+        negative_scale_direction,
     )
-    next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
-    next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
     display_positions = native_bridge.calculate_display_positions(
         positions,
         real_velocity,
@@ -1007,16 +1029,46 @@ def solve_meshcloth(
             frame_dt,
         )
     display_positions = _blend_display_positions(base_positions, display_positions, blend_weight_value)
-    next_state["display_positions"] = np.ascontiguousarray(display_positions, dtype=np.float32)
-    next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
-    next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
-    next_state["velocity_positions"] = np.ascontiguousarray(velocity_positions, dtype=np.float32)
-    next_state["velocity"] = np.ascontiguousarray(velocity, dtype=np.float32)
-    next_state["real_velocity"] = np.ascontiguousarray(real_velocity, dtype=np.float32)
-    next_state["friction"] = np.ascontiguousarray(friction, dtype=np.float32)
-    next_state["static_friction"] = np.ascontiguousarray(static_friction, dtype=np.float32)
-    next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
-    next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
+    mc2_state.commit_particle_state_for_center(
+        next_state,
+        center_state_ref,
+        next_positions=positions,
+        old_positions=old_positions,
+        velocity_positions=velocity_positions,
+        display_positions=display_positions,
+        velocity=velocity,
+        real_velocity=real_velocity,
+        friction=friction,
+        static_friction=static_friction,
+        collision_normals=collision_normals,
+        inv_masses=inv_masses,
+    )
+    if center_state_ref is None:
+        next_state["next_positions"] = np.ascontiguousarray(positions, dtype=np.float32)
+        next_state["old_positions"] = np.ascontiguousarray(old_positions, dtype=np.float32)
+        next_state["display_positions"] = np.ascontiguousarray(display_positions, dtype=np.float32)
+        next_state["velocity_positions"] = np.ascontiguousarray(velocity_positions, dtype=np.float32)
+        next_state["velocity"] = np.ascontiguousarray(velocity, dtype=np.float32)
+        next_state["real_velocity"] = np.ascontiguousarray(real_velocity, dtype=np.float32)
+        next_state["friction"] = np.ascontiguousarray(friction, dtype=np.float32)
+        next_state["static_friction"] = np.ascontiguousarray(static_friction, dtype=np.float32)
+        next_state["collision_normals"] = np.ascontiguousarray(collision_normals, dtype=np.float32)
+        next_state["inv_masses"] = np.ascontiguousarray(inv_masses, dtype=np.float32)
+    mc2_state.commit_base_pose_state_for_center(
+        next_state,
+        center_state_ref,
+        base_positions=base_positions,
+        base_normals=base_normals,
+        base_rotations=base_rotations,
+        step_basic_positions=step_basic_positions,
+        step_basic_rotations=step_basic_rotations,
+        proxy_ptr=state.get("base_pose_proxy_ptr", 0),
+        proxy_name=state.get("base_pose_proxy_name", ""),
+        proxy_frame=state.get("base_pose_proxy_frame"),
+    )
+    if center_state_ref is None:
+        next_state["step_basic_positions"] = np.ascontiguousarray(step_basic_positions, dtype=np.float32)
+        next_state["step_basic_rotations"] = np.ascontiguousarray(step_basic_rotations, dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
@@ -1113,16 +1165,22 @@ def solve_meshcloth_native_core(
     team_state_ref = mc2_state.team_state_for_solver(state, team_state)
     center_state_ref = mc2_state.coerce_center_state(center_state)
     frame_inertia_state = mc2_state.inertia_state_for_center(state, center_state_ref, obj)
+    particle_state_ref = mc2_state.particle_state_for_center(state, center_state_ref)
+    base_pose_state_ref = mc2_state.base_pose_state_for_center(state, center_state_ref)
 
-    positions = np.ascontiguousarray(state["next_positions"], dtype=np.float32)
-    old_positions = np.ascontiguousarray(state["old_positions"], dtype=np.float32)
-    base_positions = np.ascontiguousarray(state["base_positions"], dtype=np.float32)
+    positions = _particle_array(particle_state_ref, state, "next_positions")
+    old_positions = _particle_array(particle_state_ref, state, "old_positions")
+    base_positions = _base_pose_array(base_pose_state_ref, state, "base_positions")
+    base_normals = _base_pose_array(base_pose_state_ref, state, "base_normals")
+    base_rotations = _base_pose_array(base_pose_state_ref, state, "base_rotations")
+    step_basic_positions = _base_pose_array(base_pose_state_ref, state, "step_basic_positions")
+    step_basic_rotations = _base_pose_array(base_pose_state_ref, state, "step_basic_rotations")
     depths = np.ascontiguousarray(state["depths"], dtype=np.float32)
-    friction = np.ascontiguousarray(state["friction"], dtype=np.float32)
-    static_friction = np.ascontiguousarray(state["static_friction"], dtype=np.float32)
-    velocity_positions = np.ascontiguousarray(state["velocity_positions"], dtype=np.float32)
-    velocity = np.ascontiguousarray(state["velocity"], dtype=np.float32)
-    real_velocity = np.ascontiguousarray(state["real_velocity"], dtype=np.float32)
+    friction = _particle_array(particle_state_ref, state, "friction")
+    static_friction = _particle_array(particle_state_ref, state, "static_friction")
+    velocity_positions = _particle_array(particle_state_ref, state, "velocity_positions")
+    velocity = _particle_array(particle_state_ref, state, "velocity")
+    real_velocity = _particle_array(particle_state_ref, state, "real_velocity")
     inv_masses = mc2_state.calc_inverse_masses(
         np.ascontiguousarray(state["attributes"], dtype=np.uint8),
         depths,
@@ -1130,7 +1188,7 @@ def solve_meshcloth_native_core(
     )
     collision_radii = np.ascontiguousarray(state["collision_radii"], dtype=np.float32)
     collided_by_groups = math_utils.clamp_group_mask(state.get("collided_by_groups", 0))
-    collision_normals = np.ascontiguousarray(state["collision_normals"], dtype=np.float32)
+    collision_normals = _particle_array(particle_state_ref, state, "collision_normals")
     collision_normals.fill(0.0)
     _end_stage(timing, "solve_setup.arrays", substage_start)
 
@@ -1332,6 +1390,8 @@ def solve_meshcloth_native_core(
         gravity_falloff,
         inertia_state,
     )
+    if center_state_ref is not None:
+        center_state_ref.refresh_inertia_summary()
     team_state_ref.apply_gravity_context(gravity_dot, gravity_ratio, state)
     angle_restoration_gravity_falloff_values = _sync_gravity_runtime(
         runtime,
@@ -1430,6 +1490,11 @@ def solve_meshcloth_native_core(
         {
             "positions": np.ascontiguousarray(positions, dtype=np.float32),
             "old_positions": np.ascontiguousarray(old_positions, dtype=np.float32),
+            "base_positions": np.ascontiguousarray(base_positions, dtype=np.float32),
+            "base_normals": np.ascontiguousarray(base_normals, dtype=np.float32),
+            "base_rotations": np.ascontiguousarray(base_rotations, dtype=np.float32),
+            "step_basic_positions": np.ascontiguousarray(step_basic_positions, dtype=np.float32),
+            "step_basic_rotations": np.ascontiguousarray(step_basic_rotations, dtype=np.float32),
             "velocity_positions": np.ascontiguousarray(velocity_positions, dtype=np.float32),
             "velocity": np.ascontiguousarray(velocity, dtype=np.float32),
             "real_velocity": np.ascontiguousarray(real_velocity, dtype=np.float32),
@@ -1493,13 +1558,16 @@ def solve_meshcloth_native_core(
 
     stage_start = time.perf_counter() if timing is not None else None
     next_state = mc2_state.inherit_runtime_slots(state, dict(state))
-    next_state["frame_delta_time"] = float(frame_dt)
-    next_state["step_delta_time"] = float(step_dt)
-    next_state["animation_pose_ratio"] = float(team_state_ref.animation_pose_ratio)
-    next_state["gravity_dot"] = float(team_state_ref.gravity_dot)
-    next_state["gravity_ratio"] = float(team_state_ref.gravity_ratio)
-    next_state["velocity_weight"] = float(team_state_ref.velocity_weight)
-    next_state["blend_weight"] = float(team_state_ref.blend_weight)
+    team_state_ref.apply_frame_context(
+        frame_dt,
+        step_dt,
+        1,
+        0,
+        team_state_ref.frame_interpolation,
+        next_state,
+        substep_count=substep_count,
+    )
+    team_state_ref.mirror_to_legacy(next_state)
     next_state["substep_damping"] = float(np.max(substep_damping_values)) if len(substep_damping_values) else 0.0
     committed_inertia_state = mc2_state.commit_inertia_state_for_center(
         next_state,
@@ -1507,28 +1575,63 @@ def solve_meshcloth_native_core(
         obj,
         center_state_ref,
     )
-    next_state["scale_ratio"] = float(
-        committed_inertia_state.get("scale_ratio", world_scale_nonnegative) or world_scale_nonnegative
-    )
-    next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+    if center_state_ref is not None:
+        center_state_ref.refresh_inertia_summary()
+        next_state["scale_ratio"] = float(center_state_ref.scale_ratio or world_scale_nonnegative)
+        next_state["negative_scale_sign"] = int(center_state_ref.negative_scale_sign or 1)
+        negative_scale_direction = center_state_ref.negative_scale_direction
+    else:
+        next_state["scale_ratio"] = float(
+            committed_inertia_state.get("scale_ratio", world_scale_nonnegative) or world_scale_nonnegative
+        )
+        next_state["negative_scale_sign"] = int(committed_inertia_state.get("negative_scale_sign", 1) or 1)
+        negative_scale_direction = committed_inertia_state.get("negative_scale_direction")
     team_state_ref.apply_scale_context(
         next_state["scale_ratio"],
         next_state["negative_scale_sign"],
         next_state,
-        committed_inertia_state.get("negative_scale_direction"),
+        negative_scale_direction,
     )
-    next_state["next_positions"] = np.ascontiguousarray(arrays["positions"], dtype=np.float32)
-    next_state["old_positions"] = np.ascontiguousarray(arrays["old_positions"], dtype=np.float32)
-    next_state["display_positions"] = np.ascontiguousarray(arrays["display_positions"], dtype=np.float32)
-    next_state["step_basic_positions"] = np.ascontiguousarray(arrays["step_basic_positions"], dtype=np.float32)
-    next_state["step_basic_rotations"] = np.ascontiguousarray(arrays["step_basic_rotations"], dtype=np.float32)
-    next_state["velocity_positions"] = np.ascontiguousarray(arrays["velocity_positions"], dtype=np.float32)
-    next_state["velocity"] = np.ascontiguousarray(arrays["velocity"], dtype=np.float32)
-    next_state["real_velocity"] = np.ascontiguousarray(arrays["real_velocity"], dtype=np.float32)
-    next_state["friction"] = np.ascontiguousarray(arrays["friction"], dtype=np.float32)
-    next_state["static_friction"] = np.ascontiguousarray(arrays["static_friction"], dtype=np.float32)
-    next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
-    next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
+    mc2_state.commit_particle_state_for_center(
+        next_state,
+        center_state_ref,
+        next_positions=arrays["positions"],
+        old_positions=arrays["old_positions"],
+        velocity_positions=arrays["velocity_positions"],
+        display_positions=arrays["display_positions"],
+        velocity=arrays["velocity"],
+        real_velocity=arrays["real_velocity"],
+        friction=arrays["friction"],
+        static_friction=arrays["static_friction"],
+        collision_normals=arrays["collision_normals"],
+        inv_masses=arrays["inv_masses"],
+    )
+    if center_state_ref is None:
+        next_state["next_positions"] = np.ascontiguousarray(arrays["positions"], dtype=np.float32)
+        next_state["old_positions"] = np.ascontiguousarray(arrays["old_positions"], dtype=np.float32)
+        next_state["display_positions"] = np.ascontiguousarray(arrays["display_positions"], dtype=np.float32)
+        next_state["velocity_positions"] = np.ascontiguousarray(arrays["velocity_positions"], dtype=np.float32)
+        next_state["velocity"] = np.ascontiguousarray(arrays["velocity"], dtype=np.float32)
+        next_state["real_velocity"] = np.ascontiguousarray(arrays["real_velocity"], dtype=np.float32)
+        next_state["friction"] = np.ascontiguousarray(arrays["friction"], dtype=np.float32)
+        next_state["static_friction"] = np.ascontiguousarray(arrays["static_friction"], dtype=np.float32)
+        next_state["collision_normals"] = np.ascontiguousarray(arrays["collision_normals"], dtype=np.float32)
+        next_state["inv_masses"] = np.ascontiguousarray(arrays["inv_masses"], dtype=np.float32)
+    mc2_state.commit_base_pose_state_for_center(
+        next_state,
+        center_state_ref,
+        base_positions=arrays["base_positions"],
+        base_normals=arrays["base_normals"],
+        base_rotations=arrays["base_rotations"],
+        step_basic_positions=arrays["step_basic_positions"],
+        step_basic_rotations=arrays["step_basic_rotations"],
+        proxy_ptr=state.get("base_pose_proxy_ptr", 0),
+        proxy_name=state.get("base_pose_proxy_name", ""),
+        proxy_frame=state.get("base_pose_proxy_frame"),
+    )
+    if center_state_ref is None:
+        next_state["step_basic_positions"] = np.ascontiguousarray(arrays["step_basic_positions"], dtype=np.float32)
+        next_state["step_basic_rotations"] = np.ascontiguousarray(arrays["step_basic_rotations"], dtype=np.float32)
     next_state["previous_collider_snapshot"] = collision.compact_collider_snapshot(colliders)
     runtime_params.write_param_slots(next_state, runtime, native_param_context.param_slots)
 
