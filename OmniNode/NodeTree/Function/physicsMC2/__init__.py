@@ -8,6 +8,7 @@ import time
 
 import bpy
 import mathutils
+import numpy as np
 
 from .....PropertyCurve import float_curve_payload
 from .....PhysicsTools.collisionBasePose import ensure_base_pose_proxy, ensure_delta_output
@@ -15,7 +16,7 @@ from ...FunctionNodeCore import omni
 from ...OmniDebug import OmniDebug
 from ...OmniNodeSocketMapping import _OmniCache, _OmniFloatCurve
 from .. import _Color
-from . import blender_io, collision, mesh_build, params, solver, state as mc2_state
+from . import blender_io, collision, inertia, mesh_build, params, solver, state as mc2_state
 from .constants import MC2SystemConstants
 
 
@@ -228,6 +229,74 @@ def _publish_debug_timing(
     }
 
 
+def _restart_particle_state_from_base_pose(
+    state: dict,
+    center_state: mc2_state.MC2CenterState | mc2_state.MC2RuntimeOwner | None,
+) -> dict:
+    base_positions = np.ascontiguousarray(state.get("base_positions"), dtype=np.float32)
+    if base_positions.ndim != 2 or base_positions.shape[1] != 3:
+        return state
+    vertex_count = int(base_positions.shape[0])
+    zero_vec3 = np.zeros((vertex_count, 3), dtype=np.float32)
+    zero_scalar = np.zeros(vertex_count, dtype=np.float32)
+    inv_masses = np.ascontiguousarray(state.get("inv_masses"), dtype=np.float32)
+    particle_state = mc2_state.commit_particle_state_for_center(
+        state,
+        center_state,
+        next_positions=base_positions.copy(),
+        old_positions=base_positions.copy(),
+        velocity_positions=base_positions.copy(),
+        display_positions=base_positions.copy(),
+        velocity=zero_vec3.copy(),
+        real_velocity=zero_vec3.copy(),
+        friction=zero_scalar.copy(),
+        static_friction=zero_scalar.copy(),
+        collision_normals=zero_vec3.copy(),
+        inv_masses=inv_masses,
+    )
+    if particle_state is None:
+        state["next_positions"] = base_positions.copy()
+        state["old_positions"] = base_positions.copy()
+        state["velocity_positions"] = base_positions.copy()
+        state["display_positions"] = base_positions.copy()
+        state["velocity"] = zero_vec3.copy()
+        state["real_velocity"] = zero_vec3.copy()
+        state["friction"] = zero_scalar.copy()
+        state["static_friction"] = zero_scalar.copy()
+        state["collision_normals"] = zero_vec3.copy()
+        state["inv_masses"] = inv_masses
+    return state
+
+
+def _cold_restart_runtime_state(
+    state: dict,
+    obj: bpy.types.Object,
+    center_state: mc2_state.MC2CenterState | mc2_state.MC2RuntimeOwner | None,
+    team_state: mc2_state.MC2TeamState | mc2_state.MC2RuntimeOwner | None,
+    blend_weight: float,
+) -> dict:
+    cold_state = _restart_particle_state_from_base_pose(state, center_state)
+    mc2_state.set_inertia_state_for_center(cold_state, inertia.make_runtime_state(obj), center_state)
+    mc2_state.set_previous_collider_snapshot_for_center(cold_state, None, center_state)
+    team = mc2_state.coerce_team_state(team_state)
+    if team is not None:
+        team.apply_frame_context(0.0, 0.0, 0, 0, 1.0, cold_state, substep_count=1)
+        team.apply_blend_context(0.0, blend_weight, cold_state)
+        team.apply_gravity_context(1.0, 1.0, cold_state)
+    else:
+        cold_state["gravity_dot"] = 1.0
+        cold_state["gravity_ratio"] = 1.0
+        cold_state["velocity_weight"] = 0.0
+        cold_state["blend_weight"] = max(0.0, min(1.0, float(blend_weight)))
+        cold_state["frame_delta_time"] = 0.0
+        cold_state["step_delta_time"] = 0.0
+        cold_state["update_count"] = 0
+        cold_state["skip_count"] = 0
+        cold_state["substep_count"] = 1
+        cold_state["frame_interpolation"] = 1.0
+    return cold_state
+
+
 def _run_mesh_cloth_mc2_node(
     cache_state: _OmniCache,
     proxy_obj: bpy.types.Object,
@@ -318,9 +387,15 @@ def _run_mesh_cloth_mc2_node(
     vertex_count = len(obj.data.vertices)
     cache_substage_start = time.perf_counter() if timing is not None else None
     cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) else None
+    mesh_signature_key = None
+    config_key = None
+    if cache_owner is not None:
+        topology_cache = cache_owner.topology_cache
+        mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
+        config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
     state_matches = (
         cache_owner is not None
-        and mc2_state.state_matches(cache_owner, obj, output_key, mesh_light_key)
+        and mc2_state.state_matches(cache_owner, obj, output_key, mesh_light_key, config_key)
     )
     if timing is not None:
         _add_timing(timing, "cache.match", time.perf_counter() - cache_substage_start)
@@ -330,17 +405,19 @@ def _run_mesh_cloth_mc2_node(
     cache_substage_start = time.perf_counter() if timing is not None else None
     cached_frame = blender_io.cache_frame(state)
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
+    continuous_frame = cached_frame is not None and current_frame == cached_frame + 1
+    restart_required = reset or not continuous_frame
+    # 跳帧/首帧不沿用任何基于历史姿态的投影推力，避免把重启帧的基准轴偏置成稳定方向外力。
+    solve_anchor_inertia = 1.0 if restart_required else anchor_inertia
+    solve_motion_stiffness = 0.0 if restart_required else motion_stiffness
+    solve_centrifugal = 0.0 if restart_required else centrifugal
     if timing is not None:
         _add_timing(timing, "cache.frame", time.perf_counter() - cache_substage_start)
         _add_timing(timing, "cache", time.perf_counter() - stage_start)
-
-    if not reset and cached_frame is not None and current_frame != cached_frame + 1:
-        stage_start = time.perf_counter() if timing is not None else None
-        blender_io.clear_delta_attribute(obj)
-        if timing is not None:
-            _add_timing(timing, "restore", time.perf_counter() - stage_start)
-            _publish_debug_timing(obj, output_key, current_frame, vertex_count, 0, timing, backend_label)
-        return _OmniCache.replace(None), obj, vertex_count, 0
+    if restart_required:
+        replace_cache = True
+        mesh_signature_key = None
+        config_key = None
 
     base_pose_proxy = None
     if enabled:
@@ -358,7 +435,7 @@ def _run_mesh_cloth_mc2_node(
             _add_timing(timing, "base_proxy.validate", time.perf_counter() - stage_start)
             _add_timing(timing, "base_proxy", time.perf_counter() - base_proxy_stage_start)
 
-    if reset or not isinstance(state, dict):
+    if restart_required or not isinstance(state, dict):
         replace_cache = True
         cache_owner = mc2_state.MC2RuntimeOwner()
         topology_cache = cache_owner.topology_cache
@@ -372,12 +449,14 @@ def _run_mesh_cloth_mc2_node(
         # 只有 reset、跳帧清缓存、对象/mesh/顶点-loop-面数量变化时才重建完整拓扑签名。
         # 同数量但拓扑重排不会自动失效，用户需要手动 reset/清缓存。
         cache_substage_start = time.perf_counter() if timing is not None else None
-        mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
+        if mesh_signature_key is None:
+            mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
         if timing is not None:
             _add_timing(timing, "rebuild.mesh_signature", time.perf_counter() - cache_substage_start)
 
         cache_substage_start = time.perf_counter() if timing is not None else None
-        config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
+        if config_key is None:
+            config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
         if timing is not None:
             _add_timing(timing, "rebuild.config", time.perf_counter() - cache_substage_start)
 
@@ -484,6 +563,22 @@ def _run_mesh_cloth_mc2_node(
     if timing is not None:
         _add_timing(timing, "base_pose_sync", time.perf_counter() - stage_start)
 
+    if restart_required:
+        state = _cold_restart_runtime_state(
+            state,
+            obj,
+            cache_owner.center_state,
+            cache_owner.team_state,
+            blend_weight,
+        )
+        blender_io.clear_delta_attribute(obj)
+        next_state = mc2_state.inherit_runtime_slots(state, dict(state))
+        next_state["frame"] = current_frame
+        _publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
+        cache_owner.replace_state(next_state)
+        cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
+        return cache_value, obj, vertex_count, constraint_count
+
     stage_start = time.perf_counter() if timing is not None else None
     if use_collider_collision and int(collider_collision_mode) != 0:
         collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
@@ -527,12 +622,12 @@ def _run_mesh_cloth_mc2_node(
         angle_limit_curve,
         angle_limit_stiffness,
         anchor_obj,
-        anchor_inertia,
+        solve_anchor_inertia,
         world_inertia,
         movement_inertia_smoothing,
         local_inertia,
         depth_inertia,
-        centrifugal,
+        solve_centrifugal,
         movement_speed_limit,
         rotation_speed_limit,
         local_movement_speed_limit,
@@ -549,7 +644,7 @@ def _run_mesh_cloth_mc2_node(
         backstop_radius,
         backstop_distance,
         backstop_distance_curve,
-        motion_stiffness,
+        solve_motion_stiffness,
         normal_axis,
         use_collider_collision,
         collider_friction,
