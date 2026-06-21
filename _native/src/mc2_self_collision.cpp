@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace hotools {
@@ -314,16 +316,229 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
     }
 
     const float thickness = std::max(view.surface_thickness, 0.0f);
+    constexpr float kSelfCollisionGridScale = 3.0f;
+
+    struct GridCell {
+        std::int64_t x = 0;
+        std::int64_t y = 0;
+        std::int64_t z = 0;
+
+        bool operator==(const GridCell& other) const noexcept {
+            return x == other.x && y == other.y && z == other.z;
+        }
+    };
+
+    struct GridCellHash {
+        std::size_t operator()(const GridCell& cell) const noexcept {
+            std::uint64_t hash = 1469598103934665603ull;
+            auto mix = [&hash](std::int64_t value) {
+                hash ^= static_cast<std::uint64_t>(value);
+                hash *= 1099511628211ull;
+            };
+            mix(cell.x);
+            mix(cell.y);
+            mix(cell.z);
+            return static_cast<std::size_t>(hash ^ (hash >> 32u));
+        }
+    };
+
+    struct PrimitiveBounds {
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float min_z = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+        float max_z = 0.0f;
+        bool valid = false;
+    };
+
+    auto grid_coord = [](float value, float cell_size) -> std::int64_t {
+        return static_cast<std::int64_t>(std::floor(value / cell_size));
+    };
+
+    auto for_grid_cells = [&](float min_x,
+                              float min_y,
+                              float min_z,
+                              float max_x,
+                              float max_y,
+                              float max_z,
+                              float cell_size,
+                              auto&& visitor) {
+        const float safe_cell_size = std::max(cell_size, kMc2Epsilon);
+        const std::int64_t min_grid_x = grid_coord(min_x, safe_cell_size);
+        const std::int64_t min_grid_y = grid_coord(min_y, safe_cell_size);
+        const std::int64_t min_grid_z = grid_coord(min_z, safe_cell_size);
+        const std::int64_t max_grid_x = grid_coord(max_x, safe_cell_size);
+        const std::int64_t max_grid_y = grid_coord(max_y, safe_cell_size);
+        const std::int64_t max_grid_z = grid_coord(max_z, safe_cell_size);
+        for (std::int64_t grid_z = min_grid_z; grid_z <= max_grid_z; ++grid_z) {
+            for (std::int64_t grid_y = min_grid_y; grid_y <= max_grid_y; ++grid_y) {
+                for (std::int64_t grid_x = min_grid_x; grid_x <= max_grid_x; ++grid_x) {
+                    visitor(grid_x, grid_y, grid_z);
+                }
+            }
+        }
+    };
+
+    const std::size_t edge_count = view.edge_count > 0 ? static_cast<std::size_t>(view.edge_count) : 0;
+    const std::size_t triangle_count = view.triangle_count > 0 ? static_cast<std::size_t>(view.triangle_count) : 0;
+    std::vector<PrimitiveBounds> edge_bounds(edge_count);
+    std::vector<PrimitiveBounds> triangle_bounds(triangle_count);
+    std::unordered_map<GridCell, std::vector<std::int32_t>, GridCellHash> edge_cells;
+    std::unordered_map<GridCell, std::vector<std::int32_t>, GridCellHash> triangle_cells;
+    float max_primitive_size = thickness;
+
+    if (view.edges != nullptr && view.edge_count > 0) {
+        for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
+            const std::int32_t a = view.edges[edge_index * 2 + 0];
+            const std::int32_t b = view.edges[edge_index * 2 + 1];
+            if (a < 0 || b < 0 || static_cast<std::int64_t>(a) >= view.vertex_count ||
+                static_cast<std::int64_t>(b) >= view.vertex_count || a == b) {
+                continue;
+            }
+            if ((view.attributes[a] & kMc2AttrInvalid) != 0 || (view.attributes[b] & kMc2AttrInvalid) != 0) {
+                continue;
+            }
+            const std::int64_t ao = static_cast<std::int64_t>(a) * 3;
+            const std::int64_t bo = static_cast<std::int64_t>(b) * 3;
+            const float cur_a_x = view.positions[ao + 0];
+            const float cur_a_y = view.positions[ao + 1];
+            const float cur_a_z = view.positions[ao + 2];
+            const float cur_b_x = view.positions[bo + 0];
+            const float cur_b_y = view.positions[bo + 1];
+            const float cur_b_z = view.positions[bo + 2];
+            const float old_a_x = view.old_positions[ao + 0];
+            const float old_a_y = view.old_positions[ao + 1];
+            const float old_a_z = view.old_positions[ao + 2];
+            const float old_b_x = view.old_positions[bo + 0];
+            const float old_b_y = view.old_positions[bo + 1];
+            const float old_b_z = view.old_positions[bo + 2];
+            const float size = std::max(length3(cur_b_x - cur_a_x, cur_b_y - cur_a_y, cur_b_z - cur_a_z),
+                                        length3(old_b_x - old_a_x, old_b_y - old_a_y, old_b_z - old_a_z));
+            max_primitive_size = std::max(max_primitive_size, size);
+            PrimitiveBounds bounds;
+            bounds.min_x = std::min(std::min(cur_a_x, cur_b_x), std::min(old_a_x, old_b_x)) - thickness;
+            bounds.min_y = std::min(std::min(cur_a_y, cur_b_y), std::min(old_a_y, old_b_y)) - thickness;
+            bounds.min_z = std::min(std::min(cur_a_z, cur_b_z), std::min(old_a_z, old_b_z)) - thickness;
+            bounds.max_x = std::max(std::max(cur_a_x, cur_b_x), std::max(old_a_x, old_b_x)) + thickness;
+            bounds.max_y = std::max(std::max(cur_a_y, cur_b_y), std::max(old_a_y, old_b_y)) + thickness;
+            bounds.max_z = std::max(std::max(cur_a_z, cur_b_z), std::max(old_a_z, old_b_z)) + thickness;
+            bounds.valid = true;
+            edge_bounds[static_cast<std::size_t>(edge_index)] = bounds;
+        }
+    }
+
+    if (view.triangles != nullptr && view.triangle_count > 0) {
+        for (std::int64_t tri_index = 0; tri_index < view.triangle_count; ++tri_index) {
+            const std::int32_t a = view.triangles[tri_index * 3 + 0];
+            const std::int32_t b = view.triangles[tri_index * 3 + 1];
+            const std::int32_t c = view.triangles[tri_index * 3 + 2];
+            if (a < 0 || b < 0 || c < 0 || static_cast<std::int64_t>(a) >= view.vertex_count ||
+                static_cast<std::int64_t>(b) >= view.vertex_count || static_cast<std::int64_t>(c) >= view.vertex_count) {
+                continue;
+            }
+            if ((view.attributes[a] & kMc2AttrInvalid) != 0 || (view.attributes[b] & kMc2AttrInvalid) != 0 ||
+                (view.attributes[c] & kMc2AttrInvalid) != 0) {
+                continue;
+            }
+            const std::int64_t ao = static_cast<std::int64_t>(a) * 3;
+            const std::int64_t bo = static_cast<std::int64_t>(b) * 3;
+            const std::int64_t co = static_cast<std::int64_t>(c) * 3;
+            const float cur_a_x = view.positions[ao + 0];
+            const float cur_a_y = view.positions[ao + 1];
+            const float cur_a_z = view.positions[ao + 2];
+            const float cur_b_x = view.positions[bo + 0];
+            const float cur_b_y = view.positions[bo + 1];
+            const float cur_b_z = view.positions[bo + 2];
+            const float cur_c_x = view.positions[co + 0];
+            const float cur_c_y = view.positions[co + 1];
+            const float cur_c_z = view.positions[co + 2];
+            const float old_a_x = view.old_positions[ao + 0];
+            const float old_a_y = view.old_positions[ao + 1];
+            const float old_a_z = view.old_positions[ao + 2];
+            const float old_b_x = view.old_positions[bo + 0];
+            const float old_b_y = view.old_positions[bo + 1];
+            const float old_b_z = view.old_positions[bo + 2];
+            const float old_c_x = view.old_positions[co + 0];
+            const float old_c_y = view.old_positions[co + 1];
+            const float old_c_z = view.old_positions[co + 2];
+            const float size = std::max(
+                std::max(length3(cur_b_x - cur_a_x, cur_b_y - cur_a_y, cur_b_z - cur_a_z),
+                         length3(cur_c_x - cur_a_x, cur_c_y - cur_a_y, cur_c_z - cur_a_z)),
+                std::max(length3(cur_c_x - cur_b_x, cur_c_y - cur_b_y, cur_c_z - cur_b_z),
+                         std::max(length3(old_b_x - old_a_x, old_b_y - old_a_y, old_b_z - old_a_z),
+                                  std::max(length3(old_c_x - old_a_x, old_c_y - old_a_y, old_c_z - old_a_z),
+                                           length3(old_c_x - old_b_x, old_c_y - old_b_y, old_c_z - old_b_z)))));
+            max_primitive_size = std::max(max_primitive_size, size);
+            PrimitiveBounds bounds;
+            bounds.min_x = std::min(std::min(std::min(cur_a_x, cur_b_x), cur_c_x), std::min(std::min(old_a_x, old_b_x), old_c_x)) - thickness;
+            bounds.min_y = std::min(std::min(std::min(cur_a_y, cur_b_y), cur_c_y), std::min(std::min(old_a_y, old_b_y), old_c_y)) - thickness;
+            bounds.min_z = std::min(std::min(std::min(cur_a_z, cur_b_z), cur_c_z), std::min(std::min(old_a_z, old_b_z), old_c_z)) - thickness;
+            bounds.max_x = std::max(std::max(std::max(cur_a_x, cur_b_x), cur_c_x), std::max(std::max(old_a_x, old_b_x), old_c_x)) + thickness;
+            bounds.max_y = std::max(std::max(std::max(cur_a_y, cur_b_y), cur_c_y), std::max(std::max(old_a_y, old_b_y), old_c_y)) + thickness;
+            bounds.max_z = std::max(std::max(std::max(cur_a_z, cur_b_z), cur_c_z), std::max(std::max(old_a_z, old_b_z), old_c_z)) + thickness;
+            bounds.valid = true;
+            triangle_bounds[static_cast<std::size_t>(tri_index)] = bounds;
+        }
+    }
+
+    float cell_size = max_primitive_size * kSelfCollisionGridScale;
+    cell_size = std::max(cell_size, thickness);
+    cell_size = std::max(cell_size, kMc2Epsilon);
+
+    for (std::int64_t edge_index = 0; edge_index < view.edge_count; ++edge_index) {
+        const PrimitiveBounds& bounds = edge_bounds[static_cast<std::size_t>(edge_index)];
+        if (!bounds.valid) {
+            continue;
+        }
+        for_grid_cells(bounds.min_x, bounds.min_y, bounds.min_z, bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
+                       [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                           edge_cells[GridCell{grid_x, grid_y, grid_z}].push_back(static_cast<std::int32_t>(edge_index));
+                       });
+    }
+
+    for (std::int64_t tri_index = 0; tri_index < view.triangle_count; ++tri_index) {
+        const PrimitiveBounds& bounds = triangle_bounds[static_cast<std::size_t>(tri_index)];
+        if (!bounds.valid) {
+            continue;
+        }
+        for_grid_cells(bounds.min_x, bounds.min_y, bounds.min_z, bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
+                       [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                           triangle_cells[GridCell{grid_x, grid_y, grid_z}].push_back(static_cast<std::int32_t>(tri_index));
+                       });
+    }
+
     std::vector<SelfContact> contacts;
     contacts.reserve(static_cast<std::size_t>(view.vertex_count + view.edge_count));
 
     if (view.triangles != nullptr && view.triangle_count > 0) {
+        std::unordered_set<std::int32_t> candidate_triangles;
+        candidate_triangles.reserve(64);
         for (std::int64_t point = 0; point < view.vertex_count; ++point) {
             if ((view.attributes[point] & kMc2AttrInvalid) != 0) {
                 continue;
             }
             const std::int64_t po = point * 3;
-            for (std::int64_t tri_index = 0; tri_index < view.triangle_count; ++tri_index) {
+            candidate_triangles.clear();
+            const float point_min_x = std::min(view.positions[po + 0], view.old_positions[po + 0]) - thickness;
+            const float point_min_y = std::min(view.positions[po + 1], view.old_positions[po + 1]) - thickness;
+            const float point_min_z = std::min(view.positions[po + 2], view.old_positions[po + 2]) - thickness;
+            const float point_max_x = std::max(view.positions[po + 0], view.old_positions[po + 0]) + thickness;
+            const float point_max_y = std::max(view.positions[po + 1], view.old_positions[po + 1]) + thickness;
+            const float point_max_z = std::max(view.positions[po + 2], view.old_positions[po + 2]) + thickness;
+            for_grid_cells(point_min_x, point_min_y, point_min_z, point_max_x, point_max_y, point_max_z, cell_size,
+                           [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                               const auto found = triangle_cells.find(GridCell{grid_x, grid_y, grid_z});
+                               if (found == triangle_cells.end()) {
+                                   return;
+                               }
+                               candidate_triangles.insert(found->second.begin(), found->second.end());
+                           });
+            if (candidate_triangles.empty()) {
+                continue;
+            }
+            for (const std::int32_t tri_index_value : candidate_triangles) {
+                const std::int64_t tri_index = static_cast<std::int64_t>(tri_index_value);
                 const std::int32_t ta = view.triangles[tri_index * 3 + 0];
                 const std::int32_t tb = view.triangles[tri_index * 3 + 1];
                 const std::int32_t tc = view.triangles[tri_index * 3 + 2];
@@ -425,7 +640,25 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
     }
 
     if (view.edges != nullptr && view.edge_count > 1) {
+        std::unordered_set<std::int32_t> candidate_edges;
+        candidate_edges.reserve(64);
         for (std::int64_t edge_a = 0; edge_a < view.edge_count; ++edge_a) {
+            const PrimitiveBounds& bounds = edge_bounds[static_cast<std::size_t>(edge_a)];
+            if (!bounds.valid) {
+                continue;
+            }
+            candidate_edges.clear();
+            for_grid_cells(bounds.min_x, bounds.min_y, bounds.min_z, bounds.max_x, bounds.max_y, bounds.max_z, cell_size,
+                           [&](std::int64_t grid_x, std::int64_t grid_y, std::int64_t grid_z) {
+                               const auto found = edge_cells.find(GridCell{grid_x, grid_y, grid_z});
+                               if (found == edge_cells.end()) {
+                                   return;
+                               }
+                               candidate_edges.insert(found->second.begin(), found->second.end());
+                           });
+            if (candidate_edges.empty()) {
+                continue;
+            }
             const std::int32_t a0 = view.edges[edge_a * 2 + 0];
             const std::int32_t a1 = view.edges[edge_a * 2 + 1];
             if (a0 < 0 || a1 < 0 || static_cast<std::int64_t>(a0) >= view.vertex_count ||
@@ -435,7 +668,13 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
             if ((view.attributes[a0] & kMc2AttrInvalid) != 0 || (view.attributes[a1] & kMc2AttrInvalid) != 0) {
                 continue;
             }
-            for (std::int64_t edge_b = edge_a + 1; edge_b < view.edge_count; ++edge_b) {
+            const std::int64_t a0o = static_cast<std::int64_t>(a0) * 3;
+            const std::int64_t a1o = static_cast<std::int64_t>(a1) * 3;
+            for (const std::int32_t edge_b_value : candidate_edges) {
+                const std::int64_t edge_b = static_cast<std::int64_t>(edge_b_value);
+                if (edge_b <= edge_a) {
+                    continue;
+                }
                 const std::int32_t b0 = view.edges[edge_b * 2 + 0];
                 const std::int32_t b1 = view.edges[edge_b * 2 + 1];
                 if (b0 < 0 || b1 < 0 || static_cast<std::int64_t>(b0) >= view.vertex_count ||
@@ -446,8 +685,6 @@ void project_self_collisions_mc2(Mc2SelfCollisionView& view) {
                 if ((view.attributes[b0] & kMc2AttrInvalid) != 0 || (view.attributes[b1] & kMc2AttrInvalid) != 0) {
                     continue;
                 }
-                const std::int64_t a0o = static_cast<std::int64_t>(a0) * 3;
-                const std::int64_t a1o = static_cast<std::int64_t>(a1) * 3;
                 const std::int64_t b0o = static_cast<std::int64_t>(b0) * 3;
                 const std::int64_t b1o = static_cast<std::int64_t>(b1) * 3;
                 float s = 0.0f;
