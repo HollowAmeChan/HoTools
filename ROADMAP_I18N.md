@@ -105,10 +105,14 @@ Drawn at the **top** of `AddonPreference.draw()`.
 
 **Phase 1 notes for Phase 3:** `tr` accepts an optional `ctxt`; lookup tries `(ctxt, msgid)` then plain `msgid`. `tr_iface` is currently an alias of `tr`. `current_locale()` is cached; `reload()` clears the cache and tag-redraws all areas. The `bpy.app.translations` bridge (`_register_bpy_translations`) is wired but a no-op while dicts are empty (registers nothing) — it activates automatically once Phase 2 populates `en_US`/`ja_JP`.
 
-### Phase 2 — Extraction tooling
-- [ ] `i18n/tools/extract.py`: AST/regex scan for `bl_label=`, `bl_description=`, `text=`, property `name=`/`description=`, enum item labels, `self.report({...}, "…")`. Emit a master key set and **merge** into `en_US.py` / `ja_JP.py` as `key -> ""` stubs (preserving existing translations, never clobbering).
-- [ ] Generate a coverage report (translated / total per locale).
-- **Exit:** running the tool produces up-to-date stub dicts; rerun is idempotent.
+### Phase 2 — Extraction tooling  ✅ (2026-06-25)
+- [x] [i18n/tools/extract.py](i18n/tools/extract.py): **AST** scan (not regex) for `bl_label`/`bl_description` class attrs, `text=`/`name=`/`description=` call kwargs, `EnumProperty(items=[...])` labels (idx 1) + descriptions (idx 2), and `self.report({...}, "…")` messages. Filters to **Han-containing** strings only (the Chinese key model), so ASCII identifiers aren't pulled in. Keys stored **verbatim** (no whitespace normalization) to guarantee exact runtime `tr()` match; near-duplicates are *reported*, not merged. Merges into `en_US.py`/`ja_JP.py` as `key -> ""` stubs, **never clobbering** existing values; source-removed-but-translated keys retained as **orphans**. Tolerates stray BOMs; skips unparseable files with a warning. Standalone script — deliberately does **not** import the `i18n` package (no `bpy`), runs outside Blender.
+- [x] Coverage report: per-locale `translated/total (%)`, orphan count, per-category hit breakdown, near-dup groups, skipped files. `--dry-run` (report only) and `--check` (CI: exit 1 if stale) modes.
+- **Exit:** ✅ first run wrote 1204 stub keys to each locale; rerun is idempotent (`--check` → `最新`, exit 0). Merge/roundtrip/orphan/CJK logic unit-tested (10/10).
+
+**Measured (2026-06-25):** **1515 hits → 1204 unique Chinese keys** — `bl_label/desc` 424, `text/name/desc` 763, `enum item` 87, `report()` 241. Both `en_US`/`ja_JP` at 0/1204 (0%) — translation values are hand-filled next. (Unique-key 1204 < the Phase 0 raw site count because the AST scan dedups, ignores ASCII-only strings, and only counts string-literal `report()` args.)
+
+**Run:** `python i18n/tools/extract.py` (rerun after adding any new Chinese string). `i18n/tools/` is dev-only — add to the release-workflow excludes in Phase 5.
 
 ### Phase 3 — Static UI migration (panels & operators, per-module)
 Order by user visibility / size. One module per PR; **run GitNexus `impact` before editing each module's registered symbols** (per repo rules) and `detect_changes` before commit.
