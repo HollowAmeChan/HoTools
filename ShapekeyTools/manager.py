@@ -3,6 +3,8 @@ from bpy.types import PropertyGroup, UIList, Operator, Panel
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, IntProperty
 
+from ..i18n import tr
+
 
 class PG_SKManager_SKCache(PropertyGroup):  # 存储目标骨骼和源骨骼的映射关系
     key_name: StringProperty(name="")  # type: ignore
@@ -304,7 +306,7 @@ class OP_ApplyOrderSKCacheItems(bpy.types.Operator):
 
         # 检查缓存中的形态键名称是否与对象中的形态键一致
         if sorted(shape_key_names) != sorted(cache_names):
-            self.report({'WARNING'}, "形态键列表不一致！请确保两者的形态键一致。")
+            self.report({'WARNING'}, tr("形态键列表不一致！请确保两者的形态键一致。"))
             return {'CANCELLED'}
 
         # 重新排序形态键

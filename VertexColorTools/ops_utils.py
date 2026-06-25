@@ -6,12 +6,17 @@ from mathutils import Color
 from .bake_normal import HO_OT_bake_normal_to_vertex_color
 from .properties import get_scene_settings
 from .utils import get_active_corner_color_data, get_color_data_value
+from ..i18n import tr
 
 
 class HO_OT_choose_same_vertex_color_mesh(Operator):
     bl_idname = "ho.choosesamevertexcolormesh"
     bl_label = "选择相同顶点色面"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("选择相同顶点色面")
 
     threshold: FloatProperty(
         name="容差",
@@ -24,14 +29,14 @@ class HO_OT_choose_same_vertex_color_mesh(Operator):
     def execute(self, context):
         obj = context.object
         if obj is None or obj.type != "MESH":
-            self.report({"WARNING"}, "请先选择一个网格物体")
+            self.report({"WARNING"}, tr("请先选择一个网格物体"))
             return {"CANCELLED"}
 
         bpy.ops.object.mode_set(mode="OBJECT")
 
         colors = get_active_corner_color_data(obj.data, create_if_missing=False)
         if colors is None:
-            self.report({"WARNING"}, "当前没有可用的顶点色层")
+            self.report({"WARNING"}, tr("当前没有可用的顶点色层"))
             bpy.ops.object.editmode_toggle()
             return {"CANCELLED"}
 
@@ -73,6 +78,10 @@ class HO_OT_vertex_weight_to_vertex_color(Operator):
     bl_label = "权重转顶点色"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("权重转顶点色")
+
     def execute(self, context):
         bpy.ops.paint.vertex_paint_toggle()
         bpy.ops.paint.vertex_color_from_weight()
@@ -85,21 +94,21 @@ def draw_utils_panel(context, layout):
     section = layout.column(align=True)
 
     row = section.row(align=True)
-    row.prop(settings, "choose_same_threshold", text="容差")
+    row.prop(settings, "choose_same_threshold", text=tr("容差"))
     op = row.operator(
         HO_OT_choose_same_vertex_color_mesh.bl_idname,
-        text="选择同顶点色面",
+        text=tr("选择同顶点色面"),
         icon="RADIOBUT_ON",
     )
     op.threshold = settings.choose_same_threshold
 
     section.operator(
         HO_OT_vertex_weight_to_vertex_color.bl_idname,
-        text="权重转顶点色",
+        text=tr("权重转顶点色"),
     )
     section.operator(
         HO_OT_bake_normal_to_vertex_color.bl_idname,
-        text="烘焙顶点法线到顶点色",
+        text=tr("烘焙顶点法线到顶点色"),
     )
 
 

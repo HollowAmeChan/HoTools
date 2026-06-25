@@ -3,6 +3,7 @@ from bpy.props import EnumProperty, IntProperty
 from bpy.types import Operator
 
 from .properties import get_scene_settings
+from ..i18n import tr
 
 
 DEFAULT_COLOR_GROUPS = {
@@ -67,6 +68,10 @@ class HO_OT_default_vertex_color_palette(Operator):
     bl_label = "管理预设颜色"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("管理预设颜色")
+
     action: EnumProperty(
         items=[
             ("LOAD_GROUP", "Load Group", ""),
@@ -110,7 +115,7 @@ def draw_template_panel(context, layout, set_color_operator_idname):
 
     row = section.row(align=True)
     row.alignment = "LEFT"
-    row.label(text="预设组")
+    row.label(text=tr("预设组"))
     row.alignment = "RIGHT"
     op = row.operator(HO_OT_default_vertex_color_palette.bl_idname, text="", icon="EVENT_A")
     op.action = "LOAD_GROUP"

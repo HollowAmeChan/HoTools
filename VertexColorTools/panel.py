@@ -6,6 +6,7 @@ from .ops_templates import draw_template_panel
 from .ops_utils import draw_utils_panel
 from .properties import get_scene_settings
 from .utils import get_active_corner_color_attribute
+from ..i18n import tr
 
 
 def _draw_rgba_column(layout, color):
@@ -18,7 +19,7 @@ def _draw_rgba_column(layout, color):
 def _draw_active_vertex_color_warning(layout):
     warn = layout.row()
     warn.alert = True
-    warn.label(text="警告：此面板会实时读取编辑模式顶点色，受 Blender 内部问题影响容易崩溃，请不要常开。", icon="ERROR")
+    warn.label(text=tr("警告：此面板会实时读取编辑模式顶点色，受 Blender 内部问题影响容易崩溃，请不要常开。"), icon="ERROR")
 
 
 def _get_single_selected_vertex(bm):
@@ -66,13 +67,13 @@ def _draw_active_vertex_color(layout, context):
     box = layout.box()
     _draw_active_vertex_color_warning(box)
     if selected_vert is None:
-        box.label(text="请选择一个顶点")
+        box.label(text=tr("请选择一个顶点"))
         return
     if selected_vert is False:
-        box.label(text="只能选择一个顶点")
+        box.label(text=tr("只能选择一个顶点"))
         return
     if color_layer is None:
-        box.label(text="当前活动颜色层没有可读数据")
+        box.label(text=tr("当前活动颜色层没有可读数据"))
         return
 
     color_rows = []
@@ -82,7 +83,7 @@ def _draw_active_vertex_color(layout, context):
             color_rows.append(rgba)
 
     if not color_rows:
-        box.label(text="当前顶点没有可读颜色")
+        box.label(text=tr("当前顶点没有可读颜色"))
         return
 
     for index, rgba in enumerate(color_rows):

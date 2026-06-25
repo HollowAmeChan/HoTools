@@ -3,6 +3,7 @@ import bmesh
 from bpy.types import Panel
 
 from . import operators, transfer, manager,multiObjectFlow
+from ..i18n import tr
 
 
 def reg_props():
@@ -34,7 +35,7 @@ class ShapekeyTools(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="形态键工具")
+        row.label(text=tr("形态键工具"))
         row.prop(context.scene, "ho_ShapekeyToolsPanel_Mod", expand=True,)
         layout.separator()
         if context.scene.ho_ShapekeyToolsPanel_Mod == "PANEL_SHAPEKEYTOOLS_TRANSFER":
