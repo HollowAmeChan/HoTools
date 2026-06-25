@@ -155,6 +155,28 @@ class FBXExporter:
             except TypeError:
                 pass
     @staticmethod
+    def remove_hidden_modifiers(objects):
+        removed = []
+        failed = []
+
+        for ob in objects:
+            modifiers = getattr(ob, "modifiers", None)
+            if not modifiers:
+                continue
+
+            for mod in list(modifiers):
+                if getattr(mod, "show_viewport", True):
+                    continue
+
+                mod_name = mod.name
+                try:
+                    modifiers.remove(mod)
+                    removed.append((ob.name, mod_name))
+                except Exception as exc:
+                    failed.append((ob.name, mod_name, exc))
+
+        return removed, failed
+    @staticmethod
     def iter_bone_collections(armature):
         collections = getattr(armature, "collections_all", None)
         if collections is not None:
@@ -282,6 +304,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+    removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
         # 寻找所选预设脚本文件
@@ -329,6 +352,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         selection = list(bpy.context.selected_objects)
         active_object = bpy.context.view_layer.objects.active
         pose_position_state = []
+        removed_hidden_modifiers = []
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -339,6 +363,14 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         
         try:
             pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
+
+            if self.removeHiddenModifiers:
+                removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
+                if failed_hidden_modifiers:
+                    print("[HoTools FBX] Failed to remove hidden modifiers:")
+                    for ob_name, mod_name, exc in failed_hidden_modifiers:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_hidden_modifiers)} 个隐藏修改器临时删除失败，详见控制台")
 
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
@@ -389,7 +421,10 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        self.report({"INFO"},"导出成功")
+        if removed_hidden_modifiers:
+            self.report({"INFO"}, f"导出成功，临时删除隐藏修改器 {len(removed_hidden_modifiers)} 个")
+        else:
+            self.report({"INFO"},"导出成功")
         return {'FINISHED'}
 
     
@@ -410,6 +445,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.label(text="在blender原本的fbx导出界面添加预设")
         layout.label(text="==================================")
         layout.prop(self,"cheekBoneKeepRotation")
+        layout.prop(self,"removeHiddenModifiers")
         
         params = self.getParams(context, report_errors=False)
         if params:
