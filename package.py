@@ -18,7 +18,10 @@ from pathlib import Path
 
 
 # ==== Config ====
-EXCLUDE_PATTERNS = (".pyc", "__pycache__", ".gitignore", ".DS_Store", ".git", ".idea", ".vscode", "venv")
+EXCLUDE_PATTERNS = (".pyc", "__pycache__", ".gitignore", ".DS_Store", 
+                    ".git", ".idea", ".vscode", "venv", 
+                    "CLAUDE.md", "AGENTS.md", "LICENSE", "README.md", "ROADMAP.md", "CHANGELOG.md", "ROADMAP_I18N.md"
+                    "package.py", "hotools.bat")  # 文件/目录名中包含这些字符串的将被排除
 EXCLUDE_FOLDERS = [""]  # Folders to exclude, relative to the source directory (src/)
 ADDON_NAME = "HoTools"  # Root folder name inside the zip
 

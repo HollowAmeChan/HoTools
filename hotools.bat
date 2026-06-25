@@ -22,7 +22,7 @@ setlocal enabledelayedexpansion
 
 :: User Configurable Variables
 set ADDON_NAME=HoTools
-set SOURCE_DIR=src
+set SOURCE_DIR=./
 set DIST_DIR=dist
 set DEFAULT_BLENDER_VERSION=5.1
 
