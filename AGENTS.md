@@ -1,3 +1,125 @@
+# AGENTS.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+HoTools is a **Blender add-on** (`bl_info` version 2.2.0, target Blender **4.5** / Python **3.11**) — a large toolset for character/model/texture/animation workflows. It is loaded by Blender as a package; there is no standalone "run" entry point. Most code is Python operators/panels registered into Blender; a C++ native backend (`hotools_native`) accelerates a few physics hot paths.
+
+Code, comments, UI strings, and the architecture docs are predominantly in **Chinese**. Match the surrounding language when editing user-facing strings and comments.
+
+## Architecture
+
+### Add-on registration (top level)
+
+[__init__.py](__init__.py) is the add-on root. On import it appends `_Lib` and the Python-version-specific `_Lib/py311` (or `py313`) — plus `_Lib/<ver>/HotoolsPackage` (native runtime) — to `sys.path`, since Blender does not resolve nested module folders during install.
+
+Each feature lives in its own top-level package, and every package exposes module-level `register()` / `unregister()`. The root `register()` calls each in turn. **To add or remove a feature module, wire it into both `register()` and `unregister()` in [__init__.py](__init__.py).** Two features are gated behind add-on preferences (`AddonPreference`) and registered conditionally: `OmniNode` (`hoTools_OmniNodeFeatures_enable`) and `exIcon` (`hoTools_enableExIcon`).
+
+Feature packages: `FastOperators` (modeling/view), `BoneTools`, `PhysicsTools` (collision props + XPBD consumers), `ShapekeyTools`, `VertexGroupTools`, `VertexColorTools`, `UvTools`, `MeshTools`, `AnimationTools`, `Checker`, `NameMapping`, `Exporter`, `Rbf`, `exIcon`, and `OmniNode`. `HoAssets/` holds the bundled Blender asset library (registered via the `ho.register_asset_library` operator). `FastOperators.py` is an unusually large (~120 KB) single-file module of fast modeling operators.
+
+Operators follow Blender's `bl_idname` convention, mostly namespaced `ho.*`.
+
+### OmniNode (the node system)
+
+`OmniNode/` is an optional node-based automation system built on Blender's `NodeTree`. It is the most architecturally involved part of the codebase — **read [OmniNode/ARCHITECTURE.md](OmniNode/ARCHITECTURE.md) before changing anything under `OmniNode/NodeTree/`.** Key invariants you must respect:
+
+- **Functions generate nodes by default.** Business nodes are plain Python functions in `NodeTree/Function/*.py` marked `@omni(enable=True, ...)`; sockets come from the function signature (`list[T]` ⇒ multi-input). New functionality should almost always be a new function node, not a new `GraphNode`.
+- **Compile vs. execute are separate.** `OmniCompiler` walks backward from `is_output_node` nodes, topo-sorts the reachable subgraph, and emits a `CompiledGraph` of IR (`OmniIR.py`). `OmniExecutor` runs only the IR — it never traverses Blender links at runtime. Nodes not connected to an output node never execute.
+- **`GraphNode` is an IR-level exception**, only for things that change compilation/execution semantics (groups, batching, runtime cache, control flow, debug). Adding one means coordinated edits across `GraphNode.py`, `OmniIR.py`, `OmniCompiler.py`, `OmniExecutor.py`, and debug/timing.
+- **Two distinct caches.** `_COMPILED_TREE_CACHE` caches `CompiledGraph` to avoid recompiling each frame; **runtime cache** (`OmniRuntimeState.py`, accessed only via Cache Read/Write/Delete/Dump GraphNodes) holds cross-frame business state. Clearing one does not affect the other. Any edit that changes nodes/sockets/links/tree-IO must clear the compile cache. Tree entry points: `compile_cached()`, `run()`, `run_compiled()`, `run_frame_cached()`, `clear_compile_cache()`.
+- Runtime cache is session-only; cross-frame temp state must never hide in module globals, node fields, closures, or C++ statics.
+
+### Native backend
+
+`_native/` holds **only** C++ source, CMake project, and tests — never shipped runtime artifacts. Built `.pyd`/`.pdb` go to `_Lib/py311/HotoolsPackage` (Blender 4.1+/Py3.11) and `_Lib/py313/HotoolsPackage` (Blender 5.1+/Py3.13), which is what ships. Python prepares all Blender data (validation, `foreach_get`/`foreach_set`, runtime cache) and the C++ layer only crunches plain numeric arrays — it must not touch `bpy` or hold Blender pointers / cross-frame state. The pattern is **parallel nodes**: a Python blueprint node (`网格物理-XPBD`) and a `-CPP` node with identical I/O and cache semantics. See [_native/README.md](_native/README.md).
+
+## Commands
+
+There is no test runner, linter, or build step for the Python add-on itself — it is exercised by loading it in Blender. Iterating means reloading the add-on in Blender (Edit > Preferences > Add-ons), or installing the release zip.
+
+### Native build (Windows / Visual Studio 2022)
+
+Presets live in [_native/CMakePresets.json](_native/CMakePresets.json). The machine-specific tool paths in the docs (`D:\Microsoft Visual Studio\2022\...`, Blender Python paths) are environment-dependent — adjust to the local machine.
+
+```powershell
+# Configure (py311 for Blender 4.5, or py313 for Blender 5.1)
+cmake --preset vs2022-py311
+# Build Release (must specify the Release build preset for multi-config generators)
+cmake --build --preset vs2022-py311-release
+```
+
+```powershell
+# Native smoke test (use Blender's bundled Python, NOT system python)
+& "<blender>\python\bin\python.exe" _native\tests\test_mesh_xpbd_native.py
+# Import verification
+& "<blender>\python\bin\python.exe" -c "import sys; sys.path.insert(0, r'<addon>\_Lib\py311\HotoolsPackage'); import hotools_native; print(hotools_native)"
+```
+
+The `.pyd` must be built against Blender's own Python ABI — do not use a default `python` / `py -3.11`.
+
+### Release packaging
+
+The Blender install zip is produced **only** by GitHub Actions on push to `main` (or manual dispatch) — see [.github/workflows/release.yml](.github/workflows/release.yml). It `rsync`s a clean `HoTools/` tree (excluding `.git`, `.github`, IDE dirs, `__pycache__`, `_native/`, `_build/`, `_dist/`, build dirs) into a timestamped `HoTools-YYYYMMDD-HHMMSS.zip`. Note `_Lib/*/HotoolsPackage` is **not** excluded — native runtime artifacts must ship. `.gitignore` only prevents local mis-commits; the workflow's excludes decide what users install. Do not hand-zip releases.
+
+<!-- opencode:start -->
+# OpenCode — Easy Tasks
+For extremely simple tasks, or tasks that consume a large number of tokens despite being straightforward (such as translation), delegate the work to OpenCode CLI instead.
+
+## CLI
+```
+Available commands:
+
+Commands:
+opencode completion          Generate a shell completion script
+opencode acp                 Start the ACP (Agent Client Protocol) server
+opencode mcp                 Manage MCP (Model Context Protocol) servers
+opencode [project]           Start the OpenCode TUI (default)
+opencode attach <url>        Attach to a running OpenCode server
+opencode run [message..]     Run OpenCode with a message
+opencode debug               Debugging and troubleshooting tools
+opencode providers           Manage AI providers and credentials (alias: auth)
+opencode agent               Manage agents
+opencode upgrade [target]    Upgrade OpenCode to the latest or a specific version
+opencode uninstall           Uninstall OpenCode and remove all related files
+opencode serve               Start a headless OpenCode server
+opencode web                 Start the OpenCode server and open the web interface
+opencode models [provider]   List all available models
+opencode stats               Show token usage and cost statistics
+opencode export [sessionID]  Export session data as JSON
+opencode import <file>       Import session data from a JSON file or URL
+opencode github              Manage the GitHub agent
+opencode pr <number>         Fetch and check out a GitHub PR branch, then run OpenCode
+opencode session             Manage sessions
+opencode plugin <module>     Install a plugin and update the configuration (alias: plug)
+opencode db                  Database tools
+
+Positionals:
+project                      Path to the project where OpenCode should start
+
+Options:
+-h, --help                   Show help
+-v, --version                Show version information
+--print-logs             Print logs to stderr
+--log-level              Log level (DEBUG, INFO, WARN, ERROR)
+--pure                   Run without external plugins
+--port                   Port to listen on
+--hostname               Hostname to listen on
+--mdns                   Enable mDNS service discovery (defaults hostname to 0.0.0.0)
+--mdns-domain            Custom domain name for mDNS service (default: opencode.local)
+--cors                   Additional domains allowed for CORS
+-m, --model                  Model to use in the format provider/model
+-c, --continue               Continue the last session
+-s, --session                Session ID to continue
+--fork                   Fork the session when continuing (used with --continue or --session)
+--prompt                 Prompt to use
+--agent                  Agent to use
+--mini                   Start the minimal interactive interface
+--no-replay              Disable mini session history replay on resume and after resize
+--replay-limit           Limit visible mini replay to the newest N messages
+```
+<!-- opencode:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
