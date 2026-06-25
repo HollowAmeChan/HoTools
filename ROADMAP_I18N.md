@@ -1,0 +1,175 @@
+# ROADMAP — 多语言支持 / Multilingual Support
+
+Status: **Planned**
+Target: HoTools 2.3.0 · Blender 4.5 / Python 3.11
+Default language: **简体中文 (zh_HANS)** · Initial locales: `zh_HANS` (base), `en_US`, `ja_JP`
+
+---
+
+## 1. Goal
+
+Make every user-facing string in HoTools translatable, with:
+
+- **Default = Chinese.** Chinese source text stays in the code and acts as the translation key (msgid). If a translation is missing, the UI falls back to Chinese automatically.
+- **Per-addon language switch** in the addon Preferences panel that affects **only HoTools**, not Blender's global UI.
+- **`AUTO` default** that inherits Blender's current UI language (`bpy.app.translations.locale`) when the user hasn't chosen an explicit language.
+
+### Why a custom wrapper (design decision)
+
+Blender's native `bpy.app.translations` only translates against Blender's **global** locale (`preferences.view.language`). It cannot show HoTools in English while the rest of Blender is in Chinese. Because we want an **independent per-addon** switch (confirmed requirement), we introduce a thin lookup layer `tr()` that:
+
+1. resolves the *effective locale* (addon pref, or Blender's locale when pref is `AUTO`), and
+2. looks the string up in our own locale dictionaries, falling back to the Chinese key.
+
+We still **also** register the same dictionaries with `bpy.app.translations.register()` so that any string we cannot easily wrap (some auto-translated enum/tooltip contexts, OmniNode socket labels) gets best-effort native translation when the addon language follows Blender.
+
+---
+
+## 2. Target architecture
+
+```
+HoTools/
+  i18n/
+    __init__.py          # public API: tr(), tr_iface(), current_locale(),
+                         #             register(), unregister(), reload()
+    manager.py           # locale resolution, dict merge, pref/AUTO logic,
+                         #     bpy.app.translations.register hookup
+    locales/
+      __init__.py
+      zh_HANS.py         # base / msgid reference (may be empty: key == value)
+      en_US.py           # { "中文原文": "English text", ... }
+      ja_JP.py           # { "中文原文": "日本語", ... }
+    tools/
+      extract.py         # scan source -> emit/update locale stub dicts
+```
+
+### Public API (stable surface every module imports)
+
+```python
+from ..i18n import tr            # tr("中文原文") -> localized str (key fallback)
+# panels:        layout.label(text=tr("信息"))
+# operators:     bl_label = ...  # see §4 for the operator pattern
+```
+
+- **Key = Chinese source string.** Lowest migration friction, graceful fallback, mirrors Blender's msgid model. (Stable symbolic keys were considered and rejected: they'd require touching 1000+ sites *and* writing a zh dict before anything renders.)
+- Optional translation **context** (`ctxt`) param for disambiguating identical Chinese words that translate differently.
+- `current_locale()` returns the resolved locale; `reload()` is called by the pref `update=` callback so switching language redraws immediately.
+
+### Preference (in `AddonPreference`, `__init__.py`)
+
+```python
+hoTools_language: EnumProperty(
+    name="语言 / Language",
+    items=[
+        ('AUTO',    "自动 (跟随 Blender)", ""),
+        ('zh_HANS', "简体中文",            ""),
+        ('en_US',   "English",            ""),
+        ('ja_JP',   "日本語",             ""),
+    ],
+    default='AUTO',
+    update=lambda self, ctx: i18n.reload(),
+)
+```
+
+Drawn at the **top** of `AddonPreference.draw()`.
+
+---
+
+## 3. Phases
+
+### Phase 0 — Decisions & inventory  ✅ (this doc)
+- [x] Switch scope: **independent per-addon**.
+- [x] Initial locales: `zh_HANS` (base) + `en_US` + `ja_JP`.
+- [x] Key strategy: Chinese source as msgid.
+- [ ] Confirm string surface count via extractor dry-run (≈ 1100+ sites: ~666 `bl_label`/`bl_description`, ~506 `text=`, plus `report()`, enum items, property `name`/`description`).
+
+### Phase 1 — i18n foundation (no behavior change)
+- [ ] Build `i18n/` package: `manager.py` (locale resolution + dict merge + `bpy.app.translations.register`), `__init__.py` API, empty `locales/`.
+- [ ] Add `hoTools_language` to `AddonPreference`; draw selector.
+- [ ] Wire `i18n.register()` / `i18n.unregister()` into root `register()`/`unregister()` in [__init__.py](__init__.py) (register **first**, before feature modules, so `tr()` is live during their registration).
+- [ ] Unit-smoke: `tr("任意中文")` returns the key when no locale data exists; `AUTO` resolves to `bpy.app.translations.locale`.
+- **Exit:** addon loads unchanged in Blender, language selector visible, everything still Chinese.
+
+### Phase 2 — Extraction tooling
+- [ ] `i18n/tools/extract.py`: AST/regex scan for `bl_label=`, `bl_description=`, `text=`, property `name=`/`description=`, enum item labels, `self.report({...}, "…")`. Emit a master key set and **merge** into `en_US.py` / `ja_JP.py` as `key -> ""` stubs (preserving existing translations, never clobbering).
+- [ ] Generate a coverage report (translated / total per locale).
+- **Exit:** running the tool produces up-to-date stub dicts; rerun is idempotent.
+
+### Phase 3 — Static UI migration (panels & operators, per-module)
+Order by user visibility / size. One module per PR; **run GitNexus `impact` before editing each module's registered symbols** (per repo rules) and `detect_changes` before commit.
+
+Migration unit per module:
+- Wrap `layout.label/operator/prop(text=…)` and dynamic `report()` strings with `tr(...)`.
+- For operators, adopt the operator pattern in §4.
+- Fill `en_US` / `ja_JP` for that module's keys.
+
+Suggested sequence:
+1. `__init__.py` (Preferences UI, asset-library operator)
+2. `PhysicsTools` (`collisionPanel.py` is the largest panel surface)
+3. `ShapekeyTools`, `VertexGroupTools`, `VertexColorTools`
+4. `BoneTools`, `UvTools`, `MeshTools`
+5. `FastOperators.py` (large single file — budget extra time)
+6. `AnimationTools`, `Exporter`, `NameMapping`, `Checker`, `Rbf`, `exIcon`
+- **Exit:** all static panels/operators render in selected language; Chinese unchanged at default.
+
+### Phase 4 — OmniNode (dynamic) localization
+OmniNode generates node labels/sockets from `@omni` functions (see [OmniNode/ARCHITECTURE.md](OmniNode/ARCHITECTURE.md)). Translation must happen at **node draw/registration time**, not in the compiled IR (IR is cached and language-independent — keep it that way).
+- [ ] Localize `@omni` `label`/category and socket display names via `tr()` at the draw layer (`OmniNodeDraw.py` / node `draw_label`), keying off the function's Chinese name.
+- [ ] Confirm `_COMPILED_TREE_CACHE` is **not** invalidated by language change (labels are display-only; compilation keys must stay locale-independent). Language switch must not silently force recompiles or touch the runtime cache.
+- [ ] Localize `OmniNodeOperator.py` / panel strings (Phase 3 pattern).
+- **Exit:** node editor labels/sockets localized; compile & runtime caches behave identically across languages.
+
+### Phase 5 — QA, docs, release
+- [ ] Manual matrix: each locale × `AUTO`(Blender zh/en) × switch-at-runtime redraw.
+- [ ] Verify fallback: untranslated key → Chinese, never blank/error.
+- [ ] Verify global Blender language is **untouched** by the addon switch.
+- [ ] Coverage report ≥ target (e.g. 100% en_US, ≥90% ja_JP) — gaps fall back gracefully.
+- [ ] Update [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md): how to add a translatable string, run the extractor, add a locale.
+- [ ] Confirm `i18n/` ships (it lives under the addon root; not in the release-workflow exclude list — verify against [.github/workflows/release.yml](.github/workflows/release.yml)). `i18n/tools/` may be excluded as dev-only.
+- [ ] Bump `bl_info` version → 2.3.0.
+
+---
+
+## 4. Operator label pattern (gotcha)
+
+`bl_label` / `bl_description` are **class attributes evaluated at registration time**, so `tr()` there freezes the language at register and won't react to a runtime switch. Use Blender's per-instance hooks instead:
+
+```python
+class OP_Foo(Operator):
+    bl_idname = "ho.foo"
+    bl_label = "做某事"            # Chinese key, also the msgid
+    bl_description = "执行某事"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("执行某事")       # re-evaluated each tooltip
+
+    # menu/button labels: pass text=tr("做某事") at the call site
+```
+
+- Button/menu text: prefer `layout.operator("ho.foo", text=tr("做某事"))` at the **call site** (re-evaluated every redraw) over relying on `bl_label`.
+- `report()` strings: wrap inline — `self.report({'INFO'}, tr("已完成"))`.
+- Keep the Chinese on the class attribute too, so it doubles as the `bpy.app.translations` msgid and the AUTO/native path still works.
+
+---
+
+## 5. Risks & mitigations
+
+| Risk | Mitigation |
+|---|---|
+| 1000+ edit sites → high regression surface | Per-module PRs; GitNexus `impact`/`detect_changes` gate each (repo rule); Chinese fallback means a missed wrap degrades gracefully, not breaks. |
+| `bl_label` frozen at register time | Use `description()` classmethod + call-site `text=tr()` (§4). |
+| OmniNode IR cache pollution by locale | Translate only at draw layer; never key compilation/runtime cache on locale (§4 / Phase 4). |
+| Identical Chinese word, different translations | `ctxt` param on `tr()`. |
+| Duplicate/near-duplicate source strings inflate dict | Extractor reports duplicates; normalize whitespace on key. |
+| Translation drift as code changes | Idempotent extractor + coverage report in CI/PR checklist. |
+| Release zip omits `i18n/` | Explicit check in Phase 5 against the workflow excludes. |
+
+---
+
+## 6. Out of scope (v1)
+
+- Translating the C++ native backend (`_native/`) — it touches no UI strings.
+- RTL languages / pluralization rules.
+- Crowd-sourced/online translation pipeline (locale files are hand-edited Python dicts for now).
+- Translating bundled asset names in `HoAssets/`.
