@@ -114,8 +114,16 @@ Drawn at the **top** of `AddonPreference.draw()`.
 
 **Run:** `python i18n/tools/extract.py` (rerun after adding any new Chinese string). `i18n/tools/` is dev-only — add to the release-workflow excludes in Phase 5.
 
-### Phase 3 — Static UI migration (panels & operators, per-module)
+### Phase 3 — Static UI migration (panels & operators, per-module)  🚧 in progress
 Order by user visibility / size. One module per PR; **run GitNexus `impact` before editing each module's registered symbols** (per repo rules) and `detect_changes` before commit.
+
+**Progress:**
+- [x] **1. `__init__.py`** (2026-06-25) — `OP_register_asset_library` (§4 pattern: `description()` classmethod + wrapped `report()`), `AddonPreference.draw()` call-site `text=i18n.tr(...)` on operator + props. 9 keys filled in `en_US`/`ja_JP`. Compiles; end-to-end `tr()` verified (en/ja/zh fallback + bridge). Language enum *item* labels left untranslated by design (each is its own language's endonym).
+- [ ] 2. `PhysicsTools` · [ ] 3. `ShapekeyTools`/`VertexGroupTools`/`VertexColorTools` · [ ] 4. `BoneTools`/`UvTools`/`MeshTools` · [ ] 5. `FastOperators.py` · [ ] 6. `AnimationTools`/`Exporter`/`NameMapping`/`Checker`/`Rbf`/`exIcon`
+
+**Extractor enhancement (required by this phase):** wrapping a literal in `tr()` removes it from the `text=`/`report()` literal patterns, so [extract.py](i18n/tools/extract.py) now **also harvests `tr()`/`tr_iface()`/`i18n.tr()` call arguments** (incl. positional/`ctxt=`). Without this, every wrapped `report()`-only string becomes an orphan. Verified: post-wrap `__init__.py` keeps all keys live (1204, orphan=0).
+
+> **Note (this session):** GitNexus MCP tools are not connected here, so the mandated `impact`/`detect_changes` gate could not be run for module 1. The edits are string-wrapping only (no idname/signature/registration changes), but rerun the gate before merging.
 
 Migration unit per module:
 - Wrap `layout.label/operator/prop(text=…)` and dynamic `report()` strings with `tr(...)`.

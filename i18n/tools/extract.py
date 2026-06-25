@@ -70,7 +70,7 @@ class _Collector(ast.NodeVisitor):
         self.keys = set()       # 去重后的中文键
         self.hits = 0           # 命中总次数（含重复，用于报告）
         self.by_cat = {"bl_label/desc": 0, "text/name/desc": 0,
-                       "enum item": 0, "report()": 0}
+                       "enum item": 0, "report()": 0, "tr() call": 0}
 
     def _add(self, val, cat):
         if has_cjk(val):
@@ -93,12 +93,33 @@ class _Collector(ast.NodeVisitor):
                 self._add(kw.value.value, "text/name/desc")
             elif kw.arg == "items":
                 self._enum_items(kw.value)
+        fname = node.func.id if isinstance(node.func, ast.Name) else (
+            node.func.attr if isinstance(node.func, ast.Attribute) else None)
         # self.report({...}, "msg")
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "report":
+        if fname == "report":
             if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
                     and isinstance(node.args[1].value, str):
                 self._add(node.args[1].value, "report()")
+        # 已包裹的调用 tr("…") / tr_iface("…") / i18n.tr("…")，post-wrap 的权威键源。
+        elif fname in ("tr", "tr_iface") and node.args:
+            self._tr_call(node)
         self.generic_visit(node)
+
+    def _tr_call(self, node):
+        a0 = node.args[0]
+        if not (isinstance(a0, ast.Constant) and isinstance(a0.value, str) and has_cjk(a0.value)):
+            return
+        ctxt = None
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) \
+                and isinstance(node.args[1].value, str):
+            ctxt = node.args[1].value
+        for kw in node.keywords:
+            if kw.arg == "ctxt" and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str):
+                ctxt = kw.value.value
+        self.keys.add((ctxt, a0.value) if ctxt else a0.value)
+        self.hits += 1
+        self.by_cat["tr() call"] += 1
 
     def _enum_items(self, val):
         if not isinstance(val, (ast.List, ast.Tuple)):
