@@ -81,7 +81,20 @@ Drawn at the **top** of `AddonPreference.draw()`.
 - [x] Switch scope: **independent per-addon**.
 - [x] Initial locales: `zh_HANS` (base) + `en_US` + `ja_JP`.
 - [x] Key strategy: Chinese source as msgid.
-- [ ] Confirm string surface count via extractor dry-run (≈ 1100+ sites: ~666 `bl_label`/`bl_description`, ~506 `text=`, plus `report()`, enum items, property `name`/`description`).
+- [x] Confirm string surface count via extractor dry-run. Measured 2026-06-25 (HoTools sources only, excluding vendored `_Lib/` and `_native/tests`):
+
+  | Surface | Count | Notes |
+  |---|---:|---|
+  | `bl_label=` | 495 | |
+  | `bl_description=` | 172 | |
+  | **operator labels subtotal** | **667** | matches the ~666 estimate |
+  | `text="…"` | 494 | 506 raw − 12 vendored `cffi` |
+  | property `name="…"` | 458 | 510 raw − 50 `_Lib` (PIL/cffi/pycparser) − 2 `_native` tests; includes some non-UI `name=` kwargs |
+  | property `description="…"` | 188 | excludes `bl_description` |
+  | `self.report(…)` | 405 | call sites; not all carry a literal string |
+  | **gross total** | **≈ 2212** | upper bound; `name=`/`report()` over-count non-translatable + duplicate strings |
+
+  Core translatable surface (`bl_label`/`bl_description` + `text=`) ≈ **1161**, confirming the doc's ~1100+ estimate. Heaviest files: `UvTools/baker.py`, `FastOperators.py`, `VertexGroupTools/vertexGroupOperators.py`, `PhysicsTools/collision*.py`, `ShapekeyTools/operators.py`, and the `OmniNode/NodeTree/Function/*` node functions. Enum item labels still need the Phase 2 AST extractor for an exact count (regex undercounts inline tuple labels).
 
 ### Phase 1 — i18n foundation (no behavior change)
 - [ ] Build `i18n/` package: `manager.py` (locale resolution + dict merge + `bpy.app.translations.register`), `__init__.py` API, empty `locales/`.
