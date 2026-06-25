@@ -96,12 +96,14 @@ Drawn at the **top** of `AddonPreference.draw()`.
 
   Core translatable surface (`bl_label`/`bl_description` + `text=`) ≈ **1161**, confirming the doc's ~1100+ estimate. Heaviest files: `UvTools/baker.py`, `FastOperators.py`, `VertexGroupTools/vertexGroupOperators.py`, `PhysicsTools/collision*.py`, `ShapekeyTools/operators.py`, and the `OmniNode/NodeTree/Function/*` node functions. Enum item labels still need the Phase 2 AST extractor for an exact count (regex undercounts inline tuple labels).
 
-### Phase 1 — i18n foundation (no behavior change)
-- [ ] Build `i18n/` package: `manager.py` (locale resolution + dict merge + `bpy.app.translations.register`), `__init__.py` API, empty `locales/`.
-- [ ] Add `hoTools_language` to `AddonPreference`; draw selector.
-- [ ] Wire `i18n.register()` / `i18n.unregister()` into root `register()`/`unregister()` in [__init__.py](__init__.py) (register **first**, before feature modules, so `tr()` is live during their registration).
-- [ ] Unit-smoke: `tr("任意中文")` returns the key when no locale data exists; `AUTO` resolves to `bpy.app.translations.locale`.
-- **Exit:** addon loads unchanged in Blender, language selector visible, everything still Chinese.
+### Phase 1 — i18n foundation (no behavior change)  ✅ (2026-06-25)
+- [x] Build `i18n/` package: `manager.py` (locale resolution + dict merge + `bpy.app.translations.register`), `__init__.py` API, `locales/` (`zh_HANS`/`en_US`/`ja_JP` empty stub dicts + `all_dicts()`).
+- [x] Add `hoTools_language` `EnumProperty` to `AddonPreference`; selector drawn at the **top** of `draw()`. `update=` calls `i18n.reload()`.
+- [x] Wire `i18n.register()` / `i18n.unregister()` into root `register()`/`unregister()` in [__init__.py](__init__.py) — registers **first** (before classes/feature modules), unregisters **last** (after `OmniNode.unregister()`), so `tr()` is live throughout.
+- [x] Unit-smoke (`i18n/` logic, bpy stubbed): `tr("任意中文")` → key when no locale data; `AUTO` → `bpy.app.translations.locale`; explicit pref overrides AUTO; `zh_CN`→`zh_HANS` / unknown→base normalization; `ctxt` lookup; translated value + missing fallback. 10/10 pass.
+- **Exit:** addon loads unchanged in Blender, language selector visible, everything still Chinese. ✅ (Chinese default holds — `tr()` returns the Chinese key until Phase 3 wraps call sites and Phase 2 fills the dicts.)
+
+**Phase 1 notes for Phase 3:** `tr` accepts an optional `ctxt`; lookup tries `(ctxt, msgid)` then plain `msgid`. `tr_iface` is currently an alias of `tr`. `current_locale()` is cached; `reload()` clears the cache and tag-redraws all areas. The `bpy.app.translations` bridge (`_register_bpy_translations`) is wired but a no-op while dicts are empty (registers nothing) — it activates automatically once Phase 2 populates `en_US`/`ja_JP`.
 
 ### Phase 2 — Extraction tooling
 - [ ] `i18n/tools/extract.py`: AST/regex scan for `bl_label=`, `bl_description=`, `text=`, property `name=`/`description=`, enum item labels, `self.report({...}, "…")`. Emit a master key set and **merge** into `en_US.py` / `ja_JP.py` as `key -> ""` stubs (preserving existing translations, never clobbering).

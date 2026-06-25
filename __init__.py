@@ -25,7 +25,8 @@ if py_lib_dir:
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, PhysicsTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
 from . import OmniNode
-from bpy.props import BoolProperty, FloatProperty
+from . import i18n
+from bpy.props import BoolProperty, FloatProperty, EnumProperty
 
 # 内置的绘制快捷键ui的接口
 import rna_keymap_ui
@@ -105,6 +106,19 @@ class AddonPreference(bpy.types.AddonPreferences):
     """插件的参数，不随着文件改变而改变"""
     bl_idname = __name__
 
+    hoTools_language: EnumProperty(
+        name="语言 / Language",
+        description="仅影响 HoTools 的界面语言，不改变 Blender 全局语言；AUTO 跟随 Blender",
+        items=[
+            ('AUTO',    "自动 (跟随 Blender)", ""),
+            ('zh_HANS', "简体中文",            ""),
+            ('en_US',   "English",            ""),
+            ('ja_JP',   "日本語",             ""),
+        ],
+        default='AUTO',
+        update=lambda self, ctx: i18n.reload(),
+    )  # type: ignore
+
     hoTools_enableExIcon: BoolProperty(name="开关exicon",
                                        default=False, update=updateExIconState)  # type: ignore
     hoTools_OmniNodeFeatures_enable: BoolProperty(name="OmniNode",
@@ -116,6 +130,8 @@ class AddonPreference(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout: bpy.types.UILayout = self.layout
+        row = layout.row(align=True)
+        row.prop(self, "hoTools_language")
         row = layout.row(align=True)
         row.alert = True
         row.operator("ho.register_asset_library", text="注册内置资源库")
@@ -153,9 +169,12 @@ cls = [OP_register_asset_library,AddonPreference,]
 
 
 def register():
+    # i18n 先注册，使 tr() 在各功能模块注册期间即可用。
+    i18n.register()
+
     for i in cls:
         bpy.utils.register_class(i)
-    
+
     FastOperators.register()
     VertexColorTools.register()
     VertexGroupTools.register()
@@ -195,5 +214,8 @@ def unregister():
     Checker.unregister()
     Rbf.unregister()
     OmniNode.unregister()
+
+    # i18n 最后注销，保证功能模块注销期间 tr() 仍可用。
+    i18n.unregister()
 
     
