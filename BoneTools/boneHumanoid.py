@@ -3,7 +3,9 @@ from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 
+import csv
 from math import acos, atan2, cos, degrees, radians, sin
+import os
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -13,11 +15,128 @@ from bpy_extras import view3d_utils
 def PF_armature_filter(self, obj):
     return obj.type == 'ARMATURE'
 
+class HumanoidDeformTagPresetRegistry:
+    preset_dir = os.path.join(
+        os.path.dirname(__file__),
+        "deform_tag_presets",
+    )
+    no_preset_id = "__NONE__"
+
+    @staticmethod
+    def format_name(preset_id):
+        return preset_id.strip()
+
+    @classmethod
+    def load_file(cls, path):
+        tags = {}
+
+        try:
+            with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.reader(f)
+
+                for row in reader:
+                    if len(row) < 2:
+                        continue
+
+                    humanoid_name = row[0].strip()
+                    deform_name = row[1].strip()
+
+                    if not humanoid_name or humanoid_name.startswith("#"):
+                        continue
+
+                    if not deform_name:
+                        continue
+
+                    tags[humanoid_name] = deform_name
+        except Exception as e:
+            print(f"[DeformTag Preset] failed to read {path}: {e}")
+            return None
+
+        if not tags:
+            return None
+
+        preset_id = os.path.splitext(os.path.basename(path))[0]
+        return {
+            "id": preset_id,
+            "name": cls.format_name(preset_id),
+            "path": path,
+            "tags": tags,
+        }
+
+    @classmethod
+    def load_all(cls):
+        presets = {}
+
+        if not os.path.isdir(cls.preset_dir):
+            return presets
+
+        for filename in sorted(os.listdir(cls.preset_dir)):
+            if not filename.endswith(".csv") or filename.startswith("_"):
+                continue
+
+            preset = cls.load_file(
+                os.path.join(cls.preset_dir, filename),
+            )
+            if preset is None:
+                continue
+
+            presets[preset["id"]] = preset
+
+        return presets
+
+    @staticmethod
+    def enum_items(_self, _context):
+        presets = HumanoidDeformTagPresetRegistry.load_all()
+
+        if not presets:
+            return [(
+                HumanoidDeformTagPresetRegistry.no_preset_id,
+                "无DeformTag预设",
+                "没有找到可用的DeformTag预设",
+            )]
+
+        return [
+            (
+                preset_id,
+                preset["name"],
+                preset["path"],
+            )
+            for preset_id, preset in sorted(
+                presets.items(),
+                key=lambda item: item[1]["name"].lower(),
+            )
+        ]
+
+    @classmethod
+    def selected(cls, scene):
+        preset_id = getattr(
+            scene,
+            "bone_humanoid_deform_tag_preset",
+            cls.no_preset_id,
+        )
+
+        if preset_id == cls.no_preset_id:
+            return None
+
+        return cls.load_all().get(preset_id)
+
+    @classmethod
+    def get(cls, preset_id):
+        if not preset_id or preset_id == cls.no_preset_id:
+            return None
+
+        return cls.load_all().get(preset_id)
+
+
 def reg_props():
     bpy.types.Scene.bone_constraint_resting_armature = PointerProperty(
         type=bpy.types.Object, poll=PF_armature_filter)
     bpy.types.Scene.bone_constraint_moving_armature = PointerProperty(
         type=bpy.types.Object, poll=PF_armature_filter)
+    bpy.types.Scene.bone_humanoid_deform_tag_preset = EnumProperty(
+        name="DeformTag预设",
+        items=HumanoidDeformTagPresetRegistry.enum_items,
+    )
     bpy.types.Scene.bone_humanoid_preview_show_names = BoolProperty(
         name="显示名称",
         default=True,
@@ -44,6 +163,7 @@ def reg_props():
 def ureg_props():
     del bpy.types.Scene.bone_constraint_resting_armature
     del bpy.types.Scene.bone_constraint_moving_armature
+    del bpy.types.Scene.bone_humanoid_deform_tag_preset
     del bpy.types.Scene.bone_humanoid_preview_show_names
     del bpy.types.Scene.bone_humanoid_preview_show_missing
     del bpy.types.Scene.bone_humanoid_preview_show_check_details
@@ -70,113 +190,66 @@ class OP_SwapBoneConstraintArmatures(Operator):
         self.report({'INFO'}, "已交换骨架")
         return {'FINISHED'}
 
-class OP_SameNameBone_addConstraint(Operator):
-    bl_idname = "ho.samenamebone_addconstraint"
-    bl_label = "按映射添加约束"
-    bl_description = "根据humanoid映射，确定对应的pair，添加约束"
+class OP_DeformTag_addConstraint(Operator):
+    bl_idname = "ho.deformtag_addconstraint"
+    bl_label = "按DeformTag添加复制变换约束"
+    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制变换约束"
     bl_options = {'REGISTER', 'UNDO'}
-
-    constraint_type: bpy.props.StringProperty(
-        name="Constraint Type",
-        default="COPY_LOCATION",
-    )  # type: ignore
 
     def execute(self, context):
         scene = context.scene
-        resting_armature = scene.bone_constraint_resting_armature
-        moving_armature = scene.bone_constraint_moving_armature
+        fixed_armature = scene.bone_constraint_resting_armature
+        target_armature = scene.bone_constraint_moving_armature
+        constraint_type = 'COPY_TRANSFORMS'
 
-        if not (resting_armature and moving_armature):
+        if not (fixed_armature and target_armature):
             self.report({'WARNING'}, "需要指定两个骨架")
             return {'CANCELLED'}
 
-        if resting_armature.type != 'ARMATURE' or moving_armature.type != 'ARMATURE':
+        if fixed_armature.type != 'ARMATURE' or target_armature.type != 'ARMATURE':
             self.report({'WARNING'}, "指定对象必须都是Armature")
             return {'CANCELLED'}
 
-        # humanoidMapping -> resting pose bone
-        resting_mapping_map = {}
-        duplicate_resting_mappings = set()
-
-        for resting_bone in resting_armature.pose.bones:
-            props = getattr(resting_bone.bone, "hotools_boneprops", None)
-            if props is None:
-                continue
-
-            mapping_name = props.humanoidMapping.strip()
-            if not mapping_name:
-                continue
-
-            if mapping_name in resting_mapping_map:
-                duplicate_resting_mappings.add(mapping_name)
-                continue
-
-            resting_mapping_map[mapping_name] = resting_bone
-
         added_count = 0
         existed_count = 0
-        fallback_count = 0
         deform_tag_count = 0
-        missing_deform_tag_count = 0
         missing_count = 0
-        skipped_no_mapping_count = 0
+        skipped_no_props_count = 0
+        skipped_no_deform_tag_count = 0
 
-        for moving_bone in moving_armature.pose.bones:
-            resting_bone = None
+        for fixed_bone in fixed_armature.pose.bones:
+            props = getattr(fixed_bone.bone, "hotools_boneprops", None)
+            if props is None:
+                skipped_no_props_count += 1
+                continue
 
-            props = getattr(moving_bone.bone, "hotools_boneprops", None)
-            mapping_name = ""
-            deform_mapping_tag = ""
+            deform_mapping_tag = getattr(
+                props,
+                "deformMappingTag",
+                "",
+            ).strip()
 
-            if props is not None:
-                mapping_name = props.humanoidMapping.strip()
-                deform_mapping_tag = getattr(
-                    props,
-                    "deformMappingTag",
-                    "",
-                ).strip()
+            if not deform_mapping_tag:
+                skipped_no_deform_tag_count += 1
+                continue
 
-            if deform_mapping_tag:
-                resting_bone = resting_armature.pose.bones.get(
-                    deform_mapping_tag,
-                )
-                if resting_bone is None:
-                    missing_deform_tag_count += 1
-                    missing_count += 1
-                    print(
-                        f"[Bone Constraint] DeformMappingTag target missing: "
-                        f"moving={moving_bone.name}, "
-                        f"tag={deform_mapping_tag}, "
-                        f"mapping={mapping_name or '<EMPTY>'}"
-                    )
-                    continue
-
-                deform_tag_count += 1
-            elif mapping_name:
-                resting_bone = resting_mapping_map.get(mapping_name)
-            else:
-                skipped_no_mapping_count += 1
-
-            # fallback：如果映射找不到，则尝试同名骨骼
-            if resting_bone is None:
-                resting_bone = resting_armature.pose.bones.get(moving_bone.name)
-                if resting_bone is not None:
-                    fallback_count += 1
-
-            if resting_bone is None:
+            target_bone = target_armature.pose.bones.get(deform_mapping_tag)
+            if target_bone is None:
                 missing_count += 1
                 print(
-                    f"[Bone Constraint] 未找到对应骨骼: "
-                    f"moving={moving_bone.name}, mapping={mapping_name or '<EMPTY>'}"
+                    f"[Bone Constraint] DeformMappingTag target missing: "
+                    f"fixed={fixed_bone.name}, tag={deform_mapping_tag}"
                 )
                 continue
 
+            deform_tag_count += 1
+
             existing_constraints = [
-                c for c in moving_bone.constraints
+                c for c in fixed_bone.constraints
                 if (
-                    c.type == self.constraint_type
-                    and c.target == resting_armature
-                    and c.subtarget == resting_bone.name
+                    c.type == constraint_type
+                    and c.target == target_armature
+                    and c.subtarget == target_bone.name
                 )
             ]
 
@@ -184,50 +257,46 @@ class OP_SameNameBone_addConstraint(Operator):
                 existed_count += 1
                 print(
                     f"[Bone Constraint] 已存在: "
-                    f"{moving_bone.name} -> {resting_bone.name} "
-                    f"{self.constraint_type}"
+                    f"{fixed_bone.name} -> {target_bone.name} "
+                    f"{constraint_type}"
                 )
                 continue
 
-            constraint = moving_bone.constraints.new(self.constraint_type)
-            constraint.name = f"{self.constraint_type}_{resting_bone.name}"
-            constraint.target = resting_armature
-            constraint.subtarget = resting_bone.name
+            constraint = fixed_bone.constraints.new(constraint_type)
+            constraint.name = f"{constraint_type}_{target_bone.name}"
+            constraint.target = target_armature
+            constraint.subtarget = target_bone.name
+            constraint.target_space = 'POSE'
+            constraint.owner_space = 'POSE'
+            constraint.mix_mode = 'REPLACE'
+
+            if hasattr(constraint, "remove_target_shear"):
+                constraint.remove_target_shear = True
 
             added_count += 1
 
             print(
                 f"[Bone Constraint] 添加: "
-                f"{moving_bone.name} -> {resting_bone.name} "
-                f"mapping={mapping_name or '<SAME_NAME>'} "
-                f"deformTag={deform_mapping_tag or '<EMPTY>'} "
-                f"type={self.constraint_type}"
+                f"{fixed_bone.name} -> {target_bone.name} "
+                f"deformTag={deform_mapping_tag} "
+                f"type={constraint_type}"
             )
-
-        if duplicate_resting_mappings:
-            print("[Bone Constraint] resting骨架存在重复humanoidMapping:")
-            for name in sorted(duplicate_resting_mappings):
-                print(f"  {name}")
 
         msg = (
             f"添加约束完成："
             f"新增 {added_count}，"
             f"已存在 {existed_count}，"
-            f"同名回退 {fallback_count}，"
             f"未找到 {missing_count}"
         )
-
-        if skipped_no_mapping_count:
-            msg += f"，moving无映射 {skipped_no_mapping_count}"
 
         if deform_tag_count:
             msg += f"，DeformTag {deform_tag_count}"
 
-        if missing_deform_tag_count:
-            msg += f"，DeformTag目标缺失 {missing_deform_tag_count}"
+        if skipped_no_deform_tag_count:
+            msg += f"，无DeformTag {skipped_no_deform_tag_count}"
 
-        if duplicate_resting_mappings:
-            msg += f"，resting重复映射 {len(duplicate_resting_mappings)}"
+        if skipped_no_props_count:
+            msg += f"，无属性 {skipped_no_props_count}"
 
         self.report({'INFO'}, msg)
         return {'FINISHED'}
@@ -270,24 +339,22 @@ class OP_BoneApplyConstraint(Operator):
         self.report({'INFO'}, f"已应用 {len(pose_bones)} 根骨骼的约束")
         return {'FINISHED'}
     
-class OP_movingArmture_clear_constraint(Operator):
-    bl_idname = "ho.movingarmture_clear_constraint"
-    bl_label = "清空移动骨架中的所有约束"
-    bl_description = "清空移动骨架中的所有约束"
+class OP_FixedArmature_ClearConstraint(Operator):
+    bl_idname = "ho.fixedarmature_clear_constraint"
+    bl_label = "清空固定骨架中的所有约束"
+    bl_description = "清空固定骨架中的所有约束"
 
     def execute(self, context):
         scene = context.scene
-        moving_armature = scene.bone_constraint_moving_armature
-        if not moving_armature:
-            self.report({'WARNING'}, "需要指定移动骨架")
+        fixed_armature = scene.bone_constraint_resting_armature
+        if not fixed_armature:
+            self.report({'WARNING'}, "需要指定固定骨架")
             return {'CANCELLED'}
 
-        # 遍历目标骨架的每个骨骼，并删除所有指定类型的约束
-        for moving_bone in moving_armature.pose.bones:
-            # 直接删除目标骨骼上的所有指定类型的约束
-            constraints_to_remove = [c for c in moving_bone.constraints]
+        for fixed_bone in fixed_armature.pose.bones:
+            constraints_to_remove = [c for c in fixed_bone.constraints]
             for constraint in constraints_to_remove:
-                moving_bone.constraints.remove(constraint)
+                fixed_bone.constraints.remove(constraint)
         return {'FINISHED'}
 
 class OP_BoneRemoveConstraints(Operator):
@@ -865,6 +932,131 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
             bpy.ops.ho.humanoid_mapping_preview_show()
 
         return {'FINISHED'}
+
+
+class OP_Mapping_WriteDeformTagsFromHumanoid(Operator):
+    bl_idname = "ho.mapping_write_deform_tags_from_humanoid"
+    bl_label = "按Humanoid填DeformTag"
+    bl_description = "根据当前骨骼的Humanoid映射和选中的DeformTag预设，写入DeformMappingTag"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    preset_id: EnumProperty(
+        name="DeformTag预设",
+        items=HumanoidDeformTagPresetRegistry.enum_items,
+    )  # type: ignore
+
+    only_selected: BoolProperty(
+        name="仅处理选中骨骼",
+        default=False,
+    )  # type: ignore
+
+    overwrite_existing: BoolProperty(
+        name="覆盖已有DeformTag",
+        default=True,
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        obj = context.object
+        scene = context.scene
+
+        preset = HumanoidDeformTagPresetRegistry.get(self.preset_id)
+        if preset is None:
+            preset = HumanoidDeformTagPresetRegistry.selected(scene)
+
+        if preset is None:
+            self.report({'ERROR'}, "没有可用的DeformTag预设")
+            return {'CANCELLED'}
+
+        try:
+            scene.bone_humanoid_deform_tag_preset = preset["id"]
+        except Exception:
+            pass
+
+        tags = preset["tags"]
+        processed_count = 0
+        written_count = 0
+        unchanged_count = 0
+        skipped_existing_count = 0
+        skipped_no_props_count = 0
+        skipped_no_humanoid_count = 0
+        missing_preset_count = 0
+
+        for bone in obj.data.bones:
+            if self.only_selected and not bone.select:
+                continue
+
+            processed_count += 1
+            props = getattr(bone, "hotools_boneprops", None)
+
+            if props is None:
+                skipped_no_props_count += 1
+                continue
+
+            humanoid_name = props.humanoidMapping.strip()
+            if not humanoid_name:
+                skipped_no_humanoid_count += 1
+                continue
+
+            deform_tag = tags.get(humanoid_name)
+            if not deform_tag:
+                missing_preset_count += 1
+                print(
+                    f"[DeformTag Preset] missing humanoid entry: "
+                    f"bone={bone.name}, humanoid={humanoid_name}, "
+                    f"preset={preset['id']}"
+                )
+                continue
+
+            current_tag = getattr(props, "deformMappingTag", "").strip()
+            if current_tag and not self.overwrite_existing:
+                skipped_existing_count += 1
+                continue
+
+            if current_tag == deform_tag:
+                unchanged_count += 1
+                continue
+
+            props.deformMappingTag = deform_tag
+            written_count += 1
+
+            print(
+                f"[DeformTag Preset] write: "
+                f"{bone.name}, humanoid={humanoid_name}, "
+                f"deformTag={deform_tag}, preset={preset['id']}"
+            )
+
+        msg = (
+            f"DeformTag填入完成："
+            f"预设 {preset['name']}，"
+            f"处理 {processed_count}，"
+            f"写入 {written_count}，"
+            f"未变化 {unchanged_count}"
+        )
+
+        if skipped_existing_count:
+            msg += f"，保留已有 {skipped_existing_count}"
+
+        if skipped_no_humanoid_count:
+            msg += f"，无Humanoid {skipped_no_humanoid_count}"
+
+        if missing_preset_count:
+            msg += f"，预设缺失 {missing_preset_count}"
+
+        if skipped_no_props_count:
+            msg += f"，无属性 {skipped_no_props_count}"
+
+        if HumanoidMappingPreviewHUD.is_running():
+            bpy.ops.ho.humanoid_mapping_preview_clear()
+            bpy.ops.ho.humanoid_mapping_preview_show()
+
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
 
 class OP_Mapping_ClearHumanoidBoneProps(Operator):
     bl_idname = "ho.mapping_clear_humanoid_boneprops"
@@ -2412,11 +2604,24 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
     mapping_box = layout.box()
-    mapping_box.label(text="Humanoid骨骼处理")
+    mapping_box.label(text="骨骼处理")
 
     row = mapping_box.row(align=True)
     row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
+
+    row = mapping_box.row(align=True)
+    row.prop(
+        scene,
+        "bone_humanoid_deform_tag_preset",
+        text="",
+    )
+    op = row.operator(
+        OP_Mapping_WriteDeformTagsFromHumanoid.bl_idname,
+        text="填入DeformTag",
+        icon="PRESET",
+    )
+    op.preset_id = scene.bone_humanoid_deform_tag_preset
 
     preview_box = layout.box()
     header = preview_box.row(align=True)
@@ -2477,9 +2682,8 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
 
     row = col.row(align=True)
     
-    row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制位置",).constraint_type = 'COPY_LOCATION'
-    row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制旋转",).constraint_type = 'COPY_ROTATION'
-    row.operator(OP_movingArmture_clear_constraint.bl_idname,text="",icon="TRASH",)
+    row.operator(OP_DeformTag_addConstraint.bl_idname,text="约束-复制变换",)
+    row.operator(OP_FixedArmature_ClearConstraint.bl_idname,text="",icon="TRASH",)
 
     row = box.row(align=True)
     row.operator(OP_BoneApplyConstraint.bl_idname,text="应用约束到骨骼",)
@@ -2487,11 +2691,12 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
 
 cls = [
     OP_SwapBoneConstraintArmatures,
-    OP_SameNameBone_addConstraint,
+    OP_DeformTag_addConstraint,
     OP_BoneApplyConstraint,
-    OP_movingArmture_clear_constraint,
+    OP_FixedArmature_ClearConstraint,
     OP_BoneRemoveConstraints,
     OP_Mapping_WriteHumanoidBoneProps,
+    OP_Mapping_WriteDeformTagsFromHumanoid,
     OP_Mapping_ClearHumanoidBoneProps,
     OP_HumanoidMappingPreview_Show,
     OP_HumanoidMappingPreview_Clear,
