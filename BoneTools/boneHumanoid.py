@@ -1442,7 +1442,103 @@ class HumanoidTwistRuleRegistry:
         return tuple(self._rules)
 
 
+class HumanoidWarningCheckContext:
+    def __init__(
+        self,
+        bone_name,
+        mapping_name,
+        bone=None,
+        edit_bone=None,
+    ):
+        self.bone_name = bone_name
+        self.mapping_name = mapping_name
+        self.bone = bone
+        self.edit_bone = edit_bone
+
+    def source_bone(self):
+        if self.edit_bone is not None:
+            return self.edit_bone
+
+        return self.bone
+
+
+class HumanoidWarningCheckMode:
+    idname = "base"
+
+    def evaluate(self, rule, context):
+        raise NotImplementedError
+
+
+class HumanoidDisconnectedBoneWarningMode(HumanoidWarningCheckMode):
+    idname = "disconnected_bone"
+
+    def __init__(
+        self,
+        expected_connected=False,
+        message="相连项未关闭",
+    ):
+        self.expected_connected = expected_connected
+        self.message = message
+
+    def evaluate(self, rule, context):
+        source_bone = context.source_bone()
+        if source_bone is None:
+            return None
+
+        actual_connected = bool(getattr(source_bone, "use_connect", False))
+        if actual_connected == self.expected_connected:
+            return None
+
+        return {
+            "rule_name": rule.name,
+            "mode": self.idname,
+            "mapping_name": context.mapping_name,
+            "message": self.message,
+            "actual_connected": actual_connected,
+            "expected_connected": self.expected_connected,
+        }
+
+
+class HumanoidWarningRule:
+    def __init__(self, name, mapping_names, mode):
+        self.name = name
+        self.mapping_names = set(mapping_names)
+        self.mode = mode
+
+    def matches(self, mapping_name):
+        return mapping_name in self.mapping_names
+
+    def evaluate(self, context):
+        if not self.matches(context.mapping_name):
+            return None
+
+        return self.mode.evaluate(self, context)
+
+
+class HumanoidWarningRuleRegistry:
+    def __init__(self):
+        self._rules = []
+
+    def register(self, rule):
+        self._rules.append(rule)
+        return rule
+
+    def evaluate(self, context):
+        warnings = []
+
+        for rule in self._rules:
+            warning = rule.evaluate(context)
+            if warning is not None:
+                warnings.append(warning)
+
+        return warnings
+
+    def rules(self):
+        return tuple(self._rules)
+
+
 HUMANOID_TWIST_RULES = HumanoidTwistRuleRegistry()
+HUMANOID_WARNING_RULES = HumanoidWarningRuleRegistry()
 
 _WORLD_NEG_Y = (0.0, -1.0, 0.0)
 _WORLD_POS_X = (1.0, 0.0, 0.0)
@@ -1488,6 +1584,39 @@ def _register_ik_bend_direction_twist_rule(
             threshold_deg=threshold_deg,
         ),
     ))
+
+
+def _register_disconnected_bone_warning_rule(
+    mapping_name,
+    expected_connected=False,
+    message="相连项未关闭",
+):
+    return HUMANOID_WARNING_RULES.register(HumanoidWarningRule(
+        name=f"{mapping_name}: 相连项关闭建议",
+        mapping_names=(mapping_name,),
+        mode=HumanoidDisconnectedBoneWarningMode(
+            expected_connected=expected_connected,
+            message=message,
+        ),
+    ))
+
+
+# 黄色警告规则注册区：每条规则独立注册，方便后续针对具体骨骼调整。
+_register_disconnected_bone_warning_rule(
+    mapping_name="hips",
+)
+_register_disconnected_bone_warning_rule(
+    mapping_name="spine",
+)
+_register_disconnected_bone_warning_rule(
+    mapping_name="chest",
+)
+_register_disconnected_bone_warning_rule(
+    mapping_name="neck",
+)
+_register_disconnected_bone_warning_rule(
+    mapping_name="head",
+)
 
 
 # 扭转规则注册区：每条规则独立注册，方便后续单独改阈值或替换判定模式。
@@ -1946,6 +2075,27 @@ class HumanoidMappingPreviewHUD:
         return " / ".join(parts)
 
     @classmethod
+    def _get_connection_warnings(cls, sample):
+        if sample is None:
+            return []
+
+        context = HumanoidWarningCheckContext(
+            bone_name=sample.bone_name,
+            mapping_name=sample.mapping_name,
+            bone=sample.bone,
+            edit_bone=sample.edit_bone,
+        )
+
+        return HUMANOID_WARNING_RULES.evaluate(context)
+
+    @classmethod
+    def _format_connection_warnings(cls, warnings):
+        return " / ".join(
+            warning["message"]
+            for warning in warnings
+        )
+
+    @classmethod
     def _refresh_mapping_cache(cls):
         armature = cls._get_armature()
         if armature is None:
@@ -1987,6 +2137,7 @@ class HumanoidMappingPreviewHUD:
                     mapping_to_sample=mapping_to_sample,
                     bone_name_to_sample=bone_name_to_sample,
                 ),
+                "connection_warnings": cls._get_connection_warnings(sample),
             })
 
         cls._items = items
@@ -2031,6 +2182,10 @@ class HumanoidMappingPreviewHUD:
             1 for item in cls._items
             if item.get("twist_issues")
         )
+        connection_warning_bone_count = sum(
+            1 for item in cls._items
+            if item.get("connection_warnings")
+        )
         msg = (
             f"Humanoid预览已生成："
             f"映射骨骼 {len(cls._items)}，"
@@ -2039,6 +2194,9 @@ class HumanoidMappingPreviewHUD:
 
         if twist_error_bone_count:
             msg += f"，扭转错误 {twist_error_bone_count}"
+
+        if connection_warning_bone_count:
+            msg += f"，相连警告 {connection_warning_bone_count}"
 
         return True, msg
 
@@ -2189,8 +2347,10 @@ class HumanoidMappingPreviewHUD:
             return
 
         normal_coords = []
+        warning_coords = []
         error_coords = []
         normal_points = []
+        warning_points = []
         error_points = []
         actual_axis_coords = []
         target_axis_coords = []
@@ -2209,6 +2369,7 @@ class HumanoidMappingPreviewHUD:
 
             head, tail, center = result
             twist_issues = item.get("twist_issues") or []
+            connection_warnings = item.get("connection_warnings") or []
 
             if twist_issues:
                 error_coords.extend([head, tail])
@@ -2289,11 +2450,14 @@ class HumanoidMappingPreviewHUD:
                             visual_axis_length,
                             threshold_angle,
                         )
+            elif connection_warnings:
+                warning_coords.extend([head, tail])
+                warning_points.extend([head, tail])
             else:
                 normal_coords.extend([head, tail])
                 normal_points.extend([head, tail])
 
-        if not normal_coords and not error_coords:
+        if not normal_coords and not warning_coords and not error_coords:
             return
 
         gpu.state.blend_set('ALPHA')
@@ -2349,6 +2513,7 @@ class HumanoidMappingPreviewHUD:
             threshold_batch.draw(threshold_shader)
 
         draw_lines(normal_coords, (0.1, 0.85, 1.0, 0.95), cls._line_width)
+        draw_lines(warning_coords, (1.0, 0.82, 0.08, 0.98), cls._line_width)
         draw_lines(error_coords, (1.0, 0.08, 0.04, 0.98), cls._line_width)
         draw_lines(ik_triangle_edges, (1.0, 0.78, 0.1, 0.92), 3.0)
         draw_lines(angle_fan_border_coords, (1.0, 0.62, 0.05, 0.72), 2.0)
@@ -2356,7 +2521,7 @@ class HumanoidMappingPreviewHUD:
         draw_lines(target_axis_coords, (0.25, 1.0, 0.25, 0.95), cls._twist_line_width)
         draw_lines(actual_axis_coords, (1.0, 0.08, 0.04, 0.98), cls._twist_line_width)
 
-        if normal_points or error_points:
+        if normal_points or warning_points or error_points:
             point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
 
             gpu.state.point_size_set(cls._point_size)
@@ -2368,6 +2533,15 @@ class HumanoidMappingPreviewHUD:
 
                 point_shader.bind()
                 point_shader.uniform_float("color", (1.0, 0.9, 0.15, 0.95))
+                point_batch.draw(point_shader)
+
+            if warning_points:
+                point_batch = batch_for_shader(point_shader, 'POINTS', {
+                    "pos": warning_points,
+                })
+
+                point_shader.bind()
+                point_shader.uniform_float("color", (1.0, 0.82, 0.08, 0.98))
                 point_batch.draw(point_shader)
 
             if error_points:
@@ -2422,10 +2596,14 @@ class HumanoidMappingPreviewHUD:
 
             head, tail, center = result
             twist_issues = item.get("twist_issues") or []
+            connection_warnings = item.get("connection_warnings") or []
             if (
                 not show_names
                 and not show_deform_tags
-                and not (show_check_details and twist_issues)
+                and not (
+                    show_check_details
+                    and (twist_issues or connection_warnings)
+                )
             ):
                 continue
 
@@ -2462,7 +2640,11 @@ class HumanoidMappingPreviewHUD:
             line_color = (
                 (1.0, 0.08, 0.04, 0.92)
                 if twist_issues
-                else (0.1, 0.85, 1.0, 0.85)
+                else (
+                    (1.0, 0.82, 0.08, 0.92)
+                    if connection_warnings
+                    else (0.1, 0.85, 1.0, 0.85)
+                )
             )
 
             line_shader.bind()
@@ -2496,29 +2678,43 @@ class HumanoidMappingPreviewHUD:
 
                 if twist_issues:
                     blf.color(font_id, 1.0, 0.16, 0.1, 1.0)
+                elif connection_warnings:
+                    blf.color(font_id, 1.0, 0.82, 0.08, 1.0)
                 else:
                     blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
 
                 blf.position(font_id, label_x, label_y, 0)
                 blf.draw(font_id, label)
 
-            if show_check_details and twist_issues:
-                warning_label = (
-                    f"扭转错误: {cls._format_twist_issues(twist_issues)}"
-                )
-
+            if show_check_details and (twist_issues or connection_warnings):
                 blf.size(font_id, twist_font_size)
                 blf.enable(font_id, blf.SHADOW)
                 blf.shadow(font_id, 3, 0, 0, 0, 0.75)
                 blf.shadow_offset(font_id, 1, -1)
-                blf.color(font_id, 1.0, 0.46, 0.25, 1.0)
-                blf.position(
-                    font_id,
-                    label_x,
-                    label_y - max(cls._twist_warning_offset_y, twist_font_size),
-                    0,
+
+                detail_y = label_y - max(
+                    cls._twist_warning_offset_y,
+                    twist_font_size,
                 )
-                blf.draw(font_id, cls.no_i18n(warning_label))
+                detail_step = max(18, twist_font_size)
+
+                if twist_issues:
+                    warning_label = (
+                        f"扭转错误: {cls._format_twist_issues(twist_issues)}"
+                    )
+                    blf.color(font_id, 1.0, 0.46, 0.25, 1.0)
+                    blf.position(font_id, label_x, detail_y, 0)
+                    blf.draw(font_id, cls.no_i18n(warning_label))
+                    detail_y -= detail_step
+
+                if connection_warnings:
+                    warning_label = (
+                        "相连警告: "
+                        f"{cls._format_connection_warnings(connection_warnings)}"
+                    )
+                    blf.color(font_id, 1.0, 0.82, 0.08, 1.0)
+                    blf.position(font_id, label_x, detail_y, 0)
+                    blf.draw(font_id, cls.no_i18n(warning_label))
 
             blf.disable(font_id, blf.SHADOW)
 
