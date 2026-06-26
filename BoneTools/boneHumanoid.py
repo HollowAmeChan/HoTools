@@ -192,15 +192,15 @@ class OP_SwapBoneConstraintArmatures(Operator):
 
 class OP_DeformTag_addConstraint(Operator):
     bl_idname = "ho.deformtag_addconstraint"
-    bl_label = "按DeformTag添加复制变换约束"
-    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制变换约束"
+    bl_label = "按DeformTag添加复制位置旋转约束"
+    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制位置和复制旋转约束"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         scene = context.scene
         fixed_armature = scene.bone_constraint_resting_armature
         target_armature = scene.bone_constraint_moving_armature
-        constraint_type = 'COPY_TRANSFORMS'
+        constraint_types = ('COPY_LOCATION', 'COPY_ROTATION')
 
         if not (fixed_armature and target_armature):
             self.report({'WARNING'}, "需要指定两个骨架")
@@ -212,6 +212,7 @@ class OP_DeformTag_addConstraint(Operator):
 
         added_count = 0
         existed_count = 0
+        replaced_count = 0
         deform_tag_count = 0
         missing_count = 0
         skipped_no_props_count = 0
@@ -244,43 +245,57 @@ class OP_DeformTag_addConstraint(Operator):
 
             deform_tag_count += 1
 
-            existing_constraints = [
+            old_copy_transforms_constraints = [
                 c for c in fixed_bone.constraints
                 if (
-                    c.type == constraint_type
+                    c.type == 'COPY_TRANSFORMS'
                     and c.target == target_armature
                     and c.subtarget == target_bone.name
+                    and c.name == f"COPY_TRANSFORMS_{target_bone.name}"
                 )
             ]
 
-            if existing_constraints:
-                existed_count += 1
+            for old_constraint in old_copy_transforms_constraints:
+                fixed_bone.constraints.remove(old_constraint)
+                replaced_count += 1
+
+            for constraint_type in constraint_types:
+                existing_constraints = [
+                    c for c in fixed_bone.constraints
+                    if (
+                        c.type == constraint_type
+                        and c.target == target_armature
+                        and c.subtarget == target_bone.name
+                    )
+                ]
+
+                if existing_constraints:
+                    existed_count += 1
+                    print(
+                        f"[Bone Constraint] 已存在: "
+                        f"{fixed_bone.name} -> {target_bone.name} "
+                        f"{constraint_type}"
+                    )
+                    continue
+
+                constraint = fixed_bone.constraints.new(constraint_type)
+                constraint.name = f"{constraint_type}_{target_bone.name}"
+                constraint.target = target_armature
+                constraint.subtarget = target_bone.name
+                constraint.target_space = 'POSE'
+                constraint.owner_space = 'POSE'
+
+                if hasattr(constraint, "mix_mode"):
+                    constraint.mix_mode = 'REPLACE'
+
+                added_count += 1
+
                 print(
-                    f"[Bone Constraint] 已存在: "
+                    f"[Bone Constraint] 添加: "
                     f"{fixed_bone.name} -> {target_bone.name} "
-                    f"{constraint_type}"
+                    f"deformTag={deform_mapping_tag} "
+                    f"type={constraint_type}"
                 )
-                continue
-
-            constraint = fixed_bone.constraints.new(constraint_type)
-            constraint.name = f"{constraint_type}_{target_bone.name}"
-            constraint.target = target_armature
-            constraint.subtarget = target_bone.name
-            constraint.target_space = 'POSE'
-            constraint.owner_space = 'POSE'
-            constraint.mix_mode = 'REPLACE'
-
-            if hasattr(constraint, "remove_target_shear"):
-                constraint.remove_target_shear = True
-
-            added_count += 1
-
-            print(
-                f"[Bone Constraint] 添加: "
-                f"{fixed_bone.name} -> {target_bone.name} "
-                f"deformTag={deform_mapping_tag} "
-                f"type={constraint_type}"
-            )
 
         msg = (
             f"添加约束完成："
@@ -291,6 +306,9 @@ class OP_DeformTag_addConstraint(Operator):
 
         if deform_tag_count:
             msg += f"，DeformTag {deform_tag_count}"
+
+        if replaced_count:
+            msg += f"，替换复制变换 {replaced_count}"
 
         if skipped_no_deform_tag_count:
             msg += f"，无DeformTag {skipped_no_deform_tag_count}"
@@ -2682,7 +2700,7 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
 
     row = col.row(align=True)
     
-    row.operator(OP_DeformTag_addConstraint.bl_idname,text="约束-复制变换",)
+    row.operator(OP_DeformTag_addConstraint.bl_idname,text="约束-位置旋转",)
     row.operator(OP_FixedArmature_ClearConstraint.bl_idname,text="",icon="TRASH",)
 
     row = box.row(align=True)
