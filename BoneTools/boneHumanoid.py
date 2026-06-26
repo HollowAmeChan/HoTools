@@ -4,7 +4,7 @@ from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 
-from math import acos, cos, degrees, radians, sin
+from math import acos, atan2, cos, degrees, radians, sin
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -1627,6 +1627,51 @@ class HumanoidMappingPreviewHUD:
         )
 
     @classmethod
+    def _append_fan_geometry(
+        cls,
+        triangles,
+        borders,
+        origin,
+        base_axis,
+        fan_axis,
+        radius,
+        signed_angle,
+    ):
+        if abs(signed_angle) < 1e-6:
+            return
+
+        fan_points = []
+        for i in range(cls._twist_fan_segments + 1):
+            factor = i / cls._twist_fan_segments
+            angle = signed_angle * factor
+            fan_direction = cls._rotate_vector_around_axis(
+                base_axis,
+                fan_axis,
+                angle,
+            )
+            fan_points.append(origin + fan_direction * radius)
+
+        for i in range(len(fan_points) - 1):
+            triangles.extend([
+                origin,
+                fan_points[i],
+                fan_points[i + 1],
+            ])
+
+        borders.extend([
+            origin,
+            fan_points[0],
+            origin,
+            fan_points[-1],
+        ])
+
+        for i in range(len(fan_points) - 1):
+            borders.extend([
+                fan_points[i],
+                fan_points[i + 1],
+            ])
+
+    @classmethod
     def _draw_3d(cls):
         cls._refresh_live_edit_cache_if_needed()
 
@@ -1645,8 +1690,10 @@ class HumanoidMappingPreviewHUD:
         target_axis_coords = []
         ik_triangle_triangles = []
         ik_triangle_edges = []
-        fan_triangles = []
-        fan_border_coords = []
+        angle_fan_triangles = []
+        angle_fan_border_coords = []
+        threshold_fan_triangles = []
+        threshold_fan_border_coords = []
 
         for item in cls._items:
             result = cls._get_item_world_points(item)
@@ -1676,8 +1723,6 @@ class HumanoidMappingPreviewHUD:
                         "visual_axis_length",
                         axis_length,
                     )
-                    threshold_rad = radians(issue["threshold_deg"])
-
                     actual_axis_coords.extend([
                         visual_origin,
                         visual_origin + actual_axis * visual_axis_length,
@@ -1705,38 +1750,35 @@ class HumanoidMappingPreviewHUD:
                                 root_point,
                             ])
 
-                    fan_points = []
-                    for i in range(cls._twist_fan_segments + 1):
-                        factor = i / cls._twist_fan_segments
-                        angle = -threshold_rad + threshold_rad * 2.0 * factor
-                        fan_axis = cls._rotate_vector_around_axis(
-                            target_axis,
-                            fan_axis_world,
-                            angle,
+                    fan_axis = _safe_normalized_vector(fan_axis_world)
+                    if fan_axis is not None:
+                        signed_angle = atan2(
+                            fan_axis.dot(target_axis.cross(actual_axis)),
+                            max(-1.0, min(1.0, target_axis.dot(actual_axis))),
                         )
-                        fan_points.append(
-                            visual_origin + fan_axis * visual_axis_length
-                        )
+                        threshold_rad = radians(issue["threshold_deg"])
+                        threshold_angle = (
+                            1.0 if signed_angle >= 0.0 else -1.0
+                        ) * min(abs(signed_angle), threshold_rad)
 
-                    for i in range(len(fan_points) - 1):
-                        fan_triangles.extend([
+                        cls._append_fan_geometry(
+                            angle_fan_triangles,
+                            angle_fan_border_coords,
                             visual_origin,
-                            fan_points[i],
-                            fan_points[i + 1],
-                        ])
-
-                    fan_border_coords.extend([
-                        visual_origin,
-                        fan_points[0],
-                        visual_origin,
-                        fan_points[-1],
-                    ])
-
-                    for i in range(len(fan_points) - 1):
-                        fan_border_coords.extend([
-                            fan_points[i],
-                            fan_points[i + 1],
-                        ])
+                            target_axis,
+                            fan_axis,
+                            visual_axis_length,
+                            signed_angle,
+                        )
+                        cls._append_fan_geometry(
+                            threshold_fan_triangles,
+                            threshold_fan_border_coords,
+                            visual_origin,
+                            target_axis,
+                            fan_axis,
+                            visual_axis_length,
+                            threshold_angle,
+                        )
             else:
                 normal_coords.extend([head, tail])
                 normal_points.extend([head, tail])
@@ -1776,20 +1818,31 @@ class HumanoidMappingPreviewHUD:
             triangle_shader.uniform_float("color", (1.0, 0.76, 0.05, 0.12))
             triangle_batch.draw(triangle_shader)
 
-        if fan_triangles:
+        if angle_fan_triangles:
             fan_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
             fan_batch = batch_for_shader(fan_shader, 'TRIS', {
-                "pos": fan_triangles,
+                "pos": angle_fan_triangles,
             })
 
             fan_shader.bind()
             fan_shader.uniform_float("color", (1.0, 0.42, 0.05, 0.18))
             fan_batch.draw(fan_shader)
 
+        if threshold_fan_triangles:
+            threshold_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            threshold_batch = batch_for_shader(threshold_shader, 'TRIS', {
+                "pos": threshold_fan_triangles,
+            })
+
+            threshold_shader.bind()
+            threshold_shader.uniform_float("color", (0.45, 1.0, 0.45, 0.22))
+            threshold_batch.draw(threshold_shader)
+
         draw_lines(normal_coords, (0.1, 0.85, 1.0, 0.95), cls._line_width)
         draw_lines(error_coords, (1.0, 0.08, 0.04, 0.98), cls._line_width)
         draw_lines(ik_triangle_edges, (1.0, 0.78, 0.1, 0.92), 3.0)
-        draw_lines(fan_border_coords, (1.0, 0.62, 0.05, 0.72), 2.0)
+        draw_lines(angle_fan_border_coords, (1.0, 0.62, 0.05, 0.72), 2.0)
+        draw_lines(threshold_fan_border_coords, (0.55, 1.0, 0.55, 0.82), 2.0)
         draw_lines(target_axis_coords, (0.25, 1.0, 0.25, 0.95), cls._twist_line_width)
         draw_lines(actual_axis_coords, (1.0, 0.08, 0.04, 0.98), cls._twist_line_width)
 
