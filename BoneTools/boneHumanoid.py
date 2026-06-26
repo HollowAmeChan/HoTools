@@ -9,6 +9,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from bpy_extras import view3d_utils
+from ..i18n import tr
 
 def PF_armature_filter(self, obj):
     return obj.type == 'ARMATURE'
@@ -27,6 +28,10 @@ class OP_SwapBoneConstraintArmatures(Operator):
     bl_idname = "ho.swap_bone_constraint_armatures"
     bl_label = "交换骨架"
     bl_description = "交换当前设置的Resting和Moving骨架"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("交换当前设置的Resting和Moving骨架")
 
     def execute(self, context):
         scene = context.scene
@@ -34,19 +39,23 @@ class OP_SwapBoneConstraintArmatures(Operator):
         moving = scene.bone_constraint_moving_armature
 
         if resting is None and moving is None:
-            self.report({'WARNING'}, "没有设置骨架")
+            self.report({'WARNING'}, tr("没有设置骨架"))
             return {'CANCELLED'}
 
         scene.bone_constraint_resting_armature = moving
         scene.bone_constraint_moving_armature = resting
 
-        self.report({'INFO'}, "已交换骨架")
+        self.report({'INFO'}, tr("已交换骨架"))
         return {'FINISHED'}
 
 class OP_SameNameBone_addConstraint(Operator):
     bl_idname = "ho.samenamebone_addconstraint"
     bl_label = "按映射添加约束"
     bl_description = "根据humanoid映射，确定对应的pair，添加约束"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据humanoid映射，确定对应的pair，添加约束")
     bl_options = {'REGISTER', 'UNDO'}
 
     constraint_type: bpy.props.StringProperty(
@@ -60,11 +69,11 @@ class OP_SameNameBone_addConstraint(Operator):
         moving_armature = scene.bone_constraint_moving_armature
 
         if not (resting_armature and moving_armature):
-            self.report({'WARNING'}, "需要指定两个骨架")
+            self.report({'WARNING'}, tr("需要指定两个骨架"))
             return {'CANCELLED'}
 
         if resting_armature.type != 'ARMATURE' or moving_armature.type != 'ARMATURE':
-            self.report({'WARNING'}, "指定对象必须都是Armature")
+            self.report({'WARNING'}, tr("指定对象必须都是Armature"))
             return {'CANCELLED'}
 
         # humanoidMapping -> resting pose bone
@@ -178,6 +187,10 @@ class OP_BoneApplyConstraint(Operator):
     bl_idname = "ho.bone_apply_constraint"
     bl_label = "应用约束到骨骼"
     bl_description = "将选中骨骼的约束结果应用为当前姿态，并移除约束"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将选中骨骼的约束结果应用为当前姿态，并移除约束")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -194,7 +207,7 @@ class OP_BoneApplyConstraint(Operator):
         pose_bones = context.selected_pose_bones
 
         if not pose_bones:
-            self.report({'WARNING'}, "未选择任何骨骼")
+            self.report({'WARNING'}, tr("未选择任何骨骼"))
             return {'CANCELLED'}
 
         # 确保在 Pose 模式
@@ -209,19 +222,23 @@ class OP_BoneApplyConstraint(Operator):
                 pb.constraints.remove(c)
 
 
-        self.report({'INFO'}, f"已应用 {len(pose_bones)} 根骨骼的约束")
+        self.report({'INFO'}, tr("已应用 {0} 根骨骼的约束").format(len(pose_bones)))
         return {'FINISHED'}
     
 class OP_movingArmture_clear_constraint(Operator):
     bl_idname = "ho.movingarmture_clear_constraint"
     bl_label = "清空移动骨架中的所有约束"
     bl_description = "清空移动骨架中的所有约束"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空移动骨架中的所有约束")
 
     def execute(self, context):
         scene = context.scene
         moving_armature = scene.bone_constraint_moving_armature
         if not moving_armature:
-            self.report({'WARNING'}, "需要指定移动骨架")
+            self.report({'WARNING'}, tr("需要指定移动骨架"))
             return {'CANCELLED'}
 
         # 遍历目标骨架的每个骨骼，并删除所有指定类型的约束
@@ -236,6 +253,10 @@ class OP_BoneRemoveConstraints(Operator):
     bl_idname = "ho.bone_remove_constraints"
     bl_label = "移除骨骼约束"
     bl_description = "移除选中骨骼上的全部约束"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("移除选中骨骼上的全部约束")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -252,7 +273,7 @@ class OP_BoneRemoveConstraints(Operator):
         pose_bones = context.selected_pose_bones
 
         if not pose_bones:
-            self.report({'WARNING'}, "未选择任何骨骼")
+            self.report({'WARNING'}, tr("未选择任何骨骼"))
             return {'CANCELLED'}
 
         bpy.ops.object.mode_set(mode='POSE')
@@ -265,13 +286,17 @@ class OP_BoneRemoveConstraints(Operator):
             for c in reversed(pb.constraints):
                 pb.constraints.remove(c)
 
-        self.report({'INFO'}, "已移除选中骨骼的全部约束")
+        self.report({'INFO'}, tr("已移除选中骨骼的全部约束"))
         return {'FINISHED'}
 
 class OP_Humanoid_ForceAlign(Operator):
     bl_idname = "ho.humanoid_force_align"
     bl_label = "强制Humanoid对齐"
     bl_description = "根据Humanoid映射直接修改moving骨架的EditBone Rest Pose"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据Humanoid映射直接修改moving骨架的EditBone Rest Pose")
     bl_options = {'REGISTER', 'UNDO'}
 
     align_roll: BoolProperty(name="对齐Roll", default=True)  # type: ignore
@@ -306,7 +331,7 @@ class OP_Humanoid_ForceAlign(Operator):
         moving_obj = scene.bone_constraint_moving_armature
 
         if resting_obj == moving_obj:
-            self.report({'ERROR'}, "不能对同一个骨架执行")
+            self.report({'ERROR'}, tr("不能对同一个骨架执行"))
             return {'CANCELLED'}
 
         prev_active = context.view_layer.objects.active
@@ -486,6 +511,10 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
     bl_idname = "ho.mapping_write_humanoid_boneprops"
     bl_label = "自动计算选中骨骼的Humanoid映射"
     bl_description = "只检测当前选中的可见骨骼；按住Shift点击会先清空选中骨骼的旧映射"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("只检测当前选中的可见骨骼；按住Shift点击会先清空选中骨骼的旧映射")
     bl_options = {'REGISTER', 'UNDO'}
 
     use_shift: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
@@ -532,16 +561,16 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
         obj = context.object
 
         if obj is None or obj.type != 'ARMATURE':
-            self.report({'ERROR'}, "请选择一个Armature")
+            self.report({'ERROR'}, tr("请选择一个Armature"))
             return {'CANCELLED'}
 
         bones, hidden_selected_count = self._collect_selected_visible_bones(obj)
 
         if not bones:
             if hidden_selected_count:
-                self.report({'WARNING'}, f"选中的骨骼都不可见或所在骨骼集合隐藏：{hidden_selected_count}")
+                self.report({'WARNING'}, tr("选中的骨骼都不可见或所在骨骼集合隐藏：{0}").format(hidden_selected_count))
             else:
-                self.report({'WARNING'}, "请先选中需要参与Humanoid映射的骨骼")
+                self.report({'WARNING'}, tr("请先选中需要参与Humanoid映射的骨骼"))
             return {'CANCELLED'}
 
         cleared_count = 0
@@ -564,7 +593,7 @@ class OP_Mapping_WriteHumanoidBoneProps(Operator):
         try:
             result = auto_map_source_names_to_humanoid(source_names)
         except Exception as e:
-            self.report({'ERROR'}, f"自动Humanoid映射失败: {e}")
+            self.report({'ERROR'}, tr("自动Humanoid映射失败: {0}").format(e))
             return {'CANCELLED'}
 
         source_to_target = {
@@ -644,6 +673,10 @@ class OP_Mapping_ClearHumanoidBoneProps(Operator):
     bl_idname = "ho.mapping_clear_humanoid_boneprops"
     bl_label = "清空骨架Humanoid映射"
     bl_description = "清空当前活动骨架中所有骨骼的Humanoid映射"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空当前活动骨架中所有骨骼的Humanoid映射")
     bl_options = {'REGISTER', 'UNDO'}
 
     only_selected: BoolProperty(
@@ -1104,11 +1137,15 @@ class OP_HumanoidMappingPreview_Clear(Operator):
     bl_idname = "ho.humanoid_mapping_preview_clear"
     bl_label = "清除Humanoid映射预览"
     bl_description = "清除Humanoid映射绘制预览"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清除Humanoid映射绘制预览")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         HumanoidMappingPreviewHUD.clear()
-        self.report({'INFO'}, "Humanoid映射预览已清除")
+        self.report({'INFO'}, tr("Humanoid映射预览已清除"))
         return {'FINISHED'}
 
 
@@ -1116,7 +1153,7 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
     box = layout.box()
-    box.label(text="Humanoid映射")
+    box.label(text=tr("Humanoid映射"))
 
     row = box.row(align=True)
 
@@ -1127,28 +1164,28 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     else:
         row.operator(OP_HumanoidMappingPreview_Show.bl_idname,text="",icon="OVERLAY",)
 
-    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
+    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text=tr("自动映射"),)
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
 
 
     row = box.row(align=True)
-    row.prop_search(scene, "bone_constraint_resting_armature",scene,"objects",text="固定",icon="ARMATURE_DATA",)
+    row.prop_search(scene, "bone_constraint_resting_armature",scene,"objects",text=tr("固定"),icon="ARMATURE_DATA",)
     row.operator(OP_SwapBoneConstraintArmatures.bl_idname,text="",icon="ARROW_LEFTRIGHT",)
-    row.prop_search(scene,"bone_constraint_moving_armature",scene,"objects",text="移动",icon="ARMATURE_DATA",)
+    row.prop_search(scene,"bone_constraint_moving_armature",scene,"objects",text=tr("移动"),icon="ARMATURE_DATA",)
 
     col = box.column(align=True)
     row = col.row(align=True)
-    row.operator(OP_Humanoid_ForceAlign.bl_idname,text="强制Humanoid对齐",icon="CON_ARMATURE",)
+    row.operator(OP_Humanoid_ForceAlign.bl_idname,text=tr("强制Humanoid对齐"),icon="CON_ARMATURE",)
 
     row = col.row(align=True)
     
-    row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制位置",).constraint_type = 'COPY_LOCATION'
-    row.operator(OP_SameNameBone_addConstraint.bl_idname,text="约束-复制旋转",).constraint_type = 'COPY_ROTATION'
+    row.operator(OP_SameNameBone_addConstraint.bl_idname,text=tr("约束-复制位置"),).constraint_type = 'COPY_LOCATION'
+    row.operator(OP_SameNameBone_addConstraint.bl_idname,text=tr("约束-复制旋转"),).constraint_type = 'COPY_ROTATION'
     row.operator(OP_movingArmture_clear_constraint.bl_idname,text="",icon="TRASH",)
 
     row = box.row(align=True)
-    row.operator(OP_BoneApplyConstraint.bl_idname,text="应用约束到骨骼",)
-    row.operator(OP_BoneRemoveConstraints.bl_idname,text="移除骨骼约束",)
+    row.operator(OP_BoneApplyConstraint.bl_idname,text=tr("应用约束到骨骼"),)
+    row.operator(OP_BoneRemoveConstraints.bl_idname,text=tr("移除骨骼约束"),)
 
 cls = [
     OP_SwapBoneConstraintArmatures,

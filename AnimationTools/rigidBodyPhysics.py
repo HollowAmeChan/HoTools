@@ -1,6 +1,7 @@
 import bpy
 import random
 from bpy.types import Operator,UILayout
+from ..i18n import tr
 
 
 # region 变量
@@ -17,6 +18,10 @@ class OP_SetViewPortShadingMode(Operator):
     bl_idname = "ho.set_viewport_shadingmode_rigidview"
     bl_label = "设置视图"
     bl_description = "设置视图预览方便看刚体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("设置视图预览方便看刚体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -31,6 +36,10 @@ class OP_AssignColorsByCollisionGroupCombination(Operator):
     bl_idname = "ho.assign_colors_by_collision_group_combination"
     bl_label = "分类碰撞体"
     bl_description = "根据碰撞组不同，对所选物体进行颜色分类"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据碰撞组不同，对所选物体进行颜色分类")
     bl_options = {'REGISTER', 'UNDO'}
 
     seed: bpy.props.IntProperty(name="Seed", default=42)  # type: ignore
@@ -60,6 +69,10 @@ class OP_CopyRigidBodySettings(Operator):
     bl_idname = "ho.copy_rigidbody_constraints_settings"
     bl_label = "复制刚体约束到所选"
     bl_description = "复制刚体约束到所选的全部空物体（不复制物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("复制刚体约束到所选的全部空物体（不复制物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -69,7 +82,7 @@ class OP_CopyRigidBodySettings(Operator):
         # 检查活动物体是否是空物体且具有刚体约束
         if active_obj is None or active_obj.type != 'EMPTY' or not active_obj.rigid_body_constraint:
             self.report(
-                {'WARNING'}, "或动物体必须是有刚体约束的空物体。Active object must be an empty with rigid body constraint settings")
+                {'WARNING'}, tr("或动物体必须是有刚体约束的空物体。Active object must be an empty with rigid body constraint settings"))
             return {'CANCELLED'}
 
         # 获取活动物体的刚体约束设置
@@ -148,6 +161,10 @@ class OP_GenerateRigidBodyConstraints(Operator):
     bl_idname = "ho.generate_rigidbody_constraints"
     bl_label = "生成刚体约束"
     bl_description = "在所选两个物体间添加刚体约束"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在所选两个物体间添加刚体约束")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -155,7 +172,7 @@ class OP_GenerateRigidBodyConstraints(Operator):
 
         # -------- 安全检查 --------
         if len(selected_objs) != 2:
-            self.report({'ERROR'}, "请正好选择两个物体")
+            self.report({'ERROR'}, tr("请正好选择两个物体"))
             return {'CANCELLED'}
 
         obj_a, obj_b = selected_objs
@@ -197,24 +214,24 @@ class OP_GenerateRigidBodyConstraints(Operator):
 
 def drawRigidBodyPhysicsPanel(layout:UILayout, context):
     # row = layout.row(align=True)
-    # row.label(text="刚体物理相关")
+    # row.label(text=tr("刚体物理相关"))
     # row.operator(
-    #     OP_SetViewPortShadingMode.bl_idname, text="刚体预览")
+    #     OP_SetViewPortShadingMode.bl_idname, text=tr("刚体预览"))
 
     # col = layout.column(align=True)
     # row = col.row(align=True)
-    # row.prop(context.scene.rigidbody_world, "enabled", text="刚体世界")
+    # row.prop(context.scene.rigidbody_world, "enabled", text=tr("刚体世界"))
     # if context.scene.rigidbody_world.enabled:
     #     # 使用指向 frame_end 属性的路径来绘制属性
     #     row.prop(context.scene.rigidbody_world.point_cache,
     #                 "frame_end", text="End Frame")
     # col.operator(
-    #     OP_CopyRigidBodySettings.bl_idname, text="复制刚体约束到所选")
-    # col.operator("rigidbody.object_settings_copy", text="复制刚体到所选")
+    #     OP_CopyRigidBodySettings.bl_idname, text=tr("复制刚体约束到所选"))
+    # col.operator("rigidbody.object_settings_copy", text=tr("复制刚体到所选"))
     # col.operator(
-    #     OP_AssignColorsByCollisionGroupCombination.bl_idname, text="刚体组颜色刷新")
+    #     OP_AssignColorsByCollisionGroupCombination.bl_idname, text=tr("刚体组颜色刷新"))
     row = layout.row(align=True)
-    row.operator(OP_GenerateRigidBodyConstraints.bl_idname, text="生成刚体约束")
+    row.operator(OP_GenerateRigidBodyConstraints.bl_idname, text=tr("生成刚体约束"))
 
 
 

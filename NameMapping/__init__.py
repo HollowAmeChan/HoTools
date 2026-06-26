@@ -7,6 +7,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 import subprocess
 from ..BoneTools import humanoid_auto_mapping
+from ..i18n import tr
 
 
 
@@ -109,6 +110,10 @@ class OP_Mapping_SwapList(Operator):
     bl_idname = "ho.mapping_swaplist"
     bl_label = "Swap Mapping"
     bl_description = "交换列表"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("交换列表")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -148,6 +153,10 @@ class OP_Mapping_RemoveListItems(Operator):
     bl_idname = "ho.mapping_removelistitems"
     bl_label = "删除勾选"
     bl_description = "删除列表中所有勾选对象"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除列表中所有勾选对象")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -166,6 +175,10 @@ class OP_Mapping_ClearItems(Operator):
     bl_idname = "ho.mapping_clearlistitems"
     bl_label = "清空列表"
     bl_description = "清空列表中所有的对象"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空列表中所有的对象")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -182,6 +195,10 @@ class OP_Mapping_MoveUpItems(Operator):
     bl_idname = "ho.mapping_move_up_listitems"
     bl_label = "上移所选"
     bl_description = "将列表中勾选的对象向上移动"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将列表中勾选的对象向上移动")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -201,6 +218,10 @@ class OP_Mapping_MoveDownItems(Operator):
     bl_idname = "ho.mapping_move_down_listitems"
     bl_label = "下移所选"
     bl_description = "将列表中勾选的对象向下移动"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将列表中勾选的对象向下移动")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -219,6 +240,10 @@ class OP_Mapping_MoveTopItems(Operator):
     bl_idname = "ho.mapping_move_top_listitems"
     bl_label = "置顶所选"
     bl_description = "将列表中勾选的对象置顶"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将列表中勾选的对象置顶")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -240,6 +265,10 @@ class OP_Mapping_MoveBottomItems(Operator):
     bl_idname = "ho.mapping_move_bottom_listitems"
     bl_label = "置底所选"
     bl_description = "将列表中勾选的对象置底"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将列表中勾选的对象置底")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -329,12 +358,12 @@ class OP_Mapping_CopyListToClipboard(bpy.types.Operator):
             items = [i.name for i in context.scene.ho_mapping_searchlist]
 
         if not items:
-            self.report({'WARNING'}, "列表为空")
+            self.report({'WARNING'}, tr("列表为空"))
             return {'CANCELLED'}
 
         text = "\n".join(items)
         copy_to_clipboard(text)
-        self.report({'INFO'}, f"{len(items)} 行已复制到剪贴板")
+        self.report({'INFO'}, tr("{0} 行已复制到剪贴板").format(len(items)))
         return {'FINISHED'}
 
 
@@ -354,7 +383,7 @@ class OP_Mapping_PasteListFromClipboard(bpy.types.Operator):
     def execute(self, context):
         lines = paste_from_clipboard()
         if not lines:
-            self.report({'ERROR'}, "剪贴板为空或无法访问,尝试使用ctrlshiftV粘贴到其他地方后重新剪切")
+            self.report({'ERROR'}, tr("剪贴板为空或无法访问,尝试使用ctrlshiftV粘贴到其他地方后重新剪切"))
             return {'CANCELLED'}
 
         lst = (context.scene.ho_mapping_targetlist
@@ -368,7 +397,7 @@ class OP_Mapping_PasteListFromClipboard(bpy.types.Operator):
             item = lst.add()
             _set_mapping_item(item, name, self.isTargetList)
 
-        self.report({'INFO'}, f"成功粘贴 {len(lines)} 行")
+        self.report({'INFO'}, tr("成功粘贴 {0} 行").format(len(lines)))
         return {'FINISHED'}
     
 class OT_Mapping_OpenTemplateFile(Operator):
@@ -384,7 +413,7 @@ class OT_Mapping_OpenTemplateFile(Operator):
         abs_path = os.path.join(base_dir, rel_path)
 
         if not os.path.exists(abs_path):
-            self.report({'ERROR'}, f"文件不存在: {abs_path}")
+            self.report({'ERROR'}, tr("文件不存在: {0}").format(abs_path))
             return {'CANCELLED'}
         os.startfile(abs_path)
         return {'FINISHED'}
@@ -394,6 +423,10 @@ class OP_Mapping_AddItem(Operator):
     bl_idname = "ho.mapping_additem"
     bl_label = "添加到列表"
     bl_description = "所选数据添加到列表,自动根据当前模式，识别选中物体对应的的活动数据"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("所选数据添加到列表,自动根据当前模式，识别选中物体对应的的活动数据")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -441,6 +474,10 @@ class OP_Mapping_RemoveItem(Operator):
     bl_idname = "ho.mapping_removeitem"
     bl_label = "从列表删除"
     bl_description = "删除被勾选的对象"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除被勾选的对象")
     bl_options = {'REGISTER', 'UNDO'}
     isTargetList:BoolProperty(description="是否为目标列表",default=False) # type: ignore
 
@@ -694,6 +731,10 @@ class OP_Mapping_BatchRename(Operator):
     bl_idname = "ho.mapping_batchrename"
     bl_label = "批量重命名"
     bl_description = "根据选择的模式与列表内容，重命名对象的数据"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据选择的模式与列表内容，重命名对象的数据")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -714,7 +755,7 @@ class OP_Mapping_BatchRename(Operator):
         #执行重命名
         for obj in objs:
             if func(obj,context.scene.ho_mapping_targetlist,context.scene.ho_mapping_searchlist):
-                self.report({'WARNING'}, "重命名失败")
+                self.report({'WARNING'}, tr("重命名失败"))
                 return {'CANCELLED'}
 
         return {'FINISHED'}
@@ -724,6 +765,10 @@ class OP_Mapping_AutoHumanoid(Operator):
     bl_idname = "ho.mapping_auto_humanoid"
     bl_label = "自动Humanoid"
     bl_description = "计算左侧列表，自动填入humannoid骨骼名称在右侧列表"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("计算左侧列表，自动填入humannoid骨骼名称在右侧列表")
     bl_options = {'REGISTER', 'UNDO'}
 
     clear_before: BoolProperty(
@@ -735,12 +780,12 @@ class OP_Mapping_AutoHumanoid(Operator):
         scene = context.scene
 
         if scene.ho_mapping_type != 'ARMATURE_BONE_NAME':
-            self.report({'ERROR'}, "请先将映射类型切换为骨骼名称")
+            self.report({'ERROR'}, tr("请先将映射类型切换为骨骼名称"))
             return {'CANCELLED'}
 
         source_names = [item.name for item in scene.ho_mapping_searchlist if item.name.strip()]
         if not source_names:
-            self.report({'ERROR'}, "请先将源骨骼名称放在左侧列表中")
+            self.report({'ERROR'}, tr("请先将源骨骼名称放在左侧列表中"))
             return {'CANCELLED'}
 
         result = humanoid_auto_mapping.auto_map_source_names_to_humanoid(source_names)
@@ -770,7 +815,7 @@ class OP_Mapping_AutoHumanoid(Operator):
         miss_count = len(result.unmatched_sources)
 
         if match_count == 0:
-            self.report({'WARNING'}, "未找到Humanoid匹配")
+            self.report({'WARNING'}, tr("未找到Humanoid匹配"))
             return {'CANCELLED'}
 
         message = f"已填充 {match_count} 个目标名称"
@@ -795,8 +840,8 @@ class NameMappingTools(Panel):
         scene = context.scene
         # 左右标题
         row = layout.row(align=True)
-        row.label(text="查找")
-        row.label(text="替换")
+        row.label(text=tr("查找"))
+        row.label(text=tr("替换"))
 
         row = layout.row(align=True)
 
@@ -884,7 +929,7 @@ class NameMappingTools(Panel):
         row.operator(OP_Mapping_SwapList.bl_idname, text="", icon="MOD_MIRROR",)
         if scene.ho_mapping_type == 'ARMATURE_BONE_NAME':
             row.operator(OP_Mapping_AutoHumanoid.bl_idname, text="", icon="ARMATURE_DATA")
-        row.operator(OP_Mapping_BatchRename.bl_idname, text="重命名")
+        row.operator(OP_Mapping_BatchRename.bl_idname, text=tr("重命名"))
 
         row2 = row.row(align=True)  # 保存和加载预设的按钮
         row2.operator(OT_Mapping_OpenTemplateFile.bl_idname,text="",icon="HELP")

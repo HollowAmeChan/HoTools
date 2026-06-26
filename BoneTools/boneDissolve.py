@@ -3,6 +3,7 @@ import numpy as np
 import math
 from bpy.types import Operator
 from bpy.props import BoolProperty,IntProperty,FloatProperty
+from ..i18n import tr
 
 
 def reg_props():
@@ -176,6 +177,10 @@ class OP_DissolveBoneWithWeight(Operator):
     bl_idname = "ho.dissolvebone_withweight"
     bl_label = "融并骨骼与权重"
     bl_description = "！无法处理镜像骨骼！面板按钮较为卡顿,不建议长期展示"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("！无法处理镜像骨骼！面板按钮较为卡顿,不建议长期展示")
     bl_options = {'REGISTER', 'UNDO'}
 
     only_selected:BoolProperty(name="仅选择的物体",description="未被选中的物体将保留权重，但是由于骨骼已经消失将不再受到控制", default=False) # type: ignore
@@ -261,7 +266,7 @@ class OP_DissolveBoneWithWeight(Operator):
                         break
 
         else:
-            self.report({'ERROR'}, "不支持的对象")
+            self.report({'ERROR'}, tr("不支持的对象"))
             return {'CANCELLED'}
         #清洗处理列表
         if self.only_selected:
@@ -274,7 +279,7 @@ class OP_DissolveBoneWithWeight(Operator):
 
         #检查选择的骨骼是否合乎融并的需求
         if len(bones)==1:
-            self.report({'ERROR'}, "只有一个选中的骨骼")
+            self.report({'ERROR'}, tr("只有一个选中的骨骼"))
             return {'CANCELLED'}
         bpy.context.view_layer.objects.active = armature_obj
         DissolveBoneCore.set_object_mode(armature_obj,'EDIT')
@@ -288,7 +293,7 @@ class OP_DissolveBoneWithWeight(Operator):
             if (edit_bones[bn].parent is None) or (edit_bones[bn].parent.name not in bn_set)
         ]
         if len(roots) != 1:
-            self.report({'ERROR'}, f"必须只有一个骨骼的父级(parent)不在选集中，当前找到 {len(roots)} 个")
+            self.report({'ERROR'}, tr("必须只有一个骨骼的父级(parent)不在选集中，当前找到 {0} 个").format(len(roots)))
             return {'CANCELLED'}
 
         # 2) 每个非根骨骼必须 parent 在集合内
@@ -311,7 +316,7 @@ class OP_DissolveBoneWithWeight(Operator):
             child_in_set = [c for c in edit_bones[bn].children if c.name in bn_set]
             if len(child_in_set) > 1:
                 names = [c.name for c in child_in_set]
-                self.report({'ERROR'}, f"骨链在 “{bn}” 处分叉，子骨骼：{names}")
+                self.report({'ERROR'}, tr("骨链在 “{0}” 处分叉，子骨骼：{1}").format(bn, names))
                 return {'CANCELLED'}
 
         #创建新的骨骼
@@ -332,7 +337,7 @@ class OP_DissolveBoneWithWeight(Operator):
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
             DissolveBoneCore.set_object_mode(original_active,'WEIGHT_PAINT')
-        self.report({'INFO'},"融并成功")
+        self.report({'INFO'},tr("融并成功"))
 
     
         return {'FINISHED'}

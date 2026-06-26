@@ -12,6 +12,7 @@ from bpy.props import (
     PointerProperty,
     StringProperty,
 )
+from ..i18n import tr
 
 if sys.version_info >= (3, 13):
     from .._Lib.py313.PIL import Image, ImageDraw
@@ -180,7 +181,7 @@ class RTBakeChannel:
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
-        col.prop(rt_settings, self.suffix_prop, text="后缀")
+        col.prop(rt_settings, self.suffix_prop, text=tr("后缀"))
 
     def get_bake_margin(self, context):
         return context.scene.render.bake.margin
@@ -230,7 +231,7 @@ class RTBakeChannel:
 
             bake_contexts = _get_bake_target_group_contexts(context)
             if not bake_contexts:
-                operator.report({'ERROR'}, "请先在MeshGroup中添加至少一个网格物体")
+                operator.report({'ERROR'}, tr("请先在MeshGroup中添加至少一个网格物体"))
                 return {'CANCELLED'}
 
             temp_targets = self._ensure_active_image_targets(context)
@@ -639,7 +640,7 @@ class RTBakeChannel:
 
     def _denoise_image_with_oidn(self, oidn_input, uv_padding_context, operator):
         if pyoidn is None:
-            operator.report({'WARNING'}, "未找到 pyoidn，已跳过 OIDN 降噪")
+            operator.report({'WARNING'}, tr("未找到 pyoidn，已跳过 OIDN 降噪"))
             return oidn_input
 
         input_arr = oidn_input["array"]
@@ -660,7 +661,7 @@ class RTBakeChannel:
 
             error = device.get_error()
             if error is not None:
-                operator.report({'WARNING'}, f"OIDN降噪失败: {error}")
+                operator.report({'WARNING'}, tr("OIDN降噪失败: {0}").format(error))
                 return oidn_input
 
         denoised = input_arr.copy()
@@ -882,7 +883,7 @@ class RTShadowCastChannel(RTBakeChannel):
         col = layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
-        col.prop(rt_settings, "shadowcast_light", text="光源")
+        col.prop(rt_settings, "shadowcast_light", text=tr("光源"))
 
     def get_bake_margin(self, context):
         resolution = context.scene.ho_uvtools_rt_bake_settings.resolution
@@ -907,12 +908,12 @@ class RTShadowCastChannel(RTBakeChannel):
         rt_settings = context.scene.ho_uvtools_rt_bake_settings
         lights = self._get_lights(context, rt_settings.shadowcast_light)
         if not lights:
-            operator.report({'ERROR'}, "没有可用于 ShadowCast 的灯光")
+            operator.report({'ERROR'}, tr("没有可用于 ShadowCast 的灯光"))
             return {'CANCELLED'}, None
 
         selected_objs = bake_context["objects"]
         if not selected_objs:
-            operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
+            operator.report({'ERROR'}, tr("当前MeshGroup中没有网格物体"))
             return {'CANCELLED'}, None
 
         light_state = self._isolate_lights(context, lights)
@@ -1457,7 +1458,7 @@ class RTAOChannel(RTShadowCastChannel):
     def prepare(self, context, operator, bake_context):
         selected_objs = bake_context["objects"]
         if not selected_objs:
-            operator.report({'ERROR'}, "当前MeshGroup中没有网格物体")
+            operator.report({'ERROR'}, tr("当前MeshGroup中没有网格物体"))
             return {'CANCELLED'}, None
 
         world_state = self._override_world_with_white_background(context.scene)
@@ -1670,6 +1671,10 @@ class OT_UVTools_RTBakeGroupAdd(Operator):
     bl_idname = "ho.uvtools_rt_bake_group_add"
     bl_label = "添加MeshGroup"
     bl_description = "添加一个MeshGroup"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("添加一个MeshGroup")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1686,6 +1691,10 @@ class OT_UVTools_RTBakeGroupRemove(Operator):
     bl_idname = "ho.uvtools_rt_bake_group_remove"
     bl_label = "删除MeshGroup"
     bl_description = "删除活动MeshGroup"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除活动MeshGroup")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1703,6 +1712,10 @@ class OT_UVTools_RTBakeGroupMove(Operator):
     bl_idname = "ho.uvtools_rt_bake_group_move"
     bl_label = "移动MeshGroup"
     bl_description = "移动活动MeshGroup"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("移动活动MeshGroup")
     bl_options = {'REGISTER', 'UNDO'}
 
     direction: EnumProperty(items=TARGET_MOVE_ITEMS, default='UP')  # type: ignore
@@ -1722,6 +1735,10 @@ class OT_UVTools_RTBakeTargetAddSelected(Operator):
     bl_idname = "ho.uvtools_rt_bake_target_add_selected"
     bl_label = "添加选中物体"
     bl_description = "添加当前选中的网格物体到活动MeshGroup"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("添加当前选中的网格物体到活动MeshGroup")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1750,7 +1767,7 @@ class OT_UVTools_RTBakeTargetAddSelected(Operator):
             added += 1
 
         if added == 0:
-            self.report({'INFO'}, "没有可添加的选中网格物体")
+            self.report({'INFO'}, tr("没有可添加的选中网格物体"))
         return {'FINISHED'}
 
 
@@ -1759,6 +1776,10 @@ class OT_UVTools_RTBakeTargetRemove(Operator):
     bl_idname = "ho.uvtools_rt_bake_target_remove"
     bl_label = "删除目标物体"
     bl_description = "删除活动MeshGroup中的活动目标物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除活动MeshGroup中的活动目标物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1780,6 +1801,10 @@ class OT_UVTools_RTBakeTargetMove(Operator):
     bl_idname = "ho.uvtools_rt_bake_target_move"
     bl_label = "移动目标物体"
     bl_description = "移动活动MeshGroup中的活动目标物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("移动活动MeshGroup中的活动目标物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     direction: EnumProperty(items=TARGET_MOVE_ITEMS, default='UP')  # type: ignore
@@ -1803,6 +1828,10 @@ class OT_UVTools_RTBakeTargetClear(Operator):
     bl_idname = "ho.uvtools_rt_bake_target_clear"
     bl_label = "清空MeshGroup"
     bl_description = "清空所有MeshGroup"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空所有MeshGroup")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1817,6 +1846,10 @@ class OT_UVTools_RTBakeTargetClearGroup(Operator):
     bl_idname = "ho.uvtools_rt_bake_target_clear_group"
     bl_label = "清空组内物体"
     bl_description = "清空活动MeshGroup中的所有物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空活动MeshGroup中的所有物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -1833,6 +1866,10 @@ class OT_UVTools_RTBake(Operator):
     bl_idname = "ho.uvtools_rt_bake"
     bl_label = "RT烘焙"
     bl_description = "按当前Cycles烘焙设置执行RT烘焙"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("按当前Cycles烘焙设置执行RT烘焙")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1851,15 +1888,15 @@ class OT_UVTools_RTBake(Operator):
 
         filepath = bpy.path.abspath(bake_settings.filepath)
         if not filepath:
-            self.report({'ERROR'}, "请先设置外部输出路径")
+            self.report({'ERROR'}, tr("请先设置外部输出路径"))
             return {'CANCELLED'}
 
         if not target_objects:
-            self.report({'ERROR'}, "请先在MeshGroup中添加至少一个网格物体")
+            self.report({'ERROR'}, tr("请先在MeshGroup中添加至少一个网格物体"))
             return {'CANCELLED'}
 
         if not bake_channels:
-            self.report({'ERROR'}, "请至少启用一个烘焙通道")
+            self.report({'ERROR'}, tr("请至少启用一个烘焙通道"))
             return {'CANCELLED'}
 
         original_bake_type = scene.cycles.bake_type
@@ -1879,7 +1916,7 @@ class OT_UVTools_RTBake(Operator):
             self._restore_cycles_sampling(scene, original_cycles_sampling)
             bake_settings.view_from = original_view_from
 
-        self.report({'INFO'}, f"已导出 {len(bake_channels)} 个RT烘焙通道")
+        self.report({'INFO'}, tr("已导出 {0} 个RT烘焙通道").format(len(bake_channels)))
         return {'FINISHED'}
 
     # ------------------------------------------------------------------
@@ -1935,25 +1972,25 @@ def draw_rt_bake_output(layout: bpy.types.UILayout, context):
     rt_settings = context.scene.ho_uvtools_rt_bake_settings
 
     box = layout.box()
-    box.label(text="输出")
+    box.label(text=tr("输出"))
 
     col = box.column(align=True)
-    col.prop(bake_settings, "filepath", text="路径")
+    col.prop(bake_settings, "filepath", text=tr("路径"))
     col.prop(rt_settings, "resolution")
-    col.prop(bake_settings.image_settings, "file_format", text="格式")
-    col.prop(bake_settings, "use_split_materials", text="按材质分离")
+    col.prop(bake_settings.image_settings, "file_format", text=tr("格式"))
+    col.prop(bake_settings, "use_split_materials", text=tr("按材质分离"))
     col.prop(rt_settings, "debug_output")
 
     margin_col = box.column(align=True)
     margin_col.prop(rt_settings, "margin_space")
-    margin_col.prop(bake_settings, "margin", text="边距")
+    margin_col.prop(bake_settings, "margin", text=tr("边距"))
 
 
 def draw_rt_bake_sampling(layout: bpy.types.UILayout, context):
     rt_settings = context.scene.ho_uvtools_rt_bake_settings
 
     box = layout.box()
-    box.label(text="采样")
+    box.label(text=tr("采样"))
 
     col = box.column(align=True)
     col.prop(rt_settings, "samples")
@@ -1977,7 +2014,7 @@ def draw_rt_bake_targets(layout: bpy.types.UILayout, context):
     rt_settings = scene.ho_uvtools_rt_bake_settings
 
     row = layout.row(align=True)
-    row.prop(rt_settings, "use_target_groups", text="启用分组", toggle=True)
+    row.prop(rt_settings, "use_target_groups", text=tr("启用分组"), toggle=True)
 
     box = layout.box()
 
@@ -2017,7 +2054,7 @@ def draw_rt_bake_targets(layout: bpy.types.UILayout, context):
     object_row = object_root.row(align=True)
     object_col = object_row.column()
     if active_group is None:
-        object_col.label(text="没有MeshGroup", icon="INFO")
+        object_col.label(text=tr("没有MeshGroup"), icon="INFO")
     else:
         object_col.template_list(
             HO_UL_RTBakeGroupObjectList.__name__,
@@ -2045,7 +2082,7 @@ def draw_rt_bake_channels(layout: bpy.types.UILayout, context):
     rt_settings = context.scene.ho_uvtools_rt_bake_settings
 
     box = layout.box()
-    box.label(text="通道")
+    box.label(text=tr("通道"))
 
     col = box.column(align=True)
     col.use_property_split = False
@@ -2079,7 +2116,7 @@ def draw_rt_bake_settings(layout: bpy.types.UILayout, context, use_box=True):
 
     col = root.column(align=True)
     row = col.row()
-    row.prop(bake_settings, "view_from", text="观察方位")
+    row.prop(bake_settings, "view_from", text=tr("观察方位"))
     row.active = scene.camera is not None
 
     draw_rt_bake_targets(root, context)
@@ -2090,10 +2127,10 @@ def draw_rt_bake_settings(layout: bpy.types.UILayout, context, use_box=True):
 
 def drawRTBakePanel(layout: bpy.types.UILayout, context):
     box = layout.box()
-    box.operator(OT_UVTools_RTBake.bl_idname, text="烘焙", icon="RENDER_STILL")
+    box.operator(OT_UVTools_RTBake.bl_idname, text=tr("烘焙"), icon="RENDER_STILL")
 
     if context.scene.render.engine != 'CYCLES':
-        box.label(text="请先切换到Cycles渲染器", icon="ERROR")
+        box.label(text=tr("请先切换到Cycles渲染器"), icon="ERROR")
         return
 
     draw_rt_bake_settings(layout, context)

@@ -83,6 +83,10 @@ class OP_RefreshSKCacheItems(Operator):
     bl_idname = "ho.skmanager_refresh_skitem"
     bl_label = "刷新列表"
     bl_description = "使用功能前请先刷新列表"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("使用功能前请先刷新列表")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):

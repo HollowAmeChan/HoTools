@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from mathutils.geometry import intersect_line_line_2d
 import json
+from ..i18n import tr
 
 # region 变量
 def reg_props():
@@ -28,6 +29,10 @@ class OP_ShapekeyTools_multi_generateLinkedObjects(Operator):
     bl_idname = "ho.shapekeytools_generate_linkedobjects"
     bl_label = "生成链接物体"
     bl_description = "为活动物体生成链接的形态键物体集合"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("为活动物体生成链接的形态键物体集合")
     bl_options = {'REGISTER', 'UNDO'}
 
 
@@ -57,27 +62,27 @@ class OP_ShapekeyTools_multi_generateLinkedObjects(Operator):
     def execute(self, context):
         objs = context.selected_objects
         if not objs:
-            self.report({'ERROR'}, "没有选择物体")
+            self.report({'ERROR'}, tr("没有选择物体"))
             return {'CANCELLED'}
 
         # --- 检查选择物体的合法性 ---
         shapekey_names = None
         for obj in objs:
             if obj.type != 'MESH' or not obj.data.shape_keys:
-                self.report({'ERROR'}, f"{obj.name} 缺少有效形态键")
+                self.report({'ERROR'}, tr("{0} 缺少有效形态键").format(obj.name))
                 return {'CANCELLED'}
             keys = obj.data.shape_keys.key_blocks
             if len(keys) <= 1:
-                self.report({'ERROR'}, f"{obj.name} 没有基型以外的键")
+                self.report({'ERROR'}, tr("{0} 没有基型以外的键").format(obj.name))
                 return {'CANCELLED'}
             current_names = [k.name for k in keys if k.name != 'Basis']
             if shapekey_names is None:
                 shapekey_names = current_names
             elif shapekey_names != current_names:
-                self.report({'ERROR'}, "所有选中物体的形态键必须一致")
+                self.report({'ERROR'}, tr("所有选中物体的形态键必须一致"))
                 return {'CANCELLED'}
         if not shapekey_names:
-            self.report({'ERROR'}, "没有形态键")
+            self.report({'ERROR'}, tr("没有形态键"))
             return {'CANCELLED'}
 
         # --- 创建总集合 ---
@@ -179,6 +184,10 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
     bl_idname = "ho.shapekeytools_refreshkey_from_multi"
     bl_label = "从集合刷新"
     bl_description = "从集合刷新形态键到所选的全部物体的对应形态键"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从集合刷新形态键到所选的全部物体的对应形态键")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -190,13 +199,13 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
         src_col = context.scene.hoShapekeyTools_bs_multi_col
 
         if not objs or not src_col:
-            self.report({'ERROR'}, "请选择目标物体并确保已生成集合")
+            self.report({'ERROR'}, tr("请选择目标物体并确保已生成集合"))
             return {'CANCELLED'}
 
         # 找出源集合中所有空物体（按空名区分形态键）
         emptys = [obj for obj in src_col.objects if obj.type == 'EMPTY' and obj.parent is None]
         if not emptys:
-            self.report({'ERROR'}, "集合中没有空物体")
+            self.report({'ERROR'}, tr("集合中没有空物体"))
             return {'CANCELLED'}
 
         # 遍历选中中的每个物体
@@ -210,7 +219,7 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
             for empty in emptys:
                 key_name = empty.name
                 if key_name not in key_blocks:
-                    self.report({'WARNING'}, f"{obj.name} 缺少形态键 {key_name}，已跳过")
+                    self.report({'WARNING'}, tr("{0} 缺少形态键 {1}，已跳过").format(obj.name, key_name))
                     continue
 
                 # 查找当前空物体下对应的形态键物体
@@ -224,7 +233,7 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
                         break
 
                 if not matched:
-                    self.report({'WARNING'}, f"找不到与 {obj.name} 匹配的 {key_name} 形态键物体")
+                    self.report({'WARNING'}, tr("找不到与 {0} 匹配的 {1} 形态键物体").format(obj.name, key_name))
                     continue
 
                 # 将该物体的数据拷贝回目标形态键
@@ -233,13 +242,13 @@ class OP_ShapekeyTools_multi_refreshKeysFromMulti(Operator):
 
                 # 要求网格拓扑一致
                 if len(src_mesh.vertices) != len(dst_mesh.vertices):
-                    self.report({'WARNING'}, f"{obj.name} 与 {matched.name} 拓扑不一致，跳过")
+                    self.report({'WARNING'}, tr("{0} 与 {1} 拓扑不一致，跳过").format(obj.name, matched.name))
                     continue
 
                 # 传递回形态键
                 src_keys = matched.data.shape_keys
                 if key_name not in src_keys.key_blocks:
-                    self.report({'WARNING'}, f"{matched.name} 缺少形态键 {key_name}")
+                    self.report({'WARNING'}, tr("{0} 缺少形态键 {1}").format(matched.name, key_name))
                     continue
 
                 src_shape_key = src_keys.key_blocks[key_name]
@@ -254,6 +263,10 @@ class OP_ShapekeyTools_multi_removeLinkColloection(bpy.types.Operator):
     bl_idname = "ho.shapekeytools_remove_linkcollection"
     bl_label = "删除缓存集合"
     bl_description = "彻底删除集合及所有物体和数据！"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("彻底删除集合及所有物体和数据！")
     bl_options = {'REGISTER', 'UNDO'}
 
     confirm: bpy.props.BoolProperty(default=False) # type: ignore
@@ -294,7 +307,7 @@ class OP_ShapekeyTools_multi_removeLinkColloection(bpy.types.Operator):
 
         # ----------- 最后删除集合本体 -----------
         bpy.data.collections.remove(collection)
-        self.report({'INFO'}, "集合与数据已清理完成")
+        self.report({'INFO'}, tr("集合与数据已清理完成"))
         return {'FINISHED'}
 
 def _draw_sk_multiobj(layout: UILayout,context:Context):
@@ -303,17 +316,17 @@ def _draw_sk_multiobj(layout: UILayout,context:Context):
     if context.scene.hoShapekeyTools_control_shape_key_listener:
         warn = layout.row(align=True)
         warn.alert = True
-        warn.label(text="已开启多物体同步，多选时活动键可能被同步影响", icon="ERROR")
+        warn.label(text=tr("已开启多物体同步，多选时活动键可能被同步影响"), icon="ERROR")
 
     row = layout.row(align=True)
-    row.operator(OP_ShapekeyTools_multi_generateLinkedObjects.bl_idname,text="生成链接集合",icon="LINKED")
+    row.operator(OP_ShapekeyTools_multi_generateLinkedObjects.bl_idname,text=tr("生成链接集合"),icon="LINKED")
     row.prop(context.scene,"hoShapekeyTools_bs_multi_col",text="")
     row.alert = True
     row.operator(OP_ShapekeyTools_multi_removeLinkColloection.bl_idname,text="",icon="CANCEL")
 
     row = layout.row(align=True)
     row.scale_y = 2.0
-    row.operator(OP_ShapekeyTools_multi_refreshKeysFromMulti.bl_idname,text="从集合刷新",icon="FILE_REFRESH")
+    row.operator(OP_ShapekeyTools_multi_refreshKeysFromMulti.bl_idname,text=tr("从集合刷新"),icon="FILE_REFRESH")
 
     
 

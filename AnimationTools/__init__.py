@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Panel
 from . import rigidBodyPhysics,actionProcess
+from ..i18n import tr
 
 
 # region 变量
@@ -32,7 +33,7 @@ class PL_AnimationTools(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="动画工具")
+        row.label(text=tr("动画工具"))
         row.prop(context.scene, "ho_AnimationToolsPanel_Mod", expand=True,)
         layout.separator()
         if context.scene.ho_AnimationToolsPanel_Mod == "PANEL_ANIMATIONTOOLS_ACTIONPROCESS":

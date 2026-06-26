@@ -1,5 +1,6 @@
 import bpy
 from bpy.types import Operator,UILayout
+from ..i18n import tr
 
 
 # region 变量
@@ -16,6 +17,10 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
     bl_idname = "ho.fix_scaled_animated_armature_actions"
     bl_label = "修复缩放导致的动画位移错误"
     bl_description = "修复因骨架 Object 缩放导致的所有骨骼位移动画错误（破坏性操作）"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("修复因骨架 Object 缩放导致的所有骨骼位移动画错误（破坏性操作）")
     bl_options = {'REGISTER', 'UNDO'}
 
     warning_text: bpy.props.StringProperty(
@@ -61,12 +66,12 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
 
         sx, sy, sz = arm.scale
         if not (abs(sx - sy) < 1e-6 and abs(sx - sz) < 1e-6):
-            self.report({'ERROR'}, "检测到非等比缩放，该操作不支持非等比 Scale")
+            self.report({'ERROR'}, tr("检测到非等比缩放，该操作不支持非等比 Scale"))
             return {'CANCELLED'}
 
         scale = sx
         if abs(scale - 1.0) < 1e-6:
-            self.report({'INFO'}, "骨架 Scale 已为 1，无需修复")
+            self.report({'INFO'}, tr("骨架 Scale 已为 1，无需修复"))
             return {'CANCELLED'}
 
 
@@ -98,7 +103,7 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
         if fixed_actions == 0:
             self.report(
                 {'WARNING'},
-                "未在任何 Action 中检测到可修复的骨骼位移动画（pose.bones[].location）"
+                tr("未在任何 Action 中检测到可修复的骨骼位移动画（pose.bones[].location）")
             )
             return {'CANCELLED'}
 
@@ -126,7 +131,7 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
 def drawActionProcessPanel(layout:UILayout, context):
     row = layout.row(align=True)
     row.operator(
-        OP_FixScaledAnimatedArmatureActions.bl_idname, text="修复缩放导致的动画位移错误", icon='ARMATURE_DATA')
+        OP_FixScaledAnimatedArmatureActions.bl_idname, text=tr("修复缩放导致的动画位移错误"), icon='ARMATURE_DATA')
 
 
 cls = [OP_FixScaledAnimatedArmatureActions,

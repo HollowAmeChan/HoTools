@@ -4,6 +4,7 @@ import os
 import json
 from bpy.types import Operator, UILayout, Context, PropertyGroup, UIList
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty
+from ..i18n import tr
 
 # region 变量
 
@@ -151,6 +152,10 @@ class OP_SaveRules(Operator):
     bl_idname = "ho.rename_saverules"
     bl_label = "Save Rules"
     bl_description = "保存规则重命名的规则到磁盘"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("保存规则重命名的规则到磁盘")
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore
 
@@ -185,6 +190,10 @@ class OP_LoadRules(Operator):
     bl_idname = "ho.rename_loadrules"
     bl_label = "Save Rules"
     bl_description = "从磁盘加载规则重命名的规则"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从磁盘加载规则重命名的规则")
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore
@@ -224,6 +233,10 @@ class OP_SaveChangeRules(Operator):
     bl_idname = "ho.rename_savechangerules"
     bl_label = "Save Rules"
     bl_description = "保存规则到磁盘"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("保存规则到磁盘")
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore
 
@@ -259,6 +272,10 @@ class OP_LoadChangeRules(Operator):
     bl_idname = "ho.rename_loadchangerules"
     bl_label = "Save Rules"
     bl_description = "从磁盘加载规则"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从磁盘加载规则")
     bl_options = {'REGISTER', 'UNDO'}
 
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")  # type: ignore
@@ -299,6 +316,10 @@ class OP_MoveRule(Operator):
     bl_idname = "ho.rename_moverule"
     bl_label = "Move Rule"
     bl_description = "将选择的规则移动"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将选择的规则移动")
     bl_options = {'REGISTER', 'UNDO'}
 
     mode: BoolProperty(name="Move dir 0:up 1:down",
@@ -323,6 +344,10 @@ class OP_MoveChangeRule(Operator):
     bl_idname = "ho.rename_movechangerule"
     bl_label = "Move Rule"
     bl_description = "将选择的规则移动"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将选择的规则移动")
     bl_options = {'REGISTER', 'UNDO'}
 
     mode: BoolProperty(name="Move dir 0:up 1:down",
@@ -347,6 +372,10 @@ class OP_RemoveNumberTail(Operator):
     bl_idname = "ho.rename_removenumbertail"
     bl_label = "Remove BoneName Number Tail"
     bl_description = "删除骨骼的.001等数字后缀"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除骨骼的.001等数字后缀")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -369,6 +398,10 @@ class OP_RemoveSideTail(Operator):
     bl_idname = "ho.rename_removesidetail"
     bl_label = "Remove BoneName Side Tail(.l .r .L .R)"
     bl_description = "删除骨骼的.l/r/L/R后缀"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除骨骼的.l/r/L/R后缀")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -391,6 +424,10 @@ class OP_RuleRenameBoneSelected(Operator):
     bl_idname = "ho.rename_rulerenameboneselected"
     bl_label = "链叉重命名"
     bl_description = "建议使用预设来学习用法"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("建议使用预设来学习用法")
     bl_options = {'REGISTER', 'UNDO'}
 
     def increment_string(self, s: str, times: int = 0) -> str:
@@ -566,6 +603,10 @@ class OP_AddRenamePreset(Operator):
     bl_idname = "ho.rename_add_preset"
     bl_label = "添加命名预设"
     bl_description = "快速添加常用的骨骼重命名规则组合"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("快速添加常用的骨骼重命名规则组合")
     bl_options = {'REGISTER', 'UNDO'}
 
     preset_type: bpy.props.EnumProperty(
@@ -625,7 +666,7 @@ class OP_RemoveChangeRule(Operator):
 def drawBoneRenamePanel(layout: UILayout, context: Context):
     scene = context.scene
     # ------------------------------
-    layout.label(text="批量规则：")
+    layout.label(text=tr("批量规则："))
     row = layout.row(align=True)  # 左右两列
     # 左侧UIList
     col1 = row.column()
@@ -647,14 +688,14 @@ def drawBoneRenamePanel(layout: UILayout, context: Context):
     col = layout.column(align=True)
     row1 = col.row(align=True)
     row1.scale_y = 2.0
-    row1.operator(OP_RuleRenameBoneSelected.bl_idname, text="重命名")
+    row1.operator(OP_RuleRenameBoneSelected.bl_idname, text=tr("重命名"))
     row1.operator_menu_enum(OP_AddRenamePreset.bl_idname, "preset_type", text="", icon='PRESET')
 
     row2 = col.row(align=True)
-    row2.operator(OP_RemoveNumberTail.bl_idname, text="去除数字后缀")
-    row2.operator(OP_RemoveSideTail.bl_idname, text="去除.L.R后缀")
+    row2.operator(OP_RemoveNumberTail.bl_idname, text=tr("去除数字后缀"))
+    row2.operator(OP_RemoveSideTail.bl_idname, text=tr("去除.L.R后缀"))
     # ------------------------------
-    layout.label(text="规则修改：")
+    layout.label(text=tr("规则修改："))
     row = layout.row(align=True)  # 左右两列
     # 左侧UIList
     col1 = row.column()

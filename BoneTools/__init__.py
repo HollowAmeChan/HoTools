@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Panel,Menu
 from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve
+from ..i18n import tr
 
 
 # region 变量
@@ -33,7 +34,7 @@ class PL_BoneTools(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="骨骼操作")
+        row.label(text=tr("骨骼操作"))
         row.prop(context.scene, "ho_BoneToolsPanel_Mod", expand=True,)
         if context.scene.ho_BoneToolsPanel_Mod == "PANEL_BONE_HUMANOID":
             boneHumanoid.drawBoneHumanoidPanel(self.layout, context)

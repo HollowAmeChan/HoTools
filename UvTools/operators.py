@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from collections import defaultdict
 from bpy.app.handlers import persistent
+from ..i18n import tr
 
 UV_LISTENER_CACHE = {
     "active_uv": None,
@@ -162,6 +163,10 @@ class OP_UVTools_ReplaceFromLayer(Operator):
     bl_idname = "ho.uvtools_replacefromlayer"
     bl_label = "UV从层替换"
     bl_description = "类似从形态键混合,所选的顶点的UV,使用其他UV层的UV替换"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("类似从形态键混合,所选的顶点的UV,使用其他UV层的UV替换")
     bl_options = {'REGISTER', 'UNDO'}
 
     layer_name: StringProperty(
@@ -179,7 +184,7 @@ class OP_UVTools_ReplaceFromLayer(Operator):
         layout.prop_search(
             self, "layer_name",
             context.object.data, "uv_layers",
-            text="源UV层"
+            text=tr("源UV层")
         )
 
     def invoke(self, context, event):
@@ -195,7 +200,7 @@ class OP_UVTools_ReplaceFromLayer(Operator):
 
     def execute(self, context):
         if not context.scene.tool_settings.use_uv_select_sync:
-            self.report({'ERROR'}, "操作需要开启UV同步模式")
+            self.report({'ERROR'}, tr("操作需要开启UV同步模式"))
             return {'CANCELLED'}
 
         obj = context.active_object
@@ -203,7 +208,7 @@ class OP_UVTools_ReplaceFromLayer(Operator):
 
         # 验证源UV层
         if not self.layer_name or self.layer_name not in mesh.uv_layers:
-            self.report({'ERROR'}, "无效的UV层名称")
+            self.report({'ERROR'}, tr("无效的UV层名称"))
             return {'CANCELLED'}
 
         # 获取bmesh数据
@@ -218,7 +223,7 @@ class OP_UVTools_ReplaceFromLayer(Operator):
         dst_layer = uv_layers.active
 
         if not src_layer or not dst_layer:
-            self.report({'ERROR'}, "找不到UV层")
+            self.report({'ERROR'}, tr("找不到UV层"))
             return {'CANCELLED'}
 
         # 遍历所有面的循环
@@ -237,9 +242,9 @@ class OP_UVTools_ReplaceFromLayer(Operator):
         if updated:
             # 更新网格数据
             bmesh.update_edit_mesh(mesh)
-            self.report({'INFO'}, f"已从 '{self.layer_name}' 更新UV")
+            self.report({'INFO'}, tr("已从 '{0}' 更新UV").format(self.layer_name))
         else:
-            self.report({'WARNING'}, "没有选中的顶点需要更新")
+            self.report({'WARNING'}, tr("没有选中的顶点需要更新"))
 
         return {'FINISHED'}
 
@@ -332,6 +337,10 @@ class OP_UVTools_FitToFirstQuadrant(Operator):
     bl_idname = "ho.uvtools_fit_to_first_quadrant"
     bl_label = "选中UV适配到第一象限"
     bl_description = "将选中的UV整体移动并等比缩放到0~1第一象限"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将选中的UV整体移动并等比缩放到0~1第一象限")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -378,7 +387,7 @@ class OP_UVTools_FitToFirstQuadrant(Operator):
                         collected.append((obj, uv_layer, loop))
 
         if not collected:
-            self.report({'WARNING'}, "没有选中的UV")
+            self.report({'WARNING'}, tr("没有选中的UV"))
             return {'CANCELLED'}
 
         # ----------------------------
@@ -398,7 +407,7 @@ class OP_UVTools_FitToFirstQuadrant(Operator):
         height = max_y - min_y
 
         if width == 0 or height == 0:
-            self.report({'WARNING'}, "选中UV尺寸为0，无法缩放")
+            self.report({'WARNING'}, tr("选中UV尺寸为0，无法缩放"))
             return {'CANCELLED'}
 
         # 等比缩放
@@ -424,6 +433,10 @@ class OP_UVTools_UV2SK(Operator):
     bl_idname = "ho.uvtools_uv2sk"
     bl_label = "UV转形态键"
     bl_description = "将当前UV层的顶点坐标转换为形态键"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将当前UV层的顶点坐标转换为形态键")
     bl_options = {'REGISTER', 'UNDO'}
 
     plane: EnumProperty(
@@ -455,14 +468,14 @@ class OP_UVTools_UV2SK(Operator):
         obj = context.active_object
 
         if not obj or obj.type != 'MESH':
-            self.report({'WARNING'}, "请先选择一个网格物体作为活动物体")
+            self.report({'WARNING'}, tr("请先选择一个网格物体作为活动物体"))
             return {'CANCELLED'}
 
         mesh = obj.data
 
         uv_layer = mesh.uv_layers.active
         if not uv_layer:
-            self.report({'WARNING'}, "活动物体没有UV层")
+            self.report({'WARNING'}, tr("活动物体没有UV层"))
             return {'CANCELLED'}
 
         # 如果没有 shape key，先创建 Basis
@@ -504,7 +517,7 @@ class OP_UVTools_UV2SK(Operator):
                 co.y = 0.0
                 co.z = avg_v
 
-        self.report({'INFO'}, "已根据活动UV层生成形态键")
+        self.report({'INFO'}, tr("已根据活动UV层生成形态键"))
 
         return {'FINISHED'}
 
@@ -534,7 +547,7 @@ class IMAGE_MT_uvs_context_hotools(Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text="适配到象限", icon="FULLSCREEN_ENTER")
+        layout.operator(OP_UVTools_FitToFirstQuadrant.bl_idname, text=tr("适配到象限"), icon="FULLSCREEN_ENTER")
 
 def draw_in_IMAGE_MT_uvs_context_menu(self,context: bpy.types.Context):
     """UV编辑器右键菜单"""

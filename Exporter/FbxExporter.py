@@ -8,6 +8,7 @@ from mathutils import Vector
 from types import SimpleNamespace
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
+from ..i18n import tr
 
 
 def reg_props():
@@ -293,7 +294,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 break
         if not preset_file:
             if report_errors:
-                self.report({'ERROR'}, f"找不到预设文件: {self.preset}.py")
+                self.report({'ERROR'}, tr("找不到预设文件: {0}.py").format(self.preset))
             return None
 
         # 只抽取 op.xxx 赋值语句
@@ -389,7 +390,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        self.report({"INFO"},"导出成功")
+        self.report({"INFO"},tr("导出成功"))
         return {'FINISHED'}
 
     
@@ -404,10 +405,10 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     def draw(self, context):
         layout = self.layout
         layout.prop(self,"preset")
-        layout.label(text="↑↑↑此处预设与blender fbx导出共享↑↑↑")
+        layout.label(text=tr("↑↑↑此处预设与blender fbx导出共享↑↑↑"))
         layout.label(text="==================================")
-        layout.label(text="若没有选项，需要手动保存一个预设")
-        layout.label(text="在blender原本的fbx导出界面添加预设")
+        layout.label(text=tr("若没有选项，需要手动保存一个预设"))
+        layout.label(text=tr("在blender原本的fbx导出界面添加预设"))
         layout.label(text="==================================")
         layout.prop(self,"cheekBoneKeepRotation")
         
@@ -489,7 +490,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         except Exception as e:
             report_exception(self, "预处理失败", e)
             return {'CANCELLED'}
-        self.report({"INFO"}, "预处理完成")
+        self.report({"INFO"}, tr("预处理完成"))
         return {'FINISHED'}
     
     def draw(self, context):

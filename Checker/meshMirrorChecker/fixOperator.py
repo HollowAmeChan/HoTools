@@ -4,6 +4,7 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 import bmesh
 from collections import defaultdict
 from mathutils import Vector
+from ...i18n import tr
 
 def reg_props():
 
@@ -17,6 +18,10 @@ class OP_Checker_getActiveVertexIndex(Operator):
     bl_idname = "ho.checker_get_activevertex_index"
     bl_label = "选择点"
     bl_description = "填入活动顶点index"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("填入活动顶点index")
     bl_options = {'REGISTER', 'UNDO'}
 
     is_target:BoolProperty(default=False) # type: ignore
@@ -44,6 +49,10 @@ class OP_Checker_swapMirrorVertexIndex(Operator):
     bl_idname = "ho.checker_swap_mirrorvertex_index"
     bl_label = "交换"
     bl_description = "交换index"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("交换index")
     bl_options = {'REGISTER', 'UNDO'}
     @classmethod
     def poll(cls, context):
@@ -60,6 +69,10 @@ class OP_Checker_forceVertexMirror(Operator):
     bl_idname = "ho.checker_force_vertex_mirror"
     bl_label = "点强制对称"
     bl_description = "点强制对称"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("点强制对称")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -78,7 +91,7 @@ class OP_Checker_forceVertexMirror(Operator):
         mirrorAxis = context.scene.ho_MirrorCheckerAxis
         
         if baseV_index >= len(bm.verts) or targetV_index >= len(bm.verts):
-            self.report({'ERROR'}, "顶点索引超出范围")
+            self.report({'ERROR'}, tr("顶点索引超出范围"))
             return {'CANCELLED'}
 
         base = bm.verts[baseV_index]
@@ -99,6 +112,10 @@ class OP_Checker_AutoForceVertexMirror(Operator):
     bl_idname = "ho.checker_auto_force_vertex_mirror"
     bl_label = "自动修复对称"
     bl_description = "使用UV快速匹配修复顶点对称"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("使用UV快速匹配修复顶点对称")
     bl_options = {'REGISTER', 'UNDO'}
 
     isonlyselect:BoolProperty(default=True) # type: ignore
@@ -207,7 +224,7 @@ class OP_Checker_AutoForceVertexMirror(Operator):
         # --- UV预处理加速 --- #
         uv_map,uv_hash=self.calc_avg_uv(obj)
         if not uv_map:
-            self.report({"ERROR"},"无UV层")
+            self.report({"ERROR"},tr("无UV层"))
             return {'CANCELLED'}
 
         bm=bmesh.from_edit_mesh(mesh)
@@ -288,7 +305,7 @@ class OP_Checker_AutoForceVertexMirror(Operator):
                 repaired+=1
         bm.normal_update()
         bmesh.update_edit_mesh(mesh)
-        self.report({'INFO'},f"增强版对称修复完成：{repaired} 点")
+        self.report({'INFO'},tr("增强版对称修复完成：{0} 点").format(repaired))
         return {'FINISHED'}
 
 cls = [OP_Checker_getActiveVertexIndex,OP_Checker_forceVertexMirror,OP_Checker_swapMirrorVertexIndex,

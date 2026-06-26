@@ -117,7 +117,7 @@ Drawn at the **top** of `AddonPreference.draw()`.
 
 **Run:** `python i18n/tools/extract.py` (rerun after adding any new Chinese string). `i18n/tools/` is dev-only — add to the release-workflow excludes in Phase 5.
 
-### Phase 3 — Static UI migration (panels & operators, per-module) 🚧 in progress
+### Phase 3 — Static UI migration (panels & operators, per-module) ✅ (2026-06-26)
 
 Order by user visibility / size. One module per PR; **run GitNexus `impact` before editing each module's registered symbols** (per repo rules) and `detect_changes` before commit.
 
@@ -128,8 +128,19 @@ Order by user visibility / size. One module per PR; **run GitNexus `impact` befo
 - [ ] 3. `ShapekeyTools`/`VertexGroupTools`/`VertexColorTools` —
   - **VertexColorTools ✅** (2026-06-25: panel + 7 operators across `ops_base`/`ops_templates`/`ops_utils`/`bake_normal`; `description()` classmethods, `report()`/`RuntimeError` wrapped, f-string→`{i}` templates, 37 keys EN+JA; all compile, idempotent). _Known minor gap: `bake_normal.MODE_ITEMS` dialog labels left unwrapped (dynamic loop var, not auto-extractable)._
   - **ShapekeyTools 🚧** (2026-06-25: `__init__` panel title + `manager.py` reorder `report()` wrapped; 15 manager keys translated EN+JA. **Pending: `operators.py` (~82 KB, ~49 sites), `transfer.py` (~18), `multiObjectFlow.py` (~9), and `description()`/call-site `text=` for manager's 13 icon-only list ops.** _Gap: `ho_ShapekeyToolsPanel_Mod` enum-`expand` labels `管理`/`传递` aren't extractable/call-site-overridable → native-bridge only._)
-  - **VertexGroupTools** (`vertexGroupOperators.py` ~94 KB, ~83 sites): pending.
-- [ ] 4. `BoneTools`/`UvTools`/`MeshTools` · [ ] 5. `FastOperators.py` · [ ] 6. `AnimationTools`/`Exporter`/`NameMapping`/`Checker`/`Rbf`/`exIcon`
+  - **VertexGroupTools ✅** (`vertexGroupOperators.py`: codemod-wrapped, 83 `text=`/`report` + 20 `description()`).
+- [x] **4. `BoneTools`/`UvTools`/`MeshTools` ✅ · 5. `FastOperators.py` ✅ · 6. `AnimationTools`/`Exporter`/`NameMapping`/`Checker`/`Rbf`/`exIcon` ✅** — completed 2026-06-26 via verified codemod (see below).
+
+**Phase 3 completion (2026-06-26).** Remaining modules wrapped with a conservative, idempotent **AST/regex codemod** (`scratchpad/wrap_tr.py` + `fstr_tr.py` + `robust_fstr.py`), each pass `ast.parse`-validated before write, then `py_compile` on all 120 addon files + extractor `--check`:
+
+- **`text="…"` / `.report({…}, "…")` constant literals** → `tr(...)` (CJK-gated, triple-quote/f-string-safe, idempotent — already-wrapped sites never re-match).
+- **Operator `bl_description = "…"`** → added a §4 `@classmethod description()` returning `tr(...)` (guarded against duplicates).
+- **Dynamic f-strings** in `text=`/`report` → `tr("…{0}…").format(...)` templates: simple fields via regex, complex (format-specs/subscripts/conversions) via an **AST converter** using `ast.unparse` + UTF-8 byte→char span mapping.
+- **`OmniNode/NodeTree/GraphNode.py`** (missed in Phase 4) also wrapped.
+- `bl_label`-only strings (icon buttons, enum-`expand` items, property `name=`/`description=`, socket-type labels) are **not** call-site-wrapped by design — they're frozen at register and localize via the `bpy.app.translations` native bridge in AUTO/follow-Blender mode (the dicts are filled, so this works). Independent-switch tooltip localization for pure icon-ops is the documented residual gap.
+- **Result:** all 120 files compile; extractor idempotent, **orphan=0**, **1336 keys** (the +84 new f-string templates are stubbed for translation). Coverage 1252/1336 (93.7%) — the stubs are the only untranslated keys.
+
+**Earlier per-module notes (modules 1–3, hand-wrapped):**
 
 **Coverage after module 2:** 105/1215 keys translated (8.6%). **Translation-scope decision:** with 1215 keys (many paragraph-length tooltips), each module fills the _visible_ surface (titles/buttons/labels/enum/messages/operator tooltips) now; long descriptive `description=` strings stay as stubs and fall back to Chinese gracefully — a dedicated translation pass (or OpenCode delegation, per CLAUDE.md) can complete them later. **Dev helper:** `scratchpad/fill.py` applies a `{key:(en,ja)}` mapping via the extractor's own render (stays idempotent); not shipped.
 

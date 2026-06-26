@@ -8,6 +8,7 @@ import numpy as np
 from bpy.props import BoolProperty, FloatVectorProperty, IntProperty
 from bpy.types import Context, Operator, UILayout
 from gpu_extras.batch import batch_for_shader
+from ..i18n import tr
 
 
 DEFAULT_SELECTION_WIDTH = 2048
@@ -1308,6 +1309,10 @@ class OP_UVTools_ImageBoxSelect(Operator):
     bl_idname = "ho.uvtools_image_box_select"
     bl_label = "编辑图像选区"
     bl_description = "在图像编辑器中用框选或画笔编辑 HoTools 固定分辨率硬选区"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在图像编辑器中用框选或画笔编辑 HoTools 固定分辨率硬选区")
     bl_options = {"REGISTER"}
 
     draw_handle_view = None
@@ -1672,6 +1677,10 @@ class OP_UVTools_ImageRefreshSelectionCanvas(Operator):
     bl_idname = "ho.uvtools_image_refresh_selection_canvas"
     bl_label = "刷新选区画布"
     bl_description = "按当前画布宽高重采样 HoTools 硬选区"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("按当前画布宽高重采样 HoTools 硬选区")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -1689,6 +1698,10 @@ class OP_UVTools_ImageClearSelection(Operator):
     bl_idname = "ho.uvtools_image_clear_selection"
     bl_label = "清空选区"
     bl_description = "清空 HoTools 当前硬选区"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空 HoTools 当前硬选区")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -1703,6 +1716,10 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
     bl_idname = "ho.uvtools_image_fill_selection_from_selected_uv"
     bl_label = "从选中UV填充遮罩"
     bl_description = "用当前选中的 UV 面填充 HoTools 当前硬选区遮罩；Shift 叠加，Ctrl 叠减"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("用当前选中的 UV 面填充 HoTools 当前硬选区遮罩；Shift 叠加，Ctrl 叠减")
     bl_options = {"REGISTER", "UNDO"}
 
     extend: BoolProperty(
@@ -1727,13 +1744,13 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
 
         polygons = _selected_uv_polygons_from_edit_mesh(context, objects)
         if not polygons:
-            self.report({"WARNING"}, "没有选中的 UV 面")
+            self.report({"WARNING"}, tr("没有选中的 UV 面"))
             return {"CANCELLED"}
 
         selection = SelectionOverlay.get_selection(context)
         mask = _uv_polygons_to_mask(polygons, selection.width, selection.height)
         if not np.any(mask):
-            self.report({"WARNING"}, "选中的 UV 面没有覆盖当前选区画布")
+            self.report({"WARNING"}, tr("选中的 UV 面没有覆盖当前选区画布"))
             return {"CANCELLED"}
 
         if self.subtract:
@@ -1748,7 +1765,7 @@ class OP_UVTools_ImageFillSelectionFromSelectedUv(Operator):
 
         selection.apply_mask(mask, mode)
         SelectionOverlay.refresh(context)
-        self.report({"INFO"}, f"已从 {len(polygons)} 个 UV 面{action}遮罩")
+        self.report({"INFO"}, tr("已从 {0} 个 UV 面{1}遮罩").format(len(polygons), action))
         return {"FINISHED"}
 
 
@@ -1756,12 +1773,16 @@ class OP_UVTools_ImageExpandSelectionMask(Operator):
     bl_idname = "ho.uvtools_image_expand_selection_mask"
     bl_label = "拓展蒙版"
     bl_description = "将当前 HoTools 硬选区蒙版向外拓展 1 像素"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将当前 HoTools 硬选区蒙版向外拓展 1 像素")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         selection = SelectionOverlay.get_selection(context)
         if not selection.expand():
-            self.report({"WARNING"}, "当前蒙版为空或已经无法继续拓展")
+            self.report({"WARNING"}, tr("当前蒙版为空或已经无法继续拓展"))
             return {"CANCELLED"}
 
         SelectionOverlay.refresh(context)
@@ -1772,12 +1793,16 @@ class OP_UVTools_ImageShrinkSelectionMask(Operator):
     bl_idname = "ho.uvtools_image_shrink_selection_mask"
     bl_label = "收缩蒙版"
     bl_description = "将当前 HoTools 硬选区蒙版向内收缩 1 像素"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将当前 HoTools 硬选区蒙版向内收缩 1 像素")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         selection = SelectionOverlay.get_selection(context)
         if not selection.shrink():
-            self.report({"WARNING"}, "当前蒙版为空或已经无法继续收缩")
+            self.report({"WARNING"}, tr("当前蒙版为空或已经无法继续收缩"))
             return {"CANCELLED"}
 
         SelectionOverlay.refresh(context)
@@ -1788,6 +1813,10 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
     bl_idname = "ho.uvtools_image_transform_masked_pixels"
     bl_label = "变换遮罩像素"
     bl_description = "扣出当前遮罩覆盖的像素，移动/缩放/旋转后按 Enter 应用"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("扣出当前遮罩覆盖的像素，移动/缩放/旋转后按 Enter 应用")
     bl_options = {"REGISTER", "UNDO"}
 
     area = None
@@ -2001,7 +2030,7 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
 
         if not self.transform.alpha_composite_to_image(self.center, self.basis_x, self.basis_y):
             self.transform.restore()
-            self.report({"WARNING"}, "变换区域没有落在当前图像内")
+            self.report({"WARNING"}, tr("变换区域没有落在当前图像内"))
             self._clear_draw_handlers()
             self._tag_redraw()
             return {"CANCELLED"}
@@ -2026,17 +2055,17 @@ class OP_UVTools_ImageTransformMaskedPixels(Operator):
     def invoke(self, context, event):
         image = _get_active_image(context)
         if image is None:
-            self.report({"ERROR"}, "当前 Image Editor 没有活动图像")
+            self.report({"ERROR"}, tr("当前 Image Editor 没有活动图像"))
             return {"CANCELLED"}
 
         selection = SelectionOverlay.current_selection()
         if selection is None or not np.any(selection.mask):
-            self.report({"ERROR"}, "当前没有可用遮罩")
+            self.report({"ERROR"}, tr("当前没有可用遮罩"))
             return {"CANCELLED"}
 
         transform = MaskedPixelTransform.cut_from_image(image, selection)
         if transform is None:
-            self.report({"ERROR"}, "当前遮罩没有覆盖图像像素")
+            self.report({"ERROR"}, tr("当前遮罩没有覆盖图像像素"))
             return {"CANCELLED"}
 
         transform.texture = _texture_from_pixels(transform.pixels)
@@ -2097,6 +2126,10 @@ class OP_UVTools_ImageSetSelectionCanvasDefault(Operator):
     bl_idname = "ho.uvtools_image_set_selection_canvas_default"
     bl_label = "默认选区画布"
     bl_description = "将目标选区画布尺寸设为 2048 x 2048"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将目标选区画布尺寸设为 2048 x 2048")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -2110,12 +2143,16 @@ class OP_UVTools_ImageSetSelectionCanvasFromImage(Operator):
     bl_idname = "ho.uvtools_image_set_selection_canvas_from_image"
     bl_label = "使用当前图像尺寸"
     bl_description = "将目标选区画布尺寸设为当前 Image Editor 图像尺寸"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将目标选区画布尺寸设为当前 Image Editor 图像尺寸")
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         size = _active_image_size(context)
         if size is None:
-            self.report({"WARNING"}, "当前 Image Editor 没有有效图像尺寸")
+            self.report({"WARNING"}, tr("当前 Image Editor 没有有效图像尺寸"))
             return {"CANCELLED"}
 
         width, height = size
@@ -2198,18 +2235,18 @@ def drawImagePanel(layout: UILayout, context: Context):
     row = col.row(align=True)
     row.scale_y = 2
     row.prop(scene, "ho_uvtools_image_selection_show", text="", toggle=True, icon="OVERLAY")
-    row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text="编辑选区")
+    row.operator(OP_UVTools_ImageBoxSelect.bl_idname, text=tr("编辑选区"))
     row.operator(OP_UVTools_ImageClearSelection.bl_idname, text="", icon="TRASH")
 
     row = col.row(align=True)
-    row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text="选中UV填充遮罩",)
+    row.operator(OP_UVTools_ImageFillSelectionFromSelectedUv.bl_idname, text=tr("选中UV填充遮罩"),)
 
     row = col.row(align=True)
-    row.operator(OP_UVTools_ImageExpandSelectionMask.bl_idname, text="拓展蒙版")
-    row.operator(OP_UVTools_ImageShrinkSelectionMask.bl_idname, text="收缩蒙版")
+    row.operator(OP_UVTools_ImageExpandSelectionMask.bl_idname, text=tr("拓展蒙版"))
+    row.operator(OP_UVTools_ImageShrinkSelectionMask.bl_idname, text=tr("收缩蒙版"))
 
     row = col.row(align=True)
-    row.operator(OP_UVTools_ImageTransformMaskedPixels.bl_idname, text="变换遮罩像素")
+    row.operator(OP_UVTools_ImageTransformMaskedPixels.bl_idname, text=tr("变换遮罩像素"))
 
 
 cls = [

@@ -5,18 +5,23 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight
+from ..i18n import tr
 
 
 class OP_ApplyRestPose(Operator):
     bl_idname = "ho.apply_rest_pose"
     bl_label = "应用骨架与网格为当前姿势"
     bl_description = "与此同时会智能处理带形态键的绑定物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("与此同时会智能处理带形态键的绑定物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def draw(self, context):
-        self.layout.label(text="本操作将应用骨架所有子级网格的全部'骨架'修改器")
-        self.layout.label(text="同时应用掉现在的姿态为静置姿态")
-        self.layout.label(text="如果子级网格物体有形态键，将会调用额外操作保证形态家的保留")
+        self.layout.label(text=tr("本操作将应用骨架所有子级网格的全部'骨架'修改器"))
+        self.layout.label(text=tr("同时应用掉现在的姿态为静置姿态"))
+        self.layout.label(text=tr("如果子级网格物体有形态键，将会调用额外操作保证形态家的保留"))
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
@@ -46,7 +51,7 @@ class OP_ApplyRestPose(Operator):
                 bpy.ops.ho.apply_armature_modifiers_keepshapekeys()
                 return True
             except Exception as e:
-                self.report({'WARNING'}, f"形态键处理失败: {str(e)}")
+                self.report({'WARNING'}, tr("形态键处理失败: {0}").format(str(e)))
                 return False
         # 普通处理流程
         else:
@@ -57,7 +62,7 @@ class OP_ApplyRestPose(Operator):
                             bpy.ops.object.modifier_apply(modifier=mod.name)
                     except Exception as e:
                         self.report(
-                            {'WARNING'}, f"应用失败: {obj.name} 的 {mod.name}")
+                            {'WARNING'}, tr("应用失败: {0} 的 {1}").format(obj.name, mod.name))
                         continue
             return True
 
@@ -75,7 +80,7 @@ class OP_ApplyRestPose(Operator):
         # print(mesh_objects[:])
 
         if not mesh_objects:
-            self.report({'WARNING'}, "没有找到绑定到该骨架的网格对象")
+            self.report({'WARNING'}, tr("没有找到绑定到该骨架的网格对象"))
             return {'CANCELLED'}
 
         # 切换到 OBJECT 模式
@@ -113,6 +118,10 @@ class OP_ForceClearBoneRotation(Operator):
     bl_idname = "ho.force_clear_bone_rotation"
     bl_label = "强制骨骼变换"
     bl_description = "强制移除所选骨骼的变换,保证导出后旋转为0"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("强制移除所选骨骼的变换,保证导出后旋转为0")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -140,6 +149,10 @@ class OP_AddEndBone(Operator):
     bl_idname = "ho.add_endbone"
     bl_label = "添加叶骨"
     bl_description = "给当前选中骨添加叶骨"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("给当前选中骨添加叶骨")
     bl_options = {'REGISTER', 'UNDO'}
 
     length_factor: FloatProperty(
@@ -169,7 +182,7 @@ class OP_AddEndBone(Operator):
         for bone in selected_bones:
             end_bone_name = bone.name + "_end"
             if end_bone_name in ebones:
-                self.report({'WARNING'}, f"{end_bone_name} 已存在，跳过")
+                self.report({'WARNING'}, tr("{0} 已存在，跳过").format(end_bone_name))
                 continue
             new_bone:bpy.types.EditBone  
             new_bone = ebones.new(end_bone_name)
@@ -201,6 +214,10 @@ class OP_SelectBoneBy_by_KeepRotation(Operator):
     bl_idname = "ho.selectbone_by_keeprotation"
     bl_label = "选择相似骨骼-保留旋转"
     bl_description = "选择相似骨骼-按照Hotools骨骼keepRotation保留旋转属性"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("选择相似骨骼-按照Hotools骨骼keepRotation保留旋转属性")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -219,6 +236,10 @@ class OP_SelectBone_by_endBone(Operator):
     bl_idname = "ho.selectbone_by_endbone"
     bl_label = "选择叶骨"
     bl_description = "选择所有的叶骨"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("选择所有的叶骨")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -239,6 +260,10 @@ class OP_SelectBone_by_Nochild(Operator):
     bl_idname = "ho.selectbone_by_nochild"
     bl_label = "选择当前尾端骨"
     bl_description = "选择当前选中骨中的尾端骨"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("选择当前选中骨中的尾端骨")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -251,7 +276,7 @@ class OP_SelectBone_by_Nochild(Operator):
         bones = arm_data.bones
         end_bones = [eb for eb in bones if eb.select and len(eb.children) == 0]
         if not end_bones:
-            self.report({'WARNING'}, "当前选中骨骼中没有末端骨")
+            self.report({'WARNING'}, tr("当前选中骨骼中没有末端骨"))
             return {'CANCELLED'}
         for eb in bones:
             eb.select = False
@@ -319,7 +344,7 @@ class OP_RelaxBoneChain(Operator):
         selected_set = set(selected)
 
         if len(selected) < 3:
-            self.report({'WARNING'}, "至少需要3根骨骼")
+            self.report({'WARNING'}, tr("至少需要3根骨骼"))
             return {'CANCELLED'}
 
         # -------------------------------------------------
@@ -332,7 +357,7 @@ class OP_RelaxBoneChain(Operator):
                 roots.append(b)
 
         if not roots:
-            self.report({'WARNING'}, "未检测到链根")
+            self.report({'WARNING'}, tr("未检测到链根"))
             return {'CANCELLED'}
 
         chains = []
@@ -347,7 +372,7 @@ class OP_RelaxBoneChain(Operator):
                 children = [c for c in cur.children if c in selected_set]
 
                 if len(children) > 1:
-                    self.report({'WARNING'}, f"{cur.name} 存在分叉")
+                    self.report({'WARNING'}, tr("{0} 存在分叉").format(cur.name))
                     return {'CANCELLED'}
 
                 cur = children[0] if children else None
@@ -357,7 +382,7 @@ class OP_RelaxBoneChain(Operator):
         # 校验是否所有骨骼都被覆盖（防止断链）
         total_count = sum(len(c) for c in chains)
         if total_count != len(selected):
-            self.report({'WARNING'}, "检测到非连续结构")
+            self.report({'WARNING'}, tr("检测到非连续结构"))
             return {'CANCELLED'}
 
         # -------------------------------------------------
@@ -367,22 +392,22 @@ class OP_RelaxBoneChain(Operator):
         for chain in chains:
 
             if len(chain) < 3:
-                self.report({'WARNING'}, "每条链至少需要3根骨骼")
+                self.report({'WARNING'}, tr("每条链至少需要3根骨骼"))
                 return {'CANCELLED'}
 
             for i, b in enumerate(chain):
 
                 if (b.tail - b.head).length < 1e-8:
-                    self.report({'WARNING'}, f"{b.name} 长度为0")
+                    self.report({'WARNING'}, tr("{0} 长度为0").format(b.name))
                     return {'CANCELLED'}
 
                 if i > 0:
                     if not b.use_connect:
-                        self.report({'WARNING'}, f"{b.name} 未开启连接")
+                        self.report({'WARNING'}, tr("{0} 未开启连接").format(b.name))
                         return {'CANCELLED'}
 
                     if (b.head - chain[i - 1].tail).length > 1e-6:
-                        self.report({'WARNING'}, f"{b.name} 头尾未真实连接")
+                        self.report({'WARNING'}, tr("{0} 头尾未真实连接").format(b.name))
                         return {'CANCELLED'}
 
         # -------------------------------------------------
@@ -451,8 +476,8 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     scene = context.scene
      #细分骨骼
     row = layout.row(align=True)
-    row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
-    row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
+    row.operator(OP_SplitBoneWithWeight.bl_idname,text=tr("细分骨骼"))
+    row.operator(OP_DissolveBoneWithWeight.bl_idname,text=tr("融并骨骼"))
        
 
 cls = [

@@ -11,6 +11,7 @@ from bpy.props import BoolProperty, CollectionProperty, IntProperty
 from .OmniNodeTree import OmniNodeTree,draw_OmniTreeInputs,draw_OmniTreeOutputs
 from .OmniNodeOperator import OmniGraphNodeIOItem_update
 from .OmniNodeSocketMapping import runtime_socket_type_id
+from ...i18n import tr
 
 def OmniTreeFilter(self: Any, tree: Any) -> bool:
     return isinstance(tree, OmniNodeTree)
@@ -319,7 +320,7 @@ class OmniBatchGroupNode(OmniNode):
         if tree is not None and len(tree.group_inputs) > 0:
             resolved_index = self._resolve_batch_input_index(tree)
             if 0 <= resolved_index < len(tree.group_inputs):
-                row.label(text=f"批入口: {tree.group_inputs[resolved_index].name}")
+                row.label(text=tr("批入口: {0}").format(tree.group_inputs[resolved_index].name))
                 row.prop(self, "batch_input_index", text="")
 
 

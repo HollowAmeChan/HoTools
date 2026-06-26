@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Operator
 import bmesh
+from ...i18n import tr
 
 # region 变量
 def reg_props():
@@ -20,7 +21,7 @@ class OP_Checker_selectFace(Operator):
     def execute(self, context):
         obj = context.active_object
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "请选中一个网格物体")
+            self.report({'ERROR'}, tr("请选中一个网格物体"))
             return {'CANCELLED'}
 
         mesh = obj.data
@@ -53,7 +54,7 @@ class OP_Checker_selectVerts(Operator):
     def execute(self, context):
         obj = context.active_object
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "请选中一个网格物体")
+            self.report({'ERROR'}, tr("请选中一个网格物体"))
             return {'CANCELLED'}
 
         mesh = obj.data
@@ -70,7 +71,7 @@ class OP_Checker_selectVerts(Operator):
             for idx in eval(self.input):
                 bm.verts[idx].select = True
         except Exception as e:
-            self.report({'ERROR'}, f"输入错误: {e}")
+            self.report({'ERROR'}, tr("输入错误: {0}").format(e))
             return {'CANCELLED'}
 
         bmesh.update_edit_mesh(mesh)
@@ -86,7 +87,7 @@ class OP_Checker_selectEdges(Operator):
     def execute(self, context):
         obj = context.active_object
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "请选中一个网格物体")
+            self.report({'ERROR'}, tr("请选中一个网格物体"))
             return {'CANCELLED'}
 
         mesh = obj.data
@@ -103,7 +104,7 @@ class OP_Checker_selectEdges(Operator):
             for idx in eval(self.input):
                 bm.edges[idx].select = True
         except Exception as e:
-            self.report({'ERROR'}, f"输入错误: {e}")
+            self.report({'ERROR'}, tr("输入错误: {0}").format(e))
             return {'CANCELLED'}
 
         bmesh.update_edit_mesh(mesh)
@@ -119,7 +120,7 @@ class OP_Checker_selectBones(Operator):
     def execute(self, context):
         obj = context.active_object
         if obj is None or obj.type != 'ARMATURE':
-            self.report({'ERROR'}, "请选中一个骨骼对象")
+            self.report({'ERROR'}, tr("请选中一个骨骼对象"))
             return {'CANCELLED'}
 
         # 进入POSE模式
@@ -143,9 +144,9 @@ class OP_Checker_selectBones(Operator):
                     pbone.bone.select = True
                     obj.data.bones.active = pbone.bone  # 设置活动骨骼
                 else:
-                    self.report({'WARNING'}, f"未找到骨骼: {name}")
+                    self.report({'WARNING'}, tr("未找到骨骼: {0}").format(name))
         except Exception as e:
-            self.report({'ERROR'}, f"输入错误: {e}")
+            self.report({'ERROR'}, tr("输入错误: {0}").format(e))
             return {'CANCELLED'}
 
         return {'FINISHED'}
