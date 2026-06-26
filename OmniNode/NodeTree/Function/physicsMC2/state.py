@@ -2791,6 +2791,7 @@ def state_matches(
     obj: bpy.types.Object,
     output_key: str,
     mesh_light_key: tuple,
+    config_key: tuple | None = None,
 ) -> bool:
     try:
         object_ptr = int(obj.as_pointer())
@@ -3028,5 +3029,6 @@ def state_matches(
         and state.get("mesh_ptr") == mesh_ptr
         and state.get("output_key") == output_key
         and state.get("mesh_light_key") == mesh_light_key
+        and (config_key is None or state.get("config_key") == config_key)
         and state.get("vertex_count") == vertex_count
     )

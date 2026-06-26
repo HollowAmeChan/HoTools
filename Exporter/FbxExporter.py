@@ -156,6 +156,28 @@ class FBXExporter:
             except TypeError:
                 pass
     @staticmethod
+    def remove_hidden_modifiers(objects):
+        removed = []
+        failed = []
+
+        for ob in objects:
+            modifiers = getattr(ob, "modifiers", None)
+            if not modifiers:
+                continue
+
+            for mod in list(modifiers):
+                if getattr(mod, "show_viewport", True):
+                    continue
+
+                mod_name = mod.name
+                try:
+                    modifiers.remove(mod)
+                    removed.append((ob.name, mod_name))
+                except Exception as exc:
+                    failed.append((ob.name, mod_name, exc))
+
+        return removed, failed
+    @staticmethod
     def iter_bone_collections(armature):
         collections = getattr(armature, "collections_all", None)
         if collections is not None:
@@ -283,6 +305,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+    fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
+    removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
         # 寻找所选预设脚本文件
@@ -330,6 +354,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         selection = list(bpy.context.selected_objects)
         active_object = bpy.context.view_layer.objects.active
         pose_position_state = []
+        removed_hidden_modifiers = []
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -341,14 +366,23 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         try:
             pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
 
+            if self.removeHiddenModifiers:
+                removed_hidden_modifiers, failed_hidden_modifiers = FBXExporter.remove_hidden_modifiers(bpy.context.scene.objects)
+                if failed_hidden_modifiers:
+                    print("[HoTools FBX] Failed to remove hidden modifiers:")
+                    for ob_name, mod_name, exc in failed_hidden_modifiers:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, tr("{n} 个隐藏修改器临时删除失败，详见控制台").format(n=len(failed_hidden_modifiers)))
+
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
                 FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
 
 
             # 修复物体旋转（所有顶级父级物体）
-            for ob in root_objects:
-                FBXExporter.fix_object(ob)
+            if self.fixObjectTransform:
+                for ob in root_objects:
+                    FBXExporter.fix_object(ob)
 
             # 刷新场景防止变换没有应用
             bpy.context.view_layer.update()
@@ -390,7 +424,10 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             FBXExporter.restore_armatures_pose_position(pose_position_state)
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
-        self.report({"INFO"},tr("导出成功"))
+        if removed_hidden_modifiers:
+            self.report({"INFO"}, tr("导出成功，临时删除隐藏修改器 {n} 个").format(n=len(removed_hidden_modifiers)))
+        else:
+            self.report({"INFO"}, tr("导出成功"))
         return {'FINISHED'}
 
     
@@ -404,18 +441,36 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         return self.export_fbx(context)
     def draw(self, context):
         layout = self.layout
-        layout.prop(self,"preset")
-        layout.label(text=tr("↑↑↑此处预设与blender fbx导出共享↑↑↑"))
-        layout.label(text="==================================")
-        layout.label(text=tr("若没有选项，需要手动保存一个预设"))
-        layout.label(text=tr("在blender原本的fbx导出界面添加预设"))
-        layout.label(text="==================================")
-        layout.prop(self,"cheekBoneKeepRotation")
-        
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        preset_box = layout.box()
+        preset_box.label(text=tr("FBX 预设"))
+        preset_box.prop(self, "preset", text=tr("预设"))
+        hint_col = preset_box.column(align=True)
+        hint_col.label(text=tr("共享BlenderFBX导出预设"))
+        hint_col.label(text=tr("没有选项时，请在BlenderFBX面板保存预设"))
+
+        option_box = layout.box()
+        option_box.label(text=tr("预处理"))
+        option_col = option_box.column(align=True)
+        option_col.prop(self, "cheekBoneKeepRotation")
+        option_col.prop(self, "fixObjectTransform")
+        option_col.prop(self, "removeHiddenModifiers")
+
         params = self.getParams(context, report_errors=False)
+        params_box = layout.box()
+        params_box.label(text=tr("当前预设参数"))
         if params:
-            for p in params.items():
-                layout.label(text=(str(p[0]) + " = " + str(p[1])))
+            params_col = params_box.column(align=True)
+            params_col.enabled = False
+            for name, value in params.items():
+                row = params_col.row(align=True)
+                split = row.split(factor=0.36)
+                split.label(text=str(name))
+                split.label(text=str(value))
+        else:
+            params_box.label(text=tr("未读取到预设参数"))
 
 class OP_FinalFBXExport_only_preprocess(Operator):
     bl_idname = "ho.final_fbx_export_only_preprocess"
@@ -424,6 +479,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+    fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
 
 
     def export_fbx_preprocess(self,context):
@@ -457,8 +513,9 @@ class OP_FinalFBXExport_only_preprocess(Operator):
 
 
             # 修复物体旋转（所有顶级父级物体）
-            for ob in root_objects:
-                FBXExporter.fix_object(ob)
+            if self.fixObjectTransform:
+                for ob in root_objects:
+                    FBXExporter.fix_object(ob)
 
             # 刷新场景防止变换没有应用
             bpy.context.view_layer.update()
@@ -495,7 +552,14 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     
     def draw(self, context):
         layout = self.layout
-        layout.prop(self,"cheekBoneKeepRotation")
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        option_box = layout.box()
+        option_box.label(text=tr("预处理"))
+        option_col = option_box.column(align=True)
+        option_col.prop(self, "cheekBoneKeepRotation")
+        option_col.prop(self, "fixObjectTransform")
 
 
 def OPF_FinalFBXExport(self, context):

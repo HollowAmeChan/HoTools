@@ -1,274 +1,92 @@
-# HoTools 原生后端约定
+# HoTools native 后端
 
-本目录用于 HoTools 的 C++ 原生后端。第一阶段已经落地 `hotools_native` 的 XPBD solver 和 `网格物理-XPBD-CPP` 节点，Python 侧继续负责 Blender 数据准备、cache 管理、GN delta 写回和节点接口。
+`_native` 是 HoTools 的原生加速层，对应 `hotools_native` 扩展模块和 MC2 风格的核心求解管线。
 
-当前桥接层先用 Python C API / buffer 方式直连，后续如果需要再收敛到 nanobind。
+这一层只处理数组、上下文、约束求解和碰撞内核，不直接碰 Blender 场景对象，也不自己挂全局刷新。Python 侧负责场景数据采集、缓存管理、节点状态同步和结果回写；C++ 侧负责高频数值计算。
 
-这里借鉴的是 HoCloth 的“构建层 / 运行时层 / 发布层”分离思路，不是迁移它的业务代码。
+## 目录
 
-## 版本化运行时目录
+- `include/`：对外暴露的 C++ 头文件。
+- `src/`：native 实现代码，包含求解器、上下文封装、碰撞内核和导出接口。
+- `tests/`：native 回归测试和对拍测试。
+- `build/`：CMake 生成目录，按 Python 版本和预设分开。
 
-HoTools 已经天然按 Python 版本划分了 `_Lib`：
+## 当前职责
 
-```text
-_Lib/py311
-_Lib/py313
-```
+- `hotools_native` 作为 Python 扩展入口，提供曲线编译/采样、MC2 求解、上下文创建与释放、各类约束投影接口。
+- MC2 风格的上下文把静态拓扑、参数样本和运行时缓存拆开，减少每帧重复搬运。
+- 自碰撞和碰撞内核持续补齐中，当前已经有统一网格 broadphase 的雏形，后续会继续补 contact 生命周期、去重和更完整的 narrowphase。
+- 这一层不处理 Blender UI、Outliner、Handler 注册之类的东西，避免把场景刷新压力塞到 native 层。
 
-当前约定是：
+## 设计分工
 
-- `py311` 对应 Blender 4.1+ 这一支，也就是 Python 3.11 ABI。
-- `py313` 对应 Blender 5.1+ 这一支，也就是 Python 3.13 ABI。
+### Python 侧
 
-原生产物不要再单独放 `_bin`，也不要直接混放在 `_Lib/py311` 或 `_Lib/py313` 根目录。那些目录里已经有第三方包，native 后端统一放进专门的 `HotoolsPackage` 子目录：
+- 负责读取 Blender 数据。
+- 负责总缓存、节点缓存、参数缓存和脏标记。
+- 负责把 Mesh、Bone、BasePose、Collider、Curve 等数据整理成连续数组。
+- 负责把 native 结果写回对象、网格属性和节点缓存。
 
-```text
-_Lib/py311/HotoolsPackage
-_Lib/py313/HotoolsPackage
-```
+### C++ 侧
 
-例如：
+- 负责 MC2 约束迭代和数组级投影。
+- 负责 point / edge / triangle / self-collision 等高频计算。
+- 负责上下文内复用静态数据和参数数据，避免重复分配。
+- 负责保持 ABI 稳定，字段顺序、数组形状和类型一旦改动，Python 侧必须同步更新。
 
-```text
-_Lib/py311/HotoolsPackage/hotools_native.cp311-win_amd64.pyd
-_Lib/py313/HotoolsPackage/hotools_native.cp313-win_amd64.pyd
-```
+## 构建
 
-插件启动时会按当前 Python 版本把对应的 `HotoolsPackage` 加到 `sys.path` 前面，因此 Python 侧可以稳定 `import hotools_native`，同时不会污染已有的 `_Lib/py311` / `_Lib/py313` 包集合。
+`CMakePresets.json` 里分了两个常用预设：
 
-## 目录约定
+- `vs2022-py311`
+- `vs2022-py313`
 
-```text
-HoTools/
-  _Lib/
-    py311/
-      HotoolsPackage/       Blender 4.1+ / Python 3.11 的 native runtime
-    py313/
-      HotoolsPackage/       Blender 5.1+ / Python 3.13 的 native runtime
-  _build/                   发布 staging 或临时构建目录，不提交
-  _dist/                    本地临时输出目录，不提交
-  _native/
-    include/                C++ 头文件
-    src/                    C++ 实现
-    tests/                  smoke test / benchmark
-    build/                  CMake 本地构建目录，不提交
-```
+对应的运行时产物路径分别是：
 
-约定很简单：
+- `_Lib/py311/HotoolsPackage`
+- `_Lib/py313/HotoolsPackage`
 
-- `_native` 只放源码和构建工程，不放最终发布物。
-- `_Lib/py311/HotoolsPackage` 和 `_Lib/py313/HotoolsPackage` 是 native runtime 的唯一发布入口。
-- `build`、`cmake-build-*`、`.vs`、`.vscode`、`_build`、`_dist` 都是开发期内容，不进发布包。
-
-## 固定输出位置
-
-所有编译后的 runtime 产物都应该输出到对应版本的 `HotoolsPackage` 目录，例如：
-
-```text
-_Lib/py311/HotoolsPackage/hotools_native.cp311-win_amd64.pyd
-_Lib/py311/HotoolsPackage/hotools_native.pdb
-_Lib/py313/HotoolsPackage/hotools_native.cp313-win_amd64.pyd
-_Lib/py313/HotoolsPackage/hotools_native.pdb
-```
-
-Python 侧只需要把对应版本的 `HotoolsPackage` 目录加入模块搜索路径，就能稳定访问这些产物。
-
-建议 CMake 做法：
-
-```cmake
-set(HOTOOLS_RUNTIME_DIR "${HOTOOLS_PLUGIN_ROOT}/_Lib/py311/HotoolsPackage" CACHE PATH "Runtime output directory for Python 3.11")
-```
-
-或者：
-
-```cmake
-set(HOTOOLS_RUNTIME_DIR "${HOTOOLS_PLUGIN_ROOT}/_Lib/py313/HotoolsPackage" CACHE PATH "Runtime output directory for Python 3.13")
-```
-
-并且把：
-
-```cmake
-CMAKE_RUNTIME_OUTPUT_DIRECTORY
-CMAKE_LIBRARY_OUTPUT_DIRECTORY
-```
-
-都指向该版本的 `HotoolsPackage` 目录。`CMAKE_ARCHIVE_OUTPUT_DIRECTORY` 则应指向 `_native/build` 这一类已忽略目录，避免 `.lib` / `.exp` 这类中间产物进发布包。
-
-## 本机工具路径
-
-当前机器上已经验证过这些路径存在：
+常用命令：
 
 ```powershell
-$Repo = "C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-$CMake = "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-$VsDevCmd = "D:\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-$MSBuild = "D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
-$BlenderPython311 = "D:\Blender\Blender 4.5\4.5\python\bin\python.exe"
-$BlenderPython313 = "D:\Blender\blender-5.1.0-windows-x64\5.1\python\bin\python.exe"
+cmake --preset vs2022-py311
+cmake --build --preset vs2022-py311-release
+
+cmake --preset vs2022-py313
+cmake --build --preset vs2022-py313-release
 ```
 
-注意：
+如果本机 Blender Python 路径不同，先改 `CMakePresets.json` 里的 `HOTOOLS_PYTHON_EXECUTABLE`。
 
-- 不要依赖默认 `python` 或 `py -3.11`。
-- Blender 4.5 使用 Python 3.11，`.pyd` 必须按 Blender 自带 Python ABI 编译。
-- 如果以后还要打 3.13 版，就再准备一个对应的 Blender 5.1+ / Python 3.13 路径。
+## 测试
 
-## native 绑定架构
+测试脚本都在 `_native/tests/` 下，主要覆盖：
 
-建议拆成三层。
+- `test_property_curve_native.py`
+- `test_mesh_xpbd_native.py`
+- `test_mc2_solver_core_native.py`
+- `test_mc2_neighbor_native.py`
+- `test_mc2_collision_native.py`
+- `test_mc2_self_collision_native.py`
+- `test_mc2_tether_native.py`
+- `test_mc2_motion_native.py`
+- `test_mc2_inertia_native.py`
+- `test_mc2_angle_native.py`
+- `test_mc2_triangle_bending_native.py`
+- `test_mc2_display_native.py`
+- `test_mc2_post_step_native.py`
+- `test_mc2_baseline_native.py`
+- `test_mc2_blender_scene_parity.py`
 
-### 1. Python 节点层
+建议按“核心单元测试 -> 场景对拍”顺序跑，先确认 native 数值逻辑，再看 Blender 侧回写结果。
 
-文件：
+## 现状备注
 
-```text
-OmniNode/NodeTree/Function/Physics.py
-```
+- 旧版 README 里偏 XPBD 的说明已经不再代表当前主线，保留内容只作为历史参考。
+- 当前主线以 MC2 管线为主，`solve_meshcloth_mc2`、`solve_meshcloth_mc2_context`、`solve_meshcloth_mc2_context_cached_params` 是主要入口。
+- `project_self_collisions_mc2` 已接入自碰撞投影，后续重点仍然是减少卡住、穿插和重复 contact。
 
-职责：
+## 相关文档
 
-- 校验 Blender mesh object、pin group 和 frame continuity。
-- 用 `foreach_get` 批量读取 Basis/reference 坐标。
-- 维护 runtime cache，保存 `positions`、`prev_positions`、`inv_masses` 和约束数组。
-- 优先调用 C++ solve，native 不可用时回退 Python solver。
-- 用 `foreach_set` 批量写回 solver 自己维护的点域 delta 属性，并由对应 GN 后置位移修改器消费。
-
-Python 层不要逐点调用 Blender setter，也不要让 C++ 直接访问 `bpy`。
-
-### 2. native 桥接层
-
-建议模块名：
-
-```text
-hotools_native
-```
-
-第一版接口保持窄而直接：
-
-```cpp
-solve_mesh_shape_key_xpbd(
-    positions,
-    prev_positions,
-    rest_positions,
-    inv_masses,
-    edge_i,
-    edge_j,
-    edge_rest,
-    bend_i,
-    bend_j,
-    bend_rest,
-    gravity,
-    dt,
-    damping,
-    substeps,
-    iterations,
-    stretch_compliance,
-    bend_compliance
-)
-```
-
-约定：
-
-- `positions` / `prev_positions` 使用 `float32`，shape 为 `(vertex_count, 3)`。
-- `inv_masses` 使用 `float32`，shape 为 `(vertex_count,)`。
-- 约束索引用 `int32`。
-- rest length 用 `float32`。
-- C++ 原地更新 `positions` 和 `prev_positions`。
-- C++ 不保存 Blender 对象指针，不保存全局 solver 状态。
-
-### 3. C++ solver 层
-
-职责：
-
-- prediction
-- pin 修正
-- stretch distance constraint
-- bend distance constraint
-- substep / iteration 循环
-- smoke test / benchmark
-
-目标是把当前日志里的 solve 热点移走：
-
-```text
-stretch=10.527ms bend=14.451ms solve_total=25.090ms
-```
-
-## 构建约定
-
-### 本地编译
-
-当前已有 `CMakeLists.txt` 和 `CMakePresets.json`。建议分别为 3.11 和 3.13 编译到不同目录：
-
-```powershell
-# Blender 4.1+ / Python 3.11
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --preset vs2022-py311
-
-# Blender 5.1+ / Python 3.13
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --preset vs2022-py313
-```
-
-编译时要带：
-
-```powershell
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --build --preset vs2022-py311-release
-
-& "D:\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  --build --preset vs2022-py313-release
-```
-
-否则 Visual Studio 多配置生成器不会把 Release 产物放到正确的运行时目录。
-
-### 导入验证
-
-```powershell
-& "D:\Blender\Blender 4.5\4.5\python\bin\python.exe" -c "import sys; sys.path.insert(0, r'C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools\_Lib\py311\HotoolsPackage'); import hotools_native; print(hotools_native)"
-```
-
-3.13 版本同理，只是把路径换成 `_Lib\py313\HotoolsPackage` 和对应的 Python 3.13 解释器。
-
-## 发布约定
-
-发布给 Blender 用户安装的 zip 由 GitHub Actions workflow 生成，不在本机手动压缩。
-
-正确流程是：
-
-1. native build 把最终运行时产物放进 `_Lib/py311/HotoolsPackage` 或 `_Lib/py313/HotoolsPackage`。
-2. 需要跟随发布的 `.pyd` / `.dll` / 必要 `.pdb` 确认在固定目录里。
-3. GitHub Actions 创建临时 `HoTools/` staging 目录。
-4. workflow 用 `rsync` 排除 `.git`、`.github`、IDE 目录、Python 缓存、CMake 构建目录、`_native` 源码目录等开发内容。
-5. workflow 生成 `HoTools-YYYYMMDD-HHMMSS.zip`，创建 GitHub Release，并上传这个干净安装包。
-
-GitHub Release 页面仍会自动显示 `Source code (zip)` / `Source code (tar.gz)`，但那两个是 GitHub 自动源码归档，不是给 Blender 用户安装的干净包。用户安装应下载 workflow 上传的 `HoTools-*.zip`。
-
-`.gitignore` 和 release workflow 的职责不同：
-
-- `.gitignore` 防止本地开发期中间产物误提交。
-- `release.yml` 的 `rsync --exclude` 决定用户安装 zip 里排除哪些内容。
-- `_Lib/*/HotoolsPackage` 里的最终 runtime 产物不能被 release workflow 排除。
-
-如果后面补 `package_addon.ps1`，建议它只做：
-
-- 配置 CMake。
-- 编译 native。
-- 运行 smoke test。
-- 检查对应 `HotoolsPackage` 目录里的产物是否存在。
-
-不要再加 `-CreateZip` 这类本地压缩参数；安装包压缩统一交给 GitHub Actions。
-
-## 清理约定
-
-```powershell
-Remove-Item -LiteralPath "_native\build" -Recurse -Force
-Remove-Item -LiteralPath "_build" -Recurse -Force
-Remove-Item -LiteralPath "_dist" -Recurse -Force
-```
-
-## 下一步
-
-1. 视需要再把桥接层从 Python C API 收敛到 nanobind。
-2. 扩展 `hotools_native` 的 benchmark。
-3. 继续打磨 `meshPhysicsXPBDCpp` 的行为对齐和性能。
-4. 用 release workflow 生成面向 Blender 用户安装的干净 zip。
+- `OmniNode/doc/MC2_DESIGN_AND_WORKSHEET.md`
+- `OmniNode/ARCHITECTURE.md`

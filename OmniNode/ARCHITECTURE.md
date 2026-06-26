@@ -264,6 +264,15 @@ Python 侧职责：
 - 管理 runtime cache。
 - 决定是否重建 cache、是否跳帧保护、是否调用 native。
 
+MC2 节点的 Python 侧分层约定：
+
+- `physicsMC2/__init__.py` 只声明 OmniNode API：`@omni` metadata、socket 默认值、Python/CPP 平行节点 wrapper。
+- `physicsMC2/runtime/controller.py` 是运行中控，负责 cache、BasePose、collider、跳帧冷启动、backend 调用和 GN delta 写回。
+- `physicsMC2/runtime/restart.py` 只处理首帧、reset、非正向连续帧的冷启动状态，不写节点 metadata。
+- `physicsMC2/runtime/timing.py` 只处理节点级 debug timing。
+- `physicsMC2/backends/selector.py` 只做 backend 标签归一化和 solver 函数分派。
+- `physicsMC2/solver.py` 只维护 Python reference / C++ full-core 的解算实现和 ABI 打包，不再承载节点入口或 cache 中控。
+
 C++ 侧职责：
 
 - 只处理已经整理好的数组和标量参数。
