@@ -714,6 +714,7 @@ class HumanoidTwistCheckContext:
         head_world=None,
         tail_world=None,
         center_world=None,
+        mapping_to_bone_name=None,
     ):
         self.bone_name = bone_name
         self.mapping_name = mapping_name
@@ -724,6 +725,7 @@ class HumanoidTwistCheckContext:
         self.head_world = head_world
         self.tail_world = tail_world
         self.center_world = center_world
+        self.mapping_to_bone_name = mapping_to_bone_name or {}
 
     def axis(self, axis_label):
         sign = -1.0 if axis_label.startswith("-") else 1.0
@@ -744,6 +746,30 @@ class HumanoidTwistCheckContext:
     def angle_between_degrees(a, b):
         dot = max(-1.0, min(1.0, a.dot(b)))
         return degrees(acos(dot))
+
+    def bone_name_for_mapping(self, mapping_name):
+        return self.mapping_to_bone_name.get(mapping_name)
+
+    def pose_points_for_bone_name(self, bone_name):
+        if self.armature is None:
+            return None
+
+        pb = self.armature.pose.bones.get(bone_name)
+        if pb is None:
+            return None
+
+        head = self.armature.matrix_world @ pb.head
+        tail = self.armature.matrix_world @ pb.tail
+        center = (head + tail) * 0.5
+
+        return head, tail, center
+
+    def pose_points_for_mapping(self, mapping_name):
+        bone_name = self.bone_name_for_mapping(mapping_name)
+        if not bone_name:
+            return None
+
+        return self.pose_points_for_bone_name(bone_name)
 
 
 class HumanoidTwistCheckMode:
@@ -808,6 +834,93 @@ class HumanoidAxisDirectionTwistMode(HumanoidTwistCheckMode):
         }
 
 
+class HumanoidIkBendDirectionTwistMode(HumanoidTwistCheckMode):
+    idname = "ik_bend_direction"
+
+    def __init__(
+        self,
+        upper_mapping_name,
+        lower_mapping_name,
+        target_world=(0.0, 1.0, 0.0),
+        target_label="世界+Y",
+        threshold_deg=30.0,
+    ):
+        self.upper_mapping_name = upper_mapping_name
+        self.lower_mapping_name = lower_mapping_name
+        self.target_world = Vector(target_world)
+        self.target_label = target_label
+        self.threshold_deg = threshold_deg
+
+    def evaluate(self, rule, context):
+        upper_points = context.pose_points_for_mapping(self.upper_mapping_name)
+        lower_points = context.pose_points_for_mapping(self.lower_mapping_name)
+
+        if upper_points is None or lower_points is None:
+            return None
+
+        upper_head, upper_tail, _ = upper_points
+        lower_head, lower_tail, _ = lower_points
+
+        root_point = upper_head
+        middle_point = (upper_tail + lower_head) * 0.5
+        end_point = lower_tail
+
+        triangle_normal = _safe_normalized_vector(
+            (middle_point - root_point).cross(end_point - root_point)
+        )
+        if triangle_normal is None:
+            return None
+
+        chain_vector = end_point - root_point
+        chain_axis = _safe_normalized_vector(chain_vector)
+        if chain_axis is None:
+            return None
+
+        projection_point = (
+            root_point
+            + chain_axis * (middle_point - root_point).dot(chain_axis)
+        )
+        ik_direction = _safe_normalized_vector(middle_point - projection_point)
+        target_axis = _safe_normalized_vector(self.target_world)
+
+        if ik_direction is None or target_axis is None:
+            return None
+
+        angle_deg = context.angle_between_degrees(ik_direction, target_axis)
+
+        if angle_deg <= self.threshold_deg:
+            return None
+
+        visual_length = max(
+            (end_point - root_point).length * 0.35,
+            0.08,
+        )
+        fan_axis = _safe_normalized_vector(target_axis.cross(ik_direction))
+        if fan_axis is None:
+            fan_axis = triangle_normal
+
+        return {
+            "rule_name": rule.name,
+            "mode": self.idname,
+            "mapping_name": context.mapping_name,
+            "axis_label": "IK弯曲",
+            "target_label": self.target_label,
+            "angle_deg": angle_deg,
+            "threshold_deg": self.threshold_deg,
+            "actual_axis_world": ik_direction,
+            "target_axis_world": target_axis,
+            "bone_axis_world": chain_axis,
+            "fan_axis_world": fan_axis,
+            "visual_origin_world": middle_point,
+            "visual_axis_length": visual_length,
+            "ik_projection_world": projection_point,
+            "ik_middle_world": middle_point,
+            "ik_direction_end_world": middle_point + ik_direction * visual_length,
+            "ik_triangle_points_world": (root_point, middle_point, end_point),
+            "ik_triangle_normal_world": triangle_normal,
+        }
+
+
 class HumanoidTwistRule:
     def __init__(self, name, mapping_names, mode):
         self.name = name
@@ -868,6 +981,27 @@ def _register_axis_direction_twist_rule(
             target_world=target_world,
             target_label=target_label,
             roll_axis=roll_axis,
+            threshold_deg=threshold_deg,
+        ),
+    ))
+
+
+def _register_ik_bend_direction_twist_rule(
+    mapping_name,
+    upper_mapping_name,
+    lower_mapping_name,
+    target_world=(0.0, 1.0, 0.0),
+    target_label="世界+Y",
+    threshold_deg=30.0,
+):
+    return HUMANOID_TWIST_RULES.register(HumanoidTwistRule(
+        name=f"{mapping_name}: IK弯曲 -> {target_label}",
+        mapping_names=(mapping_name,),
+        mode=HumanoidIkBendDirectionTwistMode(
+            upper_mapping_name=upper_mapping_name,
+            lower_mapping_name=lower_mapping_name,
+            target_world=target_world,
+            target_label=target_label,
             threshold_deg=threshold_deg,
         ),
     ))
@@ -1009,6 +1143,27 @@ _register_axis_direction_twist_rule(
     target_label="世界+X",
 )
 
+_register_ik_bend_direction_twist_rule(
+    mapping_name="lower_arm.L",
+    upper_mapping_name="upper_arm.L",
+    lower_mapping_name="lower_arm.L",
+)
+_register_ik_bend_direction_twist_rule(
+    mapping_name="lower_arm.R",
+    upper_mapping_name="upper_arm.R",
+    lower_mapping_name="lower_arm.R",
+)
+_register_ik_bend_direction_twist_rule(
+    mapping_name="lower_leg.L",
+    upper_mapping_name="upper_leg.L",
+    lower_mapping_name="lower_leg.L",
+)
+_register_ik_bend_direction_twist_rule(
+    mapping_name="lower_leg.R",
+    upper_mapping_name="upper_leg.R",
+    lower_mapping_name="lower_leg.R",
+)
+
 
 class HumanoidMappingPreviewHUD:
     _handler_3d = None
@@ -1112,7 +1267,12 @@ class HumanoidMappingPreviewHUD:
         return x_axis, y_axis, z_axis
 
     @classmethod
-    def _get_twist_issues(cls, bone_name: str, mapping_name: str):
+    def _get_twist_issues(
+        cls,
+        bone_name: str,
+        mapping_name: str,
+        mapping_to_bone_name=None,
+    ):
         axes = cls._get_bone_world_rest_axes(bone_name)
         if axes is None:
             return []
@@ -1142,6 +1302,7 @@ class HumanoidMappingPreviewHUD:
             head_world=head_world,
             tail_world=tail_world,
             center_world=center_world,
+            mapping_to_bone_name=mapping_to_bone_name,
         )
 
         return HUMANOID_TWIST_RULES.evaluate(context)
@@ -1170,6 +1331,7 @@ class HumanoidMappingPreviewHUD:
 
         mapped_targets = set()
         items = []
+        mapping_to_bone_name = {}
 
         for pb in armature.pose.bones:
             mapping_name = cls._get_bone_mapping_name(pb.name)
@@ -1177,9 +1339,21 @@ class HumanoidMappingPreviewHUD:
                 continue
 
             mapped_targets.add(mapping_name)
+            if mapping_name not in mapping_to_bone_name:
+                mapping_to_bone_name[mapping_name] = pb.name
+
+        for pb in armature.pose.bones:
+            mapping_name = cls._get_bone_mapping_name(pb.name)
+            if not mapping_name:
+                continue
+
             items.append({
                 "bone_name": pb.name,
-                "twist_issues": cls._get_twist_issues(pb.name, mapping_name),
+                "twist_issues": cls._get_twist_issues(
+                    pb.name,
+                    mapping_name,
+                    mapping_to_bone_name=mapping_to_bone_name,
+                ),
             })
 
         cls._items = items
@@ -1323,6 +1497,8 @@ class HumanoidMappingPreviewHUD:
         error_points = []
         actual_axis_coords = []
         target_axis_coords = []
+        ik_triangle_triangles = []
+        ik_triangle_edges = []
         fan_triangles = []
         fan_border_coords = []
 
@@ -1348,16 +1524,40 @@ class HumanoidMappingPreviewHUD:
                     actual_axis = issue["actual_axis_world"]
                     target_axis = issue["target_axis_world"]
                     bone_axis = issue["bone_axis_world"]
+                    fan_axis_world = issue.get("fan_axis_world", bone_axis)
+                    visual_origin = issue.get("visual_origin_world", center)
+                    visual_axis_length = issue.get(
+                        "visual_axis_length",
+                        axis_length,
+                    )
                     threshold_rad = radians(issue["threshold_deg"])
 
                     actual_axis_coords.extend([
-                        center,
-                        center + actual_axis * axis_length,
+                        visual_origin,
+                        visual_origin + actual_axis * visual_axis_length,
                     ])
                     target_axis_coords.extend([
-                        center,
-                        center + target_axis * axis_length,
+                        visual_origin,
+                        visual_origin + target_axis * visual_axis_length,
                     ])
+
+                    if issue.get("mode") == "ik_bend_direction":
+                        triangle_points = issue.get("ik_triangle_points_world")
+                        if triangle_points and len(triangle_points) == 3:
+                            root_point, middle_point, end_point = triangle_points
+                            ik_triangle_triangles.extend([
+                                root_point,
+                                middle_point,
+                                end_point,
+                            ])
+                            ik_triangle_edges.extend([
+                                root_point,
+                                middle_point,
+                                middle_point,
+                                end_point,
+                                end_point,
+                                root_point,
+                            ])
 
                     fan_points = []
                     for i in range(cls._twist_fan_segments + 1):
@@ -1365,22 +1565,24 @@ class HumanoidMappingPreviewHUD:
                         angle = -threshold_rad + threshold_rad * 2.0 * factor
                         fan_axis = cls._rotate_vector_around_axis(
                             target_axis,
-                            bone_axis,
+                            fan_axis_world,
                             angle,
                         )
-                        fan_points.append(center + fan_axis * axis_length)
+                        fan_points.append(
+                            visual_origin + fan_axis * visual_axis_length
+                        )
 
                     for i in range(len(fan_points) - 1):
                         fan_triangles.extend([
-                            center,
+                            visual_origin,
                             fan_points[i],
                             fan_points[i + 1],
                         ])
 
                     fan_border_coords.extend([
-                        center,
+                        visual_origin,
                         fan_points[0],
-                        center,
+                        visual_origin,
                         fan_points[-1],
                     ])
 
@@ -1418,6 +1620,16 @@ class HumanoidMappingPreviewHUD:
             line_shader.uniform_float("color", color)
             batch.draw(line_shader)
 
+        if ik_triangle_triangles:
+            triangle_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            triangle_batch = batch_for_shader(triangle_shader, 'TRIS', {
+                "pos": ik_triangle_triangles,
+            })
+
+            triangle_shader.bind()
+            triangle_shader.uniform_float("color", (1.0, 0.76, 0.05, 0.12))
+            triangle_batch.draw(triangle_shader)
+
         if fan_triangles:
             fan_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
             fan_batch = batch_for_shader(fan_shader, 'TRIS', {
@@ -1430,6 +1642,7 @@ class HumanoidMappingPreviewHUD:
 
         draw_lines(normal_coords, (0.1, 0.85, 1.0, 0.95), cls._line_width)
         draw_lines(error_coords, (1.0, 0.08, 0.04, 0.98), cls._line_width)
+        draw_lines(ik_triangle_edges, (1.0, 0.78, 0.1, 0.92), 3.0)
         draw_lines(fan_border_coords, (1.0, 0.62, 0.05, 0.72), 2.0)
         draw_lines(target_axis_coords, (0.25, 1.0, 0.25, 0.95), cls._twist_line_width)
         draw_lines(actual_axis_coords, (1.0, 0.08, 0.04, 0.98), cls._twist_line_width)
