@@ -19,7 +19,7 @@ except Exception:
 
 
 _ASSET_ROOT = Path(__file__).resolve().with_name("assets")
-_DEPTH_BIAS = 1.0e-5
+_DEPTH_BIAS = 2.0e-7
 
 _DEFAULT_CHECK_MODE = "UV_GRID"
 _DEFAULT_GRID_RESOLUTION = "PX_1024"
@@ -36,6 +36,14 @@ _UV_FIRST_QUADRANT_COLOR = (0.0, 0.82, 0.16, 1.0)
 _UV_STRETCH_CENTER_COLOR = (0.0, 0.82, 0.16, 1.0)
 _UV_STRETCH_COMPRESSED_COLOR = (0.05, 0.32, 1.0, 1.0)
 _UV_STRETCH_STRETCHED_COLOR = (1.0, 0.12, 0.02, 1.0)
+_NGON_COLOR = (1.0, 0.05, 0.02, 1.0)
+_NONPLANAR_QUAD_COLOR = (1.0, 0.05, 0.02, 1.0)
+_FACE_FRONT_COLOR = (0.0, 0.82, 0.16, 1.0)
+_FACE_BACK_COLOR = (1.0, 0.05, 0.02, 1.0)
+_OBJECT_SCALE_NORMAL_COLOR = (0.0, 0.82, 0.16, 1.0)
+_OBJECT_SCALE_NON_ONE_COLOR = (0.05, 0.32, 1.0, 1.0)
+_OBJECT_SCALE_NEGATIVE_COLOR = (1.0, 0.05, 0.02, 1.0)
+_DEFAULT_NONPLANAR_QUAD_THRESHOLD = 0.01
 
 _GRID_RESOLUTION_VALUES = {
     "PX_512": 512,
@@ -695,7 +703,7 @@ void main()
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -944,7 +952,7 @@ void main()
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -1143,7 +1151,7 @@ void main()
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -1325,7 +1333,7 @@ void main()
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -1551,7 +1559,7 @@ void main()
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -1732,7 +1740,7 @@ class UVAreaDistortionOverlayPreview:
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("LESS_EQUAL")
-        gpu.state.depth_mask_set(False)
+        gpu.state.depth_mask_set(True)
         try:
             shader.bind()
             shader.uniform_float("view_projection", region_data.perspective_matrix)
@@ -1756,6 +1764,655 @@ class UVAreaDistortionOverlayPreview:
 
         layout.label(text="绿色：接近当前岛面积比例")
         layout.label(text="红色：岛内局部面积变化较大")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class NgonOverlayPreview:
+    """
+    Ngon 检查模式。
+
+    负责检查所有显示中的 Mesh，把顶点数大于 4 的多边形面标红。
+    Blender 的 loop triangles 会把 Ngon 面拆成三角形绘制，但颜色仍覆盖整个原始 Ngon 面。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            if len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+            ngon_polygon_indices = {
+                poly.index
+                for poly in evaluated_mesh.polygons
+                if len(poly.loop_indices) > 4
+            }
+            if not ngon_polygon_indices:
+                return
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for tri in evaluated_mesh.loop_triangles:
+                if tri.polygon_index not in ngon_polygon_indices:
+                    continue
+                for vertex_index in tri.vertices:
+                    positions_out.append(vertex_world_positions[vertex_index])
+                    colors_out.append(_NGON_COLOR)
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            NgonOverlayPreview.append_mesh_triangles(obj, depsgraph, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = NgonOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if NgonOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return NgonOverlayPreview.SOLID_COLOR_SHADER
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        NgonOverlayPreview.SOLID_COLOR_SHADER = shader
+        return shader
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = NgonOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(True)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="红色：五边面或更多边面")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class NonPlanarQuadOverlayPreview:
+    """
+    空间四边形检查模式。
+
+    负责检查所有显示中的四边面，把两条空间对角线不相交且距离过大的面标红。
+    判定值使用两条对角线最近距离 / 对角线平均长度，能定位非共面导致三角化方向不稳定的四边面。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def vec_sub(a, b):
+        return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    @staticmethod
+    def vec_dot(a, b):
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    @staticmethod
+    def vec_length(a):
+        return math.sqrt(NonPlanarQuadOverlayPreview.vec_dot(a, a))
+
+    @staticmethod
+    def segment_distance(a0, a1, b0, b1):
+        u = NonPlanarQuadOverlayPreview.vec_sub(a1, a0)
+        v = NonPlanarQuadOverlayPreview.vec_sub(b1, b0)
+        w = NonPlanarQuadOverlayPreview.vec_sub(a0, b0)
+        a = NonPlanarQuadOverlayPreview.vec_dot(u, u)
+        b = NonPlanarQuadOverlayPreview.vec_dot(u, v)
+        c = NonPlanarQuadOverlayPreview.vec_dot(v, v)
+        d = NonPlanarQuadOverlayPreview.vec_dot(u, w)
+        e = NonPlanarQuadOverlayPreview.vec_dot(v, w)
+        denominator = a * c - b * b
+
+        if a <= 1.0e-12 or c <= 1.0e-12:
+            return 0.0
+
+        if denominator <= 1.0e-12:
+            s = 0.0
+            t = min(max(e / c, 0.0), 1.0)
+        else:
+            s = min(max((b * e - c * d) / denominator, 0.0), 1.0)
+            t = (b * s + e) / c
+            if t < 0.0:
+                t = 0.0
+                s = min(max(-d / a, 0.0), 1.0)
+            elif t > 1.0:
+                t = 1.0
+                s = min(max((b - d) / a, 0.0), 1.0)
+
+        closest_a = (a0[0] + u[0] * s, a0[1] + u[1] * s, a0[2] + u[2] * s)
+        closest_b = (b0[0] + v[0] * t, b0[1] + v[1] * t, b0[2] + v[2] * t)
+        return NonPlanarQuadOverlayPreview.vec_length(
+            NonPlanarQuadOverlayPreview.vec_sub(closest_a, closest_b)
+        )
+
+    @staticmethod
+    def threshold(scene):
+        value = getattr(scene, "ho_checker_overlay_nonplanar_quad_threshold", _DEFAULT_NONPLANAR_QUAD_THRESHOLD)
+        return min(max(float(value), 0.0), 0.25)
+
+    @staticmethod
+    def quad_is_unstable(points, threshold):
+        diagonal_a = NonPlanarQuadOverlayPreview.vec_length(
+            NonPlanarQuadOverlayPreview.vec_sub(points[2], points[0])
+        )
+        diagonal_b = NonPlanarQuadOverlayPreview.vec_length(
+            NonPlanarQuadOverlayPreview.vec_sub(points[3], points[1])
+        )
+        base_length = max((diagonal_a + diagonal_b) * 0.5, 1.0e-12)
+        distance = NonPlanarQuadOverlayPreview.segment_distance(points[0], points[2], points[1], points[3])
+        return (distance / base_length) > threshold
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, threshold, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            if len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            unstable_polygon_indices = set()
+            for poly in evaluated_mesh.polygons:
+                if len(poly.loop_indices) != 4:
+                    continue
+                points = [
+                    vertex_world_positions[evaluated_mesh.loops[loop_index].vertex_index]
+                    for loop_index in poly.loop_indices
+                ]
+                if NonPlanarQuadOverlayPreview.quad_is_unstable(points, threshold):
+                    unstable_polygon_indices.add(poly.index)
+
+            if not unstable_polygon_indices:
+                return
+
+            for tri in evaluated_mesh.loop_triangles:
+                if tri.polygon_index not in unstable_polygon_indices:
+                    continue
+                for vertex_index in tri.vertices:
+                    positions_out.append(vertex_world_positions[vertex_index])
+                    colors_out.append(_NONPLANAR_QUAD_COLOR)
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        threshold = NonPlanarQuadOverlayPreview.threshold(scene)
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            NonPlanarQuadOverlayPreview.append_mesh_triangles(obj, depsgraph, threshold, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = NonPlanarQuadOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if NonPlanarQuadOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return NonPlanarQuadOverlayPreview.SOLID_COLOR_SHADER
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        NonPlanarQuadOverlayPreview.SOLID_COLOR_SHADER = shader
+        return shader
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = NonPlanarQuadOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(True)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="红色：对角线空间间距过大")
+        layout.prop(scene, "ho_checker_overlay_nonplanar_quad_threshold", text="对角线阈值", slider=True)
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class FaceOrientationOverlayPreview:
+    """
+    正反面检查模式。
+
+    负责绘制所有显示中的 Mesh，并在 shader 中使用 gl_FrontFacing 判断当前片元正反面。
+    正面显示绿色，反面显示红色，用于快速检查法线方向和翻面问题。
+    """
+
+    FACE_SHADER = None
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, positions_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            if len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for tri in evaluated_mesh.loop_triangles:
+                for vertex_index in tri.vertices:
+                    positions_out.append(vertex_world_positions[vertex_index])
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            FaceOrientationOverlayPreview.append_mesh_triangles(obj, depsgraph, positions)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = FaceOrientationOverlayPreview.get_face_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_face_shader():
+        if FaceOrientationOverlayPreview.FACE_SHADER is not None:
+            return FaceOrientationOverlayPreview.FACE_SHADER
+
+        shader_info = gpu.types.GPUShaderCreateInfo()
+        shader_info.vertex_in(0, "VEC3", "position")
+        shader_info.push_constant("MAT4", "view_projection")
+        shader_info.push_constant("FLOAT", "alpha")
+        shader_info.push_constant("FLOAT", "depth_bias")
+        shader_info.push_constant("VEC4", "front_color")
+        shader_info.push_constant("VEC4", "back_color")
+        shader_info.fragment_out(0, "VEC4", "FragColor")
+        shader_info.vertex_source(CheckerOverlayCommon.overlay_vertex_source(""))
+        shader_info.fragment_source(
+            """
+void main()
+{
+    vec4 color = gl_FrontFacing ? front_color : back_color;
+    FragColor = vec4(color.rgb, color.a * alpha);
+}
+"""
+        )
+
+        try:
+            FaceOrientationOverlayPreview.FACE_SHADER = gpu.shader.create_from_info(shader_info)
+        except Exception:
+            FaceOrientationOverlayPreview.FACE_SHADER = None
+        return FaceOrientationOverlayPreview.FACE_SHADER
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = FaceOrientationOverlayPreview.get_face_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(True)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            shader.uniform_float("front_color", _FACE_FRONT_COLOR)
+            shader.uniform_float("back_color", _FACE_BACK_COLOR)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="绿色：正面")
+        layout.label(text="红色：反面")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class ObjectScaleOverlayPreview:
+    """
+    物体缩放检查模式。
+
+    负责按 Object 自身 scale 属性给整个 Mesh 上色。
+    三轴都接近 1 显示绿色；存在非 1 正缩放显示蓝色；任意轴为负缩放显示红色。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def scale_color(obj, epsilon=1.0e-5):
+        scale = getattr(obj, "scale", None)
+        if scale is None:
+            return _OBJECT_SCALE_NORMAL_COLOR
+        values = (float(scale.x), float(scale.y), float(scale.z))
+        if any(value < -epsilon for value in values):
+            return _OBJECT_SCALE_NEGATIVE_COLOR
+        if any(abs(value - 1.0) > epsilon for value in values):
+            return _OBJECT_SCALE_NON_ONE_COLOR
+        return _OBJECT_SCALE_NORMAL_COLOR
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            if len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+            color = ObjectScaleOverlayPreview.scale_color(obj)
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for tri in evaluated_mesh.loop_triangles:
+                for vertex_index in tri.vertices:
+                    positions_out.append(vertex_world_positions[vertex_index])
+                    colors_out.append(color)
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            ObjectScaleOverlayPreview.append_mesh_triangles(obj, depsgraph, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = ObjectScaleOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if ObjectScaleOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return ObjectScaleOverlayPreview.SOLID_COLOR_SHADER
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        ObjectScaleOverlayPreview.SOLID_COLOR_SHADER = shader
+        return shader
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = ObjectScaleOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(True)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="绿色：物体缩放为 1")
+        layout.label(text="蓝色：存在非 1 缩放")
+        layout.label(text="红色：存在负数缩放")
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
 
 
@@ -1915,6 +2572,14 @@ class CheckerOverlayPreview:
             default=_DEFAULT_ISLAND_UV_MODE,
             update=CheckerOverlayPreview.on_mode_update,
         )
+        bpy.types.Scene.ho_checker_overlay_nonplanar_quad_threshold = FloatProperty(
+            name="空间四边形阈值",
+            description="对角线最近距离 / 对角线平均长度，超过该比例时标红",
+            default=_DEFAULT_NONPLANAR_QUAD_THRESHOLD,
+            min=0.0,
+            max=0.25,
+            update=CheckerOverlayPreview.on_mode_update,
+        )
         bpy.types.Scene.ho_checker_overlay_uv_grid_alpha = FloatProperty(
             name="不透明度",
             default=_DEFAULT_ALPHA,
@@ -1927,6 +2592,7 @@ class CheckerOverlayPreview:
     def unregister_props():
         for prop_name in (
             "ho_checker_overlay_uv_grid_alpha",
+            "ho_checker_overlay_nonplanar_quad_threshold",
             "ho_checker_overlay_island_uv_mode",
             "ho_checker_overlay_uv_grid_resolution",
             "ho_checker_overlay_custom_image_path",
@@ -2082,6 +2748,38 @@ class CheckerOverlayModule:
             refresh=UVChiralityOverlayPreview.rebuild_cache,
             draw=UVChiralityOverlayPreview.draw,
             draw_panel=UVChiralityOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "NGON",
+            label="Ngon 检查",
+            description="标红所有五边面或更多边面",
+            refresh=NgonOverlayPreview.rebuild_cache,
+            draw=NgonOverlayPreview.draw,
+            draw_panel=NgonOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "NONPLANAR_QUAD",
+            label="空间四边形检查",
+            description="标红对角线空间间距过大的四边面",
+            refresh=NonPlanarQuadOverlayPreview.rebuild_cache,
+            draw=NonPlanarQuadOverlayPreview.draw,
+            draw_panel=NonPlanarQuadOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "FACE_ORIENTATION",
+            label="正反面检查",
+            description="正面显示绿色，反面显示红色",
+            refresh=FaceOrientationOverlayPreview.rebuild_cache,
+            draw=FaceOrientationOverlayPreview.draw,
+            draw_panel=FaceOrientationOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "OBJECT_SCALE",
+            label="物体缩放检查",
+            description="绿色为 1 缩放，蓝色为非 1 缩放，红色为负缩放",
+            refresh=ObjectScaleOverlayPreview.rebuild_cache,
+            draw=ObjectScaleOverlayPreview.draw,
+            draw_panel=ObjectScaleOverlayPreview.draw_panel,
         )
 
     @staticmethod
