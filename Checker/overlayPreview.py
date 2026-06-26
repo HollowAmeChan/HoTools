@@ -1,4 +1,5 @@
 from array import array
+import math
 from pathlib import Path
 
 import bpy
@@ -31,6 +32,10 @@ _DEFAULT_FILL_B = (0.90, 0.90, 0.90, 1.0)
 _CHIRALITY_NORMAL_COLOR = (1.0, 1.0, 1.0, 1.0)
 _CHIRALITY_MIRROR_COLOR = (0.0, 0.0, 0.0, 1.0)
 _CHIRALITY_UNDEFINED_COLOR = (0.50, 0.50, 0.50, 1.0)
+_UV_FIRST_QUADRANT_COLOR = (0.0, 0.82, 0.16, 1.0)
+_UV_STRETCH_CENTER_COLOR = (0.0, 0.82, 0.16, 1.0)
+_UV_STRETCH_COMPRESSED_COLOR = (0.05, 0.32, 1.0, 1.0)
+_UV_STRETCH_STRETCHED_COLOR = (1.0, 0.12, 0.02, 1.0)
 
 _GRID_RESOLUTION_VALUES = {
     "PX_512": 512,
@@ -1164,6 +1169,596 @@ void main()
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
 
 
+class UVQuadrantOverlayPreview:
+    """
+    UV 象限检查模式。
+
+    负责按 UV 所在的整数 tile 给面上色，方便检查 UV 是否落在预期象限。
+    第一象限，也就是 U/V 都在 0-1 范围内的 tile，固定显示为绿色。
+    其他 tile 使用固定种子的哈希随机色，保证每次刷新颜色稳定且不同象限容易区分。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def quadrant_key_from_uv(uv):
+        return (math.floor(float(uv.x)), math.floor(float(uv.y)))
+
+    @staticmethod
+    def quadrant_color(tile_u, tile_v):
+        if tile_u == 0 and tile_v == 0:
+            return _UV_FIRST_QUADRANT_COLOR
+
+        seed = ((tile_u * 73856093) ^ (tile_v * 19349663) ^ 0x5A17C3) & 0xFFFFFFFF
+        red = 0.25 + (((seed >> 0) & 0xFF) / 255.0) * 0.65
+        green = 0.25 + (((seed >> 8) & 0xFF) / 255.0) * 0.65
+        blue = 0.25 + (((seed >> 16) & 0xFF) / 255.0) * 0.65
+        return (red, green, blue, 1.0)
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            uv_layer = CheckerOverlayCommon.mesh_uv_layer(evaluated_mesh)
+            if uv_layer is None or len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for tri in evaluated_mesh.loop_triangles:
+                loop_indices = list(tri.loops)
+                tile_keys = [
+                    UVQuadrantOverlayPreview.quadrant_key_from_uv(uv_layer.data[loop_index].uv)
+                    for loop_index in loop_indices
+                ]
+                color = UVQuadrantOverlayPreview.quadrant_color(*tile_keys[0])
+
+                for vertex_index, tile_key in zip(tri.vertices, tile_keys):
+                    positions_out.append(vertex_world_positions[vertex_index])
+                    if tile_key == tile_keys[0]:
+                        colors_out.append(color)
+                    else:
+                        colors_out.append(UVQuadrantOverlayPreview.quadrant_color(*tile_key))
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            UVQuadrantOverlayPreview.append_mesh_triangles(obj, depsgraph, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = UVQuadrantOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if UVQuadrantOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return UVQuadrantOverlayPreview.SOLID_COLOR_SHADER
+
+        shader_info = gpu.types.GPUShaderCreateInfo()
+        shader_info.vertex_in(0, "VEC3", "position")
+        shader_info.vertex_in(1, "VEC4", "color")
+
+        stage_interface = gpu.types.GPUStageInterfaceInfo("CheckerOverlayUVQuadrant")
+        stage_interface.smooth("VEC4", "v_color")
+        shader_info.vertex_out(stage_interface)
+
+        shader_info.push_constant("MAT4", "view_projection")
+        shader_info.push_constant("FLOAT", "alpha")
+        shader_info.push_constant("FLOAT", "depth_bias")
+        shader_info.fragment_out(0, "VEC4", "FragColor")
+        shader_info.vertex_source(CheckerOverlayCommon.overlay_vertex_source("v_color = color;"))
+        shader_info.fragment_source(
+            """
+void main()
+{
+    FragColor = vec4(v_color.rgb, v_color.a * alpha);
+}
+"""
+        )
+
+        try:
+            UVQuadrantOverlayPreview.SOLID_COLOR_SHADER = gpu.shader.create_from_info(shader_info)
+        except Exception:
+            UVQuadrantOverlayPreview.SOLID_COLOR_SHADER = None
+        return UVQuadrantOverlayPreview.SOLID_COLOR_SHADER
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = UVQuadrantOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(False)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="第一象限 0-1：绿色")
+        layout.label(text="其他象限：固定随机色")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class UVStretchOverlayPreview:
+    """
+    UV 缩放检查模式。
+
+    负责比较三角形在 3D 空间中的面积和 UV 空间中的面积，估算相对 texel 密度。
+    以当前可见 Mesh 的中位数密度作为绿色基准；UV 面积相对过大时偏蓝，
+    UV 面积相对过小时偏红，用于发现明显的 UV 缩放或密度不一致区域。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def triangle_world_area(p0, p1, p2):
+        edge_a = (p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2])
+        edge_b = (p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2])
+        cross = (
+            edge_a[1] * edge_b[2] - edge_a[2] * edge_b[1],
+            edge_a[2] * edge_b[0] - edge_a[0] * edge_b[2],
+            edge_a[0] * edge_b[1] - edge_a[1] * edge_b[0],
+        )
+        return math.sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]) * 0.5
+
+    @staticmethod
+    def triangle_uv_area(uv0, uv1, uv2):
+        return abs(
+            (
+                (uv1[0] - uv0[0]) * (uv2[1] - uv0[1])
+                - (uv1[1] - uv0[1]) * (uv2[0] - uv0[0])
+            )
+            * 0.5
+        )
+
+    @staticmethod
+    def stretch_color(log_ratio):
+        strength = min(abs(log_ratio) / 2.0, 1.0)
+        if log_ratio < 0.0:
+            target = _UV_STRETCH_COMPRESSED_COLOR
+        else:
+            target = _UV_STRETCH_STRETCHED_COLOR
+        return (
+            _UV_STRETCH_CENTER_COLOR[0] * (1.0 - strength) + target[0] * strength,
+            _UV_STRETCH_CENTER_COLOR[1] * (1.0 - strength) + target[1] * strength,
+            _UV_STRETCH_CENTER_COLOR[2] * (1.0 - strength) + target[2] * strength,
+            1.0,
+        )
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, triangle_entries):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            uv_layer = CheckerOverlayCommon.mesh_uv_layer(evaluated_mesh)
+            if uv_layer is None or len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for tri in evaluated_mesh.loop_triangles:
+                world_tri = [vertex_world_positions[vertex_index] for vertex_index in tri.vertices]
+                uv_tri = []
+                for loop_index in tri.loops:
+                    uv = uv_layer.data[loop_index].uv
+                    uv_tri.append((float(uv.x), float(uv.y)))
+
+                world_area = UVStretchOverlayPreview.triangle_world_area(*world_tri)
+                uv_area = UVStretchOverlayPreview.triangle_uv_area(*uv_tri)
+                if world_area <= 1.0e-12 or uv_area <= 1.0e-12:
+                    continue
+
+                triangle_entries.append(
+                    {
+                        "world": world_tri,
+                        "density": world_area / uv_area,
+                    }
+                )
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def median_density(triangle_entries):
+        densities = sorted(entry["density"] for entry in triangle_entries if entry["density"] > 0.0)
+        if not densities:
+            return 1.0
+        mid = len(densities) // 2
+        if len(densities) % 2:
+            return densities[mid]
+        return (densities[mid - 1] + densities[mid]) * 0.5
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        triangle_entries = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            UVStretchOverlayPreview.append_mesh_triangles(obj, depsgraph, triangle_entries)
+
+        if not triangle_entries:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        median_density = max(UVStretchOverlayPreview.median_density(triangle_entries), 1.0e-12)
+        positions = []
+        colors = []
+        for entry in triangle_entries:
+            log_ratio = math.log(max(entry["density"], 1.0e-12) / median_density, 2.0)
+            color = UVStretchOverlayPreview.stretch_color(log_ratio)
+            for position in entry["world"]:
+                positions.append(position)
+                colors.append(color)
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if UVStretchOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return UVStretchOverlayPreview.SOLID_COLOR_SHADER
+
+        shader_info = gpu.types.GPUShaderCreateInfo()
+        shader_info.vertex_in(0, "VEC3", "position")
+        shader_info.vertex_in(1, "VEC4", "color")
+
+        stage_interface = gpu.types.GPUStageInterfaceInfo("CheckerOverlayUVStretch")
+        stage_interface.smooth("VEC4", "v_color")
+        shader_info.vertex_out(stage_interface)
+
+        shader_info.push_constant("MAT4", "view_projection")
+        shader_info.push_constant("FLOAT", "alpha")
+        shader_info.push_constant("FLOAT", "depth_bias")
+        shader_info.fragment_out(0, "VEC4", "FragColor")
+        shader_info.vertex_source(CheckerOverlayCommon.overlay_vertex_source("v_color = color;"))
+        shader_info.fragment_source(
+            """
+void main()
+{
+    FragColor = vec4(v_color.rgb, v_color.a * alpha);
+}
+"""
+        )
+
+        try:
+            UVStretchOverlayPreview.SOLID_COLOR_SHADER = gpu.shader.create_from_info(shader_info)
+        except Exception:
+            UVStretchOverlayPreview.SOLID_COLOR_SHADER = None
+        return UVStretchOverlayPreview.SOLID_COLOR_SHADER
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(False)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="绿色：接近当前中位密度")
+        layout.label(text="蓝色：UV 相对偏大")
+        layout.label(text="红色：UV 相对偏小")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
+class UVAreaDistortionOverlayPreview:
+    """
+    UV 面积拉伸检查模式。
+
+    负责按 UV 岛比较局部三角形面积比例变化。
+    每个 UV 岛会先计算自身的总 3D 面积 / 总 UV 面积作为基准，因此整岛统一缩放不会被标记。
+    岛内局部三角形相对基准偏离越大越红，用于检查 UV 展开后局部面积变化造成的拉伸。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def distortion_color(abs_log_ratio):
+        strength = min(abs_log_ratio / 1.5, 1.0)
+        return (
+            _UV_STRETCH_CENTER_COLOR[0] * (1.0 - strength) + _UV_STRETCH_STRETCHED_COLOR[0] * strength,
+            _UV_STRETCH_CENTER_COLOR[1] * (1.0 - strength) + _UV_STRETCH_STRETCHED_COLOR[1] * strength,
+            _UV_STRETCH_CENTER_COLOR[2] * (1.0 - strength) + _UV_STRETCH_STRETCHED_COLOR[2] * strength,
+            1.0,
+        )
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            uv_layer = CheckerOverlayCommon.mesh_uv_layer(evaluated_mesh)
+            if uv_layer is None or len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+            tri_by_polygon = {}
+            for tri in evaluated_mesh.loop_triangles:
+                tri_by_polygon.setdefault(tri.polygon_index, []).append(tri)
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for island_polygon_indices in CheckerOverlayCommon.find_mesh_uv_islands(evaluated_mesh, uv_layer):
+                island_entries = []
+                island_world_area = 0.0
+                island_uv_area = 0.0
+
+                for polygon_index in island_polygon_indices:
+                    for tri in tri_by_polygon.get(polygon_index, []):
+                        world_tri = [vertex_world_positions[vertex_index] for vertex_index in tri.vertices]
+                        uv_tri = []
+                        for loop_index in tri.loops:
+                            uv = uv_layer.data[loop_index].uv
+                            uv_tri.append((float(uv.x), float(uv.y)))
+
+                        world_area = UVStretchOverlayPreview.triangle_world_area(*world_tri)
+                        uv_area = UVStretchOverlayPreview.triangle_uv_area(*uv_tri)
+                        if world_area <= 1.0e-12 or uv_area <= 1.0e-12:
+                            continue
+
+                        island_world_area += world_area
+                        island_uv_area += uv_area
+                        island_entries.append(
+                            {
+                                "world": world_tri,
+                                "ratio": world_area / uv_area,
+                            }
+                        )
+
+                if not island_entries or island_world_area <= 1.0e-12 or island_uv_area <= 1.0e-12:
+                    continue
+
+                island_ratio = island_world_area / island_uv_area
+                for entry in island_entries:
+                    log_ratio = math.log(max(entry["ratio"], 1.0e-12) / max(island_ratio, 1.0e-12), 2.0)
+                    color = UVAreaDistortionOverlayPreview.distortion_color(abs(log_ratio))
+                    for position in entry["world"]:
+                        positions_out.append(position)
+                        colors_out.append(color)
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            UVAreaDistortionOverlayPreview.append_mesh_triangles(obj, depsgraph, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = UVAreaDistortionOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if UVAreaDistortionOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return UVAreaDistortionOverlayPreview.SOLID_COLOR_SHADER
+
+        shader = UVStretchOverlayPreview.get_solid_color_shader()
+        UVAreaDistortionOverlayPreview.SOLID_COLOR_SHADER = shader
+        return shader
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = UVAreaDistortionOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(False)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.label(text="绿色：接近当前岛面积比例")
+        layout.label(text="红色：岛内局部面积变化较大")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
 class CheckerOverlayPreview:
     """
     检查预览的模式注册表与 UI 外壳。
@@ -1455,6 +2050,30 @@ class CheckerOverlayModule:
             refresh=UVIslandOverlayPreview.rebuild_cache,
             draw=UVIslandOverlayPreview.draw,
             draw_panel=UVIslandOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "UV_QUADRANT",
+            label="UV 象限检查",
+            description="按 UV 所在整数象限使用稳定随机色显示",
+            refresh=UVQuadrantOverlayPreview.rebuild_cache,
+            draw=UVQuadrantOverlayPreview.draw,
+            draw_panel=UVQuadrantOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "UV_STRETCH",
+            label="UV 缩放检查",
+            description="按 3D 面积与 UV 面积比例显示相对缩放密度",
+            refresh=UVStretchOverlayPreview.rebuild_cache,
+            draw=UVStretchOverlayPreview.draw,
+            draw_panel=UVStretchOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "UV_AREA_DISTORTION",
+            label="UV 面积拉伸检查",
+            description="按 UV 岛内部面积比例变化显示局部拉伸",
+            refresh=UVAreaDistortionOverlayPreview.rebuild_cache,
+            draw=UVAreaDistortionOverlayPreview.draw,
+            draw_panel=UVAreaDistortionOverlayPreview.draw_panel,
         )
         CheckerOverlayPreview.register_mode(
             "UV_CHIRALITY",
