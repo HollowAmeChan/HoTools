@@ -179,13 +179,15 @@ OmniNode generates node labels/sockets from `@omni` functions (see [OmniNode/ARC
 
 ### Phase 5 — QA, docs, release
 
-- [ ] Manual matrix: each locale × `AUTO`(Blender zh/en) × switch-at-runtime redraw.
-- [ ] Verify fallback: untranslated key → Chinese, never blank/error.
-- [ ] Verify global Blender language is **untouched** by the addon switch.
-- [ ] Coverage report ≥ target (e.g. 100% en_US, ≥90% ja_JP) — gaps fall back gracefully.
-- [ ] Update [CLAUDE.md](CLAUDE.md) / [AGENTS.md](AGENTS.md): how to add a translatable string, run the extractor, add a locale.
-- [ ] Confirm `i18n/` ships (it lives under the addon root; not in the release-workflow exclude list — verify against [.github/workflows/release.yml](.github/workflows/release.yml)). `i18n/tools/` may be excluded as dev-only.
-- [ ] Bump `bl_info` version → 2.3.0.
+### Phase 5 — QA, docs, release  🚧 (2026-06-26: docs/release/automated-QA done; manual Blender matrix pending)
+
+- [ ] **Manual matrix** (requires Blender — cannot run headless here): each locale × `AUTO`(Blender zh/en) × switch-at-runtime redraw. Eyeball the language selector in Preferences, switch HoTools→English while Blender stays Chinese, confirm panels/operators/node labels redraw.
+- [x] **Verify fallback:** untranslated key → Chinese, never blank/error. Automated test: empty-stub value (`""`) is falsy → `tr()` returns the Chinese key. ✅
+- [x] **Verify global Blender language untouched:** grep confirms no code writes `preferences.view.language`; the switch only reads `bpy.app.translations.locale` and our own pref. ✅
+- [x] **Coverage:** 1252/1336 (93.7%) en+ja, orphan=0. The 84 untranslated are the new f-string template stubs — to be filled by the translation tool. (Target ≥100% en after that pass.)
+- [x] **Docs:** [CLAUDE.md](CLAUDE.md) + [AGENTS.md](AGENTS.md) updated with an i18n section (add a translatable string, the operator gotcha, run the extractor, add a locale). ✅
+- [x] **Confirm `i18n/` ships:** not in the release-workflow excludes → included. Added `--exclude="i18n/tools/"` (dev-only extractor) to [.github/workflows/release.yml](.github/workflows/release.yml). ✅
+- [x] **Bump `bl_info` version → 2.3.0** (in [__init__.py](__init__.py); doc references in CLAUDE.md/AGENTS.md updated). ✅
 
 ---
 

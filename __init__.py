@@ -35,7 +35,7 @@ import rna_keymap_ui
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
-    "version": (2, 2, 0),
+    "version": (2, 3, 0),
     "blender": (4, 5, 0),
     "location": "Hollow",
     "description": "https://space.bilibili.com/60340452",

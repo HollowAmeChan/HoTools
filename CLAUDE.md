@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-HoTools is a **Blender add-on** (`bl_info` version 2.2.0, target Blender **4.5** / Python **3.11**) — a large toolset for character/model/texture/animation workflows. It is loaded by Blender as a package; there is no standalone "run" entry point. Most code is Python operators/panels registered into Blender; a C++ native backend (`hotools_native`) accelerates a few physics hot paths.
+HoTools is a **Blender add-on** (`bl_info` version 2.3.0, target Blender **4.5** / Python **3.11**) — a large toolset for character/model/texture/animation workflows. It is loaded by Blender as a package; there is no standalone "run" entry point. Most code is Python operators/panels registered into Blender; a C++ native backend (`hotools_native`) accelerates a few physics hot paths.
 
 Code, comments, UI strings, and the architecture docs are predominantly in **Chinese**. Match the surrounding language when editing user-facing strings and comments.
 
@@ -34,9 +34,20 @@ Operators follow Blender's `bl_idname` convention, mostly namespaced `ho.*`.
 
 `_native/` holds **only** C++ source, CMake project, and tests — never shipped runtime artifacts. Built `.pyd`/`.pdb` go to `_Lib/py311/HotoolsPackage` (Blender 4.1+/Py3.11) and `_Lib/py313/HotoolsPackage` (Blender 5.1+/Py3.13), which is what ships. Python prepares all Blender data (validation, `foreach_get`/`foreach_set`, runtime cache) and the C++ layer only crunches plain numeric arrays — it must not touch `bpy` or hold Blender pointers / cross-frame state. The pattern is **parallel nodes**: a Python blueprint node (`网格物理-XPBD`) and a `-CPP` node with identical I/O and cache semantics. See [_native/README.md](_native/README.md).
 
+## Internationalization (i18n)
+
+HoTools has an **independent per-addon** language switch (Chinese / English / Japanese), separate from Blender's global UI language. See [ROADMAP_I18N.md](ROADMAP_I18N.md) for the full design.
+
+- **Key = the Chinese source string.** UI strings are the translation key (msgid); a missing translation falls back to Chinese automatically. Locale dicts live in [i18n/locales/](i18n/locales/) (`zh_HANS` is the empty base; `en_US`/`ja_JP` hold `{"中文": "译文"}`).
+- **To make a string translatable:** wrap it with `tr()` — `from ..i18n import tr` (adjust dot-depth to the module's location), then `layout.label(text=tr("中文"))`, `self.report({'INFO'}, tr("中文"))`. Dynamic strings use a template: `tr("已处理 {n} 个").format(n=count)` — never an f-string (the key must be a literal).
+- **Operators (gotcha):** `bl_label`/`bl_description` are frozen at register time. Keep the Chinese on them (it doubles as the msgid + native-bridge path), and add a `@classmethod description(cls, context, properties): return tr("…")` for live tooltip switching. Prefer call-site `text=tr(...)` for button labels.
+- **Frozen-at-register strings** (property `name=`/`description=`, enum-item labels, socket-type `bl_label`, add-menu items) can't be call-site-wrapped; they localize via the `bpy.app.translations` bridge only when the addon language follows Blender (`AUTO`).
+- **Extractor:** `python i18n/tools/extract.py` rescans the source, adds new Chinese keys as `""` stubs to `en_US`/`ja_JP` (never clobbering existing translations), and prints a coverage report. Idempotent; `--check` (CI) exits non-zero if stale; `--dry-run` reports only. **Re-run it after adding any new `tr()` string.** `i18n/tools/` is dev-only and excluded from the release zip.
+- **Adding a locale:** add `i18n/locales/<code>.py` (`translations = {}`), register it in `locales/__init__.py:all_dicts()` and `manager.SUPPORTED_LOCALES`, and add an item to the `hoTools_language` EnumProperty in [__init__.py](__init__.py).
+
 ## Translate rule
 
-No need to manual edit on the Claude working season. These translating jobs will be handled by other tool.
+No need to manual edit on the Claude working season. The translation **values** (filling `en_US.py` / `ja_JP.py`) are handled by another tool — wrap strings with `tr()` and run the extractor; leave the dict values to that tool.
 
 ## Commands
 

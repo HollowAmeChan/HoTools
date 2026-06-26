@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-HoTools is a **Blender add-on** (`bl_info` version 2.2.0, target Blender **4.5** / Python **3.11**) — a large toolset for character/model/texture/animation workflows. It is loaded by Blender as a package; there is no standalone "run" entry point. Most code is Python operators/panels registered into Blender; a C++ native backend (`hotools_native`) accelerates a few physics hot paths.
+HoTools is a **Blender add-on** (`bl_info` version 2.3.0, target Blender **4.5** / Python **3.11**) — a large toolset for character/model/texture/animation workflows. It is loaded by Blender as a package; there is no standalone "run" entry point. Most code is Python operators/panels registered into Blender; a C++ native backend (`hotools_native`) accelerates a few physics hot paths.
 
 Code, comments, UI strings, and the architecture docs are predominantly in **Chinese**. Match the surrounding language when editing user-facing strings and comments.
 
@@ -33,6 +33,15 @@ Operators follow Blender's `bl_idname` convention, mostly namespaced `ho.*`.
 ### Native backend
 
 `_native/` holds **only** C++ source, CMake project, and tests — never shipped runtime artifacts. Built `.pyd`/`.pdb` go to `_Lib/py311/HotoolsPackage` (Blender 4.1+/Py3.11) and `_Lib/py313/HotoolsPackage` (Blender 5.1+/Py3.13), which is what ships. Python prepares all Blender data (validation, `foreach_get`/`foreach_set`, runtime cache) and the C++ layer only crunches plain numeric arrays — it must not touch `bpy` or hold Blender pointers / cross-frame state. The pattern is **parallel nodes**: a Python blueprint node (`网格物理-XPBD`) and a `-CPP` node with identical I/O and cache semantics. See [_native/README.md](_native/README.md).
+
+### Internationalization (i18n)
+
+Independent per-addon language switch (zh/en/ja), separate from Blender's global UI language. Full design in [ROADMAP_I18N.md](ROADMAP_I18N.md).
+
+- **Key = the Chinese source string** (msgid); missing translations fall back to Chinese. Locale dicts in [i18n/locales/](i18n/locales/); `tr()`/`register()`/`reload()` API in [i18n/](i18n/).
+- **Make a string translatable:** `from ..i18n import tr` (adjust dot-depth), then `text=tr("中文")` / `self.report({'INFO'}, tr("中文"))`. Dynamic → `tr("…{n}…").format(n=x)`, never an f-string (key must be a literal).
+- **Operators:** keep Chinese `bl_label`/`bl_description` (msgid + native bridge); add `@classmethod description(cls, context, properties): return tr("…")` for live tooltips; prefer call-site `text=tr(...)` for buttons. Frozen-at-register strings (property `name=`/enum/socket-type labels/add-menu) localize only via the `bpy.app.translations` bridge in `AUTO` mode.
+- **Extractor:** `python i18n/tools/extract.py` rescans, stubs new Chinese keys into `en_US`/`ja_JP` without clobbering, prints coverage. Idempotent; `--check` for CI. Re-run after adding any `tr()` string. `i18n/tools/` is dev-only (excluded from the release zip).
 
 ## Commands
 

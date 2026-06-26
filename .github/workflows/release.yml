@@ -60,6 +60,7 @@ jobs:
             --exclude=".vs/" \
             --exclude=".gitignore" \
             --exclude="__pycache__/" \
+            --exclude="i18n/tools/" \
             --exclude="*.pyc" \
             --exclude="*.pyo" \
             --exclude="*.blend[0-9]*" \
