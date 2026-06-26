@@ -1,21 +1,23 @@
 import bpy
 from bpy.types import Panel
 
-from  . import objectChecker,meshMirrorChecker
+from . import meshMirrorChecker, objectChecker, overlayPreview
+
 
 def reg_props():
-    # 功能区开关
     enum_items = [
-        ('PANEL_CHECKER_MIRRORCHECKER', "网格镜像", ""),
-        ('PANEL_CHECKER_OBJECTCHECKER', "物体检查", ""),
+        ("PANEL_CHECKER_MIRRORCHECKER", "网格镜像", ""),
+        ("PANEL_CHECKER_OBJECTCHECKER", "物体检查", ""),
     ]
     bpy.types.Scene.ho_CheckerToolsPanel_Mod = bpy.props.EnumProperty(
-        name="CheckerToolsPanelMod", items=enum_items)
-    return
+        name="CheckerToolsPanelMod",
+        items=enum_items,
+    )
+
 
 def ureg_props():
-    del bpy.types.Scene.ho_CheckerToolsPanel_Mod
-    return
+    if hasattr(bpy.types.Scene, "ho_CheckerToolsPanel_Mod"):
+        del bpy.types.Scene.ho_CheckerToolsPanel_Mod
 
 
 class PL_ObjectChecker(Panel):
@@ -24,37 +26,38 @@ class PL_ObjectChecker(Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "HoTools"
-    bl_options = {'DEFAULT_CLOSED'}
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
+        scene = context.scene
+
         row = layout.row(align=True)
         row.label(text="检查")
-        row.prop(context.scene, "ho_CheckerToolsPanel_Mod", expand=True,)
-        if context.scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_MIRRORCHECKER":
-            meshMirrorChecker.drawMeshMirrorCheckerPanel(self.layout, context)
-        if context.scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_OBJECTCHECKER":
-            objectChecker.drawObjectCheckerPanel(self.layout, context)
+        row.prop(scene, "ho_CheckerToolsPanel_Mod", expand=True)
 
-        return
-
+        if scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_MIRRORCHECKER":
+            meshMirrorChecker.drawMeshMirrorCheckerPanel(layout, context)
+        elif scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_OBJECTCHECKER":
+            objectChecker.drawObjectCheckerPanel(layout, context)
 
 
 cls = [PL_ObjectChecker]
 
 
-
 def register():
     objectChecker.register()
     meshMirrorChecker.register()
+    overlayPreview.register()
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
 
 
 def unregister():
-    objectChecker.unregister()
+    overlayPreview.unregister()
     meshMirrorChecker.unregister()
+    objectChecker.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()
