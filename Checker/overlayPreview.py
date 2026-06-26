@@ -23,6 +23,7 @@ _DEPTH_BIAS = 1.0e-5
 _DEFAULT_CHECK_MODE = "UV_GRID"
 _DEFAULT_GRID_RESOLUTION = "PX_1024"
 _DEFAULT_VISUAL_MODE = "COLOR_GRID"
+_DEFAULT_ISLAND_UV_MODE = "UV"
 _DEFAULT_ALPHA = 0.72
 _DEFAULT_FILL_A = (0.16, 0.16, 0.16, 1.0)
 _DEFAULT_FILL_B = (0.90, 0.90, 0.90, 1.0)
@@ -49,6 +50,12 @@ _VISUAL_MODE_ITEMS = (
     ("COLOR_GRID", "Color Grid", "外部 Color Grid 图片"),
     ("CHECKER", "Checker", "外部 Checker 图片"),
     ("CUSTOM_IMAGE", "Custom Image", "用户指定外部图片"),
+)
+
+_ISLAND_UV_MODE_ITEMS = (
+    ("UV", "UV", "用 R/G 通道同时显示每个 UV 岛内部归一化后的 U/V"),
+    ("U", "U", "只显示每个 UV 岛内部归一化后的 U 方向"),
+    ("V", "V", "只显示每个 UV 岛内部归一化后的 V 方向"),
 )
 
 
@@ -242,6 +249,75 @@ class CheckerOverlayCommon:
             return evaluated_obj, evaluated_obj.to_mesh(depsgraph=depsgraph)
         except TypeError:
             return evaluated_obj, evaluated_obj.to_mesh()
+
+    @staticmethod
+    def mesh_face_edge_uv_pair(mesh, uv_layer, polygon_index, edge_index):
+        loop_indices = list(mesh.polygons[polygon_index].loop_indices)
+        for offset, loop_index in enumerate(loop_indices):
+            if mesh.loops[loop_index].edge_index != edge_index:
+                continue
+            next_loop_index = loop_indices[(offset + 1) % len(loop_indices)]
+            return (
+                uv_layer.data[loop_index].uv.copy(),
+                uv_layer.data[next_loop_index].uv.copy(),
+            )
+        return None
+
+    @staticmethod
+    def mesh_uv_edge_connected(mesh, uv_layer, polygon_index, linked_polygon_index, edge_index, epsilon=1e-5):
+        pair_a = CheckerOverlayCommon.mesh_face_edge_uv_pair(mesh, uv_layer, polygon_index, edge_index)
+        pair_b = CheckerOverlayCommon.mesh_face_edge_uv_pair(mesh, uv_layer, linked_polygon_index, edge_index)
+        if pair_a is None or pair_b is None:
+            return False
+
+        a0, a1 = pair_a
+        b0, b1 = pair_b
+        same_dir = (a0 - b0).length < epsilon and (a1 - b1).length < epsilon
+        flip_dir = (a0 - b1).length < epsilon and (a1 - b0).length < epsilon
+        return same_dir or flip_dir
+
+    @staticmethod
+    def find_mesh_uv_islands(mesh, uv_layer):
+        edge_faces = {}
+        poly_edges = {}
+        for poly in mesh.polygons:
+            edges = [mesh.loops[loop_index].edge_index for loop_index in poly.loop_indices]
+            poly_edges[poly.index] = edges
+            for edge_index in edges:
+                edge_faces.setdefault(edge_index, []).append(poly.index)
+
+        islands = []
+        visited = set()
+        for poly in mesh.polygons:
+            if poly.index in visited:
+                continue
+
+            island = set()
+            stack = [poly.index]
+            while stack:
+                polygon_index = stack.pop()
+                if polygon_index in island:
+                    continue
+
+                island.add(polygon_index)
+                visited.add(polygon_index)
+
+                for edge_index in poly_edges.get(polygon_index, []):
+                    for linked_polygon_index in edge_faces.get(edge_index, []):
+                        if (
+                            linked_polygon_index == polygon_index
+                            or linked_polygon_index in island
+                            or linked_polygon_index in visited
+                        ):
+                            continue
+                        if CheckerOverlayCommon.mesh_uv_edge_connected(
+                            mesh, uv_layer, polygon_index, linked_polygon_index, edge_index
+                        ):
+                            stack.append(linked_polygon_index)
+
+            islands.append(island)
+
+        return islands
 
     @staticmethod
     def alpha(scene):
@@ -667,75 +743,6 @@ class UVChiralityOverlayPreview:
     SOLID_COLOR_SHADER = None
 
     @staticmethod
-    def mesh_face_edge_uv_pair(mesh, uv_layer, polygon_index, edge_index):
-        loop_indices = list(mesh.polygons[polygon_index].loop_indices)
-        for offset, loop_index in enumerate(loop_indices):
-            if mesh.loops[loop_index].edge_index != edge_index:
-                continue
-            next_loop_index = loop_indices[(offset + 1) % len(loop_indices)]
-            return (
-                uv_layer.data[loop_index].uv.copy(),
-                uv_layer.data[next_loop_index].uv.copy(),
-            )
-        return None
-
-    @staticmethod
-    def mesh_uv_edge_connected(mesh, uv_layer, polygon_index, linked_polygon_index, edge_index, epsilon=1e-5):
-        pair_a = UVChiralityOverlayPreview.mesh_face_edge_uv_pair(mesh, uv_layer, polygon_index, edge_index)
-        pair_b = UVChiralityOverlayPreview.mesh_face_edge_uv_pair(mesh, uv_layer, linked_polygon_index, edge_index)
-        if pair_a is None or pair_b is None:
-            return False
-
-        a0, a1 = pair_a
-        b0, b1 = pair_b
-        same_dir = (a0 - b0).length < epsilon and (a1 - b1).length < epsilon
-        flip_dir = (a0 - b1).length < epsilon and (a1 - b0).length < epsilon
-        return same_dir or flip_dir
-
-    @staticmethod
-    def find_mesh_uv_islands(mesh, uv_layer):
-        edge_faces = {}
-        poly_edges = {}
-        for poly in mesh.polygons:
-            edges = [mesh.loops[loop_index].edge_index for loop_index in poly.loop_indices]
-            poly_edges[poly.index] = edges
-            for edge_index in edges:
-                edge_faces.setdefault(edge_index, []).append(poly.index)
-
-        islands = []
-        visited = set()
-        for poly in mesh.polygons:
-            if poly.index in visited:
-                continue
-
-            island = set()
-            stack = [poly.index]
-            while stack:
-                polygon_index = stack.pop()
-                if polygon_index in island:
-                    continue
-
-                island.add(polygon_index)
-                visited.add(polygon_index)
-
-                for edge_index in poly_edges.get(polygon_index, []):
-                    for linked_polygon_index in edge_faces.get(edge_index, []):
-                        if (
-                            linked_polygon_index == polygon_index
-                            or linked_polygon_index in island
-                            or linked_polygon_index in visited
-                        ):
-                            continue
-                        if UVChiralityOverlayPreview.mesh_uv_edge_connected(
-                            mesh, uv_layer, polygon_index, linked_polygon_index, edge_index
-                        ):
-                            stack.append(linked_polygon_index)
-
-            islands.append(island)
-
-        return islands
-
-    @staticmethod
     def calc_uv_chirality_triangle(mesh, uv_layer, polygon, tri_loop_indices):
         p0 = mesh.vertices[mesh.loops[tri_loop_indices[0]].vertex_index].co
         p1 = mesh.vertices[mesh.loops[tri_loop_indices[1]].vertex_index].co
@@ -803,7 +810,7 @@ class UVChiralityOverlayPreview:
                 world_pos = evaluated_obj.matrix_world @ vertex.co
                 vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
 
-            for island_polygon_indices in UVChiralityOverlayPreview.find_mesh_uv_islands(evaluated_mesh, uv_layer):
+            for island_polygon_indices in CheckerOverlayCommon.find_mesh_uv_islands(evaluated_mesh, uv_layer):
                 island_score = 0.0
                 island_defined = 0
                 island_tris = []
@@ -960,6 +967,203 @@ void main()
         layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
 
 
+class UVIslandOverlayPreview:
+    """
+    UV 岛坐标检查模式。
+
+    负责按 UV 连通关系划分 UV 岛，并把每个岛自身的 UV 包围盒归一化到 0-1。
+    UV 子模式用 R/G 同时显示岛内横纵方向，U 子模式只显示横向灰度，
+    V 子模式只显示纵向灰度，用于检查每个岛内部 UV 流向和拉伸趋势。
+    """
+
+    SOLID_COLOR_SHADER = None
+
+    @staticmethod
+    def island_uv_mode(scene):
+        mode = getattr(scene, "ho_checker_overlay_island_uv_mode", _DEFAULT_ISLAND_UV_MODE)
+        if mode not in {item[0] for item in _ISLAND_UV_MODE_ITEMS}:
+            return _DEFAULT_ISLAND_UV_MODE
+        return mode
+
+    @staticmethod
+    def local_uv_color(local_u, local_v, mode):
+        local_u = min(max(float(local_u), 0.0), 1.0)
+        local_v = min(max(float(local_v), 0.0), 1.0)
+        if mode == "U":
+            return (local_u, local_u, local_u, 1.0)
+        if mode == "V":
+            return (local_v, local_v, local_v, 1.0)
+        return (local_u, local_v, 0.0, 1.0)
+
+    @staticmethod
+    def append_mesh_triangles(obj, depsgraph, mode, positions_out, colors_out):
+        evaluated_obj, evaluated_mesh = CheckerOverlayCommon.evaluated_mesh(obj, depsgraph)
+        try:
+            if evaluated_mesh is None:
+                return
+
+            uv_layer = CheckerOverlayCommon.mesh_uv_layer(evaluated_mesh)
+            if uv_layer is None or len(evaluated_mesh.vertices) == 0:
+                return
+
+            evaluated_mesh.calc_loop_triangles()
+            tri_by_polygon = {}
+            for tri in evaluated_mesh.loop_triangles:
+                tri_by_polygon.setdefault(tri.polygon_index, []).append(tri)
+
+            vertex_world_positions = []
+            for vertex in evaluated_mesh.vertices:
+                world_pos = evaluated_obj.matrix_world @ vertex.co
+                vertex_world_positions.append((world_pos.x, world_pos.y, world_pos.z))
+
+            for island_polygon_indices in CheckerOverlayCommon.find_mesh_uv_islands(evaluated_mesh, uv_layer):
+                island_uvs = []
+                for polygon_index in island_polygon_indices:
+                    for loop_index in evaluated_mesh.polygons[polygon_index].loop_indices:
+                        island_uvs.append(uv_layer.data[loop_index].uv)
+                if not island_uvs:
+                    continue
+
+                min_u = min(uv.x for uv in island_uvs)
+                max_u = max(uv.x for uv in island_uvs)
+                min_v = min(uv.y for uv in island_uvs)
+                max_v = max(uv.y for uv in island_uvs)
+                u_range = max(max_u - min_u, 1.0e-8)
+                v_range = max(max_v - min_v, 1.0e-8)
+
+                for polygon_index in island_polygon_indices:
+                    for tri in tri_by_polygon.get(polygon_index, []):
+                        for loop_index, vertex_index in zip(tri.loops, tri.vertices):
+                            uv = uv_layer.data[loop_index].uv
+                            local_u = (uv.x - min_u) / u_range
+                            local_v = (uv.y - min_v) / v_range
+                            positions_out.append(vertex_world_positions[vertex_index])
+                            colors_out.append(UVIslandOverlayPreview.local_uv_color(local_u, local_v, mode))
+        finally:
+            if evaluated_mesh is not None:
+                evaluated_obj.to_mesh_clear()
+
+    @staticmethod
+    def rebuild_cache(context):
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        depsgraph = context.evaluated_depsgraph_get()
+        mode = UVIslandOverlayPreview.island_uv_mode(scene)
+        positions = []
+        colors = []
+
+        for obj in CheckerOverlayCommon.visible_mesh_objects(context):
+            UVIslandOverlayPreview.append_mesh_triangles(obj, depsgraph, mode, positions, colors)
+
+        if not positions:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        shader = UVIslandOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE = None
+            CheckerOverlayCommon.set_overlay_cache_clean()
+            return
+
+        CheckerOverlayCommon.OVERLAY_BATCH_CACHE = batch_for_shader(
+            shader,
+            "TRIS",
+            {
+                "position": positions,
+                "color": colors,
+            },
+        )
+        CheckerOverlayCommon.set_overlay_cache_clean()
+
+    @staticmethod
+    def get_solid_color_shader():
+        if UVIslandOverlayPreview.SOLID_COLOR_SHADER is not None:
+            return UVIslandOverlayPreview.SOLID_COLOR_SHADER
+
+        shader_info = gpu.types.GPUShaderCreateInfo()
+        shader_info.vertex_in(0, "VEC3", "position")
+        shader_info.vertex_in(1, "VEC4", "color")
+
+        stage_interface = gpu.types.GPUStageInterfaceInfo("CheckerOverlayIslandUV")
+        stage_interface.smooth("VEC4", "v_color")
+        shader_info.vertex_out(stage_interface)
+
+        shader_info.push_constant("MAT4", "view_projection")
+        shader_info.push_constant("FLOAT", "alpha")
+        shader_info.push_constant("FLOAT", "depth_bias")
+        shader_info.fragment_out(0, "VEC4", "FragColor")
+        shader_info.vertex_source(CheckerOverlayCommon.overlay_vertex_source("v_color = color;"))
+        shader_info.fragment_source(
+            """
+void main()
+{
+    FragColor = vec4(v_color.rgb, v_color.a * alpha);
+}
+"""
+        )
+
+        try:
+            UVIslandOverlayPreview.SOLID_COLOR_SHADER = gpu.shader.create_from_info(shader_info)
+        except Exception:
+            UVIslandOverlayPreview.SOLID_COLOR_SHADER = None
+        return UVIslandOverlayPreview.SOLID_COLOR_SHADER
+
+    @staticmethod
+    def draw(context=None):
+        context = context or bpy.context
+        scene = CheckerOverlayCommon.get_scene(context)
+        if scene is None or not bool(getattr(scene, "ho_checker_overlay_show", False)):
+            return
+
+        region_data = getattr(context, "region_data", None)
+        if region_data is None:
+            return
+
+        if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+            if CheckerOverlayCommon.OVERLAY_CACHE_DIRTY:
+                CheckerOverlayCommon.refresh_draw(context)
+            if CheckerOverlayCommon.OVERLAY_BATCH_CACHE is None:
+                return
+
+        shader = UVIslandOverlayPreview.get_solid_color_shader()
+        if shader is None:
+            return
+
+        alpha = CheckerOverlayCommon.alpha(scene)
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("LESS_EQUAL")
+        gpu.state.depth_mask_set(False)
+        try:
+            shader.bind()
+            shader.uniform_float("view_projection", region_data.perspective_matrix)
+            shader.uniform_float("alpha", alpha)
+            shader.uniform_float("depth_bias", _DEPTH_BIAS)
+            CheckerOverlayCommon.OVERLAY_BATCH_CACHE.draw(shader)
+        finally:
+            gpu.state.depth_mask_set(True)
+            gpu.state.depth_test_set("NONE")
+            gpu.state.blend_set("NONE")
+
+    @staticmethod
+    def draw_panel(layout, context):
+        scene = getattr(context, "scene", None)
+        if scene is None:
+            return
+
+        active_mode = CheckerOverlayPreview.current_mode_spec(scene)
+        if active_mode is not None:
+            layout.label(text=f"当前模式：{active_mode['label']}")
+
+        layout.prop(scene, "ho_checker_overlay_island_uv_mode", text="显示通道")
+        layout.prop(scene, "ho_checker_overlay_uv_grid_alpha", text="不透明度", slider=True)
+
+
 class CheckerOverlayPreview:
     """
     检查预览的模式注册表与 UI 外壳。
@@ -1109,6 +1313,13 @@ class CheckerOverlayPreview:
             default=_DEFAULT_GRID_RESOLUTION,
             update=CheckerOverlayPreview.on_visual_update,
         )
+        bpy.types.Scene.ho_checker_overlay_island_uv_mode = EnumProperty(
+            name="岛 UV 通道",
+            description="选择 UV 岛坐标检查的显示通道",
+            items=_ISLAND_UV_MODE_ITEMS,
+            default=_DEFAULT_ISLAND_UV_MODE,
+            update=CheckerOverlayPreview.on_mode_update,
+        )
         bpy.types.Scene.ho_checker_overlay_uv_grid_alpha = FloatProperty(
             name="不透明度",
             default=_DEFAULT_ALPHA,
@@ -1121,6 +1332,7 @@ class CheckerOverlayPreview:
     def unregister_props():
         for prop_name in (
             "ho_checker_overlay_uv_grid_alpha",
+            "ho_checker_overlay_island_uv_mode",
             "ho_checker_overlay_uv_grid_resolution",
             "ho_checker_overlay_custom_image_path",
             "ho_checker_overlay_visual_mode",
@@ -1138,14 +1350,12 @@ class CheckerOverlayPreview:
             return
 
         row = layout.row(align=True)
-        row.prop(scene, "ho_checker_overlay_show", text="检查预览", toggle=True, icon="OVERLAY")
-        row.prop(scene, "ho_checker_overlay_realtime_refresh", text="", toggle=True, icon="TIME")
+        row.prop(scene, "ho_checker_overlay_realtime_refresh", text="实时刷新", toggle=True, icon="TIME")
         refresh_row = row.row(align=True)
         refresh_row.enabled = bool(scene.ho_checker_overlay_show)
-        refresh_row.operator(OP_Hotools_CheckerOverlayRefresh.bl_idname, text="", icon="FILE_REFRESH")
+        refresh_row.operator(OP_Hotools_CheckerOverlayRefresh.bl_idname, text="手动刷新", icon="FILE_REFRESH")
 
         col = layout.column(align=True)
-        col.enabled = bool(scene.ho_checker_overlay_show)
 
         mode_items = CheckerOverlayPreview.mode_items()
         if len(mode_items) > 1:
@@ -1154,7 +1364,9 @@ class CheckerOverlayPreview:
         active_mode = CheckerOverlayPreview.current_mode_spec(scene)
         if active_mode is not None:
             panel_fn = active_mode.get("draw_panel") or UVGridOverlayPreview.draw_panel
-            panel_fn(col, context)
+            mode_box = col.box()
+            mode_col = mode_box.column(align=True)
+            panel_fn(mode_col, context)
 
     @staticmethod
     def draw_header(self, context):
@@ -1235,6 +1447,14 @@ class CheckerOverlayModule:
             refresh=UVGridOverlayPreview.rebuild_cache,
             draw=UVGridOverlayPreview.draw,
             draw_panel=UVGridOverlayPreview.draw_panel,
+        )
+        CheckerOverlayPreview.register_mode(
+            "UV_ISLAND",
+            label="UV 岛检查",
+            description="显示每个 UV 岛内部归一化后的 UV / U / V 坐标",
+            refresh=UVIslandOverlayPreview.rebuild_cache,
+            draw=UVIslandOverlayPreview.draw,
+            draw_panel=UVIslandOverlayPreview.draw_panel,
         )
         CheckerOverlayPreview.register_mode(
             "UV_CHIRALITY",
