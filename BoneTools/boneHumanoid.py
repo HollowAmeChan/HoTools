@@ -323,6 +323,99 @@ class OP_Humanoid_ForceAlign(Operator):
             parent = parent.parent
         return depth
 
+    @staticmethod
+    def _axis_label_parts(axis_label):
+        sign = -1.0 if axis_label.startswith("-") else 1.0
+        axis_name = axis_label[-1].upper()
+
+        return sign, axis_name
+
+    @classmethod
+    def _actual_axis_from_label(cls, edit_bone, axis_label):
+        sign, axis_name = cls._axis_label_parts(axis_label)
+
+        if axis_name == "X":
+            return edit_bone.x_axis.normalized() * sign
+
+        if axis_name == "Z":
+            return edit_bone.z_axis.normalized() * sign
+
+        if axis_name == "Y":
+            return edit_bone.y_axis.normalized() * sign
+
+        return None
+
+    @classmethod
+    def _add_axis_direction_roll_candidate(
+        cls,
+        candidates,
+        label,
+        checked_axis_label,
+        target_axis_local,
+        bone_axis_local,
+    ):
+        sign, axis_name = cls._axis_label_parts(checked_axis_label)
+        projected_axis = (
+            target_axis_local
+            - bone_axis_local * target_axis_local.dot(bone_axis_local)
+        )
+
+        score = projected_axis.length
+        if score < 1e-6:
+            return
+
+        desired_checked_axis = projected_axis.normalized()
+
+        if axis_name == "Z":
+            roll_axis_local = desired_checked_axis * sign
+        elif axis_name == "X":
+            desired_x_axis = desired_checked_axis * sign
+            roll_axis_local = desired_x_axis.cross(bone_axis_local)
+
+            if roll_axis_local.length < 1e-6:
+                return
+
+            roll_axis_local.normalize()
+        else:
+            return
+
+        candidates.append({
+            "label": label,
+            "roll_axis_local": roll_axis_local,
+            "score": score,
+            "checked_axis_label": checked_axis_label,
+            "desired_checked_axis": desired_checked_axis,
+        })
+
+    @classmethod
+    def _build_source_axis_roll_candidates(
+        cls,
+        source,
+        bone_axis_local,
+        moving_rot_inv,
+    ):
+        candidates = []
+
+        source_z_local = moving_rot_inv @ source["z_axis_world"]
+        cls._add_axis_direction_roll_candidate(
+            candidates,
+            "SOURCE:Z",
+            "+Z",
+            source_z_local,
+            bone_axis_local,
+        )
+
+        source_x_local = moving_rot_inv @ source["x_axis_world"]
+        cls._add_axis_direction_roll_candidate(
+            candidates,
+            "SOURCE:X",
+            "+X",
+            source_x_local,
+            bone_axis_local,
+        )
+
+        return candidates
+
     def execute(self, context):
         scene = context.scene
         resting_obj = scene.bone_constraint_resting_armature
@@ -338,7 +431,11 @@ class OP_Humanoid_ForceAlign(Operator):
         aligned_count = 0
         missing_count = 0
         skipped_count = 0
+        roll_aligned_count = 0
         roll_failed_count = 0
+        roll_skipped_count = 0
+        roll_x_fallback_count = 0
+        roll_items = []
 
         # --------------------------------------------------
         # 1. 读取 resting 骨架数据
@@ -368,6 +465,7 @@ class OP_Humanoid_ForceAlign(Operator):
 
             head_world = resting_world @ eb.head
             tail_world = resting_world @ eb.tail
+            x_axis_world = (resting_rot @ eb.x_axis).normalized()
             z_axis_world = (resting_rot @ eb.z_axis).normalized()
 
             if mapping not in resting_data:
@@ -375,6 +473,7 @@ class OP_Humanoid_ForceAlign(Operator):
                     "name": str(eb.name),
                     "head_world": head_world.copy(),
                     "tail_world": tail_world.copy(),
+                    "x_axis_world": x_axis_world.copy(),
                     "z_axis_world": z_axis_world.copy(),
                 }
 
@@ -454,19 +553,7 @@ class OP_Humanoid_ForceAlign(Operator):
                 moving_eb.tail = moving_eb.head + direction * original_length
 
             if self.align_roll:
-                try:
-                    roll_axis_local = (
-                        moving_rot_inv @ source["z_axis_world"]
-                    ).normalized()
-
-                    moving_eb.align_roll(roll_axis_local)
-
-                except Exception as e:
-                    roll_failed_count += 1
-                    print(
-                        f"[Humanoid Force Align] roll align failed: "
-                        f"{moving_eb.name}, mapping={mapping}, error={e}"
-                    )
+                roll_items.append((moving_eb, mapping, source))
 
             aligned_count += 1
 
@@ -475,6 +562,80 @@ class OP_Humanoid_ForceAlign(Operator):
                 f"{moving_eb.name} <- {source['name']} "
                 f"mapping={mapping}"
             )
+
+        if self.align_roll:
+            for moving_eb, mapping, source in roll_items:
+                try:
+                    bone_axis_local = moving_eb.tail - moving_eb.head
+                    if bone_axis_local.length < 1e-6:
+                        roll_skipped_count += 1
+                        print(
+                            f"[Humanoid Force Align] roll skipped zero length: "
+                            f"{moving_eb.name}, mapping={mapping}"
+                        )
+                        continue
+
+                    bone_axis_local.normalize()
+                    roll_candidates = self._build_source_axis_roll_candidates(
+                        source,
+                        bone_axis_local,
+                        moving_rot_inv,
+                    )
+
+                    if not roll_candidates:
+                        roll_skipped_count += 1
+                        print(
+                            f"[Humanoid Force Align] roll skipped parallel: "
+                            f"{moving_eb.name}, mapping={mapping}"
+                        )
+                        continue
+
+                    candidate = max(
+                        roll_candidates,
+                        key=lambda item: item["score"],
+                    )
+                    before_roll = moving_eb.roll
+
+                    moving_eb.align_roll(candidate["roll_axis_local"])
+
+                    actual_axis = self._actual_axis_from_label(
+                        moving_eb,
+                        candidate["checked_axis_label"],
+                    )
+                    desired_axis = candidate["desired_checked_axis"]
+
+                    if actual_axis is not None and desired_axis.length >= 1e-6:
+                        desired_axis = desired_axis.normalized()
+                        roll_error_deg = degrees(acos(max(
+                            -1.0,
+                            min(1.0, actual_axis.dot(desired_axis)),
+                        )))
+                    else:
+                        roll_error_deg = None
+
+                    roll_aligned_count += 1
+                    if candidate["checked_axis_label"].endswith("X"):
+                        roll_x_fallback_count += 1
+
+                    error_text = (
+                        f"{roll_error_deg:.3f}deg"
+                        if roll_error_deg is not None
+                        else "unknown"
+                    )
+                    print(
+                        f"[Humanoid Force Align] roll: "
+                        f"{moving_eb.name}, mapping={mapping}, "
+                        f"axis={candidate['label']}, "
+                        f"{before_roll:.6f} -> {moving_eb.roll:.6f}, "
+                        f"error={error_text}"
+                    )
+
+                except Exception as e:
+                    roll_failed_count += 1
+                    print(
+                        f"[Humanoid Force Align] roll align failed: "
+                        f"{moving_eb.name}, mapping={mapping}, error={e}"
+                    )
 
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -501,6 +662,13 @@ class OP_Humanoid_ForceAlign(Operator):
 
         if roll_failed_count:
             msg += f"，Roll失败 {roll_failed_count}"
+
+        if self.align_roll:
+            msg += f"，Roll对齐 {roll_aligned_count}"
+            if roll_skipped_count:
+                msg += f"，Roll跳过 {roll_skipped_count}"
+            if roll_x_fallback_count:
+                msg += f"，Roll使用X轴 {roll_x_fallback_count}"
 
         self.report({'INFO'}, msg)
         return {'FINISHED'}    
