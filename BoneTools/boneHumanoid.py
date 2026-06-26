@@ -696,6 +696,32 @@ def _safe_normalized_vector(vector):
     return vector.normalized()
 
 
+class HumanoidBoneSample:
+    def __init__(
+        self,
+        bone_name,
+        mapping_name,
+        head_world,
+        tail_world,
+        axes_world,
+        bone=None,
+        pose_bone=None,
+        edit_bone=None,
+    ):
+        self.bone_name = bone_name
+        self.mapping_name = mapping_name
+        self.head_world = head_world
+        self.tail_world = tail_world
+        self.center_world = (head_world + tail_world) * 0.5
+        self.axes_world = axes_world
+        self.bone = bone
+        self.pose_bone = pose_bone
+        self.edit_bone = edit_bone
+
+    def points(self):
+        return self.head_world, self.tail_world, self.center_world
+
+
 class HumanoidTwistCheckContext:
     _axis_indices = {
         "X": 0,
@@ -715,6 +741,8 @@ class HumanoidTwistCheckContext:
         tail_world=None,
         center_world=None,
         mapping_to_bone_name=None,
+        mapping_to_sample=None,
+        bone_name_to_sample=None,
     ):
         self.bone_name = bone_name
         self.mapping_name = mapping_name
@@ -726,6 +754,8 @@ class HumanoidTwistCheckContext:
         self.tail_world = tail_world
         self.center_world = center_world
         self.mapping_to_bone_name = mapping_to_bone_name or {}
+        self.mapping_to_sample = mapping_to_sample or {}
+        self.bone_name_to_sample = bone_name_to_sample or {}
 
     def axis(self, axis_label):
         sign = -1.0 if axis_label.startswith("-") else 1.0
@@ -748,9 +778,23 @@ class HumanoidTwistCheckContext:
         return degrees(acos(dot))
 
     def bone_name_for_mapping(self, mapping_name):
+        sample = self.sample_for_mapping(mapping_name)
+        if sample is not None:
+            return sample.bone_name
+
         return self.mapping_to_bone_name.get(mapping_name)
 
+    def sample_for_mapping(self, mapping_name):
+        return self.mapping_to_sample.get(mapping_name)
+
+    def sample_for_bone_name(self, bone_name):
+        return self.bone_name_to_sample.get(bone_name)
+
     def pose_points_for_bone_name(self, bone_name):
+        sample = self.sample_for_bone_name(bone_name)
+        if sample is not None:
+            return sample.points()
+
         if self.armature is None:
             return None
 
@@ -765,6 +809,10 @@ class HumanoidTwistCheckContext:
         return head, tail, center
 
     def pose_points_for_mapping(self, mapping_name):
+        sample = self.sample_for_mapping(mapping_name)
+        if sample is not None:
+            return sample.points()
+
         bone_name = self.bone_name_for_mapping(mapping_name)
         if not bone_name:
             return None
@@ -1157,11 +1205,15 @@ _register_ik_bend_direction_twist_rule(
     mapping_name="lower_leg.L",
     upper_mapping_name="upper_leg.L",
     lower_mapping_name="lower_leg.L",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
 )
 _register_ik_bend_direction_twist_rule(
     mapping_name="lower_leg.R",
     upper_mapping_name="upper_leg.R",
     lower_mapping_name="lower_leg.R",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
 )
 
 
@@ -1242,6 +1294,39 @@ class HumanoidMappingPreviewHUD:
 
         return props.humanoidMapping.strip()
 
+    @staticmethod
+    def _is_editing_armature(armature):
+        context = bpy.context
+
+        return (
+            context.mode == 'EDIT_ARMATURE'
+            and getattr(context, "edit_object", None) == armature
+        )
+
+    @classmethod
+    def _make_axes_from_matrix(cls, matrix):
+        x_axis = _safe_normalized_vector(matrix @ Vector((1.0, 0.0, 0.0)))
+        y_axis = _safe_normalized_vector(matrix @ Vector((0.0, 1.0, 0.0)))
+        z_axis = _safe_normalized_vector(matrix @ Vector((0.0, 0.0, 1.0)))
+
+        if x_axis is None or y_axis is None or z_axis is None:
+            return None
+
+        return x_axis, y_axis, z_axis
+
+    @classmethod
+    def _make_axes_from_edit_bone(cls, armature, edit_bone):
+        rot_world = armature.matrix_world.to_3x3()
+
+        x_axis = _safe_normalized_vector(rot_world @ edit_bone.x_axis)
+        y_axis = _safe_normalized_vector(rot_world @ edit_bone.y_axis)
+        z_axis = _safe_normalized_vector(rot_world @ edit_bone.z_axis)
+
+        if x_axis is None or y_axis is None or z_axis is None:
+            return None
+
+        return x_axis, y_axis, z_axis
+
     @classmethod
     def _get_bone_world_rest_axes(cls, bone_name: str):
         armature = cls._get_armature()
@@ -1257,52 +1342,87 @@ class HumanoidMappingPreviewHUD:
             @ bone.matrix_local.to_3x3()
         )
 
-        x_axis = _safe_normalized_vector(rest_rot_world @ Vector((1.0, 0.0, 0.0)))
-        y_axis = _safe_normalized_vector(rest_rot_world @ Vector((0.0, 1.0, 0.0)))
-        z_axis = _safe_normalized_vector(rest_rot_world @ Vector((0.0, 0.0, 1.0)))
+        return cls._make_axes_from_matrix(rest_rot_world)
 
-        if x_axis is None or y_axis is None or z_axis is None:
-            return None
+    @classmethod
+    def _build_bone_samples(cls):
+        armature = cls._get_armature()
+        if armature is None:
+            return []
 
-        return x_axis, y_axis, z_axis
+        world = armature.matrix_world
+        samples = []
+
+        if cls._is_editing_armature(armature):
+            for eb in armature.data.edit_bones:
+                mapping_name = cls._get_bone_mapping_name(eb.name)
+                if not mapping_name:
+                    continue
+
+                axes = cls._make_axes_from_edit_bone(armature, eb)
+                if axes is None:
+                    continue
+
+                bone = armature.data.bones.get(eb.name)
+                samples.append(HumanoidBoneSample(
+                    bone_name=eb.name,
+                    mapping_name=mapping_name,
+                    head_world=world @ eb.head,
+                    tail_world=world @ eb.tail,
+                    axes_world=axes,
+                    bone=bone,
+                    edit_bone=eb,
+                ))
+
+            return samples
+
+        for pb in armature.pose.bones:
+            mapping_name = cls._get_bone_mapping_name(pb.name)
+            if not mapping_name:
+                continue
+
+            axes = cls._get_bone_world_rest_axes(pb.name)
+            if axes is None:
+                continue
+
+            samples.append(HumanoidBoneSample(
+                bone_name=pb.name,
+                mapping_name=mapping_name,
+                head_world=world @ pb.head,
+                tail_world=world @ pb.tail,
+                axes_world=axes,
+                bone=pb.bone,
+                pose_bone=pb,
+            ))
+
+        return samples
 
     @classmethod
     def _get_twist_issues(
         cls,
-        bone_name: str,
-        mapping_name: str,
+        sample,
         mapping_to_bone_name=None,
+        mapping_to_sample=None,
+        bone_name_to_sample=None,
     ):
-        axes = cls._get_bone_world_rest_axes(bone_name)
-        if axes is None:
+        if sample is None or sample.axes_world is None:
             return []
 
         armature = cls._get_armature()
-        bone = None
-        pose_bone = None
-        head_world = None
-        tail_world = None
-        center_world = None
-
-        if armature is not None:
-            bone = armature.data.bones.get(bone_name)
-            pose_bone = armature.pose.bones.get(bone_name)
-
-        points = cls._get_pose_bone_world_points(bone_name)
-        if points is not None:
-            head_world, tail_world, center_world = points
 
         context = HumanoidTwistCheckContext(
-            bone_name=bone_name,
-            mapping_name=mapping_name,
-            axes=axes,
+            bone_name=sample.bone_name,
+            mapping_name=sample.mapping_name,
+            axes=sample.axes_world,
             armature=armature,
-            bone=bone,
-            pose_bone=pose_bone,
-            head_world=head_world,
-            tail_world=tail_world,
-            center_world=center_world,
+            bone=sample.bone,
+            pose_bone=sample.pose_bone,
+            head_world=sample.head_world,
+            tail_world=sample.tail_world,
+            center_world=sample.center_world,
             mapping_to_bone_name=mapping_to_bone_name,
+            mapping_to_sample=mapping_to_sample,
+            bone_name_to_sample=bone_name_to_sample,
         )
 
         return HUMANOID_TWIST_RULES.evaluate(context)
@@ -1331,28 +1451,35 @@ class HumanoidMappingPreviewHUD:
 
         mapped_targets = set()
         items = []
+        samples = cls._build_bone_samples()
         mapping_to_bone_name = {}
+        mapping_to_sample = {}
+        bone_name_to_sample = {}
 
-        for pb in armature.pose.bones:
-            mapping_name = cls._get_bone_mapping_name(pb.name)
+        for sample in samples:
+            mapping_name = sample.mapping_name
             if not mapping_name:
                 continue
 
             mapped_targets.add(mapping_name)
-            if mapping_name not in mapping_to_bone_name:
-                mapping_to_bone_name[mapping_name] = pb.name
+            bone_name_to_sample[sample.bone_name] = sample
 
-        for pb in armature.pose.bones:
-            mapping_name = cls._get_bone_mapping_name(pb.name)
-            if not mapping_name:
+            if mapping_name not in mapping_to_bone_name:
+                mapping_to_bone_name[mapping_name] = sample.bone_name
+                mapping_to_sample[mapping_name] = sample
+
+        for sample in samples:
+            if not sample.mapping_name:
                 continue
 
             items.append({
-                "bone_name": pb.name,
+                "bone_name": sample.bone_name,
+                "sample": sample,
                 "twist_issues": cls._get_twist_issues(
-                    pb.name,
-                    mapping_name,
+                    sample,
                     mapping_to_bone_name=mapping_to_bone_name,
+                    mapping_to_sample=mapping_to_sample,
+                    bone_name_to_sample=bone_name_to_sample,
                 ),
             })
 
@@ -1451,6 +1578,23 @@ class HumanoidMappingPreviewHUD:
         return head, tail, center
 
     @classmethod
+    def _get_item_world_points(cls, item):
+        sample = item.get("sample")
+        if sample is not None:
+            return sample.points()
+
+        return cls._get_pose_bone_world_points(item["bone_name"])
+
+    @classmethod
+    def _refresh_live_edit_cache_if_needed(cls):
+        armature = cls._get_armature()
+        if armature is None:
+            return
+
+        if cls._is_editing_armature(armature):
+            cls._refresh_mapping_cache()
+
+    @classmethod
     def _timer(cls):
         if cls._handler_3d is None and cls._handler_2d is None:
             cls._timer_running = False
@@ -1484,6 +1628,8 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def _draw_3d(cls):
+        cls._refresh_live_edit_cache_if_needed()
+
         if not cls._items:
             return
 
@@ -1503,7 +1649,7 @@ class HumanoidMappingPreviewHUD:
         fan_border_coords = []
 
         for item in cls._items:
-            result = cls._get_pose_bone_world_points(item["bone_name"])
+            result = cls._get_item_world_points(item)
             if result is None:
                 continue
 
@@ -1677,6 +1823,8 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def _draw_2d(cls):
+        cls._refresh_live_edit_cache_if_needed()
+
         armature = cls._get_armature()
         if armature is None:
             return
@@ -1699,7 +1847,7 @@ class HumanoidMappingPreviewHUD:
             if not mapping_name:
                 continue
 
-            result = cls._get_pose_bone_world_points(bone_name)
+            result = cls._get_item_world_points(item)
             if result is None:
                 continue
 
