@@ -23,6 +23,11 @@ class PG_Hotools_BoneProps(PropertyGroup):
         description="定义此骨对应Unity-Humannoid标准骨",
         default="",
     )  # type: ignore
+    deformMappingTag: StringProperty(
+        name="DeformMappingTag",
+        description="目标形变骨名称，用于HoTools批量约束映射",
+        default="",
+    )  # type: ignore
 
 
 class PT_Hotools_PosebonePanel(Panel):
@@ -44,6 +49,7 @@ class PT_Hotools_PosebonePanel(Panel):
         layout.prop(props, "keepRotation", toggle=False)
         layout.prop(props, "endBone", toggle=False)
         layout.prop(props, "humanoidMapping", toggle=False)
+        layout.prop(props, "deformMappingTag", toggle=False)
 
 
 cls = [

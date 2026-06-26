@@ -1,4 +1,3 @@
-# TODO:目前很难用，还很容易不小心把骨架搞坏，OP_Humanoid_ForceAlign对于扭转的识别很奇怪。arp的ref与deform骨命名很恶心奇怪，自动处理要做好很hack。以及用户需要首先把ref吸到自己的骨架上（需要自动map一次），然后生成对齐的deform层，然后自己的骨架又要使用约束吸到rig骨架上（这里用的交换运动骨架物体，然后使用deform层的map，所以ref的map要删掉重新给deformmap，这很傻逼），这整个流程中ref强制吸附+约束吸附可以完全整合成一整个无脑操作
 import bpy
 from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
@@ -31,6 +30,10 @@ def reg_props():
         name="显示检查内容",
         default=True,
     )
+    bpy.types.Scene.bone_humanoid_preview_show_deform_tags = BoolProperty(
+        name="显示DeformTag",
+        default=True,
+    )
     bpy.types.Scene.bone_humanoid_preview_font_size = IntProperty(
         name="文字大小",
         default=30,
@@ -44,6 +47,7 @@ def ureg_props():
     del bpy.types.Scene.bone_humanoid_preview_show_names
     del bpy.types.Scene.bone_humanoid_preview_show_missing
     del bpy.types.Scene.bone_humanoid_preview_show_check_details
+    del bpy.types.Scene.bone_humanoid_preview_show_deform_tags
     del bpy.types.Scene.bone_humanoid_preview_font_size
 
 class OP_SwapBoneConstraintArmatures(Operator):
@@ -112,6 +116,8 @@ class OP_SameNameBone_addConstraint(Operator):
         added_count = 0
         existed_count = 0
         fallback_count = 0
+        deform_tag_count = 0
+        missing_deform_tag_count = 0
         missing_count = 0
         skipped_no_mapping_count = 0
 
@@ -120,11 +126,33 @@ class OP_SameNameBone_addConstraint(Operator):
 
             props = getattr(moving_bone.bone, "hotools_boneprops", None)
             mapping_name = ""
+            deform_mapping_tag = ""
 
             if props is not None:
                 mapping_name = props.humanoidMapping.strip()
+                deform_mapping_tag = getattr(
+                    props,
+                    "deformMappingTag",
+                    "",
+                ).strip()
 
-            if mapping_name:
+            if deform_mapping_tag:
+                resting_bone = resting_armature.pose.bones.get(
+                    deform_mapping_tag,
+                )
+                if resting_bone is None:
+                    missing_deform_tag_count += 1
+                    missing_count += 1
+                    print(
+                        f"[Bone Constraint] DeformMappingTag target missing: "
+                        f"moving={moving_bone.name}, "
+                        f"tag={deform_mapping_tag}, "
+                        f"mapping={mapping_name or '<EMPTY>'}"
+                    )
+                    continue
+
+                deform_tag_count += 1
+            elif mapping_name:
                 resting_bone = resting_mapping_map.get(mapping_name)
             else:
                 skipped_no_mapping_count += 1
@@ -172,6 +200,7 @@ class OP_SameNameBone_addConstraint(Operator):
                 f"[Bone Constraint] 添加: "
                 f"{moving_bone.name} -> {resting_bone.name} "
                 f"mapping={mapping_name or '<SAME_NAME>'} "
+                f"deformTag={deform_mapping_tag or '<EMPTY>'} "
                 f"type={self.constraint_type}"
             )
 
@@ -190,6 +219,12 @@ class OP_SameNameBone_addConstraint(Operator):
 
         if skipped_no_mapping_count:
             msg += f"，moving无映射 {skipped_no_mapping_count}"
+
+        if deform_tag_count:
+            msg += f"，DeformTag {deform_tag_count}"
+
+        if missing_deform_tag_count:
+            msg += f"，DeformTag目标缺失 {missing_deform_tag_count}"
 
         if duplicate_resting_mappings:
             msg += f"，resting重复映射 {len(duplicate_resting_mappings)}"
@@ -1477,6 +1512,13 @@ class HumanoidMappingPreviewHUD:
         ))
 
     @classmethod
+    def _show_deform_tags(cls):
+        return bool(cls._scene_setting(
+            "bone_humanoid_preview_show_deform_tags",
+            True,
+        ))
+
+    @classmethod
     def _font_size_value(cls):
         return int(cls._scene_setting(
             "bone_humanoid_preview_font_size",
@@ -1531,6 +1573,22 @@ class HumanoidMappingPreviewHUD:
             return ""
 
         return props.humanoidMapping.strip()
+
+    @classmethod
+    def _get_bone_deform_mapping_tag(cls, bone_name: str) -> str:
+        armature = cls._get_armature()
+        if armature is None:
+            return ""
+
+        bone = armature.data.bones.get(bone_name)
+        if bone is None:
+            return ""
+
+        props = getattr(bone, "hotools_boneprops", None)
+        if props is None:
+            return ""
+
+        return getattr(props, "deformMappingTag", "").strip()
 
     @staticmethod
     def _is_editing_armature(armature):
@@ -2137,12 +2195,14 @@ class HumanoidMappingPreviewHUD:
         gpu.state.blend_set('ALPHA')
         show_names = cls._show_names()
         show_check_details = cls._show_check_details()
+        show_deform_tags = cls._show_deform_tags()
         font_size = cls._font_size_value()
         twist_font_size = cls._twist_font_size_value()
 
         for index, item in enumerate(cls._items):
             bone_name = item["bone_name"]
             mapping_name = cls._get_bone_mapping_name(bone_name)
+            deform_mapping_tag = cls._get_bone_deform_mapping_tag(bone_name)
             if not mapping_name:
                 continue
 
@@ -2152,7 +2212,11 @@ class HumanoidMappingPreviewHUD:
 
             head, tail, center = result
             twist_issues = item.get("twist_issues") or []
-            if not show_names and not (show_check_details and twist_issues):
+            if (
+                not show_names
+                and not show_deform_tags
+                and not (show_check_details and twist_issues)
+            ):
                 continue
 
             pos_2d = view3d_utils.location_3d_to_region_2d(
@@ -2195,8 +2259,24 @@ class HumanoidMappingPreviewHUD:
             line_shader.uniform_float("color", line_color)
             batch.draw(line_shader)
 
-            if show_names:
-                label = f'{mapping_name}  ({bone_name})'
+            if show_names or show_deform_tags:
+                if show_names and show_deform_tags:
+                    deform_label = (
+                        deform_mapping_tag
+                        if deform_mapping_tag
+                        else "<NO_DEFORM_TAG>"
+                    )
+                    label = f'{mapping_name} -> {deform_label}  ({bone_name})'
+                elif show_deform_tags:
+                    deform_label = (
+                        deform_mapping_tag
+                        if deform_mapping_tag
+                        else "<NO_DEFORM_TAG>"
+                    )
+                    label = f'DeformTag: {deform_label}'
+                else:
+                    label = f'{mapping_name}  ({bone_name})'
+
                 label = cls.no_i18n(label)
 
                 blf.size(font_id, font_size)
@@ -2367,6 +2447,11 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     row.prop(
         scene,
         "bone_humanoid_preview_show_missing",
+        toggle=True,
+    )
+    row.prop(
+        scene,
+        "bone_humanoid_preview_show_deform_tags",
         toggle=True,
     )
 
