@@ -25,7 +25,8 @@ if py_lib_dir:
 
 from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, PhysicsTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
 from . import OmniNode
-from bpy.props import BoolProperty, FloatProperty
+from . import i18n
+from bpy.props import BoolProperty, FloatProperty, EnumProperty
 
 # 内置的绘制快捷键ui的接口
 import rna_keymap_ui
@@ -34,7 +35,7 @@ import rna_keymap_ui
 bl_info = {
     "name": "HoTools",
     "author": "Hollow_ame",
-    "version": (2, 2, 0),
+    "version": (2, 3, 0),
     "blender": (4, 5, 0),
     "location": "Hollow",
     "description": "https://space.bilibili.com/60340452",
@@ -89,21 +90,38 @@ class OP_register_asset_library(Operator):
     bl_label = "注册内置资源库"
     bl_description = "将Hotools内置资源库注册到Blender资源库中,可在资源浏览器中使用"
 
+    @classmethod
+    def description(cls, context, properties):
+        return i18n.tr("将Hotools内置资源库注册到Blender资源库中,可在资源浏览器中使用")
+
     def execute(self, context):
         addon_dir = os.path.dirname(__file__)
         asset_path = os.path.join(addon_dir, "HoAssets")
         if asset_library_exists(asset_path):
-            self.report({'INFO'}, "HoAssets已经被注册过了")
+            self.report({'INFO'}, i18n.tr("HoAssets已经被注册过了"))
             return {'CANCELLED'}
 
         register_asset_library("HoTools", asset_path)
-        self.report({'INFO'}, "HoTools资产库HoAssets已注册")
+        self.report({'INFO'}, i18n.tr("HoTools资产库HoAssets已注册"))
         return {'FINISHED'}
 
 
 class AddonPreference(bpy.types.AddonPreferences):
     """插件的参数，不随着文件改变而改变"""
     bl_idname = __name__
+
+    hoTools_language: EnumProperty(
+        name="语言 / Language",
+        description="仅影响 HoTools 的界面语言，不改变 Blender 全局语言；AUTO 跟随 Blender",
+        items=[
+            ('AUTO',    "自动 (跟随 Blender)", ""),
+            ('zh_HANS', "简体中文",            ""),
+            ('en_US',   "English",            ""),
+            ('ja_JP',   "日本語",             ""),
+        ],
+        default='AUTO',
+        update=lambda self, ctx: i18n.reload(),
+    )  # type: ignore
 
     hoTools_enableExIcon: BoolProperty(name="开关exicon",
                                        default=False, update=updateExIconState)  # type: ignore
@@ -117,13 +135,16 @@ class AddonPreference(bpy.types.AddonPreferences):
     def draw(self, context):
         layout: bpy.types.UILayout = self.layout
         row = layout.row(align=True)
+        # 语言枚举项是各语言的本名（English/日本語…），不翻译；仅翻译标签。
+        row.prop(self, "hoTools_language", text=i18n.tr("语言 / Language"))
+        row = layout.row(align=True)
         row.alert = True
-        row.operator("ho.register_asset_library", text="注册内置资源库")
+        row.operator("ho.register_asset_library", text=i18n.tr("注册内置资源库"))
         row.alert = False
         row = layout.row(align=True)
-        row.prop(self, "hoTools_enableExIcon", toggle=True)
-        row.prop(self, "hoTools_ExIconSize")
-        row.prop(self, "hoTools_ExiconAlpha")
+        row.prop(self, "hoTools_enableExIcon", toggle=True, text=i18n.tr("开关exicon"))
+        row.prop(self, "hoTools_ExIconSize", text=i18n.tr("图标大小"))
+        row.prop(self, "hoTools_ExiconAlpha", text=i18n.tr("图标不透明度"))
         row = layout.row(align=True)
         row.prop(self, "hoTools_OmniNodeFeatures_enable", toggle=True)
 
@@ -153,9 +174,12 @@ cls = [OP_register_asset_library,AddonPreference,]
 
 
 def register():
+    # i18n 先注册，使 tr() 在各功能模块注册期间即可用。
+    i18n.register()
+
     for i in cls:
         bpy.utils.register_class(i)
-    
+
     FastOperators.register()
     VertexColorTools.register()
     VertexGroupTools.register()
@@ -195,5 +219,8 @@ def unregister():
     Checker.unregister()
     Rbf.unregister()
     OmniNode.unregister()
+
+    # i18n 最后注销，保证功能模块注销期间 tr() 仍可用。
+    i18n.unregister()
 
     

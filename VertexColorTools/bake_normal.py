@@ -4,6 +4,7 @@ from bpy.types import Operator
 from mathutils import Vector
 
 from .utils import get_active_corner_color_attribute, write_color_data
+from ..i18n import tr
 
 MODE_ITEMS = [
     ("CUSTOM2RAW", "自定义法线 -> 原始法线", ""),
@@ -16,6 +17,10 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
     bl_idname = "ho.bake_custom_normal_to_vertex_color"
     bl_label = "烘焙自定义法线到顶点色"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("烘焙自定义法线到顶点色")
 
     mode: EnumProperty(
         name="法线空间转换",
@@ -181,27 +186,27 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
             obj for obj in context.selected_objects if obj.type == "MESH" and obj != active_obj
         ]
         if len(other_mesh_objects) != 1:
-            raise RuntimeError("该模式需要额外且仅额外选择一个拓扑一致的参考网格")
+            raise RuntimeError(tr("该模式需要额外且仅额外选择一个拓扑一致的参考网格"))
         return other_mesh_objects[0]
 
     def ensure_same_topology(self, mesh_a, mesh_b):
         if len(mesh_a.vertices) != len(mesh_b.vertices):
-            raise RuntimeError("两个物体的顶点数量不一致")
+            raise RuntimeError(tr("两个物体的顶点数量不一致"))
         if len(mesh_a.edges) != len(mesh_b.edges):
-            raise RuntimeError("两个物体的边数量不一致")
+            raise RuntimeError(tr("两个物体的边数量不一致"))
         if len(mesh_a.loops) != len(mesh_b.loops):
-            raise RuntimeError("两个物体的面角数量不一致")
+            raise RuntimeError(tr("两个物体的面角数量不一致"))
         if len(mesh_a.polygons) != len(mesh_b.polygons):
-            raise RuntimeError("两个物体的面数量不一致")
+            raise RuntimeError(tr("两个物体的面数量不一致"))
 
         for polygon_index, (polygon_a, polygon_b) in enumerate(zip(mesh_a.polygons, mesh_b.polygons)):
             if polygon_a.loop_total != polygon_b.loop_total:
-                raise RuntimeError(f"第 {polygon_index} 个面的边数不一致")
+                raise RuntimeError(tr("第 {i} 个面的边数不一致").format(i=polygon_index))
 
             verts_a = [mesh_a.loops[index].vertex_index for index in polygon_a.loop_indices]
             verts_b = [mesh_b.loops[index].vertex_index for index in polygon_b.loop_indices]
             if verts_a != verts_b:
-                raise RuntimeError(f"第 {polygon_index} 个面的拓扑顺序不一致")
+                raise RuntimeError(tr("第 {i} 个面的拓扑顺序不一致").format(i=polygon_index))
 
     def create_raw_reference_object(self, context, obj):
         mesh = obj.data
@@ -274,20 +279,20 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
         for identifier, label, _description in MODE_ITEMS:
             column.prop_enum(self, "mode", identifier, text=label)
         if self.mode == "CUSTOM2RAW":
-            layout.label(text="当前自定义法线到原始法线，需要确保有自定义法线")
+            layout.label(text=tr("当前自定义法线到原始法线，需要确保有自定义法线"))
         elif self.mode == "OBJECT2SMOOTH":
-            layout.label(text="另一个物体自定义法线到当前物体自定义法线")
-            layout.label(text="需要额外选择一个拓扑一致的参考网格")
+            layout.label(text=tr("另一个物体自定义法线到当前物体自定义法线"))
+            layout.label(text=tr("需要额外选择一个拓扑一致的参考网格"))
         elif self.mode == "SOLIDIFY_RAW2SMOOTH":
-            layout.label(text="OBJECT2SMOOTH的加强版")
-            layout.label(text="如果你正在使用Liltoon描边RGBA修正，请使用它")
-            layout.label(text="A通道以0.5为基准保存厚度补偿，可以得到连续锐利的边缘")
+            layout.label(text=tr("OBJECT2SMOOTH的加强版"))
+            layout.label(text=tr("如果你正在使用Liltoon描边RGBA修正，请使用它"))
+            layout.label(text=tr("A通道以0.5为基准保存厚度补偿，可以得到连续锐利的边缘"))
 
 
     def execute(self, context):
         active_obj = context.object
         if active_obj is None or active_obj.type != "MESH":
-            self.report({"WARNING"}, "请先选择一个网格物体")
+            self.report({"WARNING"}, tr("请先选择一个网格物体"))
             return {"CANCELLED"}
 
         active_mesh = active_obj.data
@@ -299,7 +304,7 @@ class HO_OT_bake_normal_to_vertex_color(Operator):
         try:
             if self.mode == "CUSTOM2RAW":
                 if not active_mesh.has_custom_normals:
-                    self.report({"WARNING"}, "当前网格没有自定义法线")
+                    self.report({"WARNING"}, tr("当前网格没有自定义法线"))
                     return {"CANCELLED"}
 
                 raw_obj = self.create_raw_reference_object(context, active_obj)

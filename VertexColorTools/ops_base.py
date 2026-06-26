@@ -7,13 +7,14 @@ from bpy.types import Operator
 
 from .properties import get_scene_settings
 from .utils import get_active_corner_color_attribute, linear_to_srgb
+from ..i18n import tr
 
 
 def apply_vertex_color_view(context, enable):
     window = context.window
     screen = context.screen
     if window is None or screen is None:
-        raise RuntimeError("当前上下文没有可用窗口")
+        raise RuntimeError(tr("当前上下文没有可用窗口"))
 
     for area in screen.areas:
         if area.type != "VIEW_3D":
@@ -42,13 +43,17 @@ def apply_vertex_color_view(context, enable):
                     shading.light = "STUDIO"
             return
 
-    raise RuntimeError("找不到 3D 视图区域")
+    raise RuntimeError(tr("找不到 3D 视图区域"))
 
 
 class HO_OT_temp_vertex_color_palette(Operator):
     bl_idname = "ho.temp_vertex_color_palette"
     bl_label = "管理缓存颜色"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("管理缓存颜色")
 
     action: EnumProperty(
         items=[
@@ -90,6 +95,10 @@ class HO_OT_enter_vertex_color_view(Operator):
     bl_label = "进入顶点色预览"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("进入顶点色预览")
+
     def execute(self, context):
         try:
             apply_vertex_color_view(context, True)
@@ -103,6 +112,10 @@ class HO_OT_quit_vertex_color_view(Operator):
     bl_idname = "ho.quitvertexcolorview"
     bl_label = "退出顶点色预览"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("退出顶点色预览")
 
     def execute(self, context):
         try:
@@ -118,6 +131,10 @@ class HO_OT_set_mesh_vertex_color(Operator):
     bl_label = "写入顶点色"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("写入顶点色")
+
     color: FloatVectorProperty(size=3, subtype="COLOR", min=0.0, max=1.0)  # type: ignore
 
     @classmethod
@@ -131,7 +148,7 @@ class HO_OT_set_mesh_vertex_color(Operator):
     def execute(self, context):
         obj = context.object
         if obj is None or obj.type != "MESH":
-            self.report({"WARNING"}, "当前对象不是网格")
+            self.report({"WARNING"}, tr("当前对象不是网格"))
             return {"CANCELLED"}
 
         mesh = obj.data
@@ -149,7 +166,7 @@ class HO_OT_set_mesh_vertex_color(Operator):
 
         selected_faces = [face for face in bm.faces if face.select]
         if not selected_faces:
-            self.report({"WARNING"}, "当前没有选中任何面")
+            self.report({"WARNING"}, tr("当前没有选中任何面"))
             return {"CANCELLED"}
 
         color = (*linear_to_srgb(self.color[:3]), 1.0)
@@ -186,7 +203,7 @@ def draw_base_panel(context, layout):
     if settings.temp_colors:
         section.separator()
         row = section.row(align=True)
-        row.label(text="缓存颜色")
+        row.label(text=tr("缓存颜色"))
         op = row.operator(HO_OT_temp_vertex_color_palette.bl_idname, text="", icon="TRASH")
         op.action = "CLEAR"
 

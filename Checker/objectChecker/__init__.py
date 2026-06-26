@@ -3,6 +3,7 @@ from bpy.types import Panel,Operator,UIList,PropertyGroup
 from bpy.props import StringProperty,IntProperty,CollectionProperty
 
 from . import define, fixOperator
+from ...i18n import tr
 
 
 
@@ -44,7 +45,7 @@ def drawObjectCheckerPanel(layout,context):
     scene = context.scene
     #检查列表
     box = layout.box()
-    box.label(text="检查对象")        
+    box.label(text=tr("检查对象"))        
     row = box.row(align=True)
     col1 = row.column()
     col1.template_list(
@@ -59,13 +60,13 @@ def drawObjectCheckerPanel(layout,context):
     r.alert = True
     r.operator(OP_ObjectChecker_RefreshSelectedObjects.bl_idname, icon="FILE_REFRESH", text="")
     r.alert = False
-    r.operator(OP_ObjectChecker_Run.bl_idname,text="检查列表物体",icon="INFO")
+    r.operator(OP_ObjectChecker_Run.bl_idname,text=tr("检查列表物体"),icon="INFO")
     #检查结果
     
     box = layout.box()
     results = scene.ho_checker_results
     if not results:
-        box.label(text="未发现问题/未执行检查")
+        box.label(text=tr("未发现问题/未执行检查"))
         return
     for result in results:
         layout.alert = False
@@ -94,7 +95,7 @@ def drawObjectCheckerPanel(layout,context):
             op_select.input = result.cache
         # 修复按钮
         if result.fix_operator_id :
-            op_fix = row.operator(result.fix_operator_id, text="修复", icon="MODIFIER")
+            op_fix = row.operator(result.fix_operator_id, text=tr("修复"), icon="MODIFIER")
 
     return
 
@@ -151,7 +152,7 @@ class OP_ObjectChecker_Run(Operator):
                     r.fix_operator_id = fix_func
                     r.cache = str(cache)
 
-        self.report({'INFO'}, "检查完毕")
+        self.report({'INFO'}, tr("检查完毕"))
         return {'FINISHED'}
 
 

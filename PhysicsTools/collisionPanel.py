@@ -1,5 +1,6 @@
 from bpy.types import Panel
 
+from ..i18n import tr
 from .collisionOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_AddSelectedSpringRoots,
@@ -83,17 +84,17 @@ def _draw_collision_controls(layout, props):
     pin_row = layout.row(align=True)
     pin_row.prop(props, "pin")
     if props.spring_root:
-        pin_row.label(text="Root强制Pin", icon="PINNED")
-    layout.prop(props, "collision_type", text="类型")
+        pin_row.label(text=tr("Root强制Pin"), icon="PINNED")
+    layout.prop(props, "collision_type", text=tr("类型"))
 
     col = layout.column(align=True)
-    col.label(text="主碰撞组")
+    col.label(text=tr("主碰撞组"))
     _draw_group_buttons(
         col,
         BONE_SET_PRIMARY_GROUP_OPERATOR,
         active_group=props.primary_collision_group,
     )
-    col.label(text="被碰撞组")
+    col.label(text=tr("被碰撞组"))
     _draw_group_buttons(
         col,
         BONE_TOGGLE_COLLIDED_BY_GROUP_OPERATOR,
@@ -102,17 +103,17 @@ def _draw_collision_controls(layout, props):
     if props.collision_type == "NONE":
         return
 
-    col.prop(props, "radius")
+    col.prop(props, "radius", text=tr("半径"))
     if props.collision_type == "CAPSULE":
-        col.prop(props, "length")
-    col.prop(props, "offset")
+        col.prop(props, "length", text=tr("长度"))
+    col.prop(props, "offset", text=tr("中心偏移"))
 
 
 def _draw_object_collision_controls(layout, props):
-    layout.prop(props, "collision_type", text="类型")
+    layout.prop(props, "collision_type", text=tr("类型"))
 
     col = layout.column(align=True)
-    col.label(text="主碰撞组")
+    col.label(text=tr("主碰撞组"))
     _draw_group_buttons(
         col,
         OBJECT_SET_PRIMARY_GROUP_OPERATOR,
@@ -122,31 +123,31 @@ def _draw_object_collision_controls(layout, props):
         return
 
     if props.collision_type == "PLANE":
-        col.prop(props, "length", text="预览尺寸")
-        col.prop(props, "offset", text="平面原点偏移")
+        col.prop(props, "length", text=tr("预览尺寸"))
+        col.prop(props, "offset", text=tr("平面原点偏移"))
         hint = col.column(align=True)
-        hint.label(text="局部XY为平面，局部+Z为法线", icon="INFO")
-        hint.label(text="作为子物体时会继承父级变换")
+        hint.label(text=tr("局部XY为平面，局部+Z为法线"), icon="INFO")
+        hint.label(text=tr("作为子物体时会继承父级变换"))
         return
 
     if props.collision_type == "BOX":
-        col.prop(props, "box_size", text="XYZ长度")
-        col.prop(props, "offset", text="中心偏移")
+        col.prop(props, "box_size", text=tr("XYZ长度"))
+        col.prop(props, "offset", text=tr("中心偏移"))
         hint = col.column(align=True)
-        hint.label(text="局部XYZ长度定义长方体", icon="INFO")
-        hint.label(text="世界碰撞变换读取Object.matrix_world")
+        hint.label(text=tr("局部XYZ长度定义长方体"), icon="INFO")
+        hint.label(text=tr("世界碰撞变换读取Object.matrix_world"))
         return
 
-    col.prop(props, "radius")
+    col.prop(props, "radius", text=tr("半径"))
     if props.collision_type == "CAPSULE":
-        col.prop(props, "length")
-    col.prop(props, "offset")
+        col.prop(props, "length", text=tr("长度"))
+    col.prop(props, "offset", text=tr("局部偏移"))
 
 
 def _draw_mesh_collision_controls(layout, obj, props):
     collision_box = layout.box()
     base_pose_row = collision_box.row(align=True)
-    base_pose_row.prop(props, "mc2_base_pose_proxy", text="BasePose只读对象")
+    base_pose_row.prop(props, "mc2_base_pose_proxy", text=tr("BasePose只读对象"))
     base_pose_row.operator(
         OP_Hotools_MeshCollision_CreateBasePoseProxy.bl_idname,
         text="",
@@ -154,36 +155,36 @@ def _draw_mesh_collision_controls(layout, obj, props):
     )
     base_proxy = props.mc2_base_pose_proxy
     if base_proxy is obj:
-        collision_box.label(text="BasePose不能指向当前物理写入对象", icon="ERROR")
+        collision_box.label(text=tr("BasePose不能指向当前物理写入对象"), icon="ERROR")
     elif base_proxy is not None and mesh_light_key(base_proxy) != mesh_light_key(obj):
-        collision_box.label(text="BasePose顶点/Loop/面数量不一致", icon="ERROR")
-    collision_box.prop(props, "enabled")
+        collision_box.label(text=tr("BasePose顶点/Loop/面数量不一致"), icon="ERROR")
+    collision_box.prop(props, "enabled", text=tr("启用"))
 
     col = collision_box.column(align=True)
     col.enabled = bool(props.enabled)
-    col.label(text="主碰撞组")
+    col.label(text=tr("主碰撞组"))
     _draw_group_buttons(
         col,
         MESH_SET_PRIMARY_GROUP_OPERATOR,
         active_group=props.primary_collision_group,
     )
-    col.label(text="被碰撞组")
+    col.label(text=tr("被碰撞组"))
     _draw_group_buttons(
         col,
         MESH_TOGGLE_COLLIDED_BY_GROUP_OPERATOR,
         mask=props.collided_by_groups,
     )
-    col.prop(props, "radius")
+    col.prop(props, "radius", text=tr("半径"))
     col.prop_search(
         props,
         "radius_vertex_group",
         obj,
         "vertex_groups",
-        text="半径顶点组",
+        text=tr("半径顶点组"),
     )
 
     pin_box = layout.box()
-    pin_box.prop(props, "pin_enabled")
+    pin_box.prop(props, "pin_enabled", text=tr("Pin启用"))
     pin_col = pin_box.column(align=True)
     pin_col.enabled = bool(props.pin_enabled)
     pin_col.prop_search(
@@ -191,15 +192,15 @@ def _draw_mesh_collision_controls(layout, obj, props):
         "pin_vertex_group",
         obj,
         "vertex_groups",
-        text="Pin顶点组",
+        text=tr("Pin顶点组"),
     )
 
     self_box = layout.box()
-    self_box.prop(props, "self_collision_enabled")
+    self_box.prop(props, "self_collision_enabled", text=tr("自碰撞"))
     self_col = self_box.column(align=True)
     self_col.enabled = bool(props.self_collision_enabled)
-    self_col.prop(props, "self_collision_surface_thickness")
-    self_col.prop(props, "mass")
+    self_col.prop(props, "self_collision_surface_thickness", text=tr("表面厚度"))
+    self_col.prop(props, "mass", text=tr("质量"))
 
 
 class PT_Hotools_BoneCollisionPanel(Panel):
@@ -293,19 +294,19 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
         op_box = layout.box()
         col = op_box.column(align=True)
         row = col.row(align=True)
-        row.operator(OP_Hotools_BoneCollision_AddSelectedSpringRoots.bl_idname, icon="ADD")
-        row.operator(OP_Hotools_BoneCollision_SelectSpringRoots.bl_idname, icon="RESTRICT_SELECT_OFF")
-        col.operator(OP_Hotools_BoneCollision_AddSelectedColliders.bl_idname, icon="MESH_UVSPHERE")
-        col.operator(OP_Hotools_BoneCollision_GradientRadius.bl_idname)
-        col.operator(OP_Hotools_BoneCollision_ClearAllSpringRoots.bl_idname, icon="TRASH")
+        row.operator(OP_Hotools_BoneCollision_AddSelectedSpringRoots.bl_idname, text=tr("选中骨设为Root"), icon="ADD")
+        row.operator(OP_Hotools_BoneCollision_SelectSpringRoots.bl_idname, text=tr("选择全部Root"), icon="RESTRICT_SELECT_OFF")
+        col.operator(OP_Hotools_BoneCollision_AddSelectedColliders.bl_idname, text=tr("选中骨添加碰撞"), icon="MESH_UVSPHERE")
+        col.operator(OP_Hotools_BoneCollision_GradientRadius.bl_idname, text=tr("碰撞半径渐变"))
+        col.operator(OP_Hotools_BoneCollision_ClearAllSpringRoots.bl_idname, text=tr("清空全部Root"), icon="TRASH")
 
         info_box = _section_box(layout, scene, "ho_bone_collision_show_info_section")
         if info_box:
             row = info_box.row(align=True)
-            row.label(text=f"骨骼: {len(armature_obj.data.bones)}")
+            row.label(text=f"{tr('骨骼')}: {len(armature_obj.data.bones)}")
             row.label(text=f"Spring Root: {len(roots)}")
             row.label(text=f"Pin: {pin_count}")
-            info_box.label(text=f"碰撞体: {collision_count}")
+            info_box.label(text=f"{tr('碰撞体')}: {collision_count}")
 
             if roots:
                 info_box.separator()
@@ -317,11 +318,11 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
         root_box = _section_box(layout, scene, "ho_bone_collision_show_roots_section")
         if root_box:
             if active_bone is None or active_props is None:
-                root_box.label(text="活动骨骼: 无", icon="INFO")
+                root_box.label(text=tr("活动骨骼: 无"), icon="INFO")
             else:
                 icon = "PINNED" if _effective_bone_pin(active_bone) else "BONE_DATA"
-                root_box.label(text=f"活动骨骼: {active_bone.name}", icon=icon)
+                root_box.label(text=f"{tr('活动骨骼')}: {active_bone.name}", icon=icon)
                 _draw_collision_controls(root_box, active_props)
 
         if armature_obj.mode not in {"EDIT", "POSE"}:
-            layout.label(text="进入姿态或编辑模式后可使用选中骨操作", icon="INFO")
+            layout.label(text=tr("进入姿态或编辑模式后可使用选中骨操作"), icon="INFO")

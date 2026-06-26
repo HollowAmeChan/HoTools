@@ -1,5 +1,6 @@
 import bpy
 from bpy.types import Operator
+from ..i18n import tr
 
 def reg_props():
     return
@@ -11,6 +12,10 @@ class OP_BooleanUnionReconstruction(Operator):
     bl_idname = "ho.boolean_union_reconstruction"
     bl_label = "布尔并集重构"
     bl_description = "使用布尔并集，消除网格内的内部交叉区域，保留其他区域的布线"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("使用布尔并集，消除网格内的内部交叉区域，保留其他区域的布线")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -39,7 +44,7 @@ class OP_BooleanUnionReconstruction(Operator):
             try:
                 bpy.ops.object.modifier_apply(modifier=mod.name)
             except:
-                self.report({'WARNING'}, f"无法应用修改器: {mod.name}")
+                self.report({'WARNING'}, tr("无法应用修改器: {0}").format(mod.name))
 
         # 删除临时对象
         bpy.data.objects.remove(bool_obj, do_unlink=True)

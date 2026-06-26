@@ -24,6 +24,7 @@ import bmesh
 from mathutils import Vector, Matrix, Euler
 from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
+from .i18n import tr
 
 
 def reg_props():
@@ -67,6 +68,10 @@ class OP_RestartBlender(Operator):
     bl_idname = "ho.restart_blender"
     bl_label = "快速重启"
     bl_description = "不保存并重启 Blender"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("不保存并重启 Blender")
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -88,6 +93,10 @@ class OP_sync_render_visibility(Operator):
     bl_idname = "ho.sync_render_visibility"
     bl_label = "同步渲染/视图层显示"
     bl_description = "将所有启用物体的渲染与视图层显示同步"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将所有启用物体的渲染与视图层显示同步")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -109,6 +118,10 @@ class OP_CopyALL_modifiers_to_selected(Operator):
     bl_idname = "ho.copyall_modifiers_to_selected"
     bl_label = "复制全部修改器到所选"
     bl_description = "按顺序复制全部修改器到所选物体"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("按顺序复制全部修改器到所选物体")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -117,16 +130,16 @@ class OP_CopyALL_modifiers_to_selected(Operator):
         selected_objs = context.selected_objects
 
         if not active_obj:
-            self.report({'ERROR'}, "没有活动物体")
+            self.report({'ERROR'}, tr("没有活动物体"))
             return {'CANCELLED'}
 
         if len(selected_objs) < 2:
-            self.report({'ERROR'}, "需要选择至少两个物体（源物体+目标物体）")
+            self.report({'ERROR'}, tr("需要选择至少两个物体（源物体+目标物体）"))
             return {'CANCELLED'}
 
         modifiers = active_obj.modifiers
         if not modifiers:
-            self.report({'INFO'}, "活动物体没有修改器")
+            self.report({'INFO'}, tr("活动物体没有修改器"))
             return {'FINISHED'}
 
         try:
@@ -135,10 +148,10 @@ class OP_CopyALL_modifiers_to_selected(Operator):
                     modifier=m.name
                 )
         except RuntimeError as e:
-            self.report({'ERROR'}, f"复制失败: {str(e)}")
+            self.report({'ERROR'}, tr("复制失败: {0}").format(str(e)))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"成功复制 {len(modifiers)} 个修改器")
+        self.report({'INFO'}, tr("成功复制 {0} 个修改器").format(len(modifiers)))
         return {'FINISHED'}
 
 
@@ -146,6 +159,10 @@ class OP_PlaceObjectBottom(Operator):
     bl_idname = "ho.placeobjectbottom"
     bl_label = "选择底面放置"
     bl_description = "使用选择的面作为底面，旋转物体使底面贴合水平面摆放"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("使用选择的面作为底面，旋转物体使底面贴合水平面摆放")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -169,7 +186,7 @@ class OP_PlaceObjectBottom(Operator):
             if poly.select:
                 normal_sum += (mat_world.to_3x3() @ poly.normal)
         if normal_sum.length == 0:
-            self.report({'ERROR'}, "未选择任何面")
+            self.report({'ERROR'}, tr("未选择任何面"))
             return {'CANCELLED'}
         avg_normal = normal_sum.normalized()
 
@@ -217,7 +234,7 @@ class OP_PlaceObjectBottom(Operator):
                     new_verts_z.append(v_world.z)
 
         if not new_verts_z:
-            self.report({'ERROR'}, "旋转后无法计算高度")
+            self.report({'ERROR'}, tr("旋转后无法计算高度"))
             return {'CANCELLED'}
 
         min_z = min(new_verts_z)
@@ -230,6 +247,10 @@ class OP_AlignViewToAvgNormal(Operator):
     bl_idname = "ho.align_to_avg_normal"
     bl_label = "视图对准面"
     bl_description = "根据当前选中面的平均法向，将视图对准法向的负方向"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据当前选中面的平均法向，将视图对准法向的负方向")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -255,7 +276,7 @@ class OP_AlignViewToAvgNormal(Operator):
                 normal_sum += mat_world.to_3x3() @ poly.normal
 
         if normal_sum.length == 0.0:
-            self.report({'ERROR'}, "未选择任何面")
+            self.report({'ERROR'}, tr("未选择任何面"))
             bpy.ops.object.mode_set(mode='EDIT')
             return {'CANCELLED'}
 
@@ -286,6 +307,10 @@ class OP_CustomSplitNormals_Export(Operator, ExportHelper):
     bl_idname = "ho.custom_splitnormal_export"
     bl_label = "导出自定义拆边法向为文件"
     bl_description = "如果没有添加自定义法线则跳过"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("如果没有添加自定义法线则跳过")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -299,7 +324,7 @@ class OP_CustomSplitNormals_Export(Operator, ExportHelper):
         mesh = obj.data
 
         if not mesh.has_custom_normals:
-            self.report({'WARNING'}, "当前网格没有自定义法线")
+            self.report({'WARNING'}, tr("当前网格没有自定义法线"))
             return {'CANCELLED'}
 
         # 确保在对象模式，否则 loop.normal 访问不正常
@@ -315,10 +340,10 @@ class OP_CustomSplitNormals_Export(Operator, ExportHelper):
             with open(self.filepath, 'w') as f:
                 json.dump(normals, f)
         except Exception as e:
-            self.report({'ERROR'}, f"导出失败: {e}")
+            self.report({'ERROR'}, tr("导出失败: {0}").format(e))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"已导出 {len(normals)} 个自定义法线")
+        self.report({'INFO'}, tr("已导出 {0} 个自定义法线").format(len(normals)))
         return {'FINISHED'}
 
 
@@ -326,6 +351,10 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
     bl_idname = "ho.custom_splitnormal_import"
     bl_label = "导入自定义拆边法向文件"
     bl_description = "覆盖当前的自定义法向"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("覆盖当前的自定义法向")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ".json"
@@ -342,12 +371,12 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
             with open(self.filepath, 'r') as f:
                 normal_data = json.load(f)
         except Exception as e:
-            self.report({'ERROR'}, f"读取文件失败: {e}")
+            self.report({'ERROR'}, tr("读取文件失败: {0}").format(e))
             return {'CANCELLED'}
 
         if len(normal_data) != len(mesh.loops):
             self.report(
-                {'ERROR'}, f"法线数量不匹配 ({len(normal_data)} vs {len(mesh.loops)})")
+                {'ERROR'}, tr("法线数量不匹配 ({0} vs {1})").format(len(normal_data), len(mesh.loops)))
             return {'CANCELLED'}
 
         # 转换为 Vector 列表
@@ -356,7 +385,7 @@ class OP_CustomSplitNormals_Import(Operator, ImportHelper):
 
         # mesh.use_auto_smooth = True
         mesh.normals_split_custom_set(split_normals)
-        self.report({'INFO'}, f"成功导入并应用 {len(split_normals)} 个法线")
+        self.report({'INFO'}, tr("成功导入并应用 {0} 个法线").format(len(split_normals)))
         return {'FINISHED'}
 
 
@@ -364,6 +393,10 @@ class OP_AddSelectSideRingLoops(Operator):
     bl_idname = "ho.addselect_sideringloops"
     bl_label = "加选Ring"
     bl_description = "选择并排的循环边线,如果选中中的不是loop会尝试首先选择loop"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("选择并排的循环边线,如果选中中的不是loop会尝试首先选择loop")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -391,7 +424,7 @@ class OP_AddSelectSideRingLoops(Operator):
         selected_edges = [e for e in bm.edges if e.select]
 
         if not selected_edges:
-            self.report({'WARNING'}, "没有选中任何边")
+            self.report({'WARNING'}, tr("没有选中任何边"))
             return {'CANCELLED'}
 
         side_edges = set()
@@ -943,7 +976,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.shadow(font_id, 3, 0.0, 0.0, 0.0, 0.6)
         blf.shadow_offset(font_id, 1, -1)
 
-        key_text = "滚轮:"
+        key_text = tr("滚轮:")
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y, 0)
         blf.draw(font_id, key_text)
@@ -952,7 +985,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x + key_width, y, 0)
         blf.draw(font_id, f"分段: {self.num_segments}")
 
-        key_text = "F键:"
+        key_text = tr("F键:")
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y + 22, 0)
         blf.draw(font_id, key_text)
@@ -961,7 +994,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x + key_width, y + 22, 0)
         blf.draw(font_id, f"方向模式: {self.direction_mode}")
 
-        key_text = "R键:"
+        key_text = tr("R键:")
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y + 44, 0)
         blf.draw(font_id, key_text)
@@ -970,7 +1003,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         blf.position(font_id, x + key_width, y + 44, 0)
         blf.draw(font_id, f"联动重命名: {'开' if self.auto_rename else '关'}")
 
-        key_text = "N键:"
+        key_text = tr("N键:")
         blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
         blf.position(font_id, x, y + 66, 0)
         blf.draw(font_id, key_text)
@@ -1090,7 +1123,7 @@ class OP_CreatBoneChainByMeshFlow(Operator):
         self.base_chains = self.get_edge_flows(context)
 
         if not self.base_chains:
-            self.report({'WARNING'}, "请选择连续边")
+            self.report({'WARNING'}, tr("请选择连续边"))
             return {'CANCELLED'}
 
         self.mouse_x = event.mouse_region_x
@@ -1144,6 +1177,10 @@ class OP_ModalFillMeshHole(Operator):
     bl_idname = "ho.modal_fill_mesh_hole"
     bl_label = "点击封闭孔洞"
     bl_description = "鼠标悬停高亮闭合边界孔洞，左键用三角面封闭"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("鼠标悬停高亮闭合边界孔洞，左键用三角面封闭")
     bl_options = {'REGISTER', 'UNDO'}
 
     hit_radius: IntProperty(
@@ -2937,35 +2974,35 @@ class OP_ModalFillMeshHole(Operator):
         queued_count = len(self.preview_hole_signatures)
 
         if queued_count:
-            status_text = "预览中"
+            status_text = tr("预览中")
             status_color = (0.35, 1.0, 0.35, 1.0)
         elif active_hole:
-            status_text = "已命中孔洞"
+            status_text = tr("已命中孔洞")
             status_color = (0.42, 1.0, 0.42, 1.0)
         else:
-            status_text = "寻找孔洞"
+            status_text = tr("寻找孔洞")
             status_color = (1.0, 0.65, 0.18, 1.0)
 
         if self.message.startswith("预览"):
-            status_text = "预览已更新"
+            status_text = tr("预览已更新")
             status_color = (0.35, 1.0, 0.35, 1.0)
         elif "提交" in self.message or ("封闭" in self.message and not self.message.startswith("封闭失败")):
-            status_text = "已提交"
+            status_text = tr("已提交")
             status_color = (0.35, 1.0, 0.35, 1.0)
         elif self.message.startswith("倍率"):
-            status_text = "密度已调整"
+            status_text = tr("密度已调整")
             status_color = (1.0, 0.85, 0.2, 1.0)
         elif self.message.startswith("模式切换"):
-            status_text = "模式已切换"
+            status_text = tr("模式已切换")
             status_color = (1.0, 0.85, 0.2, 1.0)
         elif self.message.startswith("已移除"):
-            status_text = "已取消预览"
+            status_text = tr("已取消预览")
             status_color = (1.0, 0.85, 0.2, 1.0)
         elif self.message.startswith("全部"):
-            status_text = "全部已预览"
+            status_text = tr("全部已预览")
             status_color = (0.35, 1.0, 0.35, 1.0)
         elif self.message.startswith("封闭失败"):
-            status_text = "封闭失败"
+            status_text = tr("封闭失败")
             status_color = (1.0, 0.28, 0.20, 1.0)
 
         # 跟骨链工具保持同一套 HUD：阴影、黄色按键、白色说明。
@@ -3160,6 +3197,10 @@ class OP_MeshToImageEmpty(Operator):
     bl_idname = "ho.mesh_to_image_empty"
     bl_label = "面片转参考图"
     bl_description = "将面片转为 Image Empty，复用原物体变换，尺寸基于面片世界空间最长边"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将面片转为 Image Empty，复用原物体变换，尺寸基于面片世界空间最长边")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -3172,7 +3213,7 @@ class OP_MeshToImageEmpty(Operator):
     def execute(self, context):
         objs = context.selected_objects
         if not objs:
-            self.report({'ERROR'}, "未选择物体")
+            self.report({'ERROR'}, tr("未选择物体"))
             return {'CANCELLED'}
 
         for obj in list(objs):
@@ -3213,6 +3254,10 @@ class OP_MergeOverlapping_VertexNormals(Operator):
     bl_idname = "ho.merge_overlapping_vertexnormals"
     bl_label = "合并最近顶点法线(仅法线)"
     bl_description = "支持多物体同时编辑（未合并物体情况），仅合并法线不合并mesh，法线写入自定义法线"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("支持多物体同时编辑（未合并物体情况），仅合并法线不合并mesh，法线写入自定义法线")
     bl_options = {'REGISTER', 'UNDO'}
 
     distancs:FloatProperty(name="间距",default=0.0001,min=0) # type: ignore
@@ -3229,7 +3274,7 @@ class OP_MergeOverlapping_VertexNormals(Operator):
     def execute(self, context):
         distance = self.distancs
         if distance <= 0:
-            self.report({'WARNING'}, "间距必须大于 0")
+            self.report({'WARNING'}, tr("间距必须大于 0"))
             return {'CANCELLED'}
 
         edit_objs = [
@@ -3273,7 +3318,7 @@ class OP_MergeOverlapping_VertexNormals(Operator):
 
         if len(items) < 2:
             bpy.ops.object.mode_set(mode='EDIT')
-            self.report({'INFO'}, "可处理的顶点少于 2 个")
+            self.report({'INFO'}, tr("可处理的顶点少于 2 个"))
             return {'FINISHED'}
 
         # ---------- 并查集 ----------
@@ -3367,7 +3412,7 @@ class OP_MergeOverlapping_VertexNormals(Operator):
 
         bpy.ops.object.mode_set(mode='EDIT')
 
-        self.report({'INFO'}, f"已合并 {merged_count} 个重叠/近邻顶点的法线")
+        self.report({'INFO'}, tr("已合并 {0} 个重叠/近邻顶点的法线").format(merged_count))
         return {'FINISHED'}
 
 def draw_in_OUTLINER_MT_context_menu(self, context: bpy.types.Context):
@@ -3393,7 +3438,7 @@ def draw_in_DATA_PT_modifiers(self, context: bpy.types.Context):
 
     row = layout.row(align=True)
     row.operator(OP_CopyALL_modifiers_to_selected.bl_idname,
-                 text="复制全部到所选")
+                 text=tr("复制全部到所选"))
 
 
 def draw_in_DATA_PT_customdata(self, context: bpy.types.Context):

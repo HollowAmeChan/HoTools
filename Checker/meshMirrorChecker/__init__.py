@@ -3,6 +3,7 @@ from bpy.types import Panel,Operator,UIList,PropertyGroup
 from bpy.props import StringProperty,IntProperty,CollectionProperty,BoolProperty,FloatProperty
 
 from . import fixOperator
+from ...i18n import tr
 
 def reg_props():
     enum_items = [
@@ -36,7 +37,7 @@ def drawMeshMirrorCheckerPanel(layout:bpy.types.UILayout,context:bpy.types.Conte
     scene = context.scene
 
     row = layout.row(align=True)
-    row.label(text="视图显示")
+    row.label(text=tr("视图显示"))
     space = context.space_data
     row.label(text="",icon="MOD_MIRROR")
     if context.object and context.object.type == "MESH":
@@ -49,13 +50,13 @@ def drawMeshMirrorCheckerPanel(layout:bpy.types.UILayout,context:bpy.types.Conte
     if hasattr(space, "overlay"):
         row.prop(space.overlay, "show_extra_indices", text="",toggle=True,icon="LINENUMBERS_ON")
  
-    layout.label(text="自动修复")
+    layout.label(text=tr("自动修复"))
     row = layout.row(align=True)
     row.scale_y = 2.0
     row1 = row.row(align=True)
     row1.scale_x = 0.5
     row1.prop(scene,"ho_MirrorCheckerAxis",text="")
-    op = row.operator(fixOperator.OP_Checker_AutoForceVertexMirror.bl_idname,text="自动修复对称",icon="MODIFIER_ON")
+    op = row.operator(fixOperator.OP_Checker_AutoForceVertexMirror.bl_idname,text=tr("自动修复对称"),icon="MODIFIER_ON")
     op.isonlyselect = scene.ho_mirrorchecker_isonlyselect
     op.checkuv_tolerance = scene.ho_mirrorchecker_checkuv_tolerance
     op.topu_ischeck = scene.ho_mirrorchecker_topu_ischeck
@@ -67,14 +68,14 @@ def drawMeshMirrorCheckerPanel(layout:bpy.types.UILayout,context:bpy.types.Conte
     row1.prop(scene,"ho_mirrorchecker_swapsign",text="",icon="AREA_SWAP")
     
     row = layout.row(align=True)
-    row.prop(scene,"ho_mirrorchecker_isonlyselect",toggle=True,icon_only=True,icon="RESTRICT_SELECT_OFF",text="仅选中")
-    row.prop(scene,"ho_mirrorchecker_checkuv_tolerance",text="UV容差")
+    row.prop(scene,"ho_mirrorchecker_isonlyselect",toggle=True,icon_only=True,icon="RESTRICT_SELECT_OFF",text=tr("仅选中"))
+    row.prop(scene,"ho_mirrorchecker_checkuv_tolerance",text=tr("UV容差"))
     row = layout.row(align=True)
-    row.prop(scene,"ho_mirrorchecker_topu_ischeck",toggle=True,icon_only=True,icon="MOD_EDGESPLIT",text="检查拓补")
-    row.prop(scene,"ho_mirrorchecker_mirroruv_ischeck",toggle=True,icon_only=True,icon="UV_VERTEXSEL",text="检查镜像UV")
-    row.prop(scene,"ho_mirrorchecker_stackuv_ischeck",toggle=True,icon_only=True,icon="MOD_MESHDEFORM",text="检查重叠UV")
+    row.prop(scene,"ho_mirrorchecker_topu_ischeck",toggle=True,icon_only=True,icon="MOD_EDGESPLIT",text=tr("检查拓补"))
+    row.prop(scene,"ho_mirrorchecker_mirroruv_ischeck",toggle=True,icon_only=True,icon="UV_VERTEXSEL",text=tr("检查镜像UV"))
+    row.prop(scene,"ho_mirrorchecker_stackuv_ischeck",toggle=True,icon_only=True,icon="MOD_MESHDEFORM",text=tr("检查重叠UV"))
 
-    layout.label(text="手动修复")
+    layout.label(text=tr("手动修复"))
     row = layout.row(align=True)
     row1 = row.row(align=True)
     op = row1.operator(fixOperator.OP_Checker_getActiveVertexIndex.bl_idname,text="",icon="EYEDROPPER")

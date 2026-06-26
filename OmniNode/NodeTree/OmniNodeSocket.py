@@ -1,5 +1,6 @@
 import bpy
 from bpy.types import NodeSocket, NodeSocketImage, Operator
+from ...i18n import tr
 from ...PropertyCurve import (
     OmniColorCurveData,
     OmniFloatCurveData,
@@ -99,15 +100,15 @@ def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_
 def _apply_curve_socket_preset(context, tree_name, node_name, socket_identifier, socket_name, preset_id):
     tree, node, socket = _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name)
     if tree is None:
-        return False, "找不到节点树"
+        return False, tr("找不到节点树")
     if node is None:
-        return False, "找不到节点"
+        return False, tr("找不到节点")
     if socket is None:
-        return False, "找不到曲线 socket"
+        return False, tr("找不到曲线 socket")
 
     payload = _curve_socket_preset_payload(socket, preset_id)
     if payload is None:
-        return False, "找不到曲线预设"
+        return False, tr("找不到曲线预设")
 
     socket.default_value = payload
     area = getattr(context, "area", None)
@@ -191,6 +192,10 @@ class OmniCurveSocketPresetPopup(Operator):
     bl_description = "打开曲线socket预设面板"
     bl_options = {'REGISTER', 'UNDO'}
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("打开曲线socket预设面板")
+
     node_tree_name: bpy.props.StringProperty(default="")  # type: ignore
     node_name: bpy.props.StringProperty(default="")  # type: ignore
     socket_identifier: bpy.props.StringProperty(default="")  # type: ignore
@@ -223,7 +228,7 @@ class OmniCurveSocketPresetPopup(Operator):
 
 def _draw_curve_socket_controls(socket, layout, node, text, curve):
     row = layout.row(align=True)
-    row.label(text=text or socket.name)
+    row.label(text=tr(text or socket.name))
     row.prop(curve, "extend", text="")
     op = row.operator(OmniCurveSocketPresetPopup.bl_idname, text="", icon="PRESET")
     op.node_tree_name = getattr(node.id_data, "name_full", "")
@@ -266,11 +271,11 @@ class OmniNodeSocketFloatCurve(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
         curve = getattr(self, "curve", None)
         if curve is None:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
         _draw_curve_socket_controls(self, layout, node, text, curve)
 
@@ -306,11 +311,11 @@ class OmniNodeSocketColorCurve(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
         curve = getattr(self, "curve", None)
         if curve is None:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
         _draw_curve_socket_controls(self, layout, node, text, curve)
 
@@ -330,9 +335,9 @@ class OmniNodeSocketScene(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -350,9 +355,9 @@ class OmniNodeSocketText(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -366,7 +371,7 @@ class OmniNodeSocketAny(NodeSocket):
     default_value: bpy.props.FloatProperty()  # type: ignore
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -383,7 +388,7 @@ class OmniNodeSocketCache(NodeSocket):
     )  # type: ignore
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -432,11 +437,11 @@ class OmniNodeSocketBone(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
 
         row = layout.row(align=True)
-        row.prop(self, "armature_object", text=text)
+        row.prop(self, "armature_object", text=tr(text))
         obj = self.armature_object
         if obj is not None and getattr(obj, "type", None) == "ARMATURE":
             row.prop_search(self, "bone_name", obj.data, "bones", text="")
@@ -458,7 +463,7 @@ class OmniNodeSocketBoneChain(NodeSocket):
     )  # type: ignore
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -485,9 +490,9 @@ class OmniNodeSocketImageFormat(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -502,9 +507,9 @@ class OmniNodeSocketRegex(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -519,9 +524,9 @@ class OmniNodeSocketGlob(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -539,9 +544,9 @@ class OmniNodeSocketDatablock(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)
+            layout.prop(self, "default_value", text=tr(text))
 
     @classmethod
     def draw_color_simple(cls):
@@ -559,9 +564,9 @@ class OmniNodeSocketModifierType(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
         else:
-            layout.prop(self, "default_value", text=text)        
+            layout.prop(self, "default_value", text=tr(text))        
 
     @classmethod
     def draw_color_simple(cls):
@@ -579,7 +584,7 @@ class OmniNodeSocketModifier(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -596,7 +601,7 @@ class OmniNodeSocketMaterialSlot(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -613,7 +618,7 @@ class OmniNodeSocketUVLayer(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -630,7 +635,7 @@ class OmniNodeSocketColorAttribute(NodeSocket):
     )
 
     def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
+        layout.label(text=tr(self.name))
 
     @classmethod
     def draw_color_simple(cls):
@@ -675,11 +680,11 @@ class OmniNodeSocketVertexGroup(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
 
         row = layout.row(align=True)
-        row.prop(self, "mesh_object", text=text)
+        row.prop(self, "mesh_object", text=tr(text))
         obj = self.mesh_object
         if obj is not None and getattr(obj, "type", None) == "MESH":
             row.prop_search(self, "group_name", obj, "vertex_groups", text="")
@@ -744,11 +749,11 @@ class OmniNodeSocketShapeKey(NodeSocket):
 
     def draw(self, context, layout, node, text):
         if self.is_output or self.is_linked:
-            layout.label(text=self.name)
+            layout.label(text=tr(self.name))
             return
 
         row = layout.row(align=True)
-        row.prop(self, "mesh_object", text=text)
+        row.prop(self, "mesh_object", text=tr(text))
         obj = self.mesh_object
         shape_keys = getattr(getattr(obj, "data", None), "shape_keys", None)
         if obj is not None and getattr(obj, "type", None) == "MESH" and shape_keys is not None:

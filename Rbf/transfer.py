@@ -6,6 +6,7 @@ from mathutils.kdtree import KDTree
 from mathutils import Vector
 from bpy.types import Panel, Operator
 from bpy.props import PointerProperty, FloatProperty, IntProperty, StringProperty
+from ..i18n import tr
 
 def reg_props():
     bpy.types.Scene.ho_rbf_cage_ratio = FloatProperty(
@@ -97,6 +98,10 @@ class OP_RbfTransferGenerateCage(Operator):
     bl_idname = "ho.rbftransfer_generatecage"
     bl_label = "生成低模cage"
     bl_description = "默认开启x方向对称与三角化"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("默认开启x方向对称与三角化")
     bl_options = {'REGISTER', 'UNDO'}
     ratio: FloatProperty(
         name="Cage Ratio",
@@ -171,8 +176,8 @@ class OP_RbfTransferDoTrans(Operator):
         layout = self.layout
         if self.fixed_mode_objects:
             box = layout.box()
-            box.label(text="检测到形态键固定模式已开启", icon='ERROR')
-            box.label(text="执行前会自动关闭这些物体的固定模式：")
+            box.label(text=tr("检测到形态键固定模式已开启"), icon='ERROR')
+            box.label(text=tr("执行前会自动关闭这些物体的固定模式："))
             box.label(text=self.fixed_mode_objects)
         layout.prop(self, "knn_k")
 
@@ -201,11 +206,11 @@ class OP_RbfTransferDoTrans(Operator):
         cageB = context.scene.ho_rbf_destcage
 
         if not cageA or not cageB:
-            self.report({'ERROR'}, "需要两个cage")
+            self.report({'ERROR'}, tr("需要两个cage"))
             return {'CANCELLED'}
 
         if len(cageA.data.vertices) != len(cageB.data.vertices):
-            self.report({'ERROR'}, "cage点数不一致")
+            self.report({'ERROR'}, tr("cage点数不一致"))
             return {'CANCELLED'}
 
         C = get_world_verts(cageA)
@@ -229,7 +234,7 @@ class OP_RbfTransferDoTrans(Operator):
                 dists.append(neighbors[-1][2])
 
         if not dists:
-            self.report({'ERROR'}, "KDTree构建失败")
+            self.report({'ERROR'}, tr("KDTree构建失败"))
             return {'CANCELLED'}
         
         depsgraph = context.evaluated_depsgraph_get()
@@ -237,7 +242,7 @@ class OP_RbfTransferDoTrans(Operator):
         objs = self.get_target_objects(context)
 
         if not objs:
-            self.report({'WARNING'}, "没有可处理的物体")
+            self.report({'WARNING'}, tr("没有可处理的物体"))
             return {'CANCELLED'}
 
         for obj in objs:
@@ -253,7 +258,7 @@ class OP_RbfTransferDoTrans(Operator):
             P = get_evaluated_world_verts(obj, depsgraph)
 
             if len(obj.data.vertices) != len(P):
-                self.report({'WARNING'}, f"{obj.name} 顶点数变化，跳过")
+                self.report({'WARNING'}, tr("{0} 顶点数变化，跳过").format(obj.name))
                 continue
 
             newP = np.zeros_like(P)
@@ -306,6 +311,10 @@ class OP_RbfTransferRemoveResultKey(Operator):
     bl_idname = "ho.rbftransfer_remove_result_key"
     bl_label = "删除RBF结果键"
     bl_description = "删除选中物体上的RBF传递结果形态键，并将活动形态键切回基型"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除选中物体上的RBF传递结果形态键，并将活动形态键切回基型")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -337,11 +346,11 @@ class OP_RbfTransferRemoveResultKey(Operator):
         if removed_count:
             self.report(
                 {'INFO'},
-                f"已删除 {removed_count} 个 RBF 结果键，跳过 {skipped_count} 个物体"
+                tr("已删除 {0} 个 RBF 结果键，跳过 {1} 个物体").format(removed_count, skipped_count)
             )
             return {'FINISHED'}
 
-        self.report({'WARNING'}, "选中物体中没有找到 RBF 结果键")
+        self.report({'WARNING'}, tr("选中物体中没有找到 RBF 结果键"))
         return {'CANCELLED'}
     
 def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context):
@@ -353,8 +362,8 @@ def drawRbfTransferPanel(layout: bpy.types.UILayout, context: bpy.types.Context)
     op.ratio = context.scene.ho_rbf_cage_ratio
 
     row = layout.row(align=True)
-    row.prop(scene,"ho_rbf_srccage",text="原cage")
-    row.prop(scene,"ho_rbf_destcage",text="目标cage")
+    row.prop(scene,"ho_rbf_srccage",text=tr("原cage"))
+    row.prop(scene,"ho_rbf_destcage",text=tr("目标cage"))
     layout.prop(scene,"ho_rbf_knn")
     row = layout.row(align=True)
     op = row.operator(OP_RbfTransferDoTrans.bl_idname)

@@ -8,6 +8,7 @@ import bmesh
 from collections import defaultdict
 from mathutils.kdtree import KDTree
 import math
+from ..i18n import tr
 # region 变量
 
 
@@ -452,13 +453,17 @@ class OP_copyKeyNames(Operator):
     bl_idname = "ho.copy_key_names"
     bl_label = "复制名称"
     bl_description = "从物体复制形态键到剪贴板,跳过基型"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从物体复制形态键到剪贴板,跳过基型")
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
         global SKT
         skt = context.scene.shapekeytransfer
         if not skt.src_object:
-            self.report({'INFO'}, "没有找到数据")
+            self.report({'INFO'}, tr("没有找到数据"))
             return {'FINISHED'}
         if skt.src_object.data:
             if SKT.get_shape_keys_mesh(obj=skt.src_object):
@@ -472,9 +477,9 @@ class OP_copyKeyNames(Operator):
                         continue
                     temp_str += key.name + "\n"
                 context.window_manager.clipboard = temp_str
-                self.report({'INFO'}, "已复制到剪贴板")
+                self.report({'INFO'}, tr("已复制到剪贴板"))
         else:
-            self.report({'INFO'}, "源网格无效")
+            self.report({'INFO'}, tr("源网格无效"))
         return {'FINISHED'}
 
 
@@ -483,6 +488,10 @@ class OP_insertKeyNames(Operator):
     bl_idname = "ho.insert_key_names"
     bl_label = "粘贴名称"
     bl_description = "从剪贴板插入形状键名称（每行为一个形态键）"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从剪贴板插入形状键名称（每行为一个形态键）")
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
     def execute(self, context):
@@ -492,7 +501,7 @@ class OP_insertKeyNames(Operator):
                 item = scn.customshapekeylist.add()
                 item.name = key
                 scn.shapekeytransfer_list_index = len(scn.customshapekeylist)-1
-        self.report({'INFO'}, "从剪贴板添加形态键名称")
+        self.report({'INFO'}, tr("从剪贴板添加形态键名称"))
         return {'FINISHED'}
 
 
@@ -501,6 +510,10 @@ class OP_transferShapeKeys(Operator):
     bl_idname = "ho.transfer_shape_keys"
     bl_label = "传递形态键"
     bl_description = "位置传递需要世界空间下贴的近,UV模式/索引模式不需要"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("位置传递需要世界空间下贴的近,UV模式/索引模式不需要")
     bl_context = 'objectmode'
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
@@ -533,7 +546,7 @@ class OP_transferShapeKeys(Operator):
         layout = self.layout
         skt = context.scene.shapekeytransfer
         col = layout.column()
-        col.label(text="顶点判定:")
+        col.label(text=tr("顶点判定:"))
         col.prop(skt, "increment_radius")
         col.prop(skt, "use_one_vertex")
 
@@ -557,7 +570,7 @@ class OP_removeShapeKeys(Operator):
         obj = bpy.data.objects.get(self.target_object)
 
         if not obj:
-            self.report({'ERROR'}, f"对象 {self.target_object} 不存在。")
+            self.report({'ERROR'}, tr("对象 {0} 不存在。").format(self.target_object))
             return {'CANCELLED'}
 
         if (obj.data.shape_keys):
@@ -576,6 +589,10 @@ class OP_transferListActions(Operator):
     bl_idname = "ho.transferlist_action"
     bl_label = "List Actions"
     bl_description = "移动增删列表元素"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("移动增删列表元素")
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
     action: EnumProperty(
@@ -623,6 +640,10 @@ class OP_clearList(Operator):
     bl_idname = "ho.transferlist_clear_list"
     bl_label = "清空列表"
     bl_description = "删除列表全部元素"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("删除列表全部元素")
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
     @classmethod
@@ -645,6 +666,10 @@ class OP_removeShapeKeysByList(Operator):
     bl_idname = "ho.transferlist_remove_shapekey"
     bl_label = "名单规则删除物体形态键"
     bl_description = "根据名单删除活动物体的形态键,不会移除基型"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据名单删除活动物体的形态键,不会移除基型")
     bl_options = {'REGISTER', 'INTERNAL', 'UNDO'}
 
     @classmethod
@@ -701,7 +726,7 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
         op.target_object = skt.src_object.name
     row1.prop(skt, "only_selected_src", text="",
               icon="RESTRICT_SELECT_OFF", toggle=True)  # 仅选中
-    row1.prop(skt, "src_object", text="源物体")
+    row1.prop(skt, "src_object", text=tr("源物体"))
 
     row2 = col.row(align=True)
     if skt.dest_object:
@@ -710,7 +735,7 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
         op.target_object = skt.dest_object.name
     row2.prop(skt, "only_selected_dest", text="",
               icon="RESTRICT_SELECT_OFF", toggle=True)  # 仅选中
-    row2.prop(skt, "dest_object", text="目标物体")
+    row2.prop(skt, "dest_object", text=tr("目标物体"))
 
     # 参数指定
     layout.separator()
@@ -727,13 +752,13 @@ def drawShapekeyTransferPanel(layout: UILayout, context: Context):
     row.prop(skt, "absolute_mode", text="", icon="RESTRICT_INSTANCED_OFF", toggle=True)
 
     row.operator(OP_transferShapeKeys.bl_idname,
-                 icon='ARROW_LEFTRIGHT', text="传递形态键")
+                 icon='ARROW_LEFTRIGHT', text=tr("传递形态键"))
 
     # 名单
     if (skt.is_list_inversed):
-        layout.label(text="白名单")
+        layout.label(text=tr("白名单"))
     else:
-        layout.label(text="黑名单")
+        layout.label(text=tr("黑名单"))
     row = layout.row()
     row.template_list(HO_UL_transferListItems.__name__, "", scn, "customshapekeylist",
                       scn, "shapekeytransfer_list_index", rows=9)

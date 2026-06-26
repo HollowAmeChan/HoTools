@@ -7,6 +7,7 @@ from bpy.types import Context, Operator, PropertyGroup, UIList, UILayout
 from . import OmniNodeSocket
 from . import OmniNodeDraw
 from . import OmniRuntimeState
+from ...i18n import tr
 from ...PropertyCurve import color_curve_payload, float_curve_payload
 from .OmniNodeSocketMapping import runtime_socket_type_id
 import uuid
@@ -575,6 +576,10 @@ class OP_JumpToNodeTree(Operator):
     bl_label = "跳转到节点树"
     bl_description = "在当前 Node Editor 区域打开该节点引用的 OmniNodeTree"
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在当前 Node Editor 区域打开该节点引用的 OmniNodeTree")
+
     node_name: StringProperty(default="")  # type: ignore
     tree_attr: StringProperty(default="target_tree")  # type: ignore
 
@@ -620,12 +625,12 @@ class OP_JumpToNodeTree(Operator):
 
         node = tree.nodes.get(self.node_name)
         if node is None:
-            self.report({'WARNING'}, "找不到源节点")
+            self.report({'WARNING'}, tr("找不到源节点"))
             return {'CANCELLED'}
 
         target_tree = getattr(node, self.tree_attr, None)
         if target_tree is None:
-            self.report({'WARNING'}, "该节点没有可跳转的节点树")
+            self.report({'WARNING'}, tr("该节点没有可跳转的节点树"))
             return {'CANCELLED'}
 
         if tree == target_tree:
@@ -642,6 +647,10 @@ class OP_ReturnToParentNodeTree(Operator):
     bl_idname = "ho.omni_return_to_parent_node_tree"
     bl_label = "返回上一级"
     bl_description = "返回到 HoTools 自己维护的上一级 OmniNodeTree"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("返回到 HoTools 自己维护的上一级 OmniNodeTree")
 
     @classmethod
     def poll(cls, context):
@@ -663,11 +672,11 @@ class OP_ReturnToParentNodeTree(Operator):
             target_tree = _pop_nav_tree(context)
 
         if target_tree is None:
-            self.report({'WARNING'}, "返回栈为空，没有可返回的节点树")
+            self.report({'WARNING'}, tr("返回栈为空，没有可返回的节点树"))
             return {'CANCELLED'}
 
         if not _activate_tree_in_space(space, target_tree):
-            self.report({'WARNING'}, "无法返回到上一级 OmniNodeTree")
+            self.report({'WARNING'}, tr("无法返回到上一级 OmniNodeTree"))
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -714,6 +723,10 @@ class OmniTreeCreate(Operator):
     bl_idname = "ho.omnitree_create"
     bl_label = "新建 OmniNodeTree"
     bl_description = "快速创建新的 OmniNodeTree，并在当前窗口的 Node Editor 中打开"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("快速创建新的 OmniNodeTree，并在当前窗口的 Node Editor 中打开")
     bl_options = {'REGISTER', 'UNDO'}
 
     tree_name: StringProperty(default="OmniNodeTree", options={'HIDDEN'})  # type: ignore
@@ -723,9 +736,9 @@ class OmniTreeCreate(Operator):
         tree.use_fake_user = True
 
         if _activate_tree_in_current_window(context, tree):
-            self.report({'INFO'}, f"已创建并打开 OmniNodeTree: {tree.name}")
+            self.report({'INFO'}, tr("已创建并打开 OmniNodeTree: {name}").format(name=tree.name))
         else:
-            self.report({'INFO'}, f"已创建 OmniNodeTree: {tree.name}，当前窗口没有可切换的 Node Editor")
+            self.report({'INFO'}, tr("已创建 OmniNodeTree: {name}，当前窗口没有可切换的 Node Editor").format(name=tree.name))
         return {'FINISHED'}
 
 
@@ -733,6 +746,10 @@ class OmniTreeOpen(Operator):
     bl_idname = "ho.omnitree_open"
     bl_label = "打开 OmniNodeTree"
     bl_description = "在当前窗口已有的 Node Editor 中打开指定 OmniNodeTree"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在当前窗口已有的 Node Editor 中打开指定 OmniNodeTree")
     bl_options = {'REGISTER'}
 
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
@@ -740,14 +757,14 @@ class OmniTreeOpen(Operator):
     def execute(self, context: bpy.types.Context):
         tree = _find_omni_tree(self.tree_name)
         if tree is None:
-            self.report({'WARNING'}, "找不到 OmniNodeTree")
+            self.report({'WARNING'}, tr("找不到 OmniNodeTree"))
             return {'CANCELLED'}
 
         if not _activate_tree_in_current_window(context, tree):
-            self.report({'WARNING'}, "当前窗口没有可切换的 Node Editor")
+            self.report({'WARNING'}, tr("当前窗口没有可切换的 Node Editor"))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"已打开 OmniNodeTree: {tree.name}")
+        self.report({'INFO'}, tr("已打开 OmniNodeTree: {name}").format(name=tree.name))
         return {'FINISHED'}
 
 
@@ -762,7 +779,7 @@ class LayerRunning(Operator):
         tree = _operator_omni_tree(context, self.tree_name)
         if tree is None:
             if self.tree_name:
-                self.report({'ERROR'}, "找不到 OmniNodeTree")
+                self.report({'ERROR'}, tr("找不到 OmniNodeTree"))
                 return {'CANCELLED'}
             return {'FINISHED'}
 
@@ -778,6 +795,10 @@ class OmniTreeCompile(Operator):
     bl_idname = "ho.omnitree_compile"
     bl_label = "编译OMNI树"
     bl_description = "只编译当前 OmniNodeTree，并缓存编译结果"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("只编译当前 OmniNodeTree，并缓存编译结果")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -792,7 +813,7 @@ class OmniTreeCompile(Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
 
-        self.report({'INFO'}, f"已编译 Omni 树: {tree.name}")
+        self.report({'INFO'}, tr("已编译 Omni 树: {name}").format(name=tree.name))
         return {'FINISHED'}
 
 
@@ -800,6 +821,10 @@ class OmniTreeRunCompiled(Operator):
     bl_idname = "ho.omnitree_run_compiled"
     bl_label = "运行已编译OMNI树"
     bl_description = "运行当前缓存的编译结果。没有编译缓存时请先编译。"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("运行当前缓存的编译结果。没有编译缓存时请先编译。")
     bl_options = {'REGISTER', 'UNDO'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -821,6 +846,10 @@ class OmniTreeClearCompileCache(Operator):
     bl_idname = "ho.omnitree_clear_compile_cache"
     bl_label = "清理编译缓存"
     bl_description = "清理当前 OmniNodeTree 的编译产物缓存"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清理当前 OmniNodeTree 的编译产物缓存")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -830,7 +859,7 @@ class OmniTreeClearCompileCache(Operator):
             return {'CANCELLED'}
 
         tree.clear_compile_cache()
-        self.report({'INFO'}, f"已清理编译缓存: {tree.name}")
+        self.report({'INFO'}, tr("已清理编译缓存: {name}").format(name=tree.name))
         return {'FINISHED'}
 
 
@@ -838,6 +867,10 @@ class OmniTreeClearRuntimeCache(Operator):
     bl_idname = "ho.omnitree_clear_runtime_cache"
     bl_label = "清理运行缓存"
     bl_description = "清理当前 OmniNodeTree 作为根树运行时保存的缓存数据"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清理当前 OmniNodeTree 作为根树运行时保存的缓存数据")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -847,7 +880,7 @@ class OmniTreeClearRuntimeCache(Operator):
             return {'CANCELLED'}
 
         OmniRuntimeState.clear_root_tree(tree)
-        self.report({'INFO'}, f"已清理运行缓存: {tree.name}")
+        self.report({'INFO'}, tr("已清理运行缓存: {name}").format(name=tree.name))
         return {'FINISHED'}
 
 
@@ -855,6 +888,10 @@ class OmniTreeDestroy(Operator):
     bl_idname = "ho.omninodetree_destroy"
     bl_label = "销毁树"
     bl_description = "销毁当前 OmniNodeTree 数据块"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("销毁当前 OmniNodeTree 数据块")
     bl_options = {'REGISTER', 'UNDO'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
     confirmed: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
@@ -865,7 +902,7 @@ class OmniTreeDestroy(Operator):
 
     def execute(self, context: bpy.types.Context):
         if not self.confirmed:
-            self.report({'ERROR'}, "销毁 OmniNodeTree 需要确认")
+            self.report({'ERROR'}, tr("销毁 OmniNodeTree 需要确认"))
             return {'CANCELLED'}
 
         tree = _operator_omni_tree(context, self.tree_name)
@@ -879,7 +916,7 @@ class OmniTreeDestroy(Operator):
 
         bpy.data.node_groups.remove(tree, do_unlink=True)
 
-        self.report({'INFO'}, f"已销毁节点树: {tree_name}")
+        self.report({'INFO'}, tr("已销毁节点树: {name}").format(name=tree_name))
 
         return {'FINISHED'}
 
@@ -888,6 +925,10 @@ class OmniNodeToggleDescription(Operator):
     bl_idname = "ho.omni_toggle_node_description"
     bl_label = "查看节点描述"
     bl_description = "在节点上方显示或隐藏该节点的描述文本"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在节点上方显示或隐藏该节点的描述文本")
     bl_options = {'REGISTER'}
 
     node_tree_name: StringProperty(default="")  # type: ignore
@@ -930,7 +971,7 @@ class OmniNodeToggleDescription(Operator):
     def execute(self, context: bpy.types.Context):
         nodes = self._resolve_nodes(context)
         if not nodes:
-            self.report({'WARNING'}, "找不到节点")
+            self.report({'WARNING'}, tr("找不到节点"))
             return {'CANCELLED'}
 
         nodes_with_description = [
@@ -938,7 +979,7 @@ class OmniNodeToggleDescription(Operator):
             if OmniNodeDraw.DrawDescription.text(node)
         ]
         if not nodes_with_description:
-            self.report({'WARNING'}, "所选节点没有描述")
+            self.report({'WARNING'}, tr("所选节点没有描述"))
             return {'CANCELLED'}
 
         shown_count = 0
@@ -961,7 +1002,7 @@ class OmniNodeToggleDescription(Operator):
             parts.append(f"显示 {shown_count} 个")
         if hidden_count:
             parts.append(f"隐藏 {hidden_count} 个")
-        self.report({'INFO'}, "节点描述: " + "，".join(parts))
+        self.report({'INFO'}, tr("节点描述: ") + "，".join(parts))
         return {'FINISHED'}
 
 
@@ -969,6 +1010,10 @@ class OmniNodeApplyPreset(Operator):
     bl_idname = "ho.omni_apply_node_preset"
     bl_label = "填入节点预设"
     bl_description = "将 omni 装饰器定义的预设值填入当前节点输入"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将 omni 装饰器定义的预设值填入当前节点输入")
     bl_options = {'REGISTER', 'UNDO'}
 
     node_tree_name: StringProperty(default="")  # type: ignore
@@ -1178,7 +1223,7 @@ class OmniNodeApplyPreset(Operator):
     def execute(self, context):
         node = self._resolve_node(context)
         if node is None:
-            self.report({'WARNING'}, "找不到节点")
+            self.report({'WARNING'}, tr("找不到节点"))
             return {'CANCELLED'}
 
         presets = _node_omni_presets(node)
@@ -1189,17 +1234,17 @@ class OmniNodeApplyPreset(Operator):
             parts = [f"重置 {updated_count} 项"]
             if skipped_count:
                 parts.append(f"跳过 {skipped_count} 项")
-            self.report({'INFO'}, "已清空预设: " + ", ".join(parts))
+            self.report({'INFO'}, tr("已清空预设: ") + ", ".join(parts))
             return {'FINISHED'}
 
         try:
             preset_index = int(self.preset_id)
         except ValueError:
-            self.report({'WARNING'}, "找不到预设")
+            self.report({'WARNING'}, tr("找不到预设"))
             return {'CANCELLED'}
 
         if preset_index < 0 or preset_index >= len(presets):
-            self.report({'WARNING'}, "找不到预设")
+            self.report({'WARNING'}, tr("找不到预设"))
             return {'CANCELLED'}
 
         preset = presets[preset_index]
@@ -1225,7 +1270,7 @@ class OmniNodeApplyPreset(Operator):
             parts.append(f"缺失 {missing_count} 项")
         if skipped_count:
             parts.append(f"跳过 {skipped_count} 项")
-        self.report({'INFO'}, f"已填入预设 {preset['name']}: " + ", ".join(parts))
+        self.report({'INFO'}, tr("已填入预设 {name}: ").format(name=preset['name']) + ", ".join(parts))
         return {'FINISHED'}
 
 
@@ -1235,6 +1280,10 @@ class OmniNodeRebuild(Operator):
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
     bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点")
     bl_options = {'REGISTER'}
 
     node_tree_name: bpy.props.StringProperty()  # type: ignore
@@ -1470,7 +1519,7 @@ class OmniNodeRebuild(Operator):
                 failed_messages.append(f"{node.name}: {exc}")
 
         if rebuilt_names:
-            self.report({'INFO'}, f"已重建 {len(rebuilt_names)} 个节点: {', '.join(rebuilt_names)}")
+            self.report({'INFO'}, tr("已重建 {n} 个节点: {names}").format(n=len(rebuilt_names), names=', '.join(rebuilt_names)))
 
         if failed_messages:
             self.report({'ERROR'}, " | ".join(failed_messages))
@@ -1497,18 +1546,18 @@ def draw_in_NODE_MT_editor_menus(self, context: Context):
 
     run_now = layout.row(align=True)
     run_now.enabled = execution_enabled
-    run_now.operator(LayerRunning.bl_idname, text="运行OMNI树", icon="FILE_REFRESH")
+    run_now.operator(LayerRunning.bl_idname, text=tr("运行OMNI树"), icon="FILE_REFRESH")
 
     row = layout.row(align=True)
     compile_button = row.row(align=True)
     compile_button.alert = execution_enabled and _should_alert_compile_button(tree)
-    compile_button.operator(OmniTreeCompile.bl_idname, text="编译", icon="FILE_TICK")
+    compile_button.operator(OmniTreeCompile.bl_idname, text=tr("编译"), icon="FILE_TICK")
     run_button = row.row(align=True)
     run_button.enabled = execution_enabled
-    run_button.operator(OmniTreeRunCompiled.bl_idname, text="运行", icon="PLAY")
+    run_button.operator(OmniTreeRunCompiled.bl_idname, text=tr("运行"), icon="PLAY")
     frame_button = row.row(align=True)
     frame_button.enabled = execution_enabled
-    frame_button.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True, icon="TIME")
+    frame_button.prop(tree, "is_frame_run_enabled", text=tr("每帧运行"), toggle=True, icon="TIME")
     row.label(text=tree.compile_cache_status_label())
     return
 
@@ -1556,7 +1605,7 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
         if presets:
             layout.separator()
             row = layout.row(align=True)
-            row.prop(preset_node, "omni_preset_id", text="预设")
+            row.prop(preset_node, "omni_preset_id", text=tr("预设"))
             op = row.operator(OmniNodeApplyPreset.bl_idname, text="", icon="PRESET")
             op.node_tree_name = getattr(tree, "name_full", tree.name)
             op.node_name = preset_node.name
@@ -1580,10 +1629,10 @@ def draw_in_NODE_HT_header(self, context: Context):
             layout.operator(OP_ReturnToParentNodeTree.bl_idname, text=stack_label, icon="FILE_PARENT")
     row = layout.row(align=True)
     row.operator_context = 'INVOKE_DEFAULT'
-    row.operator(OmniTreeDestroy.bl_idname, text="销毁树")
+    row.operator(OmniTreeDestroy.bl_idname, text=tr("销毁树"))
     row.operator_context = 'EXEC_DEFAULT'
-    row.operator(OmniTreeClearCompileCache.bl_idname, text="销毁编译")
-    row.operator(OmniTreeClearRuntimeCache.bl_idname, text="销毁缓存")
+    row.operator(OmniTreeClearCompileCache.bl_idname, text=tr("销毁编译"))
+    row.operator(OmniTreeClearRuntimeCache.bl_idname, text=tr("销毁缓存"))
 
 
 clss = [

@@ -5,6 +5,7 @@ import mathutils
 from bpy.types import Panel
 from gpu_extras.batch import batch_for_shader
 
+from ..i18n import tr
 from .collisionUtils import (
     _COLLISION_GROUP_COUNT,
     _PIN_COLOR,
@@ -436,19 +437,19 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         layout = self.layout
         scene = context.scene
 
-        layout.prop(scene, "ho_collision_overlay_show", text="显示碰撞预览")
+        layout.prop(scene, "ho_collision_overlay_show", text=tr("显示碰撞预览"))
 
         col = layout.column(align=True)
         col.enabled = bool(scene.ho_collision_overlay_show)
-        col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
+        col.prop(scene, "ho_collision_overlay_color_mode", text=tr("颜色模式"))
         col.separator()
-        col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
-        col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
-        col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
+        col.prop(scene, "ho_collision_overlay_show_bone", text=tr("骨骼碰撞体"))
+        col.prop(scene, "ho_collision_overlay_show_object", text=tr("物体碰撞体"))
+        col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text=tr("网格逐顶点球"))
         if scene.ho_collision_overlay_show_mesh_vertices:
             hint = col.column(align=True)
-            hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
-            hint.label(text="暂不保证跟随最终变形")
+            hint.label(text=tr("提示：带修改器的网格逐顶点球预览"), icon="INFO")
+            hint.label(text=tr("暂不保证跟随最终变形"))
 
 
 def draw_collision_overlay_header(self, context):

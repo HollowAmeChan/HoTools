@@ -16,6 +16,7 @@ from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionP
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 from mathutils.geometry import intersect_line_line_2d
+from ..i18n import tr
 
 # region 变量
 
@@ -1550,6 +1551,10 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bakeuvisland_image"
     bl_label = "导出UV岛填充图"
     bl_description = "将所有选中物体的UV岛填充为纯色并导出为一张图像"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将所有选中物体的UV岛填充为纯色并导出为一张图像")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -1597,7 +1602,7 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
             obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         island_id_counter = 0
@@ -1668,7 +1673,7 @@ class OT_UVTools_BakeUVIslandImage(Operator, ExportHelper):
             final_path += ext
         pil_img.save(final_path)
 
-        self.report({'INFO'}, f"已导出ID图像:{final_path}")
+        self.report({'INFO'}, tr("已导出ID图像:{0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -1677,6 +1682,10 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bakemeshisland_image"
     bl_label = "导出网格孤岛填充图"
     bl_description = "将所有选中物体的网格孤岛填充为纯色并导出为一张图像"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将所有选中物体的网格孤岛填充为纯色并导出为一张图像")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -1721,7 +1730,7 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         island_id_counter = 0
@@ -1779,7 +1788,7 @@ class OT_UVTools_BakeMeshIslandImage(Operator, ExportHelper):
             final_path += ext
         pil_img.save(final_path)
 
-        self.report({'INFO'}, f"已导出网格孤岛图像: {final_path}")
+        self.report({'INFO'}, tr("已导出网格孤岛图像: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -1788,6 +1797,10 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bakefaceid_image"
     bl_label = "导出UV面ID图"
     bl_description = "将所有选中物体的面着色,相邻面使用不同颜色,导出为UV贴图图像"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将所有选中物体的面着色,相邻面使用不同颜色,导出为UV贴图图像")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -1883,13 +1896,13 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
                 if not failed:
                     return color_table
                 palette[:] = expand_palette(palette)
-                self.report({'WARNING'}, f"颜色不足，已扩展颜色数量到 {len(palette)}")
+                self.report({'WARNING'}, tr("颜色不足，已扩展颜色数量到 {0}").format(len(palette)))
             return None
 
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         width = self.image_width
@@ -1911,7 +1924,7 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
             neighbors = build_strict_adjacency(bm)
             face_colors = greedy_coloring(bm.faces, neighbors, self.palette)
             if face_colors is None:
-                self.report({'ERROR'}, f"{obj.name}：自动扩展颜色仍不足，导出失败")
+                self.report({'ERROR'}, tr("{0}：自动扩展颜色仍不足，导出失败").format(obj.name))
                 bm.free()
                 eval_obj.to_mesh_clear()
                 return {'CANCELLED'}
@@ -1940,7 +1953,7 @@ class OT_UVTools_BakeFaceIDImage(Operator, ExportHelper):
             final_path += ext
         pil_img.save(final_path)
 
-        self.report({'INFO'}, f"已导出ID图像:{final_path}")
+        self.report({'INFO'}, tr("已导出ID图像:{0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -1949,6 +1962,10 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_objectid_image"
     bl_label = "导出物体ID图"
     bl_description = "将每个选中物体的UV填充为不同颜色并导出为一张图像"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将每个选中物体的UV填充为不同颜色并导出为一张图像")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -1997,7 +2014,7 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
             obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         for idx, obj in enumerate(selected_objs):
@@ -2030,7 +2047,7 @@ class OT_UVTools_BakeObjectIDImage(Operator, ExportHelper):
             final_path += ext
         pil_img.save(final_path)
 
-        self.report({'INFO'}, f"已导出物体ID图像: {final_path}")
+        self.report({'INFO'}, tr("已导出物体ID图像: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -2039,6 +2056,10 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_materialid_image"
     bl_label = "导出材质ID图"
     bl_description = "将每个材质的UV区域填充为不同颜色并导出为一张图像"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将每个材质的UV区域填充为不同颜色并导出为一张图像")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2097,7 +2118,7 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -2135,7 +2156,7 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
                 eval_obj.to_mesh_clear()
 
         if not material_colors:
-            self.report({'ERROR'}, "没有可导出的材质ID")
+            self.report({'ERROR'}, tr("没有可导出的材质ID"))
             return {'CANCELLED'}
 
         pil_img = dilate_image_with_colors(pil_img, self.dilate_radius)
@@ -2149,7 +2170,7 @@ class OT_UVTools_BakeMaterialIDImage(Operator, ExportHelper):
 
         if skipped_objects:
             self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
-        self.report({'INFO'}, f"已导出材质ID图像: {final_path}")
+        self.report({'INFO'}, tr("已导出材质ID图像: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -2158,6 +2179,10 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_island_uvmap_image"
     bl_label = "导出岛UV图"
     bl_description = "每个UV岛单独归一化到0-1并写入RG通道, R=U, G=V"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("每个UV岛单独归一化到0-1并写入RG通道, R=U, G=V")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2196,7 +2221,7 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -2262,7 +2287,7 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
             eval_obj.to_mesh_clear()
 
         if island_count == 0:
-            self.report({'ERROR'}, "没有可导出的UV岛")
+            self.report({'ERROR'}, tr("没有可导出的UV岛"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -2277,7 +2302,7 @@ class OT_UVTools_BakeIslandUVMapImage(Operator, ExportHelper):
 
         if skipped_objects:
             self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
-        self.report({'INFO'}, f"已导出岛UV图像: {final_path}")
+        self.report({'INFO'}, tr("已导出岛UV图像: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -2286,6 +2311,10 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_world_space_tbflowmap_image"
     bl_label = "导出World SpaceTBFlowMap"
     bl_description = "用世界坐标轴在T/B平面里的流向作为每个UV岛的局部B轴,按岛归一化输出RG坐标"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("用世界坐标轴在T/B平面里的流向作为每个UV岛的局部B轴,按岛归一化输出RG坐标")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2343,13 +2372,13 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
 
         flow_axis = get_tb_flow_map_axis_vector(self.flow_axis)
         if flow_axis is None:
-            self.report({'ERROR'}, "无效的世界流向轴")
+            self.report({'ERROR'}, tr("无效的世界流向轴"))
             return {'CANCELLED'}
 
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -2513,7 +2542,7 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
                 exported_tris += island_triangles
 
         if exported_tris == 0:
-            self.report({'ERROR'}, "没有可导出的TB流向图数据")
+            self.report({'ERROR'}, tr("没有可导出的TB流向图数据"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -2532,7 +2561,7 @@ class OT_UVTools_BakeWorldSpaceTBFlowMapImage(Operator, ExportHelper):
             self.flow_axis, self.flow_axis)
         self.report(
             {'INFO'},
-            f"已导出TB流向图: {final_path} | 参考轴={axis_label} | UV岛={island_count} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_tris} | 越界三角={out_of_range_tris}"
+            tr("已导出TB流向图: {0} | 参考轴={1} | UV岛={2} | UV范围=({3:.4f},{4:.4f})-({5:.4f},{6:.4f}) | 三角={7} | 越界三角={8}").format(final_path, axis_label, island_count, uv_min_u, uv_min_v, uv_max_u, uv_max_v, exported_tris, out_of_range_tris)
         )
         return {'FINISHED'}
 
@@ -2542,6 +2571,10 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_gravity_fieldmap_image"
     bl_label = "导出Gravity FieldMap"
     bl_description = "把世界重力方向投影到每个像素的T/B平面,R/G为方向,B为投影强度"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("把世界重力方向投影到每个像素的T/B平面,R/G为方向,B为投影强度")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2602,13 +2635,13 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
 
         gravity_axis = get_gravity_field_axis_vector(self.gravity_axis)
         if gravity_axis is None:
-            self.report({'ERROR'}, "无效的重力方向")
+            self.report({'ERROR'}, tr("无效的重力方向"))
             return {'CANCELLED'}
 
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -2694,7 +2727,7 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
                 eval_obj.to_mesh_clear()
 
         if exported_tris == 0:
-            self.report({'ERROR'}, "没有可导出的重力场数据")
+            self.report({'ERROR'}, tr("没有可导出的重力场数据"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -2713,7 +2746,7 @@ class OT_UVTools_BakeGravityFieldMapImage(Operator, ExportHelper):
             self.gravity_axis, self.gravity_axis)
         self.report(
             {'INFO'},
-            f"已导出Gravity FieldMap: {final_path} | 重力方向={axis_label} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_tris} | 越界三角={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+            tr("已导出Gravity FieldMap: {0} | 重力方向={1} | UV范围=({2:.4f},{3:.4f})-({4:.4f},{5:.4f}) | 三角={6} | 越界三角={7} | 跳过大三角={8}").format(final_path, axis_label, uv_min_u, uv_min_v, uv_max_u, uv_max_v, exported_tris, out_of_range_tris, skipped_large_tris)
         )
         return {'FINISHED'}
 
@@ -2723,6 +2756,10 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_six_direction_visibility_image"
     bl_label = "导出六向可见度Lightmap"
     bl_description = "从UV texel还原真实3D世界位置,用Blender场景ray_cast烘焙世界+/-XYZ六方向可见度"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从UV texel还原真实3D世界位置,用Blender场景ray_cast烘焙世界+/-XYZ六方向可见度")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2783,7 +2820,7 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
         occluder_objects = None
         if not self.include_visible_scene_objects:
@@ -2795,7 +2832,7 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
         mask = surface["mask"]
 
         if surface["exported_tris"] == 0 or not mask.any():
-            self.report({'ERROR'}, "没有可导出的六向可见度数据")
+            self.report({'ERROR'}, tr("没有可导出的六向可见度数据"))
             return {'CANCELLED'}
 
         pos_rgb, neg_rgb = bake_six_direction_visibility(
@@ -2833,7 +2870,7 @@ class OT_UVTools_BakeSixDirectionVisibilityImage(Operator, ExportHelper):
             self.report({'WARNING'}, "已跳过: " + ", ".join(surface["skipped_objects"]))
         self.report(
             {'INFO'},
-            f"已导出六向可见度: {pos_path} / {neg_path} | UV范围=({surface['uv_min_u']:.4f},{surface['uv_min_v']:.4f})-({surface['uv_max_u']:.4f},{surface['uv_max_v']:.4f}) | 三角={surface['exported_tris']} | 越界三角={surface['out_of_range_tris']} | 跳过大三角={surface['skipped_large_tris']}"
+            tr("已导出六向可见度: {0} / {1} | UV范围=({2:.4f},{3:.4f})-({4:.4f},{5:.4f}) | 三角={6} | 越界三角={7} | 跳过大三角={8}").format(pos_path, neg_path, surface['uv_min_u'], surface['uv_min_v'], surface['uv_max_u'], surface['uv_max_v'], surface['exported_tris'], surface['out_of_range_tris'], surface['skipped_large_tris'])
         )
         return {'FINISHED'}
 
@@ -2843,6 +2880,10 @@ class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_light_cast_image"
     bl_label = "导出光源Cast Lightmap"
     bl_description = "从UV texel还原真实3D世界位置,按指定Light对象ray_cast烘焙直接光照"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("从UV texel还原真实3D世界位置,按指定Light对象ray_cast烘焙直接光照")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -2911,13 +2952,13 @@ class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
 
         light_obj = context.scene.ho_uvtools_light_cast_object
         if light_obj is None or light_obj.type != 'LIGHT':
-            self.report({'ERROR'}, "请在光源输入口指定一个Light对象")
+            self.report({'ERROR'}, tr("请在光源输入口指定一个Light对象"))
             return {'CANCELLED'}
 
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         occluder_objects = None
@@ -2930,7 +2971,7 @@ class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
         mask = surface["mask"]
 
         if surface["exported_tris"] == 0 or not mask.any():
-            self.report({'ERROR'}, "没有可导出的光源Cast Lightmap数据")
+            self.report({'ERROR'}, tr("没有可导出的光源Cast Lightmap数据"))
             return {'CANCELLED'}
 
         rgb = bake_light_cast(
@@ -2966,7 +3007,7 @@ class OT_UVTools_BakeLightCastImage(Operator, ExportHelper):
             self.report({'WARNING'}, "已跳过: " + ", ".join(surface["skipped_objects"]))
         self.report(
             {'INFO'},
-            f"已导出光源Cast Lightmap: {final_path} | 光源={light_obj.name}({light_obj.data.type}) | UV范围=({surface['uv_min_u']:.4f},{surface['uv_min_v']:.4f})-({surface['uv_max_u']:.4f},{surface['uv_max_v']:.4f}) | 三角={surface['exported_tris']} | 越界三角={surface['out_of_range_tris']} | 跳过大三角={surface['skipped_large_tris']}"
+            tr("已导出光源Cast Lightmap: {0} | 光源={1}({2}) | UV范围=({3:.4f},{4:.4f})-({5:.4f},{6:.4f}) | 三角={7} | 越界三角={8} | 跳过大三角={9}").format(final_path, light_obj.name, light_obj.data.type, surface['uv_min_u'], surface['uv_min_v'], surface['uv_max_u'], surface['uv_max_v'], surface['exported_tris'], surface['out_of_range_tris'], surface['skipped_large_tris'])
         )
         return {'FINISHED'}
 
@@ -2976,6 +3017,10 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_island_sdf_image"
     bl_label = "导出岛SDF图"
     bl_description = "离线烘焙UV岛内部到边缘的精确欧氏距离场,白色表示离边缘更远"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("离线烘焙UV岛内部到边缘的精确欧氏距离场,白色表示离边缘更远")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -3042,7 +3087,7 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         width = self.image_width
@@ -3051,7 +3096,7 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
         hi_width = width * scale
         hi_height = height * scale
         if hi_width * hi_height > 100_000_000:
-            self.report({'ERROR'}, "岛SDF超采样图过大,请降低图像尺寸或超采样倍率")
+            self.report({'ERROR'}, tr("岛SDF超采样图过大,请降低图像尺寸或超采样倍率"))
             return {'CANCELLED'}
 
         mask_img = Image.new("L", (hi_width, hi_height), 0)
@@ -3124,12 +3169,12 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
                     context.view_layer.update()
 
         if island_count == 0:
-            self.report({'ERROR'}, "没有可导出的UV岛")
+            self.report({'ERROR'}, tr("没有可导出的UV岛"))
             return {'CANCELLED'}
 
         mask = np.array(mask_img, dtype=np.uint8) > 0
         if not mask.any():
-            self.report({'ERROR'}, "UV岛没有落在导出图像范围内")
+            self.report({'ERROR'}, tr("UV岛没有落在导出图像范围内"))
             return {'CANCELLED'}
 
         shrink_mask = None
@@ -3160,7 +3205,7 @@ class OT_UVTools_BakeIslandSDFImage(Operator, ExportHelper):
 
         if skipped_objects:
             self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
-        self.report({'INFO'}, f"已导出岛SDF图像: {final_path}")
+        self.report({'INFO'}, tr("已导出岛SDF图像: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -3169,6 +3214,10 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_uv_chirality_image"
     bl_label = "导出UV手性图"
     bl_description = "白色表示正常手性，黑色表示镜像，灰色表示未定义"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("白色表示正常手性，黑色表示镜像，灰色表示未定义")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -3209,7 +3258,7 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
 
         selected_objs = [obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "请先选中至少一个网格物体")
+            self.report({'ERROR'}, tr("请先选中至少一个网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -3309,7 +3358,7 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
                 eval_obj.to_mesh_clear()
 
         if exported_tris == 0:
-            self.report({'ERROR'}, "没有可导出的UV手性数据")
+            self.report({'ERROR'}, tr("没有可导出的UV手性数据"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -3326,7 +3375,7 @@ class OT_UVTools_BakeUVChiralityImage(Operator, ExportHelper):
             self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
         self.report(
             {'INFO'},
-            f"已导出UV手性图: {final_path} | UV岛={island_count} | 混合岛={mixed_island_count} | 未定义岛={undefined_island_count} | 未定义三角面={undefined_tri_count} | UV=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角面={exported_tris} | 越界={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+            tr("已导出UV手性图: {0} | UV岛={1} | 混合岛={2} | 未定义岛={3} | 未定义三角面={4} | UV=({5:.4f},{6:.4f})-({7:.4f},{8:.4f}) | 三角面={9} | 越界={10} | 跳过大三角={11}").format(final_path, island_count, mixed_island_count, undefined_island_count, undefined_tri_count, uv_min_u, uv_min_v, uv_max_u, uv_max_v, exported_tris, out_of_range_tris, skipped_large_tris)
         )
         return {'FINISHED'}
 
@@ -3336,6 +3385,10 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_bake_tangent_image"
     bl_label = "导出切线/副切线图"
     bl_description = "使用Blender计算的MikkTSpace切线空间导出切线或副切线向量图"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("使用Blender计算的MikkTSpace切线空间导出切线或副切线向量图")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -3390,7 +3443,7 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
         selected_objs = [
             obj for obj in context.selected_objects if obj.type == 'MESH']
         if not selected_objs:
-            self.report({'ERROR'}, "未选中任何网格物体")
+            self.report({'ERROR'}, tr("未选中任何网格物体"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -3487,7 +3540,7 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
                 eval_obj.to_mesh_clear()
 
         if exported_faces == 0:
-            self.report({'ERROR'}, "没有可导出的切线数据")
+            self.report({'ERROR'}, tr("没有可导出的切线数据"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -3505,7 +3558,7 @@ class OT_UVTools_BakeTangentImage(Operator, ExportHelper):
         label = "副切线" if self.vector_mode == 'BITANGENT' else "切线"
         self.report(
             {'INFO'},
-            f"已导出{label}图像: {final_path} | UV范围=({uv_min_u:.4f},{uv_min_v:.4f})-({uv_max_u:.4f},{uv_max_v:.4f}) | 三角={exported_faces} | 越界三角={out_of_range_tris} | 跳过大三角={skipped_large_tris}"
+            tr("已导出{0}图像: {1} | UV范围=({2:.4f},{3:.4f})-({4:.4f},{5:.4f}) | 三角={6} | 越界三角={7} | 跳过大三角={8}").format(label, final_path, uv_min_u, uv_min_v, uv_max_u, uv_max_v, exported_faces, out_of_range_tris, skipped_large_tris)
         )
         return {'FINISHED'}
 
@@ -3562,7 +3615,7 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
             obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
-            self.report({'ERROR'}, "请先选中至少一个网格物体")
+            self.report({'ERROR'}, tr("请先选中至少一个网格物体"))
             return {'CANCELLED'}
 
         for obj in selected_objs:
@@ -3577,7 +3630,7 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
             if uv_layer is None:
                 bm.free()
                 eval_obj.to_mesh_clear()
-                self.report({'WARNING'}, f"{obj.name} 没有UV,跳过")
+                self.report({'WARNING'}, tr("{0} 没有UV,跳过").format(obj.name))
                 continue
 
             bm.faces.ensure_lookup_table()
@@ -3628,7 +3681,7 @@ class OT_UVTools_BakeVertexColorImage(Operator, ExportHelper):
             final_path += ext
         pil_img.save(final_path)
 
-        self.report({'INFO'}, f"已导出顶点色贴图: {final_path}")
+        self.report({'INFO'}, tr("已导出顶点色贴图: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -3681,7 +3734,7 @@ class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
             obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not selected_objs:
-            self.report({'ERROR'}, "请先选中至少一个网格物体")
+            self.report({'ERROR'}, tr("请先选中至少一个网格物体"))
             return {'CANCELLED'}
 
         exported_count = 0
@@ -3723,7 +3776,7 @@ class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
             exported_count += 1
 
         if exported_count == 0:
-            self.report({'ERROR'}, "没有可导出的活动顶点组权重")
+            self.report({'ERROR'}, tr("没有可导出的活动顶点组权重"))
             return {'CANCELLED'}
 
         pil_img = Image.fromarray(img_arr, mode="RGBA")
@@ -3737,7 +3790,7 @@ class OT_UVTools_BakeActiveVertexGroupImage(Operator, ExportHelper):
 
         if skipped_objects:
             self.report({'WARNING'}, "已跳过: " + ", ".join(skipped_objects))
-        self.report({'INFO'}, f"已导出活动顶点组权重贴图: {final_path}")
+        self.report({'INFO'}, tr("已导出活动顶点组权重贴图: {0}").format(final_path))
         return {'FINISHED'}
 
 
@@ -3746,6 +3799,10 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
     bl_idname = "ho.uvtools_fastbake_uv_image"
     bl_label = "快速导出"
     bl_description = "快速导出多张贴图"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("快速导出多张贴图")
     bl_options = {'REGISTER', 'UNDO'}
 
     filename_ext = ""
@@ -3811,7 +3868,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 image_format='PNG'
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "UV岛导出失败")
+                self.report({'ERROR'}, tr("UV岛导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_UVIsland.png")
 
@@ -3827,7 +3884,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 image_format='PNG'
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "Mesh岛导出失败")
+                self.report({'ERROR'}, tr("Mesh岛导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_MeshIsland.png")
 
@@ -3843,7 +3900,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 image_format='PNG'
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "面ID导出失败")
+                self.report({'ERROR'}, tr("面ID导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_FaceID.png")
 
@@ -3859,7 +3916,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 image_format='PNG'
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "物体ID导出失败")
+                self.report({'ERROR'}, tr("物体ID导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_ObjectID.png")
 
@@ -3875,7 +3932,7 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 image_format='PNG'
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "材质ID导出失败")
+                self.report({'ERROR'}, tr("材质ID导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_MaterialID.png")
 
@@ -3891,11 +3948,11 @@ class OT_UVTools_FastBakeUVImage(Operator, ExportHelper):
                 check_existing=False
             )
             if result != {'FINISHED'}:
-                self.report({'ERROR'}, "线框导出失败")
+                self.report({'ERROR'}, tr("线框导出失败"))
                 return {'CANCELLED'}
             temp_files.append(base_path + "_Wire.png")
 
-        self.report({'INFO'}, f"导出完成: {len(temp_files)} 个图像生成")
+        self.report({'INFO'}, tr("导出完成: {0} 个图像生成").format(len(temp_files)))
         return {'FINISHED'}
 
 
@@ -3904,36 +3961,36 @@ def drawBakePanel(layout: bpy.types.UILayout, context):
     col = box.column(align=True)
     row = col.row(align=True)
     row.operator(OT_UVTools_FastBakeUVImage.bl_idname, text="", icon="FUND")
-    row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text="UV岛")
-    row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text="Mesh岛")
-    row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text="面ID")
-    row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text="物体ID")
-    row.operator(OT_UVTools_BakeMaterialIDImage.bl_idname, text="材质ID")
-    row.operator("uv.export_layout", text="网格")
+    row.operator(OT_UVTools_BakeUVIslandImage.bl_idname, text=tr("UV岛"))
+    row.operator(OT_UVTools_BakeMeshIslandImage.bl_idname, text=tr("Mesh岛"))
+    row.operator(OT_UVTools_BakeFaceIDImage.bl_idname, text=tr("面ID"))
+    row.operator(OT_UVTools_BakeObjectIDImage.bl_idname, text=tr("物体ID"))
+    row.operator(OT_UVTools_BakeMaterialIDImage.bl_idname, text=tr("材质ID"))
+    row.operator("uv.export_layout", text=tr("网格"))
 
     row = col.row(align=True)
-    row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text="活动顶点色")
-    row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text="活动顶点组")
+    row.operator(OT_UVTools_BakeVertexColorImage.bl_idname, text=tr("活动顶点色"))
+    row.operator(OT_UVTools_BakeActiveVertexGroupImage.bl_idname, text=tr("活动顶点组"))
 
     row = col.row(align=True)
-    row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text="每岛UV")
-    row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text="岛SDF")
-    row.operator(OT_UVTools_BakeTangentImage.bl_idname, text="切/副切线")
-    row.operator(OT_UVTools_BakeUVChiralityImage.bl_idname, text="UV手性")
+    row.operator(OT_UVTools_BakeIslandUVMapImage.bl_idname, text=tr("每岛UV"))
+    row.operator(OT_UVTools_BakeIslandSDFImage.bl_idname, text=tr("岛SDF"))
+    row.operator(OT_UVTools_BakeTangentImage.bl_idname, text=tr("切/副切线"))
+    row.operator(OT_UVTools_BakeUVChiralityImage.bl_idname, text=tr("UV手性"))
 
     row = col.row(align=True)
-    row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text="TB流向图")
-    row.operator(OT_UVTools_BakeGravityFieldMapImage.bl_idname, text="重力场图")
+    row.operator(OT_UVTools_BakeWorldSpaceTBFlowMapImage.bl_idname, text=tr("TB流向图"))
+    row.operator(OT_UVTools_BakeGravityFieldMapImage.bl_idname, text=tr("重力场图"))
 
     row = col.row(align=True)
-    row.prop(context.scene, "ho_uvtools_light_cast_object", text="光源")
-    row.operator(OT_UVTools_BakeLightCastImage.bl_idname, text="光源Cast")
-    row.operator(OT_UVTools_BakeSixDirectionVisibilityImage.bl_idname, text="六向Lightmap")
+    row.prop(context.scene, "ho_uvtools_light_cast_object", text=tr("光源"))
+    row.operator(OT_UVTools_BakeLightCastImage.bl_idname, text=tr("光源Cast"))
+    row.operator(OT_UVTools_BakeSixDirectionVisibilityImage.bl_idname, text=tr("六向Lightmap"))
 
 
 
     # box = layout.box()
-    # box.label(text="检查UV")
+    # box.label(text=tr("检查UV"))
 
     return
 

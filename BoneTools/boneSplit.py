@@ -3,6 +3,7 @@ import numpy as np
 import math
 from bpy.types import Operator
 from bpy.props import BoolProperty,IntProperty,FloatProperty
+from ..i18n import tr
 
 
 def reg_props():
@@ -234,6 +235,10 @@ class OP_SplitBoneWithWeight(Operator):
     bl_idname = "ho.splitbone_withweight"
     bl_label = "细分骨骼与权重"
     bl_description = "面板按钮较为卡顿,不建议长期展示"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("面板按钮较为卡顿,不建议长期展示")
     bl_options = {'REGISTER', 'UNDO'}
 
     count: IntProperty(name="细分段数",description="细分后产生的新骨骼数量", default=3, min=1) # type: ignore
@@ -332,11 +337,11 @@ class OP_SplitBoneWithWeight(Operator):
                         break
 
         else:
-            self.report({'ERROR'}, "不支持的对象")
+            self.report({'ERROR'}, tr("不支持的对象"))
             return {'CANCELLED'}
         #没有待处理的物体
         if not mesh_objs:
-            self.report({'ERROR'}, "没有找到需要处理的mesh对象,仅细分骨骼请勿使用")
+            self.report({'ERROR'}, tr("没有找到需要处理的mesh对象,仅细分骨骼请勿使用"))
             return {'CANCELLED'}
 
         #清洗处理列表
@@ -374,7 +379,7 @@ class OP_SplitBoneWithWeight(Operator):
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
             BoneSplitCore.set_object_mode(original_active,'WEIGHT_PAINT')
-        self.report({'INFO'},"细分成功")
+        self.report({'INFO'},tr("细分成功"))
         return {'FINISHED'}
     
     def invoke(self, context, event):

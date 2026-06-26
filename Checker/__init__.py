@@ -2,6 +2,7 @@ import bpy
 from bpy.types import Panel
 
 from  . import objectChecker,meshMirrorChecker
+from ..i18n import tr
 
 def reg_props():
     # 功能区开关
@@ -29,7 +30,7 @@ class PL_ObjectChecker(Panel):
     def draw(self, context):
         layout = self.layout
         row = layout.row(align=True)
-        row.label(text="检查")
+        row.label(text=tr("检查"))
         row.prop(context.scene, "ho_CheckerToolsPanel_Mod", expand=True,)
         if context.scene.ho_CheckerToolsPanel_Mod == "PANEL_CHECKER_MIRRORCHECKER":
             meshMirrorChecker.drawMeshMirrorCheckerPanel(self.layout, context)

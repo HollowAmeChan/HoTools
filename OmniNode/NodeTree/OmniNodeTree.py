@@ -8,6 +8,7 @@ from .OmniExecutor import OmniExecutor
 from .OmniIR import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniNodeDraw
+from ...i18n import tr
 from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
@@ -226,7 +227,7 @@ class OmniNodeTree(NodeTree):
 
 
 def draw_OmniTreeInputs(layout, tree):
-    layout.label(text="Omni树输入:")
+    layout.label(text=tr("Omni树输入:"))
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -250,7 +251,7 @@ def draw_OmniTreeInputs(layout, tree):
     moveDown.is_Down = True
 
 def draw_OmniTreeOutputs(layout, tree):
-    layout.label(text="Omni树输出:")
+    layout.label(text=tr("Omni树输出:"))
     row = layout.row()
     row.template_list(
         HO_UL_GraphNodeIO.__name__,
@@ -282,24 +283,24 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
         return
 
     layout.prop(tree, "is_execution_enabled", text="", toggle=True,icon_only=True)
-    layout.prop(tree, "debug_compile", text="Debug编译", toggle=True)
-    layout.prop(tree, "debug_runtime_trace", text="Debug运行", toggle=True)
-    layout.prop(tree, "debug_runtime_timing", text="Debug运行时长", toggle=True)
-    layout.prop(tree, "debug_runtime_timing_interval", text="输出间隔")
+    layout.prop(tree, "debug_compile", text=tr("Debug编译"), toggle=True)
+    layout.prop(tree, "debug_runtime_trace", text=tr("Debug运行"), toggle=True)
+    layout.prop(tree, "debug_runtime_timing", text=tr("Debug运行时长"), toggle=True)
+    layout.prop(tree, "debug_runtime_timing_interval", text=tr("输出间隔"))
     layout.label(text=tree.compile_cache_status_label())
 
     execution_enabled = bool(getattr(tree, "is_execution_enabled", True))
     frame_row = layout.row()
     frame_row.enabled = execution_enabled
-    frame_row.prop(tree, "is_frame_run_enabled", text="每帧运行", toggle=True)
+    frame_row.prop(tree, "is_frame_run_enabled", text=tr("每帧运行"), toggle=True)
 
     auto_row = layout.row()
     auto_row.enabled = execution_enabled
     if tree.is_auto_update:
         auto_row.alert = True
-        auto_row.prop(tree, "is_auto_update", text="树自动更新", icon="DECORATE_LINKED")
+        auto_row.prop(tree, "is_auto_update", text=tr("树自动更新"), icon="DECORATE_LINKED")
     else:
-        auto_row.prop(tree, "is_auto_update", text="树自动更新", icon="UNLINKED")
+        auto_row.prop(tree, "is_auto_update", text=tr("树自动更新"), icon="UNLINKED")
 
     draw_OmniTreeInputs(layout, tree)
     draw_OmniTreeOutputs(layout, tree)

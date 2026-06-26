@@ -8,6 +8,7 @@ from mathutils import Vector
 from types import SimpleNamespace
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
+from ..i18n import tr
 
 
 def reg_props():
@@ -317,7 +318,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 break
         if not preset_file:
             if report_errors:
-                self.report({'ERROR'}, f"找不到预设文件: {self.preset}.py")
+                self.report({'ERROR'}, tr("找不到预设文件: {0}.py").format(self.preset))
             return None
 
         # 只抽取 op.xxx 赋值语句
@@ -371,7 +372,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     print("[HoTools FBX] Failed to remove hidden modifiers:")
                     for ob_name, mod_name, exc in failed_hidden_modifiers:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
-                    self.report({"WARNING"}, f"{len(failed_hidden_modifiers)} 个隐藏修改器临时删除失败，详见控制台")
+                    self.report({"WARNING"}, tr("{n} 个隐藏修改器临时删除失败，详见控制台").format(n=len(failed_hidden_modifiers)))
 
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
@@ -424,9 +425,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             report_exception(self, "导出后重置场景失败", e)
             return {'CANCELLED'}
         if removed_hidden_modifiers:
-            self.report({"INFO"}, f"导出成功，临时删除隐藏修改器 {len(removed_hidden_modifiers)} 个")
+            self.report({"INFO"}, tr("导出成功，临时删除隐藏修改器 {n} 个").format(n=len(removed_hidden_modifiers)))
         else:
-            self.report({"INFO"},"导出成功")
+            self.report({"INFO"}, tr("导出成功"))
         return {'FINISHED'}
 
     
@@ -444,22 +445,22 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.use_property_decorate = False
 
         preset_box = layout.box()
-        preset_box.label(text="FBX 预设")
-        preset_box.prop(self, "preset", text="预设")
+        preset_box.label(text=tr("FBX 预设"))
+        preset_box.prop(self, "preset", text=tr("预设"))
         hint_col = preset_box.column(align=True)
-        hint_col.label(text="共享BlenderFBX导出预设")
-        hint_col.label(text="没有选项时，请在BlenderFBX面板保存预设")
+        hint_col.label(text=tr("共享BlenderFBX导出预设"))
+        hint_col.label(text=tr("没有选项时，请在BlenderFBX面板保存预设"))
 
         option_box = layout.box()
-        option_box.label(text="预处理")
+        option_box.label(text=tr("预处理"))
         option_col = option_box.column(align=True)
         option_col.prop(self, "cheekBoneKeepRotation")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
-        
+
         params = self.getParams(context, report_errors=False)
         params_box = layout.box()
-        params_box.label(text="当前预设参数")
+        params_box.label(text=tr("当前预设参数"))
         if params:
             params_col = params_box.column(align=True)
             params_col.enabled = False
@@ -469,7 +470,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 split.label(text=str(name))
                 split.label(text=str(value))
         else:
-            params_box.label(text="未读取到预设参数")
+            params_box.label(text=tr("未读取到预设参数"))
 
 class OP_FinalFBXExport_only_preprocess(Operator):
     bl_idname = "ho.final_fbx_export_only_preprocess"
@@ -546,7 +547,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         except Exception as e:
             report_exception(self, "预处理失败", e)
             return {'CANCELLED'}
-        self.report({"INFO"}, "预处理完成")
+        self.report({"INFO"}, tr("预处理完成"))
         return {'FINISHED'}
     
     def draw(self, context):
@@ -555,7 +556,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         layout.use_property_decorate = False
 
         option_box = layout.box()
-        option_box.label(text="预处理")
+        option_box.label(text=tr("预处理"))
         option_col = option_box.column(align=True)
         option_col.prop(self, "cheekBoneKeepRotation")
         option_col.prop(self, "fixObjectTransform")

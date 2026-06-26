@@ -11,6 +11,8 @@ __pycache__/
 # Packaging and CMake build outputs.
 _build/
 _dist/
+# For hotools.bat
+dist/  
 build/
 cmake-build-*/
 

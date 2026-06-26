@@ -8,6 +8,7 @@ from mathutils import Vector
 from types import SimpleNamespace
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
+from ..i18n import tr
 
 def reg_props():
     return
@@ -21,6 +22,10 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
     bl_idname = "ho.exportboneconstraint_unityjson"
     bl_label = "导出约束"
     bl_description = "导出活动骨架内的约束为json文件,仅约束到本骨架的其他骨的约束可以被导出"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("导出活动骨架内的约束为json文件,仅约束到本骨架的其他骨的约束可以被导出")
     filename_ext = ".json"
 
     filter_glob: bpy.props.StringProperty(
@@ -34,7 +39,7 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
 
         # 验证选择对象是否为骨架
         if not armature or armature.type != 'ARMATURE':
-            self.report({'ERROR'}, "活动物体不是骨架")
+            self.report({'ERROR'}, tr("活动物体不是骨架"))
             return {'CANCELLED'}
 
         constraint_mapping = {
@@ -96,9 +101,9 @@ class OP_2unity_exportJsonBoneConstraint(Operator, ExportHelper):
         try:
             with open(self.filepath, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, indent=4, ensure_ascii=False)
-            self.report({'INFO'}, f"成功导出 {len(bones_data)} 个骨骼的约束")
+            self.report({'INFO'}, tr("成功导出 {0} 个骨骼的约束").format(len(bones_data)))
         except Exception as e:
-            self.report({'ERROR'}, f"导出失败: {str(e)}")
+            self.report({'ERROR'}, tr("导出失败: {0}").format(str(e)))
             return {'CANCELLED'}
 
         return {'FINISHED'}

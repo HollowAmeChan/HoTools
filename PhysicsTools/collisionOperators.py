@@ -2,6 +2,7 @@ import mathutils
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
 from bpy.types import Operator
 
+from ..i18n import tr
 from .collisionUtils import (
     _COLLISION_GROUP_COUNT,
     _active_armature_object,
@@ -29,6 +30,10 @@ class OP_Hotools_BoneCollision_AddSelectedSpringRoots(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
+    def description(cls, context, properties):
+        return tr("把当前选中的骨骼标记为Spring Root")
+
+    @classmethod
     def poll(cls, context):
         armature_obj = _active_armature_object(context)
         return armature_obj is not None and armature_obj.mode in {"EDIT", "POSE"}
@@ -37,7 +42,7 @@ class OP_Hotools_BoneCollision_AddSelectedSpringRoots(Operator):
         armature_obj = _active_armature_object(context)
         selected_names = _selected_bone_names(context, armature_obj)
         if not selected_names:
-            self.report({"WARNING"}, "没有选中骨骼")
+            self.report({"WARNING"}, tr("没有选中骨骼"))
             return {"CANCELLED"}
 
         changed = 0
@@ -49,7 +54,7 @@ class OP_Hotools_BoneCollision_AddSelectedSpringRoots(Operator):
             props.spring_root = True
             changed += 1
 
-        self.report({"INFO"}, f"已设置 {changed} 个Spring Root")
+        self.report({"INFO"}, tr("已设置 {n} 个Spring Root").format(n=changed))
         return {"FINISHED"}
 
 
@@ -58,6 +63,10 @@ class OP_Hotools_BoneCollision_ClearAllSpringRoots(Operator):
     bl_label = "清空全部Root"
     bl_description = "清空当前骨架所有骨骼的Spring Root标记"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清空当前骨架所有骨骼的Spring Root标记")
 
     @classmethod
     def poll(cls, context):
@@ -74,7 +83,7 @@ class OP_Hotools_BoneCollision_ClearAllSpringRoots(Operator):
                 changed += 1
             props.spring_root = False
 
-        self.report({"INFO"}, f"已清空 {changed} 个Spring Root")
+        self.report({"INFO"}, tr("已清空 {n} 个Spring Root").format(n=changed))
         return {"FINISHED"}
 
 
@@ -85,6 +94,10 @@ class OP_Hotools_BoneCollision_SelectSpringRoots(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
+    def description(cls, context, properties):
+        return tr("选择当前骨架中所有标记为Spring Root的骨骼")
+
+    @classmethod
     def poll(cls, context):
         armature_obj = _active_armature_object(context)
         return armature_obj is not None and armature_obj.mode in {"EDIT", "POSE"}
@@ -93,7 +106,7 @@ class OP_Hotools_BoneCollision_SelectSpringRoots(Operator):
         armature_obj = _active_armature_object(context)
         root_names = {bone.name for bone in _spring_root_bones(armature_obj)}
         if not root_names:
-            self.report({"WARNING"}, "当前骨架没有Spring Root")
+            self.report({"WARNING"}, tr("当前骨架没有Spring Root"))
             return {"CANCELLED"}
 
         if armature_obj.mode == "EDIT":
@@ -105,7 +118,7 @@ class OP_Hotools_BoneCollision_SelectSpringRoots(Operator):
             active_name = next(iter(root_names))
             armature_obj.data.bones.active = armature_obj.data.bones.get(active_name)
 
-        self.report({"INFO"}, f"已选择 {len(root_names)} 个Spring Root")
+        self.report({"INFO"}, tr("已选择 {n} 个Spring Root").format(n=len(root_names)))
         return {"FINISHED"}
 
 
@@ -114,6 +127,10 @@ class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):
     bl_label = "设置主碰撞组"
     bl_description = "设置当前活动骨碰撞体所属的主碰撞组"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("设置当前活动骨碰撞体所属的主碰撞组")
 
     group: IntProperty(
         name="组",
@@ -146,7 +163,7 @@ class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):
 
         _tag_view3d_redraw()
         if self.apply_selected:
-            self.report({"INFO"}, f"已设置 {len(targets)} 根选中骨的主碰撞组")
+            self.report({"INFO"}, tr("已设置 {n} 根选中骨的主碰撞组").format(n=len(targets)))
         return {"FINISHED"}
 
 
@@ -155,6 +172,10 @@ class OP_Hotools_BoneCollision_ToggleCollidedByGroup(Operator):
     bl_label = "切换被碰撞组"
     bl_description = "切换允许哪些主碰撞组碰撞到当前活动骨碰撞体"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("切换允许哪些主碰撞组碰撞到当前活动骨碰撞体")
 
     group: IntProperty(
         name="组",
@@ -197,7 +218,7 @@ class OP_Hotools_BoneCollision_ToggleCollidedByGroup(Operator):
 
         _tag_view3d_redraw()
         if self.apply_selected:
-            self.report({"INFO"}, f"已更新 {len(targets)} 根选中骨的被碰撞组")
+            self.report({"INFO"}, tr("已更新 {n} 根选中骨的被碰撞组").format(n=len(targets)))
         return {"FINISHED"}
 
 
@@ -206,6 +227,10 @@ class OP_Hotools_ObjectCollision_SetPrimaryGroup(Operator):
     bl_label = "设置Object主碰撞组"
     bl_description = "设置当前Object被动碰撞体所属的主碰撞组"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("设置当前Object被动碰撞体所属的主碰撞组")
 
     group: IntProperty(
         name="组",
@@ -238,7 +263,7 @@ class OP_Hotools_ObjectCollision_SetPrimaryGroup(Operator):
 
         _tag_view3d_redraw()
         if self.apply_selected:
-            self.report({"INFO"}, f"已设置 {len(targets)} 个选中Object的主碰撞组")
+            self.report({"INFO"}, tr("已设置 {n} 个选中Object的主碰撞组").format(n=len(targets)))
         return {"FINISHED"}
 
 
@@ -247,6 +272,10 @@ class OP_Hotools_MeshCollision_SetPrimaryGroup(Operator):
     bl_label = "设置网格主碰撞组"
     bl_description = "设置当前Mesh逐顶点碰撞球所属的主碰撞组"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("设置当前Mesh逐顶点碰撞球所属的主碰撞组")
 
     group: IntProperty(
         name="组",
@@ -274,6 +303,10 @@ class OP_Hotools_MeshCollision_ToggleCollidedByGroup(Operator):
     bl_label = "切换网格被碰撞组"
     bl_description = "切换允许哪些主碰撞组碰撞到当前Mesh逐顶点碰撞球"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("切换允许哪些主碰撞组碰撞到当前Mesh逐顶点碰撞球")
 
     group: IntProperty(
         name="组",
@@ -309,6 +342,10 @@ class OP_Hotools_MeshCollision_CreateBasePoseProxy(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
+    def description(cls, context, properties):
+        return tr("复制或刷新当前Mesh的MC2只读BasePose对象，并写入当前物体碰撞属性")
+
+    @classmethod
     def poll(cls, context):
         obj = context.object
         return obj is not None and obj.type == "MESH" and _active_mesh_collision_props(context) is not None
@@ -334,7 +371,7 @@ class OP_Hotools_MeshCollision_CreateBasePoseProxy(Operator):
         context.view_layer.objects.active = obj
 
         _tag_view3d_redraw()
-        self.report({"INFO"}, f"已创建/刷新BasePose只读对象：{base_obj.name}")
+        self.report({"INFO"}, tr("已创建/刷新BasePose只读对象：{name}").format(name=base_obj.name))
         return {"FINISHED"}
 
 
@@ -343,6 +380,10 @@ class OP_Hotools_BoneCollision_AddSelectedColliders(Operator):
     bl_label = "选中骨添加碰撞"
     bl_description = "给当前选中的所有骨骼批量添加碰撞体"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("给当前选中的所有骨骼批量添加碰撞体")
 
     collision_type: EnumProperty(
         name="类型",
@@ -385,10 +426,10 @@ class OP_Hotools_BoneCollision_AddSelectedColliders(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "collision_type")
-        layout.prop(self, "radius")
-        layout.prop(self, "height")
-        layout.prop(self, "offset_delta")
+        layout.prop(self, "collision_type", text=tr("类型"))
+        layout.prop(self, "radius", text=tr("半径"))
+        layout.prop(self, "height", text=tr("高度"))
+        layout.prop(self, "offset_delta", text=tr("相对偏移增量"))
 
     def execute(self, context):
         armature_obj = _active_armature_object(context)
@@ -406,7 +447,7 @@ class OP_Hotools_BoneCollision_AddSelectedColliders(Operator):
             seen_names.add(name)
 
         if not target_bones:
-            self.report({"WARNING"}, "没有选中可处理的骨骼")
+            self.report({"WARNING"}, tr("没有选中可处理的骨骼"))
             return {"CANCELLED"}
 
         delta = mathutils.Vector(self.offset_delta)
@@ -422,7 +463,7 @@ class OP_Hotools_BoneCollision_AddSelectedColliders(Operator):
             props.offset = midpoint_offset + delta
 
         _tag_view3d_redraw()
-        self.report({"INFO"}, f"已给 {len(target_bones)} 根选中骨添加碰撞体")
+        self.report({"INFO"}, tr("已给 {n} 根选中骨添加碰撞体").format(n=len(target_bones)))
         return {"FINISHED"}
 
 
@@ -431,6 +472,10 @@ class OP_Hotools_BoneCollision_GradientRadius(Operator):
     bl_label = "碰撞半径渐变"
     bl_description = "按骨骼层级顺序批量递增或递减已有碰撞体半径"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("按骨骼层级顺序批量递增或递减已有碰撞体半径")
 
     target_scope: EnumProperty(
         name="范围",
@@ -491,15 +536,15 @@ class OP_Hotools_BoneCollision_GradientRadius(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "target_scope")
-        layout.prop(self, "direction")
+        layout.prop(self, "target_scope", text=tr("范围"))
+        layout.prop(self, "direction", text=tr("方向"))
 
         row = layout.row(align=True)
-        row.prop(self, "head_factor")
-        row.prop(self, "tail_factor")
+        row.prop(self, "head_factor", text=tr("头倍率"))
+        row.prop(self, "tail_factor", text=tr("尾倍率"))
 
-        layout.prop(self, "exponent")
-        layout.prop(self, "factor_offset")
+        layout.prop(self, "exponent", text=tr("指数"))
+        layout.prop(self, "factor_offset", text=tr("曲线偏移"))
 
     def execute(self, context):
         armature_obj = _active_armature_object(context)
@@ -508,7 +553,7 @@ class OP_Hotools_BoneCollision_GradientRadius(Operator):
         target_items = []
 
         if self.target_scope == "SELECTED" and not selected_names:
-            self.report({"WARNING"}, "没有选中骨骼")
+            self.report({"WARNING"}, tr("没有选中骨骼"))
             return {"CANCELLED"}
 
         for bone in armature_obj.data.bones:
@@ -536,9 +581,9 @@ class OP_Hotools_BoneCollision_GradientRadius(Operator):
 
         if not target_items:
             if self.target_scope == "SELECTED":
-                self.report({"WARNING"}, "选中骨骼中没有已有碰撞体")
+                self.report({"WARNING"}, tr("选中骨骼中没有已有碰撞体"))
             else:
-                self.report({"WARNING"}, "当前骨架没有已有碰撞体")
+                self.report({"WARNING"}, tr("当前骨架没有已有碰撞体"))
             return {"CANCELLED"}
 
         first_factor = self.head_factor if self.direction == "DECREASE" else self.tail_factor
@@ -551,5 +596,5 @@ class OP_Hotools_BoneCollision_GradientRadius(Operator):
             props.radius = max(props.radius * radius_factor, 0.0)
 
         _tag_view3d_redraw()
-        self.report({"INFO"}, f"已调整 {len(target_items)} 个碰撞体半径")
+        self.report({"INFO"}, tr("已调整 {n} 个碰撞体半径").format(n=len(target_items)))
         return {"FINISHED"}

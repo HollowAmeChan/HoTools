@@ -7,6 +7,7 @@ import json
 import math
 from mathutils import Vector
 from bpy.app.handlers import persistent
+from ..i18n import tr
 
 
 SHAPE_KEY_RENAME_MAP = {
@@ -554,14 +555,14 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         obj = context.object
 
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "请选中一个网格对象！")
+            self.report({'ERROR'}, tr("请选中一个网格对象！"))
             return {'CANCELLED'}
         if obj.data.shape_keys is None or obj.data.shape_keys.key_blocks is None:
-            self.report({'ERROR'}, "当前对象没有形态键！")
+            self.report({'ERROR'}, tr("当前对象没有形态键！"))
             return {'CANCELLED'}
         active_key = obj.active_shape_key
         if active_key is None:
-            self.report({'ERROR'}, "未找到活动形态键！")
+            self.report({'ERROR'}, tr("未找到活动形态键！"))
             return {'CANCELLED'}
 
         bpy.ops.object.mode_set(mode='EDIT')
@@ -580,7 +581,7 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         bpy.ops.mesh.select_mode(
             use_extend=False, use_expand=False, type='VERT')  # 强制进入顶点选择模式
         obj.update_from_editmode()  # 刷新顶点选择态
-        self.report({'INFO'}, "已选择形态键所有顶点")
+        self.report({'INFO'}, tr("已选择形态键所有顶点"))
         return {'FINISHED'}
 
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
@@ -602,7 +603,7 @@ class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
         # 检查形态键是否存在
         if self.shape_key not in obj.data.shape_keys.key_blocks:
             self.report(
-                {'WARNING'}, f"使用的形态键'{self.shape_key}'不存在,请选择")
+                {'WARNING'}, tr("使用的形态键'{0}'不存在,请选择").format(self.shape_key))
             return {'CANCELLED'}
         bpy.ops.mesh.blend_from_shape(shape=self.shape_key, add=False)
 
@@ -613,6 +614,10 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
     bl_idname = "ho.clear_selected_vertices_in_activeshapekey"
     bl_label = "清除活动形态键中，选择的顶点的偏移"
     bl_description = "用基型替换活动形态键中选中顶点的偏移；按住 Shift 点击会清除当前活动形态键的全部偏移"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("用基型替换活动形态键中选中顶点的偏移；按住 Shift 点击会清除当前活动形态键的全部偏移")
     bl_options = {'REGISTER', 'UNDO'}
 
     clear_whole_key: bpy.props.BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
@@ -632,10 +637,10 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
         active_key = obj.active_shape_key
         reference_key = shape_keys.reference_key
         if not active_key or active_key == reference_key:
-            self.report({'WARNING'}, "请选择一个非基型的活动形态键")
+            self.report({'WARNING'}, tr("请选择一个非基型的活动形态键"))
             return {'CANCELLED'}
         if not reference_key:
-            self.report({'WARNING'}, "未找到基型")
+            self.report({'WARNING'}, tr("未找到基型"))
             return {'CANCELLED'}
 
         if self.clear_whole_key or context.mode != "EDIT_MESH":
@@ -646,7 +651,7 @@ class OP_ClearSelectedVerticesInActiveShapekey(Operator):
                 active_key.data[i].co = reference_key.data[i].co.copy()
             if old_mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode=old_mode)
-            self.report({'INFO'}, "已清除当前活动形态键的全部偏移")
+            self.report({'INFO'}, tr("已清除当前活动形态键的全部偏移"))
             return {'FINISHED'}
 
         bpy.ops.mesh.blend_from_shape(shape=reference_key.name, add=False)
@@ -724,7 +729,7 @@ class OP_SmoothShapekey(Operator):
 
         max_dist = self.get_selected_bbox_diagonal(bm)
         if max_dist == 0:
-            self.report({'WARNING'}, "没有选中顶点或选中顶点距离为 0")
+            self.report({'WARNING'}, tr("没有选中顶点或选中顶点距离为 0"))
             return {'CANCELLED'}
         radius = max_dist * 0.2
         smooth_factor = 0.5
@@ -803,7 +808,7 @@ class OP_balanceShapekey(Operator):
 
         if not obj or obj.type != 'MESH' or not mesh.shape_keys:
             self.report(
-                {'ERROR'}, "活动物体必须是有形态键的网格物体")
+                {'ERROR'}, tr("活动物体必须是有形态键的网格物体"))
             return {'CANCELLED'}
         obj.update_from_editmode()  # 同步网格数据，确保 mesh 数据是最新的
 
@@ -1034,7 +1039,7 @@ class OP_SplitShapekey(Operator):
                     view_left_key.data[idx].co = vert.co    # 左侧保持基础
 
         self.report(
-            {'INFO'}, f"形态键 '{key_name}' 已拆分为 '{key_name}_L' 和 '{key_name}_R'。")
+            {'INFO'}, tr("形态键 '{0}' 已拆分为 '{1}_L' 和 '{2}_R'。").format(key_name, key_name, key_name))
         return {'FINISHED'}
 
 class OP_RemoveEmptyShapekeys(Operator):
@@ -1082,9 +1087,9 @@ class OP_RemoveEmptyShapekeys(Operator):
         # 根据结果显示反馈信息
         if total_removed_keys > 0:
             self.report(
-                {'INFO'}, f"已删除 {total_removed_keys} 个空形态键，共处理 {processed_objects} 个物体")
+                {'INFO'}, tr("已删除 {0} 个空形态键，共处理 {1} 个物体").format(total_removed_keys, processed_objects))
         else:
-            self.report({'WARNING'}, "所选物体中没有找到空形态键")
+            self.report({'WARNING'}, tr("所选物体中没有找到空形态键"))
 
         return {'FINISHED'}
 
@@ -1119,9 +1124,9 @@ class OP_ClearAllShapekeyValue(Operator):
 
         # 根据结果显示反馈信息
         if cleared_objects > 0:
-            self.report({'INFO'}, f"已清除 {cleared_objects} 个物体的非基型形态键值")
+            self.report({'INFO'}, tr("已清除 {0} 个物体的非基型形态键值").format(cleared_objects))
         else:
-            self.report({'WARNING'}, "没有找到包含非基型形态键的物体")
+            self.report({'WARNING'}, tr("没有找到包含非基型形态键的物体"))
 
         return {'FINISHED'}
 
@@ -1153,9 +1158,9 @@ class OP_SetBasisShapekeyActive(Operator):
 
         # 根据操作结果输出反馈信息
         if updated_objects > 0:
-            self.report({'INFO'}, f"已设置 {updated_objects} 个物体的活动形态键为基型")
+            self.report({'INFO'}, tr("已设置 {0} 个物体的活动形态键为基型").format(updated_objects))
         else:
-            self.report({'WARNING'}, "没有找到包含基型形态键的物体")
+            self.report({'WARNING'}, tr("没有找到包含基型形态键的物体"))
 
         return {'FINISHED'}
 
@@ -1303,7 +1308,7 @@ class OP_applyShowingModifiersKeepShapekeys(Operator):
             if after == before:
                 self.report(
                     {'ERROR'},
-                    f"形态键 '{shapekey_names[i]}' 添加失败（可能由于修改器的自动焊接，导致点序/点数不一致）"
+                    tr("形态键 '{0}' 添加失败（可能由于修改器的自动焊接，导致点序/点数不一致）").format(shapekey_names[i])
                 )
                 mesh_data = blendshapeObject.data
                 bpy.data.objects.remove(blendshapeObject)
@@ -1495,7 +1500,7 @@ class OP_deleteUnusingShapeKeys(Operator):
             # 删除未启用的形态键
             obj.shape_key_remove(shape_key)
 
-        self.report({'INFO'}, "已删除所有未启用的形态键")
+        self.report({'INFO'}, tr("已删除所有未启用的形态键"))
         return {'FINISHED'}
 
 class OP_AddShapekeysByTemplate(Operator):
@@ -1548,7 +1553,7 @@ class OP_AddShapekeysByTemplate(Operator):
         elif self.shapekey_list == 'UNIFIED_EXPRESSIONS_BLEND':
             shapekey_names = UNIFIED_EXPRESSIONS_BLEND_SHAPEKEYS
         else:
-            self.report({'ERROR'}, "无效的形态键列表")
+            self.report({'ERROR'}, tr("无效的形态键列表"))
             return {'CANCELLED'}
 
         # 获取形态键数据
@@ -1561,7 +1566,7 @@ class OP_AddShapekeysByTemplate(Operator):
                 new_shapekey = obj.shape_key_add(name=shapekey_name)
                 new_shapekey.value = 0  # 默认值为0
 
-        self.report({'INFO'}, f"成功添加 {self.shapekey_list} 形态键")
+        self.report({'INFO'}, tr("成功添加 {0} 形态键").format(self.shapekey_list))
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -1573,6 +1578,10 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     bl_label = "复制形态键到剪切板"
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后复制绝对位置,要确保点序一致"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("默认为相对基型的位移,非solo模式会考虑键值,开启绝对后复制绝对位置,要确保点序一致")
 
     is_abs:BoolProperty(name="是否绝对复制",default=False) # type: ignore
 
@@ -1580,10 +1589,10 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
     def execute(self, context):
         obj = context.object
         if not obj or obj.type != 'MESH':
-            self.report({'ERROR'}, "必须是一个Mesh物体")
+            self.report({'ERROR'}, tr("必须是一个Mesh物体"))
             return {'CANCELLED'}
         if not obj.data.shape_keys or not obj.data.shape_keys.key_blocks:
-            self.report({'ERROR'}, "没有找到形态键")
+            self.report({'ERROR'}, tr("没有找到形态键"))
             return {'CANCELLED'}
         
         active_sk = obj.active_shape_key
@@ -1605,9 +1614,9 @@ class OP_ShapekeyTools_copyShapekey2ShearPlate(Operator):
         json_str = json.dumps(coords)
         context.window_manager.clipboard = json_str
         if not solo_mode:
-            self.report({'INFO'},f"已复制 '{active_sk.name}' (value={sk_value:.3f}) 到剪切板，未开启独显模式")
+            self.report({'INFO'},tr("已复制 '{0}' (value={1:.3f}) 到剪切板，未开启独显模式").format(active_sk.name, sk_value))
         else:
-            self.report({'INFO'},f"已复制 '{active_sk.name}' 数据到剪切板")
+            self.report({'INFO'},tr("已复制 '{0}' 数据到剪切板").format(active_sk.name))
         return {'FINISHED'}
 
 class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
@@ -1615,6 +1624,10 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
     bl_label = "从剪切板粘贴形态键"
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "默认为相对基型的位移,非solo模式会考虑键值,开启绝对后粘贴绝对位置,要确保点序一致"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("默认为相对基型的位移,非solo模式会考虑键值,开启绝对后粘贴绝对位置,要确保点序一致")
 
     is_abs: BoolProperty(name="是否粘贴绝对位置", default=False)  # type: ignore
 
@@ -1656,12 +1669,12 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
         try:
             data = json.loads(context.window_manager.clipboard)
         except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
+            self.report({'ERROR'}, tr("剪切板数据解析失败"))
             return {'CANCELLED'}
 
         selected_objects = list(context.selected_objects)
         if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
+            self.report({'WARNING'}, tr("没有选中物体"))
             return {'CANCELLED'}
 
         success = []
@@ -1675,7 +1688,7 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate(Operator):
                 if status == 'success':
                     self.report({'INFO'}, message)
                     return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                self.report({'WARNING'}, tr("{0} 跳过：{1}").format(obj.name, message))
                 return {'CANCELLED'}
 
             if status == 'success':
@@ -1711,6 +1724,10 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
     bl_label = "从剪切板粘贴相对形态键进行叠加"
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "粘贴相对基型的位移，会直接叠加到当前活动键上，开启绝对后不要使用,要确保点序一致"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("粘贴相对基型的位移，会直接叠加到当前活动键上，开启绝对后不要使用,要确保点序一致")
 
     def paste_to_object(self, obj, data):
         if obj.type != 'MESH':
@@ -1741,12 +1758,12 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
         try:
             data = json.loads(context.window_manager.clipboard)
         except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
+            self.report({'ERROR'}, tr("剪切板数据解析失败"))
             return {'CANCELLED'}
 
         selected_objects = list(context.selected_objects)
         if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
+            self.report({'WARNING'}, tr("没有选中物体"))
             return {'CANCELLED'}
 
         success = []
@@ -1760,7 +1777,7 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add(Operator):
                 if status == 'success':
                     self.report({'INFO'}, message)
                     return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                self.report({'WARNING'}, tr("{0} 跳过：{1}").format(obj.name, message))
                 return {'CANCELLED'}
 
             if status == 'success':
@@ -1796,6 +1813,10 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
     bl_label = "从剪切板粘贴相对形态键进行相减"
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "粘贴相对基型的位移，会从当前活动键上减去，开启绝对后不要使用,要确保点序一致"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("粘贴相对基型的位移，会从当前活动键上减去，开启绝对后不要使用,要确保点序一致")
 
     def paste_to_object(self, obj, data):
         if obj.type != 'MESH':
@@ -1826,12 +1847,12 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
         try:
             data = json.loads(context.window_manager.clipboard)
         except Exception:
-            self.report({'ERROR'}, "剪切板数据解析失败")
+            self.report({'ERROR'}, tr("剪切板数据解析失败"))
             return {'CANCELLED'}
 
         selected_objects = list(context.selected_objects)
         if not selected_objects:
-            self.report({'WARNING'}, "没有选中物体")
+            self.report({'WARNING'}, tr("没有选中物体"))
             return {'CANCELLED'}
 
         success = []
@@ -1845,7 +1866,7 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
                 if status == 'success':
                     self.report({'INFO'}, message)
                     return {'FINISHED'}
-                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                self.report({'WARNING'}, tr("{0} 跳过：{1}").format(obj.name, message))
                 return {'CANCELLED'}
 
             if status == 'success':
@@ -1881,6 +1902,10 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
     bl_label = "复制列表到选中物体"
     bl_options = {'REGISTER', 'UNDO'}
     bl_description = "复制活动物体的整个形态键列表（仅名称与顺序），使选中的其他物体的形态键按照此顺序排列，不存在的会添加，额外的会排列在末尾"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("复制活动物体的整个形态键列表（仅名称与顺序），使选中的其他物体的形态键按照此顺序排列，不存在的会添加，额外的会排列在末尾")
 
 
     @classmethod
@@ -1898,13 +1923,13 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
         source_keys = [k.name for k in source_sk.key_blocks if k != source_basis]
 
         if not source_keys:
-            self.report({'WARNING'}, "源物体没有非基型的形态键")
+            self.report({'WARNING'}, tr("源物体没有非基型的形态键"))
             return {'CANCELLED'}
 
         selected_objs = [o for o in context.selected_objects if o != source_obj]
 
         if not selected_objs:
-            self.report({'WARNING'}, "没有其他被选中的物体")
+            self.report({'WARNING'}, tr("没有其他被选中的物体"))
             return {'CANCELLED'}
 
         for target in selected_objs:
@@ -1930,7 +1955,7 @@ class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
 
 
         
-        self.report({'INFO'}, f"已复制形态键顺序到 {len(selected_objs)} 个物体（跳过基型）")
+        self.report({'INFO'}, tr("已复制形态键顺序到 {0} 个物体（跳过基型）").format(len(selected_objs)))
         return {'FINISHED'}
     
     def reorder_shape_keys(self, obj, new_order):
@@ -1957,17 +1982,21 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
     bl_idname = "ho.apply_active_shapekey_to_basis"
     bl_label = "活动键到基型"
     bl_description = "根据活动键的权重混合到基型，会删除活动键"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("根据活动键的权重混合到基型，会删除活动键")
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         obj = context.object
 
         if obj is None or obj.type != 'MESH':
-            self.report({'ERROR'}, "活动对象不是网格")
+            self.report({'ERROR'}, tr("活动对象不是网格"))
             return {'CANCELLED'}
 
         if not obj.data.shape_keys or len(obj.data.shape_keys.key_blocks) < 2:
-            self.report({'ERROR'}, "对象没有足够的形态键")
+            self.report({'ERROR'}, tr("对象没有足够的形态键"))
             return {'CANCELLED'}
 
         key_blocks = obj.data.shape_keys.key_blocks
@@ -1975,12 +2004,12 @@ class OP_ShapekeyTools_Apply_ActiveShapekey2Basis(Operator):
         basis = key_blocks[0]
 
         if active_key is None or active_key == basis:
-            self.report({'ERROR'}, "没有有效的活动形态键")
+            self.report({'ERROR'}, tr("没有有效的活动形态键"))
             return {'CANCELLED'}
 
         weight = active_key.value
         if weight == 0.0:
-            self.report({'WARNING'}, "活动形态键权重为0，未做任何操作")
+            self.report({'WARNING'}, tr("活动形态键权重为0，未做任何操作"))
             return {'CANCELLED'}
 
         # 切换到 Object 模式确保 BMesh 操作正常
@@ -2010,6 +2039,10 @@ class OP_ForceRemoveAll(Operator):
     bl_idname = "ho.force_remove_all_shapekeys"
     bl_label = "强制移除所有形态键"
     bl_description = "批量移除所有形态键,无视锁定"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("批量移除所有形态键,无视锁定")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -2024,7 +2057,7 @@ class OP_ForceRemoveAll(Operator):
         obj = context.object
 
         if not obj.data.shape_keys:
-            self.report({'INFO'}, "没有形态键")
+            self.report({'INFO'}, tr("没有形态键"))
             return {'CANCELLED'}
 
         # 保存当前模式
@@ -2043,7 +2076,7 @@ class OP_ForceRemoveAll(Operator):
         if old_mode != 'OBJECT':
             bpy.ops.object.mode_set(mode=old_mode)
 
-        self.report({'INFO'}, "已强制移除所有形态键")
+        self.report({'INFO'}, tr("已强制移除所有形态键"))
         return {'FINISHED'}
 
 class OP_ForceApplyAll(Operator):
@@ -2052,6 +2085,10 @@ class OP_ForceApplyAll(Operator):
     bl_idname = "ho.force_apply_all_shapekeys"
     bl_label = "强制应用所有形态键"
     bl_description = "批量应用所有形态键,然后删除所有的键，无视锁定"
+    
+    @classmethod
+    def description(cls, context, properties):
+        return tr("批量应用所有形态键,然后删除所有的键，无视锁定")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -2066,7 +2103,7 @@ class OP_ForceApplyAll(Operator):
         obj = context.object
 
         if not obj.data.shape_keys:
-            self.report({'INFO'}, "没有形态键")
+            self.report({'INFO'}, tr("没有形态键"))
             return {'CANCELLED'}
 
         depsgraph = context.evaluated_depsgraph_get()
@@ -2081,7 +2118,7 @@ class OP_ForceApplyAll(Operator):
         if old_mesh.users == 0:
             bpy.data.meshes.remove(old_mesh)
 
-        self.report({'INFO'}, "已强制应用并删除所有形态键")
+        self.report({'INFO'}, tr("已强制应用并删除所有形态键"))
         return {'FINISHED'}
 
 def draw_in_DATA_PT_modifiers(self, context):
@@ -2104,10 +2141,10 @@ def draw_in_DATA_PT_modifiers(self, context):
 
     row = layout.row(align=True)
     row.alert = True
-    row.label(text="形态键修改器共存")
+    row.label(text=tr("形态键修改器共存"))
     row.alert = False
     row.operator(OP_applyShowingModifiersKeepShapekeys.bl_idname,
-                 text="应用")
+                 text=tr("应用"))
 
 def _draw_sk_operators(layout: UILayout,context:Context):
     layout = layout.box()
@@ -2122,7 +2159,7 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     #         row.prop(overlay, "show_extra_indices",
     #                  text="", icon="INFO_LARGE", icon_only=True, toggle=True)
     # row.prop(context.scene, "hoShapekeyTools_chooseVertexByIndex", text="")
-    # row.operator(OP_SelectVertexByIndex.bl_idname, text="选择索引顶点")
+    # row.operator(OP_SelectVertexByIndex.bl_idname, text=tr("选择索引顶点"))
 
     # 形态键操作
     col = layout.column(align=True)
@@ -2130,13 +2167,13 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row = col.row(align=True)
     row.prop(context.scene,"hoShapekeyTools_copy_is_abs",text="",icon="QUESTION",icon_only=True)
     is_abs = context.scene.hoShapekeyTools_copy_is_abs
-    op = row.operator(OP_ShapekeyTools_copyShapekey2ShearPlate.bl_idname,text="复制",icon="COPYDOWN")
+    op = row.operator(OP_ShapekeyTools_copyShapekey2ShearPlate.bl_idname,text=tr("复制"),icon="COPYDOWN")
     op.is_abs = is_abs
-    op = row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate.bl_idname,text="粘贴",icon="PASTEDOWN")
+    op = row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate.bl_idname,text=tr("粘贴"),icon="PASTEDOWN")
     op.is_abs = is_abs
     if not is_abs:
-        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text="叠加")
-        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub.bl_idname,text="叠减")
+        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text=tr("叠加"))
+        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub.bl_idname,text=tr("叠减"))
 
 
     row = layout.row(align=True)
@@ -2144,9 +2181,9 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     split = row.split()
     split.scale_x = 3.0
     row.operator(OP_ClearAllShapekeyValue.bl_idname,
-                 text="全键归零", icon="FUND")
+                 text=tr("全键归零"), icon="FUND")
     row.operator(OP_SetBasisShapekeyActive.bl_idname,
-                 text="选中基型", icon="FUND")
+                 text=tr("选中基型"), icon="FUND")
     
 
     # 形态键混合/清除
@@ -2157,18 +2194,18 @@ def _draw_sk_operators(layout: UILayout,context:Context):
         row.prop_search(context.scene, "hoShapekeyTools_selectedBaseShapekey", obj.data.shape_keys,
                         "key_blocks", text="")
         row.operator(OP_SelectShapekeyOffsetedVerticex.bl_idname,
-                     text="选择位移点")
-        row.operator(OP_SmoothShapekey.bl_idname,text="平滑")
+                     text=tr("选择位移点"))
+        row.operator(OP_SmoothShapekey.bl_idname,text=tr("平滑"))
         row.operator(
-            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text="替换").shape_key = context.scene.hoShapekeyTools_selectedBaseShapekey
-        row.operator(OP_ClearSelectedVerticesInActiveShapekey.bl_idname, text="清除")
+            OP_RemoveSelectedVerticesInActiveShapekey.bl_idname, text=tr("替换")).shape_key = context.scene.hoShapekeyTools_selectedBaseShapekey
+        row.operator(OP_ClearSelectedVerticesInActiveShapekey.bl_idname, text=tr("清除"))
     # 对称形态键
     row = layout.row(align=True)
     row.scale_y = 2.0
     row.prop(context.scene, "hoShapekeyTools_mirrorAxis", text="")
     row.prop(context.scene, "hoShapekeyTools_mirrorTolerance", text="")
     op = row.operator(OP_balanceShapekey.bl_idname,
-                      text="镜像/对称", icon="MOD_MIRROR")
+                      text=tr("镜像/对称"), icon="MOD_MIRROR")
     op.axis = context.scene.hoShapekeyTools_mirrorAxis
     op.tolerance = context.scene.hoShapekeyTools_mirrorTolerance
 
@@ -2183,7 +2220,7 @@ def _draw_sk_operators(layout: UILayout,context:Context):
                icon="ERROR", icon_only=True)
 
     op = row.operator(OP_GenerateMirroredShapekey.bl_idname,
-                      text="生成镜像键", icon="ARROW_LEFTRIGHT",)
+                      text=tr("生成镜像键"), icon="ARROW_LEFTRIGHT",)
     op.auto_rename = context.scene.hoShapekeyTools_isMirrorRename
     op.overwrite = context.scene.hoShapekeyTools_isMirrorOverwrite
 
@@ -2194,7 +2231,7 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row.prop(context.scene,
              "hoShapekeyTools_splitShapeKey_namesuffix_viewRight", text="")
     op = row.operator(OP_SplitShapekey.bl_idname,
-                      text="生成拆分键", icon="UNLINKED")
+                      text=tr("生成拆分键"), icon="UNLINKED")
     op.suffix_viewLeft = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     op.suffix_viewRight = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
 
@@ -2203,7 +2240,7 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout: bpy.types.UILayout = self.layout
     layout.operator(OP_ForceRemoveAll.bl_idname,icon="TRASH")
     layout.operator(OP_ForceApplyAll.bl_idname,icon="GHOST_ENABLED")
-    layout.operator(OP_RemoveEmptyShapekeys.bl_idname,text="删除空键",icon="X")
+    layout.operator(OP_RemoveEmptyShapekeys.bl_idname,text=tr("删除空键"),icon="X")
     layout.operator(OP_deleteUnusingShapeKeys.bl_idname,icon="X")
     layout.operator(OP_AddShapekeysByTemplate.bl_idname,icon="ADD")
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")

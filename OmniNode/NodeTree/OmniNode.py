@@ -1,6 +1,7 @@
 import bpy
 from bpy.types import Node, NodeSocket
 
+from ...i18n import tr
 from . import OmniNodeDraw
 from .OmniNodeOperator import (
     OmniNodeApplyPreset,
@@ -132,7 +133,18 @@ class OmniNode(Node):
         return
 
     def draw_label(self):
-        return f"{self.name}"
+        # 仅作显示翻译：不改变 self.name（编译/缓存键依赖它），不触碰编译/运行缓存。
+        # 无译文时退化为原行为（显示实例名），并保留 Blender 自动去重后缀(.001 等)。
+        base = self.bl_label
+        name = self.name
+        translated = tr(base)
+        if translated == base:
+            return f"{name}"
+        if name == base:
+            return translated
+        if name.startswith(base):
+            return f"{translated}{name[len(base):]}"
+        return f"{name}"
 
     def omni_socket_display_order(self, sock):
         for index, item in enumerate(self.inputs):
