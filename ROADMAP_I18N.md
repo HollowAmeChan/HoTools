@@ -154,14 +154,17 @@ Suggested sequence:
 
 - **Exit:** all static panels/operators render in selected language; Chinese unchanged at default.
 
-### Phase 4 — OmniNode (dynamic) localization
+### Phase 4 — OmniNode (dynamic) localization ✅ (2026-06-26)
 
 OmniNode generates node labels/sockets from `@omni` functions (see [OmniNode/ARCHITECTURE.md](OmniNode/ARCHITECTURE.md)). Translation must happen at **node draw/registration time**, not in the compiled IR (IR is cached and language-independent — keep it that way).
 
-- [ ] Localize `@omni` `label`/category and socket display names via `tr()` at the draw layer (`OmniNodeDraw.py` / node `draw_label`), keying off the function's Chinese name.
-- [ ] Confirm `_COMPILED_TREE_CACHE` is **not** invalidated by language change (labels are display-only; compilation keys must stay locale-independent). Language switch must not silently force recompiles or touch the runtime cache.
-- [ ] Localize `OmniNodeOperator.py` / panel strings (Phase 3 pattern).
-- **Exit:** node editor labels/sockets localized; compile & runtime caches behave identically across languages.
+- [x] **Node header labels** — `OmniNode.draw_label()` ([OmniNode/NodeTree/OmniNode.py](OmniNode/NodeTree/OmniNode.py)) now returns `tr(bl_label)` at draw time. Display-only: never mutates `self.name` (compile/cache key), never touches caches. Graceful fallback unit-tested 6/6 — untranslated → exact old behavior (`self.name`); translated → localized label with Blender auto-suffix (`.001`) and user F2-renames preserved.
+- [x] **Socket display names** — all custom sockets in [OmniNodeSocket.py](OmniNode/NodeTree/OmniNodeSocket.py) wrap `layout.label(text=tr(self.name))` / `prop(..., text=tr(text))` in `draw()`. Sockets keep their real `name`/`identifier` (compile keys) untouched.
+- [x] **Confirmed cache invariant** — compile cache key is `f"tree:{int(tree.as_pointer())}"` (pointer-based, locale-independent); compiler keys on `node.name`/`socket.identifier`. `i18n.reload()` only clears the *locale* cache + tag-redraws; it never calls `clear_compile_cache()` or touches `_COMPILED_TREE_CACHE`/runtime cache. **Language switch forces no recompile and does not touch runtime cache.**
+- [x] **Operator/panel strings (Phase 3 pattern)** — [OmniNodeOperator.py](OmniNode/NodeTree/OmniNodeOperator.py) (12 `description()` classmethods, constant + `{name}`/`{n}` template reports, sidebar draw labels), [OmniNodePanel.py](OmniNode/OmniNodePanel.py) (all buttons), [OmniNodeTree.py](OmniNode/NodeTree/OmniNodeTree.py) (tree IO + debug panel), `OmniCurveSocketPresetPopup` (`description()` + error msgs). All compile; extractor idempotent (1238 keys, orphan=0).
+- **Exit:** ✅ node editor labels/sockets localized; compile & runtime caches behave identically across languages.
+
+**Phase 4 gaps (native-bridge only, frozen-at-register — not call-site localizable):** Add-menu node-item labels via `nodeitems_utils` (`OmniNodeRegister.py`); socket-type `bl_label`s in the socket-type menus; node category labels are already English/neutral so out of the Chinese-key model. These translate only when the addon follows Blender's locale (AUTO). The new OmniNode keys (14) are stubbed for later translation.
 
 ### Phase 5 — QA, docs, release
 

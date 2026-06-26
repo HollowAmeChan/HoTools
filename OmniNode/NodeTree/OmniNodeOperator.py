@@ -576,6 +576,10 @@ class OP_JumpToNodeTree(Operator):
     bl_label = "跳转到节点树"
     bl_description = "在当前 Node Editor 区域打开该节点引用的 OmniNodeTree"
 
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在当前 Node Editor 区域打开该节点引用的 OmniNodeTree")
+
     node_name: StringProperty(default="")  # type: ignore
     tree_attr: StringProperty(default="target_tree")  # type: ignore
 
@@ -643,6 +647,10 @@ class OP_ReturnToParentNodeTree(Operator):
     bl_idname = "ho.omni_return_to_parent_node_tree"
     bl_label = "返回上一级"
     bl_description = "返回到 HoTools 自己维护的上一级 OmniNodeTree"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("返回到 HoTools 自己维护的上一级 OmniNodeTree")
 
     @classmethod
     def poll(cls, context):
@@ -715,6 +723,10 @@ class OmniTreeCreate(Operator):
     bl_idname = "ho.omnitree_create"
     bl_label = "新建 OmniNodeTree"
     bl_description = "快速创建新的 OmniNodeTree，并在当前窗口的 Node Editor 中打开"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("快速创建新的 OmniNodeTree，并在当前窗口的 Node Editor 中打开")
     bl_options = {'REGISTER', 'UNDO'}
 
     tree_name: StringProperty(default="OmniNodeTree", options={'HIDDEN'})  # type: ignore
@@ -734,6 +746,10 @@ class OmniTreeOpen(Operator):
     bl_idname = "ho.omnitree_open"
     bl_label = "打开 OmniNodeTree"
     bl_description = "在当前窗口已有的 Node Editor 中打开指定 OmniNodeTree"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在当前窗口已有的 Node Editor 中打开指定 OmniNodeTree")
     bl_options = {'REGISTER'}
 
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
@@ -779,6 +795,10 @@ class OmniTreeCompile(Operator):
     bl_idname = "ho.omnitree_compile"
     bl_label = "编译OMNI树"
     bl_description = "只编译当前 OmniNodeTree，并缓存编译结果"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("只编译当前 OmniNodeTree，并缓存编译结果")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -801,6 +821,10 @@ class OmniTreeRunCompiled(Operator):
     bl_idname = "ho.omnitree_run_compiled"
     bl_label = "运行已编译OMNI树"
     bl_description = "运行当前缓存的编译结果。没有编译缓存时请先编译。"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("运行当前缓存的编译结果。没有编译缓存时请先编译。")
     bl_options = {'REGISTER', 'UNDO'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -822,6 +846,10 @@ class OmniTreeClearCompileCache(Operator):
     bl_idname = "ho.omnitree_clear_compile_cache"
     bl_label = "清理编译缓存"
     bl_description = "清理当前 OmniNodeTree 的编译产物缓存"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清理当前 OmniNodeTree 的编译产物缓存")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -839,6 +867,10 @@ class OmniTreeClearRuntimeCache(Operator):
     bl_idname = "ho.omnitree_clear_runtime_cache"
     bl_label = "清理运行缓存"
     bl_description = "清理当前 OmniNodeTree 作为根树运行时保存的缓存数据"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("清理当前 OmniNodeTree 作为根树运行时保存的缓存数据")
     bl_options = {'REGISTER'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
 
@@ -856,6 +888,10 @@ class OmniTreeDestroy(Operator):
     bl_idname = "ho.omninodetree_destroy"
     bl_label = "销毁树"
     bl_description = "销毁当前 OmniNodeTree 数据块"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("销毁当前 OmniNodeTree 数据块")
     bl_options = {'REGISTER', 'UNDO'}
     tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
     confirmed: BoolProperty(default=False, options={'HIDDEN'})  # type: ignore
@@ -889,6 +925,10 @@ class OmniNodeToggleDescription(Operator):
     bl_idname = "ho.omni_toggle_node_description"
     bl_label = "查看节点描述"
     bl_description = "在节点上方显示或隐藏该节点的描述文本"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("在节点上方显示或隐藏该节点的描述文本")
     bl_options = {'REGISTER'}
 
     node_tree_name: StringProperty(default="")  # type: ignore
@@ -970,6 +1010,10 @@ class OmniNodeApplyPreset(Operator):
     bl_idname = "ho.omni_apply_node_preset"
     bl_label = "填入节点预设"
     bl_description = "将 omni 装饰器定义的预设值填入当前节点输入"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("将 omni 装饰器定义的预设值填入当前节点输入")
     bl_options = {'REGISTER', 'UNDO'}
 
     node_tree_name: StringProperty(default="")  # type: ignore
@@ -1236,6 +1280,10 @@ class OmniNodeRebuild(Operator):
     bl_idname = "ho.rebuild_node"
     bl_label = "重建节点"
     bl_description = "重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点"
+
+    @classmethod
+    def description(cls, context, properties):
+        return tr("重建节点的输入输出socket，保持用户输入和连接不变，适用于修改了节点函数签名后更新节点")
     bl_options = {'REGISTER'}
 
     node_tree_name: bpy.props.StringProperty()  # type: ignore
