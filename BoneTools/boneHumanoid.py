@@ -19,10 +19,32 @@ def reg_props():
         type=bpy.types.Object, poll=PF_armature_filter)
     bpy.types.Scene.bone_constraint_moving_armature = PointerProperty(
         type=bpy.types.Object, poll=PF_armature_filter)
+    bpy.types.Scene.bone_humanoid_preview_show_names = BoolProperty(
+        name="显示名称",
+        default=True,
+    )
+    bpy.types.Scene.bone_humanoid_preview_show_missing = BoolProperty(
+        name="显示缺失骨骼",
+        default=True,
+    )
+    bpy.types.Scene.bone_humanoid_preview_show_check_details = BoolProperty(
+        name="显示检查内容",
+        default=True,
+    )
+    bpy.types.Scene.bone_humanoid_preview_font_size = IntProperty(
+        name="文字大小",
+        default=30,
+        min=12,
+        max=64,
+    )
 
 def ureg_props():
     del bpy.types.Scene.bone_constraint_resting_armature
     del bpy.types.Scene.bone_constraint_moving_armature
+    del bpy.types.Scene.bone_humanoid_preview_show_names
+    del bpy.types.Scene.bone_humanoid_preview_show_missing
+    del bpy.types.Scene.bone_humanoid_preview_show_check_details
+    del bpy.types.Scene.bone_humanoid_preview_font_size
 
 class OP_SwapBoneConstraintArmatures(Operator):
     bl_idname = "ho.swap_bone_constraint_armatures"
@@ -1257,6 +1279,54 @@ class HumanoidMappingPreviewHUD:
     def no_i18n(name: str) -> str:
         return "\u200B".join(name)
 
+    @staticmethod
+    def _scene_setting(name, default):
+        scene = getattr(bpy.context, "scene", None)
+        if scene is None:
+            return default
+
+        return getattr(scene, name, default)
+
+    @classmethod
+    def _show_names(cls):
+        return bool(cls._scene_setting(
+            "bone_humanoid_preview_show_names",
+            True,
+        ))
+
+    @classmethod
+    def _show_missing_targets(cls):
+        return bool(cls._scene_setting(
+            "bone_humanoid_preview_show_missing",
+            True,
+        ))
+
+    @classmethod
+    def _show_check_details(cls):
+        return bool(cls._scene_setting(
+            "bone_humanoid_preview_show_check_details",
+            True,
+        ))
+
+    @classmethod
+    def _font_size_value(cls):
+        return int(cls._scene_setting(
+            "bone_humanoid_preview_font_size",
+            cls._font_size,
+        ))
+
+    @classmethod
+    def _twist_font_size_value(cls):
+        return max(12, int(cls._font_size_value() * 0.8))
+
+    @classmethod
+    def _missing_font_size_value(cls):
+        return cls._font_size_value()
+
+    @classmethod
+    def _missing_line_height_value(cls):
+        return max(18, int(cls._missing_font_size_value() * 1.0))
+
     @classmethod
     def is_running(cls):
         return cls._handler_2d is not None or cls._handler_3d is not None
@@ -1694,6 +1764,7 @@ class HumanoidMappingPreviewHUD:
         angle_fan_border_coords = []
         threshold_fan_triangles = []
         threshold_fan_border_coords = []
+        show_check_details = cls._show_check_details()
 
         for item in cls._items:
             result = cls._get_item_world_points(item)
@@ -1714,6 +1785,9 @@ class HumanoidMappingPreviewHUD:
                 )
 
                 for issue in twist_issues:
+                    if not show_check_details:
+                        continue
+
                     actual_axis = issue["actual_axis_world"]
                     target_axis = issue["target_axis_world"]
                     bone_axis = issue["bone_axis_world"]
@@ -1893,6 +1967,10 @@ class HumanoidMappingPreviewHUD:
 
         line_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
         gpu.state.blend_set('ALPHA')
+        show_names = cls._show_names()
+        show_check_details = cls._show_check_details()
+        font_size = cls._font_size_value()
+        twist_font_size = cls._twist_font_size_value()
 
         for index, item in enumerate(cls._items):
             bone_name = item["bone_name"]
@@ -1906,6 +1984,8 @@ class HumanoidMappingPreviewHUD:
 
             head, tail, center = result
             twist_issues = item.get("twist_issues") or []
+            if not show_names and not (show_check_details and twist_issues):
+                continue
 
             pos_2d = view3d_utils.location_3d_to_region_2d(
                 region,
@@ -1947,40 +2027,44 @@ class HumanoidMappingPreviewHUD:
             line_shader.uniform_float("color", line_color)
             batch.draw(line_shader)
 
-            label = f'{mapping_name}  ({bone_name})'
-            label = cls.no_i18n(label)
+            if show_names:
+                label = f'{mapping_name}  ({bone_name})'
+                label = cls.no_i18n(label)
 
-            blf.size(font_id, cls._font_size)
-            blf.enable(font_id, blf.SHADOW)
-            blf.shadow(font_id, 3, 0, 0, 0, 0.75)
-            blf.shadow_offset(font_id, 1, -1)
+                blf.size(font_id, font_size)
+                blf.enable(font_id, blf.SHADOW)
+                blf.shadow(font_id, 3, 0, 0, 0, 0.75)
+                blf.shadow_offset(font_id, 1, -1)
 
-            if twist_issues:
-                blf.color(font_id, 1.0, 0.16, 0.1, 1.0)
-            else:
-                blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
+                if twist_issues:
+                    blf.color(font_id, 1.0, 0.16, 0.1, 1.0)
+                else:
+                    blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
 
-            blf.position(font_id, label_x, label_y, 0)
-            blf.draw(font_id, label)
+                blf.position(font_id, label_x, label_y, 0)
+                blf.draw(font_id, label)
 
-            if twist_issues:
+            if show_check_details and twist_issues:
                 warning_label = (
                     f"扭转错误: {cls._format_twist_issues(twist_issues)}"
                 )
 
-                blf.size(font_id, cls._twist_font_size)
+                blf.size(font_id, twist_font_size)
+                blf.enable(font_id, blf.SHADOW)
+                blf.shadow(font_id, 3, 0, 0, 0, 0.75)
+                blf.shadow_offset(font_id, 1, -1)
                 blf.color(font_id, 1.0, 0.46, 0.25, 1.0)
                 blf.position(
                     font_id,
                     label_x,
-                    label_y - cls._twist_warning_offset_y,
+                    label_y - max(cls._twist_warning_offset_y, twist_font_size),
                     0,
                 )
                 blf.draw(font_id, cls.no_i18n(warning_label))
 
             blf.disable(font_id, blf.SHADOW)
 
-        if cls._missing_targets:
+        if cls._missing_targets and cls._show_missing_targets():
             origin_2d = view3d_utils.location_3d_to_region_2d(
                 region,
                 rv3d,
@@ -2006,7 +2090,10 @@ class HumanoidMappingPreviewHUD:
                 line_shader.uniform_float("color", (1.0, 0.15, 0.1, 0.9))
                 batch.draw(line_shader)
 
-                blf.size(font_id, cls._missing_font_size + 2)
+                missing_font_size = cls._missing_font_size_value()
+                missing_line_height = cls._missing_line_height_value()
+
+                blf.size(font_id, missing_font_size + 2)
                 blf.enable(font_id, blf.SHADOW)
                 blf.shadow(font_id, 5, 0, 0, 0, 0.85)
                 blf.shadow_offset(font_id, 1, -1)
@@ -2018,19 +2105,19 @@ class HumanoidMappingPreviewHUD:
                     cls.no_i18n(f"缺失Humanoid骨骼: {len(cls._missing_targets)}")
                 )
 
-                blf.size(font_id, cls._missing_font_size)
+                blf.size(font_id, missing_font_size)
 
                 max_show = cls._missing_max_show
 
                 for i, name in enumerate(cls._missing_targets[:max_show]):
-                    line_y = y - 24 - i * cls._missing_line_height
+                    line_y = y - 24 - i * missing_line_height
 
                     blf.position(font_id, x + 20, line_y, 0)
                     blf.draw(font_id, cls.no_i18n(f"✕ {name}"))
 
                 remain = len(cls._missing_targets) - max_show
                 if remain > 0:
-                    line_y = y - 24 - max_show * cls._missing_line_height
+                    line_y = y - 24 - max_show * missing_line_height
 
                     blf.position(font_id, x + 20, line_y, 0)
                     blf.draw(font_id, cls.no_i18n(f"... 还有 {remain} 个"))
@@ -2076,21 +2163,55 @@ class OP_HumanoidMappingPreview_Clear(Operator):
 def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
-    box = layout.box()
-    box.label(text="Humanoid映射")
+    mapping_box = layout.box()
+    mapping_box.label(text="Humanoid骨骼处理")
 
-    row = box.row(align=True)
-
-    if HumanoidMappingPreviewHUD.is_running():
-        row.alert = True
-        row.operator(OP_HumanoidMappingPreview_Clear.bl_idname,text="",icon="PANEL_CLOSE",)
-        row.alert = False
-    else:
-        row.operator(OP_HumanoidMappingPreview_Show.bl_idname,text="",icon="OVERLAY",)
-
+    row = mapping_box.row(align=True)
     row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
 
+    preview_box = layout.box()
+    header = preview_box.row(align=True)
+    header.label(text="Humanoid检查预览")
+
+    if HumanoidMappingPreviewHUD.is_running():
+        header.alert = True
+        header.operator(
+            OP_HumanoidMappingPreview_Clear.bl_idname,
+            text="关闭预览",
+            icon="PANEL_CLOSE",
+        )
+        header.alert = False
+    else:
+        header.operator(
+            OP_HumanoidMappingPreview_Show.bl_idname,
+            text="开启预览",
+            icon="HIDE_OFF",
+        )
+
+    col = preview_box.column(align=True)
+    row = col.row(align=True)
+    row.prop(
+        scene,
+        "bone_humanoid_preview_show_names",
+        toggle=True,
+    )
+    row.prop(
+        scene,
+        "bone_humanoid_preview_show_missing",
+        toggle=True,
+    )
+
+    row = col.row(align=True)
+    row.prop(
+        scene,
+        "bone_humanoid_preview_show_check_details",
+        toggle=True,
+    )
+    row.prop(scene, "bone_humanoid_preview_font_size")
+
+    box = layout.box()
+    box.label(text="Humanoid映射")
 
     row = box.row(align=True)
     row.prop_search(scene, "bone_constraint_resting_armature",scene,"objects",text="固定",icon="ARMATURE_DATA",)
@@ -2134,4 +2255,3 @@ def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()
-
