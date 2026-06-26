@@ -4,6 +4,7 @@ from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 
+from math import acos, cos, degrees, radians, sin
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -277,7 +278,7 @@ class OP_Humanoid_ForceAlign(Operator):
     align_roll: BoolProperty(name="对齐Roll", default=True)  # type: ignore
     align_tail: BoolProperty(name="对齐Tail", default=True)  # type: ignore
     keep_length: BoolProperty(name="保持原长度", default=False)  # type: ignore
-    only_selected: BoolProperty(name="仅处理选中骨骼", default=True)  # type: ignore
+    only_selected: BoolProperty(name="仅处理选中骨骼", default=False)  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -688,6 +689,327 @@ class OP_Mapping_ClearHumanoidBoneProps(Operator):
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
+def _safe_normalized_vector(vector):
+    if vector.length < 1e-6:
+        return None
+
+    return vector.normalized()
+
+
+class HumanoidTwistCheckContext:
+    _axis_indices = {
+        "X": 0,
+        "Y": 1,
+        "Z": 2,
+    }
+
+    def __init__(
+        self,
+        bone_name,
+        mapping_name,
+        axes,
+        armature=None,
+        bone=None,
+        pose_bone=None,
+        head_world=None,
+        tail_world=None,
+        center_world=None,
+    ):
+        self.bone_name = bone_name
+        self.mapping_name = mapping_name
+        self.axes = axes
+        self.armature = armature
+        self.bone = bone
+        self.pose_bone = pose_bone
+        self.head_world = head_world
+        self.tail_world = tail_world
+        self.center_world = center_world
+
+    def axis(self, axis_label):
+        sign = -1.0 if axis_label.startswith("-") else 1.0
+        axis_name = axis_label[-1].upper()
+        index = self._axis_indices.get(axis_name)
+
+        if index is None:
+            return None
+
+        return self.axes[index] * sign
+
+    @staticmethod
+    def project_to_roll_plane(direction, bone_axis):
+        projected = direction - bone_axis * direction.dot(bone_axis)
+        return _safe_normalized_vector(projected)
+
+    @staticmethod
+    def angle_between_degrees(a, b):
+        dot = max(-1.0, min(1.0, a.dot(b)))
+        return degrees(acos(dot))
+
+
+class HumanoidTwistCheckMode:
+    idname = "base"
+
+    def evaluate(self, rule, context):
+        raise NotImplementedError
+
+
+class HumanoidAxisDirectionTwistMode(HumanoidTwistCheckMode):
+    idname = "axis_direction"
+
+    def __init__(
+        self,
+        checked_axis,
+        target_world,
+        target_label,
+        roll_axis="+Y",
+        threshold_deg=30.0,
+    ):
+        self.checked_axis = checked_axis
+        self.target_world = Vector(target_world)
+        self.target_label = target_label
+        self.roll_axis = roll_axis
+        self.threshold_deg = threshold_deg
+
+    def evaluate(self, rule, context):
+        actual_axis_world = context.axis(self.checked_axis)
+        bone_axis_world = context.axis(self.roll_axis)
+
+        if actual_axis_world is None or bone_axis_world is None:
+            return None
+
+        actual_axis = context.project_to_roll_plane(
+            actual_axis_world,
+            bone_axis_world,
+        )
+        target_axis = context.project_to_roll_plane(
+            self.target_world,
+            bone_axis_world,
+        )
+
+        if actual_axis is None or target_axis is None:
+            return None
+
+        angle_deg = context.angle_between_degrees(actual_axis, target_axis)
+
+        if angle_deg <= self.threshold_deg:
+            return None
+
+        return {
+            "rule_name": rule.name,
+            "mode": self.idname,
+            "mapping_name": context.mapping_name,
+            "axis_label": self.checked_axis,
+            "target_label": self.target_label,
+            "angle_deg": angle_deg,
+            "threshold_deg": self.threshold_deg,
+            "actual_axis_world": actual_axis,
+            "target_axis_world": target_axis,
+            "bone_axis_world": bone_axis_world,
+        }
+
+
+class HumanoidTwistRule:
+    def __init__(self, name, mapping_names, mode):
+        self.name = name
+        self.mapping_names = set(mapping_names)
+        self.mode = mode
+
+    def matches(self, mapping_name):
+        return mapping_name in self.mapping_names
+
+    def evaluate(self, context):
+        if not self.matches(context.mapping_name):
+            return None
+
+        return self.mode.evaluate(self, context)
+
+
+class HumanoidTwistRuleRegistry:
+    def __init__(self):
+        self._rules = []
+
+    def register(self, rule):
+        self._rules.append(rule)
+        return rule
+
+    def evaluate(self, context):
+        issues = []
+
+        for rule in self._rules:
+            issue = rule.evaluate(context)
+            if issue is not None:
+                issues.append(issue)
+
+        return issues
+
+    def rules(self):
+        return tuple(self._rules)
+
+
+HUMANOID_TWIST_RULES = HumanoidTwistRuleRegistry()
+
+_WORLD_NEG_Y = (0.0, -1.0, 0.0)
+_WORLD_POS_X = (1.0, 0.0, 0.0)
+
+
+def _register_axis_direction_twist_rule(
+    mapping_name,
+    checked_axis,
+    target_world,
+    target_label,
+    roll_axis="+Y",
+    threshold_deg=30.0,
+):
+    return HUMANOID_TWIST_RULES.register(HumanoidTwistRule(
+        name=f"{mapping_name}: {checked_axis} -> {target_label}",
+        mapping_names=(mapping_name,),
+        mode=HumanoidAxisDirectionTwistMode(
+            checked_axis=checked_axis,
+            target_world=target_world,
+            target_label=target_label,
+            roll_axis=roll_axis,
+            threshold_deg=threshold_deg,
+        ),
+    ))
+
+
+# 扭转规则注册区：每条规则独立注册，方便后续单独改阈值或替换判定模式。
+_register_axis_direction_twist_rule(
+    mapping_name="shoulder.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="upper_arm.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="lower_arm.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="hand.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="upper_leg.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="lower_leg.L",
+    checked_axis="+X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+
+_register_axis_direction_twist_rule(
+    mapping_name="shoulder.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="upper_arm.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="lower_arm.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="hand.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="upper_leg.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="lower_leg.R",
+    checked_axis="-X",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+
+_register_axis_direction_twist_rule(
+    mapping_name="hips",
+    checked_axis="+Z",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="hips",
+    checked_axis="+X",
+    target_world=_WORLD_POS_X,
+    target_label="世界+X",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="spine",
+    checked_axis="+Z",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="spine",
+    checked_axis="+X",
+    target_world=_WORLD_POS_X,
+    target_label="世界+X",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="chest",
+    checked_axis="+Z",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="chest",
+    checked_axis="+X",
+    target_world=_WORLD_POS_X,
+    target_label="世界+X",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="neck",
+    checked_axis="+Z",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="neck",
+    checked_axis="+X",
+    target_world=_WORLD_POS_X,
+    target_label="世界+X",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="head",
+    checked_axis="+Z",
+    target_world=_WORLD_NEG_Y,
+    target_label="世界-Y",
+)
+_register_axis_direction_twist_rule(
+    mapping_name="head",
+    checked_axis="+X",
+    target_world=_WORLD_POS_X,
+    target_label="世界+X",
+)
+
+
 class HumanoidMappingPreviewHUD:
     _handler_3d = None
     _handler_2d = None
@@ -716,6 +1038,13 @@ class HumanoidMappingPreviewHUD:
     _missing_origin_offset_x = -40
     _missing_origin_offset_y = -40
     _missing_max_show = 40
+
+    _twist_axis_length_factor = 0.36
+    _twist_axis_min_length = 0.08
+    _twist_line_width = 4.0
+    _twist_fan_segments = 18
+    _twist_font_size = 24
+    _twist_warning_offset_y = 30
 
     @staticmethod
     def no_i18n(name: str) -> str:
@@ -759,6 +1088,77 @@ class HumanoidMappingPreviewHUD:
         return props.humanoidMapping.strip()
 
     @classmethod
+    def _get_bone_world_rest_axes(cls, bone_name: str):
+        armature = cls._get_armature()
+        if armature is None:
+            return None
+
+        bone = armature.data.bones.get(bone_name)
+        if bone is None:
+            return None
+
+        rest_rot_world = (
+            armature.matrix_world.to_3x3()
+            @ bone.matrix_local.to_3x3()
+        )
+
+        x_axis = _safe_normalized_vector(rest_rot_world @ Vector((1.0, 0.0, 0.0)))
+        y_axis = _safe_normalized_vector(rest_rot_world @ Vector((0.0, 1.0, 0.0)))
+        z_axis = _safe_normalized_vector(rest_rot_world @ Vector((0.0, 0.0, 1.0)))
+
+        if x_axis is None or y_axis is None or z_axis is None:
+            return None
+
+        return x_axis, y_axis, z_axis
+
+    @classmethod
+    def _get_twist_issues(cls, bone_name: str, mapping_name: str):
+        axes = cls._get_bone_world_rest_axes(bone_name)
+        if axes is None:
+            return []
+
+        armature = cls._get_armature()
+        bone = None
+        pose_bone = None
+        head_world = None
+        tail_world = None
+        center_world = None
+
+        if armature is not None:
+            bone = armature.data.bones.get(bone_name)
+            pose_bone = armature.pose.bones.get(bone_name)
+
+        points = cls._get_pose_bone_world_points(bone_name)
+        if points is not None:
+            head_world, tail_world, center_world = points
+
+        context = HumanoidTwistCheckContext(
+            bone_name=bone_name,
+            mapping_name=mapping_name,
+            axes=axes,
+            armature=armature,
+            bone=bone,
+            pose_bone=pose_bone,
+            head_world=head_world,
+            tail_world=tail_world,
+            center_world=center_world,
+        )
+
+        return HUMANOID_TWIST_RULES.evaluate(context)
+
+    @classmethod
+    def _format_twist_issues(cls, issues):
+        parts = []
+
+        for issue in issues:
+            parts.append(
+                f"{issue['axis_label']}->{issue['target_label']} "
+                f"{issue['angle_deg']:.0f}°>{issue['threshold_deg']:.0f}°"
+            )
+
+        return " / ".join(parts)
+
+    @classmethod
     def _refresh_mapping_cache(cls):
         armature = cls._get_armature()
         if armature is None:
@@ -779,6 +1179,7 @@ class HumanoidMappingPreviewHUD:
             mapped_targets.add(mapping_name)
             items.append({
                 "bone_name": pb.name,
+                "twist_issues": cls._get_twist_issues(pb.name, mapping_name),
             })
 
         cls._items = items
@@ -819,11 +1220,20 @@ class HumanoidMappingPreviewHUD:
 
         cls._tag_redraw()
 
-        return True, (
+        twist_error_bone_count = sum(
+            1 for item in cls._items
+            if item.get("twist_issues")
+        )
+        msg = (
             f"Humanoid预览已生成："
             f"映射骨骼 {len(cls._items)}，"
             f"缺失 {len(cls._missing_targets)}"
         )
+
+        if twist_error_bone_count:
+            msg += f"，扭转错误 {twist_error_bone_count}"
+
+        return True, msg
 
     @classmethod
     def clear(cls):
@@ -888,6 +1298,16 @@ class HumanoidMappingPreviewHUD:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
 
+    @staticmethod
+    def _rotate_vector_around_axis(vector, axis, angle_rad):
+        axis = axis.normalized()
+
+        return (
+            vector * cos(angle_rad)
+            + axis.cross(vector) * sin(angle_rad)
+            + axis * axis.dot(vector) * (1.0 - cos(angle_rad))
+        )
+
     @classmethod
     def _draw_3d(cls):
         if not cls._items:
@@ -897,8 +1317,14 @@ class HumanoidMappingPreviewHUD:
         if region is None:
             return
 
-        coords = []
-        points = []
+        normal_coords = []
+        error_coords = []
+        normal_points = []
+        error_points = []
+        actual_axis_coords = []
+        target_axis_coords = []
+        fan_triangles = []
+        fan_border_coords = []
 
         for item in cls._items:
             result = cls._get_pose_bone_world_points(item["bone_name"])
@@ -906,36 +1332,131 @@ class HumanoidMappingPreviewHUD:
                 continue
 
             head, tail, center = result
-            coords.extend([head, tail])
-            points.extend([head, tail])
+            twist_issues = item.get("twist_issues") or []
 
-        if not coords:
+            if twist_issues:
+                error_coords.extend([head, tail])
+                error_points.extend([head, tail])
+
+                bone_length = max((tail - head).length, cls._twist_axis_min_length)
+                axis_length = max(
+                    bone_length * cls._twist_axis_length_factor,
+                    cls._twist_axis_min_length,
+                )
+
+                for issue in twist_issues:
+                    actual_axis = issue["actual_axis_world"]
+                    target_axis = issue["target_axis_world"]
+                    bone_axis = issue["bone_axis_world"]
+                    threshold_rad = radians(issue["threshold_deg"])
+
+                    actual_axis_coords.extend([
+                        center,
+                        center + actual_axis * axis_length,
+                    ])
+                    target_axis_coords.extend([
+                        center,
+                        center + target_axis * axis_length,
+                    ])
+
+                    fan_points = []
+                    for i in range(cls._twist_fan_segments + 1):
+                        factor = i / cls._twist_fan_segments
+                        angle = -threshold_rad + threshold_rad * 2.0 * factor
+                        fan_axis = cls._rotate_vector_around_axis(
+                            target_axis,
+                            bone_axis,
+                            angle,
+                        )
+                        fan_points.append(center + fan_axis * axis_length)
+
+                    for i in range(len(fan_points) - 1):
+                        fan_triangles.extend([
+                            center,
+                            fan_points[i],
+                            fan_points[i + 1],
+                        ])
+
+                    fan_border_coords.extend([
+                        center,
+                        fan_points[0],
+                        center,
+                        fan_points[-1],
+                    ])
+
+                    for i in range(len(fan_points) - 1):
+                        fan_border_coords.extend([
+                            fan_points[i],
+                            fan_points[i + 1],
+                        ])
+            else:
+                normal_coords.extend([head, tail])
+                normal_points.extend([head, tail])
+
+        if not normal_coords and not error_coords:
             return
 
         gpu.state.blend_set('ALPHA')
         gpu.state.depth_test_set('NONE')
 
-        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
-        batch = batch_for_shader(shader, 'LINES', {
-            "pos": coords,
-        })
+        line_shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
 
-        shader.bind()
-        shader.uniform_float("viewportSize", (region.width, region.height))
-        shader.uniform_float("lineWidth", cls._line_width)
-        shader.uniform_float("color", (0.1, 0.85, 1.0, 0.95))
-        batch.draw(shader)
+        def draw_lines(coords, color, width):
+            if not coords:
+                return
 
-        if points:
-            point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-            point_batch = batch_for_shader(point_shader, 'POINTS', {
-                "pos": points,
+            batch = batch_for_shader(line_shader, 'LINES', {
+                "pos": coords,
             })
 
+            line_shader.bind()
+            line_shader.uniform_float(
+                "viewportSize",
+                (region.width, region.height),
+            )
+            line_shader.uniform_float("lineWidth", width)
+            line_shader.uniform_float("color", color)
+            batch.draw(line_shader)
+
+        if fan_triangles:
+            fan_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+            fan_batch = batch_for_shader(fan_shader, 'TRIS', {
+                "pos": fan_triangles,
+            })
+
+            fan_shader.bind()
+            fan_shader.uniform_float("color", (1.0, 0.42, 0.05, 0.18))
+            fan_batch.draw(fan_shader)
+
+        draw_lines(normal_coords, (0.1, 0.85, 1.0, 0.95), cls._line_width)
+        draw_lines(error_coords, (1.0, 0.08, 0.04, 0.98), cls._line_width)
+        draw_lines(fan_border_coords, (1.0, 0.62, 0.05, 0.72), 2.0)
+        draw_lines(target_axis_coords, (0.25, 1.0, 0.25, 0.95), cls._twist_line_width)
+        draw_lines(actual_axis_coords, (1.0, 0.08, 0.04, 0.98), cls._twist_line_width)
+
+        if normal_points or error_points:
+            point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+
             gpu.state.point_size_set(cls._point_size)
-            point_shader.bind()
-            point_shader.uniform_float("color", (1.0, 0.9, 0.15, 0.95))
-            point_batch.draw(point_shader)
+
+            if normal_points:
+                point_batch = batch_for_shader(point_shader, 'POINTS', {
+                    "pos": normal_points,
+                })
+
+                point_shader.bind()
+                point_shader.uniform_float("color", (1.0, 0.9, 0.15, 0.95))
+                point_batch.draw(point_shader)
+
+            if error_points:
+                point_batch = batch_for_shader(point_shader, 'POINTS', {
+                    "pos": error_points,
+                })
+
+                point_shader.bind()
+                point_shader.uniform_float("color", (1.0, 0.08, 0.04, 0.98))
+                point_batch.draw(point_shader)
+
             gpu.state.point_size_set(1.0)
 
         gpu.state.blend_set('NONE')
@@ -970,6 +1491,7 @@ class HumanoidMappingPreviewHUD:
                 continue
 
             head, tail, center = result
+            twist_issues = item.get("twist_issues") or []
 
             pos_2d = view3d_utils.location_3d_to_region_2d(
                 region,
@@ -1001,8 +1523,14 @@ class HumanoidMappingPreviewHUD:
                 "pos": coords,
             })
 
+            line_color = (
+                (1.0, 0.08, 0.04, 0.92)
+                if twist_issues
+                else (0.1, 0.85, 1.0, 0.85)
+            )
+
             line_shader.bind()
-            line_shader.uniform_float("color", (0.1, 0.85, 1.0, 0.85))
+            line_shader.uniform_float("color", line_color)
             batch.draw(line_shader)
 
             label = f'{mapping_name}  ({bone_name})'
@@ -1013,9 +1541,28 @@ class HumanoidMappingPreviewHUD:
             blf.shadow(font_id, 3, 0, 0, 0, 0.75)
             blf.shadow_offset(font_id, 1, -1)
 
-            blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
+            if twist_issues:
+                blf.color(font_id, 1.0, 0.16, 0.1, 1.0)
+            else:
+                blf.color(font_id, 0.75, 0.95, 1.0, 1.0)
+
             blf.position(font_id, label_x, label_y, 0)
             blf.draw(font_id, label)
+
+            if twist_issues:
+                warning_label = (
+                    f"扭转错误: {cls._format_twist_issues(twist_issues)}"
+                )
+
+                blf.size(font_id, cls._twist_font_size)
+                blf.color(font_id, 1.0, 0.46, 0.25, 1.0)
+                blf.position(
+                    font_id,
+                    label_x,
+                    label_y - cls._twist_warning_offset_y,
+                    0,
+                )
+                blf.draw(font_id, cls.no_i18n(warning_label))
 
             blf.disable(font_id, blf.SHADOW)
 
