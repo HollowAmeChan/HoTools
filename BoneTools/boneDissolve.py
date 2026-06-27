@@ -14,6 +14,69 @@ def ureg_props():
 
 class DissolveBoneCore:
     @staticmethod
+    def _ensure_object_visible(obj: bpy.types.Object):
+        """临时解除物体隐藏，返回可恢复的隐藏状态。"""
+        state = {
+            "hide_viewport": obj.hide_viewport,
+            "hide_get": obj.hide_get(),
+        }
+
+        if state["hide_viewport"]:
+            obj.hide_viewport = False
+        if state["hide_get"]:
+            obj.hide_set(False)
+
+        if state["hide_viewport"] or state["hide_get"]:
+            bpy.context.view_layer.update()
+
+        return state
+
+    @staticmethod
+    def _restore_object_visibility(obj: bpy.types.Object, state):
+        if state["hide_get"]:
+            obj.hide_set(True)
+        if state["hide_viewport"]:
+            obj.hide_viewport = True
+
+        if state["hide_viewport"] or state["hide_get"]:
+            bpy.context.view_layer.update()
+
+    @staticmethod
+    def resolve_bone_chain(edit_bones, bns):
+        """校验选中骨骼是否为单条父子链，并返回从根到末端的有序骨名。"""
+        bn_set = set(bns)
+        missing = [bn for bn in bns if edit_bones.get(bn) is None]
+        if missing:
+            return [], f"找不到选中的骨骼: {missing}"
+
+        roots = []
+        for bn in bns:
+            bone = edit_bones[bn]
+            if bone.parent is None or bone.parent.name not in bn_set:
+                roots.append(bn)
+
+        if len(roots) != 1:
+            return [], f"必须只选择一条连续骨链，当前找到 {len(roots)} 个最高父级骨骼: {roots}"
+
+        chain = []
+        current = edit_bones[roots[0]]
+        while current and current.name in bn_set:
+            chain.append(current.name)
+
+            child_in_set = [child for child in current.children if child.name in bn_set]
+            if len(child_in_set) > 1:
+                names = [child.name for child in child_in_set]
+                return [], f"骨链在 {current.name} 处分叉，子骨骼: {names}"
+
+            current = child_in_set[0] if child_in_set else None
+
+        if len(chain) != len(bn_set):
+            disconnected = [bn for bn in bns if bn not in chain]
+            return [], f"选中骨骼不是一条连续父子链，未连接骨骼: {disconnected}"
+
+        return chain, None
+
+    @staticmethod
     def addNewBone(armature:bpy.types.Object,bns)->str:
         """添加一个新的骨骼（已经提前确认可以添加）"""
         #强制进入骨架编辑模式
@@ -25,27 +88,21 @@ class DissolveBoneCore:
         bpy.context.view_layer.objects.active = armature
         DissolveBoneCore.set_object_mode(armature,'EDIT')
 
-        #添加骨骼
         edit_bones = armature.data.edit_bones
+        # 按父子链首尾决定新骨段，不再按世界轴高低推断。
+        root_bone = edit_bones.get(bns[0])
+        tail_bone = edit_bones.get(bns[-1])
+        if root_bone is None or tail_bone is None:
+            raise Exception("融并骨链数据无效")
+
+        #添加骨骼
         new_name = bns[0]+"_HoDissolved"
         new_bone = edit_bones.new(new_name)
         new_name = new_bone.name
 
-        #计算得到选择的骨骼中的最高父级与最低子级，以及新骨骼需要的属性
-        b_bone = edit_bones[bns[0]]#0开缓存
-        t_bone = edit_bones[bns[0]]#0开缓存
-        for bn in bns:
-            bone = edit_bones.get(bn)
-            if bone is None:
-                continue
-            if bone.head[2] > b_bone.head[2]:
-                b_bone = bone
-            if bone.tail[2] < t_bone.tail[2]:
-                t_bone = bone
-
-        head = t_bone.head.copy()
-        tail = b_bone.tail.copy()
-        parent = b_bone.parent
+        head = root_bone.head.copy()
+        tail = tail_bone.tail.copy()
+        parent = root_bone.parent
 
         # 收集所有原本连接到 bottom_bone 的子骨骼
         childrens = [b for b in edit_bones if b.parent and b.parent.name in bns and b.name not in bns]
@@ -54,7 +111,7 @@ class DissolveBoneCore:
         new_bone.head = head
         new_bone.tail = tail
         new_bone.parent = parent
-        new_bone.roll = b_bone.roll#取第一根骨的扭转
+        new_bone.roll = root_bone.roll#取最浅根骨的扭转
 
         for child in childrens:
             child.parent = new_bone
@@ -71,53 +128,68 @@ class DissolveBoneCore:
     @staticmethod
     def obj_bone_dissolve(bns,tmp_bn,obj:bpy.types.Object):
         """处理单物体的权重融并"""
-        #新建/清空目标组
-        if obj.vertex_groups.get(tmp_bn):
-            obj.vertex_groups.remove(obj.vertex_groups.get(tmp_bn))
-        new_vg = obj.vertex_groups.new(name=tmp_bn)
+        visibility_state = DissolveBoneCore._ensure_object_visible(obj)
+        old_active = bpy.context.view_layer.objects.active
 
-        #切换模式
-        bpy.context.view_layer.objects.active = obj
-        DissolveBoneCore.set_object_mode(obj,'OBJECT')  
+        try:
+            #切换模式
+            if obj.visible_get():
+                bpy.context.view_layer.objects.active = obj
+                DissolveBoneCore.set_object_mode(obj,'OBJECT')
+            else:
+                return False
 
-        verts = obj.data.vertices
-        N = len(verts)
-        M = len(bns)
+            #新建/清空目标组
+            if obj.vertex_groups.get(tmp_bn):
+                obj.vertex_groups.remove(obj.vertex_groups.get(tmp_bn))
+            new_vg = obj.vertex_groups.new(name=tmp_bn)
 
-        #np矩阵处理
-        W = np.zeros((N, M), dtype=float)
-        P = np.zeros((N, M), dtype=bool)
+            verts = obj.data.vertices
+            N = len(verts)
+            M = len(bns)
 
-        for j, group_name in enumerate(bns):
-            vg = obj.vertex_groups.get(group_name)
-            if not vg:
-                continue
-            # 对于每个顶点，尝试读取权重
-            for i, v in enumerate(verts):
+            #np矩阵处理
+            W = np.zeros((N, M), dtype=float)
+            P = np.zeros((N, M), dtype=bool)
+
+            for j, group_name in enumerate(bns):
+                vg = obj.vertex_groups.get(group_name)
+                if not vg:
+                    continue
+                # 对于每个顶点，尝试读取权重
+                for i, v in enumerate(verts):
+                    try:
+                        w = vg.weight(i)
+                        # 只要没抛异常，就算“显式归属”，即便 w==0
+                        P[i, j] = True
+                    except RuntimeError:
+                        w = 0.0
+                    W[i, j] = w
+
+            # 叠加和掩码
+            merged = W.sum(axis=1)            # 合并后权重 (N,)
+            has_explicit = P.any(axis=1)      # 哪些顶点显式属于至少一个旧组
+
+            # 批量写入：只写那些 has_explicit 的顶点，写入它们的 merged 权重
+            idxs = np.nonzero(has_explicit)[0]
+            weights = merged[has_explicit]
+            for i, w in zip(idxs, weights):
+                new_vg.add([int(i)], float(w), 'REPLACE')
+
+            # 删除旧组
+            for old in bns:
+                vg = obj.vertex_groups.get(old)
+                if vg:
+                    obj.vertex_groups.remove(vg)
+        finally:
+            if old_active:
                 try:
-                    w = vg.weight(i)
-                    # 只要没抛异常，就算“显式归属”，即便 w==0
-                    P[i, j] = True
-                except RuntimeError:
-                    w = 0.0
-                W[i, j] = w
+                    bpy.context.view_layer.objects.active = old_active
+                except Exception:
+                    pass
+            DissolveBoneCore._restore_object_visibility(obj, visibility_state)
 
-        # 叠加和掩码
-        merged = W.sum(axis=1)            # 合并后权重 (N,)
-        has_explicit = P.any(axis=1)      # 哪些顶点显式属于至少一个旧组
-
-        # 批量写入：只写那些 has_explicit 的顶点，写入它们的 merged 权重
-        idxs = np.nonzero(has_explicit)[0]
-        weights = merged[has_explicit]
-        for i, w in zip(idxs, weights):
-            new_vg.add([int(i)], float(w), 'REPLACE')
-
-        # 删除旧组
-        for old in bns:
-            vg = obj.vertex_groups.get(old)
-            if vg:
-                obj.vertex_groups.remove(vg)
-        return 
+        return True
     
 
     @staticmethod
@@ -175,7 +247,13 @@ class DissolveBoneCore:
 class OP_DissolveBoneWithWeight(Operator):
     bl_idname = "ho.dissolvebone_withweight"
     bl_label = "融并骨骼与权重"
-    bl_description = "！无法处理镜像骨骼！面板按钮较为卡顿,不建议长期展示"
+    bl_description = """
+    将选中的连续父子骨链融并成一根骨骼，并同步合并权重。
+    使用方式:在姿态模式或编辑模式选择两根以上连续骨骼，或在权重绘制时使用当前选中的骨骼。
+            选中骨骼必须是一条单独父子链；如果出现多个最高父级、断链或分叉，会取消并提示错误。
+            新骨从最浅父级骨骼的 head 延伸到最深子级骨骼的 tail，roll 使用最浅父级骨骼。
+            所有被融并骨骼的顶点组权重会相加到新骨顶点组，然后删除旧顶点组和旧骨骼。
+            隐藏网格会临时显示后处理并恢复隐藏；不在当前视图层的网格会跳过。"""
     bl_options = {'REGISTER', 'UNDO'}
 
     only_selected:BoolProperty(name="仅选择的物体",description="未被选中的物体将保留权重，但是由于骨骼已经消失将不再受到控制", default=False) # type: ignore
@@ -280,47 +358,20 @@ class OP_DissolveBoneWithWeight(Operator):
         DissolveBoneCore.set_object_mode(armature_obj,'EDIT')
 
         edit_bones = armature_obj.data.edit_bones
-        bn_set = set(bones)
-
-        # 1) 必须有且仅有一个根
-        roots = [
-            bn for bn in bones
-            if (edit_bones[bn].parent is None) or (edit_bones[bn].parent.name not in bn_set)
-        ]
-        if len(roots) != 1:
-            self.report({'ERROR'}, f"必须只有一个骨骼的父级(parent)不在选集中，当前找到 {len(roots)} 个")
+        chain_bones, chain_error = DissolveBoneCore.resolve_bone_chain(edit_bones, bones)
+        if chain_error:
+            self.report({'ERROR'}, chain_error)
             return {'CANCELLED'}
 
-        # 2) 每个非根骨骼必须 parent 在集合内
-        root = roots[0]
-        for bn in bones:
-            if bn == root:
-                continue
-            pb = edit_bones[bn].parent
-            # 只有当存在 parent 时，才必须在选集中
-            if not pb or pb.name not in bn_set:
-                self.report(
-                   {'ERROR'},
-                    f"非根骨骼 {bn} 的 parent 不在选中集合中：" +
-                    (pb.name if pb else "无 parent")
-                )
-                return {'CANCELLED'}
-
-        # 3) 不允许分叉：每个骨骼在集合内的子数 ≤ 1
-        for bn in bones:
-            child_in_set = [c for c in edit_bones[bn].children if c.name in bn_set]
-            if len(child_in_set) > 1:
-                names = [c.name for c in child_in_set]
-                self.report({'ERROR'}, f"骨链在 “{bn}” 处分叉，子骨骼：{names}")
-                return {'CANCELLED'}
+        root = chain_bones[0]
 
         #创建新的骨骼
-        new_bone_name = DissolveBoneCore.addNewBone(armature_obj,bones)
+        new_bone_name = DissolveBoneCore.addNewBone(armature_obj,chain_bones)
         #逐物体合并骨骼权重
         for obj in mesh_objs:
-            DissolveBoneCore.obj_bone_dissolve(bones,new_bone_name,obj)
+            DissolveBoneCore.obj_bone_dissolve(chain_bones,new_bone_name,obj)
         #移除骨架中的原骨骼
-        DissolveBoneCore.removeOldBones(armature_obj,bones,root,new_bone_name)        
+        DissolveBoneCore.removeOldBones(armature_obj,chain_bones,root,new_bone_name)
 
         #还原原本的视图状态
         context.view_layer.objects.active = original_active
