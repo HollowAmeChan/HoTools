@@ -2093,6 +2093,26 @@ class _SpringBoneVRMCppBackend:
         array[index, 2] = float(fallback.z)
 
     @staticmethod
+    def write_matrix4_row(array: np.ndarray, index: int, value: mathutils.Matrix) -> None:
+        row = array[index]
+        row[0] = float(value[0][0])
+        row[1] = float(value[0][1])
+        row[2] = float(value[0][2])
+        row[3] = float(value[0][3])
+        row[4] = float(value[1][0])
+        row[5] = float(value[1][1])
+        row[6] = float(value[1][2])
+        row[7] = float(value[1][3])
+        row[8] = float(value[2][0])
+        row[9] = float(value[2][1])
+        row[10] = float(value[2][2])
+        row[11] = float(value[2][3])
+        row[12] = float(value[3][0])
+        row[13] = float(value[3][1])
+        row[14] = float(value[3][2])
+        row[15] = float(value[3][3])
+
+    @staticmethod
     def write_quaternion_row(array: np.ndarray, index: int, value) -> None:
         array[index, 0] = float(value.x)
         array[index, 1] = float(value.y)
@@ -3451,6 +3471,7 @@ class _SpringBoneVRM:
                     continue
 
                 parent = getattr(pose_bone, "parent", None)
+                hit_radius, collided_by_group = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
                 joint_template = dict(joint)
                 joint_template.pop("prev_tail", None)
                 joint_template.pop("current_tail", None)
@@ -3478,6 +3499,8 @@ class _SpringBoneVRM:
                         "parent": parent,
                         "parent_name": parent.name if parent is not None else "",
                         "use_connect": bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False)),
+                        "hit_radius": float(hit_radius),
+                        "collided_by_group": int(collided_by_group),
                     }
                 )
 
@@ -3495,6 +3518,7 @@ class _SpringBoneVRM:
                 batches.append(batch)
 
             batch_runtimes = []
+            chain_collision_mask = 0
             for batch in batches:
                 bone_count = len(batch)
                 if bone_count <= 0:
@@ -3523,10 +3547,24 @@ class _SpringBoneVRM:
                     init_axis_parent[index] = record["init_axis_parent_np"]
                     init_rotations[index] = record["init_rotation_np"]
                     init_scales[index] = record["init_scale_np"]
+                    hit_radii[index] = float(record["hit_radius"])
+                    collided_by_groups[index] = int(record["collided_by_group"])
+                    if record["hit_radius"] > _BonePhysics.EPSILON:
+                        chain_collision_mask |= int(record["collided_by_group"])
+                    pose_bone = record["pose_bone"]
+                    matrix = pose_bone.matrix
+                    _SpringBoneVRMCppBackend.write_matrix4_row(current_pose_matrices, index, matrix)
+                    _SpringBoneVRMCppBackend.write_quaternion_row(current_pose_quaternions, index, matrix.to_quaternion())
+                    _SpringBoneVRMCppBackend.write_vector3_row(current_pose_tails, index, record["fallback_tail"])
 
                 batch_runtimes.append(
                     {
                         "records": batch,
+                        "pose_refresh_indices": tuple(
+                            index
+                            for index, record in enumerate(batch)
+                            if bool(record["pinned"]) or float(record["length"]) <= _BonePhysics.EPSILON
+                        ),
                         "current_pose_matrices": current_pose_matrices,
                         "current_pose_quaternions": current_pose_quaternions,
                         "current_pose_tails": current_pose_tails,
@@ -3553,7 +3591,7 @@ class _SpringBoneVRM:
                 "bones": bones,
                 "simulated_names": simulated_names,
                 "chain_bones": set(bones),
-                "chain_collision_mask": 0,
+                "chain_collision_mask": int(chain_collision_mask),
                 "batches": batch_runtimes,
                 "collider_arrays": _SpringBoneVRMCppBackend.empty_collision_arrays(),
             }
@@ -3562,37 +3600,27 @@ class _SpringBoneVRM:
 
     @classmethod
     def refresh_cpp_chain_runtime(cls, armature_obj: bpy.types.Object, chain_runtime_by_root: dict) -> None:
+        armature_world_matrix = armature_obj.matrix_world
         for chain_runtime in chain_runtime_by_root.values():
             if not isinstance(chain_runtime, dict):
                 continue
-            chain_collision_mask = 0
             for batch_runtime in chain_runtime.get("batches", []):
                 records = batch_runtime.get("records", []) if isinstance(batch_runtime, dict) else []
                 current_pose_matrices = batch_runtime["current_pose_matrices"]
                 current_pose_quaternions = batch_runtime["current_pose_quaternions"]
                 current_pose_tails = batch_runtime["current_pose_tails"]
-                hit_radii = batch_runtime["hit_radii"]
-                collided_by_groups = batch_runtime["collided_by_groups"]
 
-                for index, record in enumerate(records):
+                for index in batch_runtime.get("pose_refresh_indices", ()):
+                    record = records[index]
                     pose_bone = record.get("pose_bone")
-                    bone_name = str(record.get("bone_name") or "")
                     if pose_bone is None:
                         continue
                     matrix = pose_bone.matrix
-                    _current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+                    fallback_tail = armature_world_matrix @ pose_bone.tail
                     record["fallback_tail"] = fallback_tail
-                    current_pose_matrices[index] = _MeshPhysics.matrix4_to_numpy(matrix).reshape(16)
-                    current_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(matrix.to_quaternion())
-                    current_pose_tails[index] = _MeshPhysics.vector_to_numpy(fallback_tail)
-
-                    hit_radius, collided_by_group = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
-                    hit_radii[index] = float(hit_radius)
-                    collided_by_groups[index] = int(collided_by_group)
-                    if hit_radius > _BonePhysics.EPSILON:
-                        chain_collision_mask |= int(collided_by_group)
-
-            chain_runtime["chain_collision_mask"] = int(chain_collision_mask)
+                    _SpringBoneVRMCppBackend.write_matrix4_row(current_pose_matrices, index, matrix)
+                    _SpringBoneVRMCppBackend.write_quaternion_row(current_pose_quaternions, index, matrix.to_quaternion())
+                    _SpringBoneVRMCppBackend.write_vector3_row(current_pose_tails, index, fallback_tail)
 
     @classmethod
     def solve_cpp(cls, runtime: dict) -> dict:
