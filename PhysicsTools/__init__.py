@@ -22,6 +22,7 @@ from .collisionPanel import (
 )
 from .collisionPreview import (
     PT_Hotools_CollisionOverlayPopover,
+    COLLISION_OVERLAY_PREVIEW_MODE_ITEMS,
     _ensure_draw_handler,
     _remove_draw_handler,
     draw_collision_overlay_header,
@@ -77,6 +78,19 @@ def reg_props():
         default=False,
         update=_overlay_show_update,
     )
+    bpy.types.Scene.ho_collision_overlay_preview_mode = EnumProperty(
+        name="预览模式",
+        description="切换碰撞预览的查看方式",
+        items=COLLISION_OVERLAY_PREVIEW_MODE_ITEMS,
+        default="STANDARD",
+        update=_overlay_show_update,
+    )
+    bpy.types.Scene.ho_collision_overlay_include_passive_collision = BoolProperty(
+        name="额外显示被动碰撞",
+        description="在碰撞组交互检查模式下，同时显示被该组命中的被动碰撞体",
+        default=False,
+        update=_overlay_show_update,
+    )
     bpy.types.Scene.ho_collision_overlay_color_mode = EnumProperty(
         name="颜色模式",
         description="切换碰撞叠加层的颜色含义",
@@ -114,6 +128,8 @@ def ureg_props():
     del bpy.types.Scene.ho_collision_overlay_show_mesh_vertices
     del bpy.types.Scene.ho_collision_overlay_show_object
     del bpy.types.Scene.ho_collision_overlay_color_mode
+    del bpy.types.Scene.ho_collision_overlay_preview_mode
+    del bpy.types.Scene.ho_collision_overlay_include_passive_collision
     del bpy.types.Scene.ho_collision_overlay_only_visible_bones
     del bpy.types.Scene.ho_collision_overlay_show_bone
     del bpy.types.Scene.ho_collision_overlay_show

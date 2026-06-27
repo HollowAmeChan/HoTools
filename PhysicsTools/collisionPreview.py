@@ -1,4 +1,4 @@
-import bpy
+﻿import bpy
 import gpu
 import math
 import mathutils
@@ -11,6 +11,7 @@ from .collisionUtils import (
     _SHAPE_SEGMENTS,
     _UNPIN_COLOR,
     _collision_group_color,
+    _collision_group_bit,
     _collision_props,
     _effective_bone_pin,
     _mesh_collision_props,
@@ -20,6 +21,15 @@ from .collisionUtils import (
 
 _DRAW_HANDLE = None
 _MESH_VERTEX_SPHERE_SEGMENTS = 8
+COLLISION_OVERLAY_PREVIEW_MODE_ITEMS = [("STANDARD", "标准", "标准碰撞预览")]
+for group in range(1, _COLLISION_GROUP_COUNT + 1):
+    COLLISION_OVERLAY_PREVIEW_MODE_ITEMS.append(
+        (
+            f"GROUP_INTERACTION_{group}",
+            f"碰撞组交互检查{group}",
+            f"仅显示会与碰撞组{group}发生交互的碰撞体",
+        )
+    )
 
 
 def _visible_armature_objects(context):
@@ -50,6 +60,42 @@ def _bone_is_effectively_visible(bone):
         return False
 
     return True
+
+
+def _collision_overlay_preview_mode_group(preview_mode):
+    if not isinstance(preview_mode, str) or not preview_mode.startswith("GROUP_INTERACTION_"):
+        return None
+
+    try:
+        group = int(preview_mode.rsplit("_", 1)[1])
+    except (IndexError, TypeError, ValueError):
+        return None
+
+    if 1 <= group <= _COLLISION_GROUP_COUNT:
+        return group
+    return None
+
+
+def _collision_overlay_matches_preview_group(props, preview_group, include_passive=False):
+    if preview_group is None:
+        return True
+
+    try:
+        primary_group = int(getattr(props, "primary_collision_group", 1))
+    except (TypeError, ValueError):
+        primary_group = 1
+    primary_group = min(max(primary_group, 1), _COLLISION_GROUP_COUNT)
+    if primary_group == preview_group:
+        return True
+
+    if not include_passive:
+        return False
+
+    try:
+        collided_by_groups = int(getattr(props, "collided_by_groups", 0) or 0)
+    except (TypeError, ValueError):
+        collided_by_groups = 0
+    return _collision_group_bit(collided_by_groups, preview_group)
 
 
 def _visible_object_collision_objects(context):
@@ -180,10 +226,10 @@ def _append_capsule_lines(lines, matrix, props):
 
 
 def _append_plane_lines(lines, matrix, props):
-    # 平面碰撞体本身是无限边界；叠加层只画一个局部 XY 方片和四根 +Z 法线射线帮助用户判断朝向。
-    # matrix 必须传入 Object.matrix_world，和胶囊体一样从最终世界矩阵解析碰撞变换；不要拆读 location/rotation/scale。
-    # 世界原点 = matrix_world @ offset；世界切线来自 matrix_world.to_3x3() 变换局部 X/Y；法线等价于两条世界切线叉乘后的 +Z 方向。
-    # 平面碰撞体通常作为父级下的子物体摆放，父级位移/旋转/缩放都要体现在预览和后续求解器输入里。
+    # 平面碰撞体本身是无限边界。
+    # 预览里只画一个局部 XY 片和四根 +Z 射线，帮助判断朝向。
+    # matrix 必须使用 Object.matrix_world，不要拆读 location / rotation / scale。
+    # 世界原点 = matrix_world @ offset，世界切线来自 matrix_world.to_3x3() 变换局部 X/Y。
     center = mathutils.Vector(props.offset)
     half_size = max(float(props.length), 1.0) * 0.5
     ray_length = max(half_size * 1.25, 0.75)
@@ -204,8 +250,9 @@ def _append_plane_lines(lines, matrix, props):
 
 
 def _append_box_lines(lines, matrix, props):
-    # 长方体是 Object 级有向盒；matrix 必须传入 Object.matrix_world，保证父级、约束和动画后的最终世界变换被消费。
-    # 求解器应使用同一规则：world_center = matrix_world @ offset，world_axes 来自 matrix_world.to_3x3()，半长来自 box_size * 0.5。
+    # 长方体是 Object 级有向盒。
+    # matrix 必须使用 Object.matrix_world，保证父级、约束和动画后的最终世界变换被消耗。
+    # world_center = matrix_world @ offset，world_axes 来自 matrix_world.to_3x3()，半长来自 box_size * 0.5。
     center = mathutils.Vector(props.offset)
     size = mathutils.Vector(getattr(props, "box_size", (1.0, 1.0, 1.0)))
     half = mathutils.Vector((
@@ -325,11 +372,13 @@ def _draw_collision_overlay():
     if scene is None or not scene.ho_collision_overlay_show:
         return
 
-    show_bone_collision = scene.ho_collision_overlay_show_bone
+    preview_group = _collision_overlay_preview_mode_group(scene.ho_collision_overlay_preview_mode)
+    include_passive_collision = bool(scene.ho_collision_overlay_include_passive_collision) and preview_group is not None
+    show_bone_collision = bool(scene.ho_collision_overlay_show_bone) or preview_group is not None
     show_visible_bone_only = scene.ho_collision_overlay_only_visible_bones
-    show_object_collision = scene.ho_collision_overlay_show_object
-    show_mesh_vertices = scene.ho_collision_overlay_show_mesh_vertices
-    use_pin_color = scene.ho_collision_overlay_color_mode == "PIN"
+    show_object_collision = bool(scene.ho_collision_overlay_show_object) or preview_group is not None
+    show_mesh_vertices = bool(scene.ho_collision_overlay_show_mesh_vertices) or preview_group is not None
+    use_pin_color = scene.ho_collision_overlay_color_mode == "PIN" and preview_group is None
 
     collision_lines_by_group = {
         group: []
@@ -352,6 +401,13 @@ def _draw_collision_overlay():
                 if props is None:
                     continue
 
+                if not _collision_overlay_matches_preview_group(
+                    props,
+                    preview_group,
+                    include_passive=include_passive_collision,
+                ):
+                    continue
+
                 matrix = _bone_draw_matrix(armature_obj, bone)
                 if use_pin_color:
                     group_lines = pin_lines if _effective_bone_pin(bone) else unpin_lines
@@ -368,6 +424,13 @@ def _draw_collision_overlay():
         for obj in _visible_object_collision_objects(context):
             props = _object_collision_props(obj)
             if props is None:
+                continue
+
+            if not _collision_overlay_matches_preview_group(
+                props,
+                preview_group,
+                include_passive=include_passive_collision,
+            ):
                 continue
 
             if use_pin_color:
@@ -390,6 +453,12 @@ def _draw_collision_overlay():
         for obj in _visible_mesh_collision_objects(context):
             props = _mesh_collision_props(obj)
             if props is not None:
+                if not _collision_overlay_matches_preview_group(
+                    props,
+                    preview_group,
+                    include_passive=include_passive_collision,
+                ):
+                    continue
                 if use_pin_color:
                     _append_mesh_vertex_collision_lines(
                         [],
@@ -457,22 +526,27 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
+        preview_group = _collision_overlay_preview_mode_group(scene.ho_collision_overlay_preview_mode)
 
         layout.prop(scene, "ho_collision_overlay_show", text="显示碰撞预览")
 
         col = layout.column(align=True)
         col.enabled = bool(scene.ho_collision_overlay_show)
-        col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
-        col.separator()
-        col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
         col.prop(scene, "ho_collision_overlay_only_visible_bones", text="仅显示可见骨")
-        col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
-        col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
-        if scene.ho_collision_overlay_show_mesh_vertices:
-            hint = col.column(align=True)
-            hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
-            hint.label(text="暂不保证跟随最终变形")
+        col.prop(scene, "ho_collision_overlay_preview_mode", text="预览模式")
+        if preview_group is not None:
+            col.prop(scene, "ho_collision_overlay_include_passive_collision", text="额外显示被动碰撞")
 
+        if preview_group is None:
+            col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
+            col.separator()
+            col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
+            col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
+            col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
+            if scene.ho_collision_overlay_show_mesh_vertices:
+                hint = col.column(align=True)
+                hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
+                hint.label(text="暂不保证跟随最终变形")
 
 def draw_collision_overlay_header(self, context):
     scene = context.scene
