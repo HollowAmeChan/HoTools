@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Panel, UILayout, Context, Operator
-from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,EnumProperty
+from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,FloatProperty,EnumProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
 
 import csv
@@ -196,7 +196,28 @@ class OP_DeformTag_addConstraint(Operator):
     bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制位置和复制旋转约束"
     bl_options = {'REGISTER', 'UNDO'}
 
-    axis_changed_threshold_deg = 3.0
+    """
+    这不是一个理论上最干净的通用约束模型，而是我们根据实际测试保留下来的 hack。
+    
+    - 现在的流程里，Humanoid 映射骨、ARP 生成出来的 deform 骨、以及我们自己的 base 骨是要串起来一起用的。
+    - ARP 在生成控制器之后，可能还会直接修正参考骨 / deform 骨的 rest basis。
+    - 这样一来，统一使用同一种约束坐标系就会失效，尤其是 hips 和那些轴向变化很大的骨。
+    
+    这里做了什么：
+    - 先比较 fixed 侧参考骨和 target deform 骨在 rest 状态下的轴向差异。
+    - 如果轴向差异超过阈值，就把 COPY_ROTATION 切到
+      Local Space (Owner Orientation) / Local With Parent，
+      让目标骨按它自己的局部基准来解释旋转。
+    - COPY_LOCATION 默认仍然保持 Pose Space。
+    - hips 单独把 head_tail 设成 1.0，用来抵消 ARP 在 hips 处的 deform 骨反向的问题，同时由于反向一定会被阈值检测到，所以 hips 也会被切到 Local Space (Owner Orientation) / Local With Parent。
+    
+    如果没有这个问题，正常流程应该是：
+    - fixed/base 骨和 target/deform 骨共享同一套 rest basis；
+    - 所有约束都可以统一用 Pose Space；
+    - hips 不需要单独修正 head_tail；
+    - 也不需要按骨切换旋转坐标系。
+    """
+    axis_changed_threshold_deg = 25.0
 
     @staticmethod
     def _bone_rest_axes_world(armature, bone):
@@ -582,7 +603,7 @@ class OP_BoneRemoveConstraints(Operator):
         self.report({'INFO'}, "已移除选中骨骼的全部约束")
         return {'FINISHED'}
 
-#TODO arp在生成rig时会主动修正参考谷歌，导致匹配对不上，就算是使用旧版设置，也没有办法解决，这是一个很严重的问题需要后期解决
+#TODO arp在生成rig时会主动修正参考骨骼，导致匹配对不上，就算是使用旧版设置，也没有办法解决，这是一个很严重的问题需要后期解决.目前是在添加约束时使用了一些hack手段，对有问题的骨骼阈值比较来修复
 class OP_Humanoid_ForceAlign(Operator):
     bl_idname = "ho.humanoid_force_align"
     bl_label = "强制Humanoid对齐"
