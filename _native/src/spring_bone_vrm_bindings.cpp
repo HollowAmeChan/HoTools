@@ -57,7 +57,7 @@ float* float_ptr(Buffer& buffer) {
 }  // namespace
 
 PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 34;
+    constexpr Py_ssize_t kArgCount = 35;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError, "solve_spring_bone_vrm_cpp expects %zd arguments", kArgCount);
         return nullptr;
@@ -66,6 +66,7 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     Buffer current_tails;
     Buffer prev_tails;
     Buffer target_matrices;
+    Buffer target_quaternions;
     Buffer current_heads;
     Buffer current_pose_matrices;
     Buffer current_pose_quaternions;
@@ -96,32 +97,33 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     if (!current_tails.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "current_tails") ||
         !prev_tails.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "prev_tails") ||
         !target_matrices.get(PyTuple_GET_ITEM(args, 2), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "target_matrices") ||
-        !current_heads.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "current_heads") ||
-        !current_pose_matrices.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "current_pose_matrices") ||
-        !current_pose_quaternions.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "current_pose_quaternions") ||
-        !parent_pose_quaternions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "parent_pose_quaternions") ||
-        !current_pose_tails.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "current_pose_tails") ||
-        !lengths.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "lengths") ||
-        !init_axis_local.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "init_axis_local") ||
-        !init_axis_parent.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "init_axis_parent") ||
-        !init_rotations.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "init_rotations") ||
-        !init_scales.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "init_scales") ||
-        !parent_indices.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !pinned.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND, "pinned") ||
-        !use_connect.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND, "use_connect") ||
-        !root_quaternion.get(PyTuple_GET_ITEM(args, 16), PyBUF_FORMAT | PyBUF_ND, "root_quaternion") ||
-        !root_tail_world.get(PyTuple_GET_ITEM(args, 17), PyBUF_FORMAT | PyBUF_ND, "root_tail_world") ||
-        !armature_world.get(PyTuple_GET_ITEM(args, 18), PyBUF_FORMAT | PyBUF_ND, "armature_world") ||
-        !armature_world_inv.get(PyTuple_GET_ITEM(args, 19), PyBUF_FORMAT | PyBUF_ND, "armature_world_inv") ||
-        !gravity_dir.get(PyTuple_GET_ITEM(args, 20), PyBUF_FORMAT | PyBUF_ND, "gravity_dir") ||
-        !hit_radii.get(PyTuple_GET_ITEM(args, 21), PyBUF_FORMAT | PyBUF_ND, "hit_radii") ||
-        !collided_by_groups.get(PyTuple_GET_ITEM(args, 22), PyBUF_FORMAT | PyBUF_ND, "collided_by_groups") ||
-        !collider_types.get(PyTuple_GET_ITEM(args, 23), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
-        !collider_groups.get(PyTuple_GET_ITEM(args, 24), PyBUF_FORMAT | PyBUF_ND, "collider_groups") ||
-        !collider_centers.get(PyTuple_GET_ITEM(args, 25), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
-        !collider_segment_a.get(PyTuple_GET_ITEM(args, 26), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(PyTuple_GET_ITEM(args, 27), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
-        !collider_radii.get(PyTuple_GET_ITEM(args, 28), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        !target_quaternions.get(PyTuple_GET_ITEM(args, 3), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "target_quaternions") ||
+        !current_heads.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "current_heads") ||
+        !current_pose_matrices.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "current_pose_matrices") ||
+        !current_pose_quaternions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "current_pose_quaternions") ||
+        !parent_pose_quaternions.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "parent_pose_quaternions") ||
+        !current_pose_tails.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "current_pose_tails") ||
+        !lengths.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "lengths") ||
+        !init_axis_local.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "init_axis_local") ||
+        !init_axis_parent.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "init_axis_parent") ||
+        !init_rotations.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "init_rotations") ||
+        !init_scales.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND, "init_scales") ||
+        !parent_indices.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !pinned.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND, "pinned") ||
+        !use_connect.get(PyTuple_GET_ITEM(args, 16), PyBUF_FORMAT | PyBUF_ND, "use_connect") ||
+        !root_quaternion.get(PyTuple_GET_ITEM(args, 17), PyBUF_FORMAT | PyBUF_ND, "root_quaternion") ||
+        !root_tail_world.get(PyTuple_GET_ITEM(args, 18), PyBUF_FORMAT | PyBUF_ND, "root_tail_world") ||
+        !armature_world.get(PyTuple_GET_ITEM(args, 19), PyBUF_FORMAT | PyBUF_ND, "armature_world") ||
+        !armature_world_inv.get(PyTuple_GET_ITEM(args, 20), PyBUF_FORMAT | PyBUF_ND, "armature_world_inv") ||
+        !gravity_dir.get(PyTuple_GET_ITEM(args, 21), PyBUF_FORMAT | PyBUF_ND, "gravity_dir") ||
+        !hit_radii.get(PyTuple_GET_ITEM(args, 22), PyBUF_FORMAT | PyBUF_ND, "hit_radii") ||
+        !collided_by_groups.get(PyTuple_GET_ITEM(args, 23), PyBUF_FORMAT | PyBUF_ND, "collided_by_groups") ||
+        !collider_types.get(PyTuple_GET_ITEM(args, 24), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_groups.get(PyTuple_GET_ITEM(args, 25), PyBUF_FORMAT | PyBUF_ND, "collider_groups") ||
+        !collider_centers.get(PyTuple_GET_ITEM(args, 26), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(PyTuple_GET_ITEM(args, 27), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 28), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !collider_radii.get(PyTuple_GET_ITEM(args, 29), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
         return nullptr;
     }
 
@@ -129,6 +131,7 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     if (!hotools::py::expect_vector3_array(current_tails, "current_tails", &bone_count) ||
         !hotools::py::expect_same_vertex_count(prev_tails, "prev_tails", bone_count) ||
         !expect_matrix16_array(target_matrices, "target_matrices", &bone_count) ||
+        !hotools::py::expect_vector4_array(target_quaternions, "target_quaternions", &bone_count) ||
         !hotools::py::expect_same_vertex_count(current_heads, "current_heads", bone_count) ||
         !expect_matrix16_array(current_pose_matrices, "current_pose_matrices", &bone_count) ||
         !hotools::py::expect_vector4_array(current_pose_quaternions, "current_pose_quaternions", &bone_count) ||
@@ -184,23 +187,23 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double dt = as_double(PyTuple_GET_ITEM(args, 29), "dt");
+    const double dt = as_double(PyTuple_GET_ITEM(args, 30), "dt");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const long substeps = as_long(PyTuple_GET_ITEM(args, 30), "substeps");
+    const long substeps = as_long(PyTuple_GET_ITEM(args, 31), "substeps");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double stiffness_force = as_double(PyTuple_GET_ITEM(args, 31), "stiffness_force");
+    const double stiffness_force = as_double(PyTuple_GET_ITEM(args, 32), "stiffness_force");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double drag_force = as_double(PyTuple_GET_ITEM(args, 32), "drag_force");
+    const double drag_force = as_double(PyTuple_GET_ITEM(args, 33), "drag_force");
     if (PyErr_Occurred()) {
         return nullptr;
     }
-    const double gravity_power = as_double(PyTuple_GET_ITEM(args, 33), "gravity_power");
+    const double gravity_power = as_double(PyTuple_GET_ITEM(args, 34), "gravity_power");
     if (PyErr_Occurred()) {
         return nullptr;
     }
@@ -209,6 +212,7 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     view.current_tails = float_ptr(current_tails);
     view.prev_tails = float_ptr(prev_tails);
     view.target_matrices = float_ptr(target_matrices);
+    view.target_quaternions = float_ptr(target_quaternions);
     view.current_heads = float_ptr(current_heads);
     view.current_pose_matrices = float_ptr(current_pose_matrices);
     view.current_pose_quaternions = float_ptr(current_pose_quaternions);

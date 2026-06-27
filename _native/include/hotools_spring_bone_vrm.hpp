@@ -8,6 +8,7 @@ struct SpringBoneVrmChainView {
     float* current_tails = nullptr;
     float* prev_tails = nullptr;
     float* target_matrices = nullptr;
+    float* target_quaternions = nullptr;
 
     const float* current_heads = nullptr;
     const float* current_pose_matrices = nullptr;

@@ -1965,6 +1965,7 @@ class _SpringBoneVRMCppBackend:
         current_tails: np.ndarray,
         prev_tails: np.ndarray,
         target_matrices: np.ndarray,
+        target_quaternions: np.ndarray,
         current_heads: np.ndarray,
         current_pose_matrices: np.ndarray,
         current_pose_quaternions: np.ndarray,
@@ -2001,6 +2002,7 @@ class _SpringBoneVRMCppBackend:
             current_tails,
             prev_tails,
             target_matrices,
+            target_quaternions,
             current_heads,
             current_pose_matrices,
             current_pose_quaternions,
@@ -2036,19 +2038,73 @@ class _SpringBoneVRMCppBackend:
 
     @staticmethod
     def matrix_from_numpy(matrix: np.ndarray) -> mathutils.Matrix:
-        values = matrix.reshape((4, 4)) if isinstance(matrix, np.ndarray) else np.asarray(matrix, dtype=np.float32).reshape((4, 4))
+        values = matrix.reshape(16) if isinstance(matrix, np.ndarray) else np.asarray(matrix, dtype=np.float32).reshape(16)
         return mathutils.Matrix(
             (
-                (float(values[0, 0]), float(values[0, 1]), float(values[0, 2]), float(values[0, 3])),
-                (float(values[1, 0]), float(values[1, 1]), float(values[1, 2]), float(values[1, 3])),
-                (float(values[2, 0]), float(values[2, 1]), float(values[2, 2]), float(values[2, 3])),
-                (float(values[3, 0]), float(values[3, 1]), float(values[3, 2]), float(values[3, 3])),
+                (float(values[0]), float(values[1]), float(values[2]), float(values[3])),
+                (float(values[4]), float(values[5]), float(values[6]), float(values[7])),
+                (float(values[8]), float(values[9]), float(values[10]), float(values[11])),
+                (float(values[12]), float(values[13]), float(values[14]), float(values[15])),
             )
         )
 
     @staticmethod
     def vector_from_numpy3(values: np.ndarray) -> mathutils.Vector:
         return mathutils.Vector((float(values[0]), float(values[1]), float(values[2])))
+
+    @staticmethod
+    def write_vector3_row(array: np.ndarray, index: int, value) -> None:
+        array[index, 0] = float(value.x)
+        array[index, 1] = float(value.y)
+        array[index, 2] = float(value.z)
+
+    @staticmethod
+    def write_vector3_value_row(array: np.ndarray, index: int, value, fallback) -> None:
+        if value is None or (isinstance(value, str) and value == ""):
+            value = fallback
+        try:
+            array[index, 0] = float(value.x)
+            array[index, 1] = float(value.y)
+            array[index, 2] = float(value.z)
+            return
+        except Exception:
+            pass
+        try:
+            value_len = len(value)
+            if value_len >= 3:
+                array[index, 0] = float(value[0])
+                array[index, 1] = float(value[1])
+                array[index, 2] = float(value[2])
+                return
+            if value_len == 2:
+                array[index, 0] = float(value[0])
+                array[index, 1] = float(value[1])
+                array[index, 2] = float(fallback.z)
+                return
+            if value_len == 1:
+                array[index, 0] = float(value[0])
+                array[index, 1] = float(fallback.y)
+                array[index, 2] = float(fallback.z)
+                return
+        except Exception:
+            pass
+        array[index, 0] = float(fallback.x)
+        array[index, 1] = float(fallback.y)
+        array[index, 2] = float(fallback.z)
+
+    @staticmethod
+    def write_quaternion_row(array: np.ndarray, index: int, value) -> None:
+        array[index, 0] = float(value.x)
+        array[index, 1] = float(value.y)
+        array[index, 2] = float(value.z)
+        array[index, 3] = float(value.w)
+
+    @staticmethod
+    def copy_quaternion_row(array: np.ndarray, index: int, values: np.ndarray) -> None:
+        array[index, 0] = float(values[0])
+        array[index, 1] = float(values[1])
+        array[index, 2] = float(values[2])
+        array[index, 3] = float(values[3])
 
     @classmethod
     def empty_collision_arrays(cls) -> tuple:
@@ -3120,18 +3176,25 @@ class _SpringBoneVRM:
         target_pose_matrices: dict[str, mathutils.Matrix],
         write_records: list[dict] | None = None,
         timing: dict | None = None,
+        write_runtime: dict | None = None,
     ) -> None:
         stage_start = time.perf_counter() if timing is not None else None
         if isinstance(write_records, list):
             pose_bones = armature_obj.pose.bones
-            basis_values = [0.0] * (len(pose_bones) * 16)
+            basis_value_count = len(pose_bones) * 16
+            if isinstance(write_runtime, dict):
+                basis_values = write_runtime.get("basis_values")
+                if not isinstance(basis_values, list) or len(basis_values) != basis_value_count:
+                    basis_values = [0.0] * basis_value_count
+                    write_runtime["basis_values"] = basis_values
+            else:
+                basis_values = [0.0] * basis_value_count
             try:
                 pose_bones.foreach_get("matrix_basis", basis_values)
                 can_foreach_set = True
             except Exception:
                 can_foreach_set = False
-            valid_records = []
-            fallback_basis = []
+            fallback_updates = [] if not can_foreach_set else None
             for record in write_records:
                 pose_bone = record.get("pose_bone")
                 bone_name = str(record.get("bone_name") or "")
@@ -3148,8 +3211,6 @@ class _SpringBoneVRM:
                         parent_matrix = parent.matrix
                     parent_space = parent_matrix @ record["parent_rest_inv"] @ record["bone_rest"]
                     basis_matrix = parent_space.inverted() @ target_matrix
-                valid_records.append(record)
-                fallback_basis.append(basis_matrix)
                 if can_foreach_set:
                     pose_index = int(record.get("pose_index", -1))
                     if pose_index >= 0:
@@ -3170,6 +3231,8 @@ class _SpringBoneVRM:
                         basis_values[offset + 13] = float(basis_matrix[1][3])
                         basis_values[offset + 14] = float(basis_matrix[2][3])
                         basis_values[offset + 15] = float(basis_matrix[3][3])
+                elif fallback_updates is not None:
+                    fallback_updates.append((pose_bone, basis_matrix))
 
             if can_foreach_set:
                 try:
@@ -3177,12 +3240,26 @@ class _SpringBoneVRM:
                     cls._add_timing(timing, "write_basis", time.perf_counter() - stage_start if timing is not None else 0.0)
                     return
                 except Exception:
-                    pass
+                    fallback_updates = []
+                    for record in write_records:
+                        pose_bone = record.get("pose_bone")
+                        bone_name = str(record.get("bone_name") or "")
+                        target_matrix = target_pose_matrices.get(bone_name)
+                        if pose_bone is None or target_matrix is None:
+                            continue
+                        parent = record.get("parent")
+                        if parent is None:
+                            basis_matrix = record["bone_rest_inv"] @ target_matrix
+                        else:
+                            parent_matrix = target_pose_matrices.get(str(record.get("parent_name") or ""))
+                            if parent_matrix is None:
+                                parent_matrix = parent.matrix
+                            parent_space = parent_matrix @ record["parent_rest_inv"] @ record["bone_rest"]
+                            basis_matrix = parent_space.inverted() @ target_matrix
+                        fallback_updates.append((pose_bone, basis_matrix))
 
-            for record, basis_matrix in zip(valid_records, fallback_basis):
-                pose_bone = record.get("pose_bone")
-                if pose_bone is not None:
-                    pose_bone.matrix_basis = basis_matrix
+            for pose_bone, basis_matrix in fallback_updates or []:
+                pose_bone.matrix_basis = basis_matrix
             cls._add_timing(timing, "write_basis", time.perf_counter() - stage_start if timing is not None else 0.0)
             return
 
@@ -3345,6 +3422,7 @@ class _SpringBoneVRM:
         chains_state = runtime["state"].get("chains", {})
         target_pose_matrices = runtime["target_pose_matrices"]
         target_tail_worlds = runtime["target_tail_worlds"]
+        target_pose_quaternions = {}
         timing = runtime.get("timing")
         armature_world = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world).reshape(16)
         armature_world_inv = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world.inverted()).reshape(16)
@@ -3474,11 +3552,15 @@ class _SpringBoneVRM:
                     continue
 
                 parent = getattr(pose_bone, "parent", None)
+                joint_template = dict(joint)
+                joint_template.pop("prev_tail", None)
+                joint_template.pop("current_tail", None)
                 static_records.append(
                     {
                         "bone_name": bone_name,
                         "pose_bone": pose_bone,
                         "pinned": pinned_value,
+                        "joint_template": joint_template,
                         "fallback_tail": fallback_tail,
                         "fallback_tail_np": _MeshPhysics.vector_to_numpy(fallback_tail),
                         "length": max(length, 0.0),
@@ -3569,6 +3651,12 @@ class _SpringBoneVRM:
                         "use_connect": use_connect,
                         "hit_radii": hit_radii,
                         "collided_by_groups": collided_by_groups,
+                        "current_tails": np.empty((bone_count, 3), dtype=np.float32),
+                        "prev_tails": np.empty((bone_count, 3), dtype=np.float32),
+                        "target_matrices": np.empty((bone_count, 16), dtype=np.float32),
+                        "target_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+                        "current_heads": np.empty((bone_count, 3), dtype=np.float32),
+                        "parent_pose_quaternions": np.empty((bone_count, 4), dtype=np.float32),
                     }
                 )
 
@@ -3619,37 +3707,44 @@ class _SpringBoneVRM:
 
                 for batch_runtime in (chain_runtime.get("batches", []) if isinstance(chain_runtime, dict) else []):
                     stage_start = time.perf_counter() if timing is not None else None
-                    batch = []
                     source_records = batch_runtime.get("records", []) if isinstance(batch_runtime, dict) else []
+                    batch_parent_indices = batch_runtime["parent_indices"]
+                    active_entries = []
                     all_records_active = True
                     for source_index, record in enumerate(source_records):
                         joint = joints.get(record["bone_name"]) if isinstance(joints, dict) else None
                         if not isinstance(joint, dict):
                             all_records_active = False
                             continue
-                        head = _BonePhysics.target_head_world(
-                            armature_obj,
-                            record["pose_bone"],
-                            target_pose_matrices,
-                            target_tail_worlds,
+                        parent_source_index = int(batch_parent_indices[source_index])
+                        parent_is_active = (
+                            parent_source_index >= 0
+                            and parent_source_index < len(source_records)
+                            and isinstance(joints.get(source_records[parent_source_index]["bone_name"]), dict)
                         )
-                        next_record = dict(record)
-                        current_tail, prev_tail = _BonePhysics.joint_tail_state(joint, record["fallback_tail"])
-                        next_record["joint"] = joint
-                        next_record["head"] = head
-                        next_record["current_tail"] = current_tail
-                        next_record["prev_tail"] = prev_tail
-                        next_record["source_index"] = source_index
-                        batch.append(next_record)
-                    bone_count = len(batch)
+                        if record["use_connect"] and parent_is_active:
+                            # C++ replaces connected child heads with the solved parent tail.
+                            head = record["fallback_tail"]
+                        else:
+                            head = _BonePhysics.target_head_world(
+                                armature_obj,
+                                record["pose_bone"],
+                                target_pose_matrices,
+                                target_tail_worlds,
+                            )
+                        current_tail = _BonePhysics.vector3(joint.get("current_tail"), record["fallback_tail"])
+                        prev_tail_value = joint.get("prev_tail")
+                        active_entries.append((source_index, record, head, current_tail, prev_tail_value))
+                    bone_count = len(active_entries)
                     if bone_count <= 0:
                         continue
 
-                    current_tails = np.empty((bone_count, 3), dtype=np.float32)
-                    prev_tails = np.empty((bone_count, 3), dtype=np.float32)
-                    target_matrices = np.empty((bone_count, 16), dtype=np.float32)
-                    current_heads = np.empty((bone_count, 3), dtype=np.float32)
-                    parent_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
+                    current_tails = batch_runtime["current_tails"]
+                    prev_tails = batch_runtime["prev_tails"]
+                    target_matrices = batch_runtime["target_matrices"]
+                    target_quaternions = batch_runtime["target_quaternions"]
+                    current_heads = batch_runtime["current_heads"]
+                    parent_pose_quaternions = batch_runtime["parent_pose_quaternions"]
                     gravity_dir = np.asarray(gravity, dtype=np.float32)
                     if all_records_active and bone_count == len(source_records):
                         current_pose_matrices = batch_runtime["current_pose_matrices"]
@@ -3666,8 +3761,8 @@ class _SpringBoneVRM:
                         hit_radii = batch_runtime["hit_radii"]
                         collided_by_groups = batch_runtime["collided_by_groups"]
                     else:
-                        source_to_packed = {int(record["source_index"]): index for index, record in enumerate(batch)}
-                        source_indices = np.fromiter((int(record["source_index"]) for record in batch), dtype=np.int32, count=bone_count)
+                        source_to_packed = {int(entry[0]): index for index, entry in enumerate(active_entries)}
+                        source_indices = np.fromiter((int(entry[0]) for entry in active_entries), dtype=np.int32, count=bone_count)
                         current_pose_matrices = batch_runtime["current_pose_matrices"][source_indices]
                         current_pose_quaternions = batch_runtime["current_pose_quaternions"][source_indices]
                         current_pose_tails = batch_runtime["current_pose_tails"][source_indices]
@@ -3686,22 +3781,28 @@ class _SpringBoneVRM:
                         collided_by_groups = batch_runtime["collided_by_groups"][source_indices]
                     target_matrices[:] = current_pose_matrices
 
-                    for index, record in enumerate(batch):
+                    for index, (_source_index, record, head, current_tail, prev_tail_value) in enumerate(active_entries):
                         parent = record["parent"]
                         parent_index = int(parent_indices[index])
 
-                        parent_quaternion = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+                        parent_quaternion = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0)) if parent_index < 0 else None
+                        parent_target_quaternion = None
                         if parent_index < 0 and parent is not None:
-                            parent_target_matrix = target_pose_matrices.get(parent.name)
-                            if parent_target_matrix is not None:
-                                parent_quaternion = parent_target_matrix.to_quaternion()
-                            else:
-                                parent_quaternion = parent.matrix.to_quaternion()
+                            parent_target_quaternion = target_pose_quaternions.get(parent.name)
+                            if parent_target_quaternion is None:
+                                parent_target_matrix = target_pose_matrices.get(parent.name)
+                                if parent_target_matrix is not None:
+                                    parent_quaternion = parent_target_matrix.to_quaternion()
+                                else:
+                                    parent_quaternion = parent.matrix.to_quaternion()
 
-                        current_tails[index] = _MeshPhysics.vector_to_numpy(record["current_tail"])
-                        prev_tails[index] = _MeshPhysics.vector_to_numpy(record["prev_tail"])
-                        current_heads[index] = _MeshPhysics.vector_to_numpy(record["head"])
-                        parent_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(parent_quaternion)
+                        _SpringBoneVRMCppBackend.write_vector3_row(current_tails, index, current_tail)
+                        _SpringBoneVRMCppBackend.write_vector3_value_row(prev_tails, index, prev_tail_value, record["fallback_tail"])
+                        _SpringBoneVRMCppBackend.write_vector3_row(current_heads, index, head)
+                        if parent_target_quaternion is not None:
+                            _SpringBoneVRMCppBackend.copy_quaternion_row(parent_pose_quaternions, index, parent_target_quaternion)
+                        elif parent_quaternion is not None:
+                            _SpringBoneVRMCppBackend.write_quaternion_row(parent_pose_quaternions, index, parent_quaternion)
                     if timing is not None:
                         cls._add_timing(timing, "pack", time.perf_counter() - stage_start)
 
@@ -3710,6 +3811,7 @@ class _SpringBoneVRM:
                         current_tails,
                         prev_tails,
                         target_matrices,
+                        target_quaternions,
                         current_heads,
                         current_pose_matrices,
                         current_pose_quaternions,
@@ -3746,39 +3848,37 @@ class _SpringBoneVRM:
                         cls._add_timing(timing, "native_core", time.perf_counter() - stage_start)
 
                     stage_start = time.perf_counter() if timing is not None else None
-                    tail_stage_total = 0.0
-                    matrix_stage_total = 0.0
-                    state_stage_total = 0.0
-                    for index, record in enumerate(batch):
-                        inner_start = time.perf_counter() if timing is not None else None
+                    tail_stage_start = time.perf_counter() if timing is not None else None
+                    valid_updates = []
+                    for index, (_source_index, record, head, current_tail, _prev_tail) in enumerate(active_entries):
                         bone_name = record["bone_name"]
                         parent_index = int(parent_indices[index])
-                        head = record["head"]
+                        update_head = head
                         if record["use_connect"] and parent_index >= 0:
-                            head = _SpringBoneVRMCppBackend.vector_from_numpy3(current_tails[parent_index])
+                            update_head = _SpringBoneVRMCppBackend.vector_from_numpy3(current_tails[parent_index])
                         next_tail = _SpringBoneVRMCppBackend.vector_from_numpy3(current_tails[index])
-                        if (next_tail - head).length <= _BonePhysics.EPSILON:
+                        if (next_tail - update_head).length <= _BonePhysics.EPSILON:
                             continue
-                        if timing is not None:
-                            tail_stage_total += time.perf_counter() - inner_start
+                        valid_updates.append((index, record, bone_name, next_tail, current_tail))
+                    if timing is not None:
+                        cls._add_timing(timing, "unpack_tail", time.perf_counter() - tail_stage_start)
 
-                        inner_start = time.perf_counter() if timing is not None else None
-                        next_joint = dict(record["joint"])
-                        next_joint["prev_tail"] = _SpringBoneVRMCppBackend.vector_from_numpy3(prev_tails[index])
+                    state_stage_start = time.perf_counter() if timing is not None else None
+                    for index, record, bone_name, next_tail, current_tail in valid_updates:
+                        next_joint = dict(record["joint_template"])
+                        next_joint["prev_tail"] = current_tail
                         next_joint["current_tail"] = next_tail
                         next_joints[bone_name] = next_joint
-                        target_tail_worlds[bone_name] = next_tail.copy()
-                        if timing is not None:
-                            state_stage_total += time.perf_counter() - inner_start
-
-                        inner_start = time.perf_counter() if timing is not None else None
-                        target_pose_matrices[bone_name] = _SpringBoneVRMCppBackend.matrix_from_numpy(target_matrices[index])
-                        if timing is not None:
-                            matrix_stage_total += time.perf_counter() - inner_start
+                        target_tail_worlds[bone_name] = next_tail
                     if timing is not None:
-                        cls._add_timing(timing, "unpack_tail", tail_stage_total)
-                        cls._add_timing(timing, "unpack_state", state_stage_total)
-                        cls._add_timing(timing, "unpack_matrix", matrix_stage_total)
+                        cls._add_timing(timing, "unpack_state", time.perf_counter() - state_stage_start)
+
+                    matrix_stage_start = time.perf_counter() if timing is not None else None
+                    for index, _record, bone_name, _next_tail, _current_tail in valid_updates:
+                        target_pose_matrices[bone_name] = _SpringBoneVRMCppBackend.matrix_from_numpy(target_matrices[index])
+                        target_pose_quaternions[bone_name] = target_quaternions[index].copy()
+                    if timing is not None:
+                        cls._add_timing(timing, "unpack_matrix", time.perf_counter() - matrix_stage_start)
                         cls._add_timing(timing, "unpack", time.perf_counter() - stage_start)
 
                 next_chains_state[root_name] = {
@@ -3852,6 +3952,7 @@ class _SpringBoneVRM:
             runtime["target_pose_matrices"],
             state.get("write_records"),
             timing,
+            state.setdefault("write_runtime", {}),
         )
         if timing is not None:
             cls._add_timing(timing, "write", time.perf_counter() - stage_start)

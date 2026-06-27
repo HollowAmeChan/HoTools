@@ -421,7 +421,12 @@ void solve_spring_bone_vrm_chain(SpringBoneVrmChainView& view) {
     };
     quat_normalize(root_quaternion, root_quaternion);
 
-    std::vector<float> target_quaternions(static_cast<std::size_t>(view.bone_count) * 4u, 0.0f);
+    std::vector<float> owned_target_quaternions;
+    float* target_quaternions = view.target_quaternions;
+    if (target_quaternions == nullptr) {
+        owned_target_quaternions.resize(static_cast<std::size_t>(view.bone_count) * 4u, 0.0f);
+        target_quaternions = owned_target_quaternions.data();
+    }
 
     for (int substep = 0; substep < substep_count; ++substep) {
         (void)substep;
