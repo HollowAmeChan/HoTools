@@ -1549,18 +1549,28 @@ def draw_in_NODE_MT_context_menu(self, context: Context):
             op.node_name = target_nodes[0].name
 
     preset_node = active_node
-    if preset_node is None and len(selected_nodes) == 1:
-        preset_node = selected_nodes[0]
+    presets = []
     if preset_node is not None and getattr(preset_node, "id_data", None) == tree:
         presets = _node_omni_presets(preset_node)
-        if presets:
-            layout.separator()
-            row = layout.row(align=True)
-            row.prop(preset_node, "omni_preset_id", text="预设")
-            op = row.operator(OmniNodeApplyPreset.bl_idname, text="", icon="PRESET")
+
+    if presets:
+        layout.separator()
+        layout.label(text="节点预设", icon="PRESET")
+
+        op = layout.operator(OmniNodeApplyPreset.bl_idname, text="清空预设", icon="X")
+        op.node_tree_name = getattr(tree, "name_full", tree.name)
+        op.node_name = preset_node.name
+        op.preset_id = "NONE"
+
+        for preset_index, preset in enumerate(presets):
+            op = layout.operator(
+                OmniNodeApplyPreset.bl_idname,
+                text=str(preset.get("name") or f"Preset {preset_index + 1}"),
+                icon="PRESET",
+            )
             op.node_tree_name = getattr(tree, "name_full", tree.name)
             op.node_name = preset_node.name
-            op.preset_id = getattr(preset_node, "omni_preset_id", "NONE")
+            op.preset_id = str(preset_index)
 
     label = "重建所选节点" if target_count > 1 else "重建节点"
     layout.operator(OmniNodeRebuild.bl_idname, text=label, icon="NODETREE")
