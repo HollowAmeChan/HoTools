@@ -299,10 +299,11 @@ NodeTree/OmniIR.py
 
 1. `OmniCompiler.compile(tree, debug=False)` 创建 `CompilerContext`。
 2. `CompilerContext` 检查子树循环引用。
-3. 从输出节点反向 DFS 收集可达子图。
-4. 拓扑排序。
-5. 逐节点调用 emitter。
-6. 输出 `CompiledGraph`。
+3. 从输出节点反向 DFS 收集可达子图；如果遇到 `node.mute == True`，该节点作为搜索屏障，节点本身和输入侧上游都不进入可执行子图。
+4. 编译输入 socket 时只接受仍在可执行子图内的 link；从 muted/被剪枝节点来的可见连线按未连接处理，走目标 socket 默认值。
+5. 拓扑排序。
+6. 逐节点调用 emitter。
+7. 输出 `CompiledGraph`。
 
 特殊节点通过 `CompilerContext.SPECIAL_EMITTERS` 分派：
 

@@ -51,6 +51,15 @@ class OmniCompiler:
         return OmniCompiler._node_idname(node) == OmniCompiler.FRAME_NODE_IDNAME
 
     @staticmethod
+    def _is_muted_node(node):
+        # Blender 里对节点按 M 会设置 node.mute。OmniNode 不复刻 Blender 内部旁路线，
+        # 编译时把 muted 节点视为反向搜索屏障，节点本身和它的上游都不进入 IR。
+        try:
+            return bool(getattr(node, "mute", False))
+        except Exception:
+            return False
+
+    @staticmethod
     def topo_sort(nodes, links):
         """
         nodes: set[OmniNode]
@@ -121,6 +130,8 @@ class CompilerContext:
         self.reg_id = 0
         self.instructions = []
         self.topo = []
+        self.reachable_nodes = set()
+        self.muted_nodes = set()
 
         OmniRuntimeState.ensure_tree_runtime_uids(tree)
 
@@ -140,6 +151,7 @@ class CompilerContext:
         self.compiling_stack = self.compiling_stack + [self.tree]
 
         output_nodes, visited, links = self._collect_reachable_graph()
+        self.reachable_nodes = visited
         self.topo = OmniCompiler.topo_sort(visited, links)
         self._trace_topology(output_nodes)
 
@@ -163,6 +175,16 @@ class CompilerContext:
         def dfs(node):
             if node in visited:
                 return
+            if OmniCompiler._is_muted_node(node):
+                # muted 节点不生成输出寄存器，也不继续向输入侧搜索；
+                # 下游仍保留的可见连线会在编译输入时按 reachable_nodes 再过滤。
+                self.muted_nodes.add(node)
+                OmniDebug.append_compile_trace(
+                    self.graph,
+                    f"Block MUTED node {OmniDebug.node_name(node)} and skip its upstream",
+                )
+                return
+
             visited.add(node)
 
             if OmniCompiler._is_frame_node(node):
@@ -170,6 +192,15 @@ class CompilerContext:
 
             for input_socket in node.inputs:
                 for link in input_socket.links:
+                    if OmniCompiler._is_muted_node(link.from_node):
+                        # 到 muted 节点的 link 只属于编辑器可视连接，不参与运行时数据流。
+                        self.muted_nodes.add(link.from_node)
+                        OmniDebug.append_compile_trace(
+                            self.graph,
+                            f"Ignore link from MUTED {OmniDebug.node_name(link.from_node)} -> "
+                            f"{OmniDebug.node_name(node)}.{OmniDebug.socket_name(input_socket)}",
+                        )
+                        continue
                     links.add(link)
                     dfs(link.from_node)
 
@@ -189,10 +220,25 @@ class CompilerContext:
             "Topo order: " + ", ".join(OmniDebug.node_name(node) for node in self.topo)
             if self.topo else "Topo order: <empty>",
         )
+        if self.muted_nodes:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                "Muted nodes blocked: " + ", ".join(
+                    sorted(OmniDebug.node_name(node) for node in self.muted_nodes)
+                ),
+            )
 
     def sorted_socket_links(self, sock):
+        # 反向搜索遇到 muted 节点会把那条分支剪掉，但 Blender 的 socket.links
+        # 仍然保留可见连线；这里按可执行子图过滤，避免读取未分配的上游寄存器。
+        active_nodes = self.reachable_nodes
+        links = [
+            link
+            for link in sock.links
+            if link.from_node in active_nodes and link.to_node in active_nodes
+        ]
         return sorted(
-            sock.links,
+            links,
             key=lambda link: (link.from_node.name, link.from_socket.identifier),
         )
 
