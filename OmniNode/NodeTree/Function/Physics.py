@@ -7,6 +7,7 @@ from ....PhysicsTools.deltaOutput import PhysicsDeltaOutputSpec
 from ....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
 from ....PhysicsTools.deltaOutput import ensure_delta_output as _ensure_delta_output
 from ....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
+from ..OmniDebug import OmniDebug
 from ..FunctionNodeCore import omni
 from . import _Color
 
@@ -2338,6 +2339,20 @@ def springBoneVRMChainSetting(
 
 
 class _SpringBoneVRM:
+    DEBUG_PRINT_INTERVAL = 1.0
+    _TIMING_SUM_STAGES = {
+        "cache",
+        "restore",
+        "rebuild",
+        "colliders",
+        "targets",
+        "solve",
+        "solve_total",
+        "write",
+        "total",
+    }
+    _debug_profiles = {}
+
     @staticmethod
     def settings_for_armature(
         armature_obj: bpy.types.Object,
@@ -2410,11 +2425,15 @@ class _SpringBoneVRM:
         enabled: bool = True,
         reset: bool = False,
         substeps: int = 1,
+        timing: dict | None = None,
     ) -> dict:
+        stage_start = time.perf_counter() if timing is not None else None
         armature_obj = _BonePhysics.require_armature(armature_obj, "armature_obj")
         scene = scene or bpy.context.scene
         current_frame = int(getattr(scene, "frame_current", bpy.context.scene.frame_current))
         settings, affected_bones = cls.settings_for_armature(armature_obj, vrm_chain_settings)
+        if timing is not None:
+            cls._add_timing(timing, "validate", time.perf_counter() - stage_start)
 
         runtime = {
             "backend_tag": backend_tag,
@@ -2430,34 +2449,53 @@ class _SpringBoneVRM:
             runtime["early_result"] = (_OmniCache(cache_state), affected_bones, armature_obj, 0, 0)
             return runtime
 
+        stage_start = time.perf_counter() if timing is not None else None
         topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
         state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
         needs_reset = bool(reset) or not isinstance(state, dict)
+        if timing is not None:
+            cls._add_timing(timing, "cache", time.perf_counter() - stage_start)
 
         if isinstance(state, dict) and state.get("frame") is not None:
             try:
                 last_frame = int(state.get("frame"))
                 if current_frame not in {last_frame, last_frame + 1}:
+                    stage_start = time.perf_counter() if timing is not None else None
                     _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
+                    if timing is not None:
+                        cls._add_timing(timing, "restore", time.perf_counter() - stage_start)
                     runtime["early_result"] = (_OmniCache(None), affected_bones, armature_obj, len(settings), 0)
                     return runtime
             except Exception:
+                stage_start = time.perf_counter() if timing is not None else None
                 _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
+                if timing is not None:
+                    cls._add_timing(timing, "restore", time.perf_counter() - stage_start)
                 runtime["early_result"] = (_OmniCache(None), affected_bones, armature_obj, len(settings), 0)
                 return runtime
 
         if needs_reset:
+            stage_start = time.perf_counter() if timing is not None else None
             _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
             state = _BonePhysics.build_vrm_spring_bone_state(armature_obj, settings, topology_key)
+            if timing is not None:
+                cls._add_timing(timing, "rebuild", time.perf_counter() - stage_start)
 
         if not enabled:
             state["frame"] = current_frame
             runtime["early_result"] = (_OmniCache(state), affected_bones, armature_obj, len(settings), 0)
             return runtime
 
+        stage_start = time.perf_counter() if timing is not None else None
         collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
         colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+        if timing is not None:
+            cls._add_timing(timing, "colliders", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
         target_pose_matrices, target_tail_worlds = cls.initial_targets(armature_obj, settings)
+        if timing is not None:
+            cls._add_timing(timing, "targets", time.perf_counter() - stage_start)
 
         runtime.update(
             {
@@ -2469,6 +2507,158 @@ class _SpringBoneVRM:
             }
         )
         return runtime
+
+    @staticmethod
+    def _add_timing(timing: dict | None, stage: str, seconds: float) -> None:
+        if timing is None:
+            return
+        stages = timing.setdefault("stages", {})
+        stages[stage] = stages.get(stage, 0.0) + max(float(seconds), 0.0)
+
+    @classmethod
+    def _begin_timing(cls) -> dict:
+        return {"start": time.perf_counter(), "stages": {}}
+
+    @classmethod
+    def _timing_stage_is_sum(cls, stage: str) -> bool:
+        return str(stage) in cls._TIMING_SUM_STAGES
+
+    @classmethod
+    def _timing_role_label(cls, stage: str) -> str:
+        if cls._timing_stage_is_sum(stage):
+            return OmniDebug.str_color("[sum]", 93)
+        return OmniDebug.str_color("[step]", 95)
+
+    @classmethod
+    def _timing_stage_label(cls, stage: str) -> str:
+        if cls._timing_stage_is_sum(stage):
+            return OmniDebug.str_color(stage, 93)
+        return OmniDebug.func_label(stage)
+
+    @classmethod
+    def _timing_value_label(cls, stage: str, text: str) -> str:
+        if cls._timing_stage_is_sum(stage):
+            return OmniDebug.str_color(text, 93)
+        return OmniDebug.value_label(text)
+
+    @classmethod
+    def _format_debug_timing_report(
+        cls,
+        backend_tag: str,
+        obj_name: str,
+        frame: int,
+        chain_count: int,
+        collider_count: int,
+        elapsed: float,
+        sample_count: int,
+        totals: dict,
+    ) -> list[str]:
+        elapsed_ms = max(float(elapsed), 0.000001) * 1000.0
+        hz = sample_count / max(float(elapsed), 0.000001)
+        total_ms = totals.get("total", 0.0) / sample_count * 1000.0
+        divider = OmniDebug.str_color("-" * 72, 90)
+        title = (
+            f"{OmniDebug.str_color('OMNI DEBUG TIMING', 97)}"
+            f"  |  {OmniDebug.section_label('SpringBoneVRM')} "
+            f"{OmniDebug.func_label(str(backend_tag).upper())}"
+        )
+
+        lines = [
+            "",
+            divider,
+            title,
+            divider,
+            f"  {OmniDebug.section_label('Summary')}: "
+            f"interval={OmniDebug.value_label(f'{elapsed_ms:.1f}ms')}  "
+            f"samples={OmniDebug.value_label(sample_count)}  "
+            f"hz={OmniDebug.value_label(f'{hz:.2f}')}  "
+            f"total={OmniDebug.func_label(f'{total_ms:.3f}ms')}",
+            f"  {OmniDebug.section_label('Context')}: "
+            f"obj={OmniDebug.node_label(obj_name)}  "
+            f"frame={OmniDebug.value_label(frame)}  "
+            f"chains={OmniDebug.value_label(chain_count)}  "
+            f"colliders={OmniDebug.value_label(collider_count)}",
+        ]
+
+        step_stages = [stage for stage in totals if stage != "total"]
+        step_stages.sort(key=lambda stage: totals[stage], reverse=True)
+        if step_stages:
+            lines.append(f"  {OmniDebug.section_label('Slow Steps')}:")
+            for index, stage in enumerate(step_stages, start=1):
+                avg_ms = totals[stage] / sample_count * 1000.0
+                lines.append(
+                    f"    {OmniDebug.value_label(f'{index:02d}.')} "
+                    f"{cls._timing_role_label(stage)} "
+                    f"{cls._timing_stage_label(stage)} = "
+                    f"{cls._timing_value_label(stage, f'{avg_ms:.3f}ms')}"
+                )
+
+        return lines
+
+    @classmethod
+    def _publish_debug_timing(
+        cls,
+        armature_obj: bpy.types.Object,
+        current_frame: int,
+        chain_count: int,
+        collider_count: int,
+        backend_tag: str,
+        timing: dict | None,
+    ) -> None:
+        if timing is None:
+            return
+        now = time.perf_counter()
+        stages = dict(timing.get("stages") or {})
+        stages["total"] = max(now - float(timing.get("start", now)), 0.0)
+        key = (int(armature_obj.as_pointer()), "SpringBoneVRM", str(backend_tag))
+        profile = cls._debug_profiles
+        entry = profile.get(key)
+        first_publish = entry is None
+        if entry is None:
+            entry = {
+                "last_print": now,
+                "frames": 0,
+                "stages": {},
+                "frame": current_frame,
+                "chain_count": chain_count,
+                "collider_count": collider_count,
+            }
+            profile[key] = entry
+        entry["frames"] += 1
+        entry["frame"] = current_frame
+        entry["chain_count"] = chain_count
+        entry["collider_count"] = collider_count
+        for stage, seconds in stages.items():
+            entry["stages"][stage] = entry["stages"].get(stage, 0.0) + float(seconds)
+        if not first_publish and now - float(entry["last_print"]) < cls.DEBUG_PRINT_INTERVAL:
+            return
+
+        sample_count = max(int(entry["frames"]), 1)
+        elapsed = (
+            max(float(entry["stages"].get("total", 0.0)) / sample_count, 0.000001)
+            if first_publish
+            else max(now - float(entry["last_print"]), 0.000001)
+        )
+        print(
+            "\n".join(
+                cls._format_debug_timing_report(
+                    backend_tag,
+                    armature_obj.name_full,
+                    int(entry["frame"]),
+                    int(entry["chain_count"]),
+                    int(entry["collider_count"]),
+                    elapsed,
+                    sample_count,
+                    entry["stages"],
+                )
+            )
+        )
+
+        cls._debug_profiles[key] = {
+            "last_print": now,
+            "frames": 0,
+            "stages": {},
+        }
 
     @staticmethod
     def write_pose(
@@ -2630,6 +2820,7 @@ class _SpringBoneVRM:
         chains_state = runtime["state"].get("chains", {})
         target_pose_matrices = runtime["target_pose_matrices"]
         target_tail_worlds = runtime["target_tail_worlds"]
+        timing = runtime.get("timing")
 
         for _ in range(substep_count):
             next_chains_state = {}
@@ -2659,6 +2850,7 @@ class _SpringBoneVRM:
                 if gravity.length > _BonePhysics.EPSILON:
                     gravity.normalize()
 
+                stage_start = time.perf_counter() if timing is not None else None
                 chain_colliders = [
                     collider
                     for collider in colliders
@@ -2669,6 +2861,8 @@ class _SpringBoneVRM:
                         and str(collider.get("bone") or "") in chain_bones
                     )
                 ]
+                if timing is not None:
+                    cls._add_timing(timing, "collision_setup", time.perf_counter() - stage_start)
                 (
                     collider_types,
                     collider_groups,
@@ -2689,6 +2883,7 @@ class _SpringBoneVRM:
                     if pose_bone is None or not isinstance(joint, dict):
                         continue
 
+                    stage_start = time.perf_counter() if timing is not None else None
                     if bool(joint.get("pinned", False)):
                         target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
                             armature_obj,
@@ -2698,6 +2893,8 @@ class _SpringBoneVRM:
                         next_joints[bone_name] = next_joint
                         target_pose_matrices[bone_name] = target_matrix
                         target_tail_worlds[bone_name] = pinned_tail.copy()
+                        if timing is not None:
+                            cls._add_timing(timing, "pin", time.perf_counter() - stage_start)
                         continue
 
                     current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
@@ -2736,6 +2933,7 @@ class _SpringBoneVRM:
                     parent = getattr(pose_bone, "parent", None)
                     parent_target_matrix = target_pose_matrices.get(parent.name) if parent is not None else None
 
+                    stage_start = time.perf_counter() if timing is not None else None
                     current_tails = np.empty((1, 3), dtype=np.float32)
                     prev_tails = np.empty((1, 3), dtype=np.float32)
                     target_matrices = np.empty((1, 16), dtype=np.float32)
@@ -2781,7 +2979,10 @@ class _SpringBoneVRM:
                     init_rotations[0] = _MeshPhysics.quaternion_to_numpy(init_rotation_value)
                     init_scales[0] = _MeshPhysics.vector_to_numpy(init_scale_value)
                     hit_radii[0], collided_by_groups[0] = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
+                    if timing is not None:
+                        cls._add_timing(timing, "pack", time.perf_counter() - stage_start)
 
+                    stage_start = time.perf_counter() if timing is not None else None
                     before_current_tail = current_tails[0].copy()
                     _SpringBoneVRMCppBackend.solve_spring_bone_vrm_cpp(
                         current_tails,
@@ -2819,9 +3020,14 @@ class _SpringBoneVRM:
                         drag_force,
                         gravity_power,
                     )
+                    if timing is not None:
+                        cls._add_timing(timing, "native_core", time.perf_counter() - stage_start)
 
+                    stage_start = time.perf_counter() if timing is not None else None
                     next_tail = mathutils.Vector(tuple(float(v) for v in current_tails[0]))
                     if (next_tail - head).length <= _BonePhysics.EPSILON:
+                        if timing is not None:
+                            cls._add_timing(timing, "unpack", time.perf_counter() - stage_start)
                         continue
 
                     next_joint = dict(joint)
@@ -2830,6 +3036,8 @@ class _SpringBoneVRM:
                     next_joints[bone_name] = next_joint
                     target_pose_matrices[bone_name] = _SpringBoneVRMCppBackend.matrix_from_numpy(target_matrices[0])
                     target_tail_worlds[bone_name] = next_tail.copy()
+                    if timing is not None:
+                        cls._add_timing(timing, "unpack", time.perf_counter() - stage_start)
 
                 next_chains_state[root_name] = {
                     "bones": bones,
@@ -2851,7 +3059,9 @@ class _SpringBoneVRM:
         enabled: bool = True,
         reset: bool = False,
         substeps: int = 1,
+        debug_output: bool = False,
     ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
+        timing = cls._begin_timing() if debug_output else None
         backend_tag = str(backend_tag or "py").lower()
         runtime = cls.prepare(
             backend_tag=backend_tag,
@@ -2862,11 +3072,22 @@ class _SpringBoneVRM:
             enabled=enabled,
             reset=reset,
             substeps=substeps,
+            timing=timing,
         )
         early_result = runtime.get("early_result")
         if early_result is not None:
+            if timing is not None:
+                cls._publish_debug_timing(
+                    runtime["armature_obj"],
+                    runtime["current_frame"],
+                    len(runtime["settings"]),
+                    0,
+                    backend_tag,
+                    timing,
+                )
             return early_result
 
+        stage_start = time.perf_counter() if timing is not None else None
         if backend_tag in {"cpp", "c++", "native"}:
             if not _SpringBoneVRMCppBackend.is_available():
                 raise ImportError("hotools_native is not available; build the native backend first")
@@ -2875,16 +3096,30 @@ class _SpringBoneVRM:
             chains_state = cls.solve_py(runtime)
         else:
             raise ValueError(f"unsupported VRM SpringBone backend: {backend_tag}")
+        if timing is not None:
+            cls._add_timing(timing, "solve", time.perf_counter() - stage_start)
 
         state = runtime["state"]
         state["frame"] = runtime["current_frame"]
         state["chains"] = chains_state
+        stage_start = time.perf_counter() if timing is not None else None
         cls.write_pose(
             runtime["armature_obj"],
             runtime["settings"],
             runtime["target_pose_matrices"],
         )
+        if timing is not None:
+            cls._add_timing(timing, "write", time.perf_counter() - stage_start)
         runtime["armature_obj"].update_tag()
+        if timing is not None:
+            cls._publish_debug_timing(
+                runtime["armature_obj"],
+                runtime["current_frame"],
+                len(runtime["settings"]),
+                len(runtime["colliders"]),
+                backend_tag,
+                timing,
+            )
         return (
             _OmniCache(state),
             runtime["affected_bones"],
@@ -2903,6 +3138,7 @@ def _run_spring_bone_vrm_node(
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
+    debug_output: bool = False,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
     return _SpringBoneVRM.run(
         backend_tag=backend_tag,
@@ -2913,6 +3149,7 @@ def _run_spring_bone_vrm_node(
         enabled=enabled,
         reset=reset,
         substeps=substeps,
+        debug_output=debug_output,
     )
 
 @omni(
@@ -2928,9 +3165,11 @@ def _run_spring_bone_vrm_node(
         "启用",
         "重置",
         "子步数",
+        "调试输出",
     ],
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
+        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
     _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
@@ -2963,6 +3202,7 @@ def springBoneVRM(
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
+    debug_output: bool = False,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
     return _run_spring_bone_vrm_node(
         backend_tag="py",
@@ -2973,6 +3213,7 @@ def springBoneVRM(
         enabled=enabled,
         reset=reset,
         substeps=substeps,
+        debug_output=debug_output,
     )
 
 
@@ -2989,9 +3230,11 @@ def springBoneVRM(
         "启用",
         "重置",
         "子步数",
+        "调试输出",
     ],
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
+        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
     _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
@@ -3013,6 +3256,7 @@ def springBoneVRM_CPP(
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
+    debug_output: bool = False,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
     return _run_spring_bone_vrm_node(
         backend_tag="cpp",
@@ -3023,6 +3267,7 @@ def springBoneVRM_CPP(
         enabled=enabled,
         reset=reset,
         substeps=substeps,
+        debug_output=debug_output,
     )
 
 
@@ -3433,13 +3678,6 @@ def springBoneBase(
         )
         if target_matrix is None:
             continue
-
-        next_joint = dict(joint)
-        next_joint["prev_tail"] = current_tail.copy()
-        next_joint["current_tail"] = next_tail.copy()
-        next_joints[bone_name] = next_joint
-        target_pose_matrices[bone_name] = target_matrix
-        target_tail_worlds[bone_name] = next_tail.copy()
 
     for bone_name in _BonePhysics.simulated_bone_names(bone_chain):
         pose_bone = armature_obj.pose.bones.get(bone_name)
