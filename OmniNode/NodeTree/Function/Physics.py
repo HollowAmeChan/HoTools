@@ -2463,6 +2463,7 @@ class _SpringBoneVRM:
     }
     _TIMING_INNER_STAGES = {
         "collision_setup",
+        "runtime_refresh",
         "pack",
         "native_core",
         "unpack",
@@ -3409,6 +3410,191 @@ class _SpringBoneVRM:
         return chains_state
 
     @classmethod
+    def build_cpp_chain_runtime(cls, armature_obj: bpy.types.Object, settings: list[dict], chains_state: dict) -> dict:
+        chain_runtime_by_root = {}
+        for setting in settings:
+            root_name = str(setting.get("root_bone") or "")
+            chain_state = chains_state.get(root_name)
+            if not isinstance(chain_state, dict):
+                continue
+            bones = list(chain_state.get("bones") or [])
+            joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
+            simulated_names = _BonePhysics.simulated_bone_names(
+                {
+                    "armature": armature_obj,
+                    "root_bone": root_name,
+                    "bones": bones,
+                }
+            )
+
+            static_records = []
+            for bone_name in simulated_names:
+                pose_bone = armature_obj.pose.bones.get(bone_name)
+                joint = joints.get(bone_name) if isinstance(joints, dict) else None
+                if pose_bone is None or not isinstance(joint, dict):
+                    continue
+
+                pinned_value = bool(joint.get("pinned", False))
+                current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+                length = float(joint.get("length", (fallback_tail - current_head).length))
+                if not pinned_value and length <= _BonePhysics.EPSILON:
+                    continue
+
+                fallback_axis = pose_bone.tail.copy() - pose_bone.head.copy()
+                fallback_axis = (
+                    fallback_axis.normalized()
+                    if fallback_axis.length > _BonePhysics.EPSILON
+                    else mathutils.Vector((0.0, 0.0, 1.0))
+                )
+                init_axis_local_value = _BonePhysics.vector3(joint.get("init_axis_local"), fallback_axis)
+                if not pinned_value and init_axis_local_value.length <= _BonePhysics.EPSILON:
+                    continue
+
+                parent = getattr(pose_bone, "parent", None)
+                joint_template = dict(joint)
+                joint_template.pop("prev_tail", None)
+                joint_template.pop("current_tail", None)
+                static_records.append(
+                    {
+                        "bone_name": bone_name,
+                        "pose_bone": pose_bone,
+                        "pinned": pinned_value,
+                        "joint_template": joint_template,
+                        "fallback_tail": fallback_tail,
+                        "length": max(length, 0.0),
+                        "init_axis_local_np": _MeshPhysics.vector_to_numpy(init_axis_local_value),
+                        "init_axis_parent_np": _MeshPhysics.vector_to_numpy(
+                            _BonePhysics.vector3(joint.get("init_axis_parent"), fallback_axis)
+                        ),
+                        "init_rotation_np": _MeshPhysics.quaternion_to_numpy(
+                            _BonePhysics.quaternion_from_value(
+                                joint.get("init_rotation"),
+                                pose_bone.matrix.to_quaternion(),
+                            )
+                        ),
+                        "init_scale_np": _MeshPhysics.vector_to_numpy(
+                            _BonePhysics.vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
+                        ),
+                        "parent": parent,
+                        "parent_name": parent.name if parent is not None else "",
+                        "use_connect": bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False)),
+                    }
+                )
+
+            batches = []
+            batch = []
+            batch_names = set()
+            for record in static_records:
+                if batch and record["parent_name"] in batch_names and not record["use_connect"]:
+                    batches.append(batch)
+                    batch = []
+                    batch_names = set()
+                batch.append(record)
+                batch_names.add(record["bone_name"])
+            if batch:
+                batches.append(batch)
+
+            batch_runtimes = []
+            for batch in batches:
+                bone_count = len(batch)
+                if bone_count <= 0:
+                    continue
+                batch_indices = {record["bone_name"]: index for index, record in enumerate(batch)}
+                current_pose_matrices = np.empty((bone_count, 16), dtype=np.float32)
+                current_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
+                current_pose_tails = np.empty((bone_count, 3), dtype=np.float32)
+                lengths = np.empty(bone_count, dtype=np.float32)
+                init_axis_local = np.empty((bone_count, 3), dtype=np.float32)
+                init_axis_parent = np.empty((bone_count, 3), dtype=np.float32)
+                init_rotations = np.empty((bone_count, 4), dtype=np.float32)
+                init_scales = np.empty((bone_count, 3), dtype=np.float32)
+                parent_indices = np.full(bone_count, -1, dtype=np.int32)
+                pinned = np.zeros(bone_count, dtype=np.uint8)
+                use_connect = np.zeros(bone_count, dtype=np.uint8)
+                hit_radii = np.empty(bone_count, dtype=np.float32)
+                collided_by_groups = np.empty(bone_count, dtype=np.int32)
+
+                for index, record in enumerate(batch):
+                    parent_indices[index] = int(batch_indices.get(record["parent_name"], -1))
+                    pinned[index] = 1 if record["pinned"] else 0
+                    use_connect[index] = 1 if record["use_connect"] else 0
+                    lengths[index] = float(record["length"])
+                    init_axis_local[index] = record["init_axis_local_np"]
+                    init_axis_parent[index] = record["init_axis_parent_np"]
+                    init_rotations[index] = record["init_rotation_np"]
+                    init_scales[index] = record["init_scale_np"]
+
+                batch_runtimes.append(
+                    {
+                        "records": batch,
+                        "current_pose_matrices": current_pose_matrices,
+                        "current_pose_quaternions": current_pose_quaternions,
+                        "current_pose_tails": current_pose_tails,
+                        "lengths": lengths,
+                        "init_axis_local": init_axis_local,
+                        "init_axis_parent": init_axis_parent,
+                        "init_rotations": init_rotations,
+                        "init_scales": init_scales,
+                        "parent_indices": parent_indices,
+                        "pinned": pinned,
+                        "use_connect": use_connect,
+                        "hit_radii": hit_radii,
+                        "collided_by_groups": collided_by_groups,
+                        "current_tails": np.empty((bone_count, 3), dtype=np.float32),
+                        "prev_tails": np.empty((bone_count, 3), dtype=np.float32),
+                        "target_matrices": np.empty((bone_count, 16), dtype=np.float32),
+                        "target_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+                        "current_heads": np.empty((bone_count, 3), dtype=np.float32),
+                        "parent_pose_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+                    }
+                )
+
+            chain_runtime_by_root[root_name] = {
+                "bones": bones,
+                "simulated_names": simulated_names,
+                "chain_bones": set(bones),
+                "chain_collision_mask": 0,
+                "batches": batch_runtimes,
+                "collider_arrays": _SpringBoneVRMCppBackend.empty_collision_arrays(),
+            }
+
+        return chain_runtime_by_root
+
+    @classmethod
+    def refresh_cpp_chain_runtime(cls, armature_obj: bpy.types.Object, chain_runtime_by_root: dict) -> None:
+        for chain_runtime in chain_runtime_by_root.values():
+            if not isinstance(chain_runtime, dict):
+                continue
+            chain_collision_mask = 0
+            for batch_runtime in chain_runtime.get("batches", []):
+                records = batch_runtime.get("records", []) if isinstance(batch_runtime, dict) else []
+                current_pose_matrices = batch_runtime["current_pose_matrices"]
+                current_pose_quaternions = batch_runtime["current_pose_quaternions"]
+                current_pose_tails = batch_runtime["current_pose_tails"]
+                hit_radii = batch_runtime["hit_radii"]
+                collided_by_groups = batch_runtime["collided_by_groups"]
+
+                for index, record in enumerate(records):
+                    pose_bone = record.get("pose_bone")
+                    bone_name = str(record.get("bone_name") or "")
+                    if pose_bone is None:
+                        continue
+                    matrix = pose_bone.matrix
+                    _current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+                    record["fallback_tail"] = fallback_tail
+                    current_pose_matrices[index] = _MeshPhysics.matrix4_to_numpy(matrix).reshape(16)
+                    current_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(matrix.to_quaternion())
+                    current_pose_tails[index] = _MeshPhysics.vector_to_numpy(fallback_tail)
+
+                    hit_radius, collided_by_group = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
+                    hit_radii[index] = float(hit_radius)
+                    collided_by_groups[index] = int(collided_by_group)
+                    if hit_radius > _BonePhysics.EPSILON:
+                        chain_collision_mask |= int(collided_by_group)
+
+            chain_runtime["chain_collision_mask"] = int(chain_collision_mask)
+
+    @classmethod
     def solve_cpp(cls, runtime: dict) -> dict:
         armature_obj = runtime["armature_obj"]
         settings = runtime["settings"]
@@ -3497,176 +3683,46 @@ class _SpringBoneVRM:
                 np.ascontiguousarray(all_collider_radii[mask], dtype=np.float32),
             )
 
-        chain_runtime_by_root = {}
-        for setting in settings:
-            root_name = str(setting.get("root_bone") or "")
-            chain_state = chains_state.get(root_name)
-            if not isinstance(chain_state, dict):
-                continue
-            bones = list(chain_state.get("bones") or [])
-            joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
-            chain_bones = set(bones)
-            simulated_names = _BonePhysics.simulated_bone_names(
-                {
-                    "armature": armature_obj,
-                    "root_bone": root_name,
-                    "bones": bones,
-                }
-            )
-            profile_by_bone = {}
-            chain_collision_mask = 0
-            for bone_name in simulated_names:
-                hit_radius, collided_by_groups = _BonePhysics.vrm_spring_bone_collision_profile(
-                    armature_obj,
-                    bone_name,
-                )
-                profile_by_bone[bone_name] = (hit_radius, collided_by_groups)
-                if hit_radius > _BonePhysics.EPSILON:
-                    chain_collision_mask |= int(collided_by_groups)
+        state = runtime["state"]
+        cpp_runtime = state.get("cpp_runtime") if isinstance(state, dict) else None
+        cpp_runtime_key = (
+            "spring_bone_vrm_cpp",
+            state.get("topology_key") if isinstance(state, dict) else None,
+            tuple((str(setting.get("root_bone") or ""), tuple(setting.get("bones") or [])) for setting in settings),
+            tuple(
+                (str(root_name), tuple((chain_state.get("bones") or []) if isinstance(chain_state, dict) else ()))
+                for root_name, chain_state in sorted(chains_state.items())
+            ),
+        )
+        if not isinstance(cpp_runtime, dict) or cpp_runtime.get("key") != cpp_runtime_key:
             stage_start = time.perf_counter() if timing is not None else None
-            collider_arrays = select_collider_arrays(chain_bones, chain_collision_mask)
-            if timing is not None:
-                cls._add_timing(timing, "collision_setup", time.perf_counter() - stage_start)
-
-            static_records = []
-            for bone_name in simulated_names:
-                pose_bone = armature_obj.pose.bones.get(bone_name)
-                joint = joints.get(bone_name) if isinstance(joints, dict) else None
-                if pose_bone is None or not isinstance(joint, dict):
-                    continue
-
-                pinned_value = bool(joint.get("pinned", False))
-                current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
-                length = float(joint.get("length", (fallback_tail - current_head).length))
-                if not pinned_value and length <= _BonePhysics.EPSILON:
-                    continue
-
-                fallback_axis = pose_bone.tail.copy() - pose_bone.head.copy()
-                fallback_axis = (
-                    fallback_axis.normalized()
-                    if fallback_axis.length > _BonePhysics.EPSILON
-                    else mathutils.Vector((0.0, 0.0, 1.0))
-                )
-                init_axis_local_value = _BonePhysics.vector3(joint.get("init_axis_local"), fallback_axis)
-                if not pinned_value and init_axis_local_value.length <= _BonePhysics.EPSILON:
-                    continue
-
-                parent = getattr(pose_bone, "parent", None)
-                joint_template = dict(joint)
-                joint_template.pop("prev_tail", None)
-                joint_template.pop("current_tail", None)
-                static_records.append(
-                    {
-                        "bone_name": bone_name,
-                        "pose_bone": pose_bone,
-                        "pinned": pinned_value,
-                        "joint_template": joint_template,
-                        "fallback_tail": fallback_tail,
-                        "fallback_tail_np": _MeshPhysics.vector_to_numpy(fallback_tail),
-                        "length": max(length, 0.0),
-                        "init_axis_local_np": _MeshPhysics.vector_to_numpy(init_axis_local_value),
-                        "init_axis_parent_np": _MeshPhysics.vector_to_numpy(
-                            _BonePhysics.vector3(joint.get("init_axis_parent"), fallback_axis)
-                        ),
-                        "init_rotation_np": _MeshPhysics.quaternion_to_numpy(
-                            _BonePhysics.quaternion_from_value(
-                                joint.get("init_rotation"),
-                                pose_bone.matrix.to_quaternion(),
-                            )
-                        ),
-                        "init_scale_np": _MeshPhysics.vector_to_numpy(
-                            _BonePhysics.vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
-                        ),
-                        "current_pose_matrix_np": _MeshPhysics.matrix4_to_numpy(pose_bone.matrix.copy()).reshape(16),
-                        "current_pose_quaternion_np": _MeshPhysics.quaternion_to_numpy(pose_bone.matrix.to_quaternion()),
-                        "parent": parent,
-                        "parent_name": parent.name if parent is not None else "",
-                        "use_connect": bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False)),
-                    }
-                )
-
-            batches = []
-            batch = []
-            batch_names = set()
-            for record in static_records:
-                if batch and record["parent_name"] in batch_names and not record["use_connect"]:
-                    batches.append(batch)
-                    batch = []
-                    batch_names = set()
-                batch.append(record)
-                batch_names.add(record["bone_name"])
-            if batch:
-                batches.append(batch)
-
-            batch_runtimes = []
-            for batch in batches:
-                bone_count = len(batch)
-                if bone_count <= 0:
-                    continue
-                batch_indices = {record["bone_name"]: index for index, record in enumerate(batch)}
-                current_pose_matrices = np.empty((bone_count, 16), dtype=np.float32)
-                current_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-                current_pose_tails = np.empty((bone_count, 3), dtype=np.float32)
-                lengths = np.empty(bone_count, dtype=np.float32)
-                init_axis_local = np.empty((bone_count, 3), dtype=np.float32)
-                init_axis_parent = np.empty((bone_count, 3), dtype=np.float32)
-                init_rotations = np.empty((bone_count, 4), dtype=np.float32)
-                init_scales = np.empty((bone_count, 3), dtype=np.float32)
-                parent_indices = np.full(bone_count, -1, dtype=np.int32)
-                pinned = np.zeros(bone_count, dtype=np.uint8)
-                use_connect = np.zeros(bone_count, dtype=np.uint8)
-                hit_radii = np.empty(bone_count, dtype=np.float32)
-                collided_by_groups = np.empty(bone_count, dtype=np.int32)
-
-                for index, record in enumerate(batch):
-                    bone_name = record["bone_name"]
-                    parent_indices[index] = int(batch_indices.get(record["parent_name"], -1))
-                    pinned[index] = 1 if record["pinned"] else 0
-                    use_connect[index] = 1 if record["use_connect"] else 0
-                    current_pose_matrices[index] = record["current_pose_matrix_np"]
-                    current_pose_quaternions[index] = record["current_pose_quaternion_np"]
-                    current_pose_tails[index] = record["fallback_tail_np"]
-                    lengths[index] = float(record["length"])
-                    init_axis_local[index] = record["init_axis_local_np"]
-                    init_axis_parent[index] = record["init_axis_parent_np"]
-                    init_rotations[index] = record["init_rotation_np"]
-                    init_scales[index] = record["init_scale_np"]
-                    hit_radius, collided_by_group = profile_by_bone.get(bone_name, (0.0, 0))
-                    hit_radii[index] = float(hit_radius)
-                    collided_by_groups[index] = int(collided_by_group)
-
-                batch_runtimes.append(
-                    {
-                        "records": batch,
-                        "current_pose_matrices": current_pose_matrices,
-                        "current_pose_quaternions": current_pose_quaternions,
-                        "current_pose_tails": current_pose_tails,
-                        "lengths": lengths,
-                        "init_axis_local": init_axis_local,
-                        "init_axis_parent": init_axis_parent,
-                        "init_rotations": init_rotations,
-                        "init_scales": init_scales,
-                        "parent_indices": parent_indices,
-                        "pinned": pinned,
-                        "use_connect": use_connect,
-                        "hit_radii": hit_radii,
-                        "collided_by_groups": collided_by_groups,
-                        "current_tails": np.empty((bone_count, 3), dtype=np.float32),
-                        "prev_tails": np.empty((bone_count, 3), dtype=np.float32),
-                        "target_matrices": np.empty((bone_count, 16), dtype=np.float32),
-                        "target_quaternions": np.empty((bone_count, 4), dtype=np.float32),
-                        "current_heads": np.empty((bone_count, 3), dtype=np.float32),
-                        "parent_pose_quaternions": np.empty((bone_count, 4), dtype=np.float32),
-                    }
-                )
-
-            chain_runtime_by_root[root_name] = {
-                "bones": bones,
-                "simulated_names": simulated_names,
-                "profile_by_bone": profile_by_bone,
-                "batches": batch_runtimes,
-                "collider_arrays": collider_arrays,
+            chain_runtime_by_root = cls.build_cpp_chain_runtime(armature_obj, settings, chains_state)
+            cpp_runtime = {
+                "key": cpp_runtime_key,
+                "chains": chain_runtime_by_root,
             }
+            if isinstance(state, dict):
+                state["cpp_runtime"] = cpp_runtime
+            if timing is not None:
+                cls._add_timing(timing, "cpp_runtime", time.perf_counter() - stage_start)
+        else:
+            chain_runtime_by_root = cpp_runtime.get("chains", {})
+
+        stage_start = time.perf_counter() if timing is not None else None
+        cls.refresh_cpp_chain_runtime(armature_obj, chain_runtime_by_root)
+        if timing is not None:
+            cls._add_timing(timing, "runtime_refresh", time.perf_counter() - stage_start)
+
+        stage_start = time.perf_counter() if timing is not None else None
+        for chain_runtime in chain_runtime_by_root.values():
+            if not isinstance(chain_runtime, dict):
+                continue
+            chain_runtime["collider_arrays"] = select_collider_arrays(
+                chain_runtime.get("chain_bones", set()),
+                int(chain_runtime.get("chain_collision_mask", 0)),
+            )
+        if timing is not None:
+            cls._add_timing(timing, "collision_setup", time.perf_counter() - stage_start)
 
         for _ in range(substep_count):
             next_chains_state = {}
