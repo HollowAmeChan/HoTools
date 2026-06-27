@@ -400,7 +400,17 @@ void solve_spring_bone_vrm_chain(SpringBoneVrmChainView& view) {
     const int substep_count = std::max(view.substeps, 1);
     const float step_dt = substep_count > 0 ? view.dt / static_cast<float>(substep_count) : view.dt;
     float gravity_dir[3] = {view.gravity_dir[0], view.gravity_dir[1], view.gravity_dir[2]};
-    normalize3(gravity_dir[0], gravity_dir[1], gravity_dir[2]);
+    const float gravity_len = length3(gravity_dir[0], gravity_dir[1], gravity_dir[2]);
+    if (gravity_len > kEpsilon) {
+        const float inv_gravity_len = 1.0f / gravity_len;
+        gravity_dir[0] *= inv_gravity_len;
+        gravity_dir[1] *= inv_gravity_len;
+        gravity_dir[2] *= inv_gravity_len;
+    } else {
+        gravity_dir[0] = 0.0f;
+        gravity_dir[1] = 0.0f;
+        gravity_dir[2] = 0.0f;
+    }
     const float gravity_scale = std::max(view.gravity_power, 0.0f);
 
     float root_quaternion[4] = {

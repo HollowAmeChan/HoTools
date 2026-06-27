@@ -88,6 +88,34 @@ _MESH_XPBD_PRESETS = [
 ]
 
 
+_SPRING_BONE_VRM_PRESETS = [
+    {
+        "name": "标准",
+        "values": {
+            "enabled": True,
+            "reset": False,
+            "substeps": 1,
+        },
+    },
+    {
+        "name": "高稳定",
+        "values": {
+            "enabled": True,
+            "reset": False,
+            "substeps": 4,
+        },
+    },
+    {
+        "name": "重置缓存",
+        "values": {
+            "enabled": True,
+            "reset": True,
+            "substeps": 1,
+        },
+    },
+]
+
+
 class _BonePhysics:
     EPSILON = 0.000001
 
@@ -2309,6 +2337,584 @@ def springBoneVRMChainSetting(
     }
 
 
+class _SpringBoneVRM:
+    @staticmethod
+    def settings_for_armature(
+        armature_obj: bpy.types.Object,
+        vrm_chain_settings: list[typing.Any],
+    ) -> tuple[list[dict], list[_OmniBone]]:
+        settings = [
+            setting
+            for setting in _BonePhysics.flatten_vrm_spring_bone_chain_settings(vrm_chain_settings)
+            if setting.get("armature") is armature_obj
+        ]
+        settings.sort(key=lambda item: str(item.get("root_bone") or ""))
+
+        roots = set()
+        affected_bones = []
+        seen_affected = set()
+        expected_bones = set()
+
+        for setting in settings:
+            root = str(setting.get("root_bone") or "")
+            if not root:
+                raise ValueError("chain setting root_bone is empty")
+            if root in roots:
+                raise ValueError(f"duplicate VRM SpringBone root: {root}")
+            roots.add(root)
+
+            chain = {
+                "armature": armature_obj,
+                "root_bone": setting.get("root_bone", ""),
+                "bones": list(setting.get("bones") or []),
+            }
+            for value in _BonePhysics.bone_socket_values_from_chain(chain):
+                key = (int(armature_obj.as_pointer()), value["bone"])
+                if key not in seen_affected:
+                    affected_bones.append(value)
+                    seen_affected.add(key)
+            for bone_name in _BonePhysics.simulated_bone_names(chain):
+                if bone_name in expected_bones:
+                    raise ValueError(f"duplicate simulated bone across chains: {bone_name}")
+                expected_bones.add(bone_name)
+
+        return settings, affected_bones
+
+    @staticmethod
+    def initial_targets(
+        armature_obj: bpy.types.Object,
+        settings: list[dict],
+    ) -> tuple[dict[str, mathutils.Matrix], dict[str, mathutils.Vector]]:
+        target_pose_matrices = {}
+        target_tail_worlds = {}
+
+        for setting in settings:
+            root_name = str(setting.get("root_bone") or "")
+            root_pose_bone = armature_obj.pose.bones.get(root_name)
+            if root_pose_bone is None:
+                continue
+            target_pose_matrices[root_name] = root_pose_bone.matrix.copy()
+            _, root_tail_world = _BonePhysics.pose_head_tail_world(armature_obj, root_pose_bone)
+            target_tail_worlds[root_name] = root_tail_world.copy()
+
+        return target_pose_matrices, target_tail_worlds
+
+    @classmethod
+    def prepare(
+        cls,
+        backend_tag: str,
+        cache_state: _OmniCache,
+        armature_obj: bpy.types.Object,
+        vrm_chain_settings: list[typing.Any],
+        scene: bpy.types.Scene = None,
+        enabled: bool = True,
+        reset: bool = False,
+        substeps: int = 1,
+    ) -> dict:
+        armature_obj = _BonePhysics.require_armature(armature_obj, "armature_obj")
+        scene = scene or bpy.context.scene
+        current_frame = int(getattr(scene, "frame_current", bpy.context.scene.frame_current))
+        settings, affected_bones = cls.settings_for_armature(armature_obj, vrm_chain_settings)
+
+        runtime = {
+            "backend_tag": backend_tag,
+            "armature_obj": armature_obj,
+            "scene": scene,
+            "current_frame": current_frame,
+            "settings": settings,
+            "affected_bones": affected_bones,
+            "substep_count": max(1, min(16, int(substeps))),
+        }
+
+        if not settings:
+            runtime["early_result"] = (_OmniCache(cache_state), affected_bones, armature_obj, 0, 0)
+            return runtime
+
+        topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
+        state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
+        needs_reset = bool(reset) or not isinstance(state, dict)
+
+        if isinstance(state, dict) and state.get("frame") is not None:
+            try:
+                last_frame = int(state.get("frame"))
+                if current_frame not in {last_frame, last_frame + 1}:
+                    _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
+                    runtime["early_result"] = (_OmniCache(None), affected_bones, armature_obj, len(settings), 0)
+                    return runtime
+            except Exception:
+                _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
+                runtime["early_result"] = (_OmniCache(None), affected_bones, armature_obj, len(settings), 0)
+                return runtime
+
+        if needs_reset:
+            _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
+            state = _BonePhysics.build_vrm_spring_bone_state(armature_obj, settings, topology_key)
+
+        if not enabled:
+            state["frame"] = current_frame
+            runtime["early_result"] = (_OmniCache(state), affected_bones, armature_obj, len(settings), 0)
+            return runtime
+
+        collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
+        colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+        target_pose_matrices, target_tail_worlds = cls.initial_targets(armature_obj, settings)
+
+        runtime.update(
+            {
+                "state": state,
+                "colliders": colliders,
+                "dt": _BonePhysics.scene_delta_time(scene),
+                "target_pose_matrices": target_pose_matrices,
+                "target_tail_worlds": target_tail_worlds,
+            }
+        )
+        return runtime
+
+    @staticmethod
+    def write_pose(
+        armature_obj: bpy.types.Object,
+        settings: list[dict],
+        target_pose_matrices: dict[str, mathutils.Matrix],
+    ) -> None:
+        for setting in settings:
+            chain = {
+                "armature": armature_obj,
+                "root_bone": setting.get("root_bone", ""),
+                "bones": list(setting.get("bones") or []),
+            }
+            for bone_name in _BonePhysics.simulated_bone_names(chain):
+                pose_bone = armature_obj.pose.bones.get(bone_name)
+                target_matrix = target_pose_matrices.get(bone_name)
+                if pose_bone is None or target_matrix is None:
+                    continue
+                pose_bone.matrix_basis = _BonePhysics.matrix_basis_from_pose_matrix(
+                    pose_bone,
+                    target_matrix,
+                    target_pose_matrices,
+                )
+
+    @staticmethod
+    def solve_py(runtime: dict) -> dict:
+        armature_obj = runtime["armature_obj"]
+        settings = runtime["settings"]
+        colliders = runtime["colliders"]
+        substep_count = runtime["substep_count"]
+        step_dt = runtime["dt"] / substep_count if substep_count > 0 else runtime["dt"]
+        target_pose_matrices = runtime["target_pose_matrices"]
+        target_tail_worlds = runtime["target_tail_worlds"]
+        chains_state = runtime["state"].get("chains", {})
+
+        for _ in range(substep_count):
+            next_chains_state = {}
+
+            for setting in settings:
+                root_name = str(setting.get("root_bone") or "")
+                chain_state = chains_state.get(root_name)
+                if not isinstance(chain_state, dict):
+                    continue
+
+                bones = list(chain_state.get("bones") or [])
+                joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
+                next_joints = {}
+                chain_bones = set(bones)
+
+                if not bool(setting.get("enabled", True)):
+                    next_chains_state[root_name] = {
+                        "bones": bones,
+                        "joints": joints,
+                    }
+                    continue
+
+                stiffness_force = max(float(setting.get("stiffness_force", 0.0)), 0.0)
+                drag_force = max(0.0, min(1.0, float(setting.get("drag_force", 0.0))))
+                gravity_power = max(float(setting.get("gravity_power", 0.0)), 0.0)
+                gravity = _BonePhysics.vector3(setting.get("gravity_dir"), mathutils.Vector((0.0, 0.0, -1.0)))
+                if gravity.length > _BonePhysics.EPSILON:
+                    gravity.normalize()
+
+                chain = {
+                    "armature": armature_obj,
+                    "root_bone": root_name,
+                    "bones": bones,
+                }
+                for bone_name in _BonePhysics.simulated_bone_names(chain):
+                    pose_bone = armature_obj.pose.bones.get(bone_name)
+                    joint = joints.get(bone_name) if isinstance(joints, dict) else None
+                    if pose_bone is None or not isinstance(joint, dict):
+                        continue
+
+                    if bool(joint.get("pinned", False)):
+                        target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
+                            armature_obj,
+                            pose_bone,
+                            joint,
+                        )
+                        next_joints[bone_name] = next_joint
+                        target_pose_matrices[bone_name] = target_matrix
+                        target_tail_worlds[bone_name] = pinned_tail.copy()
+                        continue
+
+                    current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+                    head = _BonePhysics.target_head_world(
+                        armature_obj,
+                        pose_bone,
+                        target_pose_matrices,
+                        target_tail_worlds,
+                    )
+                    current_tail, prev_tail = _BonePhysics.joint_tail_state(joint, fallback_tail)
+
+                    length = float(joint.get("length", (fallback_tail - current_head).length))
+                    if length <= _BonePhysics.EPSILON:
+                        continue
+
+                    hit_radius, collided_by_groups = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
+                    rest_axis = _BonePhysics.rest_axis_world(
+                        armature_obj,
+                        pose_bone,
+                        joint,
+                        target_pose_matrices,
+                    )
+                    inertia = (current_tail - prev_tail) * (1.0 - drag_force)
+                    next_tail = (
+                        current_tail
+                        + inertia
+                        + rest_axis * stiffness_force * step_dt
+                        + gravity * gravity_power * step_dt
+                    )
+                    next_tail = _BonePhysics.project_tail_to_length(head, next_tail, length, rest_axis)
+                    next_tail = _BonePhysics.project_collision(
+                        hit_radius,
+                        collided_by_groups,
+                        armature_obj,
+                        chain_bones,
+                        colliders,
+                        head,
+                        next_tail,
+                        length,
+                        rest_axis,
+                    )
+
+                    target_matrix = _BonePhysics.pose_matrix_from_tail_world(
+                        armature_obj,
+                        pose_bone,
+                        joint,
+                        head,
+                        next_tail,
+                    )
+                    if target_matrix is None:
+                        continue
+
+                    next_joint = dict(joint)
+                    next_joint["prev_tail"] = current_tail.copy()
+                    next_joint["current_tail"] = next_tail.copy()
+                    next_joints[bone_name] = next_joint
+                    target_pose_matrices[bone_name] = target_matrix
+                    target_tail_worlds[bone_name] = next_tail.copy()
+
+                next_chains_state[root_name] = {
+                    "bones": bones,
+                    "joints": next_joints,
+                }
+
+            chains_state = next_chains_state
+
+        return chains_state
+
+    @staticmethod
+    def solve_cpp(runtime: dict) -> dict:
+        armature_obj = runtime["armature_obj"]
+        settings = runtime["settings"]
+        colliders = runtime["colliders"]
+        substep_count = runtime["substep_count"]
+        step_dt = runtime["dt"] / substep_count if substep_count > 0 else runtime["dt"]
+        chains_state = runtime["state"].get("chains", {})
+        target_pose_matrices = runtime["target_pose_matrices"]
+        target_tail_worlds = runtime["target_tail_worlds"]
+
+        for _ in range(substep_count):
+            next_chains_state = {}
+
+            for setting in settings:
+                root_name = str(setting.get("root_bone") or "")
+                chain_state = chains_state.get(root_name)
+                if not isinstance(chain_state, dict):
+                    continue
+
+                bones = list(chain_state.get("bones") or [])
+                joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
+                next_joints = {}
+                chain_bones = set(bones)
+
+                if not bool(setting.get("enabled", True)):
+                    next_chains_state[root_name] = {
+                        "bones": bones,
+                        "joints": joints,
+                    }
+                    continue
+
+                stiffness_force = max(float(setting.get("stiffness_force", 0.0)), 0.0)
+                drag_force = max(0.0, min(1.0, float(setting.get("drag_force", 0.0))))
+                gravity_power = max(float(setting.get("gravity_power", 0.0)), 0.0)
+                gravity = _BonePhysics.vector3(setting.get("gravity_dir"), mathutils.Vector((0.0, 0.0, -1.0)))
+                if gravity.length > _BonePhysics.EPSILON:
+                    gravity.normalize()
+
+                chain_colliders = [
+                    collider
+                    for collider in colliders
+                    if not (
+                        isinstance(collider, dict)
+                        and collider.get("owner_type") == "BONE"
+                        and collider.get("owner") is armature_obj
+                        and str(collider.get("bone") or "") in chain_bones
+                    )
+                ]
+                (
+                    collider_types,
+                    collider_groups,
+                    collider_centers,
+                    collider_segment_a,
+                    collider_segment_b,
+                    collider_radii,
+                ) = _SpringBoneVRMCppBackend.collision_arrays(chain_colliders)
+
+                chain = {
+                    "armature": armature_obj,
+                    "root_bone": root_name,
+                    "bones": bones,
+                }
+                for bone_name in _BonePhysics.simulated_bone_names(chain):
+                    pose_bone = armature_obj.pose.bones.get(bone_name)
+                    joint = joints.get(bone_name) if isinstance(joints, dict) else None
+                    if pose_bone is None or not isinstance(joint, dict):
+                        continue
+
+                    if bool(joint.get("pinned", False)):
+                        target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
+                            armature_obj,
+                            pose_bone,
+                            joint,
+                        )
+                        next_joints[bone_name] = next_joint
+                        target_pose_matrices[bone_name] = target_matrix
+                        target_tail_worlds[bone_name] = pinned_tail.copy()
+                        continue
+
+                    current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
+                    head = _BonePhysics.target_head_world(
+                        armature_obj,
+                        pose_bone,
+                        target_pose_matrices,
+                        target_tail_worlds,
+                    )
+                    current_tail, prev_tail = _BonePhysics.joint_tail_state(joint, fallback_tail)
+
+                    length = float(joint.get("length", (fallback_tail - current_head).length))
+                    if length <= _BonePhysics.EPSILON:
+                        continue
+
+                    fallback_axis_local = _BonePhysics.direction_to_armature(
+                        armature_obj,
+                        fallback_tail - head,
+                    )
+                    init_axis_local_value = _BonePhysics.vector3(joint.get("init_axis_local"), fallback_axis_local)
+                    if init_axis_local_value.length <= _BonePhysics.EPSILON:
+                        continue
+
+                    fallback_axis = pose_bone.tail.copy() - pose_bone.head.copy()
+                    fallback_axis = (
+                        fallback_axis.normalized()
+                        if fallback_axis.length > _BonePhysics.EPSILON
+                        else mathutils.Vector((0.0, 0.0, 1.0))
+                    )
+                    init_axis_parent_value = _BonePhysics.vector3(joint.get("init_axis_parent"), fallback_axis)
+                    init_rotation_value = _BonePhysics.quaternion_from_value(
+                        joint.get("init_rotation"),
+                        pose_bone.matrix.to_quaternion(),
+                    )
+                    init_scale_value = _BonePhysics.vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
+                    parent = getattr(pose_bone, "parent", None)
+                    parent_target_matrix = target_pose_matrices.get(parent.name) if parent is not None else None
+
+                    current_tails = np.empty((1, 3), dtype=np.float32)
+                    prev_tails = np.empty((1, 3), dtype=np.float32)
+                    target_matrices = np.empty((1, 16), dtype=np.float32)
+                    current_heads = np.empty((1, 3), dtype=np.float32)
+                    current_pose_matrices = np.empty((1, 16), dtype=np.float32)
+                    current_pose_quaternions = np.empty((1, 4), dtype=np.float32)
+                    parent_pose_quaternions = np.empty((1, 4), dtype=np.float32)
+                    current_pose_tails = np.empty((1, 3), dtype=np.float32)
+                    lengths = np.empty(1, dtype=np.float32)
+                    init_axis_local = np.empty((1, 3), dtype=np.float32)
+                    init_axis_parent = np.empty((1, 3), dtype=np.float32)
+                    init_rotations = np.empty((1, 4), dtype=np.float32)
+                    init_scales = np.empty((1, 3), dtype=np.float32)
+                    parent_indices = np.full(1, -1, dtype=np.int32)
+                    pinned = np.zeros(1, dtype=np.uint8)
+                    use_connect = np.zeros(1, dtype=np.uint8)
+                    root_quaternion = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+                    root_tail_world = np.zeros(3, dtype=np.float32)
+                    armature_world = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world).reshape(16)
+                    armature_world_inv = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world.inverted()).reshape(16)
+                    gravity_dir = np.asarray(gravity, dtype=np.float32)
+                    hit_radii = np.empty(1, dtype=np.float32)
+                    collided_by_groups = np.empty(1, dtype=np.int32)
+
+                    parent_quaternion = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+                    if parent_target_matrix is not None:
+                        parent_quaternion = parent_target_matrix.to_quaternion()
+                    elif parent is not None:
+                        parent_quaternion = parent.matrix.to_quaternion()
+
+                    target_matrix = target_pose_matrices.get(bone_name, pose_bone.matrix.copy())
+                    current_tails[0] = _MeshPhysics.vector_to_numpy(current_tail)
+                    prev_tails[0] = _MeshPhysics.vector_to_numpy(prev_tail)
+                    target_matrices[0] = _MeshPhysics.matrix4_to_numpy(target_matrix).reshape(16)
+                    current_heads[0] = _MeshPhysics.vector_to_numpy(head)
+                    current_pose_matrices[0] = _MeshPhysics.matrix4_to_numpy(pose_bone.matrix.copy()).reshape(16)
+                    current_pose_quaternions[0] = _MeshPhysics.quaternion_to_numpy(pose_bone.matrix.to_quaternion())
+                    parent_pose_quaternions[0] = _MeshPhysics.quaternion_to_numpy(parent_quaternion)
+                    current_pose_tails[0] = _MeshPhysics.vector_to_numpy(fallback_tail)
+                    lengths[0] = length
+                    init_axis_local[0] = _MeshPhysics.vector_to_numpy(init_axis_local_value)
+                    init_axis_parent[0] = _MeshPhysics.vector_to_numpy(init_axis_parent_value)
+                    init_rotations[0] = _MeshPhysics.quaternion_to_numpy(init_rotation_value)
+                    init_scales[0] = _MeshPhysics.vector_to_numpy(init_scale_value)
+                    hit_radii[0], collided_by_groups[0] = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
+
+                    before_current_tail = current_tails[0].copy()
+                    _SpringBoneVRMCppBackend.solve_spring_bone_vrm_cpp(
+                        current_tails,
+                        prev_tails,
+                        target_matrices,
+                        current_heads,
+                        current_pose_matrices,
+                        current_pose_quaternions,
+                        parent_pose_quaternions,
+                        current_pose_tails,
+                        lengths,
+                        init_axis_local,
+                        init_axis_parent,
+                        init_rotations,
+                        init_scales,
+                        parent_indices,
+                        pinned,
+                        use_connect,
+                        root_quaternion,
+                        root_tail_world,
+                        armature_world,
+                        armature_world_inv,
+                        gravity_dir,
+                        hit_radii,
+                        collided_by_groups,
+                        collider_types,
+                        collider_groups,
+                        collider_centers,
+                        collider_segment_a,
+                        collider_segment_b,
+                        collider_radii,
+                        step_dt,
+                        1,
+                        stiffness_force,
+                        drag_force,
+                        gravity_power,
+                    )
+
+                    next_tail = mathutils.Vector(tuple(float(v) for v in current_tails[0]))
+                    if (next_tail - head).length <= _BonePhysics.EPSILON:
+                        continue
+
+                    next_joint = dict(joint)
+                    next_joint["prev_tail"] = mathutils.Vector(tuple(float(v) for v in before_current_tail))
+                    next_joint["current_tail"] = next_tail
+                    next_joints[bone_name] = next_joint
+                    target_pose_matrices[bone_name] = _SpringBoneVRMCppBackend.matrix_from_numpy(target_matrices[0])
+                    target_tail_worlds[bone_name] = next_tail.copy()
+
+                next_chains_state[root_name] = {
+                    "bones": bones,
+                    "joints": next_joints,
+                }
+
+            chains_state = next_chains_state
+
+        return chains_state
+
+    @classmethod
+    def run(
+        cls,
+        backend_tag: str,
+        cache_state: _OmniCache,
+        armature_obj: bpy.types.Object,
+        vrm_chain_settings: list[typing.Any],
+        scene: bpy.types.Scene = None,
+        enabled: bool = True,
+        reset: bool = False,
+        substeps: int = 1,
+    ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
+        backend_tag = str(backend_tag or "py").lower()
+        runtime = cls.prepare(
+            backend_tag=backend_tag,
+            cache_state=cache_state,
+            armature_obj=armature_obj,
+            vrm_chain_settings=vrm_chain_settings,
+            scene=scene,
+            enabled=enabled,
+            reset=reset,
+            substeps=substeps,
+        )
+        early_result = runtime.get("early_result")
+        if early_result is not None:
+            return early_result
+
+        if backend_tag in {"cpp", "c++", "native"}:
+            if not _SpringBoneVRMCppBackend.is_available():
+                raise ImportError("hotools_native is not available; build the native backend first")
+            chains_state = cls.solve_cpp(runtime)
+        elif backend_tag in {"py", "python"}:
+            chains_state = cls.solve_py(runtime)
+        else:
+            raise ValueError(f"unsupported VRM SpringBone backend: {backend_tag}")
+
+        state = runtime["state"]
+        state["frame"] = runtime["current_frame"]
+        state["chains"] = chains_state
+        cls.write_pose(
+            runtime["armature_obj"],
+            runtime["settings"],
+            runtime["target_pose_matrices"],
+        )
+        runtime["armature_obj"].update_tag()
+        return (
+            _OmniCache(state),
+            runtime["affected_bones"],
+            runtime["armature_obj"],
+            len(runtime["settings"]),
+            len(runtime["colliders"]),
+        )
+
+
+def _run_spring_bone_vrm_node(
+    backend_tag: str,
+    cache_state: _OmniCache,
+    armature_obj: bpy.types.Object,
+    vrm_chain_settings: list[typing.Any],
+    scene: bpy.types.Scene = None,
+    enabled: bool = True,
+    reset: bool = False,
+    substeps: int = 1,
+) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
+    return _SpringBoneVRM.run(
+        backend_tag=backend_tag,
+        cache_state=cache_state,
+        armature_obj=armature_obj,
+        vrm_chain_settings=vrm_chain_settings,
+        scene=scene,
+        enabled=enabled,
+        reset=reset,
+        substeps=substeps,
+    )
+
 @omni(
     enable=True,
     bl_label="弹簧骨-VRM",
@@ -2326,6 +2932,7 @@ def springBoneVRMChainSetting(
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
     },
+    omni_presets=_SPRING_BONE_VRM_PRESETS,
     _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
     omni_description="""
     骨架级 VRM SpringBone 解算器，统一处理多条骨链的弹簧、重力、碰撞和姿态写回。
@@ -2357,519 +2964,16 @@ def springBoneVRM(
     reset: bool = False,
     substeps: int = 1,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
-    armature_obj = _BonePhysics.require_armature(armature_obj, "armature_obj")
-    scene = scene or bpy.context.scene
-    current_frame = int(getattr(scene, "frame_current", bpy.context.scene.frame_current))
-
-    settings = [
-        setting
-        for setting in _BonePhysics.flatten_vrm_spring_bone_chain_settings(vrm_chain_settings)
-        if setting.get("armature") is armature_obj
-    ]
-    settings.sort(key=lambda item: str(item.get("root_bone") or ""))
-
-    roots = set()
-    for setting in settings:
-        root = str(setting.get("root_bone") or "")
-        if not root:
-            raise ValueError("chain setting root_bone is empty")
-        if root in roots:
-            raise ValueError(f"duplicate VRM SpringBone root: {root}")
-        roots.add(root)
-
-    affected_bones = []
-    seen_affected = set()
-    for setting in settings:
-        chain = {
-            "armature": armature_obj,
-            "root_bone": setting.get("root_bone", ""),
-            "bones": list(setting.get("bones") or []),
-        }
-        for value in _BonePhysics.bone_socket_values_from_chain(chain):
-            key = (int(armature_obj.as_pointer()), value["bone"])
-            if key not in seen_affected:
-                affected_bones.append(value)
-                seen_affected.add(key)
-
-    expected_bones = set()
-    for setting in settings:
-        chain = {
-            "armature": armature_obj,
-            "root_bone": setting.get("root_bone", ""),
-            "bones": list(setting.get("bones") or []),
-        }
-        for bone_name in _BonePhysics.simulated_bone_names(chain):
-            if bone_name in expected_bones:
-                raise ValueError(f"duplicate simulated bone across chains: {bone_name}")
-            expected_bones.add(bone_name)
-
-    if not settings:
-        return _OmniCache(cache_state), affected_bones, armature_obj, 0, 0
-
-    topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
-    state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
-    needs_reset = bool(reset) or not isinstance(state, dict)
-
-    if isinstance(state, dict) and state.get("frame") is not None:
-        try:
-            last_frame = int(state.get("frame"))
-            if current_frame not in {last_frame, last_frame + 1}:
-                _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-                return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
-        except Exception:
-            _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-            return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
-
-    if needs_reset:
-        _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-        state = _BonePhysics.build_vrm_spring_bone_state(armature_obj, settings, topology_key)
-
-    if not enabled:
-        state["frame"] = current_frame
-        return _OmniCache(state), affected_bones, armature_obj, len(settings), 0
-
-    collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
-    colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
-    dt = _BonePhysics.scene_delta_time(scene)
-    substep_count = max(1, min(16, int(substeps)))
-    step_dt = dt / substep_count if substep_count > 0 else dt
-
-    chains_state = state.get("chains", {})
-    target_pose_matrices = {}
-    target_tail_worlds = {}
-
-    for setting in settings:
-        root_name = str(setting.get("root_bone") or "")
-        root_pose_bone = armature_obj.pose.bones.get(root_name)
-        if root_pose_bone is None:
-            continue
-        target_pose_matrices[root_name] = root_pose_bone.matrix.copy()
-        _, root_tail_world = _BonePhysics.pose_head_tail_world(armature_obj, root_pose_bone)
-        target_tail_worlds[root_name] = root_tail_world.copy()
-
-    for _ in range(substep_count):
-        next_chains_state = {}
-
-        for setting in settings:
-            root_name = str(setting.get("root_bone") or "")
-            chain_state = chains_state.get(root_name)
-            if not isinstance(chain_state, dict):
-                continue
-
-            bones = list(chain_state.get("bones") or [])
-            joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
-            next_joints = {}
-            chain_bones = set(bones)
-
-            if not bool(setting.get("enabled", True)):
-                next_chains_state[root_name] = {
-                    "bones": bones,
-                    "joints": joints,
-                }
-                continue
-
-            stiffness_force = max(float(setting.get("stiffness_force", 0.0)), 0.0)
-            drag_force = max(0.0, min(1.0, float(setting.get("drag_force", 0.0))))
-            gravity_power = max(float(setting.get("gravity_power", 0.0)), 0.0)
-            gravity = _BonePhysics.vector3(setting.get("gravity_dir"), mathutils.Vector((0.0, 0.0, -1.0)))
-            if gravity.length > _BonePhysics.EPSILON:
-                gravity.normalize()
-
-            chain = {
-                "armature": armature_obj,
-                "root_bone": root_name,
-                "bones": bones,
-            }
-            for bone_name in _BonePhysics.simulated_bone_names(chain):
-                pose_bone = armature_obj.pose.bones.get(bone_name)
-                joint = joints.get(bone_name) if isinstance(joints, dict) else None
-                if pose_bone is None or not isinstance(joint, dict):
-                    continue
-
-                if bool(joint.get("pinned", False)):
-                    target_matrix, pinned_tail, next_joint = _BonePhysics.pinned_joint_state(
-                        armature_obj,
-                        pose_bone,
-                        joint,
-                    )
-                    next_joints[bone_name] = next_joint
-                    target_pose_matrices[bone_name] = target_matrix
-                    target_tail_worlds[bone_name] = pinned_tail.copy()
-                    continue
-
-                current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
-                head = _BonePhysics.target_head_world(
-                    armature_obj,
-                    pose_bone,
-                    target_pose_matrices,
-                    target_tail_worlds,
-                )
-                current_tail, prev_tail = _BonePhysics.joint_tail_state(joint, fallback_tail)
-
-                length = float(joint.get("length", (fallback_tail - current_head).length))
-                if length <= _BonePhysics.EPSILON:
-                    continue
-
-                hit_radius, collided_by_groups = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
-                rest_axis = _BonePhysics.rest_axis_world(
-                    armature_obj,
-                    pose_bone,
-                    joint,
-                    target_pose_matrices,
-                )
-                inertia = (current_tail - prev_tail) * (1.0 - drag_force)
-                next_tail = (
-                    current_tail
-                    + inertia
-                    + rest_axis * stiffness_force * step_dt
-                    + gravity * gravity_power * step_dt
-                )
-                next_tail = _BonePhysics.project_tail_to_length(head, next_tail, length, rest_axis)
-                next_tail = _BonePhysics.project_collision(
-                    hit_radius,
-                    collided_by_groups,
-                    armature_obj,
-                    chain_bones,
-                    colliders,
-                    head,
-                    next_tail,
-                    length,
-                    rest_axis,
-                )
-
-                target_matrix = _BonePhysics.pose_matrix_from_tail_world(
-                    armature_obj,
-                    pose_bone,
-                    joint,
-                    head,
-                    next_tail,
-                )
-                if target_matrix is None:
-                    continue
-
-                next_joint = dict(joint)
-                next_joint["prev_tail"] = current_tail.copy()
-                next_joint["current_tail"] = next_tail.copy()
-                next_joints[bone_name] = next_joint
-                target_pose_matrices[bone_name] = target_matrix
-                target_tail_worlds[bone_name] = next_tail.copy()
-
-            next_chains_state[root_name] = {
-                "bones": bones,
-                "joints": next_joints,
-            }
-
-        chains_state = next_chains_state
-
-    for setting in settings:
-        chain = {
-            "armature": armature_obj,
-            "root_bone": setting.get("root_bone", ""),
-            "bones": list(setting.get("bones") or []),
-        }
-        for bone_name in _BonePhysics.simulated_bone_names(chain):
-            pose_bone = armature_obj.pose.bones.get(bone_name)
-            target_matrix = target_pose_matrices.get(bone_name)
-            if pose_bone is None or target_matrix is None:
-                continue
-            pose_bone.matrix_basis = _BonePhysics.matrix_basis_from_pose_matrix(
-                pose_bone,
-                target_matrix,
-                target_pose_matrices,
-            )
-
-    state["frame"] = current_frame
-    state["chains"] = chains_state
-    armature_obj.update_tag()
-    return _OmniCache(state), affected_bones, armature_obj, len(settings), len(colliders)
-
-
-def _run_spring_bone_vrm_cpp_node(
-    cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
-    vrm_chain_settings: list[typing.Any],
-    scene: bpy.types.Scene = None,
-    enabled: bool = True,
-    reset: bool = False,
-    substeps: int = 1,
-) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
-    armature_obj = _BonePhysics.require_armature(armature_obj, "armature_obj")
-    scene = scene or bpy.context.scene
-    current_frame = int(getattr(scene, "frame_current", bpy.context.scene.frame_current))
-
-    settings = [
-        setting
-        for setting in _BonePhysics.flatten_vrm_spring_bone_chain_settings(vrm_chain_settings)
-        if setting.get("armature") is armature_obj
-    ]
-    settings.sort(key=lambda item: str(item.get("root_bone") or ""))
-
-    roots = set()
-    for setting in settings:
-        root = str(setting.get("root_bone") or "")
-        if not root:
-            raise ValueError("chain setting root_bone is empty")
-        if root in roots:
-            raise ValueError(f"duplicate VRM SpringBone root: {root}")
-        roots.add(root)
-
-    affected_bones = []
-    seen_affected = set()
-    expected_bones = set()
-    for setting in settings:
-        chain = {
-            "armature": armature_obj,
-            "root_bone": setting.get("root_bone", ""),
-            "bones": list(setting.get("bones") or []),
-        }
-        for value in _BonePhysics.bone_socket_values_from_chain(chain):
-            key = (int(armature_obj.as_pointer()), value["bone"])
-            if key not in seen_affected:
-                affected_bones.append(value)
-                seen_affected.add(key)
-        for bone_name in _BonePhysics.simulated_bone_names(chain):
-            if bone_name in expected_bones:
-                raise ValueError(f"duplicate simulated bone across chains: {bone_name}")
-            expected_bones.add(bone_name)
-
-    if not settings:
-        return _OmniCache(cache_state), affected_bones, armature_obj, 0, 0
-
-    topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
-    state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
-    needs_reset = bool(reset) or not isinstance(state, dict)
-
-    if isinstance(state, dict) and state.get("frame") is not None:
-        try:
-            last_frame = int(state.get("frame"))
-            if current_frame not in {last_frame, last_frame + 1}:
-                _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-                return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
-        except Exception:
-            _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-            return _OmniCache(None), affected_bones, armature_obj, len(settings), 0
-
-    if needs_reset:
-        _BonePhysics.restore_vrm_spring_bone_initial_pose(armature_obj, state)
-        state = _BonePhysics.build_vrm_spring_bone_state(armature_obj, settings, topology_key)
-
-    if not enabled:
-        state["frame"] = current_frame
-        return _OmniCache(state), affected_bones, armature_obj, len(settings), 0
-    if not _SpringBoneVRMCppBackend.is_available():
-        raise ImportError("hotools_native is not available; build the native backend first")
-
-    collision_snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
-    colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
-    dt = _BonePhysics.scene_delta_time(scene)
-    substep_count = max(1, min(16, int(substeps)))
-    chains_state = state.get("chains", {})
-    target_pose_matrices = {}
-    target_tail_worlds = {}
-
-    for setting in settings:
-        root_name = str(setting.get("root_bone") or "")
-        root_pose_bone = armature_obj.pose.bones.get(root_name)
-        if root_pose_bone is None:
-            continue
-        target_pose_matrices[root_name] = root_pose_bone.matrix.copy()
-        _, root_tail_world = _BonePhysics.pose_head_tail_world(armature_obj, root_pose_bone)
-        target_tail_worlds[root_name] = root_tail_world.copy()
-
-    (
-        collider_types,
-        collider_groups,
-        collider_centers,
-        collider_segment_a,
-        collider_segment_b,
-        collider_radii,
-    ) = _SpringBoneVRMCppBackend.collision_arrays(colliders)
-
-    for setting in settings:
-        root_name = str(setting.get("root_bone") or "")
-        chain_state = chains_state.get(root_name)
-        if not isinstance(chain_state, dict):
-            continue
-
-        all_bones = list(chain_state.get("bones") or [])
-        joints = chain_state.get("joints") if isinstance(chain_state.get("joints"), dict) else {}
-        chain = {"armature": armature_obj, "root_bone": root_name, "bones": all_bones}
-        bones = [bone_name for bone_name in _BonePhysics.simulated_bone_names(chain) if isinstance(joints.get(bone_name), dict)]
-        if not bones:
-            continue
-        if not bool(setting.get("enabled", True)):
-            chains_state[root_name] = {"bones": all_bones, "joints": joints}
-            continue
-
-        stiffness_force = max(float(setting.get("stiffness_force", 0.0)), 0.0)
-        drag_force = max(0.0, min(1.0, float(setting.get("drag_force", 0.0))))
-        gravity_power = max(float(setting.get("gravity_power", 0.0)), 0.0)
-        gravity = _BonePhysics.vector3(setting.get("gravity_dir"), mathutils.Vector((0.0, 0.0, -1.0)))
-        if gravity.length > _BonePhysics.EPSILON:
-            gravity.normalize()
-
-        bone_count = len(bones)
-        current_tails = np.empty((bone_count, 3), dtype=np.float32)
-        prev_tails = np.empty((bone_count, 3), dtype=np.float32)
-        target_matrices = np.empty((bone_count, 16), dtype=np.float32)
-        current_heads = np.empty((bone_count, 3), dtype=np.float32)
-        current_pose_matrices = np.empty((bone_count, 16), dtype=np.float32)
-        current_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-        parent_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-        current_pose_tails = np.empty((bone_count, 3), dtype=np.float32)
-        lengths = np.empty(bone_count, dtype=np.float32)
-        init_axis_local = np.empty((bone_count, 3), dtype=np.float32)
-        init_axis_parent = np.empty((bone_count, 3), dtype=np.float32)
-        init_rotations = np.empty((bone_count, 4), dtype=np.float32)
-        init_scales = np.empty((bone_count, 3), dtype=np.float32)
-        parent_indices = np.empty(bone_count, dtype=np.int32)
-        pinned = np.empty(bone_count, dtype=np.uint8)
-        use_connect = np.empty(bone_count, dtype=np.uint8)
-        root_quaternion = np.empty(4, dtype=np.float32)
-        root_tail_world = np.empty(3, dtype=np.float32)
-        armature_world = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world).reshape(16)
-        armature_world_inv = _MeshPhysics.matrix4_to_numpy(armature_obj.matrix_world.inverted()).reshape(16)
-        gravity_dir = np.asarray(gravity, dtype=np.float32)
-        hit_radii = np.empty(bone_count, dtype=np.float32)
-        collided_by_groups = np.empty(bone_count, dtype=np.int32)
-
-        root_pose_bone = armature_obj.pose.bones.get(root_name)
-        root_target_matrix = target_pose_matrices.get(root_name)
-        root_target_tail = target_tail_worlds.get(root_name)
-        if root_target_matrix is not None:
-            root_quaternion[:] = _MeshPhysics.quaternion_to_numpy(root_target_matrix.to_quaternion())
-        elif root_pose_bone is not None:
-            root_quaternion[:] = _MeshPhysics.quaternion_to_numpy(root_pose_bone.matrix.to_quaternion())
-        else:
-            root_quaternion[:] = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
-
-        if root_target_tail is not None:
-            root_tail_world[:] = _MeshPhysics.vector_to_numpy(root_target_tail)
-        elif root_pose_bone is not None:
-            _, root_tail = _BonePhysics.pose_head_tail_world(armature_obj, root_pose_bone)
-            root_tail_world[:] = _MeshPhysics.vector_to_numpy(root_tail)
-        else:
-            root_tail_world[:] = 0.0
-
-        bone_index_map = {name: index for index, name in enumerate(bones)}
-        for index, bone_name in enumerate(bones):
-            pose_bone = armature_obj.pose.bones.get(bone_name)
-            joint = joints.get(bone_name)
-            if pose_bone is None or not isinstance(joint, dict):
-                continue
-
-            current_head, fallback_tail = _BonePhysics.pose_head_tail_world(armature_obj, pose_bone)
-            current_tail = _BonePhysics.vector3(joint.get("current_tail"), fallback_tail)
-            prev_tail = _BonePhysics.vector3(joint.get("prev_tail"), current_tail)
-            if bool(joint.get("pinned", False)):
-                current_tail = fallback_tail.copy()
-                prev_tail = fallback_tail.copy()
-            target_matrix = target_pose_matrices.get(bone_name, pose_bone.matrix.copy())
-
-            current_tails[index] = _MeshPhysics.vector_to_numpy(current_tail)
-            prev_tails[index] = _MeshPhysics.vector_to_numpy(prev_tail)
-            target_matrices[index] = _MeshPhysics.matrix4_to_numpy(target_matrix).reshape(16)
-            current_heads[index] = _MeshPhysics.vector_to_numpy(current_head)
-            current_pose_matrices[index] = _MeshPhysics.matrix4_to_numpy(pose_bone.matrix.copy()).reshape(16)
-            current_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(pose_bone.matrix.to_quaternion())
-            parent_pose = getattr(pose_bone, "parent", None)
-            if parent_pose is not None:
-                parent_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(parent_pose.matrix.to_quaternion())
-            else:
-                parent_pose_quaternions[index] = _MeshPhysics.quaternion_to_numpy(pose_bone.matrix.to_quaternion())
-            current_pose_tails[index] = _MeshPhysics.vector_to_numpy(fallback_tail)
-            lengths[index] = float(joint.get("length", (fallback_tail - current_head).length))
-            init_axis_local[index] = _MeshPhysics.vector_to_numpy(
-                _BonePhysics.vector3(joint.get("init_axis_local"), fallback_tail - current_head)
-            )
-            init_axis_parent[index] = _MeshPhysics.vector_to_numpy(
-                _BonePhysics.vector3(joint.get("init_axis_parent"), fallback_tail - current_head)
-            )
-            init_rotations[index] = _MeshPhysics.quaternion_to_numpy(
-                _BonePhysics.quaternion_from_value(joint.get("init_rotation"), pose_bone.matrix.to_quaternion())
-            )
-            init_scales[index] = _MeshPhysics.vector_to_numpy(
-                _BonePhysics.vector3(joint.get("init_scale"), pose_bone.matrix.to_scale())
-            )
-            parent = getattr(pose_bone, "parent", None)
-            parent_indices[index] = bone_index_map.get(parent.name, -1) if parent is not None else -1
-            pinned[index] = 1 if bool(joint.get("pinned", False)) else 0
-            use_connect[index] = 1 if bool(getattr(getattr(pose_bone, "bone", None), "use_connect", False)) else 0
-            hit_radii[index], collided_by_groups[index] = _BonePhysics.vrm_spring_bone_collision_profile(armature_obj, bone_name)
-
-        before_current_tails = current_tails.copy()
-        _SpringBoneVRMCppBackend.solve_spring_bone_vrm_cpp(
-            current_tails,
-            prev_tails,
-            target_matrices,
-            current_heads,
-            current_pose_matrices,
-            current_pose_quaternions,
-            parent_pose_quaternions,
-            current_pose_tails,
-            lengths,
-            init_axis_local,
-            init_axis_parent,
-            init_rotations,
-            init_scales,
-            parent_indices,
-            pinned,
-            use_connect,
-            root_quaternion,
-            root_tail_world,
-            armature_world,
-            armature_world_inv,
-            gravity_dir,
-            hit_radii,
-            collided_by_groups,
-            collider_types,
-            collider_groups,
-            collider_centers,
-            collider_segment_a,
-            collider_segment_b,
-            collider_radii,
-            dt,
-            substep_count,
-            stiffness_force,
-            drag_force,
-            gravity_power,
-        )
-
-        next_joints = {}
-        for index, bone_name in enumerate(bones):
-            joint = joints.get(bone_name)
-            if not isinstance(joint, dict):
-                continue
-            next_joint = dict(joint)
-            next_joint["prev_tail"] = mathutils.Vector(tuple(float(v) for v in before_current_tails[index]))
-            next_joint["current_tail"] = mathutils.Vector(tuple(float(v) for v in current_tails[index]))
-            next_joints[bone_name] = next_joint
-            target_pose_matrices[bone_name] = _SpringBoneVRMCppBackend.matrix_from_numpy(target_matrices[index])
-            target_tail_worlds[bone_name] = mathutils.Vector(tuple(float(v) for v in current_tails[index]))
-
-        chains_state[root_name] = {"bones": all_bones, "joints": next_joints}
-
-    for setting in settings:
-        chain = {
-            "armature": armature_obj,
-            "root_bone": setting.get("root_bone", ""),
-            "bones": list(setting.get("bones") or []),
-        }
-        for bone_name in _BonePhysics.simulated_bone_names(chain):
-            pose_bone = armature_obj.pose.bones.get(bone_name)
-            target_matrix = target_pose_matrices.get(bone_name)
-            if pose_bone is None or target_matrix is None:
-                continue
-            pose_bone.matrix_basis = _BonePhysics.matrix_basis_from_pose_matrix(
-                pose_bone,
-                target_matrix,
-                target_pose_matrices,
-            )
-
-    state["frame"] = current_frame
-    state["chains"] = chains_state
-    armature_obj.update_tag()
-    return _OmniCache(state), affected_bones, armature_obj, len(settings), len(colliders)
+    return _run_spring_bone_vrm_node(
+        backend_tag="py",
+        cache_state=cache_state,
+        armature_obj=armature_obj,
+        vrm_chain_settings=vrm_chain_settings,
+        scene=scene,
+        enabled=enabled,
+        reset=reset,
+        substeps=substeps,
+    )
 
 
 @omni(
@@ -2889,35 +2993,13 @@ def _run_spring_bone_vrm_cpp_node(
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
     },
-    omni_presets=[
-        {
-            "name": "标准",
-            "values": {
-                "enabled": True,
-                "reset": False,
-                "substeps": 1,
-            },
-        },
-        {
-            "name": "高稳定",
-            "values": {
-                "enabled": True,
-                "reset": False,
-                "substeps": 4,
-            },
-        },
-        {
-            "name": "重置缓存",
-            "values": {
-                "enabled": True,
-                "reset": True,
-                "substeps": 1,
-            },
-        },
-    ],
+    omni_presets=_SPRING_BONE_VRM_PRESETS,
     _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
     omni_description="""
     “弹簧骨-VRM”的 C++ 后端版本。
+
+    注意:由于数据交互传输开销，C++后端在最简场景中会比 Python 后端慢，但是有复杂碰撞存在时可能会更有优势
+    具体选择需要自行通过打开tree的debug运行时长查看，对比开销选择合适的后端
 
     节点输入、输出、缓存协议、跳帧规则和姿态写回方式与 Python 版保持一致。
     Python 层只负责收集 Blender 数据、维护 cache、生成 native 数组和写回 PoseBone；弹簧积分、长度约束、碰撞投影和子步循环由 hotools_native 执行。
@@ -2932,7 +3014,8 @@ def springBoneVRM_CPP(
     reset: bool = False,
     substeps: int = 1,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
-    return _run_spring_bone_vrm_cpp_node(
+    return _run_spring_bone_vrm_node(
+        backend_tag="cpp",
         cache_state=cache_state,
         armature_obj=armature_obj,
         vrm_chain_settings=vrm_chain_settings,
