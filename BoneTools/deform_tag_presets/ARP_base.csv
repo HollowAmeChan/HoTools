@@ -1,3 +1,4 @@
+root,c_pos
 hips,root.x
 spine,spine_01.x
 chest,spine_02.x

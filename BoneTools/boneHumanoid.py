@@ -197,144 +197,30 @@ class OP_DeformTag_addConstraint(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     """
-    这不是一个理论上最干净的通用约束模型，而是我们根据实际测试保留下来的 hack。
-    
-    - 现在的流程里，Humanoid 映射骨、ARP 生成出来的 deform 骨、以及我们自己的 base 骨是要串起来一起用的。
-    - ARP 在生成控制器之后，可能还会直接修正参考骨 / deform 骨的 rest basis。
-    - 这样一来，统一使用同一种约束坐标系就会失效，尤其是 hips 和那些轴向变化很大的骨。
-    
-    这里做了什么：
-    - 先比较 fixed 侧参考骨和 target deform 骨在 rest 状态下的轴向差异。
-    - 如果轴向差异超过阈值，就把 COPY_ROTATION 切到
-      Local Space (Owner Orientation) / Local With Parent，
-      让目标骨按它自己的局部基准来解释旋转。
-    - COPY_LOCATION 默认仍然保持 Pose Space。
-    - hips 单独把 head_tail 设成 1.0，用来抵消 ARP 在 hips 处的 deform 骨反向的问题，同时由于反向一定会被阈值检测到，所以 hips 也会被切到 Local Space (Owner Orientation) / Local With Parent。
-    
-    如果没有这个问题，正常流程应该是：
-    - fixed/base 骨和 target/deform 骨共享同一套 rest basis；
-    - 所有约束都可以统一用 Pose Space；
-    - hips 不需要单独修正 head_tail；
-    - 也不需要按骨切换旋转坐标系。
+    关于 ARP deform 骨约束的当前结论：
+
+    之前尝试过在添加约束时检测 fixed/base 骨和 target/deform 骨的 rest 轴向差异，
+    然后对轴向变化较大的骨切换 COPY_ROTATION 的坐标空间。这个做法已经确认会引入
+    更多不可控问题，所以这里不再做按骨骼轴向差异切换空间的 hack。
+
+    现在这个操作只负责一件事：根据 DeformMappingTag 找到目标 deform 骨，并添加统一的
+    COPY_LOCATION / COPY_ROTATION，空间全部保持 Pose Space -> Pose Space。这样约束行为
+    可预期，也方便后续定位真正的问题。
+
+    真正需要处理的是 ARP 生成控制器时会自动修正参考骨 / deform 骨本身：
+    - 优先方向是检查输入骨架，尽量在生成前发现会触发 ARP 自动修正的骨骼问题；
+    - 检查项应该放到 Humanoid 映射检查 / 骨骼规范检查里，而不是塞进约束添加逻辑；
+    - 对不可避免的 ARP 修正，需要在预览和检查里明确提示，让用户知道哪些骨可能被修正；
+    - 约束流程要容忍修正后的 deform 骨存在，但不要为了个别修正再引入隐式坐标系分支。
+
+    hips 的 COPY_LOCATION head_tail=1.0 仍然保留，这是针对 ARP hips deform 骨头尾方向的
+    明确兼容项；它比按轴向阈值切换旋转空间更局部，也更容易在 UI 和日志里解释。
     """
-    use_axis_threshold: BoolProperty(
-        name="启用轴向阈值",
-        description="启用后会按骨骼 rest 轴向差异判断是否切换 COPY_ROTATION 的局部坐标系；关闭后所有骨都保持 Pose Space",
-        default=True,
-    )  # type: ignore
-    axis_changed_threshold_deg: IntProperty(
-        name="轴变化阈值",
-        description="固定骨与目标 deform 骨的 rest 轴向差异超过该角度时，才切换到局部朝向坐标系",
-        default=25,
-        min=0,
-        max=180,
-    )  # type: ignore
-
-    @staticmethod
-    def _bone_rest_axes_world(armature, bone):
-        if armature is None or bone is None:
-            return None
-
-        rest_rot_world = (
-            armature.matrix_world.to_3x3()
-            @ bone.matrix_local.to_3x3()
-        )
-        axes = []
-
-        for axis in (
-            Vector((1.0, 0.0, 0.0)),
-            Vector((0.0, 1.0, 0.0)),
-            Vector((0.0, 0.0, 1.0)),
-        ):
-            world_axis = _safe_normalized_vector(rest_rot_world @ axis)
-            if world_axis is None:
-                return None
-
-            axes.append(world_axis)
-
-        return axes
-
-    @classmethod
-    def _max_axis_angle_deg(
-        cls,
-        source_armature,
-        source_bone,
-        target_armature,
-        target_bone,
-    ):
-        source_axes = cls._bone_rest_axes_world(source_armature, source_bone)
-        target_axes = cls._bone_rest_axes_world(target_armature, target_bone)
-
-        if source_axes is None or target_axes is None:
-            return None
-
-        max_angle = 0.0
-        for source_axis, target_axis in zip(source_axes, target_axes):
-            dot = max(-1.0, min(1.0, source_axis.dot(target_axis)))
-            max_angle = max(max_angle, degrees(acos(dot)))
-
-        return max_angle
-
-    @classmethod
-    def _axis_changed(
-        cls,
-        fixed_armature,
-        fixed_bone,
-        target_armature,
-        target_bone,
-        deform_mapping_tag,
-        use_axis_threshold=True,
-        axis_threshold_deg=None,
-    ):
-        compare_bone = fixed_armature.data.bones.get(deform_mapping_tag)
-        if compare_bone is None:
-            compare_bone = fixed_bone.bone
-
-        if not use_axis_threshold:
-            return False, None, getattr(compare_bone, "name", "")
-
-        angle_deg = cls._max_axis_angle_deg(
-            fixed_armature,
-            compare_bone,
-            target_armature,
-            target_bone.bone,
-        )
-
-        if angle_deg is None:
-            return False, None, getattr(compare_bone, "name", "")
-
-        threshold_deg = 25.0 if axis_threshold_deg is None else axis_threshold_deg
-
-        return (
-            angle_deg > threshold_deg,
-            angle_deg,
-            getattr(compare_bone, "name", ""),
-        )
 
     @staticmethod
     def _is_hips_mapping(fixed_bone, props):
         humanoid_mapping = getattr(props, "humanoidMapping", "").strip()
         return humanoid_mapping == "hips" or fixed_bone.name == "hips"
-
-    @staticmethod
-    def _set_first_available_enum(owner, prop_name, candidates):
-        enum_items = owner.bl_rna.properties[prop_name].enum_items
-        available = {item.identifier for item in enum_items}
-
-        for candidate in candidates:
-            if candidate in available:
-                setattr(owner, prop_name, candidate)
-                return candidate
-
-        return None
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, "use_axis_threshold")
-        layout.prop(self, "axis_changed_threshold_deg")
 
     @classmethod
     def _configure_constraint(
@@ -343,26 +229,13 @@ class OP_DeformTag_addConstraint(Operator):
         constraint_type,
         target_armature,
         target_bone,
-        use_local_orient_rotation,
         is_hips_mapping,
     ):
         constraint.target = target_armature
         constraint.subtarget = target_bone.name
 
-        if constraint_type == 'COPY_ROTATION' and use_local_orient_rotation:
-            cls._set_first_available_enum(
-                constraint,
-                "owner_space",
-                ('LOCAL_WITH_PARENT', 'LOCAL'),
-            )
-            cls._set_first_available_enum(
-                constraint,
-                "target_space",
-                ('LOCAL_OWNER_ORIENT', 'LOCAL'),
-            )
-        else:
-            constraint.owner_space = 'POSE'
-            constraint.target_space = 'POSE'
+        constraint.owner_space = 'POSE'
+        constraint.target_space = 'POSE'
 
         if constraint_type == 'COPY_LOCATION' and hasattr(constraint, "head_tail"):
             constraint.head_tail = 1.0 if is_hips_mapping else 0.0
@@ -375,8 +248,6 @@ class OP_DeformTag_addConstraint(Operator):
         fixed_armature = scene.bone_constraint_resting_armature
         target_armature = scene.bone_constraint_moving_armature
         constraint_types = ('COPY_LOCATION', 'COPY_ROTATION')
-        use_axis_threshold = bool(self.use_axis_threshold)
-        axis_threshold_deg = float(self.axis_changed_threshold_deg)
 
         if not (fixed_armature and target_armature):
             self.report({'WARNING'}, "需要指定两个骨架")
@@ -394,7 +265,6 @@ class OP_DeformTag_addConstraint(Operator):
         skipped_no_props_count = 0
         skipped_no_deform_tag_count = 0
         configured_existing_count = 0
-        local_orient_rotation_count = 0
         hips_head_tail_count = 0
 
         for fixed_bone in fixed_armature.pose.bones:
@@ -423,21 +293,8 @@ class OP_DeformTag_addConstraint(Operator):
                 continue
 
             deform_tag_count += 1
-            use_local_orient_rotation, axis_angle_deg, compare_bone_name = (
-                self._axis_changed(
-                    fixed_armature,
-                    fixed_bone,
-                    target_armature,
-                    target_bone,
-                    deform_mapping_tag,
-                    use_axis_threshold=use_axis_threshold,
-                    axis_threshold_deg=axis_threshold_deg,
-                )
-            )
             is_hips_mapping = self._is_hips_mapping(fixed_bone, props)
 
-            if use_local_orient_rotation:
-                local_orient_rotation_count += 1
 
             if is_hips_mapping:
                 hips_head_tail_count += 1
@@ -474,17 +331,10 @@ class OP_DeformTag_addConstraint(Operator):
                             constraint_type,
                             target_armature,
                             target_bone,
-                            use_local_orient_rotation,
                             is_hips_mapping,
                         )
                         configured_existing_count += 1
 
-                    print(
-                        f"[Bone Constraint] 已存在: "
-                        f"{fixed_bone.name} -> {target_bone.name} "
-                        f"{constraint_type}, "
-                        f"axisChanged={use_local_orient_rotation}"
-                    )
                     continue
 
                 constraint = fixed_bone.constraints.new(constraint_type)
@@ -494,21 +344,11 @@ class OP_DeformTag_addConstraint(Operator):
                     constraint_type,
                     target_armature,
                     target_bone,
-                    use_local_orient_rotation,
                     is_hips_mapping,
                 )
 
                 added_count += 1
 
-                print(
-                    f"[Bone Constraint] 添加: "
-                    f"{fixed_bone.name} -> {target_bone.name} "
-                    f"deformTag={deform_mapping_tag} "
-                    f"type={constraint_type} "
-                    f"axisChanged={use_local_orient_rotation} "
-                    f"axisAngle={axis_angle_deg} "
-                    f"compareBone={compare_bone_name}"
-                )
 
         msg = (
             f"添加约束完成："
@@ -526,8 +366,6 @@ class OP_DeformTag_addConstraint(Operator):
         if configured_existing_count:
             msg += f", reconfigured existing {configured_existing_count}"
 
-        if local_orient_rotation_count:
-            msg += f", LocalOrient rotation {local_orient_rotation_count}"
 
         if hips_head_tail_count:
             msg += f", hips head_tail=1 {hips_head_tail_count}"
@@ -633,7 +471,8 @@ class OP_BoneRemoveConstraints(Operator):
         self.report({'INFO'}, "已移除选中骨骼的全部约束")
         return {'FINISHED'}
 
-#TODO arp在生成rig时会主动修正参考骨骼，导致匹配对不上，就算是使用旧版设置，也没有办法解决，这是一个很严重的问题需要后期解决.目前是在添加约束时使用了一些hack手段，对有问题的骨骼阈值比较来修复
+# TODO ARP 在生成 rig 时会主动修正参考骨 / deform 骨。后续重点不再是给约束添加逻辑堆坐标系 hack，
+# 而是把可触发 ARP 修正的骨骼问题前置到检查规则里，并在必须容忍修正结果时给出明确提示。
 class OP_Humanoid_ForceAlign(Operator):
     bl_idname = "ho.humanoid_force_align"
     bl_label = "强制Humanoid对齐"
