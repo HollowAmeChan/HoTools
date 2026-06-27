@@ -217,7 +217,18 @@ class OP_DeformTag_addConstraint(Operator):
     - hips 不需要单独修正 head_tail；
     - 也不需要按骨切换旋转坐标系。
     """
-    axis_changed_threshold_deg = 25.0
+    use_axis_threshold: BoolProperty(
+        name="启用轴向阈值",
+        description="启用后会按骨骼 rest 轴向差异判断是否切换 COPY_ROTATION 的局部坐标系；关闭后所有骨都保持 Pose Space",
+        default=True,
+    )  # type: ignore
+    axis_changed_threshold_deg: IntProperty(
+        name="轴变化阈值",
+        description="固定骨与目标 deform 骨的 rest 轴向差异超过该角度时，才切换到局部朝向坐标系",
+        default=25,
+        min=0,
+        max=180,
+    )  # type: ignore
 
     @staticmethod
     def _bone_rest_axes_world(armature, bone):
@@ -272,10 +283,15 @@ class OP_DeformTag_addConstraint(Operator):
         target_armature,
         target_bone,
         deform_mapping_tag,
+        use_axis_threshold=True,
+        axis_threshold_deg=None,
     ):
         compare_bone = fixed_armature.data.bones.get(deform_mapping_tag)
         if compare_bone is None:
             compare_bone = fixed_bone.bone
+
+        if not use_axis_threshold:
+            return False, None, getattr(compare_bone, "name", "")
 
         angle_deg = cls._max_axis_angle_deg(
             fixed_armature,
@@ -287,8 +303,10 @@ class OP_DeformTag_addConstraint(Operator):
         if angle_deg is None:
             return False, None, getattr(compare_bone, "name", "")
 
+        threshold_deg = 25.0 if axis_threshold_deg is None else axis_threshold_deg
+
         return (
-            angle_deg > cls.axis_changed_threshold_deg,
+            angle_deg > threshold_deg,
             angle_deg,
             getattr(compare_bone, "name", ""),
         )
@@ -309,6 +327,14 @@ class OP_DeformTag_addConstraint(Operator):
                 return candidate
 
         return None
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "use_axis_threshold")
+        layout.prop(self, "axis_changed_threshold_deg")
 
     @classmethod
     def _configure_constraint(
@@ -349,6 +375,8 @@ class OP_DeformTag_addConstraint(Operator):
         fixed_armature = scene.bone_constraint_resting_armature
         target_armature = scene.bone_constraint_moving_armature
         constraint_types = ('COPY_LOCATION', 'COPY_ROTATION')
+        use_axis_threshold = bool(self.use_axis_threshold)
+        axis_threshold_deg = float(self.axis_changed_threshold_deg)
 
         if not (fixed_armature and target_armature):
             self.report({'WARNING'}, "需要指定两个骨架")
@@ -402,6 +430,8 @@ class OP_DeformTag_addConstraint(Operator):
                     target_armature,
                     target_bone,
                     deform_mapping_tag,
+                    use_axis_threshold=use_axis_threshold,
+                    axis_threshold_deg=axis_threshold_deg,
                 )
             )
             is_hips_mapping = self._is_hips_mapping(fixed_bone, props)
