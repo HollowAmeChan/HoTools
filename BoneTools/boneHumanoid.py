@@ -196,6 +196,133 @@ class OP_DeformTag_addConstraint(Operator):
     bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制位置和复制旋转约束"
     bl_options = {'REGISTER', 'UNDO'}
 
+    axis_changed_threshold_deg = 3.0
+
+    @staticmethod
+    def _bone_rest_axes_world(armature, bone):
+        if armature is None or bone is None:
+            return None
+
+        rest_rot_world = (
+            armature.matrix_world.to_3x3()
+            @ bone.matrix_local.to_3x3()
+        )
+        axes = []
+
+        for axis in (
+            Vector((1.0, 0.0, 0.0)),
+            Vector((0.0, 1.0, 0.0)),
+            Vector((0.0, 0.0, 1.0)),
+        ):
+            world_axis = _safe_normalized_vector(rest_rot_world @ axis)
+            if world_axis is None:
+                return None
+
+            axes.append(world_axis)
+
+        return axes
+
+    @classmethod
+    def _max_axis_angle_deg(
+        cls,
+        source_armature,
+        source_bone,
+        target_armature,
+        target_bone,
+    ):
+        source_axes = cls._bone_rest_axes_world(source_armature, source_bone)
+        target_axes = cls._bone_rest_axes_world(target_armature, target_bone)
+
+        if source_axes is None or target_axes is None:
+            return None
+
+        max_angle = 0.0
+        for source_axis, target_axis in zip(source_axes, target_axes):
+            dot = max(-1.0, min(1.0, source_axis.dot(target_axis)))
+            max_angle = max(max_angle, degrees(acos(dot)))
+
+        return max_angle
+
+    @classmethod
+    def _axis_changed(
+        cls,
+        fixed_armature,
+        fixed_bone,
+        target_armature,
+        target_bone,
+        deform_mapping_tag,
+    ):
+        compare_bone = fixed_armature.data.bones.get(deform_mapping_tag)
+        if compare_bone is None:
+            compare_bone = fixed_bone.bone
+
+        angle_deg = cls._max_axis_angle_deg(
+            fixed_armature,
+            compare_bone,
+            target_armature,
+            target_bone.bone,
+        )
+
+        if angle_deg is None:
+            return False, None, getattr(compare_bone, "name", "")
+
+        return (
+            angle_deg > cls.axis_changed_threshold_deg,
+            angle_deg,
+            getattr(compare_bone, "name", ""),
+        )
+
+    @staticmethod
+    def _is_hips_mapping(fixed_bone, props):
+        humanoid_mapping = getattr(props, "humanoidMapping", "").strip()
+        return humanoid_mapping == "hips" or fixed_bone.name == "hips"
+
+    @staticmethod
+    def _set_first_available_enum(owner, prop_name, candidates):
+        enum_items = owner.bl_rna.properties[prop_name].enum_items
+        available = {item.identifier for item in enum_items}
+
+        for candidate in candidates:
+            if candidate in available:
+                setattr(owner, prop_name, candidate)
+                return candidate
+
+        return None
+
+    @classmethod
+    def _configure_constraint(
+        cls,
+        constraint,
+        constraint_type,
+        target_armature,
+        target_bone,
+        use_local_orient_rotation,
+        is_hips_mapping,
+    ):
+        constraint.target = target_armature
+        constraint.subtarget = target_bone.name
+
+        if constraint_type == 'COPY_ROTATION' and use_local_orient_rotation:
+            cls._set_first_available_enum(
+                constraint,
+                "owner_space",
+                ('LOCAL_WITH_PARENT', 'LOCAL'),
+            )
+            cls._set_first_available_enum(
+                constraint,
+                "target_space",
+                ('LOCAL_OWNER_ORIENT', 'LOCAL'),
+            )
+        else:
+            constraint.owner_space = 'POSE'
+            constraint.target_space = 'POSE'
+
+        if constraint_type == 'COPY_LOCATION' and hasattr(constraint, "head_tail"):
+            constraint.head_tail = 1.0 if is_hips_mapping else 0.0
+
+        if hasattr(constraint, "mix_mode"):
+            constraint.mix_mode = 'REPLACE'
+
     def execute(self, context):
         scene = context.scene
         fixed_armature = scene.bone_constraint_resting_armature
@@ -217,6 +344,9 @@ class OP_DeformTag_addConstraint(Operator):
         missing_count = 0
         skipped_no_props_count = 0
         skipped_no_deform_tag_count = 0
+        configured_existing_count = 0
+        local_orient_rotation_count = 0
+        hips_head_tail_count = 0
 
         for fixed_bone in fixed_armature.pose.bones:
             props = getattr(fixed_bone.bone, "hotools_boneprops", None)
@@ -244,6 +374,22 @@ class OP_DeformTag_addConstraint(Operator):
                 continue
 
             deform_tag_count += 1
+            use_local_orient_rotation, axis_angle_deg, compare_bone_name = (
+                self._axis_changed(
+                    fixed_armature,
+                    fixed_bone,
+                    target_armature,
+                    target_bone,
+                    deform_mapping_tag,
+                )
+            )
+            is_hips_mapping = self._is_hips_mapping(fixed_bone, props)
+
+            if use_local_orient_rotation:
+                local_orient_rotation_count += 1
+
+            if is_hips_mapping:
+                hips_head_tail_count += 1
 
             old_copy_transforms_constraints = [
                 c for c in fixed_bone.constraints
@@ -271,22 +417,35 @@ class OP_DeformTag_addConstraint(Operator):
 
                 if existing_constraints:
                     existed_count += 1
+                    for existing_constraint in existing_constraints:
+                        self._configure_constraint(
+                            existing_constraint,
+                            constraint_type,
+                            target_armature,
+                            target_bone,
+                            use_local_orient_rotation,
+                            is_hips_mapping,
+                        )
+                        configured_existing_count += 1
+
                     print(
                         f"[Bone Constraint] 已存在: "
                         f"{fixed_bone.name} -> {target_bone.name} "
-                        f"{constraint_type}"
+                        f"{constraint_type}, "
+                        f"axisChanged={use_local_orient_rotation}"
                     )
                     continue
 
                 constraint = fixed_bone.constraints.new(constraint_type)
                 constraint.name = f"{constraint_type}_{target_bone.name}"
-                constraint.target = target_armature
-                constraint.subtarget = target_bone.name
-                constraint.target_space = 'POSE'
-                constraint.owner_space = 'POSE'
-
-                if hasattr(constraint, "mix_mode"):
-                    constraint.mix_mode = 'REPLACE'
+                self._configure_constraint(
+                    constraint,
+                    constraint_type,
+                    target_armature,
+                    target_bone,
+                    use_local_orient_rotation,
+                    is_hips_mapping,
+                )
 
                 added_count += 1
 
@@ -294,7 +453,10 @@ class OP_DeformTag_addConstraint(Operator):
                     f"[Bone Constraint] 添加: "
                     f"{fixed_bone.name} -> {target_bone.name} "
                     f"deformTag={deform_mapping_tag} "
-                    f"type={constraint_type}"
+                    f"type={constraint_type} "
+                    f"axisChanged={use_local_orient_rotation} "
+                    f"axisAngle={axis_angle_deg} "
+                    f"compareBone={compare_bone_name}"
                 )
 
         msg = (
@@ -309,6 +471,15 @@ class OP_DeformTag_addConstraint(Operator):
 
         if replaced_count:
             msg += f"，替换复制变换 {replaced_count}"
+
+        if configured_existing_count:
+            msg += f", reconfigured existing {configured_existing_count}"
+
+        if local_orient_rotation_count:
+            msg += f", LocalOrient rotation {local_orient_rotation_count}"
+
+        if hips_head_tail_count:
+            msg += f", hips head_tail=1 {hips_head_tail_count}"
 
         if skipped_no_deform_tag_count:
             msg += f"，无DeformTag {skipped_no_deform_tag_count}"
