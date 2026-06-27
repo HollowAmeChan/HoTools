@@ -114,6 +114,16 @@ class TwistBoneCore:
 
             bpy.context.view_layer.objects.active = armature
             BoneSplitCore.set_object_mode(armature, "OBJECT")
+
+            #设置hotools属性：取消保留旋转，并设置humanoidMapping填入自身名称
+            for new_name in new_bone_names:
+                bone = armature.data.bones.get(new_name)
+                props = getattr(bone, "hotools_boneprops", None) if bone else None
+                if props and hasattr(props, "keepRotation"):
+                    props.keepRotation = False
+                if props and hasattr(props, "humanoidMapping"):
+                    props.humanoidMapping = new_name
+
             return new_bone_names
         finally:
             if armature.mode == "EDIT":
@@ -502,7 +512,7 @@ class OP_TwistBoneWithWeight(Operator):
     count: IntProperty(
         name="细分段数",
         description="生成的Twist子骨数量",
-        default=3,
+        default=2,
         min=1,
     )  # type: ignore
     process_symmetry: BoolProperty(

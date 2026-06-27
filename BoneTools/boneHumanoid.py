@@ -193,7 +193,7 @@ class OP_SwapBoneConstraintArmatures(Operator):
 class OP_DeformTag_addConstraint(Operator):
     bl_idname = "ho.deformtag_addconstraint"
     bl_label = "按DeformTag添加复制位置旋转约束"
-    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加复制位置和复制旋转约束"
+    bl_description = "读取固定骨架骨骼的DeformMappingTag，在移动骨架中按骨名查找形变骨并添加约束；HumanoidMapping 名称包含 twist 的骨只添加复制旋转约束"
     bl_options = {'REGISTER', 'UNDO'}
 
     """
@@ -218,12 +218,21 @@ class OP_DeformTag_addConstraint(Operator):
     - COPY_ROTATION 使用 Local With Parent -> Local Space (Owner Orientation)，这是当前实测
       能处理 hips 旋转基准不一致的必要特例。
     这两个特例都只绑定到 hips，不恢复按轴向阈值给任意骨切换坐标系的旧逻辑。
+
+    HumanoidMapping 名称包含 twist 的骨
+    - COPY_ROTATION 使用 Local Space -> Local Space (Owner Orientation)。
+    如果已经存在同目标的 COPY_LOCATION，会在本操作中移除，避免 twist 骨被位置约束拉动。
     """
 
     @staticmethod
     def _is_hips_mapping(fixed_bone, props):
         humanoid_mapping = getattr(props, "humanoidMapping", "").strip()
         return humanoid_mapping == "hips" or fixed_bone.name == "hips"
+
+    @staticmethod
+    def _is_twist_mapping(props):
+        humanoid_mapping = getattr(props, "humanoidMapping", "").strip().lower()
+        return "twist" in humanoid_mapping
 
     @classmethod
     def _configure_constraint(
@@ -233,11 +242,15 @@ class OP_DeformTag_addConstraint(Operator):
         target_armature,
         target_bone,
         is_hips_mapping,
+        is_twist_mapping,
     ):
         constraint.target = target_armature
         constraint.subtarget = target_bone.name
 
-        if constraint_type == 'COPY_ROTATION' and is_hips_mapping:
+        if constraint_type == 'COPY_ROTATION' and is_twist_mapping:
+            constraint.owner_space = 'LOCAL'
+            constraint.target_space = 'LOCAL_OWNER_ORIENT'
+        elif constraint_type == 'COPY_ROTATION' and is_hips_mapping:
             constraint.owner_space = 'LOCAL_WITH_PARENT'
             constraint.target_space = 'LOCAL_OWNER_ORIENT'
         else:
@@ -273,6 +286,8 @@ class OP_DeformTag_addConstraint(Operator):
         skipped_no_deform_tag_count = 0
         configured_existing_count = 0
         hips_head_tail_count = 0
+        twist_rotation_only_count = 0
+        removed_twist_location_count = 0
 
         for fixed_bone in fixed_armature.pose.bones:
             props = getattr(fixed_bone.bone, "hotools_boneprops", None)
@@ -301,10 +316,31 @@ class OP_DeformTag_addConstraint(Operator):
 
             deform_tag_count += 1
             is_hips_mapping = self._is_hips_mapping(fixed_bone, props)
+            is_twist_mapping = self._is_twist_mapping(props)
+            bone_constraint_types = (
+                ('COPY_ROTATION',)
+                if is_twist_mapping
+                else constraint_types
+            )
 
 
             if is_hips_mapping:
                 hips_head_tail_count += 1
+
+            if is_twist_mapping:
+                twist_rotation_only_count += 1
+                old_copy_location_constraints = [
+                    c for c in fixed_bone.constraints
+                    if (
+                        c.type == 'COPY_LOCATION'
+                        and c.target == target_armature
+                        and c.subtarget == target_bone.name
+                    )
+                ]
+
+                for old_constraint in old_copy_location_constraints:
+                    fixed_bone.constraints.remove(old_constraint)
+                    removed_twist_location_count += 1
 
             old_copy_transforms_constraints = [
                 c for c in fixed_bone.constraints
@@ -320,7 +356,7 @@ class OP_DeformTag_addConstraint(Operator):
                 fixed_bone.constraints.remove(old_constraint)
                 replaced_count += 1
 
-            for constraint_type in constraint_types:
+            for constraint_type in bone_constraint_types:
                 existing_constraints = [
                     c for c in fixed_bone.constraints
                     if (
@@ -339,6 +375,7 @@ class OP_DeformTag_addConstraint(Operator):
                             target_armature,
                             target_bone,
                             is_hips_mapping,
+                            is_twist_mapping,
                         )
                         configured_existing_count += 1
 
@@ -352,6 +389,7 @@ class OP_DeformTag_addConstraint(Operator):
                     target_armature,
                     target_bone,
                     is_hips_mapping,
+                    is_twist_mapping,
                 )
 
                 added_count += 1
@@ -376,6 +414,12 @@ class OP_DeformTag_addConstraint(Operator):
 
         if hips_head_tail_count:
             msg += f", hips head_tail=1 {hips_head_tail_count}"
+
+        if twist_rotation_only_count:
+            msg += f"，Twist仅旋转 {twist_rotation_only_count}"
+
+        if removed_twist_location_count:
+            msg += f"，移除Twist位置约束 {removed_twist_location_count}"
 
         if skipped_no_deform_tag_count:
             msg += f"，无DeformTag {skipped_no_deform_tag_count}"
