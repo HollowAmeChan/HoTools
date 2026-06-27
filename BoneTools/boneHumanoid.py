@@ -411,6 +411,7 @@ class OP_BoneRemoveConstraints(Operator):
         self.report({'INFO'}, "已移除选中骨骼的全部约束")
         return {'FINISHED'}
 
+#TODO arp在生成rig时会主动修正参考谷歌，导致匹配对不上，就算是使用旧版设置，也没有办法解决，这是一个很严重的问题需要后期解决
 class OP_Humanoid_ForceAlign(Operator):
     bl_idname = "ho.humanoid_force_align"
     bl_label = "强制Humanoid对齐"
