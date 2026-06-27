@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject*);
+
 namespace {
 
 struct Buffer {
@@ -2162,6 +2164,12 @@ PyMethodDef kMethods[] = {
         solve_mesh_shape_key_xpbd,
         METH_VARARGS,
         "Solve one mesh shape-key XPBD step in-place.",
+    },
+    {
+        "solve_spring_bone_vrm_cpp",
+        solve_spring_bone_vrm_cpp,
+        METH_VARARGS,
+        "Solve one VRM spring bone chain in-place.",
     },
     {
         "create_meshcloth_mc2_context",

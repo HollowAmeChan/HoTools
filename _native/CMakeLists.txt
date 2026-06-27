@@ -32,6 +32,8 @@ add_library(hotools_native MODULE
     src/mc2.cpp
     src/mc2_self_collision.cpp
     src/mesh_xpbd.cpp
+    src/spring_bone_vrm.cpp
+    src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp
 )
 
