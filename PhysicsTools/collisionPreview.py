@@ -34,6 +34,24 @@ def _visible_armature_objects(context):
     ]
 
 
+def _bone_is_effectively_visible(bone):
+    if getattr(bone, "hide", False):
+        return False
+
+    visible = getattr(bone, "visible", None)
+    if visible is not None:
+        return bool(visible)
+
+    collections = getattr(bone, "collections", None)
+    if collections is not None:
+        for collection in collections:
+            if getattr(collection, "is_visible_effectively", False):
+                return True
+        return False
+
+    return True
+
+
 def _visible_object_collision_objects(context):
     visible_objects = getattr(context, "visible_objects", None)
     if visible_objects is None:
@@ -308,6 +326,7 @@ def _draw_collision_overlay():
         return
 
     show_bone_collision = scene.ho_collision_overlay_show_bone
+    show_visible_bone_only = scene.ho_collision_overlay_only_visible_bones
     show_object_collision = scene.ho_collision_overlay_show_object
     show_mesh_vertices = scene.ho_collision_overlay_show_mesh_vertices
     use_pin_color = scene.ho_collision_overlay_color_mode == "PIN"
@@ -326,6 +345,9 @@ def _draw_collision_overlay():
     if show_bone_collision:
         for armature_obj in _visible_armature_objects(context):
             for bone in armature_obj.data.bones:
+                if show_visible_bone_only and not _bone_is_effectively_visible(bone):
+                    continue
+
                 props = _collision_props(bone)
                 if props is None:
                     continue
@@ -443,6 +465,7 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
         col.separator()
         col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
+        col.prop(scene, "ho_collision_overlay_only_visible_bones", text="仅显示可见骨")
         col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
         col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
         if scene.ho_collision_overlay_show_mesh_vertices:

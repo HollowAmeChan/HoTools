@@ -71,6 +71,12 @@ def reg_props():
         default=True,
         update=_overlay_show_update,
     )
+    bpy.types.Scene.ho_collision_overlay_only_visible_bones = BoolProperty(
+        name="仅显示可见骨",
+        description="仅绘制在当前视图层中有效可见的骨骼碰撞体",
+        default=False,
+        update=_overlay_show_update,
+    )
     bpy.types.Scene.ho_collision_overlay_color_mode = EnumProperty(
         name="颜色模式",
         description="切换碰撞叠加层的颜色含义",
@@ -108,6 +114,7 @@ def ureg_props():
     del bpy.types.Scene.ho_collision_overlay_show_mesh_vertices
     del bpy.types.Scene.ho_collision_overlay_show_object
     del bpy.types.Scene.ho_collision_overlay_color_mode
+    del bpy.types.Scene.ho_collision_overlay_only_visible_bones
     del bpy.types.Scene.ho_collision_overlay_show_bone
     del bpy.types.Scene.ho_collision_overlay_show
     del bpy.types.Object.hotools_object_collision
