@@ -203,9 +203,9 @@ class OP_DeformTag_addConstraint(Operator):
     然后对轴向变化较大的骨切换 COPY_ROTATION 的坐标空间。这个做法已经确认会引入
     更多不可控问题，所以这里不再做按骨骼轴向差异切换空间的 hack。
 
-    现在这个操作只负责一件事：根据 DeformMappingTag 找到目标 deform 骨，并添加统一的
-    COPY_LOCATION / COPY_ROTATION，空间全部保持 Pose Space -> Pose Space。这样约束行为
-    可预期，也方便后续定位真正的问题。
+    现在这个操作只负责一件事：根据 DeformMappingTag 找到目标 deform 骨，并添加复制位置 /
+    复制旋转约束。默认空间保持 Pose Space -> Pose Space，这样约束行为可预期，也方便
+    后续定位真正的问题。
 
     真正需要处理的是 ARP 生成控制器时会自动修正参考骨 / deform 骨本身：
     - 优先方向是检查输入骨架，尽量在生成前发现会触发 ARP 自动修正的骨骼问题；
@@ -213,8 +213,11 @@ class OP_DeformTag_addConstraint(Operator):
     - 对不可避免的 ARP 修正，需要在预览和检查里明确提示，让用户知道哪些骨可能被修正；
     - 约束流程要容忍修正后的 deform 骨存在，但不要为了个别修正再引入隐式坐标系分支。
 
-    hips 的 COPY_LOCATION head_tail=1.0 仍然保留，这是针对 ARP hips deform 骨头尾方向的
-    明确兼容项；它比按轴向阈值切换旋转空间更局部，也更容易在 UI 和日志里解释。
+    hips 仍然保留两个明确兼容项：
+    - COPY_LOCATION head_tail=1.0，用来处理 ARP hips deform 骨头尾方向；
+    - COPY_ROTATION 使用 Local With Parent -> Local Space (Owner Orientation)，这是当前实测
+      能处理 hips 旋转基准不一致的必要特例。
+    这两个特例都只绑定到 hips，不恢复按轴向阈值给任意骨切换坐标系的旧逻辑。
     """
 
     @staticmethod
@@ -234,8 +237,12 @@ class OP_DeformTag_addConstraint(Operator):
         constraint.target = target_armature
         constraint.subtarget = target_bone.name
 
-        constraint.owner_space = 'POSE'
-        constraint.target_space = 'POSE'
+        if constraint_type == 'COPY_ROTATION' and is_hips_mapping:
+            constraint.owner_space = 'LOCAL_WITH_PARENT'
+            constraint.target_space = 'LOCAL_OWNER_ORIENT'
+        else:
+            constraint.owner_space = 'POSE'
+            constraint.target_space = 'POSE'
 
         if constraint_type == 'COPY_LOCATION' and hasattr(constraint, "head_tail"):
             constraint.head_tail = 1.0 if is_hips_mapping else 0.0
