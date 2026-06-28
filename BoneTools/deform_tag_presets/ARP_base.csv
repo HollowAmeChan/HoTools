@@ -5,7 +5,7 @@ chest,spine_02.x
 neck,neck.x
 head,head.x
 shoulder.L,shoulder.l
-upper_arm.L,arm_stretch.l
+upper_arm.L,c_arm_twist_offset.l
 lower_arm.L,forearm_stretch.l
 hand.L,hand.l
 thumb_proximal.L,thumb1.l
@@ -24,7 +24,7 @@ little_proximal.L,pinky1.l
 little_intermediate.L,pinky1.l
 little_distal.L,pinky1.l
 shoulder.R,shoulder.r
-upper_arm.R,arm_stretch.r
+upper_arm.R,c_arm_twist_offset.r
 lower_arm.R,forearm_stretch.r
 hand.R,hand.r
 thumb_proximal.R,thumb1.r
@@ -42,15 +42,11 @@ ring_distal.R,ring1.r
 little_proximal.R,pinky1.r
 little_intermediate.R,pinky1.r
 little_distal.R,pinky1.r
-upper_leg.L,thigh_stretch.l.
-lower_leg.L,leg_stretch.l.
+upper_leg.L,thigh_twist.l
+lower_leg.L,leg_stretch.l
 foot.L,foot.l
 toes.L,toes_01.l
-upper_leg.R,thigh_stretch.r
+upper_leg.R,thigh_twist.r
 lower_leg.R,leg_stretch.r
 foot.R,foot.r
 toes.R,toes_01.r
-lower_arm_twist_01.L,forearm_twist.l
-lower_arm_twist_01.R,forearm_twist.r
-lower_leg_twist_01.L,leg_twist.l
-lower_leg_twist_01.R,leg_twist.r
