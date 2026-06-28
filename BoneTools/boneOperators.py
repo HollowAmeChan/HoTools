@@ -5,7 +5,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight
-from . import boneTwist
+from . import boneTwist, boneFan
 
 
 class OP_ApplyRestPose(Operator):
@@ -456,6 +456,7 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
 
     boneTwist.drawBoneTwistPanel(layout, context)
+    boneFan.drawBoneFanPanel(layout, context)
        
 
 cls = [

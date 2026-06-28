@@ -23,7 +23,6 @@ def drawBoneTwistPanel(layout: UILayout, context: Context):
         OP_TwistBoneWithWeight.bl_idname,
         text="生成Twist骨",
     )
-    row = twist_box.row(align=True)
     row.operator(
         OP_RemoveTwistBoneWithWeight.bl_idname,
         text="消除Twist骨",
