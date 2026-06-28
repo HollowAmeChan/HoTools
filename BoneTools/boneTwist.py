@@ -9,6 +9,7 @@ from .boneSplit import BoneSplitCore
 
 
 EPS = 1e-6
+HoRig_Twist = "HoRig_Twist"
 
 
 def reg_props():
@@ -97,6 +98,46 @@ class TwistBoneCore:
                 props.humanoidMapping = bone_name
 
     @staticmethod
+    def get_mirrored_bone(bone_name, armature) -> list[str]:
+        names = [bone_name]
+        symmetrical_name = bpy.utils.flip_name(bone_name)
+
+        bone_container = getattr(armature, "bones", armature)
+        if symmetrical_name != bone_name and bone_container.get(symmetrical_name):
+            names.append(symmetrical_name)
+
+        return names
+
+    @staticmethod
+    def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
+        if not collection_name:
+            return None
+
+        collections = getattr(armature.data, "collections", None)
+        if collections is None:
+            return None
+
+        collection = collections.get(collection_name)
+        if collection is None:
+            collection = collections.new(collection_name)
+        return collection
+
+    @staticmethod
+    def _assign_bones_to_collection(armature: bpy.types.Object, bone_names: list[str], collection_name: str) -> None:
+        collection = TwistBoneCore._ensure_bone_collection(armature, collection_name)
+        if collection is None:
+            return
+
+        edit_bones = armature.data.edit_bones
+        for bone_name in bone_names:
+            bone = edit_bones.get(bone_name)
+            if bone is None:
+                continue
+            for old_collection in list(bone.collections):
+                old_collection.unassign(bone)
+            collection.assign(bone)
+
+    @staticmethod
     def _find_copy_rotation_target_bone(
         armature: bpy.types.Object,
         source_bones: list[str],
@@ -175,50 +216,68 @@ class TwistBoneCore:
         manual_target: str = "",
         top_influence: float = 0.1,
         bottom_influence: float = 0.8,
-    ) -> tuple[int, str | None]:
-        target_bone_name = TwistBoneCore._find_copy_rotation_target_bone(
-            armature,
-            source_bones,
-            manual_target,
-        )
-        if not target_bone_name:
-            return 0, None
+    ) -> tuple[int, dict[str, str]]:
+        source_set = set(source_bones)
+        source_to_twists: dict[str, list[str]] = {}
+        for bone_name in twist_bone_names:
+            parsed = TwistBoneCore._parse_twist_name(bone_name)
+            if parsed is None:
+                continue
+            main_name = parsed[0]
+            if main_name not in source_set:
+                continue
+            source_to_twists.setdefault(main_name, []).append(bone_name)
+
+        if not source_to_twists:
+            return 0, {}
 
         old_mode = armature.mode
         old_active = context.view_layer.objects.active
         added = 0
-        total = len(twist_bone_names)
+        targets: dict[str, str] = {}
 
         try:
             armature.select_set(True)
             context.view_layer.objects.active = armature
             BoneSplitCore.set_object_mode(armature, "POSE")
-            for index, bone_name in enumerate(twist_bone_names):
-                pose_bone = armature.pose.bones.get(bone_name)
-                if pose_bone is None:
+            for source_index, (source_bone_name, twist_list) in enumerate(source_to_twists.items()):
+                target_manual = manual_target if source_index == 0 else ""
+                target_bone_name = TwistBoneCore._find_copy_rotation_target_bone(
+                    armature,
+                    [source_bone_name],
+                    target_manual,
+                )
+                if not target_bone_name:
                     continue
-                if total <= 1:
-                    influence = bottom_influence
-                else:
-                    t = index / (total - 1)
-                    influence = top_influence + (bottom_influence - top_influence) * t
-                TwistBoneCore._ensure_copy_rotation_constraint(
-                    pose_bone,
-                    armature,
-                    target_bone_name,
-                    influence,
-                )
-                TwistBoneCore._ensure_stretch_to_constraint(
-                    pose_bone,
-                    armature,
-                    target_bone_name,
-                )
-                added += 1
+                targets[source_bone_name] = target_bone_name
+
+                total = len(twist_list)
+                for index, bone_name in enumerate(twist_list):
+                    pose_bone = armature.pose.bones.get(bone_name)
+                    if pose_bone is None:
+                        continue
+                    if total <= 1:
+                        influence = bottom_influence
+                    else:
+                        t = index / (total - 1)
+                        influence = top_influence + (bottom_influence - top_influence) * t
+                    TwistBoneCore._ensure_copy_rotation_constraint(
+                        pose_bone,
+                        armature,
+                        target_bone_name,
+                        influence,
+                    )
+                    TwistBoneCore._ensure_stretch_to_constraint(
+                        pose_bone,
+                        armature,
+                        target_bone_name,
+                    )
+                    added += 1
         finally:
             context.view_layer.objects.active = old_active
             BoneSplitCore.set_object_mode(armature, old_mode)
 
-        return added, target_bone_name
+        return added, targets
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -333,6 +392,7 @@ class TwistBoneCore:
         bn: str,
         count: int,
         twist_length_factor: float = 0.1,
+        bone_collection_name: str = HoRig_Twist,
     ) -> dict:
         """在保留主骨的前提下，生成 Twist 子骨链。"""
         was_hidden = armature.hide_viewport
@@ -396,6 +456,7 @@ class TwistBoneCore:
                 new_bone.parent = old_bone
                 new_bone.use_connect = False
 
+            TwistBoneCore._assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
             bpy.context.view_layer.objects.active = armature
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             # 设置 hotools 属性：取消保留旋转，并把 humanoidMapping 填成自身名称
@@ -542,6 +603,7 @@ class TwistBoneCore:
         soft_factor: float,
         twist_length_factor: float,
         objs,
+        bone_collection_name: str = HoRig_Twist,
     ) -> dict:
         """把选中的主骨权重转移到 Twist 子骨链上。"""
         chain_result = TwistBoneCore.create_twist_chain(
@@ -549,6 +611,7 @@ class TwistBoneCore:
             bn,
             count,
             twist_length_factor,
+            bone_collection_name,
         )
         new_bone_names = chain_result["created_names"]
         replaced_names = chain_result["replaced_names"]
@@ -607,16 +670,22 @@ class TwistBoneCore:
         if original_active.type == "ARMATURE":
             armature_obj = original_active
             if armature_obj.mode == "POSE":
-                bones = [bone.name for bone in context.selected_pose_bones]
+                active_bone = context.active_pose_bone
+                if active_bone:
+                    bones = [active_bone.name]
             elif armature_obj.mode == "EDIT":
-                bones = [bone.name for bone in armature_obj.data.edit_bones if bone.select]
+                active_bone = armature_obj.data.edit_bones.active
+                if active_bone:
+                    bones = [active_bone.name]
             mesh_objs = TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
         elif original_active.type == "MESH":
             for mod in original_active.modifiers:
                 if mod.type == "ARMATURE" and mod.object:
                     armature_obj = mod.object
                     break
-            bones = [bone.name for bone in context.selected_pose_bones]
+            active_bone = context.active_pose_bone
+            if active_bone:
+                bones = [active_bone.name]
             if armature_obj:
                 mesh_objs = TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
         else:
@@ -626,7 +695,9 @@ class TwistBoneCore:
             raise Exception("没有找到骨架")
 
         if not bones:
-            raise Exception("没有找到要处理的骨骼")
+            raise Exception("没有找到活动骨骼")
+        if len(bones) > 1:
+            raise Exception("当前只支持单个活动骨骼")
 
         return armature_obj, mesh_objs, bones
 
@@ -643,6 +714,7 @@ class TwistBoneCore:
         copy_rotation_target_bone: str = "",
         copy_rotation_top_influence: float = 0.1,
         copy_rotation_bottom_influence: float = 0.8,
+        bone_collection_name: str = HoRig_Twist,
     ) -> dict:
         original_mode = original_active.mode
         armature_obj = None
@@ -687,6 +759,7 @@ class TwistBoneCore:
                         soft_factor,
                         twist_length_factor,
                         objs_with_bone,
+                        bone_collection_name,
                     )
                     results.append(result)
                     twist_bone_names.extend(result.get("created_names", []))
@@ -697,12 +770,13 @@ class TwistBoneCore:
                         bn,
                         count,
                         twist_length_factor,
+                        bone_collection_name,
                     )
                     results.append(result)
                     twist_bone_names.extend(result.get("created_names", []))
 
             twist_bone_names = list(dict.fromkeys(twist_bone_names))
-            constraint_count, target_bone_name = TwistBoneCore.add_copy_rotation_to_twist_bones(
+            constraint_count, target_map = TwistBoneCore.add_copy_rotation_to_twist_bones(
                 context,
                 armature_obj,
                 bones,
@@ -728,7 +802,7 @@ class TwistBoneCore:
             "created_count": sum(item.get("created_count", 0) for item in results),
             "replaced_count": sum(item.get("replaced_count", 0) for item in results),
             "constraint_count": constraint_count if "constraint_count" in locals() else 0,
-            "constraint_target": target_bone_name if "target_bone_name" in locals() else "",
+            "constraint_targets": target_map if "target_map" in locals() else {},
             "twist_bone_names": twist_bone_names,
             "items": results,
         }
@@ -767,131 +841,49 @@ class TwistBoneCore:
         if not bones:
             raise Exception("没有找到要处理的骨骼")
 
-        if process_vertex_groups:
-            main_to_twists, selection_error = TwistBoneCore.resolve_twist_selection(bones)
-            if selection_error:
-                raise Exception(selection_error)
-            twist_names = [
-                twist_name
-                for twist_list in main_to_twists.values()
-                for twist_name in twist_list
-            ]
-            return armature_obj, mesh_objs, main_to_twists, twist_names
-
-        twist_names = []
-        selected_set = set(bones)
+        main_names = []
         for bone_name in bones:
-            if TwistBoneCore._parse_twist_name(bone_name) is not None:
-                twist_names.append(bone_name)
+            parsed = TwistBoneCore._parse_twist_name(bone_name)
+            main_name = parsed[0] if parsed is not None else bone_name
+            if armature_obj.data.bones.get(main_name) is not None:
+                main_names.append(main_name)
 
-        for bone in armature_obj.data.bones:
-            parsed = TwistBoneCore._parse_twist_name(bone.name)
-            if parsed is None:
+        main_names = list(dict.fromkeys(main_names))
+        if not main_names:
+            raise Exception("没有选择任何主骨")
+
+        main_to_twists: dict[str, list[str]] = {}
+        twist_names: list[str] = []
+
+        for main_name in main_names:
+            main_bone = armature_obj.data.bones.get(main_name)
+            if main_bone is None:
                 continue
-            if parsed[0] in selected_set:
-                twist_names.append(bone.name)
+
+            collected = []
+            stack = list(main_bone.children)
+            while stack:
+                bone = stack.pop()
+                stack.extend(bone.children)
+                parsed = TwistBoneCore._parse_twist_name(bone.name)
+                if parsed is None or parsed[0] != main_name:
+                    continue
+                collected.append(bone.name)
+
+            collected = list(dict.fromkeys(collected))
+            collected.sort(key=lambda bone_name: TwistBoneCore._parse_twist_name(bone_name)[1])
+            if collected:
+                main_to_twists[main_name] = collected
+                twist_names.extend(collected)
 
         twist_names = list(dict.fromkeys(twist_names))
         if not twist_names:
-            raise Exception("没有找到可删除的 Twist 骨")
+            raise Exception("没有找到任何 twist 子骨")
+
+        if process_vertex_groups:
+            return armature_obj, mesh_objs, main_to_twists, twist_names
 
         return armature_obj, mesh_objs, None, twist_names
-
-    @staticmethod
-    def remove_twist(
-        context: Context,
-        original_active: bpy.types.Object,
-        only_selected: bool = False,
-        process_vertex_groups: bool = True,
-    ) -> dict:
-        original_mode = original_active.mode
-        armature_obj = None
-        result = {
-            "restored_objects": 0,
-            "removed_twist_bones": 0,
-            "removed_vertex_groups": 0,
-        }
-
-        try:
-            armature_obj, mesh_objs, main_to_twists, twist_names = TwistBoneCore._collect_removal_targets(
-                context,
-                original_active,
-                process_vertex_groups,
-            )
-
-            if process_vertex_groups:
-                if only_selected:
-                    mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
-
-                if not mesh_objs:
-                    raise Exception("没有找到需要处理的网格物体")
-
-                TwistBoneCore.objs_twist_restore(
-                    main_to_twists,
-                    armature_obj,
-                    mesh_objs,
-                )
-                result["restored_objects"] = len(mesh_objs)
-                result["removed_vertex_groups"] = sum(
-                    len(twist_list) for twist_list in main_to_twists.values()
-                )
-            else:
-                TwistBoneCore.remove_twist_bones(armature_obj, twist_names)
-                result["removed_twist_bones"] = len(twist_names)
-        finally:
-            if original_active:
-                context.view_layer.objects.active = original_active
-                BoneSplitCore.set_object_mode(original_active, mode=original_mode)
-
-            if original_mode == "WEIGHT_PAINT" and armature_obj is not None:
-                armature_obj.select_set(True)
-                context.view_layer.objects.active = armature_obj
-                BoneSplitCore.set_object_mode(armature_obj, "POSE")
-                original_active.select_set(True)
-                context.view_layer.objects.active = original_active
-                BoneSplitCore.set_object_mode(original_active, "WEIGHT_PAINT")
-
-        return result
-
-    @staticmethod
-    def resolve_twist_selection(
-        selected_bone_names: list[str],
-    ) -> tuple[dict[str, list[str]], str | None]:
-        selected_unique = list(dict.fromkeys(selected_bone_names))
-        selected_set = set(selected_unique)
-        main_to_twists: dict[str, list[str]] = {}
-        twist_names = set()
-
-        for bone_name in selected_unique:
-            parsed = TwistBoneCore._parse_twist_name(bone_name)
-            if parsed is None:
-                continue
-
-            main_name, _ = parsed
-            twist_names.add(bone_name)
-            if main_name not in selected_set:
-                return {}, f"Twist骨 {bone_name} 缺少对应主骨 {main_name}，请同时选择主骨"
-
-            main_to_twists.setdefault(main_name, []).append(bone_name)
-
-        if not main_to_twists:
-            return {}, "没有选中可识别的 Twist 骨"
-
-        main_names = set(main_to_twists)
-        unrelated = [
-            bone_name for bone_name in selected_unique
-            if bone_name not in twist_names and bone_name not in main_names
-        ]
-        if unrelated:
-            return {}, "选中骨骼中有无法匹配的骨骼: " + ", ".join(unrelated)
-
-        for twist_list in main_to_twists.values():
-            twist_list.sort(
-                key=lambda bone_name: TwistBoneCore._parse_twist_name(bone_name)[1]
-            )
-
-        return main_to_twists, None
-
     @staticmethod
     def obj_twist_restore(
         obj: bpy.types.Object,
@@ -1006,6 +998,62 @@ class TwistBoneCore:
                 armature.hide_set(True)
 
     @staticmethod
+    def remove_twist(
+        context: Context,
+        original_active: bpy.types.Object,
+        only_selected: bool = False,
+        process_vertex_groups: bool = True,
+    ) -> dict:
+        original_mode = original_active.mode
+        armature_obj = None
+        result = {
+            "restored_objects": 0,
+            "removed_twist_bones": 0,
+            "removed_vertex_groups": 0,
+        }
+
+        try:
+            armature_obj, mesh_objs, main_to_twists, twist_names = TwistBoneCore._collect_removal_targets(
+                context,
+                original_active,
+                process_vertex_groups,
+            )
+
+            if process_vertex_groups:
+                if only_selected:
+                    mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
+
+                if not mesh_objs:
+                    raise Exception("没有找到需要处理的网格物体")
+
+                TwistBoneCore.objs_twist_restore(
+                    main_to_twists,
+                    armature_obj,
+                    mesh_objs,
+                )
+                result["restored_objects"] = len(mesh_objs)
+                result["removed_vertex_groups"] = sum(
+                    len(twist_list) for twist_list in main_to_twists.values()
+                )
+            else:
+                TwistBoneCore.remove_twist_bones(armature_obj, twist_names)
+                result["removed_twist_bones"] = len(twist_names)
+        finally:
+            if original_active:
+                context.view_layer.objects.active = original_active
+                BoneSplitCore.set_object_mode(original_active, mode=original_mode)
+
+            if original_mode == "WEIGHT_PAINT" and armature_obj is not None:
+                armature_obj.select_set(True)
+                context.view_layer.objects.active = armature_obj
+                BoneSplitCore.set_object_mode(armature_obj, "POSE")
+                original_active.select_set(True)
+                context.view_layer.objects.active = original_active
+                BoneSplitCore.set_object_mode(original_active, "WEIGHT_PAINT")
+
+        return result
+
+    @staticmethod
     def objs_twist_restore(
         main_to_twists: dict[str, list[str]],
         armature: bpy.types.Object,
@@ -1031,56 +1079,34 @@ class OP_TwistBoneWithWeight(Operator):
     bl_idname = "ho.twistbone_withweight"
     bl_label = "生成 Twist 骨与权重"
     bl_description = """
-    为选中的骨骼生成 Twist 子骨链，并把主骨权重转移到新骨骼上。
-    使用方式:在姿态模式或编辑模式选择要处理的骨骼，也可以在权重绘制时使用当前活动骨骼。
-            原骨骼会保留；沿原骨头尾方向放置指定段数的子级 Twist 骨，最深子骨编号为 原名_twist_01。
-            原骨骼已有子级不会被转移，生成的 Twist 骨全部直接挂在原骨下，彼此平级。
-            Twist 骨本身会竖直向上，roll 归零，子骨之间不强制连接，便于导出到引擎。
-            权重分段仍按原骨骼 head 到 tail 的方向计算，不受竖直 Twist 骨方向影响。
-            切分顶点组时会临时关闭网格 X/Y/Z 镜像选项，结束后恢复原设置。
-            如果原骨末尾有 .L/.R/_L/_R 等左右后缀，Twist 后缀会插入到左右后缀前面。
-            原骨对应顶点组会保留但清空所有顶点，权重按过渡参数分配到各个 Twist 骨。"""
+    在所选主骨上生成 Twist 子骨，并可按权重参数同步转移权重。
+    适用于姿态模式、编辑模式，以及权重绘制场景下的当前活动骨骼。
+    生成的 Twist 会保留主骨本体，按主骨方向延伸；左右后缀会插在 Twist 后缀之前。
+    需要切分权重时会临时关闭镜像选项，结束后恢复原设置。"""
     bl_options = {"REGISTER", "UNDO"}
 
     count: IntProperty(
         name="细分段数",
         description="生成的 Twist 子骨数量",
-        default=4,
         min=1,
+        default=4,
     )  # type: ignore
     twist_length_factor: FloatProperty(
         name="Twist 长度",
         description="Twist 子骨长度相对于主骨长度的比例",
+        min=0.0,
+        max=1.0,
+        step=0.01,
         default=0.1,
-        min=0.01,
-        soft_max=1.0,
     )  # type: ignore
     process_symmetry: BoolProperty(
         name="对称操作",
         description="同时处理镜像骨骼",
         default=False,
     )  # type: ignore
-    only_selected: BoolProperty(
-        name="仅选中的物体",
-        description="只处理当前被选中的网格物体",
-        default=False,
-    )  # type: ignore
-    soft_factor: FloatProperty(
-        name="过渡",
-        description="Twist 骨之间的权重过渡",
-        min=0.0,
-        max=1.0,
-        step=0.05,
-        default=1.0,
-    )  # type: ignore
-    auto_transfer_weights: BoolProperty(
-        name="自动处理权重",
-        description="生成 Twist 骨后自动把权重转移到新骨骼",
-        default=False,
-    )  # type: ignore
     copy_rotation_target_bone: StringProperty(
         name="目标骨",
-        description="Copy Rotation 的目标骨骼",
+        description="约束指向的目标骨骼",
         default="",
     )  # type: ignore
     copy_rotation_top_influence: FloatProperty(
@@ -1097,14 +1123,29 @@ class OP_TwistBoneWithWeight(Operator):
         min=0.0,
         max=1.0,
     )  # type: ignore
-
-    @staticmethod
-    def get_mirrored_bone(bone_name, armature) -> list[str]:
-        names = [bone_name]
-        symmetrical_name = bpy.utils.flip_name(bone_name)
-        if symmetrical_name != bone_name and symmetrical_name in armature.bones:
-            names.append(symmetrical_name)
-        return names
+    auto_transfer_weights: BoolProperty(
+        name="自动处理权重",
+        description="生成 Twist 骨后自动把权重转移到新骨骼",
+        default=False,
+    )  # type: ignore
+    only_selected: BoolProperty(
+        name="仅处理选中的物体权重",
+        description="只处理当前被选中的网格物体",
+        default=False,
+    )  # type: ignore
+    soft_factor: FloatProperty(
+        name="过渡",
+        description="Twist 骨之间的权重过渡",
+        min=0.0,
+        max=1.0,
+        step=0.05,
+        default=1.0,
+    )  # type: ignore
+    bone_collection_name: StringProperty(
+        name="输出到骨骼集合",
+        description="生成的Twsit骨放入指定的骨骼集合中，若不存在则创建",
+        default=HoRig_Twist,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -1141,9 +1182,19 @@ class OP_TwistBoneWithWeight(Operator):
 
     def execute(self, context):
         try:
+            obj = context.active_object
+            selected_count = 0
+            if obj and obj.type == "ARMATURE":
+                if obj.mode == "POSE":
+                    selected_count = len(context.selected_pose_bones or [])
+                elif obj.mode == "EDIT":
+                    selected_count = sum(1 for bone in obj.data.edit_bones if bone.select)
+            if selected_count > 1:
+                self.report({"ERROR"}, "当前只支持单个活动骨骼")
+                return {"CANCELLED"}
             result = TwistBoneCore.generate_twist(
                 context,
-                context.active_object,
+                obj,
                 self.count,
                 self.twist_length_factor,
                 self.process_symmetry,
@@ -1153,6 +1204,7 @@ class OP_TwistBoneWithWeight(Operator):
                 self.copy_rotation_target_bone,
                 self.copy_rotation_top_influence,
                 self.copy_rotation_bottom_influence,
+                self.bone_collection_name,
             )
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -1182,18 +1234,20 @@ class OP_TwistBoneWithWeight(Operator):
         layout = self.layout
         layout.prop(self, "count")
         layout.prop(self, "twist_length_factor")
-        layout.prop(self, "auto_transfer_weights")
-        layout.prop(self, "process_symmetry")
         row = layout.row(align=True)
         row.prop(self, "copy_rotation_target_bone")
         row = layout.row(align=True)
         row.prop(self, "copy_rotation_top_influence")
         row.prop(self, "copy_rotation_bottom_influence")
+        layout.prop(self, "bone_collection_name")
+        layout.prop(self, "process_symmetry")
+        layout.prop(self, "auto_transfer_weights")
 
         sub = layout.column()
         sub.enabled = self.auto_transfer_weights
         sub.prop(self, "only_selected")
         sub.prop(self, "soft_factor")
+
 class OP_RemoveTwistBoneWithWeight(Operator):
     bl_idname = "ho.removetwistbone_withweight"
     bl_label = "清除 Twist 骨"
