@@ -1,7 +1,7 @@
 import bpy
 import math
 import numpy as np
-from bpy.props import BoolProperty, FloatProperty, IntProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Context, Operator, UILayout
 from mathutils import Vector
 
@@ -95,6 +95,130 @@ class TwistBoneCore:
                 props.keepRotation = False
             if props and hasattr(props, "humanoidMapping"):
                 props.humanoidMapping = bone_name
+
+    @staticmethod
+    def _find_copy_rotation_target_bone(
+        armature: bpy.types.Object,
+        source_bones: list[str],
+        manual_target: str = "",
+    ) -> str | None:
+        if manual_target and armature.data.bones.get(manual_target):
+            return manual_target
+
+        selected_set = set(source_bones)
+        for source_name in source_bones:
+            source_bone = armature.data.bones.get(source_name)
+            if source_bone is None:
+                continue
+            for child in source_bone.children:
+                if child.name not in selected_set:
+                    return child.name
+        return None
+
+    @staticmethod
+    def _ensure_copy_rotation_constraint(
+        pose_bone,
+        target_armature: bpy.types.Object,
+        target_bone_name: str,
+        influence: float = 1.0,
+    ):
+        constraint = None
+        for item in pose_bone.constraints:
+            if item.type == "COPY_ROTATION" and item.name == "HoTools_CopyRotation":
+                constraint = item
+                break
+
+        if constraint is None:
+            constraint = pose_bone.constraints.new("COPY_ROTATION")
+            constraint.name = "HoTools_CopyRotation"
+
+        constraint.target = target_armature
+        constraint.subtarget = target_bone_name
+        constraint.owner_space = "LOCAL"
+        constraint.target_space = "LOCAL_OWNER_ORIENT"
+        constraint.mix_mode = "REPLACE"
+        constraint.influence = max(0.0, min(1.0, influence))
+        constraint.use_x = True
+        constraint.use_y = True
+        constraint.use_z = True
+        return constraint
+
+    @staticmethod
+    def _ensure_stretch_to_constraint(
+        pose_bone,
+        target_armature: bpy.types.Object,
+        target_bone_name: str,
+    ):
+        constraint = None
+        for item in pose_bone.constraints:
+            if item.type == "STRETCH_TO" and item.name == "HoTools_StretchTo":
+                constraint = item
+                break
+
+        if constraint is None:
+            constraint = pose_bone.constraints.new("STRETCH_TO")
+            constraint.name = "HoTools_StretchTo"
+
+        constraint.target = target_armature
+        constraint.subtarget = target_bone_name
+        constraint.volume = "NO_VOLUME"
+        constraint.keep_axis = "SWING_Y"
+        constraint.influence = 1.0
+        return constraint
+
+    @staticmethod
+    def add_copy_rotation_to_twist_bones(
+        context: Context,
+        armature: bpy.types.Object,
+        source_bones: list[str],
+        twist_bone_names: list[str],
+        manual_target: str = "",
+        top_influence: float = 0.1,
+        bottom_influence: float = 0.8,
+    ) -> tuple[int, str | None]:
+        target_bone_name = TwistBoneCore._find_copy_rotation_target_bone(
+            armature,
+            source_bones,
+            manual_target,
+        )
+        if not target_bone_name:
+            return 0, None
+
+        old_mode = armature.mode
+        old_active = context.view_layer.objects.active
+        added = 0
+        total = len(twist_bone_names)
+
+        try:
+            armature.select_set(True)
+            context.view_layer.objects.active = armature
+            BoneSplitCore.set_object_mode(armature, "POSE")
+            for index, bone_name in enumerate(twist_bone_names):
+                pose_bone = armature.pose.bones.get(bone_name)
+                if pose_bone is None:
+                    continue
+                if total <= 1:
+                    influence = bottom_influence
+                else:
+                    t = index / (total - 1)
+                    influence = top_influence + (bottom_influence - top_influence) * t
+                TwistBoneCore._ensure_copy_rotation_constraint(
+                    pose_bone,
+                    armature,
+                    target_bone_name,
+                    influence,
+                )
+                TwistBoneCore._ensure_stretch_to_constraint(
+                    pose_bone,
+                    armature,
+                    target_bone_name,
+                )
+                added += 1
+        finally:
+            context.view_layer.objects.active = old_active
+            BoneSplitCore.set_object_mode(armature, old_mode)
+
+        return added, target_bone_name
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -516,10 +640,14 @@ class TwistBoneCore:
         auto_transfer_weights: bool = False,
         only_selected: bool = False,
         soft_factor: float = 0.5,
+        copy_rotation_target_bone: str = "",
+        copy_rotation_top_influence: float = 0.1,
+        copy_rotation_bottom_influence: float = 0.8,
     ) -> dict:
         original_mode = original_active.mode
         armature_obj = None
         results = []
+        twist_bone_names = []
 
         try:
             armature_obj, mesh_objs, bones = TwistBoneCore._collect_generation_targets(
@@ -561,6 +689,7 @@ class TwistBoneCore:
                         objs_with_bone,
                     )
                     results.append(result)
+                    twist_bone_names.extend(result.get("created_names", []))
             else:
                 for bn in bones:
                     result = TwistBoneCore.create_twist_chain(
@@ -570,6 +699,18 @@ class TwistBoneCore:
                         twist_length_factor,
                     )
                     results.append(result)
+                    twist_bone_names.extend(result.get("created_names", []))
+
+            twist_bone_names = list(dict.fromkeys(twist_bone_names))
+            constraint_count, target_bone_name = TwistBoneCore.add_copy_rotation_to_twist_bones(
+                context,
+                armature_obj,
+                bones,
+                twist_bone_names,
+                copy_rotation_target_bone,
+                copy_rotation_top_influence,
+                copy_rotation_bottom_influence,
+            )
         finally:
             if original_active:
                 context.view_layer.objects.active = original_active
@@ -586,6 +727,9 @@ class TwistBoneCore:
         return {
             "created_count": sum(item.get("created_count", 0) for item in results),
             "replaced_count": sum(item.get("replaced_count", 0) for item in results),
+            "constraint_count": constraint_count if "constraint_count" in locals() else 0,
+            "constraint_target": target_bone_name if "target_bone_name" in locals() else "",
+            "twist_bone_names": twist_bone_names,
             "items": results,
         }
 
@@ -901,7 +1045,7 @@ class OP_TwistBoneWithWeight(Operator):
     count: IntProperty(
         name="细分段数",
         description="生成的 Twist 子骨数量",
-        default=2,
+        default=4,
         min=1,
     )  # type: ignore
     twist_length_factor: FloatProperty(
@@ -927,12 +1071,31 @@ class OP_TwistBoneWithWeight(Operator):
         min=0.0,
         max=1.0,
         step=0.05,
-        default=0.5,
+        default=1.0,
     )  # type: ignore
     auto_transfer_weights: BoolProperty(
         name="自动处理权重",
         description="生成 Twist 骨后自动把权重转移到新骨骼",
         default=False,
+    )  # type: ignore
+    copy_rotation_target_bone: StringProperty(
+        name="目标骨",
+        description="Copy Rotation 的目标骨骼",
+        default="",
+    )  # type: ignore
+    copy_rotation_top_influence: FloatProperty(
+        name="上约束强度",
+        description="链顶部 Twist 的 Copy Rotation 强度",
+        default=0.1,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+    copy_rotation_bottom_influence: FloatProperty(
+        name="下约束强度",
+        description="链底部 Twist 的 Copy Rotation 强度",
+        default=0.8,
+        min=0.0,
+        max=1.0,
     )  # type: ignore
 
     @staticmethod
@@ -987,6 +1150,9 @@ class OP_TwistBoneWithWeight(Operator):
                 self.auto_transfer_weights,
                 self.only_selected,
                 self.soft_factor,
+                self.copy_rotation_target_bone,
+                self.copy_rotation_top_influence,
+                self.copy_rotation_bottom_influence,
             )
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -994,11 +1160,22 @@ class OP_TwistBoneWithWeight(Operator):
 
         self.report(
             {"INFO"},
-            f"Twist骨: 新建 {result['created_count']}，替换 {result['replaced_count']}",
+            (
+                f"Twist骨: 新建 {result['created_count']}，"
+                f"替换 {result['replaced_count']}，"
+                f"约束 {result.get('constraint_count', 0)}"
+            ),
         )
         return {"FINISHED"}
 
     def invoke(self, context, event):
+        armature = context.active_object
+        selected = TwistBoneCore._selected_bone_names(context, armature) if armature and armature.type == "ARMATURE" else []
+        target = ""
+        if armature and armature.type == "ARMATURE":
+            target = TwistBoneCore._find_copy_rotation_target_bone(armature, selected, "")
+            if target:
+                self.copy_rotation_target_bone = target
         return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context):
@@ -1007,13 +1184,16 @@ class OP_TwistBoneWithWeight(Operator):
         layout.prop(self, "twist_length_factor")
         layout.prop(self, "auto_transfer_weights")
         layout.prop(self, "process_symmetry")
+        row = layout.row(align=True)
+        row.prop(self, "copy_rotation_target_bone")
+        row = layout.row(align=True)
+        row.prop(self, "copy_rotation_top_influence")
+        row.prop(self, "copy_rotation_bottom_influence")
 
         sub = layout.column()
         sub.enabled = self.auto_transfer_weights
         sub.prop(self, "only_selected")
         sub.prop(self, "soft_factor")
-
-
 class OP_RemoveTwistBoneWithWeight(Operator):
     bl_idname = "ho.removetwistbone_withweight"
     bl_label = "清除 Twist 骨"
