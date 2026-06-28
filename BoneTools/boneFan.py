@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Context, Operator, UILayout
-from bpy.props import FloatProperty, IntProperty
+from bpy.props import FloatProperty, IntProperty, StringProperty
 from math import acos, cos, radians, sin
 from mathutils import Vector
 
@@ -9,6 +9,7 @@ from .boneTwist import TwistBoneCore
 
 
 EPS = 1e-6
+HoRig_Fan = "HoRig_Fan"
 
 
 def reg_props():
@@ -27,6 +28,39 @@ def _safe_normalized_vector(vector):
 
 def _clamp(value, min_value, max_value):
     return max(min_value, min(max_value, value))
+
+
+def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
+    if not collection_name:
+        return None
+
+    collections = getattr(armature.data, "collections", None)
+    if collections is None:
+        return None
+
+    collection = collections.get(collection_name)
+    if collection is None:
+        collection = collections.new(collection_name)
+    return collection
+
+
+def _assign_bones_to_collection(
+    armature: bpy.types.Object,
+    bone_names: list[str],
+    collection_name: str,
+) -> None:
+    collection = _ensure_bone_collection(armature, collection_name)
+    if collection is None:
+        return
+
+    edit_bones = armature.data.edit_bones
+    for bone_name in bone_names:
+        bone = edit_bones.get(bone_name)
+        if bone is None:
+            continue
+        for old_collection in list(bone.collections):
+            old_collection.unassign(bone)
+        collection.assign(bone)
 
 
 def drawBoneFanPanel(layout: UILayout, context: Context):
@@ -112,15 +146,11 @@ class BoneFanCore:
         dot = _clamp(parent_dir.dot(child_dir), -1.0, 1.0)
         angle_rad = acos(dot)
         if angle_rad <= radians(1.0) or angle_rad >= radians(179.0):
-            return None, "两根骨的夹角过小或过直，无法生成 fan 骨"
+            return None, "两根骨的关节角过小或过直，无法生成 fan 骨"
 
         plane_normal = _safe_normalized_vector(parent_dir.cross(child_dir))
         if plane_normal is None:
             return None, "无法计算工作平面法线"
-
-        fan_in_axis = _safe_normalized_vector(parent_dir + child_dir)
-        if fan_in_axis is None:
-            return None, "无法计算 fan 中心线"
 
         parent_length = (parent_bone.head - joint).length
         child_length = (child_bone.tail - joint).length
@@ -132,21 +162,9 @@ class BoneFanCore:
             "parent_dir": parent_dir,
             "child_dir": child_dir,
             "plane_normal": plane_normal,
-            "fan_in_axis": fan_in_axis,
+            "angle_rad": angle_rad,
             "base_length": min(parent_length, child_length),
         }, None
-
-    @staticmethod
-    def _build_angles(count: int, spread_deg: float) -> list[float]:
-        if count <= 1:
-            return [0.0]
-
-        if spread_deg <= 0.0:
-            return [0.0 for _ in range(count)]
-
-        half = spread_deg * 0.5
-        step = spread_deg / (count - 1)
-        return [-half + i * step for i in range(count)]
 
     @staticmethod
     def _choose_parent_bone(direction, a_bone, a_dir, b_bone, b_dir):
@@ -175,7 +193,7 @@ class BoneFanCore:
         fan_kind: str,
         count: int,
         length_factor: float,
-        spread_deg: float,
+        bone_collection_name: str = HoRig_Fan,
     ) -> list[str]:
         if len(selected_names) != 2:
             raise Exception("请先选择两根骨骼")
@@ -196,14 +214,11 @@ class BoneFanCore:
         parent_dir = frame["parent_dir"]
         child_dir = frame["child_dir"]
         plane_normal = frame["plane_normal"]
-        center_axis = frame["fan_in_axis"]
-        if fan_kind == "out":
-            center_axis = -center_axis
+        total_angle = frame["angle_rad"]
         base_length = frame["base_length"]
 
         padding = max(2, len(str(count)))
         fan_length = max(base_length * length_factor, EPS)
-        angles = cls._build_angles(count, spread_deg)
 
         existed = []
         for i in range(count):
@@ -215,12 +230,14 @@ class BoneFanCore:
             raise Exception("Fan骨名称已存在: " + ", ".join(existed))
 
         created_names = []
-        for i, angle_deg in enumerate(angles, start=1):
+        step = total_angle / (count + 1)
+        start_dir = parent_dir if fan_kind == "in" else -parent_dir
+        for i in range(1, count + 1):
             new_name = cls._fan_name(parent_bone.name, fan_kind, i, padding)
             direction = cls._rotate_vector_around_axis(
-                center_axis,
+                start_dir,
                 plane_normal,
-                radians(angle_deg),
+                step * i,
             )
             if direction is None:
                 raise Exception(f"无法生成 {new_name} 的方向")
@@ -251,6 +268,7 @@ class BoneFanCore:
 
         bpy.context.view_layer.objects.active = armature
         try:
+            _assign_bones_to_collection(armature, created_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(armature, created_names)
         finally:
@@ -318,14 +336,11 @@ class OP_FanBase(Operator):
         min=0.01,
         soft_max=1.0,
     )  # type: ignore
-    spread_deg: FloatProperty(
-        name="扇面角度",
-        description="fan 骨围绕中心线的总展开角度",
-        default=30.0,
-        min=0.0,
-        soft_max=90.0,
+    bone_collection_name: StringProperty(
+        name="楠ㄦ潫闆嗗悎",
+        description="鐢熸垚鐨?fan 楠ㄥ綊鍏ュ埌鐨勯骼闆嗗悎鍚嶇О",
+        default=HoRig_Fan,
     )  # type: ignore
-
     fan_kind = "in"
 
     @classmethod
@@ -370,7 +385,7 @@ class OP_FanBase(Operator):
                 self.fan_kind,
                 self.count,
                 self.length_factor,
-                self.spread_deg,
+                self.bone_collection_name,
             )
 
             if original_mode != "EDIT":
@@ -404,7 +419,7 @@ class OP_FanBase(Operator):
         layout = self.layout
         layout.prop(self, "count")
         layout.prop(self, "length_factor")
-        layout.prop(self, "spread_deg")
+        layout.prop(self, "bone_collection_name")
 
 
 class OP_FanInBone(OP_FanBase):
@@ -430,7 +445,16 @@ class OP_RemoveFanBone(Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == "ARMATURE"
+        if obj is None or obj.type != "ARMATURE":
+            return False
+
+        if obj.mode == "POSE":
+            return len(context.selected_pose_bones) == 2
+
+        if obj.mode == "EDIT":
+            return len([bone for bone in obj.data.edit_bones if bone.select]) == 2
+
+        return False
 
     def execute(self, context):
         armature = context.active_object
