@@ -60,7 +60,12 @@ class TwistBoneCore:
         return f"{main_stem}{side_suffix}", int(index_text)
 
     @staticmethod
-    def create_twist_chain(armature: bpy.types.Object, bn: str, count: int) -> list[str]:
+    def create_twist_chain(
+        armature: bpy.types.Object,
+        bn: str,
+        count: int,
+        twist_length_factor: float = 0.1,
+    ) -> list[str]:
         """在保留主骨的前提下，生成Twist子骨链。"""
         was_hidden = armature.hide_viewport
         if was_hidden:
@@ -82,6 +87,9 @@ class TwistBoneCore:
             if bone_vec.length <= 1e-8:
                 raise Exception(f"骨骼长度为 0: {bn}")
 
+            bone_dir = bone_vec.normalized()
+            twist_length = max(bone_vec.length * twist_length_factor, 1e-4)
+
             padding = max(2, len(str(count)))
             new_bone_names = [
                 TwistBoneCore._twist_name(bn, count - i + 1, padding)
@@ -98,13 +106,11 @@ class TwistBoneCore:
                 old_bone.head.lerp(old_bone.tail, i / count)
                 for i in range(count + 1)
             ]
-            vertical_tail_offset = Vector((0, 0, bone_vec.length / count))
-
             new_bones = []
             for i, new_name in enumerate(new_bone_names, start=1):
                 new_bone = edit_bones.new(new_name)
                 new_bone.head = corrected_points[i - 1].copy()
-                new_bone.tail = new_bone.head + vertical_tail_offset
+                new_bone.tail = new_bone.head + bone_dir * twist_length
                 new_bone.roll = 0.0
                 new_bone.use_deform = True
                 new_bone.parent = old_bone
@@ -287,10 +293,16 @@ class TwistBoneCore:
         count: int,
         armature: bpy.types.Object,
         soft_factor: float,
+        twist_length_factor: float,
         objs,
     ):
         """把选中的主骨权重转移到Twist子骨链上。"""
-        new_bone_names = TwistBoneCore.create_twist_chain(armature, bn, count)
+        new_bone_names = TwistBoneCore.create_twist_chain(
+            armature,
+            bn,
+            count,
+            twist_length_factor,
+        )
 
         for obj in objs:
             b_vg = obj.vertex_groups.get(bn)
@@ -514,6 +526,13 @@ class OP_TwistBoneWithWeight(Operator):
         default=2,
         min=1,
     )  # type: ignore
+    twist_length_factor: FloatProperty(
+        name="Twist长度",
+        description="Twist子骨长度相对于主骨长度的比例",
+        default=0.1,
+        min=0.01,
+        soft_max=1.0,
+    )  # type: ignore
     process_symmetry: BoolProperty(
         name="对称操作",
         description="同时对镜像骨骼进行处理",
@@ -531,6 +550,12 @@ class OP_TwistBoneWithWeight(Operator):
         max=1.0,
         step=0.05,
         default=0.5,
+    )  # type: ignore
+
+    auto_transfer_weights: BoolProperty(
+        name="自动处理权重",
+        description="生成Twist骨后自动把权重转移到新骨骼",
+        default=False,
     )  # type: ignore
 
     def get_mirrored_bone(self, bone_name, armature) -> list[str]:
@@ -637,20 +662,29 @@ class OP_TwistBoneWithWeight(Operator):
 
         try:
             for bn in bones:
-                objs_with_bone = [
-                    obj for obj in mesh_objs
-                    if obj.vertex_groups.get(bn)
-                ]
-                if not objs_with_bone:
-                    continue
+                if self.auto_transfer_weights:
+                    objs_with_bone = [
+                        obj for obj in mesh_objs
+                        if obj.vertex_groups.get(bn)
+                    ]
+                    if not objs_with_bone:
+                        continue
 
-                TwistBoneCore.objs_bone_twist(
-                    bn,
-                    self.count,
-                    armature_obj,
-                    self.soft_factor,
-                    objs_with_bone,
-                )
+                    TwistBoneCore.objs_bone_twist(
+                        bn,
+                        self.count,
+                        armature_obj,
+                        self.soft_factor,
+                        self.twist_length_factor,
+                        objs_with_bone,
+                    )
+                else:
+                    TwistBoneCore.create_twist_chain(
+                        armature_obj,
+                        bn,
+                        self.count,
+                        self.twist_length_factor,
+                    )
         except Exception as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
@@ -674,9 +708,14 @@ class OP_TwistBoneWithWeight(Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "count")
+        layout.prop(self, "twist_length_factor")
+        layout.prop(self, "auto_transfer_weights")
         layout.prop(self, "process_symmetry")
-        layout.prop(self, "only_selected")
-        layout.prop(self, "soft_factor")
+
+        sub = layout.column()
+        sub.enabled = self.auto_transfer_weights
+        sub.prop(self, "only_selected")
+        sub.prop(self, "soft_factor")
 
 
 class OP_RemoveTwistBoneWithWeight(Operator):
