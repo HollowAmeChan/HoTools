@@ -65,11 +65,12 @@ def _assign_bones_to_collection(
 
 def drawBoneFanPanel(layout: UILayout, context: Context):
     fan_box = layout.box()
+    col = fan_box.column(align=True)
 
-    row = fan_box.row(align=True)
+    row = col.row(align=True)
     row.operator(OP_FanGenerate.bl_idname, text="fan add")
 
-    row = fan_box.row(align=True)
+    row = col.row(align=True)
     row.operator(OP_RemoveFanBone.bl_idname, text="remove fan")
 
 
@@ -81,9 +82,39 @@ class BoneFanCore:
         return f"{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
+    def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int) -> str:
+        stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
+        marker = "_fan_pin_in_" if fan_kind == "in" else "_fan_pin_out_"
+        return f"{stem}{marker}{index:0{padding}d}{side_suffix}"
+
+    @staticmethod
     def _parse_fan_name(name: str):
         stem, side_suffix = TwistBoneCore._split_side_suffix(name)
         for fan_kind, marker in (("in", "_fan_in_"), ("out", "_fan_out_")):
+            marker_index = stem.rfind(marker)
+            if marker_index < 0:
+                continue
+
+            index_text = stem[marker_index + len(marker):]
+            if not index_text.isdigit():
+                continue
+
+            base_stem = stem[:marker_index]
+            if not base_stem:
+                continue
+
+            return {
+                "base_name": f"{base_stem}{side_suffix}",
+                "fan_kind": fan_kind,
+                "index": int(index_text),
+            }
+
+        return None
+
+    @staticmethod
+    def _parse_fan_pin_name(name: str):
+        stem, side_suffix = TwistBoneCore._split_side_suffix(name)
+        for fan_kind, marker in (("in", "_fan_pin_in_"), ("out", "_fan_pin_out_")):
             marker_index = stem.rfind(marker)
             if marker_index < 0:
                 continue
@@ -183,6 +214,67 @@ class BoneFanCore:
             if props and hasattr(props, "humanoidMapping"):
                 props.humanoidMapping = bone_name
 
+    @staticmethod
+    def _ensure_copy_rotation_constraint(pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
+        constraint = None
+        for item in pose_bone.constraints:
+            if item.type == "COPY_ROTATION" and item.name == "HoTools_CopyRotation":
+                constraint = item
+                break
+
+        if constraint is None:
+            constraint = pose_bone.constraints.new("COPY_ROTATION")
+            constraint.name = "HoTools_CopyRotation"
+
+        constraint.target = target_armature
+        constraint.subtarget = target_bone_name
+        constraint.owner_space = "WORLD"
+        constraint.target_space = "WORLD"
+        constraint.mix_mode = "REPLACE"
+        constraint.influence = max(0.0, min(1.0, influence))
+        constraint.use_x = True
+        constraint.use_y = True
+        constraint.use_z = True
+        return constraint
+
+    @classmethod
+    def _add_fan_constraints(
+        cls,
+        armature: bpy.types.Object,
+        fan_names: list[str],
+        pin_names: list[str],
+        influence: float,
+    ) -> None:
+        if not fan_names:
+            return
+
+        old_mode = armature.mode
+        old_active = bpy.context.view_layer.objects.active
+        try:
+            armature.select_set(True)
+            bpy.context.view_layer.objects.active = armature
+            BoneSplitCore.set_object_mode(armature, "POSE")
+            for fan_name, pin_name in zip(fan_names, pin_names):
+                pose_bone = armature.pose.bones.get(fan_name)
+                if pose_bone is None:
+                    continue
+                cls._ensure_copy_rotation_constraint(
+                    pose_bone,
+                    armature,
+                    pin_name,
+                    influence,
+                )
+        finally:
+            if old_active is not None:
+                try:
+                    bpy.context.view_layer.objects.active = old_active
+                except Exception:
+                    pass
+            try:
+                BoneSplitCore.set_object_mode(armature, old_mode)
+            except Exception:
+                pass
+
     @classmethod
     def _create_fan_bones(
         cls,
@@ -191,6 +283,7 @@ class BoneFanCore:
         fan_kind: str,
         count: int,
         length_factor: float,
+        pin_length_factor: float,
         bone_collection_name: str = HoRig_Fan,
     ) -> list[str]:
         if len(selected_names) != 2:
@@ -217,58 +310,84 @@ class BoneFanCore:
 
         padding = max(2, len(str(count)))
         fan_length = max(base_length * length_factor, EPS)
+        influence = 1.0 / (count + 1)
+        pin_length = max(fan_length * pin_length_factor, EPS)
 
         existed = []
         for i in range(count):
-            new_name = cls._fan_name(parent_bone.name, fan_kind, i + 1, padding)
-            if edit_bones.get(new_name) is not None:
-                existed.append(new_name)
+            fan_name = cls._fan_name(parent_bone.name, fan_kind, i + 1, padding)
+            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i + 1, padding)
+            if edit_bones.get(fan_name) is not None:
+                existed.append(fan_name)
+            if edit_bones.get(pin_name) is not None:
+                existed.append(pin_name)
 
         if existed:
-            raise Exception("fan bone already exists: " + ", ".join(existed))
+            raise Exception("fan bone already exists: " + ", ".join(sorted(set(existed))))
 
         created_names = []
+        pin_names = []
         step = total_angle / (count + 1)
         start_dir = parent_dir if fan_kind == "in" else -parent_dir
+
         for i in range(1, count + 1):
-            new_name = cls._fan_name(parent_bone.name, fan_kind, i, padding)
+            fan_name = cls._fan_name(parent_bone.name, fan_kind, i, padding)
+            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i, padding)
             direction = cls._rotate_vector_around_axis(
                 start_dir,
                 plane_normal,
                 step * i,
             )
             if direction is None:
-                raise Exception(f"failed to generate {new_name}")
+                raise Exception(f"failed to generate {fan_name}")
 
             direction = _safe_normalized_vector(direction)
             if direction is None:
-                raise Exception(f"{new_name} direction length is zero")
+                raise Exception(f"{fan_name} direction length is zero")
 
-            new_bone = edit_bones.new(new_name)
-            new_bone.head = joint.copy()
-            new_bone.tail = joint + direction * fan_length
-            new_bone.use_connect = False
-            new_bone.use_deform = True
-            new_bone.parent = cls._choose_parent_bone(
+            pin_bone = edit_bones.new(pin_name)
+            pin_bone.head = joint.copy()
+            pin_bone.tail = joint + direction * pin_length
+            pin_bone.use_connect = False
+            pin_bone.use_deform = False
+            pin_bone.parent = cls._choose_parent_bone(
+                -direction,
+                parent_bone,
+                parent_dir,
+                child_bone,
+                child_dir,
+            )
+            try:
+                pin_bone.align_roll(plane_normal)
+            except Exception:
+                pin_bone.roll = 0.0
+
+            fan_bone = edit_bones.new(fan_name)
+            fan_bone.head = joint.copy()
+            fan_bone.tail = joint + direction * fan_length
+            fan_bone.use_connect = False
+            fan_bone.use_deform = True
+            fan_bone.parent = cls._choose_parent_bone(
                 direction,
                 parent_bone,
                 parent_dir,
                 child_bone,
                 child_dir,
             )
-
             try:
-                new_bone.align_roll(plane_normal)
+                fan_bone.align_roll(plane_normal)
             except Exception:
-                new_bone.roll = 0.0
+                fan_bone.roll = 0.0
 
-            created_names.append(new_name)
+            created_names.append(fan_name)
+            pin_names.append(pin_name)
 
         bpy.context.view_layer.objects.active = armature
         try:
-            _assign_bones_to_collection(armature, created_names, bone_collection_name)
+            _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(armature, created_names)
+            cls._add_fan_constraints(armature, created_names, pin_names, influence)
         finally:
             if armature.mode != "EDIT":
                 try:
@@ -286,19 +405,21 @@ class BoneFanCore:
 
         if not selected_names:
             for bone in edit_bones:
-                if cls._parse_fan_name(bone.name) is not None:
+                if cls._parse_fan_name(bone.name) is not None or cls._parse_fan_pin_name(bone.name) is not None:
                     removal.add(bone.name)
             return sorted(removal)
 
         for name in selected_names:
-            if cls._parse_fan_name(name) is not None:
+            if cls._parse_fan_name(name) is not None or cls._parse_fan_pin_name(name) is not None:
                 removal.add(name)
 
         for bone in edit_bones:
             parsed = cls._parse_fan_name(bone.name)
-            if parsed is None:
+            pin_parsed = cls._parse_fan_pin_name(bone.name)
+            if parsed is None and pin_parsed is None:
                 continue
-            if parsed["base_name"] in selected_set:
+            base_name = parsed["base_name"] if parsed is not None else pin_parsed["base_name"]
+            if base_name in selected_set:
                 removal.add(bone.name)
 
         return sorted(removal)
@@ -341,6 +462,13 @@ class OP_FanGenerate(Operator):
         description="fan bone length ratio relative to the joint-side length",
         default=0.2,
         min=0.01,
+        soft_max=1.0,
+    )  # type: ignore
+    pin_length_factor: FloatProperty(
+        name="pin length factor",
+        description="fanPin length ratio relative to fan length",
+        default=0.2 / 5.0,
+        min=0.001,
         soft_max=1.0,
     )  # type: ignore
     bone_collection_name: StringProperty(
@@ -413,6 +541,7 @@ class OP_FanGenerate(Operator):
                         fan_kind,
                         count,
                         self.length_factor,
+                        self.pin_length_factor,
                         self.bone_collection_name,
                     )
                 )
@@ -446,29 +575,27 @@ class OP_FanGenerate(Operator):
 
     def draw(self, context):
         layout = self.layout
-        flow = layout.grid_flow(
-            row_major=True,
-            columns=1,
-            even_columns=True,
-            even_rows=False,
-            align=True,
-        )
+        box = layout.box()
+        col = box.column(align=True)
 
-        row = flow.row(align=True)
+        row = col.row(align=True)
         row.prop(self, "generate_in", toggle=True)
         sub = row.row(align=True)
         sub.enabled = self.generate_in
         sub.prop(self, "count_in")
 
-        row = flow.row(align=True)
+        row = col.row(align=True)
         row.prop(self, "generate_out", toggle=True)
         sub = row.row(align=True)
         sub.enabled = self.generate_out
         sub.prop(self, "count_out")
 
-        layout.separator()
-        layout.prop(self, "length_factor")
-        layout.prop(self, "bone_collection_name")
+        col.separator()
+        col.prop(self, "length_factor")
+        col.prop(self, "pin_length_factor")
+        col.prop(self, "bone_collection_name")
+
+
 class OP_RemoveFanBone(Operator):
     bl_idname = "ho.remove_fan_bone"
     bl_label = "remove fan"
