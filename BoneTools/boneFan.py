@@ -1,6 +1,6 @@
-import bpy
+﻿import bpy
 from bpy.types import Context, Operator, UILayout
-from bpy.props import FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from math import acos, cos, radians, sin
 from mathutils import Vector
 
@@ -67,11 +67,10 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
     fan_box = layout.box()
 
     row = fan_box.row(align=True)
-    row.operator(OP_FanInBone.bl_idname, text="fanIn添加")
-    row.operator(OP_FanOutBone.bl_idname, text="fanOut添加")
+    row.operator(OP_FanGenerate.bl_idname, text="fan add")
 
     row = fan_box.row(align=True)
-    row.operator(OP_RemoveFanBone.bl_idname, text="清除Fan骨")
+    row.operator(OP_RemoveFanBone.bl_idname, text="remove fan")
 
 
 class BoneFanCore:
@@ -136,21 +135,21 @@ class BoneFanCore:
             child_bone = bone_a
             joint = (bone_b.tail + bone_a.head) * 0.5
         else:
-            return None, "两根骨必须首尾相接并形成关节"
+            return None, "two bones must be connected"
 
         parent_dir = _safe_normalized_vector(parent_bone.head - joint)
         child_dir = _safe_normalized_vector(child_bone.tail - joint)
         if parent_dir is None or child_dir is None:
-            return None, "关节两侧骨长过短，无法生成 fan 骨"
+            return None, "bone length too short"
 
         dot = _clamp(parent_dir.dot(child_dir), -1.0, 1.0)
         angle_rad = acos(dot)
         if angle_rad <= radians(1.0) or angle_rad >= radians(179.0):
-            return None, "两根骨的关节角过小或过直，无法生成 fan 骨"
+            return None, "joint angle too small or too straight"
 
         plane_normal = _safe_normalized_vector(parent_dir.cross(child_dir))
         if plane_normal is None:
-            return None, "无法计算工作平面法线"
+            return None, "failed to compute plane normal"
 
         parent_length = (parent_bone.head - joint).length
         child_length = (child_bone.tail - joint).length
@@ -176,7 +175,6 @@ class BoneFanCore:
 
     @staticmethod
     def _apply_hotools_bone_props(armature: bpy.types.Object, bone_names: list[str]) -> None:
-        #设置hotools属性
         for bone_name in bone_names:
             bone = armature.data.bones.get(bone_name)
             props = getattr(bone, "hotools_boneprops", None) if bone else None
@@ -196,13 +194,13 @@ class BoneFanCore:
         bone_collection_name: str = HoRig_Fan,
     ) -> list[str]:
         if len(selected_names) != 2:
-            raise Exception("请先选择两根骨骼")
+            raise Exception("please select exactly two bones")
 
         edit_bones = armature.data.edit_bones
         bone_a = edit_bones.get(selected_names[0])
         bone_b = edit_bones.get(selected_names[1])
         if bone_a is None or bone_b is None:
-            raise Exception("未找到已选择的骨骼")
+            raise Exception("selected bones not found")
 
         frame, error = cls._resolve_joint_geometry(bone_a, bone_b)
         if error:
@@ -227,7 +225,7 @@ class BoneFanCore:
                 existed.append(new_name)
 
         if existed:
-            raise Exception("Fan骨名称已存在: " + ", ".join(existed))
+            raise Exception("fan bone already exists: " + ", ".join(existed))
 
         created_names = []
         step = total_angle / (count + 1)
@@ -240,11 +238,11 @@ class BoneFanCore:
                 step * i,
             )
             if direction is None:
-                raise Exception(f"无法生成 {new_name} 的方向")
+                raise Exception(f"failed to generate {new_name}")
 
             direction = _safe_normalized_vector(direction)
             if direction is None:
-                raise Exception(f"{new_name} 方向长度为 0")
+                raise Exception(f"{new_name} direction length is zero")
 
             new_bone = edit_bones.new(new_name)
             new_bone.head = joint.copy()
@@ -320,28 +318,46 @@ class BoneFanCore:
         return removed
 
 
-class OP_FanBase(Operator):
+class OP_FanGenerate(Operator):
+    bl_idname = "ho.fan_generate"
+    bl_label = "fan add"
+    bl_description = "Generate fan bones from two connected bones"
     bl_options = {"REGISTER", "UNDO"}
 
-    count: IntProperty(
-        name="数量",
-        description="生成的 fan 骨数量",
+    count_in: IntProperty(
+        name="in count",
+        description="number of in-side fan bones",
+        default=2,
+        min=1,
+    )  # type: ignore
+    count_out: IntProperty(
+        name="out count",
+        description="number of out-side fan bones",
         default=2,
         min=1,
     )  # type: ignore
     length_factor: FloatProperty(
-        name="长度系数",
-        description="fan 骨长度相对于关节两侧骨长度的比例",
+        name="length factor",
+        description="fan bone length ratio relative to the joint-side length",
         default=0.2,
         min=0.01,
         soft_max=1.0,
     )  # type: ignore
     bone_collection_name: StringProperty(
-        name="楠ㄦ潫闆嗗悎",
-        description="鐢熸垚鐨?fan 楠ㄥ綊鍏ュ埌鐨勯骼闆嗗悎鍚嶇О",
+        name="bone collection",
+        description="collection name for generated fan bones",
         default=HoRig_Fan,
     )  # type: ignore
-    fan_kind = "in"
+    generate_in: BoolProperty(
+        name="generate in",
+        description="generate in-side fan bones",
+        default=True,
+    )  # type: ignore
+    generate_out: BoolProperty(
+        name="generate out",
+        description="generate out-side fan bones",
+        default=False,
+    )  # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -365,7 +381,16 @@ class OP_FanBase(Operator):
 
         selected_names = BoneFanCore._selected_bone_names(context, armature)
         if len(selected_names) != 2:
-            self.report({"ERROR"}, "请先选择两根骨骼")
+            self.report({"ERROR"}, "please select exactly two bones")
+            return {"CANCELLED"}
+
+        fan_kinds = []
+        if self.generate_in:
+            fan_kinds.append(("in", self.count_in))
+        if self.generate_out:
+            fan_kinds.append(("out", self.count_out))
+        if not fan_kinds:
+            self.report({"ERROR"}, "select at least one direction")
             return {"CANCELLED"}
 
         if was_hidden:
@@ -379,19 +404,23 @@ class OP_FanBase(Operator):
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, "EDIT")
 
-            created_names = BoneFanCore._create_fan_bones(
-                armature,
-                selected_names,
-                self.fan_kind,
-                self.count,
-                self.length_factor,
-                self.bone_collection_name,
-            )
+            created_names = []
+            for fan_kind, count in fan_kinds:
+                created_names.extend(
+                    BoneFanCore._create_fan_bones(
+                        armature,
+                        selected_names,
+                        fan_kind,
+                        count,
+                        self.length_factor,
+                        self.bone_collection_name,
+                    )
+                )
 
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            self.report({"INFO"}, f"已生成 {len(created_names)} 根 {self.bl_label}")
+            self.report({"INFO"}, f"generated {len(created_names)} fan bones")
             return {"FINISHED"}
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -417,29 +446,33 @@ class OP_FanBase(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "count")
+        flow = layout.grid_flow(
+            row_major=True,
+            columns=1,
+            even_columns=True,
+            even_rows=False,
+            align=True,
+        )
+
+        row = flow.row(align=True)
+        row.prop(self, "generate_in", toggle=True)
+        sub = row.row(align=True)
+        sub.enabled = self.generate_in
+        sub.prop(self, "count_in")
+
+        row = flow.row(align=True)
+        row.prop(self, "generate_out", toggle=True)
+        sub = row.row(align=True)
+        sub.enabled = self.generate_out
+        sub.prop(self, "count_out")
+
+        layout.separator()
         layout.prop(self, "length_factor")
         layout.prop(self, "bone_collection_name")
-
-
-class OP_FanInBone(OP_FanBase):
-    bl_idname = "ho.fan_in_bone"
-    bl_label = "fanIn添加"
-    bl_description = "在关节内侧生成 fan 骨"
-    fan_kind = "in"
-
-
-class OP_FanOutBone(OP_FanBase):
-    bl_idname = "ho.fan_out_bone"
-    bl_label = "fanOut添加"
-    bl_description = "在关节外侧生成 fan 骨"
-    fan_kind = "out"
-
-
 class OP_RemoveFanBone(Operator):
     bl_idname = "ho.remove_fan_bone"
-    bl_label = "清除Fan骨"
-    bl_description = "清除选中骨对应的 fan 骨；若未选择骨骼，则清空全部 fan 骨"
+    bl_label = "remove fan"
+    bl_description = "Remove fan bones for the selected main bones"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -480,7 +513,7 @@ class OP_RemoveFanBone(Operator):
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            self.report({"INFO"}, f"已清除 {removed} 根 fan 骨")
+            self.report({"INFO"}, f"removed {removed} fan bones")
             return {"FINISHED"}
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -503,8 +536,7 @@ class OP_RemoveFanBone(Operator):
 
 
 cls = [
-    OP_FanInBone,
-    OP_FanOutBone,
+    OP_FanGenerate,
     OP_RemoveFanBone,
 ]
 

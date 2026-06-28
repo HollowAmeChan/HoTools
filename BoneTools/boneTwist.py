@@ -33,8 +33,8 @@ def _clamp(value, min_value, max_value):
 def drawBoneTwistPanel(layout: UILayout, context: Context):
     twist_box = layout.box()
     row = twist_box.row(align=True)
-    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成 Twist 骨")
-    row.operator(OP_RemoveTwistBoneWithWeight.bl_idname, text="清除 Twist 骨")
+    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成 Twist 骨",icon="GP_SELECT_STROKES")
+    row.operator(OP_RemoveTwistBoneWithWeight.bl_idname, text="",icon="TRASH")
 
 
 class TwistBoneCore:
