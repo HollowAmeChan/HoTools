@@ -1164,6 +1164,8 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
     bl_idname = "ho.vertexgrouptools_switch_vg_bycursor"
     bl_label = "切换到鼠标位置的组/骨骼"
     bl_options = {'REGISTER', 'UNDO'}
+    _MAX_PICK_DISTANCE_PX = 32.0
+    _TIE_BREAK_MARGIN_PX = 6.0
 
     @classmethod
     def poll(cls, context):
@@ -1225,8 +1227,7 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
         return None
 
     def _pick_bone_from_mouse(self, obj, rig, region, rv3d, mouse_coord):
-        min_distance = float('inf')
-        active_bone = None
+        candidates = []
 
         for bone in rig.pose.bones:
             if bone.bone.hide or not obj.vertex_groups.get(bone.name):
@@ -1251,11 +1252,23 @@ class OP_VertexGroupTools_Switch_VG_byCursor(Operator):
                 head_2d,
                 tail_2d
             )
-            if distance < min_distance:
-                min_distance = distance
-                active_bone = bone.name
+            screen_length = (tail_2d - head_2d).length
+            candidates.append((bone.name, distance, screen_length))
 
-        return active_bone
+        if not candidates:
+            return None
+
+        best_distance = min(item[1] for item in candidates)
+        if best_distance > self._MAX_PICK_DISTANCE_PX:
+            return None
+
+        close_candidates = [
+            item for item in candidates
+            if item[1] <= best_distance + self._TIE_BREAK_MARGIN_PX
+        ]
+        close_candidates.sort(key=lambda item: (item[2], item[1], item[0]))
+
+        return close_candidates[0][0]
 
     def invoke(self, context, event):
         self._mouse_window_x = event.mouse_x
