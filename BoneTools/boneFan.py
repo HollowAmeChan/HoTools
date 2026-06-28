@@ -760,7 +760,9 @@ class BoneFanCore:
         radius = max(base_length * radius_factor, EPS)
         blur_world = max(radius * blur_factor, 0.0)
         plane_normal_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ plane_normal)
-        if plane_normal_world is None:
+        parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
+        child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
+        if plane_normal_world is None or parent_dir_world is None or child_dir_world is None:
             raise Exception("failed to compute plane normal")
 
         source_map: dict[str, list[dict]] = {}
@@ -771,12 +773,19 @@ class BoneFanCore:
             if parsed is None or fan_bone is None or fan_bone.parent is None:
                 continue
 
-            parent_name = fan_bone.parent.name
+            fan_dir = _safe_normalized_vector(armature.matrix_world.to_3x3() @ fan_bone.vector)
+            if fan_dir is None:
+                continue
+
+            parent_score = fan_dir.dot(parent_dir_world)
+            child_score = fan_dir.dot(child_dir_world)
+            parent_name = frame["parent_bone"].name if parent_score >= child_score else frame["child_bone"].name
             key = (parent_name, parsed["fan_kind"])
             kind_counts[key] = kind_counts.get(key, 0) + 1
             source_map.setdefault(parent_name, []).append({
                 "name": fan_name,
                 "kind": parsed["fan_kind"],
+                "dir": fan_dir,
             })
 
         if not source_map:
@@ -800,6 +809,7 @@ class BoneFanCore:
         source_weights_cache: dict[str, list[float]] = {}
         touched_vertices = 0
         processed_sources = 0
+        processed_fans = 0
 
         for source_name, fan_items in source_map.items():
             source_vg = obj.vertex_groups.get(source_name)
@@ -851,6 +861,8 @@ class BoneFanCore:
             if not fan_vgs:
                 continue
 
+            processed_fans += len(fan_vgs)
+
             joint_world = armature.matrix_world @ joint
             for i, orig_w in enumerate(source_weights):
                 if not has_weight[i] or orig_w <= 0.0:
@@ -890,6 +902,7 @@ class BoneFanCore:
 
         return {
             "processed_sources": processed_sources,
+            "processed_fans": processed_fans,
             "processed_vertices": touched_vertices,
             "processed_objects": 1 if processed_sources > 0 else 0,
         }
@@ -922,6 +935,7 @@ class BoneFanCore:
         result = {
             "processed_objects": 0,
             "processed_sources": 0,
+            "processed_fans": 0,
             "processed_vertices": 0,
         }
 
@@ -937,6 +951,7 @@ class BoneFanCore:
             )
             result["processed_objects"] += obj_result["processed_objects"]
             result["processed_sources"] += obj_result["processed_sources"]
+            result["processed_fans"] += obj_result.get("processed_fans", 0)
             result["processed_vertices"] += obj_result["processed_vertices"]
 
         return result
@@ -970,10 +985,20 @@ class BoneFanCore:
         armature: bpy.types.Object,
         fan_names: list[str],
         pin_names: list[str],
-        influence: float,
     ) -> None:
         if not fan_names:
             return
+
+        kind_totals: dict[str, int] = {}
+        fan_infos: list[tuple[str, str, int, int]] = []
+        for fan_name in fan_names:
+            parsed = cls._parse_fan_name(fan_name)
+            if parsed is None:
+                continue
+            kind = parsed["fan_kind"]
+            index = parsed["index"]
+            kind_totals[kind] = max(kind_totals.get(kind, 0), index)
+            fan_infos.append((fan_name, kind, index, 0))
 
         old_mode = armature.mode
         old_active = bpy.context.view_layer.objects.active
@@ -982,6 +1007,11 @@ class BoneFanCore:
             bpy.context.view_layer.objects.active = armature
             BoneSplitCore.set_object_mode(armature, "POSE")
             for fan_name, pin_name in zip(fan_names, pin_names):
+                parsed = cls._parse_fan_name(fan_name)
+                if parsed is None:
+                    continue
+                total = kind_totals.get(parsed["fan_kind"], parsed["index"])
+                influence = min(parsed["index"], total + 1 - parsed["index"]) / float(total + 1)
                 pose_bone = armature.pose.bones.get(fan_name)
                 if pose_bone is None:
                     continue
@@ -1038,7 +1068,6 @@ class BoneFanCore:
 
         padding = max(2, len(str(count)))
         fan_length = max(base_length * length_factor, EPS)
-        influence = 1.0 / (count + 1)
         pin_length = max(fan_length * pin_length_factor, EPS)
 
         existed = []
@@ -1115,7 +1144,7 @@ class BoneFanCore:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(armature, created_names)
-            cls._add_fan_constraints(armature, created_names, pin_names, influence)
+            cls._add_fan_constraints(armature, created_names, pin_names)
         finally:
             if armature.mode != "EDIT":
                 try:
