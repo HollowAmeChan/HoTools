@@ -1126,7 +1126,7 @@ class OP_TwistBoneWithWeight(Operator):
     auto_transfer_weights: BoolProperty(
         name="自动处理权重",
         description="生成 Twist 骨后自动把权重转移到新骨骼",
-        default=False,
+        default=True,
     )  # type: ignore
     only_selected: BoolProperty(
         name="仅处理选中的物体权重",

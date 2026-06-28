@@ -1,11 +1,15 @@
 ﻿import bpy
-from bpy.types import Context, Operator, UILayout
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
-from math import acos, cos, radians, sin
+from bpy.types import Context, Operator, PropertyGroup, UILayout
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty
+from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
 from .boneTwist import TwistBoneCore
+import gpu
+from gpu_extras.batch import batch_for_shader
+from bpy_extras import view3d_utils
+import blf
 
 
 EPS = 1e-6
@@ -13,11 +17,14 @@ HoRig_Fan = "HoRig_Fan"
 
 
 def reg_props():
-    return
+    if hasattr(bpy.types.Scene, "ho_fan_settings"):
+        del bpy.types.Scene.ho_fan_settings
+    bpy.types.Scene.ho_fan_settings = PointerProperty(type=PG_Hotools_FanSettings)
 
 
 def ureg_props():
-    return
+    if hasattr(bpy.types.Scene, "ho_fan_settings"):
+        del bpy.types.Scene.ho_fan_settings
 
 
 def _safe_normalized_vector(vector):
@@ -28,6 +35,116 @@ def _safe_normalized_vector(vector):
 
 def _clamp(value, min_value, max_value):
     return max(min_value, min(max_value, value))
+
+
+def _fan_preview_update(self, context):
+    if context is None:
+        return
+
+    scene = getattr(context, "scene", None)
+    settings = getattr(scene, "ho_fan_settings", None) if scene is not None else None
+    if settings is None:
+        return
+
+    if settings.preview_enabled:
+        BoneFanPreview.show(context)
+    else:
+        BoneFanPreview.clear()
+
+
+def _draw_fan_preview():
+    BoneFanPreview._draw_3d()
+
+
+class PG_Hotools_FanSettings(PropertyGroup):
+    ui_expanded: BoolProperty(
+        name="fan settings",
+        description="show fan generation settings",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
+    preview_enabled: BoolProperty(
+        name="preview",
+        description="draw fan preview in 3D view",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
+    generate_in: BoolProperty(
+        name="generate in",
+        description="generate in-side fan bones",
+        default=True,
+        update=_fan_preview_update,
+    )  # type: ignore
+    generate_out: BoolProperty(
+        name="generate out",
+        description="generate out-side fan bones",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
+    count_in: IntProperty(
+        name="in count",
+        description="number of in-side fan bones",
+        default=2,
+        min=1,
+        update=_fan_preview_update,
+    )  # type: ignore
+    count_out: IntProperty(
+        name="out count",
+        description="number of out-side fan bones",
+        default=2,
+        min=1,
+        update=_fan_preview_update,
+    )  # type: ignore
+    length_factor: FloatProperty(
+        name="length factor",
+        description="fan bone length ratio relative to the joint-side length",
+        default=0.2,
+        min=0.01,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
+    pin_length_factor: FloatProperty(
+        name="pin length factor",
+        description="fanPin length ratio relative to fan length",
+        default=0.2 / 5.0,
+        min=0.001,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
+    auto_transfer_weights: BoolProperty(
+        name="auto transfer weights",
+        description="transfer fan weights from the source main bones",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
+    only_selected: BoolProperty(
+        name="only selected objects",
+        description="only process selected mesh objects",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
+    fan_weight_radius: FloatProperty(
+        name="fan weight radius",
+        description="weight transfer radius relative to the joint-side length",
+        default=0.12,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
+    fan_weight_blur: FloatProperty(
+        name="fan weight blur",
+        description="weight transfer blur relative to the radius",
+        default=0.5,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
+    bone_collection_name: StringProperty(
+        name="bone collection",
+        description="collection name for generated fan bones",
+        default=HoRig_Fan,
+        update=_fan_preview_update,
+    )  # type: ignore
 
 
 def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
@@ -64,17 +181,377 @@ def _assign_bones_to_collection(
 
 
 def drawBoneFanPanel(layout: UILayout, context: Context):
+    settings = context.scene.ho_fan_settings
     fan_box = layout.box()
-    col = fan_box.column(align=True)
 
+    header = fan_box.row(align=True)
+    header.prop(
+        settings,
+        "ui_expanded",
+        text="",
+        icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
+        emboss=False,
+    )
+    header.label(text="fan")
+    header.prop(
+        settings,
+        "preview_enabled",
+        text="",
+        icon="HIDE_OFF" if settings.preview_enabled else "HIDE_ON",
+    )
+
+    if not settings.ui_expanded:
+        return
+
+    col = fan_box.column(align=True)
     row = col.row(align=True)
     row.operator(OP_FanGenerate.bl_idname, text="fan add")
+    row.operator(OP_RemoveFanBone.bl_idname, text="remove fan")
+
+    col.separator()
+    row = col.row(align=True)
+    row.prop(settings, "generate_in", toggle=True)
+    sub = row.row(align=True)
+    sub.enabled = settings.generate_in
+    sub.prop(settings, "count_in")
 
     row = col.row(align=True)
-    row.operator(OP_RemoveFanBone.bl_idname, text="remove fan")
+    row.prop(settings, "generate_out", toggle=True)
+    sub = row.row(align=True)
+    sub.enabled = settings.generate_out
+    sub.prop(settings, "count_out")
+
+    col.separator()
+    col.prop(settings, "length_factor")
+    col.prop(settings, "pin_length_factor")
+    col.prop(settings, "bone_collection_name")
+    col.prop(settings, "auto_transfer_weights")
+
+    sub = col.column(align=True)
+    sub.enabled = settings.auto_transfer_weights
+    sub.prop(settings, "only_selected")
+    sub.prop(settings, "fan_weight_radius")
+    sub.prop(settings, "fan_weight_blur")
+
+
+class BoneFanPreview:
+    _handler_3d = None
+    _timer_running = False
+    _timer_interval = 0.08
+    _state = None
+
+    @classmethod
+    def ensure_handler(cls):
+        if cls._handler_3d is not None:
+            return
+
+        cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_fan_preview,
+            (),
+            "WINDOW",
+            "POST_VIEW",
+        )
+
+    @classmethod
+    def show(cls, context):
+        cls.ensure_handler()
+        scene = getattr(context, "scene", None)
+        settings = getattr(scene, "ho_fan_settings", None) if scene is not None else None
+        if settings is None or not settings.preview_enabled:
+            return
+
+        armature = context.active_object
+        region_owner = cls._find_view3d_region(context)
+        region = None
+        region_data = None
+        if region_owner is not None:
+            _, region, region_data = region_owner
+
+        state = {
+            "armature_name": "",
+            "frame": None,
+            "message": "",
+            "region": region,
+            "region_data": region_data,
+        }
+
+        if armature is None or armature.type != "ARMATURE":
+            state["message"] = "preview requires an armature"
+        else:
+            selected_bones = BoneFanCore._selected_bones(context, armature)
+            if len(selected_bones) != 2:
+                state["message"] = "select exactly two bones"
+            else:
+                bone_a, bone_b = selected_bones
+                frame, error = BoneFanCore._resolve_joint_geometry(bone_a, bone_b)
+                if error:
+                    state["message"] = error
+                else:
+                    state["armature_name"] = armature.name
+                    state["frame"] = frame
+
+        cls._state = state
+        if not cls._timer_running:
+            cls._timer_running = True
+            bpy.app.timers.register(cls._timer)
+        cls._tag_redraw()
+
+    @classmethod
+    def clear(cls):
+        cls._state = None
+        cls._timer_running = False
+        cls._tag_redraw()
+
+    @classmethod
+    def shutdown(cls):
+        if cls._handler_3d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(cls._handler_3d, "WINDOW")
+        cls._handler_3d = None
+        cls._state = None
+        cls._timer_running = False
+
+    @classmethod
+    def _timer(cls):
+        if cls._handler_3d is None:
+            cls._timer_running = False
+            return None
+
+        settings = getattr(getattr(bpy.context, "scene", None), "ho_fan_settings", None)
+        if settings is not None and settings.preview_enabled:
+            cls.show(bpy.context)
+            return cls._timer_interval
+
+        if cls._state is None:
+            cls._timer_running = False
+            return None
+
+        cls._tag_redraw()
+        return cls._timer_interval
+
+    @staticmethod
+    def _tag_redraw():
+        wm = bpy.context.window_manager
+        if wm is None:
+            return
+
+        for window in wm.windows:
+            screen = window.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+
+    @staticmethod
+    def _find_view3d_region(context=None):
+        if context is None:
+            context = bpy.context
+        windows = []
+
+        if context.window is not None and context.window.screen is not None:
+            windows.append(context.window)
+
+        wm = context.window_manager
+        if wm is not None:
+            for window in wm.windows:
+                if window not in windows:
+                    windows.append(window)
+
+        for window in windows:
+            screen = window.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                for region in area.regions:
+                    if region.type == "WINDOW":
+                        for space in area.spaces:
+                            if space.type == "VIEW_3D":
+                                rv3d = space.region_3d
+                                if rv3d is not None:
+                                    return window, region, rv3d
+        return None, None, None
+
+    @classmethod
+    def _draw_3d(cls):
+        state = cls._state
+        if state is None:
+            return
+
+        message = state.get("message", "")
+        armature = bpy.data.objects.get(state.get("armature_name", ""))
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("NONE")
+        gpu.state.line_width_set(2.0)
+        gpu.state.point_size_set(8.0)
+        try:
+            shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+            font_id = 0
+            blf.size(font_id, 14)
+            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+            blf.position(font_id, 20.0, 20.0, 0.0)
+            if message:
+                blf.draw(font_id, f"fan preview: {message}")
+                return
+
+            if armature is None or armature.type != "ARMATURE":
+                blf.draw(font_id, "fan preview")
+                return
+
+            frame = state.get("frame")
+            if frame is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            joint_world = armature.matrix_world @ frame["joint"]
+            plane_normal_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["plane_normal"])
+            axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
+            if axis_a_world is None:
+                axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
+            if plane_normal_world is None or axis_a_world is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            axis_a_world = axis_a_world - plane_normal_world * axis_a_world.dot(plane_normal_world)
+            axis_a_world = _safe_normalized_vector(axis_a_world)
+            if axis_a_world is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            axis_b_world = _safe_normalized_vector(plane_normal_world.cross(axis_a_world))
+            if axis_b_world is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            settings = getattr(bpy.context.scene, "ho_fan_settings", None)
+            radius_factor = float(getattr(settings, "fan_weight_radius", 0.5)) if settings is not None else 0.5
+            blur_factor = float(getattr(settings, "fan_weight_blur", 0.25)) if settings is not None else 0.25
+            radius = max(frame["base_length"] * radius_factor, 0.0)
+            blur = max(radius * blur_factor, 0.0)
+            if radius <= EPS:
+                blf.draw(font_id, "fan preview")
+                return
+
+            def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
+                if ring_radius <= EPS:
+                    return
+                previous = center + axis_x * ring_radius
+                for index in range(1, segments + 1):
+                    angle = tau * index / segments
+                    point = center + axis_x * cos(angle) * ring_radius + axis_y * sin(angle) * ring_radius
+                    target.extend([tuple(previous), tuple(point)])
+                    previous = point
+
+            lines = []
+            points = [tuple(joint_world)]
+            in_spokes = []
+            out_spokes = []
+
+            total_angle = float(frame["angle_rad"])
+            parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
+            child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
+            if parent_dir_world is None or child_dir_world is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            center_dir_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+            if center_dir_world is None:
+                center_dir_world = parent_dir_world
+
+            center_spokes = [
+                tuple(joint_world),
+                tuple(joint_world + center_dir_world * radius),
+                tuple(joint_world),
+                tuple(joint_world - center_dir_world * radius),
+            ]
+
+            sphere_lines = []
+            blur_lines = []
+            if getattr(settings, "auto_transfer_weights", False):
+                _append_circle_3d(sphere_lines, joint_world, axis_a_world, axis_b_world, radius)
+                _append_circle_3d(sphere_lines, joint_world, axis_a_world, plane_normal_world, radius)
+                _append_circle_3d(sphere_lines, joint_world, axis_b_world, plane_normal_world, radius)
+                if blur > EPS:
+                    blur_radius = radius + blur
+                    _append_circle_3d(blur_lines, joint_world, axis_a_world, axis_b_world, blur_radius)
+                    _append_circle_3d(blur_lines, joint_world, axis_a_world, plane_normal_world, blur_radius)
+                    _append_circle_3d(blur_lines, joint_world, axis_b_world, plane_normal_world, blur_radius)
+
+            if getattr(settings, "generate_in", False):
+                in_count = max(1, int(getattr(settings, "count_in", 1)))
+                step = total_angle / (in_count + 1)
+                start_dir = parent_dir_world
+                for index in range(1, in_count + 1):
+                    direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
+                    if direction is None:
+                        continue
+                    in_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
+
+            if getattr(settings, "generate_out", False):
+                out_count = max(1, int(getattr(settings, "count_out", 1)))
+                step = total_angle / (out_count + 1)
+                start_dir = -parent_dir_world
+                for index in range(1, out_count + 1):
+                    direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
+                    if direction is None:
+                        continue
+                    out_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
+
+            shader.bind()
+
+            if sphere_lines:
+                line_batch = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
+                shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
+                line_batch.draw(shader)
+
+            if blur_lines:
+                blur_batch = batch_for_shader(shader, "LINES", {"pos": blur_lines})
+                shader.uniform_float("color", (0.45, 0.45, 0.45, 0.8))
+                blur_batch.draw(shader)
+
+            if len(center_spokes) >= 2:
+                center_batch = batch_for_shader(shader, "LINES", {"pos": center_spokes})
+                shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
+                center_batch.draw(shader)
+
+            if len(in_spokes) >= 2:
+                in_batch = batch_for_shader(shader, "LINES", {"pos": in_spokes})
+                shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
+                in_batch.draw(shader)
+
+            if len(out_spokes) >= 2:
+                out_batch = batch_for_shader(shader, "LINES", {"pos": out_spokes})
+                shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
+                out_batch.draw(shader)
+
+            point_batch = batch_for_shader(shader, "POINTS", {"pos": points})
+            shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
+            point_batch.draw(shader)
+
+            blf.draw(font_id, "fan preview")
+        finally:
+            gpu.state.point_size_set(1.0)
+            gpu.state.line_width_set(1.0)
+            gpu.state.depth_test_set("LESS_EQUAL")
+            gpu.state.blend_set("NONE")
 
 
 class BoneFanCore:
+    @staticmethod
+    def _selected_bones(context: Context, armature: bpy.types.Object):
+        if armature.mode == "POSE":
+            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
+            if pose_bones is None:
+                pose_bones = context.selected_pose_bones or []
+            return [pose_bone for pose_bone in pose_bones if getattr(pose_bone, "bone", None) is not None]
+
+        if armature.mode == "EDIT":
+            return [bone for bone in armature.data.edit_bones if bone.select]
+
+        return []
+
     @staticmethod
     def _fan_name(base_name: str, fan_kind: str, index: int, padding: int) -> str:
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
@@ -150,26 +627,59 @@ class BoneFanCore:
     @staticmethod
     def _selected_bone_names(context: Context, armature: bpy.types.Object) -> list[str]:
         if armature.mode == "POSE":
-            return [bone.name for bone in context.selected_pose_bones]
+            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
+            if pose_bones is None:
+                pose_bones = context.selected_pose_bones or []
+            return [bone.name for bone in pose_bones if getattr(bone, "name", None)]
         if armature.mode == "EDIT":
             return [bone.name for bone in armature.data.edit_bones if bone.select]
         return []
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
-        if (bone_a.tail - bone_b.head).length <= 1e-4:
+        tolerance = 1e-3
+
+        def _bone_points(bone):
+            if hasattr(bone, "head") and hasattr(bone, "tail"):
+                return bone.head, bone.tail
+            if hasattr(bone, "bone") and hasattr(bone, "matrix"):
+                rest_bone = bone.bone
+                head = bone.matrix.translation
+                tail = bone.matrix @ Vector((0.0, rest_bone.length, 0.0))
+                return head, tail
+            raise Exception("unsupported bone type")
+
+        a_head, a_tail = _bone_points(bone_a)
+        b_head, b_tail = _bone_points(bone_b)
+
+        bone_a_parent = getattr(bone_a, "parent", None)
+        bone_b_parent = getattr(bone_b, "parent", None)
+
+        if bone_b_parent == bone_a:
             parent_bone = bone_a
             child_bone = bone_b
-            joint = (bone_a.tail + bone_b.head) * 0.5
-        elif (bone_b.tail - bone_a.head).length <= 1e-4:
+        elif bone_a_parent == bone_b:
             parent_bone = bone_b
             child_bone = bone_a
-            joint = (bone_b.tail + bone_a.head) * 0.5
+        elif (a_tail - b_head).length <= tolerance:
+            parent_bone = bone_a
+            child_bone = bone_b
+        elif (b_tail - a_head).length <= tolerance:
+            parent_bone = bone_b
+            child_bone = bone_a
         else:
             return None, "two bones must be connected"
 
-        parent_dir = _safe_normalized_vector(parent_bone.head - joint)
-        child_dir = _safe_normalized_vector(child_bone.tail - joint)
+        parent_head, parent_tail = _bone_points(parent_bone)
+        child_head, child_tail = _bone_points(child_bone)
+
+        if (parent_tail - child_head).length <= tolerance:
+            joint = (parent_tail + child_head) * 0.5
+        else:
+            joint = child_head.copy() if (child_head - parent_tail).length < (parent_tail - child_head).length else parent_tail.copy()
+
+        parent_dir = _safe_normalized_vector(parent_head - joint)
+        child_dir = _safe_normalized_vector(child_tail - joint)
         if parent_dir is None or child_dir is None:
             return None, "bone length too short"
 
@@ -182,8 +692,8 @@ class BoneFanCore:
         if plane_normal is None:
             return None, "failed to compute plane normal"
 
-        parent_length = (parent_bone.head - joint).length
-        child_length = (child_bone.tail - joint).length
+        parent_length = (parent_head - joint).length
+        child_length = (child_tail - joint).length
 
         return {
             "parent_bone": parent_bone,
@@ -213,6 +723,223 @@ class BoneFanCore:
                 props.keepRotation = False
             if props and hasattr(props, "humanoidMapping"):
                 props.humanoidMapping = bone_name
+
+    @staticmethod
+    def _smooth_falloff(value: float, start_value: float, end_value: float) -> float:
+        if end_value <= start_value + EPS:
+            return 1.0 if value <= start_value else 0.0
+
+        t = _clamp((value - start_value) / (end_value - start_value), 0.0, 1.0)
+        return 1.0 - (t * t * (3.0 - 2.0 * t))
+
+    @staticmethod
+    def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
+        return TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
+
+    @classmethod
+    def _transfer_fan_weights_for_object(
+        cls,
+        obj: bpy.types.Object,
+        armature: bpy.types.Object,
+        selected_names: list[str],
+        fan_names: list[str],
+        radius_factor: float,
+        blur_factor: float,
+        frame: dict,
+    ) -> dict:
+        edit_bones = armature.data.edit_bones
+        bone_a = edit_bones.get(selected_names[0])
+        bone_b = edit_bones.get(selected_names[1])
+        if bone_a is None or bone_b is None:
+            raise Exception("selected bones not found")
+
+        joint = frame["joint"]
+        plane_normal = frame["plane_normal"]
+        total_angle = frame["angle_rad"]
+        base_length = frame["base_length"]
+        radius = max(base_length * radius_factor, EPS)
+        blur_world = max(radius * blur_factor, 0.0)
+        plane_normal_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ plane_normal)
+        if plane_normal_world is None:
+            raise Exception("failed to compute plane normal")
+
+        source_map: dict[str, list[dict]] = {}
+        kind_counts: dict[tuple[str, str], int] = {}
+        for fan_name in fan_names:
+            parsed = cls._parse_fan_name(fan_name)
+            fan_bone = armature.data.bones.get(fan_name)
+            if parsed is None or fan_bone is None or fan_bone.parent is None:
+                continue
+
+            parent_name = fan_bone.parent.name
+            key = (parent_name, parsed["fan_kind"])
+            kind_counts[key] = kind_counts.get(key, 0) + 1
+            source_map.setdefault(parent_name, []).append({
+                "name": fan_name,
+                "kind": parsed["fan_kind"],
+            })
+
+        if not source_map:
+            return {
+                "processed_sources": 0,
+                "processed_vertices": 0,
+                "processed_objects": 0,
+            }
+
+        mesh_inv = obj.matrix_world.inverted()
+        all_indices = [v.index for v in obj.data.vertices]
+        if not all_indices:
+            return {
+                "processed_sources": 0,
+                "processed_vertices": 0,
+                "processed_objects": 0,
+            }
+
+        verts_world = [obj.matrix_world @ v.co for v in obj.data.vertices]
+        rel_vectors = [vert_world - (armature.matrix_world @ joint) for vert_world in verts_world]
+        source_weights_cache: dict[str, list[float]] = {}
+        touched_vertices = 0
+        processed_sources = 0
+
+        for source_name, fan_items in source_map.items():
+            source_vg = obj.vertex_groups.get(source_name)
+            if source_vg is None:
+                continue
+
+            source_weights: list[float] = []
+            has_weight: list[bool] = []
+            for i in range(len(obj.data.vertices)):
+                try:
+                    source_weights.append(source_vg.weight(i))
+                    has_weight.append(True)
+                except RuntimeError:
+                    source_weights.append(0.0)
+                    has_weight.append(False)
+
+            if not any(has_weight):
+                continue
+
+            processed_sources += 1
+
+            fan_vgs = []
+            fan_meta = []
+            for item in fan_items:
+                fan_name = item["name"]
+                fan_vg = obj.vertex_groups.get(fan_name)
+                if fan_vg is None:
+                    fan_vg = obj.vertex_groups.new(name=fan_name)
+                else:
+                    fan_vg.remove(all_indices)
+
+                fan_bone = armature.data.bones.get(fan_name)
+                if fan_bone is None:
+                    continue
+
+                fan_dir = _safe_normalized_vector(armature.matrix_world.to_3x3() @ fan_bone.vector)
+                if fan_dir is None:
+                    continue
+
+                key = (source_name, item["kind"])
+                count = kind_counts.get(key, 0)
+                half_width = total_angle / max(2.0 * (count + 1), 1.0)
+                fan_vgs.append(fan_vg)
+                fan_meta.append({
+                    "dir": fan_dir,
+                    "half_width": half_width,
+                })
+
+            if not fan_vgs:
+                continue
+
+            joint_world = armature.matrix_world @ joint
+            for i, orig_w in enumerate(source_weights):
+                if not has_weight[i] or orig_w <= 0.0:
+                    continue
+
+                vec_world = rel_vectors[i]
+                dist = vec_world.length
+                radial = cls._smooth_falloff(dist, radius, radius + blur_world)
+                if radial <= 0.0:
+                    source_vg.add([i], orig_w, "REPLACE")
+                    continue
+
+                vec_plane = vec_world - plane_normal_world * vec_world.dot(plane_normal_world)
+                if vec_plane.length <= EPS:
+                    source_vg.add([i], orig_w, "REPLACE")
+                    continue
+
+                scores = []
+                total_score = 0.0
+                for meta in fan_meta:
+                    angle = vec_plane.angle(meta["dir"])
+                    angular_blur = meta["half_width"] * blur_factor
+                    angular = cls._smooth_falloff(angle, meta["half_width"], meta["half_width"] + angular_blur)
+                    score = radial * angular
+                    scores.append(score)
+                    total_score += score
+
+                fan_total = min(1.0, total_score)
+                if fan_total > 0.0 and total_score > EPS:
+                    for score, fan_vg in zip(scores, fan_vgs):
+                        transfer = orig_w * fan_total * (score / total_score)
+                        if transfer > 0.0:
+                            fan_vg.add([i], transfer, "REPLACE")
+                    touched_vertices += 1
+
+                source_vg.add([i], orig_w * (1.0 - fan_total), "REPLACE")
+
+        return {
+            "processed_sources": processed_sources,
+            "processed_vertices": touched_vertices,
+            "processed_objects": 1 if processed_sources > 0 else 0,
+        }
+
+    @classmethod
+    def apply_fan_weights(
+        cls,
+        context: Context,
+        armature: bpy.types.Object,
+        selected_names: list[str],
+        fan_names: list[str],
+        radius_factor: float,
+        blur_factor: float,
+        only_selected: bool,
+    ) -> dict:
+        frame, error = cls._resolve_joint_geometry(
+            armature.data.edit_bones.get(selected_names[0]),
+            armature.data.edit_bones.get(selected_names[1]),
+        )
+        if error:
+            raise Exception(error)
+
+        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        if only_selected:
+            mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
+
+        if not mesh_objs:
+            raise Exception("no mesh objects found")
+
+        result = {
+            "processed_objects": 0,
+            "processed_sources": 0,
+            "processed_vertices": 0,
+        }
+
+        for obj in mesh_objs:
+            obj_result = cls._transfer_fan_weights_for_object(
+                obj,
+                armature,
+                selected_names,
+                fan_names,
+                radius_factor,
+                blur_factor,
+                frame,
+            )
+            result["processed_objects"] += obj_result["processed_objects"]
+            result["processed_sources"] += obj_result["processed_sources"]
+            result["processed_vertices"] += obj_result["processed_vertices"]
+
+        return result
 
     @staticmethod
     def _ensure_copy_rotation_constraint(pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
@@ -289,11 +1016,12 @@ class BoneFanCore:
         if len(selected_names) != 2:
             raise Exception("please select exactly two bones")
 
-        edit_bones = armature.data.edit_bones
-        bone_a = edit_bones.get(selected_names[0])
-        bone_b = edit_bones.get(selected_names[1])
-        if bone_a is None or bone_b is None:
+        selected_bones = cls._selected_bones(bpy.context, armature)
+        if len(selected_bones) != 2:
             raise Exception("selected bones not found")
+
+        edit_bones = armature.data.edit_bones
+        bone_a, bone_b = selected_bones
 
         frame, error = cls._resolve_joint_geometry(bone_a, bone_b)
         if error:
@@ -445,48 +1173,6 @@ class OP_FanGenerate(Operator):
     bl_description = "Generate fan bones from two connected bones"
     bl_options = {"REGISTER", "UNDO"}
 
-    count_in: IntProperty(
-        name="in count",
-        description="number of in-side fan bones",
-        default=2,
-        min=1,
-    )  # type: ignore
-    count_out: IntProperty(
-        name="out count",
-        description="number of out-side fan bones",
-        default=2,
-        min=1,
-    )  # type: ignore
-    length_factor: FloatProperty(
-        name="length factor",
-        description="fan bone length ratio relative to the joint-side length",
-        default=0.2,
-        min=0.01,
-        soft_max=1.0,
-    )  # type: ignore
-    pin_length_factor: FloatProperty(
-        name="pin length factor",
-        description="fanPin length ratio relative to fan length",
-        default=0.2 / 5.0,
-        min=0.001,
-        soft_max=1.0,
-    )  # type: ignore
-    bone_collection_name: StringProperty(
-        name="bone collection",
-        description="collection name for generated fan bones",
-        default=HoRig_Fan,
-    )  # type: ignore
-    generate_in: BoolProperty(
-        name="generate in",
-        description="generate in-side fan bones",
-        default=True,
-    )  # type: ignore
-    generate_out: BoolProperty(
-        name="generate out",
-        description="generate out-side fan bones",
-        default=False,
-    )  # type: ignore
-
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -506,6 +1192,11 @@ class OP_FanGenerate(Operator):
         original_mode = armature.mode
         old_active = bpy.context.view_layer.objects.active
         was_hidden = armature.hide_viewport
+        BoneFanPreview.clear()
+        settings = getattr(context.scene, "ho_fan_settings", None)
+        if settings is None:
+            self.report({"ERROR"}, "fan settings are missing")
+            return {"CANCELLED"}
 
         selected_names = BoneFanCore._selected_bone_names(context, armature)
         if len(selected_names) != 2:
@@ -513,10 +1204,10 @@ class OP_FanGenerate(Operator):
             return {"CANCELLED"}
 
         fan_kinds = []
-        if self.generate_in:
-            fan_kinds.append(("in", self.count_in))
-        if self.generate_out:
-            fan_kinds.append(("out", self.count_out))
+        if settings.generate_in:
+            fan_kinds.append(("in", settings.count_in))
+        if settings.generate_out:
+            fan_kinds.append(("out", settings.count_out))
         if not fan_kinds:
             self.report({"ERROR"}, "select at least one direction")
             return {"CANCELLED"}
@@ -540,16 +1231,34 @@ class OP_FanGenerate(Operator):
                         selected_names,
                         fan_kind,
                         count,
-                        self.length_factor,
-                        self.pin_length_factor,
-                        self.bone_collection_name,
+                        settings.length_factor,
+                        settings.pin_length_factor,
+                        settings.bone_collection_name,
                     )
+                )
+
+            weight_result = None
+            if settings.auto_transfer_weights:
+                weight_result = BoneFanCore.apply_fan_weights(
+                    context,
+                    armature,
+                    selected_names,
+                    created_names,
+                    settings.fan_weight_radius,
+                    settings.fan_weight_blur,
+                    settings.only_selected,
                 )
 
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            self.report({"INFO"}, f"generated {len(created_names)} fan bones")
+            if weight_result is None:
+                self.report({"INFO"}, f"generated {len(created_names)} fan bones")
+            else:
+                self.report(
+                    {"INFO"},
+                    f"generated {len(created_names)} fan bones, weights on {weight_result['processed_objects']} objects",
+                )
             return {"FINISHED"}
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -571,29 +1280,8 @@ class OP_FanGenerate(Operator):
                 armature.hide_set(True)
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        layout = self.layout
-        box = layout.box()
-        col = box.column(align=True)
-
-        row = col.row(align=True)
-        row.prop(self, "generate_in", toggle=True)
-        sub = row.row(align=True)
-        sub.enabled = self.generate_in
-        sub.prop(self, "count_in")
-
-        row = col.row(align=True)
-        row.prop(self, "generate_out", toggle=True)
-        sub = row.row(align=True)
-        sub.enabled = self.generate_out
-        sub.prop(self, "count_out")
-
-        col.separator()
-        col.prop(self, "length_factor")
-        col.prop(self, "pin_length_factor")
-        col.prop(self, "bone_collection_name")
+        BoneFanPreview.show(context)
+        return self.execute(context)
 
 
 class OP_RemoveFanBone(Operator):
@@ -663,6 +1351,7 @@ class OP_RemoveFanBone(Operator):
 
 
 cls = [
+    PG_Hotools_FanSettings,
     OP_FanGenerate,
     OP_RemoveFanBone,
 ]
