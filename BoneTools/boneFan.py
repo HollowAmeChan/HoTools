@@ -17,7 +17,7 @@ HoRig_Fan = "HoRig_Fan"
 
 
 class FanRemovalBlockedError(Exception):
-    """Raised when fan bones can't be removed because other bones depend on them."""
+    """当 fan 骨下面挂着其他骨骼、无法安全删除时抛出。"""
     pass
 
 
@@ -58,8 +58,7 @@ def _fan_preview_update(self, context):
 
 
 def _fan_count_update(self, context):
-    # in/out fan bones must come in symmetric pairs, so snap to the nearest
-    # even value (>= 2) before refreshing the preview.
+    # 内/外侧 fan 骨必须成对出现，所以把数量向上吸附到最近的偶数（最小 2）再刷新预览。
     for attr in ("count_in", "count_out"):
         value = getattr(self, attr, 2)
         snapped = max(2, value if value % 2 == 0 else value + 1)
@@ -74,98 +73,98 @@ def _draw_fan_preview():
 
 class PG_Hotools_FanSettings(PropertyGroup):
     ui_expanded: BoolProperty(
-        name="fan settings",
-        description="show fan generation settings",
+        name="fan 设置",
+        description="展开 fan 骨生成设置",
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
     preview_enabled: BoolProperty(
-        name="preview",
-        description="draw fan preview in 3D view",
+        name="预览",
+        description="在 3D 视图中绘制 fan 预览",
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
     generate_in: BoolProperty(
-        name="generate in",
-        description="generate in-side fan bones",
+        name="生成内侧",
+        description="生成内侧（朝主骨方向）的 fan 骨",
         default=True,
         update=_fan_preview_update,
     )  # type: ignore
     generate_out: BoolProperty(
-        name="generate out",
-        description="generate out-side fan bones",
+        name="生成外侧",
+        description="生成外侧（背向主骨方向）的 fan 骨",
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
     count_in: IntProperty(
-        name="in count",
-        description="number of in-side fan bones, must be even",
+        name="内侧数量",
+        description="内侧 fan 骨数量，必须为偶数",
         default=2,
         min=2,
         step=2,
         update=_fan_count_update,
     )  # type: ignore
     count_out: IntProperty(
-        name="out count",
-        description="number of out-side fan bones, must be even",
+        name="外侧数量",
+        description="外侧 fan 骨数量，必须为偶数",
         default=2,
         min=2,
         step=2,
         update=_fan_count_update,
     )  # type: ignore
     length_factor: FloatProperty(
-        name="length factor",
-        description="fan bone length ratio relative to the joint-side length",
+        name="长度系数",
+        description="fan 骨长度相对于关节侧主骨长度的比例",
         default=0.2,
         min=0.01,
         soft_max=1.0,
         update=_fan_preview_update,
     )  # type: ignore
     pin_length_factor: FloatProperty(
-        name="pin length factor",
-        description="fanPin length ratio relative to fan length",
+        name="pin 长度系数",
+        description="fanPin 长度相对于 fan 骨长度的比例",
         default=0.2 / 5.0,
         min=0.001,
         soft_max=1.0,
         update=_fan_preview_update,
     )  # type: ignore
     auto_transfer_weights: BoolProperty(
-        name="auto transfer weights",
-        description="transfer fan weights from the source main bones",
-        default=False,
+        name="自动转移权重",
+        description="生成时把主骨权重转移到 fan 骨上",
+        default=True,
         update=_fan_preview_update,
     )  # type: ignore
     process_symmetry: BoolProperty(
-        name="symmetry",
-        description="also generate fan bones on the mirrored bone pair (.L/.R)",
+        name="对称操作",
+        description="同时在镜像骨对（.L/.R）上生成 fan 骨",
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
     only_selected: BoolProperty(
-        name="only selected objects",
-        description="only process selected mesh objects",
+        name="仅选中的物体",
+        description="只处理当前被选中的网格物体",
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
     fan_weight_radius: FloatProperty(
-        name="fan weight radius",
-        description="weight transfer radius relative to the joint-side length",
-        default=0.12,
+        name="权重半径",
+        description="权重转移球的半径，相对于关节侧主骨长度",
+        default=0.16,
         min=0.0,
         soft_max=1.0,
         update=_fan_preview_update,
     )  # type: ignore
     fan_weight_blur: FloatProperty(
-        name="fan weight blur",
-        description="overall blur strength applied after the hard spherical split (0 = none, 1 = max smoothing)",
-        default=0.5,
+        name="权重模糊",
+        description="硬球分割后施加的整体模糊强度（0 = 不模糊，1 = 最大平滑）",
+        default=1.0,
         min=0.0,
         soft_max=1.0,
         update=_fan_preview_update,
     )  # type: ignore
     bone_collection_name: StringProperty(
-        name="bone collection",
-        description="collection name for generated fan bones",
+        name="骨骼集合",
+        description="生成的 fan 骨所属的骨骼集合名称",
         default=HoRig_Fan,
         update=_fan_preview_update,
     )  # type: ignore
@@ -216,7 +215,12 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
         icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
         emboss=False,
     )
-    header.label(text="fan")
+    header.label(text="fan骨")
+
+    row = header.row(align=True)
+    row.operator(OP_FanGenerate.bl_idname, text="生成 fan 骨")
+    row.operator(OP_RemoveFanBone.bl_idname, text="安全移除")
+    
     header.prop(
         settings,
         "preview_enabled",
@@ -228,10 +232,6 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
         return
 
     col = fan_box.column(align=True)
-    row = col.row(align=True)
-    row.operator(OP_FanGenerate.bl_idname, text="fan add")
-    row.operator(OP_RemoveFanBone.bl_idname, text="remove fan")
-
     col.separator()
     row = col.row(align=True)
     row.prop(settings, "generate_in", toggle=True)
@@ -301,11 +301,11 @@ class BoneFanPreview:
         }
 
         if armature is None or armature.type != "ARMATURE":
-            state["message"] = "preview requires an armature"
+            state["message"] = "预览需要一个骨架"
         else:
             selected_bones = BoneFanCore._selected_bones(context, armature)
             if len(selected_bones) != 2:
-                state["message"] = "select exactly two bones"
+                state["message"] = "请正好选择两根骨骼"
             else:
                 bone_a, bone_b = selected_bones
                 frame, error = BoneFanCore._resolve_joint_geometry(bone_a, bone_b)
@@ -418,16 +418,16 @@ class BoneFanPreview:
             blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
             blf.position(font_id, 20.0, 20.0, 0.0)
             if message:
-                blf.draw(font_id, f"fan preview: {message}")
+                blf.draw(font_id, f"fan 预览: {message}")
                 return
 
             if armature is None or armature.type != "ARMATURE":
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             frame = state.get("frame")
             if frame is None:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             joint_world = armature.matrix_world @ frame["joint"]
@@ -436,25 +436,25 @@ class BoneFanPreview:
             if axis_a_world is None:
                 axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
             if plane_normal_world is None or axis_a_world is None:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             axis_a_world = axis_a_world - plane_normal_world * axis_a_world.dot(plane_normal_world)
             axis_a_world = _safe_normalized_vector(axis_a_world)
             if axis_a_world is None:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             axis_b_world = _safe_normalized_vector(plane_normal_world.cross(axis_a_world))
             if axis_b_world is None:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             settings = getattr(bpy.context.scene, "ho_fan_settings", None)
             radius_factor = float(getattr(settings, "fan_weight_radius", 0.5)) if settings is not None else 0.5
             radius = max(frame["base_length"] * radius_factor, 0.0)
             if radius <= EPS:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
@@ -476,22 +476,12 @@ class BoneFanPreview:
             parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
             child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
             if parent_dir_world is None or child_dir_world is None:
-                blf.draw(font_id, "fan preview")
+                blf.draw(font_id, "fan 预览")
                 return
 
             center_dir_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
             if center_dir_world is None:
                 center_dir_world = parent_dir_world
-
-            _, center_axis_world, side_axis_world = BoneFanCore._classify_fan_sector(
-                center_dir_world,
-                parent_dir_world,
-                child_dir_world,
-                plane_normal_world,
-            )
-            if center_axis_world is None or side_axis_world is None:
-                blf.draw(font_id, "fan preview")
-                return
 
             center_spokes = [
                 tuple(joint_world),
@@ -502,9 +492,8 @@ class BoneFanPreview:
 
             sphere_lines = []
             if getattr(settings, "auto_transfer_weights", False):
-                # the weight split is a hard sphere around the joint: every
-                # vertex inside hands its main-bone weight to the nearest fan,
-                # then an overall blur softens the result. Show only the sphere.
+                # 权重分割是关节周围的一个硬球：球内每个顶点把主骨权重交给最近的
+                # fan，再用整体模糊软化。这里只画这个球。
                 _append_circle_3d(sphere_lines, joint_world, axis_a_world, axis_b_world, radius)
                 _append_circle_3d(sphere_lines, joint_world, axis_a_world, plane_normal_world, radius)
                 _append_circle_3d(sphere_lines, joint_world, axis_b_world, plane_normal_world, radius)
@@ -555,7 +544,7 @@ class BoneFanPreview:
             shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
             point_batch.draw(shader)
 
-            blf.draw(font_id, "fan preview")
+            blf.draw(font_id, "fan 预览")
         finally:
             gpu.state.point_size_set(1.0)
             gpu.state.line_width_set(1.0)
@@ -564,8 +553,8 @@ class BoneFanPreview:
 
 
 class BoneFanCore:
-    # weight blur tuning: fan_weight_blur (0..1) scales the iteration count,
-    # each iteration is a Laplacian smoothing step with this lambda.
+    # 权重模糊参数：fan_weight_blur（0..1）缩放迭代次数，每次迭代是一步
+    # 以此 lambda 为强度的拉普拉斯平滑。
     _MAX_BLUR_ITERATIONS = 20
     _BLUR_LAMBDA = 0.5
 
@@ -676,9 +665,8 @@ class BoneFanCore:
 
     @staticmethod
     def _mirror_pair(armature: bpy.types.Object, pair_names: list[str]) -> list[str] | None:
-        # flip both bone names of the selected pair to the opposite side. Returns
-        # the mirrored pair only if it is a real, distinct pair that exists on the
-        # armature; otherwise None (nothing to mirror, e.g. center bones).
+        # 把选中骨对的两根骨名都翻转到对侧。只有当镜像骨对真实存在、且是一对不同
+        # 于原骨对的骨时才返回；否则返回 None（没有可镜像的对象，比如中线骨）。
         edit_bones = armature.data.edit_bones
         mirrored = []
         for name in pair_names:
@@ -687,8 +675,7 @@ class BoneFanCore:
                 return None
             mirrored.append(flipped)
 
-        # guard against degenerate flips collapsing to a single bone or mapping
-        # back onto the original pair (which would generate duplicates).
+        # 防止退化的翻转坍缩成单根骨，或翻回到原骨对本身（那会重复生成）。
         if len(set(mirrored)) != 2:
             return None
         if set(mirrored) == set(pair_names):
@@ -707,7 +694,7 @@ class BoneFanCore:
                 head = bone.matrix.translation
                 tail = bone.matrix @ Vector((0.0, rest_bone.length, 0.0))
                 return head, tail
-            raise Exception("unsupported bone type")
+            raise Exception("不支持的骨骼类型")
 
         a_head, a_tail = _bone_points(bone_a)
         b_head, b_tail = _bone_points(bone_b)
@@ -728,7 +715,7 @@ class BoneFanCore:
             parent_bone = bone_b
             child_bone = bone_a
         else:
-            return None, "two bones must be connected"
+            return None, "两根骨骼必须相连"
 
         parent_head, parent_tail = _bone_points(parent_bone)
         child_head, child_tail = _bone_points(child_bone)
@@ -741,16 +728,16 @@ class BoneFanCore:
         parent_dir = _safe_normalized_vector(parent_head - joint)
         child_dir = _safe_normalized_vector(child_tail - joint)
         if parent_dir is None or child_dir is None:
-            return None, "bone length too short"
+            return None, "骨骼长度太短"
 
         dot = _clamp(parent_dir.dot(child_dir), -1.0, 1.0)
         angle_rad = acos(dot)
         if angle_rad <= radians(1.0) or angle_rad >= radians(179.0):
-            return None, "joint angle too small or too straight"
+            return None, "关节夹角太小或两骨接近共线"
 
         plane_normal = _safe_normalized_vector(parent_dir.cross(child_dir))
         if plane_normal is None:
-            return None, "failed to compute plane normal"
+            return None, "无法计算平面法线"
 
         parent_length = (parent_head - joint).length
         child_length = (child_tail - joint).length
@@ -785,47 +772,6 @@ class BoneFanCore:
                 props.humanoidMapping = bone_name
 
     @staticmethod
-    def _validate_fan_count(fan_kind: str, count: int) -> None:
-        if count < 2 or count % 2 != 0:
-            raise Exception(f"{fan_kind} fan count must be an even number >= 2")
-    
-    @staticmethod
-    def _classify_fan_sector(
-        vec: Vector,
-        parent_dir_world: Vector,
-        child_dir_world: Vector,
-        plane_normal_world: Vector,
-    ) -> tuple[str | None, Vector | None, Vector | None]:
-        center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
-        if center_axis_world is None:
-            center_axis_world = _safe_normalized_vector(parent_dir_world)
-        if center_axis_world is None:
-            return None, None, None
-
-        side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
-        if side_axis_world is None:
-            side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
-        if side_axis_world is None:
-            return None, None, None
-
-        orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
-        if abs(orient) <= EPS:
-            return None, center_axis_world, side_axis_world
-        orient_sign = 1.0 if orient >= 0.0 else -1.0
-
-        vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
-        if vec_plane.length <= EPS:
-            return None, center_axis_world, side_axis_world
-        vec_plane = vec_plane.normalized()
-
-        parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
-        child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
-        inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
-        in_out = "in" if inside else "out"
-        up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
-        return in_out + up_down, center_axis_world, side_axis_world
-
-    @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
         return TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
 
@@ -840,11 +786,23 @@ class BoneFanCore:
         blur_factor: float,
         frame: dict,
     ) -> dict:
+        """把单个网格上、两根主骨的权重转移到 fan 骨上。
+
+        运行原理：
+        1. 以关节为中心、半径 radius 的球，决定哪些顶点参与转移。
+        2. 阶段 1（硬球分割）：球内每个顶点，把每根主骨的权重整份交给"同通道内"
+           平面内方向最接近的那根 fan 骨；其余顶点保持不动。
+        3. 阶段 2（整体模糊）：在受影响区域做拉普拉斯平滑软化硬边界，再按通道
+           重新归一化，保证每根主骨"剩余 + 名下 fan"之和恢复到它的原始权重。
+
+        关键不变量是"按通道守恒"——fan 骨刚性跟随其父级主骨，所以只要每个通道的
+        权重总量不变，无约束时的形变就和原始一致。详见阶段 2 注释。
+        """
         edit_bones = armature.data.edit_bones
         bone_a = edit_bones.get(selected_names[0])
         bone_b = edit_bones.get(selected_names[1])
         if bone_a is None or bone_b is None:
-            raise Exception("selected bones not found")
+            raise Exception("找不到选中的骨骼")
 
         joint = frame["joint"]
         base_length = frame["base_length"]
@@ -853,10 +811,9 @@ class BoneFanCore:
         source_names = [frame["parent_bone"].name, frame["child_bone"].name]
         parent_name, child_name = source_names[0], source_names[1]
 
-        # the bend plane normal: all fan bones lie in this plane, so the split
-        # between fans is purely an in-plane angle. Vertices sit on a limb tube
-        # and have a large out-of-plane component, so we must project it out
-        # before comparing directions or the split snaps to the wrong axis.
+        # 弯折平面的法线：所有 fan 骨都铺在这个平面内，所以 fan 之间的划分纯粹是
+        # 平面内夹角。顶点位于肢体管面上、有很大的平面外分量，必须先把它投影掉，
+        # 否则方向比较会吸附到错误的轴上。
         plane_normal_world = _safe_normalized_vector(
             armature.matrix_world.to_3x3() @ frame["plane_normal"]
         )
@@ -867,10 +824,9 @@ class BoneFanCore:
             armature.matrix_world.to_3x3() @ frame["child_dir"]
         )
 
-        # collect fan bones and their world-space directions from the joint.
-        # Read from edit_bones (not data.bones): we run inside edit mode, where
-        # data.bones is stale for freshly created fans. edit_bones is the same
-        # live source the preview uses, so the coordinate space matches.
+        # 收集 fan 骨以及它们从关节出发的世界空间方向。
+        # 从 edit_bones（而非 data.bones）读取：此时处于编辑模式，data.bones 对
+        # 刚创建的 fan 是过期的；edit_bones 和预览用的是同一个实时来源，坐标空间一致。
         fan_items: list[dict] = []
         for fan_name in fan_names:
             parsed = cls._parse_fan_name(fan_name)
@@ -884,8 +840,8 @@ class BoneFanCore:
             if fan_dir is None:
                 continue
 
-            # fan bones lie in the bend plane; project to be exact, so the
-            # comparison axis matches the projected vertex directions below.
+            # fan 骨铺在弯折平面内；精确投影一下，让比较用的轴和下面投影后的
+            # 顶点方向保持一致。
             if plane_normal_world is not None:
                 fan_dir = _safe_normalized_vector(
                     fan_dir - plane_normal_world * fan_dir.dot(plane_normal_world)
@@ -893,11 +849,9 @@ class BoneFanCore:
                 if fan_dir is None:
                     continue
 
-            # the source bone this fan rigidly follows (its edit-bone parent).
-            # Without constraints the fan deforms exactly like this bone, so it
-            # must only ever receive weight from this bone's channel. Conserving
-            # weight per channel is what keeps the auto-weighted result aligned
-            # with the original skinning when no constraints are present.
+            # 这根 fan 刚性跟随的主骨（它的 edit-bone 父级）。无约束时 fan 的形变
+            # 和这根骨完全一致，所以它只能从这根骨的通道里接收权重。按通道守恒
+            # 正是保证自动权重结果与原始蒙皮对齐的关键。
             fan_src = None
             parent_eb = getattr(fan_bone, "parent", None)
             if parent_eb is not None and parent_eb.name in source_names:
@@ -929,7 +883,7 @@ class BoneFanCore:
         joint_world = armature.matrix_world @ joint
         rel_vectors = [(obj.matrix_world @ v.co) - joint_world for v in obj.data.vertices]
 
-        # read the current weights of the two main (source) bones
+        # 读取两根主骨当前的权重
         source_groups: dict[str, bpy.types.VertexGroup] = {}
         source_weights: dict[str, list[float]] = {}
         for source_name in source_names:
@@ -960,16 +914,15 @@ class BoneFanCore:
         present_sources = list(source_groups.keys())
         processed_sources = len(present_sources)
 
-        # the influence we are allowed to redistribute: the combined main-bone
-        # weight per vertex. Renormalizing back to this value keeps the rig's
-        # partition of unity intact relative to every other bone.
+        # 顶点是否被某根主骨驱动的判定门槛：两根主骨权重之和。这里只用它来判断
+        # 顶点要不要参与转移，真正的守恒是后面按通道分别做的。
         orig_total = [0.0] * num_vertices
         for source_name in present_sources:
             sw = source_weights[source_name]
             for i in range(num_vertices):
                 orig_total[i] += sw[i]
 
-        # prepare fan vertex groups (cleared) and working weight buffers
+        # 准备 fan 顶点组（清空）和工作用的权重缓冲
         fan_groups: dict[str, bpy.types.VertexGroup] = {}
         fan_weights: dict[str, list[float]] = {}
         for item in fan_items:
@@ -982,24 +935,25 @@ class BoneFanCore:
 
         processed_fans = len(fan_groups)
 
-        # working copies for the main bones (will be edited in place)
+        # 主骨权重的工作副本（会就地修改）
         main_weights = {name: source_weights[name][:] for name in present_sources}
 
-        # group every buffer into per-source channels. A fan rigidly follows its
-        # parent source bone, so without constraints it deforms exactly like that
-        # bone. To keep the auto-weighted result identical to the original, weight
-        # must be conserved *within each channel*: at every vertex the source's
-        # leftover weight plus all of its fans must equal the source's original
-        # weight. We never move weight between the parent channel and the child
-        # channel (that is also why fan counts are forced even -> symmetric pairs).
+        # 把每个 buffer 按"通道"（每根主骨）分组。fan 骨刚性跟随它的父级主骨，
+        # 在没有约束时形变和那根主骨完全一致。要让自动权重后的效果和原始一致，
+        # 权重必须在每个通道内部守恒：每个顶点上，主骨剩余权重加上它名下所有 fan
+        # 的权重，要等于这根主骨的原始权重。父通道和子通道之间永不互相搬运权重
+        # （这也是 fan 数量被强制为偶数、能对称配对的原因）。
         channel_fans = {name: [] for name in present_sources}
         for item in fan_items:
             if item["src"] in channel_fans:
                 channel_fans[item["src"]].append(item["name"])
 
-        # --- Phase 1: hard spherical split -------------------------------
-        # Every vertex inside the joint sphere hands each source bone's weight to
-        # the single closest fan *in that same channel* (by in-plane direction).
+        # 预先取出每根 fan 的投影方向，避免在顶点循环里反复线性查找。
+        fan_dirs = {item["name"]: item["dir"] for item in fan_items}
+
+        # --- 阶段 1：硬球分割 ---------------------------------------------
+        # 关节球内的每个顶点，把每根主骨的权重交给"同通道内"在平面内方向上
+        # 夹角最近的那根 fan 骨。
         touched_vertices = 0
         core_vertices: list[int] = []
         for i in range(num_vertices):
@@ -1008,8 +962,8 @@ class BoneFanCore:
             if rel_vectors[i].length > radius:
                 continue
 
-            # project the vertex direction into the bend plane so the nearest-fan
-            # test compares in-plane angle only (the fans fan out in this plane).
+            # 把顶点方向投影到弯折平面上，让最近 fan 的判定只比较平面内夹角
+            # （fan 骨都铺在这个平面内）。
             vec = rel_vectors[i]
             if plane_normal_world is not None:
                 vec = vec - plane_normal_world * vec.dot(plane_normal_world)
@@ -1024,13 +978,13 @@ class BoneFanCore:
                 best_name = None
                 best_score = -2.0
                 for fan_name in channel_fans[source_name]:
-                    fdir = next(it["dir"] for it in fan_items if it["name"] == fan_name)
+                    fdir = fan_dirs[fan_name]
                     score = 1.0 if vdir is None else fdir.dot(vdir)
                     if score > best_score:
                         best_score = score
                         best_name = fan_name
                 if best_name is None:
-                    # channel has no fan: leave the weight on the source bone
+                    # 这个通道没有 fan：权重保留在主骨上
                     continue
 
                 fan_weights[best_name][i] += ws
@@ -1041,16 +995,14 @@ class BoneFanCore:
                 core_vertices.append(i)
                 touched_vertices += 1
 
-        # --- Phase 2: overall blur ---------------------------------------
-        # A real mesh-space Laplacian smoothing pass over the affected region
-        # softens the hard boundaries (fan<->fan and fan<->main), followed by
-        # per-channel renormalization back to each source bone's original weight.
+        # --- 阶段 2：整体模糊 ---------------------------------------------
+        # 在受影响区域做网格空间的拉普拉斯平滑，软化硬边界（fan 之间、fan 与
+        # 主骨之间），随后按通道重新归一化回每根主骨的原始权重。
         iterations = int(round(_clamp(blur_factor, 0.0, 1.0) * cls._MAX_BLUR_ITERATIONS))
         if iterations > 0 and core_vertices:
             adjacency = cls._build_vertex_adjacency(obj, num_vertices)
 
-            # grow the region outward so weight can bleed back onto the main
-            # bones beyond the sphere boundary (one ring per iteration).
+            # 把区域向外扩张，让权重能越过球边界回流到主骨上（每次迭代扩一圈）。
             in_region = [False] * num_vertices
             frontier = list(core_vertices)
             for v in frontier:
@@ -1067,8 +1019,8 @@ class BoneFanCore:
                 frontier = next_frontier
             region = [i for i in range(num_vertices) if in_region[i]]
 
-            # smoothing operates on every relevant group simultaneously; each
-            # buffer is smoothed independently so no weight crosses channels here.
+            # 同时对所有相关分组做平滑；每个 buffer 独立平滑，所以这一步不会
+            # 让权重跨通道流动。
             buffers = [main_weights[name] for name in present_sources]
             buffers += [fan_weights[item["name"]] for item in fan_items]
 
@@ -1092,18 +1044,17 @@ class BoneFanCore:
                     for b, value in enumerate(row):
                         buffers[b][i] = value
 
-            # renormalize *per channel* so the source bone's leftover weight plus
-            # all of its fans always re-sum to that source bone's ORIGINAL weight.
-            # This is the invariant that keeps the deformation aligned and stops
-            # transferred weight from leaking onto the other channel or beyond.
+            # 按"通道"重新归一化：让主骨剩余权重加上它名下所有 fan，重新加合回
+            # 这根主骨的原始权重。这就是保证形变对齐、且转移来的权重不会泄漏到
+            # 另一个通道或区域外的不变量。
             for source_name in present_sources:
                 orig_s = source_weights[source_name]
                 chan_buffers = [main_weights[source_name]]
                 chan_buffers += [fan_weights[name] for name in channel_fans[source_name]]
                 for i in region:
                     if orig_s[i] <= EPS:
-                        # this source did not drive the vertex; never introduce
-                        # new influence into its channel from the blur.
+                        # 这根主骨本来就没驱动这个顶点：绝不让模糊往它的通道里
+                        # 引入新的权重。
                         for buf in chan_buffers:
                             buf[i] = 0.0
                         continue
@@ -1116,7 +1067,7 @@ class BoneFanCore:
                     for buf in chan_buffers:
                         buf[i] *= scale
 
-        # --- write results back ------------------------------------------
+        # --- 写回结果 -----------------------------------------------------
         for source_name in present_sources:
             source_vg = source_groups[source_name]
             source_vg.remove(all_indices)
@@ -1161,7 +1112,7 @@ class BoneFanCore:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
 
         if not mesh_objs:
-            raise Exception("no mesh objects found")
+            raise Exception("没有找到网格物体")
 
         result = {
             "processed_objects": 0,
@@ -1275,16 +1226,15 @@ class BoneFanCore:
         bone_collection_name: str = HoRig_Fan,
     ) -> list[str]:
         if len(selected_names) != 2:
-            raise Exception("please select exactly two bones")
+            raise Exception("请正好选择两根骨骼")
 
         edit_bones = armature.data.edit_bones
-        # resolve the pair from the passed-in names, NOT the live selection, so
-        # the symmetric pass operates on the mirrored pair instead of regenerating
-        # the originally-selected side.
+        # 从传入的骨名解析骨对，而不是读实时选择，这样对称那一轮才会作用到
+        # 镜像骨对上，而不是重复生成原本选中的那一侧。
         bone_a = edit_bones.get(selected_names[0])
         bone_b = edit_bones.get(selected_names[1])
         if bone_a is None or bone_b is None:
-            raise Exception("selected bones not found")
+            raise Exception("找不到选中的骨骼")
 
         frame, error = cls._resolve_joint_geometry(bone_a, bone_b)
         if error:
@@ -1313,7 +1263,7 @@ class BoneFanCore:
                 existed.append(pin_name)
 
         if existed:
-            raise Exception("fan bone already exists: " + ", ".join(sorted(set(existed))))
+            raise Exception("fan 骨已存在: " + ", ".join(sorted(set(existed))))
 
         created_names = []
         pin_names = []
@@ -1329,11 +1279,11 @@ class BoneFanCore:
                 step * i,
             )
             if direction is None:
-                raise Exception(f"failed to generate {fan_name}")
+                raise Exception(f"生成 {fan_name} 失败")
 
             direction = _safe_normalized_vector(direction)
             if direction is None:
-                raise Exception(f"{fan_name} direction length is zero")
+                raise Exception(f"{fan_name} 的方向长度为零")
 
             pin_bone = edit_bones.new(pin_name)
             pin_bone.head = joint.copy()
@@ -1416,10 +1366,9 @@ class BoneFanCore:
 
     @classmethod
     def _build_fan_restore_map(cls, armature: bpy.types.Object, removal_names: list[str]) -> dict:
-        # map each deform fan -> the main bone it rigidly followed (its edit-bone
-        # parent). Restoring weight there exactly reverses the per-channel split,
-        # so the main bone gets its original weight back. Pin bones carry no
-        # weight (use_deform = False), so they are skipped here.
+        # 把每根 deform fan 映射回它刚性跟随的主骨（它的 edit-bone 父级）。把权重
+        # 还回那里正好是生成时按通道分割的逆操作，主骨能拿回原始权重。pin 骨
+        # 不参与变形（use_deform = False），所以这里跳过。
         edit_bones = armature.data.edit_bones
         main_to_fans: dict[str, list[str]] = {}
         for name in removal_names:
@@ -1479,9 +1428,8 @@ class BoneFanCore:
 
     @staticmethod
     def obj_fan_restore(obj: bpy.types.Object, main_to_fans: dict[str, list[str]]) -> int:
-        # sum each main bone's leftover weight with all of its fans and write the
-        # total back onto the main bone, then drop the fan vertex groups. This is
-        # the exact inverse of the per-channel transfer done at generation time.
+        # 把每根主骨的剩余权重和它名下所有 fan 的权重加合，写回主骨，再删掉 fan
+        # 顶点组。这正是生成时按通道转移的逆操作。
         old_mode = obj.mode
         old_active = bpy.context.view_layer.objects.active
         mirror_state = TwistBoneCore._set_temp_mesh_mirror_off(obj)
@@ -1564,8 +1512,8 @@ class BoneFanCore:
 
 class OP_FanGenerate(Operator):
     bl_idname = "ho.fan_generate"
-    bl_label = "fan add"
-    bl_description = "Generate fan bones from two connected bones"
+    bl_label = "生成 fan 骨"
+    bl_description = "从两根相连的骨骼生成 fan 骨"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -1590,12 +1538,12 @@ class OP_FanGenerate(Operator):
         BoneFanPreview.clear()
         settings = getattr(context.scene, "ho_fan_settings", None)
         if settings is None:
-            self.report({"ERROR"}, "fan settings are missing")
+            self.report({"ERROR"}, "缺少 fan 设置")
             return {"CANCELLED"}
 
         selected_names = BoneFanCore._selected_bone_names(context, armature)
         if len(selected_names) != 2:
-            self.report({"ERROR"}, "please select exactly two bones")
+            self.report({"ERROR"}, "请正好选择两根骨骼")
             return {"CANCELLED"}
 
         fan_kinds = []
@@ -1604,7 +1552,7 @@ class OP_FanGenerate(Operator):
         if settings.generate_out:
             fan_kinds.append(("out", settings.count_out))
         if not fan_kinds:
-            self.report({"ERROR"}, "select at least one direction")
+            self.report({"ERROR"}, "请至少选择一个方向")
             return {"CANCELLED"}
 
         if was_hidden:
@@ -1618,8 +1566,8 @@ class OP_FanGenerate(Operator):
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, "EDIT")
 
-            # build the list of bone pairs to process: the selected pair, plus
-            # the mirrored pair when symmetry is on (only if it actually exists).
+            # 组装要处理的骨对：选中的那一对，外加开启对称时的镜像骨对
+            # （仅当镜像骨对真实存在时才加入）。
             pairs = [selected_names]
             if settings.process_symmetry:
                 mirrored = BoneFanCore._mirror_pair(armature, selected_names)
@@ -1659,14 +1607,14 @@ class OP_FanGenerate(Operator):
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            pair_note = " (symmetry)" if len(pairs) > 1 else ""
+            pair_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
-                self.report({"INFO"}, f"generated {total_created} fan bones{pair_note}")
+                self.report({"INFO"}, f"已生成 {total_created} 根 fan 骨{pair_note}")
             else:
                 self.report(
                     {"INFO"},
-                    f"generated {total_created} fan bones{pair_note}, "
-                    f"weights on {total_weight_objects} objects",
+                    f"已生成 {total_created} 根 fan 骨{pair_note}，"
+                    f"在 {total_weight_objects} 个物体上转移了权重",
                 )
             return {"FINISHED"}
         except Exception as e:
@@ -1695,8 +1643,8 @@ class OP_FanGenerate(Operator):
 
 class OP_RemoveFanBone(Operator):
     bl_idname = "ho.remove_fan_bone"
-    bl_label = "remove fan"
-    bl_description = "Remove fan bones for the selected main bones"
+    bl_label = "删除 fan 骨"
+    bl_description = "删除选中主骨对应的 fan 骨，并把权重恢复回主骨"
     bl_options = {"REGISTER", "UNDO"}
 
     only_selected: BoolProperty(
@@ -1756,18 +1704,17 @@ class OP_RemoveFanBone(Operator):
             if armature.mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, "EDIT")
 
-            # figure out which fan/pin bones to remove, and which main bone each
-            # deform fan hands its weight back to, before touching anything.
+            # 动手之前先确定要删除哪些 fan/pin 骨，以及每根 deform fan 把权重
+            # 还给哪根主骨。
             removal_names = BoneFanCore._collect_fan_bone_names(armature, selected_names)
             if not removal_names:
-                self.report({"WARNING"}, "no fan bones found to remove")
+                self.report({"WARNING"}, "没有找到可删除的 fan 骨")
                 return {"CANCELLED"}
 
             BoneFanCore._assert_safe_to_remove_fan_bones(armature, removal_names)
             main_to_fans = BoneFanCore._build_fan_restore_map(armature, removal_names)
 
-            # reverse the weight transfer first (needs OBJECT mode per mesh),
-            # then remove the bones back in EDIT mode.
+            # 先反向恢复权重（每个网格需要在物体模式下处理），再回到编辑模式删骨。
             restored_objects = 0
             removed_groups = 0
             if self.process_vertex_groups:
@@ -1792,14 +1739,12 @@ class OP_RemoveFanBone(Operator):
 
             self.report(
                 {"INFO"},
-                f"removed {removed} fan bones, restored weights on {restored_objects} objects "
-                f"({removed_groups} groups)",
+                f"已删除 {removed} 根 fan 骨，在 {restored_objects} 个物体上恢复了权重"
+                f"（{removed_groups} 个顶点组）",
             )
             return {"FINISHED"}
-        except FanRemovalBlockedError as e:
-            self.report({"ERROR"}, str(e))
-            return {"CANCELLED"}
         except Exception as e:
+            # FanRemovalBlockedError 也会走这里：把阻断原因直接报给用户。
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
         finally:
