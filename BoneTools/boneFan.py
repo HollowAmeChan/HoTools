@@ -135,6 +135,12 @@ class PG_Hotools_FanSettings(PropertyGroup):
         default=False,
         update=_fan_preview_update,
     )  # type: ignore
+    process_symmetry: BoolProperty(
+        name="symmetry",
+        description="also generate fan bones on the mirrored bone pair (.L/.R)",
+        default=False,
+        update=_fan_preview_update,
+    )  # type: ignore
     only_selected: BoolProperty(
         name="only selected objects",
         description="only process selected mesh objects",
@@ -243,6 +249,7 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
     col.prop(settings, "length_factor")
     col.prop(settings, "pin_length_factor")
     col.prop(settings, "bone_collection_name")
+    col.prop(settings, "process_symmetry")
     col.prop(settings, "auto_transfer_weights")
 
     sub = col.column(align=True)
@@ -666,6 +673,27 @@ class BoneFanCore:
         if armature.mode == "EDIT":
             return [bone.name for bone in armature.data.edit_bones if bone.select]
         return []
+
+    @staticmethod
+    def _mirror_pair(armature: bpy.types.Object, pair_names: list[str]) -> list[str] | None:
+        # flip both bone names of the selected pair to the opposite side. Returns
+        # the mirrored pair only if it is a real, distinct pair that exists on the
+        # armature; otherwise None (nothing to mirror, e.g. center bones).
+        edit_bones = armature.data.edit_bones
+        mirrored = []
+        for name in pair_names:
+            flipped = bpy.utils.flip_name(name)
+            if flipped == name or edit_bones.get(flipped) is None:
+                return None
+            mirrored.append(flipped)
+
+        # guard against degenerate flips collapsing to a single bone or mapping
+        # back onto the original pair (which would generate duplicates).
+        if len(set(mirrored)) != 2:
+            return None
+        if set(mirrored) == set(pair_names):
+            return None
+        return mirrored
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -1249,12 +1277,14 @@ class BoneFanCore:
         if len(selected_names) != 2:
             raise Exception("please select exactly two bones")
 
-        selected_bones = cls._selected_bones(bpy.context, armature)
-        if len(selected_bones) != 2:
-            raise Exception("selected bones not found")
-
         edit_bones = armature.data.edit_bones
-        bone_a, bone_b = selected_bones
+        # resolve the pair from the passed-in names, NOT the live selection, so
+        # the symmetric pass operates on the mirrored pair instead of regenerating
+        # the originally-selected side.
+        bone_a = edit_bones.get(selected_names[0])
+        bone_b = edit_bones.get(selected_names[1])
+        if bone_a is None or bone_b is None:
+            raise Exception("selected bones not found")
 
         frame, error = cls._resolve_joint_geometry(bone_a, bone_b)
         if error:
@@ -1588,41 +1618,55 @@ class OP_FanGenerate(Operator):
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, "EDIT")
 
-            created_names = []
-            for fan_kind, count in fan_kinds:
-                created_names.extend(
-                    BoneFanCore._create_fan_bones(
-                        armature,
-                        selected_names,
-                        fan_kind,
-                        count,
-                        settings.length_factor,
-                        settings.pin_length_factor,
-                        settings.bone_collection_name,
-                    )
-                )
+            # build the list of bone pairs to process: the selected pair, plus
+            # the mirrored pair when symmetry is on (only if it actually exists).
+            pairs = [selected_names]
+            if settings.process_symmetry:
+                mirrored = BoneFanCore._mirror_pair(armature, selected_names)
+                if mirrored is not None:
+                    pairs.append(mirrored)
 
-            weight_result = None
-            if settings.auto_transfer_weights:
-                weight_result = BoneFanCore.apply_fan_weights(
-                    context,
-                    armature,
-                    selected_names,
-                    created_names,
-                    settings.fan_weight_radius,
-                    settings.fan_weight_blur,
-                    settings.only_selected,
-                )
+            total_created = 0
+            total_weight_objects = 0
+            for pair in pairs:
+                created_names = []
+                for fan_kind, count in fan_kinds:
+                    created_names.extend(
+                        BoneFanCore._create_fan_bones(
+                            armature,
+                            pair,
+                            fan_kind,
+                            count,
+                            settings.length_factor,
+                            settings.pin_length_factor,
+                            settings.bone_collection_name,
+                        )
+                    )
+                total_created += len(created_names)
+
+                if settings.auto_transfer_weights and created_names:
+                    weight_result = BoneFanCore.apply_fan_weights(
+                        context,
+                        armature,
+                        pair,
+                        created_names,
+                        settings.fan_weight_radius,
+                        settings.fan_weight_blur,
+                        settings.only_selected,
+                    )
+                    total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            if weight_result is None:
-                self.report({"INFO"}, f"generated {len(created_names)} fan bones")
+            pair_note = " (symmetry)" if len(pairs) > 1 else ""
+            if not settings.auto_transfer_weights:
+                self.report({"INFO"}, f"generated {total_created} fan bones{pair_note}")
             else:
                 self.report(
                     {"INFO"},
-                    f"generated {len(created_names)} fan bones, weights on {weight_result['processed_objects']} objects",
+                    f"generated {total_created} fan bones{pair_note}, "
+                    f"weights on {total_weight_objects} objects",
                 )
             return {"FINISHED"}
         except Exception as e:
