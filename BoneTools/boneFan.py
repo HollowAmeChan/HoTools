@@ -326,7 +326,7 @@ class BoneFanPreview:
 
         state = {
             "armature_name": "",
-            "frame": None,
+            "frames": [],
             "message": "",
             "region": region,
             "region_data": region_data,
@@ -345,7 +345,19 @@ class BoneFanPreview:
                     state["message"] = error
                 else:
                     state["armature_name"] = armature.name
-                    state["frame"] = frame
+                    frames = [frame]
+                    # 开启对称处理时，把镜像骨对的预览几何也算进来，直接看到两边。
+                    if getattr(settings, "process_symmetry", False):
+                        selected_names = [b.name for b in selected_bones]
+                        mirrored = BoneFanCore._mirror_pair(armature, selected_names)
+                        if mirrored is not None:
+                            mb_a = armature.data.edit_bones.get(mirrored[0]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[0])
+                            mb_b = armature.data.edit_bones.get(mirrored[1]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[1])
+                            if mb_a is not None and mb_b is not None:
+                                m_frame, m_error = BoneFanCore._resolve_joint_geometry(mb_a, mb_b)
+                                if not m_error:
+                                    frames.append(m_frame)
+                    state["frames"] = frames
 
         cls._state = state
         if not cls._timer_running:
@@ -452,124 +464,126 @@ class BoneFanPreview:
         gpu.state.point_size_set(8.0)
         try:
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-
-            frame = state.get("frame")
-            if frame is None:
-                return
-
-            joint_world = armature.matrix_world @ frame["joint"]
-            plane_normal_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["plane_normal"])
-            axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
-            if axis_a_world is None:
-                axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
-            if plane_normal_world is None or axis_a_world is None:
-                return
-
-            axis_a_world = axis_a_world - plane_normal_world * axis_a_world.dot(plane_normal_world)
-            axis_a_world = _safe_normalized_vector(axis_a_world)
-            if axis_a_world is None:
-                return
-
-            axis_b_world = _safe_normalized_vector(plane_normal_world.cross(axis_a_world))
-            if axis_b_world is None:
-                return
-
             settings = getattr(bpy.context.scene, "ho_fan_settings", None)
-            radius_factor = float(getattr(settings, "fan_weight_radius", 0.5)) if settings is not None else 0.5
-            radius = max(frame["base_length"] * radius_factor, 0.0)
-            if radius <= EPS:
-                return
-
-            def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
-                if ring_radius <= EPS:
-                    return
-                previous = center + axis_x * ring_radius
-                for index in range(1, segments + 1):
-                    angle = tau * index / segments
-                    point = center + axis_x * cos(angle) * ring_radius + axis_y * sin(angle) * ring_radius
-                    target.extend([tuple(previous), tuple(point)])
-                    previous = point
-
-            lines = []
-            points = [tuple(joint_world)]
-            in_spokes = []
-            out_spokes = []
-
-            total_angle = float(frame["angle_rad"])
-            parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
-            child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
-            if parent_dir_world is None or child_dir_world is None:
-                return
-
-            center_dir_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
-            if center_dir_world is None:
-                center_dir_world = parent_dir_world
-
-            center_spokes = [
-                tuple(joint_world),
-                tuple(joint_world + center_dir_world * radius),
-                tuple(joint_world),
-                tuple(joint_world - center_dir_world * radius),
-            ]
-
-            sphere_lines = []
-            if getattr(settings, "auto_transfer_weights", False):
-                # 权重分割是关节周围的一个硬球：球内每个顶点把主骨权重交给最近的
-                # fan，再用整体模糊软化。这里只画这个球。
-                _append_circle_3d(sphere_lines, joint_world, axis_a_world, axis_b_world, radius)
-                _append_circle_3d(sphere_lines, joint_world, axis_a_world, plane_normal_world, radius)
-                _append_circle_3d(sphere_lines, joint_world, axis_b_world, plane_normal_world, radius)
-
-            if getattr(settings, "generate_in", False):
-                in_count = max(1, int(getattr(settings, "count_in", 1)))
-                step = total_angle / (in_count + 1)
-                start_dir = parent_dir_world
-                for index in range(1, in_count + 1):
-                    direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
-                    if direction is None:
-                        continue
-                    in_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
-
-            if getattr(settings, "generate_out", False):
-                out_count = max(1, int(getattr(settings, "count_out", 1)))
-                step = total_angle / (out_count + 1)
-                start_dir = -parent_dir_world
-                for index in range(1, out_count + 1):
-                    direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
-                    if direction is None:
-                        continue
-                    out_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
-
-            shader.bind()
-
-            if sphere_lines:
-                line_batch = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
-                shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-                line_batch.draw(shader)
-
-            if len(center_spokes) >= 2:
-                center_batch = batch_for_shader(shader, "LINES", {"pos": center_spokes})
-                shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
-                center_batch.draw(shader)
-
-            if len(in_spokes) >= 2:
-                in_batch = batch_for_shader(shader, "LINES", {"pos": in_spokes})
-                shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
-                in_batch.draw(shader)
-
-            if len(out_spokes) >= 2:
-                out_batch = batch_for_shader(shader, "LINES", {"pos": out_spokes})
-                shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
-                out_batch.draw(shader)
-
-            point_batch = batch_for_shader(shader, "POINTS", {"pos": points})
-            shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-            point_batch.draw(shader)
+            for frame in state.get("frames", []):
+                cls._draw_frame_3d(shader, armature, settings, frame)
         finally:
             gpu.state.point_size_set(1.0)
             gpu.state.line_width_set(1.0)
             gpu.state.depth_test_set("LESS_EQUAL")
             gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_frame_3d(cls, shader, armature, settings, frame):
+        if frame is None:
+            return
+
+        joint_world = armature.matrix_world @ frame["joint"]
+        plane_normal_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["plane_normal"])
+        axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
+        if axis_a_world is None:
+            axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
+        if plane_normal_world is None or axis_a_world is None:
+            return
+
+        axis_a_world = axis_a_world - plane_normal_world * axis_a_world.dot(plane_normal_world)
+        axis_a_world = _safe_normalized_vector(axis_a_world)
+        if axis_a_world is None:
+            return
+
+        axis_b_world = _safe_normalized_vector(plane_normal_world.cross(axis_a_world))
+        if axis_b_world is None:
+            return
+
+        radius_factor = float(getattr(settings, "fan_weight_radius", 0.5)) if settings is not None else 0.5
+        radius = max(frame["base_length"] * radius_factor, 0.0)
+        if radius <= EPS:
+            return
+
+        def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
+            if ring_radius <= EPS:
+                return
+            previous = center + axis_x * ring_radius
+            for index in range(1, segments + 1):
+                angle = tau * index / segments
+                point = center + axis_x * cos(angle) * ring_radius + axis_y * sin(angle) * ring_radius
+                target.extend([tuple(previous), tuple(point)])
+                previous = point
+
+        points = [tuple(joint_world)]
+        in_spokes = []
+        out_spokes = []
+
+        total_angle = float(frame["angle_rad"])
+        parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
+        child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
+        if parent_dir_world is None or child_dir_world is None:
+            return
+
+        center_dir_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+        if center_dir_world is None:
+            center_dir_world = parent_dir_world
+
+        center_spokes = [
+            tuple(joint_world),
+            tuple(joint_world + center_dir_world * radius),
+            tuple(joint_world),
+            tuple(joint_world - center_dir_world * radius),
+        ]
+
+        sphere_lines = []
+        if getattr(settings, "auto_transfer_weights", False):
+            # 权重分割是关节周围的一个硬球：球内每个顶点把主骨权重交给最近的
+            # fan，再用整体模糊软化。这里只画这个球。
+            _append_circle_3d(sphere_lines, joint_world, axis_a_world, axis_b_world, radius)
+            _append_circle_3d(sphere_lines, joint_world, axis_a_world, plane_normal_world, radius)
+            _append_circle_3d(sphere_lines, joint_world, axis_b_world, plane_normal_world, radius)
+
+        if getattr(settings, "generate_in", False):
+            in_count = max(1, int(getattr(settings, "count_in", 1)))
+            step = total_angle / (in_count + 1)
+            start_dir = parent_dir_world
+            for index in range(1, in_count + 1):
+                direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
+                if direction is None:
+                    continue
+                in_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
+
+        if getattr(settings, "generate_out", False):
+            out_count = max(1, int(getattr(settings, "count_out", 1)))
+            step = total_angle / (out_count + 1)
+            start_dir = -parent_dir_world
+            for index in range(1, out_count + 1):
+                direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
+                if direction is None:
+                    continue
+                out_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
+
+        shader.bind()
+
+        if sphere_lines:
+            line_batch = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
+            shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
+            line_batch.draw(shader)
+
+        if len(center_spokes) >= 2:
+            center_batch = batch_for_shader(shader, "LINES", {"pos": center_spokes})
+            shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
+            center_batch.draw(shader)
+
+        if len(in_spokes) >= 2:
+            in_batch = batch_for_shader(shader, "LINES", {"pos": in_spokes})
+            shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
+            in_batch.draw(shader)
+
+        if len(out_spokes) >= 2:
+            out_batch = batch_for_shader(shader, "LINES", {"pos": out_spokes})
+            shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
+            out_batch.draw(shader)
+
+        point_batch = batch_for_shader(shader, "POINTS", {"pos": points})
+        shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
+        point_batch.draw(shader)
 
     @classmethod
     def _draw_2d(cls):
@@ -703,11 +717,19 @@ class BoneFanCore:
     def _mirror_pair(armature: bpy.types.Object, pair_names: list[str]) -> list[str] | None:
         # 把选中骨对的两根骨名都翻转到对侧。只有当镜像骨对真实存在、且是一对不同
         # 于原骨对的骨时才返回；否则返回 None（没有可镜像的对象，比如中线骨）。
-        edit_bones = armature.data.edit_bones
+        # 按当前模式取骨：EDIT 模式查 edit_bones，否则查 pose.bones（预览常在
+        # 姿态/物体模式触发，此时 edit_bones 为空，不能拿它判定镜像骨是否存在）。
+        if armature.mode == "EDIT":
+            def _bone_exists(name):
+                return armature.data.edit_bones.get(name) is not None
+        else:
+            def _bone_exists(name):
+                return armature.pose.bones.get(name) is not None
+
         mirrored = []
         for name in pair_names:
             flipped = bpy.utils.flip_name(name)
-            if flipped == name or edit_bones.get(flipped) is None:
+            if flipped == name or not _bone_exists(flipped):
                 return None
             mirrored.append(flipped)
 
@@ -732,34 +754,28 @@ class BoneFanCore:
                 return head, tail
             raise Exception("不支持的骨骼类型")
 
-        a_head, a_tail = _bone_points(bone_a)
-        b_head, b_tail = _bone_points(bone_b)
-
         bone_a_parent = getattr(bone_a, "parent", None)
         bone_b_parent = getattr(bone_b, "parent", None)
 
+        # 必须是直接父子级：仅靠端点位置相接（可能是误选的两根无关骨）不算，
+        # 否则会算出一个假关节、生成错误的 fan。
         if bone_b_parent == bone_a:
             parent_bone = bone_a
             child_bone = bone_b
         elif bone_a_parent == bone_b:
             parent_bone = bone_b
             child_bone = bone_a
-        elif (a_tail - b_head).length <= tolerance:
-            parent_bone = bone_a
-            child_bone = bone_b
-        elif (b_tail - a_head).length <= tolerance:
-            parent_bone = bone_b
-            child_bone = bone_a
         else:
-            return None, "两根骨骼必须相连"
+            return None, "两根骨骼必须是直接的父子级关系"
 
         parent_head, parent_tail = _bone_points(parent_bone)
         child_head, child_tail = _bone_points(child_bone)
 
-        if (parent_tail - child_head).length <= tolerance:
-            joint = (parent_tail + child_head) * 0.5
-        else:
-            joint = child_head.copy() if (child_head - parent_tail).length < (parent_tail - child_head).length else parent_tail.copy()
+        # 父子还必须在关节处相连：父骨末端与子骨头部重合，才有唯一的弯折点。
+        if (parent_tail - child_head).length > tolerance:
+            return None, "父子骨骼未相连：父骨末端与子骨头部不重合"
+
+        joint = (parent_tail + child_head) * 0.5
 
         parent_dir = _safe_normalized_vector(parent_head - joint)
         child_dir = _safe_normalized_vector(child_tail - joint)

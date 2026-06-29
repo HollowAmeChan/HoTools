@@ -297,6 +297,19 @@ class BoneFanSingleCore(BoneFanCore):
             return name_b, name_a, None
         return None, None, "两根骨骼之间没有父子（层级）关系，无法判定上级骨与主骨"
 
+    @staticmethod
+    def _mirror_virtual_direction(armature, virtual_dir_world):
+        """把世界空间虚拟方向按骨架局部 X 轴镜像，用于对称侧（.L/.R）。
+
+        骨骼对称在 Blender 里是沿骨架局部 X=0 平面翻转，方向向量镜像即对局部 X
+        分量取反。这里先转到骨架局部空间取反 X，再转回世界空间，保证镜像侧的
+        虚拟方向与镜像骨几何一致。
+        """
+        mw3 = armature.matrix_world.to_3x3()
+        local = mw3.inverted() @ Vector(virtual_dir_world)
+        local.x = -local.x
+        return mw3 @ local
+
 
     @classmethod
     def _create_fan_bones_single(
@@ -829,7 +842,7 @@ class BoneFanSinglePreview:
         if region_owner is not None:
             _, region, region_data = region_owner
 
-        state = {"armature_name": "", "frame": None, "message": "", "region": region, "region_data": region_data}
+        state = {"armature_name": "", "frames": [], "message": "", "region": region, "region_data": region_data}
 
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
@@ -860,7 +873,28 @@ class BoneFanSinglePreview:
                             state["message"] = error
                         else:
                             state["armature_name"] = armature.name
-                            state["frame"] = frame
+                            frames = [frame]
+                            # 对称处理：把镜像主骨 / 上级骨的预览几何也算进来。
+                            # 虚拟方向是世界向量，镜像侧需沿骨架局部 X 平面镜像，
+                            # 否则镜像骨会使用未翻转的朝向，与生成逻辑不一致。
+                            if getattr(settings, "process_symmetry", False):
+                                flipped_main = bpy.utils.flip_name(main_name)
+                                flipped_upper = bpy.utils.flip_name(upper_name)
+                                if (
+                                    (flipped_main, flipped_upper) != (main_name, upper_name)
+                                ):
+                                    m_main = _get_bone(flipped_main)
+                                    m_parent = _get_bone(flipped_upper)
+                                    if m_main is not None and m_parent is not None:
+                                        m_virtual = BoneFanSingleCore._mirror_virtual_direction(
+                                            armature, virtual,
+                                        )
+                                        m_frame, m_error = cls._resolve_single_frame(
+                                            armature, m_main, m_parent, m_virtual,
+                                        )
+                                        if not m_error:
+                                            frames.append(m_frame)
+                            state["frames"] = frames
 
         cls._state = state
         if not cls._timer_running:
@@ -964,105 +998,108 @@ class BoneFanSinglePreview:
         gpu.state.point_size_set(8.0)
         try:
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-
-            frame = state.get("frame")
-            if frame is None:
-                return
-
             settings = getattr(bpy.context.scene, "ho_fan_single_settings", None)
-            mw3 = armature.matrix_world.to_3x3()
-            joint_world = armature.matrix_world @ frame["joint"]
-            plane_normal_world = _safe_normalized_vector(mw3 @ frame["plane_normal"])
-            parent_dir_world = _safe_normalized_vector(mw3 @ frame["parent_dir"])
-            child_dir_world = _safe_normalized_vector(mw3 @ frame["child_dir"])
-            if plane_normal_world is None or parent_dir_world is None or child_dir_world is None:
-                return
-
-            radius_factor = float(getattr(settings, "fan_weight_radius", 0.16)) if settings is not None else 0.16
-            length_factor = float(getattr(settings, "length_factor", 0.2)) if settings is not None else 0.2
-            sphere_radius = max(frame["base_length"] * radius_factor, 0.0)
-            spoke_len = max(frame["base_length"] * length_factor, EPS)
-
-            def _append_circle(target, center, ax, ay, r, segments=64):
-                if r <= EPS:
-                    return
-                prev = center + ax * r
-                for idx in range(1, segments + 1):
-                    ang = tau * idx / segments
-                    pt = center + ax * cos(ang) * r + ay * sin(ang) * r
-                    target.extend([tuple(prev), tuple(pt)])
-                    prev = pt
-
-            # 正交辅助轴，用来画权重球的三个大圆
-            axis_a = _safe_normalized_vector(parent_dir_world - plane_normal_world * parent_dir_world.dot(plane_normal_world))
-            if axis_a is None:
-                axis_a = child_dir_world
-            axis_b = _safe_normalized_vector(plane_normal_world.cross(axis_a))
-
-            sphere_lines = []
-            if getattr(settings, "auto_transfer_weights", False) and sphere_radius > EPS and axis_b is not None:
-                _append_circle(sphere_lines, joint_world, axis_a, axis_b, sphere_radius)
-                _append_circle(sphere_lines, joint_world, axis_a, plane_normal_world, sphere_radius)
-                _append_circle(sphere_lines, joint_world, axis_b, plane_normal_world, sphere_radius)
-
-            # 虚拟方向：从关节指向虚拟向量，画一条醒目的参考线
-            virtual_line = [
-                tuple(joint_world),
-                tuple(joint_world + parent_dir_world * spoke_len * 1.4),
-            ]
-            # 主骨方向参考
-            main_line = [
-                tuple(joint_world),
-                tuple(joint_world + child_dir_world * spoke_len * 1.4),
-            ]
-
-            total_angle = float(frame["angle_rad"])
-            in_spokes = []
-            out_spokes = []
-            if getattr(settings, "generate_in", False):
-                in_count = max(1, int(getattr(settings, "count_in", 1)))
-                step = total_angle / (in_count + 1)
-                for index in range(1, in_count + 1):
-                    d = BoneFanSingleCore._rotate_vector_around_axis(parent_dir_world, plane_normal_world, step * index)
-                    if d is None:
-                        continue
-                    in_spokes.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
-            if getattr(settings, "generate_out", False):
-                out_count = max(1, int(getattr(settings, "count_out", 1)))
-                step = total_angle / (out_count + 1)
-                for index in range(1, out_count + 1):
-                    d = BoneFanSingleCore._rotate_vector_around_axis(-parent_dir_world, plane_normal_world, step * index)
-                    if d is None:
-                        continue
-                    out_spokes.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
-
-            shader.bind()
-            if sphere_lines:
-                b = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
-                shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
-                b.draw(shader)
-            b = batch_for_shader(shader, "LINES", {"pos": virtual_line})
-            shader.uniform_float("color", (1.0, 0.3, 0.9, 0.95))
-            b.draw(shader)
-            b = batch_for_shader(shader, "LINES", {"pos": main_line})
-            shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
-            b.draw(shader)
-            if in_spokes:
-                b = batch_for_shader(shader, "LINES", {"pos": in_spokes})
-                shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
-                b.draw(shader)
-            if out_spokes:
-                b = batch_for_shader(shader, "LINES", {"pos": out_spokes})
-                shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
-                b.draw(shader)
-            b = batch_for_shader(shader, "POINTS", {"pos": [tuple(joint_world)]})
-            shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
-            b.draw(shader)
+            for frame in state.get("frames", []):
+                cls._draw_frame_3d(shader, armature, settings, frame)
         finally:
             gpu.state.point_size_set(1.0)
             gpu.state.line_width_set(1.0)
             gpu.state.depth_test_set("LESS_EQUAL")
             gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_frame_3d(cls, shader, armature, settings, frame):
+        if frame is None:
+            return
+
+        mw3 = armature.matrix_world.to_3x3()
+        joint_world = armature.matrix_world @ frame["joint"]
+        plane_normal_world = _safe_normalized_vector(mw3 @ frame["plane_normal"])
+        parent_dir_world = _safe_normalized_vector(mw3 @ frame["parent_dir"])
+        child_dir_world = _safe_normalized_vector(mw3 @ frame["child_dir"])
+        if plane_normal_world is None or parent_dir_world is None or child_dir_world is None:
+            return
+
+        radius_factor = float(getattr(settings, "fan_weight_radius", 0.16)) if settings is not None else 0.16
+        length_factor = float(getattr(settings, "length_factor", 0.2)) if settings is not None else 0.2
+        sphere_radius = max(frame["base_length"] * radius_factor, 0.0)
+        spoke_len = max(frame["base_length"] * length_factor, EPS)
+
+        def _append_circle(target, center, ax, ay, r, segments=64):
+            if r <= EPS:
+                return
+            prev = center + ax * r
+            for idx in range(1, segments + 1):
+                ang = tau * idx / segments
+                pt = center + ax * cos(ang) * r + ay * sin(ang) * r
+                target.extend([tuple(prev), tuple(pt)])
+                prev = pt
+
+        # 正交辅助轴，用来画权重球的三个大圆
+        axis_a = _safe_normalized_vector(parent_dir_world - plane_normal_world * parent_dir_world.dot(plane_normal_world))
+        if axis_a is None:
+            axis_a = child_dir_world
+        axis_b = _safe_normalized_vector(plane_normal_world.cross(axis_a))
+
+        sphere_lines = []
+        if getattr(settings, "auto_transfer_weights", False) and sphere_radius > EPS and axis_b is not None:
+            _append_circle(sphere_lines, joint_world, axis_a, axis_b, sphere_radius)
+            _append_circle(sphere_lines, joint_world, axis_a, plane_normal_world, sphere_radius)
+            _append_circle(sphere_lines, joint_world, axis_b, plane_normal_world, sphere_radius)
+
+        # 虚拟方向：从关节指向虚拟向量，画一条醒目的参考线
+        virtual_line = [
+            tuple(joint_world),
+            tuple(joint_world + parent_dir_world * spoke_len * 1.4),
+        ]
+        # 主骨方向参考
+        main_line = [
+            tuple(joint_world),
+            tuple(joint_world + child_dir_world * spoke_len * 1.4),
+        ]
+
+        total_angle = float(frame["angle_rad"])
+        in_spokes = []
+        out_spokes = []
+        if getattr(settings, "generate_in", False):
+            in_count = max(1, int(getattr(settings, "count_in", 1)))
+            step = total_angle / (in_count + 1)
+            for index in range(1, in_count + 1):
+                d = BoneFanSingleCore._rotate_vector_around_axis(parent_dir_world, plane_normal_world, step * index)
+                if d is None:
+                    continue
+                in_spokes.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
+        if getattr(settings, "generate_out", False):
+            out_count = max(1, int(getattr(settings, "count_out", 1)))
+            step = total_angle / (out_count + 1)
+            for index in range(1, out_count + 1):
+                d = BoneFanSingleCore._rotate_vector_around_axis(-parent_dir_world, plane_normal_world, step * index)
+                if d is None:
+                    continue
+                out_spokes.extend([tuple(joint_world), tuple(joint_world + d * spoke_len)])
+
+        shader.bind()
+        if sphere_lines:
+            b = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
+            shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
+            b.draw(shader)
+        b = batch_for_shader(shader, "LINES", {"pos": virtual_line})
+        shader.uniform_float("color", (1.0, 0.3, 0.9, 0.95))
+        b.draw(shader)
+        b = batch_for_shader(shader, "LINES", {"pos": main_line})
+        shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
+        b.draw(shader)
+        if in_spokes:
+            b = batch_for_shader(shader, "LINES", {"pos": in_spokes})
+            shader.uniform_float("color", (1.0, 0.72, 0.2, 0.95))
+            b.draw(shader)
+        if out_spokes:
+            b = batch_for_shader(shader, "LINES", {"pos": out_spokes})
+            shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))
+            b.draw(shader)
+        b = batch_for_shader(shader, "POINTS", {"pos": [tuple(joint_world)]})
+        shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
+        b.draw(shader)
 
     @classmethod
     def _draw_2d(cls):
@@ -1208,8 +1245,10 @@ class OP_FanSingleGenerate(Operator):
             if role_error:
                 raise Exception(role_error)
 
-            # 组装要处理的 (上级骨, 主骨) 骨对：选中的那对，外加开启对称时的镜像对
-            pairs = [(upper_name, main_name)]
+            # 组装要处理的 (上级骨, 主骨, 虚拟方向) 骨组：选中的那对，外加开启对称时
+            # 的镜像对。镜像对的虚拟方向需沿骨架局部 X 平面镜像，否则镜像骨会沿用
+            # 未翻转的世界朝向，导致左右 fan 几何不对称。
+            pairs = [(upper_name, main_name, virtual_dir)]
             if settings.process_symmetry:
                 flipped_upper = bpy.utils.flip_name(upper_name)
                 flipped_main = bpy.utils.flip_name(main_name)
@@ -1218,12 +1257,15 @@ class OP_FanSingleGenerate(Operator):
                     and armature.data.edit_bones.get(flipped_upper) is not None
                     and armature.data.edit_bones.get(flipped_main) is not None
                 ):
-                    pairs.append((flipped_upper, flipped_main))
+                    mirror_dir = BoneFanSingleCore._mirror_virtual_direction(
+                        armature, virtual_dir,
+                    )
+                    pairs.append((flipped_upper, flipped_main, mirror_dir))
 
             total_created = 0
             total_weight_objects = 0
             weight_sites = []
-            for parent_name, this_main in pairs:
+            for parent_name, this_main, this_virtual in pairs:
                 created_names = []
                 for fan_kind, count in fan_kinds:
                     created_names.extend(
@@ -1231,7 +1273,7 @@ class OP_FanSingleGenerate(Operator):
                             armature,
                             this_main,
                             parent_name,
-                            virtual_dir,
+                            this_virtual,
                             fan_kind,
                             count,
                             settings.length_factor,
@@ -1246,7 +1288,7 @@ class OP_FanSingleGenerate(Operator):
                     weight_sites.append({
                         "main_name": this_main,
                         "parent_name": parent_name,
-                        "virtual_dir_world": virtual_dir,
+                        "virtual_dir_world": this_virtual,
                         "fan_names": created_names,
                     })
 

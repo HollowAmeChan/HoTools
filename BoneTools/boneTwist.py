@@ -312,16 +312,44 @@ class TwistBonePreview:
     def _compute_disks(cls, context, armature, settings):
         """算出每个 Twist 骨的落点（世界空间）、约束强度和圆盘半径。
 
-        几何完全对齐生成逻辑 create_twist_chain / add_copy_rotation_to_twist_bones：
-        - 把主骨从 head 到 tail 均分成 count 段，落点取各分段端点。
-        - 开启“保留头端权重”时只生成 count-1 根、并整体偏移 1 段（头侧留缓冲）。
-        - 约束强度沿链从上约束强度线性过渡到下约束强度。
+        选中一根主骨；若开启对称处理，则把镜像骨（.L/.R）的圆盘也一并算出，
+        这样预览里能直接同时看到两侧。
         """
         selected = TwistBoneCore._selected_bone_names(context, armature)
         if len(selected) != 1:
             return None, "请正好选择一根主骨"
 
-        bone_name = selected[0]
+        bone_names = [selected[0]]
+        if getattr(settings, "process_symmetry", False):
+            flipped = bpy.utils.flip_name(selected[0])
+            if flipped != selected[0] and flipped not in bone_names:
+                exists = (
+                    armature.data.edit_bones.get(flipped) is not None
+                    if armature.mode == "EDIT"
+                    else armature.data.bones.get(flipped) is not None
+                )
+                if exists:
+                    bone_names.append(flipped)
+
+        all_disks = []
+        for bone_name in bone_names:
+            disks, error = cls._compute_disks_for_bone(armature, settings, bone_name)
+            if error:
+                # 主骨自身出错才算失败；镜像骨缺失/异常只是跳过。
+                if bone_name == selected[0]:
+                    return None, error
+                continue
+            all_disks.extend(disks)
+
+        return all_disks, None
+
+    @classmethod
+    def _compute_disks_for_bone(cls, armature, settings, bone_name):
+        """对单根主骨计算圆盘。几何完全对齐生成逻辑：
+        - 把主骨从 head 到 tail 均分成 count 段，落点取各分段端点。
+        - 开启“保留头端权重”时只生成 count-1 根、并整体偏移 1 段（头侧留缓冲）。
+        - 约束强度沿链从上约束强度线性过渡到下约束强度。
+        """
         head_local = tail_local = None
         if armature.mode == "EDIT":
             eb = armature.data.edit_bones.get(bone_name)
