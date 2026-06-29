@@ -12,6 +12,10 @@ EPS = 1e-6
 HoRig_Twist = "HoRig_Twist"
 
 
+class TwistRemovalBlockedError(Exception):
+    pass
+
+
 def reg_props():
     return
 
@@ -428,11 +432,13 @@ class TwistBoneCore:
 
             bone_dir = bone_vec.normalized()
             twist_length = max(bone_vec.length * twist_length_factor, 1e-4)
-            # 这里把 count 解释为“总分段数”，不是“最终生成的 Twist 骨数量”。
-            # 实际上只生成 count - 1 根 Twist，剩下 1 段留给主骨。
-            # Twist 的编号仍然按“从头到尾递减”生成，所以编号最大的那根
-            # 会落在头侧，和 fan 骨拆权时的习惯保持一致。
-            twist_count = max(count - 1, 0)
+            # 开启“保留头端权重”时，把 count 解释为“总分段数”，
+            # 并只生成 count - 1 根 Twist。
+            # 主骨先保留头端 1 段缓冲区，Twist 链从下一段开始排布。
+            # 这样编号最大的 Twist 会贴在头侧，方便和旁边的 fan 骨拆权。
+            # 关闭时则沿用旧逻辑，生成完整 count 根 Twist，
+            # 让骨链、权重和约束都按没有特殊保留时的传统流程处理。
+            twist_count = max(count - 1 if keep_head_end_weight else count, 0)
             padding = max(2, len(str(count)))
             new_bone_names = [
                 TwistBoneCore._twist_name(bn, count - i, padding)
@@ -562,8 +568,10 @@ class TwistBoneCore:
             f = np.dot(diff, chain_vec_np) / chain_len_sq
             f = np.clip(f, 0.0, 1.0)
 
-            # 这里把权重链拆成“保留段 + Twist 段”或“Twist 段 + 保留段”两种顺序。
-            # keep_head_end_weight=True 时，主骨保留头端一小段权重，方便和隔壁 fan 骨拆权；
+            # 权重链也按同样的顺序拆成“保留段 + Twist 段”或“Twist 段 + 保留段”。
+            # keep_head_end_weight=True 时，source_vg 放在链条最前面，
+            # 主骨先保留头端一小段权重，再把后面的权重分给 Twist。
+            # 这样可以留出一小段给主骨，方便和隔壁 fan 骨一起拆权。
             # False 时保持旧逻辑，把保留段放到尾端。
             segment_targets = ([source_vg] + new_vgs) if keep_head_end_weight else (new_vgs + [source_vg])
             logical_count = len(segment_targets)
@@ -873,6 +881,49 @@ class TwistBoneCore:
         }
 
     @staticmethod
+    def _find_twist_removal_child_blockers(
+        armature: bpy.types.Object,
+        twist_names: list[str],
+    ) -> list[tuple[str, str]]:
+        target_names = set(twist_names)
+        bones = armature.data.edit_bones if armature.mode == "EDIT" else armature.data.bones
+        blockers = []
+
+        for twist_name in twist_names:
+            bone = bones.get(twist_name)
+            if bone is None:
+                continue
+
+            for child in bone.children:
+                if child.name not in target_names:
+                    blockers.append((twist_name, child.name))
+
+        return blockers
+
+    @staticmethod
+    def _assert_safe_to_remove_twist_bones(
+        armature: bpy.types.Object,
+        twist_names: list[str],
+    ) -> None:
+        blockers = TwistBoneCore._find_twist_removal_child_blockers(armature, twist_names)
+        if not blockers:
+            return
+
+        sample_count = 8
+        blocker_text = ", ".join(
+            f"{twist_name} -> {child_name}"
+            for twist_name, child_name in blockers[:sample_count]
+        )
+        if len(blockers) > sample_count:
+            blocker_text += f"，等 {len(blockers)} 处"
+
+        raise TwistRemovalBlockedError(
+            "不能清除 Twist：待清除的 Twist 下还有其他骨骼，"
+            "请先解除这些骨骼的父子关系后再清除。"
+            f"阻断项: {blocker_text}"
+        )
+
+    @staticmethod
     def _collect_removal_targets(
         context: Context,
         original_active: bpy.types.Object,
@@ -1042,6 +1093,8 @@ class TwistBoneCore:
             if missing:
                 raise Exception("找不到要删除的 Twist 骨: " + ", ".join(missing))
 
+            TwistBoneCore._assert_safe_to_remove_twist_bones(armature, twist_names)
+
             for bone_name in twist_names:
                 bone = edit_bones.get(bone_name)
                 if bone:
@@ -1083,6 +1136,7 @@ class TwistBoneCore:
                 original_active,
                 process_vertex_groups,
             )
+            TwistBoneCore._assert_safe_to_remove_twist_bones(armature_obj, twist_names)
 
             if process_vertex_groups:
                 if only_selected:
@@ -1146,13 +1200,16 @@ class OP_TwistBoneWithWeight(Operator):
     bl_description = """
     在所选主骨上生成 Twist 子骨，并可按权重参数同步转移权重。
     适用于姿态模式、编辑模式，以及权重绘制场景下的当前活动骨骼。
-    生成的 Twist 会保留主骨本体，按主骨方向延伸；左右后缀会插在 Twist 后缀之前。
+    生成时会保留主骨本体，按主骨方向延伸；左右后缀会插在 Twist 后缀之前。
+    “保留头端权重”开启时，会让主骨先保留头端一小段权重，
+    这样编号最大的 Twist 会落在头侧，方便和旁边的 fan 骨拆权；
+    关闭时则沿用旧逻辑，生成完整数量 Twist，并把权重保留段放到尾端。
     需要切分权重时会临时关闭镜像选项，结束后恢复原设置。"""
     bl_options = {"REGISTER", "UNDO"}
 
     count: IntProperty(
         name="细分段数",
-        description="生成的分段数（最后一段保留给主骨）",
+        description="Twist 细分数量；关闭保留头端权重时会生成完整数量",
         min=2,
         default=4,
     )  # type: ignore
@@ -1193,6 +1250,9 @@ class OP_TwistBoneWithWeight(Operator):
         description="生成 Twist 骨后自动把权重转移到新骨骼",
         default=True,
     )  # type: ignore
+    # 这个开关会同时影响骨链生成和权重转移：
+    # 开启后保留主骨头端的一小段权重，让编号最大的 Twist 落在头侧，
+    # 方便和旁边的 fan 骨做拆权；关闭时回到完整数量和尾端保留方式。
     keep_head_end_weight: BoolProperty(
         name="保留头端权重",
         description="让主骨保留头端一小段权重；编号最大的 Twist 会贴近头侧",
@@ -1327,6 +1387,7 @@ class OP_RemoveTwistBoneWithWeight(Operator):
     使用方式:在姿态模式或编辑模式同时选择主骨和一个或多个对应 Twist 骨，然后运行本操作。
             也可以在权重绘制时使用当前骨骼选择；必须同时选中主骨和对应 Twist 骨。
             工具会通过 原名_twist_数字 的命名规则反推主骨名，.L/.R/_L/_R 等方向后缀会保留在最后。
+            如果待清除的 Twist 下还有其他骨骼，会取消操作并提示用户先解除父子关系。
             每个网格上会把主骨顶点组与被选中 Twist 顶点组的权重相加回主骨顶点组。
             读取顶点组时会区分无权重与显式 0 权重；只有无法读取权重的顶点才视为无权重。
             恢复完成后会删除被选中 Twist 骨对应的顶点组，并从骨架中删除这些 Twist 骨。"""
@@ -1376,6 +1437,9 @@ class OP_RemoveTwistBoneWithWeight(Operator):
                 self.only_selected,
                 self.process_vertex_groups,
             )
+        except TwistRemovalBlockedError as e:
+            self.report({"WARNING"}, str(e))
+            return {"CANCELLED"}
         except Exception as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}

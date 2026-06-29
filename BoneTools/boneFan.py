@@ -83,16 +83,16 @@ class PG_Hotools_FanSettings(PropertyGroup):
     )  # type: ignore
     count_in: IntProperty(
         name="in count",
-        description="number of in-side fan bones",
+        description="number of in-side fan bones, must be even",
         default=2,
-        min=1,
+        min=2,
         update=_fan_preview_update,
     )  # type: ignore
     count_out: IntProperty(
         name="out count",
-        description="number of out-side fan bones",
+        description="number of out-side fan bones, must be even",
         default=2,
-        min=1,
+        min=2,
         update=_fan_preview_update,
     )  # type: ignore
     length_factor: FloatProperty(
@@ -460,7 +460,7 @@ class BoneFanPreview:
             if center_dir_world is None:
                 center_dir_world = parent_dir_world
 
-            sector_test, center_axis_world, side_axis_world = _classify_fan_sector(
+            _, center_axis_world, side_axis_world = BoneFanCore._classify_fan_sector(
                 center_dir_world,
                 parent_dir_world,
                 child_dir_world,
@@ -469,15 +469,6 @@ class BoneFanPreview:
             if center_axis_world is None or side_axis_world is None:
                 blf.draw(font_id, "fan preview")
                 return
-
-            def _classify_sector(vec: Vector) -> str | None:
-                sector_name, _, _ = _classify_fan_sector(
-                    vec,
-                    parent_dir_world,
-                    child_dir_world,
-                    plane_normal_world,
-                )
-                return sector_name
 
             def _append_sector_disk(target_map: dict[str, list[tuple[float, float, float]]], center, axis_x, axis_y, ring_radius, segments=96):
                 if ring_radius <= EPS:
@@ -496,7 +487,12 @@ class BoneFanPreview:
                     mid_dir = _safe_normalized_vector((p0 - center) + (p1 - center))
                     if mid_dir is None:
                         continue
-                    sector_name = _classify_sector(mid_dir)
+                    sector_name, _, _ = BoneFanCore._classify_fan_sector(
+                        mid_dir,
+                        parent_dir_world,
+                        child_dir_world,
+                        plane_normal_world,
+                    )
                     if sector_name is None:
                         continue
                     target_map[sector_name].extend([tuple(center), tuple(p0), tuple(p1)])
@@ -795,83 +791,45 @@ class BoneFanCore:
         return 1.0 - (t * t * (3.0 - 2.0 * t))
 
     @staticmethod
-def _linear_falloff(value: float, start_value: float, end_value: float) -> float:
-    if end_value <= start_value + EPS:
-        return 1.0 if value <= start_value else 0.0
-    t = _clamp((value - start_value) / (end_value - start_value), 0.0, 1.0)
-    return 1.0 - t
+    def _validate_fan_count(fan_kind: str, count: int) -> None:
+        if count < 2 or count % 2 != 0:
+            raise Exception(f"{fan_kind} fan count must be an even number >= 2")
+    
+    @staticmethod
+    def _classify_fan_sector(
+        vec: Vector,
+        parent_dir_world: Vector,
+        child_dir_world: Vector,
+        plane_normal_world: Vector,
+    ) -> tuple[str | None, Vector | None, Vector | None]:
+        center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+        if center_axis_world is None:
+            center_axis_world = _safe_normalized_vector(parent_dir_world)
+        if center_axis_world is None:
+            return None, None, None
 
+        side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
+        if side_axis_world is None:
+            side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
+        if side_axis_world is None:
+            return None, None, None
 
-def _classify_fan_sector(
-    vec: Vector,
-    parent_dir_world: Vector,
-    child_dir_world: Vector,
-    plane_normal_world: Vector,
-) -> tuple[str | None, Vector | None, Vector | None]:
-    center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
-    if center_axis_world is None:
-        center_axis_world = _safe_normalized_vector(parent_dir_world)
-    if center_axis_world is None:
-        return None, None, None
+        orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
+        if abs(orient) <= EPS:
+            return None, center_axis_world, side_axis_world
+        orient_sign = 1.0 if orient >= 0.0 else -1.0
 
-    side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
-    if side_axis_world is None:
-        side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
-    if side_axis_world is None:
-        return None, None, None
+        vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
+        if vec_plane.length <= EPS:
+            return None, center_axis_world, side_axis_world
+        vec_plane = vec_plane.normalized()
 
-    orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
-    if abs(orient) <= EPS:
-        return None, center_axis_world, side_axis_world
-    orient_sign = 1.0 if orient >= 0.0 else -1.0
-
-    vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
-    if vec_plane.length <= EPS:
-        return None, center_axis_world, side_axis_world
-    vec_plane = vec_plane.normalized()
-
-    parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
-    child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
-    inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
-    in_out = "in" if inside else "out"
-    up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
-    return in_out + up_down, center_axis_world, side_axis_world
-
-
-def _classify_fan_sector(
-    vec: Vector,
-    parent_dir_world: Vector,
-    child_dir_world: Vector,
-    plane_normal_world: Vector,
-) -> tuple[str | None, Vector | None, Vector | None]:
-    center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
-    if center_axis_world is None:
-        center_axis_world = _safe_normalized_vector(parent_dir_world)
-    if center_axis_world is None:
-        return None, None, None
-
-    side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
-    if side_axis_world is None:
-        side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
-    if side_axis_world is None:
-        return None, None, None
-
-    orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
-    if abs(orient) <= EPS:
-        return None, center_axis_world, side_axis_world
-    orient_sign = 1.0 if orient >= 0.0 else -1.0
-
-    vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
-    if vec_plane.length <= EPS:
-        return None, center_axis_world, side_axis_world
-    vec_plane = vec_plane.normalized()
-
-    parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
-    child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
-    inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
-    in_out = "in" if inside else "out"
-    up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
-    return in_out + up_down, center_axis_world, side_axis_world
+        parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
+        child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
+        inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
+        in_out = "in" if inside else "out"
+        up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
+        return in_out + up_down, center_axis_world, side_axis_world
 
     @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
@@ -1046,46 +1004,16 @@ def _classify_fan_sector(
                 prev = ua
             return result
 
+        center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+        if center_axis_world is None:
+            center_axis_world = parent_dir_world
+        side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
+        if side_axis_world is None:
+            side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
+        if side_axis_world is None:
+            raise Exception("failed to compute fan sector axis")
+
         for source_name, source_vg in source_groups.items():
-            source_dir_world = source_dirs[source_name]
-            parent_axis = _safe_normalized_vector(parent_dir_world - plane_normal_world * parent_dir_world.dot(plane_normal_world))
-            child_axis = _safe_normalized_vector(child_dir_world - plane_normal_world * child_dir_world.dot(plane_normal_world))
-            if parent_axis is None:
-                parent_axis = _safe_normalized_vector(parent_dir_world)
-            if child_axis is None:
-                child_axis = _safe_normalized_vector(child_dir_world)
-            if parent_axis is None or child_axis is None:
-                continue
-
-            bisector_axis = _safe_normalized_vector(parent_axis + child_axis)
-            if bisector_axis is None:
-                bisector_axis = parent_axis if source_name == frame["parent_bone"].name else child_axis
-
-            side_axis = _safe_normalized_vector(plane_normal_world.cross(bisector_axis))
-            if side_axis is None:
-                side_axis = _safe_normalized_vector(bisector_axis.cross(plane_normal_world))
-            if side_axis is None:
-                continue
-
-            def _sector_name(vec: Vector) -> str | None:
-                vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
-                if vec_plane.length <= EPS:
-                    return None
-                vec_plane = vec_plane.normalized()
-                signed_angle = atan2(
-                    plane_normal_world.dot(parent_axis.cross(vec_plane)),
-                    _clamp(parent_axis.dot(vec_plane), -1.0, 1.0),
-                )
-                if signed_angle < 0.0:
-                    signed_angle += tau
-                center_side = signed_angle <= total_angle + EPS
-                side_side = vec.dot(side_axis)
-                if abs(side_side) <= EPS:
-                    return None
-                in_out = "in" if center_side else "out"
-                up_down = "up" if side_side >= 0.0 else "down"
-                return in_out + up_down
-
             sector_fans: dict[str, list[dict]] = {
                 "inup": [],
                 "indown": [],
@@ -1095,7 +1023,12 @@ def _classify_fan_sector(
             for item in fan_items:
                 if item.get("source") != source_name:
                     continue
-                sector_name = _sector_name(item["dir"])
+                sector_name, _, _ = BoneFanCore._classify_fan_sector(
+                    item["dir"],
+                    parent_dir_world,
+                    child_dir_world,
+                    plane_normal_world,
+                )
                 if sector_name is None:
                     continue
                 sector_fans[sector_name].append(item)
@@ -1104,7 +1037,7 @@ def _classify_fan_sector(
                 if not source_fans:
                     continue
 
-                source_angle_items = [(_project_angle(item["dir"], parent_axis, plane_normal_world.cross(parent_axis)), item) for item in source_fans]
+                source_angle_items = [(_project_angle(item["dir"], center_axis_world, side_axis_world), item) for item in source_fans]
                 source_angle_items = _unwrap_angles(source_angle_items)
                 if not source_angle_items:
                     continue
@@ -1126,11 +1059,16 @@ def _classify_fan_sector(
                     if vec_plane.length <= EPS:
                         continue
 
-                    vertex_sector = _sector_name(vec_plane)
+                    vertex_sector, _, _ = BoneFanCore._classify_fan_sector(
+                        vec_plane,
+                        parent_dir_world,
+                        child_dir_world,
+                        plane_normal_world,
+                    )
                     if vertex_sector != sector_name:
                         continue
 
-                    vertex_angle = _project_angle(vec_plane, parent_axis, plane_normal_world.cross(parent_axis))
+                    vertex_angle = _project_angle(vec_plane, center_axis_world, side_axis_world)
                     while vertex_angle < source_first_angle:
                         vertex_angle += tau
                     if vertex_angle > source_last_angle + EPS:
