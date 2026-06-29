@@ -71,6 +71,10 @@ def _draw_fan_preview():
     BoneFanPreview._draw_3d()
 
 
+def _draw_fan_preview_2d():
+    BoneFanPreview._draw_2d()
+
+
 class PG_Hotools_FanSettings(PropertyGroup):
     ui_expanded: BoolProperty(
         name="fan 设置",
@@ -263,21 +267,27 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
 
 class BoneFanPreview:
     _handler_3d = None
+    _handler_2d = None
     _timer_running = False
     _timer_interval = 0.08
     _state = None
 
     @classmethod
     def ensure_handler(cls):
-        if cls._handler_3d is not None:
-            return
-
-        cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
-            _draw_fan_preview,
-            (),
-            "WINDOW",
-            "POST_VIEW",
-        )
+        if cls._handler_3d is None:
+            cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_fan_preview,
+                (),
+                "WINDOW",
+                "POST_VIEW",
+            )
+        if cls._handler_2d is None:
+            cls._handler_2d = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_fan_preview_2d,
+                (),
+                "WINDOW",
+                "POST_PIXEL",
+            )
 
     @classmethod
     def show(cls, context):
@@ -333,13 +343,16 @@ class BoneFanPreview:
     def shutdown(cls):
         if cls._handler_3d is not None:
             bpy.types.SpaceView3D.draw_handler_remove(cls._handler_3d, "WINDOW")
+        if cls._handler_2d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(cls._handler_2d, "WINDOW")
         cls._handler_3d = None
+        cls._handler_2d = None
         cls._state = None
         cls._timer_running = False
 
     @classmethod
     def _timer(cls):
-        if cls._handler_3d is None:
+        if cls._handler_3d is None and cls._handler_2d is None:
             cls._timer_running = False
             return None
 
@@ -407,7 +420,11 @@ class BoneFanPreview:
             return
 
         message = state.get("message", "")
+        if message:
+            return
         armature = bpy.data.objects.get(state.get("armature_name", ""))
+        if armature is None or armature.type != "ARMATURE":
+            return
 
         gpu.state.blend_set("ALPHA")
         gpu.state.depth_test_set("NONE")
@@ -415,21 +432,9 @@ class BoneFanPreview:
         gpu.state.point_size_set(8.0)
         try:
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-            font_id = 0
-            blf.size(font_id, 14)
-            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
-            blf.position(font_id, 20.0, 20.0, 0.0)
-            if message:
-                blf.draw(font_id, f"fan 预览: {message}")
-                return
-
-            if armature is None or armature.type != "ARMATURE":
-                blf.draw(font_id, "fan 预览")
-                return
 
             frame = state.get("frame")
             if frame is None:
-                blf.draw(font_id, "fan 预览")
                 return
 
             joint_world = armature.matrix_world @ frame["joint"]
@@ -438,25 +443,21 @@ class BoneFanPreview:
             if axis_a_world is None:
                 axis_a_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
             if plane_normal_world is None or axis_a_world is None:
-                blf.draw(font_id, "fan 预览")
                 return
 
             axis_a_world = axis_a_world - plane_normal_world * axis_a_world.dot(plane_normal_world)
             axis_a_world = _safe_normalized_vector(axis_a_world)
             if axis_a_world is None:
-                blf.draw(font_id, "fan 预览")
                 return
 
             axis_b_world = _safe_normalized_vector(plane_normal_world.cross(axis_a_world))
             if axis_b_world is None:
-                blf.draw(font_id, "fan 预览")
                 return
 
             settings = getattr(bpy.context.scene, "ho_fan_settings", None)
             radius_factor = float(getattr(settings, "fan_weight_radius", 0.5)) if settings is not None else 0.5
             radius = max(frame["base_length"] * radius_factor, 0.0)
             if radius <= EPS:
-                blf.draw(font_id, "fan 预览")
                 return
 
             def _append_circle_3d(target, center, axis_x, axis_y, ring_radius, segments=64):
@@ -478,7 +479,6 @@ class BoneFanPreview:
             parent_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["parent_dir"])
             child_dir_world = _safe_normalized_vector(armature.matrix_world.to_3x3() @ frame["child_dir"])
             if parent_dir_world is None or child_dir_world is None:
-                blf.draw(font_id, "fan 预览")
                 return
 
             center_dir_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
@@ -545,13 +545,27 @@ class BoneFanPreview:
             point_batch = batch_for_shader(shader, "POINTS", {"pos": points})
             shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
             point_batch.draw(shader)
-
-            blf.draw(font_id, "fan 预览")
         finally:
             gpu.state.point_size_set(1.0)
             gpu.state.line_width_set(1.0)
             gpu.state.depth_test_set("LESS_EQUAL")
             gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_2d(cls):
+        state = cls._state
+        if state is None:
+            return
+
+        font_id = 0
+        message = state.get("message", "")
+        blf.size(font_id, 14)
+        blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+        blf.position(font_id, 20.0, 20.0, 0.0)
+        if message:
+            blf.draw(font_id, f"fan 预览: {message}")
+        else:
+            blf.draw(font_id, "fan 预览")
 
 
 class BoneFanCore:

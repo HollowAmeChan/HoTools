@@ -1,6 +1,6 @@
 import bpy
 from bpy.types import Panel,Menu
-from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve,boneTwist,boneFan
+from . import boneHumanoid,boneOperators,boneProperty,boneRename,boneSplit,boneDissolve,boneTwist,boneFan,boneFanSingle
 
 
 # region 变量
@@ -90,6 +90,7 @@ def register():
     boneDissolve.register()
     boneTwist.register()
     boneFan.register()
+    boneFanSingle.register()
     boneHumanoid.register()
 
     for i in cls:
@@ -107,6 +108,7 @@ def unregister():
     boneDissolve.unregister()
     boneTwist.unregister()
     boneFan.unregister()
+    boneFanSingle.unregister()
     boneHumanoid.unregister()
     boneProperty.unregister()
 
