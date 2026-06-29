@@ -1,9 +1,14 @@
 import bpy
 import math
 import numpy as np
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
-from bpy.types import Context, Operator, UILayout
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty
+from bpy.types import Context, Operator, PropertyGroup, UILayout
 from mathutils import Vector
+
+import gpu
+from gpu_extras.batch import batch_for_shader
+from bpy_extras import view3d_utils
+import blf
 
 from .boneSplit import BoneSplitCore
 
@@ -16,12 +21,122 @@ class TwistRemovalBlockedError(Exception):
     pass
 
 
+def _twist_preview_update(self, context):
+    if context is None:
+        return
+    scene = getattr(context, "scene", None)
+    settings = getattr(scene, "ho_twist_settings", None) if scene is not None else None
+    if settings is None:
+        return
+    if settings.preview_enabled:
+        TwistBonePreview.show(context)
+    else:
+        TwistBonePreview.clear()
+
+
+def _draw_twist_preview():
+    TwistBonePreview._draw_3d()
+
+
+def _draw_twist_preview_2d():
+    TwistBonePreview._draw_2d()
+
+
+class PG_Hotools_TwistSettings(PropertyGroup):
+    ui_expanded: BoolProperty(
+        name="twist 设置",
+        description="展开 Twist 骨生成设置",
+        default=False,
+        update=_twist_preview_update,
+    )  # type: ignore
+    preview_enabled: BoolProperty(
+        name="预览",
+        description="在 3D 视图中绘制 Twist 分割预览",
+        default=False,
+        update=_twist_preview_update,
+    )  # type: ignore
+    count: IntProperty(
+        name="细分段数",
+        description="Twist 细分数量；关闭保留头端权重时会生成完整数量",
+        min=2,
+        default=4,
+        update=_twist_preview_update,
+    )  # type: ignore
+    twist_length_factor: FloatProperty(
+        name="Twist 长度",
+        description="Twist 子骨长度相对于主骨长度的比例",
+        min=0.0,
+        max=1.0,
+        step=0.01,
+        default=0.1,
+        update=_twist_preview_update,
+    )  # type: ignore
+    process_symmetry: BoolProperty(
+        name="对称操作",
+        description="同时处理镜像骨骼",
+        default=False,
+        update=_twist_preview_update,
+    )  # type: ignore
+    copy_rotation_top_influence: FloatProperty(
+        name="上约束强度",
+        description="链顶部 Twist 的 Copy Rotation 强度",
+        default=0.1,
+        min=0.0,
+        max=1.0,
+        update=_twist_preview_update,
+    )  # type: ignore
+    copy_rotation_bottom_influence: FloatProperty(
+        name="下约束强度",
+        description="链底部 Twist 的 Copy Rotation 强度",
+        default=0.8,
+        min=0.0,
+        max=1.0,
+        update=_twist_preview_update,
+    )  # type: ignore
+    auto_transfer_weights: BoolProperty(
+        name="自动处理权重",
+        description="生成 Twist 骨后自动把权重转移到新骨骼",
+        default=True,
+        update=_twist_preview_update,
+    )  # type: ignore
+    # 这个开关会同时影响骨链生成和权重转移：
+    # 开启后保留主骨头端的一小段权重，让编号最大的 Twist 落在头侧，
+    # 方便和旁边的 fan 骨做拆权；关闭时回到完整数量和尾端保留方式。
+    keep_head_end_weight: BoolProperty(
+        name="保留头端权重",
+        description="让主骨保留头端一小段权重；编号最大的 Twist 会贴近头侧",
+        default=True,
+        update=_twist_preview_update,
+    )  # type: ignore
+    only_selected: BoolProperty(
+        name="仅处理选中的物体权重",
+        description="只处理当前被选中的网格物体",
+        default=False,
+    )  # type: ignore
+    soft_factor: FloatProperty(
+        name="过渡",
+        description="Twist 骨之间的权重过渡",
+        min=0.0,
+        max=1.0,
+        step=0.05,
+        default=1.0,
+    )  # type: ignore
+    bone_collection_name: StringProperty(
+        name="输出到骨骼集合",
+        description="生成的Twsit骨放入指定的骨骼集合中，若不存在则创建",
+        default=HoRig_Twist,
+    )  # type: ignore
+
+
 def reg_props():
-    return
+    if hasattr(bpy.types.Scene, "ho_twist_settings"):
+        del bpy.types.Scene.ho_twist_settings
+    bpy.types.Scene.ho_twist_settings = PointerProperty(type=PG_Hotools_TwistSettings)
 
 
 def ureg_props():
-    return
+    if hasattr(bpy.types.Scene, "ho_twist_settings"):
+        del bpy.types.Scene.ho_twist_settings
 
 
 def _safe_normalized_vector(vector):
@@ -34,11 +149,406 @@ def _clamp(value, min_value, max_value):
     return max(min_value, min(max_value, value))
 
 
+class TwistBonePreview:
+    """Twist 分割预览：在每个 Twist 骨的落点画一个垂直于主骨的圆盘，
+    并用指向线 + 文字标出该 Twist 的名字和 Copy Rotation 约束强度。
+
+    运行原理：
+    - 选中一根主骨后，按生成逻辑算出各 Twist 骨的落点（head 位置）和
+      对应的约束强度（沿链从上约束强度线性过渡到下约束强度）。
+    - 3D（POST_VIEW）handler 在视图里画圆盘和落点（GPU）。
+    - 2D（POST_PIXEL）handler 把落点投影到屏幕，画一条指向线，
+      末端用 blf 标出 Twist 骨名和强度（风格对齐 humanoid 预览）。
+    - 一个定时器在预览开启时持续刷新状态，跟随骨骼/参数变化。
+    """
+    _handler_3d = None
+    _handler_2d = None
+    _timer_running = False
+    _timer_interval = 0.08
+    _state = None
+
+    # 指向线 / 标签布局（像素），对齐 humanoid 预览风格
+    _line_length_x = 48
+    _line_length_y = 18
+    _line_end_offset_x = 14
+    _line_end_offset_y = 12
+    _label_stagger = 14
+    _font_size = 15
+
+    @classmethod
+    def ensure_handler(cls):
+        if cls._handler_3d is None:
+            cls._handler_3d = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_twist_preview,
+                (),
+                "WINDOW",
+                "POST_VIEW",
+            )
+        if cls._handler_2d is None:
+            cls._handler_2d = bpy.types.SpaceView3D.draw_handler_add(
+                _draw_twist_preview_2d,
+                (),
+                "WINDOW",
+                "POST_PIXEL",
+            )
+
+    @classmethod
+    def show(cls, context):
+        cls.ensure_handler()
+        scene = getattr(context, "scene", None)
+        settings = getattr(scene, "ho_twist_settings", None) if scene is not None else None
+        if settings is None or not settings.preview_enabled:
+            return
+
+        armature = context.active_object
+        region_owner = cls._find_view3d_region(context)
+        region = None
+        region_data = None
+        if region_owner is not None:
+            _, region, region_data = region_owner
+
+        state = {
+            "armature_name": "",
+            "disks": [],
+            "message": "",
+            "region": region,
+            "region_data": region_data,
+        }
+
+        if armature is None or armature.type != "ARMATURE":
+            state["message"] = "预览需要一个骨架"
+        else:
+            disks, error = cls._compute_disks(context, armature, settings)
+            if error:
+                state["message"] = error
+            else:
+                state["armature_name"] = armature.name
+                state["disks"] = disks
+
+        cls._state = state
+        if not cls._timer_running:
+            cls._timer_running = True
+            bpy.app.timers.register(cls._timer)
+        cls._tag_redraw()
+
+    @classmethod
+    def clear(cls):
+        cls._state = None
+        cls._timer_running = False
+        cls._tag_redraw()
+
+    @classmethod
+    def shutdown(cls):
+        if cls._handler_3d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(cls._handler_3d, "WINDOW")
+        if cls._handler_2d is not None:
+            bpy.types.SpaceView3D.draw_handler_remove(cls._handler_2d, "WINDOW")
+        cls._handler_3d = None
+        cls._handler_2d = None
+        cls._state = None
+        cls._timer_running = False
+
+    @classmethod
+    def _timer(cls):
+        if cls._handler_3d is None and cls._handler_2d is None:
+            cls._timer_running = False
+            return None
+
+        settings = getattr(getattr(bpy.context, "scene", None), "ho_twist_settings", None)
+        if settings is not None and settings.preview_enabled:
+            cls.show(bpy.context)
+            return cls._timer_interval
+
+        if cls._state is None:
+            cls._timer_running = False
+            return None
+
+        cls._tag_redraw()
+        return cls._timer_interval
+
+    @staticmethod
+    def _tag_redraw():
+        wm = bpy.context.window_manager
+        if wm is None:
+            return
+        for window in wm.windows:
+            screen = window.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+
+    @staticmethod
+    def _find_view3d_region(context=None):
+        if context is None:
+            context = bpy.context
+        windows = []
+        if context.window is not None and context.window.screen is not None:
+            windows.append(context.window)
+        wm = context.window_manager
+        if wm is not None:
+            for window in wm.windows:
+                if window not in windows:
+                    windows.append(window)
+
+        for window in windows:
+            screen = window.screen
+            if screen is None:
+                continue
+            for area in screen.areas:
+                if area.type != "VIEW_3D":
+                    continue
+                for region in area.regions:
+                    if region.type == "WINDOW":
+                        for space in area.spaces:
+                            if space.type == "VIEW_3D":
+                                rv3d = space.region_3d
+                                if rv3d is not None:
+                                    return window, region, rv3d
+        return None, None, None
+
+    @classmethod
+    def _compute_disks(cls, context, armature, settings):
+        """算出每个 Twist 骨的落点（世界空间）、约束强度和圆盘半径。
+
+        几何完全对齐生成逻辑 create_twist_chain / add_copy_rotation_to_twist_bones：
+        - 把主骨从 head 到 tail 均分成 count 段，落点取各分段端点。
+        - 开启“保留头端权重”时只生成 count-1 根、并整体偏移 1 段（头侧留缓冲）。
+        - 约束强度沿链从上约束强度线性过渡到下约束强度。
+        """
+        selected = TwistBoneCore._selected_bone_names(context, armature)
+        if len(selected) != 1:
+            return None, "请正好选择一根主骨"
+
+        bone_name = selected[0]
+        head_local = tail_local = None
+        if armature.mode == "EDIT":
+            eb = armature.data.edit_bones.get(bone_name)
+            if eb is not None:
+                head_local, tail_local = eb.head.copy(), eb.tail.copy()
+        else:
+            db = armature.data.bones.get(bone_name)
+            if db is not None:
+                head_local = db.head_local.copy()
+                tail_local = db.tail_local.copy()
+        if head_local is None or tail_local is None:
+            return None, "找不到选中的骨骼"
+
+        bone_vec = tail_local - head_local
+        if bone_vec.length <= 1e-8:
+            return None, "骨骼长度为 0"
+
+        count = max(2, int(settings.count))
+        keep_head = bool(settings.keep_head_end_weight)
+        twist_count = max(count - 1 if keep_head else count, 0)
+        if twist_count <= 0:
+            return None, "细分段数过小"
+        point_offset = 1 if keep_head else 0
+
+        top = float(settings.copy_rotation_top_influence)
+        bottom = float(settings.copy_rotation_bottom_influence)
+
+        mw = armature.matrix_world
+        bone_dir_world = _safe_normalized_vector(mw.to_3x3() @ bone_vec)
+        if bone_dir_world is None:
+            return None, "无法计算骨骼方向"
+
+        # 在垂直于主骨方向的平面里取两条正交轴，用来铺圆盘
+        ref = Vector((0.0, 0.0, 1.0))
+        if abs(bone_dir_world.dot(ref)) > 0.95:
+            ref = Vector((1.0, 0.0, 0.0))
+        axis_x = _safe_normalized_vector(bone_dir_world.cross(ref))
+        if axis_x is None:
+            return None, "无法计算圆盘平面"
+        axis_y = _safe_normalized_vector(bone_dir_world.cross(axis_x))
+        if axis_y is None:
+            return None, "无法计算圆盘平面"
+
+        bone_len_world = (mw.to_3x3() @ bone_vec).length
+        radius = max(bone_len_world * 0.12, EPS)
+
+        padding = max(2, len(str(count)))
+        disks = []
+        for j in range(twist_count):
+            t = (j + point_offset) / count
+            center_local = head_local.lerp(tail_local, t)
+            center_world = mw @ center_local
+            if twist_count <= 1:
+                influence = bottom
+            else:
+                influence = top + (bottom - top) * (j / (twist_count - 1))
+            # 命名与 create_twist_chain 对齐：第 j 根的编号是 count - j
+            twist_name = TwistBoneCore._twist_name(bone_name, count - j, padding)
+            disks.append({
+                "center": center_world,
+                "axis_x": axis_x,
+                "axis_y": axis_y,
+                "radius": radius,
+                "influence": influence,
+                "name": twist_name,
+            })
+
+        return disks, None
+
+    @classmethod
+    def _draw_3d(cls):
+        state = cls._state
+        if state is None:
+            return
+
+        if state.get("message"):
+            return
+
+        disks = state.get("disks", [])
+        if not disks:
+            return
+
+        gpu.state.blend_set("ALPHA")
+        gpu.state.depth_test_set("NONE")
+        gpu.state.line_width_set(2.0)
+        gpu.state.point_size_set(6.0)
+        try:
+            shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+            shader.bind()
+            segments = 48
+            for disk in disks:
+                center = disk["center"]
+                axis_x = disk["axis_x"]
+                axis_y = disk["axis_y"]
+                radius = disk["radius"]
+
+                ring = []
+                previous = center + axis_x * radius
+                for index in range(1, segments + 1):
+                    angle = (math.tau * index) / segments
+                    point = center + axis_x * math.cos(angle) * radius + axis_y * math.sin(angle) * radius
+                    ring.extend([tuple(previous), tuple(point)])
+                    previous = point
+
+                ring_batch = batch_for_shader(shader, "LINES", {"pos": ring})
+                shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
+                ring_batch.draw(shader)
+
+                center_batch = batch_for_shader(shader, "POINTS", {"pos": [tuple(center)]})
+                shader.uniform_float("color", (1.0, 0.65, 0.15, 1.0))
+                center_batch.draw(shader)
+        finally:
+            gpu.state.point_size_set(1.0)
+            gpu.state.line_width_set(1.0)
+            gpu.state.depth_test_set("LESS_EQUAL")
+            gpu.state.blend_set("NONE")
+
+    @classmethod
+    def _draw_2d(cls):
+        state = cls._state
+        if state is None:
+            return
+
+        context = bpy.context
+        region = context.region
+        rv3d = context.region_data
+        font_id = 0
+
+        message = state.get("message", "")
+        if message:
+            blf.size(font_id, cls._font_size)
+            blf.color(font_id, 1.0, 0.85, 0.2, 1.0)
+            blf.position(font_id, 20.0, 20.0, 0.0)
+            blf.draw(font_id, f"twist 预览: {message}")
+            return
+
+        disks = state.get("disks", [])
+        if not disks or region is None or rv3d is None:
+            return
+
+        line_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+        gpu.state.blend_set("ALPHA")
+        gpu.state.line_width_set(1.5)
+        try:
+            for index, disk in enumerate(disks):
+                pos_2d = view3d_utils.location_3d_to_region_2d(region, rv3d, disk["center"])
+                if pos_2d is None:
+                    continue
+
+                x, y = pos_2d
+                label_x = x + cls._line_length_x
+                label_y = y + cls._line_length_y + (index % 3) * cls._label_stagger
+
+                coords = [
+                    (x, y),
+                    (label_x - cls._line_end_offset_x, label_y + cls._line_end_offset_y),
+                ]
+                batch = batch_for_shader(line_shader, "LINES", {"pos": coords})
+                line_shader.bind()
+                line_shader.uniform_float("color", (0.1, 0.85, 1.0, 0.85))
+                batch.draw(line_shader)
+
+                label = f"{disk['name']}  ({disk['influence']:.2f})"
+                blf.size(font_id, cls._font_size)
+                blf.enable(font_id, blf.SHADOW)
+                blf.shadow(font_id, 3, 0, 0, 0, 0.75)
+                blf.shadow_offset(font_id, 1, -1)
+                blf.color(font_id, 0.85, 0.97, 1.0, 1.0)
+                blf.position(font_id, label_x, label_y, 0.0)
+                blf.draw(font_id, label)
+                blf.disable(font_id, blf.SHADOW)
+        finally:
+            gpu.state.line_width_set(1.0)
+            gpu.state.blend_set("NONE")
+
+
 def drawBoneTwistPanel(layout: UILayout, context: Context):
+    settings = context.scene.ho_twist_settings
     twist_box = layout.box()
-    row = twist_box.row(align=True)
-    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成 Twist 骨",icon="GP_SELECT_STROKES")
-    row.operator(OP_RemoveTwistBoneWithWeight.bl_idname, text="",icon="TRASH")
+
+    header = twist_box.row(align=True)
+    header.prop(
+        settings,
+        "ui_expanded",
+        text="",
+        icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
+        emboss=False,
+    )
+    header.label(text="twist骨")
+
+    row = header.row(align=True)
+    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成 Twist 骨")
+    row.operator(OP_RemoveTwistBoneWithWeight.bl_idname, text="安全移除")
+
+    row = header.row(align=True)
+    row.alert = settings.preview_enabled
+    row.prop(
+        settings,
+        "preview_enabled",
+        text="",
+        icon="HIDE_OFF" if settings.preview_enabled else "HIDE_ON",
+    )
+
+    if not settings.ui_expanded:
+        return
+
+    col = twist_box.column(align=True)
+    col.separator()
+    col.prop(settings, "count")
+    col.prop(settings, "twist_length_factor")
+
+    col.separator()
+    row = col.row(align=True)
+    row.prop(settings, "copy_rotation_top_influence")
+    row.prop(settings, "copy_rotation_bottom_influence")
+
+    col.separator()
+    col.prop(settings, "bone_collection_name")
+    col.prop(settings, "process_symmetry")
+    # 保留头端权重会同时影响骨链生成和预览，所以不受“自动处理权重”限制
+    col.prop(settings, "keep_head_end_weight")
+    col.prop(settings, "auto_transfer_weights")
+
+    sub = col.column(align=True)
+    sub.enabled = settings.auto_transfer_weights
+    sub.prop(settings, "only_selected")
+    sub.prop(settings, "soft_factor")
 
 
 class TwistBoneCore:
@@ -1207,74 +1717,11 @@ class OP_TwistBoneWithWeight(Operator):
     需要切分权重时会临时关闭镜像选项，结束后恢复原设置。"""
     bl_options = {"REGISTER", "UNDO"}
 
-    count: IntProperty(
-        name="细分段数",
-        description="Twist 细分数量；关闭保留头端权重时会生成完整数量",
-        min=2,
-        default=4,
-    )  # type: ignore
-    twist_length_factor: FloatProperty(
-        name="Twist 长度",
-        description="Twist 子骨长度相对于主骨长度的比例",
-        min=0.0,
-        max=1.0,
-        step=0.01,
-        default=0.1,
-    )  # type: ignore
-    process_symmetry: BoolProperty(
-        name="对称操作",
-        description="同时处理镜像骨骼",
-        default=False,
-    )  # type: ignore
+    # 目标骨放在弹窗里让用户确认/填写，打开弹窗时会自动推断一个候选。
     copy_rotation_target_bone: StringProperty(
         name="目标骨",
-        description="约束指向的目标骨骼",
+        description="约束指向的目标骨骼（打开时自动推断，可手动修改）",
         default="",
-    )  # type: ignore
-    copy_rotation_top_influence: FloatProperty(
-        name="上约束强度",
-        description="链顶部 Twist 的 Copy Rotation 强度",
-        default=0.1,
-        min=0.0,
-        max=1.0,
-    )  # type: ignore
-    copy_rotation_bottom_influence: FloatProperty(
-        name="下约束强度",
-        description="链底部 Twist 的 Copy Rotation 强度",
-        default=0.8,
-        min=0.0,
-        max=1.0,
-    )  # type: ignore
-    auto_transfer_weights: BoolProperty(
-        name="自动处理权重",
-        description="生成 Twist 骨后自动把权重转移到新骨骼",
-        default=True,
-    )  # type: ignore
-    # 这个开关会同时影响骨链生成和权重转移：
-    # 开启后保留主骨头端的一小段权重，让编号最大的 Twist 落在头侧，
-    # 方便和旁边的 fan 骨做拆权；关闭时回到完整数量和尾端保留方式。
-    keep_head_end_weight: BoolProperty(
-        name="保留头端权重",
-        description="让主骨保留头端一小段权重；编号最大的 Twist 会贴近头侧",
-        default=True,
-    )  # type: ignore
-    only_selected: BoolProperty(
-        name="仅处理选中的物体权重",
-        description="只处理当前被选中的网格物体",
-        default=False,
-    )  # type: ignore
-    soft_factor: FloatProperty(
-        name="过渡",
-        description="Twist 骨之间的权重过渡",
-        min=0.0,
-        max=1.0,
-        step=0.05,
-        default=1.0,
-    )  # type: ignore
-    bone_collection_name: StringProperty(
-        name="输出到骨骼集合",
-        description="生成的Twsit骨放入指定的骨骼集合中，若不存在则创建",
-        default=HoRig_Twist,
     )  # type: ignore
 
     @classmethod
@@ -1311,6 +1758,13 @@ class OP_TwistBoneWithWeight(Operator):
         return False
 
     def execute(self, context):
+        settings = getattr(context.scene, "ho_twist_settings", None)
+        if settings is None:
+            self.report({"ERROR"}, "缺少 twist 设置")
+            return {"CANCELLED"}
+
+        TwistBonePreview.clear()
+
         try:
             obj = context.active_object
             selected_count = 0
@@ -1322,20 +1776,21 @@ class OP_TwistBoneWithWeight(Operator):
             if selected_count > 1:
                 self.report({"ERROR"}, "当前只支持单个活动骨骼")
                 return {"CANCELLED"}
+
             result = TwistBoneCore.generate_twist(
                 context,
                 obj,
-                self.count,
-                self.twist_length_factor,
-                self.process_symmetry,
-                self.auto_transfer_weights,
-                self.keep_head_end_weight,
-                self.only_selected,
-                self.soft_factor,
+                settings.count,
+                settings.twist_length_factor,
+                settings.process_symmetry,
+                settings.auto_transfer_weights,
+                settings.keep_head_end_weight,
+                settings.only_selected,
+                settings.soft_factor,
                 self.copy_rotation_target_bone,
-                self.copy_rotation_top_influence,
-                self.copy_rotation_bottom_influence,
-                self.bone_collection_name,
+                settings.copy_rotation_top_influence,
+                settings.copy_rotation_bottom_influence,
+                settings.bone_collection_name,
             )
         except Exception as e:
             self.report({"ERROR"}, str(e))
@@ -1352,10 +1807,10 @@ class OP_TwistBoneWithWeight(Operator):
         return {"FINISHED"}
 
     def invoke(self, context, event):
+        # 打开弹窗时自动推断目标骨，用户可在弹窗里确认或修改
         armature = context.active_object
-        selected = TwistBoneCore._selected_bone_names(context, armature) if armature and armature.type == "ARMATURE" else []
-        target = ""
         if armature and armature.type == "ARMATURE":
+            selected = TwistBoneCore._selected_bone_names(context, armature)
             target = TwistBoneCore._find_copy_rotation_target_bone(armature, selected, "")
             if target:
                 self.copy_rotation_target_bone = target
@@ -1363,21 +1818,8 @@ class OP_TwistBoneWithWeight(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "count")
-        layout.prop(self, "twist_length_factor")
-        row = layout.row(align=True)
-        row.prop(self, "copy_rotation_target_bone")
-        row = layout.row(align=True)
-        row.prop(self, "copy_rotation_top_influence")
-        row.prop(self, "copy_rotation_bottom_influence")
-        layout.prop(self, "bone_collection_name")
-        layout.prop(self, "process_symmetry")
-        layout.prop(self, "auto_transfer_weights")
-        sub = layout.column()
-        sub.enabled = self.auto_transfer_weights
-        sub.prop(self, "keep_head_end_weight")
-        sub.prop(self, "only_selected")
-        sub.prop(self, "soft_factor")
+        layout.prop(self, "copy_rotation_target_bone")
+
 
 class OP_RemoveTwistBoneWithWeight(Operator):
     bl_idname = "ho.removetwistbone_withweight"
@@ -1467,6 +1909,7 @@ class OP_RemoveTwistBoneWithWeight(Operator):
 
 
 cls = [
+    PG_Hotools_TwistSettings,
     OP_TwistBoneWithWeight,
     OP_RemoveTwistBoneWithWeight,
 ]
@@ -1479,6 +1922,7 @@ def register():
 
 
 def unregister():
+    TwistBonePreview.shutdown()
     for item in cls:
         bpy.utils.unregister_class(item)
     ureg_props()

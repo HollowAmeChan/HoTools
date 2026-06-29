@@ -221,7 +221,9 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
     row.operator(OP_FanGenerate.bl_idname, text="生成 fan 骨")
     row.operator(OP_RemoveFanBone.bl_idname, text="安全移除")
     
-    header.prop(
+    row = header.row(align=True)
+    row.alert = settings.preview_enabled
+    row.prop(
         settings,
         "preview_enabled",
         text="",
