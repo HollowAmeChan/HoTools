@@ -116,6 +116,24 @@ class PG_Hotools_FanSettings(PropertyGroup):
         step=2,
         update=_fan_count_update,
     )  # type: ignore
+    influence_in: FloatProperty(
+        name="内侧强度",
+        description="内侧 fan 骨复制旋转约束强度的整体系数，乘到每根 fan 自动计算的"
+                    "约束强度上（1 = 原始强度，0 = 完全不约束）",
+        default=1.0,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
+    influence_out: FloatProperty(
+        name="外侧强度",
+        description="外侧 fan 骨复制旋转约束强度的整体系数，乘到每根 fan 自动计算的"
+                    "约束强度上（1 = 原始强度，0 = 完全不约束）",
+        default=1.0,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_preview_update,
+    )  # type: ignore
     length_factor: FloatProperty(
         name="长度系数",
         description="fan 骨长度相对于关节侧主骨长度的比例",
@@ -244,12 +262,14 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
     sub = row.row(align=True)
     sub.enabled = settings.generate_in
     sub.prop(settings, "count_in")
+    sub.prop(settings, "influence_in", text="")
 
     row = col.row(align=True)
     row.prop(settings, "generate_out", toggle=True)
     sub = row.row(align=True)
     sub.enabled = settings.generate_out
     sub.prop(settings, "count_out")
+    sub.prop(settings, "influence_out", text="")
 
     col.separator()
     col.prop(settings, "length_factor")
@@ -1183,6 +1203,7 @@ class BoneFanCore:
         armature: bpy.types.Object,
         fan_names: list[str],
         pin_names: list[str],
+        influence_scale: float = 1.0,
     ) -> None:
         if not fan_names:
             return
@@ -1210,6 +1231,7 @@ class BoneFanCore:
                     continue
                 total = kind_totals.get(parsed["fan_kind"], parsed["index"])
                 influence = min(parsed["index"], total + 1 - parsed["index"]) / float(total + 1)
+                influence *= max(0.0, influence_scale)
                 pose_bone = armature.pose.bones.get(fan_name)
                 if pose_bone is None:
                     continue
@@ -1240,6 +1262,7 @@ class BoneFanCore:
         length_factor: float,
         pin_length_factor: float,
         bone_collection_name: str = HoRig_Fan,
+        influence_scale: float = 1.0,
     ) -> list[str]:
         if len(selected_names) != 2:
             raise Exception("请正好选择两根骨骼")
@@ -1343,7 +1366,7 @@ class BoneFanCore:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(armature, created_names)
-            cls._add_fan_constraints(armature, created_names, pin_names)
+            cls._add_fan_constraints(armature, created_names, pin_names, influence_scale)
         finally:
             if armature.mode != "EDIT":
                 try:
@@ -1604,6 +1627,7 @@ class OP_FanGenerate(Operator):
                             settings.length_factor,
                             settings.pin_length_factor,
                             settings.bone_collection_name,
+                            settings.influence_in if fan_kind == "in" else settings.influence_out,
                         )
                     )
                 total_created += len(created_names)

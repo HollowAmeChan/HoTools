@@ -113,6 +113,24 @@ class PG_Hotools_FanSingleSettings(PropertyGroup):
         step=2,
         update=_fan_single_count_update,
     )  # type: ignore
+    influence_in: FloatProperty(
+        name="内侧强度",
+        description="内侧 fan 骨复制旋转约束强度的整体系数，乘到每根 fan 自动计算的"
+                    "约束强度上（1 = 原始强度，0 = 完全不约束）",
+        default=1.0,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_single_preview_update,
+    )  # type: ignore
+    influence_out: FloatProperty(
+        name="外侧强度",
+        description="外侧 fan 骨复制旋转约束强度的整体系数，乘到每根 fan 自动计算的"
+                    "约束强度上（1 = 原始强度，0 = 完全不约束）",
+        default=1.0,
+        min=0.0,
+        soft_max=1.0,
+        update=_fan_single_preview_update,
+    )  # type: ignore
     length_factor: FloatProperty(
         name="长度系数",
         description="fan 骨长度相对于主骨长度的比例",
@@ -292,6 +310,7 @@ class BoneFanSingleCore(BoneFanCore):
         length_factor,
         pin_length_factor,
         bone_collection_name=HoRig_Fan,
+        influence_scale=1.0,
     ):
         """单骨版本的 fan 骨创建：几何来自虚拟方向，命名跟随主骨。
 
@@ -378,7 +397,7 @@ class BoneFanSingleCore(BoneFanCore):
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(armature, created_names)
-            cls._add_fan_constraints(armature, created_names, pin_names)
+            cls._add_fan_constraints(armature, created_names, pin_names, influence_scale)
         finally:
             if armature.mode != "EDIT":
                 try:
@@ -1100,12 +1119,14 @@ def drawBoneFanSinglePanel(layout: UILayout, context: Context):
     sub = row.row(align=True)
     sub.enabled = settings.generate_in
     sub.prop(settings, "count_in")
+    sub.prop(settings, "influence_in", text="")
 
     row = col.row(align=True)
     row.prop(settings, "generate_out", toggle=True)
     sub = row.row(align=True)
     sub.enabled = settings.generate_out
     sub.prop(settings, "count_out")
+    sub.prop(settings, "influence_out", text="")
 
     col.separator()
     col.prop(settings, "length_factor")
@@ -1216,6 +1237,7 @@ class OP_FanSingleGenerate(Operator):
                             settings.length_factor,
                             settings.pin_length_factor,
                             settings.bone_collection_name,
+                            settings.influence_in if fan_kind == "in" else settings.influence_out,
                         )
                     )
                 total_created += len(created_names)
