@@ -818,6 +818,7 @@ class BoneFanCore:
         radius = max(base_length * radius_factor, EPS)
 
         source_names = [frame["parent_bone"].name, frame["child_bone"].name]
+        parent_name, child_name = source_names[0], source_names[1]
 
         # the bend plane normal: all fan bones lie in this plane, so the split
         # between fans is purely an in-plane angle. Vertices sit on a limb tube
@@ -825,6 +826,12 @@ class BoneFanCore:
         # before comparing directions or the split snaps to the wrong axis.
         plane_normal_world = _safe_normalized_vector(
             armature.matrix_world.to_3x3() @ frame["plane_normal"]
+        )
+        parent_dir_world = _safe_normalized_vector(
+            armature.matrix_world.to_3x3() @ frame["parent_dir"]
+        )
+        child_dir_world = _safe_normalized_vector(
+            armature.matrix_world.to_3x3() @ frame["child_dir"]
         )
 
         # collect fan bones and their world-space directions from the joint.
@@ -853,10 +860,29 @@ class BoneFanCore:
                 if fan_dir is None:
                     continue
 
+            # the source bone this fan rigidly follows (its edit-bone parent).
+            # Without constraints the fan deforms exactly like this bone, so it
+            # must only ever receive weight from this bone's channel. Conserving
+            # weight per channel is what keeps the auto-weighted result aligned
+            # with the original skinning when no constraints are present.
+            fan_src = None
+            parent_eb = getattr(fan_bone, "parent", None)
+            if parent_eb is not None and parent_eb.name in source_names:
+                fan_src = parent_eb.name
+            if fan_src is None and parent_dir_world is not None and child_dir_world is not None:
+                fan_src = (
+                    parent_name
+                    if fan_dir.dot(parent_dir_world) >= fan_dir.dot(child_dir_world)
+                    else child_name
+                )
+            if fan_src is None:
+                fan_src = parent_name
+
             fan_items.append({
                 "name": fan_name,
                 "kind": parsed["fan_kind"],
                 "dir": fan_dir,
+                "src": fan_src,
             })
 
         if not fan_items:
@@ -926,14 +952,25 @@ class BoneFanCore:
         # working copies for the main bones (will be edited in place)
         main_weights = {name: source_weights[name][:] for name in present_sources}
 
+        # group every buffer into per-source channels. A fan rigidly follows its
+        # parent source bone, so without constraints it deforms exactly like that
+        # bone. To keep the auto-weighted result identical to the original, weight
+        # must be conserved *within each channel*: at every vertex the source's
+        # leftover weight plus all of its fans must equal the source's original
+        # weight. We never move weight between the parent channel and the child
+        # channel (that is also why fan counts are forced even -> symmetric pairs).
+        channel_fans = {name: [] for name in present_sources}
+        for item in fan_items:
+            if item["src"] in channel_fans:
+                channel_fans[item["src"]].append(item["name"])
+
         # --- Phase 1: hard spherical split -------------------------------
-        # Every vertex inside the joint sphere hands its entire main-bone
-        # weight to the single closest fan bone (by 3D direction from joint).
+        # Every vertex inside the joint sphere hands each source bone's weight to
+        # the single closest fan *in that same channel* (by in-plane direction).
         touched_vertices = 0
         core_vertices: list[int] = []
         for i in range(num_vertices):
-            total_i = orig_total[i]
-            if total_i <= 0.0:
+            if orig_total[i] <= 0.0:
                 continue
             if rel_vectors[i].length > radius:
                 continue
@@ -944,26 +981,37 @@ class BoneFanCore:
             if plane_normal_world is not None:
                 vec = vec - plane_normal_world * vec.dot(plane_normal_world)
             vdir = _safe_normalized_vector(vec)
-            best_name = None
-            best_score = -2.0
-            for item in fan_items:
-                score = 1.0 if vdir is None else item["dir"].dot(vdir)
-                if score > best_score:
-                    best_score = score
-                    best_name = item["name"]
-            if best_name is None:
-                continue
 
-            fan_weights[best_name][i] = total_i
+            touched = False
             for source_name in present_sources:
+                ws = source_weights[source_name][i]
+                if ws <= 0.0:
+                    continue
+
+                best_name = None
+                best_score = -2.0
+                for fan_name in channel_fans[source_name]:
+                    fdir = next(it["dir"] for it in fan_items if it["name"] == fan_name)
+                    score = 1.0 if vdir is None else fdir.dot(vdir)
+                    if score > best_score:
+                        best_score = score
+                        best_name = fan_name
+                if best_name is None:
+                    # channel has no fan: leave the weight on the source bone
+                    continue
+
+                fan_weights[best_name][i] += ws
                 main_weights[source_name][i] = 0.0
-            core_vertices.append(i)
-            touched_vertices += 1
+                touched = True
+
+            if touched:
+                core_vertices.append(i)
+                touched_vertices += 1
 
         # --- Phase 2: overall blur ---------------------------------------
-        # A real mesh-space Laplacian smoothing pass over the affected
-        # region softens the hard boundaries (fan<->fan and fan<->main),
-        # followed by per-vertex renormalization to the original total.
+        # A real mesh-space Laplacian smoothing pass over the affected region
+        # softens the hard boundaries (fan<->fan and fan<->main), followed by
+        # per-channel renormalization back to each source bone's original weight.
         iterations = int(round(_clamp(blur_factor, 0.0, 1.0) * cls._MAX_BLUR_ITERATIONS))
         if iterations > 0 and core_vertices:
             adjacency = cls._build_vertex_adjacency(obj, num_vertices)
@@ -986,7 +1034,8 @@ class BoneFanCore:
                 frontier = next_frontier
             region = [i for i in range(num_vertices) if in_region[i]]
 
-            # smoothing operates on every relevant group simultaneously
+            # smoothing operates on every relevant group simultaneously; each
+            # buffer is smoothed independently so no weight crosses channels here.
             buffers = [main_weights[name] for name in present_sources]
             buffers += [fan_weights[item["name"]] for item in fan_items]
 
@@ -1010,22 +1059,29 @@ class BoneFanCore:
                     for b, value in enumerate(row):
                         buffers[b][i] = value
 
-            # renormalize so each vertex keeps its original total influence
-            for i in region:
-                if orig_total[i] <= EPS:
-                    # vertex was not driven by the main bones; never introduce
-                    # new influence from the blur.
-                    for buf in buffers:
-                        buf[i] = 0.0
-                    continue
-                s = 0.0
-                for buf in buffers:
-                    s += buf[i]
-                if s <= EPS:
-                    continue
-                scale = orig_total[i] / s
-                for buf in buffers:
-                    buf[i] *= scale
+            # renormalize *per channel* so the source bone's leftover weight plus
+            # all of its fans always re-sum to that source bone's ORIGINAL weight.
+            # This is the invariant that keeps the deformation aligned and stops
+            # transferred weight from leaking onto the other channel or beyond.
+            for source_name in present_sources:
+                orig_s = source_weights[source_name]
+                chan_buffers = [main_weights[source_name]]
+                chan_buffers += [fan_weights[name] for name in channel_fans[source_name]]
+                for i in region:
+                    if orig_s[i] <= EPS:
+                        # this source did not drive the vertex; never introduce
+                        # new influence into its channel from the blur.
+                        for buf in chan_buffers:
+                            buf[i] = 0.0
+                        continue
+                    s = 0.0
+                    for buf in chan_buffers:
+                        s += buf[i]
+                    if s <= EPS:
+                        continue
+                    scale = orig_s[i] / s
+                    for buf in chan_buffers:
+                        buf[i] *= scale
 
         # --- write results back ------------------------------------------
         for source_name in present_sources:
