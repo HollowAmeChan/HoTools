@@ -392,6 +392,7 @@ class TwistBoneCore:
         bn: str,
         count: int,
         twist_length_factor: float = 0.1,
+        keep_head_end_weight: bool = True,
         bone_collection_name: str = HoRig_Twist,
     ) -> dict:
         """在保留主骨的前提下，生成 Twist 子骨链。"""
@@ -427,17 +428,28 @@ class TwistBoneCore:
 
             bone_dir = bone_vec.normalized()
             twist_length = max(bone_vec.length * twist_length_factor, 1e-4)
+            # 这里把 count 解释为“总分段数”，不是“最终生成的 Twist 骨数量”。
+            # 实际上只生成 count - 1 根 Twist，剩下 1 段留给主骨。
+            # Twist 的编号仍然按“从头到尾递减”生成，所以编号最大的那根
+            # 会落在头侧，和 fan 骨拆权时的习惯保持一致。
+            twist_count = max(count - 1, 0)
             padding = max(2, len(str(count)))
             new_bone_names = [
-                TwistBoneCore._twist_name(bn, count - i + 1, padding)
-                for i in range(1, count + 1)
+                TwistBoneCore._twist_name(bn, count - i, padding)
+                for i in range(twist_count)
             ]
 
-            existed = [name for name in new_bone_names if edit_bones.get(name)]
+            existed: list[tuple[int, str]] = []
+            for bone in list(edit_bones):
+                parsed = TwistBoneCore._parse_twist_name(bone.name)
+                if parsed is None or parsed[0] != bn:
+                    continue
+                existed.append((parsed[1], bone.name))
             if existed:
-                result["replaced_names"] = existed
+                existed.sort(key=lambda item: item[0], reverse=True)
+                result["replaced_names"] = [name for _, name in existed]
                 result["replaced_count"] = len(existed)
-                for name in reversed(existed):
+                for _, name in existed:
                     old_twist = edit_bones.get(name)
                     if old_twist is not None:
                         edit_bones.remove(old_twist)
@@ -446,10 +458,11 @@ class TwistBoneCore:
                 old_bone.head.lerp(old_bone.tail, i / count)
                 for i in range(count + 1)
             ]
+            point_offset = 1 if keep_head_end_weight else 0
 
             for i, new_name in enumerate(new_bone_names, start=1):
                 new_bone = edit_bones.new(new_name)
-                new_bone.head = corrected_points[i - 1].copy()
+                new_bone.head = corrected_points[i - 1 + point_offset].copy()
                 new_bone.tail = new_bone.head + bone_dir * twist_length
                 new_bone.roll = 0.0
                 new_bone.use_deform = True
@@ -487,6 +500,8 @@ class TwistBoneCore:
         source_bone_name,
         tmp_vg,
         soft_factor,
+        keep_head_end_weight,
+        source_vg,
     ):
         old_mode = obj.mode
         mirror_state = TwistBoneCore._set_temp_mesh_mirror_off(obj)
@@ -496,10 +511,18 @@ class TwistBoneCore:
                 bpy.context.view_layer.objects.active = obj
                 BoneSplitCore.set_object_mode(obj, "OBJECT")
 
+            if source_vg is None:
+                raise Exception(f"未找到源顶点组: {source_bone_name}")
+
             new_vgs: list[bpy.types.VertexGroup] = []
             for new_name in new_bone_names:
                 vg = obj.vertex_groups.new(name=new_name)
                 new_vgs.append(vg)
+
+            twist_count = len(new_vgs)
+            if twist_count == 0:
+                obj.vertex_groups.remove(tmp_vg)
+                return
 
             source_bone = armature.data.bones.get(source_bone_name)
             if source_bone is None:
@@ -523,6 +546,10 @@ class TwistBoneCore:
             verts_np = np.array([list(v.co) for v in obj.data.vertices], dtype=float)
             weights_np = np.zeros(n_verts, dtype=float)
             has_weight_np = np.zeros(n_verts, dtype=bool)
+            # 先把主骨该保留的权重记到临时数组里，再在循环结束后一次性回填。
+            # 这样可以避免中途改写主骨顶点组时留下半成品状态，也方便把末端那段
+            # 权重稳定地留给主骨，而不是分到不存在的最后一根 Twist 上。
+            source_weights_np = np.zeros(n_verts, dtype=float)
             for i in range(n_verts):
                 try:
                     weights_np[i] = tmp_vg.weight(i)
@@ -534,10 +561,29 @@ class TwistBoneCore:
             chain_vec_np = np.array(list(chain_vec), dtype=float)
             f = np.dot(diff, chain_vec_np) / chain_len_sq
             f = np.clip(f, 0.0, 1.0)
-            pos = f * count - 0.5
-            pos = np.clip(pos, 0, count - 1)
+
+            # 这里把权重链拆成“保留段 + Twist 段”或“Twist 段 + 保留段”两种顺序。
+            # keep_head_end_weight=True 时，主骨保留头端一小段权重，方便和隔壁 fan 骨拆权；
+            # False 时保持旧逻辑，把保留段放到尾端。
+            segment_targets = ([source_vg] + new_vgs) if keep_head_end_weight else (new_vgs + [source_vg])
+            logical_count = len(segment_targets)
+            if logical_count <= 0:
+                obj.vertex_groups.remove(tmp_vg)
+                return
+            pos = f * logical_count - 0.5
+            pos = np.clip(pos, 0, logical_count - 1)
             i_seg = np.floor(pos).astype(int)
             local_factor = pos - i_seg
+
+            def _calc_blend(local_value: float) -> float:
+                if soft_factor == 0.0:
+                    return 0.0 if local_value < 0.5 else 1.0
+                if soft_factor == 1.0:
+                    return 0.5 * (1 - math.cos(math.pi * local_value))
+
+                step_val = 0.0 if local_value < 0.5 else 1.0
+                cos_val = 0.5 * (1 - math.cos(math.pi * local_value))
+                return (1 - soft_factor) * step_val + soft_factor * cos_val
 
             for i in range(n_verts):
                 if not has_weight_np[i]:
@@ -547,21 +593,36 @@ class TwistBoneCore:
                 seg = i_seg[i]
                 lf = local_factor[i]
 
-                if seg == count - 1:
-                    new_vgs[seg].add([i], orig_w, "REPLACE")
-                else:
-                    if soft_factor == 0.0:
-                        blend = 0.0 if lf < 0.5 else 1.0
-                    elif soft_factor == 1.0:
-                        blend = 0.5 * (1 - math.cos(math.pi * lf))
+                if seg >= logical_count - 1:
+                    target = segment_targets[-1]
+                    if target is source_vg:
+                        source_weights_np[i] += orig_w
                     else:
-                        step_val = 0.0 if lf < 0.5 else 1.0
-                        cos_val = 0.5 * (1 - math.cos(math.pi * lf))
-                        blend = (1 - soft_factor) * step_val + soft_factor * cos_val
+                        target.add([i], orig_w, "REPLACE")
+                    continue
 
-                    blend = max(0.0, min(blend, 1.0))
-                    new_vgs[seg].add([i], orig_w * (1.0 - blend), "REPLACE")
-                    new_vgs[seg + 1].add([i], orig_w * blend, "REPLACE")
+                blend = max(0.0, min(_calc_blend(lf), 1.0))
+                left_target = segment_targets[seg]
+                right_target = segment_targets[seg + 1]
+                left_weight = orig_w * (1.0 - blend)
+                right_weight = orig_w * blend
+
+                if left_target is source_vg:
+                    source_weights_np[i] += left_weight
+                else:
+                    left_target.add([i], left_weight, "REPLACE")
+
+                if right_target is source_vg:
+                    source_weights_np[i] += right_weight
+                else:
+                    right_target.add([i], right_weight, "REPLACE")
+
+            source_vertex_indices = [v.index for v in obj.data.vertices]
+            if source_vertex_indices:
+                source_vg.remove(source_vertex_indices)
+                for i, weight in enumerate(source_weights_np):
+                    if weight != 0.0:
+                        source_vg.add([i], float(weight), "REPLACE")
 
             obj.vertex_groups.remove(tmp_vg)
         finally:
@@ -577,8 +638,10 @@ class TwistBoneCore:
         armature: bpy.types.Object,
         tmp_vg,
         soft_factor: float,
+        keep_head_end_weight: bool,
         source_group_name: str,
     ):
+        source_group = obj.vertex_groups.get(source_group_name)
         TwistBoneCore.splitVertexGroup_withTmp_along_source(
             obj,
             new_bone_names,
@@ -587,13 +650,9 @@ class TwistBoneCore:
             source_group_name,
             tmp_vg,
             soft_factor,
+            keep_head_end_weight,
+            source_group,
         )
-
-        source_group = obj.vertex_groups.get(source_group_name)
-        if source_group:
-            all_vertex_indices = [v.index for v in obj.data.vertices]
-            if all_vertex_indices:
-                source_group.remove(all_vertex_indices)
 
     @staticmethod
     def objs_bone_twist(
@@ -602,6 +661,7 @@ class TwistBoneCore:
         armature: bpy.types.Object,
         soft_factor: float,
         twist_length_factor: float,
+        keep_head_end_weight: bool,
         objs,
         bone_collection_name: str = HoRig_Twist,
     ) -> dict:
@@ -611,6 +671,7 @@ class TwistBoneCore:
             bn,
             count,
             twist_length_factor,
+            keep_head_end_weight,
             bone_collection_name,
         )
         new_bone_names = chain_result["created_names"]
@@ -640,6 +701,7 @@ class TwistBoneCore:
                 armature,
                 tmp_vg,
                 soft_factor,
+                keep_head_end_weight,
                 bn,
             )
 
@@ -709,6 +771,7 @@ class TwistBoneCore:
         twist_length_factor: float = 0.1,
         process_symmetry: bool = False,
         auto_transfer_weights: bool = False,
+        keep_head_end_weight: bool = True,
         only_selected: bool = False,
         soft_factor: float = 0.5,
         copy_rotation_target_bone: str = "",
@@ -758,6 +821,7 @@ class TwistBoneCore:
                         armature_obj,
                         soft_factor,
                         twist_length_factor,
+                        keep_head_end_weight,
                         objs_with_bone,
                         bone_collection_name,
                     )
@@ -770,6 +834,7 @@ class TwistBoneCore:
                         bn,
                         count,
                         twist_length_factor,
+                        keep_head_end_weight,
                         bone_collection_name,
                     )
                     results.append(result)
@@ -1087,8 +1152,8 @@ class OP_TwistBoneWithWeight(Operator):
 
     count: IntProperty(
         name="细分段数",
-        description="生成的 Twist 子骨数量",
-        min=1,
+        description="生成的分段数（最后一段保留给主骨）",
+        min=2,
         default=4,
     )  # type: ignore
     twist_length_factor: FloatProperty(
@@ -1126,6 +1191,11 @@ class OP_TwistBoneWithWeight(Operator):
     auto_transfer_weights: BoolProperty(
         name="自动处理权重",
         description="生成 Twist 骨后自动把权重转移到新骨骼",
+        default=True,
+    )  # type: ignore
+    keep_head_end_weight: BoolProperty(
+        name="保留头端权重",
+        description="让主骨保留头端一小段权重；编号最大的 Twist 会贴近头侧",
         default=True,
     )  # type: ignore
     only_selected: BoolProperty(
@@ -1199,6 +1269,7 @@ class OP_TwistBoneWithWeight(Operator):
                 self.twist_length_factor,
                 self.process_symmetry,
                 self.auto_transfer_weights,
+                self.keep_head_end_weight,
                 self.only_selected,
                 self.soft_factor,
                 self.copy_rotation_target_bone,
@@ -1242,9 +1313,9 @@ class OP_TwistBoneWithWeight(Operator):
         layout.prop(self, "bone_collection_name")
         layout.prop(self, "process_symmetry")
         layout.prop(self, "auto_transfer_weights")
-
         sub = layout.column()
         sub.enabled = self.auto_transfer_weights
+        sub.prop(self, "keep_head_end_weight")
         sub.prop(self, "only_selected")
         sub.prop(self, "soft_factor")
 

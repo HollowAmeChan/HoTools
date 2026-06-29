@@ -1,7 +1,7 @@
 ﻿import bpy
 from bpy.types import Context, Operator, PropertyGroup, UILayout
 from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty
-from math import acos, cos, radians, sin, tau
+from math import acos, atan2, cos, radians, sin, tau
 from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
@@ -460,6 +460,47 @@ class BoneFanPreview:
             if center_dir_world is None:
                 center_dir_world = parent_dir_world
 
+            sector_test, center_axis_world, side_axis_world = _classify_fan_sector(
+                center_dir_world,
+                parent_dir_world,
+                child_dir_world,
+                plane_normal_world,
+            )
+            if center_axis_world is None or side_axis_world is None:
+                blf.draw(font_id, "fan preview")
+                return
+
+            def _classify_sector(vec: Vector) -> str | None:
+                sector_name, _, _ = _classify_fan_sector(
+                    vec,
+                    parent_dir_world,
+                    child_dir_world,
+                    plane_normal_world,
+                )
+                return sector_name
+
+            def _append_sector_disk(target_map: dict[str, list[tuple[float, float, float]]], center, axis_x, axis_y, ring_radius, segments=96):
+                if ring_radius <= EPS:
+                    return
+                ring_points = []
+                for index in range(segments):
+                    angle = tau * index / segments
+                    ring_points.append(
+                        center
+                        + axis_x * cos(angle) * ring_radius
+                        + axis_y * sin(angle) * ring_radius
+                    )
+                for index in range(segments):
+                    p0 = ring_points[index]
+                    p1 = ring_points[(index + 1) % segments]
+                    mid_dir = _safe_normalized_vector((p0 - center) + (p1 - center))
+                    if mid_dir is None:
+                        continue
+                    sector_name = _classify_sector(mid_dir)
+                    if sector_name is None:
+                        continue
+                    target_map[sector_name].extend([tuple(center), tuple(p0), tuple(p1)])
+
             center_spokes = [
                 tuple(joint_world),
                 tuple(joint_world + center_dir_world * radius),
@@ -469,7 +510,14 @@ class BoneFanPreview:
 
             sphere_lines = []
             blur_lines = []
+            sector_fills: dict[str, list[tuple[float, float, float]]] = {
+                "inup": [],
+                "indown": [],
+                "outup": [],
+                "outdown": [],
+            }
             if getattr(settings, "auto_transfer_weights", False):
+                _append_sector_disk(sector_fills, joint_world, axis_a_world, axis_b_world, radius)
                 _append_circle_3d(sphere_lines, joint_world, axis_a_world, axis_b_world, radius)
                 _append_circle_3d(sphere_lines, joint_world, axis_a_world, plane_normal_world, radius)
                 _append_circle_3d(sphere_lines, joint_world, axis_b_world, plane_normal_world, radius)
@@ -482,7 +530,7 @@ class BoneFanPreview:
             if getattr(settings, "generate_in", False):
                 in_count = max(1, int(getattr(settings, "count_in", 1)))
                 step = total_angle / (in_count + 1)
-                start_dir = parent_dir_world
+                start_dir = -parent_dir_world
                 for index in range(1, in_count + 1):
                     direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
                     if direction is None:
@@ -492,7 +540,7 @@ class BoneFanPreview:
             if getattr(settings, "generate_out", False):
                 out_count = max(1, int(getattr(settings, "count_out", 1)))
                 step = total_angle / (out_count + 1)
-                start_dir = -parent_dir_world
+                start_dir = parent_dir_world
                 for index in range(1, out_count + 1):
                     direction = BoneFanCore._rotate_vector_around_axis(start_dir, plane_normal_world, step * index)
                     if direction is None:
@@ -500,6 +548,20 @@ class BoneFanPreview:
                     out_spokes.extend([tuple(joint_world), tuple(joint_world + direction * radius)])
 
             shader.bind()
+
+            if getattr(settings, "auto_transfer_weights", False):
+                sector_colors = {
+                    "inup": (1.0, 0.35, 0.2, 0.28),
+                    "indown": (1.0, 0.85, 0.2, 0.28),
+                    "outup": (0.25, 0.9, 0.55, 0.28),
+                    "outdown": (0.2, 0.75, 1.0, 0.28),
+                }
+                for sector_name, positions in sector_fills.items():
+                    if len(positions) < 3:
+                        continue
+                    sector_batch = batch_for_shader(shader, "TRIS", {"pos": positions})
+                    shader.uniform_float("color", sector_colors[sector_name])
+                    sector_batch.draw(shader)
 
             if sphere_lines:
                 line_batch = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
@@ -733,6 +795,85 @@ class BoneFanCore:
         return 1.0 - (t * t * (3.0 - 2.0 * t))
 
     @staticmethod
+def _linear_falloff(value: float, start_value: float, end_value: float) -> float:
+    if end_value <= start_value + EPS:
+        return 1.0 if value <= start_value else 0.0
+    t = _clamp((value - start_value) / (end_value - start_value), 0.0, 1.0)
+    return 1.0 - t
+
+
+def _classify_fan_sector(
+    vec: Vector,
+    parent_dir_world: Vector,
+    child_dir_world: Vector,
+    plane_normal_world: Vector,
+) -> tuple[str | None, Vector | None, Vector | None]:
+    center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+    if center_axis_world is None:
+        center_axis_world = _safe_normalized_vector(parent_dir_world)
+    if center_axis_world is None:
+        return None, None, None
+
+    side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
+    if side_axis_world is None:
+        side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
+    if side_axis_world is None:
+        return None, None, None
+
+    orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
+    if abs(orient) <= EPS:
+        return None, center_axis_world, side_axis_world
+    orient_sign = 1.0 if orient >= 0.0 else -1.0
+
+    vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
+    if vec_plane.length <= EPS:
+        return None, center_axis_world, side_axis_world
+    vec_plane = vec_plane.normalized()
+
+    parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
+    child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
+    inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
+    in_out = "in" if inside else "out"
+    up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
+    return in_out + up_down, center_axis_world, side_axis_world
+
+
+def _classify_fan_sector(
+    vec: Vector,
+    parent_dir_world: Vector,
+    child_dir_world: Vector,
+    plane_normal_world: Vector,
+) -> tuple[str | None, Vector | None, Vector | None]:
+    center_axis_world = _safe_normalized_vector(parent_dir_world + child_dir_world)
+    if center_axis_world is None:
+        center_axis_world = _safe_normalized_vector(parent_dir_world)
+    if center_axis_world is None:
+        return None, None, None
+
+    side_axis_world = _safe_normalized_vector(plane_normal_world.cross(center_axis_world))
+    if side_axis_world is None:
+        side_axis_world = _safe_normalized_vector(center_axis_world.cross(plane_normal_world))
+    if side_axis_world is None:
+        return None, None, None
+
+    orient = plane_normal_world.dot(parent_dir_world.cross(child_dir_world))
+    if abs(orient) <= EPS:
+        return None, center_axis_world, side_axis_world
+    orient_sign = 1.0 if orient >= 0.0 else -1.0
+
+    vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
+    if vec_plane.length <= EPS:
+        return None, center_axis_world, side_axis_world
+    vec_plane = vec_plane.normalized()
+
+    parent_cross = plane_normal_world.dot(parent_dir_world.cross(vec_plane))
+    child_cross = plane_normal_world.dot(vec_plane.cross(child_dir_world))
+    inside = orient_sign * parent_cross >= -EPS and orient_sign * child_cross >= -EPS
+    in_out = "in" if inside else "out"
+    up_down = "up" if vec_plane.dot(side_axis_world) >= 0.0 else "down"
+    return in_out + up_down, center_axis_world, side_axis_world
+
+    @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
         return TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
 
@@ -765,37 +906,46 @@ class BoneFanCore:
         if plane_normal_world is None or parent_dir_world is None or child_dir_world is None:
             raise Exception("failed to compute plane normal")
 
-        source_map: dict[str, list[dict]] = {}
-        kind_counts: dict[tuple[str, str], int] = {}
+        source_names = [frame["parent_bone"].name, frame["child_bone"].name]
+        source_dirs = {
+            frame["parent_bone"].name: parent_dir_world,
+            frame["child_bone"].name: child_dir_world,
+        }
+
+        fan_items: list[dict] = []
         for fan_name in fan_names:
             parsed = cls._parse_fan_name(fan_name)
             fan_bone = armature.data.bones.get(fan_name)
-            if parsed is None or fan_bone is None or fan_bone.parent is None:
+            if parsed is None or fan_bone is None:
                 continue
 
             fan_dir = _safe_normalized_vector(armature.matrix_world.to_3x3() @ fan_bone.vector)
             if fan_dir is None:
                 continue
 
-            parent_score = fan_dir.dot(parent_dir_world)
-            child_score = fan_dir.dot(child_dir_world)
-            parent_name = frame["parent_bone"].name if parent_score >= child_score else frame["child_bone"].name
-            key = (parent_name, parsed["fan_kind"])
-            kind_counts[key] = kind_counts.get(key, 0) + 1
-            source_map.setdefault(parent_name, []).append({
+            source_name = None
+            fan_parent = getattr(fan_bone, "parent", None)
+            if fan_parent is not None and fan_parent.name in source_dirs:
+                source_name = fan_parent.name
+            else:
+                parent_score = fan_dir.dot(parent_dir_world)
+                child_score = fan_dir.dot(child_dir_world)
+                source_name = frame["parent_bone"].name if parent_score >= child_score else frame["child_bone"].name
+
+            fan_items.append({
                 "name": fan_name,
                 "kind": parsed["fan_kind"],
                 "dir": fan_dir,
+                "source": source_name,
             })
 
-        if not source_map:
+        if not fan_items:
             return {
                 "processed_sources": 0,
                 "processed_vertices": 0,
                 "processed_objects": 0,
             }
 
-        mesh_inv = obj.matrix_world.inverted()
         all_indices = [v.index for v in obj.data.vertices]
         if not all_indices:
             return {
@@ -804,101 +954,233 @@ class BoneFanCore:
                 "processed_objects": 0,
             }
 
+        num_vertices = len(obj.data.vertices)
         verts_world = [obj.matrix_world @ v.co for v in obj.data.vertices]
         rel_vectors = [vert_world - (armature.matrix_world @ joint) for vert_world in verts_world]
-        source_weights_cache: dict[str, list[float]] = {}
         touched_vertices = 0
         processed_sources = 0
         processed_fans = 0
 
-        for source_name, fan_items in source_map.items():
+        source_groups: dict[str, bpy.types.VertexGroup] = {}
+        source_weights: dict[str, list[float]] = {}
+        final_source_weights: dict[str, list[float]] = {}
+        for source_name in source_names:
             source_vg = obj.vertex_groups.get(source_name)
             if source_vg is None:
                 continue
 
-            source_weights: list[float] = []
-            has_weight: list[bool] = []
-            for i in range(len(obj.data.vertices)):
+            weights = [0.0] * num_vertices
+            has_any = False
+            for i in range(num_vertices):
                 try:
-                    source_weights.append(source_vg.weight(i))
-                    has_weight.append(True)
+                    w = source_vg.weight(i)
                 except RuntimeError:
-                    source_weights.append(0.0)
-                    has_weight.append(False)
+                    w = 0.0
+                weights[i] = w
+                if w > 0.0:
+                    has_any = True
 
-            if not any(has_weight):
+            if not has_any:
                 continue
 
+            source_groups[source_name] = source_vg
+            source_weights[source_name] = weights
+            final_source_weights[source_name] = weights[:]
             processed_sources += 1
 
-            fan_vgs = []
-            fan_meta = []
-            for item in fan_items:
-                fan_name = item["name"]
-                fan_vg = obj.vertex_groups.get(fan_name)
-                if fan_vg is None:
-                    fan_vg = obj.vertex_groups.new(name=fan_name)
-                else:
-                    fan_vg.remove(all_indices)
+        if not source_groups:
+            return {
+                "processed_sources": 0,
+                "processed_vertices": 0,
+                "processed_objects": 0,
+            }
 
-                fan_bone = armature.data.bones.get(fan_name)
-                if fan_bone is None:
-                    continue
+        fan_groups: dict[str, bpy.types.VertexGroup] = {}
+        final_fan_weights: dict[str, list[float]] = {}
+        fans_by_source_sector: dict[tuple[str, str], list[dict]] = {}
+        for item in fan_items:
+            fan_vg = obj.vertex_groups.get(item["name"])
+            if fan_vg is None:
+                fan_vg = obj.vertex_groups.new(name=item["name"])
+            fan_vg.remove(all_indices)
+            fan_groups[item["name"]] = fan_vg
+            final_fan_weights[item["name"]] = [0.0] * num_vertices
+            source_name = item.get("source")
+            if source_name in source_groups:
+                pass
 
-                fan_dir = _safe_normalized_vector(armature.matrix_world.to_3x3() @ fan_bone.vector)
-                if fan_dir is None:
-                    continue
+        processed_fans = len(fan_groups)
 
-                key = (source_name, item["kind"])
-                count = kind_counts.get(key, 0)
-                half_width = total_angle / max(2.0 * (count + 1), 1.0)
-                fan_vgs.append(fan_vg)
-                fan_meta.append({
-                    "dir": fan_dir,
-                    "half_width": half_width,
-                })
+        def _project_angle(vec: Vector, axis_x: Vector, axis_y: Vector) -> float:
+            return atan2(vec.dot(axis_y), vec.dot(axis_x))
 
-            if not fan_vgs:
+        def _unwrap_angles(angle_items: list[tuple[float, dict]]) -> list[tuple[float, dict]]:
+            if len(angle_items) <= 1:
+                return angle_items
+
+            raw = sorted(angle_items, key=lambda pair: pair[0])
+            largest_gap = -1.0
+            start_index = 0
+            for idx in range(len(raw)):
+                next_idx = (idx + 1) % len(raw)
+                a0 = raw[idx][0]
+                a1 = raw[next_idx][0] + (tau if next_idx == 0 else 0.0)
+                gap = a1 - a0
+                if gap > largest_gap:
+                    largest_gap = gap
+                    start_index = next_idx
+
+            ordered = [raw[(start_index + idx) % len(raw)] for idx in range(len(raw))]
+            base = ordered[0][0]
+            result: list[tuple[float, dict]] = []
+            prev = None
+            for angle, item in ordered:
+                ua = angle
+                while ua < base:
+                    ua += tau
+                while ua >= base + tau:
+                    ua -= tau
+                if prev is not None and ua < prev:
+                    ua += tau
+                result.append((ua, item))
+                prev = ua
+            return result
+
+        for source_name, source_vg in source_groups.items():
+            source_dir_world = source_dirs[source_name]
+            parent_axis = _safe_normalized_vector(parent_dir_world - plane_normal_world * parent_dir_world.dot(plane_normal_world))
+            child_axis = _safe_normalized_vector(child_dir_world - plane_normal_world * child_dir_world.dot(plane_normal_world))
+            if parent_axis is None:
+                parent_axis = _safe_normalized_vector(parent_dir_world)
+            if child_axis is None:
+                child_axis = _safe_normalized_vector(child_dir_world)
+            if parent_axis is None or child_axis is None:
                 continue
 
-            processed_fans += len(fan_vgs)
+            bisector_axis = _safe_normalized_vector(parent_axis + child_axis)
+            if bisector_axis is None:
+                bisector_axis = parent_axis if source_name == frame["parent_bone"].name else child_axis
 
-            joint_world = armature.matrix_world @ joint
-            for i, orig_w in enumerate(source_weights):
-                if not has_weight[i] or orig_w <= 0.0:
-                    continue
+            side_axis = _safe_normalized_vector(plane_normal_world.cross(bisector_axis))
+            if side_axis is None:
+                side_axis = _safe_normalized_vector(bisector_axis.cross(plane_normal_world))
+            if side_axis is None:
+                continue
 
-                vec_world = rel_vectors[i]
-                dist = vec_world.length
-                radial = cls._smooth_falloff(dist, radius, radius + blur_world)
-                if radial <= 0.0:
-                    source_vg.add([i], orig_w, "REPLACE")
-                    continue
-
-                vec_plane = vec_world - plane_normal_world * vec_world.dot(plane_normal_world)
+            def _sector_name(vec: Vector) -> str | None:
+                vec_plane = vec - plane_normal_world * vec.dot(plane_normal_world)
                 if vec_plane.length <= EPS:
-                    source_vg.add([i], orig_w, "REPLACE")
+                    return None
+                vec_plane = vec_plane.normalized()
+                signed_angle = atan2(
+                    plane_normal_world.dot(parent_axis.cross(vec_plane)),
+                    _clamp(parent_axis.dot(vec_plane), -1.0, 1.0),
+                )
+                if signed_angle < 0.0:
+                    signed_angle += tau
+                center_side = signed_angle <= total_angle + EPS
+                side_side = vec.dot(side_axis)
+                if abs(side_side) <= EPS:
+                    return None
+                in_out = "in" if center_side else "out"
+                up_down = "up" if side_side >= 0.0 else "down"
+                return in_out + up_down
+
+            sector_fans: dict[str, list[dict]] = {
+                "inup": [],
+                "indown": [],
+                "outup": [],
+                "outdown": [],
+            }
+            for item in fan_items:
+                if item.get("source") != source_name:
+                    continue
+                sector_name = _sector_name(item["dir"])
+                if sector_name is None:
+                    continue
+                sector_fans[sector_name].append(item)
+
+            for sector_name, source_fans in sector_fans.items():
+                if not source_fans:
                     continue
 
-                scores = []
-                total_score = 0.0
-                for meta in fan_meta:
-                    angle = vec_plane.angle(meta["dir"])
-                    angular_blur = meta["half_width"] * blur_factor
-                    angular = cls._smooth_falloff(angle, meta["half_width"], meta["half_width"] + angular_blur)
-                    score = radial * angular
-                    scores.append(score)
-                    total_score += score
+                source_angle_items = [(_project_angle(item["dir"], parent_axis, plane_normal_world.cross(parent_axis)), item) for item in source_fans]
+                source_angle_items = _unwrap_angles(source_angle_items)
+                if not source_angle_items:
+                    continue
 
-                fan_total = min(1.0, total_score)
-                if fan_total > 0.0 and total_score > EPS:
-                    for score, fan_vg in zip(scores, fan_vgs):
-                        transfer = orig_w * fan_total * (score / total_score)
-                        if transfer > 0.0:
-                            fan_vg.add([i], transfer, "REPLACE")
-                    touched_vertices += 1
+                source_first_angle = source_angle_items[0][0]
+                source_last_angle = source_angle_items[-1][0]
 
-                source_vg.add([i], orig_w * (1.0 - fan_total), "REPLACE")
+                for i, vec_world in enumerate(rel_vectors):
+                    current_w = final_source_weights[source_name][i]
+                    if current_w <= 0.0:
+                        continue
+
+                    dist = vec_world.length
+                    radial = cls._smooth_falloff(dist, radius, radius + blur_world)
+                    if radial <= 0.0:
+                        continue
+
+                    vec_plane = vec_world - plane_normal_world * vec_world.dot(plane_normal_world)
+                    if vec_plane.length <= EPS:
+                        continue
+
+                    vertex_sector = _sector_name(vec_plane)
+                    if vertex_sector != sector_name:
+                        continue
+
+                    vertex_angle = _project_angle(vec_plane, parent_axis, plane_normal_world.cross(parent_axis))
+                    while vertex_angle < source_first_angle:
+                        vertex_angle += tau
+                    if vertex_angle > source_last_angle + EPS:
+                        continue
+
+                    transfer_total = current_w * radial
+                    if transfer_total <= 0.0:
+                        continue
+
+                    final_source_weights[source_name][i] = current_w - transfer_total
+
+                    if len(source_angle_items) == 1:
+                        final_fan_weights[source_angle_items[0][1]["name"]][i] += transfer_total
+                        touched_vertices += 1
+                        continue
+
+                    if vertex_angle <= source_angle_items[0][0]:
+                        final_fan_weights[source_angle_items[0][1]["name"]][i] += transfer_total
+                        touched_vertices += 1
+                        continue
+
+                    if vertex_angle >= source_angle_items[-1][0]:
+                        final_fan_weights[source_angle_items[-1][1]["name"]][i] += transfer_total
+                        touched_vertices += 1
+                        continue
+
+                    for seg_index in range(len(source_angle_items) - 1):
+                        angle_a, item_a = source_angle_items[seg_index]
+                        angle_b, item_b = source_angle_items[seg_index + 1]
+                        if angle_a <= vertex_angle <= angle_b:
+                            span = max(angle_b - angle_a, EPS)
+                            t = _clamp((vertex_angle - angle_a) / span, 0.0, 1.0)
+                            final_fan_weights[item_a["name"]][i] += transfer_total * (1.0 - t)
+                            final_fan_weights[item_b["name"]][i] += transfer_total * t
+                            touched_vertices += 1
+                            break
+
+        for source_name, source_vg in source_groups.items():
+            source_vg.remove(all_indices)
+            for i, weight in enumerate(final_source_weights[source_name]):
+                if weight > 0.0:
+                    source_vg.add([i], weight, "REPLACE")
+
+        for fan_name, fan_vg in fan_groups.items():
+            weights = final_fan_weights.get(fan_name)
+            if weights is None:
+                continue
+            for i, weight in enumerate(weights):
+                if weight > 0.0:
+                    fan_vg.add([i], weight, "REPLACE")
 
         return {
             "processed_sources": processed_sources,
