@@ -16,6 +16,11 @@ EPS = 1e-6
 HoRig_Fan = "HoRig_Fan"
 
 
+class FanRemovalBlockedError(Exception):
+    """Raised when fan bones can't be removed because other bones depend on them."""
+    pass
+
+
 def reg_props():
     if hasattr(bpy.types.Scene, "ho_fan_settings"):
         del bpy.types.Scene.ho_fan_settings
@@ -1380,11 +1385,144 @@ class BoneFanCore:
         return sorted(removal)
 
     @classmethod
-    def _remove_fan_bones(cls, armature: bpy.types.Object, selected_names: list[str]) -> int:
+    def _build_fan_restore_map(cls, armature: bpy.types.Object, removal_names: list[str]) -> dict:
+        # map each deform fan -> the main bone it rigidly followed (its edit-bone
+        # parent). Restoring weight there exactly reverses the per-channel split,
+        # so the main bone gets its original weight back. Pin bones carry no
+        # weight (use_deform = False), so they are skipped here.
+        edit_bones = armature.data.edit_bones
+        main_to_fans: dict[str, list[str]] = {}
+        for name in removal_names:
+            if cls._parse_fan_name(name) is None:
+                continue
+            bone = edit_bones.get(name)
+            main_name = None
+            if bone is not None:
+                parent = getattr(bone, "parent", None)
+                if parent is not None:
+                    main_name = parent.name
+            if main_name is None:
+                main_name = cls._parse_fan_name(name)["base_name"]
+            main_to_fans.setdefault(main_name, []).append(name)
+        return main_to_fans
+
+    @staticmethod
+    def _find_fan_removal_child_blockers(
+        armature: bpy.types.Object,
+        removal_names: list[str],
+    ) -> list[tuple[str, str]]:
+        target = set(removal_names)
+        bones = armature.data.edit_bones if armature.mode == "EDIT" else armature.data.bones
+        blockers = []
+        for name in removal_names:
+            bone = bones.get(name)
+            if bone is None:
+                continue
+            for child in bone.children:
+                if child.name not in target:
+                    blockers.append((name, child.name))
+        return blockers
+
+    @classmethod
+    def _assert_safe_to_remove_fan_bones(
+        cls,
+        armature: bpy.types.Object,
+        removal_names: list[str],
+    ) -> None:
+        blockers = cls._find_fan_removal_child_blockers(armature, removal_names)
+        if not blockers:
+            return
+
+        sample_count = 8
+        blocker_text = ", ".join(
+            f"{fan_name} -> {child_name}"
+            for fan_name, child_name in blockers[:sample_count]
+        )
+        if len(blockers) > sample_count:
+            blocker_text += f"，等 {len(blockers)} 处"
+
+        raise FanRemovalBlockedError(
+            "不能删除 fan 骨：待删除的 fan/pin 骨下还有其他骨骼，"
+            "请先解除这些骨骼的父子关系后再删除。"
+            f"阻断项: {blocker_text}"
+        )
+
+    @staticmethod
+    def obj_fan_restore(obj: bpy.types.Object, main_to_fans: dict[str, list[str]]) -> int:
+        # sum each main bone's leftover weight with all of its fans and write the
+        # total back onto the main bone, then drop the fan vertex groups. This is
+        # the exact inverse of the per-channel transfer done at generation time.
+        old_mode = obj.mode
+        old_active = bpy.context.view_layer.objects.active
+        mirror_state = TwistBoneCore._set_temp_mesh_mirror_off(obj)
+        mode_changed = False
+        removed_groups = 0
+
+        try:
+            if old_mode != "OBJECT":
+                bpy.context.view_layer.objects.active = obj
+                BoneSplitCore.set_object_mode(obj, "OBJECT")
+                mode_changed = True
+
+            for main_name, fan_names in main_to_fans.items():
+                fan_vgs = [
+                    vg for vg in (obj.vertex_groups.get(fan_name) for fan_name in fan_names)
+                    if vg is not None
+                ]
+                main_vg = obj.vertex_groups.get(main_name)
+
+                if main_vg is None and not fan_vgs:
+                    continue
+
+                if main_vg is None:
+                    main_vg = obj.vertex_groups.new(name=main_name)
+
+                for vertex in obj.data.vertices:
+                    total_weight = 0.0
+                    has_explicit_weight = False
+
+                    try:
+                        total_weight += main_vg.weight(vertex.index)
+                        has_explicit_weight = True
+                    except RuntimeError:
+                        pass
+
+                    for fan_vg in fan_vgs:
+                        try:
+                            total_weight += fan_vg.weight(vertex.index)
+                            has_explicit_weight = True
+                        except RuntimeError:
+                            continue
+
+                    if has_explicit_weight:
+                        main_vg.add([vertex.index], total_weight, "REPLACE")
+
+                for fan_name in fan_names:
+                    fan_vg = obj.vertex_groups.get(fan_name)
+                    if fan_vg:
+                        obj.vertex_groups.remove(fan_vg)
+                        removed_groups += 1
+        finally:
+            TwistBoneCore._restore_mesh_mirror_state(mirror_state)
+
+            if mode_changed:
+                bpy.context.view_layer.objects.active = obj
+                BoneSplitCore.set_object_mode(obj, old_mode)
+
+            if old_active:
+                try:
+                    bpy.context.view_layer.objects.active = old_active
+                except Exception:
+                    pass
+
+        return removed_groups
+
+    @classmethod
+    def _remove_fan_bones(cls, armature: bpy.types.Object, removal_names: list[str]) -> int:
         edit_bones = armature.data.edit_bones
         removed = 0
 
-        for bone_name in cls._collect_fan_bone_names(armature, selected_names):
+        for bone_name in removal_names:
             bone = edit_bones.get(bone_name)
             if bone is None:
                 continue
@@ -1517,6 +1655,17 @@ class OP_RemoveFanBone(Operator):
     bl_description = "Remove fan bones for the selected main bones"
     bl_options = {"REGISTER", "UNDO"}
 
+    only_selected: BoolProperty(
+        name="仅选中的物体",
+        description="只处理当前被选中的网格物体",
+        default=False,
+    )  # type: ignore
+    process_vertex_groups: BoolProperty(
+        name="处理顶点组",
+        description="删除 fan 骨时反向恢复权重到主骨并清理对应顶点组",
+        default=True,
+    )  # type: ignore
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -1531,11 +1680,24 @@ class OP_RemoveFanBone(Operator):
 
         return False
 
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "process_vertex_groups")
+
+        sub = layout.column()
+        sub.enabled = self.process_vertex_groups
+        sub.prop(self, "only_selected")
+
     def execute(self, context):
         armature = context.active_object
         original_mode = armature.mode
         old_active = bpy.context.view_layer.objects.active
         was_hidden = armature.hide_viewport
+
+        only_selected = self.only_selected
 
         selected_names = BoneFanCore._selected_bone_names(context, armature)
 
@@ -1547,16 +1709,52 @@ class OP_RemoveFanBone(Operator):
         bpy.context.view_layer.objects.active = armature
 
         try:
-            if original_mode != "EDIT":
+            if armature.mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, "EDIT")
 
-            removed = BoneFanCore._remove_fan_bones(armature, selected_names)
+            # figure out which fan/pin bones to remove, and which main bone each
+            # deform fan hands its weight back to, before touching anything.
+            removal_names = BoneFanCore._collect_fan_bone_names(armature, selected_names)
+            if not removal_names:
+                self.report({"WARNING"}, "no fan bones found to remove")
+                return {"CANCELLED"}
+
+            BoneFanCore._assert_safe_to_remove_fan_bones(armature, removal_names)
+            main_to_fans = BoneFanCore._build_fan_restore_map(armature, removal_names)
+
+            # reverse the weight transfer first (needs OBJECT mode per mesh),
+            # then remove the bones back in EDIT mode.
+            restored_objects = 0
+            removed_groups = 0
+            if self.process_vertex_groups:
+                mesh_objs = BoneFanCore._collect_mesh_objects_for_armature(armature)
+                if only_selected:
+                    mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
+
+                for obj in mesh_objs:
+                    groups = BoneFanCore.obj_fan_restore(obj, main_to_fans)
+                    if groups > 0:
+                        restored_objects += 1
+                    removed_groups += groups
+
+            if armature.mode != "EDIT":
+                bpy.context.view_layer.objects.active = armature
+                BoneSplitCore.set_object_mode(armature, "EDIT")
+
+            removed = BoneFanCore._remove_fan_bones(armature, removal_names)
 
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
 
-            self.report({"INFO"}, f"removed {removed} fan bones")
+            self.report(
+                {"INFO"},
+                f"removed {removed} fan bones, restored weights on {restored_objects} objects "
+                f"({removed_groups} groups)",
+            )
             return {"FINISHED"}
+        except FanRemovalBlockedError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
         except Exception as e:
             self.report({"ERROR"}, str(e))
             return {"CANCELLED"}
