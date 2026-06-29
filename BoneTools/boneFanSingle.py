@@ -163,6 +163,16 @@ class PG_Hotools_FanSingleSettings(PropertyGroup):
         soft_max=1.0,
         update=_fan_single_preview_update,
     )  # type: ignore
+    midline_threshold: FloatProperty(
+        name="中线阈值",
+        description="对称操作时，若某顶点到最近的左右 fan 的方向得分差小于该阈值，"
+                    "判定它落在中线上，强制把权重在这些 fan 之间均分，避免中线顶点"
+                    "被随机分到某一侧（0 = 关闭，仅严格相等才均分）",
+        default=0.02,
+        min=0.0,
+        soft_max=0.2,
+        update=_fan_single_preview_update,
+    )  # type: ignore
     bone_collection_name: StringProperty(
         name="骨骼集合",
         description="生成的 fan 骨所属的骨骼集合名称",
@@ -421,6 +431,350 @@ class BoneFanSingleCore(BoneFanCore):
             result["processed_fans"] += obj_result.get("processed_fans", 0)
             result["processed_vertices"] += obj_result["processed_vertices"]
         return result
+
+    @classmethod
+    def apply_fan_weights_multi(
+        cls,
+        context,
+        armature,
+        sites_spec,
+        radius_factor,
+        blur_factor,
+        only_selected,
+        midline_threshold=0.0,
+    ):
+        """对称感知的权重转移：把多个 fan 站点（site）放在一起做一次分割。
+
+        每个 site 是一对（上级骨, 主骨）及其 fan 骨。多个 site 可能共享同一根
+        上级骨（典型：左右肢共用中线父骨，如 Hips / Spine / Chest）。这时两侧的
+        关节球在中线附近会重叠，独立分两遍处理会让后处理的一侧读到已被前一遍
+        改写过的父骨权重，导致左右不对称、且结果依赖处理顺序。
+
+        这里改成：对原始权重做一次快照，再把父骨通道的权重在“所有覆盖该顶点的
+        site”之间按到各关节的反距离平方切分，最后在每个 site 内部交给最近的
+        fan。结果对称、与处理顺序无关，且父骨通道总量守恒。
+        """
+        sites = []
+        for spec in sites_spec:
+            main_bone = armature.data.edit_bones.get(spec["main_name"])
+            parent_bone = armature.data.edit_bones.get(spec["parent_name"])
+            if main_bone is None or parent_bone is None:
+                raise Exception("找不到主骨或其父级骨")
+            frame, error = cls._resolve_single_frame(
+                armature, main_bone, parent_bone, spec["virtual_dir_world"],
+            )
+            if error:
+                raise Exception(error)
+            sites.append({
+                "source_names": [spec["parent_name"], spec["main_name"]],
+                "fan_names": list(spec["fan_names"]),
+                "frame": frame,
+            })
+
+        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        if only_selected:
+            mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
+        if not mesh_objs:
+            raise Exception("没有找到网格物体")
+
+        result = {"processed_objects": 0, "processed_sources": 0, "processed_fans": 0, "processed_vertices": 0}
+        for obj in mesh_objs:
+            obj_result = cls._transfer_fan_weights_multi_for_object(
+                obj, armature, sites, radius_factor, blur_factor, midline_threshold,
+            )
+            result["processed_objects"] += obj_result["processed_objects"]
+            result["processed_sources"] += obj_result["processed_sources"]
+            result["processed_fans"] += obj_result.get("processed_fans", 0)
+            result["processed_vertices"] += obj_result["processed_vertices"]
+        return result
+
+    @classmethod
+    def _transfer_fan_weights_multi_for_object(
+        cls,
+        obj,
+        armature,
+        sites,
+        radius_factor,
+        blur_factor,
+        midline_threshold=0.0,
+    ):
+        """把多个 site 的权重放在一次快照里转移，保证共享父骨通道左右对称、守恒。
+
+        与父类逐对处理的区别：
+        - 原始权重只读一次（快照），所有 site 共用，避免顺序依赖。
+        - 按“真实顶点组”而非“站点”聚合通道：共享父骨的所有 fan（跨左右两侧）
+          属于同一个通道，重叠区里某顶点的父骨权重只交给方向最近的那一根 fan。
+        """
+        mw3 = armature.matrix_world.to_3x3()
+
+        # --- 解析每个 site 的几何 ---------------------------------------
+        site_infos = []
+        for site in sites:
+            frame = site["frame"]
+            joint_world = armature.matrix_world @ frame["joint"]
+            plane_normal_world = _safe_normalized_vector(mw3 @ frame["plane_normal"])
+            parent_dir_world = _safe_normalized_vector(mw3 @ frame["parent_dir"])
+            child_dir_world = _safe_normalized_vector(mw3 @ frame["child_dir"])
+            radius = max(frame["base_length"] * radius_factor, EPS)
+            site_infos.append({
+                "source_names": site["source_names"],
+                "parent_name": site["source_names"][0],
+                "child_name": site["source_names"][1],
+                "fan_names": site["fan_names"],
+                "joint_world": joint_world,
+                "plane_normal_world": plane_normal_world,
+                "parent_dir_world": parent_dir_world,
+                "child_dir_world": child_dir_world,
+                "radius": radius,
+            })
+
+        # --- 收集 fan 骨：方向投影到各自 site 的弯折平面，归属到真实顶点组通道 ---
+        edit_bones = armature.data.edit_bones
+        fan_items = []
+        for site_idx, info in enumerate(site_infos):
+            plane_normal_world = info["plane_normal_world"]
+            parent_dir_world = info["parent_dir_world"]
+            child_dir_world = info["child_dir_world"]
+            for fan_name in info["fan_names"]:
+                parsed = cls._parse_fan_name(fan_name)
+                fan_bone = edit_bones.get(fan_name)
+                if parsed is None or fan_bone is None:
+                    continue
+                fan_dir = _safe_normalized_vector(mw3 @ (fan_bone.tail - fan_bone.head))
+                if fan_dir is None:
+                    continue
+                if plane_normal_world is not None:
+                    fan_dir = _safe_normalized_vector(
+                        fan_dir - plane_normal_world * fan_dir.dot(plane_normal_world)
+                    )
+                    if fan_dir is None:
+                        continue
+                # 决定这根 fan 刚性跟随哪根骨（即它从哪个权重通道接收权重）。
+                fan_src = None
+                parent_eb = getattr(fan_bone, "parent", None)
+                if parent_eb is not None and parent_eb.name in info["source_names"]:
+                    fan_src = parent_eb.name
+                if fan_src is None and parent_dir_world is not None and child_dir_world is not None:
+                    fan_src = (
+                        info["parent_name"]
+                        if fan_dir.dot(parent_dir_world) >= fan_dir.dot(child_dir_world)
+                        else info["child_name"]
+                    )
+                if fan_src is None:
+                    fan_src = info["parent_name"]
+                fan_items.append({
+                    "name": fan_name,
+                    "src": fan_src,
+                    "site_idx": site_idx,
+                    "dir": fan_dir,
+                })
+
+        if not fan_items:
+            return {"processed_sources": 0, "processed_fans": 0, "processed_vertices": 0, "processed_objects": 0}
+
+        all_indices = [v.index for v in obj.data.vertices]
+        num_vertices = len(all_indices)
+        if num_vertices == 0:
+            return {"processed_sources": 0, "processed_fans": 0, "processed_vertices": 0, "processed_objects": 0}
+
+        world_co = [obj.matrix_world @ v.co for v in obj.data.vertices]
+
+        # --- 快照所有相关源顶点组（每个组只读一次）----------------------
+        source_names = []
+        for info in site_infos:
+            for name in info["source_names"]:
+                if name not in source_names:
+                    source_names.append(name)
+
+        source_groups = {}
+        source_weights = {}
+        for source_name in source_names:
+            source_vg = obj.vertex_groups.get(source_name)
+            if source_vg is None:
+                continue
+            weights = [0.0] * num_vertices
+            has_any = False
+            for i in range(num_vertices):
+                try:
+                    w = source_vg.weight(i)
+                except RuntimeError:
+                    w = 0.0
+                weights[i] = w
+                if w > 0.0:
+                    has_any = True
+            if not has_any:
+                continue
+            source_groups[source_name] = source_vg
+            source_weights[source_name] = weights
+
+        if not source_groups:
+            return {"processed_sources": 0, "processed_fans": 0, "processed_vertices": 0, "processed_objects": 0}
+
+        present_sources = list(source_groups.keys())
+        processed_sources = len(present_sources)
+
+        orig_total = [0.0] * num_vertices
+        for source_name in present_sources:
+            sw = source_weights[source_name]
+            for i in range(num_vertices):
+                orig_total[i] += sw[i]
+
+        # --- 准备 fan 顶点组与工作缓冲 ----------------------------------
+        fan_groups = {}
+        fan_weights = {}
+        for item in fan_items:
+            fan_vg = obj.vertex_groups.get(item["name"])
+            if fan_vg is None:
+                fan_vg = obj.vertex_groups.new(name=item["name"])
+            fan_vg.remove(all_indices)
+            fan_groups[item["name"]] = fan_vg
+            fan_weights[item["name"]] = [0.0] * num_vertices
+        processed_fans = len(fan_groups)
+
+        main_weights = {name: source_weights[name][:] for name in present_sources}
+
+        # 按真实通道（源顶点组）聚合 fan：共享父骨的左右 fan 进同一个通道。
+        channel_fans = {name: [] for name in present_sources}
+        for item in fan_items:
+            if item["src"] in channel_fans:
+                channel_fans[item["src"]].append(item)
+
+        # --- 阶段 1：硬球分割（跨 site 合并）---------------------------
+        # 每个顶点、每个通道：在“球覆盖该顶点的所有 fan”里选平面内方向最近的那根，
+        # 把整份通道权重交给它。共享父骨的重叠区因此对称、与处理顺序无关。
+        #
+        # 中线均分：恰好落在中线上的顶点，到左右最近 fan 的方向得分几乎相等，
+        # 单纯取最大值会被浮点噪声随机分到某一侧。这里把得分在 best - 阈值 以内的
+        # 候选 fan 都视为“并列最近”，把通道权重在它们之间均分，保证中线对称。
+        touched_vertices = 0
+        core_vertices = []
+        for i in range(num_vertices):
+            if orig_total[i] <= 0.0:
+                continue
+
+            touched = False
+            for source_name in present_sources:
+                ws = source_weights[source_name][i]
+                if ws <= 0.0:
+                    continue
+
+                candidates = []
+                best_score = -2.0
+                for item in channel_fans[source_name]:
+                    info = site_infos[item["site_idx"]]
+                    rel = world_co[i] - info["joint_world"]
+                    if rel.length > info["radius"]:
+                        continue
+                    plane_normal_world = info["plane_normal_world"]
+                    vec = rel
+                    if plane_normal_world is not None:
+                        vec = vec - plane_normal_world * vec.dot(plane_normal_world)
+                    vdir = _safe_normalized_vector(vec)
+                    score = 1.0 if vdir is None else item["dir"].dot(vdir)
+                    candidates.append((score, item["name"]))
+                    if score > best_score:
+                        best_score = score
+                if not candidates:
+                    continue
+
+                # best - 阈值 以内的候选并列为“最近”，均分通道权重。
+                winners = [name for score, name in candidates if best_score - score <= midline_threshold]
+                if not winners:
+                    continue
+                share = ws / len(winners)
+                for name in winners:
+                    fan_weights[name][i] += share
+                main_weights[source_name][i] = 0.0
+                touched = True
+
+            if touched:
+                core_vertices.append(i)
+                touched_vertices += 1
+
+        # --- 阶段 2：整体模糊 -----------------------------------------
+        iterations = int(round(_clamp(blur_factor, 0.0, 1.0) * cls._MAX_BLUR_ITERATIONS))
+        if iterations > 0 and core_vertices:
+            adjacency = cls._build_vertex_adjacency(obj, num_vertices)
+
+            in_region = [False] * num_vertices
+            frontier = list(core_vertices)
+            for v in frontier:
+                in_region[v] = True
+            for _ in range(iterations):
+                next_frontier = []
+                for v in frontier:
+                    for nb in adjacency[v]:
+                        if not in_region[nb]:
+                            in_region[nb] = True
+                            next_frontier.append(nb)
+                if not next_frontier:
+                    break
+                frontier = next_frontier
+            region = [i for i in range(num_vertices) if in_region[i]]
+
+            buffers = [main_weights[name] for name in present_sources]
+            buffers += [fan_weights[item["name"]] for item in fan_items]
+
+            lam = cls._BLUR_LAMBDA
+            for _ in range(iterations):
+                updates = []
+                for i in region:
+                    nbs = adjacency[i]
+                    if not nbs:
+                        continue
+                    inv = 1.0 / len(nbs)
+                    row = []
+                    for buf in buffers:
+                        neighbor_avg = 0.0
+                        for nb in nbs:
+                            neighbor_avg += buf[nb]
+                        neighbor_avg *= inv
+                        row.append(buf[i] + lam * (neighbor_avg - buf[i]))
+                    updates.append((i, row))
+                for i, row in updates:
+                    for b, value in enumerate(row):
+                        buffers[b][i] = value
+
+            # 按通道（真实源顶点组）重新归一化，保证总量守恒。
+            for source_name in present_sources:
+                orig_s = source_weights[source_name]
+                chan_buffers = [main_weights[source_name]]
+                chan_buffers += [fan_weights[item["name"]] for item in channel_fans[source_name]]
+                for i in region:
+                    if orig_s[i] <= EPS:
+                        for buf in chan_buffers:
+                            buf[i] = 0.0
+                        continue
+                    s = 0.0
+                    for buf in chan_buffers:
+                        s += buf[i]
+                    if s <= EPS:
+                        continue
+                    scale = orig_s[i] / s
+                    for buf in chan_buffers:
+                        buf[i] *= scale
+
+        # --- 写回结果 -------------------------------------------------
+        for source_name in present_sources:
+            source_vg = source_groups[source_name]
+            source_vg.remove(all_indices)
+            weights = main_weights[source_name]
+            for i in range(num_vertices):
+                if weights[i] > 0.0:
+                    source_vg.add([i], weights[i], "REPLACE")
+
+        for fan_name, fan_vg in fan_groups.items():
+            weights = fan_weights[fan_name]
+            for i in range(num_vertices):
+                if weights[i] > 0.0:
+                    fan_vg.add([i], weights[i], "REPLACE")
+
+        return {
+            "processed_sources": processed_sources,
+            "processed_fans": processed_fans,
+            "processed_vertices": touched_vertices,
+            "processed_objects": 1 if processed_sources > 0 else 0,
+        }
 
 
 class BoneFanSinglePreview:
@@ -766,6 +1120,10 @@ def drawBoneFanSinglePanel(layout: UILayout, context: Context):
     sub.prop(settings, "fan_weight_radius")
     sub.prop(settings, "fan_weight_blur")
 
+    mid = sub.column(align=True)
+    mid.enabled = settings.process_symmetry
+    mid.prop(settings, "midline_threshold")
+
 
 class OP_FanSingleGenerate(Operator):
     bl_idname = "ho.fan_single_generate"
@@ -843,6 +1201,7 @@ class OP_FanSingleGenerate(Operator):
 
             total_created = 0
             total_weight_objects = 0
+            weight_sites = []
             for parent_name, this_main in pairs:
                 created_names = []
                 for fan_kind, count in fan_kinds:
@@ -862,18 +1221,26 @@ class OP_FanSingleGenerate(Operator):
                 total_created += len(created_names)
 
                 if settings.auto_transfer_weights and created_names:
-                    weight_result = BoneFanSingleCore.apply_fan_weights_single(
-                        context,
-                        armature,
-                        this_main,
-                        parent_name,
-                        virtual_dir,
-                        created_names,
-                        settings.fan_weight_radius,
-                        settings.fan_weight_blur,
-                        settings.only_selected,
-                    )
-                    total_weight_objects += weight_result["processed_objects"]
+                    weight_sites.append({
+                        "main_name": this_main,
+                        "parent_name": parent_name,
+                        "virtual_dir_world": virtual_dir,
+                        "fan_names": created_names,
+                    })
+
+            # 权重转移：所有 site 放在一次快照里做，保证共享父骨（如中线 Hips /
+            # Spine）的左右切分对称、与处理顺序无关、且通道总量守恒。
+            if weight_sites:
+                weight_result = BoneFanSingleCore.apply_fan_weights_multi(
+                    context,
+                    armature,
+                    weight_sites,
+                    settings.fan_weight_radius,
+                    settings.fan_weight_blur,
+                    settings.only_selected,
+                    settings.midline_threshold if settings.process_symmetry else 0.0,
+                )
+                total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
                 BoneSplitCore.set_object_mode(armature, original_mode)
