@@ -1,14 +1,12 @@
 import bpy
 from bpy.types import Context, Operator, PropertyGroup, UILayout
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty, FloatVectorProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty, FloatVectorProperty, EnumProperty
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
-from .boneTwist import TwistBoneCore
 from .boneFan import (
     BoneFanCore,
-    FanRemovalBlockedError,
     _safe_normalized_vector,
     _clamp,
     _assign_bones_to_collection,
@@ -43,6 +41,14 @@ def _fan_single_preview_update(self, context):
         BoneFanSinglePreview.show(context)
     else:
         BoneFanSinglePreview.clear()
+
+
+def _fan_single_prefix_preset_update(self, context):
+    # 选预设即把对应前缀写入 fan_name_prefix；NONE 不改动，方便手填后保留。
+    preset = getattr(self, "fan_name_prefix_preset", "NONE")
+    if preset and preset != "NONE":
+        self.fan_name_prefix = preset
+    _fan_single_preview_update(self, context)
 
 
 def _fan_single_count_update(self, context):
@@ -197,6 +203,25 @@ class PG_Hotools_FanSingleSettings(PropertyGroup):
         default=HoRig_Fan,
         update=_fan_single_preview_update,
     )  # type: ignore
+    fan_name_prefix_preset: EnumProperty(
+        name="前缀预设",
+        description="常用部位前缀，选中后写入名称前缀",
+        items=[
+            ("NONE", "自定义", "不使用预设，手动填写前缀"),
+            ("pelvis_", "骨盆 pelvis", "骨盆 fan 常用前缀"),
+        ],
+        default="NONE",
+        update=_fan_single_prefix_preset_update,
+    )  # type: ignore
+    fan_name_prefix: StringProperty(
+        name="名称前缀",
+        description=(
+            "fan 骨名前缀。最终名为 前缀+主骨基名+方向标记+序号+本侧.L/R。"
+            "用于一根骨同时向上下游生成 fan 时区分两组、避免命名冲突。留空则沿用原命名。"
+        ),
+        default="",
+        update=_fan_single_preview_update,
+    )  # type: ignore
 
 
 class BoneFanSingleCore(BoneFanCore):
@@ -324,6 +349,7 @@ class BoneFanSingleCore(BoneFanCore):
         pin_length_factor,
         bone_collection_name=HoRig_Fan,
         influence_scale=1.0,
+        name_prefix="",
     ):
         """单骨版本的 fan 骨创建：几何来自虚拟方向，命名跟随主骨。
 
@@ -356,8 +382,8 @@ class BoneFanSingleCore(BoneFanCore):
 
         existed = []
         for i in range(count):
-            fan_name = cls._fan_name(main_name, fan_kind, i + 1, padding)
-            pin_name = cls._fan_pin_name(main_name, fan_kind, i + 1, padding)
+            fan_name = cls._fan_name(main_name, fan_kind, i + 1, padding, name_prefix)
+            pin_name = cls._fan_pin_name(main_name, fan_kind, i + 1, padding, name_prefix)
             if edit_bones.get(fan_name) is not None:
                 existed.append(fan_name)
             if edit_bones.get(pin_name) is not None:
@@ -371,8 +397,8 @@ class BoneFanSingleCore(BoneFanCore):
         start_dir = parent_dir if fan_kind == "in" else -parent_dir
 
         for i in range(1, count + 1):
-            fan_name = cls._fan_name(main_name, fan_kind, i, padding)
-            pin_name = cls._fan_pin_name(main_name, fan_kind, i, padding)
+            fan_name = cls._fan_name(main_name, fan_kind, i, padding, name_prefix)
+            pin_name = cls._fan_pin_name(main_name, fan_kind, i, padding, name_prefix)
             direction = cls._rotate_vector_around_axis(start_dir, plane_normal, step * i)
             if direction is None:
                 raise Exception(f"生成 {fan_name} 失败")
@@ -1130,13 +1156,16 @@ def drawBoneFanSinglePanel(layout: UILayout, context: Context):
         icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
         emboss=False,
     )
-    header.label(text="单骨 fan")
+    header.label(text="fan自由体积保持")
 
     row = header.row(align=True)
-    row.operator(OP_FanSingleGenerate.bl_idname, text="生成 fan 骨")
+    row.operator(OP_FanSingleGenerate.bl_idname, text="生成")
     row.operator(OP_RemoveFanSingleBone.bl_idname, text="安全移除")
 
-    header.prop(
+
+    row = header.row(align=True)
+    row.alert = settings.preview_enabled
+    row.prop(
         settings,
         "preview_enabled",
         text="",
@@ -1145,8 +1174,14 @@ def drawBoneFanSinglePanel(layout: UILayout, context: Context):
 
     if not settings.ui_expanded:
         return
-
+    
     col = box.column(align=True)
+    
+    prefix_row = col.row(align=True)
+    prefix_row.label(text="名称前缀")
+    prefix_row.prop(settings, "fan_name_prefix_preset", text="")
+    prefix_row.prop(settings, "fan_name_prefix", text="")
+
     col.separator()
     col.prop(settings, "virtual_direction")
 
@@ -1280,6 +1315,7 @@ class OP_FanSingleGenerate(Operator):
                             settings.pin_length_factor,
                             settings.bone_collection_name,
                             settings.influence_in if fan_kind == "in" else settings.influence_out,
+                            settings.fan_name_prefix,
                         )
                     )
                 total_created += len(created_names)

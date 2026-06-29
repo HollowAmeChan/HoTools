@@ -1,6 +1,6 @@
 ﻿import bpy
 from bpy.types import Context, Operator, PropertyGroup, UILayout
-from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, PointerProperty, EnumProperty
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
@@ -55,6 +55,14 @@ def _fan_preview_update(self, context):
         BoneFanPreview.show(context)
     else:
         BoneFanPreview.clear()
+
+
+def _fan_prefix_preset_update(self, context):
+    # 选预设即把对应前缀写入 fan_name_prefix；NONE 不改动，方便手填后保留。
+    preset = getattr(self, "fan_name_prefix_preset", "NONE")
+    if preset and preset != "NONE":
+        self.fan_name_prefix = preset
+    _fan_preview_update(self, context)
 
 
 def _fan_count_update(self, context):
@@ -190,6 +198,27 @@ class PG_Hotools_FanSettings(PropertyGroup):
         default=HoRig_Fan,
         update=_fan_preview_update,
     )  # type: ignore
+    fan_name_prefix_preset: EnumProperty(
+        name="前缀预设",
+        description="常用部位前缀，选中后写入名称前缀",
+        items=[
+            ("NONE", "自定义", "不使用预设，手动填写前缀"),
+            ("elbow_", "手肘 elbow", "手肘 fan 常用前缀"),
+            ("knee_", "膝盖 knee", "膝盖 fan 常用前缀"),
+        ],
+        default="NONE",
+        update=_fan_prefix_preset_update,
+    )  # type: ignore
+    fan_name_prefix: StringProperty(
+        name="名称前缀",
+        description=(
+            "fan 骨名前缀。最终名为 前缀+主骨基名+方向标记+序号+本侧.L/R。"
+            "用于一根骨同时向上下游生成 fan 时区分两组、避免命名冲突。留空则沿用原命名。"
+        ),
+        default="",
+        update=_fan_preview_update,
+    )  # type: ignore
+
 
 
 def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
@@ -254,8 +283,14 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
 
     if not settings.ui_expanded:
         return
-
+    
     col = fan_box.column(align=True)
+
+    prefix_row = col.row(align=True)
+    prefix_row.label(text="名称前缀")
+    prefix_row.prop(settings, "fan_name_prefix_preset", text="")
+    prefix_row.prop(settings, "fan_name_prefix", text="")
+
     col.separator()
     row = col.row(align=True)
     row.prop(settings, "generate_in", toggle=True)
@@ -631,16 +666,18 @@ class BoneFanCore:
         return []
 
     @staticmethod
-    def _fan_name(base_name: str, fan_kind: str, index: int, padding: int) -> str:
+    def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
+        # base_name 提供基名与本侧 .L/.R 后缀；prefix 是用户自定义前缀，拼在最前。
+        # 后缀必须留在最末，方便对称时左右各读自己的 .L/.R，也方便解析时先剥离。
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
         marker = "_fan_in_" if fan_kind == "in" else "_fan_out_"
-        return f"{stem}{marker}{index:0{padding}d}{side_suffix}"
+        return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
-    def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int) -> str:
+    def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
         marker = "_fan_pin_in_" if fan_kind == "in" else "_fan_pin_out_"
-        return f"{stem}{marker}{index:0{padding}d}{side_suffix}"
+        return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
     def _parse_fan_name(name: str):
@@ -1279,6 +1316,7 @@ class BoneFanCore:
         pin_length_factor: float,
         bone_collection_name: str = HoRig_Fan,
         influence_scale: float = 1.0,
+        name_prefix: str = "",
     ) -> list[str]:
         if len(selected_names) != 2:
             raise Exception("请正好选择两根骨骼")
@@ -1310,8 +1348,8 @@ class BoneFanCore:
 
         existed = []
         for i in range(count):
-            fan_name = cls._fan_name(parent_bone.name, fan_kind, i + 1, padding)
-            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i + 1, padding)
+            fan_name = cls._fan_name(parent_bone.name, fan_kind, i + 1, padding, name_prefix)
+            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i + 1, padding, name_prefix)
             if edit_bones.get(fan_name) is not None:
                 existed.append(fan_name)
             if edit_bones.get(pin_name) is not None:
@@ -1326,8 +1364,8 @@ class BoneFanCore:
         start_dir = parent_dir if fan_kind == "in" else -parent_dir
 
         for i in range(1, count + 1):
-            fan_name = cls._fan_name(parent_bone.name, fan_kind, i, padding)
-            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i, padding)
+            fan_name = cls._fan_name(parent_bone.name, fan_kind, i, padding, name_prefix)
+            pin_name = cls._fan_pin_name(parent_bone.name, fan_kind, i, padding, name_prefix)
             direction = cls._rotate_vector_around_axis(
                 start_dir,
                 plane_normal,
@@ -1413,6 +1451,13 @@ class BoneFanCore:
             pin_parsed = cls._parse_fan_pin_name(bone.name)
             if parsed is None and pin_parsed is None:
                 continue
+            # 优先用 fan/pin 骨真实的 edit-bone 父级判断归属：父级必是当初选中的
+            # 主骨对之一，与名字里的自定义前缀无关，所以自定义命名后依然能正确收集。
+            parent_bone = getattr(bone, "parent", None)
+            if parent_bone is not None and parent_bone.name in selected_set:
+                removal.add(bone.name)
+                continue
+            # 回退：老数据或父级丢失时，仍按名字里解析出的基名匹配（兼容无前缀）。
             base_name = parsed["base_name"] if parsed is not None else pin_parsed["base_name"]
             if base_name in selected_set:
                 removal.add(bone.name)
@@ -1644,6 +1689,7 @@ class OP_FanGenerate(Operator):
                             settings.pin_length_factor,
                             settings.bone_collection_name,
                             settings.influence_in if fan_kind == "in" else settings.influence_out,
+                            settings.fan_name_prefix,
                         )
                     )
                 total_created += len(created_names)
