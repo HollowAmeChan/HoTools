@@ -215,10 +215,10 @@ def drawBoneFanPanel(layout: UILayout, context: Context):
         icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
         emboss=False,
     )
-    header.label(text="fan骨")
+    header.label(text="fan关节体积保持")
 
     row = header.row(align=True)
-    row.operator(OP_FanGenerate.bl_idname, text="生成 fan 骨")
+    row.operator(OP_FanGenerate.bl_idname, text="生成")
     row.operator(OP_RemoveFanBone.bl_idname, text="安全移除")
     
     row = header.row(align=True)

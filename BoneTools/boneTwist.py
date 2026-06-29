@@ -510,10 +510,10 @@ def drawBoneTwistPanel(layout: UILayout, context: Context):
         icon="TRIA_DOWN" if settings.ui_expanded else "TRIA_RIGHT",
         emboss=False,
     )
-    header.label(text="twist骨")
+    header.label(text="twist扭转柔性跟随")
 
     row = header.row(align=True)
-    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成 Twist 骨")
+    row.operator(OP_TwistBoneWithWeight.bl_idname, text="生成")
     row.operator(OP_RemoveTwistBoneWithWeight.bl_idname, text="安全移除")
 
     row = header.row(align=True)
