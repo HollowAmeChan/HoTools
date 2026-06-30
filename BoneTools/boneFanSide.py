@@ -294,7 +294,7 @@ class BoneFanSideCore(BoneFanSingleCore):
     def _side_fan_directions(frame, count, spread_factor):
         """返回 [(direction, kind, index), ...]：左右两簇，各绕 spread_axis 上下展开。
 
-        左簇以 +lateral 为中心（标记 out），右簇以 -lateral 为中心（标记 in）。
+        左簇以 +lateral 为中心（标记 left），右簇以 -lateral 为中心（标记 right）。
         每簇 count 根（count 即每侧数量），绕 spread_axis 在 [-half, +half] 内对称分布；
         half = 展开系数 × 45°。index 在簇内按顺序 1..M，配合约束强度公式中间高两端低。
         """
@@ -309,7 +309,7 @@ class BoneFanSideCore(BoneFanSingleCore):
             return [-half + (2.0 * half) * j / (per_side - 1) for j in range(per_side)]
 
         results = []
-        for center, kind in ((lateral, "out"), (-lateral, "in")):
+        for center, kind in ((lateral, "left"), (-lateral, "right")):
             for idx, angle in enumerate(_angles(), start=1):
                 direction = BoneFanCore._rotate_vector_around_axis(center, spread_axis, angle)
                 direction = _safe_normalized_vector(direction)
@@ -650,12 +650,10 @@ class BoneFanSidePreview:
 
         mw3 = armature.matrix_world.to_3x3()
         joint_world = armature.matrix_world @ frame["joint"]
-        parent_dir_world = _safe_normalized_vector(mw3 @ frame["parent_dir"])
-        child_dir_world = _safe_normalized_vector(mw3 @ frame["child_dir"])
         lateral_world = _safe_normalized_vector(mw3 @ frame["lateral"])
         bone_axis_world = _safe_normalized_vector(mw3 @ frame["bone_axis"])
         spread_axis_world = _safe_normalized_vector(mw3 @ frame["spread_axis"])
-        if None in (parent_dir_world, child_dir_world, lateral_world, bone_axis_world, spread_axis_world):
+        if None in (lateral_world, bone_axis_world, spread_axis_world):
             return
 
         radius_factor = float(getattr(settings, "fan_weight_radius", 0.16)) if settings is not None else 0.16
@@ -681,20 +679,14 @@ class BoneFanSidePreview:
             _append_circle(sphere_lines, joint_world, lateral_world, spread_axis_world, sphere_radius)
             _append_circle(sphere_lines, joint_world, bone_axis_world, spread_axis_world, sphere_radius)
 
-        parent_line = [tuple(joint_world), tuple(joint_world + parent_dir_world * spoke_len * 1.4)]
-        child_line = [tuple(joint_world), tuple(joint_world + child_dir_world * spoke_len * 1.4)]
-        # 左右对称轴参考
-        axis_line = [tuple(joint_world - lateral_world * spoke_len * 0.6),
-                     tuple(joint_world + lateral_world * spoke_len * 0.6)]
-
         per_side = max(1, count)
         half = max(spread_factor, EPS) * radians(45.0)
         if per_side == 1:
             angles = [0.0]
         else:
             angles = [-half + (2.0 * half) * j / (per_side - 1) for j in range(per_side)]
-        left_spokes = []   # +lateral 簇 (out)
-        right_spokes = []  # -lateral 簇 (in)
+        left_spokes = []   # +lateral 簇 (left)
+        right_spokes = []  # -lateral 簇 (right)
         for center, target in ((lateral_world, left_spokes), (-lateral_world, right_spokes)):
             for angle in angles:
                 d = BoneFanCore._rotate_vector_around_axis(center, spread_axis_world, angle)
@@ -708,15 +700,6 @@ class BoneFanSidePreview:
             b = batch_for_shader(shader, "LINES", {"pos": sphere_lines})
             shader.uniform_float("color", (0.2, 0.9, 1.0, 0.95))
             b.draw(shader)
-        b = batch_for_shader(shader, "LINES", {"pos": parent_line})
-        shader.uniform_float("color", (1.0, 0.3, 0.9, 0.95))
-        b.draw(shader)
-        b = batch_for_shader(shader, "LINES", {"pos": child_line})
-        shader.uniform_float("color", (0.95, 0.95, 0.95, 0.85))
-        b.draw(shader)
-        b = batch_for_shader(shader, "LINES", {"pos": axis_line})
-        shader.uniform_float("color", (0.5, 0.7, 1.0, 0.8))
-        b.draw(shader)
         if left_spokes:
             b = batch_for_shader(shader, "LINES", {"pos": left_spokes})
             shader.uniform_float("color", (0.35, 0.95, 0.55, 0.95))

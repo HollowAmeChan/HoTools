@@ -665,24 +665,39 @@ class BoneFanCore:
 
         return []
 
+    # 方向标记表：除了普通 fan 的 in/out，侧向 fan 用 left/right。
+    # 顺序无所谓，解析时遍历全部。新增方向只要在这里加一项即可。
+    _FAN_MARKERS = (
+        ("in", "_fan_in_"),
+        ("out", "_fan_out_"),
+        ("left", "_fan_left_"),
+        ("right", "_fan_right_"),
+    )
+    _FAN_PIN_MARKERS = (
+        ("in", "_fan_pin_in_"),
+        ("out", "_fan_pin_out_"),
+        ("left", "_fan_pin_left_"),
+        ("right", "_fan_pin_right_"),
+    )
+
     @staticmethod
     def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
         # base_name 提供基名与本侧 .L/.R 后缀；prefix 是用户自定义前缀，拼在最前。
         # 后缀必须留在最末，方便对称时左右各读自己的 .L/.R，也方便解析时先剥离。
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
-        marker = "_fan_in_" if fan_kind == "in" else "_fan_out_"
+        marker = dict(BoneFanCore._FAN_MARKERS).get(fan_kind, "_fan_out_")
         return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
     def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
-        marker = "_fan_pin_in_" if fan_kind == "in" else "_fan_pin_out_"
+        marker = dict(BoneFanCore._FAN_PIN_MARKERS).get(fan_kind, "_fan_pin_out_")
         return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
     def _parse_fan_name(name: str):
         stem, side_suffix = TwistBoneCore._split_side_suffix(name)
-        for fan_kind, marker in (("in", "_fan_in_"), ("out", "_fan_out_")):
+        for fan_kind, marker in BoneFanCore._FAN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
                 continue
@@ -706,7 +721,7 @@ class BoneFanCore:
     @staticmethod
     def _parse_fan_pin_name(name: str):
         stem, side_suffix = TwistBoneCore._split_side_suffix(name)
-        for fan_kind, marker in (("in", "_fan_pin_in_"), ("out", "_fan_pin_out_")):
+        for fan_kind, marker in BoneFanCore._FAN_PIN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
                 continue
