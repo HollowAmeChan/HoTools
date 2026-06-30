@@ -17,7 +17,12 @@
       "Bash(python -m py_compile BoneTools/boneSplit.py)",
       "Bash(python -m py_compile BoneTools/boneDissolve.py)",
       "Bash(python -m py_compile boneUtils.py boneSplit.py boneDissolve.py boneTwist.py boneFan.py boneFanSingle.py boneFanSide.py)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(sed -i -E 's/\\\\b\\(BoneFanCore|BoneFanSideCore|BoneFanSingleCore|TwistBoneCore\\)\\\\._selected_bone_names\\\\\\(/BoneUtils.selected_bone_names\\(/g' boneFan.py boneFanSide.py boneFanSingle.py boneTwist.py)",
+      "Bash(sed -i -E 's/\\(^|[^.\\\\w]\\)_assign_bones_to_collection\\\\\\(/\\\\1BoneUtils.assign_bones_to_collection\\(/g' boneFan.py boneFanSide.py boneFanSingle.py)",
+      "Bash(sed -i -E 's/\\\\bTwistBoneCore\\\\._assign_bones_to_collection\\\\\\(/BoneUtils.assign_bones_to_collection\\(/g' boneTwist.py)",
+      "Bash(sed -i 's/BoneFanCore\\\\._selected_bones\\(/BoneUtils.selected_bones\\(/g' boneFan.py)",
+      "Bash(sed -i 's/cls\\\\._bone_head_tail\\(/BoneUtils.bone_head_tail\\(/g' boneFanSide.py)"
     ]
   }
 }

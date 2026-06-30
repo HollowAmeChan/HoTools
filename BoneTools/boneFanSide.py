@@ -4,13 +4,11 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneSplit import BoneSplitCore
 from .boneUtils import BoneUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
     _clamp,
-    _assign_bones_to_collection,
     EPS,
     HoRig_Fan,
 )
@@ -214,17 +212,6 @@ class BoneFanSideCore(BoneFanSingleCore):
 
     _LATERAL_DEGENERATE = 0.999
 
-    @staticmethod
-    def _bone_head_tail(bone):
-        if hasattr(bone, "head") and hasattr(bone, "tail"):
-            return bone.head.copy(), bone.tail.copy()
-        if hasattr(bone, "bone") and hasattr(bone, "matrix"):
-            rest_bone = bone.bone
-            head = bone.matrix.translation.copy()
-            tail = bone.matrix @ Vector((0.0, rest_bone.length, 0.0))
-            return head, tail
-        raise Exception("不支持的骨骼类型")
-
     @classmethod
     def _resolve_side_frame(cls, armature, bone_a, bone_b):
         """构造稳健的侧向工作面（不因关节共线而拒绝）。"""
@@ -239,8 +226,8 @@ class BoneFanSideCore(BoneFanSingleCore):
         else:
             return None, "两根骨骼必须是直接的父子级关系"
 
-        parent_head, parent_tail = cls._bone_head_tail(parent_bone)
-        child_head, child_tail = cls._bone_head_tail(child_bone)
+        parent_head, parent_tail = BoneUtils.bone_head_tail(parent_bone)
+        child_head, child_tail = BoneUtils.bone_head_tail(child_bone)
         if (parent_tail - child_head).length > tolerance:
             return None, "父子骨骼未相连：父骨末端与子骨头部不重合"
 
@@ -408,7 +395,7 @@ class BoneFanSideCore(BoneFanSingleCore):
 
         bpy.context.view_layer.objects.active = armature
         try:
-            _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneUtils.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(
                 armature,
@@ -514,7 +501,7 @@ class BoneFanSidePreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected = BoneFanSideCore._selected_bone_names(context, armature)
+            selected = BoneUtils.selected_bone_names(context, armature)
             if len(selected) != 2:
                 state["message"] = "请正好选择两根相连的父子骨"
             else:
@@ -828,7 +815,7 @@ class OP_FanSideGenerate(Operator):
             self.report({"ERROR"}, "缺少侧向 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneFanSideCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根相连的父子骨")
             return {"CANCELLED"}
@@ -986,7 +973,7 @@ class OP_RemoveFanSideBone(Operator):
         was_hidden = armature.hide_viewport
         only_selected = self.only_selected
 
-        selected_names = BoneFanSideCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
 
         if was_hidden:
             armature.hide_set(False)

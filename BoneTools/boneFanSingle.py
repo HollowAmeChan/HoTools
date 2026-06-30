@@ -4,13 +4,11 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneSplit import BoneSplitCore
 from .boneUtils import BoneUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
     _clamp,
-    _assign_bones_to_collection,
     EPS,
     HoRig_Fan,
 )
@@ -445,7 +443,7 @@ class BoneFanSingleCore(BoneFanCore):
 
         bpy.context.view_layer.objects.active = armature
         try:
-            _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneUtils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
@@ -904,7 +902,7 @@ class BoneFanSinglePreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected = BoneFanSingleCore._selected_bone_names(context, armature)
+            selected = BoneUtils.selected_bone_names(context, armature)
             if len(selected) != 2:
                 state["message"] = "请正好选择两根骨骼（上级骨 + 主骨）"
             else:
@@ -1274,7 +1272,7 @@ class OP_FanSingleGenerate(Operator):
             self.report({"ERROR"}, "缺少单骨 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneFanSingleCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根骨骼（上级骨 + 主骨）")
             return {"CANCELLED"}
@@ -1462,7 +1460,7 @@ class OP_RemoveFanSingleBone(Operator):
         was_hidden = armature.hide_viewport
         only_selected = self.only_selected
 
-        selected_names = BoneFanSingleCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
 
         if was_hidden:
             armature.hide_set(False)

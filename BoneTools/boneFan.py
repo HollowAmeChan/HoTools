@@ -4,8 +4,6 @@ from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty, 
 from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
-from .boneSplit import BoneSplitCore
-from .boneTwist import TwistBoneCore
 from .boneUtils import BoneUtils
 import gpu
 from gpu_extras.batch import batch_for_shader
@@ -222,39 +220,6 @@ class PG_Hotools_FanSettings(PropertyGroup):
 
 
 
-def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
-    if not collection_name:
-        return None
-
-    collections = getattr(armature.data, "collections", None)
-    if collections is None:
-        return None
-
-    collection = collections.get(collection_name)
-    if collection is None:
-        collection = collections.new(collection_name)
-    return collection
-
-
-def _assign_bones_to_collection(
-    armature: bpy.types.Object,
-    bone_names: list[str],
-    collection_name: str,
-) -> None:
-    collection = _ensure_bone_collection(armature, collection_name)
-    if collection is None:
-        return
-
-    edit_bones = armature.data.edit_bones
-    for bone_name in bone_names:
-        bone = edit_bones.get(bone_name)
-        if bone is None:
-            continue
-        for old_collection in list(bone.collections):
-            old_collection.unassign(bone)
-        collection.assign(bone)
-
-
 def drawBoneFanPanel(layout: UILayout, context: Context):
     settings = context.scene.ho_fan_settings
     fan_box = layout.box()
@@ -371,7 +336,7 @@ class BoneFanPreview:
         if armature is None or armature.type != "ARMATURE":
             state["message"] = "预览需要一个骨架"
         else:
-            selected_bones = BoneFanCore._selected_bones(context, armature)
+            selected_bones = BoneUtils.selected_bones(context, armature)
             if len(selected_bones) != 2:
                 state["message"] = "请正好选择两根骨骼"
             else:
@@ -653,19 +618,6 @@ class BoneFanCore:
             neighbors[b].add(a)
         return [list(group) for group in neighbors]
 
-    @staticmethod
-    def _selected_bones(context: Context, armature: bpy.types.Object):
-        if armature.mode == "POSE":
-            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
-            if pose_bones is None:
-                pose_bones = context.selected_pose_bones or []
-            return [pose_bone for pose_bone in pose_bones if getattr(pose_bone, "bone", None) is not None]
-
-        if armature.mode == "EDIT":
-            return [bone for bone in armature.data.edit_bones if bone.select]
-
-        return []
-
     # 方向标记表：除了普通 fan 的 in/out，侧向 fan 用 left/right。
     # 顺序无所谓，解析时遍历全部。新增方向只要在这里加一项即可。
     _FAN_MARKERS = (
@@ -761,17 +713,6 @@ class BoneFanCore:
             + axis.cross(vector) * sin(angle_rad)
             + axis * axis.dot(vector) * (1.0 - cos(angle_rad))
         )
-
-    @staticmethod
-    def _selected_bone_names(context: Context, armature: bpy.types.Object) -> list[str]:
-        if armature.mode == "POSE":
-            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
-            if pose_bones is None:
-                pose_bones = context.selected_pose_bones or []
-            return [bone.name for bone in pose_bones if getattr(bone, "name", None)]
-        if armature.mode == "EDIT":
-            return [bone.name for bone in armature.data.edit_bones if bone.select]
-        return []
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -1436,7 +1377,7 @@ class BoneFanCore:
 
         bpy.context.view_layer.objects.active = armature
         try:
-            _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
+            BoneUtils.assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneUtils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
@@ -1667,7 +1608,7 @@ class OP_FanGenerate(Operator):
             self.report({"ERROR"}, "缺少 fan 设置")
             return {"CANCELLED"}
 
-        selected_names = BoneFanCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
         if len(selected_names) != 2:
             self.report({"ERROR"}, "请正好选择两根骨骼")
             return {"CANCELLED"}
@@ -1819,7 +1760,7 @@ class OP_RemoveFanBone(Operator):
 
         only_selected = self.only_selected
 
-        selected_names = BoneFanCore._selected_bone_names(context, armature)
+        selected_names = BoneUtils.selected_bone_names(context, armature)
 
         if was_hidden:
             armature.hide_set(False)

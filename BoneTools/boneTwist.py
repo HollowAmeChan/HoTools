@@ -10,7 +10,6 @@ from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
 import blf
 
-from .boneSplit import BoneSplitCore
 from .boneUtils import BoneUtils
 
 
@@ -316,7 +315,7 @@ class TwistBonePreview:
         选中一根主骨；若开启对称处理，则把镜像骨（.L/.R）的圆盘也一并算出，
         这样预览里能直接同时看到两侧。
         """
-        selected = TwistBoneCore._selected_bone_names(context, armature)
+        selected = BoneUtils.selected_bone_names(context, armature)
         if len(selected) != 1:
             return None, "请正好选择一根主骨"
 
@@ -617,14 +616,6 @@ class TwistBoneCore:
         )
 
     @staticmethod
-    def _selected_bone_names(context: Context, armature: bpy.types.Object) -> list[str]:
-        if armature.mode == "POSE":
-            return [bone.name for bone in context.selected_pose_bones]
-        if armature.mode == "EDIT":
-            return [bone.name for bone in armature.data.edit_bones if bone.select]
-        return []
-
-    @staticmethod
     def _apply_hotools_bone_props(
         armature: bpy.types.Object,
         bone_names: list[str],
@@ -655,36 +646,6 @@ class TwistBoneCore:
                         continue
                     ref = aux.sourceBones.add()
                     ref.name = src
-
-
-    @staticmethod
-    def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
-        if not collection_name:
-            return None
-
-        collections = getattr(armature.data, "collections", None)
-        if collections is None:
-            return None
-
-        collection = collections.get(collection_name)
-        if collection is None:
-            collection = collections.new(collection_name)
-        return collection
-
-    @staticmethod
-    def _assign_bones_to_collection(armature: bpy.types.Object, bone_names: list[str], collection_name: str) -> None:
-        collection = TwistBoneCore._ensure_bone_collection(armature, collection_name)
-        if collection is None:
-            return
-
-        edit_bones = armature.data.edit_bones
-        for bone_name in bone_names:
-            bone = edit_bones.get(bone_name)
-            if bone is None:
-                continue
-            for old_collection in list(bone.collections):
-                old_collection.unassign(bone)
-            collection.assign(bone)
 
     @staticmethod
     def _find_copy_rotation_target_bone(
@@ -977,7 +938,7 @@ class TwistBoneCore:
                 new_bone.parent = old_bone
                 new_bone.use_connect = False
 
-            TwistBoneCore._assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
+            BoneUtils.assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
             bpy.context.view_layer.objects.active = armature
             BoneUtils.set_object_mode(armature, "OBJECT")
             # 设置 hotools 属性：取消保留旋转，并写入辅助骨自描述信息
@@ -1802,7 +1763,7 @@ class OP_TwistBoneWithWeight(Operator):
         # 打开弹窗时自动推断目标骨，用户可在弹窗里确认或修改
         armature = context.active_object
         if armature and armature.type == "ARMATURE":
-            selected = TwistBoneCore._selected_bone_names(context, armature)
+            selected = BoneUtils.selected_bone_names(context, armature)
             target = TwistBoneCore._find_copy_rotation_target_bone(armature, selected, "")
             if target:
                 self.copy_rotation_target_bone = target

@@ -1,4 +1,5 @@
 import bpy
+from mathutils import Vector
 
 
 class BoneUtils:
@@ -193,3 +194,90 @@ class BoneUtils:
         """恢复 set_temp_armature_mirror_off 保存的骨架镜像状态。"""
         for _, (owner, value) in mirror_state.items():
             owner.use_mirror_x = value
+
+    @staticmethod
+    def ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
+        """取得指定名字的骨骼集合，没有就新建；集合名为空时返回 None。
+
+        老版本 Blender 没有 armature.data.collections，此时也返回 None。
+        """
+        if not collection_name:
+            return None
+
+        collections = getattr(armature.data, "collections", None)
+        if collections is None:
+            return None
+
+        collection = collections.get(collection_name)
+        if collection is None:
+            collection = collections.new(collection_name)
+        return collection
+
+    @staticmethod
+    def assign_bones_to_collection(
+        armature: bpy.types.Object,
+        bone_names,
+        collection_name: str,
+    ) -> None:
+        """把若干骨骼移入指定集合：先从原集合移除，再加入目标集合（需 EDIT 模式）。"""
+        collection = BoneUtils.ensure_bone_collection(armature, collection_name)
+        if collection is None:
+            return
+
+        edit_bones = armature.data.edit_bones
+        for bone_name in bone_names:
+            bone = edit_bones.get(bone_name)
+            if bone is None:
+                continue
+            for old_collection in list(bone.collections):
+                old_collection.unassign(bone)
+            collection.assign(bone)
+
+    @staticmethod
+    def selected_bone_names(context, armature: bpy.types.Object) -> list[str]:
+        """返回当前选中骨骼的名字列表。
+
+        POSE 模式优先取 selected_pose_bones_from_active_object（多骨架场景下只拿活动
+        骨架的选择），取不到再退回 selected_pose_bones；EDIT 模式遍历 edit_bones 的
+        选中位。其它模式返回空列表。
+        """
+        if armature.mode == "POSE":
+            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
+            if pose_bones is None:
+                pose_bones = context.selected_pose_bones or []
+            return [bone.name for bone in pose_bones if getattr(bone, "name", None)]
+        if armature.mode == "EDIT":
+            return [bone.name for bone in armature.data.edit_bones if bone.select]
+        return []
+
+    @staticmethod
+    def selected_bones(context, armature: bpy.types.Object):
+        """返回当前选中的骨骼对象（而非名字）：POSE 取 pose_bone、EDIT 取 edit_bone。
+
+        与 selected_bone_names 同样的取选规则；POSE 模式过滤掉没有底层 bone 的项。
+        其它模式返回空列表。
+        """
+        if armature.mode == "POSE":
+            pose_bones = getattr(context, "selected_pose_bones_from_active_object", None)
+            if pose_bones is None:
+                pose_bones = context.selected_pose_bones or []
+            return [pb for pb in pose_bones if getattr(pb, "bone", None) is not None]
+        if armature.mode == "EDIT":
+            return [bone for bone in armature.data.edit_bones if bone.select]
+        return []
+
+    @staticmethod
+    def bone_head_tail(bone):
+        """取骨骼的 (head, tail) 世界/编辑坐标副本，兼容 edit_bone 与 pose_bone。
+
+        edit_bone 直接有 head/tail；pose_bone 用其 matrix 与 rest 长度推算尾端。
+        两者都不匹配时抛异常。
+        """
+        if hasattr(bone, "head") and hasattr(bone, "tail"):
+            return bone.head.copy(), bone.tail.copy()
+        if hasattr(bone, "bone") and hasattr(bone, "matrix"):
+            rest_bone = bone.bone
+            head = bone.matrix.translation.copy()
+            tail = bone.matrix @ Vector((0.0, rest_bone.length, 0.0))
+            return head, tail
+        raise Exception("不支持的骨骼类型")
