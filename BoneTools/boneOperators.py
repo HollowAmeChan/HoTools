@@ -448,12 +448,17 @@ class OP_FastCreatPoseAsset(Operator):
         bpy.ops.poselib.create_pose_asset(pose_name = self.pose_name, activate_new_action=False)
         return {'FINISHED'}
 
-def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool) -> tuple[int, int]:
-    """把活动骨架内所有姿态骨的所有约束的 mute 设为 mute。返回 (受影响约束数, 受影响骨数)。"""
+def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool, bone_filter=None) -> tuple[int, int]:
+    """把活动骨架内姿态骨的约束 mute 设为 mute。返回 (受影响约束数, 受影响骨数)。
+
+    bone_filter 为 None 时作用于全部骨；否则只作用于 bone_filter(pose_bone) 为真的骨。
+    """
     constraint_count = 0
     bone_count = 0
     for pose_bone in armature.pose.bones:
         if not pose_bone.constraints:
+            continue
+        if bone_filter is not None and not bone_filter(pose_bone):
             continue
         touched = False
         for constraint in pose_bone.constraints:
@@ -464,6 +469,19 @@ def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool) -> tu
         if touched:
             bone_count += 1
     return constraint_count, bone_count
+
+
+def _is_humanoid_bone(pose_bone) -> bool:
+    """姿态骨是否带 Humanoid 映射（humanoidMapping 非空）。"""
+    props = getattr(pose_bone.bone, "hotools_boneprops", None)
+    return bool(props and getattr(props, "humanoidMapping", "").strip())
+
+
+def _is_aux_bone(pose_bone) -> bool:
+    """姿态骨是否为 HoTools 辅助骨（auxBone.isAuxBone）。"""
+    props = getattr(pose_bone.bone, "hotools_boneprops", None)
+    aux = getattr(props, "auxBone", None) if props else None
+    return bool(aux and aux.isAuxBone)
 
 
 class OP_DisableAllBoneConstraints(Operator):
@@ -508,7 +526,97 @@ class OP_EnableAllBoneConstraints(Operator):
         return {'FINISHED'}
 
 
+class OP_DisableHumanoidBoneConstraints(Operator):
+    bl_idname = "ho.disable_humanoid_bone_constraints"
+    bl_label = "禁用所有Humanoid约束"
+    bl_description = "禁用当前活动骨架内所有带 Humanoid 映射的骨骼的约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, True, _is_humanoid_bone)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要禁用的 Humanoid 约束")
+        else:
+            self.report({'INFO'}, f"已禁用 {bone_count} 根 Humanoid 骨上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
+class OP_EnableHumanoidBoneConstraints(Operator):
+    bl_idname = "ho.enable_humanoid_bone_constraints"
+    bl_label = "启用所有Humanoid约束"
+    bl_description = "启用当前活动骨架内所有带 Humanoid 映射的骨骼的约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, False, _is_humanoid_bone)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要启用的 Humanoid 约束")
+        else:
+            self.report({'INFO'}, f"已启用 {bone_count} 根 Humanoid 骨上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
+class OP_DisableAuxBoneConstraints(Operator):
+    bl_idname = "ho.disable_aux_bone_constraints"
+    bl_label = "禁用所有辅助骨约束"
+    bl_description = "禁用当前活动骨架内所有 HoTools 辅助骨的约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, True, _is_aux_bone)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要禁用的辅助骨约束")
+        else:
+            self.report({'INFO'}, f"已禁用 {bone_count} 根辅助骨上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
+class OP_EnableAuxBoneConstraints(Operator):
+    bl_idname = "ho.enable_aux_bone_constraints"
+    bl_label = "启用所有辅助骨约束"
+    bl_description = "启用当前活动骨架内所有 HoTools 辅助骨的约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, False, _is_aux_bone)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要启用的辅助骨约束")
+        else:
+            self.report({'INFO'}, f"已启用 {bone_count} 根辅助骨上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
+
+    #细分与融并骨骼
+    row = layout.row(align=True)
+    row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
+    row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
+
     scene = context.scene
     obj = context.object
 
@@ -528,16 +636,21 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
         if expanded:
             boneProperty.draw_aux_overview(box, context)
 
-
-     #细分与融并骨骼
-    row = layout.row(align=True)
-    row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
-    row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
-
+    col = layout.column(align=True)
     # 一键开关骨架内所有约束
-    row = layout.row(align=True)
+    row = col.row(align=True)
     row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
     row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
+
+    # 仅 Humanoid 映射骨的约束
+    row = col.row(align=True)
+    row.operator(OP_DisableHumanoidBoneConstraints.bl_idname, text="禁用Humanoid约束")
+    row.operator(OP_EnableHumanoidBoneConstraints.bl_idname, text="启用Humanoid约束")
+
+    # 仅辅助骨的约束
+    row = col.row(align=True)
+    row.operator(OP_DisableAuxBoneConstraints.bl_idname, text="禁用辅助骨约束")
+    row.operator(OP_EnableAuxBoneConstraints.bl_idname, text="启用辅助骨约束")
 
     boneTwist.drawBoneTwistPanel(layout, context)
     boneFan.drawBoneFanPanel(layout, context)
@@ -557,6 +670,10 @@ cls = [
     OP_FastCreatPoseAsset,
     OP_DisableAllBoneConstraints,
     OP_EnableAllBoneConstraints,
+    OP_DisableHumanoidBoneConstraints,
+    OP_EnableHumanoidBoneConstraints,
+    OP_DisableAuxBoneConstraints,
+    OP_EnableAuxBoneConstraints,
 ]
 
 
