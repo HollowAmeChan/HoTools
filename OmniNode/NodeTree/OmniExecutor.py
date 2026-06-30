@@ -711,9 +711,20 @@ class OmniExecutor:
             raise
         finally:
             t = time.perf_counter()
-            OmniRuntimeState.finish_run(runtime_context)
+            OmniRuntimeState.finish_run(runtime_context, phases=phases)
             if phases is not None:
-                phases["[run] finish_run"] = time.perf_counter() - t
+                # finish_run 已写入三个子段；这里用 [finish] other 补齐
+                # 未插桩的部分（失败路径、循环/字典清理开销），
+                # 使 finish_run 被完整分解，且不与子段重复计数。
+                finish_total = time.perf_counter() - t
+                measured = (
+                    phases.get("[finish] committed_ids", 0.0)
+                    + phases.get("[finish] snapshot", 0.0)
+                    + phases.get("[finish] dispose", 0.0)
+                )
+                other = finish_total - measured
+                if other > 0.0:
+                    phases["[finish] other"] = phases.get("[finish] other", 0.0) + other
         if debug:
             print("\n".join(trace))
         return result

@@ -1,4 +1,5 @@
 import uuid
+import time
 
 
 _COMMITTED_CACHE = {}
@@ -278,7 +279,7 @@ def begin_run(root_tree):
     return RuntimeCacheContext(RuntimeCacheRun(root_tree))
 
 
-def finish_run(context):
+def finish_run(context, phases=None):
     if context is None:
         return
 
@@ -297,16 +298,33 @@ def finish_run(context):
         run.deleted_keys.clear()
         return
 
+    # 分段计时：committed_ids 扫描 / snapshot 深拷贝 / dispose 回收，
+    # 用于定位 finish_run 内部的真正大头。
+    t_ids = 0.0
+    t_snapshot = 0.0
+    t_dispose = 0.0
+
+    def _committed_ids_timed():
+        nonlocal t_ids
+        if phases is None:
+            return _committed_value_ids()
+        s = time.perf_counter()
+        r = _committed_value_ids()
+        t_ids += time.perf_counter() - s
+        return r
+
     pending_active_ids = _pending_replace_value_ids(run)
     disposed_seen = set()
 
     for namespace in run.deleted_namespaces:
         values = _COMMITTED_CACHE.pop(namespace, None)
         if values:
-            active_ids = _committed_value_ids()
+            active_ids = _committed_ids_timed()
             active_ids.update(pending_active_ids)
             for value in values.values():
+                s = time.perf_counter()
                 _dispose_cache_value(value, "clear_namespace", disposed_seen, active_ids=active_ids)
+                t_dispose += time.perf_counter() - s
 
     for namespace, keys in run.deleted_keys.items():
         if namespace in run.deleted_namespaces:
@@ -316,30 +334,38 @@ def finish_run(context):
             continue
         for key in keys:
             value = target.pop(key, None)
-            active_ids = _committed_value_ids()
+            active_ids = _committed_ids_timed()
             active_ids.update(pending_active_ids)
+            s = time.perf_counter()
             _dispose_cache_value(value, "delete", disposed_seen, active_ids=active_ids)
+            t_dispose += time.perf_counter() - s
         if not target:
             _COMMITTED_CACHE.pop(namespace, None)
 
-    active_ids = _committed_value_ids()
+    active_ids = _committed_ids_timed()
     active_ids.update(pending_active_ids)
 
     for intent in run.discarded_pending:
+        s = time.perf_counter()
         _dispose_pending_intent(intent, "discard_pending", active_ids=active_ids, seen=disposed_seen)
+        t_dispose += time.perf_counter() - s
 
     for namespace, values in run.pending.items():
         target = _COMMITTED_CACHE.setdefault(namespace, {})
         for key, intent in values.items():
             intent = _decode_write_intent(intent)
             if intent.mode == "replace":
+                s = time.perf_counter()
                 new_value = _snapshot_value(intent.value)
+                t_snapshot += time.perf_counter() - s
                 old_value = target.get(key)
                 target[key] = new_value
                 if old_value is not None and old_value is not new_value:
-                    active_ids = _committed_value_ids()
+                    active_ids = _committed_ids_timed()
                     active_ids.update(pending_active_ids)
+                    s = time.perf_counter()
                     _dispose_cache_value(old_value, "replace", seen=disposed_seen, active_ids=active_ids)
+                    t_dispose += time.perf_counter() - s
                 continue
             if intent.mode == "mutate":
                 if key not in target:
@@ -354,6 +380,11 @@ def finish_run(context):
     run.discarded_pending.clear()
     run.deleted_namespaces.clear()
     run.deleted_keys.clear()
+
+    if phases is not None:
+        phases["[finish] committed_ids"] = phases.get("[finish] committed_ids", 0.0) + t_ids
+        phases["[finish] snapshot"] = phases.get("[finish] snapshot", 0.0) + t_snapshot
+        phases["[finish] dispose"] = phases.get("[finish] dispose", 0.0) + t_dispose
 
 
 def read_cache(context, key):
