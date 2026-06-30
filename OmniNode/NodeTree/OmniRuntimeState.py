@@ -334,9 +334,9 @@ def finish_run(context, phases=None):
         for key, intent in values.items():
             intent = _decode_write_intent(intent)
             if intent.mode == "replace":
-                s = time.perf_counter()
-                new_value = _snapshot_value(intent.value)
-                t_snapshot += time.perf_counter() - s
+                # write_cache 在排入 pending 时已把值拷成缓存私有副本，
+                # 此处直接采用，无需再次深拷贝（消除冗余的提交期快照）。
+                new_value = intent.value
                 old_value = target.get(key)
                 target[key] = new_value
                 if old_value is not None and old_value is not new_value:
