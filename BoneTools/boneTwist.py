@@ -1365,6 +1365,22 @@ class TwistBoneCore:
             )
 
             if process_symmetry:
+                # 对称生成需要方向后缀来区分左右：无后缀的中线骨（如 spine、pelvis）
+                # 翻转后还是自己，镜像不会产生任何对侧骨，对称形同虚设。此时直接报错
+                # 退出，避免用户以为生成了对称骨却没有。
+                suffixless = [
+                    bone_name
+                    for bone_name in bones
+                    if not TwistBoneCore._split_side_suffix(bone_name)[1]
+                ]
+                if suffixless:
+                    raise Exception(
+                        "对称生成需要方向后缀：骨骼 "
+                        + "、".join(suffixless)
+                        + " 没有 .L/.R 等后缀，无法区分镜像生成的左右骨。"
+                        "请选带方向后缀的骨，或关闭对称生成。"
+                    )
+
                 mirrored = []
                 for bone_name in bones:
                     mirrored.extend(

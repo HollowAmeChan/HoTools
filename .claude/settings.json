@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\('BoneTools/boneProperty.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; [py_compile.compile\\('BoneTools/'+f, doraise=True\\) for f in \\('boneFan.py','boneFanSingle.py','boneFanSide.py','boneTwist.py','boneProperty.py'\\)]; print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('BoneTools/boneProperty.py', encoding='utf-8-sig'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile,sys; py_compile.compile\\('BoneTools/boneProperty.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile,sys; [py_compile.compile\\(f,doraise=True\\) for f in ['BoneTools/boneFan.py','BoneTools/boneFanSide.py']]; print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('BoneTools/boneProperty.py',encoding='utf-8'\\).read\\(\\)\\)\")",
+      "Bash(python -m py_compile BoneTools/boneFan.py BoneTools/boneFanSingle.py BoneTools/boneFanSide.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('BoneTools/boneFanSingle.py', encoding='utf-8'\\).read\\(\\)\\)\")",
+      "Bash(python -m py_compile BoneTools/boneFanSingle.py BoneTools/boneFan.py)",
+      "Bash(python -m py_compile BoneTools/boneTwist.py)"
+    ]
+  }
+}

@@ -350,12 +350,16 @@ class BoneFanSingleCore(BoneFanCore):
         bone_collection_name=HoRig_Fan,
         influence_scale=1.0,
         name_prefix="",
+        force_suffix=None,
     ):
-        """单骨版本的 fan 骨创建：几何来自虚拟方向，命名跟随主骨。
+        """单骨版本的 fan 骨创建：几何来自虚拟方向，命名跟随实际父骨。
 
-        与父类 _create_fan_bones 的唯一区别：用 _resolve_single_frame 取几何、
-        fan 骨名以主骨为基名（方便选主骨即可删除）。fan 的父子归属仍按方向在
-        “父级骨 / 主骨”之间二选一，保证权重通道守恒。
+        与父类 _create_fan_bones 的区别：用 _resolve_single_frame 取几何、fan/pin
+        各按 _choose_parent_bone 选出的真实父骨为基名。fan 的父子归属按方向在
+        “上级骨 / 主骨”之间二选一，保证权重通道守恒。
+        force_suffix 非 None 时强制覆盖命名的方向后缀：对称生成里基名可能落在无
+        后缀的中线骨（如 pelvis）上，左右两侧会拼出同名而冲突，此时由调用方传入
+        本侧的 .L/.R 后缀来区分。
         """
         edit_bones = armature.data.edit_bones
         main_bone = edit_bones.get(main_name)
@@ -380,38 +384,45 @@ class BoneFanSingleCore(BoneFanCore):
         fan_length = max(base_length * length_factor, EPS)
         pin_length = max(fan_length * pin_length_factor, EPS)
 
+        step = total_angle / (count + 1)
+        start_dir = parent_dir if fan_kind == "in" else -parent_dir
+
+        # 规划阶段：先按“真实父骨”决定每根 fan / pin 的命名基名，再统一查重。
+        # 命名跟随 _choose_parent_bone 的结果，而不是一律用主骨：朝上级骨方向、
+        # 因而挂在上级骨下的 fan/pin 用上级骨名，朝主骨方向的才用主骨名。
+        # index 仍沿用整条扫动的全局序号 i（1..count）：_add_fan_constraints 按
+        # index 在 1..count 内的位置算对称强度衰减，换成按基名分段计数会破坏它。
+        plans = []
         existed = []
-        for i in range(count):
-            fan_name = cls._fan_name(main_name, fan_kind, i + 1, padding, name_prefix)
-            pin_name = cls._fan_pin_name(main_name, fan_kind, i + 1, padding, name_prefix)
+        for i in range(1, count + 1):
+            direction = cls._rotate_vector_around_axis(start_dir, plane_normal, step * i)
+            direction = _safe_normalized_vector(direction) if direction is not None else None
+            if direction is None:
+                raise Exception(f"生成第 {i} 根 fan 失败：方向无效")
+
+            fan_parent = cls._choose_parent_bone(direction, parent_bone, parent_dir, main_bone, child_dir)
+            pin_parent = cls._choose_parent_bone(-direction, parent_bone, parent_dir, main_bone, child_dir)
+
+            fan_name = cls._fan_name(fan_parent.name, fan_kind, i, padding, name_prefix, force_suffix)
+            pin_name = cls._fan_pin_name(pin_parent.name, fan_kind, i, padding, name_prefix, force_suffix)
             if edit_bones.get(fan_name) is not None:
                 existed.append(fan_name)
             if edit_bones.get(pin_name) is not None:
                 existed.append(pin_name)
+            plans.append((fan_name, fan_parent, pin_name, pin_parent, direction))
+
         if existed:
             raise Exception("fan 骨已存在: " + ", ".join(sorted(set(existed))))
 
         created_names = []
         pin_names = []
-        step = total_angle / (count + 1)
-        start_dir = parent_dir if fan_kind == "in" else -parent_dir
-
-        for i in range(1, count + 1):
-            fan_name = cls._fan_name(main_name, fan_kind, i, padding, name_prefix)
-            pin_name = cls._fan_pin_name(main_name, fan_kind, i, padding, name_prefix)
-            direction = cls._rotate_vector_around_axis(start_dir, plane_normal, step * i)
-            if direction is None:
-                raise Exception(f"生成 {fan_name} 失败")
-            direction = _safe_normalized_vector(direction)
-            if direction is None:
-                raise Exception(f"{fan_name} 的方向长度为零")
-
+        for fan_name, fan_parent, pin_name, pin_parent, direction in plans:
             pin_bone = edit_bones.new(pin_name)
             pin_bone.head = joint.copy()
             pin_bone.tail = joint + direction * pin_length
             pin_bone.use_connect = False
             pin_bone.use_deform = False
-            pin_bone.parent = cls._choose_parent_bone(-direction, parent_bone, parent_dir, main_bone, child_dir)
+            pin_bone.parent = pin_parent
             try:
                 pin_bone.align_roll(plane_normal)
             except Exception:
@@ -422,7 +433,7 @@ class BoneFanSingleCore(BoneFanCore):
             fan_bone.tail = joint + direction * fan_length
             fan_bone.use_connect = False
             fan_bone.use_deform = True
-            fan_bone.parent = cls._choose_parent_bone(direction, parent_bone, parent_dir, main_bone, child_dir)
+            fan_bone.parent = fan_parent
             try:
                 fan_bone.align_roll(plane_normal)
             except Exception:
@@ -1299,10 +1310,21 @@ class OP_FanSingleGenerate(Operator):
             if role_error:
                 raise Exception(role_error)
 
-            # 组装要处理的 (上级骨, 主骨, 虚拟方向) 骨组：选中的那对，外加开启对称时
-            # 的镜像对。镜像对的虚拟方向需沿骨架局部 X 平面镜像，否则镜像骨会沿用
-            # 未翻转的世界朝向，导致左右 fan 几何不对称。
-            pairs = [(upper_name, main_name, virtual_dir)]
+            # 对称生成时命名必须带方向后缀来区分左右两侧。命名基名按真实父骨取，
+            # 朝上级骨方向的 fan/pin 会落在上级骨上；若上级骨是无后缀的中线骨（如
+            # pelvis），左右两侧会拼出同名而冲突。后缀从选中骨对里带后缀的那根取；
+            # 两根都没有后缀又开了对称，无从区分左右，直接报错退出。
+            this_suffix = BoneFanSingleCore._pair_side_suffix(upper_name, main_name)
+            if settings.process_symmetry and not this_suffix:
+                raise Exception(
+                    "对称生成需要方向后缀：选中的两根骨都没有 .L/.R 等后缀，"
+                    "无法区分镜像生成的左右骨。请选带方向后缀的骨，或关闭对称生成。"
+                )
+
+            # 组装要处理的 (上级骨, 主骨, 虚拟方向, 后缀) 骨组：选中的那对，外加开启
+            # 对称时的镜像对。镜像对的虚拟方向需沿骨架局部 X 平面镜像，否则镜像骨会
+            # 沿用未翻转的世界朝向，导致左右 fan 几何不对称。
+            pairs = [(upper_name, main_name, virtual_dir, this_suffix)]
             if settings.process_symmetry:
                 flipped_upper = bpy.utils.flip_name(upper_name)
                 flipped_main = bpy.utils.flip_name(main_name)
@@ -1314,12 +1336,13 @@ class OP_FanSingleGenerate(Operator):
                     mirror_dir = BoneFanSingleCore._mirror_virtual_direction(
                         armature, virtual_dir,
                     )
-                    pairs.append((flipped_upper, flipped_main, mirror_dir))
+                    mirror_suffix = BoneFanSingleCore._pair_side_suffix(flipped_upper, flipped_main)
+                    pairs.append((flipped_upper, flipped_main, mirror_dir, mirror_suffix))
 
             total_created = 0
             total_weight_objects = 0
             weight_sites = []
-            for parent_name, this_main, this_virtual in pairs:
+            for parent_name, this_main, this_virtual, pair_suffix in pairs:
                 created_names = []
                 for fan_kind, count in fan_kinds:
                     created_names.extend(
@@ -1335,6 +1358,7 @@ class OP_FanSingleGenerate(Operator):
                             settings.bone_collection_name,
                             settings.influence_in if fan_kind == "in" else settings.influence_out,
                             settings.fan_name_prefix,
+                            pair_suffix or None,
                         )
                     )
                 total_created += len(created_names)

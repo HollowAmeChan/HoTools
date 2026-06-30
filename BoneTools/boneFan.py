@@ -681,16 +681,34 @@ class BoneFanCore:
     )
 
     @staticmethod
-    def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
+    def _pair_side_suffix(name_a: str, name_b: str) -> str:
+        # 从一对骨名里取出方向后缀（.L/.R 等）。对称生成时，若命名基名是无后缀的
+        # 中线骨（如 pelvis），左右两侧会拼出同名而冲突；此时改用选中骨对里带后缀
+        # 的那根的后缀来区分两侧。两根都带后缀时优先用第一根；都没有则返回 ""。
+        for name in (name_a, name_b):
+            _, side_suffix = TwistBoneCore._split_side_suffix(name)
+            if side_suffix:
+                return side_suffix
+        return ""
+
+    @staticmethod
+    def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
         # base_name 提供基名与本侧 .L/.R 后缀；prefix 是用户自定义前缀，拼在最前。
         # 后缀必须留在最末，方便对称时左右各读自己的 .L/.R，也方便解析时先剥离。
+        # force_suffix 非 None 时强制用它替换基名自带的后缀：对称生成里基名可能是
+        # 无后缀的中线骨（如 pelvis），左右两侧都会拼出同名 → 冲突；此时由调用方
+        # 传入从选中骨推出的 .L/.R 后缀来区分两侧。
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
+        if force_suffix is not None:
+            side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_MARKERS).get(fan_kind, "_fan_out_")
         return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
     @staticmethod
-    def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "") -> str:
+    def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
         stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
+        if force_suffix is not None:
+            side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_PIN_MARKERS).get(fan_kind, "_fan_pin_out_")
         return f"{prefix}{stem}{marker}{index:0{padding}d}{side_suffix}"
 
