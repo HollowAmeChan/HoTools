@@ -338,6 +338,67 @@ class OT_Hotools_AuxBoneSelect(Operator):
         return {"FINISHED"}
 
 
+def _aux_group_constraint_state(armature, bone_names):
+    """统计该组辅助骨上的约束总数与已禁用（mute）数。返回 (total, muted)。"""
+    total = 0
+    muted = 0
+    for name in bone_names:
+        pose_bone = armature.pose.bones.get(name)
+        if pose_bone is None:
+            continue
+        for constraint in pose_bone.constraints:
+            total += 1
+            if constraint.mute:
+                muted += 1
+    return total, muted
+
+
+class OT_Hotools_AuxGroupConstraintToggle(Operator):
+    bl_idname = "hotools.aux_group_constraint_toggle"
+    bl_label = "开关该组辅助骨约束"
+    bl_description = "启用/禁用该分组所有辅助骨上的约束（任一启用则全部禁用，否则全部启用）"
+    bl_options = {"REGISTER", "UNDO"}
+
+    key: StringProperty(default="")  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def execute(self, context):
+        armature = context.object
+        target = None
+        for group in _collect_aux_groups(armature.data):
+            if group["key"] == self.key:
+                target = group
+                break
+        if target is None:
+            self.report({"WARNING"}, "没有找到该分组")
+            return {"CANCELLED"}
+
+        total, muted = _aux_group_constraint_state(armature, target["bones"])
+        if total == 0:
+            self.report({"WARNING"}, "该分组没有约束")
+            return {"CANCELLED"}
+        # 只要还有启用的约束，就整体禁用；全部已禁用时整体启用。
+        mute = muted < total
+        changed = 0
+        for name in target["bones"]:
+            pose_bone = armature.pose.bones.get(name)
+            if pose_bone is None:
+                continue
+            for constraint in pose_bone.constraints:
+                if constraint.mute != mute:
+                    constraint.mute = mute
+                    changed += 1
+        self.report(
+            {"INFO"},
+            f"已{'禁用' if mute else '启用'}该组 {changed} 个约束",
+        )
+        return {"FINISHED"}
+
+
 class AuxRemovalBlockedError(Exception):
     """当辅助骨无法安全删除时抛出（下面挂了外部子骨，或权重回收目标丢失）。"""
 
@@ -762,6 +823,17 @@ def draw_aux_overview(layout, context):
         count = header.row(align=True)
         count.alignment = "RIGHT"
         count.label(text=f"×{len(group['bones'])}")
+        # 约束开关：该组有任意未静音约束时视为“启用中”，点击整组切换。
+        con_total, con_muted = _aux_group_constraint_state(obj, group["bones"])
+        if con_total > 0:
+            enabled = con_muted < con_total
+            con = count.operator(
+                "hotools.aux_group_constraint_toggle",
+                icon="CON_TRACKTO" if enabled else "TRACKING_CLEAR_FORWARDS",
+                text="",
+                depress=enabled,
+            )
+            con.key = group["key"]
         remove = count.operator("hotools.aux_group_remove", icon="TRASH", text="")
         remove.key = group["key"]
 
@@ -804,6 +876,7 @@ cls = [
     OT_Hotools_AuxGroupToggle,
     OT_Hotools_AuxGroupSelect,
     OT_Hotools_AuxBoneSelect,
+    OT_Hotools_AuxGroupConstraintToggle,
     OT_Hotools_AuxGroupRemove,
     OT_Hotools_AuxRemoveAll,
     PT_Hotools_PosebonePanel,
