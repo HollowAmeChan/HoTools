@@ -448,12 +448,77 @@ class OP_FastCreatPoseAsset(Operator):
         bpy.ops.poselib.create_pose_asset(pose_name = self.pose_name, activate_new_action=False)
         return {'FINISHED'}
 
+def _set_all_bone_constraints_mute(armature: bpy.types.Object, mute: bool) -> tuple[int, int]:
+    """把活动骨架内所有姿态骨的所有约束的 mute 设为 mute。返回 (受影响约束数, 受影响骨数)。"""
+    constraint_count = 0
+    bone_count = 0
+    for pose_bone in armature.pose.bones:
+        if not pose_bone.constraints:
+            continue
+        touched = False
+        for constraint in pose_bone.constraints:
+            if constraint.mute != mute:
+                constraint.mute = mute
+                constraint_count += 1
+                touched = True
+        if touched:
+            bone_count += 1
+    return constraint_count, bone_count
+
+
+class OP_DisableAllBoneConstraints(Operator):
+    bl_idname = "ho.disable_all_bone_constraints"
+    bl_label = "禁用所有骨骼约束"
+    bl_description = "禁用当前活动骨架内所有骨骼的所有约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, True)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要禁用的约束")
+        else:
+            self.report({'INFO'}, f"已禁用 {bone_count} 根骨骼上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
+class OP_EnableAllBoneConstraints(Operator):
+    bl_idname = "ho.enable_all_bone_constraints"
+    bl_label = "启用所有骨骼约束"
+    bl_description = "启用当前活动骨架内所有骨骼的所有约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        constraint_count, bone_count = _set_all_bone_constraints_mute(armature, False)
+        if constraint_count == 0:
+            self.report({'INFO'}, "没有需要启用的约束")
+        else:
+            self.report({'INFO'}, f"已启用 {bone_count} 根骨骼上的 {constraint_count} 个约束")
+        return {'FINISHED'}
+
+
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     scene = context.scene
      #细分骨骼
     row = layout.row(align=True)
     row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
     row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
+
+    # 一键开关骨架内所有约束
+    row = layout.row(align=True)
+    row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
+    row.operator(OP_EnableAllBoneConstraints.bl_idname, text="启用所有约束")
 
     boneTwist.drawBoneTwistPanel(layout, context)
     boneFan.drawBoneFanPanel(layout, context)
@@ -470,6 +535,8 @@ cls = [
     OP_Fix_EmptyRotate_Bone,
     OP_RelaxBoneChain,
     OP_FastCreatPoseAsset,
+    OP_DisableAllBoneConstraints,
+    OP_EnableAllBoneConstraints,
 ]
 
 
