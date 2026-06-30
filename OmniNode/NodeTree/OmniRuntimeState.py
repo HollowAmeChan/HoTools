@@ -298,33 +298,19 @@ def finish_run(context, phases=None):
         run.deleted_keys.clear()
         return
 
-    # 分段计时：committed_ids 扫描 / snapshot 深拷贝 / dispose 回收，
-    # 用于定位 finish_run 内部的真正大头。
-    t_ids = 0.0
+    # 两阶段：先把所有缓存变更应用到最终状态、收集待回收的旧值候选；
+    # 再用一次 committed_value_ids() 扫描（缓存最终可达集合）统一回收。
+    # 这样 committed_ids 从 O(K×N)（每次 dispose 都重扫）降到 O(N)。
     t_snapshot = 0.0
-    t_dispose = 0.0
 
-    def _committed_ids_timed():
-        nonlocal t_ids
-        if phases is None:
-            return _committed_value_ids()
-        s = time.perf_counter()
-        r = _committed_value_ids()
-        t_ids += time.perf_counter() - s
-        return r
+    dispose_candidates = []  # [(value, reason)]
 
-    pending_active_ids = _pending_replace_value_ids(run)
-    disposed_seen = set()
-
+    # ---- 阶段 1：应用删除 / 替换，收集待回收旧值（不触碰 committed_ids）----
     for namespace in run.deleted_namespaces:
         values = _COMMITTED_CACHE.pop(namespace, None)
         if values:
-            active_ids = _committed_ids_timed()
-            active_ids.update(pending_active_ids)
             for value in values.values():
-                s = time.perf_counter()
-                _dispose_cache_value(value, "clear_namespace", disposed_seen, active_ids=active_ids)
-                t_dispose += time.perf_counter() - s
+                dispose_candidates.append((value, "clear_namespace"))
 
     for namespace, keys in run.deleted_keys.items():
         if namespace in run.deleted_namespaces:
@@ -334,21 +320,14 @@ def finish_run(context, phases=None):
             continue
         for key in keys:
             value = target.pop(key, None)
-            active_ids = _committed_ids_timed()
-            active_ids.update(pending_active_ids)
-            s = time.perf_counter()
-            _dispose_cache_value(value, "delete", disposed_seen, active_ids=active_ids)
-            t_dispose += time.perf_counter() - s
+            dispose_candidates.append((value, "delete"))
         if not target:
             _COMMITTED_CACHE.pop(namespace, None)
 
-    active_ids = _committed_ids_timed()
-    active_ids.update(pending_active_ids)
-
     for intent in run.discarded_pending:
-        s = time.perf_counter()
-        _dispose_pending_intent(intent, "discard_pending", active_ids=active_ids, seen=disposed_seen)
-        t_dispose += time.perf_counter() - s
+        intent = _decode_write_intent(intent)
+        if intent.mode == "replace":
+            dispose_candidates.append((intent.value, "discard_pending"))
 
     for namespace, values in run.pending.items():
         target = _COMMITTED_CACHE.setdefault(namespace, {})
@@ -361,11 +340,7 @@ def finish_run(context, phases=None):
                 old_value = target.get(key)
                 target[key] = new_value
                 if old_value is not None and old_value is not new_value:
-                    active_ids = _committed_ids_timed()
-                    active_ids.update(pending_active_ids)
-                    s = time.perf_counter()
-                    _dispose_cache_value(old_value, "replace", seen=disposed_seen, active_ids=active_ids)
-                    t_dispose += time.perf_counter() - s
+                    dispose_candidates.append((old_value, "replace"))
                 continue
             if intent.mode == "mutate":
                 if key not in target:
@@ -376,6 +351,21 @@ def finish_run(context, phases=None):
                 target[key] = old_value
                 continue
             raise RuntimeError(f"unknown cache write mode: {intent.mode}")
+
+    # ---- 阶段 2：缓存已到最终状态，扫描一次可达集合后统一回收 ----
+    t_ids = 0.0
+    t_dispose = 0.0
+    if dispose_candidates:
+        s = time.perf_counter()
+        active_ids = _committed_value_ids()
+        t_ids = time.perf_counter() - s
+
+        disposed_seen = set()
+        s = time.perf_counter()
+        for value, reason in dispose_candidates:
+            _dispose_cache_value(value, reason, seen=disposed_seen, active_ids=active_ids)
+        t_dispose = time.perf_counter() - s
+
     run.pending.clear()
     run.discarded_pending.clear()
     run.deleted_namespaces.clear()
