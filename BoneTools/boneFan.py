@@ -872,8 +872,6 @@ class BoneFanCore:
             props = getattr(bone, "hotools_boneprops", None) if bone else None
             if props and hasattr(props, "keepRotation"):
                 props.keepRotation = False
-            if props and hasattr(props, "humanoidMapping"):
-                props.humanoidMapping = bone_name
 
     @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:

@@ -636,8 +636,7 @@ class TwistBoneCore:
             props = getattr(bone, "hotools_boneprops", None) if bone else None
             if props and hasattr(props, "keepRotation"):
                 props.keepRotation = False
-            if props and hasattr(props, "humanoidMapping"):
-                props.humanoidMapping = bone_name
+
 
     @staticmethod
     def get_mirrored_bone(bone_name, armature) -> list[str]:

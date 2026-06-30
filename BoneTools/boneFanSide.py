@@ -181,9 +181,7 @@ class PG_Hotools_FanSideSettings(PropertyGroup):
         description="常用部位前缀，选中后写入名称前缀",
         items=[
             ("NONE", "自定义", "不使用预设，手动填写前缀"),
-            ("elbow_", "手肘 elbow", "手肘 fan 常用前缀"),
-            ("knee_", "膝盖 knee", "膝盖 fan 常用前缀"),
-            ("shoulder_", "肩 shoulder", "肩部 fan 常用前缀"),
+            ("ankle_", "脚踝 ankle", "脚踝 fan 常用前缀"),
         ],
         default="NONE",
         update=_fan_side_prefix_preset_update,
@@ -194,7 +192,7 @@ class PG_Hotools_FanSideSettings(PropertyGroup):
             "fan 骨名前缀。最终名为 前缀+父骨基名+方向标记+序号+本侧.L/R。"
             "用于同一关节生成多组 fan 时区分、避免命名冲突。留空则沿用原命名。"
         ),
-        default="side_",
+        default="",
         update=_fan_side_preview_update,
     )  # type: ignore
 
