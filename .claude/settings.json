@@ -10,7 +10,10 @@
       "Bash(python -m py_compile BoneTools/boneFan.py BoneTools/boneFanSingle.py BoneTools/boneFanSide.py)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('BoneTools/boneFanSingle.py', encoding='utf-8'\\).read\\(\\)\\)\")",
       "Bash(python -m py_compile BoneTools/boneFanSingle.py BoneTools/boneFan.py)",
-      "Bash(python -m py_compile BoneTools/boneTwist.py)"
+      "Bash(python -m py_compile BoneTools/boneTwist.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('BoneTools/boneTwist.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('BoneTools/boneUtils.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -m py_compile BoneTools/boneUtils.py BoneTools/boneSplit.py BoneTools/boneTwist.py BoneTools/boneFan.py BoneTools/boneFanSingle.py BoneTools/boneFanSide.py)",
+      "Bash(python -m py_compile BoneTools/boneUtils.py BoneTools/boneSplit.py BoneTools/boneDissolve.py BoneTools/boneTwist.py BoneTools/boneFan.py BoneTools/boneFanSingle.py BoneTools/boneFanSide.py)"
     ]
   }
 }

@@ -6,6 +6,7 @@ from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
 from .boneTwist import TwistBoneCore
+from .boneUtils import BoneUtils
 import gpu
 from gpu_extras.batch import batch_for_shader
 from bpy_extras import view3d_utils
@@ -682,14 +683,8 @@ class BoneFanCore:
 
     @staticmethod
     def _pair_side_suffix(name_a: str, name_b: str) -> str:
-        # 从一对骨名里取出方向后缀（.L/.R 等）。对称生成时，若命名基名是无后缀的
-        # 中线骨（如 pelvis），左右两侧会拼出同名而冲突；此时改用选中骨对里带后缀
-        # 的那根的后缀来区分两侧。两根都带后缀时优先用第一根；都没有则返回 ""。
-        for name in (name_a, name_b):
-            _, side_suffix = TwistBoneCore._split_side_suffix(name)
-            if side_suffix:
-                return side_suffix
-        return ""
+        # 通用实现在 BoneUtils；保留薄包装兼容现有调用点。
+        return BoneUtils.pair_side_suffix(name_a, name_b)
 
     @staticmethod
     def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
@@ -698,7 +693,7 @@ class BoneFanCore:
         # force_suffix 非 None 时强制用它替换基名自带的后缀：对称生成里基名可能是
         # 无后缀的中线骨（如 pelvis），左右两侧都会拼出同名 → 冲突；此时由调用方
         # 传入从选中骨推出的 .L/.R 后缀来区分两侧。
-        stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
+        stem, side_suffix = BoneUtils.split_side_suffix(base_name)
         if force_suffix is not None:
             side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_MARKERS).get(fan_kind, "_fan_out_")
@@ -706,7 +701,7 @@ class BoneFanCore:
 
     @staticmethod
     def _fan_pin_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
-        stem, side_suffix = TwistBoneCore._split_side_suffix(base_name)
+        stem, side_suffix = BoneUtils.split_side_suffix(base_name)
         if force_suffix is not None:
             side_suffix = force_suffix
         marker = dict(BoneFanCore._FAN_PIN_MARKERS).get(fan_kind, "_fan_pin_out_")
@@ -714,7 +709,7 @@ class BoneFanCore:
 
     @staticmethod
     def _parse_fan_name(name: str):
-        stem, side_suffix = TwistBoneCore._split_side_suffix(name)
+        stem, side_suffix = BoneUtils.split_side_suffix(name)
         for fan_kind, marker in BoneFanCore._FAN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
@@ -738,7 +733,7 @@ class BoneFanCore:
 
     @staticmethod
     def _parse_fan_pin_name(name: str):
-        stem, side_suffix = TwistBoneCore._split_side_suffix(name)
+        stem, side_suffix = BoneUtils.split_side_suffix(name)
         for fan_kind, marker in BoneFanCore._FAN_PIN_MARKERS:
             marker_index = stem.rfind(marker)
             if marker_index < 0:
@@ -785,30 +780,8 @@ class BoneFanCore:
 
     @staticmethod
     def _mirror_pair(armature: bpy.types.Object, pair_names: list[str]) -> list[str] | None:
-        # 把选中骨对的两根骨名都翻转到对侧。只有当镜像骨对真实存在、且是一对不同
-        # 于原骨对的骨时才返回；否则返回 None（没有可镜像的对象，比如中线骨）。
-        # 按当前模式取骨：EDIT 模式查 edit_bones，否则查 pose.bones（预览常在
-        # 姿态/物体模式触发，此时 edit_bones 为空，不能拿它判定镜像骨是否存在）。
-        if armature.mode == "EDIT":
-            def _bone_exists(name):
-                return armature.data.edit_bones.get(name) is not None
-        else:
-            def _bone_exists(name):
-                return armature.pose.bones.get(name) is not None
-
-        mirrored = []
-        for name in pair_names:
-            flipped = bpy.utils.flip_name(name)
-            if flipped == name or not _bone_exists(flipped):
-                return None
-            mirrored.append(flipped)
-
-        # 防止退化的翻转坍缩成单根骨，或翻回到原骨对本身（那会重复生成）。
-        if len(set(mirrored)) != 2:
-            return None
-        if set(mirrored) == set(pair_names):
-            return None
-        return mirrored
+        # 通用实现已抽到 BoneUtils；此处保留薄包装，兼容现有调用点。
+        return BoneUtils.mirror_pair(armature, pair_names)
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):

@@ -11,6 +11,7 @@ from bpy_extras import view3d_utils
 import blf
 
 from .boneSplit import BoneSplitCore
+from .boneUtils import BoneUtils
 
 
 EPS = 1e-6
@@ -582,9 +583,8 @@ def drawBoneTwistPanel(layout: UILayout, context: Context):
 class TwistBoneCore:
     @staticmethod
     def _split_side_suffix(name: str) -> tuple[str, str]:
-        if len(name) >= 2 and name[-2] in "._-" and name[-1] in "LRlr":
-            return name[:-2], name[-2:]
-        return name, ""
+        # 通用实现已抽到 BoneUtils；此处保留薄包装，兼容现有大量调用点。
+        return BoneUtils.split_side_suffix(name)
 
     @staticmethod
     def _twist_name(base_name: str, index: int, padding: int) -> str:
@@ -664,14 +664,7 @@ class TwistBoneCore:
 
     @staticmethod
     def get_mirrored_bone(bone_name, armature) -> list[str]:
-        names = [bone_name]
-        symmetrical_name = bpy.utils.flip_name(bone_name)
-
-        bone_container = getattr(armature, "bones", armature)
-        if symmetrical_name != bone_name and bone_container.get(symmetrical_name):
-            names.append(symmetrical_name)
-
-        return names
+        return BoneUtils.get_mirrored_bone(bone_name, armature)
 
     @staticmethod
     def _ensure_bone_collection(armature: bpy.types.Object, collection_name: str):
@@ -910,46 +903,20 @@ class TwistBoneCore:
 
     @staticmethod
     def _set_temp_mesh_mirror_off(obj: bpy.types.Object) -> dict[str, tuple[object, bool]]:
-        mirror_state = {}
-        for prop_name in ("use_mesh_mirror_x", "use_mesh_mirror_y", "use_mesh_mirror_z"):
-            owner = None
-            if hasattr(obj, prop_name):
-                owner = obj
-            elif getattr(obj, "data", None) is not None and hasattr(obj.data, prop_name):
-                owner = obj.data
-
-            if owner is None:
-                continue
-
-            mirror_state[prop_name] = (owner, getattr(owner, prop_name))
-            setattr(owner, prop_name, False)
-        return mirror_state
+        # 通用实现已抽到 BoneUtils；此处保留薄包装，兼容现有调用点。
+        return BoneUtils.set_temp_mesh_mirror_off(obj)
 
     @staticmethod
     def _restore_mesh_mirror_state(mirror_state: dict[str, tuple[object, bool]]) -> None:
-        for prop_name, (owner, value) in mirror_state.items():
-                setattr(owner, prop_name, value)
+        return BoneUtils.restore_mesh_mirror_state(mirror_state)
 
     @staticmethod
     def _set_temp_armature_mirror_off(armature: bpy.types.Object) -> dict[str, tuple[object, bool]]:
-        mirror_state = {}
-
-        data = getattr(armature, "data", None)
-        if data is not None and hasattr(data, "use_mirror_x"):
-            mirror_state["data.use_mirror_x"] = (data, data.use_mirror_x)
-            data.use_mirror_x = False
-
-        pose = getattr(armature, "pose", None)
-        if pose is not None and hasattr(pose, "use_mirror_x"):
-            mirror_state["pose.use_mirror_x"] = (pose, pose.use_mirror_x)
-            pose.use_mirror_x = False
-
-        return mirror_state
+        return BoneUtils.set_temp_armature_mirror_off(armature)
 
     @staticmethod
     def _restore_armature_mirror_state(mirror_state: dict[str, tuple[object, bool]]) -> None:
-        for _, (owner, value) in mirror_state.items():
-            owner.use_mirror_x = value
+        return BoneUtils.restore_armature_mirror_state(mirror_state)
 
     @staticmethod
     def create_twist_chain(
@@ -1287,15 +1254,8 @@ class TwistBoneCore:
 
     @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
-        mesh_objs = []
-        for obj in bpy.data.objects:
-            if obj.type != "MESH":
-                continue
-            for mod in obj.modifiers:
-                if mod.type == "ARMATURE" and mod.object == armature_obj:
-                    mesh_objs.append(obj)
-                    break
-        return mesh_objs
+        # 通用实现已抽到 BoneUtils；此处保留薄包装，兼容现有调用点。
+        return BoneUtils.collect_mesh_objects_for_armature(armature_obj)
 
     @staticmethod
     def _collect_generation_targets(context: Context, original_active: bpy.types.Object):
@@ -1368,11 +1328,7 @@ class TwistBoneCore:
                 # 对称生成需要方向后缀来区分左右：无后缀的中线骨（如 spine、pelvis）
                 # 翻转后还是自己，镜像不会产生任何对侧骨，对称形同虚设。此时直接报错
                 # 退出，避免用户以为生成了对称骨却没有。
-                suffixless = [
-                    bone_name
-                    for bone_name in bones
-                    if not TwistBoneCore._split_side_suffix(bone_name)[1]
-                ]
+                suffixless = BoneUtils.find_suffixless(bones)
                 if suffixless:
                     raise Exception(
                         "对称生成需要方向后缀：骨骼 "

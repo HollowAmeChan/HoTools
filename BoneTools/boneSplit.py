@@ -4,6 +4,8 @@ import math
 from bpy.types import Operator
 from bpy.props import BoolProperty,IntProperty,FloatProperty
 
+from .boneUtils import BoneUtils
+
 
 def reg_props():
     return
@@ -205,30 +207,10 @@ class BoneSplitCore:
                     continue
             obj.vertex_groups.remove(b_vg)
             BoneSplitCore.splitVertexGroup_withTmp(obj, new_bone_names, count, armature,tmp_vg,soft_factor)
-    @staticmethod  
+    @staticmethod
     def set_object_mode(obj, mode):
-        """暴力设置物体模式"""
-        ctx = bpy.context
-        view3d_ctx = bpy.context.copy()
-        for area in bpy.context.screen.areas:
-            if area.type == 'VIEW_3D':
-                for region in area.regions:
-                    if region.type == 'WINDOW':
-                        view3d_ctx =  {
-                            "area": area,
-                            "region": region,
-                            "window": bpy.context.window,
-                            "screen": bpy.context.screen,
-                            "active_object": obj,
-                        }
-        if "area" in view3d_ctx and "region" in view3d_ctx:
-            if hasattr(ctx, "temp_override"):
-                with ctx.temp_override(**view3d_ctx):
-                    bpy.ops.object.mode_set(mode=mode)
-            else:
-                bpy.ops.object.mode_set(view3d_ctx, mode=mode)
-        else:
-            bpy.ops.object.mode_set(mode=mode)
+        """暴力设置物体模式。通用实现已抽到 BoneUtils，此处保留薄包装兼容现有调用点。"""
+        return BoneUtils.set_object_mode(obj, mode)
 
 class OP_SplitBoneWithWeight(Operator):
     bl_idname = "ho.splitbone_withweight"
@@ -243,11 +225,7 @@ class OP_SplitBoneWithWeight(Operator):
 
     def get_mirrored_bone(self, bone_name, armature)->list[str]:
         """获取对称的骨骼,返回一个或一对骨骼"""
-        names = [bone_name]
-        symmetrical_name = bpy.utils.flip_name(bone_name)
-        if symmetrical_name != bone_name and symmetrical_name in armature.bones:
-            names.append(symmetrical_name)
-        return names
+        return BoneUtils.get_mirrored_bone(bone_name, armature)
     
 
     @classmethod
