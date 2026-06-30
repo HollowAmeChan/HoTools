@@ -740,7 +740,6 @@ def drawBoneFanSidePanel(layout: UILayout, context: Context):
 
     row = header.row(align=True)
     row.operator(OP_FanSideGenerate.bl_idname, text="生成")
-    row.operator(OP_RemoveFanSideBone.bl_idname, text="安全移除")
 
     row = header.row(align=True)
     row.alert = settings.preview_enabled
@@ -928,120 +927,9 @@ class OP_FanSideGenerate(Operator):
         return self.execute(context)
 
 
-class OP_RemoveFanSideBone(Operator):
-    bl_idname = "ho.remove_fan_side_bone"
-    bl_label = "删除侧向 fan 骨"
-    bl_description = "删除选中父子骨对应的侧向 fan 骨，并把权重恢复回主骨"
-    bl_options = {"REGISTER", "UNDO"}
-
-    only_selected: BoolProperty(
-        name="仅选中的物体",
-        description="只处理当前被选中的网格物体",
-        default=False,
-    )  # type: ignore
-    process_vertex_groups: BoolProperty(
-        name="处理顶点组",
-        description="删除 fan 骨时反向恢复权重并清理对应顶点组",
-        default=True,
-    )  # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        if obj is None or obj.type != "ARMATURE":
-            return False
-        if obj.mode == "POSE":
-            return len(context.selected_pose_bones or []) == 2
-        if obj.mode == "EDIT":
-            return len([b for b in obj.data.edit_bones if b.select]) == 2
-        return False
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, "process_vertex_groups")
-        sub = layout.column()
-        sub.enabled = self.process_vertex_groups
-        sub.prop(self, "only_selected")
-
-    def execute(self, context):
-        armature = context.active_object
-        original_mode = armature.mode
-        old_active = bpy.context.view_layer.objects.active
-        was_hidden = armature.hide_viewport
-        only_selected = self.only_selected
-
-        selected_names = BoneUtils.selected_bone_names(context, armature)
-
-        if was_hidden:
-            armature.hide_set(False)
-            bpy.context.view_layer.update()
-        armature.select_set(True)
-        bpy.context.view_layer.objects.active = armature
-
-        try:
-            if armature.mode != "EDIT":
-                BoneUtils.set_object_mode(armature, "EDIT")
-
-            removal_names = BoneFanSideCore._collect_fan_bone_names(armature, selected_names)
-            if not removal_names:
-                self.report({"WARNING"}, "没有找到可删除的 fan 骨")
-                return {"CANCELLED"}
-
-            BoneFanSideCore._assert_safe_to_remove_fan_bones(armature, removal_names)
-            main_to_fans = BoneFanSideCore._build_fan_restore_map(armature, removal_names)
-
-            restored_objects = 0
-            removed_groups = 0
-            if self.process_vertex_groups:
-                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
-                if only_selected:
-                    mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
-                for obj in mesh_objs:
-                    groups = BoneFanSideCore.obj_fan_restore(obj, main_to_fans)
-                    if groups > 0:
-                        restored_objects += 1
-                    removed_groups += groups
-
-            if armature.mode != "EDIT":
-                bpy.context.view_layer.objects.active = armature
-                BoneUtils.set_object_mode(armature, "EDIT")
-
-            removed = BoneFanSideCore._remove_fan_bones(armature, removal_names)
-
-            if original_mode != "EDIT":
-                BoneUtils.set_object_mode(armature, original_mode)
-
-            self.report(
-                {"INFO"},
-                f"已删除 {removed} 根 fan 骨，在 {restored_objects} 个物体上恢复了权重"
-                f"（{removed_groups} 个顶点组）",
-            )
-            return {"FINISHED"}
-        except Exception as e:
-            self.report({"ERROR"}, str(e))
-            return {"CANCELLED"}
-        finally:
-            if armature.mode == "EDIT" and original_mode != "EDIT":
-                try:
-                    BoneUtils.set_object_mode(armature, original_mode)
-                except Exception:
-                    pass
-            if old_active is not None:
-                try:
-                    bpy.context.view_layer.objects.active = old_active
-                except Exception:
-                    pass
-            if was_hidden:
-                armature.hide_set(True)
-
-
 cls = [
     PG_Hotools_FanSideSettings,
     OP_FanSideGenerate,
-    OP_RemoveFanSideBone,
 ]
 
 

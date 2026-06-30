@@ -5,7 +5,7 @@ from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
 from .boneDissolve import OP_DissolveBoneWithWeight
-from . import boneTwist, boneFan, boneFanSingle, boneFanSide
+from . import boneTwist, boneFan, boneFanSingle, boneFanSide, boneProperty
 
 
 class OP_ApplyRestPose(Operator):
@@ -510,7 +510,26 @@ class OP_EnableAllBoneConstraints(Operator):
 
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
     scene = context.scene
-     #细分骨骼
+    obj = context.object
+
+    # 活动骨架的辅助骨详情（与骨架数据属性页的总览面板共用同一套绘制），可折叠
+    if obj is not None and obj.type == "ARMATURE":
+        box = layout.box()
+        expanded = scene.ho_aux_overview_expanded
+        header = box.row(align=True)
+        header.prop(
+            scene,
+            "ho_aux_overview_expanded",
+            text="",
+            icon="TRIA_DOWN" if expanded else "TRIA_RIGHT",
+            emboss=False,
+        )
+        header.label(text="辅助骨总览", icon="BONE_DATA")
+        if expanded:
+            boneProperty.draw_aux_overview(box, context)
+
+
+     #细分与融并骨骼
     row = layout.row(align=True)
     row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
     row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
@@ -545,8 +564,15 @@ cls = [
 def register():
     for i in cls:
         bpy.utils.register_class(i)
+    # 骨骼操作面板里“辅助骨总览”详情的折叠开关，默认折叠。
+    bpy.types.Scene.ho_aux_overview_expanded = bpy.props.BoolProperty(
+        name="辅助骨总览展开",
+        default=False,
+    )
 
 
 def unregister():
+    if hasattr(bpy.types.Scene, "ho_aux_overview_expanded"):
+        del bpy.types.Scene.ho_aux_overview_expanded
     for i in reversed(cls):
         bpy.utils.unregister_class(i)

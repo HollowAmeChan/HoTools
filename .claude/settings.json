@@ -22,7 +22,13 @@
       "Bash(sed -i -E 's/\\(^|[^.\\\\w]\\)_assign_bones_to_collection\\\\\\(/\\\\1BoneUtils.assign_bones_to_collection\\(/g' boneFan.py boneFanSide.py boneFanSingle.py)",
       "Bash(sed -i -E 's/\\\\bTwistBoneCore\\\\._assign_bones_to_collection\\\\\\(/BoneUtils.assign_bones_to_collection\\(/g' boneTwist.py)",
       "Bash(sed -i 's/BoneFanCore\\\\._selected_bones\\(/BoneUtils.selected_bones\\(/g' boneFan.py)",
-      "Bash(sed -i 's/cls\\\\._bone_head_tail\\(/BoneUtils.bone_head_tail\\(/g' boneFanSide.py)"
+      "Bash(sed -i 's/cls\\\\._bone_head_tail\\(/BoneUtils.bone_head_tail\\(/g' boneFanSide.py)",
+      "Bash(sed -i '930,1039d' boneFanSide.py)",
+      "Bash(sed -i '/^    OP_RemoveFanSideBone,$/d' boneFanSide.py)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('boneFanSide.py', doraise=True\\); print\\('boneFanSide OK'\\)\")",
+      "Bash(sed -i '1416,1524d' boneFanSingle.py)",
+      "Bash(sed -i '/^    OP_RemoveFanSingleBone,$/d' boneFanSingle.py)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('boneFanSingle.py', doraise=True\\); print\\('boneFanSingle OK'\\)\")"
     ]
   }
 }
