@@ -2,7 +2,6 @@ import bpy
 from bpy.types import Panel, UILayout, Context, Operator
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty,IntProperty,FloatProperty,EnumProperty
 from .humanoid_auto_mapping import auto_map_source_names_to_humanoid,TARGET_LAYOUT
-from . import humanoidCorrectionBones
 
 import csv
 from math import acos, atan2, cos, degrees, radians, sin
@@ -2995,11 +2994,6 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
     row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
 
-    humanoidCorrectionBones.correctionBones.drawHumanoidCorrectionBonesPanel(
-        mapping_box,
-        context,
-    )
-
     row = mapping_box.row(align=True)
     row.prop(
         scene,
@@ -3099,12 +3093,10 @@ cls = [
 def register():
     for i in cls:
         bpy.utils.register_class(i)
-    humanoidCorrectionBones.register()
     reg_props()
 
 
 def unregister():
-    humanoidCorrectionBones.unregister()
     for i in cls:
         bpy.utils.unregister_class(i)
     ureg_props()

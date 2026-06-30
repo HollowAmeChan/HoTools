@@ -231,6 +231,113 @@ class OT_Hotools_AuxGroupToggle(Operator):
         return {"FINISHED"}
 
 
+def _select_bones(armature: bpy.types.Object, names, extend: bool) -> None:
+    """在活动骨架上按名字选择骨；extend=False 时先清空已有选择。
+
+    编辑模式走 edit_bones（含 head/tail），其余模式（姿态/物体）走 data.bones。
+    最后一根设为活动骨。
+    """
+    name_set = [n for n in names if n]
+    if armature.mode == "EDIT":
+        edit_bones = armature.data.edit_bones
+        if not extend:
+            for eb in edit_bones:
+                eb.select = eb.select_head = eb.select_tail = False
+        last = None
+        for name in name_set:
+            eb = edit_bones.get(name)
+            if eb is None:
+                continue
+            eb.select = eb.select_head = eb.select_tail = True
+            last = eb
+        if last is not None:
+            edit_bones.active = last
+    else:
+        bones = armature.data.bones
+        if not extend:
+            for b in bones:
+                b.select = False
+        last = None
+        for name in name_set:
+            b = bones.get(name)
+            if b is None:
+                continue
+            b.select = True
+            last = b
+        if last is not None:
+            bones.active = last
+
+
+class OT_Hotools_AuxGroupSelect(Operator):
+    bl_idname = "hotools.aux_group_select"
+    bl_label = "选择辅助骨分组"
+    bl_description = (
+        "选择该分组的骨：\n"
+        "左键 = 选择关联骨\n"
+        "Alt = 选择涉及的所有骨（关联骨 + 辅助骨）\n"
+        "Shift = 加选；Alt+Shift = 加选涉及的所有骨"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    key: StringProperty(default="")  # type: ignore
+    all_involved: BoolProperty(default=False)  # type: ignore  # alt：连辅助骨一起选
+    extend: BoolProperty(default=False)  # type: ignore  # shift：在已有选择上加选
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def invoke(self, context, event):
+        # 修饰键决定选择范围与是否加选。
+        self.all_involved = event.alt
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        armature = context.object
+        target = None
+        for group in _collect_aux_groups(armature.data):
+            if group["key"] == self.key:
+                target = group
+                break
+        if target is None:
+            self.report({"WARNING"}, "没有找到该分组")
+            return {"CANCELLED"}
+
+        if self.all_involved:
+            names = list(target["sources"]) + list(target["bones"])
+        else:
+            names = list(target["sources"])
+        _select_bones(armature, names, self.extend)
+        return {"FINISHED"}
+
+
+class OT_Hotools_AuxBoneSelect(Operator):
+    bl_idname = "hotools.aux_bone_select"
+    bl_label = "选择辅助骨"
+    bl_description = "选择该辅助骨；Shift = 加选"
+    bl_options = {"REGISTER", "UNDO"}
+
+    bone: StringProperty(default="")  # type: ignore
+    extend: BoolProperty(default=False)  # type: ignore  # shift：在已有选择上加选
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "ARMATURE"
+
+    def invoke(self, context, event):
+        self.extend = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        if not self.bone:
+            return {"CANCELLED"}
+        _select_bones(context.object, [self.bone], self.extend)
+        return {"FINISHED"}
+
+
 class AuxRemovalBlockedError(Exception):
     """当辅助骨无法安全删除时抛出（下面挂了外部子骨，或权重回收目标丢失）。"""
 
@@ -625,22 +732,33 @@ def draw_aux_overview(layout, context):
     remove_all = header_row.row()
     remove_all.alignment = "RIGHT"
     remove_all.operator("hotools.aux_remove_all", icon="TRASH", text="全部删除")
+
+    # 当前选中骨：命中某组的关联骨或辅助骨时，把该组表头标红（alert）提示归属。
+    selected = set(BoneUtils.selected_bone_names(context, obj))
     for group in groups:
         box = layout.box()
         type_label = _AUX_TYPE_LABELS.get(group["auxType"], group["auxType"])
         sources_text = " + ".join(group["sources"]) if group["sources"] else "（无关联骨）"
         expanded = _aux_group_expanded(armature_data, group["key"])
+        highlighted = bool(selected & (set(group["bones"]) | set(group["sources"])))
 
-        # 表头铺满整行：左侧折叠箭头 + 标题，右侧数量。
+        # 表头：左侧小箭头按钮仅管折叠，标题点击则选择关联骨（修饰键见算子说明）。
         header = box.row(align=True)
         header.alignment = "EXPAND"
+        header.alert = highlighted
         toggle = header.operator(
             "hotools.aux_group_toggle",
-            text=f"{type_label}：{sources_text}",
+            text="",
             icon="TRIA_DOWN" if expanded else "TRIA_RIGHT",
             emboss=False,
         )
         toggle.key = group["key"]
+        select = header.operator(
+            "hotools.aux_group_select",
+            text=f"{type_label}：{sources_text}",
+            emboss=False,
+        )
+        select.key = group["key"]
         count = header.row(align=True)
         count.alignment = "RIGHT"
         count.label(text=f"×{len(group['bones'])}")
@@ -649,7 +767,15 @@ def draw_aux_overview(layout, context):
 
         if expanded:
             for bone_name in group["bones"]:
-                box.label(text=bone_name, icon="BONE_DATA")
+                bone_row = box.row(align=True)
+                bone_row.alert = bone_name in selected
+                pick = bone_row.operator(
+                    "hotools.aux_bone_select",
+                    text=bone_name,
+                    icon="BONE_DATA",
+                    emboss=False,
+                )
+                pick.bone = bone_name
 
 
 class PT_Hotools_ArmatureAuxPanel(Panel):
@@ -676,6 +802,8 @@ cls = [
     PG_Hotools_BoneProps,
     OT_Hotools_AuxBoneClear,
     OT_Hotools_AuxGroupToggle,
+    OT_Hotools_AuxGroupSelect,
+    OT_Hotools_AuxBoneSelect,
     OT_Hotools_AuxGroupRemove,
     OT_Hotools_AuxRemoveAll,
     PT_Hotools_PosebonePanel,
