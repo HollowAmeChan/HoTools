@@ -25,7 +25,7 @@ class BoneSplitCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        BoneSplitCore.set_object_mode(armature,'EDIT')
+        BoneUtils.set_object_mode(armature,'EDIT')
 
 
         edit_bones = armature.data.edit_bones
@@ -62,7 +62,7 @@ class BoneSplitCore:
 
         #刷新
         bpy.context.view_layer.objects.active = armature
-        BoneSplitCore.set_object_mode(armature,'OBJECT')   
+        BoneUtils.set_object_mode(armature,'OBJECT')   
            
         if was_hidden:
             armature.hide_set(True)
@@ -75,7 +75,7 @@ class BoneSplitCore:
         old_mode = obj.mode
         if old_mode == 'EDIT':
             bpy.context.view_layer.objects.active = obj
-            BoneSplitCore.set_object_mode(obj,'OBJECT')
+            BoneUtils.set_object_mode(obj,'OBJECT')
         #新建顶点组
         new_vgs :list[bpy.types.VertexGroup]= []
         for new_name in new_bone_names:
@@ -166,7 +166,7 @@ class BoneSplitCore:
         obj.vertex_groups.remove(tmp_vg)
         #还原模式
         if old_mode == 'EDIT':
-            BoneSplitCore.set_object_mode(obj,'EDIT')
+            BoneUtils.set_object_mode(obj,'EDIT')
     @staticmethod    
     def objs_bone_split(bn, count, armature,soft_factor,objs):
         """处理骨架-骨骼-物体的细分"""
@@ -207,10 +207,6 @@ class BoneSplitCore:
                     continue
             obj.vertex_groups.remove(b_vg)
             BoneSplitCore.splitVertexGroup_withTmp(obj, new_bone_names, count, armature,tmp_vg,soft_factor)
-    @staticmethod
-    def set_object_mode(obj, mode):
-        """暴力设置物体模式。通用实现已抽到 BoneUtils，此处保留薄包装兼容现有调用点。"""
-        return BoneUtils.set_object_mode(obj, mode)
 
 class OP_SplitBoneWithWeight(Operator):
     bl_idname = "ho.splitbone_withweight"
@@ -222,11 +218,6 @@ class OP_SplitBoneWithWeight(Operator):
     process_symmetry: BoolProperty(name="对称操作",description="同时对镜像的骨骼进行操作", default=False) # type: ignore
     only_selected:BoolProperty(name="仅选择的物体",description="未被选中的物体将保留权重，但是由于骨骼已经消失将不再受到控制", default=False) # type: ignore
     soft_factor:FloatProperty(name="过渡",description="细分小骨骼间的权重过渡,建议0.5以上",min=0.0,max=1.0,step=0.05,default=0.5) # type: ignore
-
-    def get_mirrored_bone(self, bone_name, armature)->list[str]:
-        """获取对称的骨骼,返回一个或一对骨骼"""
-        return BoneUtils.get_mirrored_bone(bone_name, armature)
-    
 
     @classmethod
     def poll(cls, context):
@@ -330,7 +321,7 @@ class OP_SplitBoneWithWeight(Operator):
             tmp = []
             for bone_name in bones:
                 if self.process_symmetry:                    
-                    tmp.extend(self.get_mirrored_bone(bone_name, armature_obj.data))
+                    tmp.extend(BoneUtils.get_mirrored_bone(bone_name, armature_obj.data))
             bones = tmp
         #逐骨骼
         for bn in bones:
@@ -344,14 +335,14 @@ class OP_SplitBoneWithWeight(Operator):
         
         #还原原本的视图状态
         context.view_layer.objects.active = original_active
-        BoneSplitCore.set_object_mode(original_active,mode=original_mode)
+        BoneUtils.set_object_mode(original_active,mode=original_mode)
         if original_mode == 'WEIGHT_PAINT':
             armature_obj.select_set(True)
             bpy.context.view_layer.objects.active = armature_obj
-            BoneSplitCore.set_object_mode(armature_obj,'POSE')
+            BoneUtils.set_object_mode(armature_obj,'POSE')
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
-            BoneSplitCore.set_object_mode(original_active,'WEIGHT_PAINT')
+            BoneUtils.set_object_mode(original_active,'WEIGHT_PAINT')
         self.report({'INFO'},"细分成功")
         return {'FINISHED'}
     

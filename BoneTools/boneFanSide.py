@@ -5,6 +5,7 @@ from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
+from .boneUtils import BoneUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
@@ -408,7 +409,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         bpy.context.view_layer.objects.active = armature
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneSplitCore.set_object_mode(armature, "OBJECT")
+            BoneUtils.set_object_mode(armature, "OBJECT")
             cls._apply_hotools_bone_props(
                 armature,
                 created_names + pin_names,
@@ -419,7 +420,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, "EDIT")
+                    BoneUtils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -457,7 +458,7 @@ class BoneFanSideCore(BoneFanSingleCore):
                 "frame": frame,
             })
 
-        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -536,7 +537,7 @@ class BoneFanSidePreview:
                         # 对称：把镜像骨对的预览几何也算进来。镜像通过重建几何得到，
                         # 自然处理自定义/任意朝向的工作面，无需手动取反某个轴。
                         if getattr(settings, "process_symmetry", False):
-                            mirrored = BoneFanSideCore._mirror_pair(armature, list(selected))
+                            mirrored = BoneUtils.mirror_pair(armature, list(selected))
                             if mirrored is not None:
                                 mb_a = _get_bone(mirrored[0])
                                 mb_b = _get_bone(mirrored[1])
@@ -842,7 +843,7 @@ class OP_FanSideGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             # 校验是否相连父子骨，并取回真正的 (父骨, 子骨) 名
             edit_bones = armature.data.edit_bones
@@ -859,7 +860,7 @@ class OP_FanSideGenerate(Operator):
             # 组装骨对：选中那对，外加开启对称时的镜像对（仅当镜像对真实存在）
             pairs = [(parent_name, child_name)]
             if settings.process_symmetry:
-                mirrored = BoneFanSideCore._mirror_pair(armature, [parent_name, child_name])
+                mirrored = BoneUtils.mirror_pair(armature, [parent_name, child_name])
                 if mirrored is not None:
                     # 镜像后仍需按层级判定父/子，重建 frame 取回正确顺序
                     m_a = edit_bones.get(mirrored[0])
@@ -906,7 +907,7 @@ class OP_FanSideGenerate(Operator):
                 total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             sym_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -924,7 +925,7 @@ class OP_FanSideGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:
@@ -995,7 +996,7 @@ class OP_RemoveFanSideBone(Operator):
 
         try:
             if armature.mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             removal_names = BoneFanSideCore._collect_fan_bone_names(armature, selected_names)
             if not removal_names:
@@ -1008,7 +1009,7 @@ class OP_RemoveFanSideBone(Operator):
             restored_objects = 0
             removed_groups = 0
             if self.process_vertex_groups:
-                mesh_objs = BoneFanSideCore._collect_mesh_objects_for_armature(armature)
+                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
                 if only_selected:
                     mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
                 for obj in mesh_objs:
@@ -1019,12 +1020,12 @@ class OP_RemoveFanSideBone(Operator):
 
             if armature.mode != "EDIT":
                 bpy.context.view_layer.objects.active = armature
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             removed = BoneFanSideCore._remove_fan_bones(armature, removal_names)
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             self.report(
                 {"INFO"},
@@ -1038,7 +1039,7 @@ class OP_RemoveFanSideBone(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:

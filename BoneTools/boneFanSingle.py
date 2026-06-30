@@ -5,6 +5,7 @@ from math import acos, cos, radians, sin, tau
 from mathutils import Vector
 
 from .boneSplit import BoneSplitCore
+from .boneUtils import BoneUtils
 from .boneFan import (
     BoneFanCore,
     _safe_normalized_vector,
@@ -445,7 +446,7 @@ class BoneFanSingleCore(BoneFanCore):
         bpy.context.view_layer.objects.active = armature
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneSplitCore.set_object_mode(armature, "OBJECT")
+            BoneUtils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
             cls._apply_hotools_bone_props(
@@ -458,7 +459,7 @@ class BoneFanSingleCore(BoneFanCore):
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, "EDIT")
+                    BoneUtils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -487,7 +488,7 @@ class BoneFanSingleCore(BoneFanCore):
         if error:
             raise Exception(error)
 
-        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -548,7 +549,7 @@ class BoneFanSingleCore(BoneFanCore):
                 "frame": frame,
             })
 
-        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
         if not mesh_objs:
@@ -924,7 +925,7 @@ class BoneFanSinglePreview:
                         state["message"] = "找不到选中的骨骼"
                     else:
                         virtual = Vector(settings.virtual_direction)
-                        frame, error = cls._resolve_single_frame(armature, main_bone, parent_bone, virtual)
+                        frame, error = BoneFanSingleCore._resolve_single_frame(armature, main_bone, parent_bone, virtual)
                         if error:
                             state["message"] = error
                         else:
@@ -945,7 +946,7 @@ class BoneFanSinglePreview:
                                         m_virtual = BoneFanSingleCore._mirror_virtual_direction(
                                             armature, virtual,
                                         )
-                                        m_frame, m_error = cls._resolve_single_frame(
+                                        m_frame, m_error = BoneFanSingleCore._resolve_single_frame(
                                             armature, m_main, m_parent, m_virtual,
                                         )
                                         if not m_error:
@@ -957,10 +958,6 @@ class BoneFanSinglePreview:
             cls._timer_running = True
             bpy.app.timers.register(cls._timer)
         cls._tag_redraw()
-
-    @staticmethod
-    def _resolve_single_frame(armature, main_bone, parent_bone, virtual):
-        return BoneFanSingleCore._resolve_single_frame(armature, main_bone, parent_bone, virtual)
 
     @classmethod
     def clear(cls):
@@ -1301,7 +1298,7 @@ class OP_FanSingleGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             # 按骨架层级判定上级骨（权重来源）与主骨（fan 跟随）
             upper_name, main_name, role_error = BoneFanSingleCore._resolve_roles(
@@ -1314,7 +1311,7 @@ class OP_FanSingleGenerate(Operator):
             # 朝上级骨方向的 fan/pin 会落在上级骨上；若上级骨是无后缀的中线骨（如
             # pelvis），左右两侧会拼出同名而冲突。后缀从选中骨对里带后缀的那根取；
             # 两根都没有后缀又开了对称，无从区分左右，直接报错退出。
-            this_suffix = BoneFanSingleCore._pair_side_suffix(upper_name, main_name)
+            this_suffix = BoneUtils.pair_side_suffix(upper_name, main_name)
             if settings.process_symmetry and not this_suffix:
                 raise Exception(
                     "对称生成需要方向后缀：选中的两根骨都没有 .L/.R 等后缀，"
@@ -1336,7 +1333,7 @@ class OP_FanSingleGenerate(Operator):
                     mirror_dir = BoneFanSingleCore._mirror_virtual_direction(
                         armature, virtual_dir,
                     )
-                    mirror_suffix = BoneFanSingleCore._pair_side_suffix(flipped_upper, flipped_main)
+                    mirror_suffix = BoneUtils.pair_side_suffix(flipped_upper, flipped_main)
                     pairs.append((flipped_upper, flipped_main, mirror_dir, mirror_suffix))
 
             total_created = 0
@@ -1386,7 +1383,7 @@ class OP_FanSingleGenerate(Operator):
                 total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             sym_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -1404,7 +1401,7 @@ class OP_FanSingleGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:
@@ -1475,7 +1472,7 @@ class OP_RemoveFanSingleBone(Operator):
 
         try:
             if armature.mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             removal_names = BoneFanSingleCore._collect_fan_bone_names(armature, selected_names)
             if not removal_names:
@@ -1488,7 +1485,7 @@ class OP_RemoveFanSingleBone(Operator):
             restored_objects = 0
             removed_groups = 0
             if self.process_vertex_groups:
-                mesh_objs = BoneFanSingleCore._collect_mesh_objects_for_armature(armature)
+                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
                 if only_selected:
                     mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
                 for obj in mesh_objs:
@@ -1499,12 +1496,12 @@ class OP_RemoveFanSingleBone(Operator):
 
             if armature.mode != "EDIT":
                 bpy.context.view_layer.objects.active = armature
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             removed = BoneFanSingleCore._remove_fan_bones(armature, removal_names)
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             self.report(
                 {"INFO"},
@@ -1518,7 +1515,7 @@ class OP_RemoveFanSingleBone(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
             if old_active is not None:

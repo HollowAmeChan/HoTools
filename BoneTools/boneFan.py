@@ -385,7 +385,7 @@ class BoneFanPreview:
                     # 开启对称处理时，把镜像骨对的预览几何也算进来，直接看到两边。
                     if getattr(settings, "process_symmetry", False):
                         selected_names = [b.name for b in selected_bones]
-                        mirrored = BoneFanCore._mirror_pair(armature, selected_names)
+                        mirrored = BoneUtils.mirror_pair(armature, selected_names)
                         if mirrored is not None:
                             mb_a = armature.data.edit_bones.get(mirrored[0]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[0])
                             mb_b = armature.data.edit_bones.get(mirrored[1]) if armature.mode == "EDIT" else armature.pose.bones.get(mirrored[1])
@@ -682,11 +682,6 @@ class BoneFanCore:
     )
 
     @staticmethod
-    def _pair_side_suffix(name_a: str, name_b: str) -> str:
-        # 通用实现在 BoneUtils；保留薄包装兼容现有调用点。
-        return BoneUtils.pair_side_suffix(name_a, name_b)
-
-    @staticmethod
     def _fan_name(base_name: str, fan_kind: str, index: int, padding: int, prefix: str = "", force_suffix: str | None = None) -> str:
         # base_name 提供基名与本侧 .L/.R 后缀；prefix 是用户自定义前缀，拼在最前。
         # 后缀必须留在最末，方便对称时左右各读自己的 .L/.R，也方便解析时先剥离。
@@ -777,11 +772,6 @@ class BoneFanCore:
         if armature.mode == "EDIT":
             return [bone.name for bone in armature.data.edit_bones if bone.select]
         return []
-
-    @staticmethod
-    def _mirror_pair(armature: bpy.types.Object, pair_names: list[str]) -> list[str] | None:
-        # 通用实现已抽到 BoneUtils；此处保留薄包装，兼容现有调用点。
-        return BoneUtils.mirror_pair(armature, pair_names)
 
     @staticmethod
     def _resolve_joint_geometry(bone_a, bone_b):
@@ -887,10 +877,6 @@ class BoneFanCore:
                         continue
                     ref = aux.sourceBones.add()
                     ref.name = src
-
-    @staticmethod
-    def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
-        return TwistBoneCore._collect_mesh_objects_for_armature(armature_obj)
 
     @classmethod
     def _transfer_fan_weights_for_object(
@@ -1224,7 +1210,7 @@ class BoneFanCore:
         if error:
             raise Exception(error)
 
-        mesh_objs = cls._collect_mesh_objects_for_armature(armature)
+        mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
         if only_selected:
             mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
 
@@ -1305,7 +1291,7 @@ class BoneFanCore:
         try:
             armature.select_set(True)
             bpy.context.view_layer.objects.active = armature
-            BoneSplitCore.set_object_mode(armature, "POSE")
+            BoneUtils.set_object_mode(armature, "POSE")
             for fan_name, pin_name in zip(fan_names, pin_names):
                 parsed = cls._parse_fan_name(fan_name)
                 if parsed is None:
@@ -1329,7 +1315,7 @@ class BoneFanCore:
                 except Exception:
                     pass
             try:
-                BoneSplitCore.set_object_mode(armature, old_mode)
+                BoneUtils.set_object_mode(armature, old_mode)
             except Exception:
                 pass
 
@@ -1451,7 +1437,7 @@ class BoneFanCore:
         bpy.context.view_layer.objects.active = armature
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
-            BoneSplitCore.set_object_mode(armature, "OBJECT")
+            BoneUtils.set_object_mode(armature, "OBJECT")
             # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
             # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
             cls._apply_hotools_bone_props(
@@ -1464,7 +1450,7 @@ class BoneFanCore:
         finally:
             if armature.mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, "EDIT")
+                    BoneUtils.set_object_mode(armature, "EDIT")
                 except Exception:
                     pass
 
@@ -1572,14 +1558,14 @@ class BoneFanCore:
         # 顶点组。这正是生成时按通道转移的逆操作。
         old_mode = obj.mode
         old_active = bpy.context.view_layer.objects.active
-        mirror_state = TwistBoneCore._set_temp_mesh_mirror_off(obj)
+        mirror_state = BoneUtils.set_temp_mesh_mirror_off(obj)
         mode_changed = False
         removed_groups = 0
 
         try:
             if old_mode != "OBJECT":
                 bpy.context.view_layer.objects.active = obj
-                BoneSplitCore.set_object_mode(obj, "OBJECT")
+                BoneUtils.set_object_mode(obj, "OBJECT")
                 mode_changed = True
 
             for main_name, fan_names in main_to_fans.items():
@@ -1621,11 +1607,11 @@ class BoneFanCore:
                         obj.vertex_groups.remove(fan_vg)
                         removed_groups += 1
         finally:
-            TwistBoneCore._restore_mesh_mirror_state(mirror_state)
+            BoneUtils.restore_mesh_mirror_state(mirror_state)
 
             if mode_changed:
                 bpy.context.view_layer.objects.active = obj
-                BoneSplitCore.set_object_mode(obj, old_mode)
+                BoneUtils.set_object_mode(obj, old_mode)
 
             if old_active:
                 try:
@@ -1704,13 +1690,13 @@ class OP_FanGenerate(Operator):
 
         try:
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             # 组装要处理的骨对：选中的那一对，外加开启对称时的镜像骨对
             # （仅当镜像骨对真实存在时才加入）。
             pairs = [selected_names]
             if settings.process_symmetry:
-                mirrored = BoneFanCore._mirror_pair(armature, selected_names)
+                mirrored = BoneUtils.mirror_pair(armature, selected_names)
                 if mirrored is not None:
                     pairs.append(mirrored)
 
@@ -1747,7 +1733,7 @@ class OP_FanGenerate(Operator):
                     total_weight_objects += weight_result["processed_objects"]
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             pair_note = "（含对称）" if len(pairs) > 1 else ""
             if not settings.auto_transfer_weights:
@@ -1765,7 +1751,7 @@ class OP_FanGenerate(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
 
@@ -1844,7 +1830,7 @@ class OP_RemoveFanBone(Operator):
 
         try:
             if armature.mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             # 动手之前先确定要删除哪些 fan/pin 骨，以及每根 deform fan 把权重
             # 还给哪根主骨。
@@ -1860,7 +1846,7 @@ class OP_RemoveFanBone(Operator):
             restored_objects = 0
             removed_groups = 0
             if self.process_vertex_groups:
-                mesh_objs = BoneFanCore._collect_mesh_objects_for_armature(armature)
+                mesh_objs = BoneUtils.collect_mesh_objects_for_armature(armature)
                 if only_selected:
                     mesh_objs = [obj for obj in mesh_objs if obj.select_get()]
 
@@ -1872,12 +1858,12 @@ class OP_RemoveFanBone(Operator):
 
             if armature.mode != "EDIT":
                 bpy.context.view_layer.objects.active = armature
-                BoneSplitCore.set_object_mode(armature, "EDIT")
+                BoneUtils.set_object_mode(armature, "EDIT")
 
             removed = BoneFanCore._remove_fan_bones(armature, removal_names)
 
             if original_mode != "EDIT":
-                BoneSplitCore.set_object_mode(armature, original_mode)
+                BoneUtils.set_object_mode(armature, original_mode)
 
             self.report(
                 {"INFO"},
@@ -1892,7 +1878,7 @@ class OP_RemoveFanBone(Operator):
         finally:
             if armature.mode == "EDIT" and original_mode != "EDIT":
                 try:
-                    BoneSplitCore.set_object_mode(armature, original_mode)
+                    BoneUtils.set_object_mode(armature, original_mode)
                 except Exception:
                     pass
 

@@ -88,7 +88,7 @@ class DissolveBoneCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        DissolveBoneCore.set_object_mode(armature,'EDIT')
+        BoneUtils.set_object_mode(armature,'EDIT')
 
         edit_bones = armature.data.edit_bones
         # 按父子链首尾决定新骨段，不再按世界轴高低推断。
@@ -121,7 +121,7 @@ class DissolveBoneCore:
 
         #刷新并回到物体模式
         bpy.context.view_layer.objects.active = armature
-        DissolveBoneCore.set_object_mode(armature,'OBJECT')   
+        BoneUtils.set_object_mode(armature,'OBJECT')   
         if was_hidden:
             armature.hide_set(True)
         
@@ -137,7 +137,7 @@ class DissolveBoneCore:
             #切换模式
             if obj.visible_get():
                 bpy.context.view_layer.objects.active = obj
-                DissolveBoneCore.set_object_mode(obj,'OBJECT')
+                BoneUtils.set_object_mode(obj,'OBJECT')
             else:
                 return False
 
@@ -204,7 +204,7 @@ class DissolveBoneCore:
             bpy.context.view_layer.update()  
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
-        DissolveBoneCore.set_object_mode(armature,'EDIT')
+        BoneUtils.set_object_mode(armature,'EDIT')
         edit_bones = armature.data.edit_bones
         for bn in bns:
             edit_bones.remove(edit_bones.get(bn))
@@ -214,17 +214,12 @@ class DissolveBoneCore:
 
         #刷新并回到物体模式
         bpy.context.view_layer.objects.active = armature
-        DissolveBoneCore.set_object_mode(armature,'OBJECT')   
+        BoneUtils.set_object_mode(armature,'OBJECT')   
            
         if was_hidden:
             armature.hide_set(True)
 
         return
-    
-    @staticmethod
-    def set_object_mode(obj, mode):
-        """暴力设置物体模式（通用实现在 BoneUtils）。"""
-        return BoneUtils.set_object_mode(obj, mode)
 
 class OP_DissolveBoneWithWeight(Operator):
     bl_idname = "ho.dissolvebone_withweight"
@@ -337,7 +332,7 @@ class OP_DissolveBoneWithWeight(Operator):
             self.report({'ERROR'}, "只有一个选中的骨骼")
             return {'CANCELLED'}
         bpy.context.view_layer.objects.active = armature_obj
-        DissolveBoneCore.set_object_mode(armature_obj,'EDIT')
+        BoneUtils.set_object_mode(armature_obj,'EDIT')
 
         edit_bones = armature_obj.data.edit_bones
         chain_bones, chain_error = DissolveBoneCore.resolve_bone_chain(edit_bones, bones)
@@ -357,14 +352,14 @@ class OP_DissolveBoneWithWeight(Operator):
 
         #还原原本的视图状态
         context.view_layer.objects.active = original_active
-        DissolveBoneCore.set_object_mode(original_active,mode=original_mode)
+        BoneUtils.set_object_mode(original_active,mode=original_mode)
         if original_mode == 'WEIGHT_PAINT':
             armature_obj.select_set(True)
             bpy.context.view_layer.objects.active = armature_obj
-            DissolveBoneCore.set_object_mode(armature_obj,'POSE')
+            BoneUtils.set_object_mode(armature_obj,'POSE')
             original_active.select_set(True)
             bpy.context.view_layer.objects.active = original_active
-            DissolveBoneCore.set_object_mode(original_active,'WEIGHT_PAINT')
+            BoneUtils.set_object_mode(original_active,'WEIGHT_PAINT')
         self.report({'INFO'},"融并成功")
 
     
