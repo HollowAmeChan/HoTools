@@ -500,6 +500,7 @@ class BoneFanSingleCore(BoneFanCore):
         blur_factor,
         only_selected,
         midline_threshold=0.0,
+        midplane_threshold=0.0,
     ):
         """对称感知的权重转移：把多个 fan 站点（site）放在一起做一次分割。
 
@@ -538,7 +539,7 @@ class BoneFanSingleCore(BoneFanCore):
         result = {"processed_objects": 0, "processed_sources": 0, "processed_fans": 0, "processed_vertices": 0}
         for obj in mesh_objs:
             obj_result = cls._transfer_fan_weights_multi_for_object(
-                obj, armature, sites, radius_factor, blur_factor, midline_threshold,
+                obj, armature, sites, radius_factor, blur_factor, midline_threshold, midplane_threshold,
             )
             result["processed_objects"] += obj_result["processed_objects"]
             result["processed_sources"] += obj_result["processed_sources"]
@@ -555,6 +556,7 @@ class BoneFanSingleCore(BoneFanCore):
         radius_factor,
         blur_factor,
         midline_threshold=0.0,
+        midplane_threshold=0.0,
     ):
         """把多个 site 的权重放在一次快照里转移，保证共享父骨通道左右对称、守恒。
 
@@ -706,9 +708,16 @@ class BoneFanSingleCore(BoneFanCore):
         # 候选 fan 都视为“并列最近”，把通道权重在它们之间均分，保证中线对称。
         touched_vertices = 0
         core_vertices = []
+        # 几何中面：骨架局部 X=0 平面即骨骼对称镜像面。落在该面 midplane_threshold
+        # 距离内的顶点视为“正好在中线上”，把通道权重在球内所有候选 fan（左右两侧）
+        # 之间均分，保证自身左右对称体的中线顶点严格对称、不被方向噪声偏向某侧。
+        mw_inv = armature.matrix_world.inverted()
+        use_midplane = midplane_threshold > 0.0
         for i in range(num_vertices):
             if orig_total[i] <= 0.0:
                 continue
+
+            on_midplane = use_midplane and abs((mw_inv @ world_co[i]).x) <= midplane_threshold
 
             touched = False
             for source_name in present_sources:
@@ -735,8 +744,11 @@ class BoneFanSingleCore(BoneFanCore):
                 if not candidates:
                     continue
 
-                # best - 阈值 以内的候选并列为“最近”，均分通道权重。
-                winners = [name for score, name in candidates if best_score - score <= midline_threshold]
+                # 落在几何中面上：球内所有候选 fan 并列均分；否则按方向得分阈值取胜者。
+                if on_midplane:
+                    winners = [name for _, name in candidates]
+                else:
+                    winners = [name for score, name in candidates if best_score - score <= midline_threshold]
                 if not winners:
                     continue
                 share = ws / len(winners)

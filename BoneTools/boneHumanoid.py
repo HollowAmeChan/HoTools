@@ -498,8 +498,8 @@ class OP_BoneApplyConstraint(Operator):
     
 class OP_FixedArmature_ClearConstraint(Operator):
     bl_idname = "ho.fixedarmature_clear_constraint"
-    bl_label = "清空固定骨架中的所有约束"
-    bl_description = "清空固定骨架中的所有约束"
+    bl_label = "清理DeformTag约束"
+    bl_description = "只清理固定骨架中映射到 deform 骨的约束：逐骨读取 DeformMappingTag，空的跳过，否则删除该骨上目标骨名与 DeformTag 同名的约束"
 
     def execute(self, context):
         scene = context.scene
@@ -508,10 +508,40 @@ class OP_FixedArmature_ClearConstraint(Operator):
             self.report({'WARNING'}, "需要指定固定骨架")
             return {'CANCELLED'}
 
+        if fixed_armature.type != 'ARMATURE':
+            self.report({'WARNING'}, "指定对象必须是Armature")
+            return {'CANCELLED'}
+
+        removed_count = 0
+        affected_bones = 0
+        skipped_no_deform_tag = 0
+
         for fixed_bone in fixed_armature.pose.bones:
-            constraints_to_remove = [c for c in fixed_bone.constraints]
-            for constraint in constraints_to_remove:
+            props = getattr(fixed_bone.bone, "hotools_boneprops", None)
+            deform_mapping_tag = getattr(props, "deformMappingTag", "").strip() if props is not None else ""
+
+            # 没有 DeformTag 的骨不是约束目标，直接跳过，保留其它手动约束
+            if not deform_mapping_tag:
+                skipped_no_deform_tag += 1
+                continue
+
+            # 只删目标骨（subtarget）与 DeformTag 同名的约束
+            to_remove = [
+                c for c in fixed_bone.constraints
+                if getattr(c, "subtarget", "") == deform_mapping_tag
+            ]
+            if not to_remove:
+                continue
+            for constraint in to_remove:
                 fixed_bone.constraints.remove(constraint)
+                removed_count += 1
+            affected_bones += 1
+
+        self.report(
+            {'INFO'},
+            f"已清理 {affected_bones} 根骨上的 {removed_count} 个 DeformTag 约束"
+            f"（跳过 {skipped_no_deform_tag} 根无 DeformTag 的骨）",
+        )
         return {'FINISHED'}
 
 class OP_BoneRemoveConstraints(Operator):
