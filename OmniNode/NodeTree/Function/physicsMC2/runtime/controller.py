@@ -195,13 +195,36 @@ def run_mesh_cloth_mc2_node(
     config_key = None
     if cache_owner is not None:
         topology_cache = cache_owner.topology_cache
-        mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
-        config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
+        prev_state = cache_owner.state if isinstance(cache_owner.state, dict) else None
+        prev_signature = prev_state.get("mesh_signature_key") if isinstance(prev_state, dict) else None
+        prev_light_key = prev_state.get("mesh_light_key") if isinstance(prev_state, dict) else None
+        sig_substage_start = time.perf_counter() if timing is not None else None
+        if prev_signature is not None and prev_light_key is not None and prev_light_key == mesh_light_key:
+            # 廉价 light_key 一致说明拓扑数量未变；直接复用上一帧已算好的
+            # mesh_signature_key，跳过每帧重建连通性数组 + array_hash。
+            mesh_signature_key = prev_signature
+        else:
+            mesh_signature_key = mesh_build.mesh_signature_key(obj, topology_cache)
+        if timing is not None:
+            add_timing(timing, "cache.match.signature", time.perf_counter() - sig_substage_start)
+        cfg_substage_start = time.perf_counter() if timing is not None else None
+        config_key = mesh_build.config_key(
+            obj,
+            output_key,
+            mesh_signature_key,
+            collision_radius,
+            light_key=mesh_light_key,
+            weight_hash_cache=topology_cache,
+        )
+        if timing is not None:
+            add_timing(timing, "cache.match.config_key", time.perf_counter() - cfg_substage_start)
+    sm_substage_start = time.perf_counter() if timing is not None else None
     state_matches = (
         cache_owner is not None
         and mc2_state.state_matches(cache_owner, obj, output_key, mesh_light_key, config_key)
     )
     if timing is not None:
+        add_timing(timing, "cache.match.state_matches", time.perf_counter() - sm_substage_start)
         add_timing(timing, "cache.match", time.perf_counter() - cache_substage_start)
     state = cache_owner.state if state_matches else None
     replace_cache = cache_owner is None or not state_matches
@@ -256,7 +279,14 @@ def run_mesh_cloth_mc2_node(
 
         cache_substage_start = time.perf_counter() if timing is not None else None
         if config_key is None:
-            config_key = mesh_build.config_key(obj, output_key, mesh_signature_key, collision_radius)
+            config_key = mesh_build.config_key(
+                obj,
+                output_key,
+                mesh_signature_key,
+                collision_radius,
+                light_key=mesh_light_key,
+                weight_hash_cache=topology_cache,
+            )
         if timing is not None:
             add_timing(timing, "rebuild.config", time.perf_counter() - cache_substage_start)
 

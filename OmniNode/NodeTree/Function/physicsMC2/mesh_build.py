@@ -209,18 +209,53 @@ def mesh_light_key(obj: bpy.types.Object) -> tuple:
     )
 
 
+def cached_vertex_group_weights_hash(
+    obj: bpy.types.Object,
+    group_name: str,
+    light_key: tuple | None = None,
+    cache: dict | None = None,
+) -> int:
+    """权重数组 hash，按 (组名, light_key) 缓存。
+
+    vertex_group_weights 是逐顶点逐 group 的 Python 循环（高顶点数下是 config_key
+    的真正大头）。组名和 light_key（顶点/loop/面数量）不变时，权重 hash 逐帧稳定，
+    可直接复用，跳过整轮循环。语义与 mesh_light_key 一致：同数量但权重重绘不会自动
+    失效，需用户 reset/清缓存触发重建。
+    """
+    cache_key = ("vg_weights_hash", group_name, light_key)
+    if isinstance(cache, dict) and light_key is not None:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    weights = vertex_group_weights(obj, group_name) if group_name else np.empty(0, dtype=np.float32)
+    weights_hash = math_utils.array_hash(weights)
+    if isinstance(cache, dict) and light_key is not None:
+        cache[cache_key] = weights_hash
+    return weights_hash
+
+
 def config_key(
     obj: bpy.types.Object,
     output_key: str,
     mesh_signature_key_value: tuple,
     collision_radius: float,
+    light_key: tuple | None = None,
+    weight_hash_cache: dict | None = None,
 ) -> tuple:
     pin_enabled, pin_group = mesh_pin_config(obj)
-    pin_weights = vertex_group_weights(obj, pin_group) if pin_enabled and pin_group else np.empty(0, dtype=np.float32)
+    pin_weights_hash = (
+        cached_vertex_group_weights_hash(obj, pin_group, light_key, weight_hash_cache)
+        if pin_enabled and pin_group
+        else math_utils.array_hash(np.empty(0, dtype=np.float32))
+    )
     props = mesh_collision_props(obj)
     collision_enabled = bool(props is not None and getattr(props, "enabled", False))
     radius_group = str(getattr(props, "radius_vertex_group", "") or "") if props is not None else ""
-    radius_weights = vertex_group_weights(obj, radius_group) if radius_group else np.empty(0, dtype=np.float32)
+    radius_weights_hash = (
+        cached_vertex_group_weights_hash(obj, radius_group, light_key, weight_hash_cache)
+        if radius_group
+        else math_utils.array_hash(np.empty(0, dtype=np.float32))
+    )
     configured_radius = (
         float(getattr(props, "radius", 0.0))
         if collision_enabled
@@ -248,11 +283,11 @@ def config_key(
         mesh_signature_key_value,
         bool(pin_enabled),
         pin_group,
-        math_utils.array_hash(pin_weights),
+        pin_weights_hash,
         collision_enabled,
         round(configured_radius, 8),
         radius_group,
-        math_utils.array_hash(radius_weights),
+        radius_weights_hash,
         configured_mask,
         self_collision_enabled,
         self_collision_surface_thickness,
