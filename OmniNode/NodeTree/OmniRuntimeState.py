@@ -11,6 +11,28 @@ class OmniCacheWriteIntent:
         self.value = value
 
 
+class OmniCacheOwnerDict(dict):
+    """
+    零拷贝缓存载体：一个普通 dict，但实现了 omni_cache_dispose 协议。
+
+    runtime cache 对实现了 omni_cache_dispose 的对象走零拷贝路径：
+    - _snapshot_value 直接返回本体（读/写/提交都不深拷贝）；
+    - _collect_cache_value_ids / _dispose_cache_value 把它当作不透明 owner，
+      不再递归深入其内部（dict/list/numpy）。
+
+    适用于物理这类「读→原地改→写回同一对象」的逐帧滚动状态：
+    节点把 read_cache 返回的本体原地修改后按 replace 写回，提交时
+    old is new，不产生 dispose，committed_ids 也只记一个顶层 id。
+
+    用法：把要缓存的状态 dict 包成 OmniCacheOwnerDict(state)。
+    它在所有 isinstance(x, dict) 检查下仍是 dict，物理代码无需改访问方式。
+    """
+    def omni_cache_dispose(self, reason):
+        # 内部持有的都是 Python 容器 / numpy / bpy 引用，无需显式释放，
+        # 交给 GC 即可。提供此方法只是为了让 runtime 识别为零拷贝 owner。
+        return
+
+
 def cache_replace(value):
     return OmniCacheWriteIntent("replace", value)
 
@@ -62,6 +84,11 @@ def _collect_cache_value_ids(value, result=None, seen=None):
         return result
     seen.add(value_id)
     result.add(value_id)
+
+    # dispose-owner（含可变缓存 owner）自管理其内容，与 snapshot/dispose
+    # 的语义一致：不深入递归，只记录 owner 自身的 id（O(顶层)）。
+    if _has_cache_dispose(value):
+        return result
 
     if isinstance(value, dict):
         for item in value.values():

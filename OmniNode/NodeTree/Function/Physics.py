@@ -3,6 +3,7 @@ from ..OmniNodeSocketMapping import (
     _OmniBoneChain,
     _OmniCache,
 )
+from ..OmniRuntimeState import OmniCacheOwnerDict
 from ....PhysicsTools.deltaOutput import PhysicsDeltaOutputSpec
 from ....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
 from ....PhysicsTools.deltaOutput import ensure_delta_output as _ensure_delta_output
@@ -18,6 +19,23 @@ import mathutils
 import numpy as np
 import time
 import typing
+
+
+def _as_cache_owner(payload):
+    """
+    把物理 state payload 规范成零拷贝缓存 owner。
+
+    - None 原样返回（表示清空缓存，走正常 replace/删除路径）。
+    - 已经是 OmniCacheOwnerDict 的原样返回。
+    - 普通 dict 就地包成 OmniCacheOwnerDict（浅包装，不深拷贝内部）。
+
+    只作用于物理节点的缓存产出边界，不改动全局缓存语义。
+    """
+    if payload is None or isinstance(payload, OmniCacheOwnerDict):
+        return payload
+    if isinstance(payload, dict):
+        return OmniCacheOwnerDict(payload)
+    return payload
 
 
 _MESH_XPBD_PRESETS = [
@@ -692,13 +710,14 @@ class _BonePhysics:
                 "joints": dict(chain_cache.get("joints") or {}),
             }
 
-        return {
+        # 包成零拷贝缓存 owner：读/写/提交均不深拷贝，逐帧原地滚动。
+        return OmniCacheOwnerDict({
             "frame": None,
             "armature_name": armature_obj.name_full,
             "topology_key": topology_key,
             "chains": chains,
             "write_records": cls.build_vrm_spring_bone_write_records(armature_obj, settings),
-        }
+        })
 
     @classmethod
     def build_vrm_spring_bone_write_records(cls, armature_obj: bpy.types.Object, settings: list[dict]) -> list[dict]:
@@ -2275,7 +2294,7 @@ def _run_mesh_xpbd_node(
             backend_tag,
             timing,
         )
-        return _OmniCache(next_state), obj, vertex_count, constraint_count
+        return _OmniCache(_as_cache_owner(next_state)), obj, vertex_count, constraint_count
 
     stage_start = time.perf_counter() if timing is not None else None
     backend = _MeshPhysicsCppBackend if use_cpp else _MeshPhysics
@@ -2320,7 +2339,7 @@ def _run_mesh_xpbd_node(
             backend_tag,
             timing,
         )
-    return _OmniCache(next_state), obj, vertex_count, constraint_count
+    return _OmniCache(_as_cache_owner(next_state)), obj, vertex_count, constraint_count
 
 
 @omni(
@@ -2587,7 +2606,7 @@ class _SpringBoneVRM:
         }
 
         if not settings:
-            runtime["early_result"] = (_OmniCache(cache_state), affected_bones, armature_obj, 0, 0)
+            runtime["early_result"] = (_OmniCache(_as_cache_owner(cache_state)), affected_bones, armature_obj, 0, 0)
             return runtime
 
         stage_start = time.perf_counter() if timing is not None else None
@@ -2626,7 +2645,7 @@ class _SpringBoneVRM:
 
         if not enabled:
             state["frame"] = current_frame
-            runtime["early_result"] = (_OmniCache(state), affected_bones, armature_obj, len(settings), 0)
+            runtime["early_result"] = (_OmniCache(_as_cache_owner(state)), affected_bones, armature_obj, len(settings), 0)
             return runtime
 
         stage_start = time.perf_counter() if timing is not None else None
@@ -4055,7 +4074,7 @@ class _SpringBoneVRM:
                 timing,
             )
         return (
-            _OmniCache(state),
+            _OmniCache(_as_cache_owner(state)),
             runtime["affected_bones"],
             runtime["armature_obj"],
             len(runtime["settings"]),
@@ -4540,7 +4559,7 @@ def springBoneBase(
     if not enabled:
         next_cache = dict(cache_state)
         next_cache["frame"] = int(current_frame)
-        return _OmniCache(next_cache), affected_bones, armature_obj
+        return _OmniCache(_as_cache_owner(next_cache)), affected_bones, armature_obj
 
     dt = _BonePhysics.scene_delta_time()
     stiffness_force = max(float(stiffness_force), 0.0)
@@ -4628,7 +4647,7 @@ def springBoneBase(
     next_cache["frame"] = int(current_frame)
     next_cache["joints"] = next_joints
     armature_obj.update_tag()
-    return _OmniCache(next_cache), affected_bones, armature_obj
+    return _OmniCache(_as_cache_owner(next_cache)), affected_bones, armature_obj
 
 
 @omni(
