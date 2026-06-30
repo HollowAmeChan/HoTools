@@ -1188,20 +1188,33 @@ class _MeshPhysics:
         _write_world_delta_attribute(obj, cls.DELTA_OUTPUT_SPEC, positions, base_positions)
 
     @staticmethod
-    def topology_key(obj: bpy.types.Object) -> tuple:
+    def topology_signature(obj: bpy.types.Object) -> tuple:
+        """廉价拓扑签名：仅指针 + 顶点/边/面数量，不拉边索引、不算 SHA1。
+        播放期间拓扑不变，这个签名逐帧稳定，用来跳过昂贵的 edge_hash 重算。"""
         mesh = obj.data
-        edge_values = np.empty(len(mesh.edges) * 2, dtype=np.int32)
-        if len(edge_values) > 0:
-            mesh.edges.foreach_get("vertices", edge_values)
-        edge_hash = hashlib.sha1(edge_values.tobytes()).hexdigest()
         return (
             int(obj.as_pointer()),
             int(mesh.as_pointer()),
             len(mesh.vertices),
             len(mesh.edges),
             len(mesh.polygons),
-            edge_hash,
         )
+
+    @staticmethod
+    def topology_key(obj: bpy.types.Object, prev_state=None) -> tuple:
+        sig = _MeshPhysics.topology_signature(obj)
+        # 复用上一帧已算好的完整 key：廉价签名一致就直接沿用，跳过 SHA1。
+        # 拓扑只在用户编辑网格时变，播放期间每帧重算 SHA1 是纯浪费。
+        if isinstance(prev_state, dict):
+            prev_key = prev_state.get("topology_key")
+            if isinstance(prev_key, tuple) and len(prev_key) == 6 and prev_key[:5] == sig:
+                return prev_key
+        mesh = obj.data
+        edge_values = np.empty(len(mesh.edges) * 2, dtype=np.int32)
+        if len(edge_values) > 0:
+            mesh.edges.foreach_get("vertices", edge_values)
+        edge_hash = hashlib.sha1(edge_values.tobytes()).hexdigest()
+        return sig + (edge_hash,)
 
     @staticmethod
     def mesh_pin_config(obj: bpy.types.Object) -> tuple[bool, str]:
@@ -2239,7 +2252,7 @@ def _run_mesh_xpbd_node(
         _MeshPhysics.add_timing(timing, "validate", time.perf_counter() - stage_start)
 
     stage_start = time.perf_counter() if timing is not None else None
-    topology_key = _MeshPhysics.topology_key(obj)
+    topology_key = _MeshPhysics.topology_key(obj, prev_state=cache_state)
     vertex_count = len(obj.data.vertices)
     state = cache_state if _MeshPhysics.state_matches(cache_state, obj, topology_key) else None
     cached_frame = _BonePhysics.cache_frame(state)

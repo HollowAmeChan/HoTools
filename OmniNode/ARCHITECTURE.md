@@ -20,37 +20,48 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 ## 性能结论和排查优先级
 
-2026-06 的 MC2 精细计时测试结论：这次掉帧主因不在 OmniNode 执行器、MC2 C++ 求解、BasePose evaluated mesh 读取或 delta 写回，而在 Blender 编辑器 UI 刷新，尤其是 Outliner 在大量对象/空物体场景下的刷新和绘制。
+### 案例：VRM 弹簧骨缓存零拷贝优化（2026-07）
 
-实测参考数据：
+一次针对 `springBoneVRM_CPP` 每帧掉帧的精细测试，把帧调试器做成单一统一报告（见 Debug 章节「帧级统一计时」），并据此定位、消除了缓存层的全部冗余开销。
 
-- `Tree Handler` 每帧约 `3.1-3.5ms`。
-- 树级 runtime timing 每帧约 `2.6-2.8ms`，主要耗时是 `meshClothMC2Cpp`。
-- `MC2 CPP` 节点内部每帧约 `2.5-2.7ms`。
-- `BASEPOSE_HANDLER` 每帧约 `0.45-0.60ms`。
-- BasePose `read_to_mesh` 约 `0.02-0.04ms`。
-- delta 写回里的 `write_mesh_update` / `write_obj_update_tag` 约 `0.003-0.006ms`。
-- 全屏显示 3D Region 或把 Outliner 切换成其他 editor 后，帧率可直接上涨几十 FPS。
-- 不同 Outliner 显示模式、过滤模式、展开层级和可见列的帧率也不同。
-- 关闭/开启全局撤销、切换渲染后端 OpenGL/Vulkan，对该问题域没有明显影响。
+优化前后实测（同一角色，连续播放）：
 
-维护判断：
+| 指标 | 优化前 | 优化后 |
+|---|---|---|
+| 整帧 frame | 84.7ms | 31.4ms |
+| FPS | 11.8 | 31.8 |
+| handler（addon 内） | 59.5ms（最高 81ms） | 8.6ms |
+| engine/redraw（引擎侧） | 22.8ms | 22.8ms（不变） |
 
-- 看到节点 debug 里的 `outside=...ms` 时，不能直接判定 MC2 或 OmniNode 慢。`outside` 是按采样频率反推的帧间墙钟剩余时间，可能包含 Blender 播放节奏、viewport 绘制、Outliner 刷新、depsgraph 评估和 UI 同步。
-- 如果 `Tree Handler` 和树级 timing 仍在数毫秒级，而 FPS 很低，应优先检查 Blender 外部因素：Outliner、3D View overlay、视图模式、场景对象数量、空物体数量、骨架/约束评估、播放同步模式。
-- Outliner 对场景对象数量非常敏感。大量空物体、导入 mesh、运行时代理对象或频繁标脏对象，都会放大 Outliner 的 redraw 成本；这类成本不一定会出现在 OmniNode/MC2 内部计时里。
-- 当前精细测试中，已排除全局撤销和渲染后端作为主因；强相关变量是 Outliner 是否显示、Outliner 当前模式，以及 Outliner 当前需要追踪的场景对象规模。
-- 性能优化优先级应是：先隔离 editor/UI redraw，再看 depsgraph，再看 Blender 数据写回，最后才看 solver 内部循环。
-- 不应为解决低帧率而盲目把 MC2 求解、BasePose 或 cache 逻辑改成跳帧/静态化。BasePose 如果依赖骨骼动画，第一帧静态缓存会破坏姿态驱动。
+handler 内优化前的耗时分布几乎全是缓存浪费，而真正的物理解算只有 ~6.5ms：
 
-建议排查流程：
+- `CACHE_READ` ~10.7ms：`read_cache` 每帧深拷贝一次缓存值。
+- `CACHE_WRITE` ~13ms：`write_cache` 把 replace 值深拷贝成缓存私有副本。
+- `[finish] snapshot` ~10ms：提交时 `_snapshot_value` 又深拷贝一次。
+- `[finish] committed_ids` ~16ms：回收前重算「可达对象 id 集合」，且在提交循环里**每个 key 重算一次**，复杂度 O(K×N)。
+- `[finish] dispose` ~8.5ms：递归回收旧值。
 
-1. 打开 `debug_runtime_timing`、节点级 `debug_output`，同时观察 `Tree Handler`、树级 timing、MC2 timing、BasePose handler timing。
-2. 全屏 3D View 或临时切走 Outliner，对比 FPS。如果帧率大幅上升，先按 UI/editor redraw 处理。
-3. 切换 Outliner 显示模式、过滤模式、折叠展开层级和可见列，对比 FPS。
-4. 关闭 overlay、切换 Solid/Wire、隐藏导入集合或空物体集合，对比 FPS。
-5. 只有当 `Tree Handler` 或 MC2 内部 timing 本身明显升高时，才进入 OmniNode/MC2 代码路径优化。
-6. 设计运行时辅助对象时，默认假设 Outliner 会为每个场景对象付出刷新成本；能不注册新对象就不要注册，必须注册时应控制数量、隐藏显示并避免每帧改名、增删或改变层级关系。
+同一个大 state dict（9 条链的 joints + 数百条含 Matrix 的 write_records + numpy 数组）每帧被深拷贝三次、深度遍历多次，而它本质是「读 → 原地改 → 写回同一对象」的逐帧滚动状态。
+
+三步修复：
+
+1. `finish_run` 改两阶段提交：先应用所有变更到最终状态、收集待回收候选，再用一次 `_committed_value_ids()` 扫描统一回收。committed_ids 从 O(K×N) 降到 O(N)。
+2. 消除提交期冗余深拷贝：`write_cache` 排入 pending 时已拷成私有副本，`finish_run` 直接采用，不再二次 `_snapshot_value`。
+3. 零拷贝缓存 owner：把物理 state 包成 `OmniCacheOwnerDict`（实现了 `omni_cache_dispose` 协议的 dict 子类）。runtime 对带 dispose 协议的对象，`_snapshot_value` 直接返回本体（读/写/提交都不深拷贝），`_collect_cache_value_ids` / `_dispose_cache_value` 把它当不透明 owner 不再递归深入。读返回 committed 本体、节点原地改后按 replace 写回，提交时 `old is new`，dispose 与 committed_ids 整段跳过。具体写法见「7.1 Runtime cache 的资源值协议」的零拷贝加速一节。
+
+贡献最大的是第 3 步。这套修复后，缓存五项全部从榜单消失，handler 内 81% 是真实物理计算。
+
+### 诚实说明：引擎侧 engine/redraw 的固有成本
+
+帧调试器报告里的 `engine/redraw = frame − handler` 是**反推值**，覆盖 `frame_change_post` 返回后 Blender 在 C 层做的事，Python 计时探不进去，addon 代码也改不动。上面案例里这部分是 22.8ms，零代码隔离实验拆解如下：
+
+- **角色网格蒙皮变形 ~7ms**：armature modifier 每帧按新骨骼姿态重新变形整个角色网格。隐藏该网格可验证。这属于建模/绑定层（低模代理、降顶点数、GPU 蒙皮），不是 addon 能改的。
+- **视口重绘 ~7ms**：关闭 3D 视口可验证。视口是必须绘制的，关不掉。
+- **骨骼姿态求值 + 其它依赖 ~8ms**：depsgraph 重算 armature 全部骨骼的最终矩阵、约束、子物体。只要每帧改骨骼让物理生效，这个重算就省不掉。
+
+结论：当 handler 已压到个位数毫秒、而 frame 仍受 engine/redraw 主导时，剩余开销是「每帧驱动骨骼/网格」方案的物理成本，**不应再到 addon 代码里找优化**。任何声称能从 Python 层压低这部分的改动都是盲改，给不出可验证的收益。能做的只有建模/绑定层（代理网格、降面）或接受现状。
+
+判定何时停手：用帧调试器看 handler 占 frame 的比例。handler 占比已经很低（例如 < 30%）说明 addon 侧已榨干，瓶颈在引擎，优化重心应转移或收尾。
 
 ## 核心边界
 
@@ -222,6 +233,39 @@ def omni_cache_debug_snapshot(self) -> dict:
 ```
 
 dump 只把它作为调试视图，不参与运行语义。
+
+#### 用 dispose 协议做零拷贝加速
+
+默认的裸 Python value 缓存走**快照隔离**语义：`read_cache` 返回深拷贝、`write_cache` 存深拷贝、`finish_run` 提交时按需再拷贝并回收旧值。对小状态没问题，但对**每帧读改写的大状态**（物理 state：嵌套 dict、numpy 数组、几百条含 Matrix 的记录）会非常贵——同一坨结构每帧被深拷贝多次、深度遍历多次。VRM 弹簧骨案例里这部分占了 ~50ms。
+
+关键机制：`_snapshot_value` 对实现了 `omni_cache_dispose` 的对象**直接返回本体、不深拷贝**；`_collect_cache_value_ids` 和 `_dispose_cache_value` 也把它当不透明 owner，不再递归深入内部。利用这一点，把缓存 payload 包成一个带 dispose 协议的 dict 子类即可全程零拷贝：
+
+```python
+class OmniCacheOwnerDict(dict):
+    """普通 dict，但实现 omni_cache_dispose，让 runtime 走零拷贝路径。"""
+    def omni_cache_dispose(self, reason):
+        return  # 内部都是 Python 容器 / numpy / bpy 引用，交给 GC
+```
+
+它在所有 `isinstance(x, dict)` 检查下仍是 dict，业务代码无需改访问方式。逐帧滚动模式：
+
+```python
+# read 返回 committed 本体（零拷贝）
+state = cache_state                  # 来自 cache read socket
+state["frame"] = current_frame       # 原地改
+state["chains"] = new_chains
+return _OmniCache(_as_cache_owner(state))   # replace 写回同一本体
+```
+
+提交时 `old is new`，runtime 不产生 dispose 候选，committed_ids 扫描与 dispose 整段跳过。`Function/Physics.py` 用一个幂等 helper `_as_cache_owner(payload)` 在所有 `_OmniCache(...)` 产出边界把 payload 规范成 owner（普通 dict 浅包装成 `OmniCacheOwnerDict`，已是 owner 或 None 原样返回），可作参考写法。
+
+注意事项（零拷贝会改变缓存语义，务必权衡）：
+
+- **失去快照隔离**：committed 缓存变成共享可变。如果某帧解算中途抛异常，缓存会留下改了一半的状态（快照模式能隔离回滚）。对每帧整体重算、能自愈的物理通常可接受；对需要事务性的状态不要用零拷贝。
+- **多读者别名**：若两个 cache read 节点读同一个 key，零拷贝下它们拿到同一对象本体，一个改另一个会看到。需要隔离时仍用裸 value（默认深拷贝）。
+- **owner 身份要全程保持**：任何 `dict(state)` 浅重建会退化成普通 dict、丢掉零拷贝身份。要么在产出边界统一用 `_as_cache_owner(...)` 重新包装（幂等，推荐），要么避免重建。
+- **`dict()` 浅拷贝便宜，深递归才贵**：每帧浅拷一个新 owner dict 只是几微秒，真正省下的是 `_snapshot_value` 的深递归和 dispose/committed_ids 的深扫描。只要顶层是 owner，内部子结构不会被递归深入。
+- **范围最小化**：只在物理这类大状态节点的产出边界改，不要动全局 `cache_replace` / `read_cache` 默认行为，否则会破坏其它缓存使用者的隔离假设。
 
 ### 8. 编译缓存和 runtime cache 是两套系统
 
@@ -469,6 +513,37 @@ debug_runtime_timing_interval
 
 - timing 是观察工具，不应该改变节点行为。
 - 新增 IR 类型时，应在 `OmniExecutor.timing_stage_name()` 中补清晰 stage 名称。
+
+#### 帧级统一计时（frame 报告）
+
+每帧运行（`run_frame_cached`）在开启 timing 时输出一份**单一统一报告**，把整条帧链路的所有叶子项放进同一份 `phases` 字典，从大到小排序，避免多个报告块和重复 total 互相打架。报告结构：
+
+```text
+OMNI DEBUG TIMING   |  Frame: <树名>
+  [Summary]: samples=N  fps=..  frame=..ms
+    handler       = ..ms  (..%)
+    engine/redraw = ..ms  (..%)
+  [Breakdown]:
+    01. <最慢叶子项> = ..ms  (占 handler %)
+    ...
+    .. other_steps = ..ms
+```
+
+关键约定：
+
+- `frame` 是每帧真实墙钟（`flush` 间隔 / samples）。`handler` 是 addon 内部实测耗时（`phases["total"]`）。`engine/redraw = frame − handler` 是**反推值**，代表 `frame_change_post` 返回后引擎在 C 层的开销（蒙皮、视口重绘、depsgraph），Python 探不进去。详见性能章节「引擎侧 engine/redraw 的固有成本」。
+- 顶层执行器的 step 明细通过 `timing_collector` 直接并入 `phases`，不再单独成块。子树（嵌套 group/batch）仍走各自的独立报告。
+- 为保证「所有叶子项相加 = total」，不写入会重复计数的聚合项（如 `[frame] execute`、`[run] step_loop`、`[run] finish_run`）；改用互不重叠的叶子项 + 一个 `[frame] unmeasured` 残差桶（total 减去所有已插桩项，覆盖 step 循环调度、计时器自身开销等未插桩缝隙）。
+- `finish_run` 内部细分为 `[finish] committed_ids` / `[finish] snapshot` / `[finish] dispose` / `[finish] other`，四项相加等于 finish_run 总耗时，便于定位缓存提交阶段的开销。
+- `frame_level=True` 标记区分帧级报告与子树报告；只有帧级报告显示 handler/engine 分离，子树报告显示会误导。
+
+诊断引擎侧开销的零代码实验（用 frame/handler/engine 三个数做 A/B，不靠盲改代码）：
+
+- 隐藏角色网格（armature modifier 的那个 mesh）→ engine 降多少就是**蒙皮变形**成本。
+- 缩小或移出 3D 视口 → 降多少是**视口重绘**成本。
+- 两者都扣掉、engine 仍剩的部分 → 是**骨骼姿态求值 + depsgraph**，每帧改骨骼就省不掉。
+
+注意 `engine/redraw` 只在**连续播放/拖动**时准确；手动单帧点选有停顿时，空闲时间会掺进 frame 使 engine 虚高。
 
 ### 4. 节点级性能 debug
 
