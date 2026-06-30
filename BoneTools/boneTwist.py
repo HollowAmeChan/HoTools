@@ -630,12 +630,36 @@ class TwistBoneCore:
         return []
 
     @staticmethod
-    def _apply_hotools_bone_props(armature: bpy.types.Object, bone_names: list[str]) -> None:
+    def _apply_hotools_bone_props(
+        armature: bpy.types.Object,
+        bone_names: list[str],
+        aux_type: str = "NONE",
+        source_bones: list[str] | None = None,
+    ) -> None:
+        """给生成的辅助骨写入 HoTools 属性。
+
+        - keepRotation 一律置 False（辅助骨导出时不保留旋转）。
+        - 当 aux_type 不为 NONE 时，同时写入辅助骨自描述信息：isAuxBone、
+          auxType 与关联骨集合 sourceBones（用于后续精确识别骨上挂了什么辅助骨）。
+        """
+        source_bones = source_bones or []
         for bone_name in bone_names:
             bone = armature.data.bones.get(bone_name)
             props = getattr(bone, "hotools_boneprops", None) if bone else None
-            if props and hasattr(props, "keepRotation"):
+            if not props:
+                continue
+            if hasattr(props, "keepRotation"):
                 props.keepRotation = False
+            aux = getattr(props, "auxBone", None)
+            if aux is not None and aux_type != "NONE":
+                aux.isAuxBone = True
+                aux.auxType = aux_type
+                aux.sourceBones.clear()
+                for src in source_bones:
+                    if not src:
+                        continue
+                    ref = aux.sourceBones.add()
+                    ref.name = src
 
 
     @staticmethod
@@ -1015,8 +1039,13 @@ class TwistBoneCore:
             TwistBoneCore._assign_bones_to_collection(armature, new_bone_names, bone_collection_name)
             bpy.context.view_layer.objects.active = armature
             BoneSplitCore.set_object_mode(armature, "OBJECT")
-            # 设置 hotools 属性：取消保留旋转，并把 humanoidMapping 填成自身名称
-            TwistBoneCore._apply_hotools_bone_props(armature, new_bone_names)
+            # 设置 hotools 属性：取消保留旋转，并写入辅助骨自描述信息
+            TwistBoneCore._apply_hotools_bone_props(
+                armature,
+                new_bone_names,
+                aux_type="TWIST",
+                source_bones=[bn],
+            )
             result["created_names"] = new_bone_names
             result["created_count"] = len(new_bone_names)
 

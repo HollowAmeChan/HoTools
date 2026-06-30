@@ -400,11 +400,21 @@ class BoneFanSideCore(BoneFanSingleCore):
             created_names.append(fan_name)
             pin_names.append(pin_name)
 
+        # 先把骨名取成字符串：set_object_mode 切出编辑模式后，
+        # parent_bone / child_bone 这些 EditBone 引用会失效，再读 .name
+        # 会拿到已释放内存的乱码（触发 UnicodeDecodeError）或空串。
+        source_bone_names = [parent_bone.name, child_bone.name]
+
         bpy.context.view_layer.objects.active = armature
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
-            cls._apply_hotools_bone_props(armature, created_names)
+            cls._apply_hotools_bone_props(
+                armature,
+                created_names + pin_names,
+                aux_type="FAN_SIDE",
+                source_bones=source_bone_names,
+            )
             cls._add_fan_constraints(armature, created_names, pin_names, influence_scale)
         finally:
             if armature.mode != "EDIT":

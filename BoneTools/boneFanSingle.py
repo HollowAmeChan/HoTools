@@ -435,7 +435,14 @@ class BoneFanSingleCore(BoneFanCore):
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
-            cls._apply_hotools_bone_props(armature, created_names)
+            # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
+            # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
+            cls._apply_hotools_bone_props(
+                armature,
+                created_names + pin_names,
+                aux_type="FAN_SINGLE",
+                source_bones=[parent_name, main_name],
+            )
             cls._add_fan_constraints(armature, created_names, pin_names, influence_scale)
         finally:
             if armature.mode != "EDIT":

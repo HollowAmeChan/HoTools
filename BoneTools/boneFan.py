@@ -866,12 +866,36 @@ class BoneFanCore:
         return a_bone if score_a > score_b else b_bone
 
     @staticmethod
-    def _apply_hotools_bone_props(armature: bpy.types.Object, bone_names: list[str]) -> None:
+    def _apply_hotools_bone_props(
+        armature: bpy.types.Object,
+        bone_names: list[str],
+        aux_type: str = "NONE",
+        source_bones: list[str] | None = None,
+    ) -> None:
+        """给生成的辅助骨写入 HoTools 属性。
+
+        - keepRotation 一律置 False（辅助骨导出时不保留旋转）。
+        - 当 aux_type 不为 NONE 时，同时写入辅助骨自描述信息：isAuxBone、
+          auxType 与关联骨集合 sourceBones（用于后续精确识别骨上挂了什么辅助骨）。
+        """
+        source_bones = source_bones or []
         for bone_name in bone_names:
             bone = armature.data.bones.get(bone_name)
             props = getattr(bone, "hotools_boneprops", None) if bone else None
-            if props and hasattr(props, "keepRotation"):
+            if not props:
+                continue
+            if hasattr(props, "keepRotation"):
                 props.keepRotation = False
+            aux = getattr(props, "auxBone", None)
+            if aux is not None and aux_type != "NONE":
+                aux.isAuxBone = True
+                aux.auxType = aux_type
+                aux.sourceBones.clear()
+                for src in source_bones:
+                    if not src:
+                        continue
+                    ref = aux.sourceBones.add()
+                    ref.name = src
 
     @staticmethod
     def _collect_mesh_objects_for_armature(armature_obj: bpy.types.Object) -> list[bpy.types.Object]:
@@ -1428,11 +1452,23 @@ class BoneFanCore:
             created_names.append(fan_name)
             pin_names.append(pin_name)
 
+        # 先把骨名取成字符串：下面 set_object_mode 切出编辑模式后，
+        # parent_bone / child_bone 这些 EditBone 引用会失效，再读 .name
+        # 会拿到已释放内存的乱码（触发 UnicodeDecodeError）或空串。
+        source_bone_names = [parent_bone.name, child_bone.name]
+
         bpy.context.view_layer.objects.active = armature
         try:
             _assign_bones_to_collection(armature, created_names + pin_names, bone_collection_name)
             BoneSplitCore.set_object_mode(armature, "OBJECT")
-            cls._apply_hotools_bone_props(armature, created_names)
+            # fan 与 pin 都写入辅助骨信息：严格保证生成的每根骨都有自描述。
+            # pin 是非变形支撑骨，复用同类型与同关联骨，与对应 fan 归为同一组。
+            cls._apply_hotools_bone_props(
+                armature,
+                created_names + pin_names,
+                aux_type="FAN",
+                source_bones=source_bone_names,
+            )
             cls._add_fan_constraints(armature, created_names, pin_names, influence_scale)
         finally:
             if armature.mode != "EDIT":
