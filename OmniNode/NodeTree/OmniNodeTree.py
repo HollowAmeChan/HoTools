@@ -154,10 +154,16 @@ class OmniNodeTree(NodeTree):
     def interface_update(self, context):
         print(self.name, " interface_update")
 
-    def _clear_run_state(self):
-        OmniNodeDraw.clear_tree(self)
+    def _clear_run_state(self, full=True):
+        # full=True: 编译时全树清理（overlay + 所有节点 bug 状态）。
+        # full=False: 执行时仅清理当前真正带 bug 标记的节点，
+        #             正常帧没有 bug 节点时几乎零开销，避免每帧全树刷新。
+        if full:
+            OmniNodeDraw.clear_tree(self)
 
         for node in self.nodes:
+            if not full and not getattr(node, "is_bug", False):
+                continue
             if hasattr(node, "clear_bug_state"):
                 node.clear_bug_state()
             elif hasattr(node, "is_bug") and hasattr(node, "bug_text"):
@@ -194,11 +200,19 @@ class OmniNodeTree(NodeTree):
     def clear_compile_cache(self):
         clear_tree_compile_cache(self)
 
-    def _run_compiled_graph(self, compiled):
+    def _run_compiled_graph(self, compiled, phases=None):
         self._ensure_execution_enabled()
-        self._clear_run_state()
+
+        t = time.perf_counter()
+        self._clear_run_state(full=False)
+        if phases is not None:
+            phases["[frame] clear_state"] = time.perf_counter() - t
+
+        # 不再单独计 [frame] execute 聚合项：OmniExecutor.run 已把
+        # begin_run/finish_run 及顶层 step 明细作为叶子项并入 phases，
+        # 所有叶子项相加即等于 total，避免重复计数。
         debug_enabled = getattr(self, "debug_runtime_trace", False)
-        result = OmniExecutor.run(compiled, debug=debug_enabled)
+        result = OmniExecutor.run(compiled, debug=debug_enabled, phases=phases)
 
         return result
 
@@ -216,8 +230,44 @@ class OmniNodeTree(NodeTree):
 
     def run_frame_cached(self):
         self._ensure_execution_enabled()
+
+        if not bool(getattr(self, "debug_runtime_timing", False)):
+            compiled = self.compile_cached(force=False)
+            return self._run_compiled_graph(compiled)
+
+        # 统一帧计时：从 handler 入口到回写的整条链路，
+        # 外层 phase（compile_check / clear_state / begin_run / finish_run）
+        # 与执行器内部 step 明细并入同一份报告，所有叶子项之和即为 total。
+        phases = {}
+        frame_start = time.perf_counter()
+
+        t = time.perf_counter()
         compiled = self.compile_cached(force=False)
-        return self._run_compiled_graph(compiled)
+        phases["[frame] compile_check"] = time.perf_counter() - t
+
+        try:
+            return self._run_compiled_graph(compiled, phases=phases)
+        finally:
+            total = time.perf_counter() - frame_start
+            # 残差桶：total 减去所有已插桩叶子项之和，
+            # 代表未被插桩的缝隙（step 循环调度、计时器自身开销等），
+            # 保证所有项相加精确等于 total。
+            measured = sum(phases.values())
+            residual = total - measured
+            if residual > 0.0:
+                phases["[frame] unmeasured"] = residual
+            phases["total"] = total
+            try:
+                interval = float(getattr(self, "debug_runtime_timing_interval", 1.0))
+            except Exception:
+                interval = 1.0
+            OmniDebug.record_runtime_timing(
+                self.name,
+                f"frame:{int(self.as_pointer())}",
+                phases,
+                interval=interval,
+                frame_level=True,
+            )
 
     def run(self):
         self._ensure_execution_enabled()

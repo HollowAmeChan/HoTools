@@ -16,12 +16,15 @@ import time
 
 
 class RuntimeObserver:
-    def __init__(self, debug=False, depth=0, trace=None):
+    def __init__(self, debug=False, depth=0, trace=None, timing_collector=None):
         self.debug = bool(debug)
         self.depth = int(depth)
         self.trace = [] if trace is None else trace
         self.timing_start = None
         self.timing_stages = None
+        # 若提供收集器，则顶层 step 明细并入该字典（帧链路报告），
+        # 不再单独成一个报告块。子树仍走各自的独立报告。
+        self.timing_collector = timing_collector
 
     def child(self):
         return RuntimeObserver(
@@ -64,6 +67,16 @@ class RuntimeObserver:
             interval = 1.0
 
         stages = dict(self.timing_stages or {})
+
+        # 顶层有收集器时，step 明细并入帧链路报告（不再单独成块），
+        # 且不写入 total，避免与帧链路的聚合项重复计数。
+        if self.timing_collector is not None:
+            for stage, seconds in stages.items():
+                self.timing_collector[stage] = (
+                    self.timing_collector.get(stage, 0.0) + float(seconds)
+                )
+            return
+
         stages["total"] = time.perf_counter() - self.timing_start
         OmniDebug.record_runtime_timing(
             getattr(op, "tree_name", compiled.tree_name),
@@ -401,6 +414,7 @@ class OmniExecutor:
         depth=0,
         runtime_context=None,
         observer=None,
+        timing_collector=None,
     ):
         if runtime_context is None:
             runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
@@ -412,6 +426,7 @@ class OmniExecutor:
                     depth=depth,
                     runtime_context=runtime_context,
                     observer=observer,
+                    timing_collector=timing_collector,
                 )
             except Exception:
                 runtime_context.mark_failed()
@@ -420,7 +435,7 @@ class OmniExecutor:
                 OmniRuntimeState.finish_run(runtime_context)
 
         if observer is None:
-            observer = RuntimeObserver(debug=debug, depth=depth)
+            observer = RuntimeObserver(debug=debug, depth=depth, timing_collector=timing_collector)
 
         return OmniExecutor._execute_core(compiled, provided_inputs, runtime_context, observer)
 
@@ -677,15 +692,28 @@ class OmniExecutor:
         return result, observer.trace
 
     @staticmethod
-    def run(compiled: CompiledGraph, debug=False):
+    def run(compiled: CompiledGraph, debug=False, phases=None):
+        t = time.perf_counter()
         runtime_context = OmniRuntimeState.begin_run(getattr(compiled, "tree_ref", None))
+        if phases is not None:
+            phases["[run] begin_run"] = time.perf_counter() - t
         try:
-            result, trace = OmniExecutor._execute(compiled, debug=debug, runtime_context=runtime_context)
+            # phases 作为收集器传入：顶层 step 明细直接并入帧链路报告，
+            # 不再单独成块。step_loop 不作为聚合项写入，避免与各 step 重复计数。
+            result, trace = OmniExecutor._execute(
+                compiled,
+                debug=debug,
+                runtime_context=runtime_context,
+                timing_collector=phases,
+            )
         except Exception:
             runtime_context.mark_failed()
             raise
         finally:
+            t = time.perf_counter()
             OmniRuntimeState.finish_run(runtime_context)
+            if phases is not None:
+                phases["[run] finish_run"] = time.perf_counter() - t
         if debug:
             print("\n".join(trace))
         return result

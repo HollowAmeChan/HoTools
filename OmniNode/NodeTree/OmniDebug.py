@@ -168,22 +168,45 @@ class OmniDebug:
         ]
 
     @staticmethod
-    def format_runtime_timing_report(tree_name, elapsed, sample_count, totals):
-        elapsed_ms = elapsed * 1000.0
+    def format_runtime_timing_report(tree_name, elapsed, sample_count, totals, frame_level=False):
+        sample_count = max(int(sample_count), 1)
+        frame_ms = elapsed / sample_count * 1000.0           # 每帧真实墙钟间隔
         hz = sample_count / max(elapsed, 0.000001)
-        total_ms = totals.get("total", 0.0) / sample_count * 1000.0
+        handler_ms = totals.get("total", 0.0) / sample_count * 1000.0  # handler 内部耗时
 
+        header = "Frame" if frame_level else "Tree"
         lines = [
             "",
             "-" * 72,
-            f"OMNI DEBUG TIMING   |  Tree: {tree_name}",
+            f"OMNI DEBUG TIMING   |  {header}: {tree_name}",
             "-" * 72,
-            f"  {OmniDebug.section_label('Summary')}: "
-            f"interval={OmniDebug.value_label(f'{elapsed_ms:.1f}ms')}  "
-            f"samples={OmniDebug.value_label(sample_count)}  "
-            f"hz={OmniDebug.value_label(f'{hz:.2f}')}  "
-            f"total={OmniDebug.func_label(f'{total_ms:.3f}ms')}",
         ]
+
+        if frame_level:
+            # 帧级报告：区分 handler 内部 vs 引擎/重绘（handler 外）。
+            engine_ms = max(frame_ms - handler_ms, 0.0)
+            lines.append(
+                f"  {OmniDebug.section_label('Summary')}: "
+                f"samples={OmniDebug.value_label(sample_count)}  "
+                f"fps={OmniDebug.value_label(f'{hz:.1f}')}  "
+                f"frame={OmniDebug.func_label(f'{frame_ms:.2f}ms')}"
+            )
+            lines.append(
+                f"    {OmniDebug.value_label('handler')} = {OmniDebug.func_label(f'{handler_ms:.2f}ms')}"
+                f"  ({OmniDebug.value_label(f'{handler_ms / max(frame_ms, 1e-6) * 100:.0f}%')})"
+            )
+            lines.append(
+                f"    {OmniDebug.value_label('engine/redraw')} = {OmniDebug.func_label(f'{engine_ms:.2f}ms')}"
+                f"  ({OmniDebug.value_label(f'{engine_ms / max(frame_ms, 1e-6) * 100:.0f}%')})"
+            )
+        else:
+            lines.append(
+                f"  {OmniDebug.section_label('Summary')}: "
+                f"interval={OmniDebug.value_label(f'{elapsed * 1000.0:.1f}ms')}  "
+                f"samples={OmniDebug.value_label(sample_count)}  "
+                f"hz={OmniDebug.value_label(f'{hz:.2f}')}  "
+                f"total={OmniDebug.func_label(f'{handler_ms:.3f}ms')}"
+            )
 
         step_stages = [stage for stage in totals if stage != "total"]
         step_stages.sort(key=lambda stage: totals[stage], reverse=True)
@@ -192,12 +215,15 @@ class OmniDebug:
         hidden_steps = step_stages[max_stages:]
 
         if shown_steps:
-            lines.append(f"  {OmniDebug.section_label('Slow Steps')}:")
+            label = "Breakdown" if frame_level else "Slow Steps"
+            lines.append(f"  {OmniDebug.section_label(label)}:")
             for index, stage in enumerate(shown_steps, start=1):
                 avg_ms = totals[stage] / sample_count * 1000.0
+                pct = avg_ms / max(handler_ms, 1e-6) * 100.0
                 lines.append(
                     f"    {OmniDebug.value_label(f'{index:02d}.')} "
                     f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
+                    f"  ({OmniDebug.value_label(f'{pct:.0f}%')})"
                 )
 
         if hidden_steps:
@@ -227,7 +253,7 @@ class OmniDebug:
         return f"name:{tree_name}"
 
     @classmethod
-    def record_runtime_timing(cls, tree_name, tree_key, stages, interval=None):
+    def record_runtime_timing(cls, tree_name, tree_key, stages, interval=None, frame_level=False):
         if not stages:
             return
 
@@ -247,9 +273,11 @@ class OmniDebug:
                 "stages": {},
                 "tree_name": tree_name,
                 "interval": cls.RUNTIME_TIMING_PRINT_INTERVAL,
+                "frame_level": bool(frame_level),
             },
         )
         profile["tree_name"] = tree_name
+        profile["frame_level"] = bool(frame_level)
         if interval is not None:
             try:
                 profile["interval"] = max(float(interval), 0.05)
@@ -276,7 +304,10 @@ class OmniDebug:
                 continue
             totals = profile["stages"]
             tree_name = profile.get("tree_name", key)
-            print("\n".join(cls.format_runtime_timing_report(tree_name, elapsed, sample_count, totals)))
+            frame_level = bool(profile.get("frame_level", False))
+            print("\n".join(cls.format_runtime_timing_report(
+                tree_name, elapsed, sample_count, totals, frame_level=frame_level
+            )))
 
             cls._runtime_timing_profiles[key] = {
                 "last_print": now,
@@ -284,6 +315,7 @@ class OmniDebug:
                 "stages": {},
                 "tree_name": tree_name,
                 "interval": interval,
+                "frame_level": frame_level,
             }
 
     @classmethod
