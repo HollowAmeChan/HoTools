@@ -177,6 +177,56 @@ class FBXExporter:
 
         return removed, failed
     @staticmethod
+    def remove_geometry_nodes_modifiers(objects):
+        # 临时删除所有几何节点修改器（type == 'NODES'），不论是否显示在视口。
+        # 几何节点会改变导出网格拓扑，且常与形态键、Unity 导入冲突；导出前整体去掉，
+        # 靠导出后的 undo 恢复。返回 (已删列表, 失败列表)。
+        removed = []
+        failed = []
+
+        for ob in objects:
+            modifiers = getattr(ob, "modifiers", None)
+            if not modifiers:
+                continue
+
+            for mod in list(modifiers):
+                if mod.type != "NODES":
+                    continue
+
+                mod_name = mod.name
+                try:
+                    modifiers.remove(mod)
+                    removed.append((ob.name, mod_name))
+                except Exception as exc:
+                    failed.append((ob.name, mod_name, exc))
+
+        return removed, failed
+    @staticmethod
+    def remove_outline_modifiers(objects):
+        # 临时删除描边修改器：实体化修改器（type == 'SOLIDIFY'）且开启了 use_flip_normals。
+        # 这类修改器是翻转法线的外扩壳，属于渲染用描边，不应进入导出网格；导出后靠 undo 恢复。
+        # 返回 (已删列表, 失败列表)。
+        removed = []
+        failed = []
+
+        for ob in objects:
+            modifiers = getattr(ob, "modifiers", None)
+            if not modifiers:
+                continue
+
+            for mod in list(modifiers):
+                if mod.type != "SOLIDIFY" or not getattr(mod, "use_flip_normals", False):
+                    continue
+
+                mod_name = mod.name
+                try:
+                    modifiers.remove(mod)
+                    removed.append((ob.name, mod_name))
+                except Exception as exc:
+                    failed.append((ob.name, mod_name, exc))
+
+        return removed, failed
+    @staticmethod
     def iter_bone_collections(armature):
         collections = getattr(armature, "collections_all", None)
         if collections is not None:
@@ -306,6 +356,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
+    ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
+    ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；导出后自动恢复",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
         # 寻找所选预设脚本文件
@@ -372,6 +424,22 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     for ob_name, mod_name, exc in failed_hidden_modifiers:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_hidden_modifiers)} 个隐藏修改器临时删除失败，详见控制台")
+
+            if self.ignoreGeometryNodes:
+                removed_gn, failed_gn = FBXExporter.remove_geometry_nodes_modifiers(bpy.context.scene.objects)
+                if failed_gn:
+                    print("[HoTools FBX] Failed to remove geometry nodes modifiers:")
+                    for ob_name, mod_name, exc in failed_gn:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_gn)} 个几何节点修改器临时删除失败，详见控制台")
+
+            if self.ignoreOutlineModifiers:
+                removed_outline, failed_outline = FBXExporter.remove_outline_modifiers(bpy.context.scene.objects)
+                if failed_outline:
+                    print("[HoTools FBX] Failed to remove outline modifiers:")
+                    for ob_name, mod_name, exc in failed_outline:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
 
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
@@ -456,6 +524,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col.prop(self, "cheekBoneKeepRotation")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
+        option_col.prop(self, "ignoreGeometryNodes")
+        option_col.prop(self, "ignoreOutlineModifiers")
         
         params = self.getParams(context, report_errors=False)
         params_box = layout.box()
@@ -479,6 +549,8 @@ class OP_FinalFBXExport_only_preprocess(Operator):
 
     cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
+    ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
+    ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；预处理结束前生效",default=True) # type: ignore
 
 
     def export_fbx_preprocess(self,context):
@@ -506,6 +578,22 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         FBXExporter.unhide_objects()
         pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
         try:
+            if self.ignoreGeometryNodes:
+                removed_gn, failed_gn = FBXExporter.remove_geometry_nodes_modifiers(bpy.context.scene.objects)
+                if failed_gn:
+                    print("[HoTools FBX] Failed to remove geometry nodes modifiers:")
+                    for ob_name, mod_name, exc in failed_gn:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_gn)} 个几何节点修改器临时删除失败，详见控制台")
+
+            if self.ignoreOutlineModifiers:
+                removed_outline, failed_outline = FBXExporter.remove_outline_modifiers(bpy.context.scene.objects)
+                if failed_outline:
+                    print("[HoTools FBX] Failed to remove outline modifiers:")
+                    for ob_name, mod_name, exc in failed_outline:
+                        print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
+                    self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
             # 修复骨骼旋转
             if self.cheekBoneKeepRotation and armature_objects !=[]:
                 FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
@@ -559,6 +647,8 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_col = option_box.column(align=True)
         option_col.prop(self, "cheekBoneKeepRotation")
         option_col.prop(self, "fixObjectTransform")
+        option_col.prop(self, "ignoreGeometryNodes")
+        option_col.prop(self, "ignoreOutlineModifiers")
 
 
 def OPF_FinalFBXExport(self, context):
