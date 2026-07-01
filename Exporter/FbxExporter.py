@@ -5,7 +5,6 @@ import math
 import traceback
 from bpy.types import PropertyGroup, UIList, Operator, Panel
 from mathutils import Vector
-from types import SimpleNamespace
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
 
@@ -451,8 +450,6 @@ class FBXExporter:
         return name_maps
 
 
-fbx_presets = []
-
 class OP_FinalFBXExport(Operator,ExportHelper):
     bl_idname = "ho.final_fbx_export"
     bl_label = "Hotools导出FBX"
@@ -465,28 +462,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         default="*.fbx", options={'HIDDEN'}, maxlen=255,
     ) # type: ignore
 
-    
-    def get_fbx_presets(self,context):
-        '''
-        利用原生fbx导出的预设
-        扫描所有 operator/export_scene.fbx 预设目录，返回 EnumProperty items 列表
-        '''
-        presets = set()
-        for p in bpy.utils.preset_paths("operator/export_scene.fbx"):
-            if os.path.isdir(p):
-                for fn in os.listdir(p):
-                    if fn.endswith(".py"):
-                        presets.add(os.path.splitext(fn)[0])
-        global fbx_presets
-        fbx_presets = [(name, name, "") for name in presets]
-        return fbx_presets
-    
-    preset: bpy.props.EnumProperty(
-        name="Preset",
-        description="选择 FBX 导出预设",
-        items=get_fbx_presets
-    ) # type: ignore
-
+    addLeafBones:BoolProperty(name="添加叶骨",description="每根骨末端补一根叶骨(add_leaf_bones)。暂用Blender自带实现,后续会换成HoTools自己的实现",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录。约束目标已随MCH转移",default=False) # type: ignore
     boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
@@ -498,30 +474,60 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；导出后自动恢复",default=True) # type: ignore
 
     def getParams(self,context, report_errors=True):
-        # 寻找所选预设脚本文件
-        preset_file = None
-        for p in bpy.utils.preset_paths("operator/export_scene.fbx"):
-            fp = os.path.join(p, self.preset + ".py")
-            if os.path.isfile(fp):
-                preset_file = fp
-                break
-        if not preset_file:
-            if report_errors:
-                self.report({'ERROR'}, f"找不到预设文件: {self.preset}.py")
-            return None
+        """返回写死的 export_scene.fbx 参数。
 
-        # 只抽取 op.xxx 赋值语句
-        with open(preset_file, 'r', encoding='utf-8') as f:
-            lines = [l for l in f if l.strip().startswith("op.")]
-        code = compile("".join(lines), preset_file, 'exec')
-
-        # 解包参数
-        op_props = SimpleNamespace()
-        exec(code, {'op': op_props})
-        params = vars(op_props)
-        params['filepath'] = self.filepath
+        不再依赖 Blender 的 FBX 导出预设：关键参数全部固定，只有 add_leaf_bones
+        由 UI 开关 addLeafBones 控制。参数值取自约定的导出规范
+        （仅选中、仅 MESH+ARMATURE、单位全部应用等）。
+        """
+        params = {
+            "filepath": self.filepath,
+            # 范围：仅选中物体，仅导出 MESH 与 ARMATURE
+            "use_selection": True,
+            "use_visible": False,
+            "use_active_collection": False,
+            "object_types": {'MESH', 'ARMATURE'},
+            # 单位/变换：单位全部应用
+            "global_scale": 1.0,
+            "apply_unit_scale": True,
+            "apply_scale_options": 'FBX_SCALE_ALL',
+            "use_space_transform": True,
+            "bake_space_transform": False,
+            # 网格
+            "use_mesh_modifiers": True,
+            "use_mesh_modifiers_render": True,
+            "mesh_smooth_type": 'OFF',
+            "colors_type": 'SRGB',
+            "prioritize_active_color": False,
+            "use_subsurf": False,
+            "use_mesh_edges": False,
+            "use_tspace": False,
+            "use_triangles": False,
+            "use_custom_props": False,
+            # 骨架
+            "add_leaf_bones": self.addLeafBones,
+            "primary_bone_axis": 'Y',
+            "secondary_bone_axis": 'X',
+            "use_armature_deform_only": False,
+            "armature_nodetype": 'NULL',
+            # 动画烘焙
+            "bake_anim": False,
+            "bake_anim_use_all_bones": True,
+            "bake_anim_use_nla_strips": True,
+            "bake_anim_use_all_actions": True,
+            "bake_anim_force_startend_keying": True,
+            "bake_anim_step": 1.0,
+            "bake_anim_simplify_factor": 1.0,
+            # 输出
+            "path_mode": 'AUTO',
+            "embed_textures": False,
+            "batch_mode": 'OFF',
+            "use_batch_own_dir": True,
+            "axis_forward": '-Z',
+            "axis_up": 'Y',
+        }
         return params
-        
+
 
     def export_fbx(self,context):
         global hidden_collections
@@ -676,12 +682,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        preset_box = layout.box()
-        preset_box.label(text="FBX 预设")
-        preset_box.prop(self, "preset", text="预设")
-        hint_col = preset_box.column(align=True)
-        hint_col.label(text="共享BlenderFBX导出预设")
-        hint_col.label(text="没有选项时，请在BlenderFBX面板保存预设")
+        # FBX 导出参数已写死（仅选中、仅 MESH+ARMATURE、单位全部应用等），
+        # 只暴露叶骨开关
+        fbx_box = layout.box()
+        fbx_box.label(text="FBX 导出")
+        fbx_box.prop(self, "addLeafBones")
 
         option_box = layout.box()
         option_box.label(text="预处理")
@@ -702,20 +707,6 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         json_col.prop(self, "exportBoneCollection")
         if self.exportBoneCollection:
             json_col.prop(self, "boneCollectionSuffix")
-
-        params = self.getParams(context, report_errors=False)
-        params_box = layout.box()
-        params_box.label(text="当前预设参数")
-        if params:
-            params_col = params_box.column(align=True)
-            params_col.enabled = False
-            for name, value in params.items():
-                row = params_col.row(align=True)
-                split = row.split(factor=0.36)
-                split.label(text=str(name))
-                split.label(text=str(value))
-        else:
-            params_box.label(text="未读取到预设参数")
 
 class OP_FinalFBXExport_only_preprocess(Operator):
     bl_idname = "ho.final_fbx_export_only_preprocess"
