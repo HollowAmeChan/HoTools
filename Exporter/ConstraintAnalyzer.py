@@ -53,7 +53,11 @@ class ConstraintAnalyzer:
                     source = semantic.source_bone
                     if source not in twist_map:
                         twist_map[source] = []
-                    twist_map[source].append((semantic.bone_name, semantic.weight))
+                    # 目标骨用约束真正的 subtarget（通常是权重来源骨的子关节骨，如手骨），
+                    # 而非权重来源骨自身；source_bone（权重来源）在此恰好用作链分组的键。
+                    twist_map[source].append(
+                        (semantic.bone_name, semantic.weight, semantic.target_bone)
+                    )
                 else:
                     constraints_list.append(semantic)
 
@@ -121,21 +125,28 @@ class ConstraintAnalyzer:
         if aux_type == "TWIST" and kind == "CopyRotation":
             if constraint.type != "COPY_ROTATION":
                 return None
-            # Twist 骨的源骨从 auxBone.sourceBones 读取(第一个源骨)
+            # 权重来源骨(辅助骨权重从这根骨拆分而来)从 auxBone.sourceBones 读取,
+            # 同一来源的 twist 骨聚合为一条链
             source_bone = ConstraintAnalyzer._get_twist_source_bone(bone_name, armature)
             if source_bone is None:
                 return None
+            # 约束的实际目标 = COPY_ROTATION 的 subtarget(如 hand.L,主骨的子关节骨),
+            # twist 骨真正拷贝的是它的旋转;Unity 端约束必须指向这个骨,而非权重来源骨。
             return TwistConstraint(
                 bone_name=bone_name,
                 weight=weight,
                 source_bone=source_bone,
+                target_bone=target_bone,
             )
 
         return None
 
     @staticmethod
     def _get_twist_source_bone(twist_bone_name: str, armature: bpy.types.Object) -> str | None:
-        """从 twist 骨的 auxBone.sourceBones 读取源骨名(第一个)。"""
+        """从 twist 骨的 auxBone.sourceBones 读取权重来源骨名(第一个)。
+
+        sourceBones 记录该辅助骨的蒙皮权重从哪根骨拆分而来(拆分/合并时保证权重 sum 不变)。
+        """
         bone = armature.data.bones.get(twist_bone_name)
         if bone is None:
             return None

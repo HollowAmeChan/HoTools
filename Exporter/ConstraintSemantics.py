@@ -34,19 +34,29 @@ class TwistConstraint(SemanticConstraint):
 
     Blender 实现:twist 骨上 COPY_ROTATION(local→localOwnerOrient) + STRETCH_TO(抑制翻转)。
     Unity 映射:退化为单 RotationConstraint,世界→世界,锁 Y 轴(只传 twist 分量)。
+
+    - source_bone: 该辅助骨的**权重来源骨**(如 lower_arm.L)。twist 骨的蒙皮权重是
+      从这根骨上拆分出来的,拆分/合并时要保证权重 sum 不变。同一权重来源的 twist 骨
+      被聚合为同一条链(链分组只是它作为分组键的副作用,非其定义)。
+    - target_bone: COPY_ROTATION 真正拷贝旋转的目标骨(如 hand.L,即主骨的子关节骨)。
+      这才是 Unity 端约束应指向的骨——手腕滚动带动小臂扭转,twist 跟的是手骨。
     """
     source_bone: str = ""
+    target_bone: str = ""
 
 
 @dataclass
 class TwistChainGroup:
-    """Twist 链分组 — 同一源骨的多个 twist 骨聚合在一起,Unity 端可优化为多源约束。
+    """Twist 链分组 — 同一权重来源骨的多个 twist 骨聚合在一起,Unity 端可优化为多源约束。
 
+    源骨(source_bone)指辅助骨的权重来源骨:这些 twist 骨的蒙皮权重都从它拆分而来,
+    拆分/合并时保证权重 sum 不变;同一权重来源的 twist 骨天然属于同一条链,故以它为分组键。
     识别器把同源 twist 骨聚合成这个对象;映射器可选:逐个导出单约束,或导出一个
     多源 RotationConstraint。当前方案:逐个导出(Unity 原生支持)。
     """
     source_bone: str = ""
-    twist_bones: list[tuple[str, float]] = field(default_factory=list)  # [(twist骨名, weight), ...]
+    # [(twist骨名, weight, target骨名), ...]；target 为 COPY_ROTATION 真正拷贝旋转的目标骨
+    twist_bones: list[tuple[str, float, str]] = field(default_factory=list)
 
 
 @dataclass

@@ -95,12 +95,12 @@ class UnityConstraintMapper:
 
         # Twist 链:逐个 twist 骨导出为独立约束
         for chain in twist_chains:
-            for twist_bone_name, weight in chain.twist_bones:
+            for twist_bone_name, weight, target_bone in chain.twist_bones:
                 if twist_bone_name not in bones_map:
                     bones_map[twist_bone_name] = []
                 bones_map[twist_bone_name].append(
                     UnityConstraintMapper._map_twist_constraint(
-                        twist_bone_name, chain.source_bone, weight
+                        twist_bone_name, chain.source_bone, weight, target_bone
                     )
                 )
 
@@ -148,16 +148,22 @@ class UnityConstraintMapper:
         return None
 
     @staticmethod
-    def _map_twist_constraint(twist_bone_name: str, source_bone: str, weight: float) -> dict:
+    def _map_twist_constraint(
+        twist_bone_name: str, source_bone: str, weight: float, target_bone: str
+    ) -> dict:
         """映射 Twist 约束为 Unity JSON 字典。
 
         退化方案:单个 RotationConstraint,世界→世界,锁 Y 轴(只传 twist 分量)。
+
+        - sourceBone: twist 骨的权重来源骨(如 lower_arm.L,辅助骨权重从它拆分而来),仅作信息标记。
+        - targetPath: 约束真正指向的骨(如 hand.L),即 Blender COPY_ROTATION 的 subtarget。
+          twist 跟随的是手骨的旋转,而非权重来源骨自身。
         """
         return {
             "type": "Rotation",
             "semantic": "twist",
             "sourceBone": source_bone,
-            "targetPath": source_bone,
+            "targetPath": target_bone,
             "weight": weight,
             "space": {"source": "world", "target": "world"},
             "axes": {"x": True, "y": False, "z": True},  # 锁 Y 轴
