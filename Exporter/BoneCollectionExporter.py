@@ -27,7 +27,7 @@ JSON 格式:
 
 import bpy
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from bpy.types import Operator
 from bpy_extras.io_utils import ExportHelper
 
@@ -87,7 +87,7 @@ class BoneCollectionExporter:
         """构造完整的骨骼集合导出字典结构(含元信息)。"""
         return {
             "version": BoneCollectionExporter.VERSION,
-            "exportTime": datetime.utcnow().isoformat() + "Z",
+            "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "armatureName": armature.name,
             "collections": BoneCollectionExporter.build_collections_list(armature),
         }

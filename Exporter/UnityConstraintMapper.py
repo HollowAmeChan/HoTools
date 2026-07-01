@@ -59,7 +59,7 @@ Unity 端处理建议:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from .ConstraintSemantics import (
     SemanticConstraint,
     FanConstraint,
@@ -112,7 +112,7 @@ class UnityConstraintMapper:
 
         return {
             "version": UnityConstraintMapper.VERSION,
-            "exportTime": datetime.utcnow().isoformat() + "Z",
+            "exportTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "armatureName": armature_name,
             "bones": bones_list,
         }
