@@ -159,6 +159,8 @@ class FBXExporter:
         规则：
         - 只处理无子级的骨（先快照目标，避免边加边处理）；
         - 只处理 weighted_names 里的骨（无权重的骨不加）；
+        - 排除 HoTools 约束骨（辅助骨 auxBone.isAuxBone）：fan/twist 等约束骨即使有权重
+          也不该补叶骨，否则会污染约束骨末端；
         - 叶骨长度为主体骨长度的一半，沿主体骨方向延伸（FBX 导出其实不在意长度，但仍写正确值）；
         - 叶骨归入主骨所属的**所有**骨骼集合（自带 add_leaf_bones 不处理集合，这是自实现的主因；
           集合 JSON 导出须排在本步之后才能收录叶骨）；
@@ -166,9 +168,18 @@ class FBXExporter:
           （因此后续 MCH 步骤不会处理它；本步在 MCH 之前执行）。
         """
         edit_bones = ob.data.edit_bones
+        data_bones = ob.data.bones
+
+        def _is_aux_bone(bone_name):
+            """按名从 data.bones 读辅助骨标记（EDIT 模式下按名访问有效）。"""
+            bone = data_bones.get(bone_name)
+            props = getattr(bone, "hotools_boneprops", None) if bone else None
+            aux = getattr(props, "auxBone", None) if props else None
+            return bool(aux and aux.isAuxBone)
+
         targets = [
             eb.name for eb in edit_bones
-            if not eb.children and eb.name in weighted_names
+            if not eb.children and eb.name in weighted_names and not _is_aux_bone(eb.name)
         ]
         for name in targets:
             eb = edit_bones.get(name)
@@ -418,7 +429,8 @@ class FBXExporter:
         1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
            MCH 父级设为原骨、不形变、不相连；
         2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
-        3. **最后**才把原骨清零竖直（roll=0，tail 指向 +Z）。
+        3. **最后**把原骨朝向对齐到其父骨（方向 + roll 同父），使 Unity 里该骨局部旋转为 0。
+           自顶向下处理，父骨先定朝向；根骨无父级则回退世界竖直。
         """
         arm = ob.data
         edit_bones = arm.edit_bones
@@ -462,14 +474,35 @@ class FBXExporter:
                 child.use_connect = False
                 child.parent = mch
 
-        # 3. 最后清零原骨竖直
-        for src_name in name_map:
-            src = edit_bones.get(src_name)
-            if src is None:
-                continue
+        # 3. 最后清零原骨旋转：把每根骨的朝向对齐到它的父骨（方向 + roll 同父），
+        #    使 3x3 朝向矩阵与父骨一致 → Unity 里该骨局部旋转为 0。
+        #    必须自顶向下：父骨若也在清理集合内，须先定好朝向，子骨才能对齐到最终值。
+        #    无父骨（根骨）没有可对齐对象，回退到世界竖直。
+        def _ancestor_depth(eb):
+            depth = 0
+            parent = eb.parent
+            while parent is not None:
+                depth += 1
+                parent = parent.parent
+            return depth
+
+        ordered = [edit_bones.get(n) for n in name_map]
+        ordered = [eb for eb in ordered if eb is not None]
+        ordered.sort(key=_ancestor_depth)  # 父在前、子在后
+
+        for src in ordered:
             original_length = (src.tail - src.head).length
-            src.roll = 0
-            src.tail = src.head + Vector((0, 0, original_length))
+            parent = src.parent
+            parent_dir = (parent.tail - parent.head) if parent is not None else None
+            if parent_dir is not None and parent_dir.length > 1e-8:
+                # 方向与 roll 同父 → 朝向矩阵一致 → 局部旋转为 0；head（关节枢轴）不动
+                parent_dir.normalize()
+                src.tail = src.head + parent_dir * original_length
+                src.roll = parent.roll
+            else:
+                # 根骨或父骨退化：回退世界竖直
+                src.roll = 0
+                src.tail = src.head + Vector((0, 0, original_length))
 
         return name_map
     @staticmethod
