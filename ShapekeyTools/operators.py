@@ -2242,6 +2242,21 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         subtype='FACTOR',
     ) # type: ignore
 
+    slide_smooth: BoolProperty(
+        name="沿杆向两端聚拢",
+        description="投影后，以杆子中点为界把顶点分成两半：靠 head 的滑向 head、靠 tail 的滑向 tail，使中段掏空、塌陷藏进两端关节；范围钳制在 head→tail 之间",
+        default=True,
+    ) # type: ignore
+
+    slide_factor: FloatProperty(
+        name="聚拢强度",
+        description="顶点朝所属一端(head/tail)滑移的比例；1 时完全贴到两端点、中段彻底掏空，越小越接近原始投影位置",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -2278,6 +2293,11 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         # 只有权重模式才需要阈值
         if self.mode == 'WEIGHT':
             layout.prop(self, "threshold")
+
+        # 向两端聚拢开关及强度
+        layout.prop(self, "slide_smooth")
+        if self.slide_smooth:
+            layout.prop(self, "slide_factor")
 
     def execute(self, context):
         obj = context.active_object
@@ -2358,19 +2378,44 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
         if key_block is None:
             key_block = obj.shape_key_add(name=key_name, from_mix=False)
 
-        # === 写入形态键：命中的顶点硬吸附到它在骨轴上的投影点（塌成一根杆子）；
+        # === 计算命中顶点在骨轴上的投影参数 t（0=head，1=tail）===
+        # 先算每个命中顶点最近点对应的 t，钳制到 [0,1] 保证落在 head→tail 之间。
+        t_map = {}
+        for i in hit_verts:
+            if axis_len_sq > 0.0:
+                world = mat_world @ base_co[i]
+                t = (world - bone_head_world).dot(bone_axis) / axis_len_sq
+                # 钳制到杆子范围内
+                t_map[i] = min(1.0, max(0.0, t))
+            else:
+                # 退化骨：全部收向 head 点
+                t_map[i] = 0.0
+
+        # === 沿杆滑移修正：向两端聚拢 ===
+        # 关键：不能朝“邻域中心”滑——朝一圈邻居的均值滑移在数学上就是拉普拉斯
+        # 平滑，只会把分布抹平、把靠近端部的环往里拽，看起来就是“往中间滑”。
+        # 要让顶点向两端滑，需按杆子中点把命中顶点切成两半：靠 head 的一半整体
+        # 滑向 head，靠 tail 的一半整体滑向 tail，中段掏空、塌陷藏进两端关节。
+        # 退化骨没有轴向，跳过。
+        if self.slide_smooth and axis_len_sq > 0.0 and t_map:
+            t_vals = list(t_map.values())
+            # 杆子中点作为两半的分界（用实际投影范围而非固定 0.5，兼容偏置骨）
+            split = 0.5 * (min(t_vals) + max(t_vals))
+
+            # 靠 head 的一半按 factor 朝 head(0) 滑，靠 tail 的一半朝 tail(1) 滑；
+            # factor=1 时完全贴到两端点，中段彻底掏空。
+            factor = self.slide_factor
+            for i in hit_verts:
+                ti = t_map[i]
+                end = 0.0 if ti < split else 1.0
+                t_map[i] = min(1.0, max(0.0, ti + (end - ti) * factor))
+
+        # === 写入形态键：命中的顶点硬吸附到骨轴上的 t 位置（塌成一根杆子）；
         #     其余顶点还原到 Basis（覆盖旧数据，保证替换干净）===
         for i in range(vert_count):
             base = base_co[i]
             if i in hit_verts:
-                world = mat_world @ base
-                if axis_len_sq > 0.0:
-                    # 顶点在骨轴（head→tail 无限延长线）上的最近点
-                    t = (world - bone_head_world).dot(bone_axis) / axis_len_sq
-                    target = bone_head_world + bone_axis * t
-                else:
-                    # 退化骨：直接收向 head 点
-                    target = bone_head_world
+                target = bone_head_world + bone_axis * t_map[i]
                 key_block.data[i].co = mat_world_inv @ target
             else:
                 key_block.data[i].co = base
