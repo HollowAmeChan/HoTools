@@ -98,13 +98,9 @@ class ConstraintAnalyzer:
         bone_name: str, constraint, armature: bpy.types.Object
     ) -> SemanticConstraint | None:
         """识别 HoTools 辅助骨约束(名字格式 HoTools_<AUX>_<KIND>)。"""
-        parts = constraint.name.split("_")
-        if len(parts) < 3:
+        aux_type, kind = ConstraintAnalyzer._parse_aux_constraint_name(constraint.name)
+        if aux_type is None or kind is None:
             return None  # 格式不对,跳过
-
-        # parts: ["HoTools", <AUX>, <KIND>, ...]
-        aux_type = parts[1]
-        kind = parts[2]
 
         weight = getattr(constraint, "influence", 1.0)
         target_bone = constraint.subtarget
@@ -121,7 +117,7 @@ class ConstraintAnalyzer:
             )
 
         # Twist 约束:HoTools_TWIST_CopyRotation(主约束) 或 HoTools_TWIST_StretchTo(辅助,抑制翻转)
-        # 只识别 CopyRotation,StretchTo 不单独导出(Unity 端用锁 Y 轴代替)
+        # 只识别 CopyRotation,StretchTo 不单独导出(Unity 端由导出 axes 只冻结/约束 Y 轴)
         if aux_type == "TWIST" and kind == "CopyRotation":
             if constraint.type != "COPY_ROTATION":
                 return None
@@ -140,6 +136,18 @@ class ConstraintAnalyzer:
             )
 
         return None
+
+    @staticmethod
+    def _parse_aux_constraint_name(name: str) -> tuple[str | None, str | None]:
+        """Parse HoTools_<AUX_TYPE>_<KIND>, preserving aux types with underscores."""
+        prefix = ConstraintAnalyzer.AUX_PREFIX + "_"
+        if not name.startswith(prefix):
+            return None, None
+        body = name[len(prefix):]
+        aux_type, sep, kind = body.rpartition("_")
+        if not sep or not aux_type or not kind:
+            return None, None
+        return aux_type, kind
 
     @staticmethod
     def _get_twist_source_bone(twist_bone_name: str, armature: bpy.types.Object) -> str | None:

@@ -12,7 +12,7 @@ addon_path = Path(__file__).parent.parent
 if str(addon_path) not in sys.path:
     sys.path.insert(0, str(addon_path))
 
-from Exporter.ConstraintSemantics import FanConstraint, TwistConstraint, TwistChainGroup
+from Exporter.ConstraintSemantics import FanConstraint, TwistChainGroup
 from Exporter.UnityConstraintMapper import UnityConstraintMapper
 
 
@@ -46,14 +46,14 @@ def test_export():
         TwistChainGroup(
             source_bone="upper_arm.L",
             twist_bones=[
-                ("upper_arm_twist_01.L", 0.33),
-                ("upper_arm_twist_02.L", 0.67),
+                ("upper_arm_twist_01.L", 0.33, "MCH_forearm.L"),
+                ("upper_arm_twist_02.L", 0.67, "MCH_forearm.L"),
             ],
         ),
         TwistChainGroup(
             source_bone="forearm.L",
             twist_bones=[
-                ("forearm_twist_01.L", 0.5),
+                ("forearm_twist_01.L", 0.5, "MCH_hand.L"),
             ],
         ),
     ]

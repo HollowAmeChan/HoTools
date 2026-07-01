@@ -33,7 +33,8 @@ class TwistConstraint(SemanticConstraint):
     """Twist 辅助骨约束语义。
 
     Blender 实现:twist 骨上 COPY_ROTATION(local→localOwnerOrient) + STRETCH_TO(抑制翻转)。
-    Unity 映射:退化为单 RotationConstraint,世界→世界,锁 Y 轴(只传 twist 分量)。
+    Unity 映射:退化为单 RotationConstraint,世界→世界,只冻结/约束 Y 轴。
+    Blender 导出端直接写 axes={x:false,y:true,z:false},Unity 导入端只按 JSON 设置 rotationAxis。
 
     - source_bone: 该辅助骨的**权重来源骨**(如 lower_arm.L)。twist 骨的蒙皮权重是
       从这根骨上拆分出来的,拆分/合并时要保证权重 sum 不变。同一权重来源的 twist 骨
