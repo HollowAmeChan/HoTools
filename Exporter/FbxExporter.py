@@ -115,17 +115,122 @@ class FBXExporter:
         # Children may be in the current view layer even if their parent isn't.
         for child in ob.children:
             FBXExporter.fix_object(child)
+    MCH_PREFIX = "MCH_"
     @staticmethod
-    def clearArmatureBoneRoration(ob):
-        ob = ob.data
-        notKeepRotation_bones = [b for b in ob.edit_bones if not ob.bones[b.name].hotools_boneprops.keepRotation]
-        for bone in notKeepRotation_bones:
-            for cb in bone.children:#清空所有子骨的相连，防止影响子骨头部位置
-                cb.use_connect = False
-            original_length = (bone.tail - bone.head).length
-            bone.roll = 0
-            new_tail = bone.head + Vector((0, 0, original_length))
-            bone.tail = new_tail
+    def build_mch_and_clear(ob):
+        """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨清零竖直。
+
+        必须在 EDIT 模式下调用。返回 {原骨名: MCH骨名} 映射，供约束/驱动转移使用。
+
+        处理顺序（不可颠倒）：
+        1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
+           MCH 父级设为原骨、不形变、不相连；
+        2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
+        3. **最后**才把原骨清零竖直（roll=0，tail 指向 +Z）。
+        """
+        arm = ob.data
+        edit_bones = arm.edit_bones
+
+        # 读 data.bones 上的 generateMCH 属性（edit 模式下按名访问有效），确定待处理集合
+        mch_source_names = [
+            eb.name for eb in edit_bones
+            if arm.bones[eb.name].hotools_boneprops.generateMCH
+        ]
+        if not mch_source_names:
+            return {}
+
+        name_map = {}  # 原骨名 -> MCH骨名
+
+        # 1. 先建全部 MCH 副本，拷贝原始朝向
+        for src_name in mch_source_names:
+            src = edit_bones.get(src_name)
+            if src is None:
+                continue
+            mch_name = FBXExporter.MCH_PREFIX + src_name
+            existed = edit_bones.get(mch_name)
+            if existed is not None:  # 防重名（理论上不该有，工程无残留）
+                edit_bones.remove(existed)
+            mch = edit_bones.new(mch_name)
+            mch.head = src.head.copy()
+            mch.tail = src.tail.copy()
+            mch.roll = src.roll
+            mch.use_deform = False
+            mch.parent = src
+            mch.use_connect = False
+            name_map[src_name] = mch_name
+
+        # 2. 把原始子级挂到 MCH 上（此时 src.children 含刚建的 MCH，需排除）
+        for src_name, mch_name in name_map.items():
+            src = edit_bones.get(src_name)
+            mch = edit_bones.get(mch_name)
+            if src is None or mch is None:
+                continue
+            original_children = [c for c in src.children if c.name != mch_name]
+            for child in original_children:
+                child.use_connect = False
+                child.parent = mch
+
+        # 3. 最后清零原骨竖直
+        for src_name in name_map:
+            src = edit_bones.get(src_name)
+            if src is None:
+                continue
+            original_length = (src.tail - src.head).length
+            src.roll = 0
+            src.tail = src.head + Vector((0, 0, original_length))
+
+        return name_map
+    @staticmethod
+    def transfer_constraints_to_mch(ob, name_map):
+        """把本骨架内指向 name_map 里原骨的约束 subtarget / 驱动 bone_target 改指对应 MCH。
+
+        只处理指向本骨架自身（target==ob）的引用，与 ConstraintAnalyzer 的单骨架范围一致；
+        跨骨架引用不动。在 OBJECT 模式下调用。
+        """
+        if not name_map:
+            return
+
+        # 1. pose bone 约束：subtarget（及带极向目标的 pole_subtarget）
+        for pbone in ob.pose.bones:
+            for con in pbone.constraints:
+                if getattr(con, "target", None) == ob:
+                    sub = getattr(con, "subtarget", "")
+                    if sub in name_map:
+                        con.subtarget = name_map[sub]
+                if getattr(con, "pole_target", None) == ob:
+                    psub = getattr(con, "pole_subtarget", "")
+                    if psub in name_map:
+                        con.pole_subtarget = name_map[psub]
+
+        # 2. 驱动器变量的 bone_target（指向本骨架的骨）
+        anim = getattr(ob, "animation_data", None)
+        if anim:
+            for fcurve in anim.drivers:
+                for var in fcurve.driver.variables:
+                    for tgt in var.targets:
+                        if getattr(tgt, "id", None) == ob and tgt.bone_target in name_map:
+                            tgt.bone_target = name_map[tgt.bone_target]
+    @staticmethod
+    def export_armature_constraints_json(ob, fbx_filepath):
+        """分析本骨架内的辅助骨约束并写出 Unity JSON。返回写出的文件路径，无约束则返回 None。
+
+        约束的 target 已在 transfer_constraints_to_mch 中改指 MCH，故 analyze 读到的
+        targetPath 天然指向 MCH 骨（Unity 端 RotationConstraint 的 source 即 MCH）。
+        """
+        from .ConstraintAnalyzer import ConstraintAnalyzer
+        from .UnityConstraintMapper import UnityConstraintMapper
+
+        constraints_list, twist_chains = ConstraintAnalyzer.analyze(ob)
+        total = len(constraints_list) + sum(len(c.twist_bones) for c in twist_chains)
+        if total == 0:
+            return None
+
+        json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list, twist_chains)
+        base, _ = os.path.splitext(fbx_filepath)
+        json_path = f"{base}_{ob.name}.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            f.write(json_str)
+        return json_path
     @staticmethod
     def restore_selection(selection, active_object=None):
         bpy.ops.object.select_all(action='DESELECT')
@@ -292,10 +397,16 @@ class FBXExporter:
                 pass
     @staticmethod
     def clear_armatures_bone_rotation(armature_objects, selection, active_object):
+        """给各骨架建 MCH 并清零主骨，随后转移约束/驱动。返回 {骨架名: {原骨名: MCH骨名}}。
+
+        流程：EDIT 模式建 MCH + 清零 → 回 OBJECT 模式转移约束/驱动。
+        返回的映射供后续约束 JSON 导出参考（约束 subtarget 已改指 MCH）。
+        """
         view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
         if not view_layer_armatures:
-            return
+            return {}
 
+        name_maps = {}  # {骨架名: {原骨名: MCH骨名}}
         visibility_states = []
         try:
             bpy.ops.object.select_all(action='DESELECT')
@@ -307,14 +418,20 @@ class FBXExporter:
             bpy.ops.object.mode_set(mode="EDIT")
             try:
                 for ob in view_layer_armatures:
-                    FBXExporter.clearArmatureBoneRoration(ob)
+                    name_maps[ob.name] = FBXExporter.build_mch_and_clear(ob)
             finally:
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode="OBJECT")
+
+            # 回 OBJECT 模式后转移约束/驱动（subtarget/bone_target 改指 MCH）
+            for ob in view_layer_armatures:
+                FBXExporter.transfer_constraints_to_mch(ob, name_maps.get(ob.name, {}))
         finally:
             for state in reversed(visibility_states):
                 FBXExporter.restore_armature_bone_visibility(state)
             FBXExporter.restore_selection(selection, active_object)
+
+        return name_maps
 
 
 fbx_presets = []
@@ -353,7 +470,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         items=get_fbx_presets
     ) # type: ignore
 
-    cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
+    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录同名(附骨架名后缀)。约束目标已随MCH转移",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
@@ -406,6 +524,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         active_object = bpy.context.view_layer.objects.active
         pose_position_state = []
         removed_hidden_modifiers = []
+        exported_json = []
 
         #准备操作，全显场景中的对象与集合，并且全选
         if bpy.ops.object.mode_set.poll():
@@ -413,7 +532,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
         FBXExporter.unhide_collections(col=bpy.context.view_layer.layer_collection)
         FBXExporter.unhide_objects()
-        
+
         try:
             pose_position_state = FBXExporter.set_armatures_pose_position(armature_objects, "REST")
 
@@ -441,10 +560,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
 
-            # 修复骨骼旋转
-            if self.cheekBoneKeepRotation and armature_objects !=[]:
-                FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
-
+            # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；返回各骨架的 {原骨名: MCH名} 映射
+            mch_name_maps = {}
+            if self.generateMCHBones and armature_objects != []:
+                mch_name_maps = FBXExporter.clear_armatures_bone_rotation(
+                    armature_objects, selection, active_object
+                )
 
             # 修复物体旋转（所有顶级父级物体）
             if self.fixObjectTransform:
@@ -466,6 +587,15 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
             # 重置选择状态
             FBXExporter.restore_selection(selection, active_object)
+
+            # 导出约束 JSON（约束 target 已在上一步改指 MCH，targetPath 天然指向 MCH）
+            if self.exportBoneConstraint:
+                for ob in armature_objects:
+                    if ob.name not in bpy.context.view_layer.objects:
+                        continue
+                    json_path = FBXExporter.export_armature_constraints_json(ob, self.filepath)
+                    if json_path:
+                        exported_json.append(json_path)
 
             # 导出
             params = self.getParams(context)
@@ -493,6 +623,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             return {'CANCELLED'}
         if removed_hidden_modifiers:
             self.report({"INFO"}, f"导出成功，临时删除隐藏修改器 {len(removed_hidden_modifiers)} 个")
+        elif exported_json:
+            self.report({"INFO"}, f"导出成功，同时导出约束 JSON {len(exported_json)} 个")
         else:
             self.report({"INFO"},"导出成功")
         return {'FINISHED'}
@@ -521,7 +653,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_box = layout.box()
         option_box.label(text="预处理")
         option_col = option_box.column(align=True)
-        option_col.prop(self, "cheekBoneKeepRotation")
+        option_col.prop(self, "generateMCHBones")
+        option_col.prop(self, "exportBoneConstraint")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
@@ -547,7 +680,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_description = ""
     bl_options = {'REGISTER', 'UNDO'}
 
-    cheekBoneKeepRotation:BoolProperty(name="检查保留旋转",description="检查骨骼的hotools保留旋转属性,关闭的骨骼将会清空旋转",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清零竖直并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；预处理结束前生效",default=True) # type: ignore
@@ -594,8 +727,8 @@ class OP_FinalFBXExport_only_preprocess(Operator):
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
 
-            # 修复骨骼旋转
-            if self.cheekBoneKeepRotation and armature_objects !=[]:
+            # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；仅预处理模式不撤销，MCH 留在工程供检视
+            if self.generateMCHBones and armature_objects !=[]:
                 FBXExporter.clear_armatures_bone_rotation(armature_objects, selection, active_object)
 
 
@@ -645,7 +778,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_box = layout.box()
         option_box.label(text="预处理")
         option_col = option_box.column(align=True)
-        option_col.prop(self, "cheekBoneKeepRotation")
+        option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")
         option_col.prop(self, "ignoreOutlineModifiers")

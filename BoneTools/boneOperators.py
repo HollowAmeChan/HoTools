@@ -192,16 +192,15 @@ class OP_AddEndBone(Operator):
         bpy.ops.object.mode_set(mode="OBJECT")
         for bn in end_bones:
             b = arm.bones[bn]
-            b.hotools_boneprops.keepRotation = False
             b.hotools_boneprops.endBone = True
         bpy.ops.object.mode_set(mode="EDIT")
 
         return {'FINISHED'}
 
-class OP_SelectBoneBy_by_KeepRotation(Operator):
-    bl_idname = "ho.selectbone_by_keeprotation"
-    bl_label = "选择相似骨骼-保留旋转"
-    bl_description = "选择相似骨骼-按照Hotools骨骼keepRotation保留旋转属性"
+class OP_SelectBoneBy_by_GenerateMCH(Operator):
+    bl_idname = "ho.selectbone_by_generatemch"
+    bl_label = "选择相似骨骼-生成MCH"
+    bl_description = "选择相似骨骼-按照Hotools骨骼generateMCH生成MCH属性"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -212,7 +211,7 @@ class OP_SelectBoneBy_by_KeepRotation(Operator):
         active_bone = context.active_bone
         bones = context.active_object.data.bones
         for bone in bones:
-            if bone.hotools_boneprops.keepRotation == active_bone.hotools_boneprops.keepRotation:
+            if bone.hotools_boneprops.generateMCH == active_bone.hotools_boneprops.generateMCH:
                 bone.select = True
         return {'FINISHED'}
     
@@ -693,7 +692,7 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 cls = [
     OP_ApplyRestPose,
     OP_ForceClearBoneRotation,
-    OP_SelectBoneBy_by_KeepRotation,
+    OP_SelectBoneBy_by_GenerateMCH,
     OP_SelectBone_by_Nochild,
     OP_AddEndBone,
     OP_SelectBone_by_endBone,

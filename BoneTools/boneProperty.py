@@ -74,10 +74,10 @@ class PG_Hotools_AuxBoneInfo(PropertyGroup):
 
 
 class PG_Hotools_BoneProps(PropertyGroup):
-    keepRotation: BoolProperty(
-        name="保留旋转",
-        description="在使用hotools fbx导出时,如果这段骨骼不保留旋转,将会自动将骨骼竖直，注意会导致这段骨骼后续的叶骨添加错误",
-        default=True,
+    generateMCH: BoolProperty(
+        name="生成MCH",
+        description="在使用hotools fbx导出时,勾选的骨会走MCH流程:导出时把该骨清零竖直(适配动捕/humanoid),同时生成一个MCH_前缀副本保留原始朝向,并把子级挂到MCH上、指向该骨的约束/驱动改指MCH。整个过程仅存在于导出的FBX中,工程不留痕",
+        default=False,
     )  # type: ignore
     endBone: BoolProperty(
         name="叶骨",
@@ -145,7 +145,7 @@ class PT_Hotools_PosebonePanel(Panel):
         bone = context.active_bone
         layout = self.layout
         props = bone.hotools_boneprops
-        layout.prop(props, "keepRotation", toggle=False)
+        layout.prop(props, "generateMCH", toggle=False)
         layout.prop(props, "endBone", toggle=False)
         layout.prop(props, "humanoidMapping", toggle=False)
         layout.prop(props, "deformMappingTag", toggle=False)

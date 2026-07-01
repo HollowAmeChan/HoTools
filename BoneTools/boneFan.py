@@ -794,7 +794,7 @@ class BoneFanCore:
     ) -> None:
         """给生成的辅助骨写入 HoTools 属性。
 
-        - keepRotation 一律置 False（辅助骨导出时不保留旋转）。
+        - generateMCH 一律置 False（辅助骨保留旋转，带变换直接进引擎，不走 MCH 清零流程）。
         - 当 aux_type 不为 NONE 时，同时写入辅助骨自描述信息：isAuxBone、
           auxType 与关联骨集合 sourceBones（用于后续精确识别骨上挂了什么辅助骨）。
         """
@@ -804,8 +804,8 @@ class BoneFanCore:
             props = getattr(bone, "hotools_boneprops", None) if bone else None
             if not props:
                 continue
-            if hasattr(props, "keepRotation"):
-                props.keepRotation = False
+            if hasattr(props, "generateMCH"):
+                props.generateMCH = False
             aux = getattr(props, "auxBone", None)
             if aux is not None and aux_type != "NONE":
                 aux.isAuxBone = True
