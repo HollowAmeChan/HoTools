@@ -575,6 +575,9 @@ def drawBoneTwistPanel(layout: UILayout, context: Context):
 
 
 class TwistBoneCore:
+    # 该核心生成的辅助骨类型，与 hotools_boneprops.auxBone.auxType 一致；约束命名前缀按它区分。
+    AUX_TYPE = "TWIST"
+
     @staticmethod
     def _twist_name(base_name: str, index: int, padding: int) -> str:
         stem, side_suffix = BoneUtils.split_side_suffix(base_name)
@@ -668,15 +671,16 @@ class TwistBoneCore:
         target_bone_name: str,
         influence: float = 1.0,
     ):
+        name = BoneUtils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "CopyRotation")
         constraint = None
         for item in pose_bone.constraints:
-            if item.type == "COPY_ROTATION" and item.name == "HoTools_CopyRotation":
+            if item.type == "COPY_ROTATION" and item.name == name:
                 constraint = item
                 break
 
         if constraint is None:
             constraint = pose_bone.constraints.new("COPY_ROTATION")
-            constraint.name = "HoTools_CopyRotation"
+            constraint.name = name
 
         constraint.target = target_armature
         constraint.subtarget = target_bone_name
@@ -695,15 +699,16 @@ class TwistBoneCore:
         target_armature: bpy.types.Object,
         target_bone_name: str,
     ):
+        name = BoneUtils.aux_constraint_name(TwistBoneCore.AUX_TYPE, "StretchTo")
         constraint = None
         for item in pose_bone.constraints:
-            if item.type == "STRETCH_TO" and item.name == "HoTools_StretchTo":
+            if item.type == "STRETCH_TO" and item.name == name:
                 constraint = item
                 break
 
         if constraint is None:
             constraint = pose_bone.constraints.new("STRETCH_TO")
-            constraint.name = "HoTools_StretchTo"
+            constraint.name = name
 
         constraint.target = target_armature
         constraint.subtarget = target_bone_name

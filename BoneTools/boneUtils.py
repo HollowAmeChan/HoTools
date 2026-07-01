@@ -14,6 +14,20 @@ class BoneUtils:
     _SIDE_SEPARATORS = "._-"
     _SIDE_LETTERS = "LRlr"
 
+    # 次级骨（辅助骨）约束的统一命名前缀。所有 HoTools 生成的辅助骨约束都以此开头，
+    # 导出端可据此快速筛出并按 <AUX>_<KIND> 解析出辅助骨类型与约束种类。
+    AUX_CONSTRAINT_PREFIX = "HoTools"
+
+    @staticmethod
+    def aux_constraint_name(aux_type: str, kind: str) -> str:
+        """按统一规范拼辅助骨约束名：HoTools_<AUX>_<KIND>。
+
+        aux_type 为辅助骨类型（FAN / FAN_SINGLE / FAN_SIDE / TWIST，见 AUX_BONE_TYPE_ITEMS），
+        kind 为约束种类（如 CopyRotation / StretchTo）。导出端可用同一函数复现约束名，
+        或按前缀 + 下划线拆分反解出 (aux_type, kind)。
+        """
+        return f"{BoneUtils.AUX_CONSTRAINT_PREFIX}_{aux_type}_{kind}"
+
     @staticmethod
     def split_side_suffix(name: str) -> tuple[str, str]:
         """把骨名拆成 (主干, 方向后缀)。没有方向后缀时后缀为 ""。

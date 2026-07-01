@@ -598,6 +598,10 @@ class BoneFanPreview:
 
 
 class BoneFanCore:
+    # 该核心生成的辅助骨类型，与 hotools_boneprops.auxBone.auxType 一致；
+    # 约束命名前缀按它区分（子类各自覆盖）。
+    AUX_TYPE = "FAN"
+
     # 权重模糊参数：fan_weight_blur（0..1）缩放迭代次数，每次迭代是一步
     # 以此 lambda 为强度的拉普拉斯平滑。
     _MAX_BLUR_ITERATIONS = 20
@@ -1176,17 +1180,18 @@ class BoneFanCore:
 
         return result
 
-    @staticmethod
-    def _ensure_copy_rotation_constraint(pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
+    @classmethod
+    def _ensure_copy_rotation_constraint(cls, pose_bone, target_armature: bpy.types.Object, target_bone_name: str, influence: float = 1.0):
+        name = BoneUtils.aux_constraint_name(cls.AUX_TYPE, "CopyRotation")
         constraint = None
         for item in pose_bone.constraints:
-            if item.type == "COPY_ROTATION" and item.name == "HoTools_CopyRotation":
+            if item.type == "COPY_ROTATION" and item.name == name:
                 constraint = item
                 break
 
         if constraint is None:
             constraint = pose_bone.constraints.new("COPY_ROTATION")
-            constraint.name = "HoTools_CopyRotation"
+            constraint.name = name
 
         constraint.target = target_armature
         constraint.subtarget = target_bone_name

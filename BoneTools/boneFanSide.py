@@ -210,6 +210,7 @@ class BoneFanSideCore(BoneFanSingleCore):
         面，正好按左右+上下区分 fan。
     """
 
+    AUX_TYPE = "FAN_SIDE"
     _LATERAL_DEGENERATE = 0.999
 
     @classmethod

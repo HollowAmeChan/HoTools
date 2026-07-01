@@ -237,6 +237,8 @@ class BoneFanSingleCore(BoneFanCore):
     以及“权重来源是扫描到的父级骨”。其余完全一致。
     """
 
+    AUX_TYPE = "FAN_SINGLE"
+
     @staticmethod
     def _resolve_single_frame(armature, main_bone, parent_bone, virtual_dir_world):
         """构造与 BoneFanCore frame 兼容的字典。
