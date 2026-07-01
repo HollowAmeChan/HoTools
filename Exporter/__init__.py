@@ -1,7 +1,7 @@
 import bpy
 from bpy.types import Panel
 
-from . import FbxExporter,BoneConstraintExporter
+from . import FbxExporter,BoneConstraintExporter,BoneCollectionExporter
 
 
 def reg_props():
@@ -20,6 +20,7 @@ cls = []
 def register():
     FbxExporter.register()
     BoneConstraintExporter.register()
+    BoneCollectionExporter.register()
 
     for i in cls:
         bpy.utils.register_class(i)
@@ -29,6 +30,7 @@ def register():
 def unregister():
     FbxExporter.unregister()
     BoneConstraintExporter.unregister()
+    BoneCollectionExporter.unregister()
 
     
     for i in cls:
