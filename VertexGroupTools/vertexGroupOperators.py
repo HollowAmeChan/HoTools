@@ -2071,131 +2071,6 @@ class OP_RemoveNoneWeightGroup(Operator):
         self.report({'INFO'}, f"已移除 {remove_count} 个非骨骼顶点组")
         return {'FINISHED'}
 
-class OP_VertexGroupTools_GenerateHideShapeKey(Operator):
-    """为活动顶点组对应的同名骨生成 Hide 形态键"""
-    bl_idname = "ho.vertexgrouptools_generate_hide_shapekey"
-    bl_label = "生成Hide形态键"
-    bl_description = "读取活动顶点组同名骨的世界轴线（head→tail），把权重≥阈值的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子，生成名为 Hide+骨名 的形态键（已存在则替换）"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    threshold: FloatProperty(
-        name="权重阈值",
-        description="权重大于等于该值的顶点才会被硬吸附到骨轴线上",
-        default=0.5,
-        min=0.0,
-        max=1.0,
-        subtype='FACTOR',
-    ) # type: ignore
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None
-            and obj.type == 'MESH'
-            and obj.mode in {'OBJECT', 'EDIT'}
-            and obj.vertex_groups.active is not None
-        )
-
-    def invoke(self, context, event):
-        # 执行前弹窗，让用户设置权重阈值
-        return context.window_manager.invoke_props_dialog(self)
-
-    def execute(self, context):
-        obj = context.active_object
-
-        vg = obj.vertex_groups.active
-        if vg is None:
-            self.report({'WARNING'}, "没有活动顶点组")
-            return {'CANCELLED'}
-
-        # 形态键增删需要物体模式：编辑模式下先临时切到物体模式，结束后切回。
-        prev_mode = obj.mode
-        if prev_mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        try:
-            return self._generate(obj, vg)
-        finally:
-            if prev_mode != 'OBJECT':
-                bpy.ops.object.mode_set(mode=prev_mode)
-
-    def _generate(self, obj, vg):
-
-        # === 检测骨架 ===
-        arm = obj.find_armature()
-        if not arm:
-            self.report({'WARNING'}, "未找到绑定的骨架")
-            return {'CANCELLED'}
-
-        # === 检测同名骨 ===
-        bone = arm.data.bones.get(vg.name)
-        if bone is None:
-            self.report({'WARNING'}, f"骨架上不存在同名骨: {vg.name}")
-            return {'CANCELLED'}
-
-        mesh = obj.data
-
-        # === 骨骼世界轴线：取 rest 空间的 head/tail，形态键作用于静止网格 ===
-        bone_head_world = arm.matrix_world @ bone.head_local
-        bone_tail_world = arm.matrix_world @ bone.tail_local
-        # 骨轴方向（单位向量）；退化骨（head==tail）时长度为 0，后面按“收向 head 点”处理
-        bone_axis = bone_tail_world - bone_head_world
-        axis_len_sq = bone_axis.length_squared
-
-        # 网格局部空间 <-> 世界空间。顶点/形态键坐标都在网格局部空间，
-        # 但收缩基准是骨骼世界轴线，所以逐点在世界空间收缩后再转回局部。
-        mat_world = obj.matrix_world
-        mat_world_inv = mat_world.inverted()
-
-        # === 确保存在形态键（无则先建 Basis）===
-        if mesh.shape_keys is None:
-            obj.shape_key_add(name="Basis", from_mix=False)
-
-        # === 基础位：参考形态键（Basis）的坐标，作为未加权顶点的还原基准 ===
-        basis_kb = mesh.shape_keys.reference_key
-        vert_count = len(mesh.vertices)
-        base_co = [basis_kb.data[i].co.copy() for i in range(vert_count)]
-
-        # === 收集权重达到阈值的顶点（这些点会被硬吸附到骨轴，其余不动）===
-        gidx = vg.index
-        hit_verts = set()
-        for v in mesh.vertices:
-            for g in v.groups:
-                if g.group == gidx:
-                    if g.weight >= self.threshold:
-                        hit_verts.add(v.index)
-                    break
-
-        # === 找到或创建 Hide 形态键（存在则复用其数据块，实现替换）===
-        key_name = "Hide" + vg.name
-        key_block = mesh.shape_keys.key_blocks.get(key_name)
-        if key_block is None:
-            key_block = obj.shape_key_add(name=key_name, from_mix=False)
-
-        # === 写入形态键：命中阈值的顶点硬吸附到它在骨轴上的投影点（塌成一根杆子）；
-        #     其余顶点还原到 Basis（覆盖旧数据，保证替换干净）===
-        for i in range(vert_count):
-            base = base_co[i]
-            if i in hit_verts:
-                world = mat_world @ base
-                if axis_len_sq > 0.0:
-                    # 顶点在骨轴（head→tail 无限延长线）上的最近点
-                    t = (world - bone_head_world).dot(bone_axis) / axis_len_sq
-                    target = bone_head_world + bone_axis * t
-                else:
-                    # 退化骨：直接收向 head 点
-                    target = bone_head_world
-                key_block.data[i].co = mat_world_inv @ target
-            else:
-                key_block.data[i].co = base
-
-        # 默认关闭，并设为活动形态键便于查看
-        key_block.value = 0.0
-        obj.active_shape_key_index = mesh.shape_keys.key_blocks.find(key_name)
-
-        self.report({'INFO'}, f"已生成形态键 {key_name}，硬吸附 {len(hit_verts)} 个顶点")
-        return {'FINISHED'}
-
 DEBUG_BONEWEIGHTGROUP_DRAW = None # 用于存储绘制柄
 DEBUG_BONEWEIGHTGROUP_MODE_TEMP = {"mode":None,"limit":None} # 用于存储模式，hotools某些功能结束后触发刷新用
 # TODO:目前不支持形态键，修改器的影响，如果要考虑的话会很重，重到无法编辑模式下刷新了（并且编辑模式下的实时修改也无法获取）
@@ -2609,11 +2484,6 @@ def _draw_VertexGroupTools(layout:bpy.types.UILayout,context:bpy.types.Context):
     row.operator(OP_VertexGroupTools_SoftWeight_AllBone.bl_idname,text="柔化全部")
     row.operator(OP_VertexGroupTools_SharpenWeight_AllBone.bl_idname,text="锐化全部")
 
-    row = col.row(align=True)
-    row.operator(OP_VertexGroupTools_GenerateHideShapeKey.bl_idname,text="生成Hide形态键",icon="SHAPEKEY_DATA")
-
-    
-
     # #测试
     # row.template_list("HO_UL_VertexGroup_AdvancedList", "",
     #                   obj,"vertex_groups",
@@ -2781,7 +2651,6 @@ cls = [
     OP_SelectNonWeightVertices,
     OP_GenegateNoneMirroredGroup,
     OP_RemoveNoneWeightGroup,
-    OP_VertexGroupTools_GenerateHideShapeKey,
     OP_VertexGroupTools_SoftWeight_AllBone,OP_VertexGroupTools_SharpenWeight_AllBone,
     OP_DebugBoneWeightGroupSwitch,OP_DebugBoneWeightGroupClear,OP_DebugBoneWeightGroupRefresh,
     OP_VertexGroupTools_select_mirror,

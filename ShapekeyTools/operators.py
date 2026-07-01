@@ -2198,6 +2198,12 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     op.suffix_viewLeft = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     op.suffix_viewRight = context.scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
 
+    # 生成Hide形态键（读活动顶点组同名骨，把顶点塌成一根杆子）
+    row = layout.row(align=True)
+    row.scale_y = 2.0
+    row.operator(OP_ShapekeyTools_GenerateHideShapeKey.bl_idname,
+                 text="生成Hide形态键", icon="SHAPEKEY_DATA")
+
 def draw_in_MESH_MT_shape_key_context_menu(self, context):
     """形态键下拉菜单"""
     layout: bpy.types.UILayout = self.layout
@@ -2209,6 +2215,173 @@ def draw_in_MESH_MT_shape_key_context_menu(self, context):
     layout.operator(OP_ShapekeyTools_CopyList2selectedObjects.bl_idname,icon="FORWARD")
     layout.operator(OP_ShapekeyTools_Apply_ActiveShapekey2Basis.bl_idname,icon="REMOVE")
     
+
+class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
+    """读取活动顶点组，为其同名骨生成 Hide 形态键"""
+    bl_idname = "ho.shapekeytools_generate_hide_shapekey"
+    bl_label = "生成Hide形态键"
+    bl_description = "读取【活动顶点组】，找到其同名骨的世界轴线（head→tail），把权重≥阈值（或手动选中）的顶点硬吸附到骨轴线上，形成沿骨方向的一根杆子，生成名为 Hide+骨名 的形态键（已存在则替换）"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    mode: EnumProperty(
+        name="选取模式",
+        description="决定哪些顶点会被硬吸附到骨轴线上",
+        items=[
+            ('WEIGHT', "权重阈值", "处理权重大于等于阈值的顶点"),
+            ('SELECT', "手动选择", "只处理当前选中的顶点，忽略权重阈值"),
+        ],
+        default='WEIGHT',
+    ) # type: ignore
+
+    threshold: FloatProperty(
+        name="权重阈值",
+        description="权重大于等于该值的顶点才会被硬吸附到骨轴线上",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    ) # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.mode in {'OBJECT', 'EDIT'}
+            and obj.vertex_groups.active is not None
+        )
+
+    def invoke(self, context, event):
+        # 执行前弹窗，让用户设置选取模式与权重阈值
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        vg = obj.vertex_groups.active if obj else None
+
+        # 显示当前寻找的骨骼名称，并提示是否真的存在同名骨
+        if vg is not None:
+            arm = obj.find_armature()
+            bone = arm.data.bones.get(vg.name) if arm else None
+            if bone is not None:
+                layout.label(text=f"目标骨骼：{vg.name}", icon='BONE_DATA')
+            elif arm is None:
+                layout.label(text="未找到绑定的骨架", icon='ERROR')
+            else:
+                layout.label(text=f"骨架上无同名骨：{vg.name}", icon='ERROR')
+        else:
+            layout.label(text="没有活动顶点组", icon='ERROR')
+
+        layout.prop(self, "mode",expand=True)
+        # 只有权重模式才需要阈值
+        if self.mode == 'WEIGHT':
+            layout.prop(self, "threshold")
+
+    def execute(self, context):
+        obj = context.active_object
+
+        vg = obj.vertex_groups.active
+        if vg is None:
+            self.report({'WARNING'}, "没有活动顶点组")
+            return {'CANCELLED'}
+
+        # 形态键增删需要物体模式：编辑模式下先临时切到物体模式，结束后切回。
+        prev_mode = obj.mode
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        try:
+            return self._generate(obj, vg)
+        finally:
+            if prev_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=prev_mode)
+
+    def _generate(self, obj, vg):
+
+        # === 检测骨架 ===
+        arm = obj.find_armature()
+        if not arm:
+            self.report({'WARNING'}, "未找到绑定的骨架")
+            return {'CANCELLED'}
+
+        # === 检测同名骨 ===
+        bone = arm.data.bones.get(vg.name)
+        if bone is None:
+            self.report({'WARNING'}, f"骨架上不存在同名骨: {vg.name}")
+            return {'CANCELLED'}
+
+        mesh = obj.data
+
+        # === 骨骼世界轴线：取 rest 空间的 head/tail，形态键作用于静止网格 ===
+        bone_head_world = arm.matrix_world @ bone.head_local
+        bone_tail_world = arm.matrix_world @ bone.tail_local
+        # 骨轴方向向量；退化骨（head==tail）时长度为 0，后面按“收向 head 点”处理
+        bone_axis = bone_tail_world - bone_head_world
+        axis_len_sq = bone_axis.length_squared
+
+        # 网格局部空间 <-> 世界空间。顶点/形态键坐标都在网格局部空间，
+        # 但收缩基准是骨骼世界轴线，所以逐点在世界空间收缩后再转回局部。
+        mat_world = obj.matrix_world
+        mat_world_inv = mat_world.inverted()
+
+        # === 确保存在形态键（无则先建 Basis）===
+        if mesh.shape_keys is None:
+            obj.shape_key_add(name="Basis", from_mix=False)
+
+        # === 基础位：参考形态键（Basis）的坐标，作为未加权顶点的还原基准 ===
+        basis_kb = mesh.shape_keys.reference_key
+        vert_count = len(mesh.vertices)
+        base_co = [basis_kb.data[i].co.copy() for i in range(vert_count)]
+
+        # === 收集要硬吸附到骨轴的顶点（其余不动）===
+        gidx = vg.index
+        hit_verts = set()
+        if self.mode == 'SELECT':
+            # 手动模式：只处理选中顶点，跳过权重阈值
+            # （从编辑模式切到物体模式时，选择状态已刷新到 mesh.vertices）
+            for v in mesh.vertices:
+                if v.select:
+                    hit_verts.add(v.index)
+        else:
+            # 权重模式：收集权重≥阈值的顶点
+            for v in mesh.vertices:
+                for g in v.groups:
+                    if g.group == gidx:
+                        if g.weight >= self.threshold:
+                            hit_verts.add(v.index)
+                        break
+
+        # === 找到或创建 Hide 形态键（存在则复用其数据块，实现替换）===
+        key_name = "Hide_" + vg.name
+        key_block = mesh.shape_keys.key_blocks.get(key_name)
+        if key_block is None:
+            key_block = obj.shape_key_add(name=key_name, from_mix=False)
+
+        # === 写入形态键：命中的顶点硬吸附到它在骨轴上的投影点（塌成一根杆子）；
+        #     其余顶点还原到 Basis（覆盖旧数据，保证替换干净）===
+        for i in range(vert_count):
+            base = base_co[i]
+            if i in hit_verts:
+                world = mat_world @ base
+                if axis_len_sq > 0.0:
+                    # 顶点在骨轴（head→tail 无限延长线）上的最近点
+                    t = (world - bone_head_world).dot(bone_axis) / axis_len_sq
+                    target = bone_head_world + bone_axis * t
+                else:
+                    # 退化骨：直接收向 head 点
+                    target = bone_head_world
+                key_block.data[i].co = mat_world_inv @ target
+            else:
+                key_block.data[i].co = base
+
+        # 默认关闭，并设为活动形态键便于查看
+        key_block.value = 0.0
+        obj.active_shape_key_index = mesh.shape_keys.key_blocks.find(key_name)
+
+        self.report({'INFO'}, f"已生成形态键 {key_name}，硬吸附 {len(hit_verts)} 个顶点")
+        return {'FINISHED'}
+
 
 cls = [PG_ShapeKeyTools_ListenerCache,
     OP_SelectVertexByIndex, OP_SelectShapekeyOffsetedVerticex,
@@ -2222,7 +2395,8 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
-    OP_ForceRemoveAll, OP_ForceApplyAll
+    OP_ForceRemoveAll, OP_ForceApplyAll,
+    OP_ShapekeyTools_GenerateHideShapeKey,
 ]
 
 
