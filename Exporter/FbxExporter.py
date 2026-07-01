@@ -25,6 +25,9 @@ hidden_objects = []
 disabled_collections = []
 disabled_objects = []
 
+# 生成的 MCH 骨统一归入此骨骼集合（Bone Collection），便于导出后检视/清理
+MCH_BONE_COLLECTION_NAME = "HoRig_MCH"
+
 
 def report_exception(operator, prefix, exc):
     message = f"{prefix}: {type(exc).__name__}: {exc}"
@@ -445,6 +448,17 @@ class FBXExporter:
 
         name_map = {}  # 原骨名 -> MCH骨名
 
+        # 所有 MCH 骨归入专属骨骼集合（Blender 4.0+）。没有则新建；低版本无 collections 属性时为 None
+        mch_collection = None
+        collections = getattr(arm, "collections", None)
+        if collections is not None:
+            mch_collection = collections.get(MCH_BONE_COLLECTION_NAME)
+            if mch_collection is None:
+                try:
+                    mch_collection = collections.new(MCH_BONE_COLLECTION_NAME)
+                except (RuntimeError, AttributeError):
+                    mch_collection = None
+
         # 1. 先建全部 MCH 副本，拷贝原始朝向
         for src_name in mch_source_names:
             src = edit_bones.get(src_name)
@@ -461,6 +475,12 @@ class FBXExporter:
             mch.use_deform = False
             mch.parent = src
             mch.use_connect = False
+            # 归入 MCH 专属集合
+            if mch_collection is not None:
+                try:
+                    mch_collection.assign(mch)
+                except (RuntimeError, AttributeError):
+                    pass
             name_map[src_name] = mch_name
 
         # 2. 把原始子级挂到 MCH 上（此时 src.children 含刚建的 MCH，需排除）
