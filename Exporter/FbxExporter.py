@@ -211,11 +211,12 @@ class FBXExporter:
                         if getattr(tgt, "id", None) == ob and tgt.bone_target in name_map:
                             tgt.bone_target = name_map[tgt.bone_target]
     @staticmethod
-    def export_armature_constraints_json(ob, fbx_filepath):
+    def export_armature_constraints_json(ob, fbx_filepath, suffix):
         """分析本骨架内的辅助骨约束并写出 Unity JSON。返回写出的文件路径，无约束则返回 None。
 
         约束的 target 已在 transfer_constraints_to_mch 中改指 MCH，故 analyze 读到的
         targetPath 天然指向 MCH 骨（Unity 端 RotationConstraint 的 source 即 MCH）。
+        文件名为 <fbx名>_<骨架名><suffix>.json，suffix 用于与集合 JSON 区分避免冲突。
         """
         from .ConstraintAnalyzer import ConstraintAnalyzer
         from .UnityConstraintMapper import UnityConstraintMapper
@@ -227,9 +228,25 @@ class FBXExporter:
 
         json_str = UnityConstraintMapper.export_to_json(ob.name, constraints_list, twist_chains)
         base, _ = os.path.splitext(fbx_filepath)
-        json_path = f"{base}_{ob.name}.json"
+        json_path = f"{base}_{ob.name}{suffix}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             f.write(json_str)
+        return json_path
+    @staticmethod
+    def export_armature_collections_json(ob, fbx_filepath, suffix):
+        """分析本骨架的骨骼集合并写出 JSON。返回写出的文件路径，无集合则返回 None。
+
+        文件名为 <fbx名>_<骨架名><suffix>.json，suffix 用于与约束 JSON 区分避免冲突。
+        """
+        from .BoneCollectionExporter import BoneCollectionExporter
+
+        collections_list = BoneCollectionExporter.build_collections_list(ob.data)
+        if not collections_list:
+            return None
+
+        base, _ = os.path.splitext(fbx_filepath)
+        json_path = f"{base}_{ob.name}{suffix}.json"
+        BoneCollectionExporter.export_to_file(ob.data, json_path)
         return json_path
     @staticmethod
     def restore_selection(selection, active_object=None):
@@ -471,7 +488,10 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
-    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录同名(附骨架名后缀)。约束目标已随MCH转移",default=False) # type: ignore
+    exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录。约束目标已随MCH转移",default=False) # type: ignore
+    boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
+    exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,记录每个集合持有的骨骼名称,与FBX同目录",default=False) # type: ignore
+    boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
@@ -593,7 +613,20 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                 for ob in armature_objects:
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
-                    json_path = FBXExporter.export_armature_constraints_json(ob, self.filepath)
+                    json_path = FBXExporter.export_armature_constraints_json(
+                        ob, self.filepath, self.boneConstraintSuffix
+                    )
+                    if json_path:
+                        exported_json.append(json_path)
+
+            # 导出骨骼集合 JSON
+            if self.exportBoneCollection:
+                for ob in armature_objects:
+                    if ob.name not in bpy.context.view_layer.objects:
+                        continue
+                    json_path = FBXExporter.export_armature_collections_json(
+                        ob, self.filepath, self.boneCollectionSuffix
+                    )
                     if json_path:
                         exported_json.append(json_path)
 
@@ -654,12 +687,22 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_box.label(text="预处理")
         option_col = option_box.column(align=True)
         option_col.prop(self, "generateMCHBones")
-        option_col.prop(self, "exportBoneConstraint")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
         option_col.prop(self, "ignoreOutlineModifiers")
-        
+
+        # 附加 JSON 导出（影响导出文件数量）：勾选后展开对应的文件名后缀输入框
+        json_box = layout.box()
+        json_box.label(text="附加导出 (JSON)")
+        json_col = json_box.column(align=True)
+        json_col.prop(self, "exportBoneConstraint")
+        if self.exportBoneConstraint:
+            json_col.prop(self, "boneConstraintSuffix")
+        json_col.prop(self, "exportBoneCollection")
+        if self.exportBoneCollection:
+            json_col.prop(self, "boneCollectionSuffix")
+
         params = self.getParams(context, report_errors=False)
         params_box = layout.box()
         params_box.label(text="当前预设参数")
