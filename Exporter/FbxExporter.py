@@ -114,6 +114,122 @@ class FBXExporter:
         # Children may be in the current view layer even if their parent isn't.
         for child in ob.children:
             FBXExporter.fix_object(child)
+    @staticmethod
+    def get_weighted_bone_names(armature_ob):
+        """采集本骨架下"有权重"的骨名集合（供叶骨判定用）。
+
+        遍历所有被该骨架形变的网格（骨架修改器指向本骨架，或以 ARMATURE 方式父级到本骨架），
+        只要某骨名对应的顶点组存在 weight>0 的顶点，就算该骨有权重。必须在 OBJECT 模式采集。
+        """
+        bone_names = {b.name for b in armature_ob.data.bones}
+        weighted = set()
+        for mesh_ob in bpy.data.objects:
+            if mesh_ob.type != 'MESH':
+                continue
+            # 判断该网格是否被本骨架形变
+            deformed = any(
+                mod.type == 'ARMATURE' and mod.object == armature_ob
+                for mod in mesh_ob.modifiers
+            )
+            if not deformed and mesh_ob.parent == armature_ob and mesh_ob.parent_type == 'ARMATURE':
+                deformed = True
+            if not deformed or not mesh_ob.vertex_groups:
+                continue
+
+            group_names = {i: vg.name for i, vg in enumerate(mesh_ob.vertex_groups)}
+            for v in mesh_ob.data.vertices:
+                for g in v.groups:
+                    gname = group_names.get(g.group)
+                    if gname in bone_names and gname not in weighted:
+                        try:
+                            if g.weight > 0.0:
+                                weighted.add(gname)
+                        except (RuntimeError, AttributeError):
+                            continue
+            # 全部骨都已确认有权重则提前结束
+            if bone_names <= weighted:
+                break
+        return weighted
+
+    LEAF_SUFFIX = "_end"
+    @staticmethod
+    def build_leaf_bones(ob, weighted_names):
+        """给无子级且有权重的骨末端补叶骨。必须在 EDIT 模式下调用。
+
+        规则：
+        - 只处理无子级的骨（先快照目标，避免边加边处理）；
+        - 只处理 weighted_names 里的骨（无权重的骨不加）；
+        - 叶骨长度为主体骨长度的一半，沿主体骨方向延伸（FBX 导出其实不在意长度，但仍写正确值）；
+        - 叶骨归入主骨所属的**所有**骨骼集合（自带 add_leaf_bones 不处理集合，这是自实现的主因；
+          集合 JSON 导出须排在本步之后才能收录叶骨）；
+        - 叶骨 use_deform=False，不写任何 HoTools 属性，generateMCH 保持默认关闭
+          （因此后续 MCH 步骤不会处理它；本步在 MCH 之前执行）。
+        """
+        edit_bones = ob.data.edit_bones
+        targets = [
+            eb.name for eb in edit_bones
+            if not eb.children and eb.name in weighted_names
+        ]
+        for name in targets:
+            eb = edit_bones.get(name)
+            if eb is None:
+                continue
+            vec = eb.tail - eb.head
+            length = vec.length
+            if length <= 0.0:
+                continue
+            # 先取主骨所属的骨骼集合（Blender 4.0+；低版本无 collections 属性时为空）
+            member_collections = list(getattr(eb, "collections", []) or [])
+            leaf = edit_bones.new(name + FBXExporter.LEAF_SUFFIX)
+            leaf.head = eb.tail.copy()
+            leaf.tail = eb.tail + vec.normalized() * (length * 0.5)
+            leaf.roll = eb.roll
+            leaf.parent = eb
+            leaf.use_connect = True
+            leaf.use_deform = False
+            # 叶骨与主骨同属一批骨骼集合
+            for bcoll in member_collections:
+                try:
+                    bcoll.assign(leaf)
+                except (RuntimeError, AttributeError):
+                    continue
+
+    @staticmethod
+    def add_leaf_bones_to_armatures(armature_objects, selection, active_object):
+        """给各骨架的无子级有权重骨补叶骨。须在 MCH 步骤之前调用。
+
+        先在 OBJECT 模式采集每个骨架的有权重骨名，再进 EDIT 模式建叶骨。
+        """
+        view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
+        if not view_layer_armatures:
+            return
+
+        # OBJECT 模式采集有权重骨名（EDIT 模式下 data.bones/网格权重读取不可靠）
+        weighted_maps = {
+            ob.name: FBXExporter.get_weighted_bone_names(ob)
+            for ob in view_layer_armatures
+        }
+
+        visibility_states = []
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            for ob in view_layer_armatures:
+                visibility_states.append(FBXExporter.unhide_armature_bones(ob.data))
+                ob.data.use_mirror_x = False  # 关对称，避免建骨受镜像干扰
+                ob.select_set(True)
+            bpy.context.view_layer.objects.active = view_layer_armatures[0]
+            bpy.ops.object.mode_set(mode="EDIT")
+            try:
+                for ob in view_layer_armatures:
+                    FBXExporter.build_leaf_bones(ob, weighted_maps.get(ob.name, set()))
+            finally:
+                if bpy.ops.object.mode_set.poll():
+                    bpy.ops.object.mode_set(mode="OBJECT")
+        finally:
+            for state in reversed(visibility_states):
+                FBXExporter.restore_armature_bone_visibility(state)
+            FBXExporter.restore_selection(selection, active_object)
+
     MCH_PREFIX = "MCH_"
     @staticmethod
     def build_mch_and_clear(ob):
@@ -462,7 +578,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         default="*.fbx", options={'HIDDEN'}, maxlen=255,
     ) # type: ignore
 
-    addLeafBones:BoolProperty(name="添加叶骨",description="每根骨末端补一根叶骨(add_leaf_bones)。暂用Blender自带实现,后续会换成HoTools自己的实现",default=True) # type: ignore
+    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录。约束目标已随MCH转移",default=False) # type: ignore
     boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
@@ -476,9 +592,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     def getParams(self,context, report_errors=True):
         """返回写死的 export_scene.fbx 参数。
 
-        不再依赖 Blender 的 FBX 导出预设：关键参数全部固定，只有 add_leaf_bones
-        由 UI 开关 addLeafBones 控制。参数值取自约定的导出规范
-        （仅选中、仅 MESH+ARMATURE、单位全部应用等）。
+        不再依赖 Blender 的 FBX 导出预设：关键参数全部固定（仅选中、仅
+        MESH+ARMATURE、单位全部应用等）。add_leaf_bones 固定为 False——叶骨
+        改由 HoTools 自己实现（build_leaf_bones，导出前已建好），不再走原生。
         """
         params = {
             "filepath": self.filepath,
@@ -505,7 +621,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             "use_triangles": False,
             "use_custom_props": False,
             # 骨架
-            "add_leaf_bones": self.addLeafBones,
+            # 叶骨改由 HoTools 自己实现（build_leaf_bones），关闭 Blender 自带
+            "add_leaf_bones": False,
             "primary_bone_axis": 'Y',
             "secondary_bone_axis": 'X',
             "use_armature_deform_only": False,
@@ -585,6 +702,12 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            # 补叶骨（须在 MCH 之前：新叶骨 generateMCH 默认关，不会被 MCH 处理）
+            if self.addLeafBones and armature_objects != []:
+                FBXExporter.add_leaf_bones_to_armatures(
+                    armature_objects, selection, active_object
+                )
 
             # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；返回各骨架的 {原骨名: MCH名} 映射
             mch_name_maps = {}
@@ -714,6 +837,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     bl_description = ""
     bl_options = {'REGISTER', 'UNDO'}
 
+    addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清零竖直并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
@@ -760,6 +884,10 @@ class OP_FinalFBXExport_only_preprocess(Operator):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            # 补叶骨（无子级且有权重的骨），须在 MCH 步骤之前
+            if self.addLeafBones and armature_objects != []:
+                FBXExporter.add_leaf_bones_to_armatures(armature_objects, selection, active_object)
 
             # 生成 MCH 骨并清零主骨（动捕/humanoid 适配）；仅预处理模式不撤销，MCH 留在工程供检视
             if self.generateMCHBones and armature_objects !=[]:
@@ -812,6 +940,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_box = layout.box()
         option_box.label(text="预处理")
         option_col = option_box.column(align=True)
+        option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")
