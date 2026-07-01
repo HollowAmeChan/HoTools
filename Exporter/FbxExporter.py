@@ -154,6 +154,82 @@ class FBXExporter:
                 break
         return weighted
 
+    WEIGHT_CLEAN_LIMIT = 0.0001
+    WEIGHT_MAX_GROUPS = 4
+    @staticmethod
+    def clean_export_weights(mesh_objects):
+        """对将导出的形变网格做权重清理：删微小权重 → 钳制骨权重组数 → 归一化。
+
+        三步全部走 Blender 原生算子的 group_select_mode='BONE_DEFORM'：只处理与形变骨
+        对应的顶点组，非骨骼组（形态键遮罩、GN 属性组等）一律不动——这就是“先判定是不是
+        骨骼权重”的落点。须在 OBJECT 模式调用；会临时切换 active 物体，由导出流程统一恢复，
+        且本步随导出末尾 undo 回滚，工程不留痕。返回实际处理的网格数。
+
+        执行前临时关闭会干扰结果的开关，结束后恢复：
+        - scene.tool_settings.use_auto_normalize：内置自动归一化会在每步后自动重算，
+          干扰“删微小权重/限制组数”的中间态，须整体关闭，最后由第 3 步显式归一化；
+        - 每个物体的网格镜像（use_mesh_mirror_x/y/z）：对称模式会把操作镜像到对侧，
+          污染清理结果。复用 BoneUtils 的探测/恢复（属性可能挂物体或数据块）。
+        """
+        from ..BoneTools.boneUtils import BoneUtils
+
+        processed = 0
+        prev_active = bpy.context.view_layer.objects.active
+        tool_settings = bpy.context.scene.tool_settings
+        prev_auto_normalize = getattr(tool_settings, "use_auto_normalize", None)
+        if prev_auto_normalize is not None:
+            tool_settings.use_auto_normalize = False
+        mirror_states = []  # BoneUtils.set_temp_mesh_mirror_off 返回的状态，逐物体恢复
+        try:
+            for ob in mesh_objects:
+                if ob.type != 'MESH' or not ob.vertex_groups:
+                    continue
+                if ob.name not in bpy.context.view_layer.objects:
+                    continue
+                # 没有骨架形变就谈不上骨骼权重，跳过（BONE_DEFORM 也需要绑定骨架）
+                if ob.find_armature() is None:
+                    continue
+                # 临时关闭该物体的网格镜像，避免清理被镜像到对侧
+                mirror_states.append(BoneUtils.set_temp_mesh_mirror_off(ob))
+                bpy.context.view_layer.objects.active = ob
+                # 1. 删微小权重
+                try:
+                    bpy.ops.object.vertex_group_clean(
+                        group_select_mode='BONE_DEFORM',
+                        limit=FBXExporter.WEIGHT_CLEAN_LIMIT,
+                        keep_single=False,
+                    )
+                except RuntimeError as exc:
+                    print(f"[HoTools FBX] vertex_group_clean 失败 {ob.name}: {exc}")
+                # 2. 钳制每顶点最多 N 个骨权重组
+                try:
+                    bpy.ops.object.vertex_group_limit_total(
+                        group_select_mode='BONE_DEFORM',
+                        limit=FBXExporter.WEIGHT_MAX_GROUPS,
+                    )
+                except RuntimeError as exc:
+                    print(f"[HoTools FBX] vertex_group_limit_total 失败 {ob.name}: {exc}")
+                # 3. 归一化骨骼权重
+                try:
+                    bpy.ops.object.vertex_group_normalize_all(
+                        group_select_mode='BONE_DEFORM',
+                        lock_active=False,
+                    )
+                except RuntimeError as exc:
+                    print(f"[HoTools FBX] vertex_group_normalize_all 失败 {ob.name}: {exc}")
+                processed += 1
+        finally:
+            # 恢复网格镜像与自动归一化开关
+            for mirror_state in mirror_states:
+                try:
+                    BoneUtils.restore_mesh_mirror_state(mirror_state)
+                except (AttributeError, ReferenceError):
+                    pass
+            if prev_auto_normalize is not None:
+                tool_settings.use_auto_normalize = prev_auto_normalize
+            bpy.context.view_layer.objects.active = prev_active
+        return processed
+
     LEAF_SUFFIX = "_end"
     @staticmethod
     def build_leaf_bones(ob, weighted_names):
@@ -818,6 +894,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,记录每个集合持有的骨骼名称,与FBX同目录",default=False) # type: ignore
     boneCollectionSuffix:bpy.props.StringProperty(name="集合后缀",description="集合JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_collection") # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
+    cleanWeights:BoolProperty(name="清理权重",description="导出前清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。随导出末尾撤销,工程不留痕",default=False) # type: ignore
     removeHiddenModifiers:BoolProperty(name="删除隐藏修改器",description="导出前临时删除视口隐藏的修改器，用于绕过隐藏 GN 阻塞形态键应用修改器的问题",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器，避免几何节点改变导出网格拓扑；导出后自动恢复",default=True) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；导出后自动恢复",default=True) # type: ignore
@@ -936,6 +1013,11 @@ class OP_FinalFBXExport(Operator,ExportHelper):
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
 
+            # 清理权重（须在补叶骨之前：叶骨依据"有权重"判定，清理后判定更准；仅动骨骼权重组）
+            if self.cleanWeights:
+                cleaned = FBXExporter.clean_export_weights(bpy.context.scene.objects)
+                print(f"[HoTools FBX] 权重清理：处理了 {cleaned} 个网格")
+
             # 补叶骨（须在 MCH 之前：新叶骨 generateMCH 默认关，不会被 MCH 处理）
             if self.addLeafBones and armature_objects != []:
                 FBXExporter.add_leaf_bones_to_armatures(
@@ -1053,6 +1135,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         option_col = option_box.column(align=True, heading="")
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
+        option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
@@ -1087,6 +1170,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自实现,长度为主体骨的一半),在MCH步骤之前执行;仅预处理模式不撤销,叶骨会留在工程供检视",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对 generateMCH=True 的骨清零竖直并生成 MCH_ 副本保活原始朝向;仅预处理模式不会自动撤销,MCH 会留在工程里供检视,需手动 Ctrl+Z 还原",default=False) # type: ignore
+    cleanWeights:BoolProperty(name="清理权重",description="清理形变网格权重(仅骨骼权重组,非骨骼组不动):删除<0.0001的微小权重→每顶点最多保留4个骨权重组→归一化。仅预处理模式不自动撤销,修改会留在工程里,需手动 Ctrl+Z 还原",default=False) # type: ignore
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；预处理结束前生效",default=True) # type: ignore
@@ -1135,6 +1219,11 @@ class OP_FinalFBXExport_only_preprocess(Operator):
                     for ob_name, mod_name, exc in failed_outline:
                         print(f"  {ob_name}.{mod_name}: {type(exc).__name__}: {exc}")
                     self.report({"WARNING"}, f"{len(failed_outline)} 个描边修改器临时删除失败，详见控制台")
+
+            # 清理权重（须在补叶骨之前；仅动骨骼权重组，非骨骼组不碰）
+            if self.cleanWeights:
+                cleaned = FBXExporter.clean_export_weights(bpy.context.scene.objects)
+                print(f"[HoTools FBX] 权重清理：处理了 {cleaned} 个网格")
 
             # 补叶骨（无子级且有权重的骨），须在 MCH 步骤之前
             if self.addLeafBones and armature_objects != []:
@@ -1193,6 +1282,7 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         option_col = option_box.column(align=True)
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
+        option_col.prop(self, "cleanWeights")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")
         option_col.prop(self, "ignoreOutlineModifiers")
