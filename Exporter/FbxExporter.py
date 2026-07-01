@@ -232,6 +232,183 @@ class FBXExporter:
 
     MCH_PREFIX = "MCH_"
     @staticmethod
+    def collect_mch_source_bones(armature_objects):
+        """收集场景中勾了 generateMCH 的骨，按骨架分组返回 [(骨架名, [骨名,...]), ...]。
+
+        仅用于 UI 预览：读 data.bones 上的 hotools_boneprops.generateMCH，不改任何数据。
+        只返回有命中的骨架，骨名按字母排序。
+        """
+        result = []
+        for ob in armature_objects:
+            if ob.type != 'ARMATURE':
+                continue
+            names = [
+                b.name for b in ob.data.bones
+                if getattr(b, "hotools_boneprops", None) and b.hotools_boneprops.generateMCH
+            ]
+            if names:
+                result.append((ob.name, sorted(names)))
+        return result
+
+    @staticmethod
+    def no_i18n(name):
+        """在每个字符间插入零宽空格，阻止 Blender 界面翻译把骨名等标识符汉化。
+
+        与 VertexGroupTools 那边同款做法：ZWSP 不显示、不影响复制观感，但会打断
+        i18n 的整串匹配。仅用于 UI label 展示，不改任何数据。
+        """
+        return "​".join(name or "")
+
+    @staticmethod
+    def preview_armatures():
+        """预览用：只取将被导出的骨架 = 当前选中的骨架（导出参数 use_selection=True）。
+
+        预览应与实际导出范围一致，不扫全场景。
+        """
+        return [ob for ob in bpy.context.selected_objects if ob.type == 'ARMATURE']
+
+    @staticmethod
+    def draw_mch_preview(parent_layout, op, toggle_prop):
+        """在给定布局里画 MCH 骨折叠预览。op.<toggle_prop> 控制展开/收起。
+
+        列出场景中勾了 generateMCH 的骨，按骨架分组。纯展示，不改数据。
+        """
+        armature_objects = FBXExporter.preview_armatures()
+        groups = FBXExporter.collect_mch_source_bones(armature_objects)
+        total = sum(len(names) for _, names in groups)
+
+        box = parent_layout.box()
+        header = box.row(align=True)
+        expanded = getattr(op, toggle_prop)
+        header.prop(
+            op, toggle_prop,
+            text="", emboss=False,
+            icon='DISCLOSURE_TRI_DOWN' if expanded else 'DISCLOSURE_TRI_RIGHT',
+        )
+        header.label(text=f"MCH 骨预览 ({total})", icon='BONE_DATA')
+
+        if not expanded:
+            return
+        if not groups:
+            info = box.row()
+            info.enabled = False
+            info.label(text="没有勾选 generateMCH 的骨", icon='INFO')
+            return
+        for arm_name, names in groups:
+            col = box.column(align=True)
+            col.label(text=f"{FBXExporter.no_i18n(arm_name)} ({len(names)})", icon='ARMATURE_DATA')
+            sub = col.column(align=True)
+            sub.enabled = False
+            for name in names:
+                sub.label(text=FBXExporter.no_i18n(name), icon='BONE_DATA')
+
+    @staticmethod
+    def draw_aux_preview(parent_layout, op, toggle_prop):
+        """在给定布局里画次级骨（HoTools 辅助骨）折叠预览。op.<toggle_prop> 控制展开/收起。
+
+        复用骨架数据面板那套 _collect_aux_groups 聚合逻辑（按类型+关联骨分组），
+        但只做结构展示、不带任何交互（无删除/选择/约束开关）。延迟 import 避免循环依赖。
+        """
+        try:
+            from ..BoneTools.boneProperty import _collect_aux_groups, _AUX_TYPE_LABELS
+        except Exception:
+            _collect_aux_groups = None
+            _AUX_TYPE_LABELS = {}
+
+        armature_objects = FBXExporter.preview_armatures()
+        # [(骨架名, [group,...]), ...]，只保留有次级骨的骨架
+        arm_groups = []
+        total = 0
+        if _collect_aux_groups is not None:
+            for ob in armature_objects:
+                groups = _collect_aux_groups(ob.data)
+                if groups:
+                    arm_groups.append((ob.name, groups))
+                    total += sum(len(g["bones"]) for g in groups)
+
+        box = parent_layout.box()
+        header = box.row(align=True)
+        expanded = getattr(op, toggle_prop)
+        header.prop(
+            op, toggle_prop,
+            text="", emboss=False,
+            icon='DISCLOSURE_TRI_DOWN' if expanded else 'DISCLOSURE_TRI_RIGHT',
+        )
+        header.label(text=f"次级骨预览 ({total})", icon='GROUP_BONE')
+
+        if not expanded:
+            return
+        if not arm_groups:
+            info = box.row()
+            info.enabled = False
+            info.label(text="没有检测到 HoTools 次级骨", icon='INFO')
+            return
+        for arm_name, groups in arm_groups:
+            arm_total = sum(len(g["bones"]) for g in groups)
+            col = box.column(align=True)
+            col.label(text=f"{FBXExporter.no_i18n(arm_name)} ({arm_total})", icon='ARMATURE_DATA')
+            for group in groups:
+                type_label = _AUX_TYPE_LABELS.get(group["auxType"], group["auxType"])
+                sources_text = " + ".join(FBXExporter.no_i18n(s) for s in group["sources"]) if group["sources"] else "（无关联骨）"
+                grp = col.column(align=True)
+                grp.enabled = False
+                grp.label(text=f"{type_label}：{sources_text} ×{len(group['bones'])}")
+                for bone_name in group["bones"]:
+                    grp.label(text="    " + FBXExporter.no_i18n(bone_name), icon='BONE_DATA')
+
+    @staticmethod
+    def draw_collection_preview(parent_layout, op, toggle_prop):
+        """在给定布局里画骨骼集合折叠预览。op.<toggle_prop> 控制展开/收起。
+
+        复用 BoneCollectionExporter.build_collections_list（与集合 JSON 导出同源），
+        按骨架列出每个集合及其直接持有的骨数量。纯结构展示，不带交互。延迟 import。
+        """
+        try:
+            from .BoneCollectionExporter import BoneCollectionExporter
+        except Exception:
+            BoneCollectionExporter = None
+
+        armature_objects = FBXExporter.preview_armatures()
+        # [(骨架名, [collection_dict,...]), ...]，只保留有集合的骨架
+        arm_collections = []
+        total = 0
+        if BoneCollectionExporter is not None:
+            for ob in armature_objects:
+                cols = BoneCollectionExporter.build_collections_list(ob.data)
+                if cols:
+                    arm_collections.append((ob.name, cols))
+                    total += len(cols)
+
+        box = parent_layout.box()
+        header = box.row(align=True)
+        expanded = getattr(op, toggle_prop)
+        header.prop(
+            op, toggle_prop,
+            text="", emboss=False,
+            icon='DISCLOSURE_TRI_DOWN' if expanded else 'DISCLOSURE_TRI_RIGHT',
+        )
+        header.label(text=f"骨骼集合预览 ({total})", icon='GROUP_BONE')
+
+        if not expanded:
+            return
+        if not arm_collections:
+            info = box.row()
+            info.enabled = False
+            info.label(text="没有检测到骨骼集合", icon='INFO')
+            return
+        for arm_name, cols in arm_collections:
+            col = box.column(align=True)
+            col.label(text=f"{FBXExporter.no_i18n(arm_name)} ({len(cols)})", icon='ARMATURE_DATA')
+            sub = col.column(align=True)
+            sub.enabled = False
+            for coll in cols:
+                # 集合名可能被用户自定义，一并防汉化；末尾用 ×N 表示直接持有的骨数
+                sub.label(
+                    text=f"{FBXExporter.no_i18n(coll['name'])} ×{len(coll['bones'])}",
+                    icon='GROUP_BONE',
+                )
+
+    @staticmethod
     def build_mch_and_clear(ob):
         """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨清零竖直。
 
@@ -580,6 +757,9 @@ class OP_FinalFBXExport(Operator,ExportHelper):
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
     generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
+    showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
+    showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
+    showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
     exportBoneConstraint:BoolProperty(name="导出骨骼约束(JSON)",description="导出各骨架内的HoTools辅助骨约束(fan/twist)为Unity可用的JSON,与FBX同目录。约束目标已随MCH转移",default=False) # type: ignore
     boneConstraintSuffix:bpy.props.StringProperty(name="约束后缀",description="约束JSON文件名后缀:<FBX名>_<骨架名><后缀>.json",default="_constraint") # type: ignore
     exportBoneCollection:BoolProperty(name="导出骨骼集合(JSON)",description="导出各骨架的骨骼集合(Bone Collections)为JSON,记录每个集合持有的骨骼名称,与FBX同目录",default=False) # type: ignore
@@ -737,9 +917,16 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # 重置选择状态
             FBXExporter.restore_selection(selection, active_object)
 
+            # JSON 只针对将被导出的骨架 = 原始选中的骨架（与 FBX use_selection=True 一致）
+            selected_armature_names = {
+                ob.name for ob in selection if ob.type == "ARMATURE"
+            }
+
             # 导出约束 JSON（约束 target 已在上一步改指 MCH，targetPath 天然指向 MCH）
             if self.exportBoneConstraint:
                 for ob in armature_objects:
+                    if ob.name not in selected_armature_names:
+                        continue
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
                     json_path = FBXExporter.export_armature_constraints_json(
@@ -751,6 +938,8 @@ class OP_FinalFBXExport(Operator,ExportHelper):
             # 导出骨骼集合 JSON
             if self.exportBoneCollection:
                 for ob in armature_objects:
+                    if ob.name not in selected_armature_names:
+                        continue
                     if ob.name not in bpy.context.view_layer.objects:
                         continue
                     json_path = FBXExporter.export_armature_collections_json(
@@ -805,24 +994,30 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        # FBX 导出参数已写死（仅选中、仅 MESH+ARMATURE、单位全部应用等），
-        # 只暴露叶骨开关
-        fbx_box = layout.box()
-        fbx_box.label(text="FBX 导出")
-        fbx_box.prop(self, "addLeafBones")
-
+        # 预处理（FBX 参数已写死，只暴露预处理开关；叶骨也是预处理的一步）
         option_box = layout.box()
-        option_box.label(text="预处理")
-        option_col = option_box.column(align=True)
+        option_box.label(text="预处理", icon='MODIFIER')
+        option_col = option_box.column(align=True, heading="")
+        option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "removeHiddenModifiers")
         option_col.prop(self, "ignoreGeometryNodes")
         option_col.prop(self, "ignoreOutlineModifiers")
 
+        # MCH 骨列表折叠预览（勾了生成 MCH 才有意义）
+        if self.generateMCHBones:
+            FBXExporter.draw_mch_preview(option_box, self, "showMCHPreview")
+
+        # 次级骨（辅助骨）结构预览，仅展示不交互
+        FBXExporter.draw_aux_preview(option_box, self, "showAuxPreview")
+
+        # 骨骼集合结构预览，仅展示每个集合持有多少骨
+        FBXExporter.draw_collection_preview(option_box, self, "showCollectionPreview")
+
         # 附加 JSON 导出（影响导出文件数量）：勾选后展开对应的文件名后缀输入框
         json_box = layout.box()
-        json_box.label(text="附加导出 (JSON)")
+        json_box.label(text="附加导出 (JSON)", icon='FILE_TEXT')
         json_col = json_box.column(align=True)
         json_col.prop(self, "exportBoneConstraint")
         if self.exportBoneConstraint:
@@ -842,6 +1037,9 @@ class OP_FinalFBXExport_only_preprocess(Operator):
     fixObjectTransform:BoolProperty(name="矫正物体变换",description="执行原有的物体变换/旋转矫正预处理",default=True) # type: ignore
     ignoreGeometryNodes:BoolProperty(name="忽略几何节点",description="导出前临时删除所有几何节点修改器（type==NODES），避免几何节点改变导出网格；预处理结束前生效",default=True) # type: ignore
     ignoreOutlineModifiers:BoolProperty(name="忽略描边修改器",description="导出前临时删除描边修改器（开启了翻转法线的实体化修改器）；预处理结束前生效",default=True) # type: ignore
+    showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
+    showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
+    showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合直接持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
 
 
     def export_fbx_preprocess(self,context):
@@ -938,13 +1136,23 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         layout.use_property_decorate = False
 
         option_box = layout.box()
-        option_box.label(text="预处理")
+        option_box.label(text="预处理", icon='MODIFIER')
         option_col = option_box.column(align=True)
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
         option_col.prop(self, "fixObjectTransform")
         option_col.prop(self, "ignoreGeometryNodes")
         option_col.prop(self, "ignoreOutlineModifiers")
+
+        # MCH 骨列表折叠预览（勾了生成 MCH 才有意义）
+        if self.generateMCHBones:
+            FBXExporter.draw_mch_preview(option_box, self, "showMCHPreview")
+
+        # 次级骨（辅助骨）结构预览，仅展示不交互
+        FBXExporter.draw_aux_preview(option_box, self, "showAuxPreview")
+
+        # 骨骼集合结构预览，仅展示每个集合持有多少骨
+        FBXExporter.draw_collection_preview(option_box, self, "showCollectionPreview")
 
 
 def OPF_FinalFBXExport(self, context):
