@@ -499,6 +499,32 @@ class FBXExporter:
                 )
 
     @staticmethod
+    def collect_mch_source_edit_bone_names(arm, edit_bones):
+        """Collect generateMCH source bones while in EDIT mode."""
+        names = []
+        for eb in edit_bones:
+            bone = arm.bones.get(eb.name)
+            props = getattr(bone, "hotools_boneprops", None) if bone else None
+            if props and props.generateMCH:
+                names.append(eb.name)
+        return names
+
+    @staticmethod
+    def force_clear_edit_bones_transform(edit_bones, bone_names):
+        """Use the normal full-disconnect clear flow for main MCH source bones."""
+        for bone_name in bone_names:
+            bone = edit_bones.get(bone_name)
+            if bone is None:
+                continue
+            for child in bone.children:
+                child.use_connect = False
+            original_length = (bone.tail - bone.head).length
+            if original_length <= 1e-8:
+                continue
+            bone.roll = 0
+            bone.tail = bone.head + Vector((0, 0, original_length))
+
+    @staticmethod
     def build_mch_and_clear(ob):
         """给 generateMCH=True 的骨建 MCH 副本保活原始朝向，再把原骨清零竖直。
 
@@ -508,17 +534,13 @@ class FBXExporter:
         1. 建 MCH 副本，拷贝原骨此刻的 head/tail/roll（此时原骨尚未清零，拷到的是原始朝向），
            MCH 父级设为原骨、不形变、不相连；
         2. 把每根原骨的**原始子级**（排除刚建的 MCH）reparent 到它的 MCH，并断开相连；
-        3. **最后**把原骨朝向对齐到其父骨（方向 + roll 同父），使 Unity 里该骨局部旋转为 0。
-           自顶向下处理，父骨先定朝向；根骨无父级则回退世界竖直。
+        3. 重新扫描 generateMCH 主骨，按“强制骨骼变换”的全打断方式把主骨清零竖直。
         """
         arm = ob.data
         edit_bones = arm.edit_bones
 
         # 读 data.bones 上的 generateMCH 属性（edit 模式下按名访问有效），确定待处理集合
-        mch_source_names = [
-            eb.name for eb in edit_bones
-            if arm.bones[eb.name].hotools_boneprops.generateMCH
-        ]
+        mch_source_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
         if not mch_source_names:
             return {}
 
@@ -570,37 +592,38 @@ class FBXExporter:
                 child.use_connect = False
                 child.parent = mch
 
-        # 3. 最后清零原骨旋转：把每根骨的朝向对齐到它的父骨（方向 + roll 同父），
-        #    使 3x3 朝向矩阵与父骨一致 → Unity 里该骨局部旋转为 0。
-        #    必须自顶向下：父骨若也在清理集合内，须先定好朝向，子骨才能对齐到最终值。
-        #    无父骨（根骨）没有可对齐对象，回退到世界竖直。
-        def _ancestor_depth(eb):
-            depth = 0
-            parent = eb.parent
-            while parent is not None:
-                depth += 1
-                parent = parent.parent
-            return depth
-
-        ordered = [edit_bones.get(n) for n in name_map]
-        ordered = [eb for eb in ordered if eb is not None]
-        ordered.sort(key=_ancestor_depth)  # 父在前、子在后
-
-        for src in ordered:
-            original_length = (src.tail - src.head).length
-            parent = src.parent
-            parent_dir = (parent.tail - parent.head) if parent is not None else None
-            if parent_dir is not None and parent_dir.length > 1e-8:
-                # 方向与 roll 同父 → 朝向矩阵一致 → 局部旋转为 0；head（关节枢轴）不动
-                parent_dir.normalize()
-                src.tail = src.head + parent_dir * original_length
-                src.roll = parent.roll
-            else:
-                # 根骨或父骨退化：回退世界竖直
-                src.roll = 0
-                src.tail = src.head + Vector((0, 0, original_length))
+        # 3. MCH 已全部创建并接管子级后，再重新扫描主骨并走正常“全打断”清零。
+        mch_main_names = FBXExporter.collect_mch_source_edit_bone_names(arm, edit_bones)
+        FBXExporter.force_clear_edit_bones_transform(edit_bones, mch_main_names)
 
         return name_map
+    @staticmethod
+    def clear_pose_bone_transform(pose_bone):
+        """Reset one pose bone's local L/R/S and matrix basis to identity."""
+        pose_bone.location = (0.0, 0.0, 0.0)
+        pose_bone.scale = (1.0, 1.0, 1.0)
+        if pose_bone.rotation_mode == 'QUATERNION':
+            pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        elif pose_bone.rotation_mode == 'AXIS_ANGLE':
+            pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+        else:
+            pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+        pose_bone.matrix_basis = mathutils.Matrix.Identity(4)
+
+    @staticmethod
+    def clear_pose_bone_transforms(ob, bone_names):
+        """Clear pose transforms for the original main bones after EDIT changes."""
+        if ob.pose is None:
+            return 0
+        count = 0
+        for bone_name in bone_names:
+            pose_bone = ob.pose.bones.get(bone_name)
+            if pose_bone is None:
+                continue
+            FBXExporter.clear_pose_bone_transform(pose_bone)
+            count += 1
+        return count
+
     @staticmethod
     def transfer_constraints_to_mch(ob, name_map):
         """把本骨架内指向 name_map 里原骨的约束 subtarget / 驱动 bone_target 改指对应 MCH。
@@ -837,7 +860,7 @@ class FBXExporter:
     def clear_armatures_bone_rotation(armature_objects, selection, active_object):
         """给各骨架建 MCH 并清零主骨，随后转移约束/驱动。返回 {骨架名: {原骨名: MCH骨名}}。
 
-        流程：EDIT 模式建 MCH + 清零 → 回 OBJECT 模式转移约束/驱动。
+        流程：EDIT 模式建 MCH + 清零静置朝向 → 回 OBJECT 模式清 pose 变换并转移约束/驱动。
         返回的映射供后续约束 JSON 导出参考（约束 subtarget 已改指 MCH）。
         """
         view_layer_armatures = [ob for ob in armature_objects if ob.name in bpy.context.view_layer.objects]
@@ -861,9 +884,11 @@ class FBXExporter:
                 if bpy.ops.object.mode_set.poll():
                     bpy.ops.object.mode_set(mode="OBJECT")
 
-            # 回 OBJECT 模式后转移约束/驱动（subtarget/bone_target 改指 MCH）
+            # 回 OBJECT 模式后 pose bones 才刷新；先清主骨 pose 变换，再转移约束/驱动。
             for ob in view_layer_armatures:
-                FBXExporter.transfer_constraints_to_mch(ob, name_maps.get(ob.name, {}))
+                name_map = name_maps.get(ob.name, {})
+                FBXExporter.clear_pose_bone_transforms(ob, name_map.keys())
+                FBXExporter.transfer_constraints_to_mch(ob, name_map)
         finally:
             for state in reversed(visibility_states):
                 FBXExporter.restore_armature_bone_visibility(state)
@@ -885,7 +910,7 @@ class OP_FinalFBXExport(Operator,ExportHelper):
     ) # type: ignore
 
     addLeafBones:BoolProperty(name="添加叶骨",description="给无子级且有权重的骨末端补一根叶骨(HoTools自己的实现,长度为主体骨长的一半)。无权重骨不加,新叶骨不写HoTools属性、不参与MCH。在MCH步骤之前执行",default=True) # type: ignore
-    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=False) # type: ignore
+    generateMCHBones:BoolProperty(name="生成MCH骨(动捕适配)",description="对勾选了generateMCH的骨:导出时清零竖直以适配动捕/humanoid,同时生成MCH_前缀副本保留原始朝向,子级挂到MCH上、指向该骨的约束/驱动改指MCH。仅存在于导出的FBX,工程不留痕",default=True) # type: ignore
     showMCHPreview:BoolProperty(name="MCH 骨预览",description="展开/收起：列出场景中勾了 generateMCH 的骨（按骨架分组）",default=False) # type: ignore
     showAuxPreview:BoolProperty(name="次级骨预览",description="展开/收起：列出场景中各骨架的 HoTools 次级骨（辅助骨，按类型+关联骨分组），仅结构展示不可交互",default=False) # type: ignore
     showCollectionPreview:BoolProperty(name="骨骼集合预览",description="展开/收起：列出场景中各骨架的骨骼集合（Bone Collections）及每个集合持有的骨数量，仅结构展示不可交互",default=False) # type: ignore
