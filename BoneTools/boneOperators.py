@@ -610,6 +610,34 @@ class OP_EnableAuxBoneConstraints(Operator):
         return {'FINISHED'}
 
 
+class OP_ResetAllBonePose(Operator):
+    bl_idname = "ho.reset_all_bone_pose"
+    bl_label = "重置所有骨骼姿态"
+    bl_description = "把活动骨架内所有骨骼的位置、旋转、缩放清零，回到静置姿态（不改变静置骨架本身）"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.active_object
+        count = 0
+        for pose_bone in armature.pose.bones:
+            pose_bone.location = (0.0, 0.0, 0.0)
+            pose_bone.scale = (1.0, 1.0, 1.0)
+            if pose_bone.rotation_mode == 'QUATERNION':
+                pose_bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+            elif pose_bone.rotation_mode == 'AXIS_ANGLE':
+                pose_bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+            else:
+                pose_bone.rotation_euler = (0.0, 0.0, 0.0)
+            count += 1
+        self.report({'INFO'}, f"已重置 {count} 根骨骼的姿态")
+        return {'FINISHED'}
+
+
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 
     #细分与融并骨骼
@@ -637,6 +665,10 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
             boneProperty.draw_aux_overview(box, context)
 
     col = layout.column(align=True)
+
+    # 重置所有骨骼姿态
+    col.operator(OP_ResetAllBonePose.bl_idname, text="重置所有骨骼姿态", icon="LOOP_BACK")
+    
     # 一键开关骨架内所有约束
     row = col.row(align=True)
     row.operator(OP_DisableAllBoneConstraints.bl_idname, text="禁用所有约束")
@@ -674,6 +706,7 @@ cls = [
     OP_EnableHumanoidBoneConstraints,
     OP_DisableAuxBoneConstraints,
     OP_EnableAuxBoneConstraints,
+    OP_ResetAllBonePose,
 ]
 
 
