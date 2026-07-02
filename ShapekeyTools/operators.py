@@ -462,6 +462,10 @@ def reg_props():
         name="是否绝对复制粘贴",
         description="开启后的复制粘贴将会视形态键位绝对位置进行复制粘贴,如果你看不懂，不要开，注意不要混用两种复制与粘贴",
         default=False)
+    bpy.types.Scene.hoShapekeyTools_copy_is_partial = BoolProperty(
+        name="局部模式",
+        description="开启后复制/粘贴/叠加/叠减只处理选中顶点记录的相对位移；绝对模式下不可用",
+        default=False)
     
     bpy.types.Scene.hoShapekeyTools_control_shape_key_listener = bpy.props.BoolProperty(
         name="开启全局多物体同步模式",
@@ -503,6 +507,7 @@ def ureg_props():
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewLeft
     del bpy.types.Scene.hoShapekeyTools_splitShapeKey_namesuffix_viewRight
     del bpy.types.Scene.hoShapekeyTools_copy_is_abs
+    del bpy.types.Scene.hoShapekeyTools_copy_is_partial
 
     del bpy.types.Scene.hoShapekeyTools_control_shape_key_listener
     if sk_load_handler in bpy.app.handlers.load_post:
@@ -1986,6 +1991,234 @@ class OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub(Operator):
 
         return {'FINISHED'}
 
+PARTIAL_RELATIVE_SHAPEKEY_CLIPBOARD_TYPE = "HOToolsPartialRelativeShapeKeyV1"
+
+
+def _get_selected_vertex_indices(obj):
+    if obj.mode == 'EDIT':
+        obj.update_from_editmode()
+    return [v.index for v in obj.data.vertices if v.select]
+
+
+def _read_partial_relative_shapekey_clipboard(context):
+    try:
+        payload = json.loads(context.window_manager.clipboard)
+    except Exception:
+        return None, "剪贴板数据解析失败"
+
+    if not isinstance(payload, dict) or payload.get("type") != PARTIAL_RELATIVE_SHAPEKEY_CLIPBOARD_TYPE:
+        return None, "剪贴板不是局部相对形态键数据"
+
+    vertices = payload.get("vertices")
+    if not isinstance(vertices, list):
+        return None, "局部相对形态键数据缺少顶点列表"
+
+    vertex_count = payload.get("vertex_count")
+    if vertex_count is not None:
+        try:
+            vertex_count = int(vertex_count)
+        except Exception:
+            return None, "局部相对形态键顶点数量格式错误"
+
+    deltas = {}
+    try:
+        for item in vertices:
+            idx = int(item["index"])
+            delta = item["delta"]
+            if len(delta) != 3:
+                return None, "局部相对形态键顶点数据格式错误"
+            deltas[idx] = [float(delta[0]), float(delta[1]), float(delta[2])]
+    except Exception:
+        return None, "局部相对形态键顶点数据格式错误"
+
+    return {
+        "vertex_count": vertex_count,
+        "deltas": deltas,
+    }, None
+
+
+class OP_ShapekeyTools_copyPartialRelativeShapekey2ShearPlate(Operator):
+    bl_idname = "ho.sktools_copy_partial_relative"
+    bl_label = "局部复制形态键到剪贴板"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "只复制当前选中顶点的相对形态键位移；不支持绝对模式"
+
+    def execute(self, context):
+        obj = context.object
+        if not obj or obj.type != 'MESH':
+            self.report({'ERROR'}, "必须是一个 Mesh 物体")
+            return {'CANCELLED'}
+        if not obj.data.shape_keys or not obj.data.shape_keys.key_blocks:
+            self.report({'ERROR'}, "没有找到形态键")
+            return {'CANCELLED'}
+
+        selected_indices = _get_selected_vertex_indices(obj)
+        if not selected_indices:
+            self.report({'WARNING'}, "没有选中的顶点")
+            return {'CANCELLED'}
+
+        active_sk = obj.active_shape_key
+        basis_key = obj.data.shape_keys.reference_key
+        solo_mode = obj.show_only_shape_key
+        sk_value = 1.0 if solo_mode else active_sk.value
+
+        vertices = []
+        for i in selected_indices:
+            delta = (active_sk.data[i].co - basis_key.data[i].co) * sk_value
+            vertices.append({
+                "index": i,
+                "delta": [delta.x, delta.y, delta.z],
+            })
+
+        payload = {
+            "type": PARTIAL_RELATIVE_SHAPEKEY_CLIPBOARD_TYPE,
+            "vertex_count": len(active_sk.data),
+            "shape_key": active_sk.name,
+            "value": sk_value,
+            "vertices": vertices,
+        }
+        context.window_manager.clipboard = json.dumps(payload)
+        self.report({'INFO'}, f"已局部复制 '{active_sk.name}' 的 {len(vertices)} 个顶点")
+        return {'FINISHED'}
+
+
+class _PartialRelativeShapekeyPasteBase:
+    operation = 'replace'
+    success_message = "已局部粘贴到"
+
+    def paste_to_object(self, obj, payload):
+        if obj.type != 'MESH':
+            return 'skipped', "非 Mesh 物体"
+        if not obj.data.shape_keys:
+            return 'skipped', "没有 ShapeKey"
+
+        active_sk = obj.active_shape_key
+        basis_key = obj.data.shape_keys.reference_key
+        if not active_sk:
+            return 'skipped', "没有活动 ShapeKey"
+
+        solo_mode = obj.show_only_shape_key
+        if not solo_mode and active_sk.value != 1:
+            return 'warnings', "value 不等于 1 且未开启 Solo/固定模式"
+
+        vertex_count = payload["vertex_count"]
+        if vertex_count is not None and int(vertex_count) != len(active_sk.data):
+            return 'skipped', f"顶点数不匹配：剪贴板 {vertex_count} / 当前物体 {len(active_sk.data)}"
+
+        deltas = payload["deltas"]
+        if not deltas:
+            return 'skipped', "剪贴板没有局部顶点数据"
+        for i in deltas:
+            if i < 0 or i >= len(active_sk.data):
+                return 'skipped', f"顶点索引超出范围：{i}"
+
+        try:
+            for i, delta in deltas.items():
+                delta_vec = Vector(delta)
+                if self.operation == 'replace':
+                    active_sk.data[i].co = basis_key.data[i].co + delta_vec
+                elif self.operation == 'add':
+                    active_sk.data[i].co += delta_vec
+                elif self.operation == 'sub':
+                    active_sk.data[i].co -= delta_vec
+        except Exception as exc:
+            return 'skipped', f"写入失败：{exc}"
+
+        return 'success', f"{self.success_message} {obj.name} 的 {active_sk.name}"
+
+    def execute(self, context):
+        payload, error = _read_partial_relative_shapekey_clipboard(context)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+
+        selected_objects = list(context.selected_objects)
+        if not selected_objects:
+            self.report({'WARNING'}, "没有选中物体")
+            return {'CANCELLED'}
+
+        active_obj = context.object
+        prev_mode = active_obj.mode if active_obj else 'OBJECT'
+        if active_obj and prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        def restore_mode():
+            if active_obj and prev_mode != 'OBJECT':
+                active_obj.use_shape_key_edit_mode = True
+                bpy.ops.object.mode_set(mode=prev_mode)
+
+        success = []
+        skipped = []
+        warnings = []
+
+        for obj in selected_objects:
+            status, message = self.paste_to_object(obj, payload)
+
+            if len(selected_objects) == 1:
+                if status == 'success':
+                    self.report({'INFO'}, message)
+                    restore_mode()
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{obj.name} 跳过：{message}")
+                restore_mode()
+                return {'CANCELLED'}
+
+            if status == 'success':
+                success.append(obj.name)
+            elif status == 'warnings':
+                warnings.append(f"{obj.name}({message})")
+            else:
+                skipped.append(f"{obj.name}({message})")
+
+        msg = f"成功: {len(success)}"
+        if skipped:
+            msg += f" | 跳过: {len(skipped)}"
+        if warnings:
+            msg += f" | 警告: {len(warnings)}"
+        self.report({'INFO'}, msg+" 详情查看控制台")
+
+        print("====Partial Shapekey Paste Result====")
+        if warnings:
+            print("Value Warning Objects:")
+            for w in warnings:
+                print("  ", w)
+        if skipped:
+            print("Skipped Objects:")
+            for s in skipped:
+                print("  ", s)
+        print("====End Result====")
+
+        restore_mode()
+        return {'FINISHED'}
+
+
+class OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate(_PartialRelativeShapekeyPasteBase, Operator):
+    bl_idname = "ho.sktools_paste_partial_relative"
+    bl_label = "从剪贴板局部粘贴相对形态键"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "只粘贴剪贴板中记录的局部顶点相对位移；不支持绝对模式"
+    operation = 'replace'
+    success_message = "已局部粘贴到"
+
+
+class OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_add(_PartialRelativeShapekeyPasteBase, Operator):
+    bl_idname = "ho.sktools_add_partial_relative"
+    bl_label = "从剪贴板局部叠加相对形态键"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "只把剪贴板中记录的局部顶点相对位移叠加到当前活动键；不支持绝对模式"
+    operation = 'add'
+    success_message = "已局部叠加到"
+
+
+class OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub(_PartialRelativeShapekeyPasteBase, Operator):
+    bl_idname = "ho.sktools_sub_partial_relative"
+    bl_label = "从剪贴板局部叠减相对形态键"
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = "只从当前活动键减去剪贴板中记录的局部顶点相对位移；不支持绝对模式"
+    operation = 'sub'
+    success_message = "已局部叠减"
+
+
 class OP_ShapekeyTools_CopyList2selectedObjects(Operator):
     bl_idname = "ho.shapekeytools_copylist2selectedobjects"
     bl_label = "复制列表到选中物体"
@@ -2244,13 +2477,22 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     row = col.row(align=True)
     row.prop(context.scene,"hoShapekeyTools_copy_is_abs",text="",icon="QUESTION",icon_only=True)
     is_abs = context.scene.hoShapekeyTools_copy_is_abs
-    op = row.operator(OP_ShapekeyTools_copyShapekey2ShearPlate.bl_idname,text="复制",icon="COPYDOWN")
-    op.is_abs = is_abs
-    op = row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate.bl_idname,text="粘贴",icon="PASTEDOWN")
-    op.is_abs = is_abs
-    if not is_abs:
-        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text="叠加")
-        row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub.bl_idname,text="叠减")
+    partial_toggle = row.row(align=True)
+    partial_toggle.prop(context.scene,"hoShapekeyTools_copy_is_partial",text="",icon="VERTEXSEL",icon_only=True)
+    is_partial = (not is_abs) and context.scene.hoShapekeyTools_copy_is_partial
+    if is_partial:
+        row.operator(OP_ShapekeyTools_copyPartialRelativeShapekey2ShearPlate.bl_idname,text="局部复制")
+        row.operator(OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate.bl_idname,text="局部粘贴")
+        row.operator(OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_add.bl_idname,text="局部叠加")
+        row.operator(OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub.bl_idname,text="局部叠减")
+    else:
+        op = row.operator(OP_ShapekeyTools_copyShapekey2ShearPlate.bl_idname,text="复制",icon="COPYDOWN")
+        op.is_abs = is_abs
+        op = row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate.bl_idname,text="粘贴",icon="PASTEDOWN")
+        op.is_abs = is_abs
+        if not is_abs:
+            row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add.bl_idname,text="叠加")
+            row.operator(OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub.bl_idname,text="叠减")
 
 
     row = layout.row(align=True)
@@ -2553,6 +2795,10 @@ cls = [PG_ShapeKeyTools_ListenerCache,
     OP_deleteUnusingShapeKeys, OP_AddShapekeysByTemplate,
     OP_ShapekeyTools_copyShapekey2ShearPlate,OP_ShapekeyTools_importShapekeyFromShearPlate,
     OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_add,OP_ShapekeyTools_importShapekeyFromShearPlate_Relative_sub,
+    OP_ShapekeyTools_copyPartialRelativeShapekey2ShearPlate,
+    OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate,
+    OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_add,
+    OP_ShapekeyTools_importPartialRelativeShapekeyFromShearPlate_Relative_sub,
     OP_ShapekeyTools_CopyList2selectedObjects,
     OP_ShapekeyTools_Apply_ActiveShapekey2Basis,
     OP_ForceRemoveAll, OP_ForceApplyAll,
