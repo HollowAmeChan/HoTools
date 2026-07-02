@@ -12,6 +12,7 @@ from .OmniIR import (
 )
 from .OmniDebug import OmniDebug
 from . import OmniRuntimeState
+from .OmniTracy import omni_zone, omni_frame_mark, tracy_enabled
 import time
 
 
@@ -25,8 +26,12 @@ class RuntimeObserver:
         # 若提供收集器，则顶层 step 明细并入该字典（帧链路报告），
         # 不再单独成一个报告块。子树仍走各自的独立报告。
         self.timing_collector = timing_collector
+        # Tracy zone 句柄：仅在 Tracy 构建下非 None
+        self._tracy_tree_zone = None   # 树级 zone（整棵树执行期间）
+        self._tracy_step_zone = None   # 当前 step zone（step_begin→step_end）
 
     def child(self):
+        # 子树 observer 不继承父级 zone 句柄，各自独立管理
         return RuntimeObserver(
             debug=self.debug,
             depth=self.depth + 1,
@@ -38,6 +43,12 @@ class RuntimeObserver:
             self.trace.append(f"{'    ' * self.depth}{message}")
 
     def begin_tree(self, compiled):
+        # Tracy：为整棵树的执行开一个顶级 zone
+        if tracy_enabled():
+            tree_name = getattr(compiled, "tree_name", "<tree>") or "<tree>"
+            zone_name = f"OmniNode/Tree/{tree_name}"
+            self._tracy_tree_zone = omni_zone(zone_name)
+            self._tracy_tree_zone.__enter__()
         if not self.debug:
             return
         self.log(f"{OmniDebug.section_label('Run')} Tree: {OmniDebug.tree_label(compiled.tree_name)}")
@@ -86,11 +97,21 @@ class RuntimeObserver:
         )
 
     def step_begin(self, step_index, op):
+        # Tracy：为当前 step 开一个 zone
+        if tracy_enabled():
+            stage_name = OmniExecutor.timing_stage_name(step_index, op)
+            zone_name = f"OmniNode/{stage_name}" if stage_name else f"OmniNode/step{step_index}"
+            self._tracy_step_zone = omni_zone(zone_name)
+            self._tracy_step_zone.__enter__()
         if self.timing_stages is None:
             return None, None
         return time.perf_counter(), OmniExecutor.timing_stage_name(step_index, op)
 
     def step_end(self, start_time, stage):
+        # Tracy：关闭当前 step zone
+        if self._tracy_step_zone is not None:
+            self._tracy_step_zone.__exit__(None, None, None)
+            self._tracy_step_zone = None
         if start_time is not None and stage:
             self.timing_stages[stage] = self.timing_stages.get(stage, 0.0) + (
                 time.perf_counter() - start_time
@@ -249,6 +270,10 @@ class RuntimeObserver:
         )
 
     def error(self, step_index, message):
+        # Tracy：执行出错时 step_end 不会被调用，这里负责关闭残留的 step zone
+        if self._tracy_step_zone is not None:
+            self._tracy_step_zone.__exit__(None, None, None)
+            self._tracy_step_zone = None
         if not self.debug:
             return
 
@@ -258,6 +283,10 @@ class RuntimeObserver:
         )
 
     def final_outputs(self, result):
+        # Tracy：关闭树级 zone
+        if self._tracy_tree_zone is not None:
+            self._tracy_tree_zone.__exit__(None, None, None)
+            self._tracy_tree_zone = None
         if not self.debug:
             return
 
