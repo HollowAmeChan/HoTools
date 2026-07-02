@@ -583,6 +583,116 @@ class OP_SelectShapekeyOffsetedVerticex(Operator):
         self.report({'INFO'}, "已选择形态键所有顶点")
         return {'FINISHED'}
 
+def _move_shape_key_after_index(obj: Object, key_name: str, target_index: int):
+    """Move a shape key to target_index and keep it active."""
+    key_blocks = obj.data.shape_keys.key_blocks
+    current_index = key_blocks.find(key_name)
+    if current_index < 0:
+        return False
+
+    target_index = max(0, min(target_index, len(key_blocks) - 1))
+    with bpy.context.temp_override(object=obj, active_object=obj):
+        obj.active_shape_key_index = current_index
+        while obj.active_shape_key_index > target_index:
+            bpy.ops.object.shape_key_move(type='UP')
+        while obj.active_shape_key_index < target_index:
+            bpy.ops.object.shape_key_move(type='DOWN')
+    obj.active_shape_key_index = target_index
+    return True
+
+
+def _copy_shape_key_settings(source, target):
+    for attr in ("value", "slider_min", "slider_max", "mute", "lock_shape", "vertex_group"):
+        if hasattr(source, attr) and hasattr(target, attr):
+            try:
+                setattr(target, attr, getattr(source, attr))
+            except Exception:
+                pass
+    try:
+        target.interpolation = source.interpolation
+    except Exception:
+        pass
+    try:
+        target.relative_key = source.relative_key
+    except Exception:
+        pass
+
+
+class OP_ShapekeyTools_AddInPlace(Operator):
+    """在活动形态键下方新建形态键"""
+    bl_idname = "ho.shapekeytools_add_in_place"
+    bl_label = "原地新建"
+    bl_description = "新建形态键后自动移动到当前活动形态键下方"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def execute(self, context):
+        obj = context.active_object
+        prev_mode = obj.mode
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        try:
+            if obj.data.shape_keys is None:
+                basis = obj.shape_key_add(name="Basis", from_mix=False)
+                obj.active_shape_key_index = 0
+                self.report({'INFO'}, f"已新建 {basis.name}")
+                return {'FINISHED'}
+
+            source_index = obj.active_shape_key_index
+            new_key = obj.shape_key_add(name="Key", from_mix=False)
+            _move_shape_key_after_index(obj, new_key.name, source_index + 1)
+            self.report({'INFO'}, f"已在活动键下方新建 {obj.active_shape_key.name}")
+            return {'FINISHED'}
+        finally:
+            if prev_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=prev_mode)
+
+
+class OP_ShapekeyTools_DuplicateInPlace(Operator):
+    """在活动形态键下方创建当前形态键副本"""
+    bl_idname = "ho.shapekeytools_duplicate_in_place"
+    bl_label = "原地副本"
+    bl_description = "复制当前活动形态键，并自动移动到当前活动形态键下方"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == 'MESH'
+            and obj.data.shape_keys is not None
+            and obj.active_shape_key is not None
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        prev_mode = obj.mode
+        if prev_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        try:
+            source_index = obj.active_shape_key_index
+            source_key = obj.active_shape_key
+            new_key = obj.shape_key_add(name=source_key.name, from_mix=False)
+
+            for i in range(len(source_key.data)):
+                new_key.data[i].co = source_key.data[i].co.copy()
+            _copy_shape_key_settings(source_key, new_key)
+
+            _move_shape_key_after_index(obj, new_key.name, source_index + 1)
+            self.report({'INFO'}, f"已在活动键下方复制 {obj.active_shape_key.name}")
+            return {'FINISHED'}
+        finally:
+            if prev_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=prev_mode)
+
+
 class OP_RemoveSelectedVerticesInActiveShapekey(Operator):
     """将活动形态键中选择的顶点替换为指定形态键的位置"""
     bl_idname = "ho.remove_selected_vertices_in_activeshapekey"
@@ -2128,6 +2238,10 @@ def _draw_sk_operators(layout: UILayout,context:Context):
     col = layout.column(align=True)
     col.scale_y = 2.0
     row = col.row(align=True)
+    row.operator(OP_ShapekeyTools_AddInPlace.bl_idname)
+    row.operator(OP_ShapekeyTools_DuplicateInPlace.bl_idname)
+    row.operator("object.shape_key_remove", text="", icon="TRASH")
+    row = col.row(align=True)
     row.prop(context.scene,"hoShapekeyTools_copy_is_abs",text="",icon="QUESTION",icon_only=True)
     is_abs = context.scene.hoShapekeyTools_copy_is_abs
     op = row.operator(OP_ShapekeyTools_copyShapekey2ShearPlate.bl_idname,text="复制",icon="COPYDOWN")
@@ -2430,6 +2544,7 @@ class OP_ShapekeyTools_GenerateHideShapeKey(Operator):
 
 cls = [PG_ShapeKeyTools_ListenerCache,
     OP_SelectVertexByIndex, OP_SelectShapekeyOffsetedVerticex,
+    OP_ShapekeyTools_AddInPlace, OP_ShapekeyTools_DuplicateInPlace,
     OP_RemoveEmptyShapekeys, OP_RemoveSelectedVerticesInActiveShapekey,
     OP_ClearSelectedVerticesInActiveShapekey,
     OP_SmoothShapekey,OP_balanceShapekey, OP_GenerateMirroredShapekey, OP_SplitShapekey,
