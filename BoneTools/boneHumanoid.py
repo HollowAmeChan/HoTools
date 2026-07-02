@@ -158,6 +158,21 @@ def reg_props():
         description="检查四肢骨X轴是否垂直于弯曲平面（对齐ARP Auto IK Roll的目标）；开启后并入检查预览",
         default=False,
     )
+    bpy.types.Scene.bone_humanoid_check_twist = BoolProperty(
+        name="扭转检查",
+        description="检查各Humanoid骨骼轴向偏转（axis_direction模式），关闭后不显示轴向扭转错误",
+        default=True,
+    )
+    bpy.types.Scene.bone_humanoid_check_ik_bend = BoolProperty(
+        name="IK朝向",
+        description="检查四肢IK弯曲朝向是否符合预期（ik_bend_direction模式），关闭后不显示IK朝向错误",
+        default=True,
+    )
+    bpy.types.Scene.bone_humanoid_check_connection = BoolProperty(
+        name="相连项",
+        description="检查特定Humanoid骨骼的相连项（use_connect）是否关闭，关闭后不显示相连警告",
+        default=True,
+    )
     bpy.types.Scene.bone_humanoid_preview_font_size = IntProperty(
         name="文字大小",
         default=30,
@@ -174,6 +189,9 @@ def ureg_props():
     del bpy.types.Scene.bone_humanoid_preview_show_check_details
     del bpy.types.Scene.bone_humanoid_preview_show_deform_tags
     del bpy.types.Scene.bone_humanoid_check_precise_limb_ik
+    del bpy.types.Scene.bone_humanoid_check_twist
+    del bpy.types.Scene.bone_humanoid_check_ik_bend
+    del bpy.types.Scene.bone_humanoid_check_connection
     del bpy.types.Scene.bone_humanoid_preview_font_size
 
 class OP_SwapBoneConstraintArmatures(Operator):
@@ -463,44 +481,7 @@ class OP_DeformTag_addConstraint(Operator):
         self.report({'INFO'}, msg)
         return {'FINISHED'}
 
-class OP_BoneApplyConstraint(Operator):
-    bl_idname = "ho.bone_apply_constraint"
-    bl_label = "应用约束到骨骼"
-    bl_description = "将选中骨骼的约束结果应用为当前姿态，并移除约束"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None and
-            obj.type == 'ARMATURE' and
-            context.mode == 'POSE'
-        )
-
-    def execute(self, context):
-        obj = context.active_object
-        pose_bones = context.selected_pose_bones
-
-        if not pose_bones:
-            self.report({'WARNING'}, "未选择任何骨骼")
-            return {'CANCELLED'}
-
-        # 确保在 Pose 模式
-        bpy.ops.object.mode_set(mode='POSE')
-
-        # 1. 应用视觉变换（约束结果）
-        bpy.ops.pose.visual_transform_apply()
-
-        # 2. 移除约束
-        for pb in pose_bones:
-            for c in reversed(pb.constraints):
-                pb.constraints.remove(c)
-
-
-        self.report({'INFO'}, f"已应用 {len(pose_bones)} 根骨骼的约束")
-        return {'FINISHED'}
-    
+   
 class OP_FixedArmature_ClearConstraint(Operator):
     bl_idname = "ho.fixedarmature_clear_constraint"
     bl_label = "清理DeformTag约束"
@@ -549,44 +530,7 @@ class OP_FixedArmature_ClearConstraint(Operator):
         )
         return {'FINISHED'}
 
-class OP_BoneRemoveConstraints(Operator):
-    bl_idname = "ho.bone_remove_constraints"
-    bl_label = "移除骨骼约束"
-    bl_description = "移除选中骨骼上的全部约束"
-    bl_options = {'REGISTER', 'UNDO'}
 
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (
-            obj is not None and
-            obj.type == 'ARMATURE' and
-            context.mode == 'POSE'
-        )
-
-    def execute(self, context):
-        obj = context.active_object
-        pose_bones = context.selected_pose_bones
-
-        if not pose_bones:
-            self.report({'WARNING'}, "未选择任何骨骼")
-            return {'CANCELLED'}
-
-        bpy.ops.object.mode_set(mode='POSE')
-
-        for pb in pose_bones:
-            if not pb.constraints:
-                continue
-
-            # 逐个移除约束（倒序，防炸）
-            for c in reversed(pb.constraints):
-                pb.constraints.remove(c)
-
-        self.report({'INFO'}, "已移除选中骨骼的全部约束")
-        return {'FINISHED'}
-
-# TODO ARP 在生成 rig 时会主动修正参考骨 / deform 骨。后续重点不再是给约束添加逻辑堆坐标系 hack，
-# 而是把可触发 ARP 修正的骨骼问题前置到检查规则里，并在必须容忍修正结果时给出明确提示。
 class OP_Humanoid_ForceAlign(Operator):
     bl_idname = "ho.humanoid_force_align"
     bl_label = "强制Humanoid对齐"
@@ -2471,6 +2415,18 @@ class HumanoidMappingPreviewHUD:
         ))
 
     @classmethod
+    def _check_twist(cls):
+        return bool(cls._scene_setting("bone_humanoid_check_twist", True))
+
+    @classmethod
+    def _check_ik_bend(cls):
+        return bool(cls._scene_setting("bone_humanoid_check_ik_bend", True))
+
+    @classmethod
+    def _check_connection(cls):
+        return bool(cls._scene_setting("bone_humanoid_check_connection", True))
+
+    @classmethod
     def _font_size_value(cls):
         return int(cls._scene_setting(
             "bone_humanoid_preview_font_size",
@@ -2675,6 +2631,20 @@ class HumanoidMappingPreviewHUD:
 
         issues = list(HUMANOID_TWIST_RULES.evaluate(context))
 
+        # 按检查项开关过滤：扭转检查 / IK朝向检查
+        check_twist = cls._check_twist()
+        check_ik_bend = cls._check_ik_bend()
+        if not check_twist or not check_ik_bend:
+            filtered = []
+            for issue in issues:
+                mode = issue.get("mode")
+                if mode == "axis_direction" and not check_twist:
+                    continue
+                if mode == "ik_bend_direction" and not check_ik_bend:
+                    continue
+                filtered.append(issue)
+            issues = filtered
+
         # 精确四肢IK检查为可选项，开启后并入同一份结果，渲染/文字复用现有逻辑
         if cls._check_precise_limb_ik():
             issues.extend(HUMANOID_LIMB_IK_RULES.evaluate(context))
@@ -2695,6 +2665,10 @@ class HumanoidMappingPreviewHUD:
 
     @classmethod
     def _get_connection_warnings(cls, sample):
+        # 相连项检查开关关闭时直接短路
+        if not cls._check_connection():
+            return []
+
         if sample is None:
             return []
 
@@ -3436,19 +3410,16 @@ class OP_HumanoidMappingPreview_Clear(Operator):
 def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
+    # ── 骨骼处理 ──────────────────────────────────────────
     mapping_box = layout.box()
-    mapping_box.label(text="骨骼处理")
+    mapping_box.label(text="骨骼处理", icon="ARMATURE_DATA")
 
     row = mapping_box.row(align=True)
-    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname,text="自动映射",)
-    row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname,text="",icon="TRASH",)
+    row.operator(OP_Mapping_WriteHumanoidBoneProps.bl_idname, text="自动映射")
+    row.operator(OP_Mapping_ClearHumanoidBoneProps.bl_idname, text="", icon="TRASH")
 
     row = mapping_box.row(align=True)
-    row.prop(
-        scene,
-        "bone_humanoid_deform_tag_preset",
-        text="",
-    )
+    row.prop(scene, "bone_humanoid_deform_tag_preset", text="")
     op = row.operator(
         OP_Mapping_WriteDeformTagsFromHumanoid.bl_idname,
         text="填入DeformTag",
@@ -3456,11 +3427,13 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     )
     op.preset_id = scene.bone_humanoid_deform_tag_preset
 
-    layout.separator(factor=1)
+    # ── Humanoid 检查预览 ──────────────────────────────────
+    layout.separator(factor=0.8)
     preview_box = layout.box()
-    header = preview_box.row(align=True)
-    header.label(text="Humanoid检查预览")
 
+    # 标题行：名称 + 开关按钮
+    header = preview_box.row(align=True)
+    header.label(text="Humanoid检查预览", icon="HIDE_OFF")
     if HumanoidMappingPreviewHUD.is_running():
         header.alert = True
         header.operator(
@@ -3476,73 +3449,65 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
             icon="HIDE_OFF",
         )
 
-    col = preview_box.column(align=True)
-    row = col.row(align=True)
-    row.prop(
-        scene,
-        "bone_humanoid_preview_show_names",
-        toggle=True,
-    )
-    row.prop(
-        scene,
-        "bone_humanoid_preview_show_missing",
-        toggle=True,
-    )
-    row.prop(
-        scene,
-        "bone_humanoid_preview_show_deform_tags",
-        toggle=True,
-    )
+    # 显示选项
+    display_col = preview_box.column(align=True)
+    display_col.label(text="显示选项：")
+    row = display_col.row(align=True)
+    row.prop(scene, "bone_humanoid_preview_show_names", toggle=True)
+    row.prop(scene, "bone_humanoid_preview_show_missing", toggle=True)
+    row.prop(scene, "bone_humanoid_preview_show_deform_tags", toggle=True)
 
-    row = col.row(align=True)
-    row.prop(
-        scene,
-        "bone_humanoid_preview_show_check_details",
-        toggle=True,
-    )
+    row = display_col.row(align=True)
+    row.prop(scene, "bone_humanoid_preview_show_check_details", toggle=True)
     row.prop(scene, "bone_humanoid_preview_font_size")
 
-    row = col.row(align=True)
-    row.prop(
-        scene,
-        "bone_humanoid_check_precise_limb_ik",
-        toggle=True,
-    )
+    preview_box.separator(factor=0.4)
+
+    # 检查项开关
+    check_col = preview_box.column(align=True)
+    check_col.label(text="检查项：")
+    row = check_col.row(align=True)
+    row.prop(scene, "bone_humanoid_check_twist", toggle=True)
+    row.prop(scene, "bone_humanoid_check_ik_bend", toggle=True)
+    row.prop(scene, "bone_humanoid_check_connection", toggle=True)
+
+    row = check_col.row(align=True)
+    row.prop(scene, "bone_humanoid_check_precise_limb_ik", toggle=True)
     row.operator(
         OP_Humanoid_FixLimbIkRoll.bl_idname,
         text="修复四肢IK滚转",
         icon="CON_KINEMATIC",
     )
 
-
-    layout.separator(factor=1)
+    # ── Humanoid 映射 ──────────────────────────────────────
+    layout.separator(factor=0.8)
     box = layout.box()
-    box.label(text="Humanoid映射")
+    box.label(text="Humanoid映射", icon="CON_ARMATURE")
 
     row = box.row(align=True)
-    row.prop_search(scene, "bone_constraint_resting_armature",scene,"objects",text="固定",icon="ARMATURE_DATA",)
-    row.operator(OP_SwapBoneConstraintArmatures.bl_idname,text="",icon="ARROW_LEFTRIGHT",)
-    row.prop_search(scene,"bone_constraint_moving_armature",scene,"objects",text="移动",icon="ARMATURE_DATA",)
+    row.prop_search(
+        scene, "bone_constraint_resting_armature",
+        scene, "objects",
+        text="固定", icon="ARMATURE_DATA",
+    )
+    row.operator(OP_SwapBoneConstraintArmatures.bl_idname, text="", icon="ARROW_LEFTRIGHT")
+    row.prop_search(
+        scene, "bone_constraint_moving_armature",
+        scene, "objects",
+        text="移动", icon="ARMATURE_DATA",
+    )
 
     col = box.column(align=True)
-    row = col.row(align=True)
-    row.operator(OP_Humanoid_ForceAlign.bl_idname,text="强制Humanoid对齐",icon="CON_ARMATURE",)
+    col.operator(OP_Humanoid_ForceAlign.bl_idname, text="强制Humanoid对齐", icon="CON_ARMATURE")
 
     row = col.row(align=True)
-    
-    row.operator(OP_DeformTag_addConstraint.bl_idname,text="约束-位置旋转",)
-    row.operator(OP_FixedArmature_ClearConstraint.bl_idname,text="",icon="TRASH",)
-
-    row = box.row(align=True)
-    row.operator(OP_BoneApplyConstraint.bl_idname,text="应用约束到骨骼",)
-    row.operator(OP_BoneRemoveConstraints.bl_idname,text="移除骨骼约束",)
+    row.operator(OP_DeformTag_addConstraint.bl_idname, text="约束-位置旋转")
+    row.operator(OP_FixedArmature_ClearConstraint.bl_idname, text="", icon="TRASH")
 
 cls = [
     OP_SwapBoneConstraintArmatures,
     OP_DeformTag_addConstraint,
-    OP_BoneApplyConstraint,
     OP_FixedArmature_ClearConstraint,
-    OP_BoneRemoveConstraints,
     OP_Mapping_WriteHumanoidBoneProps,
     OP_Mapping_WriteDeformTagsFromHumanoid,
     OP_Mapping_ClearHumanoidBoneProps,

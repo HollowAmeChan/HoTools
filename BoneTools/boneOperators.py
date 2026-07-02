@@ -636,8 +636,86 @@ class OP_ResetAllBonePose(Operator):
         self.report({'INFO'}, f"已重置 {count} 根骨骼的姿态")
         return {'FINISHED'}
 
+class OP_BoneApplyConstraint(Operator):
+    bl_idname = "ho.bone_apply_constraint"
+    bl_label = "应用约束到骨骼"
+    bl_description = "将选中骨骼的约束结果应用为当前姿态，并移除约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'ARMATURE' and
+            context.mode == 'POSE'
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        pose_bones = context.selected_pose_bones
+
+        if not pose_bones:
+            self.report({'WARNING'}, "未选择任何骨骼")
+            return {'CANCELLED'}
+
+        # 确保在 Pose 模式
+        bpy.ops.object.mode_set(mode='POSE')
+
+        # 1. 应用视觉变换（约束结果）
+        bpy.ops.pose.visual_transform_apply()
+
+        # 2. 移除约束
+        for pb in pose_bones:
+            for c in reversed(pb.constraints):
+                pb.constraints.remove(c)
+
+
+        self.report({'INFO'}, f"已应用 {len(pose_bones)} 根骨骼的约束")
+        return {'FINISHED'}
+ 
+class OP_BoneRemoveConstraints(Operator):
+    bl_idname = "ho.bone_remove_constraints"
+    bl_label = "移除骨骼约束"
+    bl_description = "移除选中骨骼上的全部约束"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None and
+            obj.type == 'ARMATURE' and
+            context.mode == 'POSE'
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        pose_bones = context.selected_pose_bones
+
+        if not pose_bones:
+            self.report({'WARNING'}, "未选择任何骨骼")
+            return {'CANCELLED'}
+
+        bpy.ops.object.mode_set(mode='POSE')
+
+        for pb in pose_bones:
+            if not pb.constraints:
+                continue
+
+            # 逐个移除约束（倒序，防炸）
+            for c in reversed(pb.constraints):
+                pb.constraints.remove(c)
+
+        self.report({'INFO'}, "已移除选中骨骼的全部约束")
+        return {'FINISHED'}
+
 
 def drawBoneOperatorsPanel(layout: UILayout, context: Context):
+
+    row = layout.row(align=True)
+    row.operator(OP_BoneApplyConstraint.bl_idname, text="应用约束到骨骼")
+    row.operator(OP_BoneRemoveConstraints.bl_idname, text="移除骨骼约束")
 
     #细分与融并骨骼
     row = layout.row(align=True)
@@ -706,6 +784,8 @@ cls = [
     OP_DisableAuxBoneConstraints,
     OP_EnableAuxBoneConstraints,
     OP_ResetAllBonePose,
+    OP_BoneApplyConstraint,
+    OP_BoneRemoveConstraints,
 ]
 
 
