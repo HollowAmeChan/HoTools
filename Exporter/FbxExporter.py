@@ -3,10 +3,74 @@ import os
 import mathutils
 import math
 import traceback
-from bpy.types import PropertyGroup, UIList, Operator, Panel
+from bpy.types import PropertyGroup, UIList, Operator, Panel, Menu
 from mathutils import Vector
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, PointerProperty, BoolProperty, CollectionProperty
+from bl_operators.presets import AddPresetBase
+
+
+# ── 预设：主导出器 ─────────────────────────────────────────
+class HO_MT_FBXExportPresets(Menu):
+    """主 FBX 导出器预设菜单"""
+    bl_label = ""
+    preset_subdir = "hotools/fbx_export"
+    preset_operator = "script.execute_preset"
+    draw = Menu.draw_preset
+
+
+class OP_AddFBXExportPreset(AddPresetBase, Operator):
+    """保存/删除 HoTools FBX 导出预设"""
+    bl_idname = "ho.fbx_export_preset_add"
+    bl_label = "添加FBX导出预设"
+    preset_menu = "HO_MT_FBXExportPresets"
+    preset_subdir = "hotools/fbx_export"
+
+    # 预设文件头部：获取当前活动操作器
+    preset_defines = ["op = bpy.context.active_operator"]
+
+    # 需要保存/恢复的属性
+    preset_values = [
+        "op.addLeafBones",
+        "op.generateMCHBones",
+        "op.cleanWeights",
+        "op.fixObjectTransform",
+        "op.removeHiddenModifiers",
+        "op.ignoreGeometryNodes",
+        "op.ignoreOutlineModifiers",
+        "op.exportBoneConstraint",
+        "op.boneConstraintSuffix",
+        "op.exportBoneCollection",
+        "op.boneCollectionSuffix",
+    ]
+
+
+# ── 预设：仅预处理器 ──────────────────────────────────────
+class HO_MT_FBXPreprocessPresets(Menu):
+    """仅预处理器预设菜单"""
+    bl_label = ""
+    preset_subdir = "hotools/fbx_preprocess"
+    preset_operator = "script.execute_preset"
+    draw = Menu.draw_preset
+
+
+class OP_AddFBXPreprocessPreset(AddPresetBase, Operator):
+    """保存/删除 HoTools FBX 仅预处理预设"""
+    bl_idname = "ho.fbx_preprocess_preset_add"
+    bl_label = "添加预处理预设"
+    preset_menu = "HO_MT_FBXPreprocessPresets"
+    preset_subdir = "hotools/fbx_preprocess"
+
+    preset_defines = ["op = bpy.context.active_operator"]
+
+    preset_values = [
+        "op.addLeafBones",
+        "op.generateMCHBones",
+        "op.cleanWeights",
+        "op.fixObjectTransform",
+        "op.ignoreGeometryNodes",
+        "op.ignoreOutlineModifiers",
+    ]
 
 
 def reg_props():
@@ -459,7 +523,6 @@ class FBXExporter:
             BoneCollectionExporter = None
 
         armature_objects = FBXExporter.preview_armatures()
-        # [(骨架名, [collection_dict,...]), ...]，只保留有集合的骨架
         arm_collections = []
         total = 0
         if BoneCollectionExporter is not None:
@@ -492,7 +555,6 @@ class FBXExporter:
             sub = col.column(align=True)
             sub.enabled = False
             for coll in cols:
-                # 集合名可能被用户自定义，一并防汉化；末尾用 ×N 表示直接持有的骨数
                 sub.label(
                     text=f"{FBXExporter.no_i18n(coll['name'])} ×{len(coll['bones'])}",
                     icon='GROUP_BONE',
@@ -1154,6 +1216,24 @@ class OP_FinalFBXExport(Operator,ExportHelper):
         layout.use_property_split = True
         layout.use_property_decorate = False
 
+        # 预设行：菜单 + 保存按钮 + 删除按钮
+        preset_row = layout.row(align=True)
+        preset_row.menu(
+            HO_MT_FBXExportPresets.__name__,
+            text=bpy.types.HO_MT_FBXExportPresets.bl_label or "导出预设",
+        )
+        preset_row.operator(
+            OP_AddFBXExportPreset.bl_idname,
+            text="",
+            icon='ADD',
+        )
+        op_remove = preset_row.operator(
+            OP_AddFBXExportPreset.bl_idname,
+            text="",
+            icon='REMOVE',
+        )
+        op_remove.remove_active = True
+
         # 预处理（FBX 参数已写死，只暴露预处理开关；叶骨也是预处理的一步）
         option_box = layout.box()
         option_box.label(text="预处理", icon='MODIFIER')
@@ -1302,8 +1382,26 @@ class OP_FinalFBXExport_only_preprocess(Operator):
         layout.use_property_split = True
         layout.use_property_decorate = False
 
+        # 预设行
+        preset_row = layout.row(align=True)
+        preset_row.menu(
+            HO_MT_FBXPreprocessPresets.__name__,
+            text=bpy.types.HO_MT_FBXPreprocessPresets.bl_label or "预处理预设",
+        )
+        preset_row.operator(
+            OP_AddFBXPreprocessPreset.bl_idname,
+            text="",
+            icon='ADD',
+        )
+        op_remove = preset_row.operator(
+            OP_AddFBXPreprocessPreset.bl_idname,
+            text="",
+            icon='REMOVE',
+        )
+        op_remove.remove_active = True
+
         option_box = layout.box()
-        option_box.label(text="预处理", icon='MODIFIER')
+        option_box.label(text="预处理")
         option_col = option_box.column(align=True)
         option_col.prop(self, "addLeafBones")
         option_col.prop(self, "generateMCHBones")
@@ -1330,7 +1428,12 @@ def OPF_FinalFBXExport(self, context):
 
 
 cls = [
-    OP_FinalFBXExport,OP_FinalFBXExport_only_preprocess
+    HO_MT_FBXExportPresets,
+    OP_AddFBXExportPreset,
+    HO_MT_FBXPreprocessPresets,
+    OP_AddFBXPreprocessPreset,
+    OP_FinalFBXExport,
+    OP_FinalFBXExport_only_preprocess,
 ]
 
 

@@ -156,25 +156,13 @@ cls = [
 ]
 
 
-def OPF_2unity_exportJsonBoneCollection(self, context):
-    self.layout.operator_context = 'INVOKE_DEFAULT'
-    self.layout.operator(
-        OP_2unity_exportJsonBoneCollection.bl_idname,
-        text="HoTools - 骨骼集合 (.json)"
-    )
-
-
 def register():
     for i in cls:
         bpy.utils.register_class(i)
-
-    bpy.types.TOPBAR_MT_file_export.append(OPF_2unity_exportJsonBoneCollection)
     reg_props()
 
 
 def unregister():
     for i in cls:
         bpy.utils.unregister_class(i)
-
-    bpy.types.TOPBAR_MT_file_export.remove(OPF_2unity_exportJsonBoneCollection)
     ureg_props()
