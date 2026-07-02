@@ -153,6 +153,11 @@ def reg_props():
         name="显示DeformTag",
         default=True,
     )
+    bpy.types.Scene.bone_humanoid_check_precise_limb_ik = BoolProperty(
+        name="精确四肢IK检查",
+        description="检查四肢骨X轴是否垂直于弯曲平面（对齐ARP Auto IK Roll的目标）；开启后并入检查预览",
+        default=False,
+    )
     bpy.types.Scene.bone_humanoid_preview_font_size = IntProperty(
         name="文字大小",
         default=30,
@@ -168,6 +173,7 @@ def ureg_props():
     del bpy.types.Scene.bone_humanoid_preview_show_missing
     del bpy.types.Scene.bone_humanoid_preview_show_check_details
     del bpy.types.Scene.bone_humanoid_preview_show_deform_tags
+    del bpy.types.Scene.bone_humanoid_check_precise_limb_ik
     del bpy.types.Scene.bone_humanoid_preview_font_size
 
 class OP_SwapBoneConstraintArmatures(Operator):
@@ -961,8 +967,265 @@ class OP_Humanoid_ForceAlign(Operator):
                 msg += f"，Roll使用X轴 {roll_x_fallback_count}"
 
         self.report({'INFO'}, msg)
-        return {'FINISHED'}    
-    
+        return {'FINISHED'}
+
+class OP_Humanoid_FixLimbIkRoll(Operator):
+    bl_idname = "ho.humanoid_fix_limb_ik_roll"
+    bl_label = "修复四肢IK滚转"
+    bl_description = (
+        "把四肢骨(upper/lower arm/leg)的滚转对齐到各自的弯曲平面法线，"
+        "匹配ARP Auto IK Roll的目标，避免Match to Rig时参考骨扭转被自动改写。"
+        "执行前会弹框列出将修复的骨与缺失的Humanoid骨"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    # 四肢链定义：(显示名, 上肢mapping, 下肢mapping)。上下肢共用同一条弯曲平面。
+    _LIMB_CHAINS = (
+        ("左臂", "upper_arm.L", "lower_arm.L"),
+        ("右臂", "upper_arm.R", "lower_arm.R"),
+        ("左腿", "upper_leg.L", "lower_leg.L"),
+        ("右腿", "upper_leg.R", "lower_leg.R"),
+    )
+
+    # invoke 阶段扫描结果，供 draw 复用（instance 属性，dialog 期间同一实例）
+    _fixable_bones = []
+    _missing_mappings = []
+    _degenerate_limbs = []
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def _build_mapping_to_bone(self, obj):
+        # mapping 名 -> 骨名（同名 mapping 取第一根）
+        result = {}
+        for bone in obj.data.bones:
+            props = getattr(bone, "hotools_boneprops", None)
+            if props is None:
+                continue
+
+            mapping = props.humanoidMapping.strip()
+            if not mapping:
+                continue
+
+            if mapping not in result:
+                result[mapping] = bone.name
+
+        return result
+
+    def _compute_targets(self, obj):
+        """扫描四肢链，返回 (targets, missing, degenerate)。
+
+        targets: [(bone_name, mapping, normal_world)]，弯曲平面法线在世界空间。
+        missing: [缺失的 mapping 名]
+        degenerate: [直肢(三关节共线)的肢体显示名]
+        必须在 OBJECT/POSE 模式调用（依赖 data.bones 的静置坐标）。
+        """
+        world = obj.matrix_world
+        mapping_to_bone = self._build_mapping_to_bone(obj)
+
+        targets = []
+        missing = []
+        degenerate = []
+        seen = set()
+
+        for limb_label, upper_map, lower_map in self._LIMB_CHAINS:
+            upper_name = mapping_to_bone.get(upper_map)
+            lower_name = mapping_to_bone.get(lower_map)
+
+            local_missing = []
+            if upper_name is None:
+                local_missing.append(upper_map)
+            if lower_name is None:
+                local_missing.append(lower_map)
+
+            if local_missing:
+                missing.extend(local_missing)
+                continue
+
+            upper_bone = obj.data.bones.get(upper_name)
+            lower_bone = obj.data.bones.get(lower_name)
+
+            if upper_bone is None or lower_bone is None:
+                if upper_bone is None:
+                    missing.append(upper_map)
+                if lower_bone is None:
+                    missing.append(lower_map)
+                continue
+
+            root_point = world @ upper_bone.head_local
+            middle_point = (
+                world @ upper_bone.tail_local
+                + world @ lower_bone.head_local
+            ) * 0.5
+            end_point = world @ lower_bone.tail_local
+
+            normal = _safe_normalized_vector(
+                (middle_point - root_point).cross(end_point - root_point)
+            )
+
+            # 直臂/直腿三点共线，无法定义弯曲平面
+            if normal is None:
+                degenerate.append(limb_label)
+                continue
+
+            for bone_name, mapping in (
+                (upper_name, upper_map),
+                (lower_name, lower_map),
+            ):
+                if bone_name in seen:
+                    continue
+
+                seen.add(bone_name)
+                targets.append((bone_name, mapping, normal.copy()))
+
+        return targets, missing, degenerate
+
+    def invoke(self, context, event):
+        obj = context.object
+
+        targets, missing, degenerate = self._compute_targets(obj)
+        self._fixable_bones = [
+            (bone_name, mapping)
+            for bone_name, mapping, _ in targets
+        ]
+        self._missing_mappings = missing
+        self._degenerate_limbs = degenerate
+
+        if not targets and not missing and not degenerate:
+            self.report(
+                {'WARNING'},
+                "未找到任何四肢Humanoid映射（upper/lower arm/leg）",
+            )
+            return {'CANCELLED'}
+
+        return context.window_manager.invoke_props_dialog(self, width=460)
+
+    def draw(self, context):
+        layout = self.layout
+
+        if self._fixable_bones:
+            box = layout.box()
+            box.label(
+                text=f"将修复 {len(self._fixable_bones)} 根四肢骨的滚转：",
+                icon='CON_KINEMATIC',
+            )
+            col = box.column(align=True)
+            for bone_name, mapping in self._fixable_bones:
+                col.label(text=f"{mapping}  ({bone_name})")
+        else:
+            layout.label(text="没有可修复的四肢骨", icon='INFO')
+
+        if self._missing_mappings:
+            box = layout.box()
+            box.alert = True
+            box.label(
+                text=f"缺失的Humanoid四肢骨 {len(self._missing_mappings)}：",
+                icon='ERROR',
+            )
+            col = box.column(align=True)
+            for mapping in self._missing_mappings:
+                col.label(text=f"✕ {mapping}")
+
+        if self._degenerate_limbs:
+            box = layout.box()
+            box.label(
+                text="直肢跳过（三关节共线，无弯曲平面）：",
+                icon='INFO',
+            )
+            col = box.column(align=True)
+            for limb_label in self._degenerate_limbs:
+                col.label(text=f"- {limb_label}")
+
+    def execute(self, context):
+        obj = context.object
+
+        if obj is None or obj.type != 'ARMATURE':
+            self.report({'ERROR'}, "请选择一个Armature")
+            return {'CANCELLED'}
+
+        prev_active = context.view_layer.objects.active
+        prev_mode = obj.mode
+
+        # 先回到物体模式，保证 data.bones 静置坐标有效，再计算目标法线
+        bpy.ops.object.mode_set(mode='OBJECT')
+        context.view_layer.objects.active = obj
+        obj.select_set(True)
+
+        targets, missing, degenerate = self._compute_targets(obj)
+
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        rot_inv = obj.matrix_world.inverted().to_3x3()
+
+        fixed_count = 0
+        skipped_parallel = 0
+
+        for bone_name, mapping, normal_world in targets:
+            eb = obj.data.edit_bones.get(bone_name)
+            if eb is None:
+                continue
+
+            bone_y_axis = eb.tail - eb.head
+            if bone_y_axis.length < 1e-6:
+                continue
+            bone_y_axis.normalize()
+
+            # 法线转到骨架局部空间，再投影到滚转平面（⊥骨骼Y轴）
+            normal_local = rot_inv @ normal_world
+            normal_proj = normal_local - bone_y_axis * normal_local.dot(bone_y_axis)
+
+            # 法线平行于骨轴时 roll 无法修正，跳过
+            if normal_proj.length < 1e-6:
+                skipped_parallel += 1
+                continue
+            normal_proj.normalize()
+
+            # 取与当前 Z 轴同侧的法线方向，保证最小旋转、不翻180°
+            sign = 1.0 if eb.z_axis.dot(normal_proj) >= 0.0 else -1.0
+            desired_z_axis = normal_proj * sign
+
+            # align_roll 直接把骨骼 Z 轴对到给定向量（= 弯曲平面法线 = 滚转/铰链轴）
+            before_roll = eb.roll
+            eb.align_roll(desired_z_axis)
+            fixed_count += 1
+
+            print(
+                f"[Fix Limb IK Roll] {bone_name} mapping={mapping} "
+                f"roll {before_roll:.6f} -> {eb.roll:.6f}"
+            )
+
+        # 恢复进入前的模式与活动物体
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        if prev_active is not None:
+            context.view_layer.objects.active = prev_active
+
+        try:
+            if prev_mode == 'POSE':
+                bpy.ops.object.mode_set(mode='POSE')
+            elif prev_mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='EDIT')
+            else:
+                bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+
+        msg = f"四肢IK滚转修复完成：修复 {fixed_count}"
+
+        if skipped_parallel:
+            msg += f"，跳过(法线平行骨轴) {skipped_parallel}"
+
+        if degenerate:
+            msg += f"，直肢跳过 {len(degenerate)}"
+
+        if missing:
+            msg += f"，缺失 {len(missing)}"
+
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
 class OP_Mapping_WriteHumanoidBoneProps(Operator):
     bl_idname = "ho.mapping_write_humanoid_boneprops"
     bl_label = "自动计算选中骨骼的Humanoid映射"
@@ -1574,6 +1837,115 @@ class HumanoidIkBendDirectionTwistMode(HumanoidTwistCheckMode):
         }
 
 
+# 精确四肢IK检查阈值（度）。四肢骨Z轴偏离弯曲平面法线超过此值即报错。
+# ARP Auto IK Roll 会把四肢骨精确对到弯曲平面，所以这里用一个较小的阈值。
+_LIMB_IK_ROLL_THRESHOLD_DEG = 5.0
+
+
+class HumanoidLimbIkRollMode(HumanoidTwistCheckMode):
+    """精确四肢IK滚转检查。
+
+    刻画 ARP Auto IK Roll 的不变量：每根四肢骨的局部 Z 轴平行于弯曲平面法线
+    （即滚转/铰链轴 = 由上肢head、肘(膝)、下肢tail 三关节确定的平面法线，
+    等价于骨骼 X 轴落在弯曲平面内）。ARP 用 calculate_roll(NEG_Z/POS_Z) 就是
+    把 Z 对到这条法线，右侧再 -180°。
+
+    - 检查本骨世界 Z 轴（投影到滚转平面）与平面法线的锐角，超阈值即报错；
+      对 ±法线取最近，锐角判定与符号无关，左右臂腿共用同一套几何，不需要
+      处理 ARP 里 NEG_Z/POS_Z/右侧-180° 的符号差异。
+    - 直臂/直腿（三关节共线）法线退化为 0，无法定义弯曲平面，跳过不报。
+    """
+
+    idname = "limb_ik_roll"
+
+    def __init__(
+        self,
+        upper_mapping_name,
+        lower_mapping_name,
+        threshold_deg=_LIMB_IK_ROLL_THRESHOLD_DEG,
+    ):
+        self.upper_mapping_name = upper_mapping_name
+        self.lower_mapping_name = lower_mapping_name
+        self.threshold_deg = threshold_deg
+
+    def evaluate(self, rule, context):
+        upper_points = context.pose_points_for_mapping(self.upper_mapping_name)
+        lower_points = context.pose_points_for_mapping(self.lower_mapping_name)
+
+        if upper_points is None or lower_points is None:
+            return None
+
+        upper_head, upper_tail, _ = upper_points
+        lower_head, lower_tail, _ = lower_points
+
+        root_point = upper_head
+        middle_point = (upper_tail + lower_head) * 0.5
+        end_point = lower_tail
+
+        plane_normal = _safe_normalized_vector(
+            (middle_point - root_point).cross(end_point - root_point)
+        )
+        # 三关节共线（直臂/直腿）无法定义弯曲平面，跳过
+        if plane_normal is None:
+            return None
+
+        bone_z_axis = context.axis("+Z")
+        bone_y_axis = context.axis("+Y")
+
+        if bone_z_axis is None or bone_y_axis is None:
+            return None
+
+        # 投影到滚转平面（⊥骨骼Y轴）。roll 只能绕 Y 旋转，法线里平行于 Y 的分量
+        # 无论如何都消不掉，投影后只度量 roll 能控制的偏差，保证修复后必过检查。
+        actual_axis = context.project_to_roll_plane(bone_z_axis, bone_y_axis)
+        target_axis = context.project_to_roll_plane(plane_normal, bone_y_axis)
+
+        if actual_axis is None or target_axis is None:
+            return None
+
+        # 取与当前 Z 轴同侧的法线方向，度量最小锐角（符号无关，等同于修复不翻180°）
+        if actual_axis.dot(target_axis) < 0.0:
+            target_axis = -target_axis
+
+        angle_deg = context.angle_between_degrees(actual_axis, target_axis)
+
+        if angle_deg <= self.threshold_deg:
+            return None
+
+        # 可视化贴到这根骨自己的中心和尺度上。upper/lower 是两条独立规则，
+        # 若都用整条链中点(肘部)会重叠堆在一起、且不贴合骨骼，看起来像画错位。
+        if context.center_world is not None:
+            visual_origin = context.center_world
+        else:
+            visual_origin = (root_point + end_point) * 0.5
+
+        if context.head_world is not None and context.tail_world is not None:
+            bone_length = (context.tail_world - context.head_world).length
+        else:
+            bone_length = (end_point - root_point).length
+
+        visual_length = max(bone_length * 0.5, 0.08)
+        fan_axis = _safe_normalized_vector(target_axis.cross(actual_axis))
+        if fan_axis is None:
+            fan_axis = bone_y_axis
+
+        return {
+            "rule_name": rule.name,
+            "mode": self.idname,
+            "mapping_name": context.mapping_name,
+            "axis_label": "IK滚转",
+            "target_label": "弯曲平面法线",
+            "angle_deg": angle_deg,
+            "threshold_deg": self.threshold_deg,
+            "actual_axis_world": actual_axis,
+            "target_axis_world": target_axis,
+            "bone_axis_world": bone_y_axis,
+            "fan_axis_world": fan_axis,
+            "visual_origin_world": visual_origin,
+            "visual_axis_length": visual_length,
+        }
+
+
 class HumanoidTwistRule:
     def __init__(self, name, mapping_names, mode):
         self.name = name
@@ -1709,6 +2081,8 @@ class HumanoidWarningRuleRegistry:
 
 HUMANOID_TWIST_RULES = HumanoidTwistRuleRegistry()
 HUMANOID_WARNING_RULES = HumanoidWarningRuleRegistry()
+# 精确四肢IK检查规则独立成表，通过场景开关按需并入检查结果（默认关闭）
+HUMANOID_LIMB_IK_RULES = HumanoidTwistRuleRegistry()
 
 _WORLD_NEG_Y = (0.0, -1.0, 0.0)
 _WORLD_POS_X = (1.0, 0.0, 0.0)
@@ -1751,6 +2125,23 @@ def _register_ik_bend_direction_twist_rule(
             lower_mapping_name=lower_mapping_name,
             target_world=target_world,
             target_label=target_label,
+            threshold_deg=threshold_deg,
+        ),
+    ))
+
+
+def _register_limb_ik_roll_rule(
+    mapping_name,
+    upper_mapping_name,
+    lower_mapping_name,
+    threshold_deg=_LIMB_IK_ROLL_THRESHOLD_DEG,
+):
+    return HUMANOID_LIMB_IK_RULES.register(HumanoidTwistRule(
+        name=f"{mapping_name}: IK滚转 -> 弯曲平面法线",
+        mapping_names=(mapping_name,),
+        mode=HumanoidLimbIkRollMode(
+            upper_mapping_name=upper_mapping_name,
+            lower_mapping_name=lower_mapping_name,
             threshold_deg=threshold_deg,
         ),
     ))
@@ -1951,6 +2342,51 @@ _register_ik_bend_direction_twist_rule(
 )
 
 
+# 精确四肢IK检查规则注册区（默认关闭，由场景开关并入）。
+# 每根四肢骨检查自身 Z 轴是否平行于所在肢体的弯曲平面法线（Z ∥ 法线 = 滚转/铰链轴）。
+# 因取锐角、对 ±法线取最近，通过/失败与左右无关，上下肢共用同一条弯曲平面。
+_register_limb_ik_roll_rule(
+    mapping_name="upper_arm.L",
+    upper_mapping_name="upper_arm.L",
+    lower_mapping_name="lower_arm.L",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="lower_arm.L",
+    upper_mapping_name="upper_arm.L",
+    lower_mapping_name="lower_arm.L",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="upper_arm.R",
+    upper_mapping_name="upper_arm.R",
+    lower_mapping_name="lower_arm.R",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="lower_arm.R",
+    upper_mapping_name="upper_arm.R",
+    lower_mapping_name="lower_arm.R",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="upper_leg.L",
+    upper_mapping_name="upper_leg.L",
+    lower_mapping_name="lower_leg.L",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="lower_leg.L",
+    upper_mapping_name="upper_leg.L",
+    lower_mapping_name="lower_leg.L",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="upper_leg.R",
+    upper_mapping_name="upper_leg.R",
+    lower_mapping_name="lower_leg.R",
+)
+_register_limb_ik_roll_rule(
+    mapping_name="lower_leg.R",
+    upper_mapping_name="upper_leg.R",
+    lower_mapping_name="lower_leg.R",
+)
+
+
 class HumanoidMappingPreviewHUD:
     _handler_3d = None
     _handler_2d = None
@@ -2025,6 +2461,13 @@ class HumanoidMappingPreviewHUD:
         return bool(cls._scene_setting(
             "bone_humanoid_preview_show_deform_tags",
             True,
+        ))
+
+    @classmethod
+    def _check_precise_limb_ik(cls):
+        return bool(cls._scene_setting(
+            "bone_humanoid_check_precise_limb_ik",
+            False,
         ))
 
     @classmethod
@@ -2230,7 +2673,13 @@ class HumanoidMappingPreviewHUD:
             bone_name_to_sample=bone_name_to_sample,
         )
 
-        return HUMANOID_TWIST_RULES.evaluate(context)
+        issues = list(HUMANOID_TWIST_RULES.evaluate(context))
+
+        # 精确四肢IK检查为可选项，开启后并入同一份结果，渲染/文字复用现有逻辑
+        if cls._check_precise_limb_ik():
+            issues.extend(HUMANOID_LIMB_IK_RULES.evaluate(context))
+
+        return issues
 
     @classmethod
     def _format_twist_issues(cls, issues):
@@ -3053,6 +3502,18 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     )
     row.prop(scene, "bone_humanoid_preview_font_size")
 
+    row = col.row(align=True)
+    row.prop(
+        scene,
+        "bone_humanoid_check_precise_limb_ik",
+        toggle=True,
+    )
+    row.operator(
+        OP_Humanoid_FixLimbIkRoll.bl_idname,
+        text="修复四肢IK滚转",
+        icon="CON_KINEMATIC",
+    )
+
 
     layout.separator(factor=1)
     box = layout.box()
@@ -3088,6 +3549,7 @@ cls = [
     OP_HumanoidMappingPreview_Show,
     OP_HumanoidMappingPreview_Clear,
     OP_Humanoid_ForceAlign,
+    OP_Humanoid_FixLimbIkRoll,
 ]
 
 def register():
