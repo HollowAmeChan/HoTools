@@ -20,20 +20,28 @@ if tracy_enabled():
 
 # ---------------------------------------------------------------------------
 # Tracy 可用性检测
+#
+# 注意：不在模块导入时调用 is_enabled()。
+# Tracy 非 on-demand 模式下，is_enabled() / TracyIsConnected 只有
+# profiler GUI 已主动连接时才返回 True。如果 Blender 先启动、后连接
+# profiler，导入时 is_enabled() == False，会导致全程空操作。
+# 正确做法：只要 tracy_client 能 import 就认为可用；是否向 profiler
+# 发送数据由 Tracy 运行时自己决定（有环形缓冲，连接后自动同步）。
 # ---------------------------------------------------------------------------
 
 _TRACY_AVAILABLE = False
 _ScopedZone = None
 _frame_mark_fn = None
+_tracy_is_connected = None   # 保留供 report_startup 展示连接状态
 
 try:
     # tracy_client 需要从 D:\BlenderAdvance\tracy_src\python\ 编译安装
     # 普通 Blender 中 import 会失败，走 except 分支
-    from tracy_client import ScopedZone as _ScopedZone  # type: ignore
-    from tracy_client import frame_mark as _frame_mark_fn  # type: ignore
-    # is_enabled() 返回 True 才说明 Tracy 实际运行中
-    from tracy_client import is_enabled as _tracy_is_enabled  # type: ignore
-    _TRACY_AVAILABLE = bool(_tracy_is_enabled())
+    from tracy_client import ScopedZone as _ScopedZone          # type: ignore
+    from tracy_client import frame_mark as _frame_mark_fn       # type: ignore
+    from tracy_client import is_enabled as _tracy_is_connected  # type: ignore
+    # import 成功即代表 Tracy 运行时可用，不再依赖 is_enabled() 的瞬时值
+    _TRACY_AVAILABLE = True
 except Exception:
     # 普通 Blender 构建 / tracy_client 未编译 —— 静默跳过
     pass
@@ -93,6 +101,32 @@ def omni_zone(name: str, color: int = 0):
         return _ScopedZone(name=name)
     except Exception:
         return _NULL_ZONE
+
+
+def report_startup() -> None:
+    """
+    在插件注册阶段打印 Tracy 就绪状态。
+
+    tracy_client 模块可用时输出一行确认，同时显示当前 profiler
+    是否已连接。普通 Blender 构建静默，不产生任何输出。
+
+    注意：此时 profiler 不一定已连接（Blender 可能先于 profiler
+    启动），connected=False 不影响插桩效果——Tracy 有环形缓冲，
+    profiler 稍后连接时会自动同步已捕获的 zone 数据。
+    """
+    if not _TRACY_AVAILABLE:
+        return
+    try:
+        import importlib.metadata
+        version = importlib.metadata.version("tracy_client")
+    except Exception:
+        version = "?"
+    try:
+        connected = bool(_tracy_is_connected()) if _tracy_is_connected is not None else False
+    except Exception:
+        connected = False
+    conn_tag = "profiler已连接" if connected else "profiler未连接(稍后连接也会同步)"
+    print(f"[HoTools] OmniNode Tracy ✓  就绪  (tracy_client {version} | {conn_tag})")
 
 
 def omni_frame_mark(name: str = "") -> None:

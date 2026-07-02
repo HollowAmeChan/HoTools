@@ -9,7 +9,8 @@ def register():
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     from .NodeTree import OmniNodeDraw  # NOQA: E402
     from . import OmniNodePanel  # NOQA: E402
-    
+    from .NodeTree.OmniTracy import report_startup as _tracy_report  # NOQA: E402
+
     OmniNodeDraw.register()
     OmniNodeOperator.register()
     OmniNodeTree.register()
@@ -17,6 +18,7 @@ def register():
     OmniNodeSocket.register()
     OmniNodeRegister.register()
     OmniNodePanel.register()
+    _tracy_report()
 
 
 def unregister():

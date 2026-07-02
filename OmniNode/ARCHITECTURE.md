@@ -559,6 +559,155 @@ OMNI DEBUG TIMING   |  Frame: <树名>
 - 树级 timing 看哪个 IR step 慢。
 - 节点级 debug 看某个复杂节点内部哪一步慢。
 
+### 5. Tracy 深度性能分析
+
+适用场景：`debug_runtime_timing` 已经定位到慢在哪个 IR step，但需要更细粒度（微秒级、调用栈、多线程竞争）的可视化，或者需要同时观察 OmniNode 执行与 Blender C 层（depsgraph、蒙皮、视口）的交叉开销时，启用 Tracy 深度分析。
+
+普通 Blender 构建下所有 Tracy 代码完全静默，不产生任何运行时开销。
+
+#### 5.1 环境准备
+
+编译环境：`D:\BlenderAdvance\`（Tracy 版 Blender 源码 + 构建产物）
+
+**第一步：确认 Tracy Blender 已编译**
+
+```text
+D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\blender.exe
+D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\bin\python.exe
+```
+
+**第二步：修复 Blender Python 缺失的头文件和库目录**
+
+Tracy 版 Blender 的内嵌 Python 没有把 `Include/` 和 `libs/` 放在 python.exe 旁边，而是在预编译库目录里。需要各建一个目录链接（只做一次，重建 Blender 后需要重做）：
+
+```powershell
+# Python 头文件链接
+New-Item -ItemType Junction `
+  -Path   "D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\Include" `
+  -Target "D:\BlenderAdvance\blender\lib\windows_x64\python\311\include"
+
+# Python 库链接
+New-Item -ItemType Junction `
+  -Path   "D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\libs" `
+  -Target "D:\BlenderAdvance\blender\lib\windows_x64\python\311\libs"
+```
+
+**第三步：安装编译工具并编译 `tracy_client`**
+
+```powershell
+$PYEXE = "D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\bin\python.exe"
+$SCRIPTS = "D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\Scripts"
+
+# 安装 cmake / ninja / scikit-build-core（只需一次）
+& $PYEXE -m pip install cmake ninja scikit-build-core
+
+# 把 cmake/ninja 加入 PATH 再编译
+$env:PATH = "$SCRIPTS;$env:PATH"
+Set-Location "D:\BlenderAdvance\tracy_src\python"
+& $PYEXE -m pip install . --no-build-isolation
+```
+
+编译成功后验证：
+
+```powershell
+& $PYEXE -c "from tracy_client import ScopedZone, is_enabled; print('is_enabled:', is_enabled())"
+# 输出：is_enabled: True
+```
+
+tracy_client 安装位置：`D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\4.5\python\Lib\site-packages\tracy_client\`
+
+Tracy 源码位置：`D:\BlenderAdvance\tracy_src\`（版本 0.13.1）
+
+Tracy GUI 工具：`D:\BlenderAdvance\tracy_gui\tracy-profiler.exe`（启动后等待连接）
+
+#### 5.2 OmniTracy.py 封装原理
+
+封装文件：`NodeTree/OmniTracy.py`
+
+```python
+# 尝试导入 tracy_client；失败则静默降级
+try:
+    from tracy_client import ScopedZone, is_enabled, frame_mark
+    _TRACY_AVAILABLE = bool(is_enabled())
+except Exception:
+    _TRACY_AVAILABLE = False
+```
+
+公共 API：
+
+| 函数 | 说明 |
+|---|---|
+| `tracy_enabled()` | 返回 Tracy 是否激活 |
+| `omni_zone(name, color=0)` | 返回 Tracy zone 上下文管理器；不可用时返回 `_NullZone` 单例 |
+| `omni_frame_mark(name="")` | 发送 Tracy 帧标记；不可用时空操作 |
+
+`_NullZone` 是单例对象，`with omni_zone(...)` 在普通 Blender 里只有一次属性查找，开销可忽略。
+
+#### 5.3 OmniExecutor 桩点位置
+
+插桩在 `RuntimeObserver` 的以下方法里，不改变 `OmniExecutor` 主执行逻辑：
+
+| 方法 | zone 行为 |
+|---|---|
+| `begin_tree(compiled)` | 开启 `OmniNode/Tree/{tree_name}`（树级 zone，整棵树生命周期）|
+| `final_outputs(result)` | 关闭树级 zone |
+| `step_begin(step_index, op)` | 开启 `OmniNode/{stage_name}`（步骤级 zone，单步生命周期）|
+| `step_end(start_time, stage)` | 关闭步骤级 zone |
+| `error(step_index, message)` | **异常路径补丁**：`break` 前强制关闭残留步骤 zone，防止 Tracy 栈错位 |
+
+步骤 zone 名称格式（复用 `OmniExecutor.timing_stage_name()`）：
+
+```text
+OmniNode/step{N}:{NodeName}:{FuncName}         ← OpCall
+OmniNode/step{N}:{NodeName}:SUBTREE:{TreeName} ← SubtreeCall
+OmniNode/step{N}:{NodeName}:BATCH:{TreeName}   ← BatchSubtreeCall
+OmniNode/step{N}:{NodeName}:CACHE_READ         ← CacheReadCall
+OmniNode/step{N}:{NodeName}:CACHE_WRITE        ← CacheWriteCall
+OmniNode/step{N}:CONST                         ← 常量指令
+```
+
+子树通过 `observer.child()` 各自得到独立 `RuntimeObserver`，Tracy 里子树的 zone 会嵌套在父树的 zone 内部，层次结构自然对应 OmniNode 组调用深度。
+
+#### 5.4 Tracy profiler 里看到的层次结构
+
+```text
+OmniNode/Tree/TopTreeName
+  OmniNode/step0:InputNode:read_scene
+  OmniNode/step1:PhysicsNode:springBoneVRM_CPP
+  OmniNode/step2:SubtreeGroup:SUBTREE:SubTreeName
+    OmniNode/Tree/SubTreeName         ← 子树独立 zone
+      OmniNode/step0:...
+      OmniNode/step1:...
+  OmniNode/step3:OutputNode:write_bone
+```
+
+BatchSubtreeCall 的每个批次项也会产生独立的子树 zone，批次间可以通过 zone 时间轴对比。
+
+#### 5.5 使用流程
+
+1. 启动 `tracy-profiler.exe`，等待连接。
+2. 启动 Tracy 版 Blender（`D:\BlenderAdvance\build_windows_x64_vc17_Release\bin\Release\blender.exe`）。
+3. 加载工程、开启每帧运行、在 Blender 里播放动画。
+4. Tracy profiler 自动捕获，停止播放后在 profiler 里分析 zone 耗时、调用层次和帧时间线。
+5. 用 `Ctrl+F` 按 zone 名称过滤，例如搜索 `OmniNode/` 可以只看 OmniNode 相关 zone。
+
+#### 5.6 与内建 debug_runtime_timing 的分工
+
+| 工具 | 适用场景 |
+|---|---|
+| `debug_runtime_timing` | 日常跟踪哪个 IR step 慢；生产版 Blender 可用；输出间隔聚合，副作用小 |
+| Tracy zone | 需要微秒精度、可视化帧时间线、同时观察 OmniNode 与 Blender C 层交叉开销时 |
+
+两者可以同时开启。`debug_runtime_timing` 的计时本身开销极小，但如果要精确对比 Tracy 数据，建议关闭 `debug_runtime_timing` 以减少 Python 层的计时器干扰。
+
+#### 5.7 维护注意事项
+
+- **新增 IR 类型时**：`OmniExecutor.timing_stage_name()` 里补好名称，Tracy zone 名称会自动跟随，无需额外修改。
+- **子树 observer 不继承父 zone**：`child()` 方法只传 `debug`、`depth`、`trace`，`_tracy_tree_zone` 和 `_tracy_step_zone` 各自独立，不会意外跨层关闭。
+- **错误路径**：执行器 `break` 时不会调 `step_end`，`error()` 回调负责关闭残留 zone，新增 IR 执行分支时如果也有 `break` 路径，必须确保在 `break` 前调用 `observer.error()`。
+- **Tracy 版 Blender 重建后**：`Include` 和 `libs` Junction 可能丢失，需要重新创建（见 5.1 第二步）。
+- **普通 Blender 构建**：`OmniTracy.py` 导入失败时完全静默，`_TRACY_AVAILABLE = False`，所有 `omni_zone()` 调用返回 `_NullZone` 单例，不影响正常运行。
+
 ## native 后端开发流程
 
 主文档位置：
