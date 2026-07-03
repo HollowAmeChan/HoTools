@@ -219,8 +219,13 @@ def cached_vertex_group_weights_hash(
 
     vertex_group_weights 是逐顶点逐 group 的 Python 循环（高顶点数下是 config_key
     的真正大头）。组名和 light_key（顶点/loop/面数量）不变时，权重 hash 逐帧稳定，
-    可直接复用，跳过整轮循环。语义与 mesh_light_key 一致：同数量但权重重绘不会自动
-    失效，需用户 reset/清缓存触发重建。
+    可直接复用，跳过整轮循环。
+
+    **设计约束（性能优化决策）**：
+    权重 hash 只在拓扑数量变化时失效，权重值修改不会自动触发 cache 重建。
+    这是有意的设计权衡：运行期间不允许热修改 pin 顶点组或碰撞半径顶点组权重。
+    如果需要修改权重，用户必须停止运行、修改权重、使用 reset 或清除缓存后重新运行。
+    语义与 mesh_light_key 一致：拓扑不变 = cache 不失效。
     """
     cache_key = ("vg_weights_hash", group_name, light_key)
     if isinstance(cache, dict) and light_key is not None:

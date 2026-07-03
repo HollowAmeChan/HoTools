@@ -2783,13 +2783,19 @@ class _SpringBoneVRM:
 
     @classmethod
     def _collision_sources(cls, scene) -> list[dict]:
+        """枚举场景中所有碰撞源（Object 和 Bone）。
+
+        缓存策略：按 (scene_key, frame) 缓存，每帧重新枚举一次碰撞源列表，
+        确保新增/删除/修改的碰撞体能被及时检测到。同一帧内多次调用复用缓存。
+        """
         scene = scene or bpy.context.scene
+        frame = int(getattr(scene, "frame_current", 0) or 0)
         scene_key = cls._scene_key(scene)
-        cached = cls._collision_source_cache.get(scene_key)
-        if isinstance(cached, dict) and cached.get("scene") is scene:
-            sources = cached.get("sources")
-            if isinstance(sources, list):
-                return sources
+        cache_key = (scene_key, frame)
+
+        cached = cls._collision_source_cache.get(cache_key)
+        if isinstance(cached, list):
+            return cached
 
         sources = []
         for obj in _BonePhysics.scene_objects(scene):
@@ -2815,10 +2821,9 @@ class _SpringBoneVRM:
                     if source is not None:
                         sources.append(source)
 
-        cls._collision_source_cache[scene_key] = {
-            "scene": scene,
-            "sources": sources,
-        }
+        # 只保留当前帧的缓存，清除过期的旧帧数据
+        cls._collision_source_cache.clear()
+        cls._collision_source_cache[cache_key] = sources
         return sources
 
     @classmethod
@@ -2882,7 +2887,10 @@ class _SpringBoneVRM:
                 colliders.append(collider)
 
         if invalid_sources:
-            cls._collision_source_cache.pop(cls._scene_key(scene), None)
+            # 源失效时清除当前帧的缓存，下次调用会重新枚举
+            frame = int(getattr(scene, "frame_current", 0) or 0)
+            cache_key = (cls._scene_key(scene), frame)
+            cls._collision_source_cache.pop(cache_key, None)
             return _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
 
         return {
@@ -3002,7 +3010,10 @@ class _SpringBoneVRM:
                 continue
 
         if invalid_sources:
-            cls._collision_source_cache.pop(cls._scene_key(scene), None)
+            # 源失效时清除当前帧的缓存，下次调用会重新枚举
+            frame = int(getattr(scene, "frame_current", 0) or 0)
+            cache_key = (cls._scene_key(scene), frame)
+            cls._collision_source_cache.pop(cache_key, None)
             snapshot = _BonePhysics.build_collision_snapshot_from_scene(scene, True, True, False)
             colliders = list(snapshot.get("colliders") or []) if isinstance(snapshot, dict) else []
             collider_arrays = _SpringBoneVRMCppBackend.collision_arrays(colliders)

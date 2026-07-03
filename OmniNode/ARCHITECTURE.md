@@ -267,6 +267,38 @@ return _OmniCache(_as_cache_owner(state))   # replace 写回同一本体
 - **`dict()` 浅拷贝便宜，深递归才贵**：每帧浅拷一个新 owner dict 只是几微秒，真正省下的是 `_snapshot_value` 的深递归和 dispose/committed_ids 的深扫描。只要顶层是 owner，内部子结构不会被递归深入。
 - **范围最小化**：只在物理这类大状态节点的产出边界改，不要动全局 `cache_replace` / `read_cache` 默认行为，否则会破坏其它缓存使用者的隔离假设。
 
+### 7.2 缓存失效边界：哪些数据必须每帧重建
+
+缓存优化的核心风险是**缓存太狠导致该失效的数据没失效**。2026-07 的零拷贝优化后曾出现网格静态碰撞失效的回归（碰撞源列表被永久缓存，用户新增/修改碰撞体不生效），根因就是缓存 key 太粗、失效条件太宽。
+
+新增或优化任何缓存前，必须先把数据按「失效频率」分类，并显式选择匹配的缓存 key。下表是物理解算器的分类基准：
+
+| 数据类别 | 失效条件 | 正确的缓存策略 | 反例（错误做法） |
+|---|---|---|---|
+| **碰撞体位置**（`matrix_world`） | 每帧都可能变 | 每帧重建快照，key 含 `frame` | 缓存跨帧的世界坐标 |
+| **碰撞源列表**（哪些物体/骨骼启用了碰撞） | 增删改碰撞体、切换可见性 | key 含 `frame`，每帧重新枚举一次 | ❌ 只用 `scene` 指针做 key（永不失效） |
+| **网格拓扑**（顶点/边/面连通性） | 拓扑编辑 | SHA1 强签名 + 廉价数量签名（`light_key`）双重检测 | 每帧无条件重算连通性 |
+| **rest / 静止位置** | 物体变换变化 | 变换签名变化时同步 | 缓存后不再跟随物体移动 |
+| **顶点组权重**（pin / 碰撞半径） | 权重重绘 | 见下方设计约束：运行期不支持热改 | — |
+| **逐帧模拟状态**（positions/velocity） | 每帧滚动 | 零拷贝原地 mutate，见 7.1 | 每帧深拷贝 |
+
+判定缓存 key 是否正确的经验法则：**缓存 key 必须包含所有会导致结果变化的输入维度**。如果一个输入会变、但没进 key，就是一个「改了不生效」的潜在回归。scene 指针在整个会话内不变，因此**任何以 scene 指针为唯一 key 的缓存都等价于永久缓存**，只能用于真正会话级不变的数据。
+
+per-frame 缓存的正确写法（同一帧内多次调用复用、跨帧自动失效）：
+
+```python
+cache_key = (scene_key, frame)
+cached = cache.get(cache_key)
+if cached is not None:
+    return cached
+result = rebuild(...)
+cache.clear()                # 只保留当前帧，避免 key 随帧号无限增长
+cache[cache_key] = result
+return result
+```
+
+**顶点组权重的设计约束（有意的性能权衡）**：pin 顶点组和碰撞半径顶点组的权重 hash 只在拓扑数量变化时失效，权重值重绘**不会**自动触发 cache 重建。这是运行期不允许热修改权重的显式约定——需要改权重时，用户必须停止运行、修改、reset 或清缓存后重新运行。此约束写在 `physicsMC2/mesh_build.py` 的 `cached_vertex_group_weights_hash` 文档里。
+
 ### 8. 编译缓存和 runtime cache 是两套系统
 
 `OmniNodeTree._COMPILED_TREE_CACHE` 缓存的是 `CompiledGraph`，目的是避免每帧重复编译图。
