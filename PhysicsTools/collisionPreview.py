@@ -374,10 +374,10 @@ def _draw_collision_overlay():
 
     preview_group = _collision_overlay_preview_mode_group(scene.ho_collision_overlay_preview_mode)
     include_passive_collision = bool(scene.ho_collision_overlay_include_passive_collision) and preview_group is not None
-    show_bone_collision = bool(scene.ho_collision_overlay_show_bone) or preview_group is not None
+    show_bone_collision = bool(scene.ho_collision_overlay_show_bone)
+    show_object_collision = bool(scene.ho_collision_overlay_show_object)
+    show_mesh_vertices = bool(scene.ho_collision_overlay_show_mesh_vertices)
     show_visible_bone_only = scene.ho_collision_overlay_only_visible_bones
-    show_object_collision = bool(scene.ho_collision_overlay_show_object) or preview_group is not None
-    show_mesh_vertices = bool(scene.ho_collision_overlay_show_mesh_vertices) or preview_group is not None
     use_pin_color = scene.ho_collision_overlay_color_mode == "PIN" and preview_group is None
 
     collision_lines_by_group = {
@@ -536,17 +536,17 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         col.prop(scene, "ho_collision_overlay_preview_mode", text="预览模式")
         if preview_group is not None:
             col.prop(scene, "ho_collision_overlay_include_passive_collision", text="额外显示被动碰撞")
-
-        if preview_group is None:
+        else:
             col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
-            col.separator()
-            col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
-            col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
-            col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
-            if scene.ho_collision_overlay_show_mesh_vertices:
-                hint = col.column(align=True)
-                hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
-                hint.label(text="暂不保证跟随最终变形")
+
+        col.separator()
+        col.prop(scene, "ho_collision_overlay_show_bone", text="骨骼碰撞体")
+        col.prop(scene, "ho_collision_overlay_show_object", text="物体碰撞体")
+        col.prop(scene, "ho_collision_overlay_show_mesh_vertices", text="网格逐顶点球")
+        if scene.ho_collision_overlay_show_mesh_vertices:
+            hint = col.column(align=True)
+            hint.label(text="提示：带修改器的网格逐顶点球预览", icon="INFO")
+            hint.label(text="暂不保证跟随最终变形")
 
 def draw_collision_overlay_header(self, context):
     scene = context.scene
