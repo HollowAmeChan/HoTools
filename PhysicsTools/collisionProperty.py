@@ -20,20 +20,15 @@ class PG_Hotools_BoneCollision(PropertyGroup):
 
     消费约定：
     1. 碰撞体真实世界空间数据由物理节点按 PoseBone 矩阵解析。
-    2. spring_root 是链 root 标记；解算中链 root 始终硬 Pin。
+    2. 链 root 由物理节点输入的骨骼决定（“从根获取骨链”填入的骨即 root），解算中链 root 始终硬 Pin，与骨骼上的标记无关。
     3. 非 root 骨骼是否 Pin 由 pin 字段决定，只在物理 cache 重建时读取。
-    4. 预览侧用 spring_root 或 pin 显示 Pin 状态，和解算语义保持一致。
+    4. 预览侧用 pin 显示 Pin 状态。
     5. 骨骼级碰撞只定义球体和胶囊；平面和长方体碰撞需要完整 Object 变换和父级继承，必须用 Object 级碰撞体表达。
     """
 
-    spring_root: BoolProperty(
-        name="Spring Root",
-        description="把这根骨骼标记为一条SpringBone链的根；整骨架面板会批量管理这个标记",
-        default=False,
-    )  # type: ignore
     pin: BoolProperty(
         name="Pin",
-        description="固定这根骨骼，让物理解算保持当前姿态；Spring Root 在解算中始终视为Pin，即使这里关闭也不会被推动",
+        description="固定这根骨骼，让物理解算保持当前姿态；链 root 由物理节点输入决定，在解算中始终视为Pin",
         default=False,
     )  # type: ignore
     collision_type: EnumProperty(

@@ -2,10 +2,7 @@ from bpy.types import Panel
 
 from .collisionOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
-    OP_Hotools_BoneCollision_AddSelectedSpringRoots,
-    OP_Hotools_BoneCollision_ClearAllSpringRoots,
     OP_Hotools_BoneCollision_GradientRadius,
-    OP_Hotools_BoneCollision_SelectSpringRoots,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
 from .collisionBasePose import mesh_light_key
@@ -18,7 +15,6 @@ from .collisionUtils import (
     _collision_group_bit,
     _collision_props,
     _effective_bone_pin,
-    _spring_root_bones,
 )
 
 
@@ -79,11 +75,7 @@ def _draw_group_buttons(layout, operator_id, active_group=None, mask=None):
 
 
 def _draw_collision_controls(layout, props):
-    layout.prop(props, "spring_root")
-    pin_row = layout.row(align=True)
-    pin_row.prop(props, "pin")
-    if props.spring_root:
-        pin_row.label(text="Root强制Pin", icon="PINNED")
+    layout.prop(props, "pin")
     layout.prop(props, "collision_type", text="类型")
 
     col = layout.column(align=True)
@@ -277,7 +269,6 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
         armature_obj = _active_armature_object(context)
         layout = self.layout
         scene = context.scene
-        roots = _spring_root_bones(armature_obj)
         active_bone = context.active_bone
         active_props = _active_collision_props(context)
         collision_count = sum(
@@ -292,27 +283,15 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
 
         op_box = layout.box()
         col = op_box.column(align=True)
-        row = col.row(align=True)
-        row.operator(OP_Hotools_BoneCollision_AddSelectedSpringRoots.bl_idname, icon="ADD")
-        row.operator(OP_Hotools_BoneCollision_SelectSpringRoots.bl_idname, icon="RESTRICT_SELECT_OFF")
         col.operator(OP_Hotools_BoneCollision_AddSelectedColliders.bl_idname, icon="MESH_UVSPHERE")
         col.operator(OP_Hotools_BoneCollision_GradientRadius.bl_idname)
-        col.operator(OP_Hotools_BoneCollision_ClearAllSpringRoots.bl_idname, icon="TRASH")
 
         info_box = _section_box(layout, scene, "ho_bone_collision_show_info_section")
         if info_box:
             row = info_box.row(align=True)
             row.label(text=f"骨骼: {len(armature_obj.data.bones)}")
-            row.label(text=f"Spring Root: {len(roots)}")
             row.label(text=f"Pin: {pin_count}")
             info_box.label(text=f"碰撞体: {collision_count}")
-
-            if roots:
-                info_box.separator()
-                for bone in roots:
-                    row = info_box.row(align=True)
-                    is_active = active_bone is not None and active_bone.name == bone.name
-                    row.label(text=bone.name, icon="BONE_DATA" if not is_active else "PINNED")
 
         root_box = _section_box(layout, scene, "ho_bone_collision_show_roots_section")
         if root_box:

@@ -3,10 +3,7 @@ from bpy.props import BoolProperty, EnumProperty, PointerProperty
 
 from .collisionOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
-    OP_Hotools_BoneCollision_AddSelectedSpringRoots,
-    OP_Hotools_BoneCollision_ClearAllSpringRoots,
     OP_Hotools_BoneCollision_GradientRadius,
-    OP_Hotools_BoneCollision_SelectSpringRoots,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
@@ -35,9 +32,6 @@ cls = [
     PG_Hotools_BoneCollision,
     PG_Hotools_ObjectCollision,
     PG_Hotools_MeshCollision,
-    OP_Hotools_BoneCollision_AddSelectedSpringRoots,
-    OP_Hotools_BoneCollision_ClearAllSpringRoots,
-    OP_Hotools_BoneCollision_SelectSpringRoots,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,

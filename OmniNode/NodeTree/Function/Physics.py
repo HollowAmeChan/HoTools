@@ -247,7 +247,8 @@ class _BonePhysics:
     def bone_is_effectively_pinned(cls, armature_obj: bpy.types.Object, bone_name: str, root_name: str = "") -> bool:
         """
         判断骨骼是否在当前物理链中固定。
-        链 root 是硬 Pin；非 root 只在 cache 构建时读取属性，不在模拟中热更新。
+        链 root（即 root_name，来自节点输入的骨链根，非骨骼上的持久标记）是硬 Pin；
+        非 root 只在 cache 构建时读取 hotools_collision.pin，不在模拟中热更新。
         """
         if bone_name and bone_name == root_name:
             return True
@@ -2365,6 +2366,8 @@ def _run_mesh_xpbd_node(
     omni_description="""
     从 Bone socket 选择的根骨骼生成骨链数据。
 
+    接入的这根骨骼本身就是链 root，也是链锚点：它在解算中恒为硬 Pin，不参与 Verlet 推进，
+    模拟从它的第一根子骨开始。root 身份完全由这个输入决定，不依赖骨骼上的任何持久标记。
     会递归收集根骨下面的全部子骨，不提供主干猜测或排除规则。
     如果 VRM SpringBone 需要多条独立链，应在骨架制作时拆成多个明确 root。
     输出接物理类节点的骨链输入。
@@ -4163,7 +4166,7 @@ def _run_spring_bone_vrm_node(
     缓存只保存这个骨架的 VRM SpringBone 状态，拓扑变化或打开“重置”时会重建状态。
     当前消费类型：SPHERE、CAPSULE。球体读取 radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
     模拟骨骼自身的 hit radius 和 collided_by_groups 来自该骨骼 hotools_collision；外部被动碰撞体来自场景快照。
-    链 root 是硬 Pin；非 root 骨骼的 Pin 属性只在 cache 重建时读取，模拟中修改不会立即生效。
+    链 root 由“从根获取骨链”输入的骨骼决定，恒为硬 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）只在 cache 重建时读取，模拟中修改不会立即生效。
     检测到跳帧或倒放时会先恢复初始姿态，并输出空缓存，让缓存写入节点清掉旧速度。
     同一帧同一骨架只允许一个不同配置的解算器写入，避免多个节点互相覆盖姿态。
 
@@ -4536,7 +4539,7 @@ def meshPhysicsXPBDCpp(
 
     工作原理：
     骨链第一根骨骼只作为 center/锚点，不参与模拟；从第二根骨骼开始模拟。
-    链 root 永远视为 Pin；非 root 骨骼的 Pin 属性会在 cache 构建时记录，模拟中修改不会热更新。
+    链 root 由“从根获取骨链”输入的骨骼决定，永远视为 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）会在 cache 构建时记录，模拟中修改不会热更新。
     每根模拟骨在世界空间保存 tail 的 current/previous 状态，用 Verlet 推进：
     next = current + (current - previous) * (1 - drag) + rest_axis * stiffness * dt + gravity * gravity_power * dt。
     stiffness 会乘以 dt，所以它不是 0-1 参数，常用量级会落在 1、10、30、100 这种范围。

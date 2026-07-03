@@ -67,9 +67,10 @@ def _collision_props(bone):
 def _effective_bone_pin(bone) -> bool:
     """
     判断骨骼在物理预览中是否应视为固定。
+    注意：链 root 的硬 Pin 由物理节点输入决定，预览侧无法离线得知，这里只反映 pin 字段。
     """
     props = _collision_props(bone)
-    return bool(props is not None and (props.spring_root or props.pin))
+    return bool(props is not None and props.pin)
 
 
 def _object_collision_props(obj):
@@ -260,17 +261,6 @@ def _selected_bone_names(context, armature_obj) -> list[str]:
         if getattr(bone, "select", False):
             _append_unique_bone_name(names, seen_names, bone)
     return names
-
-
-def _spring_root_bones(armature_obj):
-    """
-    获取骨架中启用弹簧根节点标记的碰撞骨骼。
-    """
-    return [
-        bone
-        for bone in armature_obj.data.bones
-        if _collision_props(bone) is not None and bone.hotools_collision.spring_root
-    ]
 
 
 def _bone_topology_data(bones):

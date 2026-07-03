@@ -16,97 +16,9 @@ from .collisionUtils import (
     _object_collision_group_target_props,
     _selected_bone_names,
     _set_collision_group_bit,
-    _spring_root_bones,
     _tag_view3d_redraw,
 )
 from .collisionBasePose import ensure_base_pose_proxy
-
-
-class OP_Hotools_BoneCollision_AddSelectedSpringRoots(Operator):
-    bl_idname = "ho.bone_collision_add_selected_spring_roots"
-    bl_label = "选中骨设为Root"
-    bl_description = "把当前选中的骨骼标记为Spring Root"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        armature_obj = _active_armature_object(context)
-        return armature_obj is not None and armature_obj.mode in {"EDIT", "POSE"}
-
-    def execute(self, context):
-        armature_obj = _active_armature_object(context)
-        selected_names = _selected_bone_names(context, armature_obj)
-        if not selected_names:
-            self.report({"WARNING"}, "没有选中骨骼")
-            return {"CANCELLED"}
-
-        changed = 0
-        for name in selected_names:
-            bone = armature_obj.data.bones.get(name)
-            props = _collision_props(bone) if bone else None
-            if props is None:
-                continue
-            props.spring_root = True
-            changed += 1
-
-        self.report({"INFO"}, f"已设置 {changed} 个Spring Root")
-        return {"FINISHED"}
-
-
-class OP_Hotools_BoneCollision_ClearAllSpringRoots(Operator):
-    bl_idname = "ho.bone_collision_clear_all_spring_roots"
-    bl_label = "清空全部Root"
-    bl_description = "清空当前骨架所有骨骼的Spring Root标记"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        return _active_armature_object(context) is not None
-
-    def execute(self, context):
-        armature_obj = _active_armature_object(context)
-        changed = 0
-        for bone in armature_obj.data.bones:
-            props = _collision_props(bone)
-            if props is None:
-                continue
-            if props.spring_root:
-                changed += 1
-            props.spring_root = False
-
-        self.report({"INFO"}, f"已清空 {changed} 个Spring Root")
-        return {"FINISHED"}
-
-
-class OP_Hotools_BoneCollision_SelectSpringRoots(Operator):
-    bl_idname = "ho.bone_collision_select_spring_roots"
-    bl_label = "选择全部Root"
-    bl_description = "选择当前骨架中所有标记为Spring Root的骨骼"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        armature_obj = _active_armature_object(context)
-        return armature_obj is not None and armature_obj.mode in {"EDIT", "POSE"}
-
-    def execute(self, context):
-        armature_obj = _active_armature_object(context)
-        root_names = {bone.name for bone in _spring_root_bones(armature_obj)}
-        if not root_names:
-            self.report({"WARNING"}, "当前骨架没有Spring Root")
-            return {"CANCELLED"}
-
-        if armature_obj.mode == "EDIT":
-            for bone in armature_obj.data.edit_bones:
-                bone.select = bone.name in root_names
-        else:
-            for bone in armature_obj.data.bones:
-                bone.select = bone.name in root_names
-            active_name = next(iter(root_names))
-            armature_obj.data.bones.active = armature_obj.data.bones.get(active_name)
-
-        self.report({"INFO"}, f"已选择 {len(root_names)} 个Spring Root")
-        return {"FINISHED"}
 
 
 class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):

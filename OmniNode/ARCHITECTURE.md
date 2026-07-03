@@ -299,6 +299,21 @@ return result
 
 **顶点组权重的设计约束（有意的性能权衡）**：pin 顶点组和碰撞半径顶点组的权重 hash 只在拓扑数量变化时失效，权重值重绘**不会**自动触发 cache 重建。这是运行期不允许热修改权重的显式约定——需要改权重时，用户必须停止运行、修改、reset 或清缓存后重新运行。此约束写在 `physicsMC2/mesh_build.py` 的 `cached_vertex_group_weights_hash` 文档里。
 
+### 7.3 配置真值来源必须唯一：SpringBone 链 root 的判定
+
+和缓存失效边界并列的另一个物理侧原则：**同一个语义只能有一个真值来源**。当一份配置既能从 A 处推断、又能从 B 处标记时，A 和 B 迟早会不一致，其中一个会腐烂成误导性的死数据。
+
+具体案例（2026-07）：VRM/基础 SpringBone 的「链 root」曾有两个来源——
+
+- **解算侧**：`boneChainFromRoot`（“从根获取骨链”节点）输入的骨骼即 root，`bone_is_effectively_pinned` 靠 `bone_name == root_name` 判定硬 Pin，root_name 就是这个输入。
+- **数据侧**：`Bone.hotools_collision.spring_root` 布尔标记，配套整套「设为 Root / 清空 / 选择」operator 和面板。
+
+问题是解算器**从不读** `spring_root`，它只认节点输入的骨。`spring_root` 仅被 PhysicsTools 预览侧消费，用来离线猜哪根骨是 root 并画成 Pin 高亮。于是两套判定天然脱钩：节点里填了骨 A 当 root，但只要 A 没勾 `spring_root`，预览就显示不出它是 Pin。预览在“猜”一个解算器根本不参考的标记。
+
+结论与已执行的处理：删除 `spring_root` 属性、三个 operator 和面板批量管理块，`_effective_bone_pin` 退化为只看 `pin`。root 的唯一真值来源就是“从根获取骨链”输入的骨骼。代价是预览不再离线高亮 root 的强制 Pin（预览本就无法离线得知解算器会拿哪根骨当 root），这是诚实的：**预览不该猜解算行为**。
+
+维护约定：新增骨骼/物体级配置时，先问“这个语义是否已经能从别处（节点输入、已有数据、拓扑）确定”。能确定就不要再加一个并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。
+
 ### 8. 编译缓存和 runtime cache 是两套系统
 
 `OmniNodeTree._COMPILED_TREE_CACHE` 缓存的是 `CompiledGraph`，目的是避免每帧重复编译图。
