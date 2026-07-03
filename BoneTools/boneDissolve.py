@@ -2,7 +2,7 @@ import bpy
 import numpy as np
 import math
 from bpy.types import Operator
-from bpy.props import BoolProperty,IntProperty,FloatProperty
+from bpy.props import BoolProperty, IntProperty, FloatProperty, StringProperty
 
 from .boneUtils import BoneUtils
 
@@ -373,8 +373,304 @@ class OP_DissolveBoneWithWeight(Operator):
         layout.prop(self,"only_selected")
 
 
+class SimpleDissolveCore:
+    """简单融并的核心算法：权重合并、约束扫描、骨骼删除，均与 UI 解耦。"""
+
+    @staticmethod
+    def merge_weights(obj: bpy.types.Object, src_bn: str, tgt_bn: str) -> bool:
+        """
+        把 obj 上 src_bn 顶点组的权重叠加（sum, clamp 1.0）到 tgt_bn 顶点组，
+        然后删除 src_bn 顶点组。
+        物体不可见时跳过并返回 False；正常处理返回 True。
+        """
+        visibility_state = DissolveBoneCore._ensure_object_visible(obj)
+        old_active = bpy.context.view_layer.objects.active
+        try:
+            if not obj.visible_get():
+                return False
+            bpy.context.view_layer.objects.active = obj
+            BoneUtils.set_object_mode(obj, 'OBJECT')
+
+            src_vg = obj.vertex_groups.get(src_bn)
+            if not src_vg:
+                return True  # 无源组，视为已处理
+
+            # 确保目标组存在
+            tgt_vg = obj.vertex_groups.get(tgt_bn)
+            if not tgt_vg:
+                tgt_vg = obj.vertex_groups.new(name=tgt_bn)
+
+            verts = obj.data.vertices
+            N = len(verts)
+
+            # 读取源组全量权重（无显式权重的顶点略过）
+            src_weights: dict[int, float] = {}
+            for i in range(N):
+                try:
+                    w = src_vg.weight(i)
+                    src_weights[i] = w
+                except RuntimeError:
+                    pass
+
+            # 叠加到目标组（权重上限 1.0）
+            for i, sw in src_weights.items():
+                try:
+                    tw = tgt_vg.weight(i)
+                except RuntimeError:
+                    tw = 0.0
+                tgt_vg.add([i], min(1.0, tw + sw), 'REPLACE')
+
+            # 删除源组
+            obj.vertex_groups.remove(src_vg)
+        finally:
+            if old_active:
+                try:
+                    bpy.context.view_layer.objects.active = old_active
+                except Exception:
+                    pass
+            DissolveBoneCore._restore_object_visibility(obj, visibility_state)
+        return True
+
+    @staticmethod
+    def transfer_bone_constraints(armature: bpy.types.Object,
+                                   src_bn: str, tgt_bn: str) -> list[str]:
+        """
+        扫描骨架所有姿态骨骼的约束；将 subtarget == src_bn 的改为 tgt_bn。
+        返回被修改的约束描述列表（每项一行，格式：骨名 / 约束名）。
+        骨架必须处于可访问 pose 数据的状态（OBJECT 或 POSE 模式）。
+        """
+        changed: list[str] = []
+        pose = getattr(armature, 'pose', None)
+        if not pose:
+            return changed
+        for pb in pose.bones:
+            for con in pb.constraints:
+                if getattr(con, 'target', None) is armature:
+                    if getattr(con, 'subtarget', None) == src_bn:
+                        con.subtarget = tgt_bn
+                        changed.append(f"    {pb.name} → 约束「{con.name}」: subtarget {src_bn} → {tgt_bn}")
+        return changed
+
+    @staticmethod
+    def delete_bone(armature: bpy.types.Object, src_bn: str) -> bool:
+        """
+        在编辑模式删除 src_bn；直接子骨骼的父级改为 src_bn 的父级（断开连接）。
+        返回是否成功找到并删除了骨骼。
+        """
+        was_hidden = armature.hide_viewport
+        if was_hidden:
+            armature.hide_set(False)
+            bpy.context.view_layer.update()
+        armature.select_set(True)
+        bpy.context.view_layer.objects.active = armature
+        BoneUtils.set_object_mode(armature, 'EDIT')
+
+        edit_bones = armature.data.edit_bones
+        bone = edit_bones.get(src_bn)
+        if not bone:
+            BoneUtils.set_object_mode(armature, 'OBJECT')
+            if was_hidden:
+                armature.hide_set(True)
+            return False
+
+        parent = bone.parent
+        # 将直接子骨骼挂到爷级（断开连接，避免跳位）
+        for child in list(bone.children):
+            child.parent = parent
+            child.use_connect = False
+
+        edit_bones.remove(bone)
+
+        bpy.context.view_layer.objects.active = armature
+        BoneUtils.set_object_mode(armature, 'OBJECT')
+        if was_hidden:
+            armature.hide_set(True)
+        return True
+
+
+class OP_SimpleDissolveBone(Operator):
+    bl_idname = "ho.simple_dissolve_bone"
+    bl_label = "简单融并"
+    bl_description = (
+        "删除选中的单根骨骼，将其权重与约束引用转移到指定目标骨骼。\n"
+        "必须且只能选中一根骨骼；支持镜像同步处理。\n"
+        "姿态模式或骨架编辑模式均可触发。"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    target_bone: StringProperty(
+        name="目标骨骼",
+        description="权重和约束引用将被合并到此骨骼（默认填入父级骨骼名）",
+        default="",
+    )  # type: ignore
+
+    process_weights: BoolProperty(
+        name="处理权重",
+        description="将被删除骨骼的顶点组权重叠加到目标骨骼的顶点组",
+        default=True,
+    )  # type: ignore
+
+    only_selected_objects: BoolProperty(
+        name="仅选中物体",
+        description="处理权重时只遍历当前选中的网格物体",
+        default=False,
+    )  # type: ignore
+
+    mirror: BoolProperty(
+        name="镜像处理",
+        description="同时对翻转名（bpy.utils.flip_name）对应的镜像骨骼执行相同操作；目标骨骼也自动翻转",
+        default=False,
+    )  # type: ignore
+
+    transfer_constraints: BoolProperty(
+        name="转移约束引用",
+        description="扫描骨架内全部骨骼的约束，将 subtarget 为被删骨骼的改为目标骨骼",
+        default=True,
+    )  # type: ignore
+
+    # ── 仅选一根骨时可触发 ──────────────────────────────────────────────────
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            return False
+        if obj.mode == 'POSE':
+            return len(context.selected_pose_bones or []) == 1
+        if obj.mode == 'EDIT':
+            return len([b for b in obj.data.edit_bones if b.select]) == 1
+        return False
+
+    # ── 打开对话框前自动填入父级名 ──────────────────────────────────────────
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj.mode == 'POSE':
+            bone = (context.selected_pose_bones or [])[0]
+            parent = bone.parent
+        else:  # EDIT
+            bone = [b for b in obj.data.edit_bones if b.select][0]
+            parent = bone.parent
+        self.target_bone = parent.name if parent else ""
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    # ── 对话框布局 ──────────────────────────────────────────────────────────
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.prop(self, "target_bone")
+        col.separator()
+        col.prop(self, "process_weights")
+        sub = col.column()
+        sub.enabled = self.process_weights
+        sub.prop(self, "only_selected_objects")
+        col.separator()
+        col.prop(self, "mirror")
+        col.prop(self, "transfer_constraints")
+
+    # ── 执行 ─────────────────────────────────────────────────────────────────
+    def execute(self, context):
+        armature_obj: bpy.types.Object = context.active_object
+        original_mode = armature_obj.mode
+
+        # ── 校验目标骨骼 ──
+        tgt_bn = self.target_bone.strip()
+        if not tgt_bn:
+            self.report({'ERROR'}, "目标骨骼名称不能为空")
+            return {'CANCELLED'}
+
+        # 取被删骨骼名（在切换模式前）
+        if armature_obj.mode == 'POSE':
+            src_bn = (context.selected_pose_bones or [])[0].name
+        else:
+            src_bn = [b for b in armature_obj.data.edit_bones if b.select][0].name
+
+        if src_bn == tgt_bn:
+            self.report({'ERROR'}, "目标骨骼不能与被删骨骼相同")
+            return {'CANCELLED'}
+
+        # 切到 OBJECT 模式以访问 pose 数据（transfer_bone_constraints 需要）
+        bpy.context.view_layer.objects.active = armature_obj
+        BoneUtils.set_object_mode(armature_obj, 'OBJECT')
+
+        if not armature_obj.data.bones.get(tgt_bn):
+            self.report({'ERROR'}, f"目标骨骼「{tgt_bn}」不存在于该骨架中")
+            return {'CANCELLED'}
+
+        # ── 构建处理对（主骨对 + 可选镜像对）──
+        pairs: list[tuple[str, str]] = [(src_bn, tgt_bn)]
+        if self.mirror:
+            m_src = bpy.utils.flip_name(src_bn)
+            m_tgt = bpy.utils.flip_name(tgt_bn)
+            if m_src == src_bn:
+                self.report({'WARNING'}, f"「{src_bn}」是中线骨，无法镜像，跳过镜像处理")
+            elif not armature_obj.data.bones.get(m_src):
+                self.report({'WARNING'}, f"镜像源骨「{m_src}」不存在，跳过镜像处理")
+            elif not armature_obj.data.bones.get(m_tgt):
+                self.report({'WARNING'}, f"镜像目标骨「{m_tgt}」不存在，跳过镜像处理")
+            else:
+                pairs.append((m_src, m_tgt))
+
+        # ── 收集网格物体 ──
+        all_mesh = BoneUtils.collect_mesh_objects_for_armature(armature_obj)
+        mesh_objs = [o for o in all_mesh if o.select_get()] if self.only_selected_objects else all_mesh
+
+        # ── 聚合报告数据 ──
+        report_lines: list[str] = []
+        total_weight_objs = 0
+        total_con_transfers = 0
+
+        for s_bn, t_bn in pairs:
+            report_lines.append(f"\n【{s_bn} → {t_bn}】")
+
+            # 1. 权重处理
+            if self.process_weights:
+                cnt = sum(1 for o in mesh_objs if SimpleDissolveCore.merge_weights(o, s_bn, t_bn))
+                total_weight_objs += cnt
+                report_lines.append(f"  权重：处理了 {cnt} 个网格物体")
+
+            # 2. 约束转移（需骨架在 OBJECT 模式）
+            if self.transfer_constraints:
+                bpy.context.view_layer.objects.active = armature_obj
+                BoneUtils.set_object_mode(armature_obj, 'OBJECT')
+                changed = SimpleDissolveCore.transfer_bone_constraints(armature_obj, s_bn, t_bn)
+                total_con_transfers += len(changed)
+                if changed:
+                    report_lines.append(f"  约束：转移 {len(changed)} 处")
+                    report_lines.extend(changed)
+                else:
+                    report_lines.append("  约束：无引用此骨骼的约束")
+
+            # 3. 删除骨骼
+            deleted = SimpleDissolveCore.delete_bone(armature_obj, s_bn)
+            report_lines.append(f"  骨骼删除：{'成功' if deleted else '失败（未找到骨骼）'}")
+
+        # ── 还原模式 ──
+        try:
+            bpy.context.view_layer.objects.active = armature_obj
+            BoneUtils.set_object_mode(armature_obj, original_mode)
+        except Exception:
+            pass
+
+        # ── 控制台详细报告 ──
+        print("=" * 60)
+        print("  简单融并 · 聚合报告")
+        print("=" * 60)
+        for line in report_lines:
+            print(line)
+        print("=" * 60)
+
+        # ── INFO 摘要 ──
+        summary = (
+            f"简单融并完成 | 骨骼对: {len(pairs)} | "
+            f"权重物体: {total_weight_objs} | "
+            f"约束转移: {total_con_transfers}"
+        )
+        self.report({'INFO'}, summary)
+        return {'FINISHED'}
+
+
 cls = [
-    OP_DissolveBoneWithWeight
+    OP_DissolveBoneWithWeight,
+    OP_SimpleDissolveBone,
 ]
 
 def register():

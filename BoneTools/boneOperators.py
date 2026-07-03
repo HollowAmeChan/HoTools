@@ -4,7 +4,7 @@ from bpy.types import Operator
 from bpy.types import UILayout, Context
 from bpy.props import StringProperty, FloatProperty, IntProperty
 from .boneSplit import OP_SplitBoneWithWeight
-from .boneDissolve import OP_DissolveBoneWithWeight
+from .boneDissolve import OP_DissolveBoneWithWeight, OP_SimpleDissolveBone
 from . import boneTwist, boneFan, boneFanSingle, boneFanSide, boneProperty
 
 
@@ -719,8 +719,9 @@ def drawBoneOperatorsPanel(layout: UILayout, context: Context):
 
     #细分与融并骨骼
     row = layout.row(align=True)
-    row.operator(OP_SplitBoneWithWeight.bl_idname,text="细分骨骼")
-    row.operator(OP_DissolveBoneWithWeight.bl_idname,text="融并骨骼")
+    row.operator(OP_SplitBoneWithWeight.bl_idname, text="细分骨骼")
+    row.operator(OP_DissolveBoneWithWeight.bl_idname, text="融并骨骼")
+    row.operator(OP_SimpleDissolveBone.bl_idname, text="简单融并")
 
     scene = context.scene
     obj = context.object
