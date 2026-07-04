@@ -17,6 +17,17 @@ from bpy.types import Panel
 from .collisionPanel import (
     _draw_object_collision_controls,
     _draw_mesh_collision_controls,
+    _draw_bone_collision_details,
+)
+from .collisionOperators import (
+    OP_Hotools_BoneCollision_AddSelectedColliders,
+    OP_Hotools_BoneCollision_GradientRadius,
+)
+from .collisionUtils import (
+    _active_armature_object,
+    _active_collision_props,
+    _collision_props,
+    _effective_bone_pin,
 )
 
 _PARENT = "OBJECT_PT_Hotools_PhysicsPanel"
@@ -188,3 +199,80 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
         layout.prop(props, "constraint_type")
         layout.prop(props, "target_a")
         layout.prop(props, "target_b")
+
+
+_BONE_PARENT = "BONE_PT_Hotools_PhysicsPanel"
+
+
+# ---------------------------------------------------------------------------
+# Bone 父面板：HoTools 物理（BONE 上下文）
+# ---------------------------------------------------------------------------
+
+class PT_Hotools_Bone_PhysicsPanel(Panel):
+    bl_idname = _BONE_PARENT
+    bl_label = "HoTools 物理"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "bone"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "POSE" and _active_armature_object(context) is not None
+
+    def draw(self, context):
+        armature_obj = _active_armature_object(context)
+        layout = self.layout
+
+        # 辅助操作
+        col = layout.column(align=True)
+        col.operator(OP_Hotools_BoneCollision_AddSelectedColliders.bl_idname,
+                     icon="MESH_UVSPHERE")
+        col.operator(OP_Hotools_BoneCollision_GradientRadius.bl_idname)
+
+        # 统计行
+        collision_count = sum(
+            1 for bone in armature_obj.data.bones
+            if _collision_props(bone) is not None
+            and bone.hotools_collision.collision_type != "NONE"
+        )
+        pin_count = sum(1 for bone in armature_obj.data.bones if _effective_bone_pin(bone))
+        row = layout.row(align=True)
+        row.label(text=f"骨骼: {len(armature_obj.data.bones)}")
+        row.label(text=f"Pin: {pin_count}")
+        row.label(text=f"碰撞体: {collision_count}")
+
+        # 当前活动骨骼的碰撞类型开关
+        props = _active_collision_props(context)
+        if props is not None:
+            layout.separator()
+            layout.prop(props, "collision_type", text="骨骼碰撞")
+
+
+# ---------------------------------------------------------------------------
+# Bone 子面板：骨骼碰撞详细设置
+# ---------------------------------------------------------------------------
+
+class PT_Hotools_Bone_CollisionSubPanel(Panel):
+    bl_idname = "BONE_PT_Hotools_BoneCollision"
+    bl_label = "骨骼碰撞"
+    bl_parent_id = _BONE_PARENT
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "bone"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        props = _active_collision_props(context)
+        return (
+            context.mode == "POSE"
+            and props is not None
+            and props.collision_type != "NONE"
+        )
+
+    def draw(self, context):
+        props = _active_collision_props(context)
+        if props is None:
+            return
+        _draw_bone_collision_details(self.layout, props)

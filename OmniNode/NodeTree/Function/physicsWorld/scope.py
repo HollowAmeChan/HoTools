@@ -69,9 +69,11 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
             entries.append((-1, id(obj)))
 
     include_flags = (
-        bool(scope.include_object_colliders),
-        bool(scope.include_bone_colliders),
+        bool(scope.include_passive_collision),
+        bool(scope.include_bone_collision),
         bool(scope.include_mesh_collision),
+        bool(scope.include_rigid_body),
+        bool(scope.include_rigid_constraint),
         bool(scope.include_hidden),
     )
     return frozenset(entries) | {("flags", include_flags)}
@@ -201,18 +203,22 @@ def filter_objects_by_type(objects, obj_type: str) -> list:
 
 def make_scope(
     objects,
-    include_object_colliders: bool = True,
-    include_bone_colliders: bool = True,
+    include_passive_collision: bool = True,
+    include_bone_collision: bool = True,
     include_mesh_collision: bool = True,
+    include_rigid_body: bool = True,
+    include_rigid_constraint: bool = True,
     include_hidden: bool = False,
 ) -> PhysicsObjectScope:
     """从 object 列表构造 PhysicsObjectScope，自动去重。"""
     deduped = dedupe_objects(objects)
     return PhysicsObjectScope(
         objects=tuple(deduped),
-        include_object_colliders=include_object_colliders,
-        include_bone_colliders=include_bone_colliders,
+        include_passive_collision=include_passive_collision,
+        include_bone_collision=include_bone_collision,
         include_mesh_collision=include_mesh_collision,
+        include_rigid_body=include_rigid_body,
+        include_rigid_constraint=include_rigid_constraint,
         include_hidden=include_hidden,
     )
 
@@ -248,12 +254,11 @@ def collect_physics_sources(scope: PhysicsObjectScope) -> tuple[list[PhysicsColl
             invalid_count += 1
             continue
 
-        # Object 级碰撞（SPHERE / CAPSULE / PLANE / BOX）
-        if scope.include_object_colliders:
+        # Object 级被动碰撞
+        if scope.include_passive_collision:
             props = getattr(obj, "hotools_object_collision", None)
             if props is not None:
-                collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
-                if collision_type != "NONE":
+                if bool(getattr(props, "enabled", False)):
                     data_ptr = int(obj.data.as_pointer()) if obj.data is not None else 0
                     sources.append(PhysicsColliderSource(
                         owner=obj,
@@ -265,7 +270,7 @@ def collect_physics_sources(scope: PhysicsObjectScope) -> tuple[list[PhysicsColl
                     ))
 
         # Bone 级碰撞（需要 Armature）
-        if scope.include_bone_colliders and obj_type == "ARMATURE" and obj.data is not None:
+        if scope.include_bone_collision and obj_type == "ARMATURE" and obj.data is not None:
             arm_data_ptr = int(obj.data.as_pointer())
             for bone in obj.data.bones:
                 props = getattr(bone, "hotools_collision", None)

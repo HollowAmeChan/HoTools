@@ -305,6 +305,11 @@ def physicsWorldBegin(
 
     collider_count = len(new_snapshot.get("colliders") or [])
 
+    # 自动从 scope 收集刚体和约束 spec，写入 world slot
+    # 与碰撞 snapshot 同级：都是"从 scope 对象读取 PhysicsTools 属性"，
+    # 不是 solver 职责，不应要求用户额外接节点。
+    _collect_rigid_specs(world, object_scope)
+
     if debug_output:
         print(
             f"[PhysicsWorldBegin] gen={world.generation} frame={current_frame} "
@@ -314,6 +319,57 @@ def physicsWorldBegin(
         )
 
     return world, current_frame, collider_count, fc.restart_required
+
+
+# ---------------------------------------------------------------------------
+# 内部：从 scope 自动收集刚体和约束 spec
+# ---------------------------------------------------------------------------
+
+def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
+    """
+    遍历 scope.objects，把启用了 hotools_rigid_body / hotools_rigid_constraint
+    的对象自动注册到 world solver slot。
+
+    这和碰撞 snapshot 同级——都是"从 scope 读取 PhysicsTools 属性"，
+    不需要用户额外接节点。
+    """
+    try:
+        from .rigid.specs import build_rigid_body_spec, build_constraint_spec
+        from .rigid.solver import _flatten
+    except Exception:
+        return  # rigid domain 未加载时静默跳过
+
+    solver_id = "_world_begin_rigid_auto"
+    world.acquire_write(solver_id)
+    try:
+        for obj in _flatten(scope.objects):
+            # 刚体
+            if scope.include_rigid_body:
+                spec = build_rigid_body_spec(obj)
+                if spec is not None:
+                    slot = world.ensure_solver_slot(spec.slot_id, "rigid_body")
+                    if slot.world_generation != world.generation:
+                        slot.data.clear()
+                        slot.world_generation = world.generation
+                    slot.data["spec"] = spec
+                    slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
+
+            # 约束（只对 EMPTY 对象，受 include_rigid_constraint 控制）
+            if scope.include_rigid_constraint:
+                try:
+                    if obj.type == "EMPTY":
+                        cspec = build_constraint_spec(obj)
+                        if cspec is not None:
+                            cslot = world.ensure_solver_slot(cspec.slot_id, "rigid_constraint")
+                            if cslot.world_generation != world.generation:
+                                cslot.data.clear()
+                                cslot.world_generation = world.generation
+                            cslot.data["spec"] = cspec
+                            cslot.data["_debug_snapshot"] = lambda s=cspec: s.debug_dict()
+                except Exception:
+                    pass
+    finally:
+        world.release_write(solver_id)
 
 
 # ---------------------------------------------------------------------------

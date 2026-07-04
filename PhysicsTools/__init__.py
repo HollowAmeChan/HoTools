@@ -11,16 +11,14 @@ from .collisionOperators import (
     OP_Hotools_MeshCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
 )
-from .collisionPanel import (
-    PT_Hotools_ArmatureCollisionPanel,
-    PT_Hotools_BoneCollisionPanel,
-)
 from .physicsPanel import (
     PT_Hotools_PhysicsPanel,
     PT_Hotools_Physics_ObjectCollision,
     PT_Hotools_Physics_MeshCollision,
     PT_Hotools_Physics_RigidBody,
     PT_Hotools_Physics_RigidConstraint,
+    PT_Hotools_Bone_PhysicsPanel,
+    PT_Hotools_Bone_CollisionSubPanel,
 )
 from .collisionPreview import (
     PT_Hotools_CollisionOverlayPopover,
@@ -47,15 +45,16 @@ cls = [
     OP_Hotools_MeshCollision_ToggleCollidedByGroup,
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
-    PT_Hotools_BoneCollisionPanel,
-    PT_Hotools_ArmatureCollisionPanel,
     PT_Hotools_CollisionOverlayPopover,
-    # 统一物理面板（取代旧的独立 RigidBody / RigidConstraint 面板）
+    # 统一物理面板
     PT_Hotools_PhysicsPanel,
     PT_Hotools_Physics_ObjectCollision,
     PT_Hotools_Physics_MeshCollision,
     PT_Hotools_Physics_RigidBody,
     PT_Hotools_Physics_RigidConstraint,
+    # Bone 上下文（含原 Armature 辅助操作）
+    PT_Hotools_Bone_PhysicsPanel,
+    PT_Hotools_Bone_CollisionSubPanel,
 ]
 
 

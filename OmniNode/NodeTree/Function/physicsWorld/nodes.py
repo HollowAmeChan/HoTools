@@ -61,33 +61,44 @@ def physicsObjectsFromCollection(
     is_output_node=False,
     _INPUT_NAME=[
         "对象",
-        "包含物体碰撞",
-        "包含骨骼碰撞",
-        "包含网格碰撞",
+        "被动碰撞",
+        "骨骼碰撞",
+        "网格碰撞",
+        "刚体",
+        "刚体约束",
         "包含隐藏",
     ],
     _OUTPUT_NAME=["对象范围"],
     omni_description="""
-    把对象列表和包含策略封装成 PhysicsObjectScope，传入 Physics World Begin。
+    把对象列表和物理类型过滤开关封装成 PhysicsObjectScope，传入物理世界-帧开始。
 
     对象输入为多重输入（方形 socket），可同时接多个 Object 或多个对象列表，
     无需单独的"合并列表"节点。内部自动去重展平。
-    对象范围决定本物理世界能感知哪些对象；PhysicsTools 属性决定这些对象具有什么物理语义。
-    include_hidden 由此节点统一设置，Physics World Begin 不再接收同名参数。
+
+    各开关对齐 HoTools 统一物理面板的类型名称：
+      被动碰撞 — 读取 hotools_object_collision.enabled
+      骨骼碰撞 — 读取 Bone.hotools_collision.collision_type
+      网格碰撞 — 读取 hotools_mesh_collision.enabled
+      刚体     — 读取 hotools_rigid_body.enabled
+      刚体约束 — 读取 hotools_rigid_constraint.enabled（仅 EMPTY 对象）
     """,
 )
 def physicsObjectScope(
     objects: list[bpy.types.Object],
-    include_object_colliders: bool = True,
-    include_bone_colliders: bool = True,
+    include_passive_collision: bool = True,
+    include_bone_collision: bool = True,
     include_mesh_collision: bool = True,
+    include_rigid_body: bool = True,
+    include_rigid_constraint: bool = True,
     include_hidden: bool = False,
 ) -> object:
     return make_scope(
         objects=objects,
-        include_object_colliders=bool(include_object_colliders),
-        include_bone_colliders=bool(include_bone_colliders),
+        include_passive_collision=bool(include_passive_collision),
+        include_bone_collision=bool(include_bone_collision),
         include_mesh_collision=bool(include_mesh_collision),
+        include_rigid_body=bool(include_rigid_body),
+        include_rigid_constraint=bool(include_rigid_constraint),
         include_hidden=bool(include_hidden),
     )
 

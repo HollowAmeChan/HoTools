@@ -31,33 +31,41 @@ class PhysicsObjectScope:
 
     __slots__ = (
         "objects",
-        "include_object_colliders",
-        "include_bone_colliders",
+        "include_passive_collision",
+        "include_bone_collision",
         "include_mesh_collision",
+        "include_rigid_body",
+        "include_rigid_constraint",
         "include_hidden",
     )
 
     def __init__(
         self,
         objects: tuple = (),
-        include_object_colliders: bool = True,
-        include_bone_colliders: bool = True,
+        include_passive_collision: bool = True,
+        include_bone_collision: bool = True,
         include_mesh_collision: bool = True,
+        include_rigid_body: bool = True,
+        include_rigid_constraint: bool = True,
         include_hidden: bool = False,
     ) -> None:
         self.objects: tuple = tuple(objects) if objects else ()
-        self.include_object_colliders: bool = bool(include_object_colliders)
-        self.include_bone_colliders: bool = bool(include_bone_colliders)
+        self.include_passive_collision: bool = bool(include_passive_collision)
+        self.include_bone_collision: bool = bool(include_bone_collision)
         self.include_mesh_collision: bool = bool(include_mesh_collision)
+        self.include_rigid_body: bool = bool(include_rigid_body)
+        self.include_rigid_constraint: bool = bool(include_rigid_constraint)
         self.include_hidden: bool = bool(include_hidden)
 
     def __repr__(self) -> str:
         return (
             f"PhysicsObjectScope("
             f"objects={len(self.objects)}, "
-            f"obj_col={self.include_object_colliders}, "
-            f"bone_col={self.include_bone_colliders}, "
-            f"mesh_col={self.include_mesh_collision}, "
+            f"passive={self.include_passive_collision}, "
+            f"bone={self.include_bone_collision}, "
+            f"mesh={self.include_mesh_collision}, "
+            f"rigid={self.include_rigid_body}, "
+            f"constraint={self.include_rigid_constraint}, "
             f"hidden={self.include_hidden})"
         )
 

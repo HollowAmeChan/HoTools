@@ -74,6 +74,29 @@ def _draw_group_buttons(layout, operator_id, active_group=None, mask=None):
             op.group = group
 
 
+def _draw_bone_collision_details(layout, props):
+    """骨骼碰撞详细设置（不含 collision_type 行，供子面板使用）。"""
+    layout.prop(props, "pin")
+
+    col = layout.column(align=True)
+    col.label(text="主碰撞组")
+    _draw_group_buttons(
+        col,
+        BONE_SET_PRIMARY_GROUP_OPERATOR,
+        active_group=props.primary_collision_group,
+    )
+    col.label(text="被碰撞组")
+    _draw_group_buttons(
+        col,
+        BONE_TOGGLE_COLLIDED_BY_GROUP_OPERATOR,
+        mask=props.collided_by_groups,
+    )
+    col.prop(props, "radius")
+    if props.collision_type == "CAPSULE":
+        col.prop(props, "length")
+    col.prop(props, "offset")
+
+
 def _draw_collision_controls(layout, props):
     layout.prop(props, "pin")
     layout.prop(props, "collision_type", text="类型")
