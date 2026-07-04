@@ -186,7 +186,9 @@ def write_bone_rotations(
                 float(anime_ratio),
                 float(root_rotation),
             )
-            _write_from_world_rotations(armature_obj, records, world_rotations, write_runtime)
+            _write_from_world_rotations(
+                armature_obj, records, world_rotations, display_positions, write_runtime
+            )
             return
         except Exception:
             pass  # 退化到独立计算路径
@@ -204,7 +206,7 @@ def import_numpy():
 # 链式路径写回
 # ---------------------------------------------------------------------------
 
-def _write_from_world_rotations(armature_obj, records, world_rotations, write_runtime):
+def _write_from_world_rotations(armature_obj, records, world_rotations, display_positions, write_runtime):
     """MC2 世界旋转 Z 轴 → 骨骼方向 → matrix_basis。depth=0 root 用动画矩阵。"""
     _MC2_FORWARD = np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
 
@@ -221,6 +223,7 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
     )
 
     matrix_world = armature_obj.matrix_world
+    mat_world_inv = matrix_world.inverted()
     arm_inv_3x3 = matrix_world.to_3x3().inverted()
     parent_pose_matrices = {}
 
@@ -250,16 +253,24 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
         init_axis.normalize()
         arm_quat = init_axis.rotation_difference(desired_local) @ bone.matrix_local.to_quaternion()
 
-        parent = record.get("parent")
-        parent_name = record.get("parent_name") or ""
-        if parent is not None and record.get("parent_rest_inv") is not None:
-            par_mat = parent_pose_matrices.get(parent_name)
-            if par_mat is not None:
-                head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
-            else:
-                head_pose = parent.matrix.translation.copy()
+        # 直接用粒子世界坐标作骨骼头部位置，避免父链传播的累积误差导致末端漂移。
+        if (
+            display_positions is not None
+            and pidx < len(display_positions)
+        ):
+            dp = display_positions[pidx]
+            head_pose = (mat_world_inv @ mathutils.Vector((float(dp[0]), float(dp[1]), float(dp[2])))).to_3d()
         else:
-            head_pose = (matrix_world.inverted() @ record["pose_bone"].head).to_3d()
+            parent = record.get("parent")
+            parent_name = record.get("parent_name") or ""
+            if parent is not None and record.get("parent_rest_inv") is not None:
+                par_mat = parent_pose_matrices.get(parent_name)
+                if par_mat is not None:
+                    head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
+                else:
+                    head_pose = parent.matrix.translation.copy()
+            else:
+                head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
 
         target_matrix = mathutils.Matrix.LocRotScale(head_pose, arm_quat, record["init_scale"])
         parent_pose_matrices[bone_name] = target_matrix

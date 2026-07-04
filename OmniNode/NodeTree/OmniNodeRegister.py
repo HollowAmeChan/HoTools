@@ -5,6 +5,7 @@ from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2MeshCloth,physicsMC2BoneCloth
 from .Function.physicsWorld import nodes as physicsWorld
+from .Function.physicsWorld.rigid import nodes as physicsWorldRigid
 from .GraphNode import CLS_GRAPH
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -37,6 +38,7 @@ node_cls_physics = FunctionNodeCore.loadRegisterFuncNodes(Physics)
 node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2MeshCloth)
 node_cls_physics_bonecloth = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2BoneCloth)
 node_cls_physics_world = FunctionNodeCore.loadRegisterFuncNodes(physicsWorld)
+node_cls_physics_world_rigid = FunctionNodeCore.loadRegisterFuncNodes(physicsWorldRigid)
 cls.extend(node_cls_data)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
@@ -55,6 +57,7 @@ cls.extend(node_cls_physics)
 cls.extend(node_cls_physics_mc2)
 cls.extend(node_cls_physics_bonecloth)
 cls.extend(node_cls_physics_world)
+cls.extend(node_cls_physics_world_rigid)
 
 node_categories = [
     OmniNodeCategory("GRAPH", "graph", items=[
@@ -110,6 +113,8 @@ node_categories = [
         NodeItem(i.bl_idname) for i in node_cls_physics_bonecloth
     ] + [
         NodeItem(i.bl_idname) for i in node_cls_physics_world
+    ] + [
+        NodeItem(i.bl_idname) for i in node_cls_physics_world_rigid
     ]),
 ]
 

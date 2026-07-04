@@ -767,6 +767,16 @@ def build_bone_state(
     )
     zeros3 = np.zeros((vertex_count, 3), dtype=np.float32)
 
+    # 冷启动 base_positions：FIXED（root）骨用当前动画帧位置，保证跳帧后 pin 粒子
+    # 不停在 rest pose，防止首帧解算把动画位置的 pin 和 rest 位置的子骨拉爆。
+    # 非 FIXED 骨维持 rest_world（物理起点），与 sync_bone_state_to_pose 逻辑对齐。
+    base_positions = rest_world.copy()
+    attributes_arr = np.ascontiguousarray(attributes, dtype=np.uint8)
+    fixed_mask = (attributes_arr & MC2_ATTR_MOVE) == 0
+    if np.any(fixed_mask):
+        root_world_animated = sample_bone_head_world(armature_obj, bone_names)
+        base_positions[fixed_mask] = root_world_animated[fixed_mask]
+
     return {
         "kind": MC2_CACHE_KIND,
         "solver_version": MC2_SOLVER_VERSION,
@@ -811,7 +821,7 @@ def build_bone_state(
         "rest_world_positions": np.ascontiguousarray(rest_world, dtype=np.float32),
         "rest_local_normals": np.ascontiguousarray(rest_local_normals, dtype=np.float32),
         "rest_world_normals": np.ascontiguousarray(rest_world_normals, dtype=np.float32),
-        "base_positions": np.ascontiguousarray(rest_world.copy(), dtype=np.float32),
+        "base_positions": np.ascontiguousarray(base_positions, dtype=np.float32),
         "base_normals": np.ascontiguousarray(rest_world_normals.copy(), dtype=np.float32),
         "base_pose_proxy_ptr": 0,
         "base_pose_proxy_name": "",

@@ -293,6 +293,78 @@ class PT_Hotools_ArmatureCollisionPanel(Panel):
             row.label(text=f"Pin: {pin_count}")
             info_box.label(text=f"碰撞体: {collision_count}")
 
+
+class PT_Hotools_RigidBodyPanel(Panel):
+    bl_idname = "OBJECT_PT_Hotools_RigidBodyPanel"
+    bl_label = "HoTools刚体"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None
+
+    def draw_header(self, context):
+        obj = context.object
+        props = getattr(obj, "hotools_rigid_body", None)
+        if props is not None:
+            self.layout.prop(props, "enabled", text="")
+
+    def draw(self, context):
+        obj = context.object
+        props = getattr(obj, "hotools_rigid_body", None)
+        if props is None:
+            return
+
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.enabled = bool(props.enabled)
+
+        layout.prop(props, "body_type")
+        col = layout.column(align=True)
+        col.prop(props, "mass")
+        col.prop(props, "friction")
+        col.prop(props, "restitution")
+        layout.prop(props, "collision_group")
+
+
+class PT_Hotools_RigidConstraintPanel(Panel):
+    bl_idname = "OBJECT_PT_Hotools_RigidConstraintPanel"
+    bl_label = "HoTools刚体约束"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "object"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "EMPTY"
+
+    def draw_header(self, context):
+        obj = context.object
+        props = getattr(obj, "hotools_rigid_constraint", None)
+        if props is not None:
+            self.layout.prop(props, "enabled", text="")
+
+    def draw(self, context):
+        obj = context.object
+        props = getattr(obj, "hotools_rigid_constraint", None)
+        if props is None:
+            return
+
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.enabled = bool(props.enabled)
+
+        layout.prop(props, "constraint_type")
+        layout.prop(props, "target_a")
+        layout.prop(props, "target_b")
+
         root_box = _section_box(layout, scene, "ho_bone_collision_show_roots_section")
         if root_box:
             if active_bone is None or active_props is None:

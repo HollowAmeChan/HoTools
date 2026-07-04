@@ -81,17 +81,14 @@ class PG_Hotools_BoneCollision(PropertyGroup):
 class PG_Hotools_ObjectCollision(PropertyGroup):
     """
     Object 级被动碰撞体的持久化配置。
-
-    消费约定：
-    1. 球体和胶囊由 Object.matrix_world、offset、radius、length 和 collision_type 在运行时解析。
-    2. 平面使用 Object 局部 XY 平面作为碰撞平面，Object 局部 +Z 是平面法线方向。
-    3. 长方体使用 offset 作为局部中心，box_size 作为局部 XYZ 全尺寸；运行时用 Object.matrix_world 把 8 个局部角点转换到世界空间。
-    4. 平面和长方体都应把承载属性的 Object 当作父级下的定位子物体使用；运行时必须逐帧读取 Object.matrix_world，不能拆读 location/rotation/scale，也不能只读本地矩阵。
-    5. 平面世界变换必须按胶囊体同级规则解析：world_origin = matrix_world @ offset；world_tangent_x = matrix_world.to_3x3() @ local_X；world_tangent_y = matrix_world.to_3x3() @ local_Y；world_normal = normalize(cross(world_tangent_x, world_tangent_y))。
-    6. 长方体世界变换必须按同一规则解析：world_center = matrix_world @ offset；world_axes 来自 matrix_world.to_3x3() 变换局部 X/Y/Z；半长使用 box_size * 0.5。
-    7. 上述 matrix_world 已经包含父级、约束和动画后的最终世界变换；求解器、导出和预览必须使用同一套解析规则，避免父级空间与局部空间混用。
-    8. 属性层只保存用户输入，不保存世界空间快照；各求解器在自身节点描述中声明实际消费的碰撞类型。
+    ...（消费约定同前）
     """
+
+    enabled: BoolProperty(
+        name="启用",
+        description="将此对象识别为被动碰撞体",
+        default=False,
+    )  # type: ignore
 
     collision_type: EnumProperty(
         name="碰撞体",
@@ -222,4 +219,111 @@ class PG_Hotools_MeshCollision(PropertyGroup):
         default=0,
         min=0,
         max=_ALL_COLLISION_GROUPS_MASK,
+    )  # type: ignore
+
+
+class PG_Hotools_RigidBody(PropertyGroup):
+    """
+    Object 级刚体物理配置。
+
+    消费约定：
+    1. body_type 决定刚体是动态（受力模拟）、静态（固定碰撞体）还是运动学（由动画驱动）。
+    2. mass 只对 DYNAMIC 有效；STATIC / KINEMATIC 不消耗质量。
+    3. friction / restitution 影响碰撞响应，语义与 Jolt 等物理引擎一致。
+    4. collision_group 与现有碰撞组体系对齐，值域 1..16。
+    5. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
+    6. 节点图通过 hotools_rigid_body.body_type 等字段读取，视为只读。
+    """
+
+    enabled: BoolProperty(
+        name="启用",
+        description="将此对象纳入刚体模拟",
+        default=False,
+    )  # type: ignore
+
+    body_type: EnumProperty(
+        name="刚体类型",
+        description="刚体的运动学类型",
+        items=[
+            ("DYNAMIC",   "动态",   "受重力和碰撞力驱动；需要设置质量"),
+            ("STATIC",    "静态",   "固定不动的碰撞体；不响应外力"),
+            ("KINEMATIC", "运动学", "由动画/节点驱动位移，不受物理力影响但会推动其他刚体"),
+        ],
+        default="DYNAMIC",
+    )  # type: ignore
+
+    mass: FloatProperty(
+        name="质量",
+        description="动态刚体的质量（千克）；静态和运动学类型忽略此值",
+        default=1.0,
+        min=0.001,
+        soft_max=1000.0,
+    )  # type: ignore
+
+    friction: FloatProperty(
+        name="摩擦",
+        description="碰撞面摩擦系数；0=无摩擦，1=最大摩擦",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+
+    restitution: FloatProperty(
+        name="弹性",
+        description="碰撞弹性系数（恢复系数）；0=完全非弹性，1=完全弹性",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+
+    collision_group: IntProperty(
+        name="碰撞组",
+        description="刚体所属碰撞组，与现有碰撞组体系对齐（1..16）",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+
+class PG_Hotools_RigidConstraint(PropertyGroup):
+    """
+    Empty 对象上的刚体约束配置。
+
+    消费约定：
+    1. 约束点载体为 Empty 对象；Empty.matrix_world 表示约束 anchor frame。
+    2. target_a / target_b 指向参与约束的两个刚体对象（可以其中之一为 None 表示固定到世界）。
+    3. constraint_type 使用 OmniNode 自己的名字；Jolt adapter 负责映射到对应 Jolt constraint 子类。
+    4. Jolt ConstraintID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
+    5. 节点图通过 hotools_rigid_constraint.constraint_type 等字段读取，视为只读。
+    """
+
+    enabled: BoolProperty(
+        name="启用",
+        description="将此 Empty 对象识别为刚体约束点",
+        default=False,
+    )  # type: ignore
+
+    constraint_type: EnumProperty(
+        name="约束类型",
+        description="约束的自由度限制方式",
+        items=[
+            ("FIXED",   "固定",   "完全锁定两个刚体之间的相对运动"),
+            ("HINGE",   "铰链",   "绕约束锚点 Z 轴允许旋转，限制其余自由度"),
+            ("SLIDER",  "滑动",   "允许沿约束锚点 Z 轴平移，限制旋转"),
+            ("CONE",    "锥形",   "允许在锥角范围内摆动，限制平移"),
+            ("POINT",   "点约束", "仅锁定位置，允许任意旋转（球窝关节）"),
+        ],
+        default="FIXED",
+    )  # type: ignore
+
+    target_a: PointerProperty(
+        type=bpy.types.Object,
+        name="刚体 A",
+        description="约束的第一个刚体目标；留空表示约束到世界原点",
+    )  # type: ignore
+
+    target_b: PointerProperty(
+        type=bpy.types.Object,
+        name="刚体 B",
+        description="约束的第二个刚体目标；留空表示约束到世界原点",
     )  # type: ignore
