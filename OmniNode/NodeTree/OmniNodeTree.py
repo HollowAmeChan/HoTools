@@ -355,12 +355,29 @@ def draw_in_NODE_PT_node_tree_properties(self, context: bpy.types.Context):
     draw_OmniTreeOutputs(layout, tree)
 
 
+def register_object_mount_props():
+    if hasattr(bpy.types.Object, "ho_omni_root_tree"):
+        return
+
+    bpy.types.Object.ho_omni_root_tree = bpy.props.PointerProperty(
+        name="Omni 根树",
+        description="这个空物体挂载的 OmniNodeTree",
+        type=OmniNodeTree,
+    )
+
+
+def unregister_object_mount_props():
+    if hasattr(bpy.types.Object, "ho_omni_root_tree"):
+        del bpy.types.Object.ho_omni_root_tree
+
+
 cls = [OmniNodeTree]
 
 
 def register():
     for item in cls:
         bpy.utils.register_class(item)
+    register_object_mount_props()
     _ensure_frame_handler()
     bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
@@ -369,5 +386,6 @@ def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
     _remove_frame_handler()
     _COMPILED_TREE_CACHE.clear()
+    unregister_object_mount_props()
     for item in cls:
         bpy.utils.unregister_class(item)

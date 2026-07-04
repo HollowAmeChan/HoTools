@@ -1006,3 +1006,19 @@ VIEW_3D 侧边栏里的 OmniNode 批量管理面板。
 - 每帧运行依赖已编译 `CompiledGraph`；拓扑变化后需要重新编译或清理编译缓存。
 - 函数节点 socket identifier 与函数参数名绑定，改名会影响已有树。
 - C++ backend 不保存跨帧状态，跨帧状态仍由 Python runtime cache 管理。
+
+### 空物体挂载边界
+
+OmniNode 可以通过 `Object.ho_omni_root_tree` 挂到空物体上。这个挂载只作为资产入口和
+Blender ID 强引用，用于追加或链接工作流；它不创建独立运行实例。
+
+运行语义仍然保持树级：
+
+- `OmniNodeTree` 是执行单位。
+- `OmniNodeTree.is_frame_run_enabled` 仍然是树属性。
+- 编译缓存仍然按树数据块隔离。
+- runtime cache 仍然按 root tree 隔离。
+- 一个空物体挂载只指向一棵 root `OmniNodeTree`。
+
+如果多个空物体指向同一棵 `OmniNodeTree`，UI 只把按对象名稳定排序后的第一个当作有效挂载。
+其它空物体只视为重复引用，不应表现为独立运行实例。

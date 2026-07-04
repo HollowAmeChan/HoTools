@@ -13,7 +13,7 @@ from .....PropertyCurve import float_curve_payload
 from .constants import MC2SystemConstants
 
 
-_PRESET_DIR = Path(__file__).with_name("mc2_presets")
+_PRESET_DIR = Path(__file__).parent.parent / "mc2_presets"
 
 _PRESET_FILES = (
     ("Accessory", "MC2_Preset_Accessory.json"),

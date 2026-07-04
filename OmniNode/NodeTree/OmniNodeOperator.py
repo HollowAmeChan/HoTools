@@ -39,6 +39,7 @@ BLENDER_SOCKET_TYPES = {
 }
 
 _OMNI_TREE_NAV_STACKS = {}
+OMNI_ROOT_TREE_OBJECT_PROP = "ho_omni_root_tree"
 
 
 def _resolve_space_tree(space):
@@ -99,6 +100,80 @@ def _should_alert_compile_button(tree):
         and _tree_frame_handler_registered(tree)
         and not _tree_has_compile_cache(tree)
     )
+
+
+def omni_object_root_tree(obj):
+    if obj is None:
+        return None
+
+    try:
+        tree = getattr(obj, OMNI_ROOT_TREE_OBJECT_PROP, None)
+    except Exception:
+        return None
+    return tree if _is_omni_tree(tree) else None
+
+
+def _object_sort_key(obj):
+    name = str(getattr(obj, "name_full", "") or getattr(obj, "name", ""))
+    return (name.casefold(), name)
+
+
+def iter_omni_mount_objects(scene=None):
+    objects = getattr(scene, "objects", None) if scene is not None else bpy.data.objects
+    if objects is None:
+        objects = bpy.data.objects
+
+    mounts = []
+    for obj in objects:
+        if getattr(obj, "type", None) != 'EMPTY':
+            continue
+        if omni_object_root_tree(obj) is None:
+            continue
+        mounts.append(obj)
+    return sorted(mounts, key=_object_sort_key)
+
+
+def omni_mount_owner_map(scene=None):
+    owners = {}
+    duplicates = {}
+
+    for obj in iter_omni_mount_objects(scene):
+        tree = omni_object_root_tree(obj)
+        if tree is None:
+            continue
+        if tree not in owners:
+            owners[tree] = obj
+        else:
+            duplicates.setdefault(tree, []).append(obj)
+
+    return owners, duplicates
+
+
+def omni_mount_owner_for_tree(tree, scene=None):
+    if not _is_omni_tree(tree):
+        return None
+    owners, _duplicates = omni_mount_owner_map(scene)
+    return owners.get(tree)
+
+
+def omni_mount_is_duplicate(obj, scene=None):
+    tree = omni_object_root_tree(obj)
+    if tree is None:
+        return False
+    return omni_mount_owner_for_tree(tree, scene) != obj
+
+
+def _clear_tree_mounts(tree):
+    if not _is_omni_tree(tree):
+        return
+
+    for obj in bpy.data.objects:
+        if omni_object_root_tree(obj) != tree:
+            continue
+        try:
+            setattr(obj, OMNI_ROOT_TREE_OBJECT_PROP, None)
+        except Exception:
+            pass
 
 
 def _nav_space_key(context):
@@ -447,10 +522,10 @@ def OmniGraphNodeIOItem_update(self, context):
 
 class OmniGraphNodeIOItem(PropertyGroup):
     """IO输入输出组的ui绘制使用的列表单行"""
-    name: StringProperty(name="IO", default="IO", update=OmniGraphNodeIOItem_update)  # type: ignore
+    name: StringProperty(name="接口", default="接口", update=OmniGraphNodeIOItem_update)  # type: ignore
     uid: StringProperty(name="UID", default="", options={'HIDDEN'})  # type: ignore
     socket_type: EnumProperty(  # type: ignore
-        name="Socket Type",
+        name="Socket 类型",
         default=OmniNodeSocket.OmniNodeSocketAny.bl_idname,
         items=full_socket_type_items(),
         update=OmniGraphNodeIOItem_update,
@@ -471,7 +546,7 @@ class HO_UL_GraphNodeIO(UIList):
 
 class OP_IOItemAdd(Operator):
     bl_idname = "ho.omni_ioitemadd"
-    bl_label = "Add IO"
+    bl_label = "添加接口"
 
     is_input: BoolProperty()  # type: ignore
 
@@ -498,12 +573,12 @@ class OP_IOItemAdd(Operator):
             item = tree.group_inputs.add()
             item.uid = self.generate_unique_uid(tree)
             tree.group_inputs_index = len(tree.group_inputs) - 1
-            item.name = "Input"
+            item.name = "输入"
         else:
             item = tree.group_outputs.add()
             item.uid = self.generate_unique_uid(tree)
             tree.group_outputs_index = len(tree.group_outputs) - 1
-            item.name = "Output"
+            item.name = "输出"
 
 
         sync_all_related_tree_io(tree)
@@ -512,7 +587,7 @@ class OP_IOItemAdd(Operator):
 
 class OP_IOItemRemove(Operator):
     bl_idname = "ho.omni_ioitemremove"
-    bl_label = "Remove IO"
+    bl_label = "删除接口"
 
     is_input: BoolProperty()  # type: ignore
 
@@ -537,7 +612,7 @@ class OP_IOItemRemove(Operator):
 
 class OP_IOItemMove(Operator):
     bl_idname = "ho.omni_ioitemmove"
-    bl_label = "Move IO Up/Down"
+    bl_label = "移动接口"
 
     is_input: BoolProperty()  # type: ignore
     is_Down: BoolProperty() # type: ignore
@@ -729,6 +804,107 @@ class OmniTreeCreate(Operator):
         return {'FINISHED'}
 
 
+class OmniTreeCreateMount(Operator):
+    bl_idname = "ho.omnitree_create_mount"
+    bl_label = "创建 Omni 挂载"
+    bl_description = "创建一个空物体，并把新的 OmniNodeTree 挂载到这个空物体上"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    tree_name: StringProperty(default="OmniNodeTree", options={'HIDDEN'})  # type: ignore
+    object_name: StringProperty(default="OmniNode挂载", options={'HIDDEN'})  # type: ignore
+    open_tree: BoolProperty(default=True, options={'HIDDEN'})  # type: ignore
+
+    def execute(self, context: bpy.types.Context):
+        tree = bpy.data.node_groups.new(name=self.tree_name or "OmniNodeTree", type="OmniNodeTree")
+        tree.use_fake_user = True
+
+        obj = bpy.data.objects.new(name=self.object_name or f"{tree.name}_Mount", object_data=None)
+        obj.empty_display_type = 'PLAIN_AXES'
+        obj.empty_display_size = 0.5
+        try:
+            obj.location = context.scene.cursor.location
+        except Exception:
+            pass
+
+        collection = getattr(context, "collection", None)
+        if collection is None:
+            collection = context.scene.collection
+        collection.objects.link(obj)
+
+        try:
+            setattr(obj, OMNI_ROOT_TREE_OBJECT_PROP, tree)
+        except Exception as exc:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.node_groups.remove(tree, do_unlink=True)
+            self.report({'ERROR'}, f"无法绑定 Omni 挂载: {exc}")
+            return {'CANCELLED'}
+
+        try:
+            for selected_obj in context.selected_objects:
+                selected_obj.select_set(False)
+            obj.select_set(True)
+            context.view_layer.objects.active = obj
+        except Exception:
+            pass
+
+        if self.open_tree:
+            _activate_tree_in_current_window(context, tree)
+
+        self.report({'INFO'}, f"已创建 Omni 挂载: {obj.name} -> {tree.name}")
+        return {'FINISHED'}
+
+
+class OmniTreeBindMount(Operator):
+    bl_idname = "ho.omnitree_bind_mount"
+    bl_label = "绑定 Omni 挂载"
+    bl_description = "把活动空物体绑定到指定 OmniNodeTree"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    tree_name: StringProperty(default="", options={'HIDDEN'})  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        obj = getattr(context, "object", None)
+        return obj is not None and getattr(obj, "type", None) == 'EMPTY'
+
+    def execute(self, context: bpy.types.Context):
+        obj = getattr(context, "object", None)
+        if obj is None or getattr(obj, "type", None) != 'EMPTY':
+            self.report({'WARNING'}, "请先选择一个空物体")
+            return {'CANCELLED'}
+
+        tree = _operator_omni_tree(context, self.tree_name)
+        if tree is None:
+            self.report({'WARNING'}, "未指定 OmniNodeTree")
+            return {'CANCELLED'}
+
+        setattr(obj, OMNI_ROOT_TREE_OBJECT_PROP, tree)
+        tree.use_fake_user = True
+        self.report({'INFO'}, f"已绑定 Omni 挂载: {obj.name} -> {tree.name}")
+        return {'FINISHED'}
+
+
+class OmniTreeClearMount(Operator):
+    bl_idname = "ho.omnitree_clear_mount"
+    bl_label = "清空 Omni 挂载"
+    bl_description = "清空活动空物体上的 OmniNodeTree 挂载引用"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = getattr(context, "object", None)
+        return obj is not None and getattr(obj, "type", None) == 'EMPTY'
+
+    def execute(self, context: bpy.types.Context):
+        obj = getattr(context, "object", None)
+        if obj is None or getattr(obj, "type", None) != 'EMPTY':
+            return {'CANCELLED'}
+
+        setattr(obj, OMNI_ROOT_TREE_OBJECT_PROP, None)
+        self.report({'INFO'}, f"已清空 Omni 挂载: {obj.name}")
+        return {'FINISHED'}
+
+
 class OmniTreeOpen(Operator):
     bl_idname = "ho.omnitree_open"
     bl_label = "打开 OmniNodeTree"
@@ -876,6 +1052,7 @@ class OmniTreeDestroy(Operator):
         if hasattr(tree, "clear_compile_cache"):
             tree.clear_compile_cache()
         OmniRuntimeState.clear_root_tree(tree)
+        _clear_tree_mounts(tree)
 
         bpy.data.node_groups.remove(tree, do_unlink=True)
 
@@ -1600,6 +1777,9 @@ clss = [
     NodeSetDefaultSize,
     NodeSetBiggerSize,
     OmniTreeCreate,
+    OmniTreeCreateMount,
+    OmniTreeBindMount,
+    OmniTreeClearMount,
     OmniTreeOpen,
     LayerRunning,
     OmniTreeCompile,
