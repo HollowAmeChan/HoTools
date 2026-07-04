@@ -37,7 +37,7 @@ ensure_package(
 )
 
 from bpy.props import PointerProperty  # noqa: E402
-from HoTools.PhysicsTools.collisionProperty import (  # noqa: E402
+from HoTools.PhysicsTools.physicsProperty import (  # noqa: E402
     PG_Hotools_BoneCollision,
     PG_Hotools_MeshCollision,
     PG_Hotools_ObjectCollision,

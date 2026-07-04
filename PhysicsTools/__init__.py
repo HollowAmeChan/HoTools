@@ -27,7 +27,7 @@ from .collisionPreview import (
     _remove_draw_handler,
     draw_collision_overlay_header,
 )
-from .collisionProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
+from .physicsProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
 from .collisionUtils import _overlay_show_update
 
 
