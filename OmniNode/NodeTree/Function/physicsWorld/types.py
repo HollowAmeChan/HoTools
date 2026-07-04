@@ -336,6 +336,13 @@ class PhysicsWorldCache:
         self.previous_collider_snapshot = None
         self.valid = False
 
+        # 同步清除可视化调试绘制条目，避免缓存销毁后残影留在视口
+        try:
+            from .debug_draw import clear_draw_store
+            clear_draw_store(str(id(self)))
+        except Exception:
+            pass
+
     # ---- omni_cache_debug_snapshot 协议 --------------------------------
 
     def omni_cache_debug_snapshot(self) -> dict:

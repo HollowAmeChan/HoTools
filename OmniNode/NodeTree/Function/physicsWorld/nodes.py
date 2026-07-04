@@ -25,6 +25,7 @@ from .scope import (
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, validate_world, print_world_summary
+from .debug_draw import update_draw_store, clear_draw_store
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +250,43 @@ def physicsWorldDebugText(
         print_world_summary(world)
 
     return world, text, problems
+
+
+@omni(
+    enable=True,
+    bl_label="物理世界-可视化调试",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "启用", "显示碰撞体", "显示刚体", "显示约束"],
+    _OUTPUT_NAME=["物理世界"],
+    omni_description="""
+    在 3D 视口中可视化物理世界内容，比文字快照更直观。
+
+    直接读取 PhysicsWorldCache 里已有的数据，不做额外计算：
+      显示碰撞体 — collider_snapshot 里的球/胶囊（蓝=简单碰撞/黄绿=骨骼）
+      显示刚体   — rigid_body slot 的轮廓（绿=动态/灰=静态/蓝=运动学）
+      显示约束   — constraint slot 的 Empty 锚点轴框（橙黄）
+
+    绘制使用帧内查表（无三角函数调用），不影响视口性能。
+    物理世界 透传，可插在链路任意位置。
+    """,
+)
+def physicsWorldDebugDraw(
+    world: object,
+    enabled: bool = True,
+    show_colliders: bool = True,
+    show_rigid: bool = True,
+    show_constraints: bool = True,
+) -> object:
+    # 以 world 对象的 id 作为 draw store 的 key。
+    # 同一个 PhysicsWorldCache 实例跨帧保持同一 id；world 被 replace 时
+    # 旧条目自动孤立（不再被写入），新 world 产生新条目，开销极小。
+    update_draw_store(
+        str(id(world)),
+        world,
+        bool(enabled),
+        bool(show_colliders),
+        bool(show_rigid),
+        bool(show_constraints),
+    )
+    return world
