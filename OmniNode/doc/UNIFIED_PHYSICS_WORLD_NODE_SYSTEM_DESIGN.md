@@ -137,44 +137,44 @@ solver 节点输入：
 
 ## Object Scope
 
-第一版建议定义一个轻量 runtime value：
+第一版定义的轻量 runtime value（**已实现**）：
 
 ```python
 class PhysicsObjectScope:
     objects: tuple[bpy.types.Object, ...]
-    include_object_colliders: bool
-    include_bone_colliders: bool
-    include_mesh_collision: bool
+    include_passive_collision: bool  # 简单碰撞（hotools_object_collision）
+    include_bone_collision: bool     # 骨骼碰撞（hotools_collision on Bone）
+    include_mesh_collision: bool     # 简单布料（hotools_mesh_collision）
+    include_rigid_body: bool         # 刚体（hotools_rigid_body）
+    include_rigid_constraint: bool   # 刚体约束（hotools_rigid_constraint，仅 EMPTY）
     include_hidden: bool
 ```
 
-它可以是普通 dataclass，也可以先用 dict 表达。它不需要实现 `omni_cache_dispose()`，因为它只是本帧运行值，不是跨帧资源 owner。
+它是普通 class，不实现 `omni_cache_dispose()`，因为它只是本帧运行值，不是跨帧资源 owner。
+
+**字段命名对齐原则**：字段名与 HoTools 统一物理面板的类型开关名称一一对应，
+降低用户配置 scope 时的认知成本。
 
 ### Scope 节点
 
-建议新增普通函数节点：
+已实现的节点（Phase 2）：
 
 ```text
-Physics Objects From Collection
-  输入：Collection, recursive, include_hidden
+Physics Objects From Collection（物理对象-从集合）
+  输入：Collection, recursive
   输出：list[Object]
+  注：不在此处过滤可见性，统一由下游 Physics Object Scope 决定。
 
-Physics Merge Objects
-  输入：list[Object] 多重输入
-  输出：list[Object]
-
-Physics Object Scope
-  输入：list[Object], include_object_colliders, include_bone_colliders, include_mesh_collision, include_hidden
+Physics Object Scope（物理对象范围）
+  输入：list[Object]（多重输入，自动展平去重）,
+        include_passive_collision, include_bone_collision,
+        include_mesh_collision, include_rigid_body,
+        include_rigid_constraint, include_hidden
   输出：PhysicsObjectScope
 ```
 
-可选节点：
-
-```text
-Physics Filter Objects By Type
-Physics Filter Objects By Name / Regex
-Physics Add Object To Scope
-Physics Add Collection To Scope
+已移除的节点：
+- `Physics Merge Objects` — `list[Object]` 类型自动生成多重输入 socket，无需单独合并节点。
 ```
 
 这些都是普通函数节点，不需要 GraphNode，因为它们只是在当前帧构造运行值，不改变 runtime cache 语义。
@@ -185,9 +185,9 @@ Physics Add Collection To Scope
 
 1. 对每个 object 去重，使用 `obj.as_pointer()` 或 fallback `id(obj)`。
 2. `include_hidden=False` 时跳过不可见对象（`include_hidden` 语义以 `PhysicsObjectScope` 为准，`Physics World Begin` 不再接收同名参数，见下文）。
-3. 若 object 有 `hotools_object_collision` 且类型不是 `NONE`，生成 object collider source。
-4. 若 object 是 Armature 且 `include_bone_colliders=True`，扫描该 armature 的 bones 上的 `hotools_collision`。
-5. 若 object 是 Mesh 且 `include_mesh_collision=True`，读取 `hotools_mesh_collision`，作为 mesh collision / self collision / base pose proxy 的可用配置来源。
+3. 若 object 有 `hotools_object_collision` 且 `enabled=True`，生成简单碰撞 source（旧逻辑为 `collision_type != "NONE"`，现已统一改为 `enabled` 开关）。
+4. 若 object 是 Armature 且 `include_bone_collision=True`，扫描该 armature 的 bones 上的 `hotools_collision`。
+5. 若 object 是 Mesh 且 `include_mesh_collision=True`，读取 `hotools_mesh_collision`（简单布料），作为 mesh collision / self collision / base pose proxy 的可用配置来源。
 6. 若 object 引用失效，当前帧跳过并在 debug snapshot 中记录 invalid count。
 
 ### Scope Key 计算规则（重要）
@@ -213,7 +213,7 @@ def build_scope_key(objects: tuple, include_flags: tuple) -> frozenset:
     return frozenset(entries) | {("flags", include_flags)}
 ```
 
-`include_flags` 包含 `(include_object_colliders, include_bone_colliders, include_mesh_collision, include_hidden)` 的 bool tuple，flag 变化也应触发 restart。
+`include_flags` 包含 `(include_passive_collision, include_bone_collision, include_mesh_collision, include_rigid_body, include_rigid_constraint, include_hidden)` 的 bool tuple，flag 变化也应触发 restart。
 
 scope key 存入 `world.object_scope_key`，每帧 Begin 时重新计算并与上帧比较。
 
@@ -936,110 +936,68 @@ physicsWorld/
 - `nodes.py`：对外暴露的通用函数节点。
 - `rigid/`：刚体 domain 的 spec、约束、solver 和 backend adapter。
 
-### Phase 1：低层物理世界基础
+### Phase 0：命名和目录边界 ✅ 已完成
 
-先实现通用基础，不接任何旧 solver：
+### Phase 1：低层物理世界基础 ✅ 已完成
 
-- `PhysicsWorldCache`
-- `PhysicsFrameContext`
-- `PhysicsObjectScope`
-- `PhysicsColliderSource`
-- `PhysicsWorldCache.ensure_solver_slot()`
-- `PhysicsWorldCache.runtime_cache()`
-- `omni_cache_dispose(reason)`
-- `omni_cache_debug_snapshot()`
+### Phase 2：通用函数工具和通用节点 ✅ 已完成
 
-这一阶段只要求 world owner 能正确创建、复用、释放和输出调试信息。
-
-### Phase 2：通用函数工具和通用节点
-
-新增普通函数节点：
+**实际落地节点（已注册）：**
 
 ```text
-Physics Objects From Collection
-Physics Merge Objects
-Physics Filter Objects
-Physics Object Scope
-Physics World Begin
-Physics World Commit
+物理对象-从集合（physicsObjectsFromCollection）
+物理对象范围（physicsObjectScope）        ← list[Object] 多重输入，无需单独合并节点
+物理世界-帧开始（physicsWorldBegin）
+物理世界-帧提交（physicsWorldCommit）
 ```
 
-新增内部工具函数：
+`Physics Filter Objects`、`Physics Merge Objects` 未实现（多重输入已覆盖合并需求）。
+
+### Phase 3：debug 节点先行 ✅ 已完成，链路已验证
+
+**实际落地节点：**
 
 ```text
-dedupe_objects(objects)
-build_scope_key(scope)
-collect_physics_sources(scope)
-build_collider_snapshot(world, sources)
-update_frame_context(world, scene, settings)
-mark_restart_if_needed(world, frame_context, scope_key)
+物理世界-调试快照（physicsWorldDebugSnapshot）
+物理世界-调试文本（physicsWorldDebugText）
 ```
 
-这一阶段的目标是让物理世界链路能独立跑通：
+验证结论：frame/continuous/restart/replace/mutate 行为稳定，跳帧检测正常。
+
+### Phase 4：刚体 domain ✅ 已完成
+
+**实际落地内容：**
+
+刚体实现位于 `physicsWorld/rigid/`（specs.py / solver.py / nodes.py），
+属性挂在 `PhysicsTools/physicsProperty.py`（`PG_Hotools_RigidBody` / `PG_Hotools_RigidConstraint`），
+面板在统一物理属性面板中（`PhysicsTools/physicsPanel.py`）。
+
+**架构调整（与原设计不同）：**
+
+原设计要求用户接 `Rigid Body Setting` 节点来注册 spec，实际实现将 spec 收集内置到 `physicsWorldBegin`：
 
 ```text
-Cache Read
-  -> Physics Object Scope
-  -> Physics World Begin
-  -> Physics World Commit
-  -> Cache Write
+旧（原设计）：
+  physicsWorldBegin
+  → 刚体注册（physicsRigidSolver）← 用户需要手动接这个节点
+  → physicsWorldCommit
+
+新（实际落地）：
+  physicsWorldBegin  ← 自动从 scope 收集 rigid body spec 和 constraint spec
+  → physicsWorldCommit
 ```
 
-### Phase 3：debug 节点先行
+原因：刚体/约束 spec 收集和碰撞 snapshot 构建性质相同——都是"从 scope 对象读取 PhysicsTools 属性"，属于 world begin 的职责，不应要求用户额外接节点。
 
-在任何 solver 迁移前，先新增 debug 节点调试输出物理世界本身：
+`physicsRigidSolver`（"刚体模拟步"）保留为 Phase 5 的占位节点，届时负责 Jolt step + writeback，不再负责 spec 收集。
+
+**已注册节点：**
 
 ```text
-Physics World Debug Snapshot
-Physics World Debug Text
-Physics World Validate
+刚体模拟步（physicsRigidSolver）  ← Phase 5 占位，当前透传
 ```
 
-推荐第一条验证链路：
-
-```text
-Cache Read
-  -> Physics Objects From Collection
-  -> Physics Object Scope
-  -> Physics World Begin
-  -> Physics World Debug Snapshot
-  -> Physics World Debug Text
-  -> Physics World Commit
-  -> Cache Write
-```
-
-debug 输出至少要能确认：
-
-- frame / previous frame / continuous / same frame / restart。
-- generation / replace_required / valid。
-- object scope key 和 object count。
-- source count / collider count / skipped count。
-- solver slot count。
-- backend resource count。
-- dispose 后资源是否清空。
-
-这一步的价值是先验证 cache owner、object scope、frame policy、debug snapshot 和 Cache Read / Write 交界都没有问题，再让 solver 参与。
-
-### Phase 4：刚体 domain 先作为物理世界子模块
-
-刚体实现放在 `physicsWorld/rigid/`，不单独建立刚体世界：
-
-```text
-Rigid Body Setting
-Rigid Constraint Setting
-Rigid Constraint Point
-Rigid Body Solver
-```
-
-第一版刚体 domain 可以先只做 spec 收集和 debug 输出：
-
-- 从 object scope 和显式对象输入构造 rigid body specs。
-- 从 Empty 约束点对象构造 constraint specs。
-- 把 specs 放入 world solver slot。
-- 通过 `Physics World Debug Snapshot` 输出 body / constraint 数量和 key。
-- 暂时不要求完整 Jolt step 和写回。
-
-这个阶段要确认 OmniNode 自己的刚体和约束语义是稳定的，而不是被 Jolt API 形状反向牵引。
+`刚体注册` 节点已移除（功能并入 physicsWorldBegin）。
 
 ### Phase 5：Jolt backend 接入
 
@@ -1192,4 +1150,65 @@ object scope 限制的是 OmniNode 自己的扫描和打包范围。只要 solve
 用 Physics World Commit 把同一个 world owner 提交回 runtime cache。
 ```
 
-这样可以在不破坏 OmniNode runtime cache 架构的前提下，把物理系统从“多个独立 cache 小世界”推进到“一个显式物理世界，多 solver 协作”的模型。
+这样可以在不破坏 OmniNode runtime cache 架构的前提下，把物理系统从”多个独立 cache 小世界”推进到”一个显式物理世界，多 solver 协作”的模型。
+
+---
+
+## 附录：实施期间的变更记录
+
+### PhysicsTools 文件重组
+
+本模块原本所有文件都以 `collision` 开头，随着刚体/约束属性和统一面板的加入，文件名已与实际职责不符，按以下规则重组：
+
+| 旧文件名 | 新文件名 | 说明 |
+|---|---|---|
+| `collisionProperty.py` | `physicsProperty.py` | 包含刚体/约束 PropertyGroup，名字已不止碰撞 |
+| `collisionPanel.py` | 内容并入 `physicsPanel.py` | 旧面板类全部删除，draw 工具函数内联 |
+| `collisionOperators.py` | `physicsOperators.py` | 未来刚体操作器也会加入 |
+| `collisionUtils.py` | `physicsUtils.py` | 碰撞组工具会被刚体复用 |
+| `collisionBasePose.py` | `meshClothBasePose.py` | 内容专属 MC2 简单布料，名字更准确 |
+| `collisionPreview.py` | 保持不变 | 碰撞预览叠加层，名字准确 |
+
+新增文件：
+
+- `physicsPanel.py` — 统一物理属性面板（参考 Blender 内置物理布局：开关网格 + 子面板）
+
+### 统一物理面板结构
+
+```text
+OBJECT 上下文（Object Properties）
+  PT_Hotools_PhysicsPanel (“HoTools 物理”)
+    PT_Hotools_Physics_ObjectCollision  “简单碰撞”  — enabled 时展开
+    PT_Hotools_Physics_MeshCollision    “简单布料”  — enabled 时展开（仅 MESH）
+    PT_Hotools_Physics_RigidBody        “刚体”     — enabled 时展开
+    PT_Hotools_Physics_RigidConstraint  “刚体约束” — enabled 时展开（仅 EMPTY）
+
+BONE 上下文（Bone Properties，Pose 模式）
+  PT_Hotools_Bone_PhysicsPanel (“HoTools 物理”)  ← 原 ArmaturePanel 操作也合并至此
+    PT_Hotools_Bone_CollisionSubPanel   “骨骼碰撞” — collision_type≠NONE 时展开
+```
+
+### 物理类型 UI 命名约定
+
+| Python 属性名 | 旧 UI 名称 | 新 UI 名称 | 说明 |
+|---|---|---|---|
+| `hotools_object_collision` | 被动碰撞 | **简单碰撞** | “被动”暗示不能移动，实际可被动画驱动；改名更准确描述”一整块固体碰撞形状” |
+| `hotools_mesh_collision` | 网格碰撞 | **简单布料** | 实质是 XPBD 布料模拟，不仅仅是碰撞 |
+| `hotools_rigid_body` | 刚体 | 刚体 | 保持不变 |
+| `hotools_rigid_constraint` | 刚体约束 | 刚体约束 | 保持不变 |
+| `hotools_collision`（Bone） | 骨骼碰撞 | 骨骼碰撞 | 保持不变 |
+
+**Python 属性名均保持不变**，只改 UI 显示文字，不影响已有 Blender 数据兼容性。
+
+### physicsObjectScope 参数名变更
+
+`PhysicsObjectScope` 字段名随 UI 命名约定统一更新，同时新增刚体/约束开关：
+
+| 旧字段名 | 新字段名 | 对应 UI |
+|---|---|---|
+| `include_object_colliders` | `include_passive_collision` → 改为 `include_passive_collision` | 简单碰撞 |
+| `include_bone_colliders` | `include_bone_collision` | 骨骼碰撞 |
+| `include_mesh_collision` | `include_mesh_collision`（不变） | 简单布料 |
+| —（新增） | `include_rigid_body` | 刚体 |
+| —（新增） | `include_rigid_constraint` | 刚体约束 |
+| `include_hidden` | `include_hidden`（不变） | 包含隐藏 |
