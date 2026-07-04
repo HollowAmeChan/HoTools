@@ -305,13 +305,22 @@ def run_bone_cloth_mc2_node(
     if use_collider_collision and int(collider_collision_mode) != 0:
         collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
         raw_colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
-        # BoneCloth 特有修正：布料粒子（裙骨）和碰撞体（身体骨）都属于同一骨架。
-        # project_vertex_collision 里 `collider["owner"] is owner_obj` 本是为 MeshCloth 防止
-        # 网格与自身骨骼碰撞而设计的，但在 BoneCloth 里会把全部骨骼碰撞体排除掉。
-        # 修复：把与当前骨架同属的骨骼碰撞体的 owner 置为 None，绕过自排除检查。
+        # BoneCloth 特有修正：
+        # 1. project_vertex_collision 里 `collider["owner"] is owner_obj` 本是为 MeshCloth 防止
+        #    网格与自身骨骼碰撞而设计的，但在 BoneCloth 里会把全部骨骼碰撞体排除掉。
+        #    修复：把同骨架的骨骼碰撞体 owner 置 None，绕过自排除检查。
+        # 2. 裙骨自身（被模拟的布料骨骼）如果设置了碰撞属性，也会进入 colliders。
+        #    解算时粒子会被推离"自身上一帧位置" → 正反馈 → 乱飞爆炸。
+        #    修复：把属于当前骨架且骨骼名在 bone_names 中的条目直接剔除。
+        cloth_bone_set = set(bone_names)
         colliders = [
             dict(c, owner=None) if c.get("owner_type") == "BONE" and c.get("owner") is armature else c
             for c in raw_colliders
+            if not (
+                c.get("owner_type") == "BONE"
+                and c.get("owner") is armature
+                and c.get("bone") in cloth_bone_set
+            )
         ]
     else:
         colliders = []
