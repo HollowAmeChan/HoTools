@@ -23,6 +23,7 @@ from ....OmniNodeSocketMapping import _OmniCache
 from ...physicsMC2MeshCloth import collision, state as mc2_state
 from ...physicsMC2MeshCloth.backends import normalize_backend_label, solver_for_backend
 from ...physicsMC2MeshCloth.runtime.restart import cold_restart_runtime_state
+from ...physicsMC2MeshCloth.runtime.timing import begin_timing, publish_debug_timing
 from .. import bone_build, bone_io
 
 
@@ -122,6 +123,7 @@ def run_bone_cloth_mc2_node(
     solver_backend: str = "py",
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     backend_label = normalize_backend_label(solver_backend)
+    timing = begin_timing() if debug_output else None
     armature = _resolve_armature(armature_obj)
     if armature is None:
         _dispose_cache_value(cache_state)
@@ -174,7 +176,6 @@ def run_bone_cloth_mc2_node(
             int(connection_mode),
             output_key,
             topology_key,
-            0.0,  # collision_radius: 从骨骼 hotools_collision.radius 读取，不通过节点参数传入
         )
         cache_owner.replace_state(state)
     else:
@@ -243,6 +244,16 @@ def run_bone_cloth_mc2_node(
     if not enabled:
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
         next_state["frame"] = current_frame
+        # 与 MeshCloth clear_delta_attribute 等价：禁用时把骨骼还原到动画姿态
+        if not cache_owner.team_state.skip_writing:
+            bone_io.write_bone_rotations(
+                armature,
+                write_records,
+                state["base_positions"],
+                rotational_interpolation,
+                write_runtime=io_cache,
+            )
+            armature.update_tag()
         cache_owner.replace_state(next_state)
         cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
         return cache_value, armature, vertex_count, constraint_count
@@ -341,7 +352,7 @@ def run_bone_cloth_mc2_node(
         use_collider_collision,
         collider_friction,
         collider_collision_mode,
-        None,
+        timing,
         colliders=colliders,
         runtime_caches=cache_owner.runtime_cache_slots(),
         center_state=cache_owner.center_state,

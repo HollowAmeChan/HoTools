@@ -580,6 +580,18 @@ def sync_bone_state_to_pose(
             attributes, next_state["depths"], next_state["friction"]
         )
         next_state["object_matrix_world_3x3_key"] = matrix_3x3_key
+        # 骨架缩放变化时同步更新碰撞半径（MeshCloth 对应 collision_radii_to_world）
+        collision_local_radii = np.ascontiguousarray(
+            next_state.get("collision_local_radii"), dtype=np.float32
+        )
+        scale_ratio = math_utils.matrix_scale_ratio(
+            armature_obj.matrix_world,
+            next_state.get("init_scale_radius", math_utils.matrix_scale_radius(armature_obj.matrix_world)),
+        )
+        next_state["collision_radii"] = np.ascontiguousarray(
+            collision_local_radii * max(float(scale_ratio), MC2SystemConstants.EPSILON),
+            dtype=np.float32,
+        )
     else:
         # 3x3 不变：step_basic_pose 仍需每帧刷新（pin 粒子位置可能随整体移动）
         next_state["step_basic_positions"], next_state["step_basic_rotations"] = (
@@ -664,7 +676,6 @@ def build_bone_state(
     connection_mode: int,
     output_key: str,
     topology_key: tuple,
-    collision_radius: float,
 ) -> dict:
     """构建 MC2 solver 可直接消费的 BoneCloth state dict。
 
@@ -729,7 +740,11 @@ def build_bone_state(
         vertex_count, bend_i, bend_j, bend_rest, bend_type,
     )
 
-    collision_radii_local = build_bone_collision_radii(armature_obj, bone_names, collision_radius)
+    # MC2 默认碰撞半径 0.02m；骨骼有 hotools_collision.radius 时优先用骨骼值
+    _DEFAULT_BONE_COLLISION_RADIUS = 0.02
+    collision_radii_local = build_bone_collision_radii(
+        armature_obj, bone_names, _DEFAULT_BONE_COLLISION_RADIUS
+    )
     self_collision_inv_masses = mc2_state.calc_self_collision_inverse_masses(
         attributes, depths, friction, 0.0,
     )
@@ -846,7 +861,7 @@ def build_bone_state(
         "bend_distance_neighbor_rest": bend_neighbor_rest,
         "collision_local_radii": np.ascontiguousarray(collision_radii_local, dtype=np.float32),
         "collision_radii": np.ascontiguousarray(collision_radii_local, dtype=np.float32),
-        "collided_by_groups": 0,
+        "collided_by_groups": 0xFFFF,  # 与所有碰撞组交互，0 会导致 has_collision=False 永不碰撞
         "self_collision_enabled": False,
         "self_collision_surface_thickness": 0.0,
         "self_collision_mass": 0.0,
