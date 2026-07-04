@@ -30,6 +30,7 @@ add_library(hotools_native MODULE
     src/hotools_native.cpp
     src/mc2_context.cpp
     src/mc2.cpp
+    src/mc2_bonecloth_io.cpp
     src/mc2_self_collision.cpp
     src/mesh_xpbd.cpp
     src/spring_bone_vrm.cpp

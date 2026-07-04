@@ -1,9 +1,11 @@
 #include <Python.h>
 
 #include "hotools_mc2.hpp"
+#include "hotools_mc2_bonecloth_io.hpp"
 #include "hotools_mesh_xpbd.hpp"
 #include "hotools_property_curve.hpp"
 #include "mc2_context.hpp"
+#include "python_buffer_utils.hpp"
 
 #include <algorithm>
 #include <array>
@@ -2110,6 +2112,118 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+// ---------------------------------------------------------------------------
+// BoneCloth IO 绑定：solve_mc2_bonecloth_io
+// ---------------------------------------------------------------------------
+// 参数顺序（13个）：
+//   world_rotations(rw), display_positions, base_positions, base_rotations,
+//   vertex_local_positions, vertex_local_rotations,
+//   parent_indices, baseline_start, baseline_count, baseline_data, attributes,
+//   rotational_interpolation, blend_weight, anime_ratio
+PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 14;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError,
+            "solve_mc2_bonecloth_io expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    using hotools::py::Buffer;
+
+    Buffer world_rotations;
+    Buffer display_positions;
+    Buffer base_positions;
+    Buffer base_rotations;
+    Buffer vertex_local_positions;
+    Buffer vertex_local_rotations;
+    Buffer parent_indices;
+    Buffer baseline_start;
+    Buffer baseline_count;
+    Buffer baseline_data;
+    Buffer attributes;
+
+    if (!world_rotations.get(PyTuple_GET_ITEM(args, 0),
+            PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "world_rotations") ||
+        !display_positions.get(PyTuple_GET_ITEM(args, 1),
+            PyBUF_FORMAT | PyBUF_ND, "display_positions") ||
+        !base_positions.get(PyTuple_GET_ITEM(args, 2),
+            PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_rotations.get(PyTuple_GET_ITEM(args, 3),
+            PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 4),
+            PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
+        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 5),
+            PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
+        !parent_indices.get(PyTuple_GET_ITEM(args, 6),
+            PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(PyTuple_GET_ITEM(args, 7),
+            PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(PyTuple_GET_ITEM(args, 8),
+            PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(PyTuple_GET_ITEM(args, 9),
+            PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !attributes.get(PyTuple_GET_ITEM(args, 10),
+            PyBUF_FORMAT | PyBUF_ND, "attributes")) {
+        return nullptr;
+    }
+
+    // 形状校验
+    Py_ssize_t vertex_count = 0;
+    if (!hotools::py::expect_vector4_array(world_rotations, "world_rotations", &vertex_count) ||
+        !hotools::py::expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
+        !hotools::py::expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
+        !hotools::py::expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
+        !hotools::py::expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
+        !hotools::py::expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
+        !hotools::py::expect_int32(parent_indices, "parent_indices") ||
+        !hotools::py::expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
+        !hotools::py::expect_int32(baseline_start, "baseline_start") ||
+        !hotools::py::expect_int32_scalar_array(baseline_start, "baseline_start") ||
+        !hotools::py::expect_int32(baseline_count, "baseline_count") ||
+        !hotools::py::expect_int32_scalar_array(baseline_count, "baseline_count") ||
+        !hotools::py::expect_int32(baseline_data, "baseline_data") ||
+        !hotools::py::expect_int32_scalar_array(baseline_data, "baseline_data") ||
+        !hotools::py::expect_uint8(attributes, "attributes") ||
+        !hotools::py::expect_1d_array(attributes, "attributes", vertex_count)) {
+        return nullptr;
+    }
+
+    // baseline_start 和 baseline_count 必须等长
+    const Py_ssize_t baseline_lines = baseline_start.view.shape[0];
+    if (baseline_count.view.shape[0] != baseline_lines) {
+        PyErr_SetString(PyExc_ValueError,
+            "baseline_start and baseline_count must have the same length");
+        return nullptr;
+    }
+
+    const double rot_interp   = hotools::py::as_double(PyTuple_GET_ITEM(args, 11), "rotational_interpolation");
+    const double blend_w      = hotools::py::as_double(PyTuple_GET_ITEM(args, 12), "blend_weight");
+    const double anime_r      = hotools::py::as_double(PyTuple_GET_ITEM(args, 13), "anime_ratio");
+    if (PyErr_Occurred()) { return nullptr; }
+
+    hotools::BoneClothIoView view;
+    view.world_rotations         = static_cast<float*>(world_rotations.view.buf);
+    view.display_positions       = static_cast<const float*>(display_positions.view.buf);
+    view.base_positions          = static_cast<const float*>(base_positions.view.buf);
+    view.base_rotations          = static_cast<const float*>(base_rotations.view.buf);
+    view.vertex_local_positions  = static_cast<const float*>(vertex_local_positions.view.buf);
+    view.vertex_local_rotations  = static_cast<const float*>(vertex_local_rotations.view.buf);
+    view.parent_indices          = static_cast<const std::int32_t*>(parent_indices.view.buf);
+    view.baseline_start          = static_cast<const std::int32_t*>(baseline_start.view.buf);
+    view.baseline_count          = static_cast<const std::int32_t*>(baseline_count.view.buf);
+    view.baseline_data           = static_cast<const std::int32_t*>(baseline_data.view.buf);
+    view.attributes              = static_cast<const std::uint8_t*>(attributes.view.buf);
+    view.rotational_interpolation = static_cast<float>(rot_interp);
+    view.blend_weight             = static_cast<float>(blend_w);
+    view.anime_ratio              = static_cast<float>(anime_r);
+    view.vertex_count             = static_cast<std::int64_t>(vertex_count);
+    view.baseline_lines           = static_cast<std::int64_t>(baseline_lines);
+    view.baseline_total           = static_cast<std::int64_t>(baseline_data.view.shape[0]);
+
+    hotools::solve_bonecloth_io(view);
+    Py_RETURN_NONE;
+}
+
 PyMethodDef kMethods[] = {
     {
         "compile_property_float_curve",
@@ -2314,6 +2428,12 @@ PyMethodDef kMethods[] = {
         hotools::solve_meshcloth_mc2_context_cached_params,
         METH_VARARGS,
         "Solve one MC2 MeshCloth frame using native context static and parameter arrays.",
+    },
+    {
+        "solve_mc2_bonecloth_io",
+        solve_mc2_bonecloth_io,
+        METH_VARARGS,
+        "Compute MC2 BoneCloth chain-propagated world rotations in-place.",
     },
     {nullptr, nullptr, 0, nullptr},
 };
