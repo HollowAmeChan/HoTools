@@ -6,7 +6,7 @@ import time
 
 import bpy
 
-from ......PhysicsTools.collisionBasePose import ensure_base_pose_proxy, ensure_delta_output
+from ......PhysicsTools.meshClothBasePose import ensure_base_pose_proxy, ensure_delta_output
 from ....OmniNodeSocketMapping import _OmniCache
 from .. import blender_io, collision, mesh_build, params, state as mc2_state
 from ..constants import MC2SystemConstants
