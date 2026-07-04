@@ -7,7 +7,7 @@ physicsPanel.py — HoTools 统一物理属性面板
 面板结构：
   PT_Hotools_PhysicsPanel            — 父面板（开关网格）
   PT_Hotools_Physics_ObjectCollision — 被动碰撞子面板
-  PT_Hotools_Physics_MeshCollision   — 网格碰撞子面板（仅 MESH）
+  PT_Hotools_Physics_MeshCollision   — 简单布料子面板（仅 MESH）
   PT_Hotools_Physics_RigidBody       — 刚体子面板
   PT_Hotools_Physics_RigidConstraint — 刚体约束子面板（仅 EMPTY）
 """
@@ -153,7 +153,7 @@ class PT_Hotools_PhysicsPanel(Panel):
                       icon="MOD_PHYSICS", toggle=True)
 
         if obj.type == "MESH" and mesh_col is not None:
-            grid.prop(mesh_col, "enabled", text="网格碰撞",
+            grid.prop(mesh_col, "enabled", text="简单布料",
                       icon="MESH_DATA", toggle=True)
 
         if rigid is not None:
@@ -194,12 +194,12 @@ class PT_Hotools_Physics_ObjectCollision(Panel):
 
 
 # ---------------------------------------------------------------------------
-# 子面板：网格碰撞（仅 MESH）
+# 子面板：简单布料（仅 MESH）
 # ---------------------------------------------------------------------------
 
 class PT_Hotools_Physics_MeshCollision(Panel):
     bl_idname = "OBJECT_PT_Hotools_Physics_MeshCollision"
-    bl_label = "网格碰撞"
+    bl_label = "简单布料"
     bl_parent_id = _PARENT
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"

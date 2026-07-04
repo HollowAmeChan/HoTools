@@ -143,7 +143,7 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
 
 class PG_Hotools_MeshCollision(PropertyGroup):
     """
-    网格 XPBD 物理、逐顶点碰撞球、Pin 和自碰撞的持久化配置。
+    简单布料（XPBD）物理、逐顶点碰撞球、Pin 和自碰撞的持久化配置。
 
     消费约定：
     1. Mesh 物理解算输出由各 solver 写入自己的 GN 后置位移属性。
@@ -162,7 +162,7 @@ class PG_Hotools_MeshCollision(PropertyGroup):
     )  # type: ignore
     enabled: BoolProperty(
         name="启用",
-        description="启用XPBD网格逐顶点碰撞球",
+        description="启用简单布料（XPBD）模拟",
         default=False,
     )  # type: ignore
     radius: FloatProperty(
@@ -179,7 +179,7 @@ class PG_Hotools_MeshCollision(PropertyGroup):
     )  # type: ignore
     pin_enabled: BoolProperty(
         name="Pin启用",
-        description="启用XPBD网格Pin顶点；只在物理cache重建时读取，模拟过程中修改不会立即生效",
+        description="启用简单布料Pin顶点；只在物理cache重建时读取，模拟过程中修改不会立即生效",
         default=False,
     )  # type: ignore
     pin_vertex_group: StringProperty(

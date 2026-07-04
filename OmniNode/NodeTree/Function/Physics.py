@@ -4294,7 +4294,7 @@ def springBoneVRM_CPP(
     场景输入提供 frame_current、render.fps / fps_base，并作为骨骼/Object 被动碰撞体的枚举范围。
     被动碰撞体来自可见 Object.hotools_object_collision 和 Armature Bone.hotools_collision；当前旧 XPBD 蓝本消费类型为 SPHERE、CAPSULE。
     球体读取 collision_type、radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
-    Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools网格碰撞”；输出属性与 GN 修改器由本 solver 自己维护。
+    Pin、逐顶点碰撞半径、主碰撞组和被碰撞组来自物体属性“HoTools简单布料”；输出属性与 GN 修改器由本 solver 自己维护。
 
     求解模型：
     rest 顶点取自 Basis/reference key；mesh edge 生成拉伸距离约束，共边三角面的 opposite 顶点生成弯曲距离约束。

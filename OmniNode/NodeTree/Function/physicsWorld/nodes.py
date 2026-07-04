@@ -63,7 +63,7 @@ def physicsObjectsFromCollection(
         "对象",
         "被动碰撞",
         "骨骼碰撞",
-        "网格碰撞",
+        "简单布料",
         "刚体",
         "刚体约束",
         "包含隐藏",
@@ -78,7 +78,7 @@ def physicsObjectsFromCollection(
     各开关对齐 HoTools 统一物理面板的类型名称：
       被动碰撞 — 读取 hotools_object_collision.enabled
       骨骼碰撞 — 读取 Bone.hotools_collision.collision_type
-      网格碰撞 — 读取 hotools_mesh_collision.enabled
+      简单布料 — 读取 hotools_mesh_collision.enabled
       刚体     — 读取 hotools_rigid_body.enabled
       刚体约束 — 读取 hotools_rigid_constraint.enabled（仅 EMPTY 对象）
     """,

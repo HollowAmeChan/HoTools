@@ -201,7 +201,7 @@ def ensure_base_pose_proxy(
 ) -> bpy.types.Object:
     props = getattr(source_obj, "hotools_mesh_collision", None)
     if props is None:
-        raise ValueError("当前物体没有HoTools网格碰撞属性")
+        raise ValueError("当前物体没有HoTools简单布料属性")
 
     try:
         base_obj = getattr(props, "mc2_base_pose_proxy", None)
