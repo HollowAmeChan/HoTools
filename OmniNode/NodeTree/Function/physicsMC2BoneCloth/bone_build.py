@@ -23,6 +23,7 @@ from ..physicsMC2MeshCloth.constants import (
     MC2_ATTR_FIXED,
     MC2_ATTR_MOTION,
     MC2_ATTR_MOVE,
+    MC2_ATTR_ZERO_DISTANCE,
     MC2_BEND_KIND_DISTANCE_APPROX,
     MC2_CACHE_KIND,
     MC2_CURVE_READY_PARAMETERS,
@@ -445,16 +446,32 @@ def build_bone_topology(
 # ---------------------------------------------------------------------------
 # attributes / collision
 # ---------------------------------------------------------------------------
-def build_bone_attributes(chains: list[dict]) -> np.ndarray:
-    """每条链的 root（第一根）设为 FIXED（pin），其余设为 MOVE|MOTION。"""
+def build_bone_attributes(chains: list[dict], armature_obj=None) -> np.ndarray:
+    """每条链的 root（第一根）设为 FIXED（pin），其余设为 MOVE|MOTION。
+
+    若骨骼 rest 长度接近零（< 1e-6 m），额外置 MC2_ATTR_ZERO_DISTANCE，
+    对应 MC2 Flag_ZeroDistance：C++ 侧会把该骨的 tv=0，跳过 FromToRotation 修正。
+    """
+    _ZERO_DIST_THRESHOLD = 1e-6
+
+    # 预建零距离骨骼集合（data.bones.length = rest length，单位 m）
+    zero_dist_set: set[str] = set()
+    if armature_obj is not None and armature_obj.data is not None:
+        for bone in armature_obj.data.bones:
+            if bone.length < _ZERO_DIST_THRESHOLD:
+                zero_dist_set.add(bone.name)
+
     attributes: list[int] = []
     for chain in chains:
         bones = chain.get("bones") or []
-        for depth in range(len(bones)):
+        for depth, bone_name in enumerate(bones):
             if depth == 0:
-                attributes.append(MC2_ATTR_FIXED)
+                attr = MC2_ATTR_FIXED
             else:
-                attributes.append(MC2_ATTR_MOVE | MC2_ATTR_MOTION)
+                attr = MC2_ATTR_MOVE | MC2_ATTR_MOTION
+            if bone_name in zero_dist_set:
+                attr |= MC2_ATTR_ZERO_DISTANCE
+            attributes.append(attr)
     return np.ascontiguousarray(attributes, dtype=np.uint8)
 
 
@@ -694,7 +711,7 @@ def build_bone_state(
     rest_local = math_utils.transform_positions(world_to_local, rest_world)
     rest_local_normals = math_utils.transform_directions(world_to_local, rest_world_normals)
 
-    attributes = build_bone_attributes(chains)
+    attributes = build_bone_attributes(chains, armature_obj)
     topology = build_bone_topology(chains, connection_mode, rest_world)
     edges = topology["edges"]
     triangles = topology["triangles"]

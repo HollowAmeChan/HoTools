@@ -15,7 +15,11 @@ namespace hotools {
 namespace {
 
 constexpr float kBcEpsilon = 1e-8f;
-constexpr std::uint8_t kMc2AttrMove = 1u << 2u;
+
+// 顶点属性标记，与 MC2 VertexAttribute 对齐
+constexpr std::uint8_t kMc2AttrInvalid      = 1u << 0u;  // 0x01 — 无效粒子
+constexpr std::uint8_t kMc2AttrMove         = 1u << 2u;  // 0x04 — 受模拟驱动
+constexpr std::uint8_t kMc2AttrZeroDistance = 1u << 5u;  // 0x20 — 零距离骨骼
 
 // ---------------------------------------------------------------------------
 // 四元数工具（格式统一为 [x,y,z,w]）
@@ -191,6 +195,8 @@ void solve_bonecloth_io(BoneClothIoView& view) {
     const float average_rate = view.rotational_interpolation;
     const float bw           = std::max(0.f, std::min(1.f, view.blend_weight));
     const float ar           = std::max(0.f, std::min(1.f, view.anime_ratio));
+    // Fix 3：rootInterpolation — 非运动骨用 root_rotation (MC2 默认 0.5) 而非 1.0
+    const float root_rot     = std::max(0.f, std::min(1.f, view.root_rotation));
 
     // 按 baseline 链自顶向下遍历（与 Python 版逻辑完全一致）
     for (std::int64_t line_idx = 0; line_idx < NL; ++line_idx) {
@@ -209,17 +215,25 @@ void solve_bonecloth_io(BoneClothIoView& view) {
             const Quat base_rot = load4(view.base_rotations,    lindex);
             const Quat base_inv = qinv(base_rot);
 
-            const bool is_move  = (view.attributes[lindex] & kMc2AttrMove) != 0;
+            const std::uint8_t attr    = view.attributes[lindex];
+            const bool is_move         = (attr & kMc2AttrMove) != 0;
+            // Fix 2：IsInvalid — 无效粒子跳过整个方向修正块（MC2 L866）
+            const bool is_invalid      = (attr & kMc2AttrInvalid) != 0;
+
             const auto& ch_list = children_of[static_cast<std::size_t>(lindex)];
 
-            if (!ch_list.empty()) {
+            if (!ch_list.empty() && !is_invalid) {
                 Vec3 ctv = {0.f, 0.f, 0.f};
                 Vec3 cv  = {0.f, 0.f, 0.f};
 
                 for (const std::int32_t clindex : ch_list) {
                     if (clindex < 0 || clindex >= N) { continue; }
 
-                    const bool c_is_move = (view.attributes[clindex] & kMc2AttrMove) != 0;
+                    const std::uint8_t cattr   = view.attributes[clindex];
+                    const bool c_is_move        = (cattr & kMc2AttrMove) != 0;
+                    // Fix 1：ZeroDistance — 零距离子骨 tv=0，且跳过 FromToRotation（MC2 L883,900,917）
+                    const bool is_c0            = (cattr & kMc2AttrZeroDistance) != 0;
+
                     const Vec3 cpos      = load3(view.display_positions,      clindex);
                     const Vec3 cbase_pos = load3(view.base_positions,         clindex);
                     const Quat cbase_rot = load4(view.base_rotations,         clindex);
@@ -242,8 +256,8 @@ void solve_bonecloth_io(BoneClothIoView& view) {
                     };
                     const Quat lrot = qslerp(vl_rot, cbase_local_rot, ar);
 
-                    // rest 方向（tv）= rot * lpos
-                    const Vec3 tv = qrot(rot, lpos);
+                    // Fix 1：零距离子骨 tv=0，否则 tv = rot * lpos（MC2 L900）
+                    const Vec3 tv = is_c0 ? Vec3{0.f, 0.f, 0.f} : qrot(rot, lpos);
                     ctv = {ctv.x + tv.x, ctv.y + tv.y, ctv.z + tv.z};
 
                     if (c_is_move) {
@@ -256,7 +270,8 @@ void solve_bonecloth_io(BoneClothIoView& view) {
 
                         // 子骨旋转：rot * lrot，再由 FromToRotation(tv, v) 修正
                         Quat crot = qmul(rot, lrot);
-                        if (len3(tv) > kBcEpsilon && len3(v) > kBcEpsilon) {
+                        // Fix 1：零距离子骨跳过 FromToRotation 修正（MC2 L917）
+                        if (!is_c0 && len3(tv) > kBcEpsilon && len3(v) > kBcEpsilon) {
                             const Quat q_corr = from_to_rotation(tv, v);
                             crot = qmul(q_corr, crot);
                         }
@@ -268,7 +283,8 @@ void solve_bonecloth_io(BoneClothIoView& view) {
                 }
 
                 // 父骨方向修正
-                const float t_parent = is_move ? average_rate : 1.f;
+                // Fix 3：非运动骨用 root_rot（MC2 rootInterpolation），而非固定 1.0（MC2 L932）
+                const float t_parent = is_move ? average_rate : root_rot;
                 if (len3(ctv) > kBcEpsilon && len3(cv) > kBcEpsilon) {
                     const Quat cq = from_to_rotation(ctv, cv, t_parent);
                     rot = qmul(cq, rot);

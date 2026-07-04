@@ -36,19 +36,44 @@
 
 ## 构建
 
-`CMakePresets.json` 里分了两个常用预设：
+### 快速编译（推荐）
 
-- `vs2022-py311`
-- `vs2022-py313`
+直接双击或在终端运行 `_native/build.bat`：
 
-对应的运行时产物路径分别是：
+```bat
+:: 编译 Blender 4.5 / py311（默认）
+build.bat
 
-- `_Lib/py311/HotoolsPackage`
-- `_Lib/py313/HotoolsPackage`
+:: 编译 Blender 5.x / py313
+build.bat 313
 
-常用命令：
+:: 同时编译两个
+build.bat all
+```
+
+脚本内部路径变量（如需修改直接编辑 build.bat 顶部）：
+
+| 变量 | 当前值 |
+|------|--------|
+| `MSBUILD_EXE` | `D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe` |
+| `BUILD_DIR_311` | `_native\build\vs2022-py311` |
+| `BUILD_DIR_313` | `_native\build\vs2022-py313` |
+
+### 环境说明
+
+- **编译器**：Visual Studio 2022 Community，安装路径 `D:\Microsoft Visual Studio\2022\Community`
+- **Blender 4.5 Python**：`D:/Blender/Blender 4.5/4.5/python/bin/python.exe`（py311）
+- **Blender 5.x Python**：`D:/Blender/blender-5.1.0-windows-x64/5.1/python/bin/python.exe`（py313）
+
+如果 VS 或 Blender 路径有变动：
+1. 更新 `build.bat` 顶部的 `MSBUILD_EXE`
+2. 更新 `CMakePresets.json` 里对应预设的 `HOTOOLS_PYTHON_EXECUTABLE`
+3. 重新 configure：`cmake --preset vs2022-py311`，再用 build.bat 编译
+
+### 手动 cmake 命令（首次初始化或重新 configure 时用）
 
 ```powershell
+# 在 _native/ 目录下执行
 cmake --preset vs2022-py311
 cmake --build --preset vs2022-py311-release
 
@@ -56,7 +81,10 @@ cmake --preset vs2022-py313
 cmake --build --preset vs2022-py313-release
 ```
 
-如果本机 Blender Python 路径不同，先改 `CMakePresets.json` 里的 `HOTOOLS_PYTHON_EXECUTABLE`。
+### 产物路径
+
+- `_Lib/py311/HotoolsPackage/hotools_native.cp311-win_amd64.pyd`
+- `_Lib/py313/HotoolsPackage/hotools_native.cp313-win_amd64.pyd`
 
 ## 测试
 

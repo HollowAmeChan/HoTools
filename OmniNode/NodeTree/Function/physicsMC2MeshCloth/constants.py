@@ -3,10 +3,11 @@
 MC2_CACHE_KIND = "MESH_PHYSICS_MC2"
 MC2_SOLVER_VERSION = 18
 
-MC2_ATTR_INVALID = 1 << 0
-MC2_ATTR_FIXED = 1 << 1
-MC2_ATTR_MOVE = 1 << 2
-MC2_ATTR_MOTION = 1 << 3
+MC2_ATTR_INVALID       = 1 << 0  # 0x01 — 无效粒子，跳过方向修正
+MC2_ATTR_FIXED         = 1 << 1  # 0x02 — 固定（pin）粒子
+MC2_ATTR_MOVE          = 1 << 2  # 0x04 — 受模拟驱动
+MC2_ATTR_MOTION        = 1 << 3  # 0x08 — 参与运动
+MC2_ATTR_ZERO_DISTANCE = 1 << 5  # 0x20 — 零距离骨骼，tv=0 且跳过 FromToRotation
 
 MC2_NORMAL_AXIS_RIGHT = 0
 MC2_NORMAL_AXIS_UP = 1

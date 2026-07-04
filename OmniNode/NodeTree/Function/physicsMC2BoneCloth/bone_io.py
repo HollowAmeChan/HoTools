@@ -142,6 +142,7 @@ def write_bone_rotations(
     baseline_data=None,
     attributes=None,
     anime_ratio=0.0,
+    root_rotation=0.5,
 ):
     """把 display_positions 写回骨骼旋转（matrix_basis 批量写）。
 
@@ -183,6 +184,7 @@ def write_bone_rotations(
                 float(rotational_interpolation),
                 float(blend_weight),
                 float(anime_ratio),
+                float(root_rotation),
             )
             _write_from_world_rotations(armature_obj, records, world_rotations, write_runtime)
             return

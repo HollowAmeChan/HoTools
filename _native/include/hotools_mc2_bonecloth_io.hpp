@@ -8,25 +8,29 @@ namespace hotools {
 // 对应 MC2 SimulationPostProxyMeshUpdateLine（VirtualMeshManager.cs L790）。
 //
 // 输入数组（只读）：
-//   display_positions     (N, 3) float32  模拟后世界空间粒子位置
-//   base_positions        (N, 3) float32  当前帧 base pose 粒子位置（step_basic_positions）
-//   base_rotations        (N, 4) float32  当前帧 base pose 旋转 [x,y,z,w]（step_basic_rotations）
-//   vertex_local_positions(N, 3) float32  子骨在父骨 local 空间的 rest 位置
-//   vertex_local_rotations(N, 4) float32  子骨相对父骨的 rest local 旋转 [x,y,z,w]
-//   parent_indices        (N,)   int32    每粒子的父粒子索引，-1 表示 root
-//   baseline_start        (L,)   int32    每条 baseline 链在 baseline_data 的起始偏移
-//   baseline_count        (L,)   int32    每条 baseline 链的长度（顶点数）
-//   baseline_data         (M,)   int32    自顶向下遍历顺序的粒子全局索引
-//   attributes            (N,)   uint8    MC2_ATTR_MOVE 标记（bit 2），root = 0，move = 4
+//   display_positions      (N, 3) float32  模拟后世界空间粒子位置
+//   base_positions         (N, 3) float32  当前帧 base pose 粒子位置（step_basic_positions）
+//   base_rotations         (N, 4) float32  当前帧 base pose 旋转 [x,y,z,w]（step_basic_rotations）
+//   vertex_local_positions (N, 3) float32  子骨在父骨 local 空间的 rest 位置
+//   vertex_local_rotations (N, 4) float32  子骨相对父骨的 rest local 旋转 [x,y,z,w]
+//   parent_indices         (N,)   int32    每粒子的父粒子索引，-1 表示 root
+//   baseline_start         (L,)   int32    每条 baseline 链在 baseline_data 的起始偏移
+//   baseline_count         (L,)   int32    每条 baseline 链的长度（顶点数）
+//   baseline_data          (M,)   int32    自顶向下遍历顺序的粒子全局索引
+//   attributes             (N,)   uint8    顶点属性标记：
+//                                            bit0 = Invalid      (0x01) — 无效粒子，跳过方向修正
+//                                            bit2 = Move         (0x04) — 受模拟驱动（非固定）
+//                                            bit5 = ZeroDistance (0x20) — 零距离骨骼，tv=0 且跳过 FromToRotation
 //
 // 标量参数：
 //   rotational_interpolation  float  父骨方向修正插值率（averageRate, 0..1）
 //   blend_weight              float  模拟结果与 base pose 的混合权重（0..1）
 //   anime_ratio               float  rest / animated local pose 插值率（animationPoseRatio）
+//   root_rotation             float  固定/根骨方向修正插值率（rootInterpolation，MC2 默认 0.5）
 //
 // 输出数组（读写）：
-//   world_rotations       (N, 4) float32  计算结果：世界空间四元数 [x,y,z,w]
-//                                         初始值应为 base_rotations，函数在原地修改。
+//   world_rotations        (N, 4) float32  计算结果：世界空间四元数 [x,y,z,w]
+//                                          初始值应为 base_rotations，函数在原地修改。
 struct BoneClothIoView {
     // 输入（只读）
     const float*         display_positions      = nullptr;  // (N, 3)
@@ -44,6 +48,7 @@ struct BoneClothIoView {
     float  rotational_interpolation = 1.0f;
     float  blend_weight             = 1.0f;
     float  anime_ratio              = 0.0f;
+    float  root_rotation            = 0.5f;  // MC2 rootInterpolation 默认 0.5
 
     // 数组长度
     std::int64_t vertex_count   = 0;

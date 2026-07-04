@@ -2115,13 +2115,13 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
 // ---------------------------------------------------------------------------
 // BoneCloth IO 绑定：solve_mc2_bonecloth_io
 // ---------------------------------------------------------------------------
-// 参数顺序（13个）：
+// 参数顺序（15个）：
 //   world_rotations(rw), display_positions, base_positions, base_rotations,
 //   vertex_local_positions, vertex_local_rotations,
 //   parent_indices, baseline_start, baseline_count, baseline_data, attributes,
-//   rotational_interpolation, blend_weight, anime_ratio
+//   rotational_interpolation, blend_weight, anime_ratio, root_rotation
 PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 14;
+    constexpr Py_ssize_t kArgCount = 15;
     if (PyTuple_GET_SIZE(args) != kArgCount) {
         PyErr_Format(PyExc_TypeError,
             "solve_mc2_bonecloth_io expects %zd arguments", kArgCount);
@@ -2199,6 +2199,7 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
     const double rot_interp   = hotools::py::as_double(PyTuple_GET_ITEM(args, 11), "rotational_interpolation");
     const double blend_w      = hotools::py::as_double(PyTuple_GET_ITEM(args, 12), "blend_weight");
     const double anime_r      = hotools::py::as_double(PyTuple_GET_ITEM(args, 13), "anime_ratio");
+    const double root_rot     = hotools::py::as_double(PyTuple_GET_ITEM(args, 14), "root_rotation");
     if (PyErr_Occurred()) { return nullptr; }
 
     hotools::BoneClothIoView view;
@@ -2216,6 +2217,7 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
     view.rotational_interpolation = static_cast<float>(rot_interp);
     view.blend_weight             = static_cast<float>(blend_w);
     view.anime_ratio              = static_cast<float>(anime_r);
+    view.root_rotation            = static_cast<float>(root_rot);
     view.vertex_count             = static_cast<std::int64_t>(vertex_count);
     view.baseline_lines           = static_cast<std::int64_t>(baseline_lines);
     view.baseline_total           = static_cast<std::int64_t>(baseline_data.view.shape[0]);
