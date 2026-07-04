@@ -27,6 +27,17 @@ _COLLISION_GROUP_COLORS = (
 )
 
 
+# 预览 batch 重建信号。外部代码（属性 update 回调等）调用 mark_overlay_rebuild()
+# 来通知 collisionPreview 下次绘制时强制重建 batch 缓存。
+# 用可变容器避免循环导入（collisionPreview 直接读这个对象里的值）。
+_OVERLAY_REBUILD_COUNTER = [0]
+
+
+def mark_overlay_rebuild():
+    """通知碰撞预览在下一帧绘制时强制重建 batch 缓存。"""
+    _OVERLAY_REBUILD_COUNTER[0] += 1
+
+
 def _tag_view3d_redraw():
     """
     标记所有可见的 3D 视图重绘。
@@ -42,8 +53,9 @@ def _tag_view3d_redraw():
 
 def _overlay_show_update(self, context):
     """
-    叠加层开关变化时刷新 3D 视图。
+    叠加层开关变化时刷新 3D 视图，并通知 batch 缓存重建。
     """
+    mark_overlay_rebuild()
     _tag_view3d_redraw()
 
 

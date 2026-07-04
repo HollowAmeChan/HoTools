@@ -21,6 +21,22 @@ from .physicsUtils import (
 
 _DRAW_HANDLE = None
 _MESH_VERTEX_SPHERE_SEGMENTS = 8
+
+# 预计算单位圆 cos/sin 值，避免每次绘制球/胶囊时重复调用 math.cos/sin。
+# 每根骨骼3个圆 × 32段 = 96 次三角函数 → 0 次（全部变查表+向量乘法）。
+_UNIT_CIRCLE = [
+    (math.cos(math.tau * i / _SHAPE_SEGMENTS), math.sin(math.tau * i / _SHAPE_SEGMENTS))
+    for i in range(_SHAPE_SEGMENTS + 1)  # +1 使最后一点闭合回原点
+]
+
+# ---------------------------------------------------------------------------
+# 仅对 mesh 顶点碰撞做帧级缓存。
+# 骨骼/物体碰撞每次重绘都重建（它们很快），mesh 顶点（evaluated_get + 逐顶点权重）
+# 每帧只算一次，帧内转视角直接复用。
+# key = (obj_ptr, mesh_ptr, frame)，value = {group: lines, ...} + pin/unpin lines
+# ---------------------------------------------------------------------------
+_MESH_VERTEX_LINE_CACHE: dict = {}
+_MESH_VERTEX_CACHE_FRAME: int | None = None
 COLLISION_OVERLAY_PREVIEW_MODE_ITEMS = [("STANDARD", "标准", "标准碰撞预览")]
 for group in range(1, _COLLISION_GROUP_COUNT + 1):
     COLLISION_OVERLAY_PREVIEW_MODE_ITEMS.append(
@@ -145,17 +161,17 @@ def _append_circle(lines, matrix, center, axis_a, axis_b, radius, segments=_SHAP
     if radius <= 0.0:
         return
 
-    first = matrix @ (center + axis_a * radius)
-    previous = first
-    for index in range(1, segments + 1):
-        angle = math.tau * index / segments
-        point = matrix @ (
-            center
-            + axis_a * math.cos(angle) * radius
-            + axis_b * math.sin(angle) * radius
-        )
-        _append_line(lines, previous, point)
-        previous = point
+    # 默认 segments 时使用预计算表，避免每次重算 cos/sin
+    cos_sin = _UNIT_CIRCLE if segments == _SHAPE_SEGMENTS else [
+        (math.cos(math.tau * i / segments), math.sin(math.tau * i / segments))
+        for i in range(segments + 1)
+    ]
+
+    scaled_a = axis_a * radius
+    scaled_b = axis_b * radius
+    points = [matrix @ (center + c * scaled_a + s * scaled_b) for c, s in cos_sin]
+    for i in range(len(points) - 1):
+        _append_line(lines, points[i], points[i + 1])
 
 
 def _append_capsule_profile(lines, matrix, center, side_axis, radius, half_length, segments=_SHAPE_SEGMENTS):
@@ -303,8 +319,6 @@ def _draw_line_batch(shader, coords, color, line_width):
     gpu.state.line_width_set(line_width)
     batch = batch_for_shader(shader, "LINES", {"pos": coords})
     batch.draw(shader)
-
-
 def _mesh_vertex_collision_weight(obj, group_name, vertex_index):
     if not group_name:
         return 1.0
@@ -366,7 +380,45 @@ def _append_mesh_vertex_collision_lines(lines, obj, props, depsgraph, *, pin_lin
         )
 
 
+def _get_mesh_vertex_lines_cached(obj, props, depsgraph, frame, use_pin_color, group):
+    """
+    获取网格顶点碰撞线段，带帧级缓存。
+
+    key = (obj_ptr, mesh_ptr, frame, use_pin_color, group)
+    帧号变化时重新计算，帧内转视角直接复用。
+    """
+    global _MESH_VERTEX_CACHE_FRAME
+    key = (int(obj.as_pointer()), int(obj.data.as_pointer()), frame, use_pin_color, group)
+
+    # 帧号变化时清掉整个缓存（下一帧的数据和上一帧完全不同）
+    if _MESH_VERTEX_CACHE_FRAME != frame:
+        _MESH_VERTEX_LINE_CACHE.clear()
+        _MESH_VERTEX_CACHE_FRAME = frame
+
+    if key in _MESH_VERTEX_LINE_CACHE:
+        return _MESH_VERTEX_LINE_CACHE[key]
+
+    # 缓存未命中：重新计算（本帧只算一次）
+    lines = []
+    pin_lines = []
+    unpin_lines = []
+    if use_pin_color:
+        _append_mesh_vertex_collision_lines([], obj, props, depsgraph, pin_lines=pin_lines, unpin_lines=unpin_lines)
+        result = {"pin": pin_lines, "unpin": unpin_lines}
+    else:
+        _append_mesh_vertex_collision_lines(lines, obj, props, depsgraph)
+        result = {"lines": lines}
+
+    _MESH_VERTEX_LINE_CACHE[key] = result
+    return result
+
+
 def _draw_collision_overlay():
+    """
+    Draw handler 回调，每次视口重绘都执行。
+    骨骼/物体碰撞每次重建（矩阵运算，很快）。
+    mesh 顶点碰撞从帧缓存读（evaluated_get + 逐顶点权重查询按帧复用）。
+    """
     context = bpy.context
     scene = context.scene
     if scene is None or not scene.ho_collision_overlay_show:
@@ -379,15 +431,10 @@ def _draw_collision_overlay():
     show_mesh_vertices = bool(scene.ho_collision_overlay_show_mesh_vertices)
     show_visible_bone_only = scene.ho_collision_overlay_only_visible_bones
     use_pin_color = scene.ho_collision_overlay_color_mode == "PIN" and preview_group is None
+    frame = scene.frame_current
 
-    collision_lines_by_group = {
-        group: []
-        for group in range(1, _COLLISION_GROUP_COUNT + 1)
-    }
-    mesh_vertex_lines_by_group = {
-        group: []
-        for group in range(1, _COLLISION_GROUP_COUNT + 1)
-    }
+    collision_lines_by_group = {g: [] for g in range(1, _COLLISION_GROUP_COUNT + 1)}
+    mesh_vertex_lines_by_group = {g: [] for g in range(1, _COLLISION_GROUP_COUNT + 1)}
     pin_lines = []
     unpin_lines = []
 
@@ -396,25 +443,13 @@ def _draw_collision_overlay():
             for bone in armature_obj.data.bones:
                 if show_visible_bone_only and not _bone_is_effectively_visible(bone):
                     continue
-
                 props = _collision_props(bone)
                 if props is None:
                     continue
-
-                if not _collision_overlay_matches_preview_group(
-                    props,
-                    preview_group,
-                    include_passive=include_passive_collision,
-                ):
+                if not _collision_overlay_matches_preview_group(props, preview_group, include_passive=include_passive_collision):
                     continue
-
                 matrix = _bone_draw_matrix(armature_obj, bone)
-                if use_pin_color:
-                    group_lines = pin_lines if _effective_bone_pin(bone) else unpin_lines
-                else:
-                    group_lines = collision_lines_by_group[
-                        min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
-                    ]
+                group_lines = (pin_lines if _effective_bone_pin(bone) else unpin_lines) if use_pin_color else collision_lines_by_group[min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)]
                 if props.collision_type == "SPHERE":
                     _append_sphere_lines(group_lines, matrix, props)
                 elif props.collision_type == "CAPSULE":
@@ -425,20 +460,9 @@ def _draw_collision_overlay():
             props = _object_collision_props(obj)
             if props is None:
                 continue
-
-            if not _collision_overlay_matches_preview_group(
-                props,
-                preview_group,
-                include_passive=include_passive_collision,
-            ):
+            if not _collision_overlay_matches_preview_group(props, preview_group, include_passive=include_passive_collision):
                 continue
-
-            if use_pin_color:
-                group_lines = unpin_lines
-            else:
-                group_lines = collision_lines_by_group[
-                    min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
-                ]
+            group_lines = unpin_lines if use_pin_color else collision_lines_by_group[min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)]
             if props.collision_type == "SPHERE":
                 _append_sphere_lines(group_lines, obj.matrix_world, props)
             elif props.collision_type == "CAPSULE":
@@ -452,25 +476,17 @@ def _draw_collision_overlay():
         depsgraph = context.evaluated_depsgraph_get()
         for obj in _visible_mesh_collision_objects(context):
             props = _mesh_collision_props(obj)
-            if props is not None:
-                if not _collision_overlay_matches_preview_group(
-                    props,
-                    preview_group,
-                    include_passive=include_passive_collision,
-                ):
-                    continue
-                if use_pin_color:
-                    _append_mesh_vertex_collision_lines(
-                        [],
-                        obj,
-                        props,
-                        depsgraph,
-                        pin_lines=pin_lines,
-                        unpin_lines=unpin_lines,
-                    )
-                else:
-                    group = min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
-                    _append_mesh_vertex_collision_lines(mesh_vertex_lines_by_group[group], obj, props, depsgraph)
+            if props is None:
+                continue
+            if not _collision_overlay_matches_preview_group(props, preview_group, include_passive=include_passive_collision):
+                continue
+            group = min(max(int(props.primary_collision_group), 1), _COLLISION_GROUP_COUNT)
+            cached = _get_mesh_vertex_lines_cached(obj, props, depsgraph, frame, use_pin_color, group)
+            if use_pin_color:
+                pin_lines.extend(cached.get("pin") or [])
+                unpin_lines.extend(cached.get("unpin") or [])
+            else:
+                mesh_vertex_lines_by_group[group].extend(cached.get("lines") or [])
 
     if (
         not any(collision_lines_by_group.values())
@@ -485,10 +501,10 @@ def _draw_collision_overlay():
     gpu.state.depth_test_set("NONE")
     gpu.state.depth_mask_set(False)
     try:
-        for group, group_lines in collision_lines_by_group.items():
-            _draw_line_batch(shader, group_lines, _collision_group_color(group), 1.5)
-        for group, group_lines in mesh_vertex_lines_by_group.items():
-            _draw_line_batch(shader, group_lines, _collision_group_color(group), 1.0)
+        for group, lines in collision_lines_by_group.items():
+            _draw_line_batch(shader, lines, _collision_group_color(group), 1.5)
+        for group, lines in mesh_vertex_lines_by_group.items():
+            _draw_line_batch(shader, lines, _collision_group_color(group), 1.0)
         _draw_line_batch(shader, pin_lines, _PIN_COLOR, 1.5)
         _draw_line_batch(shader, unpin_lines, _UNPIN_COLOR, 1.0)
     finally:
