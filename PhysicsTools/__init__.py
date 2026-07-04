@@ -1,7 +1,7 @@
 import bpy
 from bpy.props import BoolProperty, EnumProperty, PointerProperty
 
-from .collisionOperators import (
+from .physicsOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
@@ -28,7 +28,7 @@ from .collisionPreview import (
     draw_collision_overlay_header,
 )
 from .physicsProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
-from .collisionUtils import _overlay_show_update
+from .physicsUtils import _overlay_show_update
 
 
 cls = [

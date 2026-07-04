@@ -2,7 +2,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
-from .collisionUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
+from .physicsUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
 
 
 def _mesh_object_poll(self, obj):

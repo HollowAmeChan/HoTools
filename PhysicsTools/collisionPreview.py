@@ -1,11 +1,11 @@
-﻿import bpy
+import bpy
 import gpu
 import math
 import mathutils
 from bpy.types import Panel
 from gpu_extras.batch import batch_for_shader
 
-from .collisionUtils import (
+from .physicsUtils import (
     _COLLISION_GROUP_COUNT,
     _PIN_COLOR,
     _SHAPE_SEGMENTS,

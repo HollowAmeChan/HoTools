@@ -2,7 +2,7 @@ import mathutils
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
 from bpy.types import Operator
 
-from .collisionUtils import (
+from .physicsUtils import (
     _COLLISION_GROUP_COUNT,
     _active_armature_object,
     _active_collision_props,
@@ -18,7 +18,7 @@ from .collisionUtils import (
     _set_collision_group_bit,
     _tag_view3d_redraw,
 )
-from .collisionBasePose import ensure_base_pose_proxy
+from .meshClothBasePose import ensure_base_pose_proxy
 
 
 class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):
