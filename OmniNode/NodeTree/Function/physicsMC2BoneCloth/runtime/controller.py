@@ -15,15 +15,13 @@ per-frame base pose 同步、collider 快照、跳帧冷启动、solver 调用�
 
 from __future__ import annotations
 
-import time
-
 import bpy
 
 from ....OmniNodeSocketMapping import _OmniCache
 from ...physicsMC2MeshCloth import collision, state as mc2_state
 from ...physicsMC2MeshCloth.backends import normalize_backend_label, solver_for_backend
 from ...physicsMC2MeshCloth.runtime.restart import cold_restart_runtime_state
-from ...physicsMC2MeshCloth.runtime.timing import begin_timing, publish_debug_timing
+from ...physicsMC2MeshCloth.runtime.timing import begin_timing
 from .. import bone_build, bone_io
 
 
@@ -53,11 +51,65 @@ def _write_records_cache(cache_owner: mc2_state.MC2RuntimeOwner) -> dict:
     return cache_owner.runtime_cache("bonecloth_io")
 
 
+
+def _extract_chain_physics(chains: list) -> dict:
+    """从骨链列表提取代表性物理参数（取第一条有 params 的链）。
+
+    当所有链使用相同物理参数时，直接作为 solve_func 的标量输入；
+    链间有差异时，extract 提供基准值，expand_chain_params_to_particle_arrays
+    负责构建 per-particle 覆盖数组。无任何链有 params 时返回系统默认值。
+    """
+    from ...physicsMC2MeshCloth.constants import MC2SystemConstants as _C
+    defaults = {
+        "rotational_interpolation":              1.0,
+        "blend_weight":                          1.0,
+        "damping":                               0.2,
+        "damping_curve":                         None,
+        "use_tether":                            True,
+        "tether_compression":                    _C.TETHER_COMPRESSION_LIMIT,
+        "use_distance":                          True,
+        "distance_stiffness":                    1.0,
+        "distance_stiffness_curve":              None,
+        "use_bend":                              True,
+        "bend_stiffness":                        0.5,
+        "bend_stiffness_curve":                  None,
+        "use_angle_restoration":                 True,
+        "angle_restoration_stiffness":           0.2,
+        "angle_restoration_stiffness_curve":     None,
+        "angle_restoration_velocity_attenuation": _C.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
+        "angle_restoration_velocity_attenuation_curve": None,
+        "angle_restoration_gravity_falloff":     _C.ANGLE_RESTORATION_GRAVITY_FALLOFF,
+        "use_angle_limit":                       False,
+        "angle_limit":                           0.0,
+        "angle_limit_curve":                     None,
+        "angle_limit_stiffness":                 1.0,
+        "use_max_distance":                      False,
+        "max_distance":                          0.0,
+        "max_distance_curve":                    None,
+        "use_backstop":                          False,
+        "backstop_radius":                       0.0,
+        "backstop_distance":                     0.0,
+        "backstop_distance_curve":               None,
+        "motion_stiffness":                      1.0,
+        "normal_axis":                           1,
+        "animation_pose_ratio":                  0.0,
+        "use_collider_collision":                True,
+        "collider_friction":                     0.05,
+        "collider_collision_mode":               1,
+    }
+    for chain in chains:
+        params = chain.get("params")
+        if isinstance(params, dict) and params:
+            merged = dict(defaults)
+            merged.update(params)
+            return merged
+    return defaults
+
+
 def run_bone_cloth_mc2_node(
     cache_state: _OmniCache,
     bone_cloth_chains,
     connection_mode: int,
-    rotational_interpolation: float,
     scene: bpy.types.Scene,
     enabled: bool,
     reset: bool,
@@ -67,27 +119,6 @@ def run_bone_cloth_mc2_node(
     gravity_power: float,
     gravity_falloff: float,
     stablization_time_after_reset: float,
-    blend_weight: float,
-    damping: float,
-    damping_curve,
-    use_tether: bool,
-    tether_compression: float,
-    use_distance: bool,
-    distance_stiffness: float,
-    distance_stiffness_curve,
-    use_bend: bool,
-    bend_stiffness: float,
-    bend_stiffness_curve,
-    use_angle_restoration: bool,
-    angle_restoration_stiffness: float,
-    angle_restoration_stiffness_curve,
-    angle_restoration_velocity_attenuation: float,
-    angle_restoration_velocity_attenuation_curve,
-    angle_restoration_gravity_falloff: float,
-    use_angle_limit: bool,
-    angle_limit: float,
-    angle_limit_curve,
-    angle_limit_stiffness: float,
     anchor_obj: bpy.types.Object,
     anchor_inertia: float,
     world_inertia: float,
@@ -103,19 +134,6 @@ def run_bone_cloth_mc2_node(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
-    animation_pose_ratio: float,
-    use_max_distance: bool,
-    max_distance: float,
-    max_distance_curve,
-    use_backstop: bool,
-    backstop_radius: float,
-    backstop_distance: float,
-    backstop_distance_curve,
-    motion_stiffness: float,
-    normal_axis: int,
-    use_collider_collision: bool,
-    collider_friction: float,
-    collider_collision_mode: int,
     time_scale: float,
     skip_writing: bool,
     debug_output: bool,
@@ -149,6 +167,44 @@ def run_bone_cloth_mc2_node(
     if not chains:
         _dispose_cache_value(cache_state)
         return _OmniCache.replace(None), armature, 0, 0
+
+    # 从链的 params 字段提取物理参数（骨链物理参数-MC2 节点写入）
+    physics = _extract_chain_physics(chains)
+    rotational_interpolation = physics["rotational_interpolation"]
+    blend_weight             = physics["blend_weight"]
+    damping                  = physics["damping"]
+    damping_curve            = physics["damping_curve"]
+    use_tether               = physics["use_tether"]
+    tether_compression       = physics["tether_compression"]
+    use_distance             = physics["use_distance"]
+    distance_stiffness       = physics["distance_stiffness"]
+    distance_stiffness_curve = physics["distance_stiffness_curve"]
+    use_bend                 = physics["use_bend"]
+    bend_stiffness           = physics["bend_stiffness"]
+    bend_stiffness_curve     = physics["bend_stiffness_curve"]
+    use_angle_restoration    = physics["use_angle_restoration"]
+    angle_restoration_stiffness = physics["angle_restoration_stiffness"]
+    angle_restoration_stiffness_curve = physics["angle_restoration_stiffness_curve"]
+    angle_restoration_velocity_attenuation = physics["angle_restoration_velocity_attenuation"]
+    angle_restoration_velocity_attenuation_curve = physics["angle_restoration_velocity_attenuation_curve"]
+    angle_restoration_gravity_falloff = physics["angle_restoration_gravity_falloff"]
+    use_angle_limit          = physics["use_angle_limit"]
+    angle_limit              = physics["angle_limit"]
+    angle_limit_curve        = physics["angle_limit_curve"]
+    angle_limit_stiffness    = physics["angle_limit_stiffness"]
+    use_max_distance         = physics["use_max_distance"]
+    max_distance             = physics["max_distance"]
+    max_distance_curve       = physics["max_distance_curve"]
+    use_backstop             = physics["use_backstop"]
+    backstop_radius          = physics["backstop_radius"]
+    backstop_distance        = physics["backstop_distance"]
+    backstop_distance_curve  = physics["backstop_distance_curve"]
+    motion_stiffness         = physics["motion_stiffness"]
+    normal_axis              = physics["normal_axis"]
+    animation_pose_ratio     = physics["animation_pose_ratio"]
+    use_collider_collision   = physics["use_collider_collision"]
+    collider_friction        = physics["collider_friction"]
+    collider_collision_mode  = physics["collider_collision_mode"]
 
     bone_names = bone_build.flatten_chain_bone_names(chains)
     vertex_count = len(bone_names)
@@ -446,7 +502,9 @@ def run_bone_cloth_mc2_node(
             armature, chains, write_records,
             next_state["display_positions"], next_state["base_positions"],
             rotational_interpolation,
-            float(next_state.get("blend_weight", blend_weight)),
+            # 使用用户配置的 blend_weight（而非 state["blend_weight"]，
+            # 那是 MC2 内部速度/混合累加器，初值为 0，在 BoneCloth 写回时不适用）。
+            blend_weight,
             write_runtime=io_cache,
             step_basic_rotations=next_state.get("step_basic_rotations"),
             vertex_local_positions=next_state.get("vertex_local_positions"),

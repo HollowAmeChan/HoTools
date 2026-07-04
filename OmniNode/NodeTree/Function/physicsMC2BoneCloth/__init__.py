@@ -3,8 +3,10 @@
 骨骼布料解算器：把多条骨链当作布料粒子求解，支持按 root 列表顺序自动生成横向约束，
 解决链骨只有纵向约束、相邻链互相穿插飘散的痛点。
 
-与网格布料-MC2 共用同一套 solver kernel（distance/angle/bend/tether/collision/inertia/motion/post），
-只替换 I/O：输入 armature + 根骨骼列表，输出写回 PoseBone.matrix_basis。
+节点拓扑（对齐 VRM SpringBone per-chain 参数设计）：
+  骨骼布料-物理属性-MC2  →  骨骼布料-MC2（解算器）
+  │  接受根骨骼，采集子链，携带完整物理参数
+  └─ 多个本节点输出可直接连入解算器多重输入，每组骨链独立调参
 
 连接模式：
   0 = 仅纵向    只连父子骨，无横向
@@ -41,172 +43,13 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
 
 @omni(
     enable=True,
-    bl_label="骨骼布料-MC2链设置",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=["根骨骼", "启用"],
-    _OUTPUT_NAME=["骨链设置"],
-    omni_description="""
-    以根骨骼的每个直接子骨作为独立链的 root，采集所有平级骨链。
-
-    适合"中控骨 + 多条平级骨串"结构（如裙摆 Skirt_0 下挂多条链）：
-    传入中控骨，自动收集全部子骨链，返回链列表接入"骨骼布料-MC2"的多重输入。
-    根骨骼（Root/中控骨）本身不参与物理，每条子链的根骨为固定锚点。
-    """,
-)
-def boneClothMC2ChainSetting(
-    root_bone: _OmniBone,
-    enabled: bool = True,
-) -> typing.Any:
-    if not isinstance(root_bone, dict):
-        raise ValueError("root_bone is invalid")
-    armature_obj = root_bone.get("armature")
-    bone_name = str(root_bone.get("bone") or "").strip()
-    if (
-        not isinstance(armature_obj, bpy.types.Object)
-        or armature_obj.type != "ARMATURE"
-        or not bone_name
-    ):
-        raise ValueError(f"root_bone is invalid: armature={armature_obj} bone={bone_name}")
-
-    pose_bone = armature_obj.pose.bones.get(bone_name)
-    if pose_bone is None:
-        raise ValueError(f"骨骼未找到：{bone_name}")
-    child_names = [c.name for c in (pose_bone.children or [])]
-    if not child_names:
-        raise ValueError(f"骨骼 {bone_name} 没有直接子骨，无法采集骨链")
-    chains = _bone_build.collect_bone_chains(armature_obj, child_names)
-    if not chains:
-        raise ValueError(f"子骨链采集失败：{child_names}")
-    return [
-        {
-            "armature": armature_obj,
-            "root_bone": ch["root"],
-            "bones": ch["bones"],
-            "enabled": bool(enabled),
-        }
-        for ch in chains
-    ]
-
-
-@omni(
-    enable=True,
-    bl_label="骨链物理参数-MC2",
+    bl_label="骨骼布料-物理属性-MC2",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "骨链设置",
-        "阻尼",
-        "距离刚度",
-        "弯曲刚度",
-        "角度恢复",
-        "角度恢复速度衰减",
-        "角度恢复重力衰减",
-        "角度限制",
-        "角度限制刚度",
-        "Tether压缩",
-        "混合权重",
-        "旋转插值",
-    ],
-    input_init={
-        "damping":          {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
-        "distance_stiffness":{"min_value": -1.0, "max_value": 1.0,  "description": "-1 = 使用解算器全局值。"},
-        "bend_stiffness":   {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
-        "angle_restoration_stiffness": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
-        "angle_restoration_velocity_attenuation": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
-        "angle_restoration_gravity_falloff": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
-        "angle_limit":      {"min_value": -1.0, "max_value": 180.0, "description": "-1 = 使用解算器全局值。"},
-        "angle_limit_stiffness": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
-        "tether_compression":{"min_value": -1.0, "max_value": 1.0,  "description": "-1 = 使用解算器全局值。"},
-        "blend_weight":     {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
-        "rotational_interpolation": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
-    },
-    _OUTPUT_NAME=["骨链设置"],
-    omni_description="""
-    为一组骨链批量设置独立物理参数（与 VRM SpringBone 链级参数对齐）。
-
-    接收"骨链设置"列表，为其中每条链附加相同的物理参数覆盖值，输出增强后的链设置。
-    对接入"骨骼布料-MC2"时，per-chain 参数优先级高于解算器节点上的全局参数。
-
-    用法：
-      - 参数值设为 -1 表示"继承解算器全局值"（不覆盖）。
-      - 多个骨链组各自接一个本节点，即可让不同组有不同物理表现（如头发软、裙子硬）。
-      - 本节点输出仍是骨链设置列表，可直接接入解算器的"骨链设置"多重输入。
-    """,
-)
-def boneClothMC2ChainPhysics(
-    bone_cloth_chains: list[typing.Any] = None,
-    damping: float = -1.0,
-    distance_stiffness: float = -1.0,
-    bend_stiffness: float = -1.0,
-    angle_restoration_stiffness: float = -1.0,
-    angle_restoration_velocity_attenuation: float = -1.0,
-    angle_restoration_gravity_falloff: float = -1.0,
-    angle_limit: float = -1.0,
-    angle_limit_stiffness: float = -1.0,
-    tether_compression: float = -1.0,
-    blend_weight: float = -1.0,
-    rotational_interpolation: float = -1.0,
-) -> typing.Any:
-    """为输入的骨链批量附加 per-chain 物理参数。
-
-    -1 表示不覆盖（解算器全局值生效）。各参数独立判断，可以只覆盖部分参数。
-    """
-    settings = _bone_build.flatten_bone_cloth_chain_settings(bone_cloth_chains)
-    if not settings:
-        raise ValueError("骨链设置为空或无效")
-
-    # 收集非 -1 的参数（即有明确覆盖意图的参数）
-    override_map: dict = {}
-    _candidates = {
-        "damping":                               float(damping),
-        "distance_stiffness":                    float(distance_stiffness),
-        "bend_stiffness":                        float(bend_stiffness),
-        "angle_restoration_stiffness":           float(angle_restoration_stiffness),
-        "angle_restoration_velocity_attenuation": float(angle_restoration_velocity_attenuation),
-        "angle_restoration_gravity_falloff":     float(angle_restoration_gravity_falloff),
-        "angle_limit":                           float(angle_limit),
-        "angle_limit_stiffness":                 float(angle_limit_stiffness),
-        "tether_compression":                    float(tether_compression),
-        "blend_weight":                          float(blend_weight),
-        "rotational_interpolation":              float(rotational_interpolation),
-    }
-    for name, val in _candidates.items():
-        if val >= 0.0:  # -1 表示不覆盖；>=0 的值均为有效覆盖
-            override_map[name] = val
-
-    # 附加 params 覆盖到每条链设置，不改变其他字段
-    result = []
-    for setting in settings:
-        new_setting = dict(setting)
-        existing_params = dict(setting.get("params") or {})
-        # 新覆盖值写在后，相同参数新值优先（允许链式叠加多个 ChainPhysics 节点）
-        existing_params.update(override_map)
-        if existing_params:
-            new_setting["params"] = existing_params
-        result.append(new_setting)
-    return result
-
-
-@omni(
-    enable=True,
-    bl_label="骨骼布料-MC2",
-    base_color=_Color.colorCat["Operator"],
-    is_output_node=False,
-    _INPUT_NAME=[
-        "缓存",
-        "骨链设置",
-        "连接模式",
-        "旋转插值",
-        "场景",
+        "根骨骼",
         "启用",
-        "重置",
-        "子步数",
-        "迭代",
-        "重力方向",
-        "重力强度",
-        "重力衰减",
-        "重置后稳定时间",
+        "旋转插值",
         "混合权重",
         "阻尼",
         "阻尼曲线",
@@ -228,22 +71,6 @@ def boneClothMC2ChainPhysics(
         "角度限制",
         "角度限制曲线",
         "角度限制刚度",
-        "Anchor物体",
-        "Anchor惯性",
-        "World惯性",
-        "World惯性平滑",
-        "Local惯性",
-        "深度惯性",
-        "离心力",
-        "World移动限速",
-        "World旋转限速",
-        "Local移动限速",
-        "Local旋转限速",
-        "粒子限速",
-        "Teleport模式",
-        "Teleport距离",
-        "Teleport旋转",
-        "动画姿态比例",
         "最大距离启用",
         "最大距离",
         "最大距离曲线",
@@ -253,111 +80,59 @@ def boneClothMC2ChainPhysics(
         "Backstop距离曲线",
         "Motion刚度",
         "法线轴",
+        "动画姿态比例",
         "碰撞启用",
         "碰撞摩擦",
         "碰撞模式",
-        "时间缩放",
-        "跳过写回",
-        "调试输出",
     ],
     input_init={
-        "connection_mode": {
-            "min_value": 0,
-            "max_value": 2,
-            "description": "0仅纵向，1顺序连接相邻链（默认），2顺序成环。按根骨列表顺序连接，不做距离查找。",
-        },
-        "rotational_interpolation": {
-            "min_value": 0.0,
-            "max_value": 1.0,
-            "description": "骨骼旋转跟随程度：0保持初始朝向，1完全跟随模拟方向。",
-        },
-        "substeps": {"min_value": 1, "max_value": 16, "description": "每帧子步数，越大越稳定但越贵。裙摆建议 2，不稳定时加到 4~8。"},
-        "iterations": {"min_value": 0, "max_value": 64, "description": "每子步约束迭代次数，增大使布料更硬、碰撞更准确。"},
-        "gravity_power": {"min_value": 0.0, "max_value": 100.0, "description": "重力强度（m/s²），预设会覆盖此值。"},
-        "gravity_falloff": {"min_value": 0.0, "max_value": 1.0, "description": "按粒子朝向与重力夹角衰减重力：0 = 不衰减，1 = 垂直时重力为 0。"},
-        "stablization_time_after_reset": {"min_value": 0.0, "max_value": 1.0, "description": "冷启动后速度权重爬升到 1 所需的秒数，防止初始帧抖动。"},
-        "blend_weight": {"min_value": 0.0, "max_value": 1.0, "description": "物理混合权重：0 = 完全 BasePose，1 = 完全物理结果。"},
-        "damping": {"min_value": 0.0, "max_value": 1.0, "description": "速度阻尼，控制振荡衰减速度，越大收敛越快但晃动感越少。"},
-        "damping_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "tether_compression": {"min_value": 0.0, "max_value": 1.0, "description": "Tether 约束压缩限制：值越大越限制骨链向根骨方向压缩。"},
+        "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0,
+            "description": "骨骼旋转跟随程度：0保持初始朝向，1完全跟随模拟方向。"},
+        "blend_weight":     {"min_value": 0.0, "max_value": 1.0,
+            "description": "物理混合权重：0=完全BasePose，1=完全物理结果。"},
+        "damping":          {"min_value": 0.0, "max_value": 1.0},
+        "damping_curve":    {"default_value": _mc2_curve_multiplier(1.0)},
+        "tether_compression": {"min_value": 0.0, "max_value": 1.0},
         "distance_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "distance_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "bend_stiffness": {"min_value": 0.0, "max_value": 1.0, "description": "弯曲约束刚度。Line 模式无三角形时意义不大；Sequential 模式横向约束后才有效。"},
+        "bend_stiffness":   {"min_value": 0.0, "max_value": 1.0},
         "bend_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "angle_restoration_stiffness": {"min_value": 0.0, "max_value": 1.0, "description": "角度恢复刚度，控制骨骼弹回初始朝向的弹簧强度。"},
+        "angle_restoration_stiffness": {"min_value": 0.0, "max_value": 1.0},
         "angle_restoration_stiffness_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "angle_restoration_velocity_attenuation": {"min_value": 0.0, "max_value": 1.0, "description": "角度恢复时的速度衰减，防止恢复力过强导致振荡。"},
+        "angle_restoration_velocity_attenuation": {"min_value": 0.0, "max_value": 1.0},
         "angle_restoration_velocity_attenuation_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "angle_restoration_gravity_falloff": {"min_value": 0.0, "max_value": 1.0, "description": "重力方向上角度恢复衰减：0 = 各方向均匀，1 = 垂直重力方向不恢复。"},
-        "angle_limit": {"min_value": 0.0, "max_value": 180.0, "description": "最大允许偏转角（度），超出时约束限制骨骼旋转，0 = 不限制。"},
+        "angle_restoration_gravity_falloff": {"min_value": 0.0, "max_value": 1.0},
+        "angle_limit":      {"min_value": 0.0, "max_value": 180.0},
         "angle_limit_curve": {"default_value": _mc2_curve_multiplier(1.0)},
         "angle_limit_stiffness": {"min_value": 0.0, "max_value": 1.0},
-        "anchor_inertia": {"min_value": 0.0, "max_value": 1.0, "description": "Anchor 物体惯性影响：0 = 忽略 Anchor 运动，1 = 完全跟随。"},
-        "world_inertia": {"min_value": 0.0, "max_value": 1.0, "description": "世界空间惯性：1 = 骨架移动时布料最大滞后效果，0 = 立即跟随。"},
-        "movement_inertia_smoothing": {"min_value": 0.0, "max_value": 1.0, "description": "移动速度平滑系数，值越大惯性响应越顺滑越慢。"},
-        "local_inertia": {"min_value": 0.0, "max_value": 1.0, "description": "局部惯性：响应骨架旋转运动，1 = 最大旋转惯性。"},
-        "depth_inertia": {"min_value": 0.0, "max_value": 1.0, "description": "深度惯性：叶子骨惯性比根骨更大，0 = 各深度均匀，1 = 叶子骨惯性最大。"},
-        "centrifugal": {"min_value": 0.0, "max_value": 1.0, "description": "离心力系数：旋转时向外张开，使裙摆旋转时展开。"},
-        "movement_speed_limit": {"min_value": -1.0, "max_value": 10.0, "description": "世界空间移动限速（m/s），-1 = 不限制。限制可防止极端惯性时骨骼飞出。"},
-        "rotation_speed_limit": {"min_value": -1.0, "max_value": 1440.0, "description": "世界空间旋转限速（°/s），-1 = 不限制。"},
-        "local_movement_speed_limit": {"min_value": -1.0, "max_value": 10.0, "description": "局部空间移动限速（m/s），-1 = 不限制。"},
-        "local_rotation_speed_limit": {"min_value": -1.0, "max_value": 1440.0, "description": "局部空间旋转限速（°/s），-1 = 不限制。"},
-        "particle_speed_limit": {"min_value": -1.0, "max_value": 10.0, "description": "单粒子速度上限（m/s），防止粒子速度爆炸，-1 = 不限制。"},
-        "teleport_mode": {
-            "min_value": 0,
-            "max_value": 2,
-            "description": "0 = 不检测；1 = 重置（推荐，检测到瞬移时重置速度）；2 = 保持（保留位置但重设速度）。",
-        },
-        "teleport_distance": {"min_value": 0.0, "description": "触发 Teleport 的移动距离阈值（m）。"},
-        "teleport_rotation": {"min_value": 0.0, "description": "触发 Teleport 的旋转角度阈值（°）。"},
-        "animation_pose_ratio": {"min_value": 0.0, "max_value": 1.0, "description": "0 = 用初始姿态距离作为约束静止长度，1 = 每帧更新为当前动画姿态距离。"},
-        "max_distance": {"min_value": 0.0, "description": "粒子距初始位置的最大位移（m），超出时被拉回，0 = 不限制。"},
+        "max_distance":     {"min_value": 0.0},
         "max_distance_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "backstop_radius": {"min_value": 0.0, "max_value": 10.0, "description": "Backstop 胶囊体半径（m），防止布料穿入角色身体。"},
-        "backstop_distance": {"min_value": 0.0, "description": "Backstop 从初始位置沿法线方向的偏移距离（m）。"},
+        "backstop_radius":  {"min_value": 0.0, "max_value": 10.0},
+        "backstop_distance": {"min_value": 0.0},
         "backstop_distance_curve": {"default_value": _mc2_curve_multiplier(1.0)},
-        "motion_stiffness": {"min_value": 0.0, "max_value": 1.0, "description": "Motion 约束弹簧强度，控制粒子被拉向 max_distance/backstop 边界的弹力。"},
-        "normal_axis": {
-            "min_value": 0,
-            "max_value": 5,
-            "description": "法线轴用于 Motion/Backstop 判断方向：0=+X 1=+Y（上，默认） 2=+Z 3=-X 4=-Y 5=-Z。",
-        },
+        "motion_stiffness": {"min_value": 0.0, "max_value": 1.0},
+        "normal_axis":      {"min_value": 0, "max_value": 5,
+            "description": "0=+X 1=+Y 2=+Z 3=-X 4=-Y 5=-Z"},
+        "animation_pose_ratio": {"min_value": 0.0, "max_value": 1.0},
         "collider_friction": {"min_value": 0.0, "max_value": 0.5},
-        "collider_collision_mode": {
-            "min_value": 0,
-            "max_value": 2,
-            "description": "0 = 关闭；1 = 点碰撞（默认，每粒子做球/胶囊检测）；2 = 边碰撞（更精确但更贵）。",
-        },
-        "time_scale": {"min_value": 0.0, "max_value": 1.0, "description": "时间缩放（0~1）：0 = 暂停物理推进，1 = 正常速度。"},
+        "collider_collision_mode": {"min_value": 0, "max_value": 2,
+            "description": "0=关闭 1=点碰撞 2=边碰撞"},
     },
-    _OUTPUT_NAME=["缓存", "骨架", "骨骼数", "约束数"],
+    _OUTPUT_NAME=["骨链设置"],
     omni_presets=BONE_CLOTH_PRESETS,
     omni_description="""
-    MC2 风格骨骼布料 Python 参考解算器。
+    骨骼布料链设置 + 物理参数（合并节点，对齐 VRM SpringBone per-chain 参数设计）。
 
-    输入一个骨架和多条骨链的根骨骼（多重输入）。每根骨骼 head 作为一个布料粒子，
-    root 骨作为固定锚点。solver 与网格布料-MC2 同源，只替换骨骼 I/O。
+    传入"中控骨/父骨"，自动采集其所有直接子链；同时携带该组骨链的完整物理参数。
+    不同骨链组（头发/裙摆/尾巴）各接一个本节点，实现独立调参。
 
-    横向约束按“根骨骼”列表顺序连接相邻链，不做空间距离查找：用户填入列表的顺序
-    就是布料面的横向走向。骨骼名一般带顺时针/逆时针序号，直接按序填入即可。
-
-    结果写回 PoseBone.matrix_basis，只改骨骼旋转不改位置，兼容 connected 骨。
+    骨骼布料-MC2 解算器不再有物理参数输入，所有物理参数均由本节点提供。
     """,
 )
-def boneClothMC2(
-    cache_state: _OmniCache,
-    bone_cloth_chains: list[typing.Any] = None,
-    connection_mode: int = 1,
-    rotational_interpolation: float = 1.0,
-    scene: bpy.types.Scene = None,
+def boneClothMC2ChainPhysics(
+    root_bone: _OmniBone,
     enabled: bool = True,
-    reset: bool = False,
-    substeps: int = 1,
-    iterations: int = 4,
-    gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
-    gravity_power: float = 9.8,
-    gravity_falloff: float = 0.0,
-    stablization_time_after_reset: float = 0.1,
+    rotational_interpolation: float = 1.0,
     blend_weight: float = 1.0,
     damping: float = 0.2,
     damping_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
@@ -379,6 +154,153 @@ def boneClothMC2(
     angle_limit: float = 0.0,
     angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
     angle_limit_stiffness: float = 1.0,
+    use_max_distance: bool = False,
+    max_distance: float = 0.0,
+    max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    use_backstop: bool = False,
+    backstop_radius: float = 0.0,
+    backstop_distance: float = 0.0,
+    backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
+    motion_stiffness: float = 1.0,
+    normal_axis: int = 1,
+    animation_pose_ratio: float = 0.0,
+    use_collider_collision: bool = True,
+    collider_friction: float = 0.05,
+    collider_collision_mode: int = 1,
+) -> typing.Any:
+    """采集骨链并附加完整 per-chain 物理参数，输出供解算器消费的链设置列表。"""
+    # 从根骨骼（中控骨）采集子骨链
+    if not isinstance(root_bone, dict):
+        raise ValueError("root_bone is invalid")
+    armature_obj = root_bone.get("armature")
+    bone_name = str(root_bone.get("bone") or "").strip()
+    if (
+        not isinstance(armature_obj, bpy.types.Object)
+        or armature_obj.type != "ARMATURE"
+        or not bone_name
+    ):
+        raise ValueError(f"root_bone 无效：armature={armature_obj} bone={bone_name}")
+    pose_bone = armature_obj.pose.bones.get(bone_name)
+    if pose_bone is None:
+        raise ValueError(f"骨骼未找到：{bone_name}")
+    child_names = [c.name for c in (pose_bone.children or [])]
+    if not child_names:
+        raise ValueError(f"骨骼 {bone_name} 没有直接子骨，无法采集骨链")
+    chains = _bone_build.collect_bone_chains(armature_obj, child_names)
+    if not chains:
+        raise ValueError(f"子骨链采集失败：{child_names}")
+
+    physics = {
+        "rotational_interpolation":                      float(rotational_interpolation),
+        "blend_weight":                                  float(blend_weight),
+        "damping":                                       float(damping),
+        "damping_curve":                                 damping_curve,
+        "use_tether":                                    bool(use_tether),
+        "tether_compression":                            float(tether_compression),
+        "use_distance":                                  bool(use_distance),
+        "distance_stiffness":                            float(distance_stiffness),
+        "distance_stiffness_curve":                      distance_stiffness_curve,
+        "use_bend":                                      bool(use_bend),
+        "bend_stiffness":                                float(bend_stiffness),
+        "bend_stiffness_curve":                          bend_stiffness_curve,
+        "use_angle_restoration":                         bool(use_angle_restoration),
+        "angle_restoration_stiffness":                   float(angle_restoration_stiffness),
+        "angle_restoration_stiffness_curve":             angle_restoration_stiffness_curve,
+        "angle_restoration_velocity_attenuation":        float(angle_restoration_velocity_attenuation),
+        "angle_restoration_velocity_attenuation_curve":  angle_restoration_velocity_attenuation_curve,
+        "angle_restoration_gravity_falloff":             float(angle_restoration_gravity_falloff),
+        "use_angle_limit":                               bool(use_angle_limit),
+        "angle_limit":                                   float(angle_limit),
+        "angle_limit_curve":                             angle_limit_curve,
+        "angle_limit_stiffness":                         float(angle_limit_stiffness),
+        "use_max_distance":                              bool(use_max_distance),
+        "max_distance":                                  float(max_distance),
+        "max_distance_curve":                            max_distance_curve,
+        "use_backstop":                                  bool(use_backstop),
+        "backstop_radius":                               float(backstop_radius),
+        "backstop_distance":                             float(backstop_distance),
+        "backstop_distance_curve":                       backstop_distance_curve,
+        "motion_stiffness":                              float(motion_stiffness),
+        "normal_axis":                                   int(normal_axis),
+        "animation_pose_ratio":                          float(animation_pose_ratio),
+        "use_collider_collision":                        bool(use_collider_collision),
+        "collider_friction":                             float(collider_friction),
+        "collider_collision_mode":                       int(collider_collision_mode),
+    }
+
+    return [
+        {
+            "armature": armature_obj,
+            "root_bone": ch["root"],
+            "bones":     ch["bones"],
+            "enabled":   bool(enabled),
+            "params":    physics,
+        }
+        for ch in chains
+    ]
+
+
+@omni(
+    enable=True,
+    bl_label="骨骼布料-MC2",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "缓存", "骨链设置", "连接模式", "场景", "启用", "重置",
+        "子步数", "迭代", "重力方向", "重力强度", "重力衰减",
+        "重置后稳定时间", "Anchor物体", "Anchor惯性",
+        "World惯性", "World惯性平滑", "Local惯性", "深度惯性", "离心力",
+        "World移动限速", "World旋转限速", "Local移动限速", "Local旋转限速", "粒子限速",
+        "Teleport模式", "Teleport距离", "Teleport旋转",
+        "时间缩放", "跳过写回", "调试输出",
+    ],
+    input_init={
+        "connection_mode": {"min_value": 0, "max_value": 2,
+            "description": "0仅纵向，1顺序连接相邻链（默认），2顺序成环。"},
+        "substeps":   {"min_value": 1, "max_value": 16},
+        "iterations": {"min_value": 0, "max_value": 64},
+        "gravity_power":   {"min_value": 0.0, "max_value": 100.0},
+        "gravity_falloff": {"min_value": 0.0, "max_value": 1.0,
+            "description": "按粒子朝向与重力夹角衰减重力：0=不衰减，1=垂直时重力为0。"},
+        "stablization_time_after_reset": {"min_value": 0.0, "max_value": 1.0},
+        "anchor_inertia": {"min_value": 0.0, "max_value": 1.0},
+        "world_inertia":  {"min_value": 0.0, "max_value": 1.0},
+        "movement_inertia_smoothing": {"min_value": 0.0, "max_value": 1.0},
+        "local_inertia":  {"min_value": 0.0, "max_value": 1.0},
+        "depth_inertia":  {"min_value": 0.0, "max_value": 1.0},
+        "centrifugal":    {"min_value": 0.0, "max_value": 1.0},
+        "movement_speed_limit":       {"min_value": -1.0, "max_value": 10.0},
+        "rotation_speed_limit":       {"min_value": -1.0, "max_value": 1440.0},
+        "local_movement_speed_limit": {"min_value": -1.0, "max_value": 10.0},
+        "local_rotation_speed_limit": {"min_value": -1.0, "max_value": 1440.0},
+        "particle_speed_limit":       {"min_value": -1.0, "max_value": 10.0},
+        "teleport_mode":     {"min_value": 0, "max_value": 2},
+        "teleport_distance": {"min_value": 0.0},
+        "teleport_rotation": {"min_value": 0.0},
+        "time_scale": {"min_value": 0.0, "max_value": 1.0},
+    },
+    _OUTPUT_NAME=["缓存", "骨架", "骨骼数", "约束数"],
+    omni_description="""
+    MC2 骨骼布料解算器（模拟级参数）。
+
+    物理参数（阻尼、刚度、角度约束等）由"骨骼布料-物理属性-MC2"节点提供，
+    通过"骨链设置"多重输入传入。不同骨链组可各接一个物理参数节点实现独立调参。
+    本节点只保留解算器级别参数：子步、重力、惯性、限速、Teleport、时间缩放。
+    """,
+)
+def boneClothMC2(
+    cache_state: _OmniCache,
+    bone_cloth_chains: list[typing.Any] = None,
+    connection_mode: int = 1,
+    scene: bpy.types.Scene = None,
+    enabled: bool = True,
+    reset: bool = False,
+    substeps: int = 1,
+    iterations: int = 4,
+    gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    gravity_power: float = 9.8,
+    gravity_falloff: float = 0.0,
+    stablization_time_after_reset: float = 0.1,
     anchor_obj: bpy.types.Object = None,
     anchor_inertia: float = MC2SystemConstants.ANCHOR_INERTIA,
     world_inertia: float = MC2SystemConstants.WORLD_INERTIA,
@@ -394,89 +316,20 @@ def boneClothMC2(
     teleport_mode: int = 0,
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
-    animation_pose_ratio: float = 0.0,
-    use_max_distance: bool = False,
-    max_distance: float = 0.0,
-    max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    use_backstop: bool = False,
-    backstop_radius: float = 0.0,
-    backstop_distance: float = 0.0,
-    backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    motion_stiffness: float = 1.0,
-    normal_axis: int = 1,
-    use_collider_collision: bool = True,
-    collider_friction: float = 0.05,
-    collider_collision_mode: int = 1,
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_bone_cloth_mc2_node(
-        cache_state,
-        bone_cloth_chains,
-        connection_mode,
-        rotational_interpolation,
-        scene,
-        enabled,
-        reset,
-        substeps,
-        iterations,
-        gravity_dir,
-        gravity_power,
-        gravity_falloff,
-        stablization_time_after_reset,
-        blend_weight,
-        damping,
-        damping_curve,
-        use_tether,
-        tether_compression,
-        use_distance,
-        distance_stiffness,
-        distance_stiffness_curve,
-        use_bend,
-        bend_stiffness,
-        bend_stiffness_curve,
-        use_angle_restoration,
-        angle_restoration_stiffness,
-        angle_restoration_stiffness_curve,
-        angle_restoration_velocity_attenuation,
-        angle_restoration_velocity_attenuation_curve,
-        angle_restoration_gravity_falloff,
-        use_angle_limit,
-        angle_limit,
-        angle_limit_curve,
-        angle_limit_stiffness,
-        anchor_obj,
-        anchor_inertia,
-        world_inertia,
-        movement_inertia_smoothing,
-        local_inertia,
-        depth_inertia,
-        centrifugal,
-        movement_speed_limit,
-        rotation_speed_limit,
-        local_movement_speed_limit,
-        local_rotation_speed_limit,
-        particle_speed_limit,
-        teleport_mode,
-        teleport_distance,
-        teleport_rotation,
-        animation_pose_ratio,
-        use_max_distance,
-        max_distance,
-        max_distance_curve,
-        use_backstop,
-        backstop_radius,
-        backstop_distance,
-        backstop_distance_curve,
-        motion_stiffness,
-        normal_axis,
-        use_collider_collision,
-        collider_friction,
-        collider_collision_mode,
-        time_scale,
-        skip_writing,
-        debug_output,
+        cache_state, bone_cloth_chains, connection_mode, scene,
+        enabled, reset, substeps, iterations,
+        gravity_dir, gravity_power, gravity_falloff, stablization_time_after_reset,
+        anchor_obj, anchor_inertia, world_inertia, movement_inertia_smoothing,
+        local_inertia, depth_inertia, centrifugal,
+        movement_speed_limit, rotation_speed_limit,
+        local_movement_speed_limit, local_rotation_speed_limit, particle_speed_limit,
+        teleport_mode, teleport_distance, teleport_rotation,
+        time_scale, skip_writing, debug_output,
     )
 
 
@@ -496,7 +349,6 @@ def boneClothMC2Cpp(
     cache_state: _OmniCache,
     bone_cloth_chains: list[typing.Any] = None,
     connection_mode: int = 1,
-    rotational_interpolation: float = 1.0,
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
@@ -506,27 +358,6 @@ def boneClothMC2Cpp(
     gravity_power: float = 9.8,
     gravity_falloff: float = 0.0,
     stablization_time_after_reset: float = 0.1,
-    blend_weight: float = 1.0,
-    damping: float = 0.2,
-    damping_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    use_tether: bool = True,
-    tether_compression: float = MC2SystemConstants.TETHER_COMPRESSION_LIMIT,
-    use_distance: bool = True,
-    distance_stiffness: float = 1.0,
-    distance_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    use_bend: bool = True,
-    bend_stiffness: float = 0.5,
-    bend_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    use_angle_restoration: bool = True,
-    angle_restoration_stiffness: float = 0.2,
-    angle_restoration_stiffness_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    angle_restoration_velocity_attenuation: float = MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
-    angle_restoration_velocity_attenuation_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    angle_restoration_gravity_falloff: float = MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
-    use_angle_limit: bool = False,
-    angle_limit: float = 0.0,
-    angle_limit_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    angle_limit_stiffness: float = 1.0,
     anchor_obj: bpy.types.Object = None,
     anchor_inertia: float = MC2SystemConstants.ANCHOR_INERTIA,
     world_inertia: float = MC2SystemConstants.WORLD_INERTIA,
@@ -542,88 +373,20 @@ def boneClothMC2Cpp(
     teleport_mode: int = 0,
     teleport_distance: float = MC2SystemConstants.TELEPORT_DISTANCE,
     teleport_rotation: float = MC2SystemConstants.TELEPORT_ROTATION,
-    animation_pose_ratio: float = 0.0,
-    use_max_distance: bool = False,
-    max_distance: float = 0.0,
-    max_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    use_backstop: bool = False,
-    backstop_radius: float = 0.0,
-    backstop_distance: float = 0.0,
-    backstop_distance_curve: _OmniFloatCurve = _mc2_curve_multiplier(1.0),
-    motion_stiffness: float = 1.0,
-    normal_axis: int = 1,
-    use_collider_collision: bool = True,
-    collider_friction: float = 0.05,
-    collider_collision_mode: int = 1,
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_bone_cloth_mc2_node(
-        cache_state,
-        bone_cloth_chains,
-        connection_mode,
-        rotational_interpolation,
-        scene,
-        enabled,
-        reset,
-        substeps,
-        iterations,
-        gravity_dir,
-        gravity_power,
-        gravity_falloff,
-        stablization_time_after_reset,
-        blend_weight,
-        damping,
-        damping_curve,
-        use_tether,
-        tether_compression,
-        use_distance,
-        distance_stiffness,
-        distance_stiffness_curve,
-        use_bend,
-        bend_stiffness,
-        bend_stiffness_curve,
-        use_angle_restoration,
-        angle_restoration_stiffness,
-        angle_restoration_stiffness_curve,
-        angle_restoration_velocity_attenuation,
-        angle_restoration_velocity_attenuation_curve,
-        angle_restoration_gravity_falloff,
-        use_angle_limit,
-        angle_limit,
-        angle_limit_curve,
-        angle_limit_stiffness,
-        anchor_obj,
-        anchor_inertia,
-        world_inertia,
-        movement_inertia_smoothing,
-        local_inertia,
-        depth_inertia,
-        centrifugal,
-        movement_speed_limit,
-        rotation_speed_limit,
-        local_movement_speed_limit,
-        local_rotation_speed_limit,
-        particle_speed_limit,
-        teleport_mode,
-        teleport_distance,
-        teleport_rotation,
-        animation_pose_ratio,
-        use_max_distance,
-        max_distance,
-        max_distance_curve,
-        use_backstop,
-        backstop_radius,
-        backstop_distance,
-        backstop_distance_curve,
-        motion_stiffness,
-        normal_axis,
-        use_collider_collision,
-        collider_friction,
-        collider_collision_mode,
-        time_scale,
-        skip_writing,
-        debug_output,
+        cache_state, bone_cloth_chains, connection_mode, scene,
+        enabled, reset, substeps, iterations,
+        gravity_dir, gravity_power, gravity_falloff, stablization_time_after_reset,
+        anchor_obj, anchor_inertia, world_inertia, movement_inertia_smoothing,
+        local_inertia, depth_inertia, centrifugal,
+        movement_speed_limit, rotation_speed_limit,
+        local_movement_speed_limit, local_rotation_speed_limit, particle_speed_limit,
+        teleport_mode, teleport_distance, teleport_rotation,
+        time_scale, skip_writing, debug_output,
         solver_backend="cpp",
     )
+

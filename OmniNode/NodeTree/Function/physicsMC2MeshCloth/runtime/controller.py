@@ -55,7 +55,7 @@ def _constraint_count(
         bend_constraint_count = (
             dihedral_constraint_count + volume_constraint_count
             if dihedral_constraint_count > 0 or volume_constraint_count > 0
-            else len(state["bend_distance_i"])
+            else len(state.get("bend_distance_i", ()))
         )
     else:
         bend_constraint_count = 0
@@ -103,7 +103,7 @@ def _constraint_count(
 
 def run_mesh_cloth_mc2_node(
     cache_state: _OmniCache,
-    proxy_obj: bpy.types.Object,
+    mesh_cloth_settings,
     scene: bpy.types.Scene,
     enabled: bool,
     reset: bool,
@@ -113,27 +113,6 @@ def run_mesh_cloth_mc2_node(
     gravity_power: float,
     gravity_falloff: float,
     stablization_time_after_reset: float,
-    blend_weight: float,
-    damping: float,
-    damping_curve,
-    use_tether: bool,
-    tether_compression: float,
-    use_distance: bool,
-    distance_stiffness: float,
-    distance_stiffness_curve,
-    use_bend: bool,
-    bend_stiffness: float,
-    bend_stiffness_curve,
-    use_angle_restoration: bool,
-    angle_restoration_stiffness: float,
-    angle_restoration_stiffness_curve,
-    angle_restoration_velocity_attenuation: float,
-    angle_restoration_velocity_attenuation_curve,
-    angle_restoration_gravity_falloff: float,
-    use_angle_limit: bool,
-    angle_limit: float,
-    angle_limit_curve,
-    angle_limit_stiffness: float,
     anchor_obj: bpy.types.Object,
     anchor_inertia: float,
     world_inertia: float,
@@ -149,20 +128,6 @@ def run_mesh_cloth_mc2_node(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
-    animation_pose_ratio: float,
-    use_max_distance: bool,
-    max_distance: float,
-    max_distance_curve,
-    collision_radius: float,
-    use_backstop: bool,
-    backstop_radius: float,
-    backstop_distance: float,
-    backstop_distance_curve,
-    motion_stiffness: float,
-    normal_axis: int,
-    use_collider_collision: bool,
-    collider_friction: float,
-    collider_collision_mode: int,
     time_scale: float,
     skip_writing: bool,
     debug_output: bool,
@@ -171,6 +136,64 @@ def run_mesh_cloth_mc2_node(
     backend_label = normalize_backend_label(solver_backend)
     timing = begin_timing() if debug_output else None
     stage_start = time.perf_counter() if timing is not None else None
+
+    # 从设置 dict/list 提取低模代理和物理参数
+    # meshClothMC2Setting 现在输出 list 格式，兼容旧版 dict 格式
+    # TODO: 多 proxy 并联支持
+    #   当前只取列表中第一个有效 dict，多个 meshClothMC2Setting 接入同一解算器时
+    #   后续的 proxy 会被静默忽略。要真正支持"一个解算器并联多个不同代理网格"需要：
+    #   1. 为每个 proxy_obj 维护独立的拓扑 state（不同网格顶点数/边/baseline 不同）
+    #   2. 分别 solve 或在同一粒子空间合并（concat particles + offset edge indices）
+    #   3. 分别写回各自的 GN delta attribute
+    #   这是架构级改动，暂不实现。
+    if isinstance(mesh_cloth_settings, (list, tuple)):
+        settings = next(
+            (s for s in mesh_cloth_settings if isinstance(s, dict) and s.get("proxy_obj")),
+            {},
+        )
+    elif isinstance(mesh_cloth_settings, dict):
+        settings = mesh_cloth_settings
+    else:
+        settings = {}
+    proxy_obj = settings.get("proxy_obj")
+    phys_enabled = bool(settings.get("enabled", True))
+    blend_weight               = float(settings.get("blend_weight", 1.0))
+    damping                    = float(settings.get("damping", 0.2))
+    damping_curve              = settings.get("damping_curve")
+    use_tether                 = bool(settings.get("use_tether", True))
+    tether_compression         = float(settings.get("tether_compression", MC2SystemConstants.TETHER_COMPRESSION_LIMIT))
+    use_distance               = bool(settings.get("use_distance", True))
+    distance_stiffness         = float(settings.get("distance_stiffness", 1.0))
+    distance_stiffness_curve   = settings.get("distance_stiffness_curve")
+    use_bend                   = bool(settings.get("use_bend", True))
+    bend_stiffness             = float(settings.get("bend_stiffness", 0.5))
+    bend_stiffness_curve       = settings.get("bend_stiffness_curve")
+    use_angle_restoration      = bool(settings.get("use_angle_restoration", True))
+    angle_restoration_stiffness = float(settings.get("angle_restoration_stiffness", 0.2))
+    angle_restoration_stiffness_curve = settings.get("angle_restoration_stiffness_curve")
+    angle_restoration_velocity_attenuation = float(settings.get("angle_restoration_velocity_attenuation", MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION))
+    angle_restoration_velocity_attenuation_curve = settings.get("angle_restoration_velocity_attenuation_curve")
+    angle_restoration_gravity_falloff = float(settings.get("angle_restoration_gravity_falloff", MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF))
+    use_angle_limit            = bool(settings.get("use_angle_limit", False))
+    angle_limit                = float(settings.get("angle_limit", 0.0))
+    angle_limit_curve          = settings.get("angle_limit_curve")
+    angle_limit_stiffness      = float(settings.get("angle_limit_stiffness", 1.0))
+    collision_radius           = float(settings.get("collision_radius", 0.0))
+    use_max_distance           = bool(settings.get("use_max_distance", False))
+    max_distance               = float(settings.get("max_distance", 0.0))
+    max_distance_curve         = settings.get("max_distance_curve")
+    use_backstop               = bool(settings.get("use_backstop", False))
+    backstop_radius            = float(settings.get("backstop_radius", 0.0))
+    backstop_distance          = float(settings.get("backstop_distance", 0.0))
+    backstop_distance_curve    = settings.get("backstop_distance_curve")
+    motion_stiffness           = float(settings.get("motion_stiffness", 1.0))
+    normal_axis                = int(settings.get("normal_axis", 1))
+    animation_pose_ratio       = float(settings.get("animation_pose_ratio", 0.0))
+    use_collider_collision     = bool(settings.get("use_collider_collision", True))
+    collider_friction          = float(settings.get("collider_friction", 0.05))
+    collider_collision_mode    = int(settings.get("collider_collision_mode", 1))
+
+    enabled = enabled and phys_enabled
     try:
         obj = blender_io.require_mesh_object(proxy_obj, "proxy_obj")
     except ValueError:
