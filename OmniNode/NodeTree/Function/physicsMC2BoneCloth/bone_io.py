@@ -92,13 +92,20 @@ def build_bone_write_records(
 def _matrix_basis_from_target(record, target_matrix, parent_pose_matrices):
     parent = record.get("parent")
     if parent is None or record.get("parent_rest_inv") is None:
-        return record["bone_rest_inv"] @ target_matrix
-    parent_name = record.get("parent_name") or ""
-    parent_matrix = parent_pose_matrices.get(parent_name)
-    if parent_matrix is None:
-        parent_matrix = parent.matrix
-    parent_space = parent_matrix @ record["parent_rest_inv"] @ record["bone_rest"]
-    return parent_space.inverted() @ target_matrix
+        raw = record["bone_rest_inv"] @ target_matrix
+    else:
+        parent_name = record.get("parent_name") or ""
+        parent_matrix = parent_pose_matrices.get(parent_name)
+        if parent_matrix is None:
+            parent_matrix = parent.matrix
+        # 用纯旋转的父骨矩阵，剔除父骨可能的缩放分量，防止缩放传播到子骨 matrix_basis
+        par_loc, par_rot, _par_scale = parent_matrix.decompose()
+        parent_matrix_no_scale = mathutils.Matrix.LocRotScale(par_loc, par_rot, mathutils.Vector((1.0, 1.0, 1.0)))
+        parent_space = parent_matrix_no_scale @ record["parent_rest_inv"] @ record["bone_rest"]
+        raw = parent_space.inverted() @ target_matrix
+    # 物理写回不允许缩放（与 MC2 SimulationPostProxyMeshUpdateLine 对齐：只改旋转）
+    loc, rot, _scale = raw.decompose()
+    return mathutils.Matrix.LocRotScale(loc, rot, mathutils.Vector((1.0, 1.0, 1.0)))
 
 
 def _pack_matrix_into(basis_values, offset, matrix):
@@ -272,7 +279,7 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, display_
             else:
                 head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
 
-        target_matrix = mathutils.Matrix.LocRotScale(head_pose, arm_quat, record["init_scale"])
+        target_matrix = mathutils.Matrix.LocRotScale(head_pose, arm_quat, mathutils.Vector((1.0, 1.0, 1.0)))
         parent_pose_matrices[bone_name] = target_matrix
 
     _batch_write_basis(armature_obj, ordered, parent_pose_matrices, write_runtime)
@@ -327,7 +334,7 @@ def _write_per_bone_independent(armature_obj, records, display_positions, rotati
         else:
             head_pose = matrix_world.inverted() @ head_world
         target_matrix = mathutils.Matrix.LocRotScale(
-            head_pose, rotation_delta @ init_rotation, record["init_scale"]
+            head_pose, rotation_delta @ init_rotation, mathutils.Vector((1.0, 1.0, 1.0))
         )
         target_pose_matrices[record["bone_name"]] = target_matrix
     _batch_write_basis(armature_obj, ordered, target_pose_matrices, write_runtime)
