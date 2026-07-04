@@ -28,6 +28,7 @@ _COLOR_RIGID_DYNAMIC = (0.20, 0.90, 0.20, 0.85)   # 动态刚体：绿
 _COLOR_RIGID_STATIC  = (0.60, 0.60, 0.65, 0.70)   # 静态刚体：灰
 _COLOR_RIGID_KINEMA  = (0.40, 0.60, 1.00, 0.85)   # 运动学刚体：蓝
 _COLOR_CONSTRAINT    = (1.00, 0.75, 0.10, 0.90)   # 约束锚点：橙黄
+_COLOR_BUG           = (1.00, 0.10, 0.10, 0.95)   # bug 状态：红
 
 _SEGMENTS = 24   # 调试绘制用较少段数，比配置预览更轻量
 
@@ -52,6 +53,7 @@ _UNIT_CIRCLE = [
 # }
 _DRAW_STORE: dict[str, dict] = {}
 _DRAW_HANDLE = None
+_DRAW_HANDLE_2D = None
 
 
 # ---------------------------------------------------------------------------
@@ -101,12 +103,75 @@ def _capsule_lines(lines, seg_a, seg_b, radius):
         _line(lines, seg_a + sign * radius, seg_b + sign * radius)
 
 
-def _axis_cross(lines, center, matrix_world, size=0.08):
-    """在约束锚点处画一个小轴框。"""
-    origin = matrix_world.translation.copy()
-    for i, col in enumerate(((1, 0, 0, 1), (0, 1, 0, 1), (0, 0, 1, 1))):
-        ax = mathutils.Vector(matrix_world.col[i][:3]).normalized() * size
-        _line(lines, origin, origin + ax)
+
+
+# ---------------------------------------------------------------------------
+# 2D 屏幕空间约束绘制辅助
+# ---------------------------------------------------------------------------
+
+def _l2(lines, a, b):
+    """往 2D lines 列表加一条线段。"""
+    lines.append(tuple(a))
+    lines.append(tuple(b))
+
+
+def _constraint_indicator_2d(lines, sx, sy, constraint_type: str, r: int = 14, direction=None):
+    """
+    在屏幕坐标 (sx, sy) 处画固定像素大小的约束类型标识。
+    direction=(dx,dy): 单位向量，HINGE 沿此方向展开两臂；
+                       None 时默认朝上 (0, 1)。
+    """
+    if constraint_type == "FIXED":
+        corners = [(sx - r, sy - r), (sx + r, sy - r),
+                   (sx + r, sy + r), (sx - r, sy + r)]
+        for i in range(4):
+            _l2(lines, corners[i], corners[(i + 1) % 4])
+
+    elif constraint_type == "HINGE":
+        dx, dy = direction if direction is not None else (0.0, 1.0)
+        px, py = -dy, dx           # 垂直于轴的方向
+
+        # 中轴线（铰链旋转轴）
+        _l2(lines, (sx - dx * r, sy - dy * r), (sx + dx * r, sy + dy * r))
+
+        # 半圆弧：从轴一端绕到另一端，朝 +perpendicular 方向凸出
+        steps = 12
+        prev = None
+        for i in range(steps + 1):
+            a = math.pi * i / steps   # 0 → π
+            pt = (sx + r * (dx * math.cos(a) + px * math.sin(a)),
+                  sy + r * (dy * math.cos(a) + py * math.sin(a)))
+            if prev:
+                _l2(lines, prev, pt)
+            prev = pt
+
+    elif constraint_type == "SLIDER":
+        head = r * 0.4
+        _l2(lines, (sx, sy - r), (sx, sy + r))
+        # 箭头朝内（从两端指向中心）
+        for tip_y, inward in ((sy - r, head), (sy + r, -head)):
+            _l2(lines, (sx, tip_y), (sx - head * 0.5, tip_y + inward))
+            _l2(lines, (sx, tip_y), (sx + head * 0.5, tip_y + inward))
+
+    elif constraint_type == "CONE":
+        apex = (sx, sy - r)
+        bl = (sx - r * 0.65, sy + r * 0.6)
+        br = (sx + r * 0.65, sy + r * 0.6)
+        _l2(lines, apex, bl)
+        _l2(lines, apex, br)
+        _l2(lines, bl, br)
+
+    elif constraint_type == "POINT":
+        steps = 12
+        pts = [(sx + r * 0.65 * math.cos(math.tau * i / steps),
+                sy + r * 0.65 * math.sin(math.tau * i / steps))
+               for i in range(steps + 1)]
+        for i in range(len(pts) - 1):
+            _l2(lines, pts[i], pts[i + 1])
+
+    else:
+        _l2(lines, (sx - r, sy), (sx + r, sy))
+        _l2(lines, (sx, sy - r), (sx, sy + r))
 
 
 # ---------------------------------------------------------------------------
@@ -161,20 +226,7 @@ def _build_draw_calls(data: dict) -> list[tuple]:
         if kin_lines:
             draw_calls.append((batch_for_shader(shader, "LINES", {"pos": kin_lines}), _COLOR_RIGID_KINEMA, 1.5))
 
-    # 约束锚点
-    if data.get("show_constraints", True):
-        con_lines = []
-        for slot in (data.get("constraint_slots") or []):
-            spec = slot.get("spec")
-            obj = getattr(spec, "empty_obj", None) if spec is not None else None
-            if obj is None:
-                continue
-            try:
-                _axis_cross(con_lines, obj.location, obj.matrix_world)
-            except Exception:
-                pass
-        if con_lines:
-            draw_calls.append((batch_for_shader(shader, "LINES", {"pos": con_lines}), _COLOR_CONSTRAINT, 2.0))
+    # 约束类型标识和连线已移入 POST_PIXEL handler（屏幕空间，大小固定不随距离缩小）
 
     return draw_calls
 
@@ -216,19 +268,147 @@ def _draw_physics_debug():
         gpu.state.blend_set("NONE")
 
 
+def _draw_physics_debug_2d():
+    """
+    POST_PIXEL handler：在屏幕空间绘制所有约束相关内容（大小固定）：
+      - 约束类型标识（正方形/两臂弧/箭头/三角形/圆）
+      - 锚点到目标对象的连线
+      - bug 红叉（缺目标或连到自身）
+    """
+    if not _DRAW_STORE:
+        return
+
+    context = bpy.context
+    if context is None or context.area is None or context.area.type != "VIEW_3D":
+        return
+    region = context.region
+    rv3d = context.region_data
+    if region is None or rv3d is None:
+        return
+
+    from bpy_extras.view3d_utils import location_3d_to_region_2d
+
+    con_lines = []    # 约束标识 + 连线（橙黄）
+    bug_lines = []    # bug 叉（红）
+
+    for data in _DRAW_STORE.values():
+        if not data.get("enabled"):
+            continue
+        show_constraints = data.get("show_constraints", True)
+        show_bugs = data.get("show_bugs", True)
+
+        # --- 约束类型标识 + 连线 ---
+        if show_constraints:
+            for slot in (data.get("constraint_slots") or []):
+                spec = slot.get("spec")
+                empty_obj = getattr(spec, "empty_obj", None) if spec is not None else None
+                if empty_obj is None:
+                    continue
+                try:
+                    sc = location_3d_to_region_2d(region, rv3d, empty_obj.location)
+                    if sc is None:
+                        continue
+                    sx, sy = sc
+                    ctype = str(getattr(spec, "constraint_type", "FIXED"))
+
+                    # HINGE：投影 Empty 本地 Z 轴到屏幕，作为铰链方向
+                    hinge_dir = None
+                    if ctype == "HINGE":
+                        try:
+                            z_w = mathutils.Vector(
+                                empty_obj.matrix_world.col[2][:3]
+                            ).normalized()
+                            tip_sc = location_3d_to_region_2d(
+                                region, rv3d, empty_obj.location + z_w * 0.2
+                            )
+                            if tip_sc:
+                                ddx = tip_sc[0] - sx
+                                ddy = tip_sc[1] - sy
+                                norm = (ddx * ddx + ddy * ddy) ** 0.5
+                                if norm > 0.5:   # 至少半像素，避免除零
+                                    hinge_dir = (ddx / norm, ddy / norm)
+                        except Exception:
+                            pass
+
+                    _constraint_indicator_2d(con_lines, sx, sy, ctype,
+                                             direction=hinge_dir)
+
+                    # 连线到 target_a / target_b
+                    for target in (getattr(spec, "target_a", None),
+                                   getattr(spec, "target_b", None)):
+                        if target is None:
+                            continue
+                        try:
+                            is_self = target.as_pointer() == empty_obj.as_pointer()
+                        except Exception:
+                            is_self = False
+                        if is_self:
+                            continue
+                        try:
+                            t_sc = location_3d_to_region_2d(region, rv3d, target.location)
+                            if t_sc:
+                                _l2(con_lines, (sx, sy), tuple(t_sc))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+        # --- bug 叉 ---
+        if show_bugs and show_constraints:
+            cross = 10
+            for pos in (data.get("bug_positions") or []):
+                sc = location_3d_to_region_2d(region, rv3d, mathutils.Vector(pos))
+                if sc is None:
+                    continue
+                x, y = sc
+                bug_lines += [
+                    (x - cross, y - cross), (x + cross, y + cross),
+                    (x + cross, y - cross), (x - cross, y + cross),
+                ]
+
+    if not con_lines and not bug_lines:
+        return
+
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    gpu.state.blend_set("ALPHA")
+    try:
+        if con_lines:
+            batch = batch_for_shader(shader, "LINES", {"pos": con_lines})
+            shader.bind()
+            shader.uniform_float("color", _COLOR_CONSTRAINT)
+            gpu.state.line_width_set(2.5)
+            batch.draw(shader)
+        if bug_lines:
+            batch = batch_for_shader(shader, "LINES", {"pos": bug_lines})
+            shader.bind()
+            shader.uniform_float("color", _COLOR_BUG)
+            gpu.state.line_width_set(3.0)
+            batch.draw(shader)
+    finally:
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set("NONE")
+
+
 def _ensure_draw_handler():
-    global _DRAW_HANDLE
+    global _DRAW_HANDLE, _DRAW_HANDLE_2D
     if _DRAW_HANDLE is None:
         _DRAW_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
             _draw_physics_debug, (), "WINDOW", "POST_VIEW"
         )
+    if _DRAW_HANDLE_2D is None:
+        _DRAW_HANDLE_2D = bpy.types.SpaceView3D.draw_handler_add(
+            _draw_physics_debug_2d, (), "WINDOW", "POST_PIXEL"
+        )
 
 
 def _remove_draw_handler():
-    global _DRAW_HANDLE
+    global _DRAW_HANDLE, _DRAW_HANDLE_2D
     if _DRAW_HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_DRAW_HANDLE, "WINDOW")
         _DRAW_HANDLE = None
+    if _DRAW_HANDLE_2D is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_DRAW_HANDLE_2D, "WINDOW")
+        _DRAW_HANDLE_2D = None
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +422,7 @@ def update_draw_store(
     show_colliders: bool,
     show_rigid: bool,
     show_constraints: bool,
+    show_bugs: bool = True,
 ) -> None:
     """
     由 physicsWorldDebugDraw 节点每帧调用。
@@ -273,12 +454,40 @@ def update_draw_store(
         elif slot.kind == "rigid_constraint":
             constraint_slots.append({"spec": spec})
 
+    # 预计算 bug 锚点位置（供 POST_PIXEL 2D handler 投影画叉）
+    bug_positions = []
+    if show_bugs and show_constraints:
+        for slot in constraint_slots:
+            spec = slot.get("spec")
+            empty_obj = getattr(spec, "empty_obj", None) if spec is not None else None
+            if empty_obj is None:
+                continue
+            try:
+                target_a = getattr(spec, "target_a", None)
+                target_b = getattr(spec, "target_b", None)
+                is_bug = False
+                for t in (target_a, target_b):
+                    if t is None:
+                        is_bug = True
+                    else:
+                        try:
+                            if t.as_pointer() == empty_obj.as_pointer():
+                                is_bug = True
+                        except Exception:
+                            is_bug = True
+                if is_bug:
+                    bug_positions.append(tuple(empty_obj.location))
+            except Exception:
+                pass
+
     _DRAW_STORE[node_uid] = {
         "frame": fc.frame,
         "enabled": True,
         "show_colliders": show_colliders,
         "show_rigid": show_rigid,
         "show_constraints": show_constraints,
+        "show_bugs": show_bugs,
+        "bug_positions": bug_positions,
         "colliders": list(world.collider_snapshot.get("colliders") or []),
         "rigid_slots": rigid_slots,
         "constraint_slots": constraint_slots,
