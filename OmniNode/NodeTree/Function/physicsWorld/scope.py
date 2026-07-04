@@ -254,7 +254,7 @@ def collect_physics_sources(scope: PhysicsObjectScope) -> tuple[list[PhysicsColl
             invalid_count += 1
             continue
 
-        # Object 级被动碰撞
+        # Object 级简单碰撞
         if scope.include_passive_collision:
             props = getattr(obj, "hotools_object_collision", None)
             if props is not None:

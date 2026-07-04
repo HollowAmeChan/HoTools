@@ -94,8 +94,8 @@ def reg_props():
         update=_overlay_show_update,
     )
     bpy.types.Scene.ho_collision_overlay_include_passive_collision = BoolProperty(
-        name="额外显示被动碰撞",
-        description="在碰撞组交互检查模式下，同时显示被该组命中的被动碰撞体",
+        name="额外显示简单碰撞",
+        description="在碰撞组交互检查模式下，同时显示被该组命中的简单碰撞体",
         default=False,
         update=_overlay_show_update,
     )

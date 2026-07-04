@@ -61,7 +61,7 @@ def physicsObjectsFromCollection(
     is_output_node=False,
     _INPUT_NAME=[
         "对象",
-        "被动碰撞",
+        "简单碰撞",
         "骨骼碰撞",
         "简单布料",
         "刚体",
@@ -76,7 +76,7 @@ def physicsObjectsFromCollection(
     无需单独的"合并列表"节点。内部自动去重展平。
 
     各开关对齐 HoTools 统一物理面板的类型名称：
-      被动碰撞 — 读取 hotools_object_collision.enabled
+      简单碰撞 — 读取 hotools_object_collision.enabled
       骨骼碰撞 — 读取 Bone.hotools_collision.collision_type
       简单布料 — 读取 hotools_mesh_collision.enabled
       刚体     — 读取 hotools_rigid_body.enabled

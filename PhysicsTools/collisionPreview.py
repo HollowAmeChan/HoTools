@@ -535,7 +535,7 @@ class PT_Hotools_CollisionOverlayPopover(Panel):
         col.prop(scene, "ho_collision_overlay_only_visible_bones", text="仅显示可见骨")
         col.prop(scene, "ho_collision_overlay_preview_mode", text="预览模式")
         if preview_group is not None:
-            col.prop(scene, "ho_collision_overlay_include_passive_collision", text="额外显示被动碰撞")
+            col.prop(scene, "ho_collision_overlay_include_passive_collision", text="额外显示简单碰撞")
         else:
             col.prop(scene, "ho_collision_overlay_color_mode", text="颜色模式")
 

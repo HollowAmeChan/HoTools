@@ -75,7 +75,7 @@ def _effective_bone_pin(bone) -> bool:
 
 def _object_collision_props(obj):
     """
-    读取物体上的 HoTools 被动碰撞属性。
+    读取物体上的 HoTools 简单碰撞属性。
     """
     return getattr(obj, "hotools_object_collision", None)
 
@@ -99,7 +99,7 @@ def _active_collision_props(context):
 
 def _active_object_collision_props(context):
     """
-    获取当前激活物体的被动碰撞属性。
+    获取当前激活物体的简单碰撞属性。
     """
     obj = context.object or context.active_object
     if obj is None:

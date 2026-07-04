@@ -116,7 +116,7 @@ class OP_Hotools_BoneCollision_ToggleCollidedByGroup(Operator):
 class OP_Hotools_ObjectCollision_SetPrimaryGroup(Operator):
     bl_idname = "ho.object_collision_set_primary_group"
     bl_label = "设置Object主碰撞组"
-    bl_description = "设置当前Object被动碰撞体所属的主碰撞组"
+    bl_description = "设置当前Object简单碰撞体所属的主碰撞组"
     bl_options = {"REGISTER", "UNDO"}
 
     group: IntProperty(

@@ -80,21 +80,21 @@ class PG_Hotools_BoneCollision(PropertyGroup):
 
 class PG_Hotools_ObjectCollision(PropertyGroup):
     """
-    Object 级被动碰撞体的持久化配置。
+    Object 级简单碰撞体的持久化配置。
     ...（消费约定同前）
     """
 
     enabled: BoolProperty(
         name="启用",
-        description="将此对象识别为被动碰撞体",
+        description="将此对象识别为简单碰撞体",
         default=False,
     )  # type: ignore
 
     collision_type: EnumProperty(
         name="碰撞体",
-        description="这个Object携带的被动碰撞体类型",
+        description="这个Object携带的简单碰撞体类型",
         items=[
-            ("NONE", "无", "不作为被动碰撞体"),
+            ("NONE", "无", "不作为简单碰撞体"),
             ("SPHERE", "球体", "以Object局部偏移为中心的球形碰撞体"),
             ("CAPSULE", "胶囊", "沿Object局部Y轴延伸的胶囊碰撞体"),
             ("PLANE", "平面", "以Object局部XY平面为无限碰撞平面；运行时必须用Object.matrix_world求世界原点、切线和法线"),
@@ -134,7 +134,7 @@ class PG_Hotools_ObjectCollision(PropertyGroup):
     )  # type: ignore
     primary_collision_group: IntProperty(
         name="主碰撞组",
-        description="这个被动碰撞体所属的主碰撞组，叠加显示颜色由它决定",
+        description="这个简单碰撞体所属的主碰撞组，叠加显示颜色由它决定",
         default=1,
         min=1,
         max=_COLLISION_GROUP_COUNT,
