@@ -247,11 +247,19 @@ def run_bone_cloth_mc2_node(
         # 与 MeshCloth clear_delta_attribute 等价：禁用时把骨骼还原到动画姿态
         if not cache_owner.team_state.skip_writing:
             bone_io.write_bone_rotations(
-                armature,
-                write_records,
-                state["base_positions"],
-                rotational_interpolation,
+                armature, chains, write_records,
+                state["base_positions"], state["base_positions"],
+                rotational_interpolation, blend_weight,
                 write_runtime=io_cache,
+                step_basic_rotations=state.get("step_basic_rotations"),
+                vertex_local_positions=state.get("vertex_local_positions"),
+                vertex_local_rotations=state.get("vertex_local_rotations"),
+                parent_indices=state.get("parent_indices"),
+                baseline_start=state.get("baseline_start"),
+                baseline_count=state.get("baseline_count"),
+                baseline_data=state.get("baseline_data"),
+                attributes=state.get("attributes"),
+                anime_ratio=float(animation_pose_ratio),
             )
             armature.update_tag()
         cache_owner.replace_state(next_state)
@@ -272,11 +280,19 @@ def run_bone_cloth_mc2_node(
         # 用 base_positions 作为 display_positions 写回，等效于把骨骼还原到动画姿态。
         if not cache_owner.team_state.skip_writing:
             bone_io.write_bone_rotations(
-                armature,
-                write_records,
-                state["base_positions"],   # 冷启动帧显示 base pose
-                rotational_interpolation,
+                armature, chains, write_records,
+                state["base_positions"], state["base_positions"],
+                rotational_interpolation, blend_weight,
                 write_runtime=io_cache,
+                step_basic_rotations=state.get("step_basic_rotations"),
+                vertex_local_positions=state.get("vertex_local_positions"),
+                vertex_local_rotations=state.get("vertex_local_rotations"),
+                parent_indices=state.get("parent_indices"),
+                baseline_start=state.get("baseline_start"),
+                baseline_count=state.get("baseline_count"),
+                baseline_data=state.get("baseline_data"),
+                attributes=state.get("attributes"),
+                anime_ratio=float(animation_pose_ratio),
             )
             armature.update_tag()  # 通知 Blender 骨架数据已变化，触发视口重绘
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
@@ -363,11 +379,20 @@ def run_bone_cloth_mc2_node(
 
     if not cache_owner.team_state.skip_writing:
         bone_io.write_bone_rotations(
-            armature,
-            write_records,
-            next_state["display_positions"],
+            armature, chains, write_records,
+            next_state["display_positions"], next_state["base_positions"],
             rotational_interpolation,
+            float(next_state.get("blend_weight", blend_weight)),
             write_runtime=io_cache,
+            step_basic_rotations=next_state.get("step_basic_rotations"),
+            vertex_local_positions=next_state.get("vertex_local_positions"),
+            vertex_local_rotations=next_state.get("vertex_local_rotations"),
+            parent_indices=next_state.get("parent_indices"),
+            baseline_start=next_state.get("baseline_start"),
+            baseline_count=next_state.get("baseline_count"),
+            baseline_data=next_state.get("baseline_data"),
+            attributes=next_state.get("attributes"),
+            anime_ratio=float(animation_pose_ratio),
         )
         armature.update_tag()  # 通知 Blender 骨架数据已变化，触发视口重绘
         if debug_output:
