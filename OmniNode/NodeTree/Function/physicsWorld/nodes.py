@@ -36,23 +36,22 @@ from .debug import snapshot_to_text, validate_world, print_world_summary
     bl_label="物理对象-从集合",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["集合", "递归子集合", "包含隐藏"],
+    _INPUT_NAME=["集合", "递归子集合"],
     _OUTPUT_NAME=["对象列表"],
     omni_description="""
     从 Blender Collection 收集对象列表，供 Physics Object Scope 节点使用。
 
-    recursive=True 时递归子集合。
-    include_hidden=False 时跳过不可见对象。
+    始终收集集合内的全部对象（含隐藏），不在此处过滤可见性。
+    可见性策略由下游的 Physics Object Scope 节点统一控制（include_hidden）。
     """,
 )
 def physicsObjectsFromCollection(
     collection: bpy.types.Collection,
     recursive: bool = True,
-    include_hidden: bool = False,
 ) -> list[bpy.types.Object]:
     if collection is None:
         return []
-    return objects_from_collection(collection, recursive=bool(recursive), include_hidden=bool(include_hidden))
+    return objects_from_collection(collection, recursive=bool(recursive), include_hidden=True)
 
 
 @omni(
