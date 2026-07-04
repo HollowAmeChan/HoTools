@@ -184,11 +184,38 @@ Physics Add Collection To Scope
 `Physics World Begin` 解析 scope 时：
 
 1. 对每个 object 去重，使用 `obj.as_pointer()` 或 fallback `id(obj)`。
-2. `include_hidden=False` 时跳过不可见对象。
+2. `include_hidden=False` 时跳过不可见对象（`include_hidden` 语义以 `PhysicsObjectScope` 为准，`Physics World Begin` 不再接收同名参数，见下文）。
 3. 若 object 有 `hotools_object_collision` 且类型不是 `NONE`，生成 object collider source。
 4. 若 object 是 Armature 且 `include_bone_colliders=True`，扫描该 armature 的 bones 上的 `hotools_collision`。
 5. 若 object 是 Mesh 且 `include_mesh_collision=True`，读取 `hotools_mesh_collision`，作为 mesh collision / self collision / base pose proxy 的可用配置来源。
 6. 若 object 引用失效，当前帧跳过并在 debug snapshot 中记录 invalid count。
+
+### Scope Key 计算规则（重要）
+
+scope key 用于检测 object 范围是否变化，进而触发 `restart_required`。
+
+**不能只用 `obj.as_pointer()` 作为 key**：Blender 删除对象后会释放地址，新建对象可能复用同一整数指针，导致 scope 已经变化但 key 未改变，restart 不会触发。
+
+推荐的 scope key 构造：
+
+```python
+def build_scope_key(objects: tuple, include_flags: tuple) -> frozenset:
+    entries = []
+    for obj in objects:
+        try:
+            obj_ptr = int(obj.as_pointer())
+            # data_ptr 感知 mesh / armature 数据被替换的情况
+            data_ptr = int(obj.data.as_pointer()) if obj.data is not None else 0
+            entries.append((obj_ptr, data_ptr))
+        except Exception:
+            # 引用已失效，记录一个标记值而不是跳过（跳过会导致数量稳定但内容变了）
+            entries.append((-1, id(obj)))
+    return frozenset(entries) | {("flags", include_flags)}
+```
+
+`include_flags` 包含 `(include_object_colliders, include_bone_colliders, include_mesh_collision, include_hidden)` 的 bool tuple，flag 变化也应触发 restart。
+
+scope key 存入 `world.object_scope_key`，每帧 Begin 时重新计算并与上帧比较。
 
 ## PhysicsWorldCache
 
@@ -311,12 +338,29 @@ solver 不再拥有整个 runtime cache owner，而是在 world 内拿自己的 
 
 ```python
 slot = world.ensure_solver_slot(
-    solver_id="meshcloth:object_pointer:output_key",
+    solver_id="meshcloth:{obj_ptr}:{mesh_ptr}:{output_key}",
     kind="mc2_mesh_cloth",
     topology_key=...,
     config_key=...,
 )
 ```
+
+**solver_id 构造规则（重要）：**
+
+solver_id 必须同时包含 `obj.as_pointer()` 和 `obj.data.as_pointer()`（对于 Mesh/Armature），不能只用 `obj.as_pointer()`。
+
+原因：Blender 删除对象后会释放内存指针，随后新建对象可能获得完全相同的整数地址。若 slot_id 只含对象指针，新对象会命中旧 solver slot，继承错误的拓扑缓存或 native context，导致物理爆炸或静默错误。
+
+各 solver 的 id 构造示意：
+
+```text
+MeshCloth:   "mc2_mesh:{obj_ptr}:{mesh_ptr}:{output_key}"
+BoneCloth:   "mc2_bone:{armature_ptr}:{armature_data_ptr}:{chain_hash}"
+SpringBone:  "spring_vrm:{armature_ptr}:{armature_data_ptr}:{topology_hash}"
+RigidBody:   "rigid:{obj_ptr}:{obj_data_ptr}"
+```
+
+scope/world restart（generation 递增）时，world 会标记所有 slot 失效；solver 检测到 generation 不匹配时应冷启动 slot，不依赖 slot_id 做旧状态恢复。
 
 slot 内容由 solver 自己维护：
 
@@ -375,11 +419,12 @@ def physicsWorldBegin(
     reset: bool = False,
     time_scale: float = 1.0,
     substeps: int = 1,
-    include_hidden: bool = False,
     debug_output: bool = False,
 ) -> tuple[PhysicsWorldCache, int, int, bool]:
     ...
 ```
+
+注意：`include_hidden` 已从此处移除。可见性策略统一由 `PhysicsObjectScope` 决定（在 `Physics Object Scope` 节点构造时传入），`Physics World Begin` 直接读取 `object_scope.include_hidden`，不再接收同名参数。这样避免两处设置不一致导致隐藏对象是否参与碰撞产生歧义。
 
 输出：
 
@@ -694,6 +739,45 @@ RigidBody step
 
 以后如果确实需要并行，可以再设计显式 `Physics World Merge` 或调度型 GraphNode。第一版不要做。
 
+### 运行时分叉防护
+
+上述约束仅靠文档无法保证用户不误接。`PhysicsWorldCache` 应在实现层维护一个写入锁：
+
+```python
+class PhysicsWorldCache:
+    def __init__(self):
+        ...
+        self._current_writer: str | None = None  # 当前持锁的 solver_id
+
+    def acquire_write(self, solver_id: str) -> None:
+        """solver 开始写入前调用。若 world 已被另一个 solver 持有则立即抛错。"""
+        if self._current_writer is not None and self._current_writer != solver_id:
+            raise RuntimeError(
+                f"PhysicsWorldCache 分叉写入冲突：{self._current_writer!r} 尚未释放，"
+                f"{solver_id!r} 不能同时写入同一个 world。请检查节点连线是否把 world 分叉给了多个 solver。"
+            )
+        self._current_writer = solver_id
+
+    def release_write(self, solver_id: str) -> None:
+        """solver 写入结束后调用。"""
+        if self._current_writer == solver_id:
+            self._current_writer = None
+```
+
+solver 节点包裹：
+
+```python
+world.acquire_write(solver_id)
+try:
+    # ... solver kernel ...
+finally:
+    world.release_write(solver_id)
+```
+
+这样误接时会在节点执行阶段立即抛出 `RuntimeError`，错误信息直接指向分叉来源，不会产生静默的状态污染。
+
+`Physics World Begin` 在每帧开始时也应清空 `_current_writer = None`，防止上一帧异常退出留下锁。
+
 ## 调试和可观察性
 
 `PhysicsWorldCache.omni_cache_debug_snapshot()` 至少输出：
@@ -726,6 +810,25 @@ restart_required
 
 这样用户不用 dump 整个 cache 也能确认本帧实际参与物理的数据规模。
 
+## replace / mutate 切换规则
+
+`replace_required` 是 `Physics World Commit` 决定写入模式的唯一依据。以下表格说明各种情况下该标志的正确状态：
+
+| 情况 | `replace_required` | Commit 写入模式 |
+|---|---|---|
+| 第一帧（`cache_state` 不是 `PhysicsWorldCache`） | `True`（Begin 新建 world 时设置） | `replace` |
+| scope 改变触发 world 重建 | `True` | `replace` |
+| `reset=True` 触发 world 重建 | `True` | `replace` |
+| 连续帧正常推进，world 对象复用 | `False`（Begin 复用 world 后清除） | `mutate` |
+| 上一帧提交失败（pending 未提交，committed owner 可能脏） | `True`（Begin 检测到帧不连续，标记 invalid，重建 world） | `replace` |
+
+**关键约定（必须遵守）：**
+
+1. `replace_required` 只由 `Physics World Begin` 写入，`Physics World Commit` 只读。
+2. `Physics World Begin` 在函数返回前必须保证 `replace_required` 已被正确设置，不能把 world 内部残留的上一帧标志带到 Commit。
+3. `Physics World Commit` 遇到 `mutate` 路径时，world 对象必须已经在 committed cache 中（`OmniRuntimeState` 的 mutate 校验会检查这一点）。若 Begin 因为脏帧重建了 world，应走 `replace`，不应走 `mutate`。
+4. world 在 Begin 内被原地更新（`_current_writer` 释放后），`replace_required=False` 时 Commit 走 `mutate` 是安全的，因为这和 `OmniRuntimeState` 的原地 mutation 语义一致。
+
 ## 失败与回滚
 
 统一 world 仍然沿用资源型 cache 的现实边界：
@@ -739,14 +842,24 @@ restart_required
 
 ```text
 if previous_frame is not current_frame - 1:
-    restart_required = True
+    world.valid = False
 
-if world marked invalid:
-    restart_required = True
+if world.valid is False:
+    # 不复用现有 world，重建一个新 owner
+    world = PhysicsWorldCache()
+    world.replace_required = True
 
-if object scope changed:
+if object scope key changed:
     restart_required = True
+    generation += 1
 ```
+
+脏帧（failed run）的处理流程：
+
+1. 本轮 `OmniRuntimeState.finish_run` 因 `run.failed=True` 跳过提交，pending 被丢弃。
+2. committed cache 仍然持有上一次成功提交的 world owner（可能已被原地改过一半）。
+3. 下一帧 Begin 读取该 owner，帧号不连续（`frame != prev_frame + 1`），标记 `world.valid = False`。
+4. Begin 重建新 world，`replace_required = True`，旧 owner 被 Commit 的 `replace` 写入替换，`omni_cache_dispose` 释放旧资源。
 
 solver slot 也必须保留自己的 topology/config 校验：
 
@@ -938,6 +1051,18 @@ Rigid Body Solver
 - debug snapshot 只输出 backend 名称、body count、constraint count、step timing 和错误摘要。
 
 第一版 Jolt 接入建议先用最小场景验证：少量动态刚体、静态 collider、一个 Empty 约束点、无跨 solver 交互。
+
+**Phase 5 完成标准（必须通过，不可跳过）：**
+
+Jolt world 内部持有大量 native 堆资源（bodies、constraints、broadphase 等），必须在 Phase 5 完成时专门验证 dispose 路径的完整性，不能留到后续阶段：
+
+1. **热重载压测：** 多次执行 Blender 插件 disable → enable 循环（至少 5 次），验证：
+   - 内存占用不持续增长（`omni_cache_dispose` 能正确释放 Jolt world）。
+   - Blender 进程不崩溃（无悬空 Jolt native 引用）。
+2. **Cache Delete 压测：** 在物理链路运行中途执行 `Cache Delete`，验证 world 和所有 rigid solver slot 都被释放，不残留 native body handle。
+3. **`clear_all` 路径：** 验证 `OmniRuntimeState.clear_all()` 能触发 `PhysicsWorldCache.omni_cache_dispose`，进而释放 `backend_resources["rigid_solver"]`。
+
+Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 constraints，再销毁 Jolt world，顺序不能颠倒。dispose 内不能引发 Python 异常（否则会中断上层 dispose 链）。
 
 ### Phase 6：稳定门槛
 
