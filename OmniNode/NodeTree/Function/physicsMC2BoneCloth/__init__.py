@@ -19,7 +19,7 @@ from .....PropertyCurve import float_curve_payload
 from ...FunctionNodeCore import omni
 from ...OmniNodeSocketMapping import _OmniBone, _OmniCache, _OmniFloatCurve
 from .. import _Color
-from ..physicsMC2.constants import MC2SystemConstants
+from ..physicsMC2MeshCloth.constants import MC2SystemConstants
 from .runtime.controller import run_bone_cloth_mc2_node as _run_bone_cloth_mc2_node
 
 

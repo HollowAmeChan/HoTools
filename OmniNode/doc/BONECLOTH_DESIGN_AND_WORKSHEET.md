@@ -5,7 +5,7 @@
 本文是 BoneCloth 解算器的设计蓝图与任务清单，不是完成记录。实现推进后，稳定项应逐步迁进 `MC2_DESIGN_AND_WORKSHEET.md` 的完成度表，本文只保留待做项和设计约定。
 
 MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`
-HoTools MeshCloth 现状：`OmniNode/NodeTree/Function/physicsMC2`
+HoTools MeshCloth 现状：`OmniNode/NodeTree/Function/physicsMC2MeshCloth`
 SpringBone 骨骼写回参考：`OmniNode/NodeTree/Function/Physics.py` 的 `_BonePhysics`
 
 ## 一、目标与范围
@@ -110,7 +110,7 @@ HoTools 的对应策略见下文 §3.5。
 BoneCloth 作为独立子包，放置在：
 
 ```
-OmniNode/NodeTree/Function/physicsBoneCloth/
+OmniNode/NodeTree/Function/physicsMC2BoneCloth/
   __init__.py          ← @omni 节点声明，对齐 physicsMC2/__init__.py 格式
   bone_build.py        ← 骨骼 → 粒子拓扑构建（新增；对应 mesh_build.py）
   bone_io.py           ← 骨骼读取 / 姿态写回（新增；含自动横向连接生成）
@@ -129,15 +129,15 @@ solver kernel、constraints、inertia、collision、baseline、params、math_uti
 
 | 模块 | 复用方式 |
 |---|---|
-| `physicsMC2/solver.py` `solve_meshcloth()` | 直接调用；BoneCloth 的粒子数组与 MeshCloth 格式一致 |
-| `physicsMC2/constraints.py` | 直接复用所有约束构建函数 |
-| `physicsMC2/baseline.py` | 直接复用 baseline/depth/root 计算 |
-| `physicsMC2/inertia.py` | 直接复用；BoneCloth 有同样的惯性/teleport 需求 |
-| `physicsMC2/collision.py` | 直接复用碰撞快照与约束投影 |
-| `physicsMC2/runtime_params.py` | 参数曲线采样完全复用 |
-| `physicsMC2/params.py` | 参数 slot 复用 |
-| `physicsMC2/constants.py` | 系统常量复用 |
-| `physicsMC2/math_utils.py` | 数学工具复用 |
+| `physicsMC2MeshCloth/solver.py` `solve_meshcloth()` | 直接调用；BoneCloth 的粒子数组与 MeshCloth 格式一致 |
+| `physicsMC2MeshCloth/constraints.py` | 直接复用所有约束构建函数 |
+| `physicsMC2MeshCloth/baseline.py` | 直接复用 baseline/depth/root 计算 |
+| `physicsMC2MeshCloth/inertia.py` | 直接复用；BoneCloth 有同样的惯性/teleport 需求 |
+| `physicsMC2MeshCloth/collision.py` | 直接复用碰撞快照与约束投影 |
+| `physicsMC2MeshCloth/runtime_params.py` | 参数曲线采样完全复用 |
+| `physicsMC2MeshCloth/params.py` | 参数 slot 复用 |
+| `physicsMC2MeshCloth/constants.py` | 系统常量复用 |
+| `physicsMC2MeshCloth/math_utils.py` | 数学工具复用 |
 | `Physics.py` `_BonePhysics` | 骨链采集 `collect_bone_names`、`pose_matrix_from_tail_world`、`matrix_basis_from_pose_matrix` 全部复用 |
 
 ### 3.3 新增的核心模块（bone_build.py）
@@ -226,8 +226,8 @@ def write_bone_rotations(
 
 #### P0-1 目录骨架与节点声明
 
-- [ ] 创建 `physicsBoneCloth/` 目录结构（`__init__.py`、`bone_build.py`、`bone_io.py`、`state.py`、`runtime/`、`backends/`）。
-- [ ] 在 `physicsBoneCloth/__init__.py` 用 `@omni` 声明 `boneClothMC2` 节点：
+- [ ] 创建 `physicsMC2BoneCloth/` 目录结构（`__init__.py`、`bone_build.py`、`bone_io.py`、`state.py`、`runtime/`、`backends/`）。
+- [ ] 在 `physicsMC2BoneCloth/__init__.py` 用 `@omni` 声明 `boneClothMC2` 节点：
   - 输入：`缓存`、`骨架对象`（`bpy.types.Object`）、`根骨骼列表`（`list[_OmniBone]`）、`连接模式`（`int 0-2`，默认 `1 = SequentialNonLoop`）、`旋转插值`（`float 0-1`）、`场景`、`启用`、`重置`，以及所有与 meshClothMC2 共用的物理参数（阻尼、距离、角度、弯曲、tether、惯性、碰撞……）。
   - 输出：`缓存`、`骨架对象`、`骨骼数`、`约束数`。
 - [ ] 节点名定义：`bl_label = "骨骼布料-MC2"`。
@@ -321,7 +321,7 @@ def write_bone_rotations(
 
 #### P3-1 碰撞接入
 
-- [ ] 复用 `physicsMC2/collision.py` 的 collider 快照和约束投影。
+- [ ] 复用 `physicsMC2MeshCloth/collision.py` 的 collider 快照和约束投影。
 - [ ] BoneCloth 碰撞半径来源：从每根参与模拟的骨骼的 `hotools_collision.radius`（与 SpringBone 同来源），不另开 mesh 顶点组。
 - [ ] 碰撞 group filter 复用 MeshCloth 机制，不重新设计。
 
@@ -400,18 +400,18 @@ def write_bone_rotations(
 
 | 文件 | 职责 |
 |---|---|
-| `physicsBoneCloth/__init__.py` | `@omni` 节点声明：`boneClothMC2` / `boneClothMC2Cpp`，socket 默认值，节点 label |
-| `physicsBoneCloth/bone_build.py` | 骨骼链采集、粒子采样、AutomaticMesh 拓扑生成（四种 connection_mode） |
-| `physicsBoneCloth/bone_io.py` | 骨骼 base pose 读取、模拟结果写回 matrix_basis（Line 路径 + 后期 Triangle 路径） |
-| `physicsBoneCloth/state.py` | `BoneClothRuntimeOwner`、`BoneTopologyState`（边表、三角表、深度、根骨索引、主边集合） |
-| `physicsBoneCloth/runtime/controller.py` | 节点运行中控：cache 命中/重建、冷启动、base pose 同步、collider 快照、solver 调用、写回 |
-| `physicsBoneCloth/runtime/restart.py` | 首帧 / reset / 非连续帧冷启动状态重置 |
-| `physicsBoneCloth/runtime/timing.py` | debug timing，与 MC2 同格式 |
-| `physicsBoneCloth/backends/selector.py` | backend 分派（Python / CPP） |
-| `physicsMC2/solver.py` | **共用**，不修改，直接 import |
-| `physicsMC2/constraints.py` | **共用**，不修改，直接 import |
-| `physicsMC2/inertia.py` | **共用**，不修改，直接 import |
-| `physicsMC2/collision.py` | **共用**，不修改，直接 import |
+| `physicsMC2BoneCloth/__init__.py` | `@omni` 节点声明：`boneClothMC2` / `boneClothMC2Cpp`，socket 默认值，节点 label |
+| `physicsMC2BoneCloth/bone_build.py` | 骨骼链采集、粒子采样、AutomaticMesh 拓扑生成（四种 connection_mode） |
+| `physicsMC2BoneCloth/bone_io.py` | 骨骼 base pose 读取、模拟结果写回 matrix_basis（Line 路径 + 后期 Triangle 路径） |
+| `physicsMC2BoneCloth/state.py` | `BoneClothRuntimeOwner`、`BoneTopologyState`（边表、三角表、深度、根骨索引、主边集合） |
+| `physicsMC2BoneCloth/runtime/controller.py` | 节点运行中控：cache 命中/重建、冷启动、base pose 同步、collider 快照、solver 调用、写回 |
+| `physicsMC2BoneCloth/runtime/restart.py` | 首帧 / reset / 非连续帧冷启动状态重置 |
+| `physicsMC2BoneCloth/runtime/timing.py` | debug timing，与 MC2 同格式 |
+| `physicsMC2BoneCloth/backends/selector.py` | backend 分派（Python / CPP） |
+| `physicsMC2MeshCloth/solver.py` | **共用**，不修改，直接 import |
+| `physicsMC2MeshCloth/constraints.py` | **共用**，不修改，直接 import |
+| `physicsMC2MeshCloth/inertia.py` | **共用**，不修改，直接 import |
+| `physicsMC2MeshCloth/collision.py` | **共用**，不修改，直接 import |
 | `Physics.py` `_BonePhysics` | **共用**写回工具，不修改，直接 import |
 
 ## 七、踩坑预判

@@ -17,9 +17,9 @@ import bpy
 import mathutils
 import numpy as np
 
-from ..physicsMC2 import baseline, mesh_build, math_utils, inertia
-from ..physicsMC2 import state as mc2_state
-from ..physicsMC2.constants import (
+from ..physicsMC2MeshCloth import baseline, mesh_build, math_utils, inertia
+from ..physicsMC2MeshCloth import state as mc2_state
+from ..physicsMC2MeshCloth.constants import (
     MC2_ATTR_FIXED,
     MC2_ATTR_MOTION,
     MC2_ATTR_MOVE,

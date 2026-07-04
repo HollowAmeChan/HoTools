@@ -8,7 +8,7 @@ MC2 BasePose 只读对象的集中管理模块。
 4. 检查当前物理对象与 BasePose 对象的顶点数、Loop 数、面数是否一致。
 
 它不负责读取 evaluated mesh、构建 solver state 或执行物理解算；这些仍由
-OmniNode/physicsMC2 后端处理。
+OmniNode/physicsMC2MeshCloth 后端处理。
 """
 
 import bpy

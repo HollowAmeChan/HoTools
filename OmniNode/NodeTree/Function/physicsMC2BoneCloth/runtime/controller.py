@@ -20,9 +20,9 @@ import time
 import bpy
 
 from ....OmniNodeSocketMapping import _OmniCache
-from ...physicsMC2 import collision, state as mc2_state
-from ...physicsMC2.backends import normalize_backend_label, solver_for_backend
-from ...physicsMC2.runtime.restart import cold_restart_runtime_state
+from ...physicsMC2MeshCloth import collision, state as mc2_state
+from ...physicsMC2MeshCloth.backends import normalize_backend_label, solver_for_backend
+from ...physicsMC2MeshCloth.runtime.restart import cold_restart_runtime_state
 from .. import bone_build, bone_io
 
 

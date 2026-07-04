@@ -32,8 +32,8 @@ ensure_package("HoTools.OmniNode", ROOT / "OmniNode")
 ensure_package("HoTools.OmniNode.NodeTree", ROOT / "OmniNode" / "NodeTree")
 ensure_package("HoTools.OmniNode.NodeTree.Function", ROOT / "OmniNode" / "NodeTree" / "Function")
 ensure_package(
-    "HoTools.OmniNode.NodeTree.Function.physicsMC2",
-    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsMC2",
+    "HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth",
+    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsMC2MeshCloth",
 )
 
 from bpy.props import PointerProperty  # noqa: E402
@@ -42,8 +42,8 @@ from HoTools.PhysicsTools.collisionProperty import (  # noqa: E402
     PG_Hotools_MeshCollision,
     PG_Hotools_ObjectCollision,
 )
-from HoTools.OmniNode.NodeTree.Function.physicsMC2 import collision, mesh_build, solver, state as mc2_state  # noqa: E402
-from HoTools.OmniNode.NodeTree.Function.physicsMC2.constants import MC2SystemConstants  # noqa: E402
+from HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth import collision, mesh_build, solver, state as mc2_state  # noqa: E402
+from HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth.constants import MC2SystemConstants  # noqa: E402
 
 
 def ensure_physics_props():
