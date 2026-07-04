@@ -48,28 +48,6 @@ def _resolve_armature(armature_obj) -> bpy.types.Object | None:
     return armature_obj
 
 
-def _flatten_root_bone_names(root_bones) -> list[str]:
-    """把 list[_OmniBone] 多重输入展平成骨名列表，保持用户填入顺序。"""
-    names: list[str] = []
-    if root_bones is None:
-        return names
-    stack = list(root_bones) if isinstance(root_bones, (list, tuple)) else [root_bones]
-    for value in stack:
-        if isinstance(value, (list, tuple)):
-            for inner in value:
-                names.extend(_flatten_root_bone_names(inner))
-            continue
-        if isinstance(value, dict):
-            name = str(value.get("bone") or "").strip()
-            if name:
-                names.append(name)
-        elif isinstance(value, str):
-            name = value.strip()
-            if name:
-                names.append(name)
-    return names
-
-
 def _write_records_cache(cache_owner: mc2_state.MC2RuntimeOwner) -> dict:
     return cache_owner.runtime_cache("bonecloth_io")
 
@@ -77,7 +55,7 @@ def _write_records_cache(cache_owner: mc2_state.MC2RuntimeOwner) -> dict:
 def run_bone_cloth_mc2_node(
     cache_state: _OmniCache,
     armature_obj: bpy.types.Object,
-    root_bones,
+    bone_cloth_chains,
     connection_mode: int,
     rotational_interpolation: float,
     scene: bpy.types.Scene,
@@ -129,7 +107,6 @@ def run_bone_cloth_mc2_node(
     use_max_distance: bool,
     max_distance: float,
     max_distance_curve,
-    collision_radius: float,
     use_backstop: bool,
     backstop_radius: float,
     backstop_distance: float,
@@ -151,8 +128,15 @@ def run_bone_cloth_mc2_node(
         return _OmniCache.replace(None), None, 0, 0
     scene = scene or bpy.context.scene
 
-    root_bone_names = _flatten_root_bone_names(root_bones)
-    chains = bone_build.collect_bone_chains(armature, root_bone_names)
+    settings = bone_build.flatten_bone_cloth_chain_settings(bone_cloth_chains)
+    chains = bone_build.chains_from_settings(settings)
+    if debug_output:
+        raw_len = len(bone_cloth_chains) if hasattr(bone_cloth_chains, "__len__") else "?"
+        print(
+            f"[BoneCloth INPUT] raw inputs={raw_len}  "
+            f"settings after flatten={len(settings)}  "
+            f"chains after from_settings={len(chains)}"
+        )
     if not chains:
         _dispose_cache_value(cache_state)
         return _OmniCache.replace(None), armature, 0, 0
@@ -190,7 +174,7 @@ def run_bone_cloth_mc2_node(
             int(connection_mode),
             output_key,
             topology_key,
-            collision_radius,
+            0.0,  # collision_radius: 从骨骼 hotools_collision.radius 读取，不通过节点参数传入
         )
         cache_owner.replace_state(state)
     else:
@@ -222,29 +206,39 @@ def run_bone_cloth_mc2_node(
             n_bend = len(state.get("bend_i", ()))
     constraint_count = n_distance + n_bend
 
-    if debug_output and restart_required:
-        # 拓扑摘要：重建时打印一次，不每帧打印
-        edges = state.get("edges")
-        triangles = state.get("triangles")
-        chain_info = ", ".join(
-            f"{c['root']}({len(c['bones'])}骨)" for c in chains
-        )
-        n_edges = len(edges) if edges is not None else 0
-        n_tris = len(triangles) if triangles is not None else 0
-        # 横向边 = 总边 - 纵向骨链父子边（每链链长-1 条）
-        n_longitudinal = sum(max(len(c["bones"]) - 1, 0) for c in chains)
-        n_lateral = n_edges - n_longitudinal
-        mode_label = {0: "Line", 1: "SequentialNonLoop", 2: "SequentialLoop"}.get(
-            int(connection_mode), str(connection_mode)
-        )
-        print(
-            f"[骨骼布料-MC2] {armature.name} | "
-            f"骨链: {chain_info} | "
-            f"模式: {mode_label} | "
-            f"粒子={vertex_count} 边={n_edges}(纵{n_longitudinal}/横{n_lateral}) "
-            f"三角={n_tris} | "
-            f"约束: distance={n_distance} bend={n_bend}"
-        )
+    if debug_output:
+        import numpy as _np
+        # ─── 每次重建时输出完整拓扑摘要 ───
+        if restart_required:
+            chain_info = ", ".join(f"{c['root']}({len(c['bones'])}骨)" for c in chains)
+            depths = state.get("depths")
+            depth_str = str(_np.round(depths, 2).tolist()) if depths is not None else "?"
+            attrs  = state.get("attributes")
+            attr_str = str(attrs.tolist()) if attrs is not None else "?"
+            mode_label = {0: "Line", 1: "SequentialNonLoop", 2: "SequentialLoop"}.get(
+                int(connection_mode), str(connection_mode))
+            print(
+                f"\n[BoneCloth REBUILD] 帧={current_frame} armature={armature.name} "
+                f"mode={mode_label}\n"
+                f"  settings 数量={len(settings)}  chains 数量={len(chains)}\n"
+                f"  骨链: {chain_info}\n"
+                f"  粒子总数={vertex_count}  depths={depth_str}\n"
+                f"  attributes={attr_str}\n"
+                f"  constraint: distance={n_distance} bend={n_bend}"
+            )
+        # ─── 每帧输出连续帧状态 ───
+        else:
+            disp = state.get("display_positions")
+            base = state.get("base_positions")
+            if disp is not None and base is not None:
+                delta = float(_np.max(_np.abs(_np.asarray(disp) - _np.asarray(base))))
+            else:
+                delta = 0.0
+            print(
+                f"[BoneCloth] 帧={current_frame} "
+                f"cached_frame={cached_frame} continuous={continuous_frame} "
+                f"max|disp-base|={delta:.5f}"
+            )
 
     if not enabled:
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
@@ -253,7 +247,7 @@ def run_bone_cloth_mc2_node(
         cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
         return cache_value, armature, vertex_count, constraint_count
 
-    # 冷启动：重置粒子动态状态并把骨骼恢复到初始姿态
+    # 冷启动：重置粒子动态状态，骨骼写回 base_positions（animated pose）
     if restart_required:
         state = cold_restart_runtime_state(
             state,
@@ -262,7 +256,18 @@ def run_bone_cloth_mc2_node(
             cache_owner.team_state,
             blend_weight,
         )
-        bone_io.restore_initial_pose(armature, write_records)
+        # 把 base_positions（当前 animated pose）写回骨骼，避免跳帧后骨骼停留在上一帧物理位置。
+        # 注意：不用 restore_initial_pose（identity 重置），那会造成首帧爆炸。
+        # 用 base_positions 作为 display_positions 写回，等效于把骨骼还原到动画姿态。
+        if not cache_owner.team_state.skip_writing:
+            bone_io.write_bone_rotations(
+                armature,
+                write_records,
+                state["base_positions"],   # 冷启动帧显示 base pose
+                rotational_interpolation,
+                write_runtime=io_cache,
+            )
+            armature.update_tag()  # 通知 Blender 骨架数据已变化，触发视口重绘
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
         next_state["frame"] = current_frame
         cache_owner.replace_state(next_state)
@@ -353,6 +358,21 @@ def run_bone_cloth_mc2_node(
             rotational_interpolation,
             write_runtime=io_cache,
         )
+        armature.update_tag()  # 通知 Blender 骨架数据已变化，触发视口重绘
+        if debug_output:
+            import numpy as _np
+            disp = _np.asarray(next_state["display_positions"])
+            base = _np.asarray(next_state["base_positions"])
+            # 逐链报告最大位移和写回的骨骼名
+            print(f"[BoneCloth WRITEBACK] 帧={current_frame} records={len(write_records)}")
+            cursor = 0
+            for ci, ch in enumerate(chains):
+                n = len(ch.get("bones") or [])
+                nroot = ch.get("root", "?")
+                if n > 0:
+                    dz = float(_np.max(_np.abs(disp[cursor:cursor+n, 2] - base[cursor:cursor+n, 2])))
+                    print(f"  chain{ci} root={nroot} 粒子[{cursor}:{cursor+n}] 最大Z位移={dz:.5f}")
+                cursor += n
 
     cache_owner.replace_state(next_state)
     cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)

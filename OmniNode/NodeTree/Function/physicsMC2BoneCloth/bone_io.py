@@ -70,9 +70,10 @@ def build_bone_write_records(
                         "parent_rest_inv": (
                             parent.bone.matrix_local.inverted() if parent is not None else None
                         ),
-                        # 初始骨向（armature object space 单位向量），叶子骨外推用
-                        "init_axis_local": _init_axis_local(pose_bone),
-                        "init_rotation": pose_bone.matrix.to_quaternion().copy(),
+                        # init_axis_local / init_rotation 必须用 rest bone 数据，
+                        # 不能读 pose_bone.tail/.head/.matrix（含物理写回，跳帧归位会失效）
+                        "init_axis_local": _init_axis_local_rest(pose_bone),
+                        "init_rotation": pose_bone.bone.matrix_local.to_quaternion().copy(),
                         "init_scale": pose_bone.matrix.to_scale().copy(),
                     }
                 )
@@ -80,8 +81,14 @@ def build_bone_write_records(
     return records
 
 
-def _init_axis_local(pose_bone) -> mathutils.Vector:
-    axis = pose_bone.tail.copy() - pose_bone.head.copy()
+def _init_axis_local_rest(pose_bone) -> mathutils.Vector:
+    """骨骼 rest pose 方向（armature object space 单位向量）。
+
+    用 pose_bone.bone.tail_local - head_local（编辑骨位置），
+    不受 matrix_basis 写回影响，确保跳帧归位时方向正确。
+    """
+    bone = pose_bone.bone
+    axis = mathutils.Vector(bone.tail_local) - mathutils.Vector(bone.head_local)
     if axis.length <= EPSILON:
         return mathutils.Vector((0.0, 1.0, 0.0))
     return axis.normalized()
@@ -168,7 +175,12 @@ def write_bone_rotations(
         return
 
     display = np.ascontiguousarray(display_positions, dtype=np.float32)
-    ordered = sorted(records, key=lambda rec: rec["depth"])
+    # depth=0 是 root/FIXED 骨，由动画控制，物理不写回旋转。
+    # 写回 root 骨会改变其 tail 位置，移动子骨 head，破坏下一帧的基准。
+    ordered = sorted(
+        [rec for rec in records if rec.get("depth", 0) > 0],
+        key=lambda rec: rec["depth"],
+    )
 
     # 第一遍：算出每根骨的目标 pose-space matrix
     target_pose_matrices: dict[str, mathutils.Matrix] = {}

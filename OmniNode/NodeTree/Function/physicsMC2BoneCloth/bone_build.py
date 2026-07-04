@@ -94,11 +94,55 @@ def flatten_chain_bone_names(chains: list[dict]) -> list[str]:
     return names
 
 
+def flatten_bone_cloth_chain_settings(values) -> list[dict]:
+    """展平嵌套的 BoneCloth 链设置列表，过滤无效项。
+
+    对齐 _BonePhysics.flatten_vrm_spring_bone_chain_settings 的处理逻辑。
+    有效项需包含 armature（Object）、root_bone（非空 str）、bones（list）三个字段。
+    """
+    result: list[dict] = []
+    if values is None:
+        return result
+    stack = list(values) if isinstance(values, (list, tuple)) else [values]
+    while stack:
+        value = stack.pop(0)
+        if isinstance(value, (list, tuple)):
+            stack[0:0] = list(value)
+            continue
+        if (
+            isinstance(value, dict)
+            and isinstance(value.get("armature"), bpy.types.Object)
+            and value.get("armature").type == "ARMATURE"
+            and isinstance(value.get("bones"), list)
+            and str(value.get("root_bone") or "")
+        ):
+            result.append(value)
+    return result
+
+
+def chains_from_settings(settings: list[dict]) -> list[dict]:
+    """把链设置 dict 列表转成 bone_build 内部骨链格式 [{"root", "bones"}, ...]。
+
+    禁用的链（enabled=False）会被跳过。
+    """
+    chains: list[dict] = []
+    for setting in settings:
+        if not bool(setting.get("enabled", True)):
+            continue
+        root_bone = str(setting.get("root_bone") or "").strip()
+        bones = list(setting.get("bones") or [])
+        if root_bone and bones:
+            chains.append({"root": root_bone, "bones": bones})
+    return chains
+
+
 # ---------------------------------------------------------------------------
 # 粒子采样
 # ---------------------------------------------------------------------------
 def sample_bone_head_world(armature_obj: bpy.types.Object, bone_names: list[str]) -> np.ndarray:
-    """采样每根骨骼 head 的世界坐标作为粒子位置。"""
+    """采样每根骨骼 head 的世界坐标（evaluated pose，含动画+物理写回）。
+    用于连续帧 sync；冷启动请用 sample_bone_head_rest。
+    """
     matrix_world = armature_obj.matrix_world
     positions = np.zeros((len(bone_names), 3), dtype=np.float32)
     pose_bones = armature_obj.pose.bones
@@ -111,7 +155,51 @@ def sample_bone_head_world(armature_obj: bpy.types.Object, bone_names: list[str]
     return np.ascontiguousarray(positions, dtype=np.float32)
 
 
-def sample_bone_directions_world(armature_obj: bpy.types.Object, bone_names: list[str]) -> np.ndarray:
+def sample_bone_head_rest(armature_obj: bpy.types.Object, bone_names: list[str]) -> np.ndarray:
+    """采样每根骨骼 head 的世界坐标（rest pose，完全不受物理写回污染）。
+
+    读 armature.data.bones[name].head_local（编辑模式下的 rest 位置），
+    适用于冷启动：确保初始粒子位置干净，不带前几帧物理状态。
+    代价是不包含动画偏移，但冷启动本就是"从静止初始态重新开始"。
+    """
+    matrix_world = armature_obj.matrix_world
+    positions = np.zeros((len(bone_names), 3), dtype=np.float32)
+    data_bones = armature_obj.data.bones if armature_obj.data is not None else None
+    if data_bones is None:
+        return positions
+    for index, name in enumerate(bone_names):
+        bone = data_bones.get(name)
+        if bone is None:
+            continue
+        head_world = matrix_world @ bone.head_local
+        positions[index] = (head_world.x, head_world.y, head_world.z)
+    return np.ascontiguousarray(positions, dtype=np.float32)
+
+
+def sample_bone_directions_from_positions(chains: list[dict], positions: np.ndarray) -> np.ndarray:
+    """从粒子位置序列计算每根骨骼的朝向向量（head→next head 方向）。
+
+    不读 evaluated pose，完全从 positions 数组推导，与 sample_bone_head_rest 配套使用。
+    """
+    vertex_count = len(positions)
+    normals = np.zeros((vertex_count, 3), dtype=np.float32)
+    _fallback = np.asarray([0.0, 1.0, 0.0], dtype=np.float32)
+    cursor = 0
+    for chain in chains:
+        bones = chain.get("bones") or []
+        n = len(bones)
+        for d in range(n):
+            idx = cursor + d
+            if d < n - 1:
+                direction = positions[cursor + d + 1] - positions[cursor + d]
+            elif d > 0:
+                direction = positions[cursor + d] - positions[cursor + d - 1]
+            else:
+                direction = _fallback
+            length = float(np.linalg.norm(direction))
+            normals[idx] = (direction / length) if length > MC2SystemConstants.EPSILON else _fallback
+        cursor += n
+    return np.ascontiguousarray(normals, dtype=np.float32)
     """采样每根骨骼的世界朝向（head→tail 单位向量），作为粒子法线的替代。
 
     mesh 有顶点法线，骨骼没有；base_rotations 依赖法线，这里用骨向充当。
@@ -175,6 +263,57 @@ def _longitudinal_edges(chain_indices: list[list[int]]) -> tuple[list[tuple[int,
             edges.append((i, j))
             main_edges.add((i, j) if i < j else (j, i))
     return edges, main_edges
+
+
+def longitudinal_edges_from_chains(chains: list[dict]) -> np.ndarray:
+    """只从骨链结构生成纵向父子边（不含横向边）。
+
+    用于 build_mesh_baseline 的输入：baseline/depth/root 只依赖链内层级关系，
+    若传入包含横向边的完整 edge set，距离 BFS 会把其他链的粒子错误地分配给最近
+    的 root，导致 depth 为 0、inv_mass 过高、除第一条链外其余链几乎不动。
+    """
+    result: list[tuple[int, int]] = []
+    cursor = 0
+    for chain in chains:
+        n = len(chain.get("bones") or [])
+        for d in range(n - 1):
+            result.append((cursor + d, cursor + d + 1))
+        cursor += n
+    if not result:
+        return np.empty((0, 2), dtype=np.int32)
+    return np.ascontiguousarray(result, dtype=np.int32)
+
+
+def compute_bone_depths(chains: list[dict], positions: np.ndarray) -> np.ndarray:
+    """逐链独立计算深度（root=0, leaf=1），不做全局归一化。
+
+    baseline.build_mesh_baseline 内部用全部链的最大根距归一化，导致短链粒子深度
+    被压缩（例如 0.1~0.4），inv_mass 虚高，响应极慢。
+    BoneCloth 每条链应各自归一化：链内叶子骨固定为 depth=1。
+    """
+    vertex_count = len(positions)
+    depths = np.zeros(vertex_count, dtype=np.float32)
+    cursor = 0
+    for chain in chains:
+        bones = chain.get("bones") or []
+        n = len(bones)
+        if n == 0:
+            cursor += n
+            continue
+        depths[cursor] = 0.0  # root
+        cumulative = 0.0
+        chain_dists = [0.0]
+        for d in range(1, n):
+            seg = float(np.linalg.norm(positions[cursor + d] - positions[cursor + d - 1]))
+            cumulative += seg
+            chain_dists.append(cumulative)
+        max_dist = chain_dists[-1] if n > 1 else 1.0
+        if max_dist <= MC2SystemConstants.EPSILON:
+            max_dist = float(max(n - 1, 1))
+        for d in range(1, n):
+            depths[cursor + d] = float(min(chain_dists[d] / max_dist, 1.0))
+        cursor += n
+    return np.ascontiguousarray(depths, dtype=np.float32)
 
 
 def _lateral_edges(
@@ -377,8 +516,14 @@ def sync_bone_state_to_pose(
 
     # 仅当旋转/缩放变化时重建约束，避免每帧重算 edge_rest 导致距离约束失效
     if next_state.get("object_matrix_world_3x3_key") != matrix_3x3_key:
-        baseline_data = baseline.build_mesh_baseline(edges, rest_world, rest_world_normals, attributes)
-        next_state["depths"] = baseline_data["depths"]
+        # baseline 只用纵向边，避免横向边影响 depth/root 分配
+        bone_longitudinal_edges = next_state.get("bone_longitudinal_edges")
+        if bone_longitudinal_edges is None:
+            bone_longitudinal_edges = longitudinal_edges_from_chains(chains)
+        baseline_data = baseline.build_mesh_baseline(
+            bone_longitudinal_edges, rest_world, rest_world_normals, attributes
+        )
+        next_state["depths"] = compute_bone_depths(chains, rest_world)
         next_state["root_indices"] = baseline_data["root_indices"]
         next_state["parent_indices"] = baseline_data["parent_indices"]
         next_state["root_rest_lengths"] = baseline_data["root_rest_lengths"]
@@ -529,8 +674,9 @@ def build_bone_state(
     bone_names = flatten_chain_bone_names(chains)
     vertex_count = len(bone_names)
 
-    rest_world = sample_bone_head_world(armature_obj, bone_names)
-    rest_world_normals = sample_bone_directions_world(armature_obj, bone_names)
+    # 冷启动用 rest pose 位置（不受物理写回污染）；连续帧 sync 仍用 evaluated pose
+    rest_world = sample_bone_head_rest(armature_obj, bone_names)
+    rest_world_normals = sample_bone_directions_from_positions(chains, rest_world)
     # BoneCloth 不做 object-local rest；直接把世界坐标经 armature 逆矩阵转成 local 存储，
     # 供 sync_state_to_object_transform 在 armature 移动时重建世界坐标。
     world_to_local = math_utils.matrix_to_numpy(armature_obj.matrix_world.inverted())
@@ -542,11 +688,21 @@ def build_bone_state(
     edges = topology["edges"]
     triangles = topology["triangles"]
 
-    baseline_data = baseline.build_mesh_baseline(edges, rest_world, rest_world_normals, attributes)
+    # baseline / depth / root 只用纵向边：横向边的距离 BFS 会把相邻链粒子错误分配给最近 root，
+    # 导致其他链 depth≈0、inv_mass 过高，只有第一条链能动。
+    bone_longitudinal_edges = longitudinal_edges_from_chains(chains)
+    baseline_data = baseline.build_mesh_baseline(
+        bone_longitudinal_edges, rest_world, rest_world_normals, attributes
+    )
     depths = baseline_data["depths"]
     root_indices = baseline_data["root_indices"]
     parent_indices = baseline_data["parent_indices"]
     root_rest_lengths = baseline_data["root_rest_lengths"]
+
+    # 用每链独立归一化的 depth 覆盖 baseline 的全局归一化值。
+    # baseline 用所有链的最大根距作分母，短链 depth 被压缩（例如0.1-0.4），
+    # 导致 inv_mass 虚高、粒子响应极慢。BoneCloth 每条链各自归一化到 [0,1]。
+    depths = compute_bone_depths(chains, rest_world)
 
     friction = np.zeros(vertex_count, dtype=np.float32)
     static_friction = np.zeros(vertex_count, dtype=np.float32)
@@ -592,6 +748,7 @@ def build_bone_state(
         "bone_topology_key": topology_key,
         "connection_mode": int(connection_mode),
         "chain_by_particle": topology["chain_by_particle"],
+        "bone_longitudinal_edges": bone_longitudinal_edges,
         # MeshCloth 兼容占位（缓存匹配用）
         "mesh_light_key": topology_key,
         "mesh_signature_key": topology_key,
