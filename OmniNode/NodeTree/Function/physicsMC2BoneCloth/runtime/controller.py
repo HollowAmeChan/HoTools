@@ -304,9 +304,30 @@ def run_bone_cloth_mc2_node(
     # collider 快照
     if use_collider_collision and int(collider_collision_mode) != 0:
         collision_snapshot = collision.build_collision_snapshot_from_scene(scene, True, True, False)
-        colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+        raw_colliders = list(collision_snapshot.get("colliders") or []) if isinstance(collision_snapshot, dict) else []
+        # BoneCloth 特有修正：布料粒子（裙骨）和碰撞体（身体骨）都属于同一骨架。
+        # project_vertex_collision 里 `collider["owner"] is owner_obj` 本是为 MeshCloth 防止
+        # 网格与自身骨骼碰撞而设计的，但在 BoneCloth 里会把全部骨骼碰撞体排除掉。
+        # 修复：把与当前骨架同属的骨骼碰撞体的 owner 置为 None，绕过自排除检查。
+        colliders = [
+            dict(c, owner=None) if c.get("owner_type") == "BONE" and c.get("owner") is armature else c
+            for c in raw_colliders
+        ]
     else:
         colliders = []
+
+    if debug_output:
+        bone_coll_count = sum(
+            1 for c in colliders if c.get("owner_type") == "BONE"
+        )
+        obj_coll_count = sum(
+            1 for c in colliders if c.get("owner_type") == "OBJECT"
+        )
+        print(
+            f"[BoneCloth COLLISION] 帧={current_frame} "
+            f"use_collider={use_collider_collision} mode={collider_collision_mode} "
+            f"碰撞体总数={len(colliders)}（骨骼={bone_coll_count} 物体={obj_coll_count}）"
+        )
 
     solve_func = solver_for_backend(backend_label)
     next_state = solve_func(

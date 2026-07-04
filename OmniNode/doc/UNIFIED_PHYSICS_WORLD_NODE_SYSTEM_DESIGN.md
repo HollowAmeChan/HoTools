@@ -1,0 +1,1070 @@
+# OmniNode 通用物理世界节点系统设计展望
+
+本文记录 OmniNode 物理节点系统从“每个解算器各自维护 cache”走向“统一物理世界 owner + 多解算器协作”的设计方向。它是设计展望和实施路线，不是当前已完全落地的架构约定。
+
+核心判断：
+
+```text
+runtime cache 系统不需要继续膨胀。
+需要重构的是物理解算层的组织方式。
+
+Cache Read / Cache Write 仍然作为跨帧生命周期边界。
+物理节点内部改为传递同一个 PhysicsWorldCache owner。
+不同 solver 在同一个 world owner 上读写自己的 slot。
+公共 frame / reset / collider / object scope 由 Physics World Begin 统一处理。
+```
+
+## 背景
+
+当前 OmniNode 已经具备资源型 runtime cache 能力：
+
+- cache value 可以实现 `omni_cache_dispose(reason)`。
+- `cache_replace(value)` 表示替换 owner。
+- `cache_mutate(owner)` 表示同一个 committed owner 已被原地更新。
+- 带 dispose 协议的 owner 可以走零拷贝路径。
+
+这解决了“一个节点自身的大状态每帧深拷贝”的问题，但没有解决更高层的物理编排问题。
+
+现在的物理解算器仍然大多按“独立小世界”组织：
+
+- MeshCloth MC2 自己读写 `MC2RuntimeOwner`。
+- BoneCloth MC2 自己读写 `MC2RuntimeOwner`。
+- SpringBone VRM 自己维护 spring cache。
+- Mesh XPBD 自己维护 XPBD state。
+- 每个节点内部各自判断 reset、跳帧、倒放、连续帧。
+- 多个 solver 各自从 scene 枚举 collider。
+- 不同 solver 的 cache 互相隔离，跨 solver 交互很难表达。
+
+这导致几个问题：
+
+1. 多个物理节点同时存在时，会出现多份 cache 读写、快照、提交和调试开销。
+2. 同一帧内多个 solver 会重复枚举 scene、armature、bone collider 和 object collider。
+3. 刚体、布料、骨骼弹簧之间很难共享同一个动态世界。
+4. batch 或复杂角色场景里，跨 cache 的交互几乎不可维护。
+5. 每个 solver 都写一套 frame/restart/collider 逻辑，行为容易漂移。
+
+## 设计目标
+
+### 必须做到
+
+1. 一个物理链路只读写一个 runtime cache key。
+2. 物理链路内部传递同一个 `PhysicsWorldCache` owner。
+3. `Physics World Begin` 统一处理当前帧上下文、reset、跳帧、倒放和公共 object scope。
+4. solver 节点只处理自己的拓扑、参数、求解和写回。
+5. collider 和可动对象范围由显式对象列表控制，避免每帧扫描整个 scene。
+6. 碰撞语义继续使用 `PhysicsTools` 已挂在 Object / Bone 上的属性，不在节点图上重复定义。
+7. 未来刚体、cloth、spring、mesh XPBD、soft body、fluid 都能共享同一个 physics world owner。
+8. Jolt 这类第三方物理库只作为 solver backend，不成为 OmniNode 公开物理语义。
+9. Cache Delete、clear runtime cache、插件注销仍然能释放所有物理资源。
+
+### 不做
+
+1. 不把 `PhysicsWorldCache` 做成隐藏全局单例。
+2. 不让普通 solver 节点直接写 `OmniRuntimeState`。
+3. 不在节点输入里重新描述 radius、group、pin、box size 等已有碰撞属性。
+4. 不恢复 scene-wide handler 或全局扫描式 TeamManager。
+5. 不要求第一版实现真正的多 solver 双向耦合，只先建立共同容器和公共上下文。
+6. 不承诺 Blender depsgraph 只求值 object scope 内对象。object scope 只能限制 OmniNode 自己的枚举、打包和物理输入范围。
+7. 不把 Jolt BodyID、ConstraintID、shape enum、constraint enum 等 backend 概念暴露成节点图的稳定公共协议。
+
+## 总体节点形态
+
+推荐链路：
+
+```text
+Cache Read
+  -> Physics Object Scope
+  -> Physics World Begin
+  -> MeshCloth Solver
+  -> BoneCloth Solver
+  -> SpringBone Solver
+  -> Rigid Body Solver
+  -> Physics World Commit
+  -> Cache Write
+```
+
+其中：
+
+- `Cache Read` 读取上一轮 committed 的 `PhysicsWorldCache`。
+- `Physics Object Scope` 输出本物理世界关心的对象范围。
+- `Physics World Begin` 确保 world owner 对当前帧有效。
+- solver 节点接收并返回同一个 world owner。
+- `Physics World Commit` 把裸 world owner 包装成 `_OmniCache.replace(...)` 或 `_OmniCache.mutate(...)`。
+- `Cache Write` 仍然是最终 runtime cache 提交边界。
+
+关键点：链路中间传递的是裸 `PhysicsWorldCache`，不是 `_OmniCache.mutate(world)` intent。intent 只应在最终 commit 节点产生，避免 wrapper 泄漏给后续普通函数节点。
+
+## 为什么输入对象列表就够
+
+`PhysicsTools` 当前已经把物理配置持久化在 Blender 数据上：
+
+- `Bone.hotools_collision`
+  - bone pin
+  - sphere / capsule
+  - radius / length / offset
+  - primary collision group
+  - collided-by group mask
+
+- `Object.hotools_object_collision`
+  - object-level passive collider
+  - sphere / capsule / plane / box
+  - radius / length / offset / box_size
+  - primary collision group
+
+- `Object.hotools_mesh_collision`
+  - mesh vertex collision balls
+  - radius vertex group
+  - pin vertex group
+  - self collision
+  - mass
+  - primary group / collided-by groups
+  - MC2 base pose proxy
+
+因此节点图不需要再创建一套 `PhysicsParticipantSpec` 去重复描述这些字段。更合理的分工是：
+
+```text
+对象列表：
+  决定本物理世界扫描哪些 Object / Armature / Mesh。
+
+PhysicsTools 属性：
+  决定这些 Object / Bone / Mesh 具有什么物理语义。
+
+solver 节点输入：
+  决定哪个 solver 作用到哪个目标对象、骨链或 mesh。
+```
+
+也就是说，object scope 是“扫描范围”和“依赖范围”，不是“物理语义 schema”。
+
+## Object Scope
+
+第一版建议定义一个轻量 runtime value：
+
+```python
+class PhysicsObjectScope:
+    objects: tuple[bpy.types.Object, ...]
+    include_object_colliders: bool
+    include_bone_colliders: bool
+    include_mesh_collision: bool
+    include_hidden: bool
+```
+
+它可以是普通 dataclass，也可以先用 dict 表达。它不需要实现 `omni_cache_dispose()`，因为它只是本帧运行值，不是跨帧资源 owner。
+
+### Scope 节点
+
+建议新增普通函数节点：
+
+```text
+Physics Objects From Collection
+  输入：Collection, recursive, include_hidden
+  输出：list[Object]
+
+Physics Merge Objects
+  输入：list[Object] 多重输入
+  输出：list[Object]
+
+Physics Object Scope
+  输入：list[Object], include_object_colliders, include_bone_colliders, include_mesh_collision, include_hidden
+  输出：PhysicsObjectScope
+```
+
+可选节点：
+
+```text
+Physics Filter Objects By Type
+Physics Filter Objects By Name / Regex
+Physics Add Object To Scope
+Physics Add Collection To Scope
+```
+
+这些都是普通函数节点，不需要 GraphNode，因为它们只是在当前帧构造运行值，不改变 runtime cache 语义。
+
+### Scope 解析规则
+
+`Physics World Begin` 解析 scope 时：
+
+1. 对每个 object 去重，使用 `obj.as_pointer()` 或 fallback `id(obj)`。
+2. `include_hidden=False` 时跳过不可见对象。
+3. 若 object 有 `hotools_object_collision` 且类型不是 `NONE`，生成 object collider source。
+4. 若 object 是 Armature 且 `include_bone_colliders=True`，扫描该 armature 的 bones 上的 `hotools_collision`。
+5. 若 object 是 Mesh 且 `include_mesh_collision=True`，读取 `hotools_mesh_collision`，作为 mesh collision / self collision / base pose proxy 的可用配置来源。
+6. 若 object 引用失效，当前帧跳过并在 debug snapshot 中记录 invalid count。
+
+## PhysicsWorldCache
+
+`PhysicsWorldCache` 是新的共享 owner。它应实现：
+
+```python
+def omni_cache_dispose(self, reason: str) -> None:
+    ...
+
+def omni_cache_debug_snapshot(self) -> dict:
+    ...
+```
+
+建议职责：
+
+```text
+PhysicsWorldCache
+  frame_context
+  object_scope_key
+  object_sources
+  collider_snapshot
+  previous_collider_snapshot
+  solver_slots
+  backend_resources
+  debug counters
+```
+
+### FrameContext
+
+统一表示当前帧状态：
+
+```python
+class PhysicsFrameContext:
+    scene_key: str
+    frame: int
+    previous_frame: int | None
+    continuous: bool
+    same_frame: bool
+    reset_requested: bool
+    restart_required: bool
+    dt: float
+    time_scale: float
+    substeps: int
+    generation: int
+```
+
+语义：
+
+- `continuous=True`：`current_frame == previous_frame + 1`。
+- `same_frame=True`：`current_frame == previous_frame`。是否允许同帧重复执行由 world policy 决定。
+- `restart_required=True`：reset、倒放、跳帧、scope 改变或 world invalid。
+- `generation`：world 每次重建或全局 restart 时递增，solver slot 可用它判断是否需要冷启动。
+
+### Object Source
+
+`Physics World Begin` 不应每次都构造完整 collider dict 后再让不同 backend 反复转换。建议先构造轻量 source，再按需求生成 snapshot 或 arrays。
+
+```python
+class PhysicsColliderSource:
+    owner: bpy.types.Object
+    owner_type: "OBJECT" | "BONE" | "MESH"
+    bone_name: str
+    props: object
+    key: str
+    visible: bool
+```
+
+第一版可以继续用 dict，不必先做类。重点是 source 只来自 object scope。
+
+### Collider Snapshot
+
+公共 collider snapshot 由 world owner 持有：
+
+```python
+world.collider_snapshot
+world.collider_arrays("mc2")
+world.collider_arrays("spring_bone_cpp")
+```
+
+第一版可以先只缓存通用 dict list：
+
+```python
+{
+    "frame": frame,
+    "colliders": [ ... ],
+    "source_count": N,
+    "object_count": M,
+}
+```
+
+以后再按 backend 增加 arrays cache：
+
+```python
+world.runtime_cache("collider_arrays:mc2")
+world.runtime_cache("collider_arrays:spring_vrm_cpp")
+world.runtime_cache("collider_arrays:rigid_jolt")
+```
+
+### Previous Collider Snapshot
+
+MC2 已经需要 moving collider 的 previous pose。这个状态应该从 solver 私有 state 上移到 world：
+
+```text
+world.previous_collider_snapshot
+world.current_collider_snapshot
+```
+
+提交策略：
+
+- `Physics World Begin` 生成 current snapshot。
+- solver 在本帧使用 `previous + current`。
+- `Physics World Commit` 成功前，world 内部已经被原地更新。
+- 如果本轮后续节点报错，下一帧 `Physics World Begin` 必须通过 frame/generation 判断是否可信，不可信就重建或冷启动。
+
+这和当前 resource cache 原地 mutation 语义一致。
+
+### Solver Slots
+
+solver 不再拥有整个 runtime cache owner，而是在 world 内拿自己的 slot：
+
+```python
+slot = world.ensure_solver_slot(
+    solver_id="meshcloth:object_pointer:output_key",
+    kind="mc2_mesh_cloth",
+    topology_key=...,
+    config_key=...,
+)
+```
+
+slot 内容由 solver 自己维护：
+
+```text
+MeshCloth slot:
+  MC2RuntimeOwner or MC2CenterState
+  topology cache
+  native context
+  base pose state
+  particle state
+
+BoneCloth slot:
+  MC2RuntimeOwner or bone-specific state
+  write records
+  chain topology
+
+SpringBone slot:
+  chain state
+  write records
+  native arrays cache
+
+RigidBody slot:
+  body handles
+  constraint handles
+  body specs
+```
+
+world 只管 slot 生命周期：
+
+- scope/world restart 时可标记所有 slot `world_restart_generation`。
+- solver topology/config 变化时，由 solver 自己重建自己的 slot。
+- world dispose 时调用所有 slot 的 dispose。
+
+slot 可以实现：
+
+```python
+def dispose(self, reason: str) -> None:
+    ...
+
+def debug_snapshot(self) -> dict:
+    ...
+```
+
+也可以第一版用 dict + owner 对象混合实现。
+
+## Physics World Begin
+
+建议节点签名：
+
+```python
+def physicsWorldBegin(
+    cache_state: _OmniCache,
+    scene: bpy.types.Scene,
+    object_scope: PhysicsObjectScope,
+    enabled: bool = True,
+    reset: bool = False,
+    time_scale: float = 1.0,
+    substeps: int = 1,
+    include_hidden: bool = False,
+    debug_output: bool = False,
+) -> tuple[PhysicsWorldCache, int, int, bool]:
+    ...
+```
+
+输出：
+
+```text
+world
+frame
+collider_count
+restart_required
+```
+
+职责：
+
+1. 校验 scene 和 object scope。
+2. 如果 `cache_state` 不是 `PhysicsWorldCache`，创建新 owner。
+3. 计算 scene key、frame、dt、substeps、time scale。
+4. 判断连续帧、同帧、倒放、跳帧、reset。
+5. 计算 object scope key。
+6. 如果 scope key 改变，标记 `restart_required`。
+7. 从 object scope 构建 collider sources。
+8. 从 sources 构建 collider snapshot。
+9. 更新 world frame context。
+10. 返回裸 world owner。
+
+注意：Begin 不应该知道 MeshCloth、BoneCloth、SpringBone 的业务参数。它只处理世界级上下文。
+
+## Physics World Commit
+
+建议节点签名：
+
+```python
+def physicsWorldCommit(
+    world: PhysicsWorldCache,
+    enabled: bool = True,
+) -> tuple[_OmniCache, PhysicsWorldCache, int]:
+    ...
+```
+
+输出：
+
+```text
+cache_value
+world
+solver_count
+```
+
+职责：
+
+1. 校验 world。
+2. 若 world 是本轮新建或重建，返回 `_OmniCache.replace(world)`。
+3. 若 world 是连续帧复用，返回 `_OmniCache.mutate(world)`。
+4. 透传裸 world 供后续 debug 或输出链路使用。
+
+它不应自己写 runtime cache。最终仍由 Cache Write 节点提交。
+
+## Solver 节点迁移后的职责
+
+### 通用规则
+
+solver 节点输入从：
+
+```text
+cache_state: _OmniCache
+scene
+reset
+...
+```
+
+迁移为：
+
+```text
+world: PhysicsWorldCache
+target object / armature / chains
+solver params
+...
+```
+
+solver 不再做：
+
+- Cache Read / Cache Write wrapper。
+- 全局 frame continuity 判断。
+- scene-wide collider scan。
+- runtime cache owner 替换。
+
+solver 仍然做：
+
+- target 校验。
+- solver_id 构造。
+- topology key / config key 计算。
+- slot 命中或重建。
+- base pose 同步。
+- solver kernel 调用。
+- 写回 GN delta、PoseBone 或 rigid body transform。
+- solver-specific debug timing。
+
+### MeshCloth MC2
+
+当前 `MC2RuntimeOwner` 可以先不删除，而是挂进 world slot：
+
+```text
+world.solver_slots["mc2_mesh:{obj_ptr}:{output_key}"].owner = MC2RuntimeOwner
+```
+
+迁移点：
+
+- `current_frame` 读取 `world.frame_context.frame`。
+- `restart_required` 读取 `world.frame_context.restart_required`，再 OR 自己的 topology/config mismatch。
+- `colliders` 读取 `world.colliders_for(owner=obj, mask=...)` 或 `world.collider_snapshot["colliders"]`。
+- `previous_collider_snapshot` 逐步从 `MC2CenterState` 上移到 world。
+- `cache_value = _OmniCache...` 删除，改为返回裸 world。
+
+### BoneCloth MC2
+
+BoneCloth 目前已经复用 `MC2RuntimeOwner`，迁移方式和 MeshCloth 类似：
+
+- slot id 由 armature pointer + chain topology + connection mode 组成。
+- write records 留在 slot 的 runtime cache。
+- frame/restart 来自 world。
+- collider snapshot 来自 world。
+- 写回仍由 BoneCloth 自己负责。
+
+### SpringBone VRM
+
+SpringBone VRM 现在有自己的 collision source cache 和 C++ arrays cache。迁移后：
+
+- `collision_snapshot(scene)` 改为 `world.collider_snapshot`。
+- `collision_snapshot_cpp(scene)` 改为 `world.collider_arrays("spring_vrm_cpp")`。
+- chain state 放到 spring solver slot。
+- `frame` 和跳帧恢复策略读取 world frame context。
+- root hard pin 仍由 chain 输入决定，不放进 world。
+
+### Mesh XPBD legacy
+
+Mesh XPBD 是旧蓝本，可作为兼容路径保留。若迁移：
+
+- state 放到 `world.solver_slots["mesh_xpbd:{obj_ptr}"]`。
+- collision snapshot 来自 world。
+- frame/restart 来自 world。
+- 仍可继续使用 `OmniCacheOwnerDict` 包旧 dict，但 owner 应逐步收敛到 world slot。
+
+### Rigid Body solver / Jolt backend
+
+统一 physics world owner 对刚体也很重要，因为刚体仿真天然需要长期资源。但公开层不要设计成 Jolt world，也不要设计成单独的 rigid world。Jolt 只是刚体 solver 的 native backend，OmniNode 自己的物理世界表达才是稳定协议：
+
+```text
+world.backend_resources["rigid_solver"]   # private backend context, backend="jolt"
+world.solver_slots["rigid_body:{object_ptr}"]
+world.solver_slots["constraint:{constraint_object_ptr}"]
+```
+
+公开节点和数据命名应保持 OmniNode / Blender 语义：
+
+```text
+Rigid Body Setting
+Rigid Constraint Setting
+Rigid Constraint Point
+Rigid Body Solver
+```
+
+不推荐在公开节点里使用：
+
+```text
+Jolt Body
+Jolt Constraint
+Jolt Shape
+Jolt World
+```
+
+`Rigid Body Solver` 可以有一个 backend 选项，第一版默认或唯一值是 `JOLT`。这个选项只影响内部适配器，不改变节点图的物理语义。
+
+刚体节点可以先做高封装：
+
+```text
+Rigid Body Solver(world, rigid_objects, constraint_objects, settings)
+```
+
+以后需要拆分时再拆成：
+
+```text
+Rigid Body Register Objects
+Rigid Constraint Register Objects
+Rigid Body Step
+Rigid Body Writeback
+```
+
+第一版不需要新增 GraphNode。它们都是普通函数节点，传入并返回 `PhysicsWorldCache`。
+
+### Jolt 只作为 backend 适配层
+
+Jolt 接入的边界建议是：
+
+```text
+OmniNode object scope
+  -> HoTools rigid body specs
+  -> HoTools constraint specs
+  -> Jolt adapter build/update
+  -> Jolt step
+  -> HoTools writeback records
+  -> Blender object transform / pose / mesh writeback
+```
+
+也就是说，Jolt 的 `BodyID`、`ConstraintID`、shape handle、constraint handle 只能存在于 rigid solver slot 或 `world.backend_resources["rigid_solver"]` 内部。debug snapshot 可以显示 backend 名称和数量统计，但不应要求用户或其他 solver 依赖 Jolt handle。
+
+这样未来即使替换、混用或补充其他 backend，公开图也仍然是：
+
+```text
+对象范围 + OmniNode 物理属性 + solver 设置 + 约束点对象
+```
+
+而不是：
+
+```text
+Jolt 专用对象图
+```
+
+### 约束点载体
+
+刚体约束不建议一开始设计成大量细输入 socket。更稳的方向是引入新的 Blender 物体对象作为约束点载体，第一版可以使用 Empty：
+
+```text
+Empty object transform:
+  表示约束 anchor frame、位置、旋转和可视化操控点。
+
+Empty read-only custom properties:
+  表示 OmniNode 约束语义，例如 constraint type、target A、target B、axis、limit、motor、break threshold。
+```
+
+这些 custom properties 应该通过 HoTools 面板或操作器维护，对节点和 solver 来说视为只读配置。节点图只需要把这些 Empty 对象纳入 object scope 或显式接到 `Rigid Constraint Setting` / `Rigid Body Solver`。
+
+关键边界：
+
+- 约束点是 OmniNode 物理语义，不是 Jolt 语义。
+- Empty 的 transform 是约束 anchor 的 Blender-native 表达。
+- custom property enum 使用 HoTools 自己的名字，Jolt adapter 负责映射到 Jolt constraint。
+- Jolt constraint handle 只保存在 runtime slot 中，不写回 Empty。
+- 约束点对象应该能被其他 solver 看见，至少作为调试、采样或未来跨 solver 交互的公共锚点。
+
+## Object Scope 与 solver target 的关系
+
+用户可能会问：某个对象既要放进 object scope，又要接到 solver，是否重复？
+
+这是有意分工：
+
+```text
+object scope:
+  告诉 world “这些对象是本物理世界需要感知的对象”。
+
+solver target:
+  告诉某个 solver “你要模拟或写回这个对象”。
+```
+
+典型情况：
+
+```text
+地面 collider:
+  放进 object scope。
+  不接 solver。
+
+布料 proxy:
+  放进 object scope，让其他 solver 能感知它的 mesh collision。
+  同时接 MeshCloth solver，自己被模拟。
+
+角色 armature:
+  放进 object scope，让 bone collider 被采样。
+  同时接 SpringBone / BoneCloth solver。
+
+刚体道具:
+  放进 object scope。
+  同时接 RigidBody solver。
+```
+
+这样比隐式扫 scene 更清楚，也比手写 participant schema 更轻。
+
+## Cache 边界
+
+推荐用户图：
+
+```text
+Cache Read(key="physics_world")
+  -> Physics World Begin
+  -> Solver...
+  -> Physics World Commit
+  -> Cache Write(key="physics_world")
+```
+
+规则：
+
+1. 每条物理世界链路只有一个 cache key。
+2. 中间 solver 不接 Cache Write。
+3. solver 不直接调用 `OmniRuntimeState.write_cache()`。
+4. `PhysicsWorldCache` 实现 `omni_cache_dispose()`。
+5. `Physics World Commit` 是唯一把 world 包成 cache intent 的普通函数节点。
+6. Cache Delete / clear runtime cache 仍然释放整个 world 和所有 solver slot。
+
+## 执行顺序和副作用
+
+统一 world owner 依赖节点连线提供顺序：
+
+```text
+world -> solver A -> solver B -> solver C -> commit
+```
+
+不要把同一个 world 分叉给两个并行 solver 后再 merge。OmniNode 当前没有事务式并行 mutation 语义，分叉原地修改同一个 owner 会让执行顺序变得隐性。
+
+如果需要多 solver 交互，应通过线性链路表达：
+
+```text
+RigidBody step
+  -> Cloth step
+  -> SpringBone step
+  -> Writeback
+```
+
+以后如果确实需要并行，可以再设计显式 `Physics World Merge` 或调度型 GraphNode。第一版不要做。
+
+## 调试和可观察性
+
+`PhysicsWorldCache.omni_cache_debug_snapshot()` 至少输出：
+
+```python
+{
+    "kind": "PhysicsWorldCache",
+    "frame": frame,
+    "previous_frame": previous_frame,
+    "continuous": continuous,
+    "restart_required": restart_required,
+    "generation": generation,
+    "objects": object_count,
+    "collider_sources": source_count,
+    "colliders": collider_count,
+    "solver_slots": {
+        slot_id: slot.debug_snapshot(),
+    },
+}
+```
+
+`Physics World Begin` 节点也可以输出：
+
+```text
+frame
+object_count
+collider_count
+restart_required
+```
+
+这样用户不用 dump 整个 cache 也能确认本帧实际参与物理的数据规模。
+
+## 失败与回滚
+
+统一 world 仍然沿用资源型 cache 的现实边界：
+
+- world owner 是原地 mutation。
+- runtime cache 不 clone native world。
+- 若某个 solver 已经修改 world，后续节点报错，本轮 pending 不提交，但 committed owner 可能已经被原地改过。
+- 下一帧 `Physics World Begin` 必须通过 frame/generation/validity 检测处理不可信状态。
+
+因此 `Physics World Begin` 是可信度检查的第一道门：
+
+```text
+if previous_frame is not current_frame - 1:
+    restart_required = True
+
+if world marked invalid:
+    restart_required = True
+
+if object scope changed:
+    restart_required = True
+```
+
+solver slot 也必须保留自己的 topology/config 校验：
+
+```text
+if world restart generation changed:
+    cold restart slot
+
+if solver topology changed:
+    rebuild slot
+
+if solver params require rebuild:
+    rebuild or refresh static arrays
+```
+
+## 与现有文档约定的关系
+
+本设计不改变以下原则：
+
+1. 默认业务节点仍然是函数生成节点。
+2. Cache Read / Cache Write / Cache Delete 仍然是 GraphNode。
+3. 跨帧状态仍然必须显式通过 runtime cache 暴露。
+4. C++ backend 不应保存隐藏全局状态。
+5. 资源生命周期仍通过 owner 的 `omni_cache_dispose()` 管理。
+
+变化的是物理节点库的推荐接法：
+
+```text
+旧：
+  每个 solver 有自己的 Cache Read -> Solver -> Cache Write。
+
+新：
+  一个 Physics World 有自己的 Cache Read -> Begin -> 多 solver -> Commit -> Cache Write。
+```
+
+## 实施路线
+
+核心顺序：不要从迁移旧 solver 开始。先搭低层物理世界和通用节点，让 debug 节点能稳定观察 `PhysicsWorldCache` 本身；这部分测试稳定以后，再开始迁移 MC2、SpringBone、XPBD 等已有 solver。
+
+### Phase 0：命名和目录边界
+
+新增顶层物理世界目录：
+
+```text
+OmniNode/NodeTree/Function/physicsWorld/
+```
+
+不要新增 `rigidWorld/`、`physicsRigidWorld/` 这类目录。刚体只是物理世界里的一个 domain，应该放在 `physicsWorld` 下面：
+
+```text
+physicsWorld/
+  __init__.py
+  types.py
+  scope.py
+  sources.py
+  world.py
+  debug.py
+  nodes.py
+  rigid/
+    __init__.py
+    specs.py
+    constraints.py
+    solver.py
+    backends/
+      jolt.py
+```
+
+目录语义：
+
+- `types.py`：`PhysicsWorldCache`、`PhysicsFrameContext`、`PhysicsObjectScope` 等基础类型。
+- `scope.py`：对象列表合并、过滤、去重、scope key 计算。
+- `sources.py`：从 object scope 解析 Object / Bone / Mesh 的物理 source。
+- `world.py`：begin / commit / lifecycle / slot 管理。
+- `debug.py`：debug snapshot、flatten text、校验结果。
+- `nodes.py`：对外暴露的通用函数节点。
+- `rigid/`：刚体 domain 的 spec、约束、solver 和 backend adapter。
+
+### Phase 1：低层物理世界基础
+
+先实现通用基础，不接任何旧 solver：
+
+- `PhysicsWorldCache`
+- `PhysicsFrameContext`
+- `PhysicsObjectScope`
+- `PhysicsColliderSource`
+- `PhysicsWorldCache.ensure_solver_slot()`
+- `PhysicsWorldCache.runtime_cache()`
+- `omni_cache_dispose(reason)`
+- `omni_cache_debug_snapshot()`
+
+这一阶段只要求 world owner 能正确创建、复用、释放和输出调试信息。
+
+### Phase 2：通用函数工具和通用节点
+
+新增普通函数节点：
+
+```text
+Physics Objects From Collection
+Physics Merge Objects
+Physics Filter Objects
+Physics Object Scope
+Physics World Begin
+Physics World Commit
+```
+
+新增内部工具函数：
+
+```text
+dedupe_objects(objects)
+build_scope_key(scope)
+collect_physics_sources(scope)
+build_collider_snapshot(world, sources)
+update_frame_context(world, scene, settings)
+mark_restart_if_needed(world, frame_context, scope_key)
+```
+
+这一阶段的目标是让物理世界链路能独立跑通：
+
+```text
+Cache Read
+  -> Physics Object Scope
+  -> Physics World Begin
+  -> Physics World Commit
+  -> Cache Write
+```
+
+### Phase 3：debug 节点先行
+
+在任何 solver 迁移前，先新增 debug 节点调试输出物理世界本身：
+
+```text
+Physics World Debug Snapshot
+Physics World Debug Text
+Physics World Validate
+```
+
+推荐第一条验证链路：
+
+```text
+Cache Read
+  -> Physics Objects From Collection
+  -> Physics Object Scope
+  -> Physics World Begin
+  -> Physics World Debug Snapshot
+  -> Physics World Debug Text
+  -> Physics World Commit
+  -> Cache Write
+```
+
+debug 输出至少要能确认：
+
+- frame / previous frame / continuous / same frame / restart。
+- generation / replace_required / valid。
+- object scope key 和 object count。
+- source count / collider count / skipped count。
+- solver slot count。
+- backend resource count。
+- dispose 后资源是否清空。
+
+这一步的价值是先验证 cache owner、object scope、frame policy、debug snapshot 和 Cache Read / Write 交界都没有问题，再让 solver 参与。
+
+### Phase 4：刚体 domain 先作为物理世界子模块
+
+刚体实现放在 `physicsWorld/rigid/`，不单独建立刚体世界：
+
+```text
+Rigid Body Setting
+Rigid Constraint Setting
+Rigid Constraint Point
+Rigid Body Solver
+```
+
+第一版刚体 domain 可以先只做 spec 收集和 debug 输出：
+
+- 从 object scope 和显式对象输入构造 rigid body specs。
+- 从 Empty 约束点对象构造 constraint specs。
+- 把 specs 放入 world solver slot。
+- 通过 `Physics World Debug Snapshot` 输出 body / constraint 数量和 key。
+- 暂时不要求完整 Jolt step 和写回。
+
+这个阶段要确认 OmniNode 自己的刚体和约束语义是稳定的，而不是被 Jolt API 形状反向牵引。
+
+### Phase 5：Jolt backend 接入
+
+在 rigid specs 和 debug 输出稳定后，再接 Jolt adapter：
+
+- Jolt native context 只挂在 `world.backend_resources["rigid_solver"]`。
+- Jolt body / constraint handles 只保存在 rigid solver slot 内。
+- 公开节点仍然是 `Rigid Body Solver`，不是 `Jolt World`。
+- debug snapshot 只输出 backend 名称、body count、constraint count、step timing 和错误摘要。
+
+第一版 Jolt 接入建议先用最小场景验证：少量动态刚体、静态 collider、一个 Empty 约束点、无跨 solver 交互。
+
+### Phase 6：稳定门槛
+
+开始迁移旧 solver 前，至少需要通过这些门槛：
+
+- debug 节点能稳定输出 world snapshot。
+- same frame、连续帧、跳帧、倒放、reset 行为明确。
+- Cache Read / Begin / Commit / Cache Write 的 replace / mutate 行为稳定。
+- Cache Delete / clear runtime cache 能释放 world、slot 和 backend resources。
+- object scope 改变会触发 generation / restart。
+- 刚体 domain 的 specs 不泄漏 Jolt handle。
+
+### Phase 7：迁移已有 solver
+
+稳定后再迁移已有 solver：
+
+- MC2 MeshCloth / BoneCloth 先改为可选读取 `world.collider_snapshot`。
+- SpringBone 再改为读取 world collider arrays。
+- frame/restart 逻辑逐步改读 `world.frame_context`。
+- per-node owner 最后再迁移到 world solver slots。
+
+旧节点继续保留兼容路径，直到 world-aware 路径被测试证明稳定。
+
+### Phase 8：跨 solver 交互
+
+在统一 world 基础上逐步支持：
+
+- cloth 读取 rigid body collider。
+- rigid body 读取 animated bone collider。
+- spring bone 读取 rigid body collider。
+- mesh cloth 之间的互碰。
+- self collision 与外部 collision 的公共 broadphase。
+
+这一步必须谨慎，不要在第一版把 world 做成大而全的调度器。
+
+## 推荐第一版 API 草图
+
+```python
+class PhysicsWorldCache:
+    kind = "hotools.physics_world"
+    schema = 1
+
+    def __init__(self):
+        self.frame_context = {}
+        self.object_scope_key = None
+        self.collider_snapshot = {"frame": None, "colliders": []}
+        self.previous_collider_snapshot = None
+        self.solver_slots = {}
+        self.runtime_caches = {}
+        self.backend_resources = {}
+        self.generation = 0
+        self.replace_required = True
+        self.valid = True
+
+    def ensure_solver_slot(self, slot_id, kind):
+        ...
+
+    def runtime_cache(self, name):
+        ...
+
+    def omni_cache_dispose(self, reason):
+        ...
+
+    def omni_cache_debug_snapshot(self):
+        ...
+```
+
+```python
+def physicsWorldBegin(cache_state, scene, object_scope, enabled=True, reset=False, time_scale=1.0, substeps=1):
+    world = cache_state if isinstance(cache_state, PhysicsWorldCache) else PhysicsWorldCache()
+    world.begin_frame(scene, object_scope, reset=reset, time_scale=time_scale, substeps=substeps)
+    return world, world.frame, world.collider_count, world.restart_required
+```
+
+```python
+def physicsWorldCommit(world, enabled=True):
+    if not enabled or world is None:
+        return _OmniCache.replace(None), world, 0
+    cache_value = _OmniCache.replace(world) if world.replace_required else _OmniCache.mutate(world)
+    return cache_value, world, len(world.solver_slots)
+```
+
+## 关键风险
+
+### world owner 变成巨型上帝对象
+
+避免方式：
+
+- world 只管公共上下文、object scope、collider snapshot、slot 生命周期。
+- solver 业务状态仍在 solver slot 内。
+- solver 参数、拓扑、writeback 不上移到 world。
+
+### object scope 不完整导致碰撞缺失
+
+这是显式输入的代价。需要通过节点输出和 debug snapshot 让用户看到：
+
+- object count
+- collider source count
+- collider count
+- skipped hidden count
+- invalid object count
+
+### 同一个 world 被分叉 mutation
+
+第一版文档和节点描述必须明确：world 链路应线性串联，不支持并行分叉后合并。
+
+### 与旧节点兼容
+
+旧节点不应立即删除。建议新增 world-aware 版本或给现有节点增加可选 world 输入时保持旧接法可用。
+
+### Blender depsgraph 开销不会完全消失
+
+object scope 限制的是 OmniNode 自己的扫描和打包范围。只要 solver 写回 PoseBone 或 mesh delta，Blender 仍可能重算依赖图和视图。
+
+## 最终建议
+
+第一版不要做复杂 participant schema。现有 `PhysicsTools` 属性系统已经承担物理语义，节点层只需要显式提供对象范围。
+
+推荐核心口径：
+
+```text
+用 object scope 限定物理世界能感知的对象。
+用 PhysicsTools 属性解释这些对象的碰撞、pin、自碰撞和组语义。
+用 PhysicsWorldCache 统一 frame/collider/resource/slot 生命周期。
+用 solver slot 保持各解算器自己的拓扑、参数、状态和写回逻辑。
+用 OmniNode rigid specs 表达刚体和约束，用 Jolt adapter 做内部求解。
+用 Physics World Commit 把同一个 world owner 提交回 runtime cache。
+```
+
+这样可以在不破坏 OmniNode runtime cache 架构的前提下，把物理系统从“多个独立 cache 小世界”推进到“一个显式物理世界，多 solver 协作”的模型。
