@@ -49,7 +49,7 @@ def physicsObjectsFromCollection(
     collection: bpy.types.Collection,
     recursive: bool = True,
     include_hidden: bool = False,
-) -> list:
+) -> list[bpy.types.Object]:
     if collection is None:
         return []
     return objects_from_collection(collection, recursive=bool(recursive), include_hidden=bool(include_hidden))
