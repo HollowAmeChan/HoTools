@@ -79,6 +79,7 @@ def build_bone_write_records(
                     "parent_rest_inv": (
                         parent.bone.matrix_local.inverted() if parent is not None else None
                     ),
+                    # init_scale 保留供调试查看，写回时不使用（物理写回强制 scale=(1,1,1)，见 _matrix_basis_from_target）
                     "init_scale": pose_bone.matrix.to_scale().copy(),
                 })
         particle_cursor += len(bone_names)
@@ -90,6 +91,17 @@ def build_bone_write_records(
 # ---------------------------------------------------------------------------
 
 def _matrix_basis_from_target(record, target_matrix, parent_pose_matrices):
+    """把骨架空间目标矩阵转换为 matrix_basis（父骨本地空间），强制不写缩放。
+
+    设计原则（与 MC2 Unity 对齐）：
+    ─ MC2 SimulationPostProxyMeshUpdateLine 只修改 localRotation，不触碰 localScale。
+      物理写回只允许改旋转，禁止改缩放。若 matrix_basis 带非单位缩放，会逐帧累积，
+      导致骨骼视觉拉长 → 末端漂移 → 最终爆炸。
+    ─ 父骨矩阵去掉缩放分量再参与计算，防止父骨的缩放传播到子骨 matrix_basis。
+    ─ Connected 骨骼（头锁父尾）：Blender 自动忽略 matrix_basis 的 Translation 部分，
+      只有 Rotation 生效——与 MC2 仅改旋转的行为完全一致，无需打断骨骼。
+    ─ Disconnected 骨骼：Translation 也生效，由调用方传入正确的 target_matrix.translation。
+    """
     parent = record.get("parent")
     if parent is None or record.get("parent_rest_inv") is None:
         raw = record["bone_rest_inv"] @ target_matrix
@@ -98,12 +110,12 @@ def _matrix_basis_from_target(record, target_matrix, parent_pose_matrices):
         parent_matrix = parent_pose_matrices.get(parent_name)
         if parent_matrix is None:
             parent_matrix = parent.matrix
-        # 用纯旋转的父骨矩阵，剔除父骨可能的缩放分量，防止缩放传播到子骨 matrix_basis
+        # 剔除父骨缩放，防止非单位 scale 传播进子骨 matrix_basis
         par_loc, par_rot, _par_scale = parent_matrix.decompose()
         parent_matrix_no_scale = mathutils.Matrix.LocRotScale(par_loc, par_rot, mathutils.Vector((1.0, 1.0, 1.0)))
         parent_space = parent_matrix_no_scale @ record["parent_rest_inv"] @ record["bone_rest"]
         raw = parent_space.inverted() @ target_matrix
-    # 物理写回不允许缩放（与 MC2 SimulationPostProxyMeshUpdateLine 对齐：只改旋转）
+    # 强制 scale=(1,1,1)：物理写回只允许写旋转，永远不写缩放
     loc, rot, _scale = raw.decompose()
     return mathutils.Matrix.LocRotScale(loc, rot, mathutils.Vector((1.0, 1.0, 1.0)))
 
@@ -193,9 +205,7 @@ def write_bone_rotations(
                 float(anime_ratio),
                 float(root_rotation),
             )
-            _write_from_world_rotations(
-                armature_obj, records, world_rotations, display_positions, write_runtime
-            )
+            _write_from_world_rotations(armature_obj, records, world_rotations, write_runtime)
             return
         except Exception:
             pass  # 退化到独立计算路径
@@ -213,8 +223,32 @@ def import_numpy():
 # 链式路径写回
 # ---------------------------------------------------------------------------
 
-def _write_from_world_rotations(armature_obj, records, world_rotations, display_positions, write_runtime):
-    """MC2 世界旋转 Z 轴 → 骨骼方向 → matrix_basis。depth=0 root 用动画矩阵。"""
+def _write_from_world_rotations(armature_obj, records, world_rotations, write_runtime):
+    """MC2 世界旋转 → 骨骼方向 → matrix_basis（链式路径）。
+
+    设计原则（与 MC2 SimulationPostProxyMeshUpdateLine 对齐）：
+
+    【只改旋转，不改缩放】
+      MC2 Unity 只修改 Transform.localRotation，localScale 从不触碰。
+      本函数构造 target_matrix 时强制 scale=(1,1,1)；
+      _matrix_basis_from_target 写入前再次剔除缩放，双重保险。
+      若允许缩放进入 matrix_basis，每帧累积后骨骼视觉被拉长，最终爆炸。
+
+    【头部位置：父链传播，不用粒子坐标】
+      每根骨骼的 head_pose 由父骨矩阵链式推算（父骨尾 = 子骨头），
+      与 MC2 中 Transform 层级位置由父子关系决定的逻辑等价。
+      不直接取 display_positions 作 head_pose：物理距离约束有柔性，
+      粒子间距可能略大于 rest 长度；若直接取粒子坐标，骨链会出现视觉断缝。
+
+    【Connected / Disconnected 骨骼均兼容，无需打断骨骼】
+      Connected 骨骼（头锁父尾）：Blender 自动忽略 matrix_basis 的 Translation，
+        只有 Rotation 生效——与 MC2 仅写旋转的行为完全一致。
+      Disconnected 骨骼：Translation 也生效，head_pose 由父链传播提供正确值。
+      推荐使用 Connected 骨骼：与 MC2 原生行为最贴近，位置由动画层级保证稳定。
+
+    【depth=0 root 骨不写回，只保留动画矩阵】
+      Root 骨（FIXED 粒子）由动画驱动，物理只负责其子骨链的旋转。
+    """
     _MC2_FORWARD = np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
 
     def _qrot_np(q, v):
@@ -260,24 +294,19 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, display_
         init_axis.normalize()
         arm_quat = init_axis.rotation_difference(desired_local) @ bone.matrix_local.to_quaternion()
 
-        # 直接用粒子世界坐标作骨骼头部位置，避免父链传播的累积误差导致末端漂移。
-        if (
-            display_positions is not None
-            and pidx < len(display_positions)
-        ):
-            dp = display_positions[pidx]
-            head_pose = (mat_world_inv @ mathutils.Vector((float(dp[0]), float(dp[1]), float(dp[2])))).to_3d()
-        else:
-            parent = record.get("parent")
-            parent_name = record.get("parent_name") or ""
-            if parent is not None and record.get("parent_rest_inv") is not None:
-                par_mat = parent_pose_matrices.get(parent_name)
-                if par_mat is not None:
-                    head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
-                else:
-                    head_pose = parent.matrix.translation.copy()
+        # 头部位置：MC2 链式传播——父骨尾部即子骨头部，保证骨链视觉连续。
+        # 不用 display_positions 直接作头部：物理有弹性拉伸时粒子距离 ≠ rest 长度，
+        # 直接取粒子坐标会导致相邻骨骼出现视觉断缝。
+        parent = record.get("parent")
+        parent_name = record.get("parent_name") or ""
+        if parent is not None and record.get("parent_rest_inv") is not None:
+            par_mat = parent_pose_matrices.get(parent_name)
+            if par_mat is not None:
+                head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
             else:
-                head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
+                head_pose = parent.matrix.translation.copy()
+        else:
+            head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
 
         target_matrix = mathutils.Matrix.LocRotScale(head_pose, arm_quat, mathutils.Vector((1.0, 1.0, 1.0)))
         parent_pose_matrices[bone_name] = target_matrix
