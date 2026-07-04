@@ -263,6 +263,65 @@ def _paused_state_for_time_scale(
     return next_state
 
 
+def _apply_chain_param_overrides(runtime, state: dict, substep_count: int) -> None:
+    """把 BoneCloth per-chain 参数覆盖注入 MC2RuntimeParams。
+
+    BoneCloth controller 在 state["chain_param_overrides"] 里存入 {param_name: ndarray}，
+    每条链展开成粒子数组。本函数在 build_runtime_params 之后、局部变量解包之前调用，
+    同时替换 *_param dict（C++ param_slots 路径）和 *_values ndarray（Python solve 路径），
+    保证两条执行路径都能拿到 per-chain 值。
+
+    MeshCloth state 不包含 "chain_param_overrides"，函数直接返回，不影响现有行为。
+    """
+    overrides = state.get("chain_param_overrides")
+    if not isinstance(overrides, dict) or not overrides:
+        return
+
+    import numpy as _np
+    from . import params as _params
+    from .runtime_params import substep_damping_values as _substep_damp
+
+    for param_name, arr in overrides.items():
+        if not isinstance(arr, _np.ndarray) or len(arr) == 0:
+            continue
+        arr32 = _np.ascontiguousarray(arr, dtype=_np.float32)
+
+        if param_name == "damping":
+            runtime.damping_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            # substep_damping_values 是帧阻尼的 per-substep 推导值，需重算
+            runtime.substep_damping_values = _substep_damp(arr32, substep_count)
+
+        elif param_name == "distance_stiffness":
+            runtime.distance_stiffness_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.distance_stiffness_values = arr32
+
+        elif param_name == "bend_stiffness":
+            runtime.bend_stiffness_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.bend_stiffness_values = arr32
+
+        elif param_name == "angle_restoration_stiffness":
+            runtime.angle_restoration_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.angle_restoration_values = arr32
+
+        elif param_name == "angle_restoration_velocity_attenuation":
+            runtime.angle_restoration_velocity_attenuation_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.angle_restoration_velocity_attenuation_values = arr32
+
+        elif param_name == "angle_restoration_gravity_falloff":
+            runtime.angle_restoration_gravity_falloff_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.angle_restoration_gravity_falloff_values = arr32
+
+        elif param_name == "angle_limit":
+            runtime.angle_limit_param = _params.per_particle_param(arr32, minimum=0.0, maximum=180.0)
+            runtime.angle_limit_values = arr32
+
+        elif param_name == "angle_limit_stiffness":
+            runtime.angle_limit_stiffness_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+
+        elif param_name == "tether_compression":
+            runtime.tether_compression_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+
+
 # 运行顺序说明：
 # 1. 先做一次输入整理、曲线采样、碰撞快照与惯性状态准备。
 # 2. 每个 substep 内固定顺序为：
@@ -477,6 +536,8 @@ def solve_meshcloth(
         _add_timing,
         timing_prefix="solve_setup.params",
     )
+    # BoneCloth per-chain 参数覆盖：MeshCloth 无此字段，函数直接返回不影响现有行为
+    _apply_chain_param_overrides(runtime, state, substep_count)
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)
@@ -1424,6 +1485,8 @@ def solve_meshcloth_native_core(
         _add_timing,
         timing_prefix="solve_setup.params",
     )
+    # BoneCloth per-chain 参数覆盖（MeshCloth 无此字段，直接返回）
+    _apply_chain_param_overrides(runtime, state, substep_count)
     _end_stage(timing, "solve_setup.params", substage_start)
 
     substage_start = _stage_start(timing)

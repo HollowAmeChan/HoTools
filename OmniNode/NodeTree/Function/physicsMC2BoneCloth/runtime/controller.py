@@ -55,7 +55,6 @@ def _write_records_cache(cache_owner: mc2_state.MC2RuntimeOwner) -> dict:
 
 def run_bone_cloth_mc2_node(
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     bone_cloth_chains,
     connection_mode: int,
     rotational_interpolation: float,
@@ -124,13 +123,21 @@ def run_bone_cloth_mc2_node(
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     backend_label = normalize_backend_label(solver_backend)
     timing = begin_timing() if debug_output else None
-    armature = _resolve_armature(armature_obj)
-    if armature is None:
-        _dispose_cache_value(cache_state)
-        return _OmniCache.replace(None), None, 0, 0
     scene = scene or bpy.context.scene
 
     settings = bone_build.flatten_bone_cloth_chain_settings(bone_cloth_chains)
+
+    # 骨架从链设置里提取（所有链必须属于同一骨架）
+    armature = None
+    for s in settings:
+        candidate = _resolve_armature(s.get("armature"))
+        if candidate is not None:
+            armature = candidate
+            break
+    if armature is None:
+        _dispose_cache_value(cache_state)
+        return _OmniCache.replace(None), None, 0, 0
+
     chains = bone_build.chains_from_settings(settings)
     if debug_output:
         raw_len = len(bone_cloth_chains) if hasattr(bone_cloth_chains, "__len__") else "?"
@@ -339,6 +346,33 @@ def run_bone_cloth_mc2_node(
         )
 
     solve_func = solver_for_backend(backend_label)
+
+    # per-chain 物理参数覆盖注入：
+    # 若有链使用了 boneClothMC2ChainPhysics 节点设置了独立参数，展开成粒子数组后存入
+    # state["chain_param_overrides"]，由 solver._apply_chain_param_overrides 在
+    # build_runtime_params 之后读取并 patch MC2RuntimeParams，对 Python 和 C++ 路径均生效。
+    # 无 per-chain override 时 expand 函数快速返回空 dict，不影响性能。
+    chain_param_overrides = bone_build.expand_chain_params_to_particle_arrays(
+        chains,
+        vertex_count,
+        global_fallbacks={
+            "damping":                                float(damping),
+            "distance_stiffness":                     float(distance_stiffness),
+            "bend_stiffness":                         float(bend_stiffness),
+            "angle_restoration_stiffness":            float(angle_restoration_stiffness),
+            "angle_restoration_velocity_attenuation": float(angle_restoration_velocity_attenuation),
+            "angle_restoration_gravity_falloff":      float(angle_restoration_gravity_falloff),
+            "angle_limit":                            float(angle_limit),
+            "angle_limit_stiffness":                  float(angle_limit_stiffness),
+            "tether_compression":                     float(tether_compression),
+            "blend_weight":                           float(blend_weight),
+        },
+    )
+    if chain_param_overrides:
+        state["chain_param_overrides"] = chain_param_overrides
+    else:
+        state.pop("chain_param_overrides", None)
+
     next_state = solve_func(
         state,
         armature,

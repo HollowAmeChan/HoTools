@@ -320,8 +320,54 @@ def param_has_positive(param: dict, epsilon: float = 0.0) -> bool:
     return param_scalar_value(param, 0.0) > float(epsilon)
 
 
+def per_particle_param(values: np.ndarray, minimum=None, maximum=None) -> dict:
+    """把 per-particle numpy 数组包装成 param slot。
+
+    与 scalar_param / curve_value_param 不同，这里 samples 是粒子数量的数组，
+    solver 按粒子下标直接索引，不做 depth 插值。用于 BoneCloth per-chain 参数展开：
+    每条链有自己的物理参数（阻尼、刚度……），展开成粒子数组后注入 param_slots，
+    优先级高于解算器全局参数 + 曲线。
+    """
+    arr = np.ascontiguousarray(values, dtype=np.float32).reshape(-1)
+    if minimum is not None:
+        arr = np.maximum(arr, float(minimum))
+    if maximum is not None:
+        arr = np.minimum(arr, float(maximum))
+    return {
+        "mode": "per_particle",
+        "value": float(arr.mean()) if len(arr) > 0 else 0.0,
+        "samples": arr,
+        "minimum": minimum,
+        "maximum": maximum,
+    }
+
+
 def sample_param(param: dict, depths: np.ndarray) -> np.ndarray:
     mode = str(param.get("mode", "scalar") if isinstance(param, dict) else "scalar")
+
+    # per_particle 模式：samples 是粒子数量的数组，按下标直接索引，不做 depth 插值。
+    # 由 BoneCloth per-chain 参数展开产生，depths 数组长度 == samples 长度。
+    if mode == "per_particle":
+        samples = param.get("samples") if isinstance(param, dict) else None
+        if samples is not None:
+            arr = np.ascontiguousarray(samples, dtype=np.float32).reshape(-1)
+            n_particles = len(depths)
+            if len(arr) == n_particles:
+                result = arr.copy()
+            elif len(arr) == 0:
+                result = np.zeros(n_particles, dtype=np.float32)
+            else:
+                # 粒子数不匹配时回退到 scalar（value 字段存储均值）
+                value = float(param.get("value", 0.0))
+                result = np.full(n_particles, value, dtype=np.float32)
+            minimum = param.get("minimum")
+            maximum = param.get("maximum")
+            if minimum is not None:
+                result = np.maximum(result, float(minimum))
+            if maximum is not None:
+                result = np.minimum(result, float(maximum))
+            return np.ascontiguousarray(result, dtype=np.float32)
+
     if mode == "scalar":
         value = float(param.get("value", 0.0)) if isinstance(param, dict) else float(param)
         return np.full(len(depths), value, dtype=np.float32)

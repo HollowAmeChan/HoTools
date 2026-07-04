@@ -91,12 +91,110 @@ def boneClothMC2ChainSetting(
 
 @omni(
     enable=True,
+    bl_label="骨链物理参数-MC2",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "骨链设置",
+        "阻尼",
+        "距离刚度",
+        "弯曲刚度",
+        "角度恢复",
+        "角度恢复速度衰减",
+        "角度恢复重力衰减",
+        "角度限制",
+        "角度限制刚度",
+        "Tether压缩",
+        "混合权重",
+        "旋转插值",
+    ],
+    input_init={
+        "damping":          {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
+        "distance_stiffness":{"min_value": -1.0, "max_value": 1.0,  "description": "-1 = 使用解算器全局值。"},
+        "bend_stiffness":   {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
+        "angle_restoration_stiffness": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
+        "angle_restoration_velocity_attenuation": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
+        "angle_restoration_gravity_falloff": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
+        "angle_limit":      {"min_value": -1.0, "max_value": 180.0, "description": "-1 = 使用解算器全局值。"},
+        "angle_limit_stiffness": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
+        "tether_compression":{"min_value": -1.0, "max_value": 1.0,  "description": "-1 = 使用解算器全局值。"},
+        "blend_weight":     {"min_value": -1.0, "max_value": 1.0,   "description": "-1 = 使用解算器全局值。"},
+        "rotational_interpolation": {"min_value": -1.0, "max_value": 1.0, "description": "-1 = 使用解算器全局值。"},
+    },
+    _OUTPUT_NAME=["骨链设置"],
+    omni_description="""
+    为一组骨链批量设置独立物理参数（与 VRM SpringBone 链级参数对齐）。
+
+    接收"骨链设置"列表，为其中每条链附加相同的物理参数覆盖值，输出增强后的链设置。
+    对接入"骨骼布料-MC2"时，per-chain 参数优先级高于解算器节点上的全局参数。
+
+    用法：
+      - 参数值设为 -1 表示"继承解算器全局值"（不覆盖）。
+      - 多个骨链组各自接一个本节点，即可让不同组有不同物理表现（如头发软、裙子硬）。
+      - 本节点输出仍是骨链设置列表，可直接接入解算器的"骨链设置"多重输入。
+    """,
+)
+def boneClothMC2ChainPhysics(
+    bone_cloth_chains: list[typing.Any] = None,
+    damping: float = -1.0,
+    distance_stiffness: float = -1.0,
+    bend_stiffness: float = -1.0,
+    angle_restoration_stiffness: float = -1.0,
+    angle_restoration_velocity_attenuation: float = -1.0,
+    angle_restoration_gravity_falloff: float = -1.0,
+    angle_limit: float = -1.0,
+    angle_limit_stiffness: float = -1.0,
+    tether_compression: float = -1.0,
+    blend_weight: float = -1.0,
+    rotational_interpolation: float = -1.0,
+) -> typing.Any:
+    """为输入的骨链批量附加 per-chain 物理参数。
+
+    -1 表示不覆盖（解算器全局值生效）。各参数独立判断，可以只覆盖部分参数。
+    """
+    settings = _bone_build.flatten_bone_cloth_chain_settings(bone_cloth_chains)
+    if not settings:
+        raise ValueError("骨链设置为空或无效")
+
+    # 收集非 -1 的参数（即有明确覆盖意图的参数）
+    override_map: dict = {}
+    _candidates = {
+        "damping":                               float(damping),
+        "distance_stiffness":                    float(distance_stiffness),
+        "bend_stiffness":                        float(bend_stiffness),
+        "angle_restoration_stiffness":           float(angle_restoration_stiffness),
+        "angle_restoration_velocity_attenuation": float(angle_restoration_velocity_attenuation),
+        "angle_restoration_gravity_falloff":     float(angle_restoration_gravity_falloff),
+        "angle_limit":                           float(angle_limit),
+        "angle_limit_stiffness":                 float(angle_limit_stiffness),
+        "tether_compression":                    float(tether_compression),
+        "blend_weight":                          float(blend_weight),
+        "rotational_interpolation":              float(rotational_interpolation),
+    }
+    for name, val in _candidates.items():
+        if val >= 0.0:  # -1 表示不覆盖；>=0 的值均为有效覆盖
+            override_map[name] = val
+
+    # 附加 params 覆盖到每条链设置，不改变其他字段
+    result = []
+    for setting in settings:
+        new_setting = dict(setting)
+        existing_params = dict(setting.get("params") or {})
+        # 新覆盖值写在后，相同参数新值优先（允许链式叠加多个 ChainPhysics 节点）
+        existing_params.update(override_map)
+        if existing_params:
+            new_setting["params"] = existing_params
+        result.append(new_setting)
+    return result
+
+
+@omni(
+    enable=True,
     bl_label="骨骼布料-MC2",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
         "缓存",
-        "骨架",
         "骨链设置",
         "连接模式",
         "旋转插值",
@@ -248,7 +346,6 @@ def boneClothMC2ChainSetting(
 )
 def boneClothMC2(
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     bone_cloth_chains: list[typing.Any] = None,
     connection_mode: int = 1,
     rotational_interpolation: float = 1.0,
@@ -316,7 +413,6 @@ def boneClothMC2(
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state,
-        armature_obj,
         bone_cloth_chains,
         connection_mode,
         rotational_interpolation,
@@ -398,7 +494,6 @@ _BONE_CLOTH_MC2_CPP_META["omni_description"] = """
 @omni(**_BONE_CLOTH_MC2_CPP_META)
 def boneClothMC2Cpp(
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     bone_cloth_chains: list[typing.Any] = None,
     connection_mode: int = 1,
     rotational_interpolation: float = 1.0,
@@ -466,7 +561,6 @@ def boneClothMC2Cpp(
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state,
-        armature_obj,
         bone_cloth_chains,
         connection_mode,
         rotational_interpolation,

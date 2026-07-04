@@ -122,9 +122,11 @@ def flatten_bone_cloth_chain_settings(values) -> list[dict]:
 
 
 def chains_from_settings(settings: list[dict]) -> list[dict]:
-    """把链设置 dict 列表转成 bone_build 内部骨链格式 [{"root", "bones"}, ...]。
+    """把链设置 dict 列表转成 bone_build 内部骨链格式 [{"root", "bones", "params"?}, ...]。
 
     禁用的链（enabled=False）会被跳过。
+    per-chain 物理参数（由 boneClothMC2ChainPhysics 节点注入）以 "params" 键透传，
+    供 expand_chain_params_to_particle_arrays 展开成粒子数组。
     """
     chains: list[dict] = []
     for setting in settings:
@@ -133,8 +135,89 @@ def chains_from_settings(settings: list[dict]) -> list[dict]:
         root_bone = str(setting.get("root_bone") or "").strip()
         bones = list(setting.get("bones") or [])
         if root_bone and bones:
-            chains.append({"root": root_bone, "bones": bones})
+            chain: dict = {"root": root_bone, "bones": bones}
+            # 携带 per-chain 物理参数（可选，boneClothMC2ChainPhysics 才会有）
+            per_chain_params = setting.get("params")
+            if isinstance(per_chain_params, dict) and per_chain_params:
+                chain["params"] = per_chain_params
+            chains.append(chain)
     return chains
+
+
+# BoneCloth 支持 per-chain 覆盖的物理参数名集合（对应解算器标量参数名）。
+# 值为 None 表示"使用解算器全局参数"，非 None 时优先级高于解算器输入。
+CHAIN_PHYSICS_PARAMS = frozenset({
+    "damping",
+    "distance_stiffness",
+    "bend_stiffness",
+    "angle_restoration_stiffness",
+    "angle_restoration_velocity_attenuation",
+    "angle_restoration_gravity_falloff",
+    "angle_limit",
+    "angle_limit_stiffness",
+    "tether_compression",
+    "blend_weight",
+    "rotational_interpolation",
+})
+
+
+def expand_chain_params_to_particle_arrays(
+    chains: list[dict],
+    vertex_count: int,
+    global_fallbacks: dict,
+) -> dict:
+    """把 per-chain 物理参数展开成 per-particle numpy 数组。
+
+    设计原则（与 VRM SpringBone 对齐）：
+    - 每条链在其 "params" dict 里携带自己的物理参数（float，可选）。
+    - 未设置的参数回退到 global_fallbacks（解算器节点级全局值）。
+    - 如果所有链对某参数都没有 override 且全局值相同，则跳过该参数（不创建per-particle数组，
+      省下额外内存；解算器会直接使用全局标量）。
+    - 返回 {param_name: np.ndarray(shape=[vertex_count])}；空 dict 表示全部用全局参数。
+
+    调用方应检查 has_any_chain_params()：若无任何 per-chain override，直接跳过此调用。
+    """
+    # 快速检查：是否有任何链携带了 per-chain 参数
+    if not any(isinstance(ch.get("params"), dict) and ch["params"] for ch in chains):
+        return {}
+
+    result: dict = {}
+    for param_name in CHAIN_PHYSICS_PARAMS:
+        fallback = global_fallbacks.get(param_name)
+        if fallback is None:
+            continue  # 未提供全局值则跳过（避免意外置零）
+
+        # 收集每条链的 per-chain 值或 fallback
+        arr = np.empty(vertex_count, dtype=np.float32)
+        all_equal_to_fallback = True
+        cursor = 0
+        for chain in chains:
+            n = len(chain.get("bones") or [])
+            if n == 0:
+                cursor += n
+                continue
+            chain_val = None
+            per_chain = chain.get("params")
+            if isinstance(per_chain, dict):
+                raw = per_chain.get(param_name)
+                if raw is not None:
+                    chain_val = float(raw)
+            if chain_val is None:
+                chain_val = float(fallback)
+            else:
+                # 有至少一条链有 override
+                if chain_val != float(fallback):
+                    all_equal_to_fallback = False
+            arr[cursor:cursor + n] = chain_val
+            cursor += n
+
+        if all_equal_to_fallback:
+            # 所有链都等于全局值，不需要 per-particle 数组
+            continue
+
+        result[param_name] = np.ascontiguousarray(arr, dtype=np.float32)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
