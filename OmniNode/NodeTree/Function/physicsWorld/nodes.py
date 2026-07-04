@@ -5,8 +5,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
 
 节点列表（Phase 2 通用节点）：
   physicsObjectsFromCollection — 从 Collection 收集对象列表
-  physicsMergeObjects          — 合并多个对象列表
-  physicsObjectScope           — 构造 PhysicsObjectScope
+  physicsObjectScope           — 构造 PhysicsObjectScope（objects 为多重输入，无需单独合并节点）
   physicsWorldBegin            — 物理世界帧开始
   physicsWorldCommit           — 物理世界帧提交
   physicsWorldDebugSnapshot    — 输出 PhysicsWorldCache debug snapshot dict
@@ -22,7 +21,6 @@ from .. import _Color
 from .types import PhysicsObjectScope, PhysicsWorldCache
 from .scope import (
     objects_from_collection,
-    merge_object_lists,
     make_scope,
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
@@ -59,31 +57,11 @@ def physicsObjectsFromCollection(
 
 @omni(
     enable=True,
-    bl_label="物理对象-合并列表",
-    base_color=_Color.colorCat["GetData"],
-    is_output_node=False,
-    _INPUT_NAME=["对象列表A", "对象列表B"],
-    _OUTPUT_NAME=["对象列表"],
-    omni_description="""
-    合并两个对象列表并去重。
-
-    常用于把"角色 armature"和"场景地面/碰撞体"分别收集后再合并成一个 scope 输入。
-    """,
-)
-def physicsMergeObjects(
-    objects_a: list,
-    objects_b: list,
-) -> list:
-    return merge_object_lists(objects_a or [], objects_b or [])
-
-
-@omni(
-    enable=True,
     bl_label="物理对象范围",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "对象列表",
+        "对象",
         "包含物体碰撞",
         "包含骨骼碰撞",
         "包含网格碰撞",
@@ -93,12 +71,14 @@ def physicsMergeObjects(
     omni_description="""
     把对象列表和包含策略封装成 PhysicsObjectScope，传入 Physics World Begin。
 
+    对象输入为多重输入（方形 socket），可同时接多个 Object 或多个对象列表，
+    无需单独的"合并列表"节点。内部自动去重展平。
     对象范围决定本物理世界能感知哪些对象；PhysicsTools 属性决定这些对象具有什么物理语义。
     include_hidden 由此节点统一设置，Physics World Begin 不再接收同名参数。
     """,
 )
 def physicsObjectScope(
-    objects: list,
+    objects: list[bpy.types.Object],
     include_object_colliders: bool = True,
     include_bone_colliders: bool = True,
     include_mesh_collision: bool = True,

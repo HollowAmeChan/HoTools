@@ -81,16 +81,33 @@ def build_scope_key(scope: PhysicsObjectScope) -> frozenset:
 # 对象去重
 # ---------------------------------------------------------------------------
 
+def _flatten_objects(objects) -> list:
+    """
+    递归展平可能嵌套的 list / tuple（多重输入 socket 传来的值是嵌套结构）。
+    非容器的叶节点直接收集，不做类型校验（无效对象在 dedupe_objects 里过滤）。
+    """
+    result = []
+    stack = list(objects) if isinstance(objects, (list, tuple)) else ([objects] if objects is not None else [])
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, (list, tuple)):
+            stack[0:0] = list(item)
+        else:
+            result.append(item)
+    return result
+
+
 def dedupe_objects(objects) -> list:
     """
     去重并保持顺序。
 
-    同一个 obj_ptr 只保留第一次出现的引用。
-    无效引用跳过（不计入结果）。
+    - 自动展平嵌套 list（多重输入 socket 值）。
+    - 同一个 obj_ptr 只保留第一次出现的引用。
+    - 无效引用跳过（不计入结果）。
     """
     seen: set[int] = set()
     result = []
-    for obj in (objects or []):
+    for obj in _flatten_objects(objects):
         if not _obj_is_valid(obj):
             continue
         try:
