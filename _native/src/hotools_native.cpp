@@ -307,13 +307,15 @@ long as_long(PyObject* object, const char* name) {
     return value;
 }
 
-PyObject* project_neighbor_constraints_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 9;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_neighbor_constraints_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_neighbor_constraints_mc2_object(PyObject* positions_object,
+                                                  PyObject* inv_masses_object,
+                                                  PyObject* starts_object,
+                                                  PyObject* counts_object,
+                                                  PyObject* neighbors_object,
+                                                  PyObject* rest_lengths_object,
+                                                  PyObject* stiffness_values_object,
+                                                  PyObject* velocity_positions_object,
+                                                  double velocity_attenuation) {
     Buffer positions;
     Buffer inv_masses;
     Buffer starts;
@@ -323,14 +325,15 @@ PyObject* project_neighbor_constraints_mc2(PyObject*, PyObject* args) {
     Buffer stiffness_values;
     Buffer velocity_positions;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !starts.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "starts") ||
-        !counts.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "counts") ||
-        !neighbors.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "neighbors") ||
-        !rest_lengths.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "rest_lengths") ||
-        !stiffness_values.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
-        !velocity_positions.get(PyTuple_GET_ITEM(args, 7), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !starts.get(starts_object, PyBUF_FORMAT | PyBUF_ND, "starts") ||
+        !counts.get(counts_object, PyBUF_FORMAT | PyBUF_ND, "counts") ||
+        !neighbors.get(neighbors_object, PyBUF_FORMAT | PyBUF_ND, "neighbors") ||
+        !rest_lengths.get(rest_lengths_object, PyBUF_FORMAT | PyBUF_ND, "rest_lengths") ||
+        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
+        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                                "velocity_positions")) {
         return nullptr;
     }
 
@@ -351,11 +354,6 @@ PyObject* project_neighbor_constraints_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(stiffness_values, "stiffness_values", vertex_count)) {
         return nullptr;
     }
-    const double velocity_attenuation = as_double(PyTuple_GET_ITEM(args, 8), "velocity_attenuation");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
     hotools::Mc2NeighborConstraintView view;
     view.positions = static_cast<float*>(positions.view.buf);
     view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
@@ -373,24 +371,26 @@ PyObject* project_neighbor_constraints_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_tether_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 8;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_tether_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_tether_mc2_object(PyObject* positions_object,
+                                    PyObject* inv_masses_object,
+                                    PyObject* root_indices_object,
+                                    PyObject* root_rest_lengths_object,
+                                    PyObject* velocity_positions_object,
+                                    double stiffness,
+                                    double compression,
+                                    double stretch) {
     Buffer positions;
     Buffer inv_masses;
     Buffer root_indices;
     Buffer root_rest_lengths;
     Buffer velocity_positions;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !root_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
-        !root_rest_lengths.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "root_rest_lengths") ||
-        !velocity_positions.get(PyTuple_GET_ITEM(args, 4), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !root_indices.get(root_indices_object, PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
+        !root_rest_lengths.get(root_rest_lengths_object, PyBUF_FORMAT | PyBUF_ND, "root_rest_lengths") ||
+        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                                "velocity_positions")) {
         return nullptr;
     }
 
@@ -404,19 +404,6 @@ PyObject* project_tether_mc2(PyObject*, PyObject* args) {
         !expect_root_indices_or_minus_one(root_indices, "root_indices", vertex_count) ||
         !expect_float32(root_rest_lengths, "root_rest_lengths") ||
         !expect_1d_array(root_rest_lengths, "root_rest_lengths", vertex_count)) {
-        return nullptr;
-    }
-
-    const double stiffness = as_double(PyTuple_GET_ITEM(args, 5), "stiffness");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double compression = as_double(PyTuple_GET_ITEM(args, 6), "compression");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double stretch = as_double(PyTuple_GET_ITEM(args, 7), "stretch");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -435,13 +422,16 @@ PyObject* project_tether_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 10;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_motion_constraints_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_motion_constraints_mc2_object(PyObject* positions_object,
+                                                PyObject* base_positions_object,
+                                                PyObject* base_rotations_object,
+                                                PyObject* inv_masses_object,
+                                                PyObject* max_distances_object,
+                                                PyObject* stiffness_values_object,
+                                                PyObject* backstop_radii_object,
+                                                PyObject* backstop_distances_object,
+                                                PyObject* velocity_positions_object,
+                                                int normal_axis) {
     Buffer positions;
     Buffer base_positions;
     Buffer base_rotations;
@@ -452,19 +442,16 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
     Buffer backstop_distances;
     Buffer velocity_positions;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !base_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !max_distances.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "max_distances") ||
-        !stiffness_values.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
-        !backstop_radii.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "backstop_radii") ||
-        !backstop_distances.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "backstop_distances") ||
-        !velocity_positions.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions")) {
-        return nullptr;
-    }
-    const long normal_axis = as_long(PyTuple_GET_ITEM(args, 9), "normal_axis");
-    if (PyErr_Occurred()) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_rotations.get(base_rotations_object, PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !max_distances.get(max_distances_object, PyBUF_FORMAT | PyBUF_ND, "max_distances") ||
+        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
+        !backstop_radii.get(backstop_radii_object, PyBUF_FORMAT | PyBUF_ND, "backstop_radii") ||
+        !backstop_distances.get(backstop_distances_object, PyBUF_FORMAT | PyBUF_ND, "backstop_distances") ||
+        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                                "velocity_positions")) {
         return nullptr;
     }
 
@@ -497,19 +484,25 @@ PyObject* project_motion_constraints_mc2(PyObject*, PyObject* args) {
     view.backstop_distances = static_cast<const float*>(backstop_distances.view.buf);
     view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
     view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.normal_axis = std::max(0, std::min(5, static_cast<int>(normal_axis)));
+    view.normal_axis = std::max(0, std::min(5, normal_axis));
 
     hotools::project_motion_constraints_mc2(view);
     Py_RETURN_NONE;
 }
 
-PyObject* apply_post_step_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 13;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "apply_post_step_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* apply_post_step_mc2_object(PyObject* positions_object,
+                                     PyObject* old_positions_object,
+                                     PyObject* velocity_positions_object,
+                                     PyObject* velocities_object,
+                                     PyObject* real_velocities_object,
+                                     PyObject* friction_object,
+                                     PyObject* static_friction_object,
+                                     PyObject* collision_normals_object,
+                                     PyObject* inv_masses_object,
+                                     double step_dt,
+                                     double dynamic_friction,
+                                     double static_friction_speed,
+                                     double particle_speed_limit) {
     Buffer positions;
     Buffer old_positions;
     Buffer velocity_positions;
@@ -520,15 +513,16 @@ PyObject* apply_post_step_mc2(PyObject*, PyObject* args) {
     Buffer collision_normals;
     Buffer inv_masses;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !old_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !velocity_positions.get(PyTuple_GET_ITEM(args, 2), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions") ||
-        !velocities.get(PyTuple_GET_ITEM(args, 3), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !real_velocities.get(PyTuple_GET_ITEM(args, 4), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
-        !friction.get(PyTuple_GET_ITEM(args, 5), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !static_friction.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "static_friction") ||
-        !collision_normals.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "collision_normals") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "inv_masses")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !old_positions.get(old_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
+        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                                "velocity_positions") ||
+        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
+        !real_velocities.get(real_velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
+        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
+        !static_friction.get(static_friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "static_friction") ||
+        !collision_normals.get(collision_normals_object, PyBUF_FORMAT | PyBUF_ND, "collision_normals") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses")) {
         return nullptr;
     }
 
@@ -545,23 +539,6 @@ PyObject* apply_post_step_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(static_friction, "static_friction", vertex_count) ||
         !expect_float32(inv_masses, "inv_masses") ||
         !expect_1d_array(inv_masses, "inv_masses", vertex_count)) {
-        return nullptr;
-    }
-
-    const double step_dt = as_double(PyTuple_GET_ITEM(args, 9), "step_dt");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double dynamic_friction = as_double(PyTuple_GET_ITEM(args, 10), "dynamic_friction");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double static_friction_speed = as_double(PyTuple_GET_ITEM(args, 11), "static_friction_speed");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double particle_speed_limit = as_double(PyTuple_GET_ITEM(args, 12), "particle_speed_limit");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -1055,13 +1032,17 @@ PyObject* project_angle_constraints_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 11;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "update_step_basic_pose_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* update_step_basic_pose_mc2_object(PyObject* base_positions_object,
+                                            PyObject* base_rotations_object,
+                                            PyObject* parent_indices_object,
+                                            PyObject* baseline_start_object,
+                                            PyObject* baseline_count_object,
+                                            PyObject* baseline_data_object,
+                                            PyObject* vertex_local_positions_object,
+                                            PyObject* vertex_local_rotations_object,
+                                            PyObject* step_positions_object,
+                                            PyObject* step_rotations_object,
+                                            double animation_pose_ratio) {
     Buffer base_positions;
     Buffer base_rotations;
     Buffer parent_indices;
@@ -1073,16 +1054,18 @@ PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
     Buffer step_positions;
     Buffer step_rotations;
 
-    if (!base_positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !parent_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
-        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
-        !step_positions.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
-        !step_rotations.get(PyTuple_GET_ITEM(args, 9), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
+    if (!base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_rotations.get(base_rotations_object, PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !vertex_local_positions.get(vertex_local_positions_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "vertex_local_positions") ||
+        !vertex_local_rotations.get(vertex_local_rotations_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "vertex_local_rotations") ||
+        !step_positions.get(step_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
+        !step_rotations.get(step_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
         return nullptr;
     }
 
@@ -1107,11 +1090,6 @@ PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 10), "animation_pose_ratio");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
     hotools::Mc2StepBasicPoseView view;
     view.base_positions = static_cast<const float*>(base_positions.view.buf);
     view.base_rotations = static_cast<const float*>(base_rotations.view.buf);
@@ -1132,13 +1110,18 @@ PyObject* update_step_basic_pose_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* update_base_pose_from_pose_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 12;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "update_base_pose_from_pose_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* update_base_pose_from_pose_mc2_object(PyObject* base_positions_object,
+                                                PyObject* base_normals_object,
+                                                PyObject* parent_indices_object,
+                                                PyObject* baseline_start_object,
+                                                PyObject* baseline_count_object,
+                                                PyObject* baseline_data_object,
+                                                PyObject* vertex_local_positions_object,
+                                                PyObject* vertex_local_rotations_object,
+                                                PyObject* base_rotations_object,
+                                                PyObject* step_positions_object,
+                                                PyObject* step_rotations_object,
+                                                double animation_pose_ratio) {
     Buffer base_positions;
     Buffer base_normals;
     Buffer parent_indices;
@@ -1151,17 +1134,19 @@ PyObject* update_base_pose_from_pose_mc2(PyObject*, PyObject* args) {
     Buffer step_positions;
     Buffer step_rotations;
 
-    if (!base_positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_normals.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_normals") ||
-        !parent_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
-        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
-        !base_rotations.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !step_positions.get(PyTuple_GET_ITEM(args, 9), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
-        !step_rotations.get(PyTuple_GET_ITEM(args, 10), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
+    if (!base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !base_normals.get(base_normals_object, PyBUF_FORMAT | PyBUF_ND, "base_normals") ||
+        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !vertex_local_positions.get(vertex_local_positions_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "vertex_local_positions") ||
+        !vertex_local_rotations.get(vertex_local_rotations_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "vertex_local_rotations") ||
+        !base_rotations.get(base_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
+        !step_positions.get(step_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
+        !step_rotations.get(step_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
         return nullptr;
     }
 
@@ -1187,11 +1172,6 @@ PyObject* update_base_pose_from_pose_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double animation_pose_ratio = as_double(PyTuple_GET_ITEM(args, 11), "animation_pose_ratio");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
     hotools::Mc2BasePoseFromPoseView view;
     view.base_positions = static_cast<const float*>(base_positions.view.buf);
     view.base_normals = static_cast<const float*>(base_normals.view.buf);
@@ -1213,13 +1193,16 @@ PyObject* update_base_pose_from_pose_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 10;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "apply_substep_inertia_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* apply_substep_inertia_mc2_object(PyObject* old_positions_object,
+                                           PyObject* velocities_object,
+                                           PyObject* depths_object,
+                                           PyObject* inv_masses_object,
+                                           PyObject* old_world_position_object,
+                                           PyObject* step_vector_object,
+                                           PyObject* step_rotation_object,
+                                           PyObject* inertia_vector_object,
+                                           PyObject* inertia_rotation_object,
+                                           double depth_inertia) {
     Buffer old_positions;
     Buffer velocities;
     Buffer depths;
@@ -1230,15 +1213,15 @@ PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
     Buffer inertia_vector;
     Buffer inertia_rotation;
 
-    if (!old_positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !velocities.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !depths.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "depths") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !old_world_position.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "old_world_position") ||
-        !step_vector.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "step_vector") ||
-        !step_rotation.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "step_rotation") ||
-        !inertia_vector.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "inertia_vector") ||
-        !inertia_rotation.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "inertia_rotation")) {
+    if (!old_positions.get(old_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
+        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
+        !depths.get(depths_object, PyBUF_FORMAT | PyBUF_ND, "depths") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !old_world_position.get(old_world_position_object, PyBUF_FORMAT | PyBUF_ND, "old_world_position") ||
+        !step_vector.get(step_vector_object, PyBUF_FORMAT | PyBUF_ND, "step_vector") ||
+        !step_rotation.get(step_rotation_object, PyBUF_FORMAT | PyBUF_ND, "step_rotation") ||
+        !inertia_vector.get(inertia_vector_object, PyBUF_FORMAT | PyBUF_ND, "inertia_vector") ||
+        !inertia_rotation.get(inertia_rotation_object, PyBUF_FORMAT | PyBUF_ND, "inertia_rotation")) {
         return nullptr;
     }
 
@@ -1259,11 +1242,6 @@ PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(inertia_vector, "inertia_vector", 3) ||
         !expect_float32(inertia_rotation, "inertia_rotation") ||
         !expect_1d_array(inertia_rotation, "inertia_rotation", 4)) {
-        return nullptr;
-    }
-
-    const double depth_inertia = as_double(PyTuple_GET_ITEM(args, 9), "depth_inertia");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -1293,13 +1271,14 @@ PyObject* apply_substep_inertia_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* apply_centrifugal_velocity_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 8;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "apply_centrifugal_velocity_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* apply_centrifugal_velocity_mc2_object(PyObject* positions_object,
+                                                PyObject* velocities_object,
+                                                PyObject* depths_object,
+                                                PyObject* inv_masses_object,
+                                                PyObject* now_world_position_object,
+                                                PyObject* rotation_axis_object,
+                                                double angular_velocity,
+                                                double centrifugal) {
     Buffer positions;
     Buffer velocities;
     Buffer depths;
@@ -1307,12 +1286,12 @@ PyObject* apply_centrifugal_velocity_mc2(PyObject*, PyObject* args) {
     Buffer now_world_position;
     Buffer rotation_axis;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !velocities.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !depths.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "depths") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !now_world_position.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "now_world_position") ||
-        !rotation_axis.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "rotation_axis")) {
+    if (!positions.get(positions_object, PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
+        !depths.get(depths_object, PyBUF_FORMAT | PyBUF_ND, "depths") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !now_world_position.get(now_world_position_object, PyBUF_FORMAT | PyBUF_ND, "now_world_position") ||
+        !rotation_axis.get(rotation_axis_object, PyBUF_FORMAT | PyBUF_ND, "rotation_axis")) {
         return nullptr;
     }
 
@@ -1327,15 +1306,6 @@ PyObject* apply_centrifugal_velocity_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(now_world_position, "now_world_position", 3) ||
         !expect_float32(rotation_axis, "rotation_axis") ||
         !expect_1d_array(rotation_axis, "rotation_axis", 3)) {
-        return nullptr;
-    }
-
-    const double angular_velocity = as_double(PyTuple_GET_ITEM(args, 6), "angular_velocity");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double centrifugal = as_double(PyTuple_GET_ITEM(args, 7), "centrifugal");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -1358,22 +1328,21 @@ PyObject* apply_centrifugal_velocity_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* calculate_display_positions_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 6;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "calculate_display_positions_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* calculate_display_positions_mc2_object(PyObject* positions_object,
+                                                 PyObject* real_velocities_object,
+                                                 PyObject* root_indices_object,
+                                                 PyObject* display_positions_object,
+                                                 double frame_dt,
+                                                 double max_distance_ratio) {
     Buffer positions;
     Buffer real_velocities;
     Buffer root_indices;
     Buffer display_positions;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !real_velocities.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
-        !root_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
-        !display_positions.get(PyTuple_GET_ITEM(args, 3), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+    if (!positions.get(positions_object, PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !real_velocities.get(real_velocities_object, PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
+        !root_indices.get(root_indices_object, PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
+        !display_positions.get(display_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
                                "display_positions")) {
         return nullptr;
     }
@@ -1384,15 +1353,6 @@ PyObject* calculate_display_positions_mc2(PyObject*, PyObject* args) {
         !expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
         !expect_int32_scalar_array(root_indices, "root_indices") ||
         !expect_1d_array(root_indices, "root_indices", vertex_count)) {
-        return nullptr;
-    }
-
-    const double frame_dt = as_double(PyTuple_GET_ITEM(args, 4), "frame_dt");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double max_distance_ratio = as_double(PyTuple_GET_ITEM(args, 5), "max_distance_ratio");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -2134,13 +2094,137 @@ NB_MODULE(hotools_native, m) {
         "Return MC2 MeshCloth native context metadata.");
     def_legacy(m, "free_meshcloth_mc2_context", hotools::free_meshcloth_mc2_context,
         "Release MC2 MeshCloth native context resources.");
-    def_legacy(m, "project_neighbor_constraints_mc2", project_neighbor_constraints_mc2,
+    m.def("project_neighbor_constraints_mc2", [](nb::object positions,
+                                                 nb::object inv_masses,
+                                                 nb::object starts,
+                                                 nb::object counts,
+                                                 nb::object neighbors,
+                                                 nb::object rest_lengths,
+                                                 nb::object stiffness_values,
+                                                 nb::object velocity_positions,
+                                                 double velocity_attenuation) {
+        return steal_or_throw(project_neighbor_constraints_mc2_object(
+            positions.ptr(),
+            inv_masses.ptr(),
+            starts.ptr(),
+            counts.ptr(),
+            neighbors.ptr(),
+            rest_lengths.ptr(),
+            stiffness_values.ptr(),
+            velocity_positions.ptr(),
+            velocity_attenuation));
+    },
+        nb::arg("positions"),
+        nb::arg("inv_masses"),
+        nb::arg("starts"),
+        nb::arg("counts"),
+        nb::arg("neighbors"),
+        nb::arg("rest_lengths"),
+        nb::arg("stiffness_values"),
+        nb::arg("velocity_positions"),
+        nb::arg("velocity_attenuation"),
         "Project MC2 neighbor constraints in-place.");
-    def_legacy(m, "project_tether_mc2", project_tether_mc2,
+    m.def("project_tether_mc2", [](nb::object positions,
+                                   nb::object inv_masses,
+                                   nb::object root_indices,
+                                   nb::object root_rest_lengths,
+                                   nb::object velocity_positions,
+                                   double stiffness,
+                                   double compression,
+                                   double stretch) {
+        return steal_or_throw(project_tether_mc2_object(
+            positions.ptr(),
+            inv_masses.ptr(),
+            root_indices.ptr(),
+            root_rest_lengths.ptr(),
+            velocity_positions.ptr(),
+            stiffness,
+            compression,
+            stretch));
+    },
+        nb::arg("positions"),
+        nb::arg("inv_masses"),
+        nb::arg("root_indices"),
+        nb::arg("root_rest_lengths"),
+        nb::arg("velocity_positions"),
+        nb::arg("stiffness"),
+        nb::arg("compression"),
+        nb::arg("stretch"),
         "Project MC2 tether constraints in-place.");
-    def_legacy(m, "project_motion_constraints_mc2", project_motion_constraints_mc2,
+    m.def("project_motion_constraints_mc2", [](nb::object positions,
+                                               nb::object base_positions,
+                                               nb::object base_rotations,
+                                               nb::object inv_masses,
+                                               nb::object max_distances,
+                                               nb::object stiffness_values,
+                                               nb::object backstop_radii,
+                                               nb::object backstop_distances,
+                                               nb::object velocity_positions,
+                                               int normal_axis) {
+        return steal_or_throw(project_motion_constraints_mc2_object(
+            positions.ptr(),
+            base_positions.ptr(),
+            base_rotations.ptr(),
+            inv_masses.ptr(),
+            max_distances.ptr(),
+            stiffness_values.ptr(),
+            backstop_radii.ptr(),
+            backstop_distances.ptr(),
+            velocity_positions.ptr(),
+            normal_axis));
+    },
+        nb::arg("positions"),
+        nb::arg("base_positions"),
+        nb::arg("base_rotations"),
+        nb::arg("inv_masses"),
+        nb::arg("max_distances"),
+        nb::arg("stiffness_values"),
+        nb::arg("backstop_radii"),
+        nb::arg("backstop_distances"),
+        nb::arg("velocity_positions"),
+        nb::arg("normal_axis"),
         "Project MC2 motion constraints in-place.");
-    def_legacy(m, "apply_post_step_mc2", apply_post_step_mc2,
+    m.def("apply_post_step_mc2", [](nb::object positions,
+                                    nb::object old_positions,
+                                    nb::object velocity_positions,
+                                    nb::object velocities,
+                                    nb::object real_velocities,
+                                    nb::object friction,
+                                    nb::object static_friction,
+                                    nb::object collision_normals,
+                                    nb::object inv_masses,
+                                    double step_dt,
+                                    double dynamic_friction,
+                                    double static_friction_speed,
+                                    double particle_speed_limit) {
+        return steal_or_throw(apply_post_step_mc2_object(
+            positions.ptr(),
+            old_positions.ptr(),
+            velocity_positions.ptr(),
+            velocities.ptr(),
+            real_velocities.ptr(),
+            friction.ptr(),
+            static_friction.ptr(),
+            collision_normals.ptr(),
+            inv_masses.ptr(),
+            step_dt,
+            dynamic_friction,
+            static_friction_speed,
+            particle_speed_limit));
+    },
+        nb::arg("positions"),
+        nb::arg("old_positions"),
+        nb::arg("velocity_positions"),
+        nb::arg("velocities"),
+        nb::arg("real_velocities"),
+        nb::arg("friction"),
+        nb::arg("static_friction"),
+        nb::arg("collision_normals"),
+        nb::arg("inv_masses"),
+        nb::arg("step_dt"),
+        nb::arg("dynamic_friction"),
+        nb::arg("static_friction_speed"),
+        nb::arg("particle_speed_limit"),
         "Apply MC2 post-step velocity and friction update in-place.");
     def_legacy(m, "project_collisions_mc2", project_collisions_mc2,
         "Project MC2 point collisions in-place.");
@@ -2152,15 +2236,161 @@ NB_MODULE(hotools_native, m) {
         "Project MC2 triangle bending constraints in-place.");
     def_legacy(m, "project_angle_constraints_mc2", project_angle_constraints_mc2,
         "Project MC2 angle restoration and limit constraints in-place.");
-    def_legacy(m, "update_step_basic_pose_mc2", update_step_basic_pose_mc2,
+    m.def("update_step_basic_pose_mc2", [](nb::object base_positions,
+                                           nb::object base_rotations,
+                                           nb::object parent_indices,
+                                           nb::object baseline_start,
+                                           nb::object baseline_count,
+                                           nb::object baseline_data,
+                                           nb::object vertex_local_positions,
+                                           nb::object vertex_local_rotations,
+                                           nb::object step_positions,
+                                           nb::object step_rotations,
+                                           double animation_pose_ratio) {
+        return steal_or_throw(update_step_basic_pose_mc2_object(
+            base_positions.ptr(),
+            base_rotations.ptr(),
+            parent_indices.ptr(),
+            baseline_start.ptr(),
+            baseline_count.ptr(),
+            baseline_data.ptr(),
+            vertex_local_positions.ptr(),
+            vertex_local_rotations.ptr(),
+            step_positions.ptr(),
+            step_rotations.ptr(),
+            animation_pose_ratio));
+    },
+        nb::arg("base_positions"),
+        nb::arg("base_rotations"),
+        nb::arg("parent_indices"),
+        nb::arg("baseline_start"),
+        nb::arg("baseline_count"),
+        nb::arg("baseline_data"),
+        nb::arg("vertex_local_positions"),
+        nb::arg("vertex_local_rotations"),
+        nb::arg("step_positions"),
+        nb::arg("step_rotations"),
+        nb::arg("animation_pose_ratio"),
         "Update MC2 step basic pose in-place.");
-    def_legacy(m, "update_base_pose_from_pose_mc2", update_base_pose_from_pose_mc2,
+    m.def("update_base_pose_from_pose_mc2", [](nb::object base_positions,
+                                               nb::object base_normals,
+                                               nb::object parent_indices,
+                                               nb::object baseline_start,
+                                               nb::object baseline_count,
+                                               nb::object baseline_data,
+                                               nb::object vertex_local_positions,
+                                               nb::object vertex_local_rotations,
+                                               nb::object base_rotations,
+                                               nb::object step_positions,
+                                               nb::object step_rotations,
+                                               double animation_pose_ratio) {
+        return steal_or_throw(update_base_pose_from_pose_mc2_object(
+            base_positions.ptr(),
+            base_normals.ptr(),
+            parent_indices.ptr(),
+            baseline_start.ptr(),
+            baseline_count.ptr(),
+            baseline_data.ptr(),
+            vertex_local_positions.ptr(),
+            vertex_local_rotations.ptr(),
+            base_rotations.ptr(),
+            step_positions.ptr(),
+            step_rotations.ptr(),
+            animation_pose_ratio));
+    },
+        nb::arg("base_positions"),
+        nb::arg("base_normals"),
+        nb::arg("parent_indices"),
+        nb::arg("baseline_start"),
+        nb::arg("baseline_count"),
+        nb::arg("baseline_data"),
+        nb::arg("vertex_local_positions"),
+        nb::arg("vertex_local_rotations"),
+        nb::arg("base_rotations"),
+        nb::arg("step_positions"),
+        nb::arg("step_rotations"),
+        nb::arg("animation_pose_ratio"),
         "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.");
-    def_legacy(m, "apply_substep_inertia_mc2", apply_substep_inertia_mc2,
+    m.def("apply_substep_inertia_mc2", [](nb::object old_positions,
+                                          nb::object velocities,
+                                          nb::object depths,
+                                          nb::object inv_masses,
+                                          nb::object old_world_position,
+                                          nb::object step_vector,
+                                          nb::object step_rotation,
+                                          nb::object inertia_vector,
+                                          nb::object inertia_rotation,
+                                          double depth_inertia) {
+        return steal_or_throw(apply_substep_inertia_mc2_object(
+            old_positions.ptr(),
+            velocities.ptr(),
+            depths.ptr(),
+            inv_masses.ptr(),
+            old_world_position.ptr(),
+            step_vector.ptr(),
+            step_rotation.ptr(),
+            inertia_vector.ptr(),
+            inertia_rotation.ptr(),
+            depth_inertia));
+    },
+        nb::arg("old_positions"),
+        nb::arg("velocities"),
+        nb::arg("depths"),
+        nb::arg("inv_masses"),
+        nb::arg("old_world_position"),
+        nb::arg("step_vector"),
+        nb::arg("step_rotation"),
+        nb::arg("inertia_vector"),
+        nb::arg("inertia_rotation"),
+        nb::arg("depth_inertia"),
         "Apply MC2 substep inertia in-place.");
-    def_legacy(m, "apply_centrifugal_velocity_mc2", apply_centrifugal_velocity_mc2,
+    m.def("apply_centrifugal_velocity_mc2", [](nb::object positions,
+                                               nb::object velocities,
+                                               nb::object depths,
+                                               nb::object inv_masses,
+                                               nb::object now_world_position,
+                                               nb::object rotation_axis,
+                                               double angular_velocity,
+                                               double centrifugal) {
+        return steal_or_throw(apply_centrifugal_velocity_mc2_object(
+            positions.ptr(),
+            velocities.ptr(),
+            depths.ptr(),
+            inv_masses.ptr(),
+            now_world_position.ptr(),
+            rotation_axis.ptr(),
+            angular_velocity,
+            centrifugal));
+    },
+        nb::arg("positions"),
+        nb::arg("velocities"),
+        nb::arg("depths"),
+        nb::arg("inv_masses"),
+        nb::arg("now_world_position"),
+        nb::arg("rotation_axis"),
+        nb::arg("angular_velocity"),
+        nb::arg("centrifugal"),
         "Apply MC2 centrifugal velocity in-place.");
-    def_legacy(m, "calculate_display_positions_mc2", calculate_display_positions_mc2,
+    m.def("calculate_display_positions_mc2", [](nb::object positions,
+                                                nb::object real_velocities,
+                                                nb::object root_indices,
+                                                nb::object display_positions,
+                                                double frame_dt,
+                                                double max_distance_ratio) {
+        return steal_or_throw(calculate_display_positions_mc2_object(
+            positions.ptr(),
+            real_velocities.ptr(),
+            root_indices.ptr(),
+            display_positions.ptr(),
+            frame_dt,
+            max_distance_ratio));
+    },
+        nb::arg("positions"),
+        nb::arg("real_velocities"),
+        nb::arg("root_indices"),
+        nb::arg("display_positions"),
+        nb::arg("frame_dt"),
+        nb::arg("max_distance_ratio"),
         "Calculate MC2 display future prediction in-place.");
     def_legacy(m, "solve_meshcloth_mc2", solve_meshcloth_mc2,
         "Solve one MC2 MeshCloth array frame in-place.");
