@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,27 @@ nb::object steal_or_throw(PyObject* result) {
         throw nb::python_error();
     }
     return nb::steal<nb::object>(result);
+}
+
+inline PyObject* unwrap_object_arg(const nb::object& object) {
+    return object.ptr();
+}
+
+template <typename T>
+std::enable_if_t<!std::is_same_v<std::decay_t<T>, nb::object>, T&&> unwrap_object_arg(T&& value) {
+    return std::forward<T>(value);
+}
+
+template <typename Function, typename... Args>
+nb::object call_object_function(Function function, Args&&... args) {
+    return steal_or_throw(function(unwrap_object_arg(std::forward<Args>(args))...));
+}
+
+template <auto Function, typename... Args>
+auto object_binding() {
+    return [](Args... args) {
+        return call_object_function(Function, std::forward<Args>(args)...);
+    };
 }
 
 void def_legacy(nb::module_& module, const char* name, LegacyPyFunc function, const char* doc) {
@@ -2048,35 +2070,35 @@ PyObject* solve_mc2_bonecloth_io_object(
 NB_MODULE(hotools_native, m) {
     m.doc() = "Native acceleration backend for HoTools (nanobind module shell).";
 
-    m.def("compile_property_float_curve", [](nb::object payload) {
-        return steal_or_throw(hotools::compile_property_float_curve_object(payload.ptr()));
-    }, nb::arg("payload"), "Compile a float curve payload into a native capsule.");
-    m.def("compile_property_color_curve", [](nb::object payload) {
-        return steal_or_throw(hotools::compile_property_color_curve_object(payload.ptr()));
-    }, nb::arg("payload"), "Compile a color curve payload into a native capsule.");
-    m.def("sample_property_float_curve", [](nb::object curve, double position, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_float_curve_object(curve.ptr(), position, extend.ptr()));
-    }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+    m.def("compile_property_float_curve",
+        object_binding<hotools::compile_property_float_curve_object, nb::object>(),
+        nb::arg("payload"), "Compile a float curve payload into a native capsule.");
+    m.def("compile_property_color_curve",
+        object_binding<hotools::compile_property_color_curve_object, nb::object>(),
+        nb::arg("payload"), "Compile a color curve payload into a native capsule.");
+    m.def("sample_property_float_curve",
+        object_binding<hotools::sample_property_float_curve_object, nb::object, double, nb::object>(),
+        nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
        "Sample a native float curve or payload at one position.");
-    m.def("sample_property_color_curve", [](nb::object curve, double position, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_color_curve_object(curve.ptr(), position, extend.ptr()));
-    }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+    m.def("sample_property_color_curve",
+        object_binding<hotools::sample_property_color_curve_object, nb::object, double, nb::object>(),
+        nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
        "Sample a native color curve or payload at one position.");
-    m.def("sample_property_float_curve_many", [](nb::object curve, int count, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_float_curve_many_object(curve.ptr(), count, extend.ptr()));
-    }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+    m.def("sample_property_float_curve_many",
+        object_binding<hotools::sample_property_float_curve_many_object, nb::object, int, nb::object>(),
+        nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
        "Sample a native float curve or payload at evenly spaced positions.");
-    m.def("sample_property_color_curve_many", [](nb::object curve, int count, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_color_curve_many_object(curve.ptr(), count, extend.ptr()));
-    }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+    m.def("sample_property_color_curve_many",
+        object_binding<hotools::sample_property_color_curve_many_object, nb::object, int, nb::object>(),
+        nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
        "Sample a native color curve or payload at evenly spaced positions.");
-    m.def("sample_property_float_curve_positions", [](nb::object curve, nb::object positions, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_float_curve_positions_object(curve.ptr(), positions.ptr(), extend.ptr()));
-    }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+    m.def("sample_property_float_curve_positions",
+        object_binding<hotools::sample_property_float_curve_positions_object, nb::object, nb::object, nb::object>(),
+        nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
        "Sample a native float curve or payload at explicit positions.");
-    m.def("sample_property_color_curve_positions", [](nb::object curve, nb::object positions, nb::object extend) {
-        return steal_or_throw(hotools::sample_property_color_curve_positions_object(curve.ptr(), positions.ptr(), extend.ptr()));
-    }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+    m.def("sample_property_color_curve_positions",
+        object_binding<hotools::sample_property_color_curve_positions_object, nb::object, nb::object, nb::object>(),
+        nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
        "Sample a native color curve or payload at explicit positions.");
     def_legacy(m, "solve_spring_bone_vrm_cpp", solve_spring_bone_vrm_cpp,
         "Solve one VRM spring bone chain in-place.");
@@ -2094,26 +2116,10 @@ NB_MODULE(hotools_native, m) {
         "Return MC2 MeshCloth native context metadata.");
     def_legacy(m, "free_meshcloth_mc2_context", hotools::free_meshcloth_mc2_context,
         "Release MC2 MeshCloth native context resources.");
-    m.def("project_neighbor_constraints_mc2", [](nb::object positions,
-                                                 nb::object inv_masses,
-                                                 nb::object starts,
-                                                 nb::object counts,
-                                                 nb::object neighbors,
-                                                 nb::object rest_lengths,
-                                                 nb::object stiffness_values,
-                                                 nb::object velocity_positions,
-                                                 double velocity_attenuation) {
-        return steal_or_throw(project_neighbor_constraints_mc2_object(
-            positions.ptr(),
-            inv_masses.ptr(),
-            starts.ptr(),
-            counts.ptr(),
-            neighbors.ptr(),
-            rest_lengths.ptr(),
-            stiffness_values.ptr(),
-            velocity_positions.ptr(),
-            velocity_attenuation));
-    },
+    m.def("project_neighbor_constraints_mc2",
+        object_binding<project_neighbor_constraints_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, double>(),
         nb::arg("positions"),
         nb::arg("inv_masses"),
         nb::arg("starts"),
@@ -2124,24 +2130,10 @@ NB_MODULE(hotools_native, m) {
         nb::arg("velocity_positions"),
         nb::arg("velocity_attenuation"),
         "Project MC2 neighbor constraints in-place.");
-    m.def("project_tether_mc2", [](nb::object positions,
-                                   nb::object inv_masses,
-                                   nb::object root_indices,
-                                   nb::object root_rest_lengths,
-                                   nb::object velocity_positions,
-                                   double stiffness,
-                                   double compression,
-                                   double stretch) {
-        return steal_or_throw(project_tether_mc2_object(
-            positions.ptr(),
-            inv_masses.ptr(),
-            root_indices.ptr(),
-            root_rest_lengths.ptr(),
-            velocity_positions.ptr(),
-            stiffness,
-            compression,
-            stretch));
-    },
+    m.def("project_tether_mc2",
+        object_binding<project_tether_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       double, double, double>(),
         nb::arg("positions"),
         nb::arg("inv_masses"),
         nb::arg("root_indices"),
@@ -2151,28 +2143,10 @@ NB_MODULE(hotools_native, m) {
         nb::arg("compression"),
         nb::arg("stretch"),
         "Project MC2 tether constraints in-place.");
-    m.def("project_motion_constraints_mc2", [](nb::object positions,
-                                               nb::object base_positions,
-                                               nb::object base_rotations,
-                                               nb::object inv_masses,
-                                               nb::object max_distances,
-                                               nb::object stiffness_values,
-                                               nb::object backstop_radii,
-                                               nb::object backstop_distances,
-                                               nb::object velocity_positions,
-                                               int normal_axis) {
-        return steal_or_throw(project_motion_constraints_mc2_object(
-            positions.ptr(),
-            base_positions.ptr(),
-            base_rotations.ptr(),
-            inv_masses.ptr(),
-            max_distances.ptr(),
-            stiffness_values.ptr(),
-            backstop_radii.ptr(),
-            backstop_distances.ptr(),
-            velocity_positions.ptr(),
-            normal_axis));
-    },
+    m.def("project_motion_constraints_mc2",
+        object_binding<project_motion_constraints_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, int>(),
         nb::arg("positions"),
         nb::arg("base_positions"),
         nb::arg("base_rotations"),
@@ -2184,34 +2158,11 @@ NB_MODULE(hotools_native, m) {
         nb::arg("velocity_positions"),
         nb::arg("normal_axis"),
         "Project MC2 motion constraints in-place.");
-    m.def("apply_post_step_mc2", [](nb::object positions,
-                                    nb::object old_positions,
-                                    nb::object velocity_positions,
-                                    nb::object velocities,
-                                    nb::object real_velocities,
-                                    nb::object friction,
-                                    nb::object static_friction,
-                                    nb::object collision_normals,
-                                    nb::object inv_masses,
-                                    double step_dt,
-                                    double dynamic_friction,
-                                    double static_friction_speed,
-                                    double particle_speed_limit) {
-        return steal_or_throw(apply_post_step_mc2_object(
-            positions.ptr(),
-            old_positions.ptr(),
-            velocity_positions.ptr(),
-            velocities.ptr(),
-            real_velocities.ptr(),
-            friction.ptr(),
-            static_friction.ptr(),
-            collision_normals.ptr(),
-            inv_masses.ptr(),
-            step_dt,
-            dynamic_friction,
-            static_friction_speed,
-            particle_speed_limit));
-    },
+    m.def("apply_post_step_mc2",
+        object_binding<apply_post_step_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object,
+                       double, double, double, double>(),
         nb::arg("positions"),
         nb::arg("old_positions"),
         nb::arg("velocity_positions"),
@@ -2236,30 +2187,11 @@ NB_MODULE(hotools_native, m) {
         "Project MC2 triangle bending constraints in-place.");
     def_legacy(m, "project_angle_constraints_mc2", project_angle_constraints_mc2,
         "Project MC2 angle restoration and limit constraints in-place.");
-    m.def("update_step_basic_pose_mc2", [](nb::object base_positions,
-                                           nb::object base_rotations,
-                                           nb::object parent_indices,
-                                           nb::object baseline_start,
-                                           nb::object baseline_count,
-                                           nb::object baseline_data,
-                                           nb::object vertex_local_positions,
-                                           nb::object vertex_local_rotations,
-                                           nb::object step_positions,
-                                           nb::object step_rotations,
-                                           double animation_pose_ratio) {
-        return steal_or_throw(update_step_basic_pose_mc2_object(
-            base_positions.ptr(),
-            base_rotations.ptr(),
-            parent_indices.ptr(),
-            baseline_start.ptr(),
-            baseline_count.ptr(),
-            baseline_data.ptr(),
-            vertex_local_positions.ptr(),
-            vertex_local_rotations.ptr(),
-            step_positions.ptr(),
-            step_rotations.ptr(),
-            animation_pose_ratio));
-    },
+    m.def("update_step_basic_pose_mc2",
+        object_binding<update_step_basic_pose_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       double>(),
         nb::arg("base_positions"),
         nb::arg("base_rotations"),
         nb::arg("parent_indices"),
@@ -2272,32 +2204,11 @@ NB_MODULE(hotools_native, m) {
         nb::arg("step_rotations"),
         nb::arg("animation_pose_ratio"),
         "Update MC2 step basic pose in-place.");
-    m.def("update_base_pose_from_pose_mc2", [](nb::object base_positions,
-                                               nb::object base_normals,
-                                               nb::object parent_indices,
-                                               nb::object baseline_start,
-                                               nb::object baseline_count,
-                                               nb::object baseline_data,
-                                               nb::object vertex_local_positions,
-                                               nb::object vertex_local_rotations,
-                                               nb::object base_rotations,
-                                               nb::object step_positions,
-                                               nb::object step_rotations,
-                                               double animation_pose_ratio) {
-        return steal_or_throw(update_base_pose_from_pose_mc2_object(
-            base_positions.ptr(),
-            base_normals.ptr(),
-            parent_indices.ptr(),
-            baseline_start.ptr(),
-            baseline_count.ptr(),
-            baseline_data.ptr(),
-            vertex_local_positions.ptr(),
-            vertex_local_rotations.ptr(),
-            base_rotations.ptr(),
-            step_positions.ptr(),
-            step_rotations.ptr(),
-            animation_pose_ratio));
-    },
+    m.def("update_base_pose_from_pose_mc2",
+        object_binding<update_base_pose_from_pose_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, double>(),
         nb::arg("base_positions"),
         nb::arg("base_normals"),
         nb::arg("parent_indices"),
@@ -2311,28 +2222,10 @@ NB_MODULE(hotools_native, m) {
         nb::arg("step_rotations"),
         nb::arg("animation_pose_ratio"),
         "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.");
-    m.def("apply_substep_inertia_mc2", [](nb::object old_positions,
-                                          nb::object velocities,
-                                          nb::object depths,
-                                          nb::object inv_masses,
-                                          nb::object old_world_position,
-                                          nb::object step_vector,
-                                          nb::object step_rotation,
-                                          nb::object inertia_vector,
-                                          nb::object inertia_rotation,
-                                          double depth_inertia) {
-        return steal_or_throw(apply_substep_inertia_mc2_object(
-            old_positions.ptr(),
-            velocities.ptr(),
-            depths.ptr(),
-            inv_masses.ptr(),
-            old_world_position.ptr(),
-            step_vector.ptr(),
-            step_rotation.ptr(),
-            inertia_vector.ptr(),
-            inertia_rotation.ptr(),
-            depth_inertia));
-    },
+    m.def("apply_substep_inertia_mc2",
+        object_binding<apply_substep_inertia_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, double>(),
         nb::arg("old_positions"),
         nb::arg("velocities"),
         nb::arg("depths"),
@@ -2344,24 +2237,10 @@ NB_MODULE(hotools_native, m) {
         nb::arg("inertia_rotation"),
         nb::arg("depth_inertia"),
         "Apply MC2 substep inertia in-place.");
-    m.def("apply_centrifugal_velocity_mc2", [](nb::object positions,
-                                               nb::object velocities,
-                                               nb::object depths,
-                                               nb::object inv_masses,
-                                               nb::object now_world_position,
-                                               nb::object rotation_axis,
-                                               double angular_velocity,
-                                               double centrifugal) {
-        return steal_or_throw(apply_centrifugal_velocity_mc2_object(
-            positions.ptr(),
-            velocities.ptr(),
-            depths.ptr(),
-            inv_masses.ptr(),
-            now_world_position.ptr(),
-            rotation_axis.ptr(),
-            angular_velocity,
-            centrifugal));
-    },
+    m.def("apply_centrifugal_velocity_mc2",
+        object_binding<apply_centrifugal_velocity_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, double, double>(),
         nb::arg("positions"),
         nb::arg("velocities"),
         nb::arg("depths"),
@@ -2371,20 +2250,9 @@ NB_MODULE(hotools_native, m) {
         nb::arg("angular_velocity"),
         nb::arg("centrifugal"),
         "Apply MC2 centrifugal velocity in-place.");
-    m.def("calculate_display_positions_mc2", [](nb::object positions,
-                                                nb::object real_velocities,
-                                                nb::object root_indices,
-                                                nb::object display_positions,
-                                                double frame_dt,
-                                                double max_distance_ratio) {
-        return steal_or_throw(calculate_display_positions_mc2_object(
-            positions.ptr(),
-            real_velocities.ptr(),
-            root_indices.ptr(),
-            display_positions.ptr(),
-            frame_dt,
-            max_distance_ratio));
-    },
+    m.def("calculate_display_positions_mc2",
+        object_binding<calculate_display_positions_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, double, double>(),
         nb::arg("positions"),
         nb::arg("real_velocities"),
         nb::arg("root_indices"),
@@ -2398,38 +2266,11 @@ NB_MODULE(hotools_native, m) {
         "Solve one MC2 MeshCloth frame using a native context for static arrays.");
     def_legacy(m, "solve_meshcloth_mc2_context_cached_params", hotools::solve_meshcloth_mc2_context_cached_params,
         "Solve one MC2 MeshCloth frame using native context static and parameter arrays.");
-    m.def("solve_mc2_bonecloth_io", [](nb::object world_rotations,
-                                       nb::object display_positions,
-                                       nb::object base_positions,
-                                       nb::object base_rotations,
-                                       nb::object vertex_local_positions,
-                                       nb::object vertex_local_rotations,
-                                       nb::object parent_indices,
-                                       nb::object baseline_start,
-                                       nb::object baseline_count,
-                                       nb::object baseline_data,
-                                       nb::object attributes,
-                                       double rotational_interpolation,
-                                       double blend_weight,
-                                       double anime_ratio,
-                                       double root_rotation) {
-        return steal_or_throw(solve_mc2_bonecloth_io_object(
-            world_rotations.ptr(),
-            display_positions.ptr(),
-            base_positions.ptr(),
-            base_rotations.ptr(),
-            vertex_local_positions.ptr(),
-            vertex_local_rotations.ptr(),
-            parent_indices.ptr(),
-            baseline_start.ptr(),
-            baseline_count.ptr(),
-            baseline_data.ptr(),
-            attributes.ptr(),
-            rotational_interpolation,
-            blend_weight,
-            anime_ratio,
-            root_rotation));
-    },
+    m.def("solve_mc2_bonecloth_io",
+        object_binding<solve_mc2_bonecloth_io_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, double, double, double, double>(),
         nb::arg("world_rotations"),
         nb::arg("display_positions"),
         nb::arg("base_positions"),
