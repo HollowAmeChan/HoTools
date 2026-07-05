@@ -1,8 +1,8 @@
 """
-physicsWorld.rigid.solver — 刚体 spec 收集并注册到 PhysicsWorldCache solver slot
+physicsWorld.rigid.solver — 刚体 spec 收集 + Jolt 模拟步
 
-Phase 4 只做 spec 收集和 slot 注册，不做 Jolt step 和写回。
-通过 PhysicsWorldCache.omni_cache_debug_snapshot() 可观察 body / constraint 数量。
+Phase 4：spec 收集（已由 physicsWorldBegin 自动完成）。
+Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步，写回变换。
 """
 
 from __future__ import annotations
@@ -124,3 +124,96 @@ def _flatten(objects) -> list:
         else:
             result.append(item)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 5：Jolt 模拟步 + 写回
+# ---------------------------------------------------------------------------
+
+def step_rigid_bodies(
+    world: PhysicsWorldCache,
+    enabled: bool = True,
+) -> tuple[int, float]:
+    """
+    Phase 5 核心：驱动 Jolt 模拟一帧并把结果写回 Blender 对象变换。
+
+    流程：
+    1. 获取或创建 JoltAdapter（挂在 world.backend_resources["rigid_solver"]）。
+    2. 对每个 rigid_body slot：
+       - 若 slot 在本 generation 内首次遇到，sync_body 注册到 Jolt。
+       - KINEMATIC body 每帧调用 update_kinematic 跟随动画。
+    3. 对每个 rigid_constraint slot：
+       - 若 slot 在本 generation 内首次遇到，sync_constraint 注册到 Jolt。
+    4. 执行 Jolt step（使用 world.frame_context.dt 和 substeps）。
+    5. DYNAMIC body 写回 Blender 对象位置/旋转。
+
+    返回 (body_count, step_ms)。
+    """
+    if not enabled or world is None or not isinstance(world, PhysicsWorldCache):
+        return 0, 0.0
+
+    from .backends.jolt import ensure_jolt_adapter
+
+    adapter = ensure_jolt_adapter(world)
+    if adapter is None:
+        # hotools_jolt 未编译，静默降级
+        return 0, 0.0
+
+    solver_id = "jolt_step"
+    world.acquire_write(solver_id)
+    try:
+        fc = world.frame_context
+        dt = float(fc.dt) if fc.dt > 0.0 else 1.0 / 60.0
+        substeps = max(1, int(fc.substeps))
+        restart = bool(fc.restart_required)
+
+        # --- sync rigid bodies ---
+        for slot_id, slot in list(world.solver_slots.items()):
+            if slot.kind != "rigid_body":
+                continue
+            spec = slot.data.get("spec")
+            if spec is None:
+                continue
+
+            needs_sync = (
+                restart
+                or slot.data.get("_jolt_generation") != world.generation
+            )
+            if needs_sync:
+                try:
+                    adapter.sync_body(slot_id, spec)
+                    slot.data["_jolt_generation"] = world.generation
+                except Exception as e:
+                    slot.data["_jolt_error"] = str(e)
+            elif spec.body_type == "KINEMATIC":
+                adapter.update_kinematic(slot_id, spec, dt)
+
+        # --- sync constraints ---
+        for slot_id, slot in list(world.solver_slots.items()):
+            if slot.kind != "rigid_constraint":
+                continue
+            spec = slot.data.get("spec")
+            if spec is None:
+                continue
+
+            needs_sync = (
+                restart
+                or slot.data.get("_jolt_generation") != world.generation
+            )
+            if needs_sync:
+                try:
+                    adapter.sync_constraint(slot_id, spec)
+                    slot.data["_jolt_generation"] = world.generation
+                except Exception as e:
+                    slot.data["_jolt_error"] = str(e)
+
+        # --- step ---
+        step_ms = adapter.step(dt, substeps)
+
+        # --- writeback DYNAMIC bodies ---
+        adapter.writeback_transforms(world.solver_slots)
+
+        return adapter._jw.body_count, step_ms
+
+    finally:
+        world.release_write(solver_id)
