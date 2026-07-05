@@ -263,7 +263,7 @@ def physicsWorldDebugText(
     在 3D 视口中可视化物理世界内容，比文字快照更直观。
 
     直接读取 PhysicsWorldCache 里已有的数据，不做额外计算：
-      显示碰撞体 — collider_snapshot 里的球/胶囊（蓝=简单碰撞/黄绿=骨骼）
+      显示碰撞体 — collider_snapshot 里的球/胶囊/平面/盒子（蓝=简单碰撞/黄绿=骨骼）
       显示刚体   — rigid_body slot 的轮廓（绿=动态/灰=静态/蓝=运动学）
       显示约束   — constraint slot 的 Empty 锚点 + 连线到目标（橙黄）
                    FIXED=轴框/HINGE=半圆/SLIDER=双箭头/CONE=锥/POINT=圆

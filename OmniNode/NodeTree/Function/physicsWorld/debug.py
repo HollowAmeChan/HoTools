@@ -34,7 +34,7 @@ def snapshot_to_text(snapshot: dict, indent: int = 0) -> str:
         "frame", "previous_frame", "continuous", "same_frame", "restart_required",
         "dt", "time_scale", "substeps",
         "objects", "collider_sources", "colliders",
-        "solver_slots", "backend_resources",
+        "solver_slots", "backend_resources", "backend_resource_details",
     ]
     shown = set()
 
@@ -54,6 +54,15 @@ def snapshot_to_text(snapshot: dict, indent: int = 0) -> str:
                     lines.append(f"{prefix}    {slot_snap}")
         elif key == "backend_resources" and isinstance(value, list):
             lines.append(f"{prefix}{key}: {value}")
+        elif key == "backend_resource_details" and isinstance(value, dict):
+            lines.append(f"{prefix}{key}: ({len(value)} 个 backend)")
+            for backend_name, backend_snap in value.items():
+                lines.append(f"{prefix}  [{backend_name}]")
+                if isinstance(backend_snap, dict):
+                    for bk, bv in backend_snap.items():
+                        lines.append(f"{prefix}    {bk}: {bv}")
+                else:
+                    lines.append(f"{prefix}    {backend_snap}")
         else:
             lines.append(f"{prefix}{key}: {value}")
 

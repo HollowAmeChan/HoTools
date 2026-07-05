@@ -82,7 +82,112 @@ def _vector3(value, fallback: mathutils.Vector) -> mathutils.Vector:
         return fallback.copy()
     if len(vec) == 0:
         return fallback.copy()
+    if len(vec) == 1:
+        return mathutils.Vector((vec[0], fallback[1], fallback[2]))
+    if len(vec) == 2:
+        return mathutils.Vector((vec[0], vec[1], fallback[2]))
     return vec.to_3d()
+
+
+def _world_normal(matrix: mathutils.Matrix, local_axis: mathutils.Vector) -> mathutils.Vector | None:
+    try:
+        normal = matrix.to_3x3() @ local_axis
+    except Exception:
+        return None
+    if normal.length <= _EPSILON:
+        return None
+    normal.normalize()
+    return normal
+
+
+def _world_axis(matrix: mathutils.Matrix, local_axis: mathutils.Vector, fallback: mathutils.Vector) -> mathutils.Vector:
+    try:
+        axis = matrix.to_3x3() @ local_axis
+    except Exception:
+        return fallback.copy()
+    if axis.length <= _EPSILON:
+        return fallback.copy()
+    return axis
+
+
+def _box_half_axes(
+    matrix: mathutils.Matrix,
+    size: mathutils.Vector,
+) -> tuple[mathutils.Vector, mathutils.Vector, mathutils.Vector] | None:
+    """从 Object.matrix_world 和 PhysicsTools box_size 解析有向盒半轴。"""
+    try:
+        basis = matrix.to_3x3()
+        axis_x = basis @ mathutils.Vector((max(float(size.x), 0.0) * 0.5, 0.0, 0.0))
+        axis_y = basis @ mathutils.Vector((0.0, max(float(size.y), 0.0) * 0.5, 0.0))
+        raw_axis_z = basis @ mathutils.Vector((0.0, 0.0, max(float(size.z), 0.0) * 0.5))
+    except Exception:
+        return None
+
+    if (
+        axis_x.length <= _EPSILON
+        or axis_y.length <= _EPSILON
+        or raw_axis_z.length <= _EPSILON
+    ):
+        return None
+
+    axis_z = axis_x.cross(axis_y)
+    if axis_z.length <= _EPSILON:
+        return None
+    axis_z.normalize()
+    if raw_axis_z.dot(axis_z) < 0.0:
+        axis_z.negate()
+    axis_z *= raw_axis_z.length
+    return axis_x, axis_y, axis_z
+
+
+def _compact_collider_snapshot(colliders: list[dict] | None) -> dict:
+    """
+    构造按 collider key 索引的 previous snapshot。
+
+    完整当前帧仍存放在 world.collider_snapshot["colliders"] list 中；
+    这个紧凑版本用于 moving collider 查询。
+    """
+    snapshots = {}
+    for collider in colliders or []:
+        if not isinstance(collider, dict):
+            continue
+        key = collider.get("key") or collider.get("source_key")
+        center = collider.get("center")
+        if not key or center is None:
+            continue
+        collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+        if collider_type == "CAPSULE":
+            segment_a = collider.get("segment_a", center)
+            segment_b = collider.get("segment_b", center)
+        elif collider_type == "PLANE":
+            segment_a = collider.get("normal")
+            segment_b = center
+            if segment_a is None:
+                continue
+        elif collider_type == "BOX":
+            segment_a = collider.get("box_axis_x")
+            segment_b = collider.get("box_axis_y")
+            axis_z = collider.get("box_axis_z")
+            if segment_a is None or segment_b is None or axis_z is None:
+                continue
+        else:
+            segment_a = center
+            segment_b = center
+
+        snapshot = {
+            "type": collider_type,
+            "center": center,
+            "segment_a": segment_a,
+            "segment_b": segment_b,
+        }
+        if collider_type == "PLANE":
+            snapshot["normal"] = segment_a
+        elif collider_type == "BOX":
+            snapshot["box_axis_x"] = segment_a
+            snapshot["box_axis_y"] = segment_b
+            snapshot["box_axis_z"] = collider.get("box_axis_z")
+        snapshots[str(key)] = snapshot
+    return {"colliders": snapshots}
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +198,9 @@ def _collider_from_source(source: PhysicsColliderSource) -> dict | None:
     """
     把单个 PhysicsColliderSource 转成碰撞 dict，与旧 build_collision_snapshot_from_scene 格式兼容。
 
-    支持的 collision_type：SPHERE、CAPSULE（Object 和 Bone 级）。
+    支持的 collision_type：
+      - Object 级：SPHERE、CAPSULE、PLANE、BOX
+      - Bone 级：SPHERE、CAPSULE
     MESH 类型不产生碰撞 dict（它是 solver 内部的 mesh collision，不走此路径）。
     """
     props = source.props
@@ -119,11 +226,8 @@ def _collider_from_source(source: PhysicsColliderSource) -> dict | None:
         return None
 
     collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
-    if collision_type not in {"SPHERE", "CAPSULE"}:
-        return None
-
-    radius = max(float(getattr(props, "radius", 0.0)), 0.0) * _matrix_scale_radius(matrix)
-    if radius <= _EPSILON:
+    allowed_types = {"SPHERE", "CAPSULE"} if owner_type == "BONE" else {"SPHERE", "CAPSULE", "PLANE", "BOX"}
+    if collision_type not in allowed_types:
         return None
 
     offset = _vector3(getattr(props, "offset", None), mathutils.Vector((0.0, 0.0, 0.0)))
@@ -137,15 +241,47 @@ def _collider_from_source(source: PhysicsColliderSource) -> dict | None:
         "bone": source.bone_name,
         "primary_group": group,
         "center": center,
-        "radius": radius,
+        "key": source.key,
         "source_key": source.key,
     }
+
+    if collision_type in {"SPHERE", "CAPSULE"}:
+        radius = max(float(getattr(props, "radius", 0.0)), 0.0) * _matrix_scale_radius(matrix)
+        if radius <= _EPSILON:
+            return None
+        collider["radius"] = radius
 
     if collision_type == "CAPSULE":
         half_length = max(float(getattr(props, "length", 0.0)), 0.0) * 0.5
         axis = mathutils.Vector((0.0, 1.0, 0.0))
         collider["segment_a"] = matrix @ (offset - axis * half_length)
         collider["segment_b"] = matrix @ (offset + axis * half_length)
+    elif collision_type == "PLANE":
+        normal = _world_normal(matrix, mathutils.Vector((0.0, 0.0, 1.0)))
+        if normal is None:
+            return None
+        half_size = max(float(getattr(props, "length", 1.0)), 1.0) * 0.5
+        collider["radius"] = 0.0
+        collider["normal"] = normal
+        collider["plane_axis_x"] = _world_axis(
+            matrix,
+            mathutils.Vector((half_size, 0.0, 0.0)),
+            mathutils.Vector((half_size, 0.0, 0.0)),
+        )
+        collider["plane_axis_y"] = _world_axis(
+            matrix,
+            mathutils.Vector((0.0, half_size, 0.0)),
+            mathutils.Vector((0.0, half_size, 0.0)),
+        )
+    elif collision_type == "BOX":
+        size = _vector3(getattr(props, "box_size", None), mathutils.Vector((1.0, 1.0, 1.0)))
+        axes = _box_half_axes(matrix, size)
+        if axes is None:
+            return None
+        collider["radius"] = 0.0
+        collider["box_axis_x"] = axes[0]
+        collider["box_axis_y"] = axes[1]
+        collider["box_axis_z"] = axes[2]
 
     return collider
 
@@ -165,10 +301,18 @@ def build_collider_snapshot(world: PhysicsWorldCache, sources: list[PhysicsColli
         if entry is not None:
             colliders.append(entry)
 
+    object_keys = set()
+    for source in sources:
+        try:
+            object_keys.add(int(source.owner.as_pointer()))
+        except Exception:
+            pass
+
     return {
         "frame": frame,
         "colliders": colliders,
         "source_count": len(sources),
+        "object_count": len(object_keys),
     }
 
 
@@ -293,10 +437,14 @@ def physicsWorldBegin(
     fc.substeps = max(1, int(substeps))
     fc.generation = world.generation
 
-    # 收集 collider sources 并构建快照
-    # previous snapshot 先保留上帧数据（供 MC2 moving collider 使用）
-    if world.collider_snapshot.get("frame") is not None:
-        world.previous_collider_snapshot = world.collider_snapshot
+    # 收集 collider sources 并构建快照。
+    # 连续帧才保留上帧紧凑快照；restart 帧不沿用旧 pose。
+    if (not fc.restart_required) and world.collider_snapshot.get("frame") is not None:
+        world.previous_collider_snapshot = _compact_collider_snapshot(
+            world.collider_snapshot.get("colliders") or []
+        )
+    else:
+        world.previous_collider_snapshot = None
 
     sources, invalid_count = collect_physics_sources(object_scope)
     new_snapshot = build_collider_snapshot(world, sources, current_frame)

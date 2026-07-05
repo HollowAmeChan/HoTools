@@ -2,7 +2,7 @@
 physicsWorld.debug_draw — OmniNode 物理世界可视化调试绘制
 
 draw handler 读取 _DRAW_STORE，在 3D 视口中绘制本帧参与模拟的所有对象：
-  - 简单碰撞体（球/胶囊）
+  - 简单碰撞体（球/胶囊/平面/盒子）
   - 骨骼碰撞体
   - 刚体轮廓（按类型着色）
   - 刚体约束锚点
@@ -103,6 +103,51 @@ def _capsule_lines(lines, seg_a, seg_b, radius):
         _line(lines, seg_a + sign * radius, seg_b + sign * radius)
 
 
+def _plane_lines(lines, center, axis_x, axis_y, normal):
+    corners = [
+        center - axis_x - axis_y,
+        center + axis_x - axis_y,
+        center + axis_x + axis_y,
+        center - axis_x + axis_y,
+    ]
+    for index, corner in enumerate(corners):
+        _line(lines, corner, corners[(index + 1) % len(corners)])
+    ray = normal.normalized() * max(axis_x.length, axis_y.length, 0.5)
+    for corner in corners:
+        _line(lines, corner, corner - ray)
+
+
+def _box_lines(lines, center, axis_x, axis_y, axis_z):
+    corners = [
+        center + sx * axis_x + sy * axis_y + sz * axis_z
+        for sx, sy, sz in (
+            (-1.0, -1.0, -1.0),
+            (1.0, -1.0, -1.0),
+            (1.0, 1.0, -1.0),
+            (-1.0, 1.0, -1.0),
+            (-1.0, -1.0, 1.0),
+            (1.0, -1.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (-1.0, 1.0, 1.0),
+        )
+    ]
+    for start, end in (
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ):
+        _line(lines, corners[start], corners[end])
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +242,28 @@ def _build_draw_calls(data: dict) -> list[tuple]:
                 sa, sb = c.get("segment_a"), c.get("segment_b")
                 if sa is not None and sb is not None:
                     _capsule_lines(target, mathutils.Vector(sa), mathutils.Vector(sb), float(c.get("radius", 0.0)))
+            elif c.get("type") == "PLANE":
+                center = c.get("center")
+                normal = c.get("normal")
+                if center is not None and normal is not None:
+                    n = mathutils.Vector(normal)
+                    axis_x_value = c.get("plane_axis_x")
+                    axis_y_value = c.get("plane_axis_y")
+                    axis_x = mathutils.Vector(axis_x_value if axis_x_value is not None else (0.5, 0.0, 0.0))
+                    axis_y = mathutils.Vector(axis_y_value if axis_y_value is not None else (0.0, 0.5, 0.0))
+                    if n.length > 1e-7 and axis_x.length > 1e-7 and axis_y.length > 1e-7:
+                        _plane_lines(target, mathutils.Vector(center), axis_x, axis_y, n)
+            elif c.get("type") == "BOX":
+                center = c.get("center")
+                ax, ay, az = c.get("box_axis_x"), c.get("box_axis_y"), c.get("box_axis_z")
+                if center is not None and ax is not None and ay is not None and az is not None:
+                    _box_lines(
+                        target,
+                        mathutils.Vector(center),
+                        mathutils.Vector(ax),
+                        mathutils.Vector(ay),
+                        mathutils.Vector(az),
+                    )
         if collider_lines:
             draw_calls.append((batch_for_shader(shader, "LINES", {"pos": collider_lines}), _COLOR_COLLIDER, 1.5))
         if bone_lines:

@@ -354,6 +354,17 @@ class PhysicsWorldCache:
             except Exception as e:
                 slot_snapshots[slot_id] = {"error": str(e)}
 
+        backend_snapshots = {}
+        for name, resource in self.backend_resources.items():
+            try:
+                snapshot_fn = getattr(resource, "debug_snapshot", None) or getattr(resource, "omni_cache_debug_snapshot", None)
+                if callable(snapshot_fn):
+                    backend_snapshots[name] = snapshot_fn()
+                else:
+                    backend_snapshots[name] = {"type": type(resource).__name__}
+            except Exception as e:
+                backend_snapshots[name] = {"error": str(e)}
+
         return {
             "kind": self.kind,
             "schema": self.schema,
@@ -368,11 +379,12 @@ class PhysicsWorldCache:
             "dt": round(fc.dt, 6),
             "time_scale": fc.time_scale,
             "substeps": fc.substeps,
-            "objects": len(self.collider_snapshot.get("colliders") or []),
+            "objects": self.collider_snapshot.get("object_count", 0),
             "collider_sources": self.collider_snapshot.get("source_count", 0),
             "colliders": len(self.collider_snapshot.get("colliders") or []),
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),
+            "backend_resource_details": backend_snapshots,
         }
 
     def __repr__(self) -> str:
