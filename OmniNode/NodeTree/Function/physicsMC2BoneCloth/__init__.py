@@ -41,6 +41,31 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
     )
 
 
+def _bone_socket_values_from_input(values) -> list[tuple[bpy.types.Object, str]]:
+    result: list[tuple[bpy.types.Object, str]] = []
+    stack = list(values) if isinstance(values, (list, tuple)) else [values]
+    while stack:
+        value = stack.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            stack[0:0] = list(value)
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("root_bone is invalid")
+
+        armature_obj = value.get("armature")
+        bone_name = str(value.get("bone") or "").strip()
+        if (
+            not isinstance(armature_obj, bpy.types.Object)
+            or armature_obj.type != "ARMATURE"
+            or not bone_name
+        ):
+            raise ValueError(f"root_bone 无效：armature={armature_obj} bone={bone_name}")
+        result.append((armature_obj, bone_name))
+    return result
+
+
 @omni(
     enable=True,
     bl_label="骨骼布料-物理属性-MC2",
@@ -123,14 +148,14 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
     omni_description="""
     骨骼布料链设置 + 物理参数（合并节点，对齐 VRM SpringBone per-chain 参数设计）。
 
-    传入"中控骨/父骨"，自动采集其所有直接子链；同时携带该组骨链的完整物理参数。
+    传入一个或多个"中控骨/父骨"，自动采集其所有直接子链；同时携带该组骨链的完整物理参数。
     不同骨链组（头发/裙摆/尾巴）各接一个本节点，实现独立调参。
 
     骨骼布料-MC2 解算器不再有物理参数输入，所有物理参数均由本节点提供。
     """,
 )
 def boneClothMC2ChainPhysics(
-    root_bone: _OmniBone,
+    root_bone: list[_OmniBone],
     enabled: bool = True,
     rotational_interpolation: float = 1.0,
     blend_weight: float = 1.0,
@@ -167,28 +192,24 @@ def boneClothMC2ChainPhysics(
     use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
-) -> typing.Any:
+) -> list[typing.Any]:
     """采集骨链并附加完整 per-chain 物理参数，输出供解算器消费的链设置列表。"""
-    # 从根骨骼（中控骨）采集子骨链
-    if not isinstance(root_bone, dict):
-        raise ValueError("root_bone is invalid")
-    armature_obj = root_bone.get("armature")
-    bone_name = str(root_bone.get("bone") or "").strip()
-    if (
-        not isinstance(armature_obj, bpy.types.Object)
-        or armature_obj.type != "ARMATURE"
-        or not bone_name
-    ):
-        raise ValueError(f"root_bone 无效：armature={armature_obj} bone={bone_name}")
-    pose_bone = armature_obj.pose.bones.get(bone_name)
-    if pose_bone is None:
-        raise ValueError(f"骨骼未找到：{bone_name}")
-    child_names = [c.name for c in (pose_bone.children or [])]
-    if not child_names:
-        raise ValueError(f"骨骼 {bone_name} 没有直接子骨，无法采集骨链")
-    chains = _bone_build.collect_bone_chains(armature_obj, child_names)
-    if not chains:
-        raise ValueError(f"子骨链采集失败：{child_names}")
+    root_values = _bone_socket_values_from_input(root_bone)
+    if not root_values:
+        raise ValueError("root_bone input is empty")
+
+    collected_chains: list[tuple[bpy.types.Object, dict]] = []
+    for armature_obj, bone_name in root_values:
+        pose_bone = armature_obj.pose.bones.get(bone_name)
+        if pose_bone is None:
+            raise ValueError(f"骨骼未找到：{bone_name}")
+        child_names = [c.name for c in (pose_bone.children or [])]
+        if not child_names:
+            raise ValueError(f"骨骼 {bone_name} 没有直接子骨，无法采集骨链")
+        chains = _bone_build.collect_bone_chains(armature_obj, child_names)
+        if not chains:
+            raise ValueError(f"子骨链采集失败：{child_names}")
+        collected_chains.extend((armature_obj, chain) for chain in chains)
 
     physics = {
         "rotational_interpolation":                      float(rotational_interpolation),
@@ -236,7 +257,7 @@ def boneClothMC2ChainPhysics(
             "enabled":   bool(enabled),
             "params":    physics,
         }
-        for ch in chains
+        for armature_obj, ch in collected_chains
     ]
 
 
@@ -389,4 +410,3 @@ def boneClothMC2Cpp(
         time_scale, skip_writing, debug_output,
         solver_backend="cpp",
     )
-

@@ -27,6 +27,22 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
     )
 
 
+def _mesh_objects_from_input(values) -> list[bpy.types.Object]:
+    result: list[bpy.types.Object] = []
+    stack = list(values) if isinstance(values, (list, tuple)) else [values]
+    while stack:
+        value = stack.pop(0)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            stack[0:0] = list(value)
+            continue
+        if not isinstance(value, bpy.types.Object) or value.type != "MESH":
+            raise ValueError(f"proxy_obj 必须是 MESH 类型的物体，得到：{value!r}")
+        result.append(value)
+    return result
+
+
 @omni(
     enable=True,
     bl_label="网格布料-MC2",
@@ -237,13 +253,13 @@ def meshClothMC2(
     omni_description="""
     网格布料物理参数设置节点。
 
-    携带低模代理网格及该布料区域的完整物理参数，接入"网格布料-MC2"解算器。
+    携带一个或多个低模代理网格及该布料区域的完整物理参数，接入"网格布料-MC2"解算器。
     解算器节点不再直接拥有物理参数，所有物理参数均由本节点提供。
     输出列表格式，支持多个设置节点连接到同一解算器。
     """,
 )
 def meshClothMC2Setting(
-    proxy_obj: bpy.types.Object,
+    proxy_obj: list[bpy.types.Object],
     enabled: bool = True,
     blend_weight: float = 1.0,
     damping: float = 0.2,
@@ -280,16 +296,13 @@ def meshClothMC2Setting(
     use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
-) -> typing.Any:
-    """把低模代理和物理参数打包成网格布料设置列表，供解算器读取。
+) -> list[typing.Any]:
+    """把低模代理和物理参数打包成网格布料设置列表，供解算器读取。"""
+    proxy_objects = _mesh_objects_from_input(proxy_obj)
+    if not proxy_objects:
+        raise ValueError("proxy_obj input is empty")
 
-    返回 typing.Any 而非 list，避免 OmniNode 对明确 list 输出做额外包装。
-    实际值是 [{...}]，兼容单/多 proxy 聚合路径。
-    """
-    if not isinstance(proxy_obj, bpy.types.Object) or proxy_obj.type != "MESH":
-        raise ValueError(f"proxy_obj 必须是 MESH 类型的物体，得到：{proxy_obj!r}")
-    return [{
-        "proxy_obj":   proxy_obj,
+    settings = {
         "enabled":     bool(enabled),
         "blend_weight":                          float(blend_weight),
         "damping":                               float(damping),
@@ -326,7 +339,14 @@ def meshClothMC2Setting(
         "use_collider_collision":                bool(use_collider_collision),
         "collider_friction":                     float(collider_friction),
         "collider_collision_mode":               int(collider_collision_mode),
-    }]
+    }
+    return [
+        {
+            "proxy_obj": proxy,
+            **settings,
+        }
+        for proxy in proxy_objects
+    ]
 
 
 _MESH_CLOTH_MC2_CPP_META = dict(meshClothMC2.__meta)

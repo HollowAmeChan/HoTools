@@ -448,23 +448,6 @@ class OmniNodeSocketBone(NodeSocket):
         return (0.55, 0.35, 0.78, 1.0)
 
 
-class OmniNodeSocketBoneChain(NodeSocket):
-    bl_label = "BoneChain-Omni"
-    bl_idname = "OmniNodeSocketBoneChain"
-
-    default_value: bpy.props.StringProperty(
-        default="",
-        options={"HIDDEN", "SKIP_SAVE"},
-    )  # type: ignore
-
-    def draw(self, context, layout, node, text):
-        layout.label(text=self.name)
-
-    @classmethod
-    def draw_color_simple(cls):
-        return (0.42, 0.26, 0.68, 1.0)
-
-
 class OmniNodeSocketImageFormat(NodeSocket):
     bl_label = "图片后缀格式-Omni"
     bl_idname = "OmniNodeSocketImageFormat"
@@ -769,7 +752,6 @@ socket_cls = [
     OmniNodeSocketFloatCurve,
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
-    OmniNodeSocketBoneChain,
     OmniNodeSocketImageFormat,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,

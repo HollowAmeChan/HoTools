@@ -6,7 +6,6 @@ from .OmniNodeSocket import (
     OmniNodeSocketFloatCurve,
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
-    OmniNodeSocketBoneChain,
     OmniNodeSocketImageFormat,
     OmniNodeSocketRegex,
     OmniNodeSocketGlob,
@@ -101,9 +100,6 @@ class _OmniCache(str):
 
         return cache_mutate(owner)
 class _OmniBone():
-    def __init__():
-        return
-class _OmniBoneChain():
     def __init__():
         return
 class _OmniFloatCurve():
@@ -201,5 +197,4 @@ SKT_DIC = {
     _OmniFloatCurve: OmniNodeSocketFloatCurve,
     _OmniColorCurve: OmniNodeSocketColorCurve,
     _OmniBone: OmniNodeSocketBone,
-    _OmniBoneChain: OmniNodeSocketBoneChain,
 }

@@ -1,6 +1,5 @@
 from ..OmniNodeSocketMapping import (
     _OmniBone,
-    _OmniBoneChain,
     _OmniCache,
 )
 from ..OmniRuntimeState import OmniCacheOwnerDict
@@ -679,6 +678,153 @@ class _BonePhysics:
                 and str(value.get("root_bone") or "")
             ):
                 result.append(value)
+        return result
+
+    @classmethod
+    def bone_chains_from_bone_values(cls, values) -> list[dict]:
+        result = []
+        if values is None:
+            return result
+
+        bone_values = []
+        stack = list(values) if isinstance(values, (list, tuple)) else [values]
+        while stack:
+            value = stack.pop(0)
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple)):
+                stack[0:0] = list(value)
+                continue
+
+            cls.resolve_bone_value(value)
+            bone_values.append(value)
+
+        metadata_keys = set()
+        direct_values = []
+        for value in bone_values:
+            armature_obj, bone_name = cls.resolve_bone_value(value)
+            collection_root = str(value.get("bone_collection_root") or "").strip()
+            collection_value = value.get("bone_collection")
+            if collection_root and isinstance(collection_value, list):
+                collection_bones = [str(name).strip() for name in collection_value if str(name).strip()]
+                if collection_bones:
+                    key = (int(armature_obj.as_pointer()), collection_root, tuple(collection_bones))
+                    if key not in metadata_keys:
+                        metadata_keys.add(key)
+                        result.append(cls._chain_from_bone_names(armature_obj, collection_root, collection_bones))
+                    continue
+            direct_values.append((armature_obj, bone_name))
+
+        result.extend(cls._chains_from_direct_bone_values(direct_values))
+        return result
+
+    @classmethod
+    def bone_chain_from_bone_values(cls, values) -> dict:
+        chains = cls.bone_chains_from_bone_values(values)
+        if not chains:
+            raise ValueError("bone input is empty")
+        if len(chains) > 1:
+            raise ValueError("expected exactly one bone chain")
+        chain = chains[0]
+        if not cls.chain_is_valid(chain):
+            raise ValueError("bone chain is invalid")
+        return chain
+
+    @classmethod
+    def _chain_bone_names_from_root(cls, armature_obj: bpy.types.Object, root_name: str) -> list[str]:
+        root_pose_bone = armature_obj.pose.bones.get(root_name)
+        if root_pose_bone is None:
+            raise ValueError(f"bone not found: {root_name}")
+        return cls.collect_bone_names(root_pose_bone)
+
+    @classmethod
+    def _chain_from_bone_names(cls, armature_obj: bpy.types.Object, root_name: str, bone_names: list[str]) -> dict:
+        chain_bones = []
+        seen = set()
+        for bone_name in bone_names:
+            bone_name = str(bone_name or "").strip()
+            if not bone_name or bone_name in seen:
+                continue
+            if armature_obj.pose.bones.get(bone_name) is None:
+                continue
+            seen.add(bone_name)
+            chain_bones.append(bone_name)
+        if root_name and root_name not in seen and armature_obj.pose.bones.get(root_name) is not None:
+            chain_bones.insert(0, root_name)
+        if not chain_bones:
+            chain_bones = cls._chain_bone_names_from_root(armature_obj, root_name)
+        return {
+            "armature": armature_obj,
+            "root_bone": str(root_name or ""),
+            "bones": chain_bones,
+        }
+
+    @classmethod
+    def _bone_is_descendant_or_self(cls, armature_obj: bpy.types.Object, bone_name: str, root_name: str) -> bool:
+        pose_bone = armature_obj.pose.bones.get(bone_name)
+        while pose_bone is not None:
+            if pose_bone.name == root_name:
+                return True
+            pose_bone = getattr(pose_bone, "parent", None)
+        return False
+
+    @classmethod
+    def _chains_from_direct_bone_values(cls, values: list[tuple[bpy.types.Object, str]]) -> list[dict]:
+        if not values:
+            return []
+
+        groups = []
+        group_index = {}
+        for armature_obj, bone_name in values:
+            key = int(armature_obj.as_pointer())
+            if key not in group_index:
+                group_index[key] = len(groups)
+                groups.append((armature_obj, []))
+            groups[group_index[key]][1].append(bone_name)
+
+        result = []
+        for armature_obj, bone_names in groups:
+            ordered_names = []
+            seen = set()
+            for bone_name in bone_names:
+                if bone_name not in seen:
+                    seen.add(bone_name)
+                    ordered_names.append(bone_name)
+
+            provided = set(ordered_names)
+            has_parent_link = False
+            for bone_name in ordered_names:
+                pose_bone = armature_obj.pose.bones.get(bone_name)
+                parent = getattr(pose_bone, "parent", None) if pose_bone is not None else None
+                if parent is not None and parent.name in provided:
+                    has_parent_link = True
+                    break
+
+            if not has_parent_link:
+                for bone_name in ordered_names:
+                    result.append(cls._chain_from_bone_names(
+                        armature_obj,
+                        bone_name,
+                        cls._chain_bone_names_from_root(armature_obj, bone_name),
+                    ))
+                continue
+
+            roots = []
+            for bone_name in ordered_names:
+                pose_bone = armature_obj.pose.bones.get(bone_name)
+                parent = getattr(pose_bone, "parent", None) if pose_bone is not None else None
+                if parent is None or parent.name not in provided:
+                    roots.append(bone_name)
+            if not roots and ordered_names:
+                roots.append(ordered_names[0])
+
+            for root_name in roots:
+                chain_bones = [
+                    bone_name
+                    for bone_name in ordered_names
+                    if cls._bone_is_descendant_or_self(armature_obj, bone_name, root_name)
+                ]
+                result.append(cls._chain_from_bone_names(armature_obj, root_name, chain_bones))
         return result
 
     @classmethod
@@ -2357,44 +2503,11 @@ def _run_mesh_xpbd_node(
 
 @omni(
     enable=True,
-    bl_label="从根获取骨链",
-    base_color=_Color.colorCat["GetData"],
-    is_output_node=False,
-    _INPUT_NAME=["根骨骼"],
-    _OUTPUT_NAME=["骨链"],
-    omni_description="""
-    从 Bone socket 选择的根骨骼生成骨链数据。
-
-    接入的这根骨骼本身就是链 root，也是链锚点：它在解算中恒为硬 Pin，不参与 Verlet 推进，
-    模拟从它的第一根子骨开始。root 身份完全由这个输入决定，不依赖骨骼上的任何持久标记。
-    会递归收集根骨下面的全部子骨，不提供主干猜测或排除规则。
-    如果 VRM SpringBone 需要多条独立链，应在骨架制作时拆成多个明确 root。
-    输出接物理类节点的骨链输入。
-    """,
-)
-def boneChainFromRoot(
-    root_bone: _OmniBone,
-) -> _OmniBoneChain:
-    armature_obj, root_name = _BonePhysics.resolve_bone_value(root_bone)
-
-    root_pose_bone = armature_obj.pose.bones.get(root_name)
-    if root_pose_bone is None:
-        raise ValueError(f"bone not found: {root_name}")
-
-    return {
-        "armature": armature_obj,
-        "root_bone": root_name,
-        "bones": _BonePhysics.collect_bone_names(root_pose_bone),
-    }
-
-
-@omni(
-    enable=True,
     bl_label="弹簧骨-VRM链设置",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "骨链",
+        "骨骼",
         "启用",
         "刚性",
         "阻力",
@@ -2460,9 +2573,9 @@ def boneChainFromRoot(
         },
     ],
     omni_description="""
-    为单条骨链生成 VRM SpringBone 解算所需的弹簧和重力参数。
+    为一个或多个骨骼输入生成 VRM SpringBone 解算所需的弹簧和重力参数。
 
-    推荐一条 spring chain 对应一个本节点，再把多个“VRM链设置”输出接到“弹簧骨-VRM”的多重输入。
+    接入单根骨骼时会把它当作 root 递归收集；接入“从根获取骨骼”的列表时会按该列表解释为链/集合。
     本节点不写姿态、不推进时间，只打包参数；真正的模拟、缓存读写和碰撞处理都在解算器里完成。
 
     碰撞半径、碰撞体类型和碰撞组不在这里重复配置。
@@ -2471,30 +2584,34 @@ def boneChainFromRoot(
     """,
 )
 def springBoneVRMChainSetting(
-    bone_chain: _OmniBoneChain,
+    bone_chain: list[_OmniBone],
     enabled: bool = True,
     stiffness_force: float = 1.0,
     drag_force: float = 0.4,
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity_power: float = 0.0,
-) -> typing.Any:
-    if not _BonePhysics.chain_is_valid(bone_chain):
-        raise ValueError("bone_chain is invalid")
+) -> list[typing.Any]:
+    bone_chains = _BonePhysics.bone_chains_from_bone_values(bone_chain)
+    if not bone_chains:
+        raise ValueError("root bone input is empty")
 
     gravity = _BonePhysics.vector3(gravity_dir, mathutils.Vector((0.0, 0.0, -1.0)))
     if gravity.length > _BonePhysics.EPSILON:
         gravity.normalize()
 
-    return {
-        "armature": bone_chain["armature"],
-        "root_bone": str(bone_chain.get("root_bone") or ""),
-        "bones": list(bone_chain.get("bones") or []),
-        "enabled": bool(enabled),
-        "stiffness_force": max(float(stiffness_force), 0.0),
-        "drag_force": max(0.0, min(1.0, float(drag_force))),
-        "gravity_dir": gravity,
-        "gravity_power": max(float(gravity_power), 0.0),
-    }
+    return [
+        {
+            "armature": bone_chain_value["armature"],
+            "root_bone": str(bone_chain_value.get("root_bone") or ""),
+            "bones": list(bone_chain_value.get("bones") or []),
+            "enabled": bool(enabled),
+            "stiffness_force": max(float(stiffness_force), 0.0),
+            "drag_force": max(0.0, min(1.0, float(drag_force))),
+            "gravity_dir": gravity,
+            "gravity_power": max(float(gravity_power), 0.0),
+        }
+        for bone_chain_value in bone_chains
+    ]
 
 
 class _SpringBoneVRM:
@@ -4165,7 +4282,7 @@ def _run_spring_bone_vrm_node(
     缓存只保存这个骨架的 VRM SpringBone 状态，拓扑变化或打开“重置”时会重建状态。
     当前消费类型：SPHERE、CAPSULE。球体读取 radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
     模拟骨骼自身的 hit radius 和 collided_by_groups 来自该骨骼 hotools_collision；外部被动碰撞体来自场景快照。
-    链 root 由“从根获取骨链”输入的骨骼决定，恒为硬 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）只在 cache 重建时读取，模拟中修改不会立即生效。
+    链 root 由骨骼输入解析得到，恒为硬 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）只在 cache 重建时读取，模拟中修改不会立即生效。
     检测到跳帧或倒放时会先恢复初始姿态，并输出空缓存，让缓存写入节点清掉旧速度。
     同一帧同一骨架只允许一个不同配置的解算器写入，避免多个节点互相覆盖姿态。
 
@@ -4453,7 +4570,7 @@ def meshPhysicsXPBDCpp(
     is_output_node=False,
     _INPUT_NAME=[
         "缓存",
-        "骨链",
+        "骨骼",
         "启用",
         "刚性",
         "阻力",
@@ -4532,13 +4649,13 @@ def meshPhysicsXPBDCpp(
     最简无碰撞 SpringBone，也是后续物理节点的范本。
 
     接法：
-    1. 用“从根获取骨链”生成骨链，接到本节点。
+    1. 用“从根获取骨骼”生成骨骼列表，接到本节点。
     2. 缓存读取和缓存写入使用同一个缓存名，读到的缓存接本节点，输出缓存再写回。
     3. 每次执行只计算一帧，不做子步补算；dt 自动使用 render.fps / render.fps_base 的真实帧间隔。
 
     工作原理：
     骨链第一根骨骼只作为 center/锚点，不参与模拟；从第二根骨骼开始模拟。
-    链 root 由“从根获取骨链”输入的骨骼决定，永远视为 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）会在 cache 构建时记录，模拟中修改不会热更新。
+    链 root 由骨骼输入解析得到，永远视为 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）会在 cache 构建时记录，模拟中修改不会热更新。
     每根模拟骨在世界空间保存 tail 的 current/previous 状态，用 Verlet 推进：
     next = current + (current - previous) * (1 - drag) + rest_axis * stiffness * dt + gravity * gravity_power * dt。
     stiffness 会乘以 dt，所以它不是 0-1 参数，常用量级会落在 1、10、30、100 这种范围。
@@ -4560,15 +4677,14 @@ def meshPhysicsXPBDCpp(
 )
 def springBoneBase(
     cache_state: _OmniCache,
-    bone_chain: _OmniBoneChain,
+    bone_chain: list[_OmniBone],
     enabled: bool = True,
     stiffness_force: float = 1.0,
     drag_force: float = 0.4,
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
     gravity_power: float = 0.0,
 ) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object,]:
-    if not _BonePhysics.chain_is_valid(bone_chain):
-        raise ValueError("bone_chain is invalid")
+    bone_chain = _BonePhysics.bone_chain_from_bone_values(bone_chain)
 
     armature_obj = bone_chain["armature"]
     affected_bones = _BonePhysics.bone_socket_values_from_chain(bone_chain)
