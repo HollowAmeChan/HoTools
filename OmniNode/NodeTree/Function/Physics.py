@@ -4303,25 +4303,25 @@ def _run_spring_bone_vrm_node(
 
 @omni(
     enable=True,
-    bl_label=”弹簧骨-VRM”,
-    base_color=_Color.colorCat[“Operator”],
+    bl_label="弹簧骨-VRM",
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        “缓存”,
-        “VRM链设置”,
-        “场景”,
-        “启用”,
-        “重置”,
-        “子步数”,
-        “调试输出”,
+        "缓存",
+        "VRM链设置",
+        "场景",
+        "启用",
+        "重置",
+        "子步数",
+        "调试输出",
     ],
     input_init={
-        “substeps”: {“min_value”: 1, “max_value”: 16},
-        “debug_output”: {“description”: “开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。”},
+        "substeps": {"min_value": 1, "max_value": 16},
+        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
-    _OUTPUT_NAME=[“缓存”, “骨骼”, “骨架列表”, “链数量”, “碰撞体数量”],
-    omni_description=”””
+    _OUTPUT_NAME=["缓存", "骨骼", "骨架列表", "链数量", "碰撞体数量"],
+    omni_description="""
     多骨架批量 VRM SpringBone 解算器，自动从 VRM链设置 中提取所有涉及的骨架并分别解算。
 
     接法：
@@ -4341,7 +4341,7 @@ def _run_spring_bone_vrm_node(
     输出”骨骼”是所有骨架中受影响的模拟骨集合，可继续接到”骨骼姿态K帧”。
     “骨架列表”是本帧参与解算的骨架对象列表。
     “链数量”和”碰撞体数量”是所有骨架的汇总值，用于快速确认本帧实际参与解算的数据规模。
-    “””,
+    """,
 )
 def springBoneVRM(
     cache_state: _OmniCache,
@@ -4353,7 +4353,7 @@ def springBoneVRM(
     debug_output: bool = False,
 ) -> tuple[_OmniCache, list[_OmniBone], list[bpy.types.Object], int, int]:
     return _run_spring_bone_vrm_node(
-        backend_tag=”py”,
+        backend_tag="py",
         cache_state=cache_state,
         vrm_chain_settings=vrm_chain_settings,
         scene=scene,
@@ -4366,25 +4366,25 @@ def springBoneVRM(
 
 @omni(
     enable=True,
-    bl_label=”弹簧骨-VRM-CPP”,
-    base_color=_Color.colorCat[“Operator”],
+    bl_label="弹簧骨-VRM-CPP",
+    base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        “缓存”,
-        “VRM链设置”,
-        “场景”,
-        “启用”,
-        “重置”,
-        “子步数”,
-        “调试输出”,
+        "缓存",
+        "VRM链设置",
+        "场景",
+        "启用",
+        "重置",
+        "子步数",
+        "调试输出",
     ],
     input_init={
-        “substeps”: {“min_value”: 1, “max_value”: 16},
-        “debug_output”: {“description”: “开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。”},
+        "substeps": {"min_value": 1, "max_value": 16},
+        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
-    _OUTPUT_NAME=[“缓存”, “骨骼”, “骨架列表”, “链数量”, “碰撞体数量”],
-    omni_description=”””
+    _OUTPUT_NAME=["缓存", "骨骼", "骨架列表", "链数量", "碰撞体数量"],
+    omni_description="""
     “弹簧骨-VRM”的 C++ 后端版本，同样支持多骨架批量解算。
 
     注意：由于数据交互传输开销，C++ 后端在最简场景中会比 Python 后端慢，但在碰撞复杂时可能更有优势。
@@ -4392,7 +4392,7 @@ def springBoneVRM(
 
     节点输入、输出、缓存协议、跳帧规则和姿态写回方式与 Python 版保持一致。
     Python 层只负责收集 Blender 数据、维护 cache、生成 native 数组和写回 PoseBone；弹簧积分、长度约束、碰撞投影和子步循环由 hotools_native 执行。
-    “””,
+    """,
 )
 def springBoneVRM_CPP(
     cache_state: _OmniCache,
@@ -4404,7 +4404,7 @@ def springBoneVRM_CPP(
     debug_output: bool = False,
 ) -> tuple[_OmniCache, list[_OmniBone], list[bpy.types.Object], int, int]:
     return _run_spring_bone_vrm_node(
-        backend_tag=”cpp”,
+        backend_tag="cpp",
         cache_state=cache_state,
         vrm_chain_settings=vrm_chain_settings,
         scene=scene,
