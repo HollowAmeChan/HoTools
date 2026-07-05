@@ -300,12 +300,14 @@ def boneClothMC2ChainPhysics(
         "teleport_rotation": {"min_value": 0.0},
         "time_scale": {"min_value": 0.0, "max_value": 1.0},
     },
-    _OUTPUT_NAME=["缓存", "骨架", "骨骼数", "约束数"],
+    _OUTPUT_NAME=["缓存", "骨架列表", "骨骼数", "约束数"],
     omni_description="""
-    MC2 骨骼布料解算器（模拟级参数）。
+    MC2 骨骼布料解算器（模拟级参数），支持多骨架批量解算。
 
     物理参数（阻尼、刚度、角度约束等）由"骨骼布料-物理属性-MC2"节点提供，
     通过"骨链设置"多重输入传入。不同骨链组可各接一个物理参数节点实现独立调参。
+    来自不同骨架的骨链设置可直接一起接入，节点自动按骨架分组独立解算。
+    横向约束（连接模式）在同一骨架的骨链之间生效，跨骨架的骨链无横向连接。
     本节点只保留解算器级别参数：子步、重力、惯性、限速、Teleport、时间缩放。
     """,
 )
@@ -340,7 +342,7 @@ def boneClothMC2(
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
-) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+) -> tuple[_OmniCache, list[bpy.types.Object], int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state, bone_cloth_chains, connection_mode, scene,
         enabled, reset, substeps, iterations,
@@ -397,7 +399,7 @@ def boneClothMC2Cpp(
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
-) -> tuple[_OmniCache, bpy.types.Object, int, int]:
+) -> tuple[_OmniCache, list[bpy.types.Object], int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state, bone_cloth_chains, connection_mode, scene,
         enabled, reset, substeps, iterations,
