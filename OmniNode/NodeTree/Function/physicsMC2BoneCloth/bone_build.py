@@ -580,6 +580,34 @@ def build_bone_collision_radii(
     return radii
 
 
+def build_bone_collided_by_groups(
+    armature_obj: bpy.types.Object,
+    bone_names: list[str],
+    fallback_mask: int = 0xFFFF,
+) -> int:
+    """Aggregate BoneCloth passive collision groups from simulated bones."""
+    data_bones = armature_obj.data.bones if armature_obj.data is not None else None
+    if data_bones is None:
+        return math_utils.clamp_group_mask(fallback_mask)
+
+    mask = 0
+    has_explicit_collision = False
+    for name in bone_names:
+        bone = data_bones.get(name)
+        props = getattr(bone, "hotools_collision", None) if bone is not None else None
+        if props is None:
+            continue
+        collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
+        if collision_type not in {"SPHERE", "CAPSULE"}:
+            continue
+        has_explicit_collision = True
+        mask |= math_utils.clamp_group_mask(getattr(props, "collided_by_groups", 0))
+
+    if has_explicit_collision:
+        return math_utils.clamp_group_mask(mask)
+    return math_utils.clamp_group_mask(fallback_mask)
+
+
 def sync_bone_state_to_pose(
     state: dict,
     armature_obj: bpy.types.Object,
@@ -767,6 +795,27 @@ def bone_topology_key(
     )
 
 
+def bone_collision_config_key(armature_obj: bpy.types.Object, bone_names: list[str]) -> tuple:
+    """Cache key for simulated bone collision radius and passive group settings."""
+    data_bones = armature_obj.data.bones if armature_obj.data is not None else None
+    if data_bones is None:
+        return ()
+
+    values = []
+    for name in bone_names:
+        bone = data_bones.get(name)
+        props = getattr(bone, "hotools_collision", None) if bone is not None else None
+        if props is None:
+            values.append(("NONE", 0.0, 0.0, 0))
+            continue
+        collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
+        radius = round(max(float(getattr(props, "radius", 0.0)), 0.0), 8)
+        length = round(max(float(getattr(props, "length", 0.0)), 0.0), 8)
+        mask = math_utils.clamp_group_mask(getattr(props, "collided_by_groups", 0))
+        values.append((collision_type, radius, length, mask))
+    return tuple(values)
+
+
 # ---------------------------------------------------------------------------
 # 完整 state 构建
 # ---------------------------------------------------------------------------
@@ -784,6 +833,7 @@ def build_bone_state(
     """
     bone_names = flatten_chain_bone_names(chains)
     vertex_count = len(bone_names)
+    collision_config_key = bone_collision_config_key(armature_obj, bone_names)
 
     # 冷启动用 rest pose 位置（不受物理写回污染）；连续帧 sync 仍用 evaluated pose
     rest_world = sample_bone_head_rest(armature_obj, bone_names)
@@ -845,6 +895,7 @@ def build_bone_state(
     collision_radii_local = build_bone_collision_radii(
         armature_obj, bone_names, _DEFAULT_BONE_COLLISION_RADIUS
     )
+    collided_by_groups = build_bone_collided_by_groups(armature_obj, bone_names)
     self_collision_inv_masses = mc2_state.calc_self_collision_inverse_masses(
         attributes, depths, friction, 0.0,
     )
@@ -871,6 +922,7 @@ def build_bone_state(
         # BoneCloth 专属缓存维度
         "bone_names": tuple(bone_names),
         "bone_topology_key": topology_key,
+        "bone_collision_config_key": collision_config_key,
         "connection_mode": int(connection_mode),
         "chain_by_particle": topology["chain_by_particle"],
         "bone_longitudinal_edges": bone_longitudinal_edges,
@@ -971,7 +1023,7 @@ def build_bone_state(
         "bend_distance_neighbor_rest": bend_neighbor_rest,
         "collision_local_radii": np.ascontiguousarray(collision_radii_local, dtype=np.float32),
         "collision_radii": np.ascontiguousarray(collision_radii_local, dtype=np.float32),
-        "collided_by_groups": 0xFFFF,  # 与所有碰撞组交互，0 会导致 has_collision=False 永不碰撞
+        "collided_by_groups": int(collided_by_groups),
         "self_collision_enabled": False,
         "self_collision_surface_thickness": 0.0,
         "self_collision_mass": 0.0,

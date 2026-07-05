@@ -206,6 +206,7 @@ def _run_for_single_armature(
     vertex_count = len(bone_names)
     output_key = armature.name_full
     topology_key = bone_build.bone_topology_key(armature, bone_names, int(connection_mode))
+    collision_config_key = bone_build.bone_collision_config_key(armature, bone_names)
 
     cache_owner = arm_cache_state if isinstance(arm_cache_state, mc2_state.MC2RuntimeOwner) else None
     prev_state = cache_owner.state if (cache_owner is not None and isinstance(cache_owner.state, dict)) else None
@@ -213,6 +214,7 @@ def _run_for_single_armature(
         prev_state is not None
         and prev_state.get("kind") == mc2_state.MC2_CACHE_KIND
         and prev_state.get("bone_topology_key") == topology_key
+        and prev_state.get("bone_collision_config_key") == collision_config_key
     )
     state = prev_state if state_matches else None
     replace_cache = cache_owner is None or not state_matches
