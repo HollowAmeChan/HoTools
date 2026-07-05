@@ -1,5 +1,7 @@
 """MeshCloth MC2 OmniNode declarations."""
 
+import typing
+
 import bpy
 import mathutils
 
@@ -62,6 +64,7 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
         "调试输出",
     ],
     input_init={
+        "mesh_cloth_settings": {"use_multi_input": True},
         "substeps": {"min_value": 1, "max_value": 16},
         "iterations": {"min_value": 0, "max_value": 64},
         "gravity_power": {"min_value": 0.0, "max_value": 100.0},
@@ -94,7 +97,7 @@ def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", ext
 )
 def meshClothMC2(
     cache_state: _OmniCache,
-    mesh_cloth_settings: dict = None,
+    mesh_cloth_settings: list[typing.Any] = None,
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
@@ -277,8 +280,12 @@ def meshClothMC2Setting(
     use_collider_collision: bool = True,
     collider_friction: float = 0.05,
     collider_collision_mode: int = 1,
-) -> list:
-    """把低模代理和物理参数打包成网格布料设置列表，供解算器读取。输出 list 以与 BoneCloth 设置节点风格一致。"""
+) -> typing.Any:
+    """把低模代理和物理参数打包成网格布料设置列表，供解算器读取。
+
+    返回 typing.Any 而非 list，避免 OmniNode 对明确 list 输出做额外包装。
+    实际值是 [{...}]，兼容单/多 proxy 聚合路径。
+    """
     if not isinstance(proxy_obj, bpy.types.Object) or proxy_obj.type != "MESH":
         raise ValueError(f"proxy_obj 必须是 MESH 类型的物体，得到：{proxy_obj!r}")
     return [{
@@ -334,7 +341,7 @@ _MESH_CLOTH_MC2_CPP_META["omni_description"] = """
 @omni(**_MESH_CLOTH_MC2_CPP_META)
 def meshClothMC2Cpp(
     cache_state: _OmniCache,
-    mesh_cloth_settings: dict = None,
+    mesh_cloth_settings: list[typing.Any] = None,
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
