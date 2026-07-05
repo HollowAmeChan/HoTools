@@ -1975,14 +1975,22 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
 //   vertex_local_positions, vertex_local_rotations,
 //   parent_indices, baseline_start, baseline_count, baseline_data, attributes,
 //   rotational_interpolation, blend_weight, anime_ratio, root_rotation
-PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 15;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError,
-            "solve_mc2_bonecloth_io expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* solve_mc2_bonecloth_io_object(
+    PyObject* world_rotations_object,
+    PyObject* display_positions_object,
+    PyObject* base_positions_object,
+    PyObject* base_rotations_object,
+    PyObject* vertex_local_positions_object,
+    PyObject* vertex_local_rotations_object,
+    PyObject* parent_indices_object,
+    PyObject* baseline_start_object,
+    PyObject* baseline_count_object,
+    PyObject* baseline_data_object,
+    PyObject* attributes_object,
+    double rot_interp,
+    double blend_w,
+    double anime_r,
+    double root_rot) {
     using hotools::py::Buffer;
 
     Buffer world_rotations;
@@ -1997,27 +2005,27 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
     Buffer baseline_data;
     Buffer attributes;
 
-    if (!world_rotations.get(PyTuple_GET_ITEM(args, 0),
+    if (!world_rotations.get(world_rotations_object,
             PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "world_rotations") ||
-        !display_positions.get(PyTuple_GET_ITEM(args, 1),
+        !display_positions.get(display_positions_object,
             PyBUF_FORMAT | PyBUF_ND, "display_positions") ||
-        !base_positions.get(PyTuple_GET_ITEM(args, 2),
+        !base_positions.get(base_positions_object,
             PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(PyTuple_GET_ITEM(args, 3),
+        !base_rotations.get(base_rotations_object,
             PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !vertex_local_positions.get(PyTuple_GET_ITEM(args, 4),
+        !vertex_local_positions.get(vertex_local_positions_object,
             PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
-        !vertex_local_rotations.get(PyTuple_GET_ITEM(args, 5),
+        !vertex_local_rotations.get(vertex_local_rotations_object,
             PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
-        !parent_indices.get(PyTuple_GET_ITEM(args, 6),
+        !parent_indices.get(parent_indices_object,
             PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(PyTuple_GET_ITEM(args, 7),
+        !baseline_start.get(baseline_start_object,
             PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(PyTuple_GET_ITEM(args, 8),
+        !baseline_count.get(baseline_count_object,
             PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(PyTuple_GET_ITEM(args, 9),
+        !baseline_data.get(baseline_data_object,
             PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !attributes.get(PyTuple_GET_ITEM(args, 10),
+        !attributes.get(attributes_object,
             PyBUF_FORMAT | PyBUF_ND, "attributes")) {
         return nullptr;
     }
@@ -2051,12 +2059,6 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double rot_interp   = hotools::py::as_double(PyTuple_GET_ITEM(args, 11), "rotational_interpolation");
-    const double blend_w      = hotools::py::as_double(PyTuple_GET_ITEM(args, 12), "blend_weight");
-    const double anime_r      = hotools::py::as_double(PyTuple_GET_ITEM(args, 13), "anime_ratio");
-    const double root_rot     = hotools::py::as_double(PyTuple_GET_ITEM(args, 14), "root_rotation");
-    if (PyErr_Occurred()) { return nullptr; }
-
     hotools::BoneClothIoView view;
     view.world_rotations         = static_cast<float*>(world_rotations.view.buf);
     view.display_positions       = static_cast<const float*>(display_positions.view.buf);
@@ -2079,6 +2081,40 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
 
     hotools::solve_bonecloth_io(view);
     Py_RETURN_NONE;
+}
+
+PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 15;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError,
+            "solve_mc2_bonecloth_io expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const double rot_interp = hotools::py::as_double(PyTuple_GET_ITEM(args, 11), "rotational_interpolation");
+    const double blend_w = hotools::py::as_double(PyTuple_GET_ITEM(args, 12), "blend_weight");
+    const double anime_r = hotools::py::as_double(PyTuple_GET_ITEM(args, 13), "anime_ratio");
+    const double root_rot = hotools::py::as_double(PyTuple_GET_ITEM(args, 14), "root_rotation");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+
+    return solve_mc2_bonecloth_io_object(
+        PyTuple_GET_ITEM(args, 0),
+        PyTuple_GET_ITEM(args, 1),
+        PyTuple_GET_ITEM(args, 2),
+        PyTuple_GET_ITEM(args, 3),
+        PyTuple_GET_ITEM(args, 4),
+        PyTuple_GET_ITEM(args, 5),
+        PyTuple_GET_ITEM(args, 6),
+        PyTuple_GET_ITEM(args, 7),
+        PyTuple_GET_ITEM(args, 8),
+        PyTuple_GET_ITEM(args, 9),
+        PyTuple_GET_ITEM(args, 10),
+        rot_interp,
+        blend_w,
+        anime_r,
+        root_rot);
 }
 
 }  // namespace
@@ -2166,6 +2202,52 @@ NB_MODULE(hotools_native, m) {
         "Solve one MC2 MeshCloth frame using a native context for static arrays.");
     def_legacy(m, "solve_meshcloth_mc2_context_cached_params", hotools::solve_meshcloth_mc2_context_cached_params,
         "Solve one MC2 MeshCloth frame using native context static and parameter arrays.");
-    def_legacy(m, "solve_mc2_bonecloth_io", solve_mc2_bonecloth_io,
+    m.def("solve_mc2_bonecloth_io", [](nb::object world_rotations,
+                                       nb::object display_positions,
+                                       nb::object base_positions,
+                                       nb::object base_rotations,
+                                       nb::object vertex_local_positions,
+                                       nb::object vertex_local_rotations,
+                                       nb::object parent_indices,
+                                       nb::object baseline_start,
+                                       nb::object baseline_count,
+                                       nb::object baseline_data,
+                                       nb::object attributes,
+                                       double rotational_interpolation,
+                                       double blend_weight,
+                                       double anime_ratio,
+                                       double root_rotation) {
+        return steal_or_throw(solve_mc2_bonecloth_io_object(
+            world_rotations.ptr(),
+            display_positions.ptr(),
+            base_positions.ptr(),
+            base_rotations.ptr(),
+            vertex_local_positions.ptr(),
+            vertex_local_rotations.ptr(),
+            parent_indices.ptr(),
+            baseline_start.ptr(),
+            baseline_count.ptr(),
+            baseline_data.ptr(),
+            attributes.ptr(),
+            rotational_interpolation,
+            blend_weight,
+            anime_ratio,
+            root_rotation));
+    },
+        nb::arg("world_rotations"),
+        nb::arg("display_positions"),
+        nb::arg("base_positions"),
+        nb::arg("base_rotations"),
+        nb::arg("vertex_local_positions"),
+        nb::arg("vertex_local_rotations"),
+        nb::arg("parent_indices"),
+        nb::arg("baseline_start"),
+        nb::arg("baseline_count"),
+        nb::arg("baseline_data"),
+        nb::arg("attributes"),
+        nb::arg("rotational_interpolation"),
+        nb::arg("blend_weight"),
+        nb::arg("anime_ratio"),
+        nb::arg("root_rotation"),
         "Compute MC2 BoneCloth chain-propagated world rotations in-place.");
 }
