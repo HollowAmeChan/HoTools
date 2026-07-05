@@ -78,21 +78,6 @@ inline void check_root_or_minus_one(const int32_t* data, size_t n, size_t vc, co
             throw nb::value_error((std::string(name) + " 包含越界 root 索引").c_str());
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     enum SolveArg {
         APositions = 0,
@@ -408,7 +393,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
         collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
         collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
-        PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
+        PyErr_SetString(PyExc_ValueError, "collider 数组长度不匹配");
         return nullptr;
     }
 
@@ -456,7 +441,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
         !expect_1d_array(buffers[ASubstepAngularVelocities], "substep_angular_velocities", substeps) ||
         !expect_float32(buffers[ASubstepVelocityWeights], "substep_velocity_weights") ||
         !expect_1d_array(buffers[ASubstepVelocityWeights], "substep_velocity_weights", substeps)) {
-        PyErr_SetString(PyExc_ValueError, "substep inertia array length mismatch");
+        PyErr_SetString(PyExc_ValueError, "substep inertia 数组长度不匹配");
         return nullptr;
     }
 
@@ -647,7 +632,7 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     view.self_collision_surface_thickness = static_cast<float>(self_collision_surface_thickness);
     view.self_collision_mass = static_cast<float>(self_collision_mass);
 
-    hotools::solve_meshcloth_mc2(view);
+    { nb::gil_scoped_release _; hotools::solve_meshcloth_mc2(view); }
     Py_RETURN_NONE;
 }
 
@@ -1293,6 +1278,7 @@ NB_MODULE(hotools_native, m) {
             check_len(attr.shape(0), vc, "attributes");
             const size_t lc = static_cast<size_t>(bstart.shape(0));
             check_len(bcount.shape(0), lc, "baseline_count");
+            check_indices_in_range(bd.data(), bd.shape(0), vc, "baseline_data");
             hotools::BoneClothIoView view;
             view.world_rotations        = wr.data();
             view.display_positions      = dp.data();
