@@ -797,7 +797,6 @@ README.md
 native smoke test：
 
 ```powershell
-& "D:\Blender\Blender 4.5\4.5\python\bin\python.exe" _native\tests\test_mesh_xpbd_native.py
 ```
 
 导入验证：

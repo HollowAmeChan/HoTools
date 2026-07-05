@@ -1790,7 +1790,7 @@ class _MeshPhysicsCppBackend:
             module = cls.native_module()
         except Exception:
             return False
-        return hasattr(module, "solve_mesh_delta_xpbd") or hasattr(module, "solve_mesh_shape_key_xpbd")
+        return hasattr(module, "solve_mesh_delta_xpbd")
 
     @classmethod
     def solve_mesh_delta_xpbd(cls, *args) -> None:
@@ -1798,8 +1798,7 @@ class _MeshPhysicsCppBackend:
         if hasattr(module, "solve_mesh_delta_xpbd"):
             module.solve_mesh_delta_xpbd(*args)
             return
-        # 旧 native 导出名来自形态键写回时代；当前 Python 层已经统一走 GN delta 输出。
-        module.solve_mesh_shape_key_xpbd(*args)
+        raise NotImplementedError("native backend missing solve_mesh_delta_xpbd")
 
     @staticmethod
     def empty_collision_arrays(collision_radii: np.ndarray, collided_by_groups: int) -> tuple:

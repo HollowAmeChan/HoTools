@@ -115,7 +115,6 @@ nanobind_add_module(hotools_native
     src/mc2.cpp
     src/mc2_bonecloth_io.cpp
     src/mc2_self_collision.cpp
-    src/mesh_xpbd.cpp
     src/spring_bone_vrm.cpp
     src/spring_bone_vrm_bindings.cpp
     src/property_curve.cpp
