@@ -109,6 +109,10 @@ def _dispose_cache_value(cache_state) -> None:
             _dispose_cache_value(value)
 
 
+def _cache_payload(cache_state):
+    return getattr(cache_state, "value", cache_state)
+
+
 def _constraint_count(
     state: dict,
     vertex_count: int,
@@ -283,7 +287,8 @@ def run_mesh_cloth_mc2_node(
 
     vertex_count = len(obj.data.vertices)
     cache_substage_start = time.perf_counter() if timing is not None else None
-    cache_owner = cache_state if isinstance(cache_state, mc2_state.MC2RuntimeOwner) else None
+    raw_cache_state = _cache_payload(cache_state)
+    cache_owner = raw_cache_state if isinstance(raw_cache_state, mc2_state.MC2RuntimeOwner) else None
     mesh_signature_key = None
     config_key = None
     if cache_owner is not None:
@@ -630,7 +635,7 @@ def _run_merged_mc2_node(
         return _OmniCache.replace(None), None, 0, 0
 
     # ---- 2. 恢复 MC2MergedOwner，或新建 ----
-    raw = cache_state.value if isinstance(cache_state, _OmniCache) else cache_state
+    raw = _cache_payload(cache_state)
     merged_owner_obj: MC2MergedOwner | None = raw if isinstance(raw, MC2MergedOwner) else None
 
     # 代理数量变化 → 强制重建
