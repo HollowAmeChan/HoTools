@@ -40,27 +40,43 @@ JPH_SUPPRESS_WARNINGS
 #include <nanobind/stl/unordered_map.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
-#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
 
 namespace nb = nanobind;
 using namespace JPH;
 
 // ---------------------------------------------------------------------------
-// Jolt 全局初始化（一次性，线程安全）
+// Jolt 全局初始化（lock-free，规避 tbbmalloc_proxy 干扰 MSVCP CRT mutex）
 // ---------------------------------------------------------------------------
 
-static std::once_flag g_jolt_init_flag;
+// 用原子状态替代 std::once_flag，完全避免 MSVCP140 的 Mtx_trylock 路径
+// 0 = 未初始化  1 = 初始化中  2 = 已完成
+static std::atomic<int> g_jolt_init_state{0};
 
 static void ensure_jolt_initialized() {
-    std::call_once(g_jolt_init_flag, [] {
+    if (g_jolt_init_state.load(std::memory_order_acquire) == 2)
+        return;
+    int expected = 0;
+    if (g_jolt_init_state.compare_exchange_strong(
+            expected, 1, std::memory_order_acq_rel)) {
+        // 赢得初始化权
         RegisterDefaultAllocator();
         Factory::sInstance = new Factory();
         RegisterTypes();
-    });
+        g_jolt_init_state.store(2, std::memory_order_release);
+    } else {
+        // 另一个线程正在初始化，自旋等待（单进程内极少发生）
+        while (g_jolt_init_state.load(std::memory_order_acquire) < 2) {}
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -157,11 +173,10 @@ public:
                        uint32_t max_body_pairs = 4096,
                        uint32_t max_contact_constraints = 2048)
     {
+        // ensure_jolt_initialized() 已在模块加载时调用，此处为保险再调一次（幂等）
         ensure_jolt_initialized();
-
         mTempAllocator = std::make_unique<TempAllocatorImpl>(8 * 1024 * 1024);
         mJobSystem     = std::make_unique<JobSystemSingleThreaded>(cMaxPhysicsJobs);
-
         mPhysicsSystem = std::make_unique<PhysicsSystem>();
         mPhysicsSystem->Init(
             max_bodies, 0,
@@ -172,6 +187,7 @@ public:
             mObjLayerFilter
         );
         mPhysicsSystem->SetGravity(Vec3(0.f, -9.81f, 0.f));
+        fprintf(stderr, "[HoJolt] ctor done\n"); fflush(stderr);
     }
 
     ~JoltWorld() { clear(); }
@@ -405,6 +421,21 @@ private:
 NB_MODULE(hotools_jolt, m) {
     m.doc() = "HoTools Jolt Physics binding（nanobind）";
 
+    // tbbmalloc_proxy compatibility warmup: force Win32 thread primitives to initialize
+    // before any Jolt call, ensuring CRITICAL_SECTION/SRWLOCK state is valid.
+#ifdef _WIN32
+    {
+        CRITICAL_SECTION cs;
+        InitializeCriticalSection(&cs);
+        EnterCriticalSection(&cs);
+        LeaveCriticalSection(&cs);
+        DeleteCriticalSection(&cs);
+    }
+#endif
+
+    // Initialize Jolt eagerly at module import time (not lazily in JoltWorld constructor)
+    ensure_jolt_initialized();
+
     nb::class_<JoltWorld>(m, "JoltWorld")
         .def(nb::init<uint32_t, uint32_t, uint32_t>(),
              nb::arg("max_bodies")              = 2048,
@@ -474,4 +505,6 @@ NB_MODULE(hotools_jolt, m) {
     // 常量：无效 handle
     m.attr("INVALID_HANDLE") = nb::int_(0u);
     m.attr("WORLD_HANDLE")   = nb::int_(0xFFFFFFFFu);
+
+    fprintf(stderr, "[HoJolt] NB_MODULE: complete\n"); fflush(stderr);
 }

@@ -330,6 +330,8 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
         adapter = JoltAdapter()
         world.backend_resources["rigid_solver"] = adapter
         return adapter
-    except RuntimeError:
-        # hotools_jolt 未编译
+    except Exception as e:
+        # hotools_jolt 未编译或初始化失败
+        import traceback
+        traceback.print_exc()
         return None

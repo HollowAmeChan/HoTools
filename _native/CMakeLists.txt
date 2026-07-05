@@ -78,6 +78,16 @@ set(GENERATE_DEBUG_SYMBOLS         OFF CACHE BOOL "" FORCE)
 set(OVERRIDE_CXX_FLAGS             OFF CACHE BOOL "" FORCE)
 # Python 扩展必须用 /MD（动态CRT）；告诉 Jolt 不要用 /MT（静态CRT）
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+# Python 调用栈不保证 32 字节对齐，禁用 AVX/AVX2 避免 vmovaps 崩溃
+set(USE_AVX2  OFF CACHE BOOL "" FORCE)
+set(USE_AVX   OFF CACHE BOOL "" FORCE)
+# Blender 进程中 tbbmalloc_proxy 干扰 MSVCP140 的 std::mutex 初始化。
+# Jolt Profiler（JPH_PROFILE_ENABLED）和 DebugRenderer（JPH_DEBUG_RENDERER）
+# 均包含 std::mutex 成员，PhysicsSystem::Init() 首次锁该 mutex 时
+# 触发 Mtx_trylock → Thrd_yield → EXCEPTION_ACCESS_VIOLATION。
+# Jolt 的实际选项名为 PROFILER_IN_DEBUG_AND_RELEASE / DEBUG_RENDERER_IN_DEBUG_AND_RELEASE。
+set(PROFILER_IN_DEBUG_AND_RELEASE    OFF CACHE BOOL "" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
 
 if(EXISTS "${_jolt_local}/Build/CMakeLists.txt")
     message(STATUS "[HoTools] JoltPhysics: 使用本地 extern/JoltPhysics")
