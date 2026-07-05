@@ -2083,40 +2083,6 @@ PyObject* solve_mc2_bonecloth_io_object(
     Py_RETURN_NONE;
 }
 
-PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 15;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError,
-            "solve_mc2_bonecloth_io expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
-    const double rot_interp = hotools::py::as_double(PyTuple_GET_ITEM(args, 11), "rotational_interpolation");
-    const double blend_w = hotools::py::as_double(PyTuple_GET_ITEM(args, 12), "blend_weight");
-    const double anime_r = hotools::py::as_double(PyTuple_GET_ITEM(args, 13), "anime_ratio");
-    const double root_rot = hotools::py::as_double(PyTuple_GET_ITEM(args, 14), "root_rotation");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
-    return solve_mc2_bonecloth_io_object(
-        PyTuple_GET_ITEM(args, 0),
-        PyTuple_GET_ITEM(args, 1),
-        PyTuple_GET_ITEM(args, 2),
-        PyTuple_GET_ITEM(args, 3),
-        PyTuple_GET_ITEM(args, 4),
-        PyTuple_GET_ITEM(args, 5),
-        PyTuple_GET_ITEM(args, 6),
-        PyTuple_GET_ITEM(args, 7),
-        PyTuple_GET_ITEM(args, 8),
-        PyTuple_GET_ITEM(args, 9),
-        PyTuple_GET_ITEM(args, 10),
-        rot_interp,
-        blend_w,
-        anime_r,
-        root_rot);
-}
-
 }  // namespace
 
 NB_MODULE(hotools_native, m) {
