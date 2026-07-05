@@ -34,6 +34,12 @@ def _load_native():
         return None
 
 
+def _get_native_const(attr: str, default):
+    """安全读取 hotools_jolt 模块常量，模块不可用时返回 default。"""
+    mod = _load_native()
+    return getattr(mod, attr, default) if mod is not None else default
+
+
 # ---------------------------------------------------------------------------
 # 形状参数从 RigidBodySpec 提取
 # ---------------------------------------------------------------------------
@@ -194,22 +200,13 @@ class JoltAdapter:
         if slot_id in self._constraint_handles:
             self._jw.remove_constraint(self._constraint_handles.pop(slot_id))
 
-        # 找 target_a / target_b 的 body handle
-        import hotools_jolt as _hj
-        world_handle = _hj.WORLD_HANDLE
+        # WORLD_HANDLE：固定到世界（native 侧 0xFFFFFFFF）
+        world_handle: int = _get_native_const("WORLD_HANDLE", 0xFFFFFFFF)
 
         def _get_handle(target_obj) -> int:
+            """通过 slot_id 前缀 "rigid:{obj_ptr}:" 查找已注册的 body handle。"""
             if target_obj is None:
                 return world_handle
-            for sid, h in self._body_handles.items():
-                try:
-                    slot_obj = getattr(
-                        # slot_id 格式 "rigid:{obj_ptr}:{data_ptr}"
-                        None, "obj", None
-                    )
-                except Exception:
-                    pass
-            # fallback：线性搜索（通常刚体数量不多）
             target_ptr = int(target_obj.as_pointer())
             for sid, h in self._body_handles.items():
                 try:

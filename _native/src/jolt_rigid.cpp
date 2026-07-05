@@ -186,8 +186,8 @@ public:
             mObjVsBPFilter,
             mObjLayerFilter
         );
-        mPhysicsSystem->SetGravity(Vec3(0.f, -9.81f, 0.f));
-        fprintf(stderr, "[HoJolt] ctor done\n"); fflush(stderr);
+        // Blender 使用 Z-up 坐标系，重力沿 -Z 轴
+        mPhysicsSystem->SetGravity(Vec3(0.f, 0.f, -9.81f));
     }
 
     ~JoltWorld() { clear(); }
@@ -295,15 +295,40 @@ public:
         const std::array<float,3>& anchor_pos,
         const std::array<float,4>& anchor_rot_wxyz   // (w,x,y,z)
     ) {
-        BodyID id_a = body_a_handle == UINT32_MAX
-            ? Body::sFixedToWorld.GetID()
-            : lookup_body_id(body_a_handle);
-        BodyID id_b = body_b_handle == UINT32_MAX
-            ? Body::sFixedToWorld.GetID()
-            : lookup_body_id(body_b_handle);
-
         RVec3 pos = to_vec3(anchor_pos);
         Quat  rot = to_quat(anchor_rot_wxyz);
+
+        // 持锁直到约束创建完成，防止 Body 引用在 Create() 前失效。
+        // sFixedToWorld 是静态哨兵体，不通过 PhysicsSystem lock 管理。
+        auto& lif = mPhysicsSystem->GetBodyLockInterface();
+
+        std::unique_ptr<BodyLockRead> lock_a;
+        std::unique_ptr<BodyLockRead> lock_b;
+        const Body* body_a_ptr = nullptr;
+        const Body* body_b_ptr = nullptr;
+
+        if (body_a_handle == UINT32_MAX) {
+            body_a_ptr = &Body::sFixedToWorld;
+        } else {
+            lock_a = std::make_unique<BodyLockRead>(lif, lookup_body_id(body_a_handle));
+            if (!lock_a->Succeeded())
+                throw std::runtime_error("无法锁定 Body A");
+            body_a_ptr = &lock_a->GetBody();
+        }
+
+        if (body_b_handle == UINT32_MAX) {
+            body_b_ptr = &Body::sFixedToWorld;
+        } else {
+            lock_b = std::make_unique<BodyLockRead>(lif, lookup_body_id(body_b_handle));
+            if (!lock_b->Succeeded())
+                throw std::runtime_error("无法锁定 Body B");
+            body_b_ptr = &lock_b->GetBody();
+        }
+
+        // Jolt Create() 取 Body&（非 const），而 BodyLockRead / sFixedToWorld 均为 const Body&。
+        // 单线程模式下约束创建发生在 step() 之外，Body 内存地址稳定，const_cast 安全。
+        Body& body_a = const_cast<Body&>(*body_a_ptr);
+        Body& body_b = const_cast<Body&>(*body_b_ptr);
 
         Ref<TwoBodyConstraint> c;
         if (constraint_type_str == "FIXED") {
@@ -312,35 +337,31 @@ public:
             s.mPoint1 = s.mPoint2 = pos;
             s.mAxisX1 = s.mAxisX2 = rot.RotateAxisX();
             s.mAxisY1 = s.mAxisY2 = rot.RotateAxisY();
-            c = static_cast<TwoBodyConstraint*>(
-                    s.Create(*get_body(id_a), *get_body(id_b)));
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "HINGE") {
             HingeConstraintSettings s;
             s.mPoint1 = s.mPoint2 = pos;
             s.mHingeAxis1 = s.mHingeAxis2 = rot.RotateAxisZ();
             s.mNormalAxis1 = s.mNormalAxis2 = rot.RotateAxisX();
-            c = static_cast<TwoBodyConstraint*>(
-                    s.Create(*get_body(id_a), *get_body(id_b)));
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "SLIDER") {
             SliderConstraintSettings s;
             s.mAutoDetectPoint = false;
             s.mPoint1 = s.mPoint2 = pos;
             s.mSliderAxis1 = s.mSliderAxis2 = rot.RotateAxisZ();
             s.mNormalAxis1 = s.mNormalAxis2 = rot.RotateAxisX();
-            c = static_cast<TwoBodyConstraint*>(
-                    s.Create(*get_body(id_a), *get_body(id_b)));
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "CONE") {
             ConeConstraintSettings s;
             s.mPoint1 = s.mPoint2 = pos;
             s.mTwistAxis1 = s.mTwistAxis2 = rot.RotateAxisZ();
-            c = static_cast<TwoBodyConstraint*>(
-                    s.Create(*get_body(id_a), *get_body(id_b)));
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else { // POINT
             PointConstraintSettings s;
             s.mPoint1 = s.mPoint2 = pos;
-            c = static_cast<TwoBodyConstraint*>(
-                    s.Create(*get_body(id_a), *get_body(id_b)));
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         }
+        // lock_a / lock_b 在此析构，释放读锁
 
         mPhysicsSystem->AddConstraint(c);
         uint32_t handle = mNextHandle++;
@@ -374,15 +395,17 @@ public:
     }
 
     void clear() {
+        // 顺序：先移除约束（约束持有 Body 引用），再销毁刚体
+        for (auto& [h, c] : mConstraints)
+            mPhysicsSystem->RemoveConstraint(c);
+        mConstraints.clear();
+
         BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
         for (auto& [h, r] : mBodies) {
             bi.RemoveBody(r.id);
             bi.DestroyBody(r.id);
         }
         mBodies.clear();
-        for (auto& [h, c] : mConstraints)
-            mPhysicsSystem->RemoveConstraint(c);
-        mConstraints.clear();
     }
 
 private:
@@ -391,14 +414,6 @@ private:
         if (it == mBodies.end())
             throw std::runtime_error("无效的 body handle");
         return it->second.id;
-    }
-
-    Body* get_body(BodyID id) const {
-        // BodyInterface 只提供 lock/unlock，直接用 BodyLockInterface
-        BodyLockRead lock(mPhysicsSystem->GetBodyLockInterface(), id);
-        if (!lock.Succeeded())
-            throw std::runtime_error("无法锁定 Jolt Body");
-        return const_cast<Body*>(&lock.GetBody());
     }
 
     HoBPLayerInterface  mBPLayerInterface;
@@ -497,7 +512,7 @@ NB_MODULE(hotools_jolt, m) {
         .def_prop_ro("constraint_count", &JoltWorld::constraint_count)
         .def("set_gravity",              &JoltWorld::set_gravity,
              nb::arg("gravity"),
-             "设置重力向量，默认 (0, -9.81, 0)。")
+             "设置重力向量，默认 (0, 0, -9.81)（Blender Z-up）。")
 
         .def("clear", &JoltWorld::clear,
              "移除所有刚体和约束（dispose 时调用）。");
@@ -505,6 +520,4 @@ NB_MODULE(hotools_jolt, m) {
     // 常量：无效 handle
     m.attr("INVALID_HANDLE") = nb::int_(0u);
     m.attr("WORLD_HANDLE")   = nb::int_(0xFFFFFFFFu);
-
-    fprintf(stderr, "[HoJolt] NB_MODULE: complete\n"); fflush(stderr);
 }
