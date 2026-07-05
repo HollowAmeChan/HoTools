@@ -25,14 +25,14 @@ namespace nb = nanobind;
 namespace {
 
 using LegacyPyFunc = PyObject* (*)(PyObject*, PyObject*);
+using O = nb::object;
 
-nb::object call_legacy_varargs(LegacyPyFunc function, nb::args args) {
-    PyObject* result = function(nullptr, args.ptr());
-    if (result == nullptr) {
-        throw nb::python_error();
-    }
-    return nb::steal<nb::object>(result);
-}
+#define HOTOOLS_NB_O5 O, O, O, O, O
+#define HOTOOLS_NB_O10 HOTOOLS_NB_O5, HOTOOLS_NB_O5
+#define HOTOOLS_NB_O20 HOTOOLS_NB_O10, HOTOOLS_NB_O10
+#define HOTOOLS_NB_O30 HOTOOLS_NB_O20, HOTOOLS_NB_O10
+#define HOTOOLS_NB_O40 HOTOOLS_NB_O20, HOTOOLS_NB_O20
+#define HOTOOLS_NB_O50 HOTOOLS_NB_O40, HOTOOLS_NB_O10
 
 nb::object steal_or_throw(PyObject* result) {
     if (result == nullptr) {
@@ -62,10 +62,50 @@ auto object_binding() {
     };
 }
 
-void def_legacy(nb::module_& module, const char* name, LegacyPyFunc function, const char* doc) {
-    module.def(name, [function](nb::args args) {
-        return call_legacy_varargs(function, args);
-    }, doc);
+PyObject* pack_tuple_arg(const nb::object& object) {
+    PyObject* value = object.ptr();
+    Py_INCREF(value);
+    return value;
+}
+
+template <std::size_t>
+bool fill_tuple(PyObject*) {
+    return true;
+}
+
+template <std::size_t Index, typename First, typename... Rest>
+bool fill_tuple(PyObject* tuple, First&& first, Rest&&... rest) {
+    PyObject* value = pack_tuple_arg(std::forward<First>(first));
+    if (value == nullptr) {
+        return false;
+    }
+    PyTuple_SET_ITEM(tuple, Index, value);
+    return fill_tuple<Index + 1>(tuple, std::forward<Rest>(rest)...);
+}
+
+template <typename... Args>
+nb::object call_legacy_tuple(LegacyPyFunc function, Args&&... args) {
+    PyObject* tuple = PyTuple_New(sizeof...(Args));
+    if (tuple == nullptr) {
+        throw nb::python_error();
+    }
+    if (!fill_tuple<0>(tuple, std::forward<Args>(args)...)) {
+        Py_DECREF(tuple);
+        throw nb::python_error();
+    }
+    PyObject* result = function(nullptr, tuple);
+    Py_DECREF(tuple);
+    if (result == nullptr) {
+        throw nb::python_error();
+    }
+    return nb::steal<nb::object>(result);
+}
+
+template <LegacyPyFunc Function, typename... Args>
+auto legacy_tuple_binding() {
+    return [](Args... args) {
+        return call_legacy_tuple(Function, std::forward<Args>(args)...);
+    };
 }
 
 struct Buffer {
@@ -2105,7 +2145,8 @@ NB_MODULE(hotools_native, m) {
         object_binding<hotools::sample_property_color_curve_positions_object, nb::object, nb::object, nb::object>(),
         nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
        "Sample a native color curve or payload at explicit positions.");
-    def_legacy(m, "solve_spring_bone_vrm_cpp", solve_spring_bone_vrm_cpp,
+    m.def("solve_spring_bone_vrm_cpp",
+        legacy_tuple_binding<solve_spring_bone_vrm_cpp, HOTOOLS_NB_O30, HOTOOLS_NB_O5>(),
         "Solve one VRM spring bone chain in-place.");
     m.def("create_meshcloth_mc2_context",
         object_binding<hotools::create_meshcloth_mc2_context_object, long, long, long, long>(),
@@ -2123,14 +2164,18 @@ NB_MODULE(hotools_native, m) {
         nb::arg("bend_count"),
         nb::arg("collider_radius_count"),
         "Update MC2 MeshCloth native context static metadata.");
-    def_legacy(m, "update_meshcloth_mc2_context_static_arrays", hotools::update_meshcloth_mc2_context_static_arrays,
+    m.def("update_meshcloth_mc2_context_static_arrays",
+        legacy_tuple_binding<hotools::update_meshcloth_mc2_context_static_arrays,
+                             HOTOOLS_NB_O20, HOTOOLS_NB_O5, O>(),
         "Upload MC2 MeshCloth static topology arrays into a native context.");
     m.def("update_meshcloth_mc2_context_params",
         object_binding<hotools::update_meshcloth_mc2_context_params_object, nb::object, long>(),
         nb::arg("handle"),
         nb::arg("param_slot_count"),
         "Update MC2 MeshCloth native context parameter metadata.");
-    def_legacy(m, "update_meshcloth_mc2_context_param_arrays", hotools::update_meshcloth_mc2_context_param_arrays,
+    m.def("update_meshcloth_mc2_context_param_arrays",
+        legacy_tuple_binding<hotools::update_meshcloth_mc2_context_param_arrays,
+                             HOTOOLS_NB_O10, O, O>(),
         "Upload MC2 MeshCloth parameter sample arrays into a native context.");
     m.def("meshcloth_mc2_context_info",
         object_binding<hotools::meshcloth_mc2_context_info_object, nb::object>(),
@@ -2368,11 +2413,17 @@ NB_MODULE(hotools_native, m) {
         nb::arg("frame_dt"),
         nb::arg("max_distance_ratio"),
         "Calculate MC2 display future prediction in-place.");
-    def_legacy(m, "solve_meshcloth_mc2", solve_meshcloth_mc2,
+    m.def("solve_meshcloth_mc2",
+        legacy_tuple_binding<solve_meshcloth_mc2,
+                             HOTOOLS_NB_O50, HOTOOLS_NB_O40, O, O, O>(),
         "Solve one MC2 MeshCloth array frame in-place.");
-    def_legacy(m, "solve_meshcloth_mc2_context", hotools::solve_meshcloth_mc2_context,
+    m.def("solve_meshcloth_mc2_context",
+        legacy_tuple_binding<hotools::solve_meshcloth_mc2_context,
+                             HOTOOLS_NB_O50, HOTOOLS_NB_O10, HOTOOLS_NB_O5, O, O, O, O>(),
         "Solve one MC2 MeshCloth frame using a native context for static arrays.");
-    def_legacy(m, "solve_meshcloth_mc2_context_cached_params", hotools::solve_meshcloth_mc2_context_cached_params,
+    m.def("solve_meshcloth_mc2_context_cached_params",
+        legacy_tuple_binding<hotools::solve_meshcloth_mc2_context_cached_params,
+                             HOTOOLS_NB_O50, HOTOOLS_NB_O5, O, O, O>(),
         "Solve one MC2 MeshCloth frame using native context static and parameter arrays.");
     m.def("solve_mc2_bonecloth_io",
         object_binding<solve_mc2_bonecloth_io_object,
@@ -2396,3 +2447,10 @@ NB_MODULE(hotools_native, m) {
         nb::arg("root_rotation"),
         "Compute MC2 BoneCloth chain-propagated world rotations in-place.");
 }
+
+#undef HOTOOLS_NB_O5
+#undef HOTOOLS_NB_O10
+#undef HOTOOLS_NB_O20
+#undef HOTOOLS_NB_O30
+#undef HOTOOLS_NB_O40
+#undef HOTOOLS_NB_O50
