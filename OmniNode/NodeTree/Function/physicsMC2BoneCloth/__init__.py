@@ -273,7 +273,7 @@ def boneClothMC2ChainPhysics(
         "World惯性", "World惯性平滑", "Local惯性", "深度惯性", "离心力",
         "World移动限速", "World旋转限速", "Local移动限速", "Local旋转限速", "粒子限速",
         "Teleport模式", "Teleport距离", "Teleport旋转",
-        "时间缩放", "跳过写回", "调试输出",
+        "时间缩放", "跳过写回", "调试输出", "自碰撞",
     ],
     input_init={
         "connection_mode": {"min_value": 0, "max_value": 2,
@@ -299,6 +299,9 @@ def boneClothMC2ChainPhysics(
         "teleport_distance": {"min_value": 0.0},
         "teleport_rotation": {"min_value": 0.0},
         "time_scale": {"min_value": 0.0, "max_value": 1.0},
+        "use_self_collision": {
+            "description": "开启后，同一个骨骼布料节点参与解算的多个骨架会互相作为骨骼碰撞体。",
+        },
     },
     _OUTPUT_NAME=["缓存", "骨架列表", "骨骼数", "约束数"],
     omni_description="""
@@ -308,7 +311,7 @@ def boneClothMC2ChainPhysics(
     通过"骨链设置"多重输入传入。不同骨链组可各接一个物理参数节点实现独立调参。
     来自不同骨架的骨链设置可直接一起接入，节点自动按骨架分组独立解算。
     横向约束（连接模式）在同一骨架的骨链之间生效，跨骨架的骨链无横向连接。
-    本节点只保留解算器级别参数：子步、重力、惯性、限速、Teleport、时间缩放。
+    本节点只保留解算器级别参数：子步、重力、惯性、限速、Teleport、时间缩放、自碰撞。
     """,
 )
 def boneClothMC2(
@@ -342,6 +345,7 @@ def boneClothMC2(
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
+    use_self_collision: bool = False,
 ) -> tuple[_OmniCache, list[bpy.types.Object], int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state, bone_cloth_chains, connection_mode, scene,
@@ -352,7 +356,7 @@ def boneClothMC2(
         movement_speed_limit, rotation_speed_limit,
         local_movement_speed_limit, local_rotation_speed_limit, particle_speed_limit,
         teleport_mode, teleport_distance, teleport_rotation,
-        time_scale, skip_writing, debug_output,
+        time_scale, skip_writing, debug_output, use_self_collision,
     )
 
 
@@ -399,6 +403,7 @@ def boneClothMC2Cpp(
     time_scale: float = 1.0,
     skip_writing: bool = False,
     debug_output: bool = False,
+    use_self_collision: bool = False,
 ) -> tuple[_OmniCache, list[bpy.types.Object], int, int]:
     return _run_bone_cloth_mc2_node(
         cache_state, bone_cloth_chains, connection_mode, scene,
@@ -409,6 +414,6 @@ def boneClothMC2Cpp(
         movement_speed_limit, rotation_speed_limit,
         local_movement_speed_limit, local_rotation_speed_limit, particle_speed_limit,
         teleport_mode, teleport_distance, teleport_rotation,
-        time_scale, skip_writing, debug_output,
+        time_scale, skip_writing, debug_output, use_self_collision,
         solver_backend="cpp",
     )

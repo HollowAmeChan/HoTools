@@ -2,7 +2,7 @@ from ..OmniNodeSocketMapping import (
     _OmniBone,
     _OmniCache,
 )
-from ..OmniRuntimeState import OmniCacheOwnerDict
+from ..OmniRuntimeState import OmniCacheOwnerDict, cache_visible_value
 from ....PhysicsTools.deltaOutput import PhysicsDeltaOutputSpec
 from ....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
 from ....PhysicsTools.deltaOutput import ensure_delta_output as _ensure_delta_output
@@ -901,6 +901,63 @@ class _BonePhysics:
                 )
                 seen.add(bone_name)
         return records
+
+    @classmethod
+    def vrm_spring_bone_write_records_match(
+        cls,
+        armature_obj: bpy.types.Object,
+        settings: list[dict],
+        records,
+    ) -> bool:
+        if not isinstance(records, list) or armature_obj.pose is None:
+            return False
+
+        def same_bpy_ref(left, right) -> bool:
+            if left is right:
+                return True
+            if left is None or right is None:
+                return False
+            left_pointer = getattr(left, "as_pointer", None)
+            right_pointer = getattr(right, "as_pointer", None)
+            if callable(left_pointer) and callable(right_pointer):
+                return int(left_pointer()) == int(right_pointer())
+            return False
+
+        pose_bone_collection = armature_obj.pose.bones
+        pose_bones = list(pose_bone_collection)
+        expected_names = []
+        seen = set()
+        for setting in settings:
+            chain = {
+                "armature": armature_obj,
+                "root_bone": setting.get("root_bone", ""),
+                "bones": list(setting.get("bones") or []),
+            }
+            for bone_name in cls.simulated_bone_names(chain):
+                if bone_name in seen:
+                    continue
+                if pose_bone_collection.get(bone_name) is not None:
+                    expected_names.append(bone_name)
+                    seen.add(bone_name)
+
+        if [str(record.get("bone_name") or "") for record in records if isinstance(record, dict)] != expected_names:
+            return False
+
+        for record in records:
+            if not isinstance(record, dict):
+                return False
+            bone_name = str(record.get("bone_name") or "")
+            pose_bone = pose_bone_collection.get(bone_name)
+            if pose_bone is None or not same_bpy_ref(record.get("pose_bone"), pose_bone):
+                return False
+            pose_index = int(record.get("pose_index", -1))
+            if pose_index < 0 or pose_index >= len(pose_bones) or pose_bones[pose_index].name != bone_name:
+                return False
+            parent = getattr(pose_bone, "parent", None)
+            parent_name = parent.name if parent is not None else ""
+            if not same_bpy_ref(record.get("parent"), parent) or str(record.get("parent_name") or "") != parent_name:
+                return False
+        return True
 
     @classmethod
     def vrm_spring_bone_cache_matches(cls, cache, armature_obj: bpy.types.Object, topology_key: tuple) -> bool:
@@ -2745,8 +2802,14 @@ class _SpringBoneVRM:
         topology_key = _BonePhysics.vrm_spring_bone_topology_key(armature_obj, settings)
         state = cache_state if _BonePhysics.vrm_spring_bone_cache_matches(cache_state, armature_obj, topology_key) else None
         needs_reset = bool(reset) or not isinstance(state, dict)
-        if isinstance(state, dict) and not isinstance(state.get("write_records"), list):
+        if isinstance(state, dict) and not _BonePhysics.vrm_spring_bone_write_records_match(
+            armature_obj,
+            settings,
+            state.get("write_records"),
+        ):
             state["write_records"] = _BonePhysics.build_vrm_spring_bone_write_records(armature_obj, settings)
+            state.pop("write_runtime", None)
+            state.pop("cpp_runtime", None)
         if timing is not None:
             cls._add_timing(timing, "cache", time.perf_counter() - stage_start)
 
@@ -4265,7 +4328,8 @@ def _run_spring_bone_vrm_node(
         armature_settings_map[key][1].append(setting)
 
     # 提取各骨架子缓存；兼容旧的单骨架缓存（不含 "armatures" 键时视为空）
-    if isinstance(cache_state, dict) and "armatures" in cache_state:
+    cache_state = cache_visible_value(cache_state)
+    if isinstance(cache_state, dict) and isinstance(cache_state.get("armatures"), dict):
         armature_caches: dict = cache_state["armatures"]
     else:
         armature_caches = {}
@@ -4279,7 +4343,7 @@ def _run_spring_bone_vrm_node(
     for key in armature_order:
         arm_obj, arm_settings = armature_settings_map[key]
         arm_name = arm_obj.name_full
-        arm_cache = armature_caches.get(arm_name)
+        arm_cache = cache_visible_value(armature_caches.get(arm_name))
 
         next_cache, affected_bones, _arm, chains, colliders = _SpringBoneVRM.run(
             backend_tag=backend_tag,
@@ -4292,7 +4356,7 @@ def _run_spring_bone_vrm_node(
             substeps=substeps,
             debug_output=debug_output,
         )
-        next_armature_caches[arm_name] = next_cache
+        next_armature_caches[arm_name] = cache_visible_value(next_cache)
         all_affected_bones.extend(affected_bones)
         all_armatures.append(arm_obj)
         total_chains += chains

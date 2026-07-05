@@ -43,6 +43,16 @@ def _dispose_cache_value(cache_state) -> None:
             pass
 
 
+def _bpy_pointer(value) -> int:
+    as_pointer = getattr(value, "as_pointer", None)
+    if callable(as_pointer):
+        try:
+            return int(as_pointer())
+        except Exception:
+            return 0
+    return 0
+
+
 def _resolve_armature(armature_obj) -> bpy.types.Object | None:
     if not isinstance(armature_obj, bpy.types.Object):
         return None
@@ -141,6 +151,8 @@ def _run_for_single_armature(
     skip_writing: bool,
     connection_mode: int,
     solver_backend: str = "py",
+    use_self_collision: bool = False,
+    participant_armature_pointers: set[int] | None = None,
     timing=None,
     debug_output: bool = False,
 ) -> tuple[mc2_state.MC2RuntimeOwner | None, int, int]:
@@ -353,15 +365,34 @@ def _run_for_single_armature(
         # 1. 把同骨架的骨骼碰撞体 owner 置 None，绕过 project_vertex_collision 的自排除逻辑。
         # 2. 属于当前骨架且骨骼名在 bone_names 中的条目直接剔除，防止粒子被自身推飞。
         cloth_bone_set = set(bone_names)
-        colliders = [
-            dict(c, owner=None) if c.get("owner_type") == "BONE" and c.get("owner") is armature else c
-            for c in raw_colliders
-            if not (
-                c.get("owner_type") == "BONE"
-                and c.get("owner") is armature
-                and c.get("bone") in cloth_bone_set
+        current_armature_pointer = _bpy_pointer(armature)
+        participant_armature_pointers = set(participant_armature_pointers or ())
+        colliders = []
+        for collider in raw_colliders:
+            if not isinstance(collider, dict):
+                continue
+            if collider.get("owner_type") != "BONE":
+                colliders.append(collider)
+                continue
+
+            owner = collider.get("owner")
+            owner_pointer = _bpy_pointer(owner)
+            same_armature = owner is armature or (
+                owner_pointer != 0
+                and current_armature_pointer != 0
+                and owner_pointer == current_armature_pointer
             )
-        ]
+            if same_armature and collider.get("bone") in cloth_bone_set:
+                continue
+            if (
+                not bool(use_self_collision)
+                and not same_armature
+                and owner_pointer != 0
+                and owner_pointer in participant_armature_pointers
+            ):
+                continue
+
+            colliders.append(dict(collider, owner=None) if same_armature else collider)
     else:
         colliders = []
 
@@ -371,6 +402,7 @@ def _run_for_single_armature(
         print(
             f"[BoneCloth COLLISION] 帧={current_frame} armature={armature.name} "
             f"use_collider={use_collider_collision} mode={collider_collision_mode} "
+            f"self_collision={bool(use_self_collision)} "
             f"碰撞体总数={len(colliders)}（骨骼={bone_coll_count} 物体={obj_coll_count}）"
         )
 
@@ -496,6 +528,7 @@ def run_bone_cloth_mc2_node(
     time_scale: float,
     skip_writing: bool,
     debug_output: bool,
+    use_self_collision: bool = False,
     solver_backend: str = "py",
 ) -> tuple[_OmniCache, list[bpy.types.Object], int, int]:
     """多骨架骨骼布料解算入口。
@@ -533,6 +566,8 @@ def run_bone_cloth_mc2_node(
             f"settings after flatten={len(settings)}  "
             f"armatures={len(armature_order)}"
         )
+
+    participant_armature_pointers = set(armature_order)
 
     # 提取各骨架子缓存
     # 新格式：{"armatures": {name_full: MC2RuntimeOwner}}
@@ -585,9 +620,11 @@ def run_bone_cloth_mc2_node(
             teleport_distance=teleport_distance,
             teleport_rotation=teleport_rotation,
             time_scale=time_scale,
+            use_self_collision=use_self_collision,
             skip_writing=skip_writing,
             connection_mode=connection_mode,
             solver_backend=solver_backend,
+            participant_armature_pointers=participant_armature_pointers,
             timing=timing,
             debug_output=debug_output,
         )
