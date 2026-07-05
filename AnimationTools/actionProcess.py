@@ -12,6 +12,166 @@ def ureg_props():
 # endregion
 
 
+def _copy_action_setting(source_anim, target_anim, prop_name):
+    if hasattr(source_anim, prop_name) and hasattr(target_anim, prop_name):
+        setattr(target_anim, prop_name, getattr(source_anim, prop_name))
+
+
+class OP_CopyActiveAnimationToSelected(Operator):
+    bl_idname = "ho.copy_active_animation_to_selected"
+    bl_label = "应用活动物体动画到选中物体"
+    bl_description = "将活动物体当前 Action、Action 槽和 Action 设置应用到其他选中物体"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    copy_action_settings: bpy.props.BoolProperty(
+        name="同步 Action 设置",
+        description="同步 Action 的混合、外推、影响值和 NLA 开关",
+        default=True,
+        options={'SKIP_SAVE'},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        active = getattr(context, "active_object", None)
+        selected = getattr(context, "selected_objects", ())
+        return active is not None and any(obj != active for obj in selected)
+
+    def execute(self, context):
+        source = context.active_object
+        source_anim = getattr(source, "animation_data", None)
+
+        if source_anim is None or source_anim.action is None:
+            self.report({'ERROR'}, "活动物体没有当前 Action，无法应用动画")
+            return {'CANCELLED'}
+
+        source_action = source_anim.action
+        source_slot = getattr(source_anim, "action_slot", None)
+        targets = [obj for obj in context.selected_objects if obj != source]
+
+        copied_count = 0
+        failed = []
+
+        for target in targets:
+            try:
+                target_anim = target.animation_data_create()
+                target_anim.action = source_action
+
+                if hasattr(target_anim, "action_slot"):
+                    target_anim.action_slot = source_slot
+                elif hasattr(target_anim, "action_slot_handle"):
+                    target_anim.action_slot_handle = getattr(
+                        source_anim, "action_slot_handle", 0
+                    )
+
+                if self.copy_action_settings:
+                    for prop_name in (
+                        "action_blend_type",
+                        "action_extrapolation",
+                        "action_influence",
+                        "use_nla",
+                    ):
+                        _copy_action_setting(source_anim, target_anim, prop_name)
+
+            except Exception as ex:
+                failed.append(f"{target.name}: {ex}")
+                continue
+
+            copied_count += 1
+
+        if copied_count == 0:
+            message = "未能应用到任何选中物体"
+            if failed:
+                message += f"；{failed[0]}"
+            self.report({'ERROR'}, message)
+            return {'CANCELLED'}
+
+        if failed:
+            self.report(
+                {'WARNING'},
+                f"已应用到 {copied_count} 个物体，失败 {len(failed)} 个：{failed[0]}"
+            )
+        else:
+            slot_text = (
+                getattr(source_slot, "name_display", None)
+                or getattr(source_slot, "identifier", None)
+                or "无槽"
+            )
+            self.report(
+                {'INFO'},
+                f"已将 Action「{source_action.name}」和槽「{slot_text}」应用到 {copied_count} 个物体"
+            )
+
+        return {'FINISHED'}
+
+
+class OP_ClearSelectedAnimationSlots(Operator):
+    bl_idname = "ho.clear_selected_animation_slots"
+    bl_label = "批量清除动画槽"
+    bl_description = "清除选中物体当前 Action 的槽绑定，不删除 Action 本身"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(getattr(context, "selected_objects", ()))
+
+    def execute(self, context):
+        cleared_count = 0
+        skipped_count = 0
+        failed = []
+
+        for obj in context.selected_objects:
+            anim = getattr(obj, "animation_data", None)
+            if anim is None:
+                skipped_count += 1
+                continue
+
+            try:
+                had_slot = False
+
+                if hasattr(anim, "action_slot"):
+                    if anim.action_slot is not None:
+                        anim.action_slot = None
+                        had_slot = True
+                elif hasattr(anim, "action_slot_handle"):
+                    if anim.action_slot_handle != 0:
+                        anim.action_slot_handle = 0
+                        had_slot = True
+
+                if hasattr(anim, "last_slot_identifier") and anim.last_slot_identifier:
+                    anim.last_slot_identifier = ""
+                    had_slot = True
+
+                if not had_slot:
+                    skipped_count += 1
+                    continue
+
+            except Exception as ex:
+                failed.append(f"{obj.name}: {ex}")
+                continue
+
+            cleared_count += 1
+
+        if cleared_count == 0:
+            message = "未清除任何动画槽"
+            if failed:
+                message += f"；{failed[0]}"
+            self.report({'WARNING'}, message)
+            return {'CANCELLED'}
+
+        if failed:
+            self.report(
+                {'WARNING'},
+                f"已清除 {cleared_count} 个物体的动画槽，跳过 {skipped_count} 个，失败 {len(failed)} 个：{failed[0]}"
+            )
+        else:
+            self.report(
+                {'INFO'},
+                f"已清除 {cleared_count} 个物体的动画槽，跳过 {skipped_count} 个"
+            )
+
+        return {'FINISHED'}
+
+
 class OP_FixScaledAnimatedArmatureActions(Operator):
     bl_idname = "ho.fix_scaled_animated_armature_actions"
     bl_label = "修复缩放导致的动画位移错误"
@@ -126,10 +286,18 @@ class OP_FixScaledAnimatedArmatureActions(Operator):
 def drawActionProcessPanel(layout:UILayout, context):
     row = layout.row(align=True)
     row.operator(
+        OP_CopyActiveAnimationToSelected.bl_idname, text="应用活动物体动画/槽到选中物体", icon='ACTION')
+    row.operator(
+        OP_ClearSelectedAnimationSlots.bl_idname, text="批量清除选中物体动画槽", icon='X')
+
+    row = layout.row(align=True)
+    row.operator(
         OP_FixScaledAnimatedArmatureActions.bl_idname, text="修复缩放导致的动画位移错误", icon='ARMATURE_DATA')
 
 
-cls = [OP_FixScaledAnimatedArmatureActions,
+cls = [OP_CopyActiveAnimationToSelected,
+       OP_ClearSelectedAnimationSlots,
+       OP_FixScaledAnimatedArmatureActions,
        ]
 
 
