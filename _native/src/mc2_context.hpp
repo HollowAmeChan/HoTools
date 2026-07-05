@@ -1,17 +1,13 @@
 #pragma once
 
-#include <Python.h>
+#include <nanobind/nanobind.h>
+
+namespace nb = nanobind;
 
 namespace hotools {
 
-PyObject* create_meshcloth_mc2_context(PyObject*, PyObject* args);
-PyObject* update_meshcloth_mc2_context_static(PyObject*, PyObject* args);
-PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args);
-PyObject* update_meshcloth_mc2_context_params(PyObject*, PyObject* args);
-PyObject* update_meshcloth_mc2_context_param_arrays(PyObject*, PyObject* args);
-PyObject* meshcloth_mc2_context_info(PyObject*, PyObject* args);
-PyObject* free_meshcloth_mc2_context(PyObject*, PyObject* args);
-PyObject* solve_meshcloth_mc2_context(PyObject*, PyObject* args);
-PyObject* solve_meshcloth_mc2_context_cached_params(PyObject*, PyObject* args);
+// register_mc2_context_class 在 mc2_context.cpp 中实现，
+// 由 hotools_native.cpp 的 NB_MODULE 调用。
+void register_mc2_context_class(nb::module_& m);
 
 }  // namespace hotools

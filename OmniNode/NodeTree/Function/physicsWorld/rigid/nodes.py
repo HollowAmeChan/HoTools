@@ -7,7 +7,7 @@ physicsRigidSolver 节点执行 Jolt 模拟步 + 写回 Blender 对象变换。
 
 from ....FunctionNodeCore import omni
 from ... import _Color
-from ..solver import step_rigid_bodies
+from .solver import step_rigid_bodies
 
 
 @omni(

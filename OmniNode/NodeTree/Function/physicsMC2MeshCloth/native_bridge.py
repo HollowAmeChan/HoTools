@@ -72,10 +72,10 @@ def has_function(function_name: str) -> bool:
 
 def create_meshcloth_context(vertex_count: int, distance_count: int, bend_count: int, collider_radius_count: int):
     module = native_module()
-    function = getattr(module, "create_meshcloth_mc2_context", None) if module is not None else None
-    if function is None:
+    cls = getattr(module, "Mc2Context", None) if module is not None else None
+    if cls is None:
         return None
-    return function(
+    return cls(
         int(vertex_count),
         int(distance_count),
         int(bend_count),
@@ -90,12 +90,9 @@ def update_meshcloth_context_static(
     bend_count: int,
     collider_radius_count: int,
 ) -> bool:
-    module = native_module()
-    function = getattr(module, "update_meshcloth_mc2_context_static", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return False
-    function(
-        handle,
+    handle.update_static(
         int(vertex_count),
         int(distance_count),
         int(bend_count),
@@ -105,12 +102,9 @@ def update_meshcloth_context_static(
 
 
 def update_meshcloth_context_static_arrays(handle, arrays: dict) -> bool:
-    module = native_module()
-    function = getattr(module, "update_meshcloth_mc2_context_static_arrays", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return False
-    function(
-        handle,
+    handle.update_static_arrays(
         np.ascontiguousarray(arrays["attributes"], dtype=np.uint8),
         np.ascontiguousarray(arrays["depths"], dtype=np.float32),
         np.ascontiguousarray(arrays["root_indices"], dtype=np.int32),
@@ -141,21 +135,16 @@ def update_meshcloth_context_static_arrays(handle, arrays: dict) -> bool:
 
 
 def update_meshcloth_context_params(handle, param_slot_count: int) -> bool:
-    module = native_module()
-    function = getattr(module, "update_meshcloth_mc2_context_params", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return False
-    function(handle, int(param_slot_count))
+    handle.update_params(int(param_slot_count))
     return True
 
 
 def update_meshcloth_context_param_arrays(handle, arrays: dict) -> bool:
-    module = native_module()
-    function = getattr(module, "update_meshcloth_mc2_context_param_arrays", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return False
-    function(
-        handle,
+    handle.update_param_arrays(
         np.ascontiguousarray(arrays["distance_stiffness_values"], dtype=np.float32),
         np.ascontiguousarray(arrays["bend_stiffness_values"], dtype=np.float32),
         np.ascontiguousarray(arrays["angle_restoration_values"], dtype=np.float32),
@@ -172,20 +161,16 @@ def update_meshcloth_context_param_arrays(handle, arrays: dict) -> bool:
 
 
 def meshcloth_context_info(handle) -> dict | None:
-    module = native_module()
-    function = getattr(module, "meshcloth_mc2_context_info", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return None
-    value = function(handle)
+    value = handle.info()
     return value if isinstance(value, dict) else None
 
 
 def free_meshcloth_context(handle) -> bool:
-    module = native_module()
-    function = getattr(module, "free_meshcloth_mc2_context", None) if module is not None else None
-    if function is None or handle is None:
+    if handle is None:
         return False
-    function(handle)
+    handle.free()
     return True
 
 
