@@ -2107,19 +2107,38 @@ NB_MODULE(hotools_native, m) {
        "Sample a native color curve or payload at explicit positions.");
     def_legacy(m, "solve_spring_bone_vrm_cpp", solve_spring_bone_vrm_cpp,
         "Solve one VRM spring bone chain in-place.");
-    def_legacy(m, "create_meshcloth_mc2_context", hotools::create_meshcloth_mc2_context,
+    m.def("create_meshcloth_mc2_context",
+        object_binding<hotools::create_meshcloth_mc2_context_object, long, long, long, long>(),
+        nb::arg("vertex_count"),
+        nb::arg("distance_count"),
+        nb::arg("bend_count"),
+        nb::arg("collider_radius_count"),
         "Create an MC2 MeshCloth native context handle.");
-    def_legacy(m, "update_meshcloth_mc2_context_static", hotools::update_meshcloth_mc2_context_static,
+    m.def("update_meshcloth_mc2_context_static",
+        object_binding<hotools::update_meshcloth_mc2_context_static_object,
+                       nb::object, long, long, long, long>(),
+        nb::arg("handle"),
+        nb::arg("vertex_count"),
+        nb::arg("distance_count"),
+        nb::arg("bend_count"),
+        nb::arg("collider_radius_count"),
         "Update MC2 MeshCloth native context static metadata.");
     def_legacy(m, "update_meshcloth_mc2_context_static_arrays", hotools::update_meshcloth_mc2_context_static_arrays,
         "Upload MC2 MeshCloth static topology arrays into a native context.");
-    def_legacy(m, "update_meshcloth_mc2_context_params", hotools::update_meshcloth_mc2_context_params,
+    m.def("update_meshcloth_mc2_context_params",
+        object_binding<hotools::update_meshcloth_mc2_context_params_object, nb::object, long>(),
+        nb::arg("handle"),
+        nb::arg("param_slot_count"),
         "Update MC2 MeshCloth native context parameter metadata.");
     def_legacy(m, "update_meshcloth_mc2_context_param_arrays", hotools::update_meshcloth_mc2_context_param_arrays,
         "Upload MC2 MeshCloth parameter sample arrays into a native context.");
-    def_legacy(m, "meshcloth_mc2_context_info", hotools::meshcloth_mc2_context_info,
+    m.def("meshcloth_mc2_context_info",
+        object_binding<hotools::meshcloth_mc2_context_info_object, nb::object>(),
+        nb::arg("handle"),
         "Return MC2 MeshCloth native context metadata.");
-    def_legacy(m, "free_meshcloth_mc2_context", hotools::free_meshcloth_mc2_context,
+    m.def("free_meshcloth_mc2_context",
+        object_binding<hotools::free_meshcloth_mc2_context_object, nb::object>(),
+        nb::arg("handle"),
         "Release MC2 MeshCloth native context resources.");
     m.def("project_neighbor_constraints_mc2",
         object_binding<project_neighbor_constraints_mc2_object,

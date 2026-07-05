@@ -270,33 +270,15 @@ bool ensure_context_param_arrays_ready(const Mc2NativeContext& context, Py_ssize
 
 }  // namespace
 
-PyObject* create_meshcloth_mc2_context(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 4;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "create_meshcloth_mc2_context expects %zd arguments", kArgCount);
-        return nullptr;
-    }
+PyObject* create_meshcloth_mc2_context_object(long vertex_count,
+                                              long distance_count,
+                                              long bend_count,
+                                              long collider_radius_count) {
     auto* context = new Mc2NativeContext();
-    context->vertex_count = as_long(PyTuple_GET_ITEM(args, 0), "vertex_count");
-    if (PyErr_Occurred()) {
-        delete context;
-        return nullptr;
-    }
-    context->distance_count = as_long(PyTuple_GET_ITEM(args, 1), "distance_count");
-    if (PyErr_Occurred()) {
-        delete context;
-        return nullptr;
-    }
-    context->bend_count = as_long(PyTuple_GET_ITEM(args, 2), "bend_count");
-    if (PyErr_Occurred()) {
-        delete context;
-        return nullptr;
-    }
-    context->collider_radius_count = as_long(PyTuple_GET_ITEM(args, 3), "collider_radius_count");
-    if (PyErr_Occurred()) {
-        delete context;
-        return nullptr;
-    }
+    context->vertex_count = vertex_count;
+    context->distance_count = distance_count;
+    context->bend_count = bend_count;
+    context->collider_radius_count = collider_radius_count;
     context->topology_serial = 1;
     PyObject* capsule = PyCapsule_New(context, kMc2ContextCapsuleName, destroy_mc2_context);
     if (capsule == nullptr) {
@@ -306,33 +288,20 @@ PyObject* create_meshcloth_mc2_context(PyObject*, PyObject* args) {
     return capsule;
 }
 
-PyObject* update_meshcloth_mc2_context_static(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 5;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "update_meshcloth_mc2_context_static expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-    auto* context = get_mc2_context(PyTuple_GET_ITEM(args, 0));
+PyObject* update_meshcloth_mc2_context_static_object(PyObject* context_object,
+                                                     long vertex_count,
+                                                     long distance_count,
+                                                     long bend_count,
+                                                     long collider_radius_count) {
+    auto* context = get_mc2_context(context_object);
     if (!ensure_context_live(context)) {
         return nullptr;
     }
     clear_static_storage(*context);
-    context->vertex_count = as_long(PyTuple_GET_ITEM(args, 1), "vertex_count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    context->distance_count = as_long(PyTuple_GET_ITEM(args, 2), "distance_count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    context->bend_count = as_long(PyTuple_GET_ITEM(args, 3), "bend_count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    context->collider_radius_count = as_long(PyTuple_GET_ITEM(args, 4), "collider_radius_count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
+    context->vertex_count = vertex_count;
+    context->distance_count = distance_count;
+    context->bend_count = bend_count;
+    context->collider_radius_count = collider_radius_count;
     context->topology_serial += 1;
     Py_RETURN_NONE;
 }
@@ -530,20 +499,12 @@ PyObject* update_meshcloth_mc2_context_static_arrays(PyObject*, PyObject* args) 
     Py_RETURN_NONE;
 }
 
-PyObject* update_meshcloth_mc2_context_params(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 2;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "update_meshcloth_mc2_context_params expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-    auto* context = get_mc2_context(PyTuple_GET_ITEM(args, 0));
+PyObject* update_meshcloth_mc2_context_params_object(PyObject* context_object, long param_slot_count) {
+    auto* context = get_mc2_context(context_object);
     if (!ensure_context_live(context)) {
         return nullptr;
     }
-    context->param_slot_count = as_long(PyTuple_GET_ITEM(args, 1), "param_slot_count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
+    context->param_slot_count = param_slot_count;
     clear_param_storage(*context);
     context->param_serial += 1;
     Py_RETURN_NONE;
@@ -626,27 +587,16 @@ PyObject* update_meshcloth_mc2_context_param_arrays(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* meshcloth_mc2_context_info(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 1;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "meshcloth_mc2_context_info expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-    auto* context = get_mc2_context(PyTuple_GET_ITEM(args, 0));
+PyObject* meshcloth_mc2_context_info_object(PyObject* context_object) {
+    auto* context = get_mc2_context(context_object);
     if (!ensure_context_live(context)) {
         return nullptr;
     }
     return mc2_context_to_dict(*context);
 }
 
-PyObject* free_meshcloth_mc2_context(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 1;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "free_meshcloth_mc2_context expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-    PyObject* capsule = PyTuple_GET_ITEM(args, 0);
-    auto* context = get_mc2_context(capsule);
+PyObject* free_meshcloth_mc2_context_object(PyObject* context_object) {
+    auto* context = get_mc2_context(context_object);
     if (context == nullptr) {
         return nullptr;
     }
