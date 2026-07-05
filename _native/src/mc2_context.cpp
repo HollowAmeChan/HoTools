@@ -11,25 +11,7 @@
 namespace hotools {
 namespace {
 
-using py::Buffer;
-using py::as_double;
-using py::as_long;
-using py::expect_1d_array;
-using py::expect_float32;
-using py::expect_indices_in_range;
-using py::expect_int32_pair_array;
-using py::expect_int32_quad_array;
-using py::expect_int32_scalar_array;
-using py::expect_int32_triple_array;
-using py::expect_pair_indices_in_range;
-using py::expect_quad_indices_in_range;
-using py::expect_root_indices_or_minus_one;
-using py::expect_same_quat_vertex_count;
-using py::expect_same_vertex_count;
-using py::expect_triple_indices_in_range;
-using py::expect_uint8_scalar_array;
-using py::expect_vector3_array;
-using py::expect_vector4_array;
+using namespace py;  // Buffer, expect_*, as_double, as_long
 
 constexpr const char* kMc2ContextCapsuleName = "hotools_native.MC2Context";
 

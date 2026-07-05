@@ -14,8 +14,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <type_traits>
-#include <utility>
 #include <vector>
 
 PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject*);
@@ -24,349 +22,20 @@ namespace nb = nanobind;
 
 namespace {
 
-using LegacyPyFunc = PyObject* (*)(PyObject*, PyObject*);
-using O = nb::object;
+using namespace hotools::py;  // Buffer, expect_*, as_double, as_long
 
-#define HOTOOLS_NB_O5 O, O, O, O, O
-#define HOTOOLS_NB_O10 HOTOOLS_NB_O5, HOTOOLS_NB_O5
-#define HOTOOLS_NB_O20 HOTOOLS_NB_O10, HOTOOLS_NB_O10
-#define HOTOOLS_NB_O30 HOTOOLS_NB_O20, HOTOOLS_NB_O10
-#define HOTOOLS_NB_O40 HOTOOLS_NB_O20, HOTOOLS_NB_O20
-#define HOTOOLS_NB_O50 HOTOOLS_NB_O40, HOTOOLS_NB_O10
-
+// nb::object 版本结果转换：nullptr → 抛出 python_error
 nb::object steal_or_throw(PyObject* result) {
-    if (result == nullptr) {
-        throw nb::python_error();
-    }
+    if (result == nullptr) throw nb::python_error();
     return nb::steal<nb::object>(result);
 }
 
-inline PyObject* unwrap_object_arg(const nb::object& object) {
-    return object.ptr();
-}
-
-template <typename T>
-std::enable_if_t<!std::is_same_v<std::decay_t<T>, nb::object>, T&&> unwrap_object_arg(T&& value) {
-    return std::forward<T>(value);
-}
-
-template <typename Function, typename... Args>
-nb::object call_object_function(Function function, Args&&... args) {
-    return steal_or_throw(function(unwrap_object_arg(std::forward<Args>(args))...));
-}
-
-template <auto Function, typename... Args>
-auto object_binding() {
-    return [](Args... args) {
-        return call_object_function(Function, std::forward<Args>(args)...);
-    };
-}
-
-PyObject* pack_tuple_arg(const nb::object& object) {
-    PyObject* value = object.ptr();
-    Py_INCREF(value);
-    return value;
-}
-
-template <std::size_t>
-bool fill_tuple(PyObject*) {
-    return true;
-}
-
-template <std::size_t Index, typename First, typename... Rest>
-bool fill_tuple(PyObject* tuple, First&& first, Rest&&... rest) {
-    PyObject* value = pack_tuple_arg(std::forward<First>(first));
-    if (value == nullptr) {
-        return false;
-    }
-    PyTuple_SET_ITEM(tuple, Index, value);
-    return fill_tuple<Index + 1>(tuple, std::forward<Rest>(rest)...);
-}
-
-template <typename... Args>
-nb::object call_legacy_tuple(LegacyPyFunc function, Args&&... args) {
-    PyObject* tuple = PyTuple_New(sizeof...(Args));
-    if (tuple == nullptr) {
-        throw nb::python_error();
-    }
-    if (!fill_tuple<0>(tuple, std::forward<Args>(args)...)) {
-        Py_DECREF(tuple);
-        throw nb::python_error();
-    }
-    PyObject* result = function(nullptr, tuple);
-    Py_DECREF(tuple);
-    if (result == nullptr) {
-        throw nb::python_error();
-    }
-    return nb::steal<nb::object>(result);
-}
-
-template <LegacyPyFunc Function, typename... Args>
-auto legacy_tuple_binding() {
-    return [](Args... args) {
-        return call_legacy_tuple(Function, std::forward<Args>(args)...);
-    };
-}
-
-struct Buffer {
-    Py_buffer view {};
-    bool acquired = false;
-
-    ~Buffer() {
-        if (acquired) {
-            PyBuffer_Release(&view);
-        }
-    }
-
-    bool get(PyObject* object, int flags, const char* name) {
-        if (PyObject_GetBuffer(object, &view, flags) != 0) {
-            return false;
-        }
-        acquired = true;
-
-        if (!PyBuffer_IsContiguous(&view, 'C')) {
-            PyErr_Format(PyExc_ValueError, "%s must be C-contiguous", name);
-            return false;
-        }
-        return true;
-    }
-};
-
-bool expect_float32(const Buffer& buffer, const char* name) {
-    if (buffer.view.itemsize != 4) {
-        PyErr_Format(PyExc_TypeError, "%s must use float32 elements", name);
-        return false;
-    }
-    if (buffer.view.format != nullptr) {
-        const char format = buffer.view.format[0];
-        if (format != 'f') {
-            PyErr_Format(PyExc_TypeError, "%s must use float32 elements", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_int32(const Buffer& buffer, const char* name) {
-    if (buffer.view.itemsize != 4) {
-        PyErr_Format(PyExc_TypeError, "%s must use int32 elements", name);
-        return false;
-    }
-    if (buffer.view.format != nullptr) {
-        const char format = buffer.view.format[0];
-        if (format != 'i' && format != 'l') {
-            PyErr_Format(PyExc_TypeError, "%s must use int32 elements", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_uint8(const Buffer& buffer, const char* name) {
-    if (buffer.view.itemsize != 1) {
-        PyErr_Format(PyExc_TypeError, "%s must use uint8 elements", name);
-        return false;
-    }
-    if (buffer.view.format != nullptr) {
-        const char format = buffer.view.format[0];
-        if (format != 'B') {
-            PyErr_Format(PyExc_TypeError, "%s must use uint8 elements", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_vector3_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
-    if (!expect_float32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 3) {
-        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 3)", name);
-        return false;
-    }
-    *count = buffer.view.shape[0];
-    return true;
-}
-
-bool expect_1d_array(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
-    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
-        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
-        return false;
-    }
-    if (expected_count >= 0 && buffer.view.shape[0] != expected_count) {
-        PyErr_Format(PyExc_ValueError, "%s length mismatch", name);
-        return false;
-    }
-    return true;
-}
-
-bool expect_same_vertex_count(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    Py_ssize_t count = 0;
-    if (!expect_vector3_array(buffer, name, &count)) {
-        return false;
-    }
-    if (count != vertex_count) {
-        PyErr_Format(PyExc_ValueError, "%s vertex count mismatch", name);
-        return false;
-    }
-    return true;
-}
-
-bool expect_vector4_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
-    if (!expect_float32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 4) {
-        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 4)", name);
-        return false;
-    }
-    *count = buffer.view.shape[0];
-    return true;
-}
-
-bool expect_same_quat_vertex_count(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    Py_ssize_t count = 0;
-    if (!expect_vector4_array(buffer, name, &count)) {
-        return false;
-    }
-    if (count != vertex_count) {
-        PyErr_Format(PyExc_ValueError, "%s vertex count mismatch", name);
-        return false;
-    }
-    return true;
-}
-
-bool expect_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
-    for (Py_ssize_t index = 0; index < buffer.view.shape[0]; ++index) {
-        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
-            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_root_indices_or_minus_one(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
-    for (Py_ssize_t index = 0; index < buffer.view.shape[0]; ++index) {
-        if (values[index] < -1 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
-            PyErr_Format(PyExc_ValueError, "%s contains root index out of range", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_int32_scalar_array(const Buffer& buffer, const char* name) {
-    if (!expect_int32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
-        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
-        return false;
-    }
-    return true;
-}
-
-bool expect_uint8_scalar_array(const Buffer& buffer, const char* name) {
-    if (!expect_uint8(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
-        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
-        return false;
-    }
-    return true;
-}
-
-bool expect_int32_quad_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
-    if (!expect_int32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 4) {
-        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 4)", name);
-        return false;
-    }
-    *count = buffer.view.shape[0];
-    return true;
-}
-
-bool expect_int32_pair_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
-    if (!expect_int32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 2) {
-        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 2)", name);
-        return false;
-    }
-    *count = buffer.view.shape[0];
-    return true;
-}
-
-bool expect_int32_triple_array(const Buffer& buffer, const char* name, Py_ssize_t* count) {
-    if (!expect_int32(buffer, name)) {
-        return false;
-    }
-    if (buffer.view.ndim != 2 || buffer.view.shape == nullptr || buffer.view.shape[1] != 3) {
-        PyErr_Format(PyExc_ValueError, "%s must have shape (n, 3)", name);
-        return false;
-    }
-    *count = buffer.view.shape[0];
-    return true;
-}
-
-bool expect_quad_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
-    const Py_ssize_t count = buffer.view.shape[0] * 4;
-    for (Py_ssize_t index = 0; index < count; ++index) {
-        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
-            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_triple_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
-    const Py_ssize_t count = buffer.view.shape[0] * 3;
-    for (Py_ssize_t index = 0; index < count; ++index) {
-        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
-            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-bool expect_pair_indices_in_range(const Buffer& buffer, const char* name, Py_ssize_t vertex_count) {
-    const auto* values = static_cast<const std::int32_t*>(buffer.view.buf);
-    const Py_ssize_t count = buffer.view.shape[0] * 2;
-    for (Py_ssize_t index = 0; index < count; ++index) {
-        if (values[index] < 0 || static_cast<Py_ssize_t>(values[index]) >= vertex_count) {
-            PyErr_Format(PyExc_ValueError, "%s contains vertex index out of range", name);
-            return false;
-        }
-    }
-    return true;
-}
-
-double as_double(PyObject* object, const char* name) {
-    const double value = PyFloat_AsDouble(object);
-    if (PyErr_Occurred()) {
-        PyErr_Format(PyExc_TypeError, "%s must be a float", name);
-    }
-    return value;
-}
-
-long as_long(PyObject* object, const char* name) {
-    const long value = PyLong_AsLong(object);
-    if (PyErr_Occurred()) {
-        PyErr_Format(PyExc_TypeError, "%s must be an integer", name);
-    }
-    return value;
+// 对于接受 (PyObject*, PyObject* args) 的旧式函数，用 nb::args 直接传递
+// nb::args 在 nanobind 内部就是一个 Python tuple，ptr() 可直接传给旧函数
+inline void call_legacy(PyObject* (*fn)(PyObject*, PyObject*), nb::args a) {
+    PyObject* r = fn(nullptr, a.ptr());
+    if (!r) throw nb::python_error();
+    Py_DECREF(r);  // 函数返回 Py_None（已 INCREF），需要释放
 }
 
 PyObject* project_neighbor_constraints_mc2_object(PyObject* positions_object,
@@ -2018,8 +1687,6 @@ PyObject* solve_mc2_bonecloth_io_object(
     double blend_w,
     double anime_r,
     double root_rot) {
-    using hotools::py::Buffer;
-
     Buffer world_rotations;
     Buffer display_positions;
     Buffer base_positions;
@@ -2059,22 +1726,22 @@ PyObject* solve_mc2_bonecloth_io_object(
 
     // 形状校验
     Py_ssize_t vertex_count = 0;
-    if (!hotools::py::expect_vector4_array(world_rotations, "world_rotations", &vertex_count) ||
-        !hotools::py::expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
-        !hotools::py::expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
-        !hotools::py::expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
-        !hotools::py::expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
-        !hotools::py::expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
-        !hotools::py::expect_int32(parent_indices, "parent_indices") ||
-        !hotools::py::expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
-        !hotools::py::expect_int32(baseline_start, "baseline_start") ||
-        !hotools::py::expect_int32_scalar_array(baseline_start, "baseline_start") ||
-        !hotools::py::expect_int32(baseline_count, "baseline_count") ||
-        !hotools::py::expect_int32_scalar_array(baseline_count, "baseline_count") ||
-        !hotools::py::expect_int32(baseline_data, "baseline_data") ||
-        !hotools::py::expect_int32_scalar_array(baseline_data, "baseline_data") ||
-        !hotools::py::expect_uint8(attributes, "attributes") ||
-        !hotools::py::expect_1d_array(attributes, "attributes", vertex_count)) {
+    if (!expect_vector4_array(world_rotations, "world_rotations", &vertex_count) ||
+        !expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
+        !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
+        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
+        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
+        !expect_int32(parent_indices, "parent_indices") ||
+        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
+        !expect_int32(baseline_start, "baseline_start") ||
+        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
+        !expect_int32(baseline_count, "baseline_count") ||
+        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
+        !expect_int32(baseline_data, "baseline_data") ||
+        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
+        !expect_uint8(attributes, "attributes") ||
+        !expect_1d_array(attributes, "attributes", vertex_count)) {
         return nullptr;
     }
 
@@ -2115,342 +1782,319 @@ PyObject* solve_mc2_bonecloth_io_object(
 NB_MODULE(hotools_native, m) {
     m.doc() = "Native acceleration backend for HoTools (nanobind module shell).";
 
+    // ---- 属性曲线 ----
     m.def("compile_property_float_curve",
-        object_binding<hotools::compile_property_float_curve_object, nb::object>(),
+        [](nb::object p) { return steal_or_throw(hotools::compile_property_float_curve_object(p.ptr())); },
         nb::arg("payload"), "Compile a float curve payload into a native capsule.");
     m.def("compile_property_color_curve",
-        object_binding<hotools::compile_property_color_curve_object, nb::object>(),
+        [](nb::object p) { return steal_or_throw(hotools::compile_property_color_curve_object(p.ptr())); },
         nb::arg("payload"), "Compile a color curve payload into a native capsule.");
     m.def("sample_property_float_curve",
-        object_binding<hotools::sample_property_float_curve_object, nb::object, double, nb::object>(),
-        nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
-       "Sample a native float curve or payload at one position.");
+        [](nb::object c, double pos, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_float_curve_object(c.ptr(), pos, ext.ptr()));
+        }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+        "Sample a native float curve or payload at one position.");
     m.def("sample_property_color_curve",
-        object_binding<hotools::sample_property_color_curve_object, nb::object, double, nb::object>(),
-        nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
-       "Sample a native color curve or payload at one position.");
+        [](nb::object c, double pos, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_color_curve_object(c.ptr(), pos, ext.ptr()));
+        }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+        "Sample a native color curve or payload at one position.");
     m.def("sample_property_float_curve_many",
-        object_binding<hotools::sample_property_float_curve_many_object, nb::object, int, nb::object>(),
-        nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
-       "Sample a native float curve or payload at evenly spaced positions.");
+        [](nb::object c, int n, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_float_curve_many_object(c.ptr(), n, ext.ptr()));
+        }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+        "Sample a native float curve or payload at evenly spaced positions.");
     m.def("sample_property_color_curve_many",
-        object_binding<hotools::sample_property_color_curve_many_object, nb::object, int, nb::object>(),
-        nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
-       "Sample a native color curve or payload at evenly spaced positions.");
+        [](nb::object c, int n, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_color_curve_many_object(c.ptr(), n, ext.ptr()));
+        }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+        "Sample a native color curve or payload at evenly spaced positions.");
     m.def("sample_property_float_curve_positions",
-        object_binding<hotools::sample_property_float_curve_positions_object, nb::object, nb::object, nb::object>(),
-        nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
-       "Sample a native float curve or payload at explicit positions.");
+        [](nb::object c, nb::object pos, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_float_curve_positions_object(c.ptr(), pos.ptr(), ext.ptr()));
+        }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+        "Sample a native float curve or payload at explicit positions.");
     m.def("sample_property_color_curve_positions",
-        object_binding<hotools::sample_property_color_curve_positions_object, nb::object, nb::object, nb::object>(),
-        nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
-       "Sample a native color curve or payload at explicit positions.");
+        [](nb::object c, nb::object pos, nb::object ext) {
+            return steal_or_throw(hotools::sample_property_color_curve_positions_object(c.ptr(), pos.ptr(), ext.ptr()));
+        }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+        "Sample a native color curve or payload at explicit positions.");
+
+    // ---- VRM spring bone ----
     m.def("solve_spring_bone_vrm_cpp",
-        legacy_tuple_binding<solve_spring_bone_vrm_cpp, HOTOOLS_NB_O30, HOTOOLS_NB_O5>(),
+        [](nb::args a) { call_legacy(solve_spring_bone_vrm_cpp, a); },
         "Solve one VRM spring bone chain in-place.");
+
+    // ---- MC2 上下文管理 ----
     m.def("create_meshcloth_mc2_context",
-        object_binding<hotools::create_meshcloth_mc2_context_object, long, long, long, long>(),
-        nb::arg("vertex_count"),
-        nb::arg("distance_count"),
-        nb::arg("bend_count"),
-        nb::arg("collider_radius_count"),
+        [](long vc, long dc, long bc, long crc) {
+            return steal_or_throw(hotools::create_meshcloth_mc2_context_object(vc, dc, bc, crc));
+        }, nb::arg("vertex_count"), nb::arg("distance_count"),
+        nb::arg("bend_count"), nb::arg("collider_radius_count"),
         "Create an MC2 MeshCloth native context handle.");
     m.def("update_meshcloth_mc2_context_static",
-        object_binding<hotools::update_meshcloth_mc2_context_static_object,
-                       nb::object, long, long, long, long>(),
-        nb::arg("handle"),
-        nb::arg("vertex_count"),
-        nb::arg("distance_count"),
-        nb::arg("bend_count"),
-        nb::arg("collider_radius_count"),
+        [](nb::object h, long vc, long dc, long bc, long crc) {
+            PyObject* r = hotools::update_meshcloth_mc2_context_static_object(h.ptr(), vc, dc, bc, crc);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        }, nb::arg("handle"), nb::arg("vertex_count"), nb::arg("distance_count"),
+        nb::arg("bend_count"), nb::arg("collider_radius_count"),
         "Update MC2 MeshCloth native context static metadata.");
     m.def("update_meshcloth_mc2_context_static_arrays",
-        legacy_tuple_binding<hotools::update_meshcloth_mc2_context_static_arrays,
-                             HOTOOLS_NB_O20, HOTOOLS_NB_O5, O>(),
+        [](nb::args a) { call_legacy(hotools::update_meshcloth_mc2_context_static_arrays, a); },
         "Upload MC2 MeshCloth static topology arrays into a native context.");
     m.def("update_meshcloth_mc2_context_params",
-        object_binding<hotools::update_meshcloth_mc2_context_params_object, nb::object, long>(),
-        nb::arg("handle"),
-        nb::arg("param_slot_count"),
+        [](nb::object h, long n) {
+            PyObject* r = hotools::update_meshcloth_mc2_context_params_object(h.ptr(), n);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        }, nb::arg("handle"), nb::arg("param_slot_count"),
         "Update MC2 MeshCloth native context parameter metadata.");
     m.def("update_meshcloth_mc2_context_param_arrays",
-        legacy_tuple_binding<hotools::update_meshcloth_mc2_context_param_arrays,
-                             HOTOOLS_NB_O10, O, O>(),
+        [](nb::args a) { call_legacy(hotools::update_meshcloth_mc2_context_param_arrays, a); },
         "Upload MC2 MeshCloth parameter sample arrays into a native context.");
     m.def("meshcloth_mc2_context_info",
-        object_binding<hotools::meshcloth_mc2_context_info_object, nb::object>(),
-        nb::arg("handle"),
-        "Return MC2 MeshCloth native context metadata.");
+        [](nb::object h) { return steal_or_throw(hotools::meshcloth_mc2_context_info_object(h.ptr())); },
+        nb::arg("handle"), "Return MC2 MeshCloth native context metadata.");
     m.def("free_meshcloth_mc2_context",
-        object_binding<hotools::free_meshcloth_mc2_context_object, nb::object>(),
-        nb::arg("handle"),
-        "Release MC2 MeshCloth native context resources.");
+        [](nb::object h) {
+            PyObject* r = hotools::free_meshcloth_mc2_context_object(h.ptr());
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        }, nb::arg("handle"), "Release MC2 MeshCloth native context resources.");
+    // ---- MC2 单步约束求解器 ----
     m.def("project_neighbor_constraints_mc2",
-        object_binding<project_neighbor_constraints_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, double>(),
-        nb::arg("positions"),
-        nb::arg("inv_masses"),
-        nb::arg("starts"),
-        nb::arg("counts"),
-        nb::arg("neighbors"),
-        nb::arg("rest_lengths"),
-        nb::arg("stiffness_values"),
-        nb::arg("velocity_positions"),
-        nb::arg("velocity_attenuation"),
+        [](nb::object pos, nb::object inv, nb::object starts, nb::object counts,
+           nb::object nbrs, nb::object rest, nb::object stiff, nb::object vel, double attn) {
+            PyObject* r = project_neighbor_constraints_mc2_object(
+                pos.ptr(), inv.ptr(), starts.ptr(), counts.ptr(),
+                nbrs.ptr(), rest.ptr(), stiff.ptr(), vel.ptr(), attn);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("inv_masses"), nb::arg("starts"), nb::arg("counts"),
+        nb::arg("neighbors"), nb::arg("rest_lengths"), nb::arg("stiffness_values"),
+        nb::arg("velocity_positions"), nb::arg("velocity_attenuation"),
         "Project MC2 neighbor constraints in-place.");
     m.def("project_tether_mc2",
-        object_binding<project_tether_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       double, double, double>(),
-        nb::arg("positions"),
-        nb::arg("inv_masses"),
-        nb::arg("root_indices"),
-        nb::arg("root_rest_lengths"),
-        nb::arg("velocity_positions"),
-        nb::arg("stiffness"),
-        nb::arg("compression"),
-        nb::arg("stretch"),
+        [](nb::object pos, nb::object inv, nb::object ri, nb::object rrl, nb::object vel,
+           double stiff, double comp, double stretch) {
+            PyObject* r = project_tether_mc2_object(
+                pos.ptr(), inv.ptr(), ri.ptr(), rrl.ptr(), vel.ptr(), stiff, comp, stretch);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("inv_masses"), nb::arg("root_indices"),
+        nb::arg("root_rest_lengths"), nb::arg("velocity_positions"),
+        nb::arg("stiffness"), nb::arg("compression"), nb::arg("stretch"),
         "Project MC2 tether constraints in-place.");
     m.def("project_motion_constraints_mc2",
-        object_binding<project_motion_constraints_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, int>(),
-        nb::arg("positions"),
-        nb::arg("base_positions"),
-        nb::arg("base_rotations"),
-        nb::arg("inv_masses"),
-        nb::arg("max_distances"),
-        nb::arg("stiffness_values"),
-        nb::arg("backstop_radii"),
-        nb::arg("backstop_distances"),
-        nb::arg("velocity_positions"),
-        nb::arg("normal_axis"),
+        [](nb::object pos, nb::object bp, nb::object br, nb::object inv,
+           nb::object md, nb::object sv, nb::object bkr, nb::object bkd, nb::object vel, int axis) {
+            PyObject* r = project_motion_constraints_mc2_object(
+                pos.ptr(), bp.ptr(), br.ptr(), inv.ptr(),
+                md.ptr(), sv.ptr(), bkr.ptr(), bkd.ptr(), vel.ptr(), axis);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("base_positions"), nb::arg("base_rotations"),
+        nb::arg("inv_masses"), nb::arg("max_distances"), nb::arg("stiffness_values"),
+        nb::arg("backstop_radii"), nb::arg("backstop_distances"),
+        nb::arg("velocity_positions"), nb::arg("normal_axis"),
         "Project MC2 motion constraints in-place.");
     m.def("apply_post_step_mc2",
-        object_binding<apply_post_step_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object,
-                       double, double, double, double>(),
-        nb::arg("positions"),
-        nb::arg("old_positions"),
-        nb::arg("velocity_positions"),
-        nb::arg("velocities"),
-        nb::arg("real_velocities"),
-        nb::arg("friction"),
-        nb::arg("static_friction"),
-        nb::arg("collision_normals"),
-        nb::arg("inv_masses"),
-        nb::arg("step_dt"),
-        nb::arg("dynamic_friction"),
-        nb::arg("static_friction_speed"),
-        nb::arg("particle_speed_limit"),
+        [](nb::object pos, nb::object old, nb::object vp, nb::object vel,
+           nb::object rvel, nb::object fric, nb::object sfric, nb::object cn,
+           nb::object inv, double dt, double dfric, double sfs, double psl) {
+            PyObject* r = apply_post_step_mc2_object(
+                pos.ptr(), old.ptr(), vp.ptr(), vel.ptr(), rvel.ptr(),
+                fric.ptr(), sfric.ptr(), cn.ptr(), inv.ptr(), dt, dfric, sfs, psl);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("old_positions"), nb::arg("velocity_positions"),
+        nb::arg("velocities"), nb::arg("real_velocities"), nb::arg("friction"),
+        nb::arg("static_friction"), nb::arg("collision_normals"), nb::arg("inv_masses"),
+        nb::arg("step_dt"), nb::arg("dynamic_friction"),
+        nb::arg("static_friction_speed"), nb::arg("particle_speed_limit"),
         "Apply MC2 post-step velocity and friction update in-place.");
     m.def("project_collisions_mc2",
-        object_binding<project_collisions_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, int, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object>(),
-        nb::arg("positions"),
-        nb::arg("base_positions"),
-        nb::arg("inv_masses"),
-        nb::arg("collision_radii"),
-        nb::arg("collision_normals"),
-        nb::arg("friction"),
-        nb::arg("collided_by_groups"),
-        nb::arg("collider_types"),
-        nb::arg("collider_group_bits"),
-        nb::arg("collider_centers"),
-        nb::arg("collider_segment_a"),
-        nb::arg("collider_segment_b"),
-        nb::arg("collider_old_centers"),
-        nb::arg("collider_old_segment_a"),
-        nb::arg("collider_old_segment_b"),
-        nb::arg("collider_radii"),
+        [](nb::object pos, nb::object bp, nb::object inv, nb::object cr, nb::object cn,
+           nb::object fric, int cbg, nb::object ct, nb::object cgb,
+           nb::object cc, nb::object csa, nb::object csb,
+           nb::object coc, nb::object cosa, nb::object cosb, nb::object crad) {
+            PyObject* r = project_collisions_mc2_object(
+                pos.ptr(), bp.ptr(), inv.ptr(), cr.ptr(), cn.ptr(), fric.ptr(),
+                cbg, ct.ptr(), cgb.ptr(), cc.ptr(), csa.ptr(), csb.ptr(),
+                coc.ptr(), cosa.ptr(), cosb.ptr(), crad.ptr());
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("base_positions"), nb::arg("inv_masses"),
+        nb::arg("collision_radii"), nb::arg("collision_normals"), nb::arg("friction"),
+        nb::arg("collided_by_groups"), nb::arg("collider_types"), nb::arg("collider_group_bits"),
+        nb::arg("collider_centers"), nb::arg("collider_segment_a"), nb::arg("collider_segment_b"),
+        nb::arg("collider_old_centers"), nb::arg("collider_old_segment_a"),
+        nb::arg("collider_old_segment_b"), nb::arg("collider_radii"),
         "Project MC2 point collisions in-place.");
     m.def("project_edge_collisions_mc2",
-        object_binding<project_edge_collisions_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, int, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object>(),
-        nb::arg("positions"),
-        nb::arg("edges"),
-        nb::arg("attributes"),
-        nb::arg("inv_masses"),
-        nb::arg("collision_radii"),
-        nb::arg("collision_normals"),
-        nb::arg("friction"),
-        nb::arg("collided_by_groups"),
-        nb::arg("collider_types"),
-        nb::arg("collider_group_bits"),
-        nb::arg("collider_centers"),
-        nb::arg("collider_segment_a"),
-        nb::arg("collider_segment_b"),
-        nb::arg("collider_old_centers"),
-        nb::arg("collider_old_segment_a"),
-        nb::arg("collider_old_segment_b"),
-        nb::arg("collider_radii"),
+        [](nb::object pos, nb::object edges, nb::object attr, nb::object inv,
+           nb::object cr, nb::object cn, nb::object fric, int cbg,
+           nb::object ct, nb::object cgb, nb::object cc, nb::object csa, nb::object csb,
+           nb::object coc, nb::object cosa, nb::object cosb, nb::object crad) {
+            PyObject* r = project_edge_collisions_mc2_object(
+                pos.ptr(), edges.ptr(), attr.ptr(), inv.ptr(), cr.ptr(), cn.ptr(), fric.ptr(),
+                cbg, ct.ptr(), cgb.ptr(), cc.ptr(), csa.ptr(), csb.ptr(),
+                coc.ptr(), cosa.ptr(), cosb.ptr(), crad.ptr());
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("edges"), nb::arg("attributes"),
+        nb::arg("inv_masses"), nb::arg("collision_radii"), nb::arg("collision_normals"),
+        nb::arg("friction"), nb::arg("collided_by_groups"), nb::arg("collider_types"),
+        nb::arg("collider_group_bits"), nb::arg("collider_centers"),
+        nb::arg("collider_segment_a"), nb::arg("collider_segment_b"),
+        nb::arg("collider_old_centers"), nb::arg("collider_old_segment_a"),
+        nb::arg("collider_old_segment_b"), nb::arg("collider_radii"),
         "Project MC2 edge collisions in-place.");
     m.def("project_self_collisions_mc2",
-        object_binding<project_self_collisions_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, double>(),
-        nb::arg("positions"),
-        nb::arg("old_positions"),
-        nb::arg("inv_masses"),
-        nb::arg("edges"),
-        nb::arg("triangles"),
-        nb::arg("attributes"),
-        nb::arg("collision_normals"),
-        nb::arg("friction"),
-        nb::arg("surface_thickness"),
+        [](nb::object pos, nb::object old, nb::object inv, nb::object edges,
+           nb::object tri, nb::object attr, nb::object cn, nb::object fric, double st) {
+            PyObject* r = project_self_collisions_mc2_object(
+                pos.ptr(), old.ptr(), inv.ptr(), edges.ptr(), tri.ptr(),
+                attr.ptr(), cn.ptr(), fric.ptr(), st);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("old_positions"), nb::arg("inv_masses"),
+        nb::arg("edges"), nb::arg("triangles"), nb::arg("attributes"),
+        nb::arg("collision_normals"), nb::arg("friction"), nb::arg("surface_thickness"),
         "Project MC2 self collisions in-place.");
     m.def("project_triangle_bending_mc2",
-        object_binding<project_triangle_bending_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object>(),
-        nb::arg("positions"),
-        nb::arg("inv_masses"),
-        nb::arg("dihedral_pairs"),
-        nb::arg("dihedral_rest_angles"),
-        nb::arg("dihedral_signs"),
-        nb::arg("volume_pairs"),
-        nb::arg("volume_rest"),
-        nb::arg("stiffness_values"),
+        [](nb::object pos, nb::object inv, nb::object dp, nb::object dra,
+           nb::object ds, nb::object vp, nb::object vr, nb::object sv) {
+            PyObject* r = project_triangle_bending_mc2_object(
+                pos.ptr(), inv.ptr(), dp.ptr(), dra.ptr(), ds.ptr(), vp.ptr(), vr.ptr(), sv.ptr());
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("inv_masses"), nb::arg("dihedral_pairs"),
+        nb::arg("dihedral_rest_angles"), nb::arg("dihedral_signs"),
+        nb::arg("volume_pairs"), nb::arg("volume_rest"), nb::arg("stiffness_values"),
         "Project MC2 triangle bending constraints in-place.");
     m.def("project_angle_constraints_mc2",
-        object_binding<project_angle_constraints_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, double, double, double>(),
-        nb::arg("positions"),
-        nb::arg("inv_masses"),
-        nb::arg("parent_indices"),
-        nb::arg("baseline_start"),
-        nb::arg("baseline_count"),
-        nb::arg("baseline_data"),
-        nb::arg("step_basic_positions"),
-        nb::arg("step_basic_rotations"),
-        nb::arg("restoration_values"),
-        nb::arg("limit_values"),
-        nb::arg("velocity_positions"),
-        nb::arg("restoration_velocity_attenuation"),
-        nb::arg("restoration_gravity_falloff"),
+        [](nb::object pos, nb::object inv, nb::object pi, nb::object bs,
+           nb::object bc, nb::object bd, nb::object sbp, nb::object sbr,
+           nb::object rv, nb::object lv, nb::object vel, double rva, double rgf, double ls) {
+            PyObject* r = project_angle_constraints_mc2_object(
+                pos.ptr(), inv.ptr(), pi.ptr(), bs.ptr(), bc.ptr(), bd.ptr(),
+                sbp.ptr(), sbr.ptr(), rv.ptr(), lv.ptr(), vel.ptr(), rva, rgf, ls);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("inv_masses"), nb::arg("parent_indices"),
+        nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
+        nb::arg("step_basic_positions"), nb::arg("step_basic_rotations"),
+        nb::arg("restoration_values"), nb::arg("limit_values"), nb::arg("velocity_positions"),
+        nb::arg("restoration_velocity_attenuation"), nb::arg("restoration_gravity_falloff"),
         nb::arg("limit_stiffness"),
         "Project MC2 angle restoration and limit constraints in-place.");
     m.def("update_step_basic_pose_mc2",
-        object_binding<update_step_basic_pose_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       double>(),
-        nb::arg("base_positions"),
-        nb::arg("base_rotations"),
-        nb::arg("parent_indices"),
-        nb::arg("baseline_start"),
-        nb::arg("baseline_count"),
-        nb::arg("baseline_data"),
-        nb::arg("vertex_local_positions"),
-        nb::arg("vertex_local_rotations"),
-        nb::arg("step_positions"),
-        nb::arg("step_rotations"),
-        nb::arg("animation_pose_ratio"),
+        [](nb::object bp, nb::object br, nb::object pi, nb::object bstart, nb::object bcount,
+           nb::object bd, nb::object vlp, nb::object vlr, nb::object sp, nb::object sr, double apr) {
+            PyObject* r = update_step_basic_pose_mc2_object(
+                bp.ptr(), br.ptr(), pi.ptr(), bstart.ptr(), bcount.ptr(), bd.ptr(),
+                vlp.ptr(), vlr.ptr(), sp.ptr(), sr.ptr(), apr);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("base_positions"), nb::arg("base_rotations"), nb::arg("parent_indices"),
+        nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
+        nb::arg("vertex_local_positions"), nb::arg("vertex_local_rotations"),
+        nb::arg("step_positions"), nb::arg("step_rotations"), nb::arg("animation_pose_ratio"),
         "Update MC2 step basic pose in-place.");
     m.def("update_base_pose_from_pose_mc2",
-        object_binding<update_base_pose_from_pose_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, double>(),
-        nb::arg("base_positions"),
-        nb::arg("base_normals"),
-        nb::arg("parent_indices"),
-        nb::arg("baseline_start"),
-        nb::arg("baseline_count"),
-        nb::arg("baseline_data"),
-        nb::arg("vertex_local_positions"),
-        nb::arg("vertex_local_rotations"),
-        nb::arg("base_rotations"),
-        nb::arg("step_positions"),
-        nb::arg("step_rotations"),
+        [](nb::object bp, nb::object bn, nb::object pi, nb::object bstart, nb::object bcount,
+           nb::object bd, nb::object vlp, nb::object vlr, nb::object br2, nb::object sp,
+           nb::object sr, double apr) {
+            PyObject* r = update_base_pose_from_pose_mc2_object(
+                bp.ptr(), bn.ptr(), pi.ptr(), bstart.ptr(), bcount.ptr(), bd.ptr(),
+                vlp.ptr(), vlr.ptr(), br2.ptr(), sp.ptr(), sr.ptr(), apr);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("base_positions"), nb::arg("base_normals"), nb::arg("parent_indices"),
+        nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
+        nb::arg("vertex_local_positions"), nb::arg("vertex_local_rotations"),
+        nb::arg("base_rotations"), nb::arg("step_positions"), nb::arg("step_rotations"),
         nb::arg("animation_pose_ratio"),
         "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.");
     m.def("apply_substep_inertia_mc2",
-        object_binding<apply_substep_inertia_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, double>(),
-        nb::arg("old_positions"),
-        nb::arg("velocities"),
-        nb::arg("depths"),
-        nb::arg("inv_masses"),
-        nb::arg("old_world_position"),
-        nb::arg("step_vector"),
-        nb::arg("step_rotation"),
-        nb::arg("inertia_vector"),
-        nb::arg("inertia_rotation"),
+        [](nb::object old, nb::object vel, nb::object dep, nb::object inv,
+           nb::object owp, nb::object sv, nb::object sr, nb::object iv, nb::object ir, double di) {
+            PyObject* r = apply_substep_inertia_mc2_object(
+                old.ptr(), vel.ptr(), dep.ptr(), inv.ptr(),
+                owp.ptr(), sv.ptr(), sr.ptr(), iv.ptr(), ir.ptr(), di);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("old_positions"), nb::arg("velocities"), nb::arg("depths"),
+        nb::arg("inv_masses"), nb::arg("old_world_position"), nb::arg("step_vector"),
+        nb::arg("step_rotation"), nb::arg("inertia_vector"), nb::arg("inertia_rotation"),
         nb::arg("depth_inertia"),
         "Apply MC2 substep inertia in-place.");
     m.def("apply_centrifugal_velocity_mc2",
-        object_binding<apply_centrifugal_velocity_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, double, double>(),
-        nb::arg("positions"),
-        nb::arg("velocities"),
-        nb::arg("depths"),
-        nb::arg("inv_masses"),
-        nb::arg("now_world_position"),
-        nb::arg("rotation_axis"),
-        nb::arg("angular_velocity"),
-        nb::arg("centrifugal"),
+        [](nb::object pos, nb::object vel, nb::object dep, nb::object inv,
+           nb::object nwp, nb::object ra, double av, double cf) {
+            PyObject* r = apply_centrifugal_velocity_mc2_object(
+                pos.ptr(), vel.ptr(), dep.ptr(), inv.ptr(), nwp.ptr(), ra.ptr(), av, cf);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("velocities"), nb::arg("depths"), nb::arg("inv_masses"),
+        nb::arg("now_world_position"), nb::arg("rotation_axis"),
+        nb::arg("angular_velocity"), nb::arg("centrifugal"),
         "Apply MC2 centrifugal velocity in-place.");
     m.def("calculate_display_positions_mc2",
-        object_binding<calculate_display_positions_mc2_object,
-                       nb::object, nb::object, nb::object, nb::object, double, double>(),
-        nb::arg("positions"),
-        nb::arg("real_velocities"),
-        nb::arg("root_indices"),
-        nb::arg("display_positions"),
-        nb::arg("frame_dt"),
-        nb::arg("max_distance_ratio"),
+        [](nb::object pos, nb::object rvel, nb::object ri, nb::object dp, double fdt, double mdr) {
+            PyObject* r = calculate_display_positions_mc2_object(
+                pos.ptr(), rvel.ptr(), ri.ptr(), dp.ptr(), fdt, mdr);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("positions"), nb::arg("real_velocities"), nb::arg("root_indices"),
+        nb::arg("display_positions"), nb::arg("frame_dt"), nb::arg("max_distance_ratio"),
         "Calculate MC2 display future prediction in-place.");
+    // ---- MC2 网格布料大函数 ----
     m.def("solve_meshcloth_mc2",
-        legacy_tuple_binding<solve_meshcloth_mc2,
-                             HOTOOLS_NB_O50, HOTOOLS_NB_O40, O, O, O>(),
+        [](nb::args a) { call_legacy(solve_meshcloth_mc2, a); },
         "Solve one MC2 MeshCloth array frame in-place.");
     m.def("solve_meshcloth_mc2_context",
-        legacy_tuple_binding<hotools::solve_meshcloth_mc2_context,
-                             HOTOOLS_NB_O50, HOTOOLS_NB_O10, HOTOOLS_NB_O5, O, O, O, O>(),
+        [](nb::args a) { call_legacy(hotools::solve_meshcloth_mc2_context, a); },
         "Solve one MC2 MeshCloth frame using a native context for static arrays.");
     m.def("solve_meshcloth_mc2_context_cached_params",
-        legacy_tuple_binding<hotools::solve_meshcloth_mc2_context_cached_params,
-                             HOTOOLS_NB_O50, HOTOOLS_NB_O5, O, O, O>(),
+        [](nb::args a) { call_legacy(hotools::solve_meshcloth_mc2_context_cached_params, a); },
         "Solve one MC2 MeshCloth frame using native context static and parameter arrays.");
+
+    // ---- 骨骼布料 IO ----
     m.def("solve_mc2_bonecloth_io",
-        object_binding<solve_mc2_bonecloth_io_object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, nb::object, nb::object, nb::object, nb::object,
-                       nb::object, double, double, double, double>(),
-        nb::arg("world_rotations"),
-        nb::arg("display_positions"),
-        nb::arg("base_positions"),
-        nb::arg("base_rotations"),
-        nb::arg("vertex_local_positions"),
-        nb::arg("vertex_local_rotations"),
-        nb::arg("parent_indices"),
-        nb::arg("baseline_start"),
-        nb::arg("baseline_count"),
-        nb::arg("baseline_data"),
-        nb::arg("attributes"),
-        nb::arg("rotational_interpolation"),
-        nb::arg("blend_weight"),
-        nb::arg("anime_ratio"),
-        nb::arg("root_rotation"),
+        [](nb::object wr, nb::object dp, nb::object bp, nb::object br,
+           nb::object vlp, nb::object vlr, nb::object pi, nb::object bstart,
+           nb::object bc, nb::object bd, nb::object attr,
+           double ri, double bw, double ar, double rr) {
+            PyObject* r = solve_mc2_bonecloth_io_object(
+                wr.ptr(), dp.ptr(), bp.ptr(), br.ptr(), vlp.ptr(), vlr.ptr(),
+                pi.ptr(), bstart.ptr(), bc.ptr(), bd.ptr(), attr.ptr(),
+                ri, bw, ar, rr);
+            if (!r) throw nb::python_error();
+            Py_DECREF(r);
+        },
+        nb::arg("world_rotations"), nb::arg("display_positions"),
+        nb::arg("base_positions"), nb::arg("base_rotations"),
+        nb::arg("vertex_local_positions"), nb::arg("vertex_local_rotations"),
+        nb::arg("parent_indices"), nb::arg("baseline_start"),
+        nb::arg("baseline_count"), nb::arg("baseline_data"), nb::arg("attributes"),
+        nb::arg("rotational_interpolation"), nb::arg("blend_weight"),
+        nb::arg("anime_ratio"), nb::arg("root_rotation"),
         "Compute MC2 BoneCloth chain-propagated world rotations in-place.");
 }
-
-#undef HOTOOLS_NB_O5
-#undef HOTOOLS_NB_O10
-#undef HOTOOLS_NB_O20
-#undef HOTOOLS_NB_O30
-#undef HOTOOLS_NB_O40
-#undef HOTOOLS_NB_O50
