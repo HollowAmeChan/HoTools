@@ -4225,85 +4225,136 @@ class _SpringBoneVRM:
         )
 
 
+# TODO(batch-backend): 将多骨架解算提升到 C++ 层真正批量处理
+#   当前是逐骨架串行分发，性能瓶颈在骨架数量很大（20+）且需要跨骨架内碰撞时才会显现。
+#   改动要点：
+#   1. solve_spring_bone_vrm_cpp 签名改为接受 armature_world_per_bone (N,16) 和
+#      armature_world_inv_per_bone (N,16)，替换单骨架的两个 4x4 矩阵。
+#   2. 自碰撞过滤从"属于本骨架"改为按 armature_id_per_bone (N,) 匹配，
+#      否则骨架 A 的骨骼会错误排除骨架 B 的碰撞体。
+#   3. hotools_native 侧对应增加批量接口，Python 桥接层打包多骨架数组后一次调用。
 def _run_spring_bone_vrm_node(
     backend_tag: str,
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     vrm_chain_settings: list[typing.Any],
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
     debug_output: bool = False,
-) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
-    return _SpringBoneVRM.run(
-        backend_tag=backend_tag,
-        cache_state=cache_state,
-        armature_obj=armature_obj,
-        vrm_chain_settings=vrm_chain_settings,
-        scene=scene,
-        enabled=enabled,
-        reset=reset,
-        substeps=substeps,
-        debug_output=debug_output,
-    )
+) -> tuple[_OmniCache, list[_OmniBone], list[bpy.types.Object], int, int]:
+    """
+    多骨架批量弹簧骨解算入口。
+
+    从 vrm_chain_settings 自动提取所有涉及的骨架并按出现顺序去重，
+    对每个骨架独立调用 _SpringBoneVRM.run()，共享同一个节点缓存入口。
+    缓存结构：{"armatures": {arm_name_full: per_arm_cache, ...}}
+    """
+    # 从 vrm_chain_settings 展平并按骨架分组，保持出现顺序
+    flat_settings = _BonePhysics.flatten_vrm_spring_bone_chain_settings(vrm_chain_settings)
+    armature_order: list[int] = []
+    armature_settings_map: dict[int, tuple[bpy.types.Object, list]] = {}
+    for setting in flat_settings:
+        arm = setting.get("armature")
+        if arm is None:
+            continue
+        key = int(arm.as_pointer())
+        if key not in armature_settings_map:
+            armature_settings_map[key] = (arm, [])
+            armature_order.append(key)
+        armature_settings_map[key][1].append(setting)
+
+    # 提取各骨架子缓存；兼容旧的单骨架缓存（不含 "armatures" 键时视为空）
+    if isinstance(cache_state, dict) and "armatures" in cache_state:
+        armature_caches: dict = cache_state["armatures"]
+    else:
+        armature_caches = {}
+
+    all_affected_bones: list = []
+    all_armatures: list[bpy.types.Object] = []
+    total_chains = 0
+    total_colliders = 0
+    next_armature_caches: dict = {}
+
+    for key in armature_order:
+        arm_obj, arm_settings = armature_settings_map[key]
+        arm_name = arm_obj.name_full
+        arm_cache = armature_caches.get(arm_name)
+
+        next_cache, affected_bones, _arm, chains, colliders = _SpringBoneVRM.run(
+            backend_tag=backend_tag,
+            cache_state=arm_cache,
+            armature_obj=arm_obj,
+            vrm_chain_settings=arm_settings,
+            scene=scene,
+            enabled=enabled,
+            reset=reset,
+            substeps=substeps,
+            debug_output=debug_output,
+        )
+        next_armature_caches[arm_name] = next_cache
+        all_affected_bones.extend(affected_bones)
+        all_armatures.append(arm_obj)
+        total_chains += chains
+        total_colliders += colliders
+
+    combined_cache = _OmniCache(_as_cache_owner({"armatures": next_armature_caches}))
+    return combined_cache, all_affected_bones, all_armatures, total_chains, total_colliders
 
 @omni(
     enable=True,
-    bl_label="弹簧骨-VRM",
-    base_color=_Color.colorCat["Operator"],
+    bl_label=”弹簧骨-VRM”,
+    base_color=_Color.colorCat[“Operator”],
     is_output_node=False,
     _INPUT_NAME=[
-        "缓存",
-        "骨架",
-        "VRM链设置",
-        "场景",
-        "启用",
-        "重置",
-        "子步数",
-        "调试输出",
+        “缓存”,
+        “VRM链设置”,
+        “场景”,
+        “启用”,
+        “重置”,
+        “子步数”,
+        “调试输出”,
     ],
     input_init={
-        "substeps": {"min_value": 1, "max_value": 16},
-        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
+        “substeps”: {“min_value”: 1, “max_value”: 16},
+        “debug_output”: {“description”: “开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。”},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
-    _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
-    omni_description="""
-    骨架级 VRM SpringBone 解算器，统一处理多条骨链的弹簧、重力、碰撞和姿态写回。
+    _OUTPUT_NAME=[“缓存”, “骨骼”, “骨架列表”, “链数量”, “碰撞体数量”],
+    omni_description=”””
+    多骨架批量 VRM SpringBone 解算器，自动从 VRM链设置 中提取所有涉及的骨架并分别解算。
 
     接法：
-    1. 缓存读取节点接到本节点“缓存”，本节点输出“缓存”再接缓存写入节点。
-    2. 一个 Armature 接一个“弹簧骨-VRM”；多条“弹簧骨-VRM链设置”直接接到“VRM链设置”多重输入。
+    1. 缓存读取节点接到本节点”缓存”，本节点输出”缓存”再接缓存写入节点。
+    2. 来自任意多个骨架的”弹簧骨-VRM链设置”直接接到”VRM链设置”多重输入，无需额外指定骨架。
     3. 场景直接作为唯一的外部碰撞来源；解算器会在内部枚举可见 Object.hotools_object_collision 和 Armature Bone.hotools_collision 生成碰撞快照。
 
     运行规则：
-    解算器会按 root 名排序设置，拒绝重复 root 或重复模拟同一根骨骼。
-    缓存只保存这个骨架的 VRM SpringBone 状态，拓扑变化或打开“重置”时会重建状态。
+    解算器按链设置中出现的顺序对每个骨架独立维护缓存和解算状态，多骨架共享同一节点缓存入口。
+    每个骨架按 root 名排序设置，拒绝重复 root 或重复模拟同一根骨骼。
+    缓存按骨架 name_full 分区存储，拓扑变化或打开”重置”时对该骨架重建状态。
     当前消费类型：SPHERE、CAPSULE。球体读取 radius、offset、primary_collision_group；胶囊额外读取 length，并沿局部 Y 轴生成线段。
     模拟骨骼自身的 hit radius 和 collided_by_groups 来自该骨骼 hotools_collision；外部被动碰撞体来自场景快照。
-    链 root 由骨骼输入解析得到，恒为硬 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）只在 cache 重建时读取，模拟中修改不会立即生效。
+    链 root 恒为硬 Pin；非 root 骨骼的 Pin 属性（hotools_collision.pin）只在 cache 重建时读取，模拟中修改不会立即生效。
     检测到跳帧或倒放时会先恢复初始姿态，并输出空缓存，让缓存写入节点清掉旧速度。
-    同一帧同一骨架只允许一个不同配置的解算器写入，避免多个节点互相覆盖姿态。
 
-    输出“骨骼”是受影响的模拟骨集合，可继续接到“骨骼姿态K帧”。
-    “链数量”和“碰撞体数量”用于快速确认本帧实际参与解算的数据规模。
-    """,
+    输出”骨骼”是所有骨架中受影响的模拟骨集合，可继续接到”骨骼姿态K帧”。
+    “骨架列表”是本帧参与解算的骨架对象列表。
+    “链数量”和”碰撞体数量”是所有骨架的汇总值，用于快速确认本帧实际参与解算的数据规模。
+    “””,
 )
 def springBoneVRM(
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     vrm_chain_settings: list[typing.Any],
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
     debug_output: bool = False,
-) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
+) -> tuple[_OmniCache, list[_OmniBone], list[bpy.types.Object], int, int]:
     return _run_spring_bone_vrm_node(
-        backend_tag="py",
+        backend_tag=”py”,
         cache_state=cache_state,
-        armature_obj=armature_obj,
         vrm_chain_settings=vrm_chain_settings,
         scene=scene,
         enabled=enabled,
@@ -4315,49 +4366,46 @@ def springBoneVRM(
 
 @omni(
     enable=True,
-    bl_label="弹簧骨-VRM-CPP",
-    base_color=_Color.colorCat["Operator"],
+    bl_label=”弹簧骨-VRM-CPP”,
+    base_color=_Color.colorCat[“Operator”],
     is_output_node=False,
     _INPUT_NAME=[
-        "缓存",
-        "骨架",
-        "VRM链设置",
-        "场景",
-        "启用",
-        "重置",
-        "子步数",
-        "调试输出",
+        “缓存”,
+        “VRM链设置”,
+        “场景”,
+        “启用”,
+        “重置”,
+        “子步数”,
+        “调试输出”,
     ],
     input_init={
-        "substeps": {"min_value": 1, "max_value": 16},
-        "debug_output": {"description": "开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。"},
+        “substeps”: {“min_value”: 1, “max_value”: 16},
+        “debug_output”: {“description”: “开启后按 MC2 风格在控制台打印本节点各阶段平均耗时。”},
     },
     omni_presets=_SPRING_BONE_VRM_PRESETS,
-    _OUTPUT_NAME=["缓存", "骨骼", "骨架", "链数量", "碰撞体数量"],
-    omni_description="""
-    “弹簧骨-VRM”的 C++ 后端版本。
+    _OUTPUT_NAME=[“缓存”, “骨骼”, “骨架列表”, “链数量”, “碰撞体数量”],
+    omni_description=”””
+    “弹簧骨-VRM”的 C++ 后端版本，同样支持多骨架批量解算。
 
-    注意:由于数据交互传输开销，C++后端在最简场景中会比 Python 后端慢，但是有复杂碰撞存在时可能会更有优势
-    具体选择需要自行通过打开tree的debug运行时长查看，对比开销选择合适的后端
+    注意：由于数据交互传输开销，C++ 后端在最简场景中会比 Python 后端慢，但在碰撞复杂时可能更有优势。
+    具体选择需要自行通过打开 tree 的 debug 运行时长查看，对比开销选择合适的后端。
 
     节点输入、输出、缓存协议、跳帧规则和姿态写回方式与 Python 版保持一致。
     Python 层只负责收集 Blender 数据、维护 cache、生成 native 数组和写回 PoseBone；弹簧积分、长度约束、碰撞投影和子步循环由 hotools_native 执行。
-    """,
+    “””,
 )
 def springBoneVRM_CPP(
     cache_state: _OmniCache,
-    armature_obj: bpy.types.Object,
     vrm_chain_settings: list[typing.Any],
     scene: bpy.types.Scene = None,
     enabled: bool = True,
     reset: bool = False,
     substeps: int = 1,
     debug_output: bool = False,
-) -> tuple[_OmniCache, list[_OmniBone], bpy.types.Object, int, int]:
+) -> tuple[_OmniCache, list[_OmniBone], list[bpy.types.Object], int, int]:
     return _run_spring_bone_vrm_node(
-        backend_tag="cpp",
+        backend_tag=”cpp”,
         cache_state=cache_state,
-        armature_obj=armature_obj,
         vrm_chain_settings=vrm_chain_settings,
         scene=scene,
         enabled=enabled,
