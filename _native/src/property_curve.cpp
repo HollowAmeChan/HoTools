@@ -948,14 +948,9 @@ std::array<double, 4> sample_color_curve_value(const ColorCurveData& curve, doub
 
 }  // namespace
 
-PyObject* compile_property_float_curve(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 1) {
-        PyErr_SetString(PyExc_TypeError, "compile_property_float_curve expects 1 argument");
-        return nullptr;
-    }
-
+PyObject* compile_property_float_curve_object(PyObject* payload) {
     FloatCurveData* curve = new FloatCurveData();
-    if (!build_float_curve_from_object(PyTuple_GET_ITEM(args, 0), curve)) {
+    if (!build_float_curve_from_object(payload, curve)) {
         delete curve;
         return nullptr;
     }
@@ -968,14 +963,9 @@ PyObject* compile_property_float_curve(PyObject*, PyObject* args) {
     return capsule;
 }
 
-PyObject* compile_property_color_curve(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 1) {
-        PyErr_SetString(PyExc_TypeError, "compile_property_color_curve expects 1 argument");
-        return nullptr;
-    }
-
+PyObject* compile_property_color_curve_object(PyObject* payload) {
     ColorCurveData* curve = new ColorCurveData();
-    if (!build_color_curve_from_object(PyTuple_GET_ITEM(args, 0), curve)) {
+    if (!build_color_curve_from_object(payload, curve)) {
         delete curve;
         return nullptr;
     }
@@ -988,70 +978,36 @@ PyObject* compile_property_color_curve(PyObject*, PyObject* args) {
     return capsule;
 }
 
-PyObject* sample_property_float_curve(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_float_curve expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_float_curve_object(PyObject* curve_object, double position, PyObject* extend_object) {
     FloatCurveData temp_curve;
     const FloatCurveData* curve = nullptr;
-    if (!resolve_float_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_float_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    const double position = as_double(PyTuple_GET_ITEM(args, 1), "position");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
-    PyObject* extend_object = PyTuple_GET_ITEM(args, 2);
     const double value = sample_float_curve_value(*curve, position, extend_object);
     return PyFloat_FromDouble(value);
 }
 
-PyObject* sample_property_color_curve(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_color_curve expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_color_curve_object(PyObject* curve_object, double position, PyObject* extend_object) {
     ColorCurveData temp_curve;
     const ColorCurveData* curve = nullptr;
-    if (!resolve_color_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_color_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    const double position = as_double(PyTuple_GET_ITEM(args, 1), "position");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
-    const std::array<double, 4> value = sample_color_curve_value(*curve, position, PyTuple_GET_ITEM(args, 2));
+    const std::array<double, 4> value = sample_color_curve_value(*curve, position, extend_object);
     return Py_BuildValue("(dddd)", value[0], value[1], value[2], value[3]);
 }
 
-PyObject* sample_property_float_curve_many(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_float_curve_many expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_float_curve_many_object(PyObject* curve_object, int sample_count, PyObject* extend_object) {
     FloatCurveData temp_curve;
     const FloatCurveData* curve = nullptr;
-    if (!resolve_float_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_float_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    const long count = as_long(PyTuple_GET_ITEM(args, 1), "count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const int sample_count = std::max(1, static_cast<int>(count));
-    PyObject* extend_object = PyTuple_GET_ITEM(args, 2);
+    sample_count = std::max(1, sample_count);
 
     PyObject* list = PyList_New(sample_count);
     if (list == nullptr) {
@@ -1092,25 +1048,14 @@ PyObject* sample_property_float_curve_many(PyObject*, PyObject* args) {
     return list;
 }
 
-PyObject* sample_property_color_curve_many(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_color_curve_many expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_color_curve_many_object(PyObject* curve_object, int sample_count, PyObject* extend_object) {
     ColorCurveData temp_curve;
     const ColorCurveData* curve = nullptr;
-    if (!resolve_color_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_color_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    const long count = as_long(PyTuple_GET_ITEM(args, 1), "count");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const int sample_count = std::max(1, static_cast<int>(count));
-    PyObject* extend_object = PyTuple_GET_ITEM(args, 2);
+    sample_count = std::max(1, sample_count);
 
     PyObject* list = PyList_New(sample_count);
     if (list == nullptr) {
@@ -1154,27 +1099,19 @@ PyObject* sample_property_color_curve_many(PyObject*, PyObject* args) {
     return list;
 }
 
-PyObject* sample_property_float_curve_positions(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_float_curve_positions expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_float_curve_positions_object(PyObject* curve_object, PyObject* positions_object, PyObject* extend_object) {
     FloatCurveData temp_curve;
     const FloatCurveData* curve = nullptr;
-    if (!resolve_float_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_float_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    PyObject* positions_object = PyTuple_GET_ITEM(args, 1);
     PyObject* sequence = PySequence_Fast(positions_object, nullptr);
     if (sequence == nullptr) {
         PyErr_SetString(PyExc_TypeError, "positions must be a sequence");
         return nullptr;
     }
 
-    PyObject* extend_object = PyTuple_GET_ITEM(args, 2);
     const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
     PyObject* list = PyList_New(size);
     if (list == nullptr) {
@@ -1211,27 +1148,19 @@ PyObject* sample_property_float_curve_positions(PyObject*, PyObject* args) {
     return list;
 }
 
-PyObject* sample_property_color_curve_positions(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 3;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "sample_property_color_curve_positions expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* sample_property_color_curve_positions_object(PyObject* curve_object, PyObject* positions_object, PyObject* extend_object) {
     ColorCurveData temp_curve;
     const ColorCurveData* curve = nullptr;
-    if (!resolve_color_curve_object(PyTuple_GET_ITEM(args, 0), &temp_curve, &curve)) {
+    if (!resolve_color_curve_object(curve_object, &temp_curve, &curve)) {
         return nullptr;
     }
 
-    PyObject* positions_object = PyTuple_GET_ITEM(args, 1);
     PyObject* sequence = PySequence_Fast(positions_object, nullptr);
     if (sequence == nullptr) {
         PyErr_SetString(PyExc_TypeError, "positions must be a sequence");
         return nullptr;
     }
 
-    PyObject* extend_object = PyTuple_GET_ITEM(args, 2);
     const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
     PyObject* list = PyList_New(size);
     if (list == nullptr) {
@@ -1268,5 +1197,101 @@ PyObject* sample_property_color_curve_positions(PyObject*, PyObject* args) {
 
     Py_DECREF(sequence);
     return list;
+}
+
+PyObject* compile_property_float_curve(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "compile_property_float_curve expects 1 argument");
+        return nullptr;
+    }
+    return compile_property_float_curve_object(PyTuple_GET_ITEM(args, 0));
+}
+
+PyObject* compile_property_color_curve(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "compile_property_color_curve expects 1 argument");
+        return nullptr;
+    }
+    return compile_property_color_curve_object(PyTuple_GET_ITEM(args, 0));
+}
+
+PyObject* sample_property_float_curve(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_float_curve expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const double position = as_double(PyTuple_GET_ITEM(args, 1), "position");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    return sample_property_float_curve_object(
+        PyTuple_GET_ITEM(args, 0), position, PyTuple_GET_ITEM(args, 2));
+}
+
+PyObject* sample_property_color_curve(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_color_curve expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const double position = as_double(PyTuple_GET_ITEM(args, 1), "position");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    return sample_property_color_curve_object(
+        PyTuple_GET_ITEM(args, 0), position, PyTuple_GET_ITEM(args, 2));
+}
+
+PyObject* sample_property_float_curve_many(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_float_curve_many expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const long count = as_long(PyTuple_GET_ITEM(args, 1), "count");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    return sample_property_float_curve_many_object(
+        PyTuple_GET_ITEM(args, 0), static_cast<int>(count), PyTuple_GET_ITEM(args, 2));
+}
+
+PyObject* sample_property_color_curve_many(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_color_curve_many expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    const long count = as_long(PyTuple_GET_ITEM(args, 1), "count");
+    if (PyErr_Occurred()) {
+        return nullptr;
+    }
+    return sample_property_color_curve_many_object(
+        PyTuple_GET_ITEM(args, 0), static_cast<int>(count), PyTuple_GET_ITEM(args, 2));
+}
+
+PyObject* sample_property_float_curve_positions(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_float_curve_positions expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+    return sample_property_float_curve_positions_object(
+        PyTuple_GET_ITEM(args, 0), PyTuple_GET_ITEM(args, 1), PyTuple_GET_ITEM(args, 2));
+}
+
+PyObject* sample_property_color_curve_positions(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 3;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "sample_property_color_curve_positions expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+    return sample_property_color_curve_positions_object(
+        PyTuple_GET_ITEM(args, 0), PyTuple_GET_ITEM(args, 1), PyTuple_GET_ITEM(args, 2));
 }
 }  // namespace hotools

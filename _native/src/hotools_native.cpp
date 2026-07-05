@@ -34,6 +34,13 @@ nb::object call_legacy_varargs(LegacyPyFunc function, nb::args args) {
     return nb::steal<nb::object>(result);
 }
 
+nb::object steal_or_throw(PyObject* result) {
+    if (result == nullptr) {
+        throw nb::python_error();
+    }
+    return nb::steal<nb::object>(result);
+}
+
 void def_legacy(nb::module_& module, const char* name, LegacyPyFunc function, const char* doc) {
     module.def(name, [function](nb::args args) {
         return call_legacy_varargs(function, args);
@@ -2251,22 +2258,36 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
 NB_MODULE(hotools_native, m) {
     m.doc() = "Native acceleration backend for HoTools (nanobind module shell).";
 
-    def_legacy(m, "compile_property_float_curve", hotools::compile_property_float_curve,
-        "Compile a float curve payload into a native capsule.");
-    def_legacy(m, "compile_property_color_curve", hotools::compile_property_color_curve,
-        "Compile a color curve payload into a native capsule.");
-    def_legacy(m, "sample_property_float_curve", hotools::sample_property_float_curve,
-        "Sample a native float curve or payload at one position.");
-    def_legacy(m, "sample_property_color_curve", hotools::sample_property_color_curve,
-        "Sample a native color curve or payload at one position.");
-    def_legacy(m, "sample_property_float_curve_many", hotools::sample_property_float_curve_many,
-        "Sample a native float curve or payload at evenly spaced positions.");
-    def_legacy(m, "sample_property_color_curve_many", hotools::sample_property_color_curve_many,
-        "Sample a native color curve or payload at evenly spaced positions.");
-    def_legacy(m, "sample_property_float_curve_positions", hotools::sample_property_float_curve_positions,
-        "Sample a native float curve or payload at explicit positions.");
-    def_legacy(m, "sample_property_color_curve_positions", hotools::sample_property_color_curve_positions,
-        "Sample a native color curve or payload at explicit positions.");
+    m.def("compile_property_float_curve", [](nb::object payload) {
+        return steal_or_throw(hotools::compile_property_float_curve_object(payload.ptr()));
+    }, nb::arg("payload"), "Compile a float curve payload into a native capsule.");
+    m.def("compile_property_color_curve", [](nb::object payload) {
+        return steal_or_throw(hotools::compile_property_color_curve_object(payload.ptr()));
+    }, nb::arg("payload"), "Compile a color curve payload into a native capsule.");
+    m.def("sample_property_float_curve", [](nb::object curve, double position, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_float_curve_object(curve.ptr(), position, extend.ptr()));
+    }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+       "Sample a native float curve or payload at one position.");
+    m.def("sample_property_color_curve", [](nb::object curve, double position, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_color_curve_object(curve.ptr(), position, extend.ptr()));
+    }, nb::arg("curve"), nb::arg("position"), nb::arg("extend").none(),
+       "Sample a native color curve or payload at one position.");
+    m.def("sample_property_float_curve_many", [](nb::object curve, int count, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_float_curve_many_object(curve.ptr(), count, extend.ptr()));
+    }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+       "Sample a native float curve or payload at evenly spaced positions.");
+    m.def("sample_property_color_curve_many", [](nb::object curve, int count, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_color_curve_many_object(curve.ptr(), count, extend.ptr()));
+    }, nb::arg("curve"), nb::arg("count"), nb::arg("extend").none(),
+       "Sample a native color curve or payload at evenly spaced positions.");
+    m.def("sample_property_float_curve_positions", [](nb::object curve, nb::object positions, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_float_curve_positions_object(curve.ptr(), positions.ptr(), extend.ptr()));
+    }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+       "Sample a native float curve or payload at explicit positions.");
+    m.def("sample_property_color_curve_positions", [](nb::object curve, nb::object positions, nb::object extend) {
+        return steal_or_throw(hotools::sample_property_color_curve_positions_object(curve.ptr(), positions.ptr(), extend.ptr()));
+    }, nb::arg("curve"), nb::arg("positions"), nb::arg("extend").none(),
+       "Sample a native color curve or payload at explicit positions.");
     def_legacy(m, "solve_mesh_shape_key_xpbd", solve_mesh_shape_key_xpbd,
         "Solve one mesh shape-key XPBD step in-place.");
     def_legacy(m, "solve_spring_bone_vrm_cpp", solve_spring_bone_vrm_cpp,
