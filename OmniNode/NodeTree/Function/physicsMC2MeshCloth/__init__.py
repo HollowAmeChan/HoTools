@@ -11,7 +11,7 @@ from ...OmniNodeSocketMapping import _OmniCache, _OmniFloatCurve
 from .. import _Color
 from .runtime.controller import run_mesh_cloth_mc2_node as _run_mesh_cloth_mc2_node
 from .constants import MC2SystemConstants
-from .presets import MC2_MESH_CLOTH_PRESETS
+from .presets import MC2_MESH_CLOTH_SETTING_PRESETS, MC2_MESH_CLOTH_SOLVER_PRESETS
 
 
 def _mc2_curve_multiplier(value: float = 1.0, interpolation: str = "LINEAR", extend: str = "CLAMP") -> dict:
@@ -102,6 +102,7 @@ def _mesh_objects_from_input(values) -> list[bpy.types.Object]:
         "teleport_rotation": {"min_value": 0.0},
         "time_scale": {"min_value": 0.0, "max_value": 1.0},
     },
+    omni_presets=MC2_MESH_CLOTH_SOLVER_PRESETS,
     _OUTPUT_NAME=["缓存", "低模代理", "顶点数", "约束数"],
     omni_description="""
     MC2 网格布料解算器（模拟级参数）。
@@ -248,7 +249,7 @@ def meshClothMC2(
         "collider_friction":{"min_value": 0.0, "max_value": 0.5},
         "collider_collision_mode": {"min_value": 0, "max_value": 2, "description": "0=关闭 1=点碰撞 2=边碰撞"},
     },
-    omni_presets=MC2_MESH_CLOTH_PRESETS,
+    omni_presets=MC2_MESH_CLOTH_SETTING_PRESETS,
     _OUTPUT_NAME=["网格布料设置"],
     omni_description="""
     网格布料物理参数设置节点。

@@ -161,6 +161,7 @@ def _constraint(data, key) -> dict:
 
 def _convert_preset(label: str, source: dict) -> dict:
     damping = _constraint(source, "damping")
+    radius = _constraint(source, "radius")
     inertia = _constraint(source, "inertiaConstraint")
     tether = _constraint(source, "tetherConstraint")
     distance = _constraint(source, "distanceConstraint")
@@ -213,6 +214,7 @@ def _convert_preset(label: str, source: dict) -> dict:
         "angle_limit": _curve_value(angle_limit_value, 0.0),
         "angle_limit_curve": _curve_payload(angle_limit_value),
         "angle_limit_stiffness": _float(angle_limit.get("stiffness"), 1.0),
+        "collision_radius": _curve_value(radius, 0.0),
         "anchor_inertia": _float(inertia.get("anchorInertia"), MC2SystemConstants.ANCHOR_INERTIA),
         "world_inertia": _float(inertia.get("worldInertia"), MC2SystemConstants.WORLD_INERTIA),
         "movement_inertia_smoothing": _float(
@@ -273,6 +275,81 @@ def _convert_preset(label: str, source: dict) -> dict:
     }
 
 
+_SETTING_PRESET_KEYS = {
+    "enabled",
+    "blend_weight",
+    "damping",
+    "damping_curve",
+    "use_tether",
+    "tether_compression",
+    "use_distance",
+    "distance_stiffness",
+    "distance_stiffness_curve",
+    "use_bend",
+    "bend_stiffness",
+    "bend_stiffness_curve",
+    "use_angle_restoration",
+    "angle_restoration_stiffness",
+    "angle_restoration_stiffness_curve",
+    "angle_restoration_velocity_attenuation",
+    "angle_restoration_velocity_attenuation_curve",
+    "angle_restoration_gravity_falloff",
+    "use_angle_limit",
+    "angle_limit",
+    "angle_limit_curve",
+    "angle_limit_stiffness",
+    "collision_radius",
+    "use_max_distance",
+    "max_distance",
+    "max_distance_curve",
+    "use_backstop",
+    "backstop_radius",
+    "backstop_distance",
+    "backstop_distance_curve",
+    "motion_stiffness",
+    "normal_axis",
+    "animation_pose_ratio",
+    "use_collider_collision",
+    "collider_friction",
+    "collider_collision_mode",
+}
+
+_SOLVER_PRESET_KEYS = {
+    "enabled",
+    "reset",
+    "gravity_dir",
+    "gravity_power",
+    "gravity_falloff",
+    "stablization_time_after_reset",
+    "anchor_inertia",
+    "world_inertia",
+    "movement_inertia_smoothing",
+    "local_inertia",
+    "depth_inertia",
+    "centrifugal",
+    "movement_speed_limit",
+    "rotation_speed_limit",
+    "local_movement_speed_limit",
+    "local_rotation_speed_limit",
+    "particle_speed_limit",
+    "teleport_mode",
+    "teleport_distance",
+    "teleport_rotation",
+}
+
+
+def _filter_preset_values(preset: dict, keys: set[str]) -> dict:
+    return {
+        "name": preset.get("name", ""),
+        "description": preset.get("description", ""),
+        "values": {
+            key: value
+            for key, value in (preset.get("values") or {}).items()
+            if key in keys
+        },
+    }
+
+
 def _load_source(filename: str) -> dict | None:
     path = _PRESET_DIR / filename
     try:
@@ -293,3 +370,11 @@ def _load_presets() -> tuple[dict, ...]:
 
 
 MC2_MESH_CLOTH_PRESETS = _load_presets()
+MC2_MESH_CLOTH_SETTING_PRESETS = tuple(
+    _filter_preset_values(preset, _SETTING_PRESET_KEYS)
+    for preset in MC2_MESH_CLOTH_PRESETS
+)
+MC2_MESH_CLOTH_SOLVER_PRESETS = tuple(
+    _filter_preset_values(preset, _SOLVER_PRESET_KEYS)
+    for preset in MC2_MESH_CLOTH_PRESETS
+)

@@ -11,6 +11,12 @@ import json
 import pathlib
 
 from ..physicsMC2MeshCloth.constants import MC2SystemConstants
+from ..physicsMC2MeshCloth.presets import (
+    _constraint,
+    _curve_payload,
+    _curve_value,
+    _unity_vector_to_blender,
+)
 
 _PRESET_DIR = pathlib.Path(__file__).parent.parent / "mc2_presets"
 
@@ -49,13 +55,6 @@ def _b(v, fb: bool = False) -> bool:
     return bool(v)
 
 
-def _cv(data, fb: float = 0.0) -> float:
-    """从 {value: X, useCurve: bool, curve: ...} 提取 scalar 值。"""
-    if isinstance(data, dict):
-        return _f(data.get("value"), fb)
-    return _f(data, fb)
-
-
 def _slider(data, fb: float) -> float:
     """use==false 时返回 -1（禁用哨兵值），对应 HoTools 的 -1 = 不限制。"""
     if not isinstance(data, dict):
@@ -67,27 +66,38 @@ def _slider(data, fb: float) -> float:
 
 def _convert_preset(label: str, source: dict) -> dict:
     """把 MC2 JSON 顶层 dict 转成 BoneCloth 节点的 preset values dict。"""
-    inertia = source.get("inertiaConstraint", {})
-    ar      = source.get("angleRestorationConstraint", {})
-    dist    = source.get("distanceConstraint", {})
-    bend    = source.get("triangleBendingConstraint", {})
-    tether  = source.get("tetherConstraint", {})
-    motion  = source.get("motionConstraint", {})
-    collider = source.get("colliderCollisionConstraint", {})
+    damping = _constraint(source, "damping")
+    inertia = _constraint(source, "inertiaConstraint")
+    ar = _constraint(source, "angleRestorationConstraint")
+    ar_stiffness = _constraint(ar, "stiffness") or _constraint(ar, "restorationStiffness")
+    angle_limit = _constraint(source, "angleLimitConstraint")
+    angle_limit_value = _constraint(angle_limit, "limitAngle")
+    dist = _constraint(source, "distanceConstraint")
+    dist_stiffness = _constraint(dist, "stiffness")
+    bend = _constraint(source, "triangleBendingConstraint")
+    tether = _constraint(source, "tetherConstraint")
+    motion = _constraint(source, "motionConstraint")
+    max_distance = _constraint(motion, "maxDistance")
+    backstop_distance = _constraint(motion, "backstopDistance")
+    collider = _constraint(source, "colliderCollisionConstraint")
     collider_mode = _i(collider.get("mode"), 0)
 
     return {
         "name": label,
         "values": {
             # ── 重力 ──────────────────────────────────────────────
+            "connection_mode": _i(source.get("connectionMode"), 1),
+            "gravity_dir": _unity_vector_to_blender(source.get("gravityDirection")),
             "gravity_power":  _f(source.get("gravity"), 9.8),
             "gravity_falloff": _f(source.get("gravityFalloff"), 0.0),
             # ── 基础 ──────────────────────────────────────────────
             "stablization_time_after_reset": _f(
                 source.get("stablizationTimeAfterReset"), 0.1,
             ),
+            "rotational_interpolation": _f(source.get("rotationalInterpolation"), 1.0),
             "blend_weight": _f(source.get("blendWeight"), 1.0),
-            "damping": _cv(source.get("damping"), 0.2),
+            "damping": _curve_value(damping, 0.2),
+            "damping_curve": _curve_payload(damping),
             # ── Tether ────────────────────────────────────────────
             "use_tether": "tetherConstraint" in source,
             "tether_compression": _f(
@@ -96,25 +106,30 @@ def _convert_preset(label: str, source: dict) -> dict:
             ),
             # ── Distance ──────────────────────────────────────────
             "use_distance": "distanceConstraint" in source,
-            "distance_stiffness": _cv(dist.get("stiffness"), 1.0),
+            "distance_stiffness": _curve_value(dist_stiffness, 1.0),
+            "distance_stiffness_curve": _curve_payload(dist_stiffness),
             # ── Bend ──────────────────────────────────────────────
             "use_bend": "triangleBendingConstraint" in source,
             "bend_stiffness": _f(bend.get("stiffness"), 0.5),
+            "bend_stiffness_curve": _curve_payload(None),
             # ── Angle restoration ─────────────────────────────────
-            "use_angle_restoration": _b(ar.get("useAngleRestoration"), False),
-            "angle_restoration_stiffness": _cv(ar.get("restorationStiffness"), 0.2),
+            "use_angle_restoration": _b(ar.get("useAngleRestoration"), True),
+            "angle_restoration_stiffness": _curve_value(ar_stiffness, 0.2),
+            "angle_restoration_stiffness_curve": _curve_payload(ar_stiffness),
             "angle_restoration_velocity_attenuation": _f(
                 ar.get("velocityAttenuation"),
                 MC2SystemConstants.ANGLE_RESTORATION_VELOCITY_ATTENUATION,
             ),
+            "angle_restoration_velocity_attenuation_curve": _curve_payload(None),
             "angle_restoration_gravity_falloff": _f(
                 ar.get("gravityFalloff"),
                 MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF,
             ),
             # ── Angle limit ───────────────────────────────────────
-            "use_angle_limit": _b(ar.get("useAngleLimit"), False),
-            "angle_limit": _cv(ar.get("limitAngle"), 0.0),
-            "angle_limit_stiffness": _f(ar.get("limitStiffness"), 1.0),
+            "use_angle_limit": _b(angle_limit.get("useAngleLimit"), False),
+            "angle_limit": _curve_value(angle_limit_value, 0.0),
+            "angle_limit_curve": _curve_payload(angle_limit_value),
+            "angle_limit_stiffness": _f(angle_limit.get("stiffness"), 1.0),
             # ── Inertia ───────────────────────────────────────────
             "anchor_inertia": _f(
                 inertia.get("anchorInertia"),
@@ -178,10 +193,12 @@ def _convert_preset(label: str, source: dict) -> dict:
             ),
             # ── Motion (max distance / backstop) ──────────────────
             "use_max_distance": _b(motion.get("useMaxDistance"), False),
-            "max_distance": _cv(motion.get("maxDistance"), 0.0),
+            "max_distance": _curve_value(max_distance, 0.0),
+            "max_distance_curve": _curve_payload(max_distance),
             "use_backstop": _b(motion.get("useBackstop"), False),
             "backstop_radius": _f(motion.get("backstopRadius"), 0.0),
-            "backstop_distance": _cv(motion.get("backstopDistance"), 0.0),
+            "backstop_distance": _curve_value(backstop_distance, 0.0),
+            "backstop_distance_curve": _curve_payload(backstop_distance),
             "motion_stiffness": _f(motion.get("stiffness"), 1.0),
             # ── 法线轴 ────────────────────────────────────────────
             "normal_axis": _i(source.get("normalAxis"), 1),
@@ -189,6 +206,80 @@ def _convert_preset(label: str, source: dict) -> dict:
             "use_collider_collision": collider_mode != 0,
             "collider_collision_mode": collider_mode,
             "collider_friction": _f(collider.get("friction"), 0.05),
+        },
+    }
+
+
+_CHAIN_PRESET_KEYS = {
+    "enabled",
+    "rotational_interpolation",
+    "blend_weight",
+    "damping",
+    "damping_curve",
+    "use_tether",
+    "tether_compression",
+    "use_distance",
+    "distance_stiffness",
+    "distance_stiffness_curve",
+    "use_bend",
+    "bend_stiffness",
+    "bend_stiffness_curve",
+    "use_angle_restoration",
+    "angle_restoration_stiffness",
+    "angle_restoration_stiffness_curve",
+    "angle_restoration_velocity_attenuation",
+    "angle_restoration_velocity_attenuation_curve",
+    "angle_restoration_gravity_falloff",
+    "use_angle_limit",
+    "angle_limit",
+    "angle_limit_curve",
+    "angle_limit_stiffness",
+    "use_max_distance",
+    "max_distance",
+    "max_distance_curve",
+    "use_backstop",
+    "backstop_radius",
+    "backstop_distance",
+    "backstop_distance_curve",
+    "motion_stiffness",
+    "normal_axis",
+    "animation_pose_ratio",
+    "use_collider_collision",
+    "collider_friction",
+    "collider_collision_mode",
+}
+
+_SOLVER_PRESET_KEYS = {
+    "connection_mode",
+    "gravity_dir",
+    "gravity_power",
+    "gravity_falloff",
+    "stablization_time_after_reset",
+    "anchor_inertia",
+    "world_inertia",
+    "movement_inertia_smoothing",
+    "local_inertia",
+    "depth_inertia",
+    "centrifugal",
+    "movement_speed_limit",
+    "rotation_speed_limit",
+    "local_movement_speed_limit",
+    "local_rotation_speed_limit",
+    "particle_speed_limit",
+    "teleport_mode",
+    "teleport_distance",
+    "teleport_rotation",
+}
+
+
+def _filter_preset_values(preset: dict, keys: set[str]) -> dict:
+    return {
+        "name": preset.get("name", ""),
+        "description": preset.get("description", ""),
+        "values": {
+            key: value
+            for key, value in (preset.get("values") or {}).items()
+            if key in keys
         },
     }
 
@@ -208,3 +299,11 @@ def _load_presets() -> list[dict]:
 
 
 BONE_CLOTH_PRESETS: list[dict] = _load_presets()
+BONE_CLOTH_CHAIN_PRESETS: list[dict] = [
+    _filter_preset_values(preset, _CHAIN_PRESET_KEYS)
+    for preset in BONE_CLOTH_PRESETS
+]
+BONE_CLOTH_SOLVER_PRESETS: list[dict] = [
+    _filter_preset_values(preset, _SOLVER_PRESET_KEYS)
+    for preset in BONE_CLOTH_PRESETS
+]

@@ -24,7 +24,7 @@ from ...OmniNodeSocketMapping import _OmniBone, _OmniCache, _OmniFloatCurve
 from .. import _Color
 from ..physicsMC2MeshCloth.constants import MC2SystemConstants
 from . import bone_build as _bone_build
-from .presets import BONE_CLOTH_PRESETS
+from .presets import BONE_CLOTH_CHAIN_PRESETS, BONE_CLOTH_SOLVER_PRESETS
 from .runtime.controller import run_bone_cloth_mc2_node as _run_bone_cloth_mc2_node
 
 
@@ -144,7 +144,7 @@ def _bone_socket_values_from_input(values) -> list[tuple[bpy.types.Object, str]]
             "description": "0=关闭 1=点碰撞 2=边碰撞"},
     },
     _OUTPUT_NAME=["骨链设置"],
-    omni_presets=BONE_CLOTH_PRESETS,
+    omni_presets=BONE_CLOTH_CHAIN_PRESETS,
     omni_description="""
     骨骼布料链设置 + 物理参数（合并节点，对齐 VRM SpringBone per-chain 参数设计）。
 
@@ -303,6 +303,7 @@ def boneClothMC2ChainPhysics(
             "description": "开启后，同一个骨骼布料节点参与解算的多个骨架会互相作为骨骼碰撞体。",
         },
     },
+    omni_presets=BONE_CLOTH_SOLVER_PRESETS,
     _OUTPUT_NAME=["缓存", "骨架列表", "骨骼数", "约束数"],
     omni_description="""
     MC2 骨骼布料解算器（模拟级参数），支持多骨架批量解算。
