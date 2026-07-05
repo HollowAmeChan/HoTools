@@ -3,7 +3,7 @@ import bpy
 import nodeitems_utils
 from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
-from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2MeshCloth,physicsMC2BoneCloth
+from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2MeshCloth,physicsMC2BoneCloth,Armature
 from .Function.physicsWorld import nodes as physicsWorld
 from .Function.physicsWorld.rigid import nodes as physicsWorldRigid
 from .GraphNode import CLS_GRAPH
@@ -21,6 +21,7 @@ node_cls_graph.extend(CLS_GRAPH)
 cls.extend(node_cls_graph)
 # Function生成节点
 node_cls_data = FunctionNodeCore.loadRegisterFuncNodes(Data)
+node_cls_armature = FunctionNodeCore.loadRegisterFuncNodes(Armature)
 node_cls_math = FunctionNodeCore.loadRegisterFuncNodes(Math)
 node_cls_operator = FunctionNodeCore.loadRegisterFuncNodes(Operator)
 node_cls_modifier = FunctionNodeCore.loadRegisterFuncNodes(Modifier)
@@ -40,6 +41,7 @@ node_cls_physics_bonecloth = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2Bo
 node_cls_physics_world = FunctionNodeCore.loadRegisterFuncNodes(physicsWorld)
 node_cls_physics_world_rigid = FunctionNodeCore.loadRegisterFuncNodes(physicsWorldRigid)
 cls.extend(node_cls_data)
+cls.extend(node_cls_armature)
 cls.extend(node_cls_math)
 cls.extend(node_cls_operator)
 cls.extend(node_cls_modifier)
@@ -65,6 +67,9 @@ node_categories = [
     ]),
     OmniNodeCategory("DATA", "Data", items=[
         NodeItem(i.bl_idname) for i in node_cls_data
+    ]),
+    OmniNodeCategory("ARMATURE", "Armature", items=[
+        NodeItem(i.bl_idname) for i in node_cls_armature
     ]),
     OmniNodeCategory("DATA_TYPECAST", "DataTypeCast", items=[
         NodeItem(i.bl_idname) for i in node_cls_datatypecast

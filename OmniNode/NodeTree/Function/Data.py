@@ -90,22 +90,6 @@ def _read_datablock_property(datablock, property_name: str):
         return None
 
 
-def _bone_socket_value(
-    armature_obj: bpy.types.Object,
-    bone_name: str,
-    collection_root: str = "",
-    collection_bones: list[str] = None,
-):
-    value = {
-        "armature": armature_obj,
-        "bone": bone_name,
-    }
-    if collection_root and collection_bones:
-        value["bone_collection_root"] = str(collection_root)
-        value["bone_collection"] = list(collection_bones)
-    return value
-
-
 def _resolve_bone_value(value):
     if not isinstance(value, dict):
         raise ValueError("bone input is empty or invalid")
@@ -121,25 +105,6 @@ def _resolve_bone_value(value):
         raise ValueError(f"bone not found: {bone_name}")
     return armature_obj, bone_name
 
-
-def _collect_bone_names(root_pose_bone, include_all_bones: bool) -> list[str]:
-    names: list[str] = []
-
-    if include_all_bones:
-        def visit(pose_bone):
-            names.append(pose_bone.name)
-            for child in list(getattr(pose_bone, "children", []) or []):
-                visit(child)
-
-        visit(root_pose_bone)
-        return names
-
-    pose_bone = root_pose_bone
-    while pose_bone is not None:
-        names.append(pose_bone.name)
-        children = list(getattr(pose_bone, "children", []) or [])
-        pose_bone = children[0] if children else None
-    return names
 
 @omni(enable=True,
       bl_label="颜色",
@@ -189,35 +154,10 @@ def stringInput(v: str) -> str:
       )
 def boneInput(v: _OmniBone) -> _OmniBone:
     armature_obj, bone_name = _resolve_bone_value(v)
-    return _bone_socket_value(armature_obj, bone_name)
-
-@omni(enable=True,
-      bl_label="从根获取骨骼",
-      base_color=_Color.colorCat["GetData"],
-      is_output_node=False,
-      _INPUT_NAME=["根骨骼", "包含全部骨"],
-      _OUTPUT_NAME=["骨骼"],
-      omni_description="""
-      从根骨骼收集一组 Bone socket 值。
-
-      “包含全部骨”开启时递归输出根骨下的全部子骨；关闭时遇到分叉只沿第一个子骨走到底。
-      输出仍是普通骨骼列表，物理节点如果需要链结构会在内部自行解释。
-      """,
-      )
-def bonesFromRoot(
-    root_bone: _OmniBone,
-    include_all_bones: bool = True,
-) -> list[_OmniBone]:
-    armature_obj, root_name = _resolve_bone_value(root_bone)
-    root_pose_bone = armature_obj.pose.bones.get(root_name)
-    if root_pose_bone is None:
-        raise ValueError(f"bone not found: {root_name}")
-
-    bone_names = _collect_bone_names(root_pose_bone, include_all_bones)
-    return [
-        _bone_socket_value(armature_obj, bone_name, root_name, bone_names)
-        for bone_name in bone_names
-    ]
+    return {
+        "armature": armature_obj,
+        "bone": bone_name,
+    }
 
 @omni(enable=True,
       bl_label="当前时间",
