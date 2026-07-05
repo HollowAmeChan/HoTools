@@ -1,6 +1,7 @@
 #include <Python.h>
 
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 
 #include "hotools_mc2.hpp"
 #include "hotools_mc2_bonecloth_io.hpp"
@@ -22,1088 +23,75 @@ namespace nb = nanobind;
 
 namespace {
 
-using namespace hotools::py;  // Buffer, expect_*, as_double, as_long
+using namespace hotools::py;  // Buffer, expect_*, as_double, as_long（solve_meshcloth_mc2 旧函数仍用）
 
-// nb::object 版本结果转换：nullptr → 抛出 python_error
+// ---------------------------------------------------------------------------
+// nanobind ndarray 类型别名（按可变/只读、维度、元素类型分类）
+// ---------------------------------------------------------------------------
+using f32_2d  = nb::ndarray<float,          nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using f32_1d  = nb::ndarray<float,          nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using cf32_2d = nb::ndarray<const float,    nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using cf32_1d = nb::ndarray<const float,    nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using ci32_2d = nb::ndarray<const int32_t,  nb::ndim<2>, nb::c_contig, nb::device::cpu>;
+using ci32_1d = nb::ndarray<const int32_t,  nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using cu8_1d  = nb::ndarray<const uint8_t,  nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+
+// ---------------------------------------------------------------------------
+// 旧式 PyObject* 函数辅助（property curve / tuple-args 大函数仍需）
+// ---------------------------------------------------------------------------
 nb::object steal_or_throw(PyObject* result) {
     if (result == nullptr) throw nb::python_error();
     return nb::steal<nb::object>(result);
 }
-
-// 对于接受 (PyObject*, PyObject* args) 的旧式函数，用 nb::args 直接传递
-// nb::args 在 nanobind 内部就是一个 Python tuple，ptr() 可直接传给旧函数
 inline void call_legacy(PyObject* (*fn)(PyObject*, PyObject*), nb::args a) {
     PyObject* r = fn(nullptr, a.ptr());
     if (!r) throw nb::python_error();
-    Py_DECREF(r);  // 函数返回 Py_None（已 INCREF），需要释放
+    Py_DECREF(r);
 }
 
-PyObject* project_neighbor_constraints_mc2_object(PyObject* positions_object,
-                                                  PyObject* inv_masses_object,
-                                                  PyObject* starts_object,
-                                                  PyObject* counts_object,
-                                                  PyObject* neighbors_object,
-                                                  PyObject* rest_lengths_object,
-                                                  PyObject* stiffness_values_object,
-                                                  PyObject* velocity_positions_object,
-                                                  double velocity_attenuation) {
-    Buffer positions;
-    Buffer inv_masses;
-    Buffer starts;
-    Buffer counts;
-    Buffer neighbors;
-    Buffer rest_lengths;
-    Buffer stiffness_values;
-    Buffer velocity_positions;
+// ---------------------------------------------------------------------------
+// ndarray 路径：nanobind 在调用边界已保证 dtype/ndim/contiguous
+// 以下辅助仅处理 nanobind 类型系统无法表达的语义约束
+// ---------------------------------------------------------------------------
 
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !starts.get(starts_object, PyBUF_FORMAT | PyBUF_ND, "starts") ||
-        !counts.get(counts_object, PyBUF_FORMAT | PyBUF_ND, "counts") ||
-        !neighbors.get(neighbors_object, PyBUF_FORMAT | PyBUF_ND, "neighbors") ||
-        !rest_lengths.get(rest_lengths_object, PyBUF_FORMAT | PyBUF_ND, "rest_lengths") ||
-        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
-        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                                "velocity_positions")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_int32_scalar_array(starts, "starts") ||
-        !expect_1d_array(starts, "starts", vertex_count) ||
-        !expect_int32_scalar_array(counts, "counts") ||
-        !expect_1d_array(counts, "counts", vertex_count) ||
-        !expect_int32_scalar_array(neighbors, "neighbors") ||
-        !expect_indices_in_range(neighbors, "neighbors", vertex_count) ||
-        !expect_float32(rest_lengths, "rest_lengths") ||
-        !expect_1d_array(rest_lengths, "rest_lengths", neighbors.view.shape[0]) ||
-        !expect_float32(stiffness_values, "stiffness_values") ||
-        !expect_1d_array(stiffness_values, "stiffness_values", vertex_count)) {
-        return nullptr;
-    }
-    hotools::Mc2NeighborConstraintView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.starts = static_cast<const std::int32_t*>(starts.view.buf);
-    view.counts = static_cast<const std::int32_t*>(counts.view.buf);
-    view.neighbors = static_cast<const std::int32_t*>(neighbors.view.buf);
-    view.rest_lengths = static_cast<const float*>(rest_lengths.view.buf);
-    view.stiffness_values = static_cast<const float*>(stiffness_values.view.buf);
-    view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.neighbor_count = static_cast<std::int64_t>(neighbors.view.shape[0]);
-    view.velocity_attenuation = static_cast<float>(velocity_attenuation);
-
-    hotools::project_neighbor_constraints_mc2(view);
-    Py_RETURN_NONE;
+// 检查 2D 数组第二维等于期望列数
+template<typename Arr>
+inline void check_cols(const Arr& arr, size_t expected, const char* name) {
+    if (static_cast<size_t>(arr.shape(1)) != expected)
+        throw nb::value_error((std::string(name) + " 列数错误").c_str());
+}
+// 检查数组行/元素数量
+inline void check_len(size_t actual, size_t expected, const char* name) {
+    if (actual != expected)
+        throw nb::value_error((std::string(name) + " 长度不匹配").c_str());
+}
+// 检查 int32 indices 都在 [0, vertex_count)
+inline void check_indices_in_range(const int32_t* data, size_t n, size_t vc, const char* name) {
+    for (size_t i = 0; i < n; ++i)
+        if (data[i] < 0 || static_cast<size_t>(data[i]) >= vc)
+            throw nb::value_error((std::string(name) + " 包含越界顶点索引").c_str());
+}
+// 检查 root indices 在 [-1, vertex_count)，-1 表示根节点
+inline void check_root_or_minus_one(const int32_t* data, size_t n, size_t vc, const char* name) {
+    for (size_t i = 0; i < n; ++i)
+        if (data[i] < -1 || (data[i] >= 0 && static_cast<size_t>(data[i]) >= vc))
+            throw nb::value_error((std::string(name) + " 包含越界 root 索引").c_str());
 }
 
-PyObject* project_tether_mc2_object(PyObject* positions_object,
-                                    PyObject* inv_masses_object,
-                                    PyObject* root_indices_object,
-                                    PyObject* root_rest_lengths_object,
-                                    PyObject* velocity_positions_object,
-                                    double stiffness,
-                                    double compression,
-                                    double stretch) {
-    Buffer positions;
-    Buffer inv_masses;
-    Buffer root_indices;
-    Buffer root_rest_lengths;
-    Buffer velocity_positions;
 
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !root_indices.get(root_indices_object, PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
-        !root_rest_lengths.get(root_rest_lengths_object, PyBUF_FORMAT | PyBUF_ND, "root_rest_lengths") ||
-        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                                "velocity_positions")) {
-        return nullptr;
-    }
 
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_int32_scalar_array(root_indices, "root_indices") ||
-        !expect_1d_array(root_indices, "root_indices", vertex_count) ||
-        !expect_root_indices_or_minus_one(root_indices, "root_indices", vertex_count) ||
-        !expect_float32(root_rest_lengths, "root_rest_lengths") ||
-        !expect_1d_array(root_rest_lengths, "root_rest_lengths", vertex_count)) {
-        return nullptr;
-    }
 
-    hotools::Mc2TetherConstraintView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.root_indices = static_cast<const std::int32_t*>(root_indices.view.buf);
-    view.root_rest_lengths = static_cast<const float*>(root_rest_lengths.view.buf);
-    view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.stiffness = static_cast<float>(stiffness);
-    view.compression = static_cast<float>(compression);
-    view.stretch = static_cast<float>(stretch);
 
-    hotools::project_tether_mc2(view);
-    Py_RETURN_NONE;
-}
 
-PyObject* project_motion_constraints_mc2_object(PyObject* positions_object,
-                                                PyObject* base_positions_object,
-                                                PyObject* base_rotations_object,
-                                                PyObject* inv_masses_object,
-                                                PyObject* max_distances_object,
-                                                PyObject* stiffness_values_object,
-                                                PyObject* backstop_radii_object,
-                                                PyObject* backstop_distances_object,
-                                                PyObject* velocity_positions_object,
-                                                int normal_axis) {
-    Buffer positions;
-    Buffer base_positions;
-    Buffer base_rotations;
-    Buffer inv_masses;
-    Buffer max_distances;
-    Buffer stiffness_values;
-    Buffer backstop_radii;
-    Buffer backstop_distances;
-    Buffer velocity_positions;
 
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(base_rotations_object, PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !max_distances.get(max_distances_object, PyBUF_FORMAT | PyBUF_ND, "max_distances") ||
-        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values") ||
-        !backstop_radii.get(backstop_radii_object, PyBUF_FORMAT | PyBUF_ND, "backstop_radii") ||
-        !backstop_distances.get(backstop_distances_object, PyBUF_FORMAT | PyBUF_ND, "backstop_distances") ||
-        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                                "velocity_positions")) {
-        return nullptr;
-    }
 
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
-        !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_float32(max_distances, "max_distances") ||
-        !expect_1d_array(max_distances, "max_distances", vertex_count) ||
-        !expect_float32(stiffness_values, "stiffness_values") ||
-        !expect_1d_array(stiffness_values, "stiffness_values", vertex_count) ||
-        !expect_float32(backstop_radii, "backstop_radii") ||
-        !expect_1d_array(backstop_radii, "backstop_radii", vertex_count) ||
-        !expect_float32(backstop_distances, "backstop_distances") ||
-        !expect_1d_array(backstop_distances, "backstop_distances", vertex_count)) {
-        return nullptr;
-    }
 
-    hotools::Mc2MotionConstraintView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.base_positions = static_cast<const float*>(base_positions.view.buf);
-    view.base_rotations = static_cast<const float*>(base_rotations.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.max_distances = static_cast<const float*>(max_distances.view.buf);
-    view.stiffness_values = static_cast<const float*>(stiffness_values.view.buf);
-    view.backstop_radii = static_cast<const float*>(backstop_radii.view.buf);
-    view.backstop_distances = static_cast<const float*>(backstop_distances.view.buf);
-    view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.normal_axis = std::max(0, std::min(5, normal_axis));
 
-    hotools::project_motion_constraints_mc2(view);
-    Py_RETURN_NONE;
-}
 
-PyObject* apply_post_step_mc2_object(PyObject* positions_object,
-                                     PyObject* old_positions_object,
-                                     PyObject* velocity_positions_object,
-                                     PyObject* velocities_object,
-                                     PyObject* real_velocities_object,
-                                     PyObject* friction_object,
-                                     PyObject* static_friction_object,
-                                     PyObject* collision_normals_object,
-                                     PyObject* inv_masses_object,
-                                     double step_dt,
-                                     double dynamic_friction,
-                                     double static_friction_speed,
-                                     double particle_speed_limit) {
-    Buffer positions;
-    Buffer old_positions;
-    Buffer velocity_positions;
-    Buffer velocities;
-    Buffer real_velocities;
-    Buffer friction;
-    Buffer static_friction;
-    Buffer collision_normals;
-    Buffer inv_masses;
 
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !old_positions.get(old_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                                "velocity_positions") ||
-        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !real_velocities.get(real_velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
-        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !static_friction.get(static_friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "static_friction") ||
-        !collision_normals.get(collision_normals_object, PyBUF_FORMAT | PyBUF_ND, "collision_normals") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses")) {
-        return nullptr;
-    }
 
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(old_positions, "old_positions", vertex_count) ||
-        !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
-        !expect_same_vertex_count(velocities, "velocities", vertex_count) ||
-        !expect_same_vertex_count(real_velocities, "real_velocities", vertex_count) ||
-        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
-        !expect_float32(friction, "friction") ||
-        !expect_1d_array(friction, "friction", vertex_count) ||
-        !expect_float32(static_friction, "static_friction") ||
-        !expect_1d_array(static_friction, "static_friction", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count)) {
-        return nullptr;
-    }
 
-    hotools::Mc2PostStepView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.old_positions = static_cast<float*>(old_positions.view.buf);
-    view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
-    view.velocities = static_cast<float*>(velocities.view.buf);
-    view.real_velocities = static_cast<float*>(real_velocities.view.buf);
-    view.friction = static_cast<float*>(friction.view.buf);
-    view.static_friction = static_cast<float*>(static_friction.view.buf);
-    view.collision_normals = static_cast<const float*>(collision_normals.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.step_dt = static_cast<float>(step_dt);
-    view.dynamic_friction = static_cast<float>(dynamic_friction);
-    view.static_friction_speed = static_cast<float>(static_friction_speed);
-    view.particle_speed_limit = static_cast<float>(particle_speed_limit);
 
-    hotools::apply_post_step_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* project_collisions_mc2_object(PyObject* positions_object,
-                                        PyObject* base_positions_object,
-                                        PyObject* inv_masses_object,
-                                        PyObject* collision_radii_object,
-                                        PyObject* collision_normals_object,
-                                        PyObject* friction_object,
-                                        int collided_by_groups,
-                                        PyObject* collider_types_object,
-                                        PyObject* collider_group_bits_object,
-                                        PyObject* collider_centers_object,
-                                        PyObject* collider_segment_a_object,
-                                        PyObject* collider_segment_b_object,
-                                        PyObject* collider_old_centers_object,
-                                        PyObject* collider_old_segment_a_object,
-                                        PyObject* collider_old_segment_b_object,
-                                        PyObject* collider_radii_object) {
-    Buffer positions;
-    Buffer base_positions;
-    Buffer inv_masses;
-    Buffer collision_radii;
-    Buffer collision_normals;
-    Buffer friction;
-    Buffer collider_types;
-    Buffer collider_group_bits;
-    Buffer collider_centers;
-    Buffer collider_segment_a;
-    Buffer collider_segment_b;
-    Buffer collider_old_centers;
-    Buffer collider_old_segment_a;
-    Buffer collider_old_segment_b;
-    Buffer collider_radii;
-
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !collision_radii.get(collision_radii_object, PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
-        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                               "collision_normals") ||
-        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !collider_types.get(collider_types_object, PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
-        !collider_group_bits.get(collider_group_bits_object, PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
-        !collider_centers.get(collider_centers_object, PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
-        !collider_segment_a.get(collider_segment_a_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(collider_segment_b_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_b")) {
-        return nullptr;
-    }
-    if (!collider_old_centers.get(collider_old_centers_object, PyBUF_FORMAT | PyBUF_ND,
-                                  "collider_old_centers") ||
-        !collider_old_segment_a.get(collider_old_segment_a_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "collider_old_segment_a") ||
-        !collider_old_segment_b.get(collider_old_segment_b_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "collider_old_segment_b") ||
-        !collider_radii.get(collider_radii_object, PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
-        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_float32(collision_radii, "collision_radii") ||
-        !expect_1d_array(collision_radii, "collision_radii", vertex_count) ||
-        !expect_float32(friction, "friction") ||
-        !expect_1d_array(friction, "friction", vertex_count) ||
-        !expect_int32_scalar_array(collider_types, "collider_types") ||
-        !expect_int32_scalar_array(collider_group_bits, "collider_group_bits") ||
-        !expect_float32(collider_radii, "collider_radii")) {
-        return nullptr;
-    }
-
-    const Py_ssize_t collider_count = collider_types.view.shape[0];
-    Py_ssize_t collider_centers_count = 0;
-    Py_ssize_t collider_segment_a_count = 0;
-    Py_ssize_t collider_segment_b_count = 0;
-    Py_ssize_t collider_old_centers_count = collider_count;
-    Py_ssize_t collider_old_segment_a_count = collider_count;
-    Py_ssize_t collider_old_segment_b_count = collider_count;
-    if (!expect_1d_array(collider_group_bits, "collider_group_bits", collider_count) ||
-        !expect_1d_array(collider_radii, "collider_radii", collider_count) ||
-        !expect_vector3_array(collider_centers, "collider_centers", &collider_centers_count) ||
-        !expect_vector3_array(collider_segment_a, "collider_segment_a", &collider_segment_a_count) ||
-        !expect_vector3_array(collider_segment_b, "collider_segment_b", &collider_segment_b_count)) {
-        return nullptr;
-    }
-    if (!expect_vector3_array(collider_old_centers, "collider_old_centers", &collider_old_centers_count) ||
-        !expect_vector3_array(collider_old_segment_a, "collider_old_segment_a", &collider_old_segment_a_count) ||
-        !expect_vector3_array(collider_old_segment_b, "collider_old_segment_b", &collider_old_segment_b_count)) {
-        return nullptr;
-    }
-    if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
-        collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
-        collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
-        PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
-        return nullptr;
-    }
-
-    hotools::Mc2CollisionView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.base_positions = static_cast<const float*>(base_positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.collision_radii = static_cast<const float*>(collision_radii.view.buf);
-    view.collision_normals = static_cast<float*>(collision_normals.view.buf);
-    view.friction = static_cast<float*>(friction.view.buf);
-    view.collider_types = static_cast<const std::int32_t*>(collider_types.view.buf);
-    view.collider_group_bits = static_cast<const std::int32_t*>(collider_group_bits.view.buf);
-    view.collider_centers = static_cast<const float*>(collider_centers.view.buf);
-    view.collider_segment_a = static_cast<const float*>(collider_segment_a.view.buf);
-    view.collider_segment_b = static_cast<const float*>(collider_segment_b.view.buf);
-    view.collider_old_centers = static_cast<const float*>(collider_old_centers.view.buf);
-    view.collider_old_segment_a = static_cast<const float*>(collider_old_segment_a.view.buf);
-    view.collider_old_segment_b = static_cast<const float*>(collider_old_segment_b.view.buf);
-    view.collider_radii = static_cast<const float*>(collider_radii.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.collider_count = static_cast<std::int64_t>(collider_count);
-    view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
-
-    hotools::project_collisions_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* project_edge_collisions_mc2_object(PyObject* positions_object,
-                                             PyObject* edges_object,
-                                             PyObject* attributes_object,
-                                             PyObject* inv_masses_object,
-                                             PyObject* collision_radii_object,
-                                             PyObject* collision_normals_object,
-                                             PyObject* friction_object,
-                                             int collided_by_groups,
-                                             PyObject* collider_types_object,
-                                             PyObject* collider_group_bits_object,
-                                             PyObject* collider_centers_object,
-                                             PyObject* collider_segment_a_object,
-                                             PyObject* collider_segment_b_object,
-                                             PyObject* collider_old_centers_object,
-                                             PyObject* collider_old_segment_a_object,
-                                             PyObject* collider_old_segment_b_object,
-                                             PyObject* collider_radii_object) {
-    Buffer positions;
-    Buffer edges;
-    Buffer attributes;
-    Buffer inv_masses;
-    Buffer collision_radii;
-    Buffer collision_normals;
-    Buffer friction;
-    Buffer collider_types;
-    Buffer collider_group_bits;
-    Buffer collider_centers;
-    Buffer collider_segment_a;
-    Buffer collider_segment_b;
-    Buffer collider_old_centers;
-    Buffer collider_old_segment_a;
-    Buffer collider_old_segment_b;
-    Buffer collider_radii;
-
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !edges.get(edges_object, PyBUF_FORMAT | PyBUF_ND, "edges") ||
-        !attributes.get(attributes_object, PyBUF_FORMAT | PyBUF_ND, "attributes") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !collision_radii.get(collision_radii_object, PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
-        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                               "collision_normals") ||
-        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !collider_types.get(collider_types_object, PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
-        !collider_group_bits.get(collider_group_bits_object, PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
-        !collider_centers.get(collider_centers_object, PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
-        !collider_segment_a.get(collider_segment_a_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(collider_segment_b_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
-        !collider_old_centers.get(collider_old_centers_object, PyBUF_FORMAT | PyBUF_ND,
-                                  "collider_old_centers") ||
-        !collider_old_segment_a.get(collider_old_segment_a_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "collider_old_segment_a") ||
-        !collider_old_segment_b.get(collider_old_segment_b_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "collider_old_segment_b") ||
-        !collider_radii.get(collider_radii_object, PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    Py_ssize_t edge_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_int32_pair_array(edges, "edges", &edge_count) ||
-        !expect_pair_indices_in_range(edges, "edges", vertex_count) ||
-        !expect_uint8_scalar_array(attributes, "attributes") ||
-        !expect_1d_array(attributes, "attributes", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_float32(collision_radii, "collision_radii") ||
-        !expect_1d_array(collision_radii, "collision_radii", vertex_count) ||
-        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
-        !expect_float32(friction, "friction") ||
-        !expect_1d_array(friction, "friction", vertex_count) ||
-        !expect_int32_scalar_array(collider_types, "collider_types") ||
-        !expect_int32_scalar_array(collider_group_bits, "collider_group_bits") ||
-        !expect_float32(collider_radii, "collider_radii")) {
-        return nullptr;
-    }
-
-    const Py_ssize_t collider_count = collider_types.view.shape[0];
-    Py_ssize_t collider_centers_count = 0;
-    Py_ssize_t collider_segment_a_count = 0;
-    Py_ssize_t collider_segment_b_count = 0;
-    Py_ssize_t collider_old_centers_count = 0;
-    Py_ssize_t collider_old_segment_a_count = 0;
-    Py_ssize_t collider_old_segment_b_count = 0;
-    if (!expect_1d_array(collider_group_bits, "collider_group_bits", collider_count) ||
-        !expect_1d_array(collider_radii, "collider_radii", collider_count) ||
-        !expect_vector3_array(collider_centers, "collider_centers", &collider_centers_count) ||
-        !expect_vector3_array(collider_segment_a, "collider_segment_a", &collider_segment_a_count) ||
-        !expect_vector3_array(collider_segment_b, "collider_segment_b", &collider_segment_b_count) ||
-        !expect_vector3_array(collider_old_centers, "collider_old_centers", &collider_old_centers_count) ||
-        !expect_vector3_array(collider_old_segment_a, "collider_old_segment_a", &collider_old_segment_a_count) ||
-        !expect_vector3_array(collider_old_segment_b, "collider_old_segment_b", &collider_old_segment_b_count)) {
-        return nullptr;
-    }
-    if (collider_centers_count != collider_count || collider_segment_a_count != collider_count ||
-        collider_segment_b_count != collider_count || collider_old_centers_count != collider_count ||
-        collider_old_segment_a_count != collider_count || collider_old_segment_b_count != collider_count) {
-        PyErr_SetString(PyExc_ValueError, "collider array length mismatch");
-        return nullptr;
-    }
-
-    hotools::Mc2EdgeCollisionView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.edges = static_cast<const std::int32_t*>(edges.view.buf);
-    view.attributes = static_cast<const std::uint8_t*>(attributes.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.collision_radii = static_cast<const float*>(collision_radii.view.buf);
-    view.collision_normals = static_cast<float*>(collision_normals.view.buf);
-    view.friction = static_cast<float*>(friction.view.buf);
-    view.collider_types = static_cast<const std::int32_t*>(collider_types.view.buf);
-    view.collider_group_bits = static_cast<const std::int32_t*>(collider_group_bits.view.buf);
-    view.collider_centers = static_cast<const float*>(collider_centers.view.buf);
-    view.collider_segment_a = static_cast<const float*>(collider_segment_a.view.buf);
-    view.collider_segment_b = static_cast<const float*>(collider_segment_b.view.buf);
-    view.collider_old_centers = static_cast<const float*>(collider_old_centers.view.buf);
-    view.collider_old_segment_a = static_cast<const float*>(collider_old_segment_a.view.buf);
-    view.collider_old_segment_b = static_cast<const float*>(collider_old_segment_b.view.buf);
-    view.collider_radii = static_cast<const float*>(collider_radii.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.edge_count = static_cast<std::int64_t>(edge_count);
-    view.collider_count = static_cast<std::int64_t>(collider_count);
-    view.collided_by_groups = static_cast<std::int32_t>(collided_by_groups);
-
-    hotools::project_edge_collisions_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* project_self_collisions_mc2_object(PyObject* positions_object,
-                                             PyObject* old_positions_object,
-                                             PyObject* inv_masses_object,
-                                             PyObject* edges_object,
-                                             PyObject* triangles_object,
-                                             PyObject* attributes_object,
-                                             PyObject* collision_normals_object,
-                                             PyObject* friction_object,
-                                             double surface_thickness) {
-    Buffer positions;
-    Buffer old_positions;
-    Buffer inv_masses;
-    Buffer edges;
-    Buffer triangles;
-    Buffer attributes;
-    Buffer collision_normals;
-    Buffer friction;
-
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !old_positions.get(old_positions_object, PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !edges.get(edges_object, PyBUF_FORMAT | PyBUF_ND, "edges") ||
-        !triangles.get(triangles_object, PyBUF_FORMAT | PyBUF_ND, "triangles") ||
-        !attributes.get(attributes_object, PyBUF_FORMAT | PyBUF_ND, "attributes") ||
-        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                               "collision_normals") ||
-        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    Py_ssize_t edge_count = 0;
-    Py_ssize_t triangle_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(old_positions, "old_positions", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_int32_pair_array(edges, "edges", &edge_count) ||
-        !expect_int32_triple_array(triangles, "triangles", &triangle_count) ||
-        !expect_uint8_scalar_array(attributes, "attributes") ||
-        !expect_1d_array(attributes, "attributes", vertex_count) ||
-        !expect_same_vertex_count(collision_normals, "collision_normals", vertex_count) ||
-        !expect_float32(friction, "friction") ||
-        !expect_1d_array(friction, "friction", vertex_count)) {
-        return nullptr;
-    }
-    if ((edge_count > 0 && !expect_pair_indices_in_range(edges, "edges", vertex_count)) ||
-        (triangle_count > 0 && !expect_triple_indices_in_range(triangles, "triangles", vertex_count))) {
-        return nullptr;
-    }
-
-    hotools::Mc2SelfCollisionView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.old_positions = static_cast<const float*>(old_positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.edges = static_cast<const std::int32_t*>(edges.view.buf);
-    view.triangles = static_cast<const std::int32_t*>(triangles.view.buf);
-    view.attributes = static_cast<const std::uint8_t*>(attributes.view.buf);
-    view.collision_normals = static_cast<float*>(collision_normals.view.buf);
-    view.friction = static_cast<float*>(friction.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.edge_count = static_cast<std::int64_t>(edge_count);
-    view.triangle_count = static_cast<std::int64_t>(triangle_count);
-    view.surface_thickness = static_cast<float>(surface_thickness);
-
-    hotools::project_self_collisions_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* project_triangle_bending_mc2_object(PyObject* positions_object,
-                                              PyObject* inv_masses_object,
-                                              PyObject* dihedral_pairs_object,
-                                              PyObject* dihedral_rest_angles_object,
-                                              PyObject* dihedral_signs_object,
-                                              PyObject* volume_pairs_object,
-                                              PyObject* volume_rest_object,
-                                              PyObject* stiffness_values_object) {
-    Buffer positions;
-    Buffer inv_masses;
-    Buffer dihedral_pairs;
-    Buffer dihedral_rest_angles;
-    Buffer dihedral_signs;
-    Buffer volume_pairs;
-    Buffer volume_rest;
-    Buffer stiffness_values;
-
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !dihedral_pairs.get(dihedral_pairs_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_pairs") ||
-        !dihedral_rest_angles.get(dihedral_rest_angles_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_rest_angles") ||
-        !dihedral_signs.get(dihedral_signs_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_signs") ||
-        !volume_pairs.get(volume_pairs_object, PyBUF_FORMAT | PyBUF_ND, "volume_pairs") ||
-        !volume_rest.get(volume_rest_object, PyBUF_FORMAT | PyBUF_ND, "volume_rest") ||
-        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    Py_ssize_t dihedral_count = 0;
-    Py_ssize_t volume_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_int32_quad_array(dihedral_pairs, "dihedral_pairs", &dihedral_count) ||
-        !expect_float32(dihedral_rest_angles, "dihedral_rest_angles") ||
-        !expect_1d_array(dihedral_rest_angles, "dihedral_rest_angles", dihedral_count) ||
-        !expect_int32_scalar_array(dihedral_signs, "dihedral_signs") ||
-        !expect_1d_array(dihedral_signs, "dihedral_signs", dihedral_count) ||
-        !expect_int32_quad_array(volume_pairs, "volume_pairs", &volume_count) ||
-        !expect_float32(volume_rest, "volume_rest") ||
-        !expect_1d_array(volume_rest, "volume_rest", volume_count) ||
-        !expect_float32(stiffness_values, "stiffness_values") ||
-        !expect_1d_array(stiffness_values, "stiffness_values", vertex_count)) {
-        return nullptr;
-    }
-    if ((dihedral_count > 0 && !expect_quad_indices_in_range(dihedral_pairs, "dihedral_pairs", vertex_count)) ||
-        (volume_count > 0 && !expect_quad_indices_in_range(volume_pairs, "volume_pairs", vertex_count))) {
-        return nullptr;
-    }
-
-    hotools::Mc2TriangleBendingView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.dihedral_pairs = static_cast<const std::int32_t*>(dihedral_pairs.view.buf);
-    view.dihedral_rest_angles = static_cast<const float*>(dihedral_rest_angles.view.buf);
-    view.dihedral_signs = static_cast<const std::int32_t*>(dihedral_signs.view.buf);
-    view.volume_pairs = static_cast<const std::int32_t*>(volume_pairs.view.buf);
-    view.volume_rest = static_cast<const float*>(volume_rest.view.buf);
-    view.stiffness_values = static_cast<const float*>(stiffness_values.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.dihedral_count = static_cast<std::int64_t>(dihedral_count);
-    view.volume_count = static_cast<std::int64_t>(volume_count);
-
-    hotools::project_triangle_bending_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* project_angle_constraints_mc2_object(PyObject* positions_object,
-                                               PyObject* inv_masses_object,
-                                               PyObject* parent_indices_object,
-                                               PyObject* baseline_start_object,
-                                               PyObject* baseline_count_object,
-                                               PyObject* baseline_data_object,
-                                               PyObject* step_basic_positions_object,
-                                               PyObject* step_basic_rotations_object,
-                                               PyObject* restoration_values_object,
-                                               PyObject* limit_values_object,
-                                               PyObject* velocity_positions_object,
-                                               double restoration_velocity_attenuation,
-                                               double restoration_gravity_falloff,
-                                               double limit_stiffness) {
-    Buffer positions;
-    Buffer inv_masses;
-    Buffer parent_indices;
-    Buffer baseline_start;
-    Buffer baseline_count;
-    Buffer baseline_data;
-    Buffer step_basic_positions;
-    Buffer step_basic_rotations;
-    Buffer restoration_values;
-    Buffer limit_values;
-    Buffer velocity_positions;
-
-    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !step_basic_positions.get(step_basic_positions_object, PyBUF_FORMAT | PyBUF_ND, "step_basic_positions") ||
-        !step_basic_rotations.get(step_basic_rotations_object, PyBUF_FORMAT | PyBUF_ND, "step_basic_rotations") ||
-        !restoration_values.get(restoration_values_object, PyBUF_FORMAT | PyBUF_ND, "restoration_values") ||
-        !limit_values.get(limit_values_object, PyBUF_FORMAT | PyBUF_ND, "limit_values") ||
-        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                                "velocity_positions")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(step_basic_positions, "step_basic_positions", vertex_count) ||
-        !expect_same_vertex_count(velocity_positions, "velocity_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(step_basic_rotations, "step_basic_rotations", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_int32_scalar_array(parent_indices, "parent_indices") ||
-        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
-        !expect_root_indices_or_minus_one(parent_indices, "parent_indices", vertex_count) ||
-        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
-        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
-        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
-        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count) ||
-        !expect_float32(restoration_values, "restoration_values") ||
-        !expect_1d_array(restoration_values, "restoration_values", vertex_count) ||
-        !expect_float32(limit_values, "limit_values") ||
-        !expect_1d_array(limit_values, "limit_values", vertex_count)) {
-        return nullptr;
-    }
-    const Py_ssize_t line_count = baseline_start.view.shape[0];
-    if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
-        return nullptr;
-    }
-
-    hotools::Mc2AngleConstraintView view;
-    view.positions = static_cast<float*>(positions.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.parent_indices = static_cast<const std::int32_t*>(parent_indices.view.buf);
-    view.baseline_start = static_cast<const std::int32_t*>(baseline_start.view.buf);
-    view.baseline_count = static_cast<const std::int32_t*>(baseline_count.view.buf);
-    view.baseline_data = static_cast<const std::int32_t*>(baseline_data.view.buf);
-    view.step_basic_positions = static_cast<const float*>(step_basic_positions.view.buf);
-    view.step_basic_rotations = static_cast<const float*>(step_basic_rotations.view.buf);
-    view.restoration_values = static_cast<const float*>(restoration_values.view.buf);
-    view.limit_values = static_cast<const float*>(limit_values.view.buf);
-    view.velocity_positions = static_cast<float*>(velocity_positions.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.line_count = static_cast<std::int64_t>(line_count);
-    view.baseline_data_count = static_cast<std::int64_t>(baseline_data.view.shape[0]);
-    view.restoration_velocity_attenuation = static_cast<float>(restoration_velocity_attenuation);
-    view.restoration_gravity_falloff = static_cast<float>(restoration_gravity_falloff);
-    view.limit_stiffness = static_cast<float>(limit_stiffness);
-
-    hotools::project_angle_constraints_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* update_step_basic_pose_mc2_object(PyObject* base_positions_object,
-                                            PyObject* base_rotations_object,
-                                            PyObject* parent_indices_object,
-                                            PyObject* baseline_start_object,
-                                            PyObject* baseline_count_object,
-                                            PyObject* baseline_data_object,
-                                            PyObject* vertex_local_positions_object,
-                                            PyObject* vertex_local_rotations_object,
-                                            PyObject* step_positions_object,
-                                            PyObject* step_rotations_object,
-                                            double animation_pose_ratio) {
-    Buffer base_positions;
-    Buffer base_rotations;
-    Buffer parent_indices;
-    Buffer baseline_start;
-    Buffer baseline_count;
-    Buffer baseline_data;
-    Buffer vertex_local_positions;
-    Buffer vertex_local_rotations;
-    Buffer step_positions;
-    Buffer step_rotations;
-
-    if (!base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(base_rotations_object, PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !vertex_local_positions.get(vertex_local_positions_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "vertex_local_positions") ||
-        !vertex_local_rotations.get(vertex_local_rotations_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "vertex_local_rotations") ||
-        !step_positions.get(step_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
-        !step_rotations.get(step_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(base_positions, "base_positions", &vertex_count) ||
-        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
-        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
-        !expect_same_vertex_count(step_positions, "step_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(step_rotations, "step_rotations", vertex_count) ||
-        !expect_int32_scalar_array(parent_indices, "parent_indices") ||
-        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
-        !expect_root_indices_or_minus_one(parent_indices, "parent_indices", vertex_count) ||
-        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
-        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
-        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
-        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count)) {
-        return nullptr;
-    }
-    const Py_ssize_t line_count = baseline_start.view.shape[0];
-    if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
-        return nullptr;
-    }
-
-    hotools::Mc2StepBasicPoseView view;
-    view.base_positions = static_cast<const float*>(base_positions.view.buf);
-    view.base_rotations = static_cast<const float*>(base_rotations.view.buf);
-    view.parent_indices = static_cast<const std::int32_t*>(parent_indices.view.buf);
-    view.baseline_start = static_cast<const std::int32_t*>(baseline_start.view.buf);
-    view.baseline_count = static_cast<const std::int32_t*>(baseline_count.view.buf);
-    view.baseline_data = static_cast<const std::int32_t*>(baseline_data.view.buf);
-    view.vertex_local_positions = static_cast<const float*>(vertex_local_positions.view.buf);
-    view.vertex_local_rotations = static_cast<const float*>(vertex_local_rotations.view.buf);
-    view.step_positions = static_cast<float*>(step_positions.view.buf);
-    view.step_rotations = static_cast<float*>(step_rotations.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.line_count = static_cast<std::int64_t>(line_count);
-    view.baseline_data_count = static_cast<std::int64_t>(baseline_data.view.shape[0]);
-    view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
-
-    hotools::update_step_basic_pose_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* update_base_pose_from_pose_mc2_object(PyObject* base_positions_object,
-                                                PyObject* base_normals_object,
-                                                PyObject* parent_indices_object,
-                                                PyObject* baseline_start_object,
-                                                PyObject* baseline_count_object,
-                                                PyObject* baseline_data_object,
-                                                PyObject* vertex_local_positions_object,
-                                                PyObject* vertex_local_rotations_object,
-                                                PyObject* base_rotations_object,
-                                                PyObject* step_positions_object,
-                                                PyObject* step_rotations_object,
-                                                double animation_pose_ratio) {
-    Buffer base_positions;
-    Buffer base_normals;
-    Buffer parent_indices;
-    Buffer baseline_start;
-    Buffer baseline_count;
-    Buffer baseline_data;
-    Buffer vertex_local_positions;
-    Buffer vertex_local_rotations;
-    Buffer base_rotations;
-    Buffer step_positions;
-    Buffer step_rotations;
-
-    if (!base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_normals.get(base_normals_object, PyBUF_FORMAT | PyBUF_ND, "base_normals") ||
-        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !vertex_local_positions.get(vertex_local_positions_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "vertex_local_positions") ||
-        !vertex_local_rotations.get(vertex_local_rotations_object, PyBUF_FORMAT | PyBUF_ND,
-                                    "vertex_local_rotations") ||
-        !base_rotations.get(base_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !step_positions.get(step_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_positions") ||
-        !step_rotations.get(step_rotations_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "step_rotations")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(base_positions, "base_positions", &vertex_count) ||
-        !expect_same_vertex_count(base_normals, "base_normals", vertex_count) ||
-        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
-        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
-        !expect_same_vertex_count(step_positions, "step_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(step_rotations, "step_rotations", vertex_count) ||
-        !expect_int32_scalar_array(parent_indices, "parent_indices") ||
-        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
-        !expect_root_indices_or_minus_one(parent_indices, "parent_indices", vertex_count) ||
-        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
-        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
-        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
-        !expect_indices_in_range(baseline_data, "baseline_data", vertex_count)) {
-        return nullptr;
-    }
-    const Py_ssize_t line_count = baseline_start.view.shape[0];
-    if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
-        return nullptr;
-    }
-
-    hotools::Mc2BasePoseFromPoseView view;
-    view.base_positions = static_cast<const float*>(base_positions.view.buf);
-    view.base_normals = static_cast<const float*>(base_normals.view.buf);
-    view.parent_indices = static_cast<const std::int32_t*>(parent_indices.view.buf);
-    view.baseline_start = static_cast<const std::int32_t*>(baseline_start.view.buf);
-    view.baseline_count = static_cast<const std::int32_t*>(baseline_count.view.buf);
-    view.baseline_data = static_cast<const std::int32_t*>(baseline_data.view.buf);
-    view.vertex_local_positions = static_cast<const float*>(vertex_local_positions.view.buf);
-    view.vertex_local_rotations = static_cast<const float*>(vertex_local_rotations.view.buf);
-    view.base_rotations = static_cast<float*>(base_rotations.view.buf);
-    view.step_positions = static_cast<float*>(step_positions.view.buf);
-    view.step_rotations = static_cast<float*>(step_rotations.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.line_count = static_cast<std::int64_t>(line_count);
-    view.baseline_data_count = static_cast<std::int64_t>(baseline_data.view.shape[0]);
-    view.animation_pose_ratio = static_cast<float>(animation_pose_ratio);
-
-    hotools::update_base_pose_from_pose_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* apply_substep_inertia_mc2_object(PyObject* old_positions_object,
-                                           PyObject* velocities_object,
-                                           PyObject* depths_object,
-                                           PyObject* inv_masses_object,
-                                           PyObject* old_world_position_object,
-                                           PyObject* step_vector_object,
-                                           PyObject* step_rotation_object,
-                                           PyObject* inertia_vector_object,
-                                           PyObject* inertia_rotation_object,
-                                           double depth_inertia) {
-    Buffer old_positions;
-    Buffer velocities;
-    Buffer depths;
-    Buffer inv_masses;
-    Buffer old_world_position;
-    Buffer step_vector;
-    Buffer step_rotation;
-    Buffer inertia_vector;
-    Buffer inertia_rotation;
-
-    if (!old_positions.get(old_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !depths.get(depths_object, PyBUF_FORMAT | PyBUF_ND, "depths") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !old_world_position.get(old_world_position_object, PyBUF_FORMAT | PyBUF_ND, "old_world_position") ||
-        !step_vector.get(step_vector_object, PyBUF_FORMAT | PyBUF_ND, "step_vector") ||
-        !step_rotation.get(step_rotation_object, PyBUF_FORMAT | PyBUF_ND, "step_rotation") ||
-        !inertia_vector.get(inertia_vector_object, PyBUF_FORMAT | PyBUF_ND, "inertia_vector") ||
-        !inertia_rotation.get(inertia_rotation_object, PyBUF_FORMAT | PyBUF_ND, "inertia_rotation")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(old_positions, "old_positions", &vertex_count) ||
-        !expect_same_vertex_count(velocities, "velocities", vertex_count) ||
-        !expect_float32(depths, "depths") ||
-        !expect_1d_array(depths, "depths", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_float32(old_world_position, "old_world_position") ||
-        !expect_1d_array(old_world_position, "old_world_position", 3) ||
-        !expect_float32(step_vector, "step_vector") ||
-        !expect_1d_array(step_vector, "step_vector", 3) ||
-        !expect_float32(step_rotation, "step_rotation") ||
-        !expect_1d_array(step_rotation, "step_rotation", 4) ||
-        !expect_float32(inertia_vector, "inertia_vector") ||
-        !expect_1d_array(inertia_vector, "inertia_vector", 3) ||
-        !expect_float32(inertia_rotation, "inertia_rotation") ||
-        !expect_1d_array(inertia_rotation, "inertia_rotation", 4)) {
-        return nullptr;
-    }
-
-    hotools::Mc2SubstepInertiaView view;
-    view.old_positions = static_cast<float*>(old_positions.view.buf);
-    view.velocities = static_cast<float*>(velocities.view.buf);
-    view.depths = static_cast<const float*>(depths.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    const float* old_world_position_values = static_cast<const float*>(old_world_position.view.buf);
-    const float* step_vector_values = static_cast<const float*>(step_vector.view.buf);
-    const float* step_rotation_values = static_cast<const float*>(step_rotation.view.buf);
-    const float* inertia_vector_values = static_cast<const float*>(inertia_vector.view.buf);
-    const float* inertia_rotation_values = static_cast<const float*>(inertia_rotation.view.buf);
-    for (int index = 0; index < 3; ++index) {
-        view.old_world_position[index] = old_world_position_values[index];
-        view.step_vector[index] = step_vector_values[index];
-        view.inertia_vector[index] = inertia_vector_values[index];
-    }
-    for (int index = 0; index < 4; ++index) {
-        view.step_rotation[index] = step_rotation_values[index];
-        view.inertia_rotation[index] = inertia_rotation_values[index];
-    }
-    view.depth_inertia = static_cast<float>(depth_inertia);
-
-    hotools::apply_substep_inertia_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* apply_centrifugal_velocity_mc2_object(PyObject* positions_object,
-                                                PyObject* velocities_object,
-                                                PyObject* depths_object,
-                                                PyObject* inv_masses_object,
-                                                PyObject* now_world_position_object,
-                                                PyObject* rotation_axis_object,
-                                                double angular_velocity,
-                                                double centrifugal) {
-    Buffer positions;
-    Buffer velocities;
-    Buffer depths;
-    Buffer inv_masses;
-    Buffer now_world_position;
-    Buffer rotation_axis;
-
-    if (!positions.get(positions_object, PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !velocities.get(velocities_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocities") ||
-        !depths.get(depths_object, PyBUF_FORMAT | PyBUF_ND, "depths") ||
-        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !now_world_position.get(now_world_position_object, PyBUF_FORMAT | PyBUF_ND, "now_world_position") ||
-        !rotation_axis.get(rotation_axis_object, PyBUF_FORMAT | PyBUF_ND, "rotation_axis")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(velocities, "velocities", vertex_count) ||
-        !expect_float32(depths, "depths") ||
-        !expect_1d_array(depths, "depths", vertex_count) ||
-        !expect_float32(inv_masses, "inv_masses") ||
-        !expect_1d_array(inv_masses, "inv_masses", vertex_count) ||
-        !expect_float32(now_world_position, "now_world_position") ||
-        !expect_1d_array(now_world_position, "now_world_position", 3) ||
-        !expect_float32(rotation_axis, "rotation_axis") ||
-        !expect_1d_array(rotation_axis, "rotation_axis", 3)) {
-        return nullptr;
-    }
-
-    hotools::Mc2CentrifugalView view;
-    view.positions = static_cast<const float*>(positions.view.buf);
-    view.velocities = static_cast<float*>(velocities.view.buf);
-    view.depths = static_cast<const float*>(depths.view.buf);
-    view.inv_masses = static_cast<const float*>(inv_masses.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    const float* now_world_position_values = static_cast<const float*>(now_world_position.view.buf);
-    const float* rotation_axis_values = static_cast<const float*>(rotation_axis.view.buf);
-    for (int index = 0; index < 3; ++index) {
-        view.now_world_position[index] = now_world_position_values[index];
-        view.rotation_axis[index] = rotation_axis_values[index];
-    }
-    view.angular_velocity = static_cast<float>(angular_velocity);
-    view.centrifugal = static_cast<float>(centrifugal);
-
-    hotools::apply_centrifugal_velocity_mc2(view);
-    Py_RETURN_NONE;
-}
-
-PyObject* calculate_display_positions_mc2_object(PyObject* positions_object,
-                                                 PyObject* real_velocities_object,
-                                                 PyObject* root_indices_object,
-                                                 PyObject* display_positions_object,
-                                                 double frame_dt,
-                                                 double max_distance_ratio) {
-    Buffer positions;
-    Buffer real_velocities;
-    Buffer root_indices;
-    Buffer display_positions;
-
-    if (!positions.get(positions_object, PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !real_velocities.get(real_velocities_object, PyBUF_FORMAT | PyBUF_ND, "real_velocities") ||
-        !root_indices.get(root_indices_object, PyBUF_FORMAT | PyBUF_ND, "root_indices") ||
-        !display_positions.get(display_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
-                               "display_positions")) {
-        return nullptr;
-    }
-
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector3_array(positions, "positions", &vertex_count) ||
-        !expect_same_vertex_count(real_velocities, "real_velocities", vertex_count) ||
-        !expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
-        !expect_int32_scalar_array(root_indices, "root_indices") ||
-        !expect_1d_array(root_indices, "root_indices", vertex_count)) {
-        return nullptr;
-    }
-
-    hotools::Mc2DisplayPredictionView view;
-    view.positions = static_cast<const float*>(positions.view.buf);
-    view.real_velocities = static_cast<const float*>(real_velocities.view.buf);
-    view.root_indices = static_cast<const std::int32_t*>(root_indices.view.buf);
-    view.display_positions = static_cast<float*>(display_positions.view.buf);
-    view.vertex_count = static_cast<std::int64_t>(vertex_count);
-    view.frame_dt = static_cast<float>(frame_dt);
-    view.max_distance_ratio = static_cast<float>(max_distance_ratio);
-
-    hotools::calculate_display_positions_mc2(view);
-    Py_RETURN_NONE;
-}
 
 PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
     enum SolveArg {
@@ -1671,111 +659,6 @@ PyObject* solve_meshcloth_mc2(PyObject*, PyObject* args) {
 //   vertex_local_positions, vertex_local_rotations,
 //   parent_indices, baseline_start, baseline_count, baseline_data, attributes,
 //   rotational_interpolation, blend_weight, anime_ratio, root_rotation
-PyObject* solve_mc2_bonecloth_io_object(
-    PyObject* world_rotations_object,
-    PyObject* display_positions_object,
-    PyObject* base_positions_object,
-    PyObject* base_rotations_object,
-    PyObject* vertex_local_positions_object,
-    PyObject* vertex_local_rotations_object,
-    PyObject* parent_indices_object,
-    PyObject* baseline_start_object,
-    PyObject* baseline_count_object,
-    PyObject* baseline_data_object,
-    PyObject* attributes_object,
-    double rot_interp,
-    double blend_w,
-    double anime_r,
-    double root_rot) {
-    Buffer world_rotations;
-    Buffer display_positions;
-    Buffer base_positions;
-    Buffer base_rotations;
-    Buffer vertex_local_positions;
-    Buffer vertex_local_rotations;
-    Buffer parent_indices;
-    Buffer baseline_start;
-    Buffer baseline_count;
-    Buffer baseline_data;
-    Buffer attributes;
-
-    if (!world_rotations.get(world_rotations_object,
-            PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "world_rotations") ||
-        !display_positions.get(display_positions_object,
-            PyBUF_FORMAT | PyBUF_ND, "display_positions") ||
-        !base_positions.get(base_positions_object,
-            PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !base_rotations.get(base_rotations_object,
-            PyBUF_FORMAT | PyBUF_ND, "base_rotations") ||
-        !vertex_local_positions.get(vertex_local_positions_object,
-            PyBUF_FORMAT | PyBUF_ND, "vertex_local_positions") ||
-        !vertex_local_rotations.get(vertex_local_rotations_object,
-            PyBUF_FORMAT | PyBUF_ND, "vertex_local_rotations") ||
-        !parent_indices.get(parent_indices_object,
-            PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(baseline_start_object,
-            PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(baseline_count_object,
-            PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(baseline_data_object,
-            PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !attributes.get(attributes_object,
-            PyBUF_FORMAT | PyBUF_ND, "attributes")) {
-        return nullptr;
-    }
-
-    // 形状校验
-    Py_ssize_t vertex_count = 0;
-    if (!expect_vector4_array(world_rotations, "world_rotations", &vertex_count) ||
-        !expect_same_vertex_count(display_positions, "display_positions", vertex_count) ||
-        !expect_same_vertex_count(base_positions, "base_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(base_rotations, "base_rotations", vertex_count) ||
-        !expect_same_vertex_count(vertex_local_positions, "vertex_local_positions", vertex_count) ||
-        !expect_same_quat_vertex_count(vertex_local_rotations, "vertex_local_rotations", vertex_count) ||
-        !expect_int32(parent_indices, "parent_indices") ||
-        !expect_1d_array(parent_indices, "parent_indices", vertex_count) ||
-        !expect_int32(baseline_start, "baseline_start") ||
-        !expect_int32_scalar_array(baseline_start, "baseline_start") ||
-        !expect_int32(baseline_count, "baseline_count") ||
-        !expect_int32_scalar_array(baseline_count, "baseline_count") ||
-        !expect_int32(baseline_data, "baseline_data") ||
-        !expect_int32_scalar_array(baseline_data, "baseline_data") ||
-        !expect_uint8(attributes, "attributes") ||
-        !expect_1d_array(attributes, "attributes", vertex_count)) {
-        return nullptr;
-    }
-
-    // baseline_start 和 baseline_count 必须等长
-    const Py_ssize_t baseline_lines = baseline_start.view.shape[0];
-    if (baseline_count.view.shape[0] != baseline_lines) {
-        PyErr_SetString(PyExc_ValueError,
-            "baseline_start and baseline_count must have the same length");
-        return nullptr;
-    }
-
-    hotools::BoneClothIoView view;
-    view.world_rotations         = static_cast<float*>(world_rotations.view.buf);
-    view.display_positions       = static_cast<const float*>(display_positions.view.buf);
-    view.base_positions          = static_cast<const float*>(base_positions.view.buf);
-    view.base_rotations          = static_cast<const float*>(base_rotations.view.buf);
-    view.vertex_local_positions  = static_cast<const float*>(vertex_local_positions.view.buf);
-    view.vertex_local_rotations  = static_cast<const float*>(vertex_local_rotations.view.buf);
-    view.parent_indices          = static_cast<const std::int32_t*>(parent_indices.view.buf);
-    view.baseline_start          = static_cast<const std::int32_t*>(baseline_start.view.buf);
-    view.baseline_count          = static_cast<const std::int32_t*>(baseline_count.view.buf);
-    view.baseline_data           = static_cast<const std::int32_t*>(baseline_data.view.buf);
-    view.attributes              = static_cast<const std::uint8_t*>(attributes.view.buf);
-    view.rotational_interpolation = static_cast<float>(rot_interp);
-    view.blend_weight             = static_cast<float>(blend_w);
-    view.anime_ratio              = static_cast<float>(anime_r);
-    view.root_rotation            = static_cast<float>(root_rot);
-    view.vertex_count             = static_cast<std::int64_t>(vertex_count);
-    view.baseline_lines           = static_cast<std::int64_t>(baseline_lines);
-    view.baseline_total           = static_cast<std::int64_t>(baseline_data.view.shape[0]);
-
-    hotools::solve_bonecloth_io(view);
-    Py_RETURN_NONE;
-}
 
 }  // namespace
 
@@ -1862,40 +745,90 @@ NB_MODULE(hotools_native, m) {
             if (!r) throw nb::python_error();
             Py_DECREF(r);
         }, nb::arg("handle"), "Release MC2 MeshCloth native context resources.");
-    // ---- MC2 单步约束求解器 ----
+    // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",
-        [](nb::object pos, nb::object inv, nb::object starts, nb::object counts,
-           nb::object nbrs, nb::object rest, nb::object stiff, nb::object vel, double attn) {
-            PyObject* r = project_neighbor_constraints_mc2_object(
-                pos.ptr(), inv.ptr(), starts.ptr(), counts.ptr(),
-                nbrs.ptr(), rest.ptr(), stiff.ptr(), vel.ptr(), attn);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,
+           ci32_1d nbrs, cf32_1d rest, cf32_1d stiff, f32_2d vel, float attn) {
+            check_cols(pos, 3, "positions"); check_cols(vel, 3, "velocity_positions");
+            const size_t vc = pos.shape(0);
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(starts.shape(0), vc, "starts");
+            check_len(counts.shape(0), vc, "counts");
+            check_len(stiff.shape(0), vc, "stiffness_values");
+            check_len(vel.shape(0), vc, "velocity_positions");
+            check_len(rest.shape(0), nbrs.shape(0), "rest_lengths");
+            check_indices_in_range(nbrs.data(), nbrs.shape(0), vc, "neighbors");
+            hotools::Mc2NeighborConstraintView view;
+            view.positions          = pos.data();
+            view.inv_masses         = inv.data();
+            view.starts             = starts.data();
+            view.counts             = counts.data();
+            view.neighbors          = nbrs.data();
+            view.rest_lengths       = rest.data();
+            view.stiffness_values   = stiff.data();
+            view.velocity_positions = vel.data();
+            view.vertex_count       = static_cast<std::int64_t>(vc);
+            view.neighbor_count     = static_cast<std::int64_t>(nbrs.shape(0));
+            view.velocity_attenuation = attn;
+            { nb::gil_scoped_release _; hotools::project_neighbor_constraints_mc2(view); }
         },
         nb::arg("positions"), nb::arg("inv_masses"), nb::arg("starts"), nb::arg("counts"),
         nb::arg("neighbors"), nb::arg("rest_lengths"), nb::arg("stiffness_values"),
         nb::arg("velocity_positions"), nb::arg("velocity_attenuation"),
         "Project MC2 neighbor constraints in-place.");
     m.def("project_tether_mc2",
-        [](nb::object pos, nb::object inv, nb::object ri, nb::object rrl, nb::object vel,
-           double stiff, double comp, double stretch) {
-            PyObject* r = project_tether_mc2_object(
-                pos.ptr(), inv.ptr(), ri.ptr(), rrl.ptr(), vel.ptr(), stiff, comp, stretch);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_1d inv, ci32_1d ri, cf32_1d rrl, f32_2d vel,
+           float stiff, float comp, float stretch) {
+            check_cols(pos, 3, "positions"); check_cols(vel, 3, "velocity_positions");
+            const size_t vc = pos.shape(0);
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(ri.shape(0), vc, "root_indices");
+            check_len(rrl.shape(0), vc, "root_rest_lengths");
+            check_len(vel.shape(0), vc, "velocity_positions");
+            check_root_or_minus_one(ri.data(), vc, vc, "root_indices");
+            hotools::Mc2TetherConstraintView view;
+            view.positions          = pos.data();
+            view.inv_masses         = inv.data();
+            view.root_indices       = ri.data();
+            view.root_rest_lengths  = rrl.data();
+            view.velocity_positions = vel.data();
+            view.vertex_count       = static_cast<std::int64_t>(vc);
+            view.stiffness          = stiff;
+            view.compression        = comp;
+            view.stretch            = stretch;
+            { nb::gil_scoped_release _; hotools::project_tether_mc2(view); }
         },
         nb::arg("positions"), nb::arg("inv_masses"), nb::arg("root_indices"),
         nb::arg("root_rest_lengths"), nb::arg("velocity_positions"),
         nb::arg("stiffness"), nb::arg("compression"), nb::arg("stretch"),
         "Project MC2 tether constraints in-place.");
     m.def("project_motion_constraints_mc2",
-        [](nb::object pos, nb::object bp, nb::object br, nb::object inv,
-           nb::object md, nb::object sv, nb::object bkr, nb::object bkd, nb::object vel, int axis) {
-            PyObject* r = project_motion_constraints_mc2_object(
-                pos.ptr(), bp.ptr(), br.ptr(), inv.ptr(),
-                md.ptr(), sv.ptr(), bkr.ptr(), bkd.ptr(), vel.ptr(), axis);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_2d bp, cf32_2d br, cf32_1d inv, cf32_1d md,
+           cf32_1d sv, cf32_1d bkr, cf32_1d bkd, f32_2d vel, int axis) {
+            check_cols(pos, 3, "positions"); check_cols(bp, 3, "base_positions");
+            check_cols(br, 4, "base_rotations"); check_cols(vel, 3, "velocity_positions");
+            const size_t vc = pos.shape(0);
+            check_len(bp.shape(0), vc, "base_positions");
+            check_len(br.shape(0), vc, "base_rotations");
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(md.shape(0), vc, "max_distances");
+            check_len(sv.shape(0), vc, "stiffness_values");
+            check_len(bkr.shape(0), vc, "backstop_radii");
+            check_len(bkd.shape(0), vc, "backstop_distances");
+            check_len(vel.shape(0), vc, "velocity_positions");
+            hotools::Mc2MotionConstraintView view;
+            view.positions          = pos.data();
+            view.base_positions     = bp.data();
+            view.base_rotations     = br.data();
+            view.inv_masses         = inv.data();
+            view.max_distances      = md.data();
+            view.stiffness_values   = sv.data();
+            view.backstop_radii     = bkr.data();
+            view.backstop_distances = bkd.data();
+            view.velocity_positions = vel.data();
+            view.vertex_count       = static_cast<std::int64_t>(vc);
+            view.normal_axis        = std::max(0, std::min(5, axis));
+            { nb::gil_scoped_release _; hotools::project_motion_constraints_mc2(view); }
         },
         nb::arg("positions"), nb::arg("base_positions"), nb::arg("base_rotations"),
         nb::arg("inv_masses"), nb::arg("max_distances"), nb::arg("stiffness_values"),
@@ -1903,14 +836,37 @@ NB_MODULE(hotools_native, m) {
         nb::arg("velocity_positions"), nb::arg("normal_axis"),
         "Project MC2 motion constraints in-place.");
     m.def("apply_post_step_mc2",
-        [](nb::object pos, nb::object old, nb::object vp, nb::object vel,
-           nb::object rvel, nb::object fric, nb::object sfric, nb::object cn,
-           nb::object inv, double dt, double dfric, double sfs, double psl) {
-            PyObject* r = apply_post_step_mc2_object(
-                pos.ptr(), old.ptr(), vp.ptr(), vel.ptr(), rvel.ptr(),
-                fric.ptr(), sfric.ptr(), cn.ptr(), inv.ptr(), dt, dfric, sfs, psl);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, f32_2d old, f32_2d vp, f32_2d vel, f32_2d rvel,
+           f32_1d fric, f32_1d sfric, cf32_2d cn, cf32_1d inv,
+           float dt, float dfric, float sfs, float psl) {
+            check_cols(pos, 3, "positions"); check_cols(old, 3, "old_positions");
+            check_cols(vp, 3, "velocity_positions"); check_cols(vel, 3, "velocities");
+            check_cols(rvel, 3, "real_velocities"); check_cols(cn, 3, "collision_normals");
+            const size_t vc = pos.shape(0);
+            check_len(old.shape(0), vc, "old_positions");
+            check_len(vp.shape(0), vc, "velocity_positions");
+            check_len(vel.shape(0), vc, "velocities");
+            check_len(rvel.shape(0), vc, "real_velocities");
+            check_len(cn.shape(0), vc, "collision_normals");
+            check_len(fric.shape(0), vc, "friction");
+            check_len(sfric.shape(0), vc, "static_friction");
+            check_len(inv.shape(0), vc, "inv_masses");
+            hotools::Mc2PostStepView view;
+            view.positions           = pos.data();
+            view.old_positions       = old.data();
+            view.velocity_positions  = vp.data();
+            view.velocities          = vel.data();
+            view.real_velocities     = rvel.data();
+            view.friction            = fric.data();
+            view.static_friction     = sfric.data();
+            view.collision_normals   = cn.data();
+            view.inv_masses          = inv.data();
+            view.vertex_count        = static_cast<std::int64_t>(vc);
+            view.step_dt             = dt;
+            view.dynamic_friction    = dfric;
+            view.static_friction_speed = sfs;
+            view.particle_speed_limit  = psl;
+            { nb::gil_scoped_release _; hotools::apply_post_step_mc2(view); }
         },
         nb::arg("positions"), nb::arg("old_positions"), nb::arg("velocity_positions"),
         nb::arg("velocities"), nb::arg("real_velocities"), nb::arg("friction"),
@@ -1919,16 +875,47 @@ NB_MODULE(hotools_native, m) {
         nb::arg("static_friction_speed"), nb::arg("particle_speed_limit"),
         "Apply MC2 post-step velocity and friction update in-place.");
     m.def("project_collisions_mc2",
-        [](nb::object pos, nb::object bp, nb::object inv, nb::object cr, nb::object cn,
-           nb::object fric, int cbg, nb::object ct, nb::object cgb,
-           nb::object cc, nb::object csa, nb::object csb,
-           nb::object coc, nb::object cosa, nb::object cosb, nb::object crad) {
-            PyObject* r = project_collisions_mc2_object(
-                pos.ptr(), bp.ptr(), inv.ptr(), cr.ptr(), cn.ptr(), fric.ptr(),
-                cbg, ct.ptr(), cgb.ptr(), cc.ptr(), csa.ptr(), csb.ptr(),
-                coc.ptr(), cosa.ptr(), cosb.ptr(), crad.ptr());
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_2d bp, cf32_1d inv, cf32_1d cr, f32_2d cn, f32_1d fric,
+           int cbg, ci32_1d ct, ci32_1d cgb,
+           cf32_2d cc, cf32_2d csa, cf32_2d csb,
+           cf32_2d coc, cf32_2d cosa, cf32_2d cosb, cf32_1d crad) {
+            check_cols(pos, 3, "positions"); check_cols(bp, 3, "base_positions");
+            check_cols(cn, 3, "collision_normals");
+            const size_t vc = pos.shape(0);
+            check_len(bp.shape(0), vc, "base_positions");
+            check_len(cn.shape(0), vc, "collision_normals");
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(cr.shape(0), vc, "collision_radii");
+            check_len(fric.shape(0), vc, "friction");
+            const size_t nc = static_cast<size_t>(ct.shape(0));
+            check_len(cgb.shape(0), nc, "collider_group_bits");
+            check_len(crad.shape(0), nc, "collider_radii");
+            check_cols(cc, 3, "collider_centers");   check_len(cc.shape(0), nc, "collider_centers");
+            check_cols(csa, 3, "collider_segment_a"); check_len(csa.shape(0), nc, "collider_segment_a");
+            check_cols(csb, 3, "collider_segment_b"); check_len(csb.shape(0), nc, "collider_segment_b");
+            check_cols(coc, 3, "collider_old_centers");    check_len(coc.shape(0), nc, "collider_old_centers");
+            check_cols(cosa, 3, "collider_old_segment_a"); check_len(cosa.shape(0), nc, "collider_old_segment_a");
+            check_cols(cosb, 3, "collider_old_segment_b"); check_len(cosb.shape(0), nc, "collider_old_segment_b");
+            hotools::Mc2CollisionView view;
+            view.positions           = pos.data();
+            view.base_positions      = bp.data();
+            view.inv_masses          = inv.data();
+            view.collision_radii     = cr.data();
+            view.collision_normals   = cn.data();
+            view.friction            = fric.data();
+            view.collider_types      = ct.data();
+            view.collider_group_bits = cgb.data();
+            view.collider_centers    = cc.data();
+            view.collider_segment_a  = csa.data();
+            view.collider_segment_b  = csb.data();
+            view.collider_old_centers   = coc.data();
+            view.collider_old_segment_a = cosa.data();
+            view.collider_old_segment_b = cosb.data();
+            view.collider_radii      = crad.data();
+            view.vertex_count        = static_cast<std::int64_t>(vc);
+            view.collider_count      = static_cast<std::int64_t>(nc);
+            view.collided_by_groups  = static_cast<std::int32_t>(cbg);
+            { nb::gil_scoped_release _; hotools::project_collisions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("base_positions"), nb::arg("inv_masses"),
         nb::arg("collision_radii"), nb::arg("collision_normals"), nb::arg("friction"),
@@ -1938,16 +925,49 @@ NB_MODULE(hotools_native, m) {
         nb::arg("collider_old_segment_b"), nb::arg("collider_radii"),
         "Project MC2 point collisions in-place.");
     m.def("project_edge_collisions_mc2",
-        [](nb::object pos, nb::object edges, nb::object attr, nb::object inv,
-           nb::object cr, nb::object cn, nb::object fric, int cbg,
-           nb::object ct, nb::object cgb, nb::object cc, nb::object csa, nb::object csb,
-           nb::object coc, nb::object cosa, nb::object cosb, nb::object crad) {
-            PyObject* r = project_edge_collisions_mc2_object(
-                pos.ptr(), edges.ptr(), attr.ptr(), inv.ptr(), cr.ptr(), cn.ptr(), fric.ptr(),
-                cbg, ct.ptr(), cgb.ptr(), cc.ptr(), csa.ptr(), csb.ptr(),
-                coc.ptr(), cosa.ptr(), cosb.ptr(), crad.ptr());
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, ci32_2d edges, cu8_1d attr, cf32_1d inv,
+           cf32_1d cr, f32_2d cn, f32_1d fric, int cbg,
+           ci32_1d ct, ci32_1d cgb, cf32_2d cc, cf32_2d csa, cf32_2d csb,
+           cf32_2d coc, cf32_2d cosa, cf32_2d cosb, cf32_1d crad) {
+            check_cols(pos, 3, "positions"); check_cols(cn, 3, "collision_normals");
+            check_cols(edges, 2, "edges");
+            const size_t vc = pos.shape(0);
+            check_len(attr.shape(0), vc, "attributes");
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(cr.shape(0), vc, "collision_radii");
+            check_len(cn.shape(0), vc, "collision_normals");
+            check_len(fric.shape(0), vc, "friction");
+            const size_t nc = static_cast<size_t>(ct.shape(0));
+            check_len(cgb.shape(0), nc, "collider_group_bits");
+            check_len(crad.shape(0), nc, "collider_radii");
+            check_cols(cc, 3, "collider_centers");    check_len(cc.shape(0), nc, "collider_centers");
+            check_cols(csa, 3, "collider_segment_a"); check_len(csa.shape(0), nc, "collider_segment_a");
+            check_cols(csb, 3, "collider_segment_b"); check_len(csb.shape(0), nc, "collider_segment_b");
+            check_cols(coc, 3, "collider_old_centers");    check_len(coc.shape(0), nc, "collider_old_centers");
+            check_cols(cosa, 3, "collider_old_segment_a"); check_len(cosa.shape(0), nc, "collider_old_segment_a");
+            check_cols(cosb, 3, "collider_old_segment_b"); check_len(cosb.shape(0), nc, "collider_old_segment_b");
+            hotools::Mc2EdgeCollisionView view;
+            view.positions           = pos.data();
+            view.edges               = edges.data();
+            view.attributes          = attr.data();
+            view.inv_masses          = inv.data();
+            view.collision_radii     = cr.data();
+            view.collision_normals   = cn.data();
+            view.friction            = fric.data();
+            view.collider_types      = ct.data();
+            view.collider_group_bits = cgb.data();
+            view.collider_centers    = cc.data();
+            view.collider_segment_a  = csa.data();
+            view.collider_segment_b  = csb.data();
+            view.collider_old_centers   = coc.data();
+            view.collider_old_segment_a = cosa.data();
+            view.collider_old_segment_b = cosb.data();
+            view.collider_radii      = crad.data();
+            view.vertex_count        = static_cast<std::int64_t>(vc);
+            view.edge_count          = static_cast<std::int64_t>(edges.shape(0));
+            view.collider_count      = static_cast<std::int64_t>(nc);
+            view.collided_by_groups  = static_cast<std::int32_t>(cbg);
+            { nb::gil_scoped_release _; hotools::project_edge_collisions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("edges"), nb::arg("attributes"),
         nb::arg("inv_masses"), nb::arg("collision_radii"), nb::arg("collision_normals"),
@@ -1958,39 +978,106 @@ NB_MODULE(hotools_native, m) {
         nb::arg("collider_old_segment_b"), nb::arg("collider_radii"),
         "Project MC2 edge collisions in-place.");
     m.def("project_self_collisions_mc2",
-        [](nb::object pos, nb::object old, nb::object inv, nb::object edges,
-           nb::object tri, nb::object attr, nb::object cn, nb::object fric, double st) {
-            PyObject* r = project_self_collisions_mc2_object(
-                pos.ptr(), old.ptr(), inv.ptr(), edges.ptr(), tri.ptr(),
-                attr.ptr(), cn.ptr(), fric.ptr(), st);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_2d old, cf32_1d inv, ci32_2d edges,
+           ci32_2d tri, cu8_1d attr, f32_2d cn, f32_1d fric, float st) {
+            check_cols(pos, 3, "positions"); check_cols(old, 3, "old_positions");
+            check_cols(cn, 3, "collision_normals");
+            check_cols(edges, 2, "edges"); check_cols(tri, 3, "triangles");
+            const size_t vc = pos.shape(0);
+            check_len(old.shape(0), vc, "old_positions");
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(attr.shape(0), vc, "attributes");
+            check_len(cn.shape(0), vc, "collision_normals");
+            check_len(fric.shape(0), vc, "friction");
+            hotools::Mc2SelfCollisionView view;
+            view.positions        = pos.data();
+            view.old_positions    = old.data();
+            view.inv_masses       = inv.data();
+            view.edges            = edges.data();
+            view.triangles        = tri.data();
+            view.attributes       = attr.data();
+            view.collision_normals = cn.data();
+            view.friction         = fric.data();
+            view.vertex_count     = static_cast<std::int64_t>(vc);
+            view.edge_count       = static_cast<std::int64_t>(edges.shape(0));
+            view.triangle_count   = static_cast<std::int64_t>(tri.shape(0));
+            view.surface_thickness = st;
+            { nb::gil_scoped_release _; hotools::project_self_collisions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("old_positions"), nb::arg("inv_masses"),
         nb::arg("edges"), nb::arg("triangles"), nb::arg("attributes"),
         nb::arg("collision_normals"), nb::arg("friction"), nb::arg("surface_thickness"),
         "Project MC2 self collisions in-place.");
     m.def("project_triangle_bending_mc2",
-        [](nb::object pos, nb::object inv, nb::object dp, nb::object dra,
-           nb::object ds, nb::object vp, nb::object vr, nb::object sv) {
-            PyObject* r = project_triangle_bending_mc2_object(
-                pos.ptr(), inv.ptr(), dp.ptr(), dra.ptr(), ds.ptr(), vp.ptr(), vr.ptr(), sv.ptr());
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_1d inv, ci32_2d dp, cf32_1d dra,
+           ci32_1d ds, ci32_2d vp, cf32_1d vr, cf32_1d sv) {
+            check_cols(pos, 3, "positions");
+            check_cols(dp, 4, "dihedral_pairs"); check_cols(vp, 4, "volume_pairs");
+            const size_t vc = pos.shape(0);
+            check_len(inv.shape(0), vc, "inv_masses");
+            const size_t dc = static_cast<size_t>(dp.shape(0));
+            const size_t volc = static_cast<size_t>(vp.shape(0));
+            check_len(dra.shape(0), dc, "dihedral_rest_angles");
+            check_len(ds.shape(0), dc, "dihedral_signs");
+            check_len(vr.shape(0), volc, "volume_rest");
+            check_len(sv.shape(0), vc, "stiffness_values");
+            hotools::Mc2TriangleBendingView view;
+            view.positions            = pos.data();
+            view.inv_masses           = inv.data();
+            view.dihedral_pairs       = dp.data();
+            view.dihedral_rest_angles = dra.data();
+            view.dihedral_signs       = ds.data();
+            view.volume_pairs         = vp.data();
+            view.volume_rest          = vr.data();
+            view.stiffness_values     = sv.data();
+            view.vertex_count         = static_cast<std::int64_t>(vc);
+            view.dihedral_count       = static_cast<std::int64_t>(dc);
+            view.volume_count         = static_cast<std::int64_t>(volc);
+            { nb::gil_scoped_release _; hotools::project_triangle_bending_mc2(view); }
         },
         nb::arg("positions"), nb::arg("inv_masses"), nb::arg("dihedral_pairs"),
         nb::arg("dihedral_rest_angles"), nb::arg("dihedral_signs"),
         nb::arg("volume_pairs"), nb::arg("volume_rest"), nb::arg("stiffness_values"),
         "Project MC2 triangle bending constraints in-place.");
     m.def("project_angle_constraints_mc2",
-        [](nb::object pos, nb::object inv, nb::object pi, nb::object bs,
-           nb::object bc, nb::object bd, nb::object sbp, nb::object sbr,
-           nb::object rv, nb::object lv, nb::object vel, double rva, double rgf, double ls) {
-            PyObject* r = project_angle_constraints_mc2_object(
-                pos.ptr(), inv.ptr(), pi.ptr(), bs.ptr(), bc.ptr(), bd.ptr(),
-                sbp.ptr(), sbr.ptr(), rv.ptr(), lv.ptr(), vel.ptr(), rva, rgf, ls);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d pos, cf32_1d inv, ci32_1d pi, ci32_1d bs,
+           ci32_1d bc, ci32_1d bd, cf32_2d sbp, cf32_2d sbr,
+           cf32_1d rv, cf32_1d lv, f32_2d vel, float rva, float rgf, float ls) {
+            check_cols(pos, 3, "positions");
+            check_cols(sbp, 3, "step_basic_positions");
+            check_cols(sbr, 4, "step_basic_rotations");
+            check_cols(vel, 3, "velocity_positions");
+            const size_t vc = pos.shape(0);
+            check_len(inv.shape(0), vc, "inv_masses");
+            check_len(pi.shape(0), vc, "parent_indices");
+            check_len(sbp.shape(0), vc, "step_basic_positions");
+            check_len(sbr.shape(0), vc, "step_basic_rotations");
+            check_len(rv.shape(0), vc, "restoration_values");
+            check_len(lv.shape(0), vc, "limit_values");
+            check_len(vel.shape(0), vc, "velocity_positions");
+            check_root_or_minus_one(pi.data(), vc, vc, "parent_indices");
+            const size_t lc = static_cast<size_t>(bs.shape(0));
+            check_len(bc.shape(0), lc, "baseline_count");
+            check_indices_in_range(bd.data(), bd.shape(0), vc, "baseline_data");
+            hotools::Mc2AngleConstraintView view;
+            view.positions              = pos.data();
+            view.inv_masses             = inv.data();
+            view.parent_indices         = pi.data();
+            view.baseline_start         = bs.data();
+            view.baseline_count         = bc.data();
+            view.baseline_data          = bd.data();
+            view.step_basic_positions   = sbp.data();
+            view.step_basic_rotations   = sbr.data();
+            view.restoration_values     = rv.data();
+            view.limit_values           = lv.data();
+            view.velocity_positions     = vel.data();
+            view.vertex_count           = static_cast<std::int64_t>(vc);
+            view.line_count             = static_cast<std::int64_t>(lc);
+            view.baseline_data_count    = static_cast<std::int64_t>(bd.shape(0));
+            view.restoration_velocity_attenuation = rva;
+            view.restoration_gravity_falloff      = rgf;
+            view.limit_stiffness                  = ls;
+            { nb::gil_scoped_release _; hotools::project_angle_constraints_mc2(view); }
         },
         nb::arg("positions"), nb::arg("inv_masses"), nb::arg("parent_indices"),
         nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
@@ -2000,13 +1087,38 @@ NB_MODULE(hotools_native, m) {
         nb::arg("limit_stiffness"),
         "Project MC2 angle restoration and limit constraints in-place.");
     m.def("update_step_basic_pose_mc2",
-        [](nb::object bp, nb::object br, nb::object pi, nb::object bstart, nb::object bcount,
-           nb::object bd, nb::object vlp, nb::object vlr, nb::object sp, nb::object sr, double apr) {
-            PyObject* r = update_step_basic_pose_mc2_object(
-                bp.ptr(), br.ptr(), pi.ptr(), bstart.ptr(), bcount.ptr(), bd.ptr(),
-                vlp.ptr(), vlr.ptr(), sp.ptr(), sr.ptr(), apr);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](cf32_2d bp, cf32_2d br, ci32_1d pi, ci32_1d bstart, ci32_1d bcount,
+           ci32_1d bd, cf32_2d vlp, cf32_2d vlr, f32_2d sp, f32_2d sr, float apr) {
+            check_cols(bp, 3, "base_positions"); check_cols(br, 4, "base_rotations");
+            check_cols(vlp, 3, "vertex_local_positions"); check_cols(vlr, 4, "vertex_local_rotations");
+            check_cols(sp, 3, "step_positions"); check_cols(sr, 4, "step_rotations");
+            const size_t vc = bp.shape(0);
+            check_len(br.shape(0), vc, "base_rotations");
+            check_len(pi.shape(0), vc, "parent_indices");
+            check_len(vlp.shape(0), vc, "vertex_local_positions");
+            check_len(vlr.shape(0), vc, "vertex_local_rotations");
+            check_len(sp.shape(0), vc, "step_positions");
+            check_len(sr.shape(0), vc, "step_rotations");
+            check_root_or_minus_one(pi.data(), vc, vc, "parent_indices");
+            const size_t lc = static_cast<size_t>(bstart.shape(0));
+            check_len(bcount.shape(0), lc, "baseline_count");
+            check_indices_in_range(bd.data(), bd.shape(0), vc, "baseline_data");
+            hotools::Mc2StepBasicPoseView view;
+            view.base_positions          = bp.data();
+            view.base_rotations          = br.data();
+            view.parent_indices          = pi.data();
+            view.baseline_start          = bstart.data();
+            view.baseline_count          = bcount.data();
+            view.baseline_data           = bd.data();
+            view.vertex_local_positions  = vlp.data();
+            view.vertex_local_rotations  = vlr.data();
+            view.step_positions          = sp.data();
+            view.step_rotations          = sr.data();
+            view.vertex_count            = static_cast<std::int64_t>(vc);
+            view.line_count              = static_cast<std::int64_t>(lc);
+            view.baseline_data_count     = static_cast<std::int64_t>(bd.shape(0));
+            view.animation_pose_ratio    = apr;
+            { nb::gil_scoped_release _; hotools::update_step_basic_pose_mc2(view); }
         },
         nb::arg("base_positions"), nb::arg("base_rotations"), nb::arg("parent_indices"),
         nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
@@ -2014,14 +1126,41 @@ NB_MODULE(hotools_native, m) {
         nb::arg("step_positions"), nb::arg("step_rotations"), nb::arg("animation_pose_ratio"),
         "Update MC2 step basic pose in-place.");
     m.def("update_base_pose_from_pose_mc2",
-        [](nb::object bp, nb::object bn, nb::object pi, nb::object bstart, nb::object bcount,
-           nb::object bd, nb::object vlp, nb::object vlr, nb::object br2, nb::object sp,
-           nb::object sr, double apr) {
-            PyObject* r = update_base_pose_from_pose_mc2_object(
-                bp.ptr(), bn.ptr(), pi.ptr(), bstart.ptr(), bcount.ptr(), bd.ptr(),
-                vlp.ptr(), vlr.ptr(), br2.ptr(), sp.ptr(), sr.ptr(), apr);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](cf32_2d bp, cf32_2d bn, ci32_1d pi, ci32_1d bstart, ci32_1d bcount,
+           ci32_1d bd, cf32_2d vlp, cf32_2d vlr, f32_2d br2, f32_2d sp, f32_2d sr, float apr) {
+            check_cols(bp, 3, "base_positions"); check_cols(bn, 3, "base_normals");
+            check_cols(vlp, 3, "vertex_local_positions"); check_cols(vlr, 4, "vertex_local_rotations");
+            check_cols(br2, 4, "base_rotations"); check_cols(sp, 3, "step_positions");
+            check_cols(sr, 4, "step_rotations");
+            const size_t vc = bp.shape(0);
+            check_len(bn.shape(0), vc, "base_normals");
+            check_len(pi.shape(0), vc, "parent_indices");
+            check_len(vlp.shape(0), vc, "vertex_local_positions");
+            check_len(vlr.shape(0), vc, "vertex_local_rotations");
+            check_len(br2.shape(0), vc, "base_rotations");
+            check_len(sp.shape(0), vc, "step_positions");
+            check_len(sr.shape(0), vc, "step_rotations");
+            check_root_or_minus_one(pi.data(), vc, vc, "parent_indices");
+            const size_t lc = static_cast<size_t>(bstart.shape(0));
+            check_len(bcount.shape(0), lc, "baseline_count");
+            check_indices_in_range(bd.data(), bd.shape(0), vc, "baseline_data");
+            hotools::Mc2BasePoseFromPoseView view;
+            view.base_positions          = bp.data();
+            view.base_normals            = bn.data();
+            view.parent_indices          = pi.data();
+            view.baseline_start          = bstart.data();
+            view.baseline_count          = bcount.data();
+            view.baseline_data           = bd.data();
+            view.vertex_local_positions  = vlp.data();
+            view.vertex_local_rotations  = vlr.data();
+            view.base_rotations          = br2.data();
+            view.step_positions          = sp.data();
+            view.step_rotations          = sr.data();
+            view.vertex_count            = static_cast<std::int64_t>(vc);
+            view.line_count              = static_cast<std::int64_t>(lc);
+            view.baseline_data_count     = static_cast<std::int64_t>(bd.shape(0));
+            view.animation_pose_ratio    = apr;
+            { nb::gil_scoped_release _; hotools::update_base_pose_from_pose_mc2(view); }
         },
         nb::arg("base_positions"), nb::arg("base_normals"), nb::arg("parent_indices"),
         nb::arg("baseline_start"), nb::arg("baseline_count"), nb::arg("baseline_data"),
@@ -2030,13 +1169,40 @@ NB_MODULE(hotools_native, m) {
         nb::arg("animation_pose_ratio"),
         "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.");
     m.def("apply_substep_inertia_mc2",
-        [](nb::object old, nb::object vel, nb::object dep, nb::object inv,
-           nb::object owp, nb::object sv, nb::object sr, nb::object iv, nb::object ir, double di) {
-            PyObject* r = apply_substep_inertia_mc2_object(
-                old.ptr(), vel.ptr(), dep.ptr(), inv.ptr(),
-                owp.ptr(), sv.ptr(), sr.ptr(), iv.ptr(), ir.ptr(), di);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d old, f32_2d vel, cf32_1d dep, cf32_1d inv,
+           cf32_1d owp, cf32_1d sv, cf32_1d sr, cf32_1d iv, cf32_1d ir, float di) {
+            check_cols(old, 3, "old_positions"); check_cols(vel, 3, "velocities");
+            const size_t vc = old.shape(0);
+            check_len(vel.shape(0), vc, "velocities");
+            check_len(dep.shape(0), vc, "depths");
+            check_len(inv.shape(0), vc, "inv_masses");
+            if (owp.shape(0) != 3) throw nb::value_error("old_world_position 需要3个元素");
+            if (sv.shape(0) != 3)  throw nb::value_error("step_vector 需要3个元素");
+            if (sr.shape(0) != 4)  throw nb::value_error("step_rotation 需要4个元素");
+            if (iv.shape(0) != 3)  throw nb::value_error("inertia_vector 需要3个元素");
+            if (ir.shape(0) != 4)  throw nb::value_error("inertia_rotation 需要4个元素");
+            hotools::Mc2SubstepInertiaView view;
+            view.old_positions = old.data();
+            view.velocities    = vel.data();
+            view.depths        = dep.data();
+            view.inv_masses    = inv.data();
+            view.vertex_count  = static_cast<std::int64_t>(vc);
+            const float* owp_d = owp.data();
+            const float* sv_d  = sv.data();
+            const float* sr_d  = sr.data();
+            const float* iv_d  = iv.data();
+            const float* ir_d  = ir.data();
+            for (int i = 0; i < 3; ++i) {
+                view.old_world_position[i] = owp_d[i];
+                view.step_vector[i]        = sv_d[i];
+                view.inertia_vector[i]     = iv_d[i];
+            }
+            for (int i = 0; i < 4; ++i) {
+                view.step_rotation[i]    = sr_d[i];
+                view.inertia_rotation[i] = ir_d[i];
+            }
+            view.depth_inertia = di;
+            { nb::gil_scoped_release _; hotools::apply_substep_inertia_mc2(view); }
         },
         nb::arg("old_positions"), nb::arg("velocities"), nb::arg("depths"),
         nb::arg("inv_masses"), nb::arg("old_world_position"), nb::arg("step_vector"),
@@ -2044,23 +1210,52 @@ NB_MODULE(hotools_native, m) {
         nb::arg("depth_inertia"),
         "Apply MC2 substep inertia in-place.");
     m.def("apply_centrifugal_velocity_mc2",
-        [](nb::object pos, nb::object vel, nb::object dep, nb::object inv,
-           nb::object nwp, nb::object ra, double av, double cf) {
-            PyObject* r = apply_centrifugal_velocity_mc2_object(
-                pos.ptr(), vel.ptr(), dep.ptr(), inv.ptr(), nwp.ptr(), ra.ptr(), av, cf);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](cf32_2d pos, f32_2d vel, cf32_1d dep, cf32_1d inv,
+           cf32_1d nwp, cf32_1d ra, float av, float cf_val) {
+            check_cols(pos, 3, "positions"); check_cols(vel, 3, "velocities");
+            const size_t vc = pos.shape(0);
+            check_len(vel.shape(0), vc, "velocities");
+            check_len(dep.shape(0), vc, "depths");
+            check_len(inv.shape(0), vc, "inv_masses");
+            if (nwp.shape(0) != 3) throw nb::value_error("now_world_position 需要3个元素");
+            if (ra.shape(0) != 3)  throw nb::value_error("rotation_axis 需要3个元素");
+            hotools::Mc2CentrifugalView view;
+            view.positions    = pos.data();
+            view.velocities   = vel.data();
+            view.depths       = dep.data();
+            view.inv_masses   = inv.data();
+            view.vertex_count = static_cast<std::int64_t>(vc);
+            const float* nwp_d = nwp.data();
+            const float* ra_d  = ra.data();
+            for (int i = 0; i < 3; ++i) {
+                view.now_world_position[i] = nwp_d[i];
+                view.rotation_axis[i]      = ra_d[i];
+            }
+            view.angular_velocity = av;
+            view.centrifugal      = cf_val;
+            { nb::gil_scoped_release _; hotools::apply_centrifugal_velocity_mc2(view); }
         },
         nb::arg("positions"), nb::arg("velocities"), nb::arg("depths"), nb::arg("inv_masses"),
         nb::arg("now_world_position"), nb::arg("rotation_axis"),
         nb::arg("angular_velocity"), nb::arg("centrifugal"),
         "Apply MC2 centrifugal velocity in-place.");
     m.def("calculate_display_positions_mc2",
-        [](nb::object pos, nb::object rvel, nb::object ri, nb::object dp, double fdt, double mdr) {
-            PyObject* r = calculate_display_positions_mc2_object(
-                pos.ptr(), rvel.ptr(), ri.ptr(), dp.ptr(), fdt, mdr);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](cf32_2d pos, cf32_2d rvel, ci32_1d ri, f32_2d dp, float fdt, float mdr) {
+            check_cols(pos, 3, "positions"); check_cols(rvel, 3, "real_velocities");
+            check_cols(dp, 3, "display_positions");
+            const size_t vc = pos.shape(0);
+            check_len(rvel.shape(0), vc, "real_velocities");
+            check_len(ri.shape(0), vc, "root_indices");
+            check_len(dp.shape(0), vc, "display_positions");
+            hotools::Mc2DisplayPredictionView view;
+            view.positions         = pos.data();
+            view.real_velocities   = rvel.data();
+            view.root_indices      = ri.data();
+            view.display_positions = dp.data();
+            view.vertex_count      = static_cast<std::int64_t>(vc);
+            view.frame_dt          = fdt;
+            view.max_distance_ratio = mdr;
+            { nb::gil_scoped_release _; hotools::calculate_display_positions_mc2(view); }
         },
         nb::arg("positions"), nb::arg("real_velocities"), nb::arg("root_indices"),
         nb::arg("display_positions"), nb::arg("frame_dt"), nb::arg("max_distance_ratio"),
@@ -2078,16 +1273,46 @@ NB_MODULE(hotools_native, m) {
 
     // ---- 骨骼布料 IO ----
     m.def("solve_mc2_bonecloth_io",
-        [](nb::object wr, nb::object dp, nb::object bp, nb::object br,
-           nb::object vlp, nb::object vlr, nb::object pi, nb::object bstart,
-           nb::object bc, nb::object bd, nb::object attr,
-           double ri, double bw, double ar, double rr) {
-            PyObject* r = solve_mc2_bonecloth_io_object(
-                wr.ptr(), dp.ptr(), bp.ptr(), br.ptr(), vlp.ptr(), vlr.ptr(),
-                pi.ptr(), bstart.ptr(), bc.ptr(), bd.ptr(), attr.ptr(),
-                ri, bw, ar, rr);
-            if (!r) throw nb::python_error();
-            Py_DECREF(r);
+        [](f32_2d wr, cf32_2d dp, cf32_2d bp, cf32_2d br,
+           cf32_2d vlp, cf32_2d vlr, ci32_1d pi, ci32_1d bstart,
+           ci32_1d bcount, ci32_1d bd, cu8_1d attr,
+           float ri, float bw, float ar, float rr) {
+            check_cols(wr, 4, "world_rotations");
+            check_cols(dp, 3, "display_positions");
+            check_cols(bp, 3, "base_positions");
+            check_cols(br, 4, "base_rotations");
+            check_cols(vlp, 3, "vertex_local_positions");
+            check_cols(vlr, 4, "vertex_local_rotations");
+            const size_t vc = static_cast<size_t>(wr.shape(0));
+            check_len(dp.shape(0), vc, "display_positions");
+            check_len(bp.shape(0), vc, "base_positions");
+            check_len(br.shape(0), vc, "base_rotations");
+            check_len(vlp.shape(0), vc, "vertex_local_positions");
+            check_len(vlr.shape(0), vc, "vertex_local_rotations");
+            check_len(pi.shape(0), vc, "parent_indices");
+            check_len(attr.shape(0), vc, "attributes");
+            const size_t lc = static_cast<size_t>(bstart.shape(0));
+            check_len(bcount.shape(0), lc, "baseline_count");
+            hotools::BoneClothIoView view;
+            view.world_rotations        = wr.data();
+            view.display_positions      = dp.data();
+            view.base_positions         = bp.data();
+            view.base_rotations         = br.data();
+            view.vertex_local_positions = vlp.data();
+            view.vertex_local_rotations = vlr.data();
+            view.parent_indices         = pi.data();
+            view.baseline_start         = bstart.data();
+            view.baseline_count         = bcount.data();
+            view.baseline_data          = bd.data();
+            view.attributes             = attr.data();
+            view.rotational_interpolation = ri;
+            view.blend_weight             = bw;
+            view.anime_ratio              = ar;
+            view.root_rotation            = rr;
+            view.vertex_count             = static_cast<std::int64_t>(vc);
+            view.baseline_lines           = static_cast<std::int64_t>(lc);
+            view.baseline_total           = static_cast<std::int64_t>(bd.shape(0));
+            { nb::gil_scoped_release _; hotools::solve_bonecloth_io(view); }
         },
         nb::arg("world_rotations"), nb::arg("display_positions"),
         nb::arg("base_positions"), nb::arg("base_rotations"),
