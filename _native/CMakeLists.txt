@@ -108,7 +108,8 @@ endif()
 # ---------------------------------------------------------------------------
 # hotools_native legacy CPython API module
 # ---------------------------------------------------------------------------
-add_library(hotools_native MODULE
+nanobind_add_module(hotools_native
+    NB_STATIC
     src/hotools_native.cpp
     src/mc2_context.cpp
     src/mc2.cpp
@@ -124,7 +125,6 @@ target_include_directories(hotools_native PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/include"
 )
 
-target_link_libraries(hotools_native PRIVATE Python3::Module)
 target_compile_definitions(hotools_native PRIVATE PY_SSIZE_T_CLEAN)
 
 if(MSVC)

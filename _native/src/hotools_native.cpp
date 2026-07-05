@@ -1,5 +1,7 @@
 #include <Python.h>
 
+#include <nanobind/nanobind.h>
+
 #include "hotools_mc2.hpp"
 #include "hotools_mc2_bonecloth_io.hpp"
 #include "hotools_mesh_xpbd.hpp"
@@ -18,7 +20,25 @@
 
 PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject*);
 
+namespace nb = nanobind;
+
 namespace {
+
+using LegacyPyFunc = PyObject* (*)(PyObject*, PyObject*);
+
+nb::object call_legacy_varargs(LegacyPyFunc function, nb::args args) {
+    PyObject* result = function(nullptr, args.ptr());
+    if (result == nullptr) {
+        throw nb::python_error();
+    }
+    return nb::steal<nb::object>(result);
+}
+
+void def_legacy(nb::module_& module, const char* name, LegacyPyFunc function, const char* doc) {
+    module.def(name, [function](nb::args args) {
+        return call_legacy_varargs(function, args);
+    }, doc);
+}
 
 struct Buffer {
     Py_buffer view {};
@@ -2226,230 +2246,79 @@ PyObject* solve_mc2_bonecloth_io(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyMethodDef kMethods[] = {
-    {
-        "compile_property_float_curve",
-        hotools::compile_property_float_curve,
-        METH_VARARGS,
-        "Compile a float curve payload into a native capsule.",
-    },
-    {
-        "compile_property_color_curve",
-        hotools::compile_property_color_curve,
-        METH_VARARGS,
-        "Compile a color curve payload into a native capsule.",
-    },
-    {
-        "sample_property_float_curve",
-        hotools::sample_property_float_curve,
-        METH_VARARGS,
-        "Sample a native float curve or payload at one position.",
-    },
-    {
-        "sample_property_color_curve",
-        hotools::sample_property_color_curve,
-        METH_VARARGS,
-        "Sample a native color curve or payload at one position.",
-    },
-    {
-        "sample_property_float_curve_many",
-        hotools::sample_property_float_curve_many,
-        METH_VARARGS,
-        "Sample a native float curve or payload at evenly spaced positions.",
-    },
-    {
-        "sample_property_color_curve_many",
-        hotools::sample_property_color_curve_many,
-        METH_VARARGS,
-        "Sample a native color curve or payload at evenly spaced positions.",
-    },
-    {
-        "sample_property_float_curve_positions",
-        hotools::sample_property_float_curve_positions,
-        METH_VARARGS,
-        "Sample a native float curve or payload at explicit positions.",
-    },
-    {
-        "sample_property_color_curve_positions",
-        hotools::sample_property_color_curve_positions,
-        METH_VARARGS,
-        "Sample a native color curve or payload at explicit positions.",
-    },
-    {
-        "solve_mesh_shape_key_xpbd",
-        solve_mesh_shape_key_xpbd,
-        METH_VARARGS,
-        "Solve one mesh shape-key XPBD step in-place.",
-    },
-    {
-        "solve_spring_bone_vrm_cpp",
-        solve_spring_bone_vrm_cpp,
-        METH_VARARGS,
-        "Solve one VRM spring bone chain in-place.",
-    },
-    {
-        "create_meshcloth_mc2_context",
-        hotools::create_meshcloth_mc2_context,
-        METH_VARARGS,
-        "Create an MC2 MeshCloth native context handle.",
-    },
-    {
-        "update_meshcloth_mc2_context_static",
-        hotools::update_meshcloth_mc2_context_static,
-        METH_VARARGS,
-        "Update MC2 MeshCloth native context static metadata.",
-    },
-    {
-        "update_meshcloth_mc2_context_static_arrays",
-        hotools::update_meshcloth_mc2_context_static_arrays,
-        METH_VARARGS,
-        "Upload MC2 MeshCloth static topology arrays into a native context.",
-    },
-    {
-        "update_meshcloth_mc2_context_params",
-        hotools::update_meshcloth_mc2_context_params,
-        METH_VARARGS,
-        "Update MC2 MeshCloth native context parameter metadata.",
-    },
-    {
-        "update_meshcloth_mc2_context_param_arrays",
-        hotools::update_meshcloth_mc2_context_param_arrays,
-        METH_VARARGS,
-        "Upload MC2 MeshCloth parameter sample arrays into a native context.",
-    },
-    {
-        "meshcloth_mc2_context_info",
-        hotools::meshcloth_mc2_context_info,
-        METH_VARARGS,
-        "Return MC2 MeshCloth native context metadata.",
-    },
-    {
-        "free_meshcloth_mc2_context",
-        hotools::free_meshcloth_mc2_context,
-        METH_VARARGS,
-        "Release MC2 MeshCloth native context resources.",
-    },
-    {
-        "project_neighbor_constraints_mc2",
-        project_neighbor_constraints_mc2,
-        METH_VARARGS,
-        "Project MC2 neighbor constraints in-place.",
-    },
-    {
-        "project_tether_mc2",
-        project_tether_mc2,
-        METH_VARARGS,
-        "Project MC2 tether constraints in-place.",
-    },
-    {
-        "project_motion_constraints_mc2",
-        project_motion_constraints_mc2,
-        METH_VARARGS,
-        "Project MC2 motion constraints in-place.",
-    },
-    {
-        "apply_post_step_mc2",
-        apply_post_step_mc2,
-        METH_VARARGS,
-        "Apply MC2 post-step velocity and friction update in-place.",
-    },
-    {
-        "project_collisions_mc2",
-        project_collisions_mc2,
-        METH_VARARGS,
-        "Project MC2 point collisions in-place.",
-    },
-    {
-        "project_edge_collisions_mc2",
-        project_edge_collisions_mc2,
-        METH_VARARGS,
-        "Project MC2 edge collisions in-place.",
-    },
-    {
-        "project_self_collisions_mc2",
-        project_self_collisions_mc2,
-        METH_VARARGS,
-        "Project MC2 self collisions in-place.",
-    },
-    {
-        "project_triangle_bending_mc2",
-        project_triangle_bending_mc2,
-        METH_VARARGS,
-        "Project MC2 triangle bending constraints in-place.",
-    },
-    {
-        "project_angle_constraints_mc2",
-        project_angle_constraints_mc2,
-        METH_VARARGS,
-        "Project MC2 angle restoration and limit constraints in-place.",
-    },
-    {
-        "update_step_basic_pose_mc2",
-        update_step_basic_pose_mc2,
-        METH_VARARGS,
-        "Update MC2 step basic pose in-place.",
-    },
-    {
-        "update_base_pose_from_pose_mc2",
-        update_base_pose_from_pose_mc2,
-        METH_VARARGS,
-        "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.",
-    },
-    {
-        "apply_substep_inertia_mc2",
-        apply_substep_inertia_mc2,
-        METH_VARARGS,
-        "Apply MC2 substep inertia in-place.",
-    },
-    {
-        "apply_centrifugal_velocity_mc2",
-        apply_centrifugal_velocity_mc2,
-        METH_VARARGS,
-        "Apply MC2 centrifugal velocity in-place.",
-    },
-    {
-        "calculate_display_positions_mc2",
-        calculate_display_positions_mc2,
-        METH_VARARGS,
-        "Calculate MC2 display future prediction in-place.",
-    },
-    {
-        "solve_meshcloth_mc2",
-        solve_meshcloth_mc2,
-        METH_VARARGS,
-        "Solve one MC2 MeshCloth array frame in-place.",
-    },
-    {
-        "solve_meshcloth_mc2_context",
-        hotools::solve_meshcloth_mc2_context,
-        METH_VARARGS,
-        "Solve one MC2 MeshCloth frame using a native context for static arrays.",
-    },
-    {
-        "solve_meshcloth_mc2_context_cached_params",
-        hotools::solve_meshcloth_mc2_context_cached_params,
-        METH_VARARGS,
-        "Solve one MC2 MeshCloth frame using native context static and parameter arrays.",
-    },
-    {
-        "solve_mc2_bonecloth_io",
-        solve_mc2_bonecloth_io,
-        METH_VARARGS,
-        "Compute MC2 BoneCloth chain-propagated world rotations in-place.",
-    },
-    {nullptr, nullptr, 0, nullptr},
-};
-
-PyModuleDef kModule = {
-    PyModuleDef_HEAD_INIT,
-    "hotools_native",
-    "Native acceleration backend for HoTools.",
-    -1,
-    kMethods,
-};
-
 }  // namespace
 
-PyMODINIT_FUNC PyInit_hotools_native() {
-    return PyModule_Create(&kModule);
+NB_MODULE(hotools_native, m) {
+    m.doc() = "Native acceleration backend for HoTools (nanobind module shell).";
+
+    def_legacy(m, "compile_property_float_curve", hotools::compile_property_float_curve,
+        "Compile a float curve payload into a native capsule.");
+    def_legacy(m, "compile_property_color_curve", hotools::compile_property_color_curve,
+        "Compile a color curve payload into a native capsule.");
+    def_legacy(m, "sample_property_float_curve", hotools::sample_property_float_curve,
+        "Sample a native float curve or payload at one position.");
+    def_legacy(m, "sample_property_color_curve", hotools::sample_property_color_curve,
+        "Sample a native color curve or payload at one position.");
+    def_legacy(m, "sample_property_float_curve_many", hotools::sample_property_float_curve_many,
+        "Sample a native float curve or payload at evenly spaced positions.");
+    def_legacy(m, "sample_property_color_curve_many", hotools::sample_property_color_curve_many,
+        "Sample a native color curve or payload at evenly spaced positions.");
+    def_legacy(m, "sample_property_float_curve_positions", hotools::sample_property_float_curve_positions,
+        "Sample a native float curve or payload at explicit positions.");
+    def_legacy(m, "sample_property_color_curve_positions", hotools::sample_property_color_curve_positions,
+        "Sample a native color curve or payload at explicit positions.");
+    def_legacy(m, "solve_mesh_shape_key_xpbd", solve_mesh_shape_key_xpbd,
+        "Solve one mesh shape-key XPBD step in-place.");
+    def_legacy(m, "solve_spring_bone_vrm_cpp", solve_spring_bone_vrm_cpp,
+        "Solve one VRM spring bone chain in-place.");
+    def_legacy(m, "create_meshcloth_mc2_context", hotools::create_meshcloth_mc2_context,
+        "Create an MC2 MeshCloth native context handle.");
+    def_legacy(m, "update_meshcloth_mc2_context_static", hotools::update_meshcloth_mc2_context_static,
+        "Update MC2 MeshCloth native context static metadata.");
+    def_legacy(m, "update_meshcloth_mc2_context_static_arrays", hotools::update_meshcloth_mc2_context_static_arrays,
+        "Upload MC2 MeshCloth static topology arrays into a native context.");
+    def_legacy(m, "update_meshcloth_mc2_context_params", hotools::update_meshcloth_mc2_context_params,
+        "Update MC2 MeshCloth native context parameter metadata.");
+    def_legacy(m, "update_meshcloth_mc2_context_param_arrays", hotools::update_meshcloth_mc2_context_param_arrays,
+        "Upload MC2 MeshCloth parameter sample arrays into a native context.");
+    def_legacy(m, "meshcloth_mc2_context_info", hotools::meshcloth_mc2_context_info,
+        "Return MC2 MeshCloth native context metadata.");
+    def_legacy(m, "free_meshcloth_mc2_context", hotools::free_meshcloth_mc2_context,
+        "Release MC2 MeshCloth native context resources.");
+    def_legacy(m, "project_neighbor_constraints_mc2", project_neighbor_constraints_mc2,
+        "Project MC2 neighbor constraints in-place.");
+    def_legacy(m, "project_tether_mc2", project_tether_mc2,
+        "Project MC2 tether constraints in-place.");
+    def_legacy(m, "project_motion_constraints_mc2", project_motion_constraints_mc2,
+        "Project MC2 motion constraints in-place.");
+    def_legacy(m, "apply_post_step_mc2", apply_post_step_mc2,
+        "Apply MC2 post-step velocity and friction update in-place.");
+    def_legacy(m, "project_collisions_mc2", project_collisions_mc2,
+        "Project MC2 point collisions in-place.");
+    def_legacy(m, "project_edge_collisions_mc2", project_edge_collisions_mc2,
+        "Project MC2 edge collisions in-place.");
+    def_legacy(m, "project_self_collisions_mc2", project_self_collisions_mc2,
+        "Project MC2 self collisions in-place.");
+    def_legacy(m, "project_triangle_bending_mc2", project_triangle_bending_mc2,
+        "Project MC2 triangle bending constraints in-place.");
+    def_legacy(m, "project_angle_constraints_mc2", project_angle_constraints_mc2,
+        "Project MC2 angle restoration and limit constraints in-place.");
+    def_legacy(m, "update_step_basic_pose_mc2", update_step_basic_pose_mc2,
+        "Update MC2 step basic pose in-place.");
+    def_legacy(m, "update_base_pose_from_pose_mc2", update_base_pose_from_pose_mc2,
+        "Update MC2 base rotations and step basic pose from BasePose positions/normals in-place.");
+    def_legacy(m, "apply_substep_inertia_mc2", apply_substep_inertia_mc2,
+        "Apply MC2 substep inertia in-place.");
+    def_legacy(m, "apply_centrifugal_velocity_mc2", apply_centrifugal_velocity_mc2,
+        "Apply MC2 centrifugal velocity in-place.");
+    def_legacy(m, "calculate_display_positions_mc2", calculate_display_positions_mc2,
+        "Calculate MC2 display future prediction in-place.");
+    def_legacy(m, "solve_meshcloth_mc2", solve_meshcloth_mc2,
+        "Solve one MC2 MeshCloth array frame in-place.");
+    def_legacy(m, "solve_meshcloth_mc2_context", hotools::solve_meshcloth_mc2_context,
+        "Solve one MC2 MeshCloth frame using a native context for static arrays.");
+    def_legacy(m, "solve_meshcloth_mc2_context_cached_params", hotools::solve_meshcloth_mc2_context_cached_params,
+        "Solve one MC2 MeshCloth frame using native context static and parameter arrays.");
+    def_legacy(m, "solve_mc2_bonecloth_io", solve_mc2_bonecloth_io,
+        "Compute MC2 BoneCloth chain-propagated world rotations in-place.");
 }
