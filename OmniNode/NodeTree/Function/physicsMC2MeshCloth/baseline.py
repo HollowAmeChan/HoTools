@@ -4,11 +4,16 @@ baseline 是 MC2 在 MeshCloth 和 BoneCloth 之间共用的父子参考链。Me
 mesh 邻接关系生成这条链；BoneCloth 后续可以直接从骨骼 Transform 父子关系生成同一套数组。
 """
 
-from collections import deque
-
 import numpy as np
 
 from .constants import MC2_ATTR_MOVE, MC2SystemConstants
+from .math_utils import (
+    quat_from_matrix,
+    quat_inverse,
+    quat_mul,
+    quat_rotate,
+    quat_slerp,
+)
 
 
 def _empty_i() -> np.ndarray:
@@ -39,118 +44,6 @@ def _perpendicular(vector: np.ndarray) -> np.ndarray:
     return _safe_normal(np.cross(vector, axis), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
 
 
-def _quat_normalize(quat: np.ndarray) -> np.ndarray:
-    length = float(np.linalg.norm(quat))
-    if length <= MC2SystemConstants.EPSILON:
-        return np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
-    return np.asarray(quat / length, dtype=np.float32)
-
-
-def _quat_from_matrix(matrix: np.ndarray) -> np.ndarray:
-    m = np.asarray(matrix, dtype=np.float32)
-    trace = float(m[0, 0] + m[1, 1] + m[2, 2])
-    if trace > 0.0:
-        s = float(np.sqrt(trace + 1.0) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    (m[2, 1] - m[1, 2]) / s,
-                    (m[0, 2] - m[2, 0]) / s,
-                    (m[1, 0] - m[0, 1]) / s,
-                    0.25 * s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    if m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        s = float(np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    0.25 * s,
-                    (m[0, 1] + m[1, 0]) / s,
-                    (m[0, 2] + m[2, 0]) / s,
-                    (m[2, 1] - m[1, 2]) / s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    if m[1, 1] > m[2, 2]:
-        s = float(np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    (m[0, 1] + m[1, 0]) / s,
-                    0.25 * s,
-                    (m[1, 2] + m[2, 1]) / s,
-                    (m[0, 2] - m[2, 0]) / s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    s = float(np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2.0)
-    return _quat_normalize(
-        np.asarray(
-            (
-                (m[0, 2] + m[2, 0]) / s,
-                (m[1, 2] + m[2, 1]) / s,
-                0.25 * s,
-                (m[1, 0] - m[0, 1]) / s,
-            ),
-            dtype=np.float32,
-        )
-    )
-
-
-def quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    ax, ay, az, aw = (float(a[0]), float(a[1]), float(a[2]), float(a[3]))
-    bx, by, bz, bw = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
-    return _quat_normalize(
-        np.asarray(
-            (
-                aw * bx + ax * bw + ay * bz - az * by,
-                aw * by - ax * bz + ay * bw + az * bx,
-                aw * bz + ax * by - ay * bx + az * bw,
-                aw * bw - ax * bx - ay * by - az * bz,
-            ),
-            dtype=np.float32,
-        )
-    )
-
-
-def quat_inverse(quat: np.ndarray) -> np.ndarray:
-    q = _quat_normalize(np.asarray(quat, dtype=np.float32))
-    return np.asarray((-q[0], -q[1], -q[2], q[3]), dtype=np.float32)
-
-
-def quat_rotate(quat: np.ndarray, vector: np.ndarray) -> np.ndarray:
-    q = _quat_normalize(np.asarray(quat, dtype=np.float32))
-    v = np.asarray(vector, dtype=np.float32)
-    qv = q[:3]
-    uv = np.cross(qv, v)
-    uuv = np.cross(qv, uv)
-    return np.ascontiguousarray(v + 2.0 * (q[3] * uv + uuv), dtype=np.float32)
-
-
-def _slerp(a: np.ndarray, b: np.ndarray, ratio: float) -> np.ndarray:
-    t = max(0.0, min(1.0, float(ratio)))
-    qa = _quat_normalize(np.asarray(a, dtype=np.float32))
-    qb = _quat_normalize(np.asarray(b, dtype=np.float32))
-    dot = float(np.dot(qa, qb))
-    if dot < 0.0:
-        qb = -qb
-        dot = -dot
-    if dot > 0.9995:
-        return _quat_normalize(qa + (qb - qa) * t)
-    theta0 = float(np.arccos(max(-1.0, min(1.0, dot))))
-    theta = theta0 * t
-    sin_theta = float(np.sin(theta))
-    sin_theta0 = float(np.sin(theta0))
-    s0 = float(np.cos(theta) - dot * sin_theta / sin_theta0)
-    s1 = float(sin_theta / sin_theta0)
-    return _quat_normalize((s0 * qa) + (s1 * qb))
-
-
 def _frame_rotation(forward: np.ndarray, normal: np.ndarray) -> np.ndarray:
     z_axis = _safe_normal(forward, normal)
     up_hint = _safe_normal(normal, np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
@@ -168,7 +61,7 @@ def _frame_rotation(forward: np.ndarray, normal: np.ndarray) -> np.ndarray:
         ),
         dtype=np.float32,
     )
-    return _quat_from_matrix(matrix)
+    return quat_from_matrix(matrix)
 
 
 def _build_adjacency(vertex_count: int, edges: np.ndarray) -> list[list[int]]:
@@ -453,7 +346,7 @@ def update_step_basic_pose(
                     step_positions[vertex_index] * (1.0 - ratio)
                     + base_positions[vertex_index] * ratio
                 )
-                step_rotations[vertex_index] = _slerp(
+                step_rotations[vertex_index] = quat_slerp(
                     step_rotations[vertex_index],
                     base_rotations[vertex_index],
                     ratio,

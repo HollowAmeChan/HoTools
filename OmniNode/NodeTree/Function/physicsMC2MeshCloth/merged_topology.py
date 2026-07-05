@@ -93,8 +93,17 @@ def _concat_index_1d(states: list[dict], field_name: str, offsets: list[int]) ->
     return _concat(arrays, dtype=np.int32)
 
 
-def _concat_index_2d(states: list[dict], field_name: str, offsets: list[int]) -> np.ndarray:
-    """拼接 2D 索引数组并加粒子偏移，支持 (E,2) / (E,3) / (E,4) 等形状。"""
+def _concat_index_2d(
+    states: list[dict],
+    field_name: str,
+    offsets: list[int],
+    ncols: int = 2,
+) -> np.ndarray:
+    """拼接 2D 索引数组并加粒子偏移，支持 (E,2) / (E,3) / (E,4) 等形状。
+
+    ncols 用于全空时的回退形状，应与下游 solver 期望的列数匹配：
+      edges / triangle_pairs → 2，triangles / volume_pairs → 3，dihedral_pairs → 4。
+    """
     arrays = []
     for s, offset in zip(states, offsets):
         val = s.get(field_name)
@@ -105,7 +114,7 @@ def _concat_index_2d(states: list[dict], field_name: str, offsets: list[int]) ->
             arr = arr.reshape(-1, 1)
         arrays.append(arr + offset if offset > 0 else arr)
     if not arrays:
-        return np.empty((0, 2), dtype=np.int32)
+        return np.empty((0, ncols), dtype=np.int32)
     return np.ascontiguousarray(np.concatenate(arrays, axis=0), dtype=np.int32)
 
 
@@ -313,11 +322,11 @@ def build_merged_state(
     parent_indices = _concat_index_1d(per_proxy_states, "parent_indices", offsets)
 
     # ---- 约束索引（二维，需加粒子偏移）----
-    edges         = _concat_index_2d(per_proxy_states, "edges",         offsets)
-    triangles     = _concat_index_2d(per_proxy_states, "triangles",     offsets)
-    dihedral_pairs = _concat_index_2d(per_proxy_states, "dihedral_pairs", offsets)
-    volume_pairs  = _concat_index_2d(per_proxy_states, "volume_pairs",  offsets)
-    tri_pairs     = _concat_index_2d(per_proxy_states, "triangle_pairs", offsets)
+    edges         = _concat_index_2d(per_proxy_states, "edges",          offsets, ncols=2)
+    triangles     = _concat_index_2d(per_proxy_states, "triangles",      offsets, ncols=3)
+    dihedral_pairs = _concat_index_2d(per_proxy_states, "dihedral_pairs", offsets, ncols=4)
+    volume_pairs  = _concat_index_2d(per_proxy_states, "volume_pairs",   offsets, ncols=4)
+    tri_pairs     = _concat_index_2d(per_proxy_states, "triangle_pairs", offsets, ncols=4)
 
     # ---- 约束 1D 索引对（edge_i / edge_j 分开存储）----
     edge_i   = _concat_flat_indexed(per_proxy_states, "edge_i",   offsets)
@@ -522,6 +531,10 @@ _SYNC_PARTICLE_FIELDS_VELOCITY = (
     "velocity",
     "real_velocity",
     "collision_normals",
+    # 摩擦状态逐帧累积，必须和速度/位置一起同步到合并数组，
+    # 否则 copy_merged_slice_to_proxy 回写的摩擦状态下一帧丢失
+    "friction",
+    "static_friction",
 )
 
 

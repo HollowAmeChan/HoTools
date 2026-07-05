@@ -370,35 +370,6 @@ def meshClothMC2Cpp(
     skip_writing: bool = False,
     debug_output: bool = False,
 ) -> tuple[_OmniCache, bpy.types.Object, int, int]:
-    return _run_mesh_cloth_mc2_node(
-        cache_state,
-        mesh_cloth_settings,
-        scene,
-        enabled,
-        reset,
-        substeps,
-        iterations,
-        gravity_dir,
-        gravity_power,
-        gravity_falloff,
-        stablization_time_after_reset,
-        anchor_obj,
-        anchor_inertia,
-        world_inertia,
-        movement_inertia_smoothing,
-        local_inertia,
-        depth_inertia,
-        centrifugal,
-        movement_speed_limit,
-        rotation_speed_limit,
-        local_movement_speed_limit,
-        local_rotation_speed_limit,
-        particle_speed_limit,
-        teleport_mode,
-        teleport_distance,
-        teleport_rotation,
-        time_scale,
-        skip_writing,
-        debug_output,
-        solver_backend="cpp",
-    )
+    # 签名与 meshClothMC2 完全一致，唯一区别是后端为 cpp。
+    # 用 locals() 转发，避免未来参数新增时需要手动同步两处调用点。
+    return _run_mesh_cloth_mc2_node(**dict(locals()), solver_backend="cpp")

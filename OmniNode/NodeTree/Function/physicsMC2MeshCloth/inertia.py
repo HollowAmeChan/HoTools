@@ -10,148 +10,26 @@ import math
 import bpy
 import numpy as np
 
-from . import baseline, math_utils
+from . import math_utils
 from .constants import MC2SystemConstants
+from .math_utils import (
+    identity_quat,
+    inverse_transform_point,
+    matrix_rotation_quat,
+    matrix_translation,
+    quat_angle,
+    quat_from_to,
+    quat_mul,
+    quat_rotate,
+    quat_slerp,
+    quat_to_axis_angle,
+    shift_position,
+    transform_point,
+)
 
 TELEPORT_NONE = 0
 TELEPORT_RESET = 1
 TELEPORT_KEEP = 2
-
-
-def _identity_quat() -> np.ndarray:
-    return np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
-
-
-def _matrix_translation(matrix: np.ndarray) -> np.ndarray:
-    return np.ascontiguousarray(matrix[:3, 3], dtype=np.float32)
-
-
-def _matrix_rotation_quat(matrix: np.ndarray) -> np.ndarray:
-    basis = np.asarray(matrix[:3, :3], dtype=np.float32)
-    x = math_utils.safe_normal_np(basis[:, 0], np.asarray((1.0, 0.0, 0.0), dtype=np.float32))
-    y = basis[:, 1] - x * float(np.dot(basis[:, 1], x))
-    y = math_utils.safe_normal_np(y, np.asarray((0.0, 1.0, 0.0), dtype=np.float32))
-    z = math_utils.safe_normal_np(np.cross(x, y), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
-    y = math_utils.safe_normal_np(np.cross(z, x), y)
-    rot = np.asarray(
-        (
-            (x[0], y[0], z[0]),
-            (x[1], y[1], z[1]),
-            (x[2], y[2], z[2]),
-        ),
-        dtype=np.float32,
-    )
-    return _quat_from_matrix(rot)
-
-
-def _quat_from_matrix(matrix: np.ndarray) -> np.ndarray:
-    m = np.asarray(matrix, dtype=np.float32)
-    trace = float(m[0, 0] + m[1, 1] + m[2, 2])
-    if trace > 0.0:
-        s = float(math.sqrt(trace + 1.0) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    (m[2, 1] - m[1, 2]) / s,
-                    (m[0, 2] - m[2, 0]) / s,
-                    (m[1, 0] - m[0, 1]) / s,
-                    0.25 * s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    if m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        s = float(math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    0.25 * s,
-                    (m[0, 1] + m[1, 0]) / s,
-                    (m[0, 2] + m[2, 0]) / s,
-                    (m[2, 1] - m[1, 2]) / s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    if m[1, 1] > m[2, 2]:
-        s = float(math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2.0)
-        return _quat_normalize(
-            np.asarray(
-                (
-                    (m[0, 1] + m[1, 0]) / s,
-                    0.25 * s,
-                    (m[1, 2] + m[2, 1]) / s,
-                    (m[0, 2] - m[2, 0]) / s,
-                ),
-                dtype=np.float32,
-            )
-        )
-    s = float(math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2.0)
-    return _quat_normalize(
-        np.asarray(
-            (
-                (m[0, 2] + m[2, 0]) / s,
-                (m[1, 2] + m[2, 1]) / s,
-                0.25 * s,
-                (m[1, 0] - m[0, 1]) / s,
-            ),
-            dtype=np.float32,
-        )
-    )
-
-
-def _quat_normalize(quat: np.ndarray) -> np.ndarray:
-    length = float(np.linalg.norm(quat))
-    if length <= MC2SystemConstants.EPSILON:
-        return _identity_quat()
-    return np.asarray(quat / length, dtype=np.float32)
-
-
-def _quat_dot_abs(a: np.ndarray, b: np.ndarray) -> float:
-    return abs(float(np.dot(_quat_normalize(a), _quat_normalize(b))))
-
-
-def quat_angle(a: np.ndarray, b: np.ndarray) -> float:
-    dot = max(-1.0, min(1.0, _quat_dot_abs(a, b)))
-    return float(2.0 * math.acos(dot))
-
-
-def quat_slerp(a: np.ndarray, b: np.ndarray, ratio: float) -> np.ndarray:
-    t = max(0.0, min(1.0, float(ratio)))
-    qa = _quat_normalize(a)
-    qb = _quat_normalize(b)
-    dot = float(np.dot(qa, qb))
-    if dot < 0.0:
-        qb = -qb
-        dot = -dot
-    if dot > 0.9995:
-        return _quat_normalize(qa + (qb - qa) * t)
-    theta0 = float(math.acos(max(-1.0, min(1.0, dot))))
-    theta = theta0 * t
-    sin_theta = float(math.sin(theta))
-    sin_theta0 = float(math.sin(theta0))
-    s0 = float(math.cos(theta) - dot * sin_theta / sin_theta0)
-    s1 = float(sin_theta / sin_theta0)
-    return _quat_normalize((s0 * qa) + (s1 * qb))
-
-
-def quat_from_to(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    return baseline.quat_mul(_quat_normalize(b), baseline.quat_inverse(_quat_normalize(a)))
-
-
-def quat_to_axis_angle(quat: np.ndarray) -> tuple[np.ndarray, float]:
-    q = _quat_normalize(quat)
-    w = max(-1.0, min(1.0, float(q[3])))
-    angle = float(2.0 * math.acos(w))
-    s = float(math.sqrt(max(1.0 - w * w, 0.0)))
-    if s <= MC2SystemConstants.EPSILON:
-        return np.asarray((0.0, 0.0, 0.0), dtype=np.float32), 0.0
-    return np.asarray(q[:3] / s, dtype=np.float32), angle
-
-
-def shift_position(position: np.ndarray, pivot: np.ndarray, shift_vector: np.ndarray, shift_rotation: np.ndarray) -> np.ndarray:
-    local = np.asarray(position, dtype=np.float32) - pivot
-    return np.ascontiguousarray(pivot + baseline.quat_rotate(shift_rotation, local) + shift_vector, dtype=np.float32)
 
 
 def capture_object_pose(obj: bpy.types.Object) -> dict:
@@ -159,8 +37,8 @@ def capture_object_pose(obj: bpy.types.Object) -> dict:
     scale_radius = math_utils.matrix_scale_radius(obj.matrix_world)
     return {
         "matrix": matrix,
-        "position": _matrix_translation(matrix),
-        "rotation": _matrix_rotation_quat(matrix),
+        "position": matrix_translation(matrix),
+        "rotation": matrix_rotation_quat(matrix),
         "scale_radius": scale_radius,
         "negative_scale_sign": math_utils.object_negative_scale_sign(obj),
         "negative_scale_direction": math_utils.object_negative_scale_direction(obj),
@@ -176,18 +54,6 @@ def _capture_anchor_pose(anchor_obj: bpy.types.Object | None) -> dict | None:
         return None
 
 
-def _inverse_transform_point(position: np.ndarray, origin: np.ndarray, rotation: np.ndarray) -> np.ndarray:
-    local = np.asarray(position, dtype=np.float32) - np.asarray(origin, dtype=np.float32)
-    return np.ascontiguousarray(baseline.quat_rotate(baseline.quat_inverse(rotation), local), dtype=np.float32)
-
-
-def _transform_point(local_position: np.ndarray, origin: np.ndarray, rotation: np.ndarray) -> np.ndarray:
-    return np.ascontiguousarray(
-        np.asarray(origin, dtype=np.float32) + baseline.quat_rotate(rotation, local_position),
-        dtype=np.float32,
-    )
-
-
 def make_runtime_state(obj: bpy.types.Object) -> dict:
     pose = capture_object_pose(obj)
     return {
@@ -196,13 +62,13 @@ def make_runtime_state(obj: bpy.types.Object) -> dict:
         "shift_pivot_position": pose["position"],
         "smoothing_velocity": np.zeros(3, dtype=np.float32),
         "frame_component_shift_vector": np.zeros(3, dtype=np.float32),
-        "frame_component_shift_rotation": _identity_quat(),
+        "frame_component_shift_rotation": identity_quat(),
         "anchor_active": False,
         "anchor_name": "",
         "anchor_position": np.zeros(3, dtype=np.float32),
-        "anchor_rotation": _identity_quat(),
+        "anchor_rotation": identity_quat(),
         "old_anchor_position": np.zeros(3, dtype=np.float32),
-        "old_anchor_rotation": _identity_quat(),
+        "old_anchor_rotation": identity_quat(),
         "anchor_component_local_position": np.zeros(3, dtype=np.float32),
         "old_world_position": pose["position"],
         "old_world_rotation": pose["rotation"],
@@ -219,9 +85,9 @@ def make_runtime_state(obj: bpy.types.Object) -> dict:
         "now_world_position": pose["position"],
         "now_world_rotation": pose["rotation"],
         "step_vector": np.zeros(3, dtype=np.float32),
-        "step_rotation": _identity_quat(),
+        "step_rotation": identity_quat(),
         "inertia_vector": np.zeros(3, dtype=np.float32),
-        "inertia_rotation": _identity_quat(),
+        "inertia_rotation": identity_quat(),
         "rotation_axis": np.zeros(3, dtype=np.float32),
         "angular_velocity": 0.0,
         "teleport_state": 0,
@@ -261,7 +127,7 @@ def prepare_frame(
     now_pos = pose["position"]
     now_rot = pose["rotation"]
     anchor_delta_vector = np.zeros(3, dtype=np.float32)
-    anchor_delta_rotation = _identity_quat()
+    anchor_delta_rotation = identity_quat()
     anchor_pose = _capture_anchor_pose(anchor_obj)
     old_anchor_active = bool(next_state.get("anchor_active", False))
     anchor_active = anchor_pose is not None
@@ -277,15 +143,15 @@ def prepare_frame(
         if anchor_reset:
             next_state["old_anchor_position"] = np.ascontiguousarray(anchor_pos, dtype=np.float32)
             next_state["old_anchor_rotation"] = np.ascontiguousarray(anchor_rot, dtype=np.float32)
-            next_state["anchor_component_local_position"] = _inverse_transform_point(now_pos, anchor_pos, anchor_rot)
+            next_state["anchor_component_local_position"] = inverse_transform_point(now_pos, anchor_pos, anchor_rot)
         old_anchor_rot = np.asarray(next_state.get("old_anchor_rotation", anchor_rot), dtype=np.float32)
         anchor_local = np.asarray(next_state.get("anchor_component_local_position"), dtype=np.float32)
-        anchor_center_pos = _transform_point(anchor_local, anchor_pos, anchor_rot)
+        anchor_center_pos = transform_point(anchor_local, anchor_pos, anchor_rot)
         anchor_ratio = 1.0 - max(0.0, min(1.0, float(anchor_inertia)))
         anchor_delta_vector = (anchor_center_pos - old_component_pos) * anchor_ratio
-        anchor_delta_rotation = quat_slerp(_identity_quat(), quat_from_to(old_anchor_rot, anchor_rot), anchor_ratio)
+        anchor_delta_rotation = quat_slerp(identity_quat(), quat_from_to(old_anchor_rot, anchor_rot), anchor_ratio)
         work_old_pos = work_old_pos + anchor_delta_vector
-        old_rot = baseline.quat_mul(anchor_delta_rotation, old_rot)
+        old_rot = quat_mul(anchor_delta_rotation, old_rot)
         next_state["anchor_position"] = np.ascontiguousarray(anchor_pos, dtype=np.float32)
         next_state["anchor_rotation"] = np.ascontiguousarray(anchor_rot, dtype=np.float32)
     next_state["anchor_active"] = bool(anchor_active)
@@ -310,7 +176,7 @@ def prepare_frame(
         old_rot = now_rot.copy()
     if negative_scale_changed:
         anchor_delta_vector = np.zeros(3, dtype=np.float32)
-        anchor_delta_rotation = _identity_quat()
+        anchor_delta_rotation = identity_quat()
     delta = now_pos - work_old_pos
     delta_angle = quat_angle(old_rot, now_rot)
 
@@ -371,13 +237,13 @@ def prepare_frame(
             rotation_shift_ratio = rotation_shift_ratio * (1.0 - limit_ratio) + limit_ratio
 
     shift_vector = delta * move_shift_ratio + smooth_delta + anchor_delta_vector
-    shift_rotation = baseline.quat_mul(
+    shift_rotation = quat_mul(
         anchor_delta_rotation,
-        quat_slerp(_identity_quat(), quat_from_to(old_rot, now_rot), rotation_shift_ratio),
+        quat_slerp(identity_quat(), quat_from_to(old_rot, now_rot), rotation_shift_ratio),
     )
 
     shifted_old_center = shift_position(old_component_pos, old_component_pos, shift_vector, shift_rotation)
-    shifted_old_rotation = baseline.quat_mul(shift_rotation, old_rot)
+    shifted_old_rotation = quat_mul(shift_rotation, old_rot)
 
     next_state["shift_pivot_position"] = np.ascontiguousarray(old_component_pos, dtype=np.float32)
     next_state["frame_component_shift_vector"] = np.ascontiguousarray(shift_vector, dtype=np.float32)
@@ -424,7 +290,7 @@ def commit_frame(runtime_state: dict, obj: bpy.types.Object) -> dict:
     next_state["shift_pivot_position"] = np.ascontiguousarray(pose["position"], dtype=np.float32)
     next_state["smoothing_velocity"] = np.asarray(next_state.get("smoothing_velocity"), dtype=np.float32)
     next_state["frame_component_shift_vector"] = np.zeros(3, dtype=np.float32)
-    next_state["frame_component_shift_rotation"] = _identity_quat()
+    next_state["frame_component_shift_rotation"] = identity_quat()
     if bool(next_state.get("anchor_active", False)):
         next_state["old_anchor_position"] = np.asarray(next_state.get("anchor_position"), dtype=np.float32)
         next_state["old_anchor_rotation"] = np.asarray(next_state.get("anchor_rotation"), dtype=np.float32)
@@ -475,7 +341,7 @@ def apply_frame_shift(
     shift_rotation = np.asarray(runtime_state.get("frame_component_shift_rotation"), dtype=np.float32)
     if (
         float(np.linalg.norm(shift_vector)) <= MC2SystemConstants.EPSILON
-        and quat_angle(_identity_quat(), shift_rotation) <= MC2SystemConstants.EPSILON
+        and quat_angle(identity_quat(), shift_rotation) <= MC2SystemConstants.EPSILON
     ):
         return
     pivot = np.asarray(runtime_state.get("shift_pivot_position"), dtype=np.float32)
@@ -488,8 +354,8 @@ def apply_frame_shift(
             shift_rotation,
         )
         display_positions[vertex_index] = shift_position(display_positions[vertex_index], pivot, shift_vector, shift_rotation)
-        velocities[vertex_index] = baseline.quat_rotate(shift_rotation, velocities[vertex_index])
-        real_velocities[vertex_index] = baseline.quat_rotate(shift_rotation, real_velocities[vertex_index])
+        velocities[vertex_index] = quat_rotate(shift_rotation, velocities[vertex_index])
+        real_velocities[vertex_index] = quat_rotate(shift_rotation, real_velocities[vertex_index])
 
 
 def prepare_substep(
@@ -530,7 +396,7 @@ def prepare_substep(
             t = max(0.0, min(1.0, local_rotation_speed_limit / local_speed))
             local_rotation_ratio = 1.0 * (1.0 - t) + local_rotation_ratio * t
     inertia_vector = step_vector * local_move_ratio
-    inertia_rotation = quat_slerp(_identity_quat(), step_rotation, local_rotation_ratio)
+    inertia_rotation = quat_slerp(identity_quat(), step_rotation, local_rotation_ratio)
     return {
         "old_world_position": old_pos,
         "now_world_position": now_pos,
@@ -567,8 +433,8 @@ def apply_substep_inertia(
         inertia_vector = base_vector * (1.0 - ratio) + step_vector * ratio
         inertia_rotation = quat_slerp(base_rotation, step_rotation, ratio)
         local = old_positions[vertex_index] - old_world
-        old_positions[vertex_index] = old_world + baseline.quat_rotate(inertia_rotation, local) + inertia_vector
-        velocities[vertex_index] = baseline.quat_rotate(inertia_rotation, velocities[vertex_index])
+        old_positions[vertex_index] = old_world + quat_rotate(inertia_rotation, local) + inertia_vector
+        velocities[vertex_index] = quat_rotate(inertia_rotation, velocities[vertex_index])
 
 
 def apply_centrifugal_velocity(
