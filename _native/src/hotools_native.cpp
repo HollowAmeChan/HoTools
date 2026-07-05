@@ -584,13 +584,22 @@ PyObject* apply_post_step_mc2_object(PyObject* positions_object,
     Py_RETURN_NONE;
 }
 
-PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 16;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_collisions_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_collisions_mc2_object(PyObject* positions_object,
+                                        PyObject* base_positions_object,
+                                        PyObject* inv_masses_object,
+                                        PyObject* collision_radii_object,
+                                        PyObject* collision_normals_object,
+                                        PyObject* friction_object,
+                                        int collided_by_groups,
+                                        PyObject* collider_types_object,
+                                        PyObject* collider_group_bits_object,
+                                        PyObject* collider_centers_object,
+                                        PyObject* collider_segment_a_object,
+                                        PyObject* collider_segment_b_object,
+                                        PyObject* collider_old_centers_object,
+                                        PyObject* collider_old_segment_a_object,
+                                        PyObject* collider_old_segment_b_object,
+                                        PyObject* collider_radii_object) {
     Buffer positions;
     Buffer base_positions;
     Buffer inv_masses;
@@ -607,23 +616,27 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     Buffer collider_old_segment_b;
     Buffer collider_radii;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !base_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !collision_radii.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
-        !collision_normals.get(PyTuple_GET_ITEM(args, 4), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "collision_normals") ||
-        !friction.get(PyTuple_GET_ITEM(args, 5), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !collider_types.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
-        !collider_group_bits.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
-        !collider_centers.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
-        !collider_segment_a.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !base_positions.get(base_positions_object, PyBUF_FORMAT | PyBUF_ND, "base_positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !collision_radii.get(collision_radii_object, PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
+        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                               "collision_normals") ||
+        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
+        !collider_types.get(collider_types_object, PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_group_bits.get(collider_group_bits_object, PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
+        !collider_centers.get(collider_centers_object, PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(collider_segment_a_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(collider_segment_b_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_b")) {
         return nullptr;
     }
-    if (!collider_old_centers.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collider_old_centers") ||
-        !collider_old_segment_a.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND, "collider_old_segment_a") ||
-        !collider_old_segment_b.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND, "collider_old_segment_b") ||
-        !collider_radii.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+    if (!collider_old_centers.get(collider_old_centers_object, PyBUF_FORMAT | PyBUF_ND,
+                                  "collider_old_centers") ||
+        !collider_old_segment_a.get(collider_old_segment_a_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "collider_old_segment_a") ||
+        !collider_old_segment_b.get(collider_old_segment_b_object, PyBUF_FORMAT | PyBUF_ND,
+                                    "collider_old_segment_b") ||
+        !collider_radii.get(collider_radii_object, PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
         return nullptr;
     }
 
@@ -640,11 +653,6 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
         !expect_int32_scalar_array(collider_types, "collider_types") ||
         !expect_int32_scalar_array(collider_group_bits, "collider_group_bits") ||
         !expect_float32(collider_radii, "collider_radii")) {
-        return nullptr;
-    }
-
-    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 6), "collided_by_groups");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -698,13 +706,23 @@ PyObject* project_collisions_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 17;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_edge_collisions_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_edge_collisions_mc2_object(PyObject* positions_object,
+                                             PyObject* edges_object,
+                                             PyObject* attributes_object,
+                                             PyObject* inv_masses_object,
+                                             PyObject* collision_radii_object,
+                                             PyObject* collision_normals_object,
+                                             PyObject* friction_object,
+                                             int collided_by_groups,
+                                             PyObject* collider_types_object,
+                                             PyObject* collider_group_bits_object,
+                                             PyObject* collider_centers_object,
+                                             PyObject* collider_segment_a_object,
+                                             PyObject* collider_segment_b_object,
+                                             PyObject* collider_old_centers_object,
+                                             PyObject* collider_old_segment_a_object,
+                                             PyObject* collider_old_segment_b_object,
+                                             PyObject* collider_radii_object) {
     Buffer positions;
     Buffer edges;
     Buffer attributes;
@@ -722,26 +740,26 @@ PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
     Buffer collider_old_segment_b;
     Buffer collider_radii;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !edges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "edges") ||
-        !attributes.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "attributes") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !collision_radii.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
-        !collision_normals.get(PyTuple_GET_ITEM(args, 5), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !edges.get(edges_object, PyBUF_FORMAT | PyBUF_ND, "edges") ||
+        !attributes.get(attributes_object, PyBUF_FORMAT | PyBUF_ND, "attributes") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !collision_radii.get(collision_radii_object, PyBUF_FORMAT | PyBUF_ND, "collision_radii") ||
+        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
                                "collision_normals") ||
-        !friction.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
-        !collider_types.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
-        !collider_group_bits.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
-        !collider_centers.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
-        !collider_segment_a.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
-        !collider_segment_b.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
-        !collider_old_centers.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND,
+        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction") ||
+        !collider_types.get(collider_types_object, PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_group_bits.get(collider_group_bits_object, PyBUF_FORMAT | PyBUF_ND, "collider_group_bits") ||
+        !collider_centers.get(collider_centers_object, PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(collider_segment_a_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(collider_segment_b_object, PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !collider_old_centers.get(collider_old_centers_object, PyBUF_FORMAT | PyBUF_ND,
                                   "collider_old_centers") ||
-        !collider_old_segment_a.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND,
+        !collider_old_segment_a.get(collider_old_segment_a_object, PyBUF_FORMAT | PyBUF_ND,
                                     "collider_old_segment_a") ||
-        !collider_old_segment_b.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND,
+        !collider_old_segment_b.get(collider_old_segment_b_object, PyBUF_FORMAT | PyBUF_ND,
                                     "collider_old_segment_b") ||
-        !collider_radii.get(PyTuple_GET_ITEM(args, 16), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        !collider_radii.get(collider_radii_object, PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
         return nullptr;
     }
 
@@ -762,11 +780,6 @@ PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
         !expect_int32_scalar_array(collider_types, "collider_types") ||
         !expect_int32_scalar_array(collider_group_bits, "collider_group_bits") ||
         !expect_float32(collider_radii, "collider_radii")) {
-        return nullptr;
-    }
-
-    const long collided_by_groups = as_long(PyTuple_GET_ITEM(args, 7), "collided_by_groups");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -820,13 +833,15 @@ PyObject* project_edge_collisions_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_self_collisions_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 9;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_self_collisions_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_self_collisions_mc2_object(PyObject* positions_object,
+                                             PyObject* old_positions_object,
+                                             PyObject* inv_masses_object,
+                                             PyObject* edges_object,
+                                             PyObject* triangles_object,
+                                             PyObject* attributes_object,
+                                             PyObject* collision_normals_object,
+                                             PyObject* friction_object,
+                                             double surface_thickness) {
     Buffer positions;
     Buffer old_positions;
     Buffer inv_masses;
@@ -836,15 +851,15 @@ PyObject* project_self_collisions_mc2(PyObject*, PyObject* args) {
     Buffer collision_normals;
     Buffer friction;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !old_positions.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !edges.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "edges") ||
-        !triangles.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "triangles") ||
-        !attributes.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "attributes") ||
-        !collision_normals.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !old_positions.get(old_positions_object, PyBUF_FORMAT | PyBUF_ND, "old_positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !edges.get(edges_object, PyBUF_FORMAT | PyBUF_ND, "edges") ||
+        !triangles.get(triangles_object, PyBUF_FORMAT | PyBUF_ND, "triangles") ||
+        !attributes.get(attributes_object, PyBUF_FORMAT | PyBUF_ND, "attributes") ||
+        !collision_normals.get(collision_normals_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
                                "collision_normals") ||
-        !friction.get(PyTuple_GET_ITEM(args, 7), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction")) {
+        !friction.get(friction_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "friction")) {
         return nullptr;
     }
 
@@ -869,11 +884,6 @@ PyObject* project_self_collisions_mc2(PyObject*, PyObject* args) {
         return nullptr;
     }
 
-    const double surface_thickness = as_double(PyTuple_GET_ITEM(args, 8), "surface_thickness");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-
     hotools::Mc2SelfCollisionView view;
     view.positions = static_cast<float*>(positions.view.buf);
     view.old_positions = static_cast<const float*>(old_positions.view.buf);
@@ -892,13 +902,14 @@ PyObject* project_self_collisions_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_triangle_bending_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 8;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_triangle_bending_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_triangle_bending_mc2_object(PyObject* positions_object,
+                                              PyObject* inv_masses_object,
+                                              PyObject* dihedral_pairs_object,
+                                              PyObject* dihedral_rest_angles_object,
+                                              PyObject* dihedral_signs_object,
+                                              PyObject* volume_pairs_object,
+                                              PyObject* volume_rest_object,
+                                              PyObject* stiffness_values_object) {
     Buffer positions;
     Buffer inv_masses;
     Buffer dihedral_pairs;
@@ -908,14 +919,14 @@ PyObject* project_triangle_bending_mc2(PyObject*, PyObject* args) {
     Buffer volume_rest;
     Buffer stiffness_values;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !dihedral_pairs.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "dihedral_pairs") ||
-        !dihedral_rest_angles.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "dihedral_rest_angles") ||
-        !dihedral_signs.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "dihedral_signs") ||
-        !volume_pairs.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "volume_pairs") ||
-        !volume_rest.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "volume_rest") ||
-        !stiffness_values.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "stiffness_values")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !dihedral_pairs.get(dihedral_pairs_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_pairs") ||
+        !dihedral_rest_angles.get(dihedral_rest_angles_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_rest_angles") ||
+        !dihedral_signs.get(dihedral_signs_object, PyBUF_FORMAT | PyBUF_ND, "dihedral_signs") ||
+        !volume_pairs.get(volume_pairs_object, PyBUF_FORMAT | PyBUF_ND, "volume_pairs") ||
+        !volume_rest.get(volume_rest_object, PyBUF_FORMAT | PyBUF_ND, "volume_rest") ||
+        !stiffness_values.get(stiffness_values_object, PyBUF_FORMAT | PyBUF_ND, "stiffness_values")) {
         return nullptr;
     }
 
@@ -959,13 +970,20 @@ PyObject* project_triangle_bending_mc2(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
-PyObject* project_angle_constraints_mc2(PyObject*, PyObject* args) {
-    constexpr Py_ssize_t kArgCount = 14;
-    if (PyTuple_GET_SIZE(args) != kArgCount) {
-        PyErr_Format(PyExc_TypeError, "project_angle_constraints_mc2 expects %zd arguments", kArgCount);
-        return nullptr;
-    }
-
+PyObject* project_angle_constraints_mc2_object(PyObject* positions_object,
+                                               PyObject* inv_masses_object,
+                                               PyObject* parent_indices_object,
+                                               PyObject* baseline_start_object,
+                                               PyObject* baseline_count_object,
+                                               PyObject* baseline_data_object,
+                                               PyObject* step_basic_positions_object,
+                                               PyObject* step_basic_rotations_object,
+                                               PyObject* restoration_values_object,
+                                               PyObject* limit_values_object,
+                                               PyObject* velocity_positions_object,
+                                               double restoration_velocity_attenuation,
+                                               double restoration_gravity_falloff,
+                                               double limit_stiffness) {
     Buffer positions;
     Buffer inv_masses;
     Buffer parent_indices;
@@ -978,17 +996,18 @@ PyObject* project_angle_constraints_mc2(PyObject*, PyObject* args) {
     Buffer limit_values;
     Buffer velocity_positions;
 
-    if (!positions.get(PyTuple_GET_ITEM(args, 0), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
-        !inv_masses.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
-        !parent_indices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
-        !baseline_start.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
-        !baseline_count.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
-        !baseline_data.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
-        !step_basic_positions.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "step_basic_positions") ||
-        !step_basic_rotations.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "step_basic_rotations") ||
-        !restoration_values.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "restoration_values") ||
-        !limit_values.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "limit_values") ||
-        !velocity_positions.get(PyTuple_GET_ITEM(args, 10), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "velocity_positions")) {
+    if (!positions.get(positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "positions") ||
+        !inv_masses.get(inv_masses_object, PyBUF_FORMAT | PyBUF_ND, "inv_masses") ||
+        !parent_indices.get(parent_indices_object, PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !baseline_start.get(baseline_start_object, PyBUF_FORMAT | PyBUF_ND, "baseline_start") ||
+        !baseline_count.get(baseline_count_object, PyBUF_FORMAT | PyBUF_ND, "baseline_count") ||
+        !baseline_data.get(baseline_data_object, PyBUF_FORMAT | PyBUF_ND, "baseline_data") ||
+        !step_basic_positions.get(step_basic_positions_object, PyBUF_FORMAT | PyBUF_ND, "step_basic_positions") ||
+        !step_basic_rotations.get(step_basic_rotations_object, PyBUF_FORMAT | PyBUF_ND, "step_basic_rotations") ||
+        !restoration_values.get(restoration_values_object, PyBUF_FORMAT | PyBUF_ND, "restoration_values") ||
+        !limit_values.get(limit_values_object, PyBUF_FORMAT | PyBUF_ND, "limit_values") ||
+        !velocity_positions.get(velocity_positions_object, PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND,
+                                "velocity_positions")) {
         return nullptr;
     }
 
@@ -1014,20 +1033,6 @@ PyObject* project_angle_constraints_mc2(PyObject*, PyObject* args) {
     }
     const Py_ssize_t line_count = baseline_start.view.shape[0];
     if (!expect_1d_array(baseline_count, "baseline_count", line_count)) {
-        return nullptr;
-    }
-
-    const double restoration_velocity_attenuation =
-        as_double(PyTuple_GET_ITEM(args, 11), "restoration_velocity_attenuation");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double restoration_gravity_falloff = as_double(PyTuple_GET_ITEM(args, 12), "restoration_gravity_falloff");
-    if (PyErr_Occurred()) {
-        return nullptr;
-    }
-    const double limit_stiffness = as_double(PyTuple_GET_ITEM(args, 13), "limit_stiffness");
-    if (PyErr_Occurred()) {
         return nullptr;
     }
 
@@ -2177,15 +2182,99 @@ NB_MODULE(hotools_native, m) {
         nb::arg("static_friction_speed"),
         nb::arg("particle_speed_limit"),
         "Apply MC2 post-step velocity and friction update in-place.");
-    def_legacy(m, "project_collisions_mc2", project_collisions_mc2,
+    m.def("project_collisions_mc2",
+        object_binding<project_collisions_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, int, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object>(),
+        nb::arg("positions"),
+        nb::arg("base_positions"),
+        nb::arg("inv_masses"),
+        nb::arg("collision_radii"),
+        nb::arg("collision_normals"),
+        nb::arg("friction"),
+        nb::arg("collided_by_groups"),
+        nb::arg("collider_types"),
+        nb::arg("collider_group_bits"),
+        nb::arg("collider_centers"),
+        nb::arg("collider_segment_a"),
+        nb::arg("collider_segment_b"),
+        nb::arg("collider_old_centers"),
+        nb::arg("collider_old_segment_a"),
+        nb::arg("collider_old_segment_b"),
+        nb::arg("collider_radii"),
         "Project MC2 point collisions in-place.");
-    def_legacy(m, "project_edge_collisions_mc2", project_edge_collisions_mc2,
+    m.def("project_edge_collisions_mc2",
+        object_binding<project_edge_collisions_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, int, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object>(),
+        nb::arg("positions"),
+        nb::arg("edges"),
+        nb::arg("attributes"),
+        nb::arg("inv_masses"),
+        nb::arg("collision_radii"),
+        nb::arg("collision_normals"),
+        nb::arg("friction"),
+        nb::arg("collided_by_groups"),
+        nb::arg("collider_types"),
+        nb::arg("collider_group_bits"),
+        nb::arg("collider_centers"),
+        nb::arg("collider_segment_a"),
+        nb::arg("collider_segment_b"),
+        nb::arg("collider_old_centers"),
+        nb::arg("collider_old_segment_a"),
+        nb::arg("collider_old_segment_b"),
+        nb::arg("collider_radii"),
         "Project MC2 edge collisions in-place.");
-    def_legacy(m, "project_self_collisions_mc2", project_self_collisions_mc2,
+    m.def("project_self_collisions_mc2",
+        object_binding<project_self_collisions_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, double>(),
+        nb::arg("positions"),
+        nb::arg("old_positions"),
+        nb::arg("inv_masses"),
+        nb::arg("edges"),
+        nb::arg("triangles"),
+        nb::arg("attributes"),
+        nb::arg("collision_normals"),
+        nb::arg("friction"),
+        nb::arg("surface_thickness"),
         "Project MC2 self collisions in-place.");
-    def_legacy(m, "project_triangle_bending_mc2", project_triangle_bending_mc2,
+    m.def("project_triangle_bending_mc2",
+        object_binding<project_triangle_bending_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object>(),
+        nb::arg("positions"),
+        nb::arg("inv_masses"),
+        nb::arg("dihedral_pairs"),
+        nb::arg("dihedral_rest_angles"),
+        nb::arg("dihedral_signs"),
+        nb::arg("volume_pairs"),
+        nb::arg("volume_rest"),
+        nb::arg("stiffness_values"),
         "Project MC2 triangle bending constraints in-place.");
-    def_legacy(m, "project_angle_constraints_mc2", project_angle_constraints_mc2,
+    m.def("project_angle_constraints_mc2",
+        object_binding<project_angle_constraints_mc2_object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, nb::object, nb::object, nb::object, nb::object,
+                       nb::object, double, double, double>(),
+        nb::arg("positions"),
+        nb::arg("inv_masses"),
+        nb::arg("parent_indices"),
+        nb::arg("baseline_start"),
+        nb::arg("baseline_count"),
+        nb::arg("baseline_data"),
+        nb::arg("step_basic_positions"),
+        nb::arg("step_basic_rotations"),
+        nb::arg("restoration_values"),
+        nb::arg("limit_values"),
+        nb::arg("velocity_positions"),
+        nb::arg("restoration_velocity_attenuation"),
+        nb::arg("restoration_gravity_falloff"),
+        nb::arg("limit_stiffness"),
         "Project MC2 angle restoration and limit constraints in-place.");
     m.def("update_step_basic_pose_mc2",
         object_binding<update_step_basic_pose_mc2_object,
