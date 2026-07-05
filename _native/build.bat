@@ -12,10 +12,10 @@ set MSBUILD_EXE=D:\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MS
 set BUILD_DIR_311=%~dp0build\vs2022-py311
 set BUILD_DIR_313=%~dp0build\vs2022-py313
 
-:: 默认编译 py311；传入参数 313 则编译 py313；传入 all 则编译两个
-set TARGET=311
+:: 默认编译两个版本；传入参数 311 则只编译 py311；传入 313 则只编译 py313
+set TARGET=all
+if "%1"=="311" set TARGET=311
 if "%1"=="313" set TARGET=313
-if "%1"=="all" set TARGET=all
 
 echo.
 echo ========================================
