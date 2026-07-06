@@ -116,7 +116,8 @@ node_categories = [
         NodeItem(i.bl_idname) for i in node_cls_physics_mc2
     ] + [
         NodeItem(i.bl_idname) for i in node_cls_physics_bonecloth
-    ] + [
+    ]),
+    OmniNodeCategory("PHYSICS_WORLD", "物理世界", items=[
         NodeItem(i.bl_idname) for i in node_cls_physics_world
     ] + [
         NodeItem(i.bl_idname) for i in node_cls_physics_world_rigid

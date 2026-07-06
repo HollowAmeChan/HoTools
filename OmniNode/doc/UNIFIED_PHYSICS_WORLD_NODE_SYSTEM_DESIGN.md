@@ -1004,8 +1004,17 @@ physicsWorld/
 
 **已注册节点：**
 
+节点菜单注册到独立 `PHYSICS_WORLD` / `物理世界` 分类，不再混入 legacy `Physics` 分类。
+
 ```text
 刚体模拟步（physicsRigidSolver）  ← Jolt sync + step，不直接写回
+刚体命令-设置速度（physicsRigidSetVelocity）          ← 发布 set_velocity
+刚体命令-施加力（physicsRigidAddForce）               ← 发布 add_force
+刚体命令-施加冲量（physicsRigidAddImpulse）           ← 发布 add_impulse
+刚体命令-重力倍率（physicsRigidSetGravityFactor）     ← 发布 set_gravity_factor
+刚体命令-材质响应（physicsRigidSetMaterialResponse）  ← 发布 set_material_response
+刚体命令-运动质量（physicsRigidSetMotionQuality）     ← 发布 set_motion_quality
+刚体命令-激活状态（physicsRigidSetActive）            ← 发布 set_active
 物理写回（physicsWriteback）      ← Object.delta_* 增量写回
 ```
 

@@ -125,6 +125,19 @@ if _nt_omni_key not in sys.modules:
     # 同时用短名注册，防止其他路径查找
     sys.modules.setdefault("OmniNodeSocketMapping", _sm)
 
+# FunctionNodeCore stub（rigid.nodes 只需要 omni 装饰器元数据）
+_nt_fnc_key = "HoTools.OmniNode.NodeTree.FunctionNodeCore"
+if _nt_fnc_key not in sys.modules:
+    _fm = _types.ModuleType(_nt_fnc_key)
+    _fm.__package__ = "HoTools.OmniNode.NodeTree"
+    def omni(**omnidata):
+        def decorator(func):
+            func.__meta = omnidata
+            return func
+        return decorator
+    _fm.omni = omni
+    sys.modules[_nt_fnc_key] = _fm
+
 # 按依赖顺序加载
 _load_pw("types",                "types.py")
 _load_pw("scope",                "scope.py")
@@ -134,6 +147,7 @@ _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
 _load_pw("rigid.backends.jolt",  "rigid/backends/jolt.py")
+_load_pw("rigid.nodes",          "rigid/nodes.py")
 
 
 # ── 导入快捷方式 ──────────────────────────────────────────────────────────────
@@ -151,6 +165,7 @@ build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 RIGID_TRANSFORM_RESULT_KEY = _pw("rigid.results").RIGID_TRANSFORM_RESULT_KEY
+physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -337,6 +352,45 @@ def test_rigid_body_commands_exchange():
     _del(ball)
 
 
+def test_rigid_body_command_nodes():
+    scene = bpy.context.scene
+    ball = _make_obj("T3C_CommandNodeBall", (0, 0, 5), body_type="DYNAMIC")
+
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True)
+
+    _, skipped = physicsRigidSetVelocity(world, ball, (0, 0, 2), (0, 0, 0), False)
+    assert skipped is None
+    assert world.exchange_counts().get("rigid_body_commands", 0) == 0
+
+    _, item = physicsRigidSetVelocity(world, ball, (0, 0, 5), (0, 0, 0), True)
+    assert item is not None
+    assert item["command"] == "set_velocity"
+    assert item["target_object"] == ball.name
+    assert item["linear_velocity"] == (0.0, 0.0, 5.0)
+    assert world.exchange_counts()["rigid_body_commands"] == 1
+
+    step_rigid_bodies(world, enabled=True)
+    spec = build_rigid_body_spec(ball)
+    slot = world.solver_slots.get(spec.slot_id)
+    result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
+    assert result is not None
+    assert result["linear_velocity"][2] > 4.0
+
+    adapter = world.backend_resources.get("rigid_solver")
+    debug = adapter.debug_snapshot()
+    assert debug["last_command_count"] == 1
+    assert debug["last_command_failed"] == 0
+
+    world.omni_cache_dispose("test_command_nodes")
+    _del(ball)
+
+
 def test_constraint_spec_disable_collisions():
     a = _make_obj("T3A_BodyA", (-1, 0, 1))
     b = _make_obj("T3A_BodyB", (1, 0, 1))
@@ -447,6 +501,7 @@ if __name__ == "__main__":
     check("JoltAdapter 直接测试",        test_jolt_adapter_direct)
     check("PhysicsWorldCache 生命周期",  test_world_lifecycle)
     check("rigid body commands exchange", test_rigid_body_commands_exchange)
+    check("rigid body command nodes", test_rigid_body_command_nodes)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
 

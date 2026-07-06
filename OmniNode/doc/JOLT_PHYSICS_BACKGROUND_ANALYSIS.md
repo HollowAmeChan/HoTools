@@ -361,12 +361,12 @@ HoTools 当前 constraint spec 只有：
 
 - `dt`、substeps、time scale。
 - Kinematic body 的目标 position/rotation。
-- Force / torque / impulse 命令。底层 API 已接入，节点/Exchange 命令流未接入。
+- Force / torque / impulse 命令。底层 API、`world.exchange` 命令流和第一批刚体命令节点已接入。
 - Motor target。
 - Constraint enable/break 状态。
 - 动态切换 body motion type、shape、filter、sensor 等。
 
-当前 HoTools 每帧只更新 kinematic transform，并 step。native / adapter 已支持 velocity、force、impulse 等控制，但还没有正式的 force/motor command 节点流。
+当前 HoTools 已支持节点侧向 `rigid_body_commands` 发布 velocity、force、impulse、gravity factor、material response、motion quality、active 命令，并由 rigid solver 翻译到 adapter。motor target、constraint enable/break 和 shape/filter/sensor 等结构性运行更新仍未形成正式节点流。
 
 ## Jolt 能输出什么
 

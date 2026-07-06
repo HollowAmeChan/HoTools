@@ -294,7 +294,7 @@ debug_markers
 }
 ```
 
-Rigid solver 已把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。当前 consumer 标记为 `_consumed_by_rigid_solver`，同一 generation/frame 内不会重复应用 impulse / force。
+Rigid solver 已把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。当前 consumer 标记为 `_consumed_by_rigid_solver`，同一 generation/frame 内不会重复应用 impulse / force。第一批节点入口已落地在 `physicsWorld/rigid/nodes.py`：设置速度、施加力、施加冲量、重力倍率、材质响应、运动质量和激活状态。
 
 ### Physics Writeback / Export / Preview
 
