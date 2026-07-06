@@ -21,15 +21,16 @@ OmniNode 物理系统应该从“一个高封装 solver 节点内部完成所有
 Cache Read
   -> Physics Object Scope
   -> Physics World Begin
-  -> Physics Entity / Spec Build
-  -> Physics Frame Prepare
-  -> Solver Prepare
-  -> Solver Step
-  -> Cross Solver Publish / Consume
-  -> Physics Writeback / Export / Preview
+  -> [Physics Entity / Spec Build]   ← 可选独立节点，或内联在 Solver 内
+  -> Solver Step                     ← 含 Solver Prepare（内部，不是独立节点）
+     (-> Cross Solver Publish)       ← 可选：solver 写 world.exchange
+  -> Solver Step...                  ← 后续 solver 可消费上游 exchange
+  -> Physics Writeback
   -> Physics World Commit
   -> Cache Write
 ```
+
+节点图暴露给用户的最简链路应只有：`World Begin → Solver → Writeback → Commit`。其余阶段（Spec Build、Frame Prepare、Solver Prepare）是实现层拆分，不应强制用户在图上连线。
 
 核心原则：
 
@@ -145,16 +146,19 @@ TemporaryColliderSpec
 
 ### Physics Frame Prepare
 
+**定位说明：** Frame Prepare 是一个内部实现概念，不是必须独立存在的用户节点。它的职责通常内联在 Physics World Begin（公共部分）或 Solver Prepare（solver 私有部分）里。只有当多个 solver 共用同一份昂贵输入转换结果（例如相同 backend 的 collider arrays）时，才值得把这层逻辑显式化为可缓存的独立步骤。
+
 职责：
 
 - 汇总本帧 frame input。
 - 把公共 collider snapshot、object transforms、armature pose、mesh state 等整理成 solver 可消费的输入视图。
-- 维护公共 runtime arrays cache，例如不同 backend 共用的 collider arrays。
+- 维护公共 runtime arrays cache，例如不同 backend 共用的 collider arrays（lazy 生成，key = `collider_arrays:{backend_id}`）。
 
 边界：
 
 - Frame Prepare 可以缓存本帧临时数组，但默认帧末丢弃。
 - 如果某个数组跨帧复用且重建昂贵，应放进 world runtime cache 或 solver slot，并声明 dirty policy。
+- **不应把 Frame Prepare 单独做成节点强加给用户**；用户只应感知 Scope、World Begin、Solver、Writeback、Commit 这几个语义清晰的节点。Frame Prepare 是实现细节，应内聚在 World Begin 或 solver 内部。
 
 ### Solver Prepare
 
@@ -216,11 +220,31 @@ exchange_item = {
     "channel": "dynamic_bone_colliders",
     "producer": "spring_vrm",
     "scope": "frame",
-    "source_id": "...",
-    "stable_id": "...",
+    # source_id：当前帧的来源标识，可用于 debug/log
+    "source_id": "armature:HairRoot:Hair_03",
+    # stable_id：跨帧稳定匹配 id，必须同时包含 obj_ptr + data_ptr + name
+    # 不能只用 obj.as_pointer()，Blender 删除对象后会释放地址可被新对象复用
+    "stable_id": "spring_vrm:{arm_ptr}:{arm_data_ptr}:{bone_name}",
     "payload": {...},
 }
 ```
+
+**stable_id 构造规则（必须遵守）：**
+
+所有需要跨帧匹配的 ID（exchange item 的 `stable_id`、solver slot 的 `slot_id`、spec 的 `stable_id`）都必须遵循：
+
+```python
+# 正确：同时包含对象指针和数据指针
+stable_id = f"spring_vrm:{int(arm.as_pointer())}:{int(arm.data.as_pointer())}:{bone_name}"
+
+# 错误：只用对象指针
+stable_id = f"spring_vrm:{int(arm.as_pointer())}:{bone_name}"
+
+# 错误：只用名字（不同场景可能重名，link 导入等情况更复杂）
+stable_id = f"spring_vrm:{arm.name_full}:{bone_name}"
+```
+
+`arm.data.as_pointer()` 的作用：感知骨架数据被替换（例如用户换了 Armature 数据块），此时对象指针不变但数据变了，如果没有 data_ptr，会命中旧 slot 而不触发重建。
 
 常见 channel：
 
@@ -292,6 +316,52 @@ Apply + Record
 Disabled
   不写，solver state 是否推进由 solver policy 决定。
 ```
+
+## 写回时序语义（必须在系统级统一选择）
+
+这是全系统最重要的设计决策之一，直接影响所有跨 solver 场景的行为。
+
+### 问题
+
+当链路中有多个 solver，且下游 solver 需要感知上游 solver 的物理结果时，有以下三种语义：
+
+**模式 A：solver 内写回 bpy，下游读 bpy（当前做法）**
+
+```text
+SpringBone step → 立即写 PoseBone
+  ↓ (bpy)
+Cloth step 读到 SpringBone 已写回的骨骼状态
+  ↓
+链路末尾 Writeback（Cloth 自己再写）
+```
+
+- 优点：下游 solver 不需要改，直接读 bpy。
+- 缺点：同一骨架在一帧内发生"写 bpy → 读 bpy"循环，可能触发 Blender depsgraph 中间重算；无法做 Record Only；无法统一 writeback 统计。
+
+**模式 B：所有 solver 结果存 world.exchange，链路末尾统一写 bpy（推荐长期目标）**
+
+```text
+SpringBone step → 写 world.exchange["spring_bone_matrices"]
+  ↓ (world.exchange，无 bpy 写)
+Cloth step 读 world.exchange["spring_bone_matrices"]（不读 bpy）
+  ↓
+Physics Writeback 统一写 PoseBone + mesh delta
+```
+
+- 优点：零 bpy 中间写；支持 Record Only；writeback 成本可统一统计。
+- 缺点：所有下游 solver 必须声明消费 exchange channel；首次迁移改动范围较大。
+
+**模式 C：上游 solver 内写回 bpy，下游 solver 读 bpy（同 A），但 writeback 节点可选（当前旧路径兼容）**
+
+### 系统约定
+
+**第一版统一选模式 A 作为兼容路径，模式 B 作为新 solver 的目标。**
+
+规则：
+1. **新写的 solver 必须用模式 B**：step 不写 bpy，结果存 solver slot 或 world.exchange，由 Physics Writeback 节点消费。
+2. **旧 solver 迁移前可保留模式 A**，但必须在 solver 声明的 Writeback 字段里标注 `legacy_inline_writeback: true`。
+3. **如果下游 solver 需要消费上游物理结果**，上游 solver 必须发布 exchange item；下游 solver 声明消费该 channel，不依赖 bpy 中间状态。
+4. **`armature.update_tag()` 只能在 Physics Writeback 节点调用**，每个 armature 只调一次（汇总所有 solver 写完后），不能在 solver step 内调用。
 
 ### Physics World Commit
 
@@ -498,16 +568,33 @@ spec_key
 
 topology_key
   骨链、mesh topology、body/constraint identity。
+  变化触发：slot 重建 + native context 全量重传。
 
 config_key
-  影响 solver 静态结构的参数。
+  影响 solver 静态结构但不影响拓扑的配置。
+  例如：连接模式、碰撞组过滤、backend 版本。
+  变化触发：slot 重建，native context 静态结构重传。
 
-dynamic_key
-  可选，影响每帧动态同步的参数摘要。
+param_key（与 config_key 区分）
+  影响每帧参数数组但不影响结构的运行参数。
+  例如：stiffness/drag/gravity 数值、substeps、time_scale。
+  变化触发：仅刷新对应 native context 参数数组，不重建 slot。
+  如果 solver 支持 hot param update，params 可以每帧直接传入，不走 key 检测。
+
+dynamic_key（可选）
+  影响每帧动态同步的参数摘要。
+  仅当需要确认动态数据来源是否变化时使用。
 
 backend_key
   backend 版本、schema、native layout。
+  变化触发：native context 重建。
 ```
+
+**config_key 和 param_key 的关键区别：**
+
+- config 变化 → slot 结构无效，需要重建（例如改了骨链连接模式，整个 solver 要冷启动）。
+- param 变化 → slot 结构有效，只需刷新参数数组（例如调低 stiffness，不需要冷启动，直接下一帧生效）。
+- 不区分这两个 key 会导致用户调参时触发不必要的冷启动，体验变差。
 
 规则：
 
@@ -530,35 +617,81 @@ Python owner:
   dispose 调度
 
 C++ native context:
-  static arrays
-  reusable dynamic buffers
-  solver state
-  broadphase / backend world
-  heavy conversion cache
+  static arrays（topology、constraint table、init pose）
+  reusable dynamic buffers（per-frame 动态数据的预分配 buffer）
+  solver state（particle positions、velocities、angular state）
+  broadphase / backend world（Jolt PhysicsSystem 等）
+  heavy conversion cache（collider arrays per backend）
   numeric kernels
 ```
 
 收益点不在于把 Cache Read/Write 搬到 C++，而在于减少每帧重复：
 
-- 拓扑数组重建。
+- 拓扑数组重建（topology 不变时每帧白重建）。
 - 约束表重建。
 - Python list/dict 到 numpy 的打包。
 - backend-specific collider arrays 转换。
-- buffer 校验和多参数调用。
+- buffer 校验和多参数调用（当前 35 参数单次调用模型无法避免 per-call overhead）。
 - 大量中间 matrix/vector 解包。
 
-约束：
+### Native Context 生命周期协议
 
+每个需要 C++ persistent context 的 solver 应遵循以下调用协议，不得合并成单一大函数：
+
+```text
+阶段 1：创建（topology dirty 或 generation 变化时）
+  ctx = create_{solver}_context(schema_version, static_arrays)
+    - 分配 C++ 内部结构
+    - 上传 topology、constraint table、init pose 等静态数组
+    - 返回 opaque handle（Python capsule）
+
+阶段 2：静态参数更新（config dirty 时，不触发重建）
+  update_{solver}_static(ctx, static_param_arrays)
+    - 只更新参数数组（stiffness、radius 等）
+    - 不重建 topology
+
+阶段 3：每帧动态同步（每帧）
+  update_{solver}_dynamic(ctx, animated_arrays, collider_arrays, scalar_params)
+    - 上传当前帧的动画数据（骨骼矩阵、碰撞体变换等）
+    - 不触发任何重建
+
+阶段 4：step（每帧，在 dynamic sync 之后）
+  step_{solver}(ctx, dt, substeps)
+    - 推进模拟
+    - 原地更新内部 solver state
+
+阶段 5：结果读取（每帧，在 writeback 时）
+  read_{solver}_results(ctx, output_arrays)
+    - 将 C++ 内部结果写入 Python 预分配 buffer
+    - 不返回新 Python 对象
+
+阶段 6：释放（dispose 时）
+  free_{solver}_context(ctx)
+    - 按顺序释放：先 bodies/constraints/sub-resources，再 world/context 本体
+    - 必须幂等
+    - 不得引发 Python 异常（否则中断上层 dispose 链）
+```
+
+**关键约束：**
+
+- 阶段 3（dynamic sync）和阶段 4（step）必须分开，不能合并成"传入参数同时 step"的单次调用，否则无法区分"动画数据更新"和"模拟推进"的性能开销。
+- `read_results` 写入调用方预分配的 Python buffer（`np.ndarray`），不创建新 numpy 数组。
 - C++ context 不得是隐藏全局单例。
-- C++ context 必须由 Python owner 持有并可释放。
-- dispose 必须幂等。
-- debug snapshot 不能依赖 native 内部复杂对象直接暴露。
+- C++ context 必须由 Python owner 持有并可释放（存入 solver slot 的 native_context 字段，slot dispose 时触发 free）。
+- dispose 必须幂等（多次调用不崩溃）。
+- debug snapshot 只输出数量统计和状态摘要，不直接暴露 C++ 内部对象。
 
 ## Writeback Result Stream
 
 solver step 应产生统一 result stream，而不是直接写 Blender。
 
-示例：
+**性能说明：** result stream 不应每帧在 Python 层构造 per-item dict 列表。对于骨骼数量较多的 solver（50+ bones），每帧为每根骨骼创建 Python dict 的开销不可忽视。推荐做法：
+
+- result stream 在 solver slot 里以预分配 numpy buffer 表达（`output.target_matrices`, `output.basis_values`）。
+- Python 只传递 buffer 引用给 writeback，不每帧创建新对象。
+- 下面的 dict 格式适合 debug/export 场景，不作为每帧高频路径的正式格式。
+
+示例（debug/export 用途）：
 
 ```python
 {
@@ -576,11 +709,23 @@ solver step 应产生统一 result stream，而不是直接写 Blender。
 }
 ```
 
-其他类型：
+高频路径（每帧写回）推荐：
+
+```python
+# solver slot 内预分配
+slot["output.target_matrices"]  # (N, 16) float32，C++ 原地写
+slot["output.basis_values"]     # (N*16,) float32，Python 写回 foreach_set 用
+
+# writeback 节点消费
+armature.pose.bones.foreach_set("matrix_basis", slot["output.basis_values"])
+armature.update_tag()  # 每个 armature 只调一次，汇总所有 solver 写完后
+```
+
+其他 result 类型：
 
 ```text
-object_transforms
-mesh_delta_attribute
+object_transforms    → Object.matrix_world 批量写回
+mesh_delta_attribute → GN attribute 或 shape key
 shape_key_values
 debug_draw_primitives
 export_samples
@@ -592,6 +737,26 @@ export_samples
 - solver 可以被测试为纯计算阶段。
 - 可以做 `Record Only`，不触发 Blender depsgraph。
 - 可以统一统计 writeback 成本。
+
+### Same Frame 策略
+
+`PhysicsFrameContext.same_frame = True` 表示同一帧被重复求值（例如 Blender 交互拖动、场景重建）。各 solver 应在 solver 声明里明确 same_frame 策略：
+
+```text
+skip（推荐默认）：
+  same_frame 时跳过 step，复用上一次结果。
+  适合大多数确定性物理 solver。
+
+re_run：
+  same_frame 时重新 step。
+  仅当 solver 有非确定性外部输入（用户实时调参）时考虑。
+
+re_run_and_reset：
+  same_frame 时先 reset 再 step。
+  谨慎使用，会破坏连续帧的状态连贯性。
+```
+
+默认：`skip`。必须在 solver 声明的 Update Policy 里显式列出 `same_frame_policy` 字段。
 
 ## 兼容迁移策略
 

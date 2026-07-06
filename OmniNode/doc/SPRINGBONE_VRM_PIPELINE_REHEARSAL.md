@@ -224,23 +224,36 @@ _SpringBoneVRM.settings_for_armature
 
 ```text
 SpringChainSpec
-  armature
-  root_bone
-  bones
-  enabled
-  stiffness_force
-  drag_force
-  gravity_dir
-  gravity_power
-  source_id
-  stable_id
+  armature              ← bpy.types.Object 引用
+  root_bone             ← str，骨骼名
+  bones                 ← list[str]
+  enabled               ← bool
+  stiffness_force       ← float
+  drag_force            ← float
+  gravity_dir           ← Vector
+  gravity_power         ← float
+  source_id             ← 调试用来源标识，例如 "vrm_chain_setting:Hair_01"
+  stable_id             ← 跨帧稳定 id（见下方规则）
 ```
+
+**stable_id 构造规则：**
+
+```python
+stable_id = (
+    f"spring_vrm"
+    f":{int(armature.as_pointer())}"
+    f":{int(armature.data.as_pointer())}"   # 必须包含，防止 Armature 数据块被替换后命中旧 slot
+    f":{root_bone}"
+)
+```
+
+不能只用 `armature.as_pointer()` 或 `armature.name_full`，原因见 CONTRACT.md 的 stable_id 规则章节。
 
 约束：
 
-- 不能允许同一 armature 内重复 root。
-- 不能允许多个 chain 重复模拟同一根 bone。
-- root 只是 anchor / center，不参与 Verlet 推进。
+- 不能允许同一 armature 内重复 root（两个 ChainSetting 用同一根骨骼当 root）。
+- 不能允许多个 chain 重复模拟同一根 bone（bone 只能被一个 chain 包含）。
+- root 只是 anchor / center，不参与 Verlet 推进，不写回 PoseBone。
 
 ### Solver Prepare
 
@@ -373,7 +386,7 @@ _SpringBoneVRM.write_pose
   -> 填 basis_values
   -> foreach_set matrix_basis
   -> fallback 单根写 pose_bone.matrix_basis
-armature.update_tag()
+armature.update_tag()    ← 每个 solver 调一次，多 solver 场景下重复调用
 ```
 
 新流程：
@@ -381,12 +394,18 @@ armature.update_tag()
 ```text
 Physics Writeback
   consumes:
-    SpringBonePoseResult
-    SpringBoneWritebackPlan
+    solver_slot["spring_vrm:..."]["output.basis_values"]  ← 预分配 buffer，C++ 原地写
+    solver_slot["spring_vrm:..."]["writeback_plan"]       ← pose bone refs、rest matrices
   applies:
-    PoseBone.matrix_basis
-    Armature.update_tag
+    armature.pose.bones.foreach_set("matrix_basis", basis_values)
+    armature.update_tag()   ← 每个 armature 只调一次，汇总链路中所有 solver 的写完之后
 ```
+
+**`armature.update_tag()` 重要约定：**
+
+当前每个 solver 在 `write_pose` 末尾各自调用 `armature.update_tag()`。多个 solver 共同写同一个骨架时，中间的 `update_tag` 会触发不必要的 Blender depsgraph 重算。
+
+新流程：`update_tag()` 必须在 Physics Writeback 节点里统一调用，每个 armature 在本帧所有 solver 写完之后只调一次。Writeback 节点需要收集本帧被写回的所有 armature，统一在最后 `update_tag()`。
 
 长期收益：
 
@@ -394,33 +413,47 @@ Physics Writeback
 - 可以 `Preview Only`，只画 tail 和 target axis。
 - 可以统一所有骨骼类 solver 的 `matrix_basis` 批量写回。
 - BoneCloth 和 SpringBone 可以共用 writeback plan。
+- 消除多 solver 场景下的中间 `update_tag()` 触发。
 
 ## 更新频率表
 
 SpringBone 暴露出的最大隐性问题是：Python backend 和 C++ backend 对部分字段的读取频率不同。文档和未来 solver 声明必须明确这些策略。
 
-| 数据 | 当前来源 | 当前 Python 路径 | 当前 CPP 路径 | 建议策略 |
-|---|---|---|---|---|
-| frame / dt | scene | 每帧 | 每帧 | world begin 每帧 |
-| chain root / bones | ChainSetting | cache match | cache match | topology dirty / restart |
-| stiffness / drag / gravity | ChainSetting | 每帧读 setting | 每帧读 setting | 每帧或 params dirty |
-| pose head / tail | PoseBone | 每步按需读 | 每帧 pack | 每帧 dynamic sync |
-| parent target pose | 本帧 target | 每步 dict 查询 | 每 batch pack | 每帧 dynamic sync |
-| current_tail / prev_tail | cache joints | 每步 dict 读写 | pack/unpack 到 arrays | solver slot frame_state |
-| initial axis / rotation / scale | cache joint | 重建时建立，求解时读 | cpp_runtime 静态数组 | restart/topology dirty |
-| pinned | bone property | build state 时读 | cpp_runtime 静态数组 | restart_only 或 dirty tag |
-| hit radius | bone hotools_collision | solve 时每 bone 读取 | build_cpp_chain_runtime 时打入数组 | 必须明确，建议 dirty_only 或每帧可选 |
-| collided_by_groups | bone hotools_collision | solve 时每 bone 读取 | build_cpp_chain_runtime 时打入数组 | 必须明确，建议 dirty_only 或每帧可选 |
-| object/bone colliders | scene objects | 每帧 snapshot cache | 每帧 array snapshot cache | world collider snapshot |
-| collider arrays | colliders | 不用 arrays | 每帧构建/过滤 | world runtime arrays cache + lazy per backend |
-| write records | pose bones | cache 中维护 | cache 中维护 | writeback_plan |
-| basis foreach buffer | write_runtime | 写回时复用 | 写回时复用 | writeback_plan runtime |
-| native buffer validation | binding | 无 | 每次调用 | native context 或批量接口优化 |
+| 数据 | 当前来源 | 当前 Python 路径 | 当前 CPP 路径 | 建议策略 | 更新 policy |
+|---|---|---|---|---|---|
+| frame / dt | scene | 每帧 | 每帧 | world begin 每帧 | `every_frame` |
+| chain root / bones | ChainSetting | cache match | cache match | topology dirty / restart | `topology_dirty` |
+| stiffness / drag / gravity 数值 | ChainSetting | 每帧读 setting | 每帧读 setting | 传入 step 标量，不进 static arrays | `every_frame`（标量传入，无需 key 检测）|
+| pose head / tail | PoseBone | 每步按需读 | 每帧 pack | 每帧 dynamic sync | `every_frame` |
+| parent target pose | 本帧 target | 每步 dict 查询 | 每 batch pack | 每帧 dynamic sync | `every_frame` |
+| current_tail / prev_tail | cache joints | 每步 dict 读写 | pack/unpack 到 arrays | solver slot frame_state（C++ 原地） | `every_frame`（C++ 原地 mutate）|
+| initial axis / rotation / scale | cache joint | 重建时建立，求解时读 | cpp_runtime 静态数组 | C++ persistent，topology dirty 才重传 | `restart_only` |
+| parent_indices / use_connect | cache joint | 重建时建立 | cpp_runtime 静态数组 | C++ persistent，topology dirty 才重传 | `topology_dirty` |
+| pinned | bone hotools_collision.pin | build state 时读 | cpp_runtime 静态数组 | **`restart_only`**（见下方说明）| `restart_only` |
+| hit_radius | bone hotools_collision | solve 时每 bone 读取 | build_cpp_chain_runtime 时打入数组 | C++ persistent，dirty tag 触发重传 | `dirty_only`（推荐）或 `restart_only`（旧兼容）|
+| collided_by_groups | bone hotools_collision | solve 时每 bone 读取 | build_cpp_chain_runtime 时打入数组 | 同 hit_radius | `dirty_only`（推荐）或 `restart_only`（旧兼容）|
+| object/bone colliders | scope objects | 每帧 snapshot cache | 每帧 array snapshot cache | world.collider_snapshot（World Begin 构建）| `every_frame`（由 World Begin 统一）|
+| collider arrays (CPP 格式) | colliders | 不用 arrays | 每帧构建/过滤 | solver slot lazy cache，collider source key 脏才重打包 | `lazy_on_access`（dirty 后下帧重建）|
+| write records | pose bones | cache 中维护 | cache 中维护 | writeback_plan（topology dirty 才重建）| `topology_dirty` |
+| basis foreach buffer | write_runtime | 写回时复用 | 写回时复用 | solver slot 预分配 buffer，永不重建 | `restart_only`（预分配一次）|
+| native buffer validation | binding | 无 | 每次调用 | 进 native context，validate 只在 topology rebuild 时 | `topology_dirty` |
 
-需要特别处理：
+**`pin` 字段 restart_only 说明（必须显式声明）：**
 
-- `pin` 当前节点描述已说明“非 root 骨骼 Pin 只在 cache 重建时读取”。这是合理的，但必须成为 solver 声明的一部分。
-- `hit_radius` 和 `collided_by_groups` 在 Python/CPP 路径的实时性不同，长期要统一策略。
+当前节点文档和 `_BonePhysics.build_vrm_spring_bone_state()` 中已明确：”非 root 骨骼的 pin 属性只在 cache 重建时读取”。这是有意设计，不是疏漏。
+
+理由：pin 表示”模拟期间该骨骼固定不动”，是 solver 初始化时的结构性决策，不是可以热改的运行时参数。如果允许每帧热读 pin，意味着模拟中途某根骨骼突然从自由变为固定，会导致状态爆炸或不连续跳动。
+
+**声明约定：** solver 声明中必须在 Update Policy 的 `restart_only` 下列出 `pin`，并在节点 UI 描述中标注”修改 Pin 需要 Reset 后生效”。
+
+**`hit_radius` 和 `collided_by_groups` 统一策略：**
+
+Python 路径当前每帧从 bone 属性读取，CPP 路径只在 `build_cpp_chain_runtime` 时打入 static arrays，导致两条路径实时性不一致。新 solver 声明必须明确选择一种：
+
+- `dirty_only`（推荐）：用骨骼属性 hash 做 dirty key，变化时刷新 C++ context 对应数组。
+- `restart_only`（旧兼容）：只在 restart/topology 变化时刷新，保持和旧 CPP 路径相同行为。
+
+两种策略的节点 UI 描述必须对用户说明生效时机。
 
 ## 性能预演
 
@@ -647,14 +680,17 @@ exchange item：
     "producer": "spring_vrm",
     "scope": "frame",
     "source_id": "armature:HairRoot:Hair_03",
-    "stable_id": "spring_vrm:{arm_ptr}:{bone_name}",
+    # stable_id 必须同时包含 arm_ptr + arm_data_ptr + bone_name
+    # 不能只用 arm_ptr，Blender 删除骨架后可能复用相同指针给新对象
+    "stable_id": f"spring_vrm:{int(arm.as_pointer())}:{int(arm.data.as_pointer())}:{bone_name}",
     "payload": {
         "armature": armature_obj,
         "bone_name": bone_name,
-        "head_world": head,
-        "tail_world": tail,
-        "radius": radius,
-        "group": group,
+        "head_world": head,    # (3,) float32 numpy，不用 mathutils.Vector（性能）
+        "tail_world": tail,    # (3,) float32 numpy
+        "radius": radius,      # float
+        "group": group,        # int
+        "collided_by_groups": collided_by_groups,  # int，bitmask
     },
 }
 ```
@@ -685,94 +721,102 @@ SpringBone Step
 
 ## 迁移建议
 
+**阶段依赖关系说明：** world collider snapshot（阶段 3）必须在 solver slot 化（阶段 4）之前完成，因为 slot 化后的 SpringBone solver 需要从 world 读 collider，而不是自己扫 scene。如果顺序颠倒，slot 化后的 solver 会无法获取碰撞数据。
+
 ### 阶段 0：只改文档和 timing 名称
 
 目标：
 
 - 不改节点 UI。
 - 不改运行行为。
-- 把现有 debug timing 映射到新阶段名。
+- 把现有 debug timing 映射到新阶段名（见本文「推荐统一 timing 命名」表格）。
 - 确认每帧成本真实分布。
 
 验收：
 
 - Python / CPP 输出行为不变。
-- debug 报告能看出 `pack/native_core/unpack/write/colliders` 占比。
+- 开启 `debug_output=True` 后，报告能看出 `pack/native_core/unpack/write/colliders` 各项占比和绝对值。
 
 ### 阶段 1：内部 result stream
 
 目标：
 
 - `solve_py/solve_cpp` 不直接依赖 writeback。
-- 产出 `SpringBonePoseResult` 和 `SpringBoneTailResult`。
-- 旧节点仍立即调用 `write_pose` 消费 result，保持兼容。
+- 结果存入 solver slot 预分配 buffer（`output.target_matrices`、`output.basis_values`）。
+- 旧节点仍立即从 buffer 调用 `write_pose`，保持兼容。
 
 验收：
 
 - 可以在测试中只跑 step，不写 Blender。
-- 可以打印 result stream 摘要。
+- solver step 执行后，buffer 中有正确结果，`write_pose` 只消费 buffer，不访问 solver 内部 dict。
 
 ### 阶段 2：writeback plan 分离
 
 目标：
 
 - 把 `write_records/write_runtime` 从 solver state 概念上分离为 writeback plan。
-- 仍可存放在旧 cache 中，但文档和 debug 按 writeback plan 展示。
+- `write_records`（pose bone refs、rest matrices）进入 solver slot 的 writeback_plan 区。
+- `write_runtime["basis_values"]`（预分配 float32 buffer）归属 writeback_plan，不归属 solver frame_state。
 
 验收：
 
-- SpringBone 和 BoneCloth 可以共享 PoseBone writeback helper。
-- 可以统计 `writeback.prepare` 和 `writeback.apply`。
+- SpringBone 和 BoneCloth 可以共享同一套 PoseBone writeback helper。
+- `armature.update_tag()` 只在 writeback 阶段调用，不在 solver step 内调用。
+- 可以统计 `writeback.prepare` 和 `writeback.apply` 独立耗时。
 
-### 阶段 3：world collider snapshot
+### 阶段 3：world collider snapshot（必须在阶段 4 之前）
 
 目标：
 
-- SpringBone 可选读取 `world.collider_snapshot` 或 `world.collider_arrays("spring_vrm_cpp")`。
-- 保留旧 scene-wide collider path 作为兼容。
+- SpringBone 从 `world.collider_snapshot` 读取公共碰撞源（World Begin 已构建）。
+- 引入 solver slot 内的 lazy collider arrays cache：`collider_source_key` 变化时重新打包成 CPP 格式，否则复用。
+- 保留旧 scene-wide collider path 作为 fallback（`world` 为 None 时）。
 
 验收：
 
-- 同一帧多个 solver 不重复扫描 scene。
-- object scope 缩小后 SpringBone 只消费 scope 内 collider。
+- 同一帧多个 solver（例如 SpringBone + BoneCloth）不重复扫描 scene。
+- object scope 缩小后 SpringBone 只消费 scope 内 collider，debug output 显示 collider count 变化。
+- collider 不变的帧（静态场景）`solver.prepare_collider_arrays` 耗时接近零。
 
 ### 阶段 4：solver slot 化
 
 目标：
 
-- per-armature cache 迁移到 `world.solver_slots`。
-- `cpp_runtime` 进入 solver slot native context 区。
-- frame_state 与 writeback_plan 分离。
+- per-armature cache 迁移到 `world.solver_slots["spring_vrm:{arm_ptr}:{arm_data_ptr}:{spec_hash}"]`。
+- slot 内部按 topology、frame_state、native_context、writeback_plan 分区。
+- `cpp_runtime` 进入 slot 的 native_context 区。
 
 验收：
 
-- Cache Read / Begin / SpringBone Step / Writeback / Commit / Cache Write 路径跑通。
-- Cache Delete / clear_all 可释放 slot 和 native context。
+- `Cache Read → World Begin → SpringBone Step → Physics Writeback → World Commit → Cache Write` 完整路径跑通。
+- `Cache Delete` / `clear_all` 可释放 slot 和 native context，内存不泄漏（插件 disable→enable 循环验证）。
+- slot_id 包含 `arm_ptr + arm_data_ptr`，删骨架后重建骨架不命中旧 slot。
 
-### 阶段 5：native context 或批量 API
+### 阶段 5：native context 与双调用模型
 
 目标：
 
-- 减少 35 参数逐 batch 调用成本。
-- 将 static arrays 和 batch plan 常驻 native context。
-- 支持多 armature 一次调用或至少减少 per-batch Python 往返。
+- 拆分当前 35 参数单次调用为"静态上传 + 每帧 step"两阶段（见 CONTRACT.md「Native Context 生命周期协议」）。
+- static arrays 常驻 C++ context，topology dirty 才重传。
+- 每帧只传 animated arrays + collider arrays + 标量参数。
 
-候选接口：
+**当前代码 → 新接口映射：**
 
-```text
-create_spring_vrm_context(schema, static_arrays)
-update_spring_vrm_context_static(handle, static_arrays)
-update_spring_vrm_context_dynamic(handle, pose_arrays, collider_arrays, params)
-step_spring_vrm_context(handle, dt, substeps)
-read_spring_vrm_results(handle, output_arrays)
-free_spring_vrm_context(handle)
-```
+| 当前代码 / 数据 | 新接口调用 | 触发时机 |
+|---|---|---|
+| `build_cpp_chain_runtime()` 构建 static arrays | `create_spring_vrm_context(schema, static_arrays)` | topology dirty / generation 变化 |
+| `refresh_cpp_chain_runtime()` 更新 static | `update_spring_vrm_static(ctx, static_arrays)` | config dirty（不重建）|
+| `solve_cpp()` 每帧 pack animated arrays | `update_spring_vrm_dynamic(ctx, pose_arrays, collider_arrays, scalars)` | 每帧 |
+| `hotools_native.solve_spring_bone_vrm_cpp(...)` | `step_spring_vrm(ctx, dt, substeps)` | 每帧（在 dynamic 之后）|
+| 解包 `current_tails` / `target_matrices` | `read_spring_vrm_results(ctx, out_basis_values)` | 每帧（在 step 之后）|
+| Python owner dispose | `free_spring_vrm_context(ctx)` | slot dispose |
 
 验收：
 
-- `pack/native_core/unpack` 总成本下降。
-- context dispose 幂等。
-- Python owner 仍控制生命周期。
+- `pack/native_core/unpack` 总耗时下降（以阶段 0 的 timing 基准对比）。
+- static arrays 在 topology 不变的连续帧中不重传（`solver.prepare_static` 耗时接近零）。
+- context dispose 幂等，多次调用不崩溃。
+- Python owner 仍通过 slot dispose 控制生命周期。
 
 ## 风险点
 
