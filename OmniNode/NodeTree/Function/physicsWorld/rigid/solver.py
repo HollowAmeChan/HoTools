@@ -210,9 +210,8 @@ def step_rigid_bodies(
         # --- step ---
         step_ms = adapter.step(dt, substeps)
 
-        # --- writeback DYNAMIC bodies ---
-        adapter.writeback_transforms(world.solver_slots)
-
+        # 注意：写回由下游 Physics Writeback 节点统一处理。
+        # adapter.writeback_transforms 不在此处调用，以便写回节点能先捕获 frame=0 初始位置。
         return adapter._jw.body_count, step_ms
 
     finally:

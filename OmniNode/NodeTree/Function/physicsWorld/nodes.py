@@ -26,6 +26,7 @@ from .scope import (
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, validate_world, print_world_summary
 from .debug_draw import update_draw_store, clear_draw_store
+from .writeback import apply_all_writebacks
 
 
 # ---------------------------------------------------------------------------
@@ -296,3 +297,62 @@ def physicsWorldDebugDraw(
         bool(show_bugs),
     )
     return world
+
+
+# ---------------------------------------------------------------------------
+# Phase 5  写回节点
+# ---------------------------------------------------------------------------
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="物理写回",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "启用", "帧0初始K帧"],
+    _OUTPUT_NAME=["物理世界", "写回数量"],
+    omni_description="""
+    物理写回节点——将本帧所有物理 solver 的结果写回 Blender 对象变换。
+
+    写回类型（全部基于偏移量语义，归零即复位）：
+      · 刚体：Object.delta_location / delta_rotation_euler（不修改原始 location）
+      · 骨骼：PoseBone.matrix_basis（未来扩展，offset from rest pose）
+      · GN属性：mesh attribute offset（未来扩展）
+
+    帧0初始K帧（frame0_keyframe）：
+      restart_required=True 时，若目标对象在 frame=0 尚无 delta 的 K 帧，
+      自动插入一次全零K帧（"物理未启动"参考帧）。
+      用户可拖时间轴到 frame=0 来复位——delta 归零即回到原始位置。
+      已有 K 帧则跳过，不覆盖。
+
+    跳帧/复位处理：
+      world.frame_context.restart_required=True 时（跳帧、倒放、显式
+      reset=True 或 scope 变化），节点先将所有刚体 delta 归零，再写入
+      本帧物理结果——保证跳帧后 Blender 对象不保留上次模拟残留。
+
+    接法：
+      Physics World Begin → Rigid Body Solver → 物理写回 → Physics World Commit
+    """,
+)
+def physicsWriteback(
+    world:           object,
+    enabled:         bool = True,
+    frame0_keyframe: bool = True,
+) -> tuple[object, int]:
+
+    from .types import PhysicsWorldCache
+    if not enabled or not isinstance(world, PhysicsWorldCache):
+        return world, 0
+
+    fc = world.frame_context
+    if fc is None:
+        return world, 0
+
+    # same_frame（同帧重复求值）时跳过写回，避免冗余 bpy 操作
+    if bool(getattr(fc, "same_frame", False)):
+        return world, 0
+
+    restart = bool(getattr(fc, "restart_required", False))
+    total   = apply_all_writebacks(world, restart=restart,
+                                   frame0_keyframe=frame0_keyframe)
+    return world, total
