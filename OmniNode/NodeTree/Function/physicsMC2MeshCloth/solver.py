@@ -612,7 +612,12 @@ def solve_meshcloth(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
-        collision.collider_arrays_for_native(obj, colliders, topology_state_ref)
+        collision.collider_arrays_for_native(
+            obj,
+            colliders,
+            topology_state_ref,
+            excluded_owner_ptrs=state.get("collider_owner_exclusion_ptrs"),
+        )
         if has_collision
         else None
     )
@@ -1570,7 +1575,12 @@ def solve_meshcloth_native_core(
         np.any(collision_radii > MC2SystemConstants.EPSILON)
     )
     collider_arrays = (
-        collision.collider_arrays_for_native(obj, colliders, topology_state_ref)
+        collision.collider_arrays_for_native(
+            obj,
+            colliders,
+            topology_state_ref,
+            excluded_owner_ptrs=state.get("collider_owner_exclusion_ptrs"),
+        )
         if has_collision
         else None
     )

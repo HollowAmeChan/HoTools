@@ -1401,6 +1401,7 @@ def collider_arrays_for_native(
     obj: bpy.types.Object,
     colliders: list[dict] | None,
     topology_state=None,
+    excluded_owner_ptrs: set[int] | tuple[int, ...] | list[int] | None = None,
 ) -> dict:
     """把当前 HoTools 碰撞组快照打包成未来 native 后端可直接消费的数组。"""
     if topology_state is None:
@@ -1439,10 +1440,25 @@ def collider_arrays_for_native(
     collider_old_segment_a = []
     collider_old_segment_b = []
     collider_radii = []
+    excluded_ptrs = set()
+    for ptr in excluded_owner_ptrs or ():
+        try:
+            ptr_i = int(ptr or 0)
+        except Exception:
+            continue
+        if ptr_i:
+            excluded_ptrs.add(ptr_i)
     for collider in colliders:
         if not isinstance(collider, dict):
             continue
-        if collider.get("owner") is obj:
+        owner = collider.get("owner")
+        if owner is obj:
+            continue
+        try:
+            owner_ptr = int(owner.as_pointer()) if owner is not None else 0
+        except Exception:
+            owner_ptr = 0
+        if owner_ptr and owner_ptr in excluded_ptrs:
             continue
 
         try:

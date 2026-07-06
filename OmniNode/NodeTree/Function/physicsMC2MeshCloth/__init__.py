@@ -45,6 +45,7 @@ def _mesh_objects_from_input(values) -> list[bpy.types.Object]:
 
 @omni(
     enable=True,
+    always_run=True,   # physics solver: advance/write every frame even when graph inputs are unchanged
     bl_label="网格布料-MC2",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,

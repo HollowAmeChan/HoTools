@@ -42,6 +42,7 @@ class MC2MergedOwner:
     proxy_owners: list = field(default_factory=list)   # list[MC2RuntimeOwner]
     merged_owner: object = None                        # MC2RuntimeOwner，用于合并解算
     chunks: list = field(default_factory=list)         # list[ProxyChunk]
+    proxy_signature: tuple = field(default_factory=tuple)
 
     def omni_cache_dispose(self, reason: str = "") -> None:
         """释放所有子 owner。"""
@@ -65,26 +66,31 @@ class MC2MergedOwner:
 # 工具：从 settings list 提取所有有效 proxy 设置
 # ---------------------------------------------------------------------------
 
-def _extract_all_settings(mesh_cloth_settings) -> list[dict]:
-    """从 list/dict 输入中提取所有包含有效 proxy_obj 的设置 dict。
+def _append_expanded_setting(result: list[dict], setting: dict) -> None:
+    proxy_obj = setting.get("proxy_obj")
+    if not proxy_obj:
+        return
+    if isinstance(proxy_obj, (list, tuple)):
+        for obj in proxy_obj:
+            if obj:
+                expanded = dict(setting)
+                expanded["proxy_obj"] = obj
+                result.append(expanded)
+        return
+    result.append(setting)
 
-    OmniNode 对 list 类型输出可能做一层包装（list-of-lists），
-    此函数自动展平一层嵌套，兼容框架的包装行为。
-    """
-    if isinstance(mesh_cloth_settings, dict):
-        return [mesh_cloth_settings] if mesh_cloth_settings.get("proxy_obj") else []
-    if isinstance(mesh_cloth_settings, (list, tuple)):
-        result: list[dict] = []
-        for s in mesh_cloth_settings:
-            if isinstance(s, dict) and s.get("proxy_obj"):
-                result.append(s)
-            elif isinstance(s, (list, tuple)):
-                # 框架对 list 输出包了一层：[[{...}]] → 展平
-                for sub in s:
-                    if isinstance(sub, dict) and sub.get("proxy_obj"):
-                        result.append(sub)
-        return result
-    return []
+
+def _extract_all_settings(mesh_cloth_settings) -> list[dict]:
+    """Extract all settings and expand packed multi-object proxy inputs."""
+    result: list[dict] = []
+    pending = [mesh_cloth_settings]
+    while pending:
+        item = pending.pop(0)
+        if isinstance(item, dict):
+            _append_expanded_setting(result, item)
+        elif isinstance(item, (list, tuple)):
+            pending[0:0] = list(item)
+    return result
 
 
 def _dispose_cache_value(cache_state) -> None:
@@ -111,6 +117,46 @@ def _dispose_cache_value(cache_state) -> None:
 
 def _cache_payload(cache_state):
     return getattr(cache_state, "value", cache_state)
+
+
+def _rna_pointer(value) -> int:
+    try:
+        return int(value.as_pointer())
+    except Exception:
+        return 0
+
+
+def _merged_proxy_signature(valid_objs: list[bpy.types.Object]) -> tuple:
+    return tuple(
+        (
+            _rna_pointer(obj),
+            _rna_pointer(getattr(obj, "data", None)),
+            blender_io.output_key_name(obj),
+        )
+        for obj in valid_objs
+    )
+
+
+def _write_merged_delta_attributes(
+    merged_state: dict,
+    chunks: list[ProxyChunk],
+    valid_objs: list[bpy.types.Object],
+    skip_writing: bool,
+) -> None:
+    if skip_writing:
+        return
+
+    display_slices = split_display_positions(merged_state, chunks)
+    rest_pos_merged = merged_state.get("rest_world_positions")
+    base_pos_merged = merged_state.get("base_positions")
+    for ch, obj, disp in zip(chunks, valid_objs, display_slices):
+        if ch.base_pose_proxy is not None and base_pos_merged is not None:
+            base = np.ascontiguousarray(base_pos_merged[ch.start:ch.end], np.float32)
+        elif rest_pos_merged is not None:
+            base = np.ascontiguousarray(rest_pos_merged[ch.start:ch.end], np.float32)
+        else:
+            continue
+        blender_io.write_world_delta_attribute(obj, disp, base)
 
 
 _SETTING_KEY_FIELDS = (
@@ -828,7 +874,6 @@ def _run_merged_mc2_node(
     每个 proxy 可以有不同的物理参数（damping / stiffness / blend_weight），
     通过 per_particle_param 机制逐粒子传入 solver。
     """
-    from .. import runtime_params as mc2_runtime_params
     backend_label = normalize_backend_label(solver_backend)
     scene = scene or bpy.context.scene
 
@@ -846,13 +891,23 @@ def _run_merged_mc2_node(
     if not valid_settings:
         _dispose_cache_value(cache_state)
         return _OmniCache.replace(None), None, 0, 0
+    proxy_signature = _merged_proxy_signature(valid_objs)
+    if debug_output:
+        proxy_names = ", ".join(
+            str(getattr(obj, "name_full", getattr(obj, "name", obj)))
+            for obj in valid_objs
+        )
+        print(
+            f"[HoTools MC2] merged settings={len(all_settings)} "
+            f"valid_proxies={len(valid_objs)} proxies=[{proxy_names}]"
+        )
 
     # ---- 2. 恢复 MC2MergedOwner，或新建 ----
     proxy_settings_keys = [
         _runtime_settings_key(
             s,
             scene=scene,
-            enabled=enabled,
+            enabled=enabled and bool(s.get("enabled", True)),
             backend_label=backend_label,
             substeps=substeps,
             iterations=iterations,
@@ -889,9 +944,15 @@ def _run_merged_mc2_node(
     raw = _cache_payload(cache_state)
     merged_owner_obj: MC2MergedOwner | None = raw if isinstance(raw, MC2MergedOwner) else None
 
-    # 代理数量变化 → 强制重建
-    if merged_owner_obj is not None and len(merged_owner_obj.proxy_owners) != len(valid_settings):
-        merged_owner_obj.omni_cache_dispose("代理数量变化，重建合并 owner")
+    # 代理数量/身份/顺序变化 → 强制重建，避免把第一个旧对象的 owner 错配给新对象。
+    if (
+        merged_owner_obj is not None
+        and (
+            len(merged_owner_obj.proxy_owners) != len(valid_settings)
+            or tuple(getattr(merged_owner_obj, "proxy_signature", ())) != proxy_signature
+        )
+    ):
+        merged_owner_obj.omni_cache_dispose("代理输入变化，重建合并 owner")
         merged_owner_obj = None
 
     if merged_owner_obj is None:
@@ -899,9 +960,11 @@ def _run_merged_mc2_node(
             proxy_owners=[mc2_state.MC2RuntimeOwner() for _ in valid_settings],
             merged_owner=mc2_state.MC2RuntimeOwner(),
             chunks=[],
+            proxy_signature=proxy_signature,
         )
         replace_cache = True
     else:
+        merged_owner_obj.proxy_signature = proxy_signature
         replace_cache = False
 
     n_proxies = len(valid_settings)
@@ -913,10 +976,19 @@ def _run_merged_mc2_node(
     for obj in valid_objs:
         ensure_delta_output(obj)
         bpp = None
+        refreshed = False
         if enabled:
             bpp = ensure_base_pose_proxy(obj, scene, refresh=False)
             if not blender_io.is_live_mesh_object(bpp):
+                refreshed = True
                 bpp = ensure_base_pose_proxy(obj, scene, refresh=True)
+        if debug_output:
+            obj_name = str(getattr(obj, "name_full", getattr(obj, "name", obj)))
+            bpp_name = str(getattr(bpp, "name_full", getattr(bpp, "name", None)))
+            print(
+                f"[HoTools MC2] base_pose_proxy proxy={obj_name} "
+                f"base={bpp_name} refreshed={refreshed} enabled={enabled}"
+            )
         base_pose_proxies.append(bpp)
 
     # ---- 4. 每个 proxy 的拓扑 cache 检查 ----
@@ -997,6 +1069,7 @@ def _run_merged_mc2_node(
     )
     all_same_frame = all_same_frame and bool(merged_settings_unchanged)
     merged_state["settings_key"] = merged_settings_key
+    merged_state["collider_owner_exclusion_ptrs"] = tuple(_rna_pointer(obj) for obj in valid_objs)
 
     solve_anchor_inertia  = 1.0 if any_restart else anchor_inertia
     solve_centrifugal     = 0.0 if any_restart else centrifugal
@@ -1010,8 +1083,12 @@ def _run_merged_mc2_node(
 
     # ---- 7. not enabled：清除 delta 并提前返回 ----
     if not enabled:
-        for obj in valid_objs:
+        for obj, p_owner, proxy_settings_key in zip(valid_objs, proxy_owners, proxy_settings_keys):
             blender_io.clear_delta_attribute(obj)
+            proxy_state = p_owner.state if isinstance(p_owner.state, dict) else {}
+            proxy_state["frame"] = current_frame
+            proxy_state["settings_key"] = proxy_settings_key
+            p_owner.replace_state(proxy_state)
         merged_state["frame"] = current_frame
         merged_state["settings_key"] = merged_settings_key
         merged_owner.replace_state(merged_state)
@@ -1083,12 +1160,11 @@ def _run_merged_mc2_node(
         merged_state["base_pose_proxy_ptr"] = 0
 
     # ---- 10. 构建 per-proxy MC2RuntimeParams ----
-    from ..runtime_params import build_runtime_params as _build_rp, MC2RuntimeParams
-    world_scale = float(merged_state.get("init_scale_radius") or 1.0)
-
+    from ..runtime_params import build_runtime_params as _build_rp
     per_proxy_runtimes: list = []
     for s, p_owner, ch in zip(valid_settings, proxy_owners, chunks):
         depths = np.asarray(p_owner.state.get("depths", []), dtype=np.float32)
+        world_scale = float(p_owner.state.get("init_scale_radius") or 1.0)
         rp = _build_rp(
             curve_cache        = p_owner.center_state.curve_cache,
             depths             = depths,
@@ -1184,18 +1260,12 @@ def _run_merged_mc2_node(
 
     # ---- 12. 一次合并解算 ----
     if all_same_frame and not reset:
-        display_slices = split_display_positions(merged_state, chunks)
-        if not merged_owner.team_state.skip_writing:
-            rest_pos_merged = merged_state.get("rest_world_positions")
-            base_pos_merged = merged_state.get("base_positions")
-            for ch, obj, disp in zip(chunks, valid_objs, display_slices):
-                if ch.base_pose_proxy is not None and base_pos_merged is not None:
-                    base = np.ascontiguousarray(base_pos_merged[ch.start:ch.end], np.float32)
-                elif rest_pos_merged is not None:
-                    base = np.ascontiguousarray(rest_pos_merged[ch.start:ch.end], np.float32)
-                else:
-                    continue
-                blender_io.write_world_delta_attribute(obj, disp, base)
+        _write_merged_delta_attributes(
+            merged_state,
+            chunks,
+            valid_objs,
+            merged_owner.team_state.skip_writing,
+        )
         merged_owner.replace_state(merged_state)
         cache_value = _OmniCache.replace(merged_owner_obj) if replace_cache else _OmniCache.mutate(merged_owner_obj)
         return cache_value, valid_objs[0], total_vertex_count, 0
@@ -1284,19 +1354,12 @@ def _run_merged_mc2_node(
     next_merged_state["settings_key"] = merged_settings_key
 
     # ---- 13. 分块写回各 proxy delta ----
-    display_slices = split_display_positions(next_merged_state, chunks)
-
-    if not merged_owner.team_state.skip_writing:
-        rest_pos_merged = next_merged_state.get("rest_world_positions")
-        base_pos_merged = next_merged_state.get("base_positions")
-        for ch, obj, disp in zip(chunks, valid_objs, display_slices):
-            if ch.base_pose_proxy is not None and base_pos_merged is not None:
-                base = np.ascontiguousarray(base_pos_merged[ch.start:ch.end], np.float32)
-            elif rest_pos_merged is not None:
-                base = np.ascontiguousarray(rest_pos_merged[ch.start:ch.end], np.float32)
-            else:
-                continue
-            blender_io.write_world_delta_attribute(obj, disp, base)
+    _write_merged_delta_attributes(
+        next_merged_state,
+        chunks,
+        valid_objs,
+        merged_owner.team_state.skip_writing,
+    )
 
     # 把解算后的粒子状态回写到 per-proxy owner，保证下一帧连续性
     for p_owner, ch, proxy_settings_key in zip(proxy_owners, chunks, proxy_settings_keys):
