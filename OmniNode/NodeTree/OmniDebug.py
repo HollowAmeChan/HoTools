@@ -170,9 +170,9 @@ class OmniDebug:
     @staticmethod
     def format_runtime_timing_report(tree_name, elapsed, sample_count, totals, frame_level=False):
         sample_count = max(int(sample_count), 1)
-        frame_ms = elapsed / sample_count * 1000.0           # 每帧真实墙钟间隔
+        frame_ms = elapsed / sample_count * 1000.0
         hz = sample_count / max(elapsed, 0.000001)
-        handler_ms = totals.get("total", 0.0) / sample_count * 1000.0  # handler 内部耗时
+        handler_ms = totals.get("total", 0.0) / sample_count * 1000.0
 
         header = "Frame" if frame_level else "Tree"
         lines = [
@@ -183,7 +183,6 @@ class OmniDebug:
         ]
 
         if frame_level:
-            # 帧级报告：区分 handler 内部 vs 引擎/重绘（handler 外）。
             engine_ms = max(frame_ms - handler_ms, 0.0)
             lines.append(
                 f"  {OmniDebug.section_label('Summary')}: "
@@ -208,11 +207,33 @@ class OmniDebug:
                 f"total={OmniDebug.func_label(f'{handler_ms:.3f}ms')}"
             )
 
-        step_stages = [stage for stage in totals if stage != "total"]
-        step_stages.sort(key=lambda stage: totals[stage], reverse=True)
+        # ── 懒求值统计（[lazy] 前缀的 key 存的是计数，不是毫秒）───────────────
+        nodes_run     = totals.get("[lazy] nodes_run",     0.0) / sample_count
+        nodes_skipped = totals.get("[lazy] nodes_skipped", 0.0) / sample_count
+        nodes_total   = nodes_run + nodes_skipped
+        if nodes_total > 0:
+            skip_pct = nodes_skipped / nodes_total * 100.0
+            lines.append(
+                f"  {OmniDebug.section_label('Lazy Eval')}: "
+                f"run={OmniDebug.func_label(f'{nodes_run:.0f}')}  "
+                f"skip={OmniDebug.value_label(f'{nodes_skipped:.0f}')}  "
+                f"skip%={OmniDebug.value_label(f'{skip_pct:.0f}%')}"
+            )
+
+        # ── Breakdown：分离 :SKIP 后缀 stage 与正常 stage ────────────────────
+        # [lazy] 计数 key 和 "total" 不进 breakdown
+        _excluded = {"total", "[lazy] nodes_run", "[lazy] nodes_skipped"}
+        all_stages = [s for s in totals if s not in _excluded]
+
+        normal_stages = [s for s in all_stages if not s.endswith(":SKIP")]
+        skip_stages   = [s for s in all_stages if s.endswith(":SKIP")]
+
+        normal_stages.sort(key=lambda s: totals[s], reverse=True)
+        skip_stages.sort(key=lambda s: totals[s], reverse=True)
+
         max_stages = max(int(OmniDebug.RUNTIME_TIMING_MAX_STAGES), 1)
-        shown_steps = step_stages[:max_stages]
-        hidden_steps = step_stages[max_stages:]
+        shown_steps = normal_stages[:max_stages]
+        hidden_steps = normal_stages[max_stages:]
 
         if shown_steps:
             label = "Breakdown" if frame_level else "Slow Steps"
@@ -220,9 +241,11 @@ class OmniDebug:
             for index, stage in enumerate(shown_steps, start=1):
                 avg_ms = totals[stage] / sample_count * 1000.0
                 pct = avg_ms / max(handler_ms, 1e-6) * 100.0
+                # always_run 节点（执行路径，没有 :SKIP 后缀）加 ★ 标记
+                marker = " ★" if OmniDebug._is_likely_always_run(stage) else ""
                 lines.append(
                     f"    {OmniDebug.value_label(f'{index:02d}.')} "
-                    f"{OmniDebug.func_label(stage)} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
+                    f"{OmniDebug.func_label(stage)}{marker} = {OmniDebug.value_label(f'{avg_ms:.3f}ms')}"
                     f"  ({OmniDebug.value_label(f'{pct:.0f}%')})"
                 )
 
@@ -234,7 +257,35 @@ class OmniDebug:
                 f"{OmniDebug.func_label('other_steps')} = {OmniDebug.value_label(f'{other_ms:.3f}ms')}"
             )
 
+        # ── 跳过的节点汇总行（不逐条展示，只汇总总代价）────────────────────────
+        if skip_stages:
+            skip_total_ms = sum(totals[s] for s in skip_stages) / sample_count * 1000.0
+            lines.append(
+                f"    {OmniDebug.value_label('..')} "
+                f"{OmniDebug.func_label(f'skipped_nodes×{len(skip_stages)}')} "
+                f"= {OmniDebug.value_label(f'{skip_total_ms:.3f}ms')}  "
+                f"(skip check overhead)"
+            )
+
         return lines
+
+    @staticmethod
+    def _is_likely_always_run(stage: str) -> bool:
+        """
+        启发式判断一个 stage 是否对应 always_run 节点。
+        stage 格式：step{N}:{NodeName}:{FuncName}
+        凡是在 breakdown 中出现的（不以 :SKIP 结尾），有可能是 always_run 节点。
+        这里通过名字里的关键词做粗略识别，用于显示 ★ 标记。
+        """
+        # 物理解算器和写入节点的函数名关键词
+        _ALWAYS_RUN_HINTS = (
+            "springBoneVRM", "boneClothMC2", "meshcloth", "XPBD",
+            "physicsWorldBegin", "physicsWorldCommit",
+            "objectWrite", "setDatablock", "meshCreateUV",
+            "debug_print", "physicsWorldDebug",
+        )
+        stage_lower = stage.lower()
+        return any(hint.lower() in stage_lower for hint in _ALWAYS_RUN_HINTS)
 
     @staticmethod
     def make_runtime_logger(depth):

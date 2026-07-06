@@ -29,6 +29,9 @@ class RuntimeObserver:
         # Tracy zone 句柄：仅在 Tracy 构建下非 None
         self._tracy_tree_zone = None   # 树级 zone（整棵树执行期间）
         self._tracy_step_zone = None   # 当前 step zone（step_begin→step_end）
+        # 懒求值计数器（每帧重置，end_timing 时写入 timing_stages）
+        self._lazy_nodes_run     = 0
+        self._lazy_nodes_skipped = 0
 
     def child(self):
         # 子树 observer 不继承父级 zone 句柄，各自独立管理
@@ -66,6 +69,9 @@ class RuntimeObserver:
         if bool(getattr(tree_ref, "debug_runtime_timing", False)):
             self.timing_start = time.perf_counter()
             self.timing_stages = {}
+            # 每帧重置懒求值计数器
+            self._lazy_nodes_run     = 0
+            self._lazy_nodes_skipped = 0
 
     def end_timing(self, compiled, op):
         tree_ref = getattr(op, "tree_ref", None)
@@ -78,6 +84,11 @@ class RuntimeObserver:
             interval = 1.0
 
         stages = dict(self.timing_stages or {})
+
+        # 把懒求值计数写入 stages（值为计数，后续报告特殊处理不当成毫秒）
+        if self._lazy_nodes_run or self._lazy_nodes_skipped:
+            stages["[lazy] nodes_run"]     = float(self._lazy_nodes_run)
+            stages["[lazy] nodes_skipped"] = float(self._lazy_nodes_skipped)
 
         # 顶层有收集器时，step 明细并入帧链路报告（不再单独成块），
         # 且不写入 total，避免与帧链路的聚合项重复计数。
@@ -692,8 +703,13 @@ class OmniExecutor:
                 # ── 懒求值 skip 判定 ───────────────────────────────────────────
                 if OmniExecutor._should_skip_opcall(op, compiled):
                     observer.log_skip(op)
-                    observer.step_end(step_start, stage)
+                    # 计入 skip 专用 stage（与执行路径的 stage 区分）
+                    skip_stage = (stage + ":SKIP") if stage else stage
+                    observer.step_end(step_start, skip_stage)
+                    observer._lazy_nodes_skipped += 1
                     continue
+
+                observer._lazy_nodes_run += 1
 
                 args, arg_desc = OmniExecutor.build_call_args(registers, op, observer)
 
