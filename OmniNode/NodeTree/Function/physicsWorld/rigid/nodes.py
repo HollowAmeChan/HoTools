@@ -12,6 +12,7 @@ from .solver import step_rigid_bodies
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧必须推进 Jolt state
     bl_label="刚体模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,

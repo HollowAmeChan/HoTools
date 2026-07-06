@@ -132,13 +132,31 @@ class JoltAdapter:
             max_body_pairs=max_bodies * 4,
             max_contact_constraints=max_bodies * 2,
         )
-        # slot_id → jolt body handle
         self._body_handles: dict[str, int] = {}
-        # slot_id → jolt constraint handle
         self._constraint_handles: dict[str, int] = {}
-        # 最近一次 step 耗时（ms）
         self.last_step_ms: float = 0.0
         self._valid = True
+        self._last_generation: int = -1   # generation 变化时 flush handles
+
+    def _flush_handles(self) -> None:
+        """
+        world generation 变化（restart/scope 改变）时清空所有 handles。
+        通知 Jolt 删除所有 bodies/constraints，但不销毁 JoltWorld 本体。
+        下一帧 sync 时会重新注册。
+        """
+        for handle in list(self._constraint_handles.values()):
+            try:
+                self._jw.remove_constraint(handle)
+            except Exception:
+                pass
+        self._constraint_handles.clear()
+
+        for handle in list(self._body_handles.values()):
+            try:
+                self._jw.remove_body(handle)
+            except Exception:
+                pass
+        self._body_handles.clear()
 
     # ---- Body 管理 --------------------------------------------------------
 
@@ -290,18 +308,40 @@ class JoltAdapter:
 
     def dispose(self, reason: str = "dispose") -> None:
         """
-        释放顺序：先约束，再刚体，最后销毁 JoltWorld。
-        不能抛出异常（dispose 链约定）。
+        释放顺序（严格执行）：
+          1. 先逐一通知 Jolt 删除所有 constraints（必须在 bodies 之前）
+          2. 再逐一通知 Jolt 删除所有 bodies
+          3. 最后销毁 JoltWorld 本体
+        不能抛出异常（dispose 链约定）。幂等（多次调用安全）。
         """
         if not self._valid:
             return
+        self._valid = False   # 先标记，防止 dispose 中途异常后重入
         try:
+            # 阶段1：删除 constraints（顺序必须先于 bodies）
+            for handle in list(self._constraint_handles.values()):
+                try:
+                    self._jw.remove_constraint(handle)
+                except Exception:
+                    pass
             self._constraint_handles.clear()
+
+            # 阶段2：删除 bodies
+            for handle in list(self._body_handles.values()):
+                try:
+                    self._jw.remove_body(handle)
+                except Exception:
+                    pass
             self._body_handles.clear()
-            self._jw.clear()
+
+            # 阶段3：销毁 JoltWorld 本体
+            try:
+                self._jw.destroy()
+            except Exception:
+                pass
         except Exception:
+            # dispose 链约定：不能向外抛异常
             pass
-        self._valid = False
 
     def omni_cache_dispose(self, reason: str) -> None:
         """兼容 omni_cache_dispose 协议，供 backend_resources 字典调用。"""
@@ -315,20 +355,30 @@ class JoltAdapter:
 def ensure_jolt_adapter(world) -> "JoltAdapter | None":
     """
     从 world.backend_resources["rigid_solver"] 获取 JoltAdapter。
-    若不存在则尝试新建。native 不可用时返回 None。
+    若不存在则尝试新建。
+    若存在但 world generation 变化，清空 adapter 内所有 handles（不重建 JoltWorld）。
+    native 不可用时返回 None。
     """
     existing = world.backend_resources.get("rigid_solver")
-    if isinstance(existing, JoltAdapter):
+    if isinstance(existing, JoltAdapter) and existing._valid:
+        # generation 变化：清空 handles，下一帧的 sync 会重新注册
+        fc = world.frame_context if world.frame_context else None
+        if fc is not None and existing._last_generation != fc.generation:
+            existing._flush_handles()
+            existing._last_generation = fc.generation
         return existing
+
     # 已有其他 backend 就不覆盖
-    if existing is not None:
+    if existing is not None and not isinstance(existing, JoltAdapter):
         return None
+
     try:
         adapter = JoltAdapter()
+        fc = world.frame_context if world.frame_context else None
+        adapter._last_generation = fc.generation if fc else 0
         world.backend_resources["rigid_solver"] = adapter
         return adapter
-    except Exception as e:
-        # hotools_jolt 未编译或初始化失败
+    except Exception:
         import traceback
         traceback.print_exc()
         return None
