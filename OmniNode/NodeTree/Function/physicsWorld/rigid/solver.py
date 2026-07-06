@@ -15,9 +15,8 @@ from .specs import (
     build_constraint_spec,
 )
 from .results import (
-    RIGID_TRANSFORM_RESULT_KEY,
-    clear_rigid_transform_result,
-    make_rigid_transform_result,
+    clear_rigid_transform_results,
+    publish_rigid_transform_result,
 )
 
 
@@ -151,13 +150,7 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
 
 
 def _consume_exchange(world: PhysicsWorldCache, channel: str) -> list[dict]:
-    consume = getattr(world, "consume_exchange", None)
-    if callable(consume):
-        return [item for item in consume(channel) if isinstance(item, dict)]
-    exchange = getattr(world, "exchange", None)
-    if isinstance(exchange, dict):
-        return [item for item in exchange.get(channel, ()) if isinstance(item, dict)]
-    return []
+    return [item for item in world.consume_exchange(channel) if isinstance(item, dict)]
 
 
 def _rigid_command_token(world: PhysicsWorldCache) -> tuple[int, int]:
@@ -279,21 +272,21 @@ def _apply_rigid_body_commands(world: PhysicsWorldCache, adapter) -> tuple[int, 
 
 def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     """
-    从 backend 采样本帧刚体 transform，写入 solver slot 的 result stream。
+    从 backend 采样本帧刚体 transform，写入 world result stream。
 
     这是 solver 和 writeback/debug/export 之间的边界：下游不应再读取
-    adapter._body_handles 或 adapter._jw。
+    solver slot、adapter._body_handles 或 adapter._jw 来拿本帧 transform。
     """
     fc = world.frame_context
     frame = int(getattr(fc, "frame", 0) or 0)
     published = 0
+    clear_rigid_transform_results(world)
 
     for slot_id, slot in list(world.solver_slots.items()):
         if slot.kind != "rigid_body":
             continue
         spec = slot.data.get("spec")
         if spec is None:
-            clear_rigid_transform_result(slot)
             continue
 
         try:
@@ -307,11 +300,11 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
             else:
                 result = adapter.get_body_transform(slot_id)
                 if result is None:
-                    clear_rigid_transform_result(slot)
                     continue
                 pos_arr, rot_arr = result
 
-            slot.data[RIGID_TRANSFORM_RESULT_KEY] = make_rigid_transform_result(
+            published_result = publish_rigid_transform_result(
+                world,
                 slot_id=slot_id,
                 spec=spec,
                 frame=frame,
@@ -324,10 +317,11 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
                 sleeping=state.get("sleeping") if state else None,
                 backend=getattr(adapter, "BACKEND", "jolt"),
             )
+            if published_result is None:
+                continue
             slot.data.pop("_result_error", None)
             published += 1
         except Exception as exc:
-            clear_rigid_transform_result(slot)
             slot.data["_result_error"] = str(exc)
 
     return published
@@ -364,6 +358,8 @@ def step_rigid_bodies(
     if same_frame and not _has_pending_jolt_work(world):
         adapter = world.backend_resources.get("rigid_solver")
         body_count = int(getattr(adapter, "body_count", 0) or 0)
+        if adapter is not None:
+            _publish_rigid_transform_results(world, adapter)
         return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter

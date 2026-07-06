@@ -193,7 +193,7 @@ slot.data["frame_state"]
 
 - 推进模拟状态。
 - 消费 frame input、spec、solver state、exchange input。
-- 产生 result stream 或更新 solver slot 内的 frame result。
+- 产生 world result stream。
 
 默认约束：
 
@@ -201,10 +201,10 @@ slot.data["frame_state"]
 - 不直接调用 Cache Write。
 - 不创建不可清理的 native 全局状态。
 
-允许例外：
+当前开发约束：
 
-- 已存在的 legacy/integrated solver 可以继续内部写回，但必须标记为 legacy path。
-- 迁移期间可保留旧节点行为，同时新增 world-aware shadow path。
+- 统一物理世界内的新 solver 不保留 legacy inline writeback。
+- 不为旧资产或旧节点 socket / payload 格式保留兼容层；破坏性调整必须在本文档记录。
 
 ### Cross Solver Publish / Consume
 
@@ -323,10 +323,10 @@ export cache stream
 
 当前刚体落地点：
 
-- `physicsRigidSolver` 在每个 rigid body slot 写入 `result.rigid_transform`。
-- `result.rigid_transform` 是本帧纯快照 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`。
+- `physicsRigidSolver` 向 `world.result_streams["rigid_transform"]` 写入每个 rigid body 的本帧结果。
+- `rigid_transform` result 是本帧纯快照 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`。
 - `physicsWriteback`、`physicsWorldDebugDraw` 和 `physicsRigidReadState` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
-- 这是 `world.exchange` 的过渡形态；等跨 solver result channel 稳定后，可把相同 payload 移到 exchange。
+- solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。
 
 模式：
 
@@ -353,9 +353,9 @@ Disabled
 
 ### 问题
 
-当链路中有多个 solver，且下游 solver 需要感知上游 solver 的物理结果时，有以下三种语义：
+当链路中有多个 solver，且下游 solver 需要感知上游 solver 的物理结果时，必须避免隐式 bpy 中间态。
 
-**模式 A：solver 内写回 bpy，下游读 bpy（当前做法）**
+**禁止模式：solver 内写回 bpy，下游读 bpy**
 
 ```text
 SpringBone step → 立即写 PoseBone
@@ -365,32 +365,29 @@ Cloth step 读到 SpringBone 已写回的骨骼状态
 链路末尾 Writeback（Cloth 自己再写）
 ```
 
-- 优点：下游 solver 不需要改，直接读 bpy。
 - 缺点：同一骨架在一帧内发生"写 bpy → 读 bpy"循环，可能触发 Blender depsgraph 中间重算；无法做 Record Only；无法统一 writeback 统计。
 
-**模式 B：所有 solver 结果存 world.exchange，链路末尾统一写 bpy（推荐长期目标）**
+**目标模式：solver 结果进入 `world.result_streams` / `world.exchange`，链路末尾统一写 bpy**
 
 ```text
-SpringBone step → 写 world.exchange["spring_bone_matrices"]
-  ↓ (world.exchange，无 bpy 写)
-Cloth step 读 world.exchange["spring_bone_matrices"]（不读 bpy）
+SpringBone step → 写 world.result_streams["spring_bone_matrices"]
+  ↓ (world result stream / exchange，无 bpy 写)
+Cloth step 读声明的 result / exchange channel（不读 bpy）
   ↓
 Physics Writeback 统一写 PoseBone + mesh delta
 ```
 
 - 优点：零 bpy 中间写；支持 Record Only；writeback 成本可统一统计。
-- 缺点：所有下游 solver 必须声明消费 exchange channel；首次迁移改动范围较大。
-
-**模式 C：上游 solver 内写回 bpy，下游 solver 读 bpy（同 A），但 writeback 节点可选（当前旧路径兼容）**
+- 代价：所有下游 solver 必须声明消费 result / exchange channel；首次迁移可以破坏旧接口。
 
 ### 系统约定
 
-**第一版统一选模式 A 作为兼容路径，模式 B 作为新 solver 的目标。**
+**统一物理世界只选目标模式。当前项目没有旧资产兼容要求，接口可以破坏性收敛到强契约。**
 
 规则：
-1. **新写的 solver 必须用模式 B**：step 不写 bpy，结果存 solver slot 或 world.exchange，由 Physics Writeback 节点消费。
-2. **旧 solver 迁移前可保留模式 A**，但必须在 solver 声明的 Writeback 字段里标注 `legacy_inline_writeback: true`。
-3. **如果下游 solver 需要消费上游物理结果**，上游 solver 必须发布 exchange item；下游 solver 声明消费该 channel，不依赖 bpy 中间状态。
+1. **solver step 不写 bpy**：结果写入 `world.result_streams`；跨 solver 命令、事件和临时共享数据写入 `world.exchange`。
+2. **slot 不作为结果总线**：solver slot 只保存 spec、topology、native handle、dirty/runtime 状态。
+3. **如果下游 solver 需要消费上游物理结果**，上游 solver 必须发布 result / exchange item；下游 solver 声明消费该 channel，不依赖 bpy 中间状态。
 4. **`armature.update_tag()` 只能在 Physics Writeback 节点调用**，每个 armature 只调一次（汇总所有 solver 写完后），不能在 solver step 内调用。
 
 ### Physics World Commit
@@ -629,9 +626,9 @@ backend_key
 规则：
 
 - key 应包含 Blender object pointer 和 data pointer，避免对象删除后指针复用。
-- 使用 name 时要说明是兼容旧缓存还是稳定 id。
+- 使用 name 时要说明它是否只是显示名；稳定 id 不能只依赖 name。
 - native context schema 变化必须进入 backend key。
-- 修改 socket 参数名会影响节点兼容性，不能随意作为 key 的唯一来源。
+- 修改 socket 参数名会改变节点 contract，不能作为 dirty key 的唯一来源。
 
 ## Native Context 分工
 
@@ -791,16 +788,16 @@ re_run_and_reset：
 
 默认：`skip`。必须在 solver 声明的 Update Policy 里显式列出 `same_frame_policy` 字段。
 
-## 兼容迁移策略
+## 不兼容收敛策略
 
-现有 solver 不应一次性打散。推荐 shadow pipeline：
+当前没有旧资产兼容要求，迁移时优先删除双路径，而不是维护 shadow pipeline：
 
-1. 保留旧节点 UI 和行为。
-2. 在内部按新阶段重命名 timing。
-3. 把 prepare、step、writeback 拆成可独立调用 helper。
-4. 让 solver step 产生 result stream，同时旧路径立即消费它写回。
-5. 新增 world-aware 节点或可选 world 输入。
-6. 验证性能和行为后，再把写回移到统一节点。
+1. 先确定 world-aware contract：scope、spec、result stream、exchange、writeback 边界。
+2. 直接调整节点 socket、payload 和内部数据结构到新 contract。
+3. 把 prepare、step、result publish、writeback apply 拆成可独立调用 helper。
+4. solver step 只产生 result stream / exchange item，不直接写 bpy。
+5. 下游节点和 debug draw 只读公开 result / exchange，不读 solver slot 私有结构。
+6. 用后台集成测试锁住同帧、连续帧、跳帧、reset、dispose 行为。
 
 优先预演对象：
 
@@ -867,7 +864,7 @@ rigid.jolt_step
 6. dirty key 定义。
 7. native context 生命周期。
 8. writeback/export 支持状态。
-9. legacy 兼容说明。
+9. 不兼容变更说明。
 
 ## 当前建议
 

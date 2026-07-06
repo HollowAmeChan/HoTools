@@ -557,14 +557,14 @@ SpringBone VRM 现在有自己的 collision source cache 和 C++ arrays cache。
 - `frame` 和跳帧恢复策略读取 world frame context。
 - root hard pin 仍由 chain 输入决定，不放进 world。
 
-### Mesh XPBD legacy
+### Mesh XPBD 参考迁移
 
-Mesh XPBD 是旧蓝本，可作为兼容路径保留。若迁移：
+Mesh XPBD 是旧蓝本，只作为阶段拆分和 native resident state 的参考，不作为兼容路径保留。若迁移：
 
-- state 放到 `world.solver_slots["mesh_xpbd:{obj_ptr}"]`。
+- state 放到 `world.solver_slots["mesh_xpbd:{obj_ptr}:{data_ptr}"]`。
 - collision snapshot 来自 world。
 - frame/restart 来自 world。
-- 仍可继续使用 `OmniCacheOwnerDict` 包旧 dict，但 owner 应逐步收敛到 world slot。
+- owner 直接收敛到 world slot，不再用 `OmniCacheOwnerDict` 包旧 dict 作为双路径。
 
 ### Rigid Body solver / Jolt backend
 
@@ -623,7 +623,7 @@ OmniNode object scope
   -> HoTools constraint specs
   -> Jolt adapter build/update
   -> Jolt step
-  -> rigid slot result.rigid_transform
+  -> world.result_streams["rigid_transform"]
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
 ```
@@ -1008,7 +1008,7 @@ physicsWorld/
 
 ```text
 刚体模拟步（physicsRigidSolver）  ← Jolt sync + step，不直接写回
-刚体结果-读取状态（physicsRigidReadState）             ← 读取 result.rigid_transform
+刚体结果-读取状态（physicsRigidReadState）             ← 读取 rigid_transform result stream
 刚体命令-设置速度（physicsRigidSetVelocity）          ← 发布 set_velocity
 刚体命令-施加力（physicsRigidAddForce）               ← 发布 add_force
 刚体命令-施加冲量（physicsRigidAddImpulse）           ← 发布 add_impulse
@@ -1064,7 +1064,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 - frame/restart 逻辑逐步改读 `world.frame_context`。
 - per-node owner 最后再迁移到 world solver slots。
 
-旧节点继续保留兼容路径，直到 world-aware 路径被测试证明稳定。
+旧节点不作为统一物理世界的兼容目标。迁移时可以直接收敛到 world-aware 路径；需要保留的旧入口必须被标记为未迁移模块，不能影响新 contract。
 
 ### Phase 8：跨 solver 交互
 
@@ -1092,6 +1092,7 @@ class PhysicsWorldCache:
         self.previous_collider_snapshot = None
         self.solver_slots = {}
         self.exchange = {}
+        self.result_streams = {}
         self.runtime_caches = {}
         self.backend_resources = {}
         self.generation = 0
@@ -1108,6 +1109,15 @@ class PhysicsWorldCache:
         ...
 
     def consume_exchange(self, channel=None, producer=None, scope=None):
+        ...
+
+    def publish_result(self, item=None, channel=None, solver="unknown", **payload):
+        ...
+
+    def consume_results(self, channel=None, solver=None, frame=None, generation=None):
+        ...
+
+    def clear_results(self, channel=None, solver=None):
         ...
 
     def omni_cache_dispose(self, reason):
@@ -1156,9 +1166,9 @@ def physicsWorldCommit(world, enabled=True):
 
 第一版文档和节点描述必须明确：world 链路应线性串联，不支持并行分叉后合并。
 
-### 与旧节点兼容
+### 旧节点收敛
 
-旧节点不应立即删除。建议新增 world-aware 版本或给现有节点增加可选 world 输入时保持旧接法可用。
+统一物理世界不再为旧节点接法保留兼容层。旧节点可以暂时作为未迁移模块存在，但新刚体世界节点、result stream、exchange 和 writeback contract 不应为了旧接法增加双路径。
 
 ### Blender depsgraph 开销不会完全消失
 
@@ -1227,7 +1237,7 @@ BONE 上下文（Bone Properties，Pose 模式）
 | `hotools_rigid_constraint` | 刚体约束 | 刚体约束 | 保持不变 |
 | `hotools_collision`（Bone） | 骨骼碰撞 | 骨骼碰撞 | 保持不变 |
 
-**Python 属性名均保持不变**，只改 UI 显示文字，不影响已有 Blender 数据兼容性。
+当前实现暂沿用这些 Python 属性名作为内部 API。它们不是兼容承诺；后续如果统一物理世界需要更清晰的属性分层，可以做破坏性重命名。
 
 ### physicsObjectScope 参数名变更
 

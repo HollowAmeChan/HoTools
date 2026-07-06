@@ -47,132 +47,54 @@ def _get_native_const(attr: str, default):
 def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
     """
     从 RigidBodySpec 提取碰撞形状参数。
-    新版 spec 已经持有持久化 shape 字段；旧 spec 才回退到对象属性/包围盒。
+    Jolt adapter 只消费 spec 快照，不回读 Blender 对象属性或包围盒。
     """
     stype = getattr(spec, "shape_type", None)
-    if stype in {"SPHERE", "CAPSULE", "CYLINDER", "TAPERED_CAPSULE", "TAPERED_CYLINDER", "PLANE", "BOX"}:
-        return {
-            "shape_type": stype,
-            "shape_radius": max(float(getattr(spec, "shape_radius", 0.5)), 0.001),
-            "shape_half_height": max(float(getattr(spec, "shape_half_height", 0.5)), 0.001),
-            "shape_half_extents": tuple(getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5))),
-            "shape_plane_half_extent": max(float(getattr(spec, "shape_plane_half_extent", 10.0)), 1.0),
-            "shape_top_radius": max(float(getattr(spec, "shape_top_radius", 0.5)), 0.001),
-            "shape_bottom_radius": max(float(getattr(spec, "shape_bottom_radius", 0.3)), 0.001),
-            "shape_convex_radius": max(float(getattr(spec, "shape_convex_radius", 0.05)), 0.0),
-            "shape_offset": tuple(getattr(spec, "shape_offset", (0.0, 0.0, 0.0))),
-            "shape_rotation_wxyz": tuple(getattr(spec, "shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-        }
-
-    obj = spec.obj
-    if obj is None:
-        return {"shape_type": "SPHERE", "shape_radius": 0.1}
-
-    rb = getattr(obj, "hotools_rigid_body", None)
-    if rb is not None:
-        stype = str(getattr(rb, "shape_type", "SPHERE"))
-        if stype == "SPHERE":
-            return {"shape_type": "SPHERE",
-                    "shape_radius": max(float(getattr(rb, "shape_radius", 0.5)), 0.001)}
-        if stype == "CAPSULE":
-            return {"shape_type": "CAPSULE",
-                    "shape_radius":      max(float(getattr(rb, "shape_radius",      0.3)), 0.001),
-                    "shape_half_height": max(float(getattr(rb, "shape_half_height", 0.5)), 0.001)}
-        if stype == "CYLINDER":
-            return {
-                "shape_type": "CYLINDER",
-                "shape_radius": max(float(getattr(rb, "shape_radius", 0.5)), 0.001),
-                "shape_half_height": max(float(getattr(rb, "shape_half_height", 0.5)), 0.001),
-                "shape_convex_radius": max(float(getattr(rb, "shape_convex_radius", 0.05)), 0.0),
-            }
-        if stype in {"TAPERED_CAPSULE", "TAPERED_CYLINDER"}:
-            return {
-                "shape_type": stype,
-                "shape_top_radius": max(float(getattr(rb, "shape_top_radius", 0.5)), 0.001),
-                "shape_bottom_radius": max(float(getattr(rb, "shape_bottom_radius", 0.3)), 0.001),
-                "shape_half_height": max(float(getattr(rb, "shape_half_height", 0.5)), 0.001),
-                "shape_convex_radius": max(float(getattr(rb, "shape_convex_radius", 0.05)), 0.0),
-            }
-        if stype == "BOX":
-            he = getattr(rb, "shape_half_extents", None)
-            if he is not None:
-                hx = max(float(he[0]), 0.001)
-                hy = max(float(he[1]), 0.001)
-                hz = max(float(he[2]), 0.001)
-            else:
-                hx = hy = hz = 0.5
-            return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
-        if stype == "PLANE":
-            he = getattr(rb, "shape_half_extents", None)
-            if he is not None:
-                hx = max(float(he[0]), 0.001)
-                hy = max(float(he[1]), 0.001)
-                hz = max(float(he[2]), 0.001)
-            else:
-                hx = hy = 5.0
-                hz = 0.001
-            return {
-                "shape_type": "PLANE",
-                "shape_half_extents": (hx, hy, hz),
-                "shape_plane_half_extent": max(float(getattr(rb, "shape_plane_half_extent", max(hx, hy))), 1.0),
-            }
-
-    # Fallback：对象包围盒
-    try:
-        dims = obj.dimensions
-        hx = max(float(dims.x) * 0.5, 0.01)
-        hy = max(float(dims.y) * 0.5, 0.01)
-        hz = max(float(dims.z) * 0.5, 0.01)
-        return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
-    except Exception:
-        return {"shape_type": "SPHERE", "shape_radius": 0.1}
+    if stype not in {"SPHERE", "CAPSULE", "CYLINDER", "TAPERED_CAPSULE", "TAPERED_CYLINDER", "PLANE", "BOX"}:
+        slot_id = getattr(spec, "slot_id", "<unknown>")
+        raise ValueError(f"RigidBodySpec {slot_id} has unsupported shape_type {stype!r}")
+    return {
+        "shape_type": stype,
+        "shape_radius": max(float(getattr(spec, "shape_radius")), 0.001),
+        "shape_half_height": max(float(getattr(spec, "shape_half_height")), 0.001),
+        "shape_half_extents": tuple(getattr(spec, "shape_half_extents")),
+        "shape_plane_half_extent": max(float(getattr(spec, "shape_plane_half_extent")), 1.0),
+        "shape_top_radius": max(float(getattr(spec, "shape_top_radius")), 0.001),
+        "shape_bottom_radius": max(float(getattr(spec, "shape_bottom_radius")), 0.001),
+        "shape_convex_radius": max(float(getattr(spec, "shape_convex_radius")), 0.0),
+        "shape_offset": tuple(getattr(spec, "shape_offset")),
+        "shape_rotation_wxyz": tuple(getattr(spec, "shape_rotation_wxyz")),
+    }
 
 
 # ---------------------------------------------------------------------------
 # 位置和旋转从 spec 快照提取
 # ---------------------------------------------------------------------------
 
-def _transform_from_obj(obj) -> tuple[tuple, tuple]:
-    """返回 (position, rotation_wxyz)。仅用于旧数据或 KINEMATIC 兜底。"""
-    try:
-        loc, rot, _scale = obj.matrix_world.decompose()
-        return ((float(loc.x), float(loc.y), float(loc.z)),
-                (float(rot.w), float(rot.x), float(rot.y), float(rot.z)))
-    except Exception:
-        return ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0))
-
-
-def _transform_from_empty(empty_obj) -> tuple[tuple, tuple]:
-    """约束锚点 Empty 的 anchor frame。"""
-    return _transform_from_obj(empty_obj)
-
-
 def _transform_from_body_spec(spec: "RigidBodySpec") -> tuple[tuple, tuple]:
     pos = getattr(spec, "world_position", None)
     rot = getattr(spec, "world_rotation_wxyz", None)
-    if pos is not None and rot is not None:
-        try:
-            return (
-                (float(pos[0]), float(pos[1]), float(pos[2])),
-                (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
-            )
-        except Exception:
-            pass
-    return _transform_from_obj(getattr(spec, "obj", None))
+    try:
+        return (
+            (float(pos[0]), float(pos[1]), float(pos[2])),
+            (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+        )
+    except Exception as exc:
+        slot_id = getattr(spec, "slot_id", "<unknown>")
+        raise ValueError(f"RigidBodySpec {slot_id} has invalid world transform snapshot") from exc
 
 
 def _transform_from_constraint_spec(spec: "ConstraintSpec") -> tuple[tuple, tuple]:
     pos = getattr(spec, "anchor_position", None)
     rot = getattr(spec, "anchor_rotation_wxyz", None)
-    if pos is not None and rot is not None:
-        try:
-            return (
-                (float(pos[0]), float(pos[1]), float(pos[2])),
-                (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
-            )
-        except Exception:
-            pass
-    return _transform_from_empty(getattr(spec, "empty_obj", None))
+    try:
+        return (
+            (float(pos[0]), float(pos[1]), float(pos[2])),
+            (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+        )
+    except Exception as exc:
+        slot_id = getattr(spec, "slot_id", "<unknown>")
+        raise ValueError(f"ConstraintSpec {slot_id} has invalid anchor transform snapshot") from exc
 
 
 # ---------------------------------------------------------------------------

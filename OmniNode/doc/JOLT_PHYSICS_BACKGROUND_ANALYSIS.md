@@ -382,10 +382,10 @@ HoTools 当前 constraint spec 只有：
 当前写回机制：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
-- solver 每帧把 body state 纯快照发布到 rigid slot 的 `result.rigid_transform`。
+- solver 每帧把 body state 纯快照发布到 `world.result_streams["rigid_transform"]`。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
-- `physicsWorldDebugDraw` 优先消费 `result.rigid_transform`，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
-- `physicsRigidReadState` 直接从 `result.rigid_transform` 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
+- `physicsWorldDebugDraw` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
+- `physicsRigidReadState` 直接从 `rigid_transform` result 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 应补的核心输出
@@ -399,7 +399,7 @@ HoTools 当前 constraint spec 只有：
 - sensor event。
 - query result：ray/shape cast hit body、point、normal、fraction、subshape。
 
-这些输出不应直接写到 Blender 自定义属性里。推荐写入 `world.exchange` 或 solver slot 的 frame result，再由：
+这些输出不应直接写到 Blender 自定义属性里。推荐写入 `world.result_streams` 或 `world.exchange`，再由：
 
 - debug draw 节点消费。
 - Physics Writeback 消费。
@@ -504,8 +504,7 @@ Native 侧当前特点：
 
 - `world.begin` 每次都重采集 spec；slot 使用 sync signature 判断参数/形状/约束是否需要重新同步 Jolt。
 - `same_frame` 不重复推进 Jolt step，但允许脏 spec 或 kinematic pose 执行无时间推进的 backend sync。
-- `_transform_from_obj()` / `_transform_from_empty()` 只作为旧数据兜底；adapter 主路径应消费 spec 内的 `world_position` / `world_rotation_wxyz` / anchor 快照。
-- shape 已进入 `RigidBodySpec`，adapter 优先消费 spec。
+- adapter 只消费 `RigidBodySpec` / `ConstraintSpec` 内的 `world_position`、`world_rotation_wxyz`、anchor 和 shape 快照；不再回读 Object / Empty。
 - `rigid_collision_group` / `rigid_collides_with_groups` 已进 spec，并由 adapter 映射到 Jolt/native 的 `CollisionGroup` 参数。
 - sync 策略目前每次 sync 旧 body 都 remove + add；后续需要区分 topology/config rebuild 与 runtime value update。
 

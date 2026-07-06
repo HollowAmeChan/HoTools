@@ -58,10 +58,7 @@ def _publish_rigid_body_command(
         "command": str(command),
     }
     item.update(payload)
-    publish = getattr(world, "publish_exchange", None)
-    if callable(publish):
-        return world, publish(item)
-    return world, None
+    return world, world.publish_exchange(item)
 
 
 def _rigid_result_for_target(world: object, target: bpy.types.Object) -> dict | None:
@@ -75,7 +72,12 @@ def _rigid_result_for_target(world: object, target: bpy.types.Object) -> dict | 
         return None
     fc = getattr(world, "frame_context", None)
     frame = int(getattr(fc, "frame", 0) or 0)
-    return get_rigid_transform_result(slot, frame=frame, generation=world.generation)
+    return get_rigid_transform_result(
+        world,
+        slot_id=spec.slot_id,
+        frame=frame,
+        generation=world.generation,
+    )
 
 
 def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
@@ -98,7 +100,7 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     _INPUT_NAME=["物理世界", "启用"],
     _OUTPUT_NAME=["物理世界", "刚体数量", "耗时ms"],
     omni_description="""
-    执行 Jolt 刚体模拟步，结果保留在 rigid backend 中。
+    执行 Jolt 刚体模拟步，结果发布到 world.result_streams["rigid_transform"]。
 
     刚体/约束 spec 已由"物理世界-帧开始"自动收集，无需手动注册节点。
 
@@ -129,11 +131,11 @@ def physicsRigidSolver(
     _INPUT_NAME=["物理世界", "目标刚体"],
     _OUTPUT_NAME=["物理世界", "命中", "位置", "旋转", "线速度", "角速度", "激活", "睡眠", "结果"],
     omni_description="""
-    从 rigid solver 的 result stream 读取目标刚体当前状态。
+    从 world result stream 读取目标刚体当前状态。
 
-    该节点不访问 Jolt adapter 或 native handle，只消费 solver slot 上的
-    result.rigid_transform。应放在"刚体模拟步"之后；若本帧还没有结果，
-    命中为 False，其余输出为默认值。
+    该节点不访问 Jolt adapter、native handle 或 slot 私有 transform，只消费
+    world.result_streams 中的 rigid_transform。应放在"刚体模拟步"之后；
+    若本帧还没有结果，命中为 False，其余输出为默认值。
     """,
 )
 def physicsRigidReadState(

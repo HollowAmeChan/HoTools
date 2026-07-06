@@ -20,6 +20,8 @@ import gpu
 import mathutils
 from gpu_extras.batch import batch_for_shader
 
+from .rigid.results import get_rigid_transform_result
+
 # ---------------------------------------------------------------------------
 # 颜色常量
 # ---------------------------------------------------------------------------
@@ -745,11 +747,6 @@ def update_draw_store(
 
     # 收集 rigid / constraint 绘制数据。这里采样成纯快照，draw handler
     # 后续不再读取 bpy 对象或 spec 引用。
-    try:
-        from .rigid.results import get_rigid_transform_result
-    except Exception:
-        get_rigid_transform_result = None
-
     rigid_shapes = []
     constraints = []
     for slot_id, slot in world.solver_slots.items():
@@ -758,8 +755,12 @@ def update_draw_store(
             continue
         if slot.kind == "rigid_body" and show_rigid:
             result = (
-                get_rigid_transform_result(slot, frame=fc.frame, generation=world.generation)
-                if callable(get_rigid_transform_result) else None
+                get_rigid_transform_result(
+                    world,
+                    slot_id=slot_id,
+                    frame=fc.frame,
+                    generation=world.generation,
+                )
             )
             shape = _rigid_shape_snapshot(spec, result)
             if shape is not None:

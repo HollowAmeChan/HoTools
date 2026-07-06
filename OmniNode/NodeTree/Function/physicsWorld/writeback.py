@@ -114,7 +114,7 @@ def clear_all_deltas(world) -> None:
 
 def writeback_rigid_body_deltas(world) -> int:
     """
-    从 rigid solver result stream 读取 DYNAMIC 刚体的当前变换，写入 Blender 对象的
+    从 world result stream 读取 DYNAMIC 刚体的当前变换，写入 Blender 对象的
     delta_location / delta_rotation_euler（增量变换）。
 
     不修改 obj.location / rotation_euler，保留原始变换。
@@ -141,7 +141,12 @@ def writeback_rigid_body_deltas(world) -> int:
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
             continue
 
-        result = get_rigid_transform_result(slot, frame=frame, generation=generation)
+        result = get_rigid_transform_result(
+            world,
+            slot_id=slot.slot_id,
+            frame=frame,
+            generation=generation,
+        )
         if result is None:
             continue
 

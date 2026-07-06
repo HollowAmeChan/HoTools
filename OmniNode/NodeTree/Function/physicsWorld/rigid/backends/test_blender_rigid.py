@@ -164,7 +164,7 @@ build_rigid_body_spec = _pw("rigid.specs").build_rigid_body_spec
 build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
-RIGID_TRANSFORM_RESULT_KEY = _pw("rigid.results").RIGID_TRANSFORM_RESULT_KEY
+get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
 physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 
@@ -334,10 +334,12 @@ def test_rigid_body_commands_exchange():
     assert cmd is not None
 
     step_rigid_bodies(world, enabled=True)
-    slot = world.solver_slots.get(spec.slot_id)
-    result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
+    result = get_rigid_transform_result(
+        world, slot_id=spec.slot_id, frame=scene.frame_current, generation=world.generation)
     assert result is not None
     assert result["linear_velocity"][2] > 3.0
+    snapshot = world.omni_cache_debug_snapshot()
+    assert snapshot["result_channels"]["rigid_transform"] == 1
 
     adapter = world.backend_resources.get("rigid_solver")
     assert adapter is not None
@@ -378,8 +380,8 @@ def test_rigid_body_command_nodes():
 
     step_rigid_bodies(world, enabled=True)
     spec = build_rigid_body_spec(ball)
-    slot = world.solver_slots.get(spec.slot_id)
-    result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
+    result = get_rigid_transform_result(
+        world, slot_id=spec.slot_id, frame=scene.frame_current, generation=world.generation)
     assert result is not None
     assert result["linear_velocity"][2] > 4.0
 
@@ -450,15 +452,9 @@ def test_full_rigid_pipeline():
     assert z1 < z0, f"DYNAMIC 球应下落 z0={z0:.2f} z1={z1:.2f}"
     assert z1 > -2.0, f"球应落地停止 z1={z1:.2f}"
     ball_ptr = int(ball.as_pointer())
-    stream_results = []
-    for slot in world.solver_slots.values():
-        spec = slot.data.get("spec") if slot.kind == "rigid_body" else None
-        if spec is not None and int(getattr(spec, "obj_ptr", 0) or 0) == ball_ptr:
-            result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
-            if result is not None:
-                stream_results.append(result)
-    assert stream_results, "刚体 solver slot 应写入 result.rigid_transform"
-    result = stream_results[-1]
+    result = get_rigid_transform_result(
+        world, obj_ptr=ball_ptr, frame=scene.frame_current, generation=world.generation)
+    assert result is not None, "刚体 solver 应写入 world.result_streams rigid_transform"
     assert "linear_velocity" in result and "angular_velocity" in result
     assert isinstance(result.get("active"), bool)
     assert isinstance(result.get("sleeping"), bool)

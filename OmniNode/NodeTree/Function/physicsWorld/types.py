@@ -227,6 +227,7 @@ class PhysicsWorldCache:
       previous_collider_snapshot — 上帧快照（供 MC2 moving collider 使用）
       solver_slots           — 各 solver 的私有状态槽
       exchange               — 当前图执行内的帧级交换 item registry
+      result_streams         — 当前图执行内的 solver result registry
       backend_resources      — native backend 资源（如 Jolt world context）
       generation             — 每次 world 重建时递增
       replace_required       — 当帧 Commit 是否走 replace（由 Begin 写入，Commit 只读）
@@ -244,6 +245,7 @@ class PhysicsWorldCache:
         self.previous_collider_snapshot: dict | None = None
         self.solver_slots: dict[str, PhysicsSolverSlot] = {}
         self.exchange: dict[str, list[dict]] = {}
+        self.result_streams: dict[str, list[dict]] = {}
         self.runtime_caches: dict = {}
         self.backend_resources: dict = {}
         self.generation: int = 0
@@ -356,6 +358,83 @@ class PhysicsWorldCache:
     def exchange_counts(self) -> dict[str, int]:
         return {str(channel): len(items) for channel, items in self.exchange.items()}
 
+    def clear_results(self, channel: str | None = None, solver: str | None = None) -> None:
+        """
+        清空 result stream。
+
+        channel=None 且 solver=None 时清空全部；指定 solver 时只清理该 solver
+        生产的 item。result stream 是当前图执行内的本帧输出，不负责跨帧持久化。
+        """
+        if channel is None and solver is None:
+            self.result_streams.clear()
+            return
+
+        if channel is not None:
+            ch = str(channel)
+            if solver is None:
+                self.result_streams.pop(ch, None)
+                return
+            items = self.result_streams.get(ch, [])
+            self.result_streams[ch] = [item for item in items if item.get("solver") != solver]
+            if not self.result_streams[ch]:
+                self.result_streams.pop(ch, None)
+            return
+
+        for ch in list(self.result_streams.keys()):
+            items = self.result_streams.get(ch, [])
+            self.result_streams[ch] = [item for item in items if item.get("solver") != solver]
+            if not self.result_streams[ch]:
+                self.result_streams.pop(ch, None)
+
+    def publish_result(
+        self,
+        item: dict | None = None,
+        channel: str | None = None,
+        solver: str = "unknown",
+        **payload,
+    ) -> dict | None:
+        """
+        发布 solver result item。
+
+        result item 是本帧纯数据快照，供 writeback、debug、export、节点读取消费。
+        channel 缺失时返回 None。
+        """
+        data = dict(item) if isinstance(item, dict) else {}
+        if payload:
+            data.update(payload)
+        ch = str(channel or data.get("channel") or "").strip()
+        if not ch:
+            return None
+        data["channel"] = ch
+        data.setdefault("solver", solver)
+        data.setdefault("frame", int(getattr(self.frame_context, "frame", 0) or 0))
+        data.setdefault("generation", int(self.generation))
+        self.result_streams.setdefault(ch, []).append(data)
+        return data
+
+    def consume_results(
+        self,
+        channel: str | None = None,
+        solver: str | None = None,
+        frame: int | None = None,
+        generation: int | None = None,
+    ) -> list[dict]:
+        """读取 result stream item。此操作不删除 item。"""
+        if channel is None:
+            items = [item for bucket in self.result_streams.values() for item in bucket]
+        else:
+            items = list(self.result_streams.get(str(channel), ()))
+        if solver is not None:
+            items = [item for item in items if item.get("solver") == solver]
+        if frame is not None:
+            items = [item for item in items if int(item.get("frame", -1)) == int(frame)]
+        if generation is not None:
+            items = [item for item in items if int(item.get("generation", -1)) == int(generation)]
+        return items
+
+    def result_stream_counts(self) -> dict[str, int]:
+        return {str(channel): len(items) for channel, items in self.result_streams.items()}
+
     # ---- omni_cache_dispose 协议 ---------------------------------------
 
     def omni_cache_dispose(self, reason: str) -> None:
@@ -385,6 +464,7 @@ class PhysicsWorldCache:
         # 清理 runtime caches（Python 容器，GC 即可，但显式 clear 更安全）
         self.runtime_caches.clear()
         self.exchange.clear()
+        self.result_streams.clear()
 
         # 重置碰撞快照（不持有 native 资源，直接清空）
         self.collider_snapshot = {"frame": None, "colliders": [], "source_count": 0}
@@ -439,6 +519,8 @@ class PhysicsWorldCache:
             "colliders": len(self.collider_snapshot.get("colliders") or []),
             "exchange_channels": self.exchange_counts(),
             "exchange_item_count": sum(len(items) for items in self.exchange.values()),
+            "result_channels": self.result_stream_counts(),
+            "result_item_count": sum(len(items) for items in self.result_streams.values()),
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),
             "backend_resource_details": backend_snapshots,
