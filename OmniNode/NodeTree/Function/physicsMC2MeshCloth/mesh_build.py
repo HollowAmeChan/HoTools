@@ -85,6 +85,8 @@ def build_collision_profile(obj: bpy.types.Object, fallback_radius: float) -> tu
         weights = vertex_group_weights(obj, str(getattr(props, "radius_vertex_group", "") or ""))
         radii = np.ascontiguousarray(weights * radius, dtype=np.float32)
         mask = math_utils.clamp_group_mask(getattr(props, "collided_by_groups", 0))
+        if mask == 0 and fallback_radius > MC2SystemConstants.EPSILON:
+            mask = 0xFFFF
         return radii, mask
 
     if fallback_radius <= MC2SystemConstants.EPSILON:
@@ -266,11 +268,12 @@ def config_key(
         if collision_enabled
         else float(collision_radius)
     )
-    configured_mask = (
-        math_utils.clamp_group_mask(getattr(props, "collided_by_groups", 0))
-        if collision_enabled
-        else (0xFFFF if float(collision_radius) > MC2SystemConstants.EPSILON else 0)
-    )
+    if collision_enabled:
+        configured_mask = math_utils.clamp_group_mask(getattr(props, "collided_by_groups", 0))
+        if configured_mask == 0 and float(collision_radius) > MC2SystemConstants.EPSILON:
+            configured_mask = 0xFFFF
+    else:
+        configured_mask = 0xFFFF if float(collision_radius) > MC2SystemConstants.EPSILON else 0
     self_collision_enabled = bool(props is not None and getattr(props, "self_collision_enabled", False))
     self_collision_surface_thickness = (
         round(max(float(getattr(props, "self_collision_surface_thickness", 0.0)), 0.0), 8)

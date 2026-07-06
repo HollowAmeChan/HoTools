@@ -271,15 +271,35 @@ def _apply_chain_param_overrides(runtime, state: dict, substep_count: int) -> No
     同时替换 *_param dict（C++ param_slots 路径）和 *_values ndarray（Python solve 路径），
     保证两条执行路径都能拿到 per-chain 值。
 
-    MeshCloth state 不包含 "chain_param_overrides"，函数直接返回，不影响现有行为。
+    MeshCloth merged state 也会通过 state["param_slots"] 传入 per-particle 参数，
+    这里统一转换成 runtime 覆盖，保证 Python/C++ 路径都拿到同一组数组。
     """
-    overrides = state.get("chain_param_overrides")
-    if not isinstance(overrides, dict) or not overrides:
-        return
-
     import numpy as _np
     from . import params as _params
     from .runtime_params import substep_damping_values as _substep_damp
+
+    overrides = {}
+    chain_overrides = state.get("chain_param_overrides")
+    if isinstance(chain_overrides, dict):
+        overrides.update(chain_overrides)
+
+    particle_count = len(getattr(runtime, "substep_damping_values", ()))
+    param_slots = state.get("param_slots")
+    if isinstance(param_slots, dict):
+        for name, slot in param_slots.items():
+            if name in overrides or not isinstance(slot, dict):
+                continue
+            if str(slot.get("mode", "")) != "per_particle":
+                continue
+            samples = slot.get("samples")
+            if samples is None:
+                continue
+            arr = _np.ascontiguousarray(samples, dtype=_np.float32).reshape(-1)
+            if len(arr) == particle_count:
+                overrides[name] = arr
+
+    if not overrides:
+        return
 
     for param_name, arr in overrides.items():
         if not isinstance(arr, _np.ndarray) or len(arr) == 0:
@@ -317,9 +337,22 @@ def _apply_chain_param_overrides(runtime, state: dict, substep_count: int) -> No
 
         elif param_name == "angle_limit_stiffness":
             runtime.angle_limit_stiffness_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+            runtime.angle_limit_stiffness = float(_np.clip(arr32, 0.0, 1.0).mean())
 
         elif param_name == "tether_compression":
             runtime.tether_compression_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+
+        elif param_name == "max_distance":
+            runtime.max_distance_param = _params.per_particle_param(arr32, minimum=0.0)
+
+        elif param_name == "motion_stiffness":
+            runtime.motion_stiffness_param = _params.per_particle_param(arr32, minimum=0.0, maximum=1.0)
+
+        elif param_name == "backstop_radius":
+            runtime.backstop_radius_param = _params.per_particle_param(arr32, minimum=0.0)
+
+        elif param_name == "backstop_distance":
+            runtime.backstop_distance_param = _params.per_particle_param(arr32, minimum=0.0)
 
 
 # 运行顺序说明：
@@ -536,7 +569,7 @@ def solve_meshcloth(
         _add_timing,
         timing_prefix="solve_setup.params",
     )
-    # BoneCloth per-chain 参数覆盖：MeshCloth 无此字段，函数直接返回不影响现有行为
+    # BoneCloth per-chain / MeshCloth merged per-particle 参数覆盖。
     _apply_chain_param_overrides(runtime, state, substep_count)
     _end_stage(timing, "solve_setup.params", substage_start)
 
@@ -1485,7 +1518,7 @@ def solve_meshcloth_native_core(
         _add_timing,
         timing_prefix="solve_setup.params",
     )
-    # BoneCloth per-chain 参数覆盖（MeshCloth 无此字段，直接返回）
+    # BoneCloth per-chain / MeshCloth merged per-particle 参数覆盖。
     _apply_chain_param_overrides(runtime, state, substep_count)
     _end_stage(timing, "solve_setup.params", substage_start)
 

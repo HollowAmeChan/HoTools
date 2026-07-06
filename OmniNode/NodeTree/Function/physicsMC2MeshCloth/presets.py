@@ -307,11 +307,6 @@ _SETTING_PRESET_KEYS = {
     "backstop_distance",
     "backstop_distance_curve",
     "motion_stiffness",
-    "normal_axis",
-    "animation_pose_ratio",
-    "use_collider_collision",
-    "collider_friction",
-    "collider_collision_mode",
 }
 
 _SOLVER_PRESET_KEYS = {
@@ -335,6 +330,11 @@ _SOLVER_PRESET_KEYS = {
     "teleport_mode",
     "teleport_distance",
     "teleport_rotation",
+    "normal_axis",
+    "animation_pose_ratio",
+    "use_collider_collision",
+    "collider_friction",
+    "collider_collision_mode",
 }
 
 

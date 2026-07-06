@@ -113,6 +113,161 @@ def _cache_payload(cache_state):
     return getattr(cache_state, "value", cache_state)
 
 
+_SETTING_KEY_FIELDS = (
+    "enabled",
+    "blend_weight",
+    "damping",
+    "damping_curve",
+    "use_tether",
+    "tether_compression",
+    "use_distance",
+    "distance_stiffness",
+    "distance_stiffness_curve",
+    "use_bend",
+    "bend_stiffness",
+    "bend_stiffness_curve",
+    "use_angle_restoration",
+    "angle_restoration_stiffness",
+    "angle_restoration_stiffness_curve",
+    "angle_restoration_velocity_attenuation",
+    "angle_restoration_velocity_attenuation_curve",
+    "angle_restoration_gravity_falloff",
+    "use_angle_limit",
+    "angle_limit",
+    "angle_limit_curve",
+    "angle_limit_stiffness",
+    "collision_radius",
+    "use_max_distance",
+    "max_distance",
+    "max_distance_curve",
+    "use_backstop",
+    "backstop_radius",
+    "backstop_distance",
+    "backstop_distance_curve",
+    "motion_stiffness",
+)
+
+
+def _object_key(obj) -> tuple | None:
+    if obj is None:
+        return None
+    if isinstance(obj, bpy.types.ID):
+        return (type(obj).__name__, int(obj.as_pointer()), str(getattr(obj, "name_full", "")))
+    return None
+
+
+def _key_value(value):
+    object_key = _object_key(value)
+    if object_key is not None:
+        return object_key
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, np.ndarray):
+        array = np.ascontiguousarray(value)
+        return ("ndarray", str(array.dtype), tuple(array.shape), bytes(array.reshape(-1).tobytes()))
+    try:
+        payload = value.to_payload()
+    except Exception:
+        payload = None
+    else:
+        return _key_value(payload)
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _key_value(item)) for key, item in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_key_value(item) for item in value)
+    try:
+        return tuple(_key_value(item) for item in value)
+    except TypeError:
+        return (type(value).__name__, repr(value))
+
+
+def _scene_timestep_key(scene: bpy.types.Scene | None) -> tuple:
+    render = getattr(scene, "render", None)
+    return (
+        int(getattr(render, "fps", 24) or 24),
+        float(getattr(render, "fps_base", 1.0) or 1.0),
+    )
+
+
+def _runtime_settings_key(
+    settings: dict,
+    *,
+    scene: bpy.types.Scene | None,
+    enabled: bool,
+    backend_label: str,
+    substeps: int,
+    iterations: int,
+    gravity_dir,
+    gravity_power: float,
+    gravity_falloff: float,
+    stablization_time_after_reset: float,
+    anchor_obj: bpy.types.Object | None,
+    anchor_inertia: float,
+    world_inertia: float,
+    movement_inertia_smoothing: float,
+    local_inertia: float,
+    depth_inertia: float,
+    centrifugal: float,
+    movement_speed_limit: float,
+    rotation_speed_limit: float,
+    local_movement_speed_limit: float,
+    local_rotation_speed_limit: float,
+    particle_speed_limit: float,
+    teleport_mode: int,
+    teleport_distance: float,
+    teleport_rotation: float,
+    normal_axis: int,
+    animation_pose_ratio: float,
+    use_collider_collision: bool,
+    collider_friction: float,
+    collider_collision_mode: int,
+    time_scale: float,
+) -> tuple:
+    setting_items = tuple((name, _key_value(settings.get(name))) for name in _SETTING_KEY_FIELDS)
+    solver_items = (
+        ("enabled", bool(enabled)),
+        ("backend", str(backend_label)),
+        ("substeps", int(substeps)),
+        ("iterations", int(iterations)),
+        ("scene_timestep", _scene_timestep_key(scene)),
+        ("gravity_dir", _key_value(gravity_dir)),
+        ("gravity_power", float(gravity_power)),
+        ("gravity_falloff", float(gravity_falloff)),
+        ("stablization_time_after_reset", float(stablization_time_after_reset)),
+        ("anchor_obj", _object_key(anchor_obj)),
+        ("anchor_inertia", float(anchor_inertia)),
+        ("world_inertia", float(world_inertia)),
+        ("movement_inertia_smoothing", float(movement_inertia_smoothing)),
+        ("local_inertia", float(local_inertia)),
+        ("depth_inertia", float(depth_inertia)),
+        ("centrifugal", float(centrifugal)),
+        ("movement_speed_limit", float(movement_speed_limit)),
+        ("rotation_speed_limit", float(rotation_speed_limit)),
+        ("local_movement_speed_limit", float(local_movement_speed_limit)),
+        ("local_rotation_speed_limit", float(local_rotation_speed_limit)),
+        ("particle_speed_limit", float(particle_speed_limit)),
+        ("teleport_mode", int(teleport_mode)),
+        ("teleport_distance", float(teleport_distance)),
+        ("teleport_rotation", float(teleport_rotation)),
+        ("normal_axis", int(normal_axis)),
+        ("animation_pose_ratio", float(animation_pose_ratio)),
+        ("use_collider_collision", bool(use_collider_collision)),
+        ("collider_friction", float(collider_friction)),
+        ("collider_collision_mode", int(collider_collision_mode)),
+        ("time_scale", float(time_scale)),
+    )
+    return ("meshcloth-runtime-settings-v1", setting_items, solver_items)
+
+
+def _write_cached_delta(obj: bpy.types.Object, state: dict, use_base_pose: bool, skip_writing: bool) -> None:
+    if skip_writing:
+        return
+    display = state.get("display_positions")
+    base = state.get("base_positions") if use_base_pose else state.get("rest_world_positions")
+    if isinstance(display, np.ndarray) and isinstance(base, np.ndarray):
+        blender_io.write_world_delta_attribute(obj, display, base)
+
+
 def _constraint_count(
     state: dict,
     vertex_count: int,
@@ -204,6 +359,11 @@ def run_mesh_cloth_mc2_node(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    normal_axis: int,
+    animation_pose_ratio: float,
+    use_collider_collision: bool,
+    collider_friction: float,
+    collider_collision_mode: int,
     time_scale: float,
     skip_writing: bool,
     debug_output: bool,
@@ -220,6 +380,8 @@ def run_mesh_cloth_mc2_node(
             centrifugal, movement_speed_limit, rotation_speed_limit,
             local_movement_speed_limit, local_rotation_speed_limit, particle_speed_limit,
             teleport_mode, teleport_distance, teleport_rotation,
+            normal_axis, animation_pose_ratio, use_collider_collision,
+            collider_friction, collider_collision_mode,
             time_scale, skip_writing, debug_output, solver_backend,
         )
 
@@ -261,11 +423,6 @@ def run_mesh_cloth_mc2_node(
     backstop_distance          = float(settings.get("backstop_distance", 0.0))
     backstop_distance_curve    = settings.get("backstop_distance_curve")
     motion_stiffness           = float(settings.get("motion_stiffness", 1.0))
-    normal_axis                = int(settings.get("normal_axis", 1))
-    animation_pose_ratio       = float(settings.get("animation_pose_ratio", 0.0))
-    use_collider_collision     = bool(settings.get("use_collider_collision", True))
-    collider_friction          = float(settings.get("collider_friction", 0.05))
-    collider_collision_mode    = int(settings.get("collider_collision_mode", 1))
 
     enabled = enabled and phys_enabled
     try:
@@ -275,6 +432,39 @@ def run_mesh_cloth_mc2_node(
         return _OmniCache.replace(None), None, 0, 0
     scene = scene or bpy.context.scene
     output_key = blender_io.output_key_name(obj)
+    current_settings_key = _runtime_settings_key(
+        settings,
+        scene=scene,
+        enabled=enabled,
+        backend_label=backend_label,
+        substeps=substeps,
+        iterations=iterations,
+        gravity_dir=gravity_dir,
+        gravity_power=gravity_power,
+        gravity_falloff=gravity_falloff,
+        stablization_time_after_reset=stablization_time_after_reset,
+        anchor_obj=anchor_obj,
+        anchor_inertia=anchor_inertia,
+        world_inertia=world_inertia,
+        movement_inertia_smoothing=movement_inertia_smoothing,
+        local_inertia=local_inertia,
+        depth_inertia=depth_inertia,
+        centrifugal=centrifugal,
+        movement_speed_limit=movement_speed_limit,
+        rotation_speed_limit=rotation_speed_limit,
+        local_movement_speed_limit=local_movement_speed_limit,
+        local_rotation_speed_limit=local_rotation_speed_limit,
+        particle_speed_limit=particle_speed_limit,
+        teleport_mode=teleport_mode,
+        teleport_distance=teleport_distance,
+        teleport_rotation=teleport_rotation,
+        normal_axis=normal_axis,
+        animation_pose_ratio=animation_pose_ratio,
+        use_collider_collision=use_collider_collision,
+        collider_friction=collider_friction,
+        collider_collision_mode=collider_collision_mode,
+        time_scale=time_scale,
+    )
     ensure_delta_output(obj)
     if timing is not None:
         add_timing(timing, "validate", time.perf_counter() - stage_start)
@@ -325,13 +515,18 @@ def run_mesh_cloth_mc2_node(
         add_timing(timing, "cache.match.state_matches", time.perf_counter() - sm_substage_start)
         add_timing(timing, "cache.match", time.perf_counter() - cache_substage_start)
     state = cache_owner.state if state_matches else None
+    settings_unchanged = (
+        isinstance(state, dict)
+        and state.get("settings_key") == current_settings_key
+    )
     replace_cache = cache_owner is None or not state_matches
 
     cache_substage_start = time.perf_counter() if timing is not None else None
     cached_frame = blender_io.cache_frame(state)
     current_frame = int(getattr(scene, "frame_current", 0) or 0)
+    same_frame = cached_frame is not None and current_frame == cached_frame
     continuous_frame = cached_frame is not None and current_frame == cached_frame + 1
-    restart_required = reset or not continuous_frame
+    restart_required = reset or not (same_frame or continuous_frame)
     solve_anchor_inertia = 1.0 if restart_required else anchor_inertia
     solve_motion_stiffness = 0.0 if restart_required else motion_stiffness
     solve_centrifugal = 0.0 if restart_required else centrifugal
@@ -398,6 +593,7 @@ def run_mesh_cloth_mc2_node(
             collision_radius,
             topology_cache,
         )
+        state["settings_key"] = current_settings_key
         cache_owner.replace_state(state)
         if timing is not None:
             add_timing(timing, "rebuild.build_state", time.perf_counter() - stage_start)
@@ -409,6 +605,7 @@ def run_mesh_cloth_mc2_node(
             state = mc2_state.sync_state_to_base_pose_write_container(state, obj)
         else:
             state = mc2_state.sync_state_to_object_transform(state, obj, cache_owner.center_state)
+        state["settings_key"] = current_settings_key
         cache_owner.replace_state(state)
         if timing is not None:
             add_timing(timing, "transform", time.perf_counter() - stage_start)
@@ -435,9 +632,18 @@ def run_mesh_cloth_mc2_node(
     if not enabled:
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
         next_state["frame"] = current_frame
+        next_state["settings_key"] = current_settings_key
         blender_io.clear_delta_attribute(obj)
         publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
         cache_owner.replace_state(next_state)
+        cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
+        return cache_value, obj, vertex_count, constraint_count
+
+    if same_frame and settings_unchanged and not reset:
+        use_base_pose = mc2_state.base_pose_proxy_active(state, cache_owner.center_state.base_pose_state)
+        _write_cached_delta(obj, state, use_base_pose, cache_owner.team_state.skip_writing)
+        publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
+        cache_owner.replace_state(state)
         cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
         return cache_value, obj, vertex_count, constraint_count
 
@@ -466,6 +672,7 @@ def run_mesh_cloth_mc2_node(
         blender_io.clear_delta_attribute(obj)
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
         next_state["frame"] = current_frame
+        next_state["settings_key"] = current_settings_key
         publish_debug_timing(obj, output_key, current_frame, vertex_count, constraint_count, timing, backend_label)
         cache_owner.replace_state(next_state)
         cache_value = _OmniCache.replace(cache_owner) if replace_cache else _OmniCache.mutate(cache_owner)
@@ -551,6 +758,7 @@ def run_mesh_cloth_mc2_node(
         add_timing(timing, "solve_total", time.perf_counter() - stage_start)
 
     next_state["frame"] = current_frame
+    next_state["settings_key"] = current_settings_key
     stage_start = time.perf_counter() if timing is not None else None
     write_substage_start = time.perf_counter() if timing is not None else None
     base_positions = next_state["base_positions"] if base_pose_proxy is not None else next_state["rest_world_positions"]
@@ -604,6 +812,11 @@ def _run_merged_mc2_node(
     teleport_mode: int,
     teleport_distance: float,
     teleport_rotation: float,
+    normal_axis: int,
+    animation_pose_ratio: float,
+    use_collider_collision: bool,
+    collider_friction: float,
+    collider_collision_mode: int,
     time_scale: float,
     skip_writing: bool,
     debug_output: bool,
@@ -635,6 +848,44 @@ def _run_merged_mc2_node(
         return _OmniCache.replace(None), None, 0, 0
 
     # ---- 2. 恢复 MC2MergedOwner，或新建 ----
+    proxy_settings_keys = [
+        _runtime_settings_key(
+            s,
+            scene=scene,
+            enabled=enabled,
+            backend_label=backend_label,
+            substeps=substeps,
+            iterations=iterations,
+            gravity_dir=gravity_dir,
+            gravity_power=gravity_power,
+            gravity_falloff=gravity_falloff,
+            stablization_time_after_reset=stablization_time_after_reset,
+            anchor_obj=anchor_obj,
+            anchor_inertia=anchor_inertia,
+            world_inertia=world_inertia,
+            movement_inertia_smoothing=movement_inertia_smoothing,
+            local_inertia=local_inertia,
+            depth_inertia=depth_inertia,
+            centrifugal=centrifugal,
+            movement_speed_limit=movement_speed_limit,
+            rotation_speed_limit=rotation_speed_limit,
+            local_movement_speed_limit=local_movement_speed_limit,
+            local_rotation_speed_limit=local_rotation_speed_limit,
+            particle_speed_limit=particle_speed_limit,
+            teleport_mode=teleport_mode,
+            teleport_distance=teleport_distance,
+            teleport_rotation=teleport_rotation,
+            normal_axis=normal_axis,
+            animation_pose_ratio=animation_pose_ratio,
+            use_collider_collision=use_collider_collision,
+            collider_friction=collider_friction,
+            collider_collision_mode=collider_collision_mode,
+            time_scale=time_scale,
+        )
+        for s in valid_settings
+    ]
+    merged_settings_key = ("meshcloth-merged-runtime-settings-v1", tuple(proxy_settings_keys))
+
     raw = _cache_payload(cache_state)
     merged_owner_obj: MC2MergedOwner | None = raw if isinstance(raw, MC2MergedOwner) else None
 
@@ -674,8 +925,9 @@ def _run_merged_mc2_node(
     per_proxy_needs_rebuild: list[bool] = []
     any_rebuild = False
     any_restart = False
+    all_same_frame = True
 
-    for i, (s, obj, p_owner) in enumerate(zip(valid_settings, valid_objs, proxy_owners)):
+    for i, (s, obj, p_owner, proxy_settings_key) in enumerate(zip(valid_settings, valid_objs, proxy_owners, proxy_settings_keys)):
         collision_radius = float(s.get("collision_radius", 0.0))
         topo_cache = p_owner.topology_cache
         prev_state = p_owner.state if isinstance(p_owner.state, dict) else None
@@ -691,12 +943,21 @@ def _run_merged_mc2_node(
         state_ok = mc2_state.state_matches(p_owner, obj, output_key, mesh_light_key, config_key)
 
         cached_frame = blender_io.cache_frame(p_owner.state if state_ok else None)
-        continuous = cached_frame is not None and current_frame == cached_frame + 1
-        restart = reset or not continuous
+        settings_unchanged = (
+            state_ok
+            and isinstance(prev_state, dict)
+            and prev_state.get("settings_key") == proxy_settings_key
+        )
+        same = state_ok and cached_frame is not None and current_frame == cached_frame
+        same_replay = same and settings_unchanged
+        continuous = state_ok and cached_frame is not None and current_frame == cached_frame + 1
+        restart = reset or not (same or continuous)
+        all_same_frame = all_same_frame and bool(same_replay)
 
         if not state_ok or restart:
             new_state = mc2_state.build_state(obj, output_key, mesh_light_key, mesh_sig, config_key,
                                                collision_radius, topo_cache)
+            new_state["settings_key"] = proxy_settings_key
             p_owner.replace_state(new_state)
             per_proxy_needs_rebuild.append(True)
             any_rebuild = True
@@ -730,6 +991,13 @@ def _run_merged_mc2_node(
         merged_state = merged_owner.state
 
     # ---- 6. TeamState / lifecycle 应用到合并 owner ----
+    merged_settings_unchanged = (
+        isinstance(merged_state, dict)
+        and merged_state.get("settings_key") == merged_settings_key
+    )
+    all_same_frame = all_same_frame and bool(merged_settings_unchanged)
+    merged_state["settings_key"] = merged_settings_key
+
     solve_anchor_inertia  = 1.0 if any_restart else anchor_inertia
     solve_centrifugal     = 0.0 if any_restart else centrifugal
     merged_owner.team_state.apply_lifecycle_context(
@@ -745,13 +1013,14 @@ def _run_merged_mc2_node(
         for obj in valid_objs:
             blender_io.clear_delta_attribute(obj)
         merged_state["frame"] = current_frame
+        merged_state["settings_key"] = merged_settings_key
         merged_owner.replace_state(merged_state)
         cache_value = _OmniCache.replace(merged_owner_obj) if replace_cache else _OmniCache.mutate(merged_owner_obj)
         return cache_value, valid_objs[0], total_vertex_count, 0
 
     # ---- 8. restart：cold restart 各 proxy + 清 delta + 提前返回 ----
     if any_restart:
-        for i, (s, obj, p_owner, ch) in enumerate(zip(valid_settings, valid_objs, proxy_owners, chunks)):
+        for i, (s, obj, p_owner, ch, proxy_settings_key) in enumerate(zip(valid_settings, valid_objs, proxy_owners, chunks, proxy_settings_keys)):
             blend_weight = float(s.get("blend_weight", 1.0))
             proxy_state = p_owner.state
             proxy_state = cold_restart_runtime_state(
@@ -763,16 +1032,18 @@ def _run_merged_mc2_node(
             )
             blender_io.clear_delta_attribute(obj)
             proxy_state["frame"] = current_frame
+            proxy_state["settings_key"] = proxy_settings_key
             p_owner.replace_state(proxy_state)
             # 把重置后的粒子位置写入合并 state 的对应切片
             update_merged_particle_slice(merged_state, proxy_state, ch)
         merged_state["frame"] = current_frame
+        merged_state["settings_key"] = merged_settings_key
         merged_owner.replace_state(merged_state)
         cache_value = _OmniCache.replace(merged_owner_obj) if replace_cache else _OmniCache.mutate(merged_owner_obj)
         return cache_value, valid_objs[0], total_vertex_count, 0
 
     # ---- 9. 正常帧：per-proxy base pose sync ----
-    for i, (s, obj, p_owner, ch) in enumerate(zip(valid_settings, valid_objs, proxy_owners, chunks)):
+    for i, (s, obj, p_owner, ch, proxy_settings_key) in enumerate(zip(valid_settings, valid_objs, proxy_owners, chunks, proxy_settings_keys)):
         # 第一次 sync（与单 proxy 路径对齐）
         proxy_owners[i] = mc2_state.ensure_runtime_owner(p_owner)
         p_owner = proxy_owners[i]
@@ -795,6 +1066,7 @@ def _run_merged_mc2_node(
                 p_owner.io_cache,
                 p_owner.center_state,
             )
+        proxy_state["settings_key"] = proxy_settings_key
         p_owner.replace_state(proxy_state)
         # 把同步后的 base_positions / step_basic_* 写入合并 state 的切片
         update_merged_particle_slice(merged_state, proxy_state, ch)
@@ -858,7 +1130,7 @@ def _run_merged_mc2_node(
             local_movement_speed_limit = local_movement_speed_limit,
             local_rotation_speed_limit = local_rotation_speed_limit,
             particle_speed_limit      = particle_speed_limit,
-            animation_pose_ratio      = float(s.get("animation_pose_ratio", 0.0)),
+            animation_pose_ratio      = float(animation_pose_ratio),
             velocity_weight           = float(merged_state.get("velocity_weight", 0.0)),
             blend_weight              = float(s.get("blend_weight", 1.0)),
             use_max_distance          = bool(s.get("use_max_distance", False)),
@@ -868,30 +1140,68 @@ def _run_merged_mc2_node(
             backstop_radius           = float(s.get("backstop_radius", 0.0)),
             backstop_distance         = float(s.get("backstop_distance", 0.0)),
             backstop_distance_curve   = s.get("backstop_distance_curve"),
-            motion_stiffness          = 0.0,
-            normal_axis               = int(s.get("normal_axis", 1)),
-            use_collider_collision    = bool(s.get("use_collider_collision", True)),
-            collider_friction         = float(s.get("collider_friction", 0.05)),
-            collider_collision_mode   = int(s.get("collider_collision_mode", 1)),
+            motion_stiffness          = float(s.get("motion_stiffness", 1.0)),
+            normal_axis               = int(normal_axis),
+            use_collider_collision    = bool(use_collider_collision),
+            collider_friction         = float(collider_friction),
+            collider_collision_mode   = int(collider_collision_mode),
         )
         per_proxy_runtimes.append(rp)
 
     # 以第一个 runtime 作为全局参数来源（重力/惯性/速度限制由 solver 节点统一控制）
     merged_rp = merge_runtime_params(per_proxy_runtimes, chunks, per_proxy_runtimes[0])
+    merged_param_slots = merged_rp.param_slots()
+
+    def _merge_particle_param(slot_name: str, attr_name: str, minimum=None, maximum=None, squared_depth: bool = False) -> None:
+        values = []
+        for runtime, owner in zip(per_proxy_runtimes, proxy_owners):
+            depths = np.asarray(owner.state.get("depths", []), dtype=np.float32)
+            sample_depths = np.clip(depths * depths, 0.0, 1.0) if squared_depth else np.clip(depths, 0.0, 1.0)
+            values.append(params.sample_param(getattr(runtime, attr_name), sample_depths))
+        if values:
+            merged_param_slots[slot_name] = params.per_particle_param(
+                np.ascontiguousarray(np.concatenate(values), dtype=np.float32),
+                minimum=minimum,
+                maximum=maximum,
+            )
+
+    _merge_particle_param("tether_compression", "tether_compression_param", 0.0, 1.0)
+    _merge_particle_param("angle_limit_stiffness", "angle_limit_stiffness_param", 0.0, 1.0)
+    _merge_particle_param("max_distance", "max_distance_param", 0.0, None, squared_depth=True)
+    _merge_particle_param("motion_stiffness", "motion_stiffness_param", 0.0, 1.0, squared_depth=True)
+    _merge_particle_param("backstop_radius", "backstop_radius_param", 0.0, None, squared_depth=True)
+    _merge_particle_param("backstop_distance", "backstop_distance_param", 0.0, None, squared_depth=True)
+    merged_state["param_slots"] = merged_param_slots
 
     # ---- 11. 碰撞体 ----
-    use_collider_any = any(bool(s.get("use_collider_collision", True)) for s in valid_settings)
-    coll_mode_first  = int(valid_settings[0].get("collider_collision_mode", 1))
-    if use_collider_any and coll_mode_first != 0:
+    use_collider_any = bool(use_collider_collision)
+    coll_mode = int(collider_collision_mode)
+    if use_collider_any and coll_mode != 0:
         snap = collision.build_collision_snapshot_from_scene(scene, True, True, False)
         colliders = list(snap.get("colliders") or []) if isinstance(snap, dict) else []
     else:
         colliders = []
 
     # ---- 12. 一次合并解算 ----
+    if all_same_frame and not reset:
+        display_slices = split_display_positions(merged_state, chunks)
+        if not merged_owner.team_state.skip_writing:
+            rest_pos_merged = merged_state.get("rest_world_positions")
+            base_pos_merged = merged_state.get("base_positions")
+            for ch, obj, disp in zip(chunks, valid_objs, display_slices):
+                if ch.base_pose_proxy is not None and base_pos_merged is not None:
+                    base = np.ascontiguousarray(base_pos_merged[ch.start:ch.end], np.float32)
+                elif rest_pos_merged is not None:
+                    base = np.ascontiguousarray(rest_pos_merged[ch.start:ch.end], np.float32)
+                else:
+                    continue
+                blender_io.write_world_delta_attribute(obj, disp, base)
+        merged_owner.replace_state(merged_state)
+        cache_value = _OmniCache.replace(merged_owner_obj) if replace_cache else _OmniCache.mutate(merged_owner_obj)
+        return cache_value, valid_objs[0], total_vertex_count, 0
+
     solve_func = solver_for_backend(backend_label)
     ref_obj = valid_objs[0]   # 为 anchor inertia 提供参考 transform
-    s0 = valid_settings[0]    # 全局布尔开关取第一个 proxy（solver 节点统一控制）
 
     def _pv(rp_field: str, fallback=0.0) -> float:
         """从 merged_rp 的 param dict 取均值标量（solver 需要标量，per-particle 数组已存入 param_slots）。"""
@@ -916,15 +1226,15 @@ def _run_merged_mc2_node(
         merged_rp.blend_weight,
         _pv("damping_param", 0.2),
         None,   # damping_curve（已展开为 per_particle）
-        bool(s0.get("use_tether", True)),
+        any(bool(s.get("use_tether", True)) for s in valid_settings),
         _pv("tether_compression_param", MC2SystemConstants.TETHER_COMPRESSION_LIMIT),
-        bool(s0.get("use_distance", True)),
+        any(bool(s.get("use_distance", True)) for s in valid_settings),
         _pv("distance_stiffness_param", 1.0),
         None,
-        bool(s0.get("use_bend", True)),
+        any(bool(s.get("use_bend", True)) for s in valid_settings),
         _pv("bend_stiffness_param", 0.5),
         None,
-        bool(s0.get("use_angle_restoration", True)),
+        any(bool(s.get("use_angle_restoration", True)) for s in valid_settings),
         _pv("angle_restoration_param", 0.2),
         None,
         _pv("angle_restoration_velocity_attenuation_param",
@@ -932,7 +1242,7 @@ def _run_merged_mc2_node(
         None,
         _pv("angle_restoration_gravity_falloff_param",
             MC2SystemConstants.ANGLE_RESTORATION_GRAVITY_FALLOFF),
-        bool(s0.get("use_angle_limit", False)),
+        any(bool(s.get("use_angle_limit", False)) for s in valid_settings),
         _pv("angle_limit_param", 0.0),
         None,
         merged_rp.angle_limit_stiffness,
@@ -951,19 +1261,19 @@ def _run_merged_mc2_node(
         teleport_mode,
         teleport_distance,
         teleport_rotation,
-        float(s0.get("animation_pose_ratio", 0.0)),
-        bool(s0.get("use_max_distance", False)),
+        float(animation_pose_ratio),
+        any(bool(s.get("use_max_distance", False)) for s in valid_settings),
         _pv("max_distance_param", 0.0),
         None,
-        bool(s0.get("use_backstop", False)),
+        any(bool(s.get("use_backstop", False)) for s in valid_settings),
         _pv("backstop_radius_param", 0.0),
         _pv("backstop_distance_param", 0.0),
         None,
-        0.0,    # motion_stiffness
-        int(s0.get("normal_axis", 1)),
+        _pv("motion_stiffness_param", 0.0),
+        int(normal_axis),
         use_collider_any,
-        float(s0.get("collider_friction", 0.05)),   # 传原始标量，solver 内部做 dynamic/static 分解
-        coll_mode_first,
+        float(collider_friction),   # 传原始标量，solver 内部做 dynamic/static 分解
+        coll_mode,
         None,   # timing
         colliders=colliders,
         runtime_caches=merged_owner.runtime_cache_slots(),
@@ -971,6 +1281,7 @@ def _run_merged_mc2_node(
         team_state=merged_owner.team_state,
     )
     next_merged_state["frame"] = current_frame
+    next_merged_state["settings_key"] = merged_settings_key
 
     # ---- 13. 分块写回各 proxy delta ----
     display_slices = split_display_positions(next_merged_state, chunks)
@@ -988,9 +1299,10 @@ def _run_merged_mc2_node(
             blender_io.write_world_delta_attribute(obj, disp, base)
 
     # 把解算后的粒子状态回写到 per-proxy owner，保证下一帧连续性
-    for p_owner, ch in zip(proxy_owners, chunks):
+    for p_owner, ch, proxy_settings_key in zip(proxy_owners, chunks, proxy_settings_keys):
         proxy_state = dict(p_owner.state)
         proxy_state["frame"] = current_frame
+        proxy_state["settings_key"] = proxy_settings_key
         copy_merged_slice_to_proxy(next_merged_state, proxy_state, ch)
         p_owner.replace_state(proxy_state)
 
