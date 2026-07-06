@@ -438,6 +438,97 @@ public:
             it->second.id, to_vec3(position), to_quat(rotation_wxyz), dt);
     }
 
+    bool set_body_velocity(
+        uint32_t                  handle,
+        const std::array<float,3>& linear_velocity,
+        const std::array<float,3>& angular_velocity
+    ) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type == EMotionType::Static)
+            return false;
+        mPhysicsSystem->GetBodyInterface().SetLinearAndAngularVelocity(
+            it->second.id,
+            Vec3(linear_velocity[0], linear_velocity[1], linear_velocity[2]),
+            Vec3(angular_velocity[0], angular_velocity[1], angular_velocity[2])
+        );
+        return true;
+    }
+
+    bool add_body_force(
+        uint32_t                  handle,
+        const std::array<float,3>& force,
+        const std::array<float,3>& torque
+    ) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type != EMotionType::Dynamic)
+            return false;
+        mPhysicsSystem->GetBodyInterface().AddForceAndTorque(
+            it->second.id,
+            Vec3(force[0], force[1], force[2]),
+            Vec3(torque[0], torque[1], torque[2]),
+            EActivation::Activate
+        );
+        return true;
+    }
+
+    bool add_body_impulse(
+        uint32_t                  handle,
+        const std::array<float,3>& impulse,
+        const std::array<float,3>& angular_impulse
+    ) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type != EMotionType::Dynamic)
+            return false;
+        BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
+        bi.AddImpulse(it->second.id, Vec3(impulse[0], impulse[1], impulse[2]));
+        bi.AddAngularImpulse(
+            it->second.id,
+            Vec3(angular_impulse[0], angular_impulse[1], angular_impulse[2])
+        );
+        return true;
+    }
+
+    bool set_body_gravity_factor(uint32_t handle, float gravity_factor) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type == EMotionType::Static)
+            return false;
+        mPhysicsSystem->GetBodyInterface().SetGravityFactor(it->second.id, gravity_factor);
+        return true;
+    }
+
+    bool set_body_material_response(uint32_t handle, float friction, float restitution) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end())
+            return false;
+        BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
+        bi.SetFriction(it->second.id, std::clamp(friction, 0.0f, 1.0f));
+        bi.SetRestitution(it->second.id, std::clamp(restitution, 0.0f, 1.0f));
+        return true;
+    }
+
+    bool set_body_motion_quality(uint32_t handle, const std::string& motion_quality_str) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type == EMotionType::Static)
+            return false;
+        EMotionQuality quality = (
+            motion_quality_str == "LINEAR_CAST" || motion_quality_str == "CCD"
+        ) ? EMotionQuality::LinearCast : EMotionQuality::Discrete;
+        mPhysicsSystem->GetBodyInterface().SetMotionQuality(it->second.id, quality);
+        return true;
+    }
+
+    bool activate_body(uint32_t handle, bool active) {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end() || it->second.motion_type == EMotionType::Static)
+            return false;
+        BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
+        if (active)
+            bi.ActivateBody(it->second.id);
+        else
+            bi.DeactivateBody(it->second.id);
+        return true;
+    }
+
     std::tuple<std::array<float,3>, std::array<float,4>>
     get_body_transform(uint32_t handle) const {
         auto it = mBodies.find(handle);
@@ -866,6 +957,45 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("rotation_wxyz"),
              nb::arg("dt"),
              "每帧驱动运动学刚体位置/旋转（由 Blender 动画提供）。")
+
+        .def("set_body_velocity", &JoltWorld::set_body_velocity,
+             nb::arg("handle"),
+             nb::arg("linear_velocity"),
+             nb::arg("angular_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             "设置非静态刚体线速度和角速度；无效或静态刚体返回 False。")
+
+        .def("add_body_force", &JoltWorld::add_body_force,
+             nb::arg("handle"),
+             nb::arg("force"),
+             nb::arg("torque") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             "给动态刚体添加本步 force/torque；无效或非动态刚体返回 False。")
+
+        .def("add_body_impulse", &JoltWorld::add_body_impulse,
+             nb::arg("handle"),
+             nb::arg("impulse"),
+             nb::arg("angular_impulse") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             "给动态刚体添加 impulse/angular impulse；无效或非动态刚体返回 False。")
+
+        .def("set_body_gravity_factor", &JoltWorld::set_body_gravity_factor,
+             nb::arg("handle"),
+             nb::arg("gravity_factor"),
+             "设置非静态刚体重力倍率；无效或静态刚体返回 False。")
+
+        .def("set_body_material_response", &JoltWorld::set_body_material_response,
+             nb::arg("handle"),
+             nb::arg("friction"),
+             nb::arg("restitution"),
+             "设置刚体摩擦/弹性响应；无效刚体返回 False。")
+
+        .def("set_body_motion_quality", &JoltWorld::set_body_motion_quality,
+             nb::arg("handle"),
+             nb::arg("motion_quality"),
+             "设置非静态刚体 CCD/Discrete 质量；无效或静态刚体返回 False。")
+
+        .def("activate_body", &JoltWorld::activate_body,
+             nb::arg("handle"),
+             nb::arg("active") = true,
+             "激活或休眠非静态刚体；无效或静态刚体返回 False。")
 
         .def("get_body_transform", &JoltWorld::get_body_transform,
              nb::arg("handle"),

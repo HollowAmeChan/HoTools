@@ -322,7 +322,7 @@ HoTools 当前 `RigidBodySpec` 已覆盖基础刚体输入：
 - shape offset / local rotation。
 - initial velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
 
-下一步的输入补齐重点不再是基础 shape，而是高级 shape、runtime command（force / impulse / velocity update）、惯性覆写和更完整的 material / body update API。
+下一步的输入补齐重点不再是基础 shape，而是高级 shape、节点侧 runtime command stream、惯性覆写和更完整的 material / body update API。底层 Jolt adapter 已有 velocity / force / impulse / gravity factor / material response / motion quality / activate 控制 API，后续需要把节点命令流映射到这些 API。
 
 ### Constraint 级输入
 
@@ -361,12 +361,12 @@ HoTools 当前 constraint spec 只有：
 
 - `dt`、substeps、time scale。
 - Kinematic body 的目标 position/rotation。
-- Force / torque / impulse 命令。
+- Force / torque / impulse 命令。底层 API 已接入，节点/Exchange 命令流未接入。
 - Motor target。
 - Constraint enable/break 状态。
 - 动态切换 body motion type、shape、filter、sensor 等。
 
-当前 HoTools 每帧只更新 kinematic transform，并 step。还没有 force/motor command 流。
+当前 HoTools 每帧只更新 kinematic transform，并 step。native / adapter 已支持 velocity、force、impulse 等控制，但还没有正式的 force/motor command 节点流。
 
 ## Jolt 能输出什么
 
@@ -453,6 +453,13 @@ add_body(body_type, mass, friction, restitution, position, rotation_wxyz,
          sensor, allowed_dofs, ...)
 remove_body(handle)
 set_kinematic_transform(handle, position, rotation_wxyz, dt)
+set_body_velocity(handle, linear_velocity, angular_velocity)
+add_body_force(handle, force, torque)
+add_body_impulse(handle, impulse, angular_impulse)
+set_body_gravity_factor(handle, gravity_factor)
+set_body_material_response(handle, friction, restitution)
+set_body_motion_quality(handle, motion_quality)
+activate_body(handle, active)
 get_body_transform(handle)
 get_body_state(handle)
 add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz,
@@ -476,9 +483,9 @@ Native 侧当前特点：
 - 约束当前创建 fixed/hinge/slider/cone/point，并已接 Hinge/Slider 基础 limit/friction/motor、Cone half angle、通用 solver overrides。
 - 没有 contact listener。
 - 没有 debug draw API。
-- 已有 body state getter；仍没有 force / impulse runtime command。
+- 已有 body state getter 和 body 控制 API：set velocity、add force/torque、add impulse/angular impulse、gravity factor、friction/restitution、motion quality、activate/deactivate。
 - HoTools collision group / mask 已接入 Jolt `CollisionGroup` / 自定义 `GroupFilter`。
-- 没有 body update API，body 参数变化一般靠 remove + add。
+- 运行时控制 API 已覆盖 velocity / force / impulse / material response / gravity factor / motion quality / activation；shape、mass、motion type 等结构性参数变化仍靠 remove + add。
 
 ### Python adapter
 
@@ -669,7 +676,7 @@ HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDe
 - 扩展 `add_body()` 参数或改为结构化参数。
 - 接入 velocity、damping、gravity factor、sleep、CCD、sensor、max velocity。
 - 已增加 getter：transform + velocity + active state。
-- 增加 setter：velocity、gravity factor、friction/restitution、motion quality、activate/deactivate。
+- 已增加 runtime body control：velocity、force/torque、impulse/angular impulse、gravity factor、friction/restitution、motion quality、activate/deactivate。
 
 注意：nanobind 函数参数继续线性增长会失控。建议 native 侧引入 `BodyDesc` 风格结构或 Python dict 解析层。
 

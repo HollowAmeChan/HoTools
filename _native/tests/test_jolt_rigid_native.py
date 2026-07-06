@@ -330,6 +330,46 @@ def test_set_gravity_zero():
     jw.clear()
 
 
+def test_runtime_body_controls():
+    jw = _make_world()
+    h = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 5.0))
+    static_h = _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
+
+    assert jw.set_body_velocity(h, (0.0, 0.0, 2.0), (0.0, 0.0, 0.5)) is True
+    _pos, _rot, lin, ang, active, sleeping = jw.get_body_state(h)
+    assert abs(lin[2] - 2.0) < 1e-4, f"set_body_velocity 应写入线速度，得 {lin}"
+    assert abs(ang[2] - 0.5) < 1e-4, f"set_body_velocity 应写入角速度，得 {ang}"
+    assert active is True and sleeping is False
+
+    assert jw.add_body_impulse(h, (0.0, 0.0, 1.0), (0.0, 0.0, 0.25)) is True
+    _pos, _rot, lin_after_impulse, ang_after_impulse, _active, _sleeping = jw.get_body_state(h)
+    assert lin_after_impulse[2] > lin[2], "impulse 应立即增加线速度"
+    assert ang_after_impulse[2] > ang[2], "angular impulse 应立即增加角速度"
+
+    assert jw.add_body_force(h, (0.0, 0.0, 30.0), (0.0, 0.0, 0.0)) is True
+    jw.step(1.0 / 60.0, 1)
+    _pos, _rot, lin_after_force, _ang, _active, _sleeping = jw.get_body_state(h)
+    assert lin_after_force[2] > 0.0, "force 应参与下一次 step"
+
+    assert jw.set_body_gravity_factor(h, 0.0) is True
+    assert jw.set_body_material_response(h, 0.2, 0.8) is True
+    assert jw.set_body_motion_quality(h, "LINEAR_CAST") is True
+    assert jw.activate_body(h, False) is True
+    _pos, _rot, _lin, _ang, active_off, sleeping_off = jw.get_body_state(h)
+    assert active_off is False and sleeping_off is True
+    assert jw.activate_body(h, True) is True
+    _pos, _rot, _lin, _ang, active_on, sleeping_on = jw.get_body_state(h)
+    assert active_on is True and sleeping_on is False
+
+    assert jw.set_body_velocity(static_h, (0.0, 0.0, 1.0), (0.0, 0.0, 0.0)) is False
+    assert jw.add_body_impulse(static_h, (0.0, 0.0, 1.0), (0.0, 0.0, 0.0)) is False
+    assert jw.set_body_gravity_factor(static_h, 0.0) is False
+    assert jw.set_body_motion_quality(static_h, "LINEAR_CAST") is False
+    assert jw.activate_body(static_h, False) is False
+    assert jw.set_body_material_response(static_h, 0.1, 0.2) is True
+    jw.clear()
+
+
 # ---------------------------------------------------------------------------
 # 测试：KINEMATIC 刚体位置跟随
 # ---------------------------------------------------------------------------

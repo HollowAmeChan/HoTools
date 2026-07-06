@@ -276,10 +276,13 @@ class JoltAdapter:
         if handle is not None:
             self._jw.remove_body(handle)
 
+    def _get_body_handle(self, slot_id: str) -> int | None:
+        return self._body_handles.get(slot_id)
+
     def update_kinematic(self, slot_id: str, spec: "RigidBodySpec",
                          dt: float) -> None:
         """每帧驱动运动学刚体跟随 Blender 动画。"""
-        handle = self._body_handles.get(slot_id)
+        handle = self._get_body_handle(slot_id)
         if handle is None:
             return
         if spec.body_type != "KINEMATIC":
@@ -287,16 +290,81 @@ class JoltAdapter:
         pos, rot = _transform_from_body_spec(spec)
         self._jw.set_kinematic_transform(handle, pos, rot, dt)
 
+    def set_body_velocity(
+        self,
+        slot_id: str,
+        linear_velocity=(0.0, 0.0, 0.0),
+        angular_velocity=(0.0, 0.0, 0.0),
+    ) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "set_body_velocity"):
+            return False
+        return bool(self._jw.set_body_velocity(
+            handle, tuple(linear_velocity), tuple(angular_velocity)))
+
+    def add_body_force(
+        self,
+        slot_id: str,
+        force=(0.0, 0.0, 0.0),
+        torque=(0.0, 0.0, 0.0),
+    ) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "add_body_force"):
+            return False
+        return bool(self._jw.add_body_force(handle, tuple(force), tuple(torque)))
+
+    def add_body_impulse(
+        self,
+        slot_id: str,
+        impulse=(0.0, 0.0, 0.0),
+        angular_impulse=(0.0, 0.0, 0.0),
+    ) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "add_body_impulse"):
+            return False
+        return bool(self._jw.add_body_impulse(
+            handle, tuple(impulse), tuple(angular_impulse)))
+
+    def set_body_gravity_factor(self, slot_id: str, gravity_factor: float) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "set_body_gravity_factor"):
+            return False
+        return bool(self._jw.set_body_gravity_factor(handle, float(gravity_factor)))
+
+    def set_body_material_response(
+        self,
+        slot_id: str,
+        friction: float,
+        restitution: float,
+    ) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "set_body_material_response"):
+            return False
+        return bool(self._jw.set_body_material_response(
+            handle, float(friction), float(restitution)))
+
+    def set_body_motion_quality(self, slot_id: str, motion_quality: str) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "set_body_motion_quality"):
+            return False
+        return bool(self._jw.set_body_motion_quality(handle, str(motion_quality)))
+
+    def set_body_active(self, slot_id: str, active: bool = True) -> bool:
+        handle = self._get_body_handle(slot_id)
+        if handle is None or not hasattr(self._jw, "activate_body"):
+            return False
+        return bool(self._jw.activate_body(handle, bool(active)))
+
     def get_body_transform(self, slot_id: str):
         """返回 (position_xyz, rotation_wxyz) 或 None。"""
-        handle = self._body_handles.get(slot_id)
+        handle = self._get_body_handle(slot_id)
         if handle is None:
             return None
         return self._jw.get_body_transform(handle)
 
     def get_body_state(self, slot_id: str) -> dict | None:
         """返回求解后的 transform、速度和激活状态，或 None。"""
-        handle = self._body_handles.get(slot_id)
+        handle = self._get_body_handle(slot_id)
         if handle is None:
             return None
 

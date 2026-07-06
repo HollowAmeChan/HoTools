@@ -239,6 +239,19 @@ def test_jolt_adapter_direct():
     assert state["position"][2] < z0
     assert state["linear_velocity"][2] < 0.0
     assert isinstance(state["active"], bool) and isinstance(state["sleeping"], bool)
+    assert a.set_body_velocity(spec_b.slot_id, (0, 0, 0), (0, 0, 0)) is True
+    assert a.add_body_impulse(spec_b.slot_id, (0, 0, 3), (0, 0, 0.5)) is True
+    state2 = a.get_body_state(spec_b.slot_id)
+    assert state2["linear_velocity"][2] > 0.0
+    assert state2["angular_velocity"][2] > 0.0
+    assert a.set_body_gravity_factor(spec_b.slot_id, 0.0) is True
+    assert a.set_body_material_response(spec_b.slot_id, 0.2, 0.8) is True
+    assert a.set_body_motion_quality(spec_b.slot_id, "LINEAR_CAST") is True
+    assert a.set_body_active(spec_b.slot_id, False) is True
+    state3 = a.get_body_state(spec_b.slot_id)
+    assert state3["active"] is False and state3["sleeping"] is True
+    assert a.set_body_active(spec_b.slot_id, True) is True
+    assert a.set_body_velocity(spec_g.slot_id, (0, 0, 1), (0, 0, 0)) is False
 
     a.dispose("test"); assert not a._valid
     a.dispose("idempotent")

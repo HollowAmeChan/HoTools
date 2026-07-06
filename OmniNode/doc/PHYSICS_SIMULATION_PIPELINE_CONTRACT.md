@@ -252,6 +252,7 @@ stable_id = f"spring_vrm:{arm.name_full}:{bone_name}"
 dynamic_bone_colliders
 temporary_constraints
 attachment_points
+rigid_body_commands
 force_fields
 surface_samples
 rigid_contact_events
@@ -272,6 +273,26 @@ debug_markers
 - consumer 必须声明自己消费哪些 channel。
 - 不允许 consumer 依赖 producer 的私有 slot 结构。
 - 如需跨帧存在，必须升级为 spec 或 slot state。
+
+`rigid_body_commands` 建议 payload：
+
+```python
+{
+    "channel": "rigid_body_commands",
+    "producer": "node_id",
+    "scope": "frame",
+    "target_slot_id": "rigid:{obj_ptr}:{data_ptr}",
+    "command": "set_velocity | add_force | add_impulse | set_gravity_factor | set_material_response | set_motion_quality | set_active",
+    "linear_velocity": (0.0, 0.0, 0.0),
+    "angular_velocity": (0.0, 0.0, 0.0),
+    "force": (0.0, 0.0, 0.0),
+    "torque": (0.0, 0.0, 0.0),
+    "impulse": (0.0, 0.0, 0.0),
+    "angular_impulse": (0.0, 0.0, 0.0),
+}
+```
+
+Rigid solver 必须把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。
 
 ### Physics Writeback / Export / Preview
 

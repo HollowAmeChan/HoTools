@@ -93,6 +93,29 @@ def test_body_state():
     assert isinstance(active, bool) and isinstance(sleeping, bool)
     jw.clear()
 
+def test_runtime_controls():
+    jw = hotools_jolt.JoltWorld(32, 64, 32)
+    ball = jw.add_body("DYNAMIC", 1.0, 0.5, 0.0,
+                       (0, 0, 5), (1, 0, 0, 0),
+                       "SPHERE", 0.5, 0.5, (0.5, 0.5, 0.5))
+    ground = jw.add_body("STATIC", 0, 0.5, 0.0,
+                         (0, 0, 0), (1, 0, 0, 0),
+                         "BOX", 0.5, 0.5, (5.0, 5.0, 0.1))
+    assert jw.set_body_velocity(ball, (0, 0, 2), (0, 0, 0.5)) is True
+    _pos, _rot, lin, ang, _active, _sleeping = jw.get_body_state(ball)
+    assert abs(lin[2] - 2.0) < 1e-4 and abs(ang[2] - 0.5) < 1e-4
+    assert jw.add_body_impulse(ball, (0, 0, 1), (0, 0, 0.25)) is True
+    _pos, _rot, lin2, ang2, _active, _sleeping = jw.get_body_state(ball)
+    assert lin2[2] > lin[2] and ang2[2] > ang[2]
+    assert jw.set_body_gravity_factor(ball, 0.0) is True
+    assert jw.set_body_material_response(ball, 0.2, 0.8) is True
+    assert jw.set_body_motion_quality(ball, "LINEAR_CAST") is True
+    assert jw.activate_body(ball, False) is True
+    assert jw.activate_body(ball, True) is True
+    assert jw.set_body_velocity(ground, (0, 0, 1), (0, 0, 0)) is False
+    assert jw.add_body_impulse(ground, (0, 0, 1), (0, 0, 0)) is False
+    jw.clear()
+
 def test_kinematic_drive():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
     plat = jw.add_body("KINEMATIC", 0, 0.5, 0.0,
@@ -192,6 +215,7 @@ if __name__ == "__main__":
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),
         ("body state 输出",          test_body_state),
+        ("runtime 控制 API",         test_runtime_controls),
         ("运动学 body 驱动",        test_kinematic_drive),
         ("约束 body-body",          test_constraint),
         ("约束 WORLD_HANDLE",       test_world_handle_constraint),
