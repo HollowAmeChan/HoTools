@@ -649,7 +649,7 @@ Empty object transform:
   表示约束 anchor frame、位置、旋转和可视化操控点。
 
 Empty read-only custom properties:
-  表示 OmniNode 约束语义，例如 constraint type、target A、target B、axis、limit、motor、break threshold。
+  表示 OmniNode 约束语义，例如 constraint type、target A、target B、axis、limit、motor、break threshold、disable_collisions。
 ```
 
 这些 custom properties 应该通过 HoTools 面板或操作器维护，对节点和 solver 来说视为只读配置。节点图只需要把这些 Empty 对象纳入 object scope 或显式接到 `Rigid Constraint Setting` / `Rigid Body Solver`。
@@ -659,6 +659,7 @@ Empty read-only custom properties:
 - 约束点是 OmniNode 物理语义，不是 Jolt 语义。
 - Empty 的 transform 是约束 anchor 的 Blender-native 表达。
 - custom property enum 使用 HoTools 自己的名字，Jolt adapter 负责映射到 Jolt constraint。
+- `disable_collisions` 表示约束连接体之间是否禁用直接碰撞，应由刚体 solver 私有 pair filter 表达，不复用简单碰撞组。
 - Jolt constraint handle 只保存在 runtime slot 中，不写回 Empty。
 - 约束点对象应该能被其他 solver 看见，至少作为调试、采样或未来跨 solver 交互的公共锚点。
 

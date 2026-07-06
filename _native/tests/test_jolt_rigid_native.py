@@ -345,9 +345,41 @@ def test_add_fixed_constraint():
         body_b_handle=h_b,
         anchor_pos=(0.0, 0.0, 0.5),
         anchor_rot_wxyz=(1.0, 0.0, 0.0, 0.0),
+        disable_collisions=True,
     )
     assert jw.constraint_count == 1, f"constraint_count 应为 1，得 {jw.constraint_count}"
     jw.remove_constraint(ch)
+    assert jw.constraint_count == 0
+    jw.clear()
+
+
+def test_constraint_disable_collisions_lifecycle():
+    """disable_collisions constraints must clean up on remove_body / clear."""
+    jw = _make_world()
+    h_a = _add_sphere(jw, body_type="DYNAMIC", pos=(-0.25, 0.0, 2.0), radius=0.5)
+    h_b = _add_sphere(jw, body_type="DYNAMIC", pos=(0.25, 0.0, 2.0), radius=0.5)
+    c1 = jw.add_constraint(
+        constraint_type="POINT",
+        body_a_handle=h_a,
+        body_b_handle=h_b,
+        anchor_pos=(0.0, 0.0, 2.0),
+        anchor_rot_wxyz=(1.0, 0.0, 0.0, 0.0),
+        disable_collisions=True,
+    )
+    jw.add_constraint(
+        constraint_type="HINGE",
+        body_a_handle=h_a,
+        body_b_handle=h_b,
+        anchor_pos=(0.0, 0.0, 2.0),
+        anchor_rot_wxyz=(1.0, 0.0, 0.0, 0.0),
+        disable_collisions=True,
+    )
+    assert jw.constraint_count == 2
+    jw.step(1.0 / 60.0, 1)
+    jw.remove_constraint(c1)
+    assert jw.constraint_count == 1
+    jw.remove_body(h_a)
+    assert jw.body_count == 1
     assert jw.constraint_count == 0
     jw.clear()
 

@@ -387,6 +387,7 @@ def _constraint_snapshot(spec) -> dict | None:
         "constraint_type": ctype,
         "anchor_pos": _vec3_tuple(anchor_pos),
         "hinge_axis": hinge_axis,
+        "disable_collisions": bool(getattr(spec, "disable_collisions", True)),
         "target_positions": target_positions,
         "is_bug": is_bug,
     }

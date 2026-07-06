@@ -361,6 +361,7 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
         layout.prop(props, "constraint_type")
         layout.prop(props, "target_a")
         layout.prop(props, "target_b")
+        layout.prop(props, "disable_collisions")
 
         ctype = props.constraint_type
 

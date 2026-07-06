@@ -54,7 +54,9 @@ JPH_SUPPRESS_WARNINGS
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -155,6 +157,12 @@ public:
     bool CanCollide(const CollisionGroup& a, const CollisionGroup& b) const override {
         uint32_t group_a = a.GetGroupID();
         uint32_t group_b = b.GetGroupID();
+        uint32_t filter_id_a = (a.GetSubGroupID() >> 16u) & 0xffffu;
+        uint32_t filter_id_b = (b.GetSubGroupID() >> 16u) & 0xffffu;
+        if (filter_id_a != 0u && filter_id_b != 0u &&
+            mDisabledPairs.find(pair_key(filter_id_a, filter_id_b)) != mDisabledPairs.end())
+            return false;
+
         if (group_a < 1u || group_a > 16u || group_b < 1u || group_b > 16u)
             return true;
 
@@ -164,6 +172,31 @@ public:
         uint32_t bit_b = 1u << (group_b - 1u);
         return (mask_a & bit_b) != 0u && (mask_b & bit_a) != 0u;
     }
+
+    void DisablePair(uint32_t filter_id_a, uint32_t filter_id_b) {
+        if (filter_id_a == 0u || filter_id_b == 0u || filter_id_a == filter_id_b)
+            return;
+        mDisabledPairs.insert(pair_key(filter_id_a, filter_id_b));
+    }
+
+    void EnablePair(uint32_t filter_id_a, uint32_t filter_id_b) {
+        if (filter_id_a == 0u || filter_id_b == 0u || filter_id_a == filter_id_b)
+            return;
+        mDisabledPairs.erase(pair_key(filter_id_a, filter_id_b));
+    }
+
+    void ClearPairs() {
+        mDisabledPairs.clear();
+    }
+
+private:
+    static uint64_t pair_key(uint32_t a, uint32_t b) {
+        uint32_t lo = (std::min)(a, b);
+        uint32_t hi = (std::max)(a, b);
+        return (static_cast<uint64_t>(lo) << 32u) | static_cast<uint64_t>(hi);
+    }
+
+    std::unordered_set<uint64_t> mDisabledPairs;
 };
 
 JPH_IMPLEMENT_SERIALIZABLE_VIRTUAL(HoCollisionGroupFilter)
@@ -198,6 +231,14 @@ static std::array<float, 4> from_quat(Quat q) {
 struct BodyRecord {
     BodyID  id;
     EMotionType motion_type;
+    uint32_t filter_id;
+};
+
+struct ConstraintRecord {
+    Ref<TwoBodyConstraint> constraint;
+    uint32_t body_a_handle;
+    uint32_t body_b_handle;
+    bool disable_collisions;
 };
 
 class JoltWorld {
@@ -334,9 +375,12 @@ public:
         settings.mFriction = friction;
         settings.mRestitution = restitution;
         uint32_t primary_group = (std::min)((std::max)(collision_group, 1u), 16u);
+        uint32_t filter_id = allocate_filter_id();
         settings.mCollisionGroup.SetGroupFilter(mGroupFilter);
         settings.mCollisionGroup.SetGroupID(primary_group);
-        settings.mCollisionGroup.SetSubGroupID(collided_by_groups & 0xffffu);
+        settings.mCollisionGroup.SetSubGroupID(
+            ((filter_id & 0xffffu) << 16u) | (collided_by_groups & 0xffffu)
+        );
         settings.mLinearVelocity = Vec3(linear_velocity[0], linear_velocity[1], linear_velocity[2]);
         settings.mAngularVelocity = Vec3(angular_velocity[0], angular_velocity[1], angular_velocity[2]);
         settings.mLinearDamping = std::clamp(linear_damping, 0.0f, 1.0f);
@@ -367,13 +411,14 @@ public:
         bi.AddBody(body->GetID(), EActivation::Activate);
 
         uint32_t handle = mNextHandle++;
-        mBodies[handle] = {body->GetID(), motion};
+        mBodies[handle] = {body->GetID(), motion, filter_id};
         return handle;
     }
 
     void remove_body(uint32_t handle) {
         auto it = mBodies.find(handle);
         if (it == mBodies.end()) return;
+        remove_constraints_for_body(handle);
         BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
         bi.RemoveBody(it->second.id);
         bi.DestroyBody(it->second.id);
@@ -434,7 +479,8 @@ public:
         float                     motor_target_angle,
         float                     motor_target_velocity,
         float                     motor_target_position,
-        float                     cone_half_angle
+        float                     cone_half_angle,
+        bool                      disable_collisions
     ) {
         RVec3 pos = to_vec3(anchor_pos);
         Quat  rot = to_quat(anchor_rot_wxyz);
@@ -580,15 +626,19 @@ public:
         // lock_a / lock_b 在此析构，释放读锁
 
         mPhysicsSystem->AddConstraint(c);
+        if (disable_collisions)
+            disable_collision_pair(body_a_handle, body_b_handle);
         uint32_t handle = mNextHandle++;
-        mConstraints[handle] = c;
+        mConstraints[handle] = {c, body_a_handle, body_b_handle, disable_collisions};
         return handle;
     }
 
     void remove_constraint(uint32_t handle) {
         auto it = mConstraints.find(handle);
         if (it == mConstraints.end()) return;
-        mPhysicsSystem->RemoveConstraint(it->second);
+        if (it->second.disable_collisions)
+            enable_collision_pair(it->second.body_a_handle, it->second.body_b_handle);
+        mPhysicsSystem->RemoveConstraint(it->second.constraint);
         mConstraints.erase(it);
     }
 
@@ -613,8 +663,10 @@ public:
     void clear() {
         // 顺序：先移除约束（约束持有 Body 引用），再销毁刚体
         for (auto& [h, c] : mConstraints)
-            mPhysicsSystem->RemoveConstraint(c);
+            mPhysicsSystem->RemoveConstraint(c.constraint);
         mConstraints.clear();
+        mDisabledPairRefCounts.clear();
+        mGroupFilter->ClearPairs();
 
         BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
         for (auto& [h, r] : mBodies) {
@@ -632,17 +684,80 @@ private:
         return it->second.id;
     }
 
+    uint32_t allocate_filter_id() {
+        uint32_t id = mNextFilterId++ & 0xffffu;
+        if (id == 0u)
+            id = mNextFilterId++ & 0xffffu;
+        return id == 0u ? 1u : id;
+    }
+
+    static uint64_t pair_key(uint32_t a, uint32_t b) {
+        uint32_t lo = (std::min)(a, b);
+        uint32_t hi = (std::max)(a, b);
+        return (static_cast<uint64_t>(lo) << 32u) | static_cast<uint64_t>(hi);
+    }
+
+    uint32_t filter_id_for_body_handle(uint32_t handle) const {
+        auto it = mBodies.find(handle);
+        return it == mBodies.end() ? 0u : it->second.filter_id;
+    }
+
+    void disable_collision_pair(uint32_t body_a_handle, uint32_t body_b_handle) {
+        if (body_a_handle == UINT32_MAX || body_b_handle == UINT32_MAX)
+            return;
+        uint32_t id_a = filter_id_for_body_handle(body_a_handle);
+        uint32_t id_b = filter_id_for_body_handle(body_b_handle);
+        if (id_a == 0u || id_b == 0u || id_a == id_b)
+            return;
+        uint64_t key = pair_key(id_a, id_b);
+        uint32_t& refs = mDisabledPairRefCounts[key];
+        refs += 1u;
+        if (refs == 1u)
+            mGroupFilter->DisablePair(id_a, id_b);
+    }
+
+    void enable_collision_pair(uint32_t body_a_handle, uint32_t body_b_handle) {
+        if (body_a_handle == UINT32_MAX || body_b_handle == UINT32_MAX)
+            return;
+        uint32_t id_a = filter_id_for_body_handle(body_a_handle);
+        uint32_t id_b = filter_id_for_body_handle(body_b_handle);
+        if (id_a == 0u || id_b == 0u || id_a == id_b)
+            return;
+        uint64_t key = pair_key(id_a, id_b);
+        auto it = mDisabledPairRefCounts.find(key);
+        if (it == mDisabledPairRefCounts.end())
+            return;
+        if (it->second > 1u) {
+            it->second -= 1u;
+            return;
+        }
+        mDisabledPairRefCounts.erase(it);
+        mGroupFilter->EnablePair(id_a, id_b);
+    }
+
+    void remove_constraints_for_body(uint32_t body_handle) {
+        std::vector<uint32_t> to_remove;
+        for (const auto& [h, c] : mConstraints) {
+            if (c.body_a_handle == body_handle || c.body_b_handle == body_handle)
+                to_remove.push_back(h);
+        }
+        for (uint32_t h : to_remove)
+            remove_constraint(h);
+    }
+
     HoBPLayerInterface  mBPLayerInterface;
     HoObjVsBPFilter     mObjVsBPFilter;
     HoObjLayerFilter    mObjLayerFilter;
-    RefConst<GroupFilter> mGroupFilter;
+    Ref<HoCollisionGroupFilter> mGroupFilter;
 
     std::unique_ptr<TempAllocatorImpl>        mTempAllocator;
     std::unique_ptr<JobSystemSingleThreaded>  mJobSystem;
     std::unique_ptr<PhysicsSystem>            mPhysicsSystem;
 
-    std::unordered_map<uint32_t, BodyRecord>           mBodies;
-    std::unordered_map<uint32_t, Ref<TwoBodyConstraint>> mConstraints;
+    std::unordered_map<uint32_t, BodyRecord> mBodies;
+    std::unordered_map<uint32_t, ConstraintRecord> mConstraints;
+    std::unordered_map<uint64_t, uint32_t> mDisabledPairRefCounts;
+    uint32_t mNextFilterId = 1;
     uint32_t mNextHandle = 1; // 0 保留为 invalid
 };
 
@@ -754,6 +869,7 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("motor_target_velocity") = 0.0f,
              nb::arg("motor_target_position") = 0.0f,
              nb::arg("cone_half_angle") = 0.0f,
+             nb::arg("disable_collisions") = false,
              "注册约束（FIXED/HINGE/SLIDER/CONE/POINT），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 

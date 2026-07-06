@@ -534,6 +534,12 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
 
     # ── Jolt 通用 ConstraintSettings ───────────────────────────────────────
 
+    disable_collisions: BoolProperty(
+        name="禁用连接体碰撞",
+        description="约束连接的两个刚体不再彼此碰撞；不影响它们与其他刚体的碰撞",
+        default=True,
+    )  # type: ignore
+
     constraint_priority: IntProperty(
         name="求解优先级",
         description="Jolt约束求解优先级；更高数值会更优先满足",

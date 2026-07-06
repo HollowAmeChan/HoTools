@@ -102,7 +102,7 @@ def test_constraint():
                     ( 1, 0, 5), (1, 0, 0, 0),
                     "SPHERE", 0.3, 0.3, (0.3, 0.3, 0.3))
 
-    c = jw.add_constraint("POINT", a, b, (0, 0, 5), (1, 0, 0, 0))
+    c = jw.add_constraint("POINT", a, b, (0, 0, 5), (1, 0, 0, 0), disable_collisions=True)
     assert jw.constraint_count == 1
 
     for _ in range(20):

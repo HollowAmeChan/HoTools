@@ -336,6 +336,7 @@ def _constraint_sync_signature(spec) -> tuple:
         str(getattr(spec, "constraint_type", "FIXED") or "FIXED"),
         int(getattr(spec, "target_a_ptr", 0) or 0),
         int(getattr(spec, "target_b_ptr", 0) or 0),
+        bool(getattr(spec, "disable_collisions", True)),
         _round_tuple(getattr(spec, "anchor_position", (0.0, 0.0, 0.0))),
         _round_tuple(getattr(spec, "anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
         int(getattr(spec, "constraint_priority", 0) or 0),

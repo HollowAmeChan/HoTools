@@ -147,6 +147,7 @@ physicsWorldBegin     = _pw("world").physicsWorldBegin
 physicsWorldCommit    = _pw("world").physicsWorldCommit
 apply_all_writebacks  = _pw("writeback").apply_all_writebacks
 build_rigid_body_spec = _pw("rigid.specs").build_rigid_body_spec
+build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 
@@ -181,6 +182,19 @@ def _del(*objs):
     for o in objs:
         try: bpy.data.objects.remove(o)
         except Exception: pass
+
+def _make_constraint_empty(name, target_a, target_b, loc=(0, 0, 1)):
+    obj = bpy.data.objects.new(name, None)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.empty_display_type = "ARROWS"
+    obj.location = loc
+    con = obj.hotools_rigid_constraint
+    con.enabled = True
+    con.constraint_type = "POINT"
+    con.target_a = target_a
+    con.target_b = target_b
+    con.disable_collisions = True
+    return obj
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -247,6 +261,24 @@ def test_world_lifecycle():
         cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
     assert not world2.replace_required, "连续帧应 mutate"
     world2.omni_cache_dispose("test")
+
+
+def test_constraint_spec_disable_collisions():
+    a = _make_obj("T3A_BodyA", (-1, 0, 1))
+    b = _make_obj("T3A_BodyB", (1, 0, 1))
+    c = _make_constraint_empty("T3A_Constraint", a, b, loc=(0, 0, 1))
+
+    spec = build_constraint_spec(c)
+    assert spec is not None
+    assert spec.disable_collisions is True
+    assert spec.debug_dict()["disable_collisions"] is True
+
+    c.hotools_rigid_constraint.disable_collisions = False
+    spec2 = build_constraint_spec(c)
+    assert spec2 is not None
+    assert spec2.disable_collisions is False
+
+    _del(c, a, b)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,6 +361,8 @@ if __name__ == "__main__":
     check("PhysicsWorldCache 生命周期",  test_world_lifecycle)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
+
+    check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
 
     passed = sum(_results)
     total  = len(_results)

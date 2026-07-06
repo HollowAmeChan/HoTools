@@ -157,7 +157,7 @@ Jolt 支持的主要 two-body constraint：
 
 Breakable constraint 不是一个独立 setting。Jolt 的建议方式是读取 constraint 的 lambda / impulse，当超过阈值时 `SetEnabled(false)` 或 remove constraint。HoTools 如果要支持“可断裂”，应该在 adapter 层实现 break policy，而不是期待 Jolt 有单一 `breaking_threshold` 字段。
 
-连接体之间是否互相碰撞也不是 constraint 本身的字段。Jolt 推荐通过 collision layer / collision group / group filter 控制。HoTools 的 `disable_collisions` 或“约束连接体不碰撞”需要映射到 `CollisionGroup` / `GroupFilterTable` 或 HoTools 自己的 pair filter。
+连接体之间是否互相碰撞不是 Jolt constraint 本身的字段。HoTools 的 `disable_collisions` 已映射到刚体 solver 私有的 pair filter：约束连接的两个 body 可以禁用直接碰撞，同时不影响它们与其他刚体的碰撞。
 
 ### Motor 和 Spring
 
@@ -208,13 +208,13 @@ Jolt 有两层过滤：
 - static-static 不碰。
 - moving 与所有层碰。
 
-HoTools 刚体自己的 1..16 `rigid_collision_group` 和 `rigid_collides_with_groups` mask 已通过自定义 `CollisionGroup` / `GroupFilter` 接入 native。当前策略是对称过滤：两个刚体都必须允许对方的刚体组，才会碰撞。它不复用简单碰撞、骨骼碰撞或 mesh collision 的 `primary_collision_group / collided_by_groups` 状态。后续如果要支持“约束连接体不碰撞”或更细 pair override，应继续在 rigid group filter / pair table 层扩展，不应污染 coarse object layer。
+HoTools 刚体自己的 1..16 `rigid_collision_group` 和 `rigid_collides_with_groups` mask 已通过自定义 `CollisionGroup` / `GroupFilter` 接入 native。当前策略是对称过滤：两个刚体都必须允许对方的刚体组，才会碰撞。它不复用简单碰撞、骨骼碰撞或 mesh collision 的 `primary_collision_group / collided_by_groups` 状态。约束级 `disable_collisions` 也在同一个 rigid group filter 内实现为 pair override，不污染 coarse object layer。
 
 建议：
 
 - `ObjectLayer` 先保持 coarse：static、dynamic/kinematic、sensor，必要时再扩展。
 - 刚体 1..16 过滤组和可碰 mask 用自定义 pair filter 或 group filter 表达，命名空间独立于简单碰撞组。
-- 约束连接体禁用碰撞用 pair table 或 subgroup 规则表达，避免污染全局 layer。
+- 约束连接体禁用碰撞由 `ConstraintSpec.disable_collisions` 驱动，在 native rigid pair table 中表达，避免污染全局 layer。
 
 ### 查询与事件
 
@@ -459,7 +459,8 @@ remove_body(handle)
 set_kinematic_transform(handle, position, rotation_wxyz, dt)
 get_body_transform(handle)
 add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz,
-               solver overrides, limit/spring, friction, motor, cone angle)
+               solver overrides, limit/spring, friction, motor, cone angle,
+               disable_collisions)
 remove_constraint(handle)
 step(dt, substeps)
 body_count
@@ -660,7 +661,7 @@ HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDe
 - `RigidBodySpec` 包含 shape 字段，不再由 adapter 回读 Blender 属性。
 - `ConstraintSpec` 包含 anchor frame、target、基础通用字段。
 - transform 改为读取 `matrix_world`，并明确输出/写回的 local/world 策略。
-- `rigid_collision_group` / `rigid_collides_with_groups` 已接入最小过滤；后续扩展 pair override。
+- `rigid_collision_group` / `rigid_collides_with_groups` 已接入最小过滤；`ConstraintSpec.disable_collisions` 已接入约束连接体 pair override。
 
 这一步不要求增加很多 Jolt 能力，但能把架构方向摆正。
 
