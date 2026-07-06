@@ -1008,6 +1008,7 @@ physicsWorld/
 
 ```text
 刚体模拟步（physicsRigidSolver）  ← Jolt sync + step，不直接写回
+刚体结果-读取状态（physicsRigidReadState）             ← 读取 result.rigid_transform
 刚体命令-设置速度（physicsRigidSetVelocity）          ← 发布 set_velocity
 刚体命令-施加力（physicsRigidAddForce）               ← 发布 add_force
 刚体命令-施加冲量（physicsRigidAddImpulse）           ← 发布 add_impulse

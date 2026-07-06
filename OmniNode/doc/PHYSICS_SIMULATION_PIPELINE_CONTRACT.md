@@ -325,7 +325,7 @@ export cache stream
 
 - `physicsRigidSolver` 在每个 rigid body slot 写入 `result.rigid_transform`。
 - `result.rigid_transform` 是本帧纯快照 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`。
-- `physicsWriteback` 和 `physicsWorldDebugDraw` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
+- `physicsWriteback`、`physicsWorldDebugDraw` 和 `physicsRigidReadState` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
 - 这是 `world.exchange` 的过渡形态；等跨 solver result channel 稳定后，可把相同 payload 移到 exchange。
 
 模式：

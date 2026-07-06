@@ -11,6 +11,7 @@ import mathutils
 from ....FunctionNodeCore import omni
 from ... import _Color
 from ..types import PhysicsWorldCache
+from .results import get_rigid_transform_result
 from .solver import RIGID_BODY_COMMANDS_CHANNEL, step_rigid_bodies
 from .specs import build_rigid_body_spec
 
@@ -63,6 +64,31 @@ def _publish_rigid_body_command(
     return world, None
 
 
+def _rigid_result_for_target(world: object, target: bpy.types.Object) -> dict | None:
+    if not isinstance(world, PhysicsWorldCache):
+        return None
+    spec = build_rigid_body_spec(target)
+    if spec is None:
+        return None
+    slot = world.solver_slots.get(spec.slot_id)
+    if slot is None or slot.kind != "rigid_body":
+        return None
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    return get_rigid_transform_result(slot, frame=frame, generation=world.generation)
+
+
+def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
+    try:
+        quat = mathutils.Quaternion((
+            float(value[0]), float(value[1]), float(value[2]), float(value[3])
+        ))
+        euler = quat.to_euler("XYZ")
+        return mathutils.Vector((float(euler.x), float(euler.y), float(euler.z)))
+    except Exception:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+
+
 @omni(
     enable=True,
     always_run=True,   # 物理解算器，每个新帧必须推进 Jolt state
@@ -92,6 +118,48 @@ def physicsRigidSolver(
 ) -> tuple[object, int, float]:
     body_count, step_ms = step_rigid_bodies(world, bool(enabled))
     return world, body_count, float(step_ms)
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="刚体结果-读取状态",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "目标刚体"],
+    _OUTPUT_NAME=["物理世界", "命中", "位置", "旋转", "线速度", "角速度", "激活", "睡眠", "结果"],
+    omni_description="""
+    从 rigid solver 的 result stream 读取目标刚体当前状态。
+
+    该节点不访问 Jolt adapter 或 native handle，只消费 solver slot 上的
+    result.rigid_transform。应放在"刚体模拟步"之后；若本帧还没有结果，
+    命中为 False，其余输出为默认值。
+    """,
+)
+def physicsRigidReadState(
+    world: object,
+    target: bpy.types.Object,
+) -> tuple[object, bool, mathutils.Vector, mathutils.Vector, mathutils.Vector, mathutils.Vector, bool, bool, object]:
+    result = _rigid_result_for_target(world, target)
+    if result is None:
+        zero = mathutils.Vector((0.0, 0.0, 0.0))
+        return world, False, zero.copy(), zero.copy(), zero.copy(), zero.copy(), False, False, None
+
+    position = mathutils.Vector(_vec3(result.get("position")))
+    rotation = _rotation_euler_from_wxyz(result.get("rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))
+    linear_velocity = mathutils.Vector(_vec3(result.get("linear_velocity")))
+    angular_velocity = mathutils.Vector(_vec3(result.get("angular_velocity")))
+    return (
+        world,
+        True,
+        position,
+        rotation,
+        linear_velocity,
+        angular_velocity,
+        bool(result.get("active", False)),
+        bool(result.get("sleeping", False)),
+        result,
+    )
 
 
 @omni(

@@ -165,6 +165,7 @@ build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 RIGID_TRANSFORM_RESULT_KEY = _pw("rigid.results").RIGID_TRANSFORM_RESULT_KEY
+physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 
 
@@ -386,6 +387,16 @@ def test_rigid_body_command_nodes():
     debug = adapter.debug_snapshot()
     assert debug["last_command_count"] == 1
     assert debug["last_command_failed"] == 0
+
+    _, found, position, rotation, linear_velocity, angular_velocity, active, sleeping, raw_result = physicsRigidReadState(world, ball)
+    assert found is True
+    assert position[2] > 4.0
+    assert abs(rotation[0]) < 0.001 and abs(rotation[1]) < 0.001 and abs(rotation[2]) < 0.001
+    assert linear_velocity[2] > 4.0
+    assert abs(angular_velocity[0]) < 0.001
+    assert active is True
+    assert sleeping is False
+    assert raw_result["slot_id"] == spec.slot_id
 
     world.omni_cache_dispose("test_command_nodes")
     _del(ball)
