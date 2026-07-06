@@ -390,6 +390,19 @@ HoTools 当前 constraint spec 只有：
 - `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_solver_stats` 等 channel，后续 contact、query 和 constraint lambda 也应按同一模式输出。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
+### 迁移其它 solver 前的 Jolt 状态判断
+
+Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：它证明了 scope/spec/backend/result/writeback/debug/cache owner 这条链路能跑通。继续补 contact listener、query、constraint lambda、advanced shape 会提升刚体能力，但不是 SpringBone/MC2/BoneCloth 迁移的前置条件。
+
+其它 solver 迁移前还缺的是工程验收，而不是 Jolt feature：
+
+- 需要真实 Cache Delete / `OmniRuntimeState.clear_all()` 的 background smoke，而不只是直接调用 `world.omni_cache_dispose()`。
+- 需要帧语义矩阵：连续帧、same-frame、跳回首帧、reset、scope prune、dirty spec resync。
+- 需要 PoseBone 和 mesh delta 的统一 writeback contract，因为 SpringBone/MC2 不写 Object.delta。
+- 需要第一条非 Jolt solver 的窄切片，把 result stream 和 solver slot 用起来。
+
+因此下一步应转向“SpringBone VRM world-aware rewrite vertical slice”，而不是继续把 Jolt Phase 5 扩成全功能刚体系统。SpringBone 旧 `_SpringBoneVRM` 只作为审查和数值参考；新路径应从 `physicsWorld/spring_vrm/` 的 spec / slot / result stream / writeback contract 直接重写。新迁移 solver 默认只保留 C++ / native 计算路径，Python 不再维护第二套运行时算法。
+
 ### 应补的核心输出
 
 建议下一批补：

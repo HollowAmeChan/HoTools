@@ -2,11 +2,13 @@
 #
 # 目录语义：
 #   types.py   — PhysicsWorldCache、PhysicsFrameContext、PhysicsObjectScope、PhysicsColliderSource
-#   scope.py   — 对象列表合并、过滤、去重、scope key 计算
-#   world.py   — begin / commit / lifecycle / slot 管理
-#   debug.py   — debug snapshot、flatten text、校验结果
+#   scope.py   — 对象列表合并、过滤、去重、作用域键计算
+#   world.py   — 开始 / 提交 / 生命周期 / 槽管理
+#   debug.py   — 调试快照、文本展开、校验结果
 #   nodes.py   — 对外暴露的通用函数节点（由 OmniNodeRegister 加载注册）
-#   rigid/     — 刚体 domain（Phase 4+）
+#   utils/     — 新物理世界通用数学、id、buffer 辅助函数
+#   rigid/     — 刚体领域（阶段 4+）
+#   spring_vrm/ — VRM SpringBone 重写领域（面向物理世界的垂直切片）
 
 from .types import (
     PhysicsObjectScope,

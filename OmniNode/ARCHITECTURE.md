@@ -773,16 +773,15 @@ README.md
 
 开发新 native 节点建议流程：
 
-1. 先保留或补全 Python 蓝本节点。
-2. 新增平行 C++ 节点，命名上加明确后缀，例如 `-CPP`。
-3. 两个节点保持相同输入、输出、cache 语义、跳帧规则和错误边界。
-4. Python 层把 Blender 数据整理成数组，不让 C++ 直接碰 `bpy`。
-5. C++ 桥接层只暴露窄接口。
-6. C++ solver 层只处理数值计算。
-7. 用节点级 debug 输出对比 Python / C++ 行为和耗时。
-8. 补 native smoke test / benchmark。
-9. 编译到对应 `HotoolsPackage`。
-10. 用 Blender Python import 验证，再在 Blender 中 smoke test 节点。
+1. 明确运行时是否属于统一物理世界迁移。
+2. Python 层把 Blender 数据整理成 spec / buffer，不让 C++ 直接碰 `bpy`。
+3. C++ 桥接层只暴露窄接口。
+4. C++ solver 层只处理数值计算。
+5. 用 reference case、native smoke test 和 benchmark 验证行为和耗时。
+6. 编译到对应 `HotoolsPackage`。
+7. 用 Blender Python import 验证，再在 Blender 中 smoke test 节点。
+
+统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧 Python 实现可以作为审查材料或测试 reference，但不能作为运行时 fallback。
 
 常用构建命令见 `_native/README.md`。核心入口是：
 

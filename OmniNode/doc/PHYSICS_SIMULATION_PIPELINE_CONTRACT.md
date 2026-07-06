@@ -795,17 +795,89 @@ re_run_and_reset：
 当前没有旧资产兼容要求，迁移时优先删除双路径，而不是维护 shadow pipeline：
 
 1. 先确定 world-aware contract：scope、spec、result stream、exchange、writeback 边界。
-2. 直接调整节点 socket、payload 和内部数据结构到新 contract。
-3. 把 prepare、step、result publish、writeback apply 拆成可独立调用 helper。
-4. solver step 只产生 result stream / exchange item，不直接写 bpy。
-5. 下游节点和 debug draw 只读公开 result / exchange，不读 solver slot 私有结构。
-6. 用后台集成测试锁住同帧、连续帧、跳帧、reset、dispose 行为。
+2. 对旧实现做删除前审查：列出 direct bpy write、旧 cache owner、scene-wide scan、frame/restart 判断、native handle 生命周期。
+3. 新 solver 建在 `physicsWorld/<domain>/` 下，直接重写新的 spec / slot / result / writeback 模块。
+4. 直接调整节点 socket、payload 和内部数据结构到新 contract。
+5. 把 prepare、step、result publish、writeback apply 拆成可独立调用 helper。
+6. solver step 只产生 result stream / exchange item，不直接写 bpy。
+7. 下游节点和 debug draw 只读公开 result / exchange，不读 solver slot 私有结构。
+8. 用后台集成测试锁住同帧、连续帧、跳帧、reset、dispose 行为。
+
+旧 solver 的 Python 包装层默认不迁移。它只能作为审查材料和数值参考；真正可复用的只有独立计算核、纯数学 helper、明确无 bpy 写回的 native 数组接口。
+
+## 新迁移 solver 的 C++ 单实现策略
+
+新迁移进统一物理世界的 solver 默认只保留一条计算实现：C++ / native 侧。Python 层只负责：
+
+1. 从 Blender / 节点输入构建 spec。
+2. 管理 `PhysicsWorldCache`、solver slot、dirty key、生命周期和 dispose。
+3. 把 spec / world snapshot 打包成 native buffer。
+4. 调用 native context / step / readback。
+5. 发布 result stream / exchange，并由统一 writeback 执行 bpy 写回。
+
+不再新增 Python solver 与 C++ solver 双实现，也不再暴露 `xxx` / `xxx_CPP` 两套节点。节点数量应按“语义能力”组织，而不是按 backend 数量组织。需要调试或降级时，只允许以下方式：
+
+- native 后端不可用时节点报错或输出明确的 stats/error result，不自动切回 Python 计算。
+- 单元测试可以有 Python 参考函数，但只能放在 test / reference 区，不作为运行时 backend。
+- 数值算法的可读性应通过 C++ 侧拆函数、注释、测试和小型 reference case 解决，不靠维护第二套 Python solver。
+
+这一策略的目标是减少节点数量、减少行为分叉、避免 Python / C++ 实时性不一致，并让调度、跳帧、缓存生命周期都只在世界层表达一次。
+
+## physicsWorld/utils 抽取计划
+
+迁移过程中明显通用的数学和实用函数，应从旧 solver 包装层抽到 `OmniNode/NodeTree/Function/physicsWorld/utils/`。这个目录只放与统一物理世界相关、且不属于某个单一 solver 的 helper。
+
+初始建议分层：
+
+```text
+physicsWorld/utils/
+  math.py           -> 矩阵、四元数、向量、归一化、矩阵 16 展平等纯 Python helper
+  ids.py            -> obj/data pointer、slot id、hash key、scope key 片段
+  buffers.py        -> numpy buffer 创建、shape 校验、matrix/vector 打包
+  writeback_pose.py -> PoseBone matrix_basis 计算与批量写回准备
+  collision.py      -> 碰撞组 mask、半径缩放、collider snapshot 到 native arrays 的打包
+```
+
+抽取规则：
+
+- 纯数学、buffer shape、id/hash、通用 writeback plan 可以进 utils。
+- solver 独有参数、算法状态、native handle、业务 dirty policy 不能进 utils。
+- utils 不读取 solver slot 私有结构；需要数据时由调用者显式传入。
+- utils 不直接调用 native step；native context 生命周期仍归属各 solver backend。
+- 如果某个 helper 同时被 SpringBone、BoneCloth、Rigid/Jolt 或 MC2 使用，优先抽到 utils。
+
+## 其它 solver 迁移入口
+
+不要把“Jolt 全能力完成”作为其它 solver 迁移的前置条件。统一物理世界要验证的是通用 contract，而不是 Jolt 的全部 feature。满足以下条件后，可以开始其它 solver 的 world-aware vertical slice：
+
+1. `PhysicsWorldCache` 的生命周期已经通过真实 runtime cache 路径验证：Cache Write 提交、Cache Delete、`OmniRuntimeState.clear_all()` 都能触发 owner dispose。
+2. 目标 solver 可以声明 consumes / produces / persistent state / dirty key / same_frame_policy / writeback 支持。
+3. solver step 不直接写 bpy；输出先进入 `world.result_streams` 或 `world.exchange`。
+4. 写回路径已经有明确 owner：Object、PoseBone、mesh delta、shape key 或 export cache，不能在 solver 内隐式写。
+5. debug 节点能观察该 solver 的 slot / result / stats，而不读取 backend-private handle。
+6. native/C++ 计算入口明确，Python 运行时不维护第二套 solver 算法。
+7. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
+
+迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
+
+```text
+world.begin
+  -> collect/build minimal spec
+  -> solver slot 持有最小 runtime state
+  -> solver step 发布一个 result stream
+  -> debug/result stream 节点可观察
+  -> writeback 节点消费最小 result
+  -> world.commit/cache.write
+```
+
+第一条明确迁移 SpringBone VRM，因为它比较小但覆盖面完整：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、多骨架分组都能被验证。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
 
 优先预演对象：
 
 ```text
 VRM SpringBone:
-  已有 Python / C++ 双路径，cache、碰撞、PoseBone 写回、multi-armature 都齐全。
+  旧实现已有 Python / C++ 双路径，cache、碰撞、PoseBone 写回、multi-armature 都齐全。
+  新迁移只保留 C++ / native 计算路径，Python 只做 spec、slot、buffer、result、writeback glue。
 
 MC2 MeshCloth:
   已有 native context 和 mesh delta 写回，适合验证 native resident state。
@@ -870,7 +942,7 @@ rigid.jolt_step
 
 ## 当前建议
 
-不要先把所有 solver 重写到 C++。先以 VRM SpringBone 做预演，把一条稳定 solver 的内部阶段映射到本文契约，确认职责拆分是否真的减少重复转换、提高可读性，并暴露出更新频率和 dirty 策略差异。
+从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。先以 VRM SpringBone 做预演，把一条稳定 solver 的内部阶段映射到本文契约，确认职责拆分是否真的减少重复转换、提高可读性，并暴露出更新频率和 dirty 策略差异。
 
 在文档和 timing 稳定后，再决定：
 
@@ -878,3 +950,4 @@ rigid.jolt_step
 - 哪些公共数据进入 world。
 - 哪些结果进入统一 writeback。
 - 哪些跨 solver hack 升级为 exchange channel。
+- 哪些数学、buffer、id、writeback helper 抽到 `physicsWorld/utils/`。
