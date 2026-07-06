@@ -1260,6 +1260,12 @@ def solve_meshcloth(
             root_indices,
             frame_dt,
         )
+    # 安全修正：固定（pin）粒子的 display 位置强制与其模拟位置对齐。
+    # native/Python 速度预测路径均可能对 fixed 点引入浮点偏移，
+    # 导致写回的 GN delta 属性不为零，pin 区域被 Geometry Nodes 错误移动。
+    if bool(np.any(fixed)):
+        display_positions = np.ascontiguousarray(display_positions, dtype=np.float32)
+        display_positions[fixed] = positions[fixed]
     display_positions = _blend_display_positions(base_positions, display_positions, blend_weight_value)
     mc2_state.commit_particle_state_for_center(
         next_state,
