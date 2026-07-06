@@ -164,11 +164,20 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
             continue
 
         try:
-            result = adapter.get_body_transform(slot_id)
-            if result is None:
-                clear_rigid_transform_result(slot)
-                continue
-            pos_arr, rot_arr = result
+            state = None
+            if hasattr(adapter, "get_body_state"):
+                state = adapter.get_body_state(slot_id)
+
+            if state is not None:
+                pos_arr = state.get("position")
+                rot_arr = state.get("rotation_wxyz")
+            else:
+                result = adapter.get_body_transform(slot_id)
+                if result is None:
+                    clear_rigid_transform_result(slot)
+                    continue
+                pos_arr, rot_arr = result
+
             slot.data[RIGID_TRANSFORM_RESULT_KEY] = make_rigid_transform_result(
                 slot_id=slot_id,
                 spec=spec,
@@ -176,6 +185,10 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
                 generation=world.generation,
                 position=pos_arr,
                 rotation_wxyz=rot_arr,
+                linear_velocity=state.get("linear_velocity") if state else None,
+                angular_velocity=state.get("angular_velocity") if state else None,
+                active=state.get("active") if state else None,
+                sleeping=state.get("sleeping") if state else None,
                 backend=getattr(adapter, "BACKEND", "jolt"),
             )
             slot.data.pop("_result_error", None)

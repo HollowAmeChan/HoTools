@@ -377,24 +377,20 @@ HoTools 当前 constraint spec 只有：
 - `step_ms`。
 - `body_count`。
 - `constraint_count`。
-- body transform：position + rotation。
+- body state：position、rotation、linear velocity、angular velocity、active、sleeping。
 
 当前写回机制：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
-- solver 每帧把 body transform 发布到 rigid slot 的 `result.rigid_transform`。
+- solver 每帧把 body state 纯快照发布到 rigid slot 的 `result.rigid_transform`。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
 - `physicsWorldDebugDraw` 优先消费 `result.rigid_transform`，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 应补的核心输出
 
-建议第一批补：
+建议下一批补：
 
-- body transform。
-- linear velocity。
-- angular velocity。
-- active / sleeping 状态。
 - body type / shape type / bounds。
 - constraint current value：hinge angle、slider position、distance、6DOF limits 状态。
 - constraint lambda / impulse，用于 debug 和 breakable constraint。
@@ -458,6 +454,7 @@ add_body(body_type, mass, friction, restitution, position, rotation_wxyz,
 remove_body(handle)
 set_kinematic_transform(handle, position, rotation_wxyz, dt)
 get_body_transform(handle)
+get_body_state(handle)
 add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz,
                solver overrides, limit/spring, friction, motor, cone angle,
                disable_collisions)
@@ -479,7 +476,7 @@ Native 侧当前特点：
 - 约束当前创建 fixed/hinge/slider/cone/point，并已接 Hinge/Slider 基础 limit/friction/motor、Cone half angle、通用 solver overrides。
 - 没有 contact listener。
 - 没有 debug draw API。
-- 没有 force / impulse / velocity getter。
+- 已有 body state getter；仍没有 force / impulse runtime command。
 - HoTools collision group / mask 已接入 Jolt `CollisionGroup` / 自定义 `GroupFilter`。
 - 没有 body update API，body 参数变化一般靠 remove + add。
 
@@ -671,7 +668,7 @@ HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDe
 
 - 扩展 `add_body()` 参数或改为结构化参数。
 - 接入 velocity、damping、gravity factor、sleep、CCD、sensor、max velocity。
-- 增加 getter：transform + velocity + active state。
+- 已增加 getter：transform + velocity + active state。
 - 增加 setter：velocity、gravity factor、friction/restitution、motion quality、activate/deactivate。
 
 注意：nanobind 函数参数继续线性增长会失控。建议 native 侧引入 `BodyDesc` 风格结构或 Python dict 解析层。

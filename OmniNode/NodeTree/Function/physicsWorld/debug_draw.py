@@ -28,6 +28,7 @@ _COLOR_BONE          = (0.60, 0.90, 0.30, 0.80)   # 骨骼碰撞：黄绿
 _COLOR_RIGID_DYNAMIC = (0.20, 0.90, 0.20, 0.85)   # 动态刚体：绿
 _COLOR_RIGID_STATIC  = (0.60, 0.60, 0.65, 0.70)   # 静态刚体：灰
 _COLOR_RIGID_KINEMA  = (0.40, 0.60, 1.00, 0.85)   # 运动学刚体：蓝
+_COLOR_RIGID_SLEEP   = (0.35, 0.70, 0.35, 0.50)   # 休眠动态刚体：淡绿
 _COLOR_CONSTRAINT    = (1.00, 0.75, 0.10, 0.90)   # 约束锚点：橙黄
 _COLOR_BUG           = (1.00, 0.10, 0.10, 0.95)   # bug 状态：红
 
@@ -278,6 +279,10 @@ def _rigid_shape_snapshot(spec, result: dict | None = None) -> dict | None:
     return {
         "body_type": str(getattr(spec, "body_type", "DYNAMIC")),
         "shape_type": str(getattr(spec, "shape_type", "SPHERE")),
+        "linear_velocity": _vec3_tuple(result.get("linear_velocity")) if result else (0.0, 0.0, 0.0),
+        "angular_velocity": _vec3_tuple(result.get("angular_velocity")) if result else (0.0, 0.0, 0.0),
+        "active": bool(result.get("active")) if result else False,
+        "sleeping": bool(result.get("sleeping")) if result else False,
         "center": _vec3_tuple(center),
         "axis_x": axis_x,
         "axis_y": axis_y,
@@ -516,16 +521,21 @@ def _build_draw_calls(data: dict) -> list[tuple]:
 
     # 刚体轮廓
     if data.get("show_rigid", True):
-        dyn_lines, sta_lines, kin_lines = [], [], []
+        dyn_lines, sta_lines, kin_lines, sleep_lines = [], [], [], []
         for shape in (data.get("rigid_shapes") or []):
             body_type = str(shape.get("body_type", "DYNAMIC"))
-            target = dyn_lines if body_type == "DYNAMIC" else (sta_lines if body_type == "STATIC" else kin_lines)
+            if body_type == "DYNAMIC" and bool(shape.get("sleeping")):
+                target = sleep_lines
+            else:
+                target = dyn_lines if body_type == "DYNAMIC" else (sta_lines if body_type == "STATIC" else kin_lines)
             try:
                 _draw_rigid_shape(target, shape)
             except Exception:
                 pass
         if dyn_lines:
             draw_calls.append((batch_for_shader(shader, "LINES", {"pos": dyn_lines}), _COLOR_RIGID_DYNAMIC, 1.5))
+        if sleep_lines:
+            draw_calls.append((batch_for_shader(shader, "LINES", {"pos": sleep_lines}), _COLOR_RIGID_SLEEP, 1.0))
         if sta_lines:
             draw_calls.append((batch_for_shader(shader, "LINES", {"pos": sta_lines}), _COLOR_RIGID_STATIC, 1.0))
         if kin_lines:

@@ -29,6 +29,10 @@ def make_rigid_transform_result(
     generation: int,
     position,
     rotation_wxyz,
+    linear_velocity=None,
+    angular_velocity=None,
+    active: bool | None = None,
+    sleeping: bool | None = None,
     backend: str = "jolt",
 ) -> dict:
     return {
@@ -43,6 +47,10 @@ def make_rigid_transform_result(
         "body_type": str(getattr(spec, "body_type", "DYNAMIC") or "DYNAMIC"),
         "position": _float3(position),
         "rotation_wxyz": _float4(rotation_wxyz),
+        "linear_velocity": _float3(linear_velocity if linear_velocity is not None else (0.0, 0.0, 0.0)),
+        "angular_velocity": _float3(angular_velocity if angular_velocity is not None else (0.0, 0.0, 0.0)),
+        "active": bool(active) if active is not None else False,
+        "sleeping": bool(sleeping) if sleeping is not None else False,
     }
 
 

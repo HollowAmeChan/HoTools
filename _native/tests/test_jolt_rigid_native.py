@@ -226,6 +226,24 @@ def test_add_plane_body():
     jw.clear()
 
 
+def test_body_state_output():
+    jw = _make_world()
+    h = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 5.0))
+
+    state0 = jw.get_body_state(h)
+    assert len(state0) == 6, f"body state 应有 6 个字段，得 {len(state0)}"
+    pos0, rot0, lin0, ang0, active0, sleeping0 = state0
+    assert abs(pos0[2] - 5.0) < 1e-3
+    assert len(rot0) == 4 and len(lin0) == 3 and len(ang0) == 3
+    assert isinstance(active0, bool) and isinstance(sleeping0, bool)
+
+    jw.step(1.0 / 60.0, 2)
+    _pos1, _rot1, lin1, _ang1, active1, sleeping1 = jw.get_body_state(h)
+    assert lin1[2] < 0.0, f"重力后 Z 线速度应为负，得 {lin1[2]}"
+    assert isinstance(active1, bool) and isinstance(sleeping1, bool)
+    jw.clear()
+
+
 def test_multiple_bodies():
     """注册多个刚体，body_count 正确递增。"""
     jw = _make_world()

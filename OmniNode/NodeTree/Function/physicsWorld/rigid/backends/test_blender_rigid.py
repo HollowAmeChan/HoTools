@@ -150,6 +150,7 @@ build_rigid_body_spec = _pw("rigid.specs").build_rigid_body_spec
 build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
+RIGID_TRANSFORM_RESULT_KEY = _pw("rigid.results").RIGID_TRANSFORM_RESULT_KEY
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -233,6 +234,11 @@ def test_jolt_adapter_direct():
     pos, _ = a.get_body_transform(spec_b.slot_id)
     assert pos is not None and pos[2] < z0, \
         f"DYNAMIC 球应下落 z0={z0:.2f} jolt_z={pos[2]:.2f}"
+    state = a.get_body_state(spec_b.slot_id)
+    assert state is not None
+    assert state["position"][2] < z0
+    assert state["linear_velocity"][2] < 0.0
+    assert isinstance(state["active"], bool) and isinstance(state["sleeping"], bool)
 
     a.dispose("test"); assert not a._valid
     a.dispose("idempotent")
@@ -310,6 +316,19 @@ def test_full_rigid_pipeline():
     z1 = ball.matrix_world.translation.z
     assert z1 < z0, f"DYNAMIC 球应下落 z0={z0:.2f} z1={z1:.2f}"
     assert z1 > -2.0, f"球应落地停止 z1={z1:.2f}"
+    ball_ptr = int(ball.as_pointer())
+    stream_results = []
+    for slot in world.solver_slots.values():
+        spec = slot.data.get("spec") if slot.kind == "rigid_body" else None
+        if spec is not None and int(getattr(spec, "obj_ptr", 0) or 0) == ball_ptr:
+            result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
+            if result is not None:
+                stream_results.append(result)
+    assert stream_results, "刚体 solver slot 应写入 result.rigid_transform"
+    result = stream_results[-1]
+    assert "linear_velocity" in result and "angular_velocity" in result
+    assert isinstance(result.get("active"), bool)
+    assert isinstance(result.get("sleeping"), bool)
 
     world.omni_cache_dispose("test_end")
     _del(ground, ball)

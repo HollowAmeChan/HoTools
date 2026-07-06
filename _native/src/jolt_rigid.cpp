@@ -449,6 +449,38 @@ public:
         return {from_vec3(pos), from_quat(rot)};
     }
 
+    std::tuple<
+        std::array<float,3>,
+        std::array<float,4>,
+        std::array<float,3>,
+        std::array<float,3>,
+        bool,
+        bool>
+    get_body_state(uint32_t handle) const {
+        auto it = mBodies.find(handle);
+        if (it == mBodies.end())
+            return {{0,0,0}, {1,0,0,0}, {0,0,0}, {0,0,0}, false, false};
+
+        auto& lif = mPhysicsSystem->GetBodyLockInterface();
+        BodyLockRead lock(lif, it->second.id);
+        if (!lock.Succeeded())
+            return {{0,0,0}, {1,0,0,0}, {0,0,0}, {0,0,0}, false, false};
+
+        const Body& body = lock.GetBody();
+        Vec3 linear_velocity = body.GetLinearVelocity();
+        Vec3 angular_velocity = body.GetAngularVelocity();
+        bool active = body.IsActive();
+        bool sleeping = body.GetMotionType() == EMotionType::Dynamic && !active;
+        return {
+            from_vec3(body.GetPosition()),
+            from_quat(body.GetRotation()),
+            {linear_velocity.GetX(), linear_velocity.GetY(), linear_velocity.GetZ()},
+            {angular_velocity.GetX(), angular_velocity.GetY(), angular_velocity.GetZ()},
+            active,
+            sleeping
+        };
+    }
+
     // ---- Constraint management -----------------------------------------
 
     uint32_t add_constraint(
@@ -838,6 +870,10 @@ NB_MODULE(hotools_jolt, m) {
         .def("get_body_transform", &JoltWorld::get_body_transform,
              nb::arg("handle"),
              "返回 (position, rotation_wxyz) 元组，用于写回 Blender 对象变换。")
+
+        .def("get_body_state", &JoltWorld::get_body_state,
+             nb::arg("handle"),
+             "返回 (position, rotation_wxyz, linear_velocity, angular_velocity, active, sleeping)。")
 
         // constraint
         .def("add_constraint", &JoltWorld::add_constraint,

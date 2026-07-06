@@ -81,6 +81,18 @@ def test_gravity_fall():
     assert z1 < z0, f"球体应下落：z0={z0:.3f} z1={z1:.3f}"
     jw.clear()
 
+def test_body_state():
+    jw = hotools_jolt.JoltWorld(32, 64, 32)
+    ball = jw.add_body("DYNAMIC", 1.0, 0.5, 0.0,
+                       (0, 0, 5), (1, 0, 0, 0),
+                       "SPHERE", 0.5, 0.5, (0.5, 0.5, 0.5))
+    jw.step(1/60.0, 2)
+    pos, rot, lin, ang, active, sleeping = jw.get_body_state(ball)
+    assert len(pos) == 3 and len(rot) == 4 and len(lin) == 3 and len(ang) == 3
+    assert lin[2] < 0.0, f"重力后 Z 线速度应为负，得 {lin[2]}"
+    assert isinstance(active, bool) and isinstance(sleeping, bool)
+    jw.clear()
+
 def test_kinematic_drive():
     jw = hotools_jolt.JoltWorld(32, 64, 32)
     plat = jw.add_body("KINEMATIC", 0, 0.5, 0.0,
@@ -179,6 +191,7 @@ if __name__ == "__main__":
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),
+        ("body state 输出",          test_body_state),
         ("运动学 body 驱动",        test_kinematic_drive),
         ("约束 body-body",          test_constraint),
         ("约束 WORLD_HANDLE",       test_world_handle_constraint),

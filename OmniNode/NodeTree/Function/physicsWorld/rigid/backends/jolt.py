@@ -294,6 +294,30 @@ class JoltAdapter:
             return None
         return self._jw.get_body_transform(handle)
 
+    def get_body_state(self, slot_id: str) -> dict | None:
+        """返回求解后的 transform、速度和激活状态，或 None。"""
+        handle = self._body_handles.get(slot_id)
+        if handle is None:
+            return None
+
+        if hasattr(self._jw, "get_body_state"):
+            pos, rot, lin, ang, active, sleeping = self._jw.get_body_state(handle)
+        else:
+            pos, rot = self._jw.get_body_transform(handle)
+            lin = (0.0, 0.0, 0.0)
+            ang = (0.0, 0.0, 0.0)
+            active = False
+            sleeping = False
+
+        return {
+            "position": tuple(pos),
+            "rotation_wxyz": tuple(rot),
+            "linear_velocity": tuple(lin),
+            "angular_velocity": tuple(ang),
+            "active": bool(active),
+            "sleeping": bool(sleeping),
+        }
+
     # ---- Constraint 管理 -------------------------------------------------
 
     def sync_constraint(self, slot_id: str, spec: "ConstraintSpec") -> int:
