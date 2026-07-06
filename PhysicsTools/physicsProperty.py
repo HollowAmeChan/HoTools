@@ -303,6 +303,10 @@ class PG_Hotools_RigidBody(PropertyGroup):
         items=[
             ("SPHERE",  "球体",   "球形；由半径决定大小"),
             ("CAPSULE", "胶囊",   "胶囊；由半径和高度决定大小"),
+            ("CYLINDER", "圆柱",  "圆柱；局部Y轴为高度方向"),
+            ("TAPERED_CAPSULE", "锥形胶囊", "两端半径可不同的胶囊；局部Y轴为高度方向"),
+            ("TAPERED_CYLINDER", "锥形圆柱", "两端半径可不同的圆柱；局部Y轴为高度方向"),
+            ("PLANE",   "平面",   "无限静态平面；局部XY为平面，局部Z为法线"),
             ("BOX",     "长方体", "轴对齐长方体；由三轴半尺寸决定大小"),
         ],
         default="SPHERE",
@@ -310,7 +314,7 @@ class PG_Hotools_RigidBody(PropertyGroup):
 
     shape_radius: FloatProperty(
         name="半径",
-        description="球体半径（SPHERE）或胶囊截面半径（CAPSULE）",
+        description="球体半径，或胶囊/圆柱截面半径",
         default=0.5,
         min=0.001,
         soft_max=10.0,
@@ -319,7 +323,7 @@ class PG_Hotools_RigidBody(PropertyGroup):
 
     shape_half_height: FloatProperty(
         name="半高",
-        description="胶囊中段的半长（CAPSULE）；总高度 = 半高×2 + 半径×2",
+        description="沿局部Y轴的半长；胶囊总高度 = 半高×2 + 半径×2",
         default=0.5,
         min=0.001,
         soft_max=10.0,
@@ -335,6 +339,42 @@ class PG_Hotools_RigidBody(PropertyGroup):
         size=3,
         unit="LENGTH",
         subtype="XYZ",
+    )  # type: ignore
+
+    shape_plane_half_extent: FloatProperty(
+        name="平面范围",
+        description="Jolt PlaneShape broadphase/debug 半范围；物理平面本身无厚度",
+        default=10.0,
+        min=1.0,
+        soft_max=1000.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    shape_top_radius: FloatProperty(
+        name="顶部半径",
+        description="锥形胶囊/锥形圆柱在局部 +Y 端的半径",
+        default=0.5,
+        min=0.001,
+        soft_max=10.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    shape_bottom_radius: FloatProperty(
+        name="底部半径",
+        description="锥形胶囊/锥形圆柱在局部 -Y 端的半径",
+        default=0.3,
+        min=0.001,
+        soft_max=10.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    shape_convex_radius: FloatProperty(
+        name="凸半径",
+        description="Jolt convex radius；用于圆柱/锥形圆柱边缘圆角和接触稳定性",
+        default=0.05,
+        min=0.0,
+        soft_max=1.0,
+        unit="LENGTH",
     )  # type: ignore
 
     shape_offset: FloatVectorProperty(

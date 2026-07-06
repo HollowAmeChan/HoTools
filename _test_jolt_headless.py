@@ -58,4 +58,68 @@ except Exception as e:
 
 pos, rot = jw.get_body_transform(h)
 print("[TEST] body pos after 1 step:", [round(v, 4) for v in pos])
+
+print("[TEST] PLANE floor collision ...")
+try:
+    jw.clear()
+    jw.add_body(
+        body_type="STATIC",
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=[0.0, 0.0, 0.0],
+        rotation_wxyz=[1.0, 0.0, 0.0, 0.0],
+        shape_type="PLANE",
+        shape_plane_half_extent=20.0,
+    )
+    ball = jw.add_body(
+        body_type="DYNAMIC",
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=[0.0, 0.0, 3.0],
+        rotation_wxyz=[1.0, 0.0, 0.0, 0.0],
+        shape_type="SPHERE",
+        shape_radius=0.5,
+    )
+    for _ in range(180):
+        jw.step(1.0 / 60.0, 2)
+    pos, rot = jw.get_body_transform(ball)
+    print("[TEST] ball pos after PLANE landing:", [round(v, 4) for v in pos])
+    if not (0.45 <= pos[2] <= 0.65):
+        raise RuntimeError("PLANE floor did not stop the sphere near radius height")
+except Exception as e:
+    import traceback
+    print("[TEST] PLANE collision FAILED:", e)
+    traceback.print_exc()
+    sys.exit(1)
+
+print("[TEST] extended shape creation ...")
+try:
+    jw.clear()
+    shape_kwargs = [
+        dict(shape_type="CYLINDER", shape_radius=0.35, shape_half_height=0.5, shape_convex_radius=0.03),
+        dict(shape_type="TAPERED_CAPSULE", shape_top_radius=0.45, shape_bottom_radius=0.25, shape_half_height=0.5),
+        dict(shape_type="TAPERED_CYLINDER", shape_top_radius=0.45, shape_bottom_radius=0.25, shape_half_height=0.5, shape_convex_radius=0.02),
+    ]
+    for index, kwargs in enumerate(shape_kwargs):
+        jw.add_body(
+            body_type="DYNAMIC",
+            mass=1.0,
+            friction=0.5,
+            restitution=0.0,
+            position=[float(index) * 1.5, 0.0, 2.0],
+            rotation_wxyz=[1.0, 0.0, 0.0, 0.0],
+            **kwargs,
+        )
+    jw.step(1.0 / 60.0, 1)
+    print("[TEST] extended shape count:", jw.body_count)
+    if jw.body_count != len(shape_kwargs):
+        raise RuntimeError("extended shapes were not all registered")
+except Exception as e:
+    import traceback
+    print("[TEST] extended shape creation FAILED:", e)
+    traceback.print_exc()
+    sys.exit(1)
+
 print("[TEST] 全部通过！")

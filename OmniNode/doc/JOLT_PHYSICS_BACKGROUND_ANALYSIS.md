@@ -85,7 +85,7 @@ Jolt body 的基本运动类型：
 - 激活、休眠、重置 sleep timer。
 - 获取 body user data、material、active 状态和 world transform。
 
-当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`collision_group` / `collided_by_groups`、三种 shape 的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
+当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`collision_group` / `collided_by_groups`、基础 shape（sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder）的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
 
 ### Shape
 
@@ -112,12 +112,16 @@ Jolt shape 重要约束：
 
 - `SphereShape(shape_radius)`
 - `CapsuleShape(shape_half_height, shape_radius)`
+- `CylinderShape(shape_half_height, shape_radius, shape_convex_radius)`
+- `TaperedCapsuleShape(shape_half_height, shape_top_radius, shape_bottom_radius)`
+- `TaperedCylinderShape(shape_half_height, shape_top_radius, shape_bottom_radius, shape_convex_radius)`
 - `BoxShape(shape_half_extents)`
+- `PlaneShape(local +Z normal, shape_plane_half_extent)`；HoTools 语义为局部 XY 平面、局部 Z 法线，PLANE 在 spec/native 层按 STATIC 处理。
 
 当前 binding 已通过 `RotatedTranslatedShape` 接入 shape offset / local rotation。当前仍没有：
 
-- convex radius。
-- plane / cylinder / convex hull / mesh / compound。
+- box convex radius。
+- convex hull / mesh / compound。
 - scaled shape / COM offset。
 - shape material。
 - shape user data / sub shape ID 映射。
@@ -443,6 +447,7 @@ HoTools 当前 constraint spec 只有：
 JoltWorld(max_bodies, max_body_pairs, max_contact_constraints)
 add_body(body_type, mass, friction, restitution, position, rotation_wxyz,
          shape_type, shape_radius, shape_half_height, shape_half_extents,
+         shape_plane_half_extent,
          collision_group, collided_by_groups,
          shape_offset, shape_rotation_wxyz,
          linear_velocity, angular_velocity, damping, gravity, sleep, CCD,
@@ -503,10 +508,13 @@ Native 侧当前特点：
 - friction。
 - restitution。
 - collision_group / collided_by_groups。
-- shape_type：sphere / capsule / box。
+- shape_type：sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder。
 - shape_radius。
 - shape_half_height。
 - shape_half_extents。
+- shape_plane_half_extent：Jolt PlaneShape broadphase/debug half extent。
+- shape_top_radius / shape_bottom_radius：tapered shape 两端半径。
+- shape_convex_radius：cylinder / tapered cylinder 的 Jolt convex radius。
 - shape_offset / shape_rotation。
 - initial linear/angular velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
 
@@ -566,9 +574,10 @@ Native 侧当前特点：
 |---|---|---|---|
 | shape offset | `RotatedTranslatedShape` | P0 | 现在只能中心对齐，无法表达偏心 collider |
 | shape rotation | `RotatedTranslatedShape` | P0 | capsule/box 方向必须可调 |
-| convex radius | box/cylinder/convex shape | P1 | 稳定性和精度调节 |
-| cylinder | `CylinderShape` | P1 | 常见刚体形状，但 Jolt 文档提示 cylinder 稳定性较差 |
-| plane | `PlaneShape` | P1 | 静态地面/无限平面 |
+| convex radius | cylinder/tapered cylinder 已接；box/convex hull 未接 | 部分已接 | 稳定性和精度调节 |
+| cylinder | `CylinderShape` | 已接 | 常见刚体形状，但 Jolt 文档提示 cylinder 稳定性较差 |
+| tapered capsule/cylinder | `TaperedCapsuleShape` / `TaperedCylinderShape` | 已接 | 两端半径可不同的基础凸体，局部 Y 为高度方向 |
+| plane | `PlaneShape` | 已接 | 静态地面/无限平面；当前 PLANE 按 STATIC 处理，使用 `shape_plane_half_extent` 控制 broadphase/debug 范围 |
 | compound shape | `StaticCompoundShape` | P1 | 多 collider 刚体、ragdoll proxy |
 | convex hull | `ConvexHullShape` | P2 | 从 mesh 生成动态代理 |
 | mesh shape | `MeshShape` | P2 | 静态场景碰撞；dynamic 需强警告 |
@@ -733,6 +742,7 @@ shape_type
 shape_radius
 shape_half_height
 shape_half_extents
+shape_plane_half_extent
 shape_offset
 shape_rotation
 linear_velocity

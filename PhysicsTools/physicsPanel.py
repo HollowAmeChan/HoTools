@@ -272,6 +272,21 @@ class PT_Hotools_Physics_RigidBody(Panel):
             col2 = layout.column(align=True)
             col2.prop(props, "shape_radius")
             col2.prop(props, "shape_half_height")
+        elif stype == "CYLINDER":
+            col2 = layout.column(align=True)
+            col2.prop(props, "shape_radius")
+            col2.prop(props, "shape_half_height")
+            col2.prop(props, "shape_convex_radius")
+        elif stype in {"TAPERED_CAPSULE", "TAPERED_CYLINDER"}:
+            col2 = layout.column(align=True)
+            col2.prop(props, "shape_top_radius")
+            col2.prop(props, "shape_bottom_radius")
+            col2.prop(props, "shape_half_height")
+            if stype == "TAPERED_CYLINDER":
+                col2.prop(props, "shape_convex_radius")
+        elif stype == "PLANE":
+            layout.prop(props, "shape_plane_half_extent")
+            layout.label(text="局部XY为平面，局部Z为法线；PLANE按STATIC处理", icon="INFO")
         elif stype == "BOX":
             layout.prop(props, "shape_half_extents")
         layout.prop(props, "shape_offset")

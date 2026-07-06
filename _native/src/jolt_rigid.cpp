@@ -27,8 +27,13 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/TaperedCapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/TaperedCylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
+#include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
@@ -45,6 +50,7 @@ JPH_SUPPRESS_WARNINGS
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -248,15 +254,51 @@ public:
         float                     max_angular_velocity,
         bool                      is_sensor,
         uint32_t                  allowed_dofs_bits,
-        bool                      collide_kinematic_vs_non_dynamic
+        bool                      collide_kinematic_vs_non_dynamic,
+        float                     shape_plane_half_extent,
+        float                     shape_top_radius,
+        float                     shape_bottom_radius,
+        float                     shape_convex_radius
     )
     {
         // 形状
         Ref<Shape> shape;
+        const bool is_plane = shape_type_str == "PLANE";
         if (shape_type_str == "SPHERE") {
             shape = new SphereShape(shape_radius);
         } else if (shape_type_str == "CAPSULE") {
             shape = new CapsuleShape(shape_half_height, shape_radius);
+        } else if (shape_type_str == "CYLINDER") {
+            float radius = (std::max)(shape_radius, 0.001f);
+            float convex_radius = std::clamp(shape_convex_radius, 0.0f, radius);
+            shape = new CylinderShape(shape_half_height, radius, convex_radius);
+        } else if (shape_type_str == "TAPERED_CAPSULE") {
+            TaperedCapsuleShapeSettings settings(
+                (std::max)(shape_half_height, 0.0f),
+                (std::max)(shape_top_radius, 0.001f),
+                (std::max)(shape_bottom_radius, 0.001f)
+            );
+            Shape::ShapeResult result = settings.Create();
+            if (result.HasError())
+                throw std::runtime_error(std::string("Jolt TaperedCapsuleShape failed: ") + result.GetError().c_str());
+            shape = result.Get();
+        } else if (shape_type_str == "TAPERED_CYLINDER") {
+            float top_radius = (std::max)(shape_top_radius, 0.001f);
+            float bottom_radius = (std::max)(shape_bottom_radius, 0.001f);
+            float convex_radius = std::clamp(shape_convex_radius, 0.0f, (std::min)(top_radius, bottom_radius));
+            TaperedCylinderShapeSettings settings(
+                (std::max)(shape_half_height, 0.001f),
+                top_radius,
+                bottom_radius,
+                convex_radius
+            );
+            Shape::ShapeResult result = settings.Create();
+            if (result.HasError())
+                throw std::runtime_error(std::string("Jolt TaperedCylinderShape failed: ") + result.GetError().c_str());
+            shape = result.Get();
+        } else if (is_plane) {
+            float half_extent = (std::max)(std::abs(shape_plane_half_extent), 1.0f);
+            shape = new PlaneShape(Plane(Vec3(0.0f, 0.0f, 1.0f), 0.0f), nullptr, half_extent);
         } else { // BOX (default)
             shape = new BoxShape(Vec3(shape_half_extents[0],
                                      shape_half_extents[1],
@@ -275,7 +317,7 @@ public:
         // 运动类型
         EMotionType motion = EMotionType::Dynamic;
         ObjectLayer layer  = HoLayers::MOVING;
-        if (body_type_str == "STATIC") {
+        if (body_type_str == "STATIC" || is_plane) {
             motion = EMotionType::Static;
             layer  = HoLayers::NON_MOVING;
         } else if (body_type_str == "KINEMATIC") {
@@ -661,6 +703,10 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("is_sensor")          = false,
              nb::arg("allowed_dofs")       = 0x3fu,
              nb::arg("collide_kinematic_vs_non_dynamic") = false,
+             nb::arg("shape_plane_half_extent") = 10.0f,
+             nb::arg("shape_top_radius") = 0.5f,
+             nb::arg("shape_bottom_radius") = 0.3f,
+             nb::arg("shape_convex_radius") = 0.05f,
              "注册刚体，返回 handle（uint32）。")
 
         .def("remove_body", &JoltWorld::remove_body,

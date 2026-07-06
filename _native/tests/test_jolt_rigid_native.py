@@ -4,7 +4,7 @@ test_jolt_rigid_native.py — hotools_jolt JoltWorld 单元测试
 测试覆盖：
 - 模块加载与常量
 - STATIC / DYNAMIC / KINEMATIC 刚体注册与变换读取
-- 三种形状：SPHERE / BOX / CAPSULE
+- 形状：SPHERE / BOX / CAPSULE / CYLINDER / TAPERED_CAPSULE / TAPERED_CYLINDER / PLANE
 - 模拟步：DYNAMIC 刚体受重力下落（Z-down）
 - KINEMATIC 刚体位置跟随
 - remove_body / clear()
@@ -78,6 +78,66 @@ def _add_capsule(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0)):
     )
 
 
+def _add_cylinder(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0)):
+    return jw.add_body(
+        body_type=body_type,
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=pos,
+        rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_type="CYLINDER",
+        shape_radius=0.35,
+        shape_half_height=0.5,
+        shape_convex_radius=0.03,
+    )
+
+
+def _add_tapered_capsule(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0)):
+    return jw.add_body(
+        body_type=body_type,
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=pos,
+        rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_type="TAPERED_CAPSULE",
+        shape_top_radius=0.45,
+        shape_bottom_radius=0.25,
+        shape_half_height=0.5,
+    )
+
+
+def _add_tapered_cylinder(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0)):
+    return jw.add_body(
+        body_type=body_type,
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=pos,
+        rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_type="TAPERED_CYLINDER",
+        shape_top_radius=0.45,
+        shape_bottom_radius=0.25,
+        shape_half_height=0.5,
+        shape_convex_radius=0.02,
+    )
+
+
+def _add_plane(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0), half_extents=(10.0, 10.0, 0.001)):
+    return jw.add_body(
+        body_type=body_type,
+        mass=1.0,
+        friction=0.5,
+        restitution=0.0,
+        position=pos,
+        rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
+        shape_type="PLANE",
+        shape_half_extents=half_extents,
+        shape_plane_half_extent=max(float(half_extents[0]), float(half_extents[1])),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 测试：模块常量
 # ---------------------------------------------------------------------------
@@ -102,7 +162,7 @@ def test_world_creation():
 
 
 # ---------------------------------------------------------------------------
-# 测试：刚体注册（三种形状）
+# 测试：刚体注册（基础形状）
 # ---------------------------------------------------------------------------
 
 def test_add_sphere_body():
@@ -130,6 +190,39 @@ def test_add_capsule_body():
     jw = _make_world()
     h = _add_capsule(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 2.0))
     assert jw.body_count == 1
+    jw.clear()
+
+
+def test_add_cylinder_body():
+    jw = _make_world()
+    _add_cylinder(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 2.0))
+    assert jw.body_count == 1
+    jw.step(1.0 / 60.0, 1)
+    jw.clear()
+
+
+def test_add_tapered_capsule_body():
+    jw = _make_world()
+    _add_tapered_capsule(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 2.0))
+    assert jw.body_count == 1
+    jw.step(1.0 / 60.0, 1)
+    jw.clear()
+
+
+def test_add_tapered_cylinder_body():
+    jw = _make_world()
+    _add_tapered_cylinder(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 2.0))
+    assert jw.body_count == 1
+    jw.step(1.0 / 60.0, 1)
+    jw.clear()
+
+
+def test_add_plane_body():
+    jw = _make_world()
+    h = _add_plane(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
+    assert jw.body_count == 1
+    pos, _ = jw.get_body_transform(h)
+    assert abs(pos[2]) < 1e-4, f"PLANE Z 应为 0.0，得 {pos[2]}"
     jw.clear()
 
 
@@ -186,6 +279,20 @@ def test_gravity_x_y_stable():
     pos, _ = jw.get_body_transform(h)
     assert abs(pos[0] - 3.0) < 0.05, f"X 应保持约 3.0，得 {pos[0]}"
     assert abs(pos[1] - (-2.0)) < 0.05, f"Y 应保持约 -2.0，得 {pos[1]}"
+    jw.clear()
+
+
+def test_sphere_lands_on_static_plane():
+    """A dynamic sphere should collide with a static PLANE floor instead of falling forever."""
+    jw = _make_world()
+    _add_plane(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0), half_extents=(20.0, 20.0, 0.001))
+    h = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 3.0), radius=0.5)
+
+    for _ in range(180):
+        jw.step(1.0 / 60.0, 2)
+
+    pos, _ = jw.get_body_transform(h)
+    assert 0.45 <= pos[2] <= 0.65, f"球落到PLANE后 Z 应接近半径0.5，得 {pos[2]:.4f}"
     jw.clear()
 
 

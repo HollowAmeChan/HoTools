@@ -41,6 +41,10 @@ class RigidBodySpec:
         "shape_radius",
         "shape_half_height",
         "shape_half_extents",
+        "shape_plane_half_extent",
+        "shape_top_radius",
+        "shape_bottom_radius",
+        "shape_convex_radius",
         "shape_offset",
         "shape_rotation_wxyz",
         "linear_velocity",
@@ -72,6 +76,10 @@ class RigidBodySpec:
         shape_radius: float = 0.5,
         shape_half_height: float = 0.5,
         shape_half_extents: tuple[float, float, float] = (0.5, 0.5, 0.5),
+        shape_plane_half_extent: float = 10.0,
+        shape_top_radius: float = 0.5,
+        shape_bottom_radius: float = 0.3,
+        shape_convex_radius: float = 0.05,
         shape_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
         shape_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         linear_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -101,6 +109,10 @@ class RigidBodySpec:
         self.shape_radius: float = shape_radius
         self.shape_half_height: float = shape_half_height
         self.shape_half_extents: tuple[float, float, float] = shape_half_extents
+        self.shape_plane_half_extent: float = shape_plane_half_extent
+        self.shape_top_radius: float = shape_top_radius
+        self.shape_bottom_radius: float = shape_bottom_radius
+        self.shape_convex_radius: float = shape_convex_radius
         self.shape_offset: tuple[float, float, float] = shape_offset
         self.shape_rotation_wxyz: tuple[float, float, float, float] = shape_rotation_wxyz
         self.linear_velocity: tuple[float, float, float] = linear_velocity
@@ -129,6 +141,10 @@ class RigidBodySpec:
             "shape_radius": self.shape_radius,
             "shape_half_height": self.shape_half_height,
             "shape_half_extents": self.shape_half_extents,
+            "shape_plane_half_extent": self.shape_plane_half_extent,
+            "shape_top_radius": self.shape_top_radius,
+            "shape_bottom_radius": self.shape_bottom_radius,
+            "shape_convex_radius": self.shape_convex_radius,
             "shape_offset": self.shape_offset,
             "shape_rotation_wxyz": self.shape_rotation_wxyz,
             "linear_velocity": self.linear_velocity,
@@ -376,11 +392,25 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
     collided_by_groups = max(0, min(0xFFFF, int(getattr(props, "collided_by_groups", 0xFFFF))))
 
     shape_type = str(getattr(props, "shape_type", "SPHERE"))
-    if shape_type not in {"SPHERE", "CAPSULE", "BOX"}:
+    if shape_type not in {
+        "SPHERE",
+        "CAPSULE",
+        "CYLINDER",
+        "TAPERED_CAPSULE",
+        "TAPERED_CYLINDER",
+        "PLANE",
+        "BOX",
+    }:
         shape_type = "SPHERE"
+    if shape_type == "PLANE":
+        body_type = "STATIC"
     shape_radius = max(float(getattr(props, "shape_radius", 0.5)), 0.001)
     shape_half_height = max(float(getattr(props, "shape_half_height", 0.5)), 0.001)
     shape_half_extents = tuple(max(v, 0.001) for v in _float3(getattr(props, "shape_half_extents", (0.5, 0.5, 0.5))))
+    shape_plane_half_extent = max(float(getattr(props, "shape_plane_half_extent", 10.0)), 1.0)
+    shape_top_radius = max(float(getattr(props, "shape_top_radius", 0.5)), 0.001)
+    shape_bottom_radius = max(float(getattr(props, "shape_bottom_radius", 0.3)), 0.001)
+    shape_convex_radius = max(float(getattr(props, "shape_convex_radius", 0.05)), 0.0)
     shape_offset = _float3(getattr(props, "shape_offset", (0.0, 0.0, 0.0)))
     shape_rotation_wxyz = _rotation_wxyz_from_euler(getattr(props, "shape_rotation", (0.0, 0.0, 0.0)))
 
@@ -413,6 +443,10 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
         shape_radius=shape_radius,
         shape_half_height=shape_half_height,
         shape_half_extents=shape_half_extents,
+        shape_plane_half_extent=shape_plane_half_extent,
+        shape_top_radius=shape_top_radius,
+        shape_bottom_radius=shape_bottom_radius,
+        shape_convex_radius=shape_convex_radius,
         shape_offset=shape_offset,
         shape_rotation_wxyz=shape_rotation_wxyz,
         linear_velocity=linear_velocity,

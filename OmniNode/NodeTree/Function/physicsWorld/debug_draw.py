@@ -109,6 +109,26 @@ def _capsule_lines(lines, seg_a, seg_b, radius):
         _line(lines, seg_a + sign * radius, seg_b + sign * radius)
 
 
+def _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, top_radius, bottom_radius, sphere_caps=False):
+    if half_height <= 1e-7:
+        radius = max(top_radius, bottom_radius)
+        _sphere_lines_oriented(lines, center, axis_x, axis_y, axis_z, radius)
+        return
+    top = center + axis_y * half_height
+    bottom = center - axis_y * half_height
+    if top_radius > 1e-7:
+        _circle(lines, top, axis_x, axis_z, top_radius)
+    if bottom_radius > 1e-7:
+        _circle(lines, bottom, axis_x, axis_z, bottom_radius)
+    for direction in (axis_x, -axis_x, axis_z, -axis_z):
+        _line(lines, bottom + direction * bottom_radius, top + direction * top_radius)
+    if sphere_caps:
+        if top_radius > 1e-7:
+            _sphere_lines_oriented(lines, top, axis_x, axis_y, axis_z, top_radius)
+        if bottom_radius > 1e-7:
+            _sphere_lines_oriented(lines, bottom, axis_x, axis_y, axis_z, bottom_radius)
+
+
 def _plane_lines(lines, center, axis_x, axis_y, normal):
     corners = [
         center - axis_x - axis_y,
@@ -200,7 +220,14 @@ def _draw_rigid_shape(lines, spec) -> None:
     axis_z = mathutils.Vector(mat.col[2][:3]).normalized()
     stype = str(getattr(spec, "shape_type", "SPHERE"))
 
-    if stype == "BOX":
+    if stype == "PLANE":
+        try:
+            extent = float(getattr(spec, "shape_plane_half_extent", 10.0))
+        except Exception:
+            extent = 10.0
+        extent = max(extent, 1.0)
+        _plane_lines(lines, center, axis_x * extent, axis_y * extent, axis_z)
+    elif stype == "BOX":
         try:
             hx, hy, hz = (float(v) for v in getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5)))
         except Exception:
@@ -210,6 +237,20 @@ def _draw_rigid_shape(lines, spec) -> None:
         radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
         half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
         _capsule_lines(lines, center - axis_y * half_height, center + axis_y * half_height, radius)
+    elif stype == "CYLINDER":
+        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
+        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, radius, radius)
+    elif stype == "TAPERED_CAPSULE":
+        top_radius = max(float(getattr(spec, "shape_top_radius", 0.5)), 0.0)
+        bottom_radius = max(float(getattr(spec, "shape_bottom_radius", 0.3)), 0.0)
+        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, top_radius, bottom_radius, sphere_caps=True)
+    elif stype == "TAPERED_CYLINDER":
+        top_radius = max(float(getattr(spec, "shape_top_radius", 0.5)), 0.0)
+        bottom_radius = max(float(getattr(spec, "shape_bottom_radius", 0.3)), 0.0)
+        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, top_radius, bottom_radius)
     else:
         radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
         _sphere_lines_oriented(lines, center, axis_x, axis_y, axis_z, radius)
