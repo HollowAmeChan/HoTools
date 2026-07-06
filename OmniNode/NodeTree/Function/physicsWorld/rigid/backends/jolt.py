@@ -141,21 +141,14 @@ class JoltAdapter:
     def _flush_handles(self) -> None:
         """
         world generation 变化（restart/scope 改变）时清空所有 handles。
-        通知 Jolt 删除所有 bodies/constraints，但不销毁 JoltWorld 本体。
+        直接调用 JoltWorld.clear()，它内部已保证顺序：先约束再 body。
         下一帧 sync 时会重新注册。
         """
-        for handle in list(self._constraint_handles.values()):
-            try:
-                self._jw.remove_constraint(handle)
-            except Exception:
-                pass
+        try:
+            self._jw.clear()
+        except Exception:
+            pass
         self._constraint_handles.clear()
-
-        for handle in list(self._body_handles.values()):
-            try:
-                self._jw.remove_body(handle)
-            except Exception:
-                pass
         self._body_handles.clear()
 
     # ---- Body 管理 --------------------------------------------------------
@@ -308,40 +301,20 @@ class JoltAdapter:
 
     def dispose(self, reason: str = "dispose") -> None:
         """
-        释放顺序（严格执行）：
-          1. 先逐一通知 Jolt 删除所有 constraints（必须在 bodies 之前）
-          2. 再逐一通知 Jolt 删除所有 bodies
-          3. 最后销毁 JoltWorld 本体
+        释放所有 Jolt 资源。
+        JoltWorld.clear() 内部已保证顺序：先删约束，再删 body，与 C++ 析构顺序一致。
         不能抛出异常（dispose 链约定）。幂等（多次调用安全）。
         """
         if not self._valid:
             return
-        self._valid = False   # 先标记，防止 dispose 中途异常后重入
+        self._valid = False   # 先标记，防止 dispose 途中异常后重入
         try:
-            # 阶段1：删除 constraints（顺序必须先于 bodies）
-            for handle in list(self._constraint_handles.values()):
-                try:
-                    self._jw.remove_constraint(handle)
-                except Exception:
-                    pass
-            self._constraint_handles.clear()
-
-            # 阶段2：删除 bodies
-            for handle in list(self._body_handles.values()):
-                try:
-                    self._jw.remove_body(handle)
-                except Exception:
-                    pass
-            self._body_handles.clear()
-
-            # 阶段3：销毁 JoltWorld 本体
-            try:
-                self._jw.destroy()
-            except Exception:
-                pass
+            self._jw.clear()  # 对应 C++ clear()：先约束后 body，顺序正确
         except Exception:
-            # dispose 链约定：不能向外抛异常
             pass
+        self._constraint_handles.clear()
+        self._body_handles.clear()
+        self._jw = None       # 允许 GC 回收 JoltWorld Python 对象
 
     def omni_cache_dispose(self, reason: str) -> None:
         """兼容 omni_cache_dispose 协议，供 backend_resources 字典调用。"""
