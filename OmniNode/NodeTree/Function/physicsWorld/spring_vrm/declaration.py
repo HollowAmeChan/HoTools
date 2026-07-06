@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from ..names import (
+    SPRING_VRM_POSE_CHANNEL,
+    SPRING_VRM_SLOT_KIND,
+    SPRING_VRM_SOLVER_ID,
+    SPRING_VRM_STATS_CHANNEL,
+)
+
 
 SPRING_VRM_SOLVER_DECLARATION = {
-    "solver_id": "spring_vrm",
-    "slot_kind": "spring_vrm",
+    "solver_id": SPRING_VRM_SOLVER_ID,
+    "slot_kind": SPRING_VRM_SLOT_KIND,
     "stage": "rewrite_vertical_slice",
     "consumes": [
         "PhysicsWorldCache.frame_context",
@@ -13,8 +20,8 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "SpringVRMSolverSpec",
     ],
     "produces": [
-        'world.result_streams["spring_vrm_pose"]',
-        'world.result_streams["spring_vrm_stats"]',
+        f'world.result_streams["{SPRING_VRM_POSE_CHANNEL}"]',
+        f'world.result_streams["{SPRING_VRM_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
         "slot.data.frame_state",

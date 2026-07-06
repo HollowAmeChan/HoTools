@@ -368,6 +368,41 @@ HoTools 当前 constraint spec 只有：
 
 当前 HoTools 已支持节点侧向 `rigid_body_commands` 发布 velocity、force、impulse、gravity factor、material response、motion quality、active 命令，并由 rigid solver 翻译到 adapter。motor target、constraint enable/break 和 shape/filter/sensor 等结构性运行更新仍未形成正式节点流。
 
+### Jolt 的隐式物理对象边界
+
+Jolt 后续会需要大量“看起来像节点写入 solver 信息”的能力，例如批量生成约束、规则生成 ragdoll 关节、按命名规则给刚体设置 material preset、给一批约束设置 motor profile。它们本质是会参与刚体模拟的隐式对象，不能直接写 Jolt adapter、不能写 solver slot，也不应该塞进帧级 `exchange`。
+
+统一约定：
+
+- 持久或懒更新的刚体/约束对象进入 `world.implicit_objects`。
+- 一次性命令进入 `world.exchange["rigid_body_commands"]`。
+- 求解结果、contact、sensor、constraint lambda 进入 `world.result_streams`。
+- Jolt native handle 只允许存在于 rigid solver slot 或 `backend_resources["rigid_solver"]` 内。
+
+示例 tag：
+
+```text
+rigid.generated_constraint        # 规则/批量节点生成的持久约束对象
+rigid.constraint_override         # motor、limit、break policy 等可懒更新对象
+rigid.material_preset             # 刚体材质响应 preset 对象
+rigid.world_setting               # gravity、solver iteration 等 world 级对象
+```
+
+示例链路：
+
+```text
+Physics World Begin
+  -> 刚体约束-批量生成写入世界
+  -> 刚体材质Preset-写入世界
+  -> 刚体模拟步
+  -> Physics Writeback
+  -> Physics World Commit
+```
+
+`physicsRigidSolver` 在 prepare 阶段读取声明的 `implicit_objects` tag，合并到 `RigidBodySpec` / `RigidConstraintSpec` 或 adapter sync plan，再按 signature/version 决定增量更新或重建。这样批量约束和 preset 是持久懒更新对象，不会被误解成每帧事件。
+
+写回顾虑：Jolt 后续可能会有批量生成的虚拟刚体、虚拟约束或 attachment，它们在 solver 内会有 transform / anchor 结果，但不一定对应真实 Blender `Object`。这类隐式对象默认只能进入 solver 和 debug/export；如果要写回 Blender，必须在 result stream 中显式声明真实 owner resolver，不能因为 payload 长得像内置物体就让 Physics Writeback 静默写回。
+
 ## Jolt 能输出什么
 
 ### 当前已输出

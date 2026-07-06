@@ -7,6 +7,15 @@ Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步。
 
 from __future__ import annotations
 
+from ..names import (
+    JOLT_STEP_WRITER_ID,
+    RIGID_BACKEND_RESOURCE_KEY,
+    RIGID_BODY_COMMANDS_CHANNEL,
+    RIGID_BODY_REGISTER_WRITER_ID,
+    RIGID_BODY_SLOT_KIND,
+    RIGID_CONSTRAINT_REGISTER_WRITER_ID,
+    RIGID_CONSTRAINT_SLOT_KIND,
+)
 from ..types import PhysicsWorldCache
 from .specs import (
     RigidBodySpec,
@@ -21,7 +30,6 @@ from .results import (
 )
 
 
-RIGID_BODY_COMMANDS_CHANNEL = "rigid_body_commands"
 _RIGID_COMMAND_CONSUMER_KEY = "_consumed_by_rigid_solver"
 
 
@@ -46,7 +54,7 @@ def register_rigid_bodies(
     if world is None or not isinstance(world, PhysicsWorldCache):
         return 0, []
 
-    solver_id = "rigid_body_solver"
+    solver_id = RIGID_BODY_REGISTER_WRITER_ID
     world.acquire_write(solver_id)
     try:
         registered_ids: list[str] = []
@@ -56,7 +64,7 @@ def register_rigid_bodies(
             if spec is None:
                 continue
 
-            slot = world.ensure_solver_slot(spec.slot_id, "rigid_body")
+            slot = world.ensure_solver_slot(spec.slot_id, RIGID_BODY_SLOT_KIND)
 
             # world generation 变化时冷启动 slot（清掉旧 spec 和 native handle）
             if slot.world_generation != world.generation:
@@ -91,7 +99,7 @@ def register_constraints(
     if world is None or not isinstance(world, PhysicsWorldCache):
         return 0, []
 
-    solver_id = "constraint_solver"
+    solver_id = RIGID_CONSTRAINT_REGISTER_WRITER_ID
     world.acquire_write(solver_id)
     try:
         registered_ids: list[str] = []
@@ -101,7 +109,7 @@ def register_constraints(
             if spec is None:
                 continue
 
-            slot = world.ensure_solver_slot(spec.slot_id, "rigid_constraint")
+            slot = world.ensure_solver_slot(spec.slot_id, RIGID_CONSTRAINT_SLOT_KIND)
 
             if slot.world_generation != world.generation:
                 slot.data.clear()
@@ -139,13 +147,13 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     if _has_pending_rigid_body_commands(world):
         return True
     for slot in world.solver_slots.values():
-        if slot.kind not in {"rigid_body", "rigid_constraint"}:
+        if slot.kind not in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
             continue
         if slot.data.get("spec") is None:
             continue
         if slot.data.get("_jolt_generation") != world.generation:
             return True
-        if slot.kind == "rigid_body" and slot.data.get("_jolt_kinematic_pose_dirty"):
+        if slot.kind == RIGID_BODY_SLOT_KIND and slot.data.get("_jolt_kinematic_pose_dirty"):
             return True
     return False
 
@@ -284,7 +292,7 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     clear_rigid_transform_results(world)
 
     for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind != "rigid_body":
+        if slot.kind != RIGID_BODY_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         if spec is None:
@@ -332,7 +340,7 @@ def _rigid_slot_error_counts(world: PhysicsWorldCache) -> tuple[int, int]:
     sync_error_count = 0
     result_error_count = 0
     for slot in world.solver_slots.values():
-        if slot.kind not in {"rigid_body", "rigid_constraint"}:
+        if slot.kind not in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
             continue
         if slot.data.get("_jolt_error"):
             sync_error_count += 1
@@ -399,7 +407,7 @@ def step_rigid_bodies(
     fc = world.frame_context
     same_frame = bool(getattr(fc, "same_frame", False)) if fc is not None else False
     if same_frame and not _has_pending_jolt_work(world):
-        adapter = world.backend_resources.get("rigid_solver")
+        adapter = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
         body_count = int(getattr(adapter, "body_count", 0) or 0)
         if adapter is not None:
             adapter.last_command_count = 0
@@ -416,7 +424,7 @@ def step_rigid_bodies(
         # hotools_jolt 未编译，静默降级
         return 0, 0.0
 
-    solver_id = "jolt_step"
+    solver_id = JOLT_STEP_WRITER_ID
     world.acquire_write(solver_id)
     try:
         dt = float(fc.dt) if fc is not None and fc.dt > 0.0 else 1.0 / 60.0
@@ -425,7 +433,7 @@ def step_rigid_bodies(
 
         # --- sync rigid bodies ---
         for slot_id, slot in list(world.solver_slots.items()):
-            if slot.kind != "rigid_body":
+            if slot.kind != RIGID_BODY_SLOT_KIND:
                 continue
             spec = slot.data.get("spec")
             if spec is None:
@@ -449,7 +457,7 @@ def step_rigid_bodies(
 
         # --- sync constraints ---
         for slot_id, slot in list(world.solver_slots.items()):
-            if slot.kind != "rigid_constraint":
+            if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
                 continue
             spec = slot.data.get("spec")
             if spec is None:

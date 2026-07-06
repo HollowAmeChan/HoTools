@@ -226,6 +226,7 @@ class PhysicsWorldCache:
       collider_snapshot      — 当帧碰撞快照（dict list）
       previous_collider_snapshot — 上帧快照（供 MC2 moving collider 使用）
       solver_slots           — 各 solver 的私有状态槽
+      implicit_objects       — 跨帧持久的隐式物理对象 registry
       exchange               — 当前图执行内的帧级交换 item registry
       result_streams         — 当前图执行内的 solver result registry
       backend_resources      — native backend 资源（如 Jolt world context）
@@ -244,6 +245,7 @@ class PhysicsWorldCache:
         self.collider_snapshot: dict = {"frame": None, "colliders": [], "source_count": 0}
         self.previous_collider_snapshot: dict | None = None
         self.solver_slots: dict[str, PhysicsSolverSlot] = {}
+        self.implicit_objects: list[dict] = []
         self.exchange: dict[str, list[dict]] = {}
         self.result_streams: dict[str, list[dict]] = {}
         self.runtime_caches: dict = {}
@@ -305,6 +307,126 @@ class PhysicsWorldCache:
 
     def set_runtime_cache(self, name: str, value) -> None:
         self.runtime_caches[name] = value
+
+    # ---- 隐式物理对象 --------------------------------------------------
+
+    def append_implicit_object(
+        self,
+        item: dict | None = None,
+        tag: str | None = None,
+        producer: str = "unknown",
+        stable_id: str = "",
+        signature: str = "",
+        enabled: bool = True,
+        schema: int = 1,
+        **payload,
+    ) -> dict | None:
+        """
+        追加或更新跨帧持久的隐式物理对象。
+
+        implicit object 不是 frame exchange：Physics World Begin 不会清空它。
+        tag 是 solver 可读的类型标记；stable_id 只用于 registry 内部去重，不暴露为用户设置。
+        """
+        data = dict(item) if isinstance(item, dict) else {}
+        if payload:
+            data.update(payload)
+
+        object_tag = str(tag or data.get("tag") or "").strip()
+        if not object_tag:
+            return None
+
+        object_signature = str(signature or data.get("signature") or "").strip()
+        object_stable_id = str(stable_id or data.get("stable_id") or "").strip()
+        if not object_stable_id and object_signature:
+            object_stable_id = f"{object_tag}:{object_signature}"
+        if not object_stable_id:
+            object_stable_id = f"{object_tag}:{len(self.implicit_objects)}"
+
+        previous_index = None
+        previous = None
+        for index, candidate in enumerate(self.implicit_objects):
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("tag") == object_tag and candidate.get("stable_id") == object_stable_id:
+                previous_index = index
+                previous = candidate
+                break
+
+        previous_version = int(previous.get("version", 0)) if isinstance(previous, dict) else 0
+        changed = (
+            previous is None
+            or previous.get("signature") != object_signature
+            or bool(previous.get("enabled", True)) != bool(enabled)
+        )
+        frame = int(getattr(self.frame_context, "frame", 0) or 0)
+        entry = {
+            "tag": object_tag,
+            "stable_id": object_stable_id,
+            "schema": int(schema or data.get("schema", 1) or 1),
+            "payload": dict(data.get("payload") if isinstance(data.get("payload"), dict) else data),
+            "signature": object_signature,
+            "version": previous_version + 1 if changed else previous_version,
+            "dirty": bool(changed),
+            "enabled": bool(enabled),
+            "producer": str(producer or "unknown"),
+            "source_id": str(data.get("source_id", "") or object_stable_id),
+            "priority": int(data.get("priority", 0) or 0),
+            "updated_frame": frame if changed or previous is None else previous.get("updated_frame", frame),
+            "last_seen_frame": frame,
+            "generation": int(self.generation),
+        }
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            entry["metadata"] = dict(metadata)
+        elif isinstance(previous, dict) and "metadata" in previous:
+            entry["metadata"] = previous.get("metadata")
+
+        if previous_index is None:
+            self.implicit_objects.append(entry)
+        else:
+            self.implicit_objects[previous_index] = entry
+        return entry
+
+    def iter_implicit_objects(
+        self,
+        tag: str | None = None,
+        producer: str | None = None,
+        enabled: bool | None = True,
+    ) -> list[dict]:
+        """读取隐式物理对象。此操作不删除 item。"""
+        items = [item for item in self.implicit_objects if isinstance(item, dict)]
+        if tag is not None:
+            items = [item for item in items if item.get("tag") == str(tag)]
+        if producer is not None:
+            items = [item for item in items if item.get("producer") == str(producer)]
+        if enabled is not None:
+            items = [item for item in items if bool(item.get("enabled", True)) == bool(enabled)]
+        return list(items)
+
+    def copy_implicit_objects_from(self, other) -> None:
+        """
+        world owner 被 replace 时保留隐式对象。
+
+        这里故意只浅拷贝 entry：payload 里可能包含 Blender 对象引用，不能深拷贝。
+        """
+        if not isinstance(other, PhysicsWorldCache):
+            return
+        self.implicit_objects = [
+            dict(item)
+            for item in getattr(other, "implicit_objects", ())
+            if isinstance(item, dict)
+        ]
+
+    def implicit_object_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.implicit_objects:
+            if not isinstance(item, dict):
+                continue
+            tag = str(item.get("tag") or "")
+            if not tag:
+                continue
+            counts[tag] = counts.get(tag, 0) + 1
+        return counts
 
     def clear_exchange(self) -> None:
         """清空当前图执行内的 frame scratch exchange。"""
@@ -463,6 +585,7 @@ class PhysicsWorldCache:
 
         # 清理 runtime caches（Python 容器，GC 即可，但显式 clear 更安全）
         self.runtime_caches.clear()
+        self.implicit_objects.clear()
         self.exchange.clear()
         self.result_streams.clear()
 
@@ -517,6 +640,8 @@ class PhysicsWorldCache:
             "objects": self.collider_snapshot.get("object_count", 0),
             "collider_sources": self.collider_snapshot.get("source_count", 0),
             "colliders": len(self.collider_snapshot.get("colliders") or []),
+            "implicit_objects": self.implicit_object_counts(),
+            "implicit_object_count": len(self.implicit_objects),
             "exchange_channels": self.exchange_counts(),
             "exchange_item_count": sum(len(items) for items in self.exchange.values()),
             "result_channels": self.result_stream_counts(),

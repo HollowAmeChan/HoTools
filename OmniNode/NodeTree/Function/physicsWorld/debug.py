@@ -35,6 +35,7 @@ def snapshot_to_text(snapshot: dict, indent: int = 0) -> str:
         "frame", "previous_frame", "continuous", "same_frame", "restart_required",
         "dt", "time_scale", "substeps",
         "objects", "collider_sources", "colliders",
+        "implicit_objects", "implicit_object_count",
         "exchange_channels", "exchange_item_count",
         "result_channels", "result_item_count",
         "solver_slots", "backend_resources", "backend_resource_details",

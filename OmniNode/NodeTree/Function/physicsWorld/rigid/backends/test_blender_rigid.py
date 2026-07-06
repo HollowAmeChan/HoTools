@@ -96,6 +96,10 @@ _pkg_dirs = [
     ("HoTools.OmniNode.NodeTree",                    _NT_DIR),
     ("HoTools.OmniNode.NodeTree.Function",           os.path.join(_NT_DIR, "Function")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld", _PW_ROOT),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.utils",
+         os.path.join(_PW_ROOT, "utils")),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm",
+         os.path.join(_PW_ROOT, "spring_vrm")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid",
          os.path.join(_PW_ROOT, "rigid")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.backends",
@@ -121,6 +125,10 @@ if _nt_omni_key not in sys.modules:
         @classmethod
         def mutate(cls, v): return cls(v)
     _sm._OmniCache = _OmniCache
+    class _OmniBone(dict):
+        """stub：满足 spring_vrm 结果模块导入链。"""
+        pass
+    _sm._OmniBone = _OmniBone
     sys.modules[_nt_omni_key] = _sm
     # 同时用短名注册，防止其他路径查找
     sys.modules.setdefault("OmniNodeSocketMapping", _sm)
@@ -139,9 +147,11 @@ if _nt_fnc_key not in sys.modules:
     sys.modules[_nt_fnc_key] = _fm
 
 # 按依赖顺序加载
+_load_pw("names",                "names.py")
 _load_pw("types",                "types.py")
 _load_pw("scope",                "scope.py")
 _load_pw("rigid.results",        "rigid/results.py")
+_load_pw("spring_vrm.results",   "spring_vrm/results.py")
 _load_pw("writeback",            "writeback.py")
 _load_pw("debug",                "debug.py")
 _load_pw("world",                "world.py")

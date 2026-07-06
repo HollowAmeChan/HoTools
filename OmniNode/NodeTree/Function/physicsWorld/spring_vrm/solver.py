@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..names import SPRING_VRM_POSE_CHANNEL, SPRING_VRM_SLOT_KIND, SPRING_VRM_STEP_WRITER_ID
 from ..types import PhysicsWorldCache
 from .declaration import SPRING_VRM_SOLVER_DECLARATION
 from .results import (
@@ -10,20 +11,18 @@ from .results import (
     publish_spring_vrm_stats_result,
 )
 from .specs import SpringVRMSolverSpec, build_spring_vrm_solver_specs
+from .implicit_objects import collect_spring_vrm_chain_objects
 from .native import step_spring_vrm_slot
 
 
-SPRING_VRM_SLOT_KIND = "spring_vrm"
-
-
-def register_spring_vrm_from_chain_settings(
+def register_spring_vrm_from_chain_properties(
     world: PhysicsWorldCache,
-    vrm_chain_settings,
+    vrm_chain_properties,
     backend: str = "cpp",
     substeps: int = 1,
 ) -> tuple[int, list[str]]:
     specs = build_spring_vrm_solver_specs(
-        vrm_chain_settings,
+        vrm_chain_properties,
         backend=backend,
         substeps=substeps,
     )
@@ -80,20 +79,20 @@ def register_spring_vrm_specs(
 
 def step_spring_vrm(
     world: PhysicsWorldCache,
-    vrm_chain_settings,
     enabled: bool = True,
     substeps: int = 1,
 ) -> tuple[int, float]:
     if not enabled or world is None or not isinstance(world, PhysicsWorldCache):
         return 0, 0.0
 
+    chain_objects = _resolve_chain_objects(world)
     specs = build_spring_vrm_solver_specs(
-        vrm_chain_settings,
+        chain_objects,
         backend="cpp",
         substeps=max(1, int(substeps)),
     )
 
-    solver_id = "spring_vrm_step"
+    solver_id = SPRING_VRM_STEP_WRITER_ID
     world.acquire_write(solver_id)
     try:
         clear_spring_vrm_pose_results(world)
@@ -150,7 +149,7 @@ def step_spring_vrm(
         else:
             _republish_last_results(world, registered_ids)
             published = len(world.consume_results(
-                "spring_vrm_pose",
+                SPRING_VRM_POSE_CHANNEL,
                 solver=SPRING_VRM_SOLVER_ID,
                 frame=int(getattr(fc, "frame", 0) or 0),
                 generation=world.generation,
@@ -173,6 +172,12 @@ def step_spring_vrm(
         return published, step_ms
     finally:
         world.release_write(solver_id)
+
+
+def _resolve_chain_objects(
+    world: PhysicsWorldCache,
+) -> list[dict]:
+    return collect_spring_vrm_chain_objects(world)
 
 
 def _republish_last_results(world: PhysicsWorldCache, slot_ids: list[str]) -> None:

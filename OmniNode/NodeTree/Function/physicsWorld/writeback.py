@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import mathutils
 
+from .names import RIGID_BODY_SLOT_KIND, SPRING_VRM_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
 from .spring_vrm.results import iter_spring_vrm_pose_results
 from .utils.values import matrix_from_16
@@ -76,7 +77,7 @@ def reset_rigid_body_deltas(world) -> None:
     """
     updated = set()
     for slot in world.solver_slots.values():
-        if slot.kind != "rigid_body":
+        if slot.kind != RIGID_BODY_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
@@ -137,7 +138,7 @@ def writeback_rigid_body_deltas(world) -> int:
     written = 0
 
     for slot in list(world.solver_slots.values()):
-        if slot.kind != "rigid_body":
+        if slot.kind != RIGID_BODY_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
@@ -201,7 +202,7 @@ def writeback_bone_transforms(world) -> int:
     written = 0
 
     for slot in list(world.solver_slots.values()):
-        if slot.kind != "spring_vrm":
+        if slot.kind != SPRING_VRM_SLOT_KIND:
             continue
         spec = slot.data.get("spec")
         armature = getattr(spec, "armature", None)

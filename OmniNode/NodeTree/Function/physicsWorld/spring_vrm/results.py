@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from ..names import (
+    SPRING_VRM_POSE_CHANNEL,
+    SPRING_VRM_SOLVER_ID,
+    SPRING_VRM_STATS_CHANNEL,
+)
 from ..utils.values import float3, matrix16
-
-
-SPRING_VRM_SOLVER_ID = "spring_vrm"
-SPRING_VRM_POSE_CHANNEL = "spring_vrm_pose"
-SPRING_VRM_STATS_CHANNEL = "spring_vrm_stats"
 
 
 def make_spring_vrm_pose_result(

@@ -10,9 +10,10 @@ import mathutils
 
 from ....FunctionNodeCore import omni
 from ... import _Color
+from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
 from .results import get_rigid_transform_result
-from .solver import RIGID_BODY_COMMANDS_CHANNEL, step_rigid_bodies
+from .solver import step_rigid_bodies
 from .specs import build_rigid_body_spec
 
 
@@ -46,7 +47,7 @@ def _publish_rigid_body_command(
     if spec is None:
         return world, None
     slot = world.solver_slots.get(spec.slot_id)
-    if slot is None or slot.kind != "rigid_body":
+    if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
         return world, None
 
     item = {
@@ -68,7 +69,7 @@ def _rigid_result_for_target(world: object, target: bpy.types.Object) -> dict | 
     if spec is None:
         return None
     slot = world.solver_slots.get(spec.slot_id)
-    if slot is None or slot.kind != "rigid_body":
+    if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
         return None
     fc = getattr(world, "frame_context", None)
     frame = int(getattr(fc, "frame", 0) or 0)

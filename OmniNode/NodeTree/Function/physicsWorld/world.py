@@ -30,6 +30,11 @@ from .types import (
     PhysicsObjectScope,
     PhysicsColliderSource,
 )
+from .names import (
+    RIGID_BACKEND_RESOURCE_KEY,
+    RIGID_BODY_SLOT_KIND,
+    RIGID_CONSTRAINT_SLOT_KIND,
+)
 from .scope import (
     build_scope_key,
     collect_physics_sources,
@@ -250,7 +255,7 @@ def _clear_scope_dynamic_rigid_deltas(scope: PhysicsObjectScope) -> None:
 
 
 def _flush_rigid_backend_handles(world: PhysicsWorldCache) -> None:
-    adapter = world.backend_resources.get("rigid_solver")
+    adapter = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
     flush = getattr(adapter, "_flush_handles", None)
     if callable(flush):
         try:
@@ -368,7 +373,7 @@ def _constraint_sync_signature(spec) -> tuple:
 def _mark_all_rigid_slots_for_resync(world: PhysicsWorldCache) -> None:
     _flush_rigid_backend_handles(world)
     for slot in world.solver_slots.values():
-        if slot.kind in {"rigid_body", "rigid_constraint"}:
+        if slot.kind in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
             slot.data.pop("_jolt_generation", None)
 
 
@@ -385,9 +390,9 @@ def _prune_stale_rigid_slots(
     """
     stale_ids = []
     for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind == "rigid_body" and slot_id not in active_body_ids:
+        if slot.kind == RIGID_BODY_SLOT_KIND and slot_id not in active_body_ids:
             stale_ids.append(slot_id)
-        elif slot.kind == "rigid_constraint" and slot_id not in active_constraint_ids:
+        elif slot.kind == RIGID_CONSTRAINT_SLOT_KIND and slot_id not in active_constraint_ids:
             stale_ids.append(slot_id)
 
     if not stale_ids:
@@ -623,7 +628,9 @@ def physicsWorldBegin(
     if not world.valid or world.generation == 0:
         if world is raw and isinstance(raw, PhysicsWorldCache):
             # 旧 world 需要被 replace，新建一个
+            previous_world = world
             world = PhysicsWorldCache()
+            world.copy_implicit_objects_from(previous_world)
         world.generation += 1
         world.replace_required = True
         world.valid = True
@@ -728,7 +735,7 @@ def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) ->
                 spec = build_rigid_body_spec(obj)
                 if spec is not None:
                     active_body_ids.add(spec.slot_id)
-                    slot = world.ensure_solver_slot(spec.slot_id, "rigid_body")
+                    slot = world.ensure_solver_slot(spec.slot_id, RIGID_BODY_SLOT_KIND)
                     if slot.world_generation != world.generation:
                         slot.data.clear()
                         slot.world_generation = world.generation
@@ -762,7 +769,7 @@ def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) ->
                         cspec = build_constraint_spec(obj)
                         if cspec is not None:
                             active_constraint_ids.add(cspec.slot_id)
-                            cslot = world.ensure_solver_slot(cspec.slot_id, "rigid_constraint")
+                            cslot = world.ensure_solver_slot(cspec.slot_id, RIGID_CONSTRAINT_SLOT_KIND)
                             if cslot.world_generation != world.generation:
                                 cslot.data.clear()
                                 cslot.world_generation = world.generation

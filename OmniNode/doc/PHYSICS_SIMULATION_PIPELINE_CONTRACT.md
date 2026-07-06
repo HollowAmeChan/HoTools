@@ -21,6 +21,7 @@ OmniNode 物理系统应该从“一个高封装 solver 节点内部完成所有
 Cache Read
   -> Physics Object Scope
   -> Physics World Begin
+  -> [Implicit Physics Objects]      ← 可选：注册节点把持久隐式对象写入 world.implicit_objects
   -> [Physics Entity / Spec Build]   ← 可选独立节点，或内联在 Solver 内
   -> Solver Step                     ← 含 Solver Prepare（内部，不是独立节点）
      (-> Cross Solver Publish)       ← 可选：solver 写 world.exchange
@@ -42,6 +43,7 @@ Cache Read
 6. 所有跨 solver 数据必须有类型、命名空间、生命周期和生产者信息。
 7. 每个 solver 必须声明 consumes、produces、persistent state、update policy、writeback 和 export 能力。
 8. Python 管 Blender 边界、cache 生命周期和 debug；C++ 管适合常驻的纯数据 context 和数值热路径。
+9. 隐式写入会参与模拟的 solver 对象必须走 `world.implicit_objects`，不能写 `exchange`、不能直接写 solver slot、不能放进模块全局状态。
 
 ## 阶段职责
 
@@ -115,6 +117,7 @@ MeshClothSpec
 BoneClothSpec
 GeneratedConstraintSpec
 TemporaryColliderSpec
+ImplicitPhysicsObjectSpec
 ```
 
 必须包含：
@@ -275,6 +278,83 @@ debug_markers
 - 如需跨帧存在，必须升级为 spec 或 slot state。
 - 当前最小 API：`world.publish_exchange(...)`、`world.consume_exchange(channel)`、`world.clear_exchange()`、`world.exchange_counts()`。
 - `consume_exchange` 是非破坏性读取；需要避免重复消费时，consumer 在 item 上写入自己的私有 `_consumed_by_*` 标记。
+
+### 隐式物理对象 / Implicit Objects
+
+`world.implicit_objects` 是统一物理世界里的“隐式物理对象”registry。它用于表达那些由注册节点、规则节点或批量生成节点写入世界、会参与后续物理模拟、但不应该被当作每帧事件的数据。
+
+它和其它三条通道的边界如下：
+
+| 通道 | 用途 | 生命周期 | 允许谁写 | 允许谁读 |
+|---|---|---|---|---|
+| `implicit_objects` | 持久懒更新的隐式物理对象，例如 VRM 骨链对象、批量生成约束、solver 参数对象 | 跨帧，Begin 不清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
+| `exchange` | 当前图执行内的命令、事件、临时共享数据，例如 force/impulse、临时碰撞代理 | frame / until_next_begin | solver 或命令节点 | 下游声明消费 channel 的 solver |
+| `result_streams` | solver 输出的本帧纯结果快照，例如 transform、pose matrix、contact event | 当前图执行 | solver | writeback、debug、export、下游 solver |
+| `solver_slots` | solver 私有状态和 native context | 跨帧，归属单个 solver | 所属 solver | 只能所属 solver 读写，debug 只读摘要 |
+
+`implicit_objects` 的最小 entry 结构：
+
+```python
+{
+    "tag": "spring_vrm.chain",
+    "stable_id": "spring_vrm.chain:{arm_ptr}:{arm_data_ptr}:{root}:{bones_hash}",
+    "schema": 1,
+    "payload": {...},               # 纯对象/spec 片段；可含 Blender 引用，但不得含 native handle
+    "signature": "stable_hash",
+    "version": 3,
+    "dirty": False,
+    "enabled": True,
+    "producer": "physicsSpringVRMChainRegister",
+    "source_id": "node-or-rule-id",
+    "updated_frame": 12,
+    "last_seen_frame": 14,
+    "generation": 5,
+    "metadata": {...},
+}
+```
+
+规则：
+
+- `tag` 是对象类型标记，必须使用 `physicsWorld/names.py` 里的全局名称常量，不允许 solver 和注册节点各写一份字符串。例如 `SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"`。
+- `physicsWorld/names.py` 是统一物理世界的跨模块名称集中点。solver id、slot kind、result channel、exchange channel、backend resource key 和 implicit object tag 都应放在这里，避免未来跨 solver 识别名称错位。
+- `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
+- `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
+- `dirty=True` 只表示该 entry 相对上一轮写入发生了设置变化，不表示本帧必须 step。
+- `enabled=False` 是禁用该隐式对象，不是 no-op。删除注册节点不会自动清除旧 entry；需要关闭时应显式写 disabled entry，或执行 Cache Delete / clear runtime cache。
+- `Physics World Begin` 不清空 `implicit_objects`。world owner 被 replace 时应浅拷贝对象；solver slot 和 native state 仍按 generation 冷启动。
+- 注册节点必须接收并返回同一个 `PhysicsWorldCache`，只调用 `world.append_implicit_object()`，不得直接创建 solver slot、不得写 `world.exchange`、不得写 Blender。
+- 注册节点默认不标记 `always_run=True`。即使因节点图依赖被执行，语义上也只是按 stable_id/signature 更新 registry；输入未变时不产生新的 solver 重建。
+- solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。solver step 不应该再暴露大量同类对象 socket。
+- 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
+- `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
+
+后续 solver 必须按同一模式组织：
+
+```text
+<Domain>属性节点
+  输入：authoring data / rules / targets
+  输出：可注册的属性对象
+
+<Domain>对象注册节点
+  输入：world, 属性对象, enabled
+  输出：world, item_count, dirty_count, version
+  行为：append/update world.implicit_objects[tag]
+
+<Domain> Solver Step
+  输入：world, enabled, solver runtime params
+  行为：读取声明的 implicit object tag，注册/更新 solver slot，调用 native，发布 result stream
+```
+
+当前第一条落地是 VRM SpringBone：
+
+```text
+Physics World Begin
+  -> VRM骨链属性
+  -> VRM骨链对象注册
+  -> SpringBone VRM模拟步          # 读取 tag=SPRING_VRM_CHAIN_OBJECT_TAG 的全部隐式对象
+  -> Physics Writeback
+  -> Physics World Commit
+```
 
 `rigid_body_commands` 建议 payload：
 
@@ -461,6 +541,7 @@ Physics Writeback 统一写 PoseBone + mesh delta
 - public snapshots。
 - solver slot registry。
 - backend resource registry。
+- implicit object registry。
 - exchange registry。
 - debug snapshot。
 
@@ -502,6 +583,7 @@ solver slot 持有：
 - 默认帧末清理。
 - 跨 solver 共享时必须走 exchange channel。
 - 跨帧保存时必须升级到 world state 或 solver slot。
+- 持久的 solver 对象和生成 spec 不属于 frame scratch，应进入 `world.implicit_objects`。
 
 ## Solver 声明协议
 
@@ -518,6 +600,7 @@ Consumes:
   authoring:
   frame_input:
   world:
+  implicit_objects:
   exchange:
 
 Produces:
@@ -533,6 +616,7 @@ Persistent State:
   frame_state:
 
 Update Policy:
+  implicit_object_policy:
   every_frame:
   dirty_only:
   lazy_on_access:
@@ -555,6 +639,20 @@ Failure:
   skipped_frame:
   failed_run:
   dispose:
+```
+
+`implicit_objects` 声明必须列出：
+
+```text
+implicit_objects:
+  tag:
+  tag_constant:
+  schema:
+  payload_contract:
+  signature_fields:
+  stable_id_fields:
+  conflict_policy: replace_same_stable_id | collect_all | error
+  disabled_policy:
 ```
 
 ### Update Policy 语义
@@ -760,6 +858,12 @@ debug_draw_primitives
 export_samples
 ```
 
+隐式对象与写回边界：
+
+- `world.implicit_objects` 本身不进入写回阶段。Physics Writeback 只能消费 `world.result_streams` 中的公开结果，不能把隐式对象 payload 当作 Blender owner 直接写。
+- 即使未来出现“虚拟刚体 / 批量生成约束 / 临时 attachment”这类长得像 Blender 对象的隐式对象，也默认只参与 solver prepare 和 debug，不允许伪装成真实 `Object` / `PoseBone` / `Mesh` 写回目标。
+- 如果某类隐式对象确实需要写回 transform，必须先在 result item 中显式声明 `writeback_target_type`、`target_id`、`source_implicit_object_id` 和 owner resolver；没有明确 owner resolver 时只能发布 debug/export 结果，不能静默写 Blender。
+
 好处：
 
 - Writeback、Export、Bake、Preview 共享结果。
@@ -853,10 +957,11 @@ physicsWorld/utils/
 1. `PhysicsWorldCache` 的生命周期已经通过真实 runtime cache 路径验证：Cache Write 提交、Cache Delete、`OmniRuntimeState.clear_all()` 都能触发 owner dispose。
 2. 目标 solver 可以声明 consumes / produces / persistent state / dirty key / same_frame_policy / writeback 支持。
 3. solver step 不直接写 bpy；输出先进入 `world.result_streams` 或 `world.exchange`。
-4. 写回路径已经有明确 owner：Object、PoseBone、mesh delta、shape key 或 export cache，不能在 solver 内隐式写。
+4. 写回路径已经有明确 owner：Object、PoseBone、mesh delta、shape key 或 export cache，不能在 solver 内隐式写；隐式对象不能伪装成 owner 绕过统一写回。
 5. debug 节点能观察该 solver 的 slot / result / stats，而不读取 backend-private handle。
 6. native/C++ 计算入口明确，Python 运行时不维护第二套 solver 算法。
-7. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
+7. 如需隐式对象或生成 spec，必须先定义 `implicit_objects` tag / schema / stable_id / signature / conflict policy。
+8. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
 
 迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
 
@@ -935,10 +1040,11 @@ rigid.jolt_step
 3. 更新频率表。
 4. result stream 格式。
 5. exchange channel 使用情况。
-6. dirty key 定义。
-7. native context 生命周期。
-8. writeback/export 支持状态。
-9. 不兼容变更说明。
+6. implicit_objects tag / schema / stable_id / signature / conflict policy。
+7. dirty key 定义。
+8. native context 生命周期。
+9. writeback/export 支持状态。
+10. 不兼容变更说明。
 
 ## 当前建议
 

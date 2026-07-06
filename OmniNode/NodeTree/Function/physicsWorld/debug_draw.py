@@ -20,6 +20,7 @@ import gpu
 import mathutils
 from gpu_extras.batch import batch_for_shader
 
+from .names import RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
 
 # ---------------------------------------------------------------------------
@@ -753,7 +754,7 @@ def update_draw_store(
         spec = slot.data.get("spec")
         if spec is None:
             continue
-        if slot.kind == "rigid_body" and show_rigid:
+        if slot.kind == RIGID_BODY_SLOT_KIND and show_rigid:
             result = (
                 get_rigid_transform_result(
                     world,
@@ -765,7 +766,7 @@ def update_draw_store(
             shape = _rigid_shape_snapshot(spec, result)
             if shape is not None:
                 rigid_shapes.append(shape)
-        elif slot.kind == "rigid_constraint" and (show_constraints or show_bugs):
+        elif slot.kind == RIGID_CONSTRAINT_SLOT_KIND and (show_constraints or show_bugs):
             constraint = _constraint_snapshot(spec)
             if constraint is not None:
                 constraints.append(constraint)

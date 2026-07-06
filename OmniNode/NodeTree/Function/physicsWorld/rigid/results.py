@@ -8,10 +8,11 @@ these results instead of reaching into backend-private Jolt handles.
 
 from __future__ import annotations
 
-
-RIGID_TRANSFORM_CHANNEL = "rigid_transform"
-RIGID_SOLVER_STATS_CHANNEL = "rigid_solver_stats"
-RIGID_SOLVER_ID = "rigid_jolt"
+from ..names import (
+    RIGID_SOLVER_ID,
+    RIGID_SOLVER_STATS_CHANNEL,
+    RIGID_TRANSFORM_CHANNEL,
+)
 
 
 def _float3(value) -> tuple[float, float, float]:

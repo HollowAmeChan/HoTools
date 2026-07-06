@@ -75,6 +75,7 @@ Cache Read / Cache Write 仍然作为跨帧生命周期边界。
 Cache Read
   -> Physics Object Scope
   -> Physics World Begin
+  -> Implicit Object Registers
   -> MeshCloth Solver
   -> BoneCloth Solver
   -> SpringBone Solver
@@ -88,6 +89,7 @@ Cache Read
 - `Cache Read` 读取上一轮 committed 的 `PhysicsWorldCache`。
 - `Physics Object Scope` 输出本物理世界关心的对象范围。
 - `Physics World Begin` 确保 world owner 对当前帧有效。
+- `Implicit Object Registers` 可选地把持久隐式对象写进 `world.implicit_objects`。
 - solver 节点接收并返回同一个 world owner。
 - `Physics World Commit` 把裸 world owner 包装成 `_OmniCache.replace(...)` 或 `_OmniCache.mutate(...)`。
 - `Cache Write` 仍然是最终 runtime cache 提交边界。
@@ -239,6 +241,7 @@ PhysicsWorldCache
   collider_snapshot
   previous_collider_snapshot
   solver_slots
+  implicit_objects
   exchange
   backend_resources
   debug counters
@@ -270,6 +273,70 @@ class PhysicsFrameContext:
 - `restart_required=True`：reset、倒放、跳帧、scope 改变或 world invalid。
 - `generation`：world 每次重建或全局 restart 时递增，solver slot 可用它判断是否需要冷启动。
 - `exchange`：当前图执行内的帧级 scratch registry。`Physics World Begin` 会清空上一轮 exchange；需要跨帧保存的数据必须升级为 spec、solver slot 或 world state。
+- `implicit_objects`：跨帧持久的隐式物理对象 registry。它不属于帧级 exchange，Begin 不清空；注册节点按 tag/stable_id 追加或更新对象，solver 通过 tag 收集自己要消费的对象。
+
+### 隐式物理对象
+
+统一物理世界允许“注册节点 / 生成节点”把会参与模拟的对象隐式写入 world，但这个入口必须是正式、可检查的 registry：`world.implicit_objects`。
+
+这类数据包括：
+
+```text
+SpringBone VRM 链设置
+MC2 mesh / bone cloth 设置组
+规则生成的 Jolt 刚体约束
+批量生成的 joint / attachment / force field 规格
+solver 参数对象
+```
+
+它不包括：
+
+```text
+force / impulse / activate 等一次性命令       -> world.exchange
+solver 每帧输出 transform / pose / contact     -> world.result_streams
+native body / constraint handle                -> solver slot / backend resource
+```
+
+隐式对象节点的统一形态：
+
+```text
+<Domain>属性
+  输入：对象、骨链或规则参数
+  输出：属性对象
+
+<Domain>对象注册
+  输入：world, 属性对象, enabled
+  输出：world, item_count, dirty_count, version
+  行为：world.append_implicit_object(tag, stable_id, payload, signature, enabled)
+```
+
+约束：
+
+1. 属性节点和注册节点都是普通函数节点，不是 GraphNode。
+2. 注册节点必须接收并返回同一个 `PhysicsWorldCache`，保证 world 链路仍然线性。
+3. 注册节点不直接创建 solver slot，不写 backend handle，不写 Blender，不写 `exchange`。
+4. `tag` 必须使用 `physicsWorld/names.py` 里的全局名称常量，例如 `SPRING_VRM_CHAIN_OBJECT_TAG`，避免注册节点和 solver 字符串错位。
+5. `stable_id` 是 registry 内部去重/替换用，不暴露成用户设置。相同 tag + stable_id 后写覆盖前写。
+6. 同一 tag 下可以自然 append 多个对象；solver 直接按 tag 收集全部对象。
+7. `signature` 必须由拓扑、配置和参数输入组成。签名不变时 `version` 不递增，solver 不应重建。
+8. `enabled=False` 表达禁用该隐式对象；删除节点不会自动清除旧对象。
+9. `implicit_objects` 在 world replace 时浅拷贝，在 Cache Delete / clear runtime cache / world dispose 时清除。
+10. 隐式对象默认不参与写回。即使某个 payload 表达了虚拟刚体、批量约束或临时 attachment，Physics Writeback 也只能消费 result stream；没有显式 owner resolver 时不得把隐式对象当作 Blender `Object` 或 `PoseBone` 写回。
+
+`physicsWorld/names.py` 是跨模块识别名称的集中点。后续新增 solver 时，solver id、slot kind、result channel、exchange channel、backend resource key 和 implicit object tag 都应先进入这个文件，再由节点、solver、debug、writeback 共同引用。
+
+未来 solver 迁移时不再把大量对象/设置 socket 全塞进 solver step 节点。推荐拆成：
+
+```text
+World Begin
+  -> <Domain>属性
+  -> <Domain>对象注册
+  -> <Domain>模拟步
+  -> Physics Writeback
+  -> World Commit
+```
+
+solver step 的职责是读取自己声明的 `implicit_objects` tag，构建/更新 spec 和 solver slot，再调用 native 后端。这样 SpringBone、Jolt 约束生成、MC2 规则设置会走同一套隐式对象模式。
 
 ### Object Source
 
@@ -1051,7 +1118,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 **已完成，可作为迁移参照的部分：**
 
-- `PhysicsWorldCache` 已持有 frame context、scope key、collider snapshot、solver slots、exchange、result streams、backend resources。
+- `PhysicsWorldCache` 已持有 frame context、scope key、collider snapshot、solver slots、implicit_objects、exchange、result streams、backend resources。
 - `physicsWorldBegin` 每帧重采集 scope / collider / rigid spec，并处理 restart、scope change、slot prune、spec sync signature、kinematic pose dirty。
 - `physicsRigidSolver` 不直接写 Blender；它发布 `rigid_transform` 和 `rigid_solver_stats` result stream。
 - `physicsWriteback` 已验证 Object transform 的统一写回路径：只写 `Object.delta_*`，不改原始 transform。
@@ -1134,6 +1201,7 @@ class PhysicsWorldCache:
         self.collider_snapshot = {"frame": None, "colliders": []}
         self.previous_collider_snapshot = None
         self.solver_slots = {}
+        self.implicit_objects = []
         self.exchange = {}
         self.result_streams = {}
         self.runtime_caches = {}
@@ -1146,6 +1214,15 @@ class PhysicsWorldCache:
         ...
 
     def runtime_cache(self, name):
+        ...
+
+    def append_implicit_object(self, item=None, tag=None, producer="unknown", stable_id="", signature="", enabled=True, schema=1, **payload):
+        ...
+
+    def iter_implicit_objects(self, tag=None, producer=None, enabled=True):
+        ...
+
+    def implicit_object_counts(self):
         ...
 
     def publish_exchange(self, item=None, channel=None, producer="unknown", scope="frame", **payload):

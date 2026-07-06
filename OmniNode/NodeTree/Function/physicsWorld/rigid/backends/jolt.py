@@ -19,6 +19,8 @@ import importlib
 import time
 from typing import TYPE_CHECKING
 
+from ...names import RIGID_BACKEND_RESOURCE_KEY
+
 if TYPE_CHECKING:
     from ..specs import RigidBodySpec, ConstraintSpec
 
@@ -458,7 +460,7 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
     若存在但 world generation 变化，清空 adapter 内所有 handles（不重建 JoltWorld）。
     native 不可用时返回 None。
     """
-    existing = world.backend_resources.get("rigid_solver")
+    existing = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
     if isinstance(existing, JoltAdapter) and existing._valid:
         # generation 变化：清空 handles，下一帧的 sync 会重新注册
         fc = world.frame_context if world.frame_context else None
@@ -475,7 +477,7 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
         adapter = JoltAdapter()
         fc = world.frame_context if world.frame_context else None
         adapter._last_generation = fc.generation if fc else 0
-        world.backend_resources["rigid_solver"] = adapter
+        world.backend_resources[RIGID_BACKEND_RESOURCE_KEY] = adapter
         return adapter
     except Exception:
         import traceback

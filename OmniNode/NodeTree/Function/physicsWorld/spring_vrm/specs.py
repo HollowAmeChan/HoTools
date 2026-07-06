@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..names import SPRING_VRM_SLOT_KIND
 from ..utils.ids import as_pointer, data_pointer, make_typed_slot_id, stable_short_hash
 from ..utils.values import float3
 
@@ -29,7 +30,7 @@ def _spec_hash(chains: tuple["SpringVRMChainSpec", ...], backend: str, substeps:
 
 
 def make_spring_vrm_slot_id(armature_ptr: int, armature_data_ptr: int, spec_hash: str) -> str:
-    return make_typed_slot_id("spring_vrm", int(armature_ptr), int(armature_data_ptr), str(spec_hash))
+    return make_typed_slot_id(SPRING_VRM_SLOT_KIND, int(armature_ptr), int(armature_data_ptr), str(spec_hash))
 
 
 class SpringVRMChainSpec:
@@ -138,7 +139,7 @@ class SpringVRMSolverSpec:
         }
 
 
-def normalize_spring_vrm_chain_settings(values) -> list[dict]:
+def normalize_spring_vrm_chain_properties(values) -> list[dict]:
     result = []
     stack = list(values) if isinstance(values, (list, tuple)) else ([values] if values is not None else [])
     while stack:
@@ -158,16 +159,16 @@ def normalize_spring_vrm_chain_settings(values) -> list[dict]:
 
 
 def build_spring_vrm_solver_specs(
-    vrm_chain_settings,
+    vrm_chain_properties,
     backend: str = "cpp",
     substeps: int = 1,
 ) -> list[SpringVRMSolverSpec]:
-    flat_settings = normalize_spring_vrm_chain_settings(vrm_chain_settings)
+    flat_properties = normalize_spring_vrm_chain_properties(vrm_chain_properties)
     armature_order: list[int] = []
     grouped: dict[int, tuple[object, list[SpringVRMChainSpec]]] = {}
 
-    for setting in flat_settings:
-        armature = setting.get("armature")
+    for chain_property in flat_properties:
+        armature = chain_property.get("armature")
         key = as_pointer(armature)
         if key <= 0:
             continue
@@ -176,13 +177,13 @@ def build_spring_vrm_solver_specs(
             armature_order.append(key)
         grouped[key][1].append(SpringVRMChainSpec(
             armature=armature,
-            root_bone=str(setting.get("root_bone") or ""),
-            bones=list(setting.get("bones") or []),
-            enabled=bool(setting.get("enabled", True)),
-            stiffness_force=float(setting.get("stiffness_force", 1.0)),
-            drag_force=float(setting.get("drag_force", 0.4)),
-            gravity_dir=setting.get("gravity_dir", (0.0, 0.0, -1.0)),
-            gravity_power=float(setting.get("gravity_power", 0.0)),
+            root_bone=str(chain_property.get("root_bone") or ""),
+            bones=list(chain_property.get("bones") or []),
+            enabled=bool(chain_property.get("enabled", True)),
+            stiffness_force=float(chain_property.get("stiffness_force", 1.0)),
+            drag_force=float(chain_property.get("drag_force", 0.4)),
+            gravity_dir=chain_property.get("gravity_dir", (0.0, 0.0, -1.0)),
+            gravity_power=float(chain_property.get("gravity_power", 0.0)),
         ))
 
     specs = []
