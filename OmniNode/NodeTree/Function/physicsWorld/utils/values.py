@@ -16,3 +16,15 @@ def matrix16(value) -> tuple[float, ...]:
     if len(flat) != 16:
         raise ValueError("matrix payload 必须包含 16 个数值")
     return tuple(float(item) for item in flat)
+
+
+def matrix_from_16(value):
+    import mathutils
+
+    values = matrix16(value)
+    return mathutils.Matrix((
+        (values[0], values[1], values[2], values[3]),
+        (values[4], values[5], values[6], values[7]),
+        (values[8], values[9], values[10], values[11]),
+        (values[12], values[13], values[14], values[15]),
+    ))

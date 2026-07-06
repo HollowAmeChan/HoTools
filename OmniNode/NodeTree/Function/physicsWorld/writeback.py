@@ -23,6 +23,8 @@ from __future__ import annotations
 import mathutils
 
 from .rigid.results import get_rigid_transform_result
+from .spring_vrm.results import iter_spring_vrm_pose_results
+from .utils.values import matrix_from_16
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +193,47 @@ def writeback_rigid_body_deltas(world) -> int:
 # ---------------------------------------------------------------------------
 
 def writeback_bone_transforms(world) -> int:
-    # TODO：Phase 7 迁移 SpringBone / BoneCloth 到 world.exchange 时实现
-    return 0
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    generation = int(getattr(world, "generation", 0) or 0)
+
+    updated_armatures = set()
+    written = 0
+
+    for slot in list(world.solver_slots.values()):
+        if slot.kind != "spring_vrm":
+            continue
+        spec = slot.data.get("spec")
+        armature = getattr(spec, "armature", None)
+        pose = getattr(armature, "pose", None)
+        if pose is None:
+            continue
+
+        for result in iter_spring_vrm_pose_results(
+            world,
+            frame=frame,
+            generation=generation,
+            slot_id=slot.slot_id,
+        ):
+            try:
+                bone_name = str(result.get("bone_name") or "")
+                pose_bone = pose.bones.get(bone_name)
+                if pose_bone is None:
+                    continue
+                pose_bone.matrix_basis = matrix_from_16(result.get("matrix_basis"))
+                updated_armatures.add(armature)
+                written += 1
+                slot.data.pop("_writeback_error", None)
+            except Exception as exc:
+                slot.data["_writeback_error"] = str(exc)
+
+    for armature in updated_armatures:
+        try:
+            armature.update_tag()
+        except Exception:
+            pass
+
+    return written
 
 
 # ---------------------------------------------------------------------------

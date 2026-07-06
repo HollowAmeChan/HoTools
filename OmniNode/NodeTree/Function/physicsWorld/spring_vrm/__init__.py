@@ -30,6 +30,7 @@ from .solver import (
     SPRING_VRM_SLOT_KIND,
     register_spring_vrm_from_chain_settings,
     register_spring_vrm_specs,
+    step_spring_vrm,
 )
 from .specs import (
     SpringVRMChainSpec,
@@ -62,4 +63,5 @@ __all__ = [
     "publish_spring_vrm_stats_result",
     "register_spring_vrm_from_chain_settings",
     "register_spring_vrm_specs",
+    "step_spring_vrm",
 ]

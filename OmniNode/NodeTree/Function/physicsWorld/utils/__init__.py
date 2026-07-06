@@ -12,7 +12,9 @@ from .ids import (
 from .values import (
     float3,
     matrix16,
+    matrix_from_16,
 )
+from .writeback_pose import matrix_basis_from_pose_matrix
 
 __all__ = [
     "as_pointer",
@@ -20,5 +22,7 @@ __all__ = [
     "float3",
     "make_typed_slot_id",
     "matrix16",
+    "matrix_basis_from_pose_matrix",
+    "matrix_from_16",
     "stable_short_hash",
 ]
