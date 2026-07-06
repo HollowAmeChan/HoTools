@@ -312,16 +312,17 @@ Body 创建最低需要：
 - collision group / mask。
 - user data，用于从 native event 映射回 HoTools slot。
 
-HoTools 当前 body spec 只有：
+HoTools 当前 `RigidBodySpec` 已覆盖基础刚体输入：
 
 - object pointer / data pointer。
-- body type。
-- mass。
-- friction。
-- restitution。
-- collision group。
+- world transform 快照。
+- body type、mass、friction、restitution。
+- collision group / mask。
+- sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder 的基础 shape 参数。
+- shape offset / local rotation。
+- initial velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
 
-Shape 参数现在没有进入 `RigidBodySpec`，而是 `JoltAdapter._shape_params_from_spec()` 临时回读 `obj.hotools_rigid_body`。这与 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 中“spec 是可 debug、可导出的实体描述”的方向不一致。下一步应把 shape 完整放入 spec。
+下一步的输入补齐重点不再是基础 shape，而是高级 shape、runtime command（force / impulse / velocity update）、惯性覆写和更完整的 material / body update API。
 
 ### Constraint 级输入
 
@@ -381,7 +382,9 @@ HoTools 当前 constraint spec 只有：
 当前写回机制：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
+- solver 每帧把 body transform 发布到 rigid slot 的 `result.rigid_transform`。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
+- `physicsWorldDebugDraw` 优先消费 `result.rigid_transform`，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 应补的核心输出
@@ -703,9 +706,9 @@ HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDe
 
 ## 关键设计风险
 
-### 不要让 adapter 继续回读 Blender
+### 不要让 adapter 重新回读 Blender
 
-现在 adapter 读 shape property 是短期可跑方案。后续会让 spec、debug、export、bake 都不可检查。应该尽快把所有 Jolt 输入都纳入 spec。
+当前基础 shape 和 transform 已进入 spec，adapter 主路径消费 spec 快照；这是正确方向。后续新增 Jolt 输入时必须继续走 HoTools property -> spec -> adapter 映射，不能把新字段临时塞回 `JoltAdapter` 里直接读 `bpy` 对象，否则 debug、export、bake 和 headless 测试都会重新变得不可检查。
 
 ### 不要把 Jolt enum 直接暴露成公共协议
 

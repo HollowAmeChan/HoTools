@@ -5,6 +5,7 @@
 #
 #   specs.py    — RigidBodySpec、ConstraintSpec 及从 PropertyGroup 构造的工具函数
 #   solver.py   — 把 specs 注册到 PhysicsWorldCache solver slot 的逻辑
+#   results.py  — solver 每帧输出给 writeback/debug/export 的稳定结果
 #   nodes.py    — @omni 装饰的节点定义
 #   backends/   — native backend 适配层（Phase 5 加入 jolt.py）
 

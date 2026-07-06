@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import mathutils
 
+from .rigid.results import get_rigid_transform_result
+
 
 # ---------------------------------------------------------------------------
 # 受影响对象注册表 key
@@ -112,7 +114,7 @@ def clear_all_deltas(world) -> None:
 
 def writeback_rigid_body_deltas(world) -> int:
     """
-    从 JoltAdapter 读取 DYNAMIC 刚体的当前变换，写入 Blender 对象的
+    从 rigid solver result stream 读取 DYNAMIC 刚体的当前变换，写入 Blender 对象的
     delta_location / delta_rotation_euler（增量变换）。
 
     不修改 obj.location / rotation_euler，保留原始变换。
@@ -120,9 +122,9 @@ def writeback_rigid_body_deltas(world) -> int:
 
     返回成功写回的对象数量。
     """
-    adapter = world.backend_resources.get("rigid_solver")
-    if adapter is None or not getattr(adapter, "_valid", False):
-        return 0
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    generation = int(getattr(world, "generation", 0) or 0)
 
     touched = _get_touched_set(world)
     # 首次写回时注册清理资源，确保 world dispose 时自动归零 delta
@@ -132,18 +134,20 @@ def writeback_rigid_body_deltas(world) -> int:
     updated = set()
     written = 0
 
-    for slot_id, handle in list(adapter._body_handles.items()):
-        slot = world.solver_slots.get(slot_id)
-        spec = slot.data.get("spec") if slot else None
+    for slot in list(world.solver_slots.values()):
+        if slot.kind != "rigid_body":
+            continue
+        spec = slot.data.get("spec")
         if spec is None or spec.body_type != "DYNAMIC" or spec.obj is None:
             continue
 
-        result = adapter._jw.get_body_transform(handle)
+        result = get_rigid_transform_result(slot, frame=frame, generation=generation)
         if result is None:
             continue
 
         try:
-            pos_arr, rot_arr = result
+            pos_arr = result.get("position")
+            rot_arr = result.get("rotation_wxyz")
             obj = spec.obj
 
             # 位置 delta = Jolt 世界位置 - 对象原始 location
@@ -166,8 +170,7 @@ def writeback_rigid_body_deltas(world) -> int:
             slot.data.pop("_writeback_error", None)
 
         except Exception as exc:
-            if slot:
-                slot.data["_writeback_error"] = str(exc)
+            slot.data["_writeback_error"] = str(exc)
 
     for obj in updated:
         try:

@@ -98,6 +98,7 @@ _load_pw("scope", "scope.py")
 _load_pw("writeback", "writeback.py")
 _load_pw("world", "world.py")
 _load_pw("rigid.specs", "rigid/specs.py")
+_load_pw("rigid.results", "rigid/results.py")
 _load_pw("rigid.solver", "rigid/solver.py")
 _load_pw("rigid.backends.jolt", "rigid/backends/jolt.py")
 
@@ -106,6 +107,7 @@ physicsWorldBegin = sys.modules[f"{PKG_PREFIX}.world"].physicsWorldBegin
 physicsWorldCommit = sys.modules[f"{PKG_PREFIX}.world"].physicsWorldCommit
 apply_all_writebacks = sys.modules[f"{PKG_PREFIX}.writeback"].apply_all_writebacks
 build_rigid_body_spec = sys.modules[f"{PKG_PREFIX}.rigid.specs"].build_rigid_body_spec
+get_rigid_transform_result = sys.modules[f"{PKG_PREFIX}.rigid.results"].get_rigid_transform_result
 step_rigid_bodies = sys.modules[f"{PKG_PREFIX}.rigid.solver"].step_rigid_bodies
 
 
@@ -150,6 +152,10 @@ def _run():
             enabled=True,
         )
         step_rigid_bodies(world, enabled=True)
+        slot = next((s for s in world.solver_slots.values() if s.kind == "rigid_body"), None)
+        result = get_rigid_transform_result(slot, frame=frame, generation=world.generation) if slot else None
+        if result is None:
+            raise RuntimeError(f"rigid solver did not publish transform result on frame {frame}")
         apply_all_writebacks(world, restart=restart)
         cache_state, _, _ = physicsWorldCommit(world, enabled=True)
 
@@ -184,6 +190,14 @@ def _run():
         raise RuntimeError(
             f"Jolt cold-started from stale pose: stale_z={stale_z:.4f}, jolt_z={pos[2]:.4f}"
         )
+    rewound_slot = rewound_world.solver_slots.get(spec.slot_id)
+    rewound_result = get_rigid_transform_result(
+        rewound_slot,
+        frame=scene.frame_current,
+        generation=rewound_world.generation,
+    )
+    if rewound_result is None or float(rewound_result["position"][2]) < 4.5:
+        raise RuntimeError("rewind did not publish a fresh rigid transform result")
 
     cache_state, _, _ = physicsWorldCommit(rewound_world, enabled=True)
 
@@ -223,6 +237,13 @@ def _run():
         raise RuntimeError("same-frame dirty sync should not advance simulation")
     if dirty_slot is None or dirty_slot.data.get("_jolt_generation") != dirty_world.generation:
         raise RuntimeError("same-frame spec edit did not resync Jolt slot")
+    dirty_result = get_rigid_transform_result(
+        dirty_slot,
+        frame=scene.frame_current,
+        generation=dirty_world.generation,
+    )
+    if dirty_result is None:
+        raise RuntimeError("same-frame dirty sync did not refresh rigid transform result")
 
     cache_state, _, _ = physicsWorldCommit(dirty_world, enabled=True)
     ball.hotools_rigid_body.enabled = False

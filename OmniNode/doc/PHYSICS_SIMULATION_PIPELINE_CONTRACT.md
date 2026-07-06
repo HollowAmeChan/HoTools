@@ -298,6 +298,13 @@ export cache stream
 - writeback plan 可以由 solver prepare 生成，但执行写回应由统一 writeback 阶段完成。
 - 导出缓存应消费同一 result stream，不能重新从 solver 私有状态里猜。
 
+当前刚体落地点：
+
+- `physicsRigidSolver` 在每个 rigid body slot 写入 `result.rigid_transform`。
+- `result.rigid_transform` 是纯 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`。
+- `physicsWriteback` 和 `physicsWorldDebugDraw` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
+- 这是 `world.exchange` 的过渡形态；等跨 solver result channel 稳定后，可把相同 payload 移到 exchange。
+
 模式：
 
 ```text

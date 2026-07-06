@@ -14,6 +14,11 @@ from .specs import (
     build_rigid_body_spec,
     build_constraint_spec,
 )
+from .results import (
+    RIGID_TRANSFORM_RESULT_KEY,
+    clear_rigid_transform_result,
+    make_rigid_transform_result,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +144,49 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     return False
 
 
+def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
+    """
+    从 backend 采样本帧刚体 transform，写入 solver slot 的 result stream。
+
+    这是 solver 和 writeback/debug/export 之间的边界：下游不应再读取
+    adapter._body_handles 或 adapter._jw。
+    """
+    fc = world.frame_context
+    frame = int(getattr(fc, "frame", 0) or 0)
+    published = 0
+
+    for slot_id, slot in list(world.solver_slots.items()):
+        if slot.kind != "rigid_body":
+            continue
+        spec = slot.data.get("spec")
+        if spec is None:
+            clear_rigid_transform_result(slot)
+            continue
+
+        try:
+            result = adapter.get_body_transform(slot_id)
+            if result is None:
+                clear_rigid_transform_result(slot)
+                continue
+            pos_arr, rot_arr = result
+            slot.data[RIGID_TRANSFORM_RESULT_KEY] = make_rigid_transform_result(
+                slot_id=slot_id,
+                spec=spec,
+                frame=frame,
+                generation=world.generation,
+                position=pos_arr,
+                rotation_wxyz=rot_arr,
+                backend=getattr(adapter, "BACKEND", "jolt"),
+            )
+            slot.data.pop("_result_error", None)
+            published += 1
+        except Exception as exc:
+            clear_rigid_transform_result(slot)
+            slot.data["_result_error"] = str(exc)
+
+    return published
+
+
 # ---------------------------------------------------------------------------
 # Phase 5：Jolt 模拟步
 # ---------------------------------------------------------------------------
@@ -158,7 +206,7 @@ def step_rigid_bodies(
     3. 对每个 rigid_constraint slot：
        - 若 slot 在本 generation 内首次遇到，sync_constraint 注册到 Jolt。
     4. 执行 Jolt step（使用 world.frame_context.dt 和 substeps）。
-    5. 写回由下游 Physics Writeback 节点统一处理。
+    5. 发布 rigid transform result；写回由下游 Physics Writeback 节点统一处理。
 
     返回 (body_count, step_ms)。
     """
@@ -169,8 +217,7 @@ def step_rigid_bodies(
     same_frame = bool(getattr(fc, "same_frame", False)) if fc is not None else False
     if same_frame and not _has_pending_jolt_work(world):
         adapter = world.backend_resources.get("rigid_solver")
-        jw = getattr(adapter, "_jw", None)
-        body_count = int(getattr(jw, "body_count", 0) or 0)
+        body_count = int(getattr(adapter, "body_count", 0) or 0)
         return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter
@@ -230,14 +277,16 @@ def step_rigid_bodies(
                     slot.data["_jolt_error"] = str(e)
 
         if same_frame:
-            return adapter._jw.body_count, 0.0
+            _publish_rigid_transform_results(world, adapter)
+            return adapter.body_count, 0.0
 
         # --- step ---
         step_ms = adapter.step(dt, substeps)
+        _publish_rigid_transform_results(world, adapter)
 
         # 注意：写回由下游 Physics Writeback 节点统一处理。
         # adapter.writeback_transforms 不在此处调用，以便写回节点能先捕获 frame=0 初始位置。
-        return adapter._jw.body_count, step_ms
+        return adapter.body_count, step_ms
 
     finally:
         world.release_write(solver_id)

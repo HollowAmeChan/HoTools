@@ -621,6 +621,7 @@ OmniNode object scope
   -> HoTools constraint specs
   -> Jolt adapter build/update
   -> Jolt step
+  -> rigid slot result.rigid_transform
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
 ```

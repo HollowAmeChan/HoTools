@@ -388,6 +388,20 @@ class JoltAdapter:
             "last_step_ms": round(self.last_step_ms, 3),
         }
 
+    @property
+    def body_count(self) -> int:
+        try:
+            return int(self._jw.body_count)
+        except Exception:
+            return 0
+
+    @property
+    def constraint_count(self) -> int:
+        try:
+            return int(self._jw.constraint_count)
+        except Exception:
+            return 0
+
     # ---- Dispose ---------------------------------------------------------
 
     def dispose(self, reason: str = "dispose") -> None:

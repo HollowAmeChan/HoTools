@@ -214,19 +214,36 @@ def _world_location(obj) -> mathutils.Vector:
             return mathutils.Vector((0.0, 0.0, 0.0))
 
 
-def _rigid_body_matrix(spec) -> mathutils.Matrix | None:
-    obj = getattr(spec, "obj", None)
-    if obj is None:
-        return None
+def _matrix_from_position_rotation(position, rotation_wxyz) -> mathutils.Matrix | None:
     try:
-        loc, rot, _scale = obj.matrix_world.decompose()
+        loc = mathutils.Vector(position).to_3d()
+        rot = mathutils.Quaternion(rotation_wxyz)
         return mathutils.Matrix.Translation(loc) @ rot.to_matrix().to_4x4()
     except Exception:
         return None
 
 
-def _shape_matrix(spec) -> mathutils.Matrix | None:
-    body = _rigid_body_matrix(spec)
+def _rigid_body_matrix(spec, result: dict | None = None) -> mathutils.Matrix | None:
+    if result is not None:
+        body = _matrix_from_position_rotation(
+            result.get("position"),
+            result.get("rotation_wxyz"),
+        )
+        if body is not None:
+            return body
+
+    body = _matrix_from_position_rotation(
+        getattr(spec, "world_position", (0.0, 0.0, 0.0)),
+        getattr(spec, "world_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)),
+    )
+    if body is not None:
+        return body
+
+    return None
+
+
+def _shape_matrix(spec, result: dict | None = None) -> mathutils.Matrix | None:
+    body = _rigid_body_matrix(spec, result)
     if body is None:
         return None
     try:
@@ -240,8 +257,8 @@ def _shape_matrix(spec) -> mathutils.Matrix | None:
     return body @ mathutils.Matrix.Translation(offset) @ q.to_matrix().to_4x4()
 
 
-def _rigid_shape_snapshot(spec) -> dict | None:
-    mat = _shape_matrix(spec)
+def _rigid_shape_snapshot(spec, result: dict | None = None) -> dict | None:
+    mat = _shape_matrix(spec, result)
     if mat is None:
         return None
     center = mat.translation.copy()
@@ -717,6 +734,11 @@ def update_draw_store(
 
     # 收集 rigid / constraint 绘制数据。这里采样成纯快照，draw handler
     # 后续不再读取 bpy 对象或 spec 引用。
+    try:
+        from .rigid.results import get_rigid_transform_result
+    except Exception:
+        get_rigid_transform_result = None
+
     rigid_shapes = []
     constraints = []
     for slot_id, slot in world.solver_slots.items():
@@ -724,7 +746,11 @@ def update_draw_store(
         if spec is None:
             continue
         if slot.kind == "rigid_body" and show_rigid:
-            shape = _rigid_shape_snapshot(spec)
+            result = (
+                get_rigid_transform_result(slot, frame=fc.frame, generation=world.generation)
+                if callable(get_rigid_transform_result) else None
+            )
+            shape = _rigid_shape_snapshot(spec, result)
             if shape is not None:
                 rigid_shapes.append(shape)
         elif slot.kind == "rigid_constraint" and (show_constraints or show_bugs):
