@@ -547,7 +547,9 @@ class CompilerContext:
             note="subtree output bridge",
         )
 
-        self.instructions.append(SubtreeCall(compiled_subtree, input_regs, output_regs, node))
+        call = SubtreeCall(compiled_subtree, input_regs, output_regs, node)
+        call._init_lazy_fields()
+        self.instructions.append(call)
         OmniDebug.append_compile_trace(
             self.graph,
             f"Emit SUBTREE {node.name} -> {compiled_subtree.tree_name} inputs={input_regs} outputs={output_regs}",
@@ -679,27 +681,93 @@ class CompilerContext:
             OmniCompiler._set_node_bug_state(node, message)
             raise RuntimeError(f"{message} ({node.name})")
 
-        input_regs = self.compile_function_inputs(node, func)
+        # 读取 always_run：优先 _meta，其次判断 is_output_node
+        func_meta = getattr(func, "__meta", {}) or {}
+        is_output = bool(getattr(node, "is_output_node", False))
+        has_always_run = bool(func_meta.get("always_run", is_output))
+
+        input_regs  = self.compile_function_inputs(node, func)
         output_regs = self.allocate_outputs(node, source=OmniDebug.func_name(func), note="node output")
 
-        self.instructions.append(OpCall(func, input_regs, output_regs, node))
+        op = OpCall(func, input_regs, output_regs, node, has_always_run=has_always_run)
+        op._init_lazy_fields()   # 初始化 flat_inputs / version_buffer / last_snapshot
+        self.instructions.append(op)
+
         self.graph.function_catalog.append({
             "func": OmniDebug.func_name(func),
             "node": node.name,
         })
         OmniDebug.append_compile_trace(
             self.graph,
-            f"Emit CALL {OmniDebug.func_name(func)} @ {node.name} inputs={input_regs} outputs={output_regs}",
+            f"Emit CALL {OmniDebug.func_name(func)} @ {node.name} "
+            f"always_run={has_always_run} inputs={input_regs} outputs={output_regs}",
         )
 
     def finish(self):
-        self.graph.instructions = self.instructions
-        self.graph.instructions.insert(0, RuntimeTimingBeginCall(self.graph.tree_name, self.tree))
-        self.graph.instructions.append(RuntimeTimingEndCall(self.graph.tree_name, self.tree))
-        self.graph.reg_count = self.reg_id
-        self.graph.node_order = [node.name for node in self.topo]
+        # 插入计时桩
+        self.instructions.insert(0, RuntimeTimingBeginCall(self.graph.tree_name, self.tree))
+        self.instructions.append(RuntimeTimingEndCall(self.graph.tree_name, self.tree))
+
+        # instructions 固化为 tuple（不可变，迭代更快）
+        self.graph.instructions = tuple(self.instructions)
+        self.graph.reg_count    = self.reg_id
+        self.graph.node_order   = [node.name for node in self.topo]
+
+        # ── 懒求值：计算 has_always_run_node ──────────────────────────────────
+        self.graph.has_always_run_node = self._compute_has_always_run(self.graph)
+
+        # ── 懒求值：计算各子树 ref_count 和 inner_lazy_eval ───────────────────
+        self._compute_ref_counts(self.graph)
+
         OmniDebug.append_compile_trace(
             self.graph,
-            f"Compile finished with {len(self.instructions)} instructions",
+            f"Compile finished with {len(self.graph.instructions)} instructions, "
+            f"has_always_run_node={self.graph.has_always_run_node}",
         )
         return self.graph
+
+    @staticmethod
+    def _compute_has_always_run(graph) -> bool:
+        """递归判断图中是否包含 always_run 节点（含子树）。"""
+        from .OmniIR import OpCall as _OpCall, SubtreeCall as _SubCall, BatchSubtreeCall as _BSubCall
+        for op in graph.instructions:
+            if isinstance(op, _OpCall) and getattr(op, "has_always_run", False):
+                return True
+            if isinstance(op, (_SubCall, _BSubCall)):
+                child = getattr(op, "compiled_graph", None)
+                if child and getattr(child, "has_always_run_node", False):
+                    return True
+        return False
+
+    @staticmethod
+    def _compute_ref_counts(root_graph) -> None:
+        """
+        递归统计每个 compiled_graph 被引用的次数。
+        ref_count > 1 的子树不允许内部节点 skip（防跨路径污染）。
+        """
+        from .OmniIR import SubtreeCall as _SubCall, BatchSubtreeCall as _BSubCall
+        counts = {}   # id(graph) -> count
+
+        def walk(g):
+            for op in g.instructions:
+                if isinstance(op, (_SubCall, _BSubCall)):
+                    child = getattr(op, "compiled_graph", None)
+                    if child is None:
+                        continue
+                    gid = id(child)
+                    counts[gid] = counts.get(gid, 0) + 1
+                    walk(child)
+
+        walk(root_graph)
+
+        def apply(g):
+            for op in g.instructions:
+                if isinstance(op, (_SubCall, _BSubCall)):
+                    child = getattr(op, "compiled_graph", None)
+                    if child is None:
+                        continue
+                    child.ref_count       = counts.get(id(child), 1)
+                    child.inner_lazy_eval = (child.ref_count == 1)
+                    apply(child)
+
+        apply(root_graph)

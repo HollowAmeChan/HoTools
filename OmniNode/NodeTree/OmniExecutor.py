@@ -301,6 +301,30 @@ class RuntimeObserver:
             )
         )
 
+    # ── 懒求值 debug 方法 ─────────────────────────────────────────────────────
+
+    def log_skip(self, op):
+        """节点被 skip：所有输入版本号与上帧相同。"""
+        if not self.debug:
+            return
+        node_name = getattr(getattr(op, "node", None), "name", "<node>")
+        self.log(f"  {OmniDebug.section_label('SKIP')}     {OmniDebug.node_label(node_name)} — inputs unchanged")
+
+    def log_no_change(self, op, output_index):
+        """节点执行后返回 OMNI_NO_CHANGE：输出版本号不递增。"""
+        if not self.debug:
+            return
+        node_name = getattr(getattr(op, "node", None), "name", "<node>")
+        self.log(f"  {OmniDebug.section_label('NO_CHG')}   {OmniDebug.node_label(node_name)}.output{output_index} — version not bumped")
+
+    def log_subtree_skip(self, call):
+        """SubtreeCall 整块被 skip。"""
+        if not self.debug:
+            return
+        tree_name = getattr(getattr(call, "compiled_graph", None), "tree_name", "<subtree>")
+        node_name = getattr(getattr(call, "node", None), "name", "<node>")
+        self.log(f"  {OmniDebug.section_label('SKIP_ST')}  SubtreeCall({OmniDebug.node_label(node_name)}) -> {OmniDebug.tree_label(tree_name)} — inputs unchanged")
+
 
 class OmniExecutor:
     @staticmethod
@@ -369,6 +393,64 @@ class OmniExecutor:
         for key in sorted(values.keys(), key=str):
             lines.append(f"{key}: {OmniDebug.format_value(values[key])}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _write_reg(graph, reg, value):
+        """
+        写入寄存器并维护版本号。
+        - value is OMNI_NO_CHANGE → 版本不递增，reg_values 不修改
+        - value is not 旧值（身份比较） → 版本 +1，reg_values 更新
+        - value is 旧值 → 不递增（幂等写入）
+        """
+        from .OmniIR import OMNI_NO_CHANGE as _NO_CHG
+        if value is _NO_CHG:
+            return False   # 调用方据此决定是否 log_no_change
+        old = graph.reg_values[reg]
+        if old is not value:
+            graph.reg_values[reg]    = value
+            graph.reg_versions[reg] += 1
+        return True
+
+    @staticmethod
+    def _should_skip_opcall(op, graph) -> bool:
+        """
+        判断 OpCall 是否可以跳过。
+        热路径：零内存分配，C 层批量版本比较。
+        """
+        if op.has_always_run:
+            return False
+        snap = op.last_snapshot
+        if snap is None or snap[0] == -1:
+            return False
+        buf   = op.version_buffer
+        ins   = op.flat_inputs
+        vers  = graph.reg_versions
+        for i in range(len(ins)):
+            buf[i] = vers[ins[i]]
+        return buf == snap
+
+    @staticmethod
+    def _record_snapshot(op):
+        """执行完毕后把 version_buffer 内容 memcpy 到 last_snapshot。"""
+        op.last_snapshot[:] = op.version_buffer
+
+    @staticmethod
+    def _should_skip_subtree(call, parent_graph) -> bool:
+        """
+        SubtreeCall 整块跳过判断（基于父树寄存器，始终安全）。
+        子树内部是否允许逐节点 skip 由 inner_lazy_eval 控制。
+        """
+        snap = call.last_snapshot
+        if snap is None or snap[0] == -1:
+            return False
+        if getattr(call.compiled_graph, "has_always_run_node", False):
+            return False
+        buf  = call.version_buffer
+        ins  = call.flat_inputs
+        vers = parent_graph.reg_versions
+        for i in range(len(ins)):
+            buf[i] = vers[ins[i]]
+        return buf == snap
 
     @staticmethod
     def cache_key_input_value(registers, reg):
@@ -471,13 +553,16 @@ class OmniExecutor:
     @staticmethod
     def _execute_core(compiled, provided_inputs, runtime_context, observer):
         OmniExecutor.ensure_compiled_graph_enabled(compiled)
-        registers = [None] * compiled.reg_count
+
+        # 持久化寄存器：首次执行时分配，后续帧复用（懒求值的基础）
+        compiled.ensure_reg_arrays()
+        registers = compiled.reg_values   # 别名，写 registers[reg] 即写持久化数组
         provided_inputs = provided_inputs or {}
 
         observer.begin_tree(compiled)
         for uid, reg in compiled.input_regs.items():
             if uid in provided_inputs:
-                registers[reg] = provided_inputs[uid]
+                OmniExecutor._write_reg(compiled, reg, provided_inputs[uid])
                 observer.input_value(uid, reg, registers[reg])
 
         for step_index, op in enumerate(compiled.instructions):
@@ -604,6 +689,12 @@ class OmniExecutor:
                 continue
 
             if isinstance(op, OpCall):
+                # ── 懒求值 skip 判定 ───────────────────────────────────────────
+                if OmniExecutor._should_skip_opcall(op, compiled):
+                    observer.log_skip(op)
+                    observer.step_end(step_start, stage)
+                    continue
+
                 args, arg_desc = OmniExecutor.build_call_args(registers, op, observer)
 
                 try:
@@ -617,12 +708,46 @@ class OmniExecutor:
                     )
                     break
 
-                out_desc = OmniExecutor.assign_call_outputs(registers, op, result, observer)
+                # ── 写回输出寄存器（处理 OMNI_NO_CHANGE）─────────────────────
+                if len(op.outputs) == 1:
+                    changed = OmniExecutor._write_reg(compiled, op.outputs[0], result)
+                    if not changed:
+                        observer.log_no_change(op, 0)
+                    out_desc = (
+                        f"{OmniDebug.reg_label(op.outputs[0])}="
+                        f"{OmniDebug.value_label(OmniDebug.format_value(registers[op.outputs[0]]))}"
+                        if observer.debug else None
+                    )
+                else:
+                    out_parts = []
+                    results = result if isinstance(result, tuple) else (result,)
+                    for index, reg in enumerate(op.outputs):
+                        val = results[index] if index < len(results) else None
+                        changed = OmniExecutor._write_reg(compiled, reg, val)
+                        if not changed:
+                            observer.log_no_change(op, index)
+                        if observer.debug:
+                            out_parts.append(
+                                f"{OmniDebug.reg_label(reg)}="
+                                f"{OmniDebug.value_label(OmniDebug.format_value(registers[reg]))}"
+                            )
+                    out_desc = ", ".join(out_parts) if observer.debug else None
+
+                # 记录版本快照，供下帧 skip 判定使用
+                OmniExecutor._record_snapshot(op)
+
                 observer.call(step_index, op, arg_desc or [], out_desc or "")
                 observer.step_end(step_start, stage)
                 continue
 
             if isinstance(op, SubtreeCall):
+                # ── SubtreeCall 外层 skip（基于父树寄存器，始终安全）──────────
+                if OmniExecutor._should_skip_subtree(op, compiled):
+                    observer.log_subtree_skip(op)
+                    OmniExecutor._record_snapshot(op)
+                    observer.step_end(step_start, stage)
+                    continue
+
                 subtree_inputs = OmniExecutor.build_subtree_inputs(registers, op)
                 observer.enter_subtree(step_index, op, subtree_inputs)
 
@@ -647,7 +772,11 @@ class OmniExecutor:
                 ordered_output_uids = list(op.compiled_graph.output_regs.keys())
                 for index, uid in enumerate(ordered_output_uids):
                     if index < len(op.outputs):
-                        registers[op.outputs[index]] = subtree_outputs.get(uid)
+                        val = subtree_outputs.get(uid)
+                        OmniExecutor._write_reg(compiled, op.outputs[index], val)
+
+                # 记录快照供下帧 skip 判定
+                OmniExecutor._record_snapshot(op)
 
                 observer.exit_subtree(step_index, op, registers, ordered_output_uids)
                 observer.step_end(step_start, stage)

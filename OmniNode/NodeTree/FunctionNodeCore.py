@@ -24,6 +24,11 @@ def omni(**omnidata):
     2.  由于使用了函数签名来生成，签名无法设置多输出的名字
         目前使用默认_OUTPUT+数字来生成identifier
         名称想要修改可以使用_OUTPUT_NAME这个列表,他将会顺序指定输出的名字
+    3.  懒求值相关：
+        always_run: bool = False
+            True  → 每帧强制执行，不参与 skip 判定（物理 solver、有副作用的节点）
+            False → 默认，输入版本未变时自动跳过（参数节点、纯计算节点）
+        返回 OMNI_NO_CHANGE 可主动声明"输出未变，不递增版本"
     '''
     def decorator(func):
         func.__meta = omnidata

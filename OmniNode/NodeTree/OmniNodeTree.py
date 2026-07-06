@@ -37,7 +37,10 @@ def _tree_cache_key(tree):
 
 
 def clear_tree_compile_cache(tree):
-    _COMPILED_TREE_CACHE.pop(_tree_cache_key(tree), None)
+    old = _COMPILED_TREE_CACHE.pop(_tree_cache_key(tree), None)
+    # 清空持久化寄存器，释放 bpy 对象引用，防止悬空指针
+    if old is not None:
+        old.clear_reg_arrays()
 
 
 def _cached_compiled_graph(tree):
@@ -385,6 +388,12 @@ def register():
 def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
     _remove_frame_handler()
+    # 清空所有持久化寄存器，释放 bpy 引用后再清 dict
+    for graph in _COMPILED_TREE_CACHE.values():
+        try:
+            graph.clear_reg_arrays()
+        except Exception:
+            pass
     _COMPILED_TREE_CACHE.clear()
     unregister_object_mount_props()
     for item in cls:
