@@ -99,6 +99,13 @@ def _mesh_collision_props(obj):
     return getattr(obj, "hotools_mesh_collision", None)
 
 
+def _rigid_body_props(obj):
+    """
+    读取物体上的 HoTools 刚体属性。
+    """
+    return getattr(obj, "hotools_rigid_body", None)
+
+
 def _active_collision_props(context):
     """
     获取当前激活骨骼的碰撞属性。
@@ -127,6 +134,16 @@ def _active_mesh_collision_props(context):
     if obj is None or obj.type != "MESH":
         return None
     return _mesh_collision_props(obj)
+
+
+def _active_rigid_body_props(context):
+    """
+    获取当前激活物体的刚体属性。
+    """
+    obj = context.object or context.active_object
+    if obj is None:
+        return None
+    return _rigid_body_props(obj)
 
 
 def _set_collision_group_bit(mask, group, value):
@@ -204,6 +221,31 @@ def _object_collision_group_target_props(context, apply_selected):
 
     if not targets:
         props = _active_object_collision_props(context)
+        if props is not None:
+            targets.append(props)
+    return targets
+
+
+def _rigid_body_group_target_props(context, apply_selected):
+    """
+    收集刚体过滤组操作需要修改的目标属性。
+    """
+    if not apply_selected:
+        props = _active_rigid_body_props(context)
+        return [props] if props is not None else []
+
+    targets = []
+    seen_names = set()
+    for obj in getattr(context, "selected_objects", None) or []:
+        if obj.name in seen_names:
+            continue
+        props = _rigid_body_props(obj)
+        if props is not None:
+            targets.append(props)
+            seen_names.add(obj.name)
+
+    if not targets:
+        props = _active_rigid_body_props(context)
         if props is not None:
             targets.append(props)
     return targets

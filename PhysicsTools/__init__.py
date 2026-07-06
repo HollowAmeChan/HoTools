@@ -10,6 +10,8 @@ from .physicsOperators import (
     OP_Hotools_MeshCollision_SetPrimaryGroup,
     OP_Hotools_MeshCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
+    OP_Hotools_RigidBody_SetCollisionGroup,
+    OP_Hotools_RigidBody_ToggleCollidesWithGroup,
 )
 from .physicsPanel import (
     PT_Hotools_PhysicsPanel,
@@ -40,6 +42,8 @@ cls = [
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
+    OP_Hotools_RigidBody_SetCollisionGroup,
+    OP_Hotools_RigidBody_ToggleCollidesWithGroup,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
     OP_Hotools_MeshCollision_SetPrimaryGroup,
     OP_Hotools_MeshCollision_ToggleCollidedByGroup,

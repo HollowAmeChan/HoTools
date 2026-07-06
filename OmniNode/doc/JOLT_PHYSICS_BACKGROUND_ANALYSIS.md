@@ -85,7 +85,7 @@ Jolt body 的基本运动类型：
 - 激活、休眠、重置 sleep timer。
 - 获取 body user data、material、active 状态和 world transform。
 
-当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`collision_group` / `collided_by_groups`、基础 shape（sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder）的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
+当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`rigid_collision_group` / `rigid_collides_with_groups`、基础 shape（sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder）的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
 
 ### Shape
 
@@ -208,12 +208,12 @@ Jolt 有两层过滤：
 - static-static 不碰。
 - moving 与所有层碰。
 
-HoTools 的 1..16 主碰撞组和 `collided_by_groups` mask 已通过自定义 `CollisionGroup` / `GroupFilter` 接入 native。当前策略是对称过滤：两个刚体都必须允许对方的主组，才会碰撞。后续如果要支持“约束连接体不碰撞”或更细 pair override，应继续在 group filter / pair table 层扩展，不应污染 coarse object layer。
+HoTools 刚体自己的 1..16 `rigid_collision_group` 和 `rigid_collides_with_groups` mask 已通过自定义 `CollisionGroup` / `GroupFilter` 接入 native。当前策略是对称过滤：两个刚体都必须允许对方的刚体组，才会碰撞。它不复用简单碰撞、骨骼碰撞或 mesh collision 的 `primary_collision_group / collided_by_groups` 状态。后续如果要支持“约束连接体不碰撞”或更细 pair override，应继续在 rigid group filter / pair table 层扩展，不应污染 coarse object layer。
 
 建议：
 
 - `ObjectLayer` 先保持 coarse：static、dynamic/kinematic、sensor，必要时再扩展。
-- HoTools 1..16 主碰撞组和被碰撞 mask 用自定义 pair filter 或 group filter 表达。
+- 刚体 1..16 过滤组和可碰 mask 用自定义 pair filter 或 group filter 表达，命名空间独立于简单碰撞组。
 - 约束连接体禁用碰撞用 pair table 或 subgroup 规则表达，避免污染全局 layer。
 
 ### 查询与事件
@@ -309,7 +309,7 @@ Body 创建最低需要：
 - sleeping。
 - DOF lock。
 - sensor flag。
-- collision group / mask。
+- rigid collision group / rigid collides-with mask。
 - user data，用于从 native event 映射回 HoTools slot。
 
 HoTools 当前 `RigidBodySpec` 已覆盖基础刚体输入：
@@ -317,7 +317,7 @@ HoTools 当前 `RigidBodySpec` 已覆盖基础刚体输入：
 - object pointer / data pointer。
 - world transform 快照。
 - body type、mass、friction、restitution。
-- collision group / mask。
+- rigid collision group / rigid collides-with mask。
 - sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder 的基础 shape 参数。
 - shape offset / local rotation。
 - initial velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
@@ -500,7 +500,7 @@ Native 侧当前特点：
 - `same_frame` 不重复推进 Jolt step，但允许脏 spec 或 kinematic pose 执行无时间推进的 backend sync。
 - `_transform_from_obj()` / `_transform_from_empty()` 只作为旧数据兜底；adapter 主路径应消费 spec 内的 `world_position` / `world_rotation_wxyz` / anchor 快照。
 - shape 已进入 `RigidBodySpec`，adapter 优先消费 spec。
-- `collision_group` / `collided_by_groups` 已进 spec 并由 native 消费。
+- `rigid_collision_group` / `rigid_collides_with_groups` 已进 spec，并由 adapter 映射到 Jolt/native 的 `CollisionGroup` 参数。
 - sync 策略目前每次 sync 旧 body 都 remove + add；后续需要区分 topology/config rebuild 与 runtime value update。
 
 ### HoTools 属性面板
@@ -512,7 +512,7 @@ Native 侧当前特点：
 - mass。
 - friction。
 - restitution。
-- collision_group / collided_by_groups。
+- rigid_collision_group / rigid_collides_with_groups。
 - shape_type：sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder。
 - shape_radius。
 - shape_half_height。
@@ -660,7 +660,7 @@ HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDe
 - `RigidBodySpec` 包含 shape 字段，不再由 adapter 回读 Blender 属性。
 - `ConstraintSpec` 包含 anchor frame、target、基础通用字段。
 - transform 改为读取 `matrix_world`，并明确输出/写回的 local/world 策略。
-- `collision_group` / `collided_by_groups` 已接入最小过滤；后续扩展 pair override。
+- `rigid_collision_group` / `rigid_collides_with_groups` 已接入最小过滤；后续扩展 pair override。
 
 这一步不要求增加很多 Jolt 能力，但能把架构方向摆正。
 
@@ -723,9 +723,9 @@ HoTools 公共属性可以接近 Jolt，但命名应保持领域语义。例如 
 - auto detect point。
 - axis/normal 可视化。
 
-### Collision group 必须一次设计清楚
+### 刚体 collision group 必须独立持有
 
-HoTools 已有 object/bone/mesh 的主碰撞组和被碰撞 mask。刚体不要另起一套难以交互的过滤系统。Jolt 的 `ObjectLayer` 更适合 coarse broadphase，HoTools mask 更适合细粒度 pair filter。
+Object/Bone/Mesh 的简单碰撞组服务于 cloth / spring / collider snapshot，是外部碰撞输入语义；刚体 collision group 服务于 Jolt 刚体之间的 pair filter，是刚体 solver 私有输入。两者可以共享 1..16 的交互习惯和按钮 UI，但不能共享同一份属性状态。跨 solver 交互（例如 cloth 读取 rigid body collider）应通过显式 bridge/result channel 映射，而不是让 rigid 直接复用 `hotools_object_collision` 的组字段。
 
 ### DebugRenderer 不可作为依赖
 
@@ -743,8 +743,8 @@ body_type
 mass
 friction
 restitution
-collision_group
-collided_by_groups
+rigid_collision_group
+rigid_collides_with_groups
 shape_type
 shape_radius
 shape_half_height

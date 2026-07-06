@@ -122,6 +122,8 @@ def _make_ball():
     rb.mass = 1.0
     rb.shape_type = "SPHERE"
     rb.shape_radius = 0.5
+    rb.rigid_collision_group = 3
+    rb.rigid_collides_with_groups = 0x0004
     rb.gravity_factor = 1.0
     return obj
 
@@ -142,6 +144,13 @@ def _run():
 
     cache_state = None
     world = None
+    initial_spec = build_rigid_body_spec(ball)
+    if (
+        initial_spec is None
+        or initial_spec.rigid_collision_group != 3
+        or initial_spec.rigid_collides_with_groups != 0x0004
+    ):
+        raise RuntimeError("rigid spec did not read rigid-owned collision filter fields")
 
     for frame in range(1, 25):
         scene.frame_set(frame)

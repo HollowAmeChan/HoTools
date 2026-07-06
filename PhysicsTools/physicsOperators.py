@@ -14,6 +14,8 @@ from .physicsUtils import (
     _collision_props,
     _exponent_factor,
     _object_collision_group_target_props,
+    _active_rigid_body_props,
+    _rigid_body_group_target_props,
     _selected_bone_names,
     _set_collision_group_bit,
     _tag_view3d_redraw,
@@ -211,6 +213,98 @@ class OP_Hotools_MeshCollision_ToggleCollidedByGroup(Operator):
             enable,
         )
         _tag_view3d_redraw()
+        return {"FINISHED"}
+
+
+class OP_Hotools_RigidBody_SetCollisionGroup(Operator):
+    bl_idname = "ho.rigid_body_set_collision_group"
+    bl_label = "设置刚体碰撞组"
+    bl_description = "设置当前刚体所属的刚体过滤组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    group: IntProperty(
+        name="组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+    apply_selected: BoolProperty(
+        name="应用到选中刚体",
+        default=False,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _active_rigid_body_props(context) is not None
+
+    def invoke(self, context, event):
+        self.apply_selected = bool(event.alt)
+        return self.execute(context)
+
+    def execute(self, context):
+        targets = _rigid_body_group_target_props(context, self.apply_selected)
+        if not targets:
+            return {"CANCELLED"}
+
+        group = min(max(int(self.group), 1), _COLLISION_GROUP_COUNT)
+        for props in targets:
+            props.rigid_collision_group = group
+
+        _tag_view3d_redraw()
+        if self.apply_selected:
+            self.report({"INFO"}, f"已设置 {len(targets)} 个选中刚体的过滤组")
+        return {"FINISHED"}
+
+
+class OP_Hotools_RigidBody_ToggleCollidesWithGroup(Operator):
+    bl_idname = "ho.rigid_body_toggle_collides_with_group"
+    bl_label = "切换可碰刚体组"
+    bl_description = "切换当前刚体允许碰撞的刚体过滤组"
+    bl_options = {"REGISTER", "UNDO"}
+
+    group: IntProperty(
+        name="组",
+        default=1,
+        min=1,
+        max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+    apply_selected: BoolProperty(
+        name="应用到选中刚体",
+        default=False,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )  # type: ignore
+
+    @classmethod
+    def poll(cls, context):
+        return _active_rigid_body_props(context) is not None
+
+    def invoke(self, context, event):
+        self.apply_selected = bool(event.shift or event.ctrl or event.alt)
+        return self.execute(context)
+
+    def execute(self, context):
+        targets = _rigid_body_group_target_props(context, self.apply_selected)
+        if not targets:
+            return {"CANCELLED"}
+
+        group = min(max(int(self.group), 1), _COLLISION_GROUP_COUNT)
+        active_props = _active_rigid_body_props(context)
+        if active_props is not None:
+            enable = not _collision_group_bit(active_props.rigid_collides_with_groups, group)
+        else:
+            enable = not all(_collision_group_bit(props.rigid_collides_with_groups, group) for props in targets)
+
+        for props in targets:
+            props.rigid_collides_with_groups = _set_collision_group_bit(
+                props.rigid_collides_with_groups,
+                group,
+                enable,
+            )
+
+        _tag_view3d_redraw()
+        if self.apply_selected:
+            self.report({"INFO"}, f"已更新 {len(targets)} 个选中刚体的可碰组")
         return {"FINISHED"}
 
 

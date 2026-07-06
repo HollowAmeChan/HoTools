@@ -232,7 +232,7 @@ class PG_Hotools_RigidBody(PropertyGroup):
     1. body_type 决定刚体是动态（受力模拟）、静态（固定碰撞体）还是运动学（由动画驱动）。
     2. mass 只对 DYNAMIC 有效；STATIC / KINEMATIC 不消耗质量。
     3. friction / restitution 影响碰撞响应，语义与 Jolt 等物理引擎一致。
-    4. collision_group / collided_by_groups 与现有碰撞组体系对齐，并映射到 Jolt CollisionGroup。
+    4. rigid_collision_group / rigid_collides_with_groups 是刚体自己的过滤组，不复用简单碰撞的组状态。
     5. shape_type 决定刚体碰撞形状；shape_offset / shape_rotation 表示 shape 相对 Object 原点的局部偏移。
     6. 速度、阻尼、CCD、睡眠和轴锁定等字段在刚体注册到 Jolt 时消费；运行中热改需要 solver 同步策略支持。
     7. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
@@ -280,16 +280,16 @@ class PG_Hotools_RigidBody(PropertyGroup):
         max=1.0,
     )  # type: ignore
 
-    collision_group: IntProperty(
-        name="碰撞组",
-        description="刚体所属碰撞组，与现有碰撞组体系对齐（1..16）",
+    rigid_collision_group: IntProperty(
+        name="刚体碰撞组",
+        description="刚体所属过滤组，仅在刚体/Jolt 求解器内部使用（1..16）",
         default=1,
         min=1,
         max=_COLLISION_GROUP_COUNT,
     )  # type: ignore
-    collided_by_groups: IntProperty(
-        name="被碰撞组",
-        description="允许哪些主碰撞组碰撞到这个刚体的位掩码；Jolt中两个刚体需互相允许才会碰撞",
+    rigid_collides_with_groups: IntProperty(
+        name="可碰刚体组",
+        description="允许哪些刚体碰撞组与此刚体碰撞；两个刚体需互相允许才会碰撞",
         default=_ALL_COLLISION_GROUPS_MASK,
         min=0,
         max=_ALL_COLLISION_GROUPS_MASK,

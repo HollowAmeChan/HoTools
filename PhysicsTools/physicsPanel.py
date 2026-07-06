@@ -37,6 +37,8 @@ _BONE_TOGGLE_COLLIDED_BY_GROUP_OP = "ho.bone_collision_toggle_collided_by_group"
 _OBJECT_SET_PRIMARY_GROUP_OP = "ho.object_collision_set_primary_group"
 _MESH_SET_PRIMARY_GROUP_OP = "ho.mesh_collision_set_primary_group"
 _MESH_TOGGLE_COLLIDED_BY_GROUP_OP = "ho.mesh_collision_toggle_collided_by_group"
+_RIGID_SET_COLLISION_GROUP_OP = "ho.rigid_body_set_collision_group"
+_RIGID_TOGGLE_COLLIDES_WITH_GROUP_OP = "ho.rigid_body_toggle_collides_with_group"
 
 
 def _draw_group_buttons(layout, operator_id, active_group=None, mask=None):
@@ -257,8 +259,14 @@ class PT_Hotools_Physics_RigidBody(Panel):
 
         layout.prop(props, "friction")
         layout.prop(props, "restitution")
-        layout.prop(props, "collision_group")
-        layout.prop(props, "collided_by_groups")
+
+        layout.separator()
+        layout.label(text="刚体过滤", icon="FILTER")
+        filter_col = layout.column(align=True)
+        filter_col.label(text="所属刚体组")
+        _draw_group_buttons(filter_col, _RIGID_SET_COLLISION_GROUP_OP, active_group=props.rigid_collision_group)
+        filter_col.label(text="可碰刚体组")
+        _draw_group_buttons(filter_col, _RIGID_TOGGLE_COLLIDES_WITH_GROUP_OP, mask=props.rigid_collides_with_groups)
 
         # ── 碰撞形状 ──────────────────────────────────────────────────────────
         layout.separator()

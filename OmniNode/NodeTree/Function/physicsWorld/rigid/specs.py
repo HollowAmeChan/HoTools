@@ -37,8 +37,8 @@ class RigidBodySpec:
         "mass",
         "friction",
         "restitution",
-        "collision_group",
-        "collided_by_groups",
+        "rigid_collision_group",
+        "rigid_collides_with_groups",
         "shape_type",
         "shape_radius",
         "shape_half_height",
@@ -74,8 +74,8 @@ class RigidBodySpec:
         mass: float = 1.0,
         friction: float = 0.5,
         restitution: float = 0.0,
-        collision_group: int = 1,
-        collided_by_groups: int = 0xFFFF,
+        rigid_collision_group: int = 1,
+        rigid_collides_with_groups: int = 0xFFFF,
         shape_type: str = "SPHERE",
         shape_radius: float = 0.5,
         shape_half_height: float = 0.5,
@@ -109,8 +109,8 @@ class RigidBodySpec:
         self.mass: float = mass
         self.friction: float = friction
         self.restitution: float = restitution
-        self.collision_group: int = collision_group
-        self.collided_by_groups: int = collided_by_groups
+        self.rigid_collision_group: int = rigid_collision_group
+        self.rigid_collides_with_groups: int = rigid_collides_with_groups
         self.shape_type: str = shape_type
         self.shape_radius: float = shape_radius
         self.shape_half_height: float = shape_half_height
@@ -143,8 +143,8 @@ class RigidBodySpec:
             "mass": self.mass,
             "friction": self.friction,
             "restitution": self.restitution,
-            "collision_group": self.collision_group,
-            "collided_by_groups": self.collided_by_groups,
+            "rigid_collision_group": self.rigid_collision_group,
+            "rigid_collides_with_groups": self.rigid_collides_with_groups,
             "shape_type": self.shape_type,
             "shape_radius": self.shape_radius,
             "shape_half_height": self.shape_half_height,
@@ -444,8 +444,8 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
     mass = max(float(getattr(props, "mass", 1.0)), 0.001)
     friction = max(0.0, min(1.0, float(getattr(props, "friction", 0.5))))
     restitution = max(0.0, min(1.0, float(getattr(props, "restitution", 0.0))))
-    collision_group = max(1, min(16, int(getattr(props, "collision_group", 1))))
-    collided_by_groups = max(0, min(0xFFFF, int(getattr(props, "collided_by_groups", 0xFFFF))))
+    rigid_collision_group = max(1, min(16, int(getattr(props, "rigid_collision_group", 1))))
+    rigid_collides_with_groups = max(0, min(0xFFFF, int(getattr(props, "rigid_collides_with_groups", 0xFFFF))))
 
     shape_type = str(getattr(props, "shape_type", "SPHERE"))
     if shape_type not in {
@@ -495,8 +495,8 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
         mass=mass,
         friction=friction,
         restitution=restitution,
-        collision_group=collision_group,
-        collided_by_groups=collided_by_groups,
+        rigid_collision_group=rigid_collision_group,
+        rigid_collides_with_groups=rigid_collides_with_groups,
         shape_type=shape_type,
         shape_radius=shape_radius,
         shape_half_height=shape_half_height,

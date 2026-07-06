@@ -128,6 +128,8 @@ if _nt_omni_key not in sys.modules:
 # 按依赖顺序加载
 _load_pw("types",                "types.py")
 _load_pw("scope",                "scope.py")
+_load_pw("rigid.results",        "rigid/results.py")
+_load_pw("writeback",            "writeback.py")
 _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
@@ -143,6 +145,7 @@ PhysicsWorldCache     = _pw("types").PhysicsWorldCache
 make_scope            = _pw("scope").make_scope
 physicsWorldBegin     = _pw("world").physicsWorldBegin
 physicsWorldCommit    = _pw("world").physicsWorldCommit
+apply_all_writebacks  = _pw("writeback").apply_all_writebacks
 build_rigid_body_spec = _pw("rigid.specs").build_rigid_body_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
@@ -158,7 +161,7 @@ def _make_obj(name, loc, body_type="DYNAMIC", mass=1.0, friction=0.5, restitutio
     rb = obj.hotools_rigid_body
     rb.enabled = True; rb.body_type = body_type
     rb.mass = mass; rb.friction = friction; rb.restitution = restitution
-    rb.collision_group = 1
+    rb.rigid_collision_group = 1
     col = obj.hotools_object_collision
     col.enabled = True; col.collision_type = "SPHERE"; col.radius = 0.4
     return obj
@@ -264,13 +267,15 @@ def test_full_rigid_pipeline():
 
     for fi in range(60):
         scene.frame_set(fi + 1)
-        world, _, _, _ = physicsWorldBegin(
+        world, _, _, restart = physicsWorldBegin(
             cache_state=cache_state, scene=scene, object_scope=scope, enabled=True)
         step_rigid_bodies(world, enabled=True)
+        apply_all_writebacks(world, restart=restart)
         cache_val, _, _ = physicsWorldCommit(world, enabled=True)
         cache_state = cache_val
 
-    z1 = ball.location.z
+    bpy.context.view_layer.update()
+    z1 = ball.matrix_world.translation.z
     assert z1 < z0, f"DYNAMIC 球应下落 z0={z0:.2f} z1={z1:.2f}"
     assert z1 > -2.0, f"球应落地停止 z1={z1:.2f}"
 
