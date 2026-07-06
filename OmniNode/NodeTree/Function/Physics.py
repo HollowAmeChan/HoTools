@@ -4367,6 +4367,7 @@ def _run_spring_bone_vrm_node(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进Verlet状态
     bl_label="弹簧骨-VRM",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -4430,6 +4431,7 @@ def springBoneVRM(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进Verlet状态
     bl_label="弹簧骨-VRM-CPP",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -4481,6 +4483,7 @@ def springBoneVRM_CPP(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进XPBD状态
     bl_label="网格物理-XPBD",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -4583,6 +4586,7 @@ def meshPhysicsXPBD(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进XPBD状态
     bl_label="网格物理-XPBD-CPP",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -4677,6 +4681,7 @@ def meshPhysicsXPBDCpp(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进弹簧骨状态
     bl_label="弹簧骨",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -4906,6 +4911,7 @@ def springBoneBase(
 
 @omni(
     enable=True,
+    always_run=True,   # 写入 bpy keyframe，有副作用
     bl_label="骨骼姿态K帧",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,

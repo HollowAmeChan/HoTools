@@ -5,6 +5,7 @@ from ..FunctionNodeCore import omni
 
 @omni(
     enable=True,
+    always_run=True,   # print 副作用
     bl_label="Debug打印",
     bl_icon="CONSOLE",
     base_color=(0.12, 0.12, 0.12),

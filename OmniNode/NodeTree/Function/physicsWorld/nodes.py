@@ -110,6 +110,7 @@ def physicsObjectScope(
 
 @omni(
     enable=True,
+    always_run=True,   # 每帧必须更新帧上下文和碰撞快照
     bl_label="物理世界-帧开始",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -165,6 +166,7 @@ def physicsWorldBegin(
 
 @omni(
     enable=True,
+    always_run=True,   # 每帧必须提交 cache intent
     bl_label="物理世界-帧提交",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
@@ -195,6 +197,7 @@ def physicsWorldCommit(
 
 @omni(
     enable=True,
+    always_run=True,   # debug输出，每帧刷新快照
     bl_label="物理世界-调试快照",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
@@ -220,6 +223,7 @@ def physicsWorldDebugSnapshot(
 
 @omni(
     enable=True,
+    always_run=True,   # 可能有 print 副作用，每帧刷新
     bl_label="物理世界-调试文本",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
@@ -254,6 +258,7 @@ def physicsWorldDebugText(
 
 @omni(
     enable=True,
+    always_run=True,   # 写入 draw store，每帧刷新视口绘制
     bl_label="物理世界-可视化调试",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,

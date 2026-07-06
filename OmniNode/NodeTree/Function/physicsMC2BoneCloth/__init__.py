@@ -263,6 +263,7 @@ def boneClothMC2ChainPhysics(
 
 @omni(
     enable=True,
+    always_run=True,   # 物理解算器，每帧推进状态
     bl_label="骨骼布料-MC2",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,

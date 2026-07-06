@@ -166,6 +166,7 @@ def _euler_order(obj: bpy.types.Object) -> str:
 
 
 @omni(enable=True,
+      always_run=True,   # 写入 bpy 变换，有副作用
       bl_label="写入物体变换",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
@@ -331,6 +332,7 @@ def composeTransform(
 
 
 @omni(enable=True,
+      always_run=True,   # 写入 bpy delta 变换，有副作用
       bl_label="写入增量变换",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
@@ -356,6 +358,7 @@ def objectWriteDeltaTransform(
 
 
 @omni(enable=True,
+      always_run=True,   # 写入 bpy 属性，有副作用
       bl_label="设置Datablock数据",
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
@@ -367,6 +370,7 @@ def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) 
 
 
 @omni(enable=True,
+    always_run=True,   # 修改 bpy mesh UV层，有副作用
     bl_label="创建UV层",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
