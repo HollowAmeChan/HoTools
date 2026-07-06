@@ -85,7 +85,7 @@ Jolt body 的基本运动类型：
 - 激活、休眠、重置 sleep timer。
 - 获取 body user data、material、active 状态和 world transform。
 
-当前 HoTools 只覆盖：`body_type`、`mass`、`friction`、`restitution`、三种 shape 的尺寸，以及一个尚未接入 native 的 `collision_group`。
+当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`collision_group` / `collided_by_groups`、三种 shape 的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
 
 ### Shape
 
@@ -114,9 +114,8 @@ Jolt shape 重要约束：
 - `CapsuleShape(shape_half_height, shape_radius)`
 - `BoxShape(shape_half_extents)`
 
-当前没有：
+当前 binding 已通过 `RotatedTranslatedShape` 接入 shape offset / local rotation。当前仍没有：
 
-- shape offset / local rotation。
 - convex radius。
 - plane / cylinder / convex hull / mesh / compound。
 - scaled shape / COM offset。
@@ -132,9 +131,9 @@ Jolt 支持的主要 two-body constraint：
 | Fixed | 锁定相对位置和旋转；支持 world/local frame、auto detect point | 已接类型，但只传统一 anchor frame |
 | Point | 锁定一个点，允许任意旋转 | 已接类型，但只传统一 anchor point |
 | Distance | 点到点距离范围，支持 min/max 和 spring | 未接 |
-| Hinge | 单轴旋转，支持角度 limit、limit spring、friction torque、motor | 已接类型，但未接 limit/friction/motor |
-| Slider | 单轴平移，支持线性 limit、limit spring、friction force、motor | 已接类型，但未接 limit/friction/motor |
-| Cone | 点约束 + swing cone angle | 已接类型，但未接 half cone angle，默认等于 0，实际近似锁死摆动 |
+| Hinge | 单轴旋转，支持角度 limit、limit spring、friction torque、motor | 已接类型，并已接基础 limit/friction/motor |
+| Slider | 单轴平移，支持线性 limit、limit spring、friction force、motor | 已接类型，并已接基础 limit/friction/motor |
+| Cone | 点约束 + swing cone angle | 已接类型，并已接 half cone angle |
 | SwingTwist | 肩关节/球窝角限制，支持 normal/twist/plane half cone angle、twist min/max、friction、motor | 未接 |
 | SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 未接；最适合作为“全面约束属性”的兜底 |
 | Gear | 两个 hinge 角速度/角度关系 | 未接 |
@@ -195,7 +194,7 @@ Jolt 有两层过滤：
 - `ObjectLayer` / `BroadPhaseLayer`：粗粒度，影响 broadphase。
 - `CollisionGroup` / `GroupFilter`：细粒度，允许同组内 subgroup pair 控制。
 
-当前 `jolt_rigid.cpp` 只有两层：
+当前 `jolt_rigid.cpp` 的 broadphase / object layer 仍只有两层：
 
 - `NON_MOVING`
 - `MOVING`
@@ -205,7 +204,7 @@ Jolt 有两层过滤：
 - static-static 不碰。
 - moving 与所有层碰。
 
-当前没有真正接入 HoTools 的 1..16 碰撞组，也没有接入 `collided_by_groups` mask。`RigidBodySpec.collision_group` 已经构造出来，但 native `add_body()` 没有消费它。后续要把 HoTools 统一碰撞组映射到 Jolt，不应只在 Python spec 停住。
+HoTools 的 1..16 主碰撞组和 `collided_by_groups` mask 已通过自定义 `CollisionGroup` / `GroupFilter` 接入 native。当前策略是对称过滤：两个刚体都必须允许对方的主组，才会碰撞。后续如果要支持“约束连接体不碰撞”或更细 pair override，应继续在 group filter / pair table 层扩展，不应污染 coarse object layer。
 
 建议：
 
@@ -443,11 +442,16 @@ HoTools 当前 constraint spec 只有：
 ```text
 JoltWorld(max_bodies, max_body_pairs, max_contact_constraints)
 add_body(body_type, mass, friction, restitution, position, rotation_wxyz,
-         shape_type, shape_radius, shape_half_height, shape_half_extents)
+         shape_type, shape_radius, shape_half_height, shape_half_extents,
+         collision_group, collided_by_groups,
+         shape_offset, shape_rotation_wxyz,
+         linear_velocity, angular_velocity, damping, gravity, sleep, CCD,
+         sensor, allowed_dofs, ...)
 remove_body(handle)
 set_kinematic_transform(handle, position, rotation_wxyz, dt)
 get_body_transform(handle)
-add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz)
+add_constraint(constraint_type, body_a_handle, body_b_handle, anchor_pos, anchor_rot_wxyz,
+               solver overrides, limit/spring, friction, motor, cone angle)
 remove_constraint(handle)
 step(dt, substeps)
 body_count
@@ -463,11 +467,11 @@ Native 侧当前特点：
 - broadphase/object layer 只有 moving/non-moving。
 - static-static 不碰。
 - 支持固定到 world：`WORLD_HANDLE = 0xFFFFFFFF`。
-- 约束当前只创建 fixed/hinge/slider/cone/point。
+- 约束当前创建 fixed/hinge/slider/cone/point，并已接 Hinge/Slider 基础 limit/friction/motor、Cone half angle、通用 solver overrides。
 - 没有 contact listener。
 - 没有 debug draw API。
 - 没有 force / impulse / velocity getter。
-- 没有 collision group / mask。
+- HoTools collision group / mask 已接入 Jolt `CollisionGroup` / 自定义 `GroupFilter`。
 - 没有 body update API，body 参数变化一般靠 remove + add。
 
 ### Python adapter
@@ -484,10 +488,9 @@ Native 侧当前特点：
 
 需要修正或设计决策的点：
 
-- `_transform_from_obj()` 使用 `obj.location` 和 `obj.rotation_euler`，没有使用 `matrix_world`。父子层级、约束、非默认 rotation mode 下可能不准确。
-- `_transform_from_empty()` 同样没有用 `Empty.matrix_world`，而文档语义写的是 anchor frame 应来自 `Empty.matrix_world`。
-- shape 没有进入 `RigidBodySpec`，adapter 直接读 Blender property，削弱 spec 可检查性。
-- `collision_group` 已进 spec，但 native 未消费。
+- `_transform_from_obj()` / `_transform_from_empty()` 已改为读取 `matrix_world.decompose()`。
+- shape 已进入 `RigidBodySpec`，adapter 优先消费 spec。
+- `collision_group` / `collided_by_groups` 已进 spec 并由 native 消费。
 - sync 策略目前每次 sync 旧 body 都 remove + add；后续需要区分 topology/config rebuild 与 runtime value update。
 
 ### HoTools 属性面板
@@ -499,17 +502,21 @@ Native 侧当前特点：
 - mass。
 - friction。
 - restitution。
-- collision_group。
+- collision_group / collided_by_groups。
 - shape_type：sphere / capsule / box。
 - shape_radius。
 - shape_half_height。
 - shape_half_extents。
+- shape_offset / shape_rotation。
+- initial linear/angular velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
 
 当前 `PG_Hotools_RigidConstraint`：
 
 - enabled。
 - constraint_type：fixed / hinge / slider / cone / point。
 - target_a。
+- target_b。
+- solver overrides、limit/spring、friction、motor、cone half angle。
 - target_b。
 
 这只是 Jolt 能力的基础子集。
@@ -637,7 +644,7 @@ RigidDebugFrame
 - `RigidBodySpec` 包含 shape 字段，不再由 adapter 回读 Blender 属性。
 - `ConstraintSpec` 包含 anchor frame、target、基础通用字段。
 - transform 改为读取 `matrix_world`，并明确输出/写回的 local/world 策略。
-- `collision_group` 暂时保留但标记 native 未生效，或直接接入最小过滤。
+- `collision_group` / `collided_by_groups` 已接入最小过滤；后续扩展 pair override。
 
 这一步不要求增加很多 Jolt 能力，但能把架构方向摆正。
 

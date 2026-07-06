@@ -258,6 +258,7 @@ class PT_Hotools_Physics_RigidBody(Panel):
         layout.prop(props, "friction")
         layout.prop(props, "restitution")
         layout.prop(props, "collision_group")
+        layout.prop(props, "collided_by_groups")
 
         # ── 碰撞形状 ──────────────────────────────────────────────────────────
         layout.separator()
@@ -273,6 +274,38 @@ class PT_Hotools_Physics_RigidBody(Panel):
             col2.prop(props, "shape_half_height")
         elif stype == "BOX":
             layout.prop(props, "shape_half_extents")
+        layout.prop(props, "shape_offset")
+        layout.prop(props, "shape_rotation")
+
+        layout.separator()
+        layout.label(text="动力学", icon="FORCE_FORCE")
+        dyn_col = layout.column(align=True)
+        dyn_col.enabled = (props.body_type == "DYNAMIC")
+        dyn_col.prop(props, "linear_velocity")
+        dyn_col.prop(props, "angular_velocity")
+        dyn_col.prop(props, "linear_damping")
+        dyn_col.prop(props, "angular_damping")
+        dyn_col.prop(props, "gravity_factor")
+        dyn_col.prop(props, "max_linear_velocity")
+        dyn_col.prop(props, "max_angular_velocity")
+
+        layout.separator()
+        layout.label(text="求解", icon="MOD_PHYSICS")
+        layout.prop(props, "motion_quality")
+        layout.prop(props, "allow_sleeping")
+        layout.prop(props, "is_sensor")
+        layout.prop(props, "collide_kinematic_vs_non_dynamic")
+
+        lock_col = layout.column(align=True)
+        lock_col.label(text="轴锁定")
+        row = lock_col.row(align=True)
+        row.prop(props, "lock_linear_x", toggle=True, text="线X")
+        row.prop(props, "lock_linear_y", toggle=True, text="线Y")
+        row.prop(props, "lock_linear_z", toggle=True, text="线Z")
+        row = lock_col.row(align=True)
+        row.prop(props, "lock_angular_x", toggle=True, text="角X")
+        row.prop(props, "lock_angular_y", toggle=True, text="角Y")
+        row.prop(props, "lock_angular_z", toggle=True, text="角Z")
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +338,60 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
         layout.prop(props, "constraint_type")
         layout.prop(props, "target_a")
         layout.prop(props, "target_b")
+
+        ctype = props.constraint_type
+
+        layout.separator()
+        layout.label(text="求解", icon="MOD_PHYSICS")
+        solver_col = layout.column(align=True)
+        solver_col.prop(props, "constraint_priority")
+        solver_col.prop(props, "solver_velocity_steps")
+        solver_col.prop(props, "solver_position_steps")
+        solver_col.prop(props, "draw_constraint_size")
+
+        if ctype in {"HINGE", "SLIDER"}:
+            layout.separator()
+            layout.label(text="限制", icon="CON_TRACKTO")
+            layout.prop(props, "limit_enabled")
+            limit_col = layout.column(align=True)
+            limit_col.enabled = bool(props.limit_enabled)
+            if ctype == "HINGE":
+                limit_col.prop(props, "angular_limit_min")
+                limit_col.prop(props, "angular_limit_max")
+            else:
+                limit_col.prop(props, "linear_limit_min")
+                limit_col.prop(props, "linear_limit_max")
+            limit_col.prop(props, "limit_spring_frequency")
+            limit_col.prop(props, "limit_spring_damping")
+
+            layout.separator()
+            layout.label(text="Motor", icon="DRIVER")
+            if ctype == "HINGE":
+                layout.prop(props, "max_friction_torque")
+            else:
+                layout.prop(props, "max_friction_force")
+            layout.prop(props, "motor_state")
+            motor_col = layout.column(align=True)
+            motor_col.enabled = (props.motor_state != "OFF")
+            motor_col.prop(props, "motor_frequency")
+            motor_col.prop(props, "motor_damping")
+            if ctype == "HINGE":
+                motor_col.prop(props, "motor_torque_limit")
+                if props.motor_state == "VELOCITY":
+                    motor_col.prop(props, "motor_target_angular_velocity")
+                elif props.motor_state == "POSITION":
+                    motor_col.prop(props, "motor_target_angle")
+            else:
+                motor_col.prop(props, "motor_force_limit")
+                if props.motor_state == "VELOCITY":
+                    motor_col.prop(props, "motor_target_velocity")
+                elif props.motor_state == "POSITION":
+                    motor_col.prop(props, "motor_target_position")
+
+        if ctype == "CONE":
+            layout.separator()
+            layout.label(text="Cone", icon="EMPTY_SINGLE_ARROW")
+            layout.prop(props, "cone_half_angle")
 
 
 _BONE_PARENT = "BONE_PT_Hotools_PhysicsPanel"

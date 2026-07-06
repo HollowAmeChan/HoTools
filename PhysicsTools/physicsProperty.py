@@ -4,6 +4,8 @@ from bpy.types import PropertyGroup
 
 from .physicsUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
 
+_PI = 3.141592653589793
+
 
 def _mesh_object_poll(self, obj):
     return obj is not None and obj.type == "MESH"
@@ -230,11 +232,11 @@ class PG_Hotools_RigidBody(PropertyGroup):
     1. body_type 决定刚体是动态（受力模拟）、静态（固定碰撞体）还是运动学（由动画驱动）。
     2. mass 只对 DYNAMIC 有效；STATIC / KINEMATIC 不消耗质量。
     3. friction / restitution 影响碰撞响应，语义与 Jolt 等物理引擎一致。
-    4. collision_group 与现有碰撞组体系对齐，值域 1..16。
-    5. shape_type 决定刚体的碰撞形状；AUTO 时先尝试读 hotools_object_collision，
-       失败则按 Object.dimensions 的 AABB 包围盒生成 BOX。
-    6. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
-    7. 节点图通过 hotools_rigid_body.body_type 等字段读取，视为只读。
+    4. collision_group / collided_by_groups 与现有碰撞组体系对齐，并映射到 Jolt CollisionGroup。
+    5. shape_type 决定刚体碰撞形状；shape_offset / shape_rotation 表示 shape 相对 Object 原点的局部偏移。
+    6. 速度、阻尼、CCD、睡眠和轴锁定等字段在刚体注册到 Jolt 时消费；运行中热改需要 solver 同步策略支持。
+    7. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
+    8. 节点图通过 hotools_rigid_body.body_type 等字段读取，视为只读。
     """
 
     enabled: BoolProperty(
@@ -285,6 +287,13 @@ class PG_Hotools_RigidBody(PropertyGroup):
         min=1,
         max=_COLLISION_GROUP_COUNT,
     )  # type: ignore
+    collided_by_groups: IntProperty(
+        name="被碰撞组",
+        description="允许哪些主碰撞组碰撞到这个刚体的位掩码；Jolt中两个刚体需互相允许才会碰撞",
+        default=_ALL_COLLISION_GROUPS_MASK,
+        min=0,
+        max=_ALL_COLLISION_GROUPS_MASK,
+    )  # type: ignore
 
     # ── 碰撞形状 ────────────────────────────────────────────────────────────
 
@@ -328,6 +337,117 @@ class PG_Hotools_RigidBody(PropertyGroup):
         subtype="XYZ",
     )  # type: ignore
 
+    shape_offset: FloatVectorProperty(
+        name="局部偏移",
+        description="碰撞形状相对Object原点的局部偏移",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="LENGTH",
+        subtype="XYZ",
+    )  # type: ignore
+
+    shape_rotation: FloatVectorProperty(
+        name="局部旋转",
+        description="碰撞形状相对Object旋转的局部欧拉旋转",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="ROTATION",
+        subtype="EULER",
+    )  # type: ignore
+
+    # ── 动力学 ─────────────────────────────────────────────────────────────
+
+    linear_velocity: FloatVectorProperty(
+        name="线速度",
+        description="动态刚体注册到Jolt时的初始世界线速度",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        subtype="XYZ",
+    )  # type: ignore
+
+    angular_velocity: FloatVectorProperty(
+        name="角速度",
+        description="动态刚体注册到Jolt时的初始世界角速度（rad/s）",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        subtype="XYZ",
+    )  # type: ignore
+
+    linear_damping: FloatProperty(
+        name="线阻尼",
+        description="线速度阻尼；Jolt建议范围0..1，通常接近0",
+        default=0.05,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+
+    angular_damping: FloatProperty(
+        name="角阻尼",
+        description="角速度阻尼；Jolt建议范围0..1，通常接近0",
+        default=0.05,
+        min=0.0,
+        max=1.0,
+    )  # type: ignore
+
+    gravity_factor: FloatProperty(
+        name="重力倍率",
+        description="该刚体受到的世界重力倍率；0表示不受重力",
+        default=1.0,
+        soft_min=0.0,
+        soft_max=2.0,
+    )  # type: ignore
+
+    allow_sleeping: BoolProperty(
+        name="允许睡眠",
+        description="允许Jolt在刚体静止后让它进入睡眠以节省计算",
+        default=True,
+    )  # type: ignore
+
+    motion_quality: EnumProperty(
+        name="碰撞质量",
+        description="高速刚体的碰撞检测质量",
+        items=[
+            ("DISCRETE",    "离散", "普通离散步进，速度过高时可能穿透薄物体"),
+            ("LINEAR_CAST", "CCD",  "使用线性投射降低高速穿透风险，成本更高"),
+        ],
+        default="DISCRETE",
+    )  # type: ignore
+
+    max_linear_velocity: FloatProperty(
+        name="最大线速度",
+        description="Jolt允许该刚体达到的最大线速度",
+        default=500.0,
+        min=0.0,
+        soft_max=500.0,
+    )  # type: ignore
+
+    max_angular_velocity: FloatProperty(
+        name="最大角速度",
+        description="Jolt允许该刚体达到的最大角速度（rad/s）",
+        default=47.1239,
+        min=0.0,
+        soft_max=100.0,
+    )  # type: ignore
+
+    is_sensor: BoolProperty(
+        name="传感器",
+        description="作为触发体接收接触事件，但不产生碰撞响应；事件输出接入前仅作为Jolt body设置",
+        default=False,
+    )  # type: ignore
+
+    collide_kinematic_vs_non_dynamic: BoolProperty(
+        name="运动学碰静态",
+        description="允许运动学体和静态/运动学体生成接触点；大型传感器会显著增加接触成本",
+        default=False,
+    )  # type: ignore
+
+    lock_linear_x: BoolProperty(name="锁定线性X", default=False)  # type: ignore
+    lock_linear_y: BoolProperty(name="锁定线性Y", default=False)  # type: ignore
+    lock_linear_z: BoolProperty(name="锁定线性Z", default=False)  # type: ignore
+    lock_angular_x: BoolProperty(name="锁定角度X", default=False)  # type: ignore
+    lock_angular_y: BoolProperty(name="锁定角度Y", default=False)  # type: ignore
+    lock_angular_z: BoolProperty(name="锁定角度Z", default=False)  # type: ignore
+
 
 class PG_Hotools_RigidConstraint(PropertyGroup):
     """
@@ -370,4 +490,191 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
         type=bpy.types.Object,
         name="刚体 B",
         description="约束的第二个刚体目标；留空表示约束到世界原点",
+    )  # type: ignore
+
+    # ── Jolt 通用 ConstraintSettings ───────────────────────────────────────
+
+    constraint_priority: IntProperty(
+        name="求解优先级",
+        description="Jolt约束求解优先级；更高数值会更优先满足",
+        default=0,
+        min=0,
+    )  # type: ignore
+
+    solver_velocity_steps: IntProperty(
+        name="速度迭代覆盖",
+        description="0表示使用物理世界默认速度迭代次数；非0会覆盖该约束所在岛的速度迭代下限",
+        default=0,
+        min=0,
+        max=255,
+    )  # type: ignore
+
+    solver_position_steps: IntProperty(
+        name="位置迭代覆盖",
+        description="0表示使用物理世界默认位置迭代次数；非0会覆盖该约束所在岛的位置迭代下限",
+        default=0,
+        min=0,
+        max=255,
+    )  # type: ignore
+
+    draw_constraint_size: FloatProperty(
+        name="调试显示尺寸",
+        description="Jolt debug renderer使用的约束显示尺寸；当前先作为调试可视化数据保留",
+        default=1.0,
+        min=0.0,
+        soft_max=10.0,
+    )  # type: ignore
+
+    # ── Hinge / Slider 限制与弹簧 ──────────────────────────────────────────
+
+    limit_enabled: BoolProperty(
+        name="启用限制",
+        description="为Hinge启用角度限制，或为Slider启用线性行程限制",
+        default=False,
+    )  # type: ignore
+
+    angular_limit_min: FloatProperty(
+        name="最小角度",
+        description="Hinge最小旋转角度；范围[-π, 0]",
+        default=-_PI,
+        min=-_PI,
+        max=0.0,
+        unit="ROTATION",
+    )  # type: ignore
+
+    angular_limit_max: FloatProperty(
+        name="最大角度",
+        description="Hinge最大旋转角度；范围[0, π]",
+        default=_PI,
+        min=0.0,
+        max=_PI,
+        unit="ROTATION",
+    )  # type: ignore
+
+    linear_limit_min: FloatProperty(
+        name="最小行程",
+        description="Slider沿约束轴的最小位移",
+        default=-1.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    linear_limit_max: FloatProperty(
+        name="最大行程",
+        description="Slider沿约束轴的最大位移",
+        default=1.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    limit_spring_frequency: FloatProperty(
+        name="限制弹簧频率",
+        description="大于0时将硬限制变为软限制；单位Hz",
+        default=0.0,
+        min=0.0,
+        soft_max=20.0,
+    )  # type: ignore
+
+    limit_spring_damping: FloatProperty(
+        name="限制弹簧阻尼",
+        description="限制弹簧阻尼比；0无阻尼，1约等于临界阻尼",
+        default=0.0,
+        min=0.0,
+        soft_max=2.0,
+    )  # type: ignore
+
+    # ── 摩擦与 Motor ──────────────────────────────────────────────────────
+
+    max_friction_torque: FloatProperty(
+        name="最大摩擦扭矩",
+        description="Hinge未启用motor时用于阻碍旋转的最大摩擦扭矩",
+        default=0.0,
+        min=0.0,
+        soft_max=1000.0,
+    )  # type: ignore
+
+    max_friction_force: FloatProperty(
+        name="最大摩擦力",
+        description="Slider未启用motor时用于阻碍滑动的最大摩擦力",
+        default=0.0,
+        min=0.0,
+        soft_max=1000.0,
+    )  # type: ignore
+
+    motor_state: EnumProperty(
+        name="Motor",
+        description="Hinge或Slider motor状态",
+        items=[
+            ("OFF",      "关闭", "不驱动约束"),
+            ("VELOCITY", "速度", "驱动到目标速度"),
+            ("POSITION", "位置", "驱动到目标位置/角度"),
+        ],
+        default="OFF",
+    )  # type: ignore
+
+    motor_frequency: FloatProperty(
+        name="Motor频率",
+        description="Motor位置弹簧频率；单位Hz",
+        default=2.0,
+        min=0.0,
+        soft_max=20.0,
+    )  # type: ignore
+
+    motor_damping: FloatProperty(
+        name="Motor阻尼",
+        description="Motor位置弹簧阻尼比",
+        default=1.0,
+        min=0.0,
+        soft_max=2.0,
+    )  # type: ignore
+
+    motor_force_limit: FloatProperty(
+        name="Motor力限制",
+        description="Slider motor最大力；0表示使用Jolt默认无限制",
+        default=0.0,
+        min=0.0,
+        soft_max=1000.0,
+    )  # type: ignore
+
+    motor_torque_limit: FloatProperty(
+        name="Motor扭矩限制",
+        description="Hinge motor最大扭矩；0表示使用Jolt默认无限制",
+        default=0.0,
+        min=0.0,
+        soft_max=1000.0,
+    )  # type: ignore
+
+    motor_target_angular_velocity: FloatProperty(
+        name="目标角速度",
+        description="Hinge速度motor目标角速度（rad/s）",
+        default=0.0,
+    )  # type: ignore
+
+    motor_target_angle: FloatProperty(
+        name="目标角度",
+        description="Hinge位置motor目标角度",
+        default=0.0,
+        unit="ROTATION",
+    )  # type: ignore
+
+    motor_target_velocity: FloatProperty(
+        name="目标线速度",
+        description="Slider速度motor目标线速度",
+        default=0.0,
+    )  # type: ignore
+
+    motor_target_position: FloatProperty(
+        name="目标位置",
+        description="Slider位置motor目标位移",
+        default=0.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    # ── Cone 专用 ──────────────────────────────────────────────────────────
+
+    cone_half_angle: FloatProperty(
+        name="半锥角",
+        description="Cone约束允许的最大摆动半角；0保持旧行为",
+        default=0.0,
+        min=0.0,
+        max=_PI,
+        unit="ROTATION",
     )  # type: ignore

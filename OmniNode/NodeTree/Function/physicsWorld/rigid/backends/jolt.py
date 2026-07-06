@@ -46,10 +46,20 @@ def _get_native_const(attr: str, default):
 
 def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
     """
-    从 RigidBodySpec 提取碰撞形状参数，读取顺序：
-      1. hotools_rigid_body.shape_type（SPHERE/CAPSULE/BOX，默认 SPHERE）
-      2. Fallback：对象 dimensions AABB 生成 BOX（shape_type 值异常时）
+    从 RigidBodySpec 提取碰撞形状参数。
+    新版 spec 已经持有持久化 shape 字段；旧 spec 才回退到对象属性/包围盒。
     """
+    stype = getattr(spec, "shape_type", None)
+    if stype in {"SPHERE", "CAPSULE", "BOX"}:
+        return {
+            "shape_type": stype,
+            "shape_radius": max(float(getattr(spec, "shape_radius", 0.5)), 0.001),
+            "shape_half_height": max(float(getattr(spec, "shape_half_height", 0.5)), 0.001),
+            "shape_half_extents": tuple(getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5))),
+            "shape_offset": tuple(getattr(spec, "shape_offset", (0.0, 0.0, 0.0))),
+            "shape_rotation_wxyz": tuple(getattr(spec, "shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
+        }
+
     obj = spec.obj
     if obj is None:
         return {"shape_type": "SPHERE", "shape_radius": 0.1}
@@ -92,8 +102,7 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
 def _transform_from_obj(obj) -> tuple[tuple, tuple]:
     """返回 (position, rotation_wxyz)。"""
     try:
-        loc = obj.location
-        rot = obj.rotation_euler.to_quaternion()
+        loc, rot, _scale = obj.matrix_world.decompose()
         return ((float(loc.x), float(loc.y), float(loc.z)),
                 (float(rot.w), float(rot.x), float(rot.y), float(rot.z)))
     except Exception:
@@ -164,7 +173,7 @@ class JoltAdapter:
         pos, rot = _transform_from_obj(spec.obj)
         shape = _shape_params_from_spec(spec)
 
-        handle = self._jw.add_body(
+        kwargs = dict(
             body_type=spec.body_type,
             mass=float(spec.mass),
             friction=float(spec.friction),
@@ -176,7 +185,40 @@ class JoltAdapter:
             shape_half_height=float(shape.get("shape_half_height", 0.5)),
             shape_half_extents=tuple(shape.get("shape_half_extents",
                                                (0.5, 0.5, 0.5))),
+            collision_group=int(getattr(spec, "collision_group", 1)),
+            collided_by_groups=int(getattr(spec, "collided_by_groups", 0xFFFF)),
+            shape_offset=tuple(shape.get("shape_offset", (0.0, 0.0, 0.0))),
+            shape_rotation_wxyz=tuple(shape.get("shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
+            linear_velocity=tuple(getattr(spec, "linear_velocity", (0.0, 0.0, 0.0))),
+            angular_velocity=tuple(getattr(spec, "angular_velocity", (0.0, 0.0, 0.0))),
+            linear_damping=float(getattr(spec, "linear_damping", 0.05)),
+            angular_damping=float(getattr(spec, "angular_damping", 0.05)),
+            gravity_factor=float(getattr(spec, "gravity_factor", 1.0)),
+            allow_sleeping=bool(getattr(spec, "allow_sleeping", True)),
+            motion_quality=str(getattr(spec, "motion_quality", "DISCRETE")),
+            max_linear_velocity=float(getattr(spec, "max_linear_velocity", 500.0)),
+            max_angular_velocity=float(getattr(spec, "max_angular_velocity", 47.1239)),
+            is_sensor=bool(getattr(spec, "is_sensor", False)),
+            allowed_dofs=int(getattr(spec, "allowed_dofs", 0x3F)),
+            collide_kinematic_vs_non_dynamic=bool(getattr(spec, "collide_kinematic_vs_non_dynamic", False)),
         )
+        try:
+            handle = self._jw.add_body(**kwargs)
+        except TypeError:
+            # 兼容尚未重编的旧 hotools_jolt.pyd；新字段会在重编后生效。
+            legacy_keys = {
+                "body_type",
+                "mass",
+                "friction",
+                "restitution",
+                "position",
+                "rotation_wxyz",
+                "shape_type",
+                "shape_radius",
+                "shape_half_height",
+                "shape_half_extents",
+            }
+            handle = self._jw.add_body(**{k: v for k, v in kwargs.items() if k in legacy_keys})
         self._body_handles[slot_id] = handle
         return handle
 
@@ -231,13 +273,47 @@ class JoltAdapter:
 
         pos, rot = _transform_from_empty(spec.empty_obj)
 
-        handle = self._jw.add_constraint(
+        kwargs = dict(
             constraint_type=spec.constraint_type,
             body_a_handle=a_handle,
             body_b_handle=b_handle,
             anchor_pos=pos,
             anchor_rot_wxyz=rot,
+            constraint_priority=int(getattr(spec, "constraint_priority", 0)),
+            solver_velocity_steps=int(getattr(spec, "solver_velocity_steps", 0)),
+            solver_position_steps=int(getattr(spec, "solver_position_steps", 0)),
+            draw_constraint_size=float(getattr(spec, "draw_constraint_size", 1.0)),
+            limit_enabled=bool(getattr(spec, "limit_enabled", False)),
+            angular_limit_min=float(getattr(spec, "angular_limit_min", -3.141592653589793)),
+            angular_limit_max=float(getattr(spec, "angular_limit_max", 3.141592653589793)),
+            linear_limit_min=float(getattr(spec, "linear_limit_min", -1.0)),
+            linear_limit_max=float(getattr(spec, "linear_limit_max", 1.0)),
+            limit_spring_frequency=float(getattr(spec, "limit_spring_frequency", 0.0)),
+            limit_spring_damping=float(getattr(spec, "limit_spring_damping", 0.0)),
+            max_friction_torque=float(getattr(spec, "max_friction_torque", 0.0)),
+            max_friction_force=float(getattr(spec, "max_friction_force", 0.0)),
+            motor_state=str(getattr(spec, "motor_state", "OFF")),
+            motor_frequency=float(getattr(spec, "motor_frequency", 2.0)),
+            motor_damping=float(getattr(spec, "motor_damping", 1.0)),
+            motor_force_limit=float(getattr(spec, "motor_force_limit", 0.0)),
+            motor_torque_limit=float(getattr(spec, "motor_torque_limit", 0.0)),
+            motor_target_angular_velocity=float(getattr(spec, "motor_target_angular_velocity", 0.0)),
+            motor_target_angle=float(getattr(spec, "motor_target_angle", 0.0)),
+            motor_target_velocity=float(getattr(spec, "motor_target_velocity", 0.0)),
+            motor_target_position=float(getattr(spec, "motor_target_position", 0.0)),
+            cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
         )
+        try:
+            handle = self._jw.add_constraint(**kwargs)
+        except TypeError:
+            legacy_keys = {
+                "constraint_type",
+                "body_a_handle",
+                "body_b_handle",
+                "anchor_pos",
+                "anchor_rot_wxyz",
+            }
+            handle = self._jw.add_constraint(**{k: v for k, v in kwargs.items() if k in legacy_keys})
         self._constraint_handles[slot_id] = handle
         return handle
 
