@@ -129,11 +129,11 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 位置和旋转从 Blender 对象提取
+# 位置和旋转从 spec 快照提取
 # ---------------------------------------------------------------------------
 
 def _transform_from_obj(obj) -> tuple[tuple, tuple]:
-    """返回 (position, rotation_wxyz)。"""
+    """返回 (position, rotation_wxyz)。仅用于旧数据或 KINEMATIC 兜底。"""
     try:
         loc, rot, _scale = obj.matrix_world.decompose()
         return ((float(loc.x), float(loc.y), float(loc.z)),
@@ -145,6 +145,34 @@ def _transform_from_obj(obj) -> tuple[tuple, tuple]:
 def _transform_from_empty(empty_obj) -> tuple[tuple, tuple]:
     """约束锚点 Empty 的 anchor frame。"""
     return _transform_from_obj(empty_obj)
+
+
+def _transform_from_body_spec(spec: "RigidBodySpec") -> tuple[tuple, tuple]:
+    pos = getattr(spec, "world_position", None)
+    rot = getattr(spec, "world_rotation_wxyz", None)
+    if pos is not None and rot is not None:
+        try:
+            return (
+                (float(pos[0]), float(pos[1]), float(pos[2])),
+                (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+            )
+        except Exception:
+            pass
+    return _transform_from_obj(getattr(spec, "obj", None))
+
+
+def _transform_from_constraint_spec(spec: "ConstraintSpec") -> tuple[tuple, tuple]:
+    pos = getattr(spec, "anchor_position", None)
+    rot = getattr(spec, "anchor_rotation_wxyz", None)
+    if pos is not None and rot is not None:
+        try:
+            return (
+                (float(pos[0]), float(pos[1]), float(pos[2])),
+                (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+            )
+        except Exception:
+            pass
+    return _transform_from_empty(getattr(spec, "empty_obj", None))
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +231,7 @@ class JoltAdapter:
         if slot_id in self._body_handles:
             self._jw.remove_body(self._body_handles.pop(slot_id))
 
-        pos, rot = _transform_from_obj(spec.obj)
+        pos, rot = _transform_from_body_spec(spec)
         shape = _shape_params_from_spec(spec)
 
         kwargs = dict(
@@ -256,7 +284,7 @@ class JoltAdapter:
             return
         if spec.body_type != "KINEMATIC":
             return
-        pos, rot = _transform_from_obj(spec.obj)
+        pos, rot = _transform_from_body_spec(spec)
         self._jw.set_kinematic_transform(handle, pos, rot, dt)
 
     def get_body_transform(self, slot_id: str):
@@ -276,11 +304,10 @@ class JoltAdapter:
         # WORLD_HANDLE：固定到世界（native 侧 0xFFFFFFFF）
         world_handle: int = _get_native_const("WORLD_HANDLE", 0xFFFFFFFF)
 
-        def _get_handle(target_obj) -> int:
+        def _get_handle(target_ptr: int) -> int:
             """通过 slot_id 前缀 "rigid:{obj_ptr}:" 查找已注册的 body handle。"""
-            if target_obj is None:
+            if not target_ptr:
                 return world_handle
-            target_ptr = int(target_obj.as_pointer())
             for sid, h in self._body_handles.items():
                 try:
                     if sid.startswith(f"rigid:{target_ptr}:"):
@@ -289,10 +316,10 @@ class JoltAdapter:
                     pass
             return world_handle
 
-        a_handle = _get_handle(spec.target_a)
-        b_handle = _get_handle(spec.target_b)
+        a_handle = _get_handle(int(getattr(spec, "target_a_ptr", 0) or 0))
+        b_handle = _get_handle(int(getattr(spec, "target_b_ptr", 0) or 0))
 
-        pos, rot = _transform_from_empty(spec.empty_obj)
+        pos, rot = _transform_from_constraint_spec(spec)
 
         kwargs = dict(
             constraint_type=spec.constraint_type,
@@ -344,66 +371,12 @@ class JoltAdapter:
 
     def writeback_transforms(self, solver_slots: dict) -> list[str]:
         """
-        把 Jolt 结果写回 Blender 对象变换。
-        只处理 DYNAMIC body；KINEMATIC/STATIC 由动画驱动，不写回。
-        返回成功写回的 slot_id 列表。
+        Deprecated no-op.
 
-        注意：这是 Phase 5 的 legacy inline writeback 路径。
-        未来统一写入节点（Physics Writeback）落地后，此方法将被替换。
+        写回统一由 physicsWorld.writeback 执行，基于 Object.delta_*。
+        保留方法名只为旧调用兼容，避免任何路径重新直接写 Object.location。
         """
-        import mathutils
-        written = []
-        # 收集本次写回了哪些 armature/object，最后统一 update_tag
-        updated_objects = set()
-
-        for slot_id, handle in self._body_handles.items():
-            slot = solver_slots.get(slot_id)
-            if slot is None:
-                continue
-            spec = slot.data.get("spec")
-            if spec is None or spec.body_type != "DYNAMIC":
-                continue
-            obj = spec.obj
-            if obj is None:
-                continue
-
-            result = self._jw.get_body_transform(handle)
-            if result is None:
-                slot.data["_writeback_error"] = "get_body_transform 返回 None"
-                continue
-
-            try:
-                pos_arr, rot_arr = result
-                obj.location = mathutils.Vector(pos_arr)
-
-                q = mathutils.Quaternion(
-                    (float(rot_arr[0]), float(rot_arr[1]),
-                     float(rot_arr[2]), float(rot_arr[3]))
-                )
-                # 兼容不同旋转模式
-                if obj.rotation_mode == "QUATERNION":
-                    obj.rotation_quaternion = q
-                elif obj.rotation_mode == "AXIS_ANGLE":
-                    aa = q.to_axis_angle()
-                    obj.rotation_axis_angle = (aa[1], aa[0].x, aa[0].y, aa[0].z)
-                else:
-                    obj.rotation_euler = q.to_euler(obj.rotation_mode)
-
-                updated_objects.add(obj)
-                written.append(slot_id)
-                slot.data.pop("_writeback_error", None)
-
-            except Exception as exc:
-                slot.data["_writeback_error"] = str(exc)
-
-        # 统一 update_tag，通知 depsgraph 刷新
-        for obj in updated_objects:
-            try:
-                obj.update_tag()
-            except Exception:
-                pass
-
-        return written
+        return []
 
     # ---- Info ------------------------------------------------------------
 

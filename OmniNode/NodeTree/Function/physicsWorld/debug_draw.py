@@ -1,13 +1,14 @@
 """
 physicsWorld.debug_draw — OmniNode 物理世界可视化调试绘制
 
-draw handler 读取 _DRAW_STORE，在 3D 视口中绘制本帧参与模拟的所有对象：
+physicsWorldDebugDraw 节点执行时把 world 采样成纯绘制快照；
+draw handler 只读取 _DRAW_STORE 内的数值快照，在 3D 视口中绘制：
   - 简单碰撞体（球/胶囊/平面/盒子）
   - 骨骼碰撞体
   - 刚体轮廓（按类型着色）
   - 刚体约束锚点
 
-由 physicsWorldDebugDraw 节点写入 _DRAW_STORE，不进 OmniNode cache。
+_DRAW_STORE 不保存 bpy 对象、spec 引用或 live matrix；它不进 OmniNode cache。
 draw handler 在首次写入时自动注册，插件注销时清理。
 """
 
@@ -44,9 +45,9 @@ _UNIT_CIRCLE = [
 # key: node_uid (str)
 # value: {
 #   "frame": int,
-#   "colliders": list[dict],      ← 来自 world.collider_snapshot["colliders"]
-#   "rigid_slots": list[dict],    ← 来自 rigid_body solver slots
-#   "constraint_slots": list[dict],
+#   "colliders": list[dict],      ← 已转成纯 tuple/list/dict 快照
+#   "rigid_shapes": list[dict],
+#   "constraints": list[dict],
 #   "show_colliders": bool,
 #   "show_rigid": bool,
 #   "show_constraints": bool,
@@ -174,6 +175,35 @@ def _box_lines(lines, center, axis_x, axis_y, axis_z):
         _line(lines, corners[start], corners[end])
 
 
+def _vec3(value, fallback=(0.0, 0.0, 0.0)) -> mathutils.Vector:
+    try:
+        return mathutils.Vector(value).to_3d()
+    except Exception:
+        return mathutils.Vector(fallback)
+
+
+def _vec3_tuple(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    vec = _vec3(value, fallback)
+    return (float(vec.x), float(vec.y), float(vec.z))
+
+
+def _normalized_tuple(value, fallback=(1.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    vec = _vec3(value, fallback)
+    if vec.length <= 1e-7:
+        vec = mathutils.Vector(fallback)
+    if vec.length <= 1e-7:
+        vec = mathutils.Vector((1.0, 0.0, 0.0))
+    vec.normalize()
+    return (float(vec.x), float(vec.y), float(vec.z))
+
+
+def _float_value(value, fallback: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(fallback)
+
+
 def _world_location(obj) -> mathutils.Vector:
     try:
         return obj.matrix_world.translation.copy()
@@ -210,50 +240,139 @@ def _shape_matrix(spec) -> mathutils.Matrix | None:
     return body @ mathutils.Matrix.Translation(offset) @ q.to_matrix().to_4x4()
 
 
-def _draw_rigid_shape(lines, spec) -> None:
+def _rigid_shape_snapshot(spec) -> dict | None:
     mat = _shape_matrix(spec)
     if mat is None:
-        return
+        return None
     center = mat.translation.copy()
-    axis_x = mathutils.Vector(mat.col[0][:3]).normalized()
-    axis_y = mathutils.Vector(mat.col[1][:3]).normalized()
-    axis_z = mathutils.Vector(mat.col[2][:3]).normalized()
-    stype = str(getattr(spec, "shape_type", "SPHERE"))
+    axis_x = _normalized_tuple(mat.col[0][:3], (1.0, 0.0, 0.0))
+    axis_y = _normalized_tuple(mat.col[1][:3], (0.0, 1.0, 0.0))
+    axis_z = _normalized_tuple(mat.col[2][:3], (0.0, 0.0, 1.0))
+    try:
+        half_extents = tuple(
+            max(float(v), 0.0)
+            for v in getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5))
+        )
+        if len(half_extents) != 3:
+            half_extents = (0.5, 0.5, 0.5)
+    except Exception:
+        half_extents = (0.5, 0.5, 0.5)
+
+    return {
+        "body_type": str(getattr(spec, "body_type", "DYNAMIC")),
+        "shape_type": str(getattr(spec, "shape_type", "SPHERE")),
+        "center": _vec3_tuple(center),
+        "axis_x": axis_x,
+        "axis_y": axis_y,
+        "axis_z": axis_z,
+        "shape_radius": max(_float_value(getattr(spec, "shape_radius", 0.5), 0.5), 0.0),
+        "shape_half_height": max(_float_value(getattr(spec, "shape_half_height", 0.5), 0.5), 0.0),
+        "shape_half_extents": half_extents,
+        "shape_plane_half_extent": max(_float_value(getattr(spec, "shape_plane_half_extent", 10.0), 10.0), 1.0),
+        "shape_top_radius": max(_float_value(getattr(spec, "shape_top_radius", 0.5), 0.5), 0.0),
+        "shape_bottom_radius": max(_float_value(getattr(spec, "shape_bottom_radius", 0.3), 0.3), 0.0),
+    }
+
+
+def _draw_rigid_shape(lines, shape: dict) -> None:
+    center = _vec3(shape.get("center"))
+    axis_x = _vec3(shape.get("axis_x"), (1.0, 0.0, 0.0))
+    axis_y = _vec3(shape.get("axis_y"), (0.0, 1.0, 0.0))
+    axis_z = _vec3(shape.get("axis_z"), (0.0, 0.0, 1.0))
+    stype = str(shape.get("shape_type", "SPHERE"))
 
     if stype == "PLANE":
-        try:
-            extent = float(getattr(spec, "shape_plane_half_extent", 10.0))
-        except Exception:
-            extent = 10.0
+        extent = float(shape.get("shape_plane_half_extent", 10.0))
         extent = max(extent, 1.0)
         _plane_lines(lines, center, axis_x * extent, axis_y * extent, axis_z)
     elif stype == "BOX":
         try:
-            hx, hy, hz = (float(v) for v in getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5)))
+            hx, hy, hz = (float(v) for v in shape.get("shape_half_extents", (0.5, 0.5, 0.5)))
         except Exception:
             hx = hy = hz = 0.5
         _box_lines(lines, center, axis_x * hx, axis_y * hy, axis_z * hz)
     elif stype == "CAPSULE":
-        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
-        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        radius = max(float(shape.get("shape_radius", 0.5)), 0.0)
+        half_height = max(float(shape.get("shape_half_height", 0.5)), 0.0)
         _capsule_lines(lines, center - axis_y * half_height, center + axis_y * half_height, radius)
     elif stype == "CYLINDER":
-        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
-        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        radius = max(float(shape.get("shape_radius", 0.5)), 0.0)
+        half_height = max(float(shape.get("shape_half_height", 0.5)), 0.0)
         _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, radius, radius)
     elif stype == "TAPERED_CAPSULE":
-        top_radius = max(float(getattr(spec, "shape_top_radius", 0.5)), 0.0)
-        bottom_radius = max(float(getattr(spec, "shape_bottom_radius", 0.3)), 0.0)
-        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        top_radius = max(float(shape.get("shape_top_radius", 0.5)), 0.0)
+        bottom_radius = max(float(shape.get("shape_bottom_radius", 0.3)), 0.0)
+        half_height = max(float(shape.get("shape_half_height", 0.5)), 0.0)
         _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, top_radius, bottom_radius, sphere_caps=True)
     elif stype == "TAPERED_CYLINDER":
-        top_radius = max(float(getattr(spec, "shape_top_radius", 0.5)), 0.0)
-        bottom_radius = max(float(getattr(spec, "shape_bottom_radius", 0.3)), 0.0)
-        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        top_radius = max(float(shape.get("shape_top_radius", 0.5)), 0.0)
+        bottom_radius = max(float(shape.get("shape_bottom_radius", 0.3)), 0.0)
+        half_height = max(float(shape.get("shape_half_height", 0.5)), 0.0)
         _tapered_y_lines(lines, center, axis_x, axis_y, axis_z, half_height, top_radius, bottom_radius)
     else:
-        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
+        radius = max(float(shape.get("shape_radius", 0.5)), 0.0)
         _sphere_lines_oriented(lines, center, axis_x, axis_y, axis_z, radius)
+
+
+def _collider_snapshot(collider: dict) -> dict:
+    result = {
+        "type": str(collider.get("type", "SPHERE")),
+        "owner_type": str(collider.get("owner_type", "")),
+        "center": _vec3_tuple(collider.get("center")),
+        "radius": _float_value(collider.get("radius", 0.0), 0.0),
+    }
+    for key in (
+        "segment_a",
+        "segment_b",
+        "normal",
+        "plane_axis_x",
+        "plane_axis_y",
+        "box_axis_x",
+        "box_axis_y",
+        "box_axis_z",
+    ):
+        value = collider.get(key)
+        if value is not None:
+            result[key] = _vec3_tuple(value)
+    return result
+
+
+def _constraint_snapshot(spec) -> dict | None:
+    empty_obj = getattr(spec, "empty_obj", None) if spec is not None else None
+    if empty_obj is None:
+        return None
+
+    anchor_pos = _world_location(empty_obj)
+    ctype = str(getattr(spec, "constraint_type", "FIXED"))
+
+    hinge_axis = (0.0, 0.0, 1.0)
+    if ctype == "HINGE":
+        try:
+            hinge_axis = _normalized_tuple(empty_obj.matrix_world.col[2][:3], (0.0, 0.0, 1.0))
+        except Exception:
+            hinge_axis = (0.0, 0.0, 1.0)
+
+    target_positions = []
+    is_bug = False
+    for target in (getattr(spec, "target_a", None), getattr(spec, "target_b", None)):
+        if target is None:
+            is_bug = True
+            continue
+        try:
+            if target.as_pointer() == empty_obj.as_pointer():
+                is_bug = True
+                continue
+            target_positions.append(_vec3_tuple(_world_location(target)))
+        except Exception:
+            is_bug = True
+
+    return {
+        "constraint_type": ctype,
+        "anchor_pos": _vec3_tuple(anchor_pos),
+        "hinge_axis": hinge_axis,
+        "target_positions": target_positions,
+        "is_bug": is_bug,
+    }
 
 
 
@@ -380,14 +499,11 @@ def _build_draw_calls(data: dict) -> list[tuple]:
     # 刚体轮廓
     if data.get("show_rigid", True):
         dyn_lines, sta_lines, kin_lines = [], [], []
-        for slot in (data.get("rigid_slots") or []):
-            spec = slot.get("spec")
-            if spec is None:
-                continue
-            body_type = str(getattr(spec, "body_type", "DYNAMIC"))
+        for shape in (data.get("rigid_shapes") or []):
+            body_type = str(shape.get("body_type", "DYNAMIC"))
             target = dyn_lines if body_type == "DYNAMIC" else (sta_lines if body_type == "STATIC" else kin_lines)
             try:
-                _draw_rigid_shape(target, spec)
+                _draw_rigid_shape(target, shape)
             except Exception:
                 pass
         if dyn_lines:
@@ -470,26 +586,20 @@ def _draw_physics_debug_2d():
 
         # --- 约束类型标识 + 连线 ---
         if show_constraints:
-            for slot in (data.get("constraint_slots") or []):
-                spec = slot.get("spec")
-                empty_obj = getattr(spec, "empty_obj", None) if spec is not None else None
-                if empty_obj is None:
-                    continue
+            for constraint in (data.get("constraints") or []):
                 try:
-                    anchor_pos = _world_location(empty_obj)
+                    anchor_pos = _vec3(constraint.get("anchor_pos"))
                     sc = location_3d_to_region_2d(region, rv3d, anchor_pos)
                     if sc is None:
                         continue
                     sx, sy = sc
-                    ctype = str(getattr(spec, "constraint_type", "FIXED"))
+                    ctype = str(constraint.get("constraint_type", "FIXED"))
 
                     # HINGE：投影 Empty 本地 Z 轴到屏幕，作为铰链方向
                     hinge_dir = None
                     if ctype == "HINGE":
                         try:
-                            z_w = mathutils.Vector(
-                                empty_obj.matrix_world.col[2][:3]
-                            ).normalized()
+                            z_w = _vec3(constraint.get("hinge_axis"), (0.0, 0.0, 1.0)).normalized()
                             tip_sc = location_3d_to_region_2d(
                                 region, rv3d, anchor_pos + z_w * 0.2
                             )
@@ -506,18 +616,9 @@ def _draw_physics_debug_2d():
                                              direction=hinge_dir)
 
                     # 连线到 target_a / target_b
-                    for target in (getattr(spec, "target_a", None),
-                                   getattr(spec, "target_b", None)):
-                        if target is None:
-                            continue
+                    for target_pos in (constraint.get("target_positions") or []):
                         try:
-                            is_self = target.as_pointer() == empty_obj.as_pointer()
-                        except Exception:
-                            is_self = False
-                        if is_self:
-                            continue
-                        try:
-                            t_sc = location_3d_to_region_2d(region, rv3d, _world_location(target))
+                            t_sc = location_3d_to_region_2d(region, rv3d, _vec3(target_pos))
                             if t_sc:
                                 _l2(con_lines, (sx, sy), tuple(t_sc))
                         except Exception:
@@ -614,43 +715,29 @@ def update_draw_store(
 
     fc = world.frame_context
 
-    # 收集 rigid / constraint slot 数据（只传轻量引用，不深拷贝）
-    rigid_slots = []
-    constraint_slots = []
+    # 收集 rigid / constraint 绘制数据。这里采样成纯快照，draw handler
+    # 后续不再读取 bpy 对象或 spec 引用。
+    rigid_shapes = []
+    constraints = []
     for slot_id, slot in world.solver_slots.items():
         spec = slot.data.get("spec")
         if spec is None:
             continue
-        if slot.kind == "rigid_body":
-            rigid_slots.append({"spec": spec})
-        elif slot.kind == "rigid_constraint":
-            constraint_slots.append({"spec": spec})
+        if slot.kind == "rigid_body" and show_rigid:
+            shape = _rigid_shape_snapshot(spec)
+            if shape is not None:
+                rigid_shapes.append(shape)
+        elif slot.kind == "rigid_constraint" and (show_constraints or show_bugs):
+            constraint = _constraint_snapshot(spec)
+            if constraint is not None:
+                constraints.append(constraint)
 
     # 预计算 bug 锚点位置（供 POST_PIXEL 2D handler 投影画叉）
     bug_positions = []
     if show_bugs and show_constraints:
-        for slot in constraint_slots:
-            spec = slot.get("spec")
-            empty_obj = getattr(spec, "empty_obj", None) if spec is not None else None
-            if empty_obj is None:
-                continue
-            try:
-                target_a = getattr(spec, "target_a", None)
-                target_b = getattr(spec, "target_b", None)
-                is_bug = False
-                for t in (target_a, target_b):
-                    if t is None:
-                        is_bug = True
-                    else:
-                        try:
-                            if t.as_pointer() == empty_obj.as_pointer():
-                                is_bug = True
-                        except Exception:
-                            is_bug = True
-                if is_bug:
-                    bug_positions.append(tuple(_world_location(empty_obj)))
-            except Exception:
-                pass
+        for constraint in constraints:
+            if constraint.get("is_bug"):
+                bug_positions.append(tuple(constraint.get("anchor_pos", (0.0, 0.0, 0.0))))
 
     _DRAW_STORE[node_uid] = {
         "frame": fc.frame,
@@ -660,9 +747,16 @@ def update_draw_store(
         "show_constraints": show_constraints,
         "show_bugs": show_bugs,
         "bug_positions": bug_positions,
-        "colliders": list(world.collider_snapshot.get("colliders") or []),
-        "rigid_slots": rigid_slots,
-        "constraint_slots": constraint_slots,
+        "colliders": (
+            [
+                _collider_snapshot(c)
+                for c in (world.collider_snapshot.get("colliders") or [])
+                if isinstance(c, dict)
+            ]
+            if show_colliders else []
+        ),
+        "rigid_shapes": rigid_shapes,
+        "constraints": constraints,
     }
 
 

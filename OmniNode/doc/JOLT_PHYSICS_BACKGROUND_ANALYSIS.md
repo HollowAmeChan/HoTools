@@ -381,8 +381,8 @@ HoTools 当前 constraint spec 只有：
 当前写回机制：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
-- 注释说明写回应由下游 `Physics Writeback` 统一处理。
-- `JoltAdapter.writeback_transforms()` 仍保留 legacy inline 写回路径。
+- 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
+- `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 应补的核心输出
 
@@ -486,14 +486,16 @@ Native 侧当前特点：
 - 懒加载 `hotools_jolt`。
 - 管理 slot id 到 native handle。
 - restart/generation 变化时 clear。
-- sync body / constraint。
+- 从 `RigidBodySpec` / `ConstraintSpec` 快照同步 body / constraint。
 - update kinematic。
 - step。
-- legacy writeback。
+- 输出 body transform 给统一 Physics Writeback。
 
 需要修正或设计决策的点：
 
-- `_transform_from_obj()` / `_transform_from_empty()` 已改为读取 `matrix_world.decompose()`。
+- `world.begin` 每次都重采集 spec；slot 使用 sync signature 判断参数/形状/约束是否需要重新同步 Jolt。
+- `same_frame` 不重复推进 Jolt step，但允许脏 spec 或 kinematic pose 执行无时间推进的 backend sync。
+- `_transform_from_obj()` / `_transform_from_empty()` 只作为旧数据兜底；adapter 主路径应消费 spec 内的 `world_position` / `world_rotation_wxyz` / anchor 快照。
 - shape 已进入 `RigidBodySpec`，adapter 优先消费 spec。
 - `collision_group` / `collided_by_groups` 已进 spec 并由 native 消费。
 - sync 策略目前每次 sync 旧 body 都 remove + add；后续需要区分 topology/config rebuild 与 runtime value update。
@@ -643,6 +645,8 @@ RigidDebugFrame
   contacts: [body_a, body_b, normal, depth, points, state]
   stats: [body_count, active_count, constraint_count, contact_count, step_ms]
 ```
+
+HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDebugDraw` 节点执行时生成的纯快照，不保存 live `bpy` 对象、spec 引用或 `matrix_world`。视口 draw handler 只能消费快照坐标、类型和调试参数。这样 debug 结果才能准确表达节点链路中该节点所在阶段，而不是表达后续 Blender 依赖图或手动编辑后的状态。
 
 ## 推荐实现路线
 

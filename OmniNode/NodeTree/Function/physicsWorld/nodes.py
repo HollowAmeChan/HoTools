@@ -268,14 +268,15 @@ def physicsWorldDebugText(
     omni_description="""
     在 3D 视口中可视化物理世界内容，比文字快照更直观。
 
-    直接读取 PhysicsWorldCache 里已有的数据，不做额外计算：
+    节点执行时把 PhysicsWorldCache 里的数据采样成纯绘制快照：
       显示碰撞体 — collider_snapshot 里的球/胶囊/平面/盒子（蓝=简单碰撞/黄绿=骨骼）
       显示刚体   — rigid_body slot 的轮廓（绿=动态/灰=静态/蓝=运动学）
       显示约束   — constraint slot 的 Empty 锚点 + 连线到目标（橙黄）
                    FIXED=轴框/HINGE=半圆/SLIDER=双箭头/CONE=锥/POINT=圆
       显示Bug    — 约束缺目标或连到自身时以红色标出
 
-    绘制使用帧内查表（无三角函数调用），不影响视口性能。
+    _DRAW_STORE 不保存 bpy 对象、spec 引用或 live matrix；draw handler 只读快照。
+    因此该节点应放在你想观察的写回/求解阶段之后。
     物理世界 透传，可插在链路任意位置。
     """,
 )

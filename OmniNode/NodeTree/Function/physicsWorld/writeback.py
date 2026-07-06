@@ -97,7 +97,9 @@ def clear_all_deltas(world) -> None:
     清除本 world 期间所有曾被写过 delta 的对象（无论是否在 solver_slots 里）。
     在 omni_cache_dispose / Cache Delete / 停止模拟时调用，确保对象归位。
     """
-    touched = _get_touched_set(world)
+    touched = getattr(world, "backend_resources", {}).get(_TOUCHED_OBJECTS_KEY)
+    if not touched:
+        return
     for obj in list(touched):
         try:
             obj.delta_location       = (0.0, 0.0, 0.0)

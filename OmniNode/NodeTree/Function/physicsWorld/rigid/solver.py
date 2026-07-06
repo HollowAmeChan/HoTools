@@ -2,7 +2,7 @@
 physicsWorld.rigid.solver — 刚体 spec 收集 + Jolt 模拟步
 
 Phase 4：spec 收集（已由 physicsWorldBegin 自动完成）。
-Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步，写回变换。
+Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步。
 """
 
 from __future__ import annotations
@@ -126,8 +126,21 @@ def _flatten(objects) -> list:
     return result
 
 
+def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
+    for slot in world.solver_slots.values():
+        if slot.kind not in {"rigid_body", "rigid_constraint"}:
+            continue
+        if slot.data.get("spec") is None:
+            continue
+        if slot.data.get("_jolt_generation") != world.generation:
+            return True
+        if slot.kind == "rigid_body" and slot.data.get("_jolt_kinematic_pose_dirty"):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
-# Phase 5：Jolt 模拟步 + 写回
+# Phase 5：Jolt 模拟步
 # ---------------------------------------------------------------------------
 
 def step_rigid_bodies(
@@ -135,7 +148,7 @@ def step_rigid_bodies(
     enabled: bool = True,
 ) -> tuple[int, float]:
     """
-    Phase 5 核心：驱动 Jolt 模拟一帧并把结果写回 Blender 对象变换。
+    Phase 5 核心：驱动 Jolt 模拟一帧。
 
     流程：
     1. 获取或创建 JoltAdapter（挂在 world.backend_resources["rigid_solver"]）。
@@ -145,12 +158,20 @@ def step_rigid_bodies(
     3. 对每个 rigid_constraint slot：
        - 若 slot 在本 generation 内首次遇到，sync_constraint 注册到 Jolt。
     4. 执行 Jolt step（使用 world.frame_context.dt 和 substeps）。
-    5. DYNAMIC body 写回 Blender 对象位置/旋转。
+    5. 写回由下游 Physics Writeback 节点统一处理。
 
     返回 (body_count, step_ms)。
     """
     if not enabled or world is None or not isinstance(world, PhysicsWorldCache):
         return 0, 0.0
+
+    fc = world.frame_context
+    same_frame = bool(getattr(fc, "same_frame", False)) if fc is not None else False
+    if same_frame and not _has_pending_jolt_work(world):
+        adapter = world.backend_resources.get("rigid_solver")
+        jw = getattr(adapter, "_jw", None)
+        body_count = int(getattr(jw, "body_count", 0) or 0)
+        return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter
 
@@ -162,10 +183,9 @@ def step_rigid_bodies(
     solver_id = "jolt_step"
     world.acquire_write(solver_id)
     try:
-        fc = world.frame_context
-        dt = float(fc.dt) if fc.dt > 0.0 else 1.0 / 60.0
-        substeps = max(1, int(fc.substeps))
-        restart = bool(fc.restart_required)
+        dt = float(fc.dt) if fc is not None and fc.dt > 0.0 else 1.0 / 60.0
+        substeps = max(1, int(fc.substeps)) if fc is not None else 1
+        restart = bool(fc.restart_required) if fc is not None else True
 
         # --- sync rigid bodies ---
         for slot_id, slot in list(world.solver_slots.items()):
@@ -183,10 +203,12 @@ def step_rigid_bodies(
                 try:
                     adapter.sync_body(slot_id, spec)
                     slot.data["_jolt_generation"] = world.generation
+                    slot.data.pop("_jolt_kinematic_pose_dirty", None)
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
             elif spec.body_type == "KINEMATIC":
                 adapter.update_kinematic(slot_id, spec, dt)
+                slot.data.pop("_jolt_kinematic_pose_dirty", None)
 
         # --- sync constraints ---
         for slot_id, slot in list(world.solver_slots.items()):
@@ -206,6 +228,9 @@ def step_rigid_bodies(
                     slot.data["_jolt_generation"] = world.generation
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
+
+        if same_frame:
+            return adapter._jw.body_count, 0.0
 
         # --- step ---
         step_ms = adapter.step(dt, substeps)

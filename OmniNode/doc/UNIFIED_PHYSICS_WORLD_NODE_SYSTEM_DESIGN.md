@@ -516,7 +516,7 @@ solver 仍然做：
 - slot 命中或重建。
 - base pose 同步。
 - solver kernel 调用。
-- 写回 GN delta、PoseBone 或 rigid body transform。
+- 产出 result / writeback 数据，或调用统一写回阶段需要的 runtime 输出。
 - solver-specific debug timing。
 
 ### MeshCloth MC2
@@ -621,8 +621,8 @@ OmniNode object scope
   -> HoTools constraint specs
   -> Jolt adapter build/update
   -> Jolt step
-  -> HoTools writeback records
-  -> Blender object transform / pose / mesh writeback
+  -> Physics Writeback
+  -> Object.delta_* / PoseBone / mesh delta writeback
 ```
 
 也就是说，Jolt 的 `BodyID`、`ConstraintID`、shape handle、constraint handle 只能存在于 rigid solver slot 或 `world.backend_resources["rigid_solver"]` 内部。debug snapshot 可以显示 backend 名称和数量统计，但不应要求用户或其他 solver 依赖 Jolt handle。
@@ -960,9 +960,12 @@ physicsWorld/
 ```text
 物理世界-调试快照（physicsWorldDebugSnapshot）
 物理世界-调试文本（physicsWorldDebugText）
+物理世界-可视化调试（physicsWorldDebugDraw）
 ```
 
 验证结论：frame/continuous/restart/replace/mutate 行为稳定，跳帧检测正常。
+
+`physicsWorldDebugDraw` 的 `_DRAW_STORE` 必须是纯快照：节点执行时把 collider / rigid shape / constraint anchor 采样成 tuple/list/dict，不保存 `bpy` 对象、spec 引用或 live `matrix_world`。draw handler 只负责把快照转成 GPU lines，不允许在绘制阶段重新读取 Blender 对象。这样 debug 视图表达的是节点链路中该节点所在位置的状态，而不是视口重绘时的外部状态。
 
 ### Phase 4：刚体 domain ✅ 已完成
 
@@ -984,17 +987,20 @@ physicsWorld/
 
 新（实际落地）：
   physicsWorldBegin  ← 自动从 scope 收集 rigid body spec 和 constraint spec
+  → physicsRigidSolver  ← 同步脏 spec/kinematic pose，并在新帧推进 Jolt
+  → physicsWriteback    ← 统一写 Object.delta_*
   → physicsWorldCommit
 ```
 
 原因：刚体/约束 spec 收集和碰撞 snapshot 构建性质相同——都是"从 scope 对象读取 PhysicsTools 属性"，属于 world begin 的职责，不应要求用户额外接节点。
 
-`physicsRigidSolver`（"刚体模拟步"）保留为 Phase 5 的占位节点，届时负责 Jolt step + writeback，不再负责 spec 收集。
+`physicsRigidSolver`（"刚体模拟步"）负责 Jolt backend 同步和 step，不直接写 Blender 对象；写回由 `physicsWriteback` 统一处理。
 
 **已注册节点：**
 
 ```text
-刚体模拟步（physicsRigidSolver）  ← Phase 5 占位，当前透传
+刚体模拟步（physicsRigidSolver）  ← Jolt sync + step，不直接写回
+物理写回（physicsWriteback）      ← Object.delta_* 增量写回
 ```
 
 `刚体注册` 节点已移除（功能并入 physicsWorldBegin）。

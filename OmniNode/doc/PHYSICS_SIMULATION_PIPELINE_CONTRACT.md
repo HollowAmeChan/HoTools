@@ -744,7 +744,10 @@ export_samples
 
 ```text
 skip（推荐默认）：
-  same_frame 时跳过 step，复用上一次结果。
+  same_frame 时跳过时间积分 / step，复用上一次结果。
+  world.begin 仍然必须重新采集 scope、collider 和 spec。
+  如果 spec/kinematic pose 已变脏，solver 可以执行“无时间推进”的 backend sync，
+  但不能重复推进模拟时间。
   适合大多数确定性物理 solver。
 
 re_run：

@@ -31,6 +31,8 @@ class RigidBodySpec:
         "obj_ptr",
         "data_ptr",
         "slot_id",
+        "world_position",
+        "world_rotation_wxyz",
         "body_type",
         "mass",
         "friction",
@@ -66,6 +68,8 @@ class RigidBodySpec:
         obj,
         obj_ptr: int,
         data_ptr: int,
+        world_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        world_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         body_type: str = "DYNAMIC",
         mass: float = 1.0,
         friction: float = 0.5,
@@ -99,6 +103,8 @@ class RigidBodySpec:
         self.obj_ptr: int = obj_ptr
         self.data_ptr: int = data_ptr
         self.slot_id: str = f"rigid:{obj_ptr}:{data_ptr}"
+        self.world_position: tuple[float, float, float] = world_position
+        self.world_rotation_wxyz: tuple[float, float, float, float] = world_rotation_wxyz
         self.body_type: str = body_type
         self.mass: float = mass
         self.friction: float = friction
@@ -131,6 +137,8 @@ class RigidBodySpec:
     def debug_dict(self) -> dict:
         return {
             "slot_id": self.slot_id,
+            "world_position": self.world_position,
+            "world_rotation_wxyz": self.world_rotation_wxyz,
             "body_type": self.body_type,
             "mass": self.mass,
             "friction": self.friction,
@@ -185,6 +193,10 @@ class ConstraintSpec:
         "constraint_type",
         "target_a",
         "target_b",
+        "target_a_ptr",
+        "target_b_ptr",
+        "anchor_position",
+        "anchor_rotation_wxyz",
         "constraint_priority",
         "solver_velocity_steps",
         "solver_position_steps",
@@ -217,6 +229,10 @@ class ConstraintSpec:
         constraint_type: str = "FIXED",
         target_a=None,
         target_b=None,
+        target_a_ptr: int = 0,
+        target_b_ptr: int = 0,
+        anchor_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        anchor_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         constraint_priority: int = 0,
         solver_velocity_steps: int = 0,
         solver_position_steps: int = 0,
@@ -247,6 +263,10 @@ class ConstraintSpec:
         self.constraint_type: str = constraint_type
         self.target_a = target_a   # bpy.types.Object 或 None（固定到世界）
         self.target_b = target_b   # bpy.types.Object 或 None
+        self.target_a_ptr: int = int(target_a_ptr or 0)
+        self.target_b_ptr: int = int(target_b_ptr or 0)
+        self.anchor_position: tuple[float, float, float] = anchor_position
+        self.anchor_rotation_wxyz: tuple[float, float, float, float] = anchor_rotation_wxyz
         self.constraint_priority: int = constraint_priority
         self.solver_velocity_steps: int = solver_velocity_steps
         self.solver_position_steps: int = solver_position_steps
@@ -277,6 +297,10 @@ class ConstraintSpec:
             "constraint_type": self.constraint_type,
             "target_a": self.target_a.name if self.target_a is not None else None,
             "target_b": self.target_b.name if self.target_b is not None else None,
+            "target_a_ptr": self.target_a_ptr,
+            "target_b_ptr": self.target_b_ptr,
+            "anchor_position": self.anchor_position,
+            "anchor_rotation_wxyz": self.anchor_rotation_wxyz,
             "constraint_priority": self.constraint_priority,
             "solver_velocity_steps": self.solver_velocity_steps,
             "solver_position_steps": self.solver_position_steps,
@@ -335,6 +359,38 @@ def _float4(value, default=(1.0, 0.0, 0.0, 0.0)) -> tuple[float, float, float, f
         return tuple(float(v) for v in default)
 
 
+def _object_pointer(obj) -> int:
+    if obj is None:
+        return 0
+    try:
+        return int(obj.as_pointer())
+    except Exception:
+        return 0
+
+
+def _object_data_pointer(obj) -> int:
+    try:
+        data = getattr(obj, "data", None)
+        return int(data.as_pointer()) if data is not None else 0
+    except Exception:
+        return 0
+
+
+def _world_transform_wxyz(obj) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    try:
+        loc, rot, _scale = obj.matrix_world.decompose()
+        return (
+            (float(loc.x), float(loc.y), float(loc.z)),
+            (float(rot.w), float(rot.x), float(rot.y), float(rot.z)),
+        )
+    except Exception:
+        try:
+            loc = getattr(obj, "location", (0.0, 0.0, 0.0))
+            return (_float3(loc), (1.0, 0.0, 0.0, 0.0))
+        except Exception:
+            return ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0))
+
+
 def _rotation_wxyz_from_euler(value) -> tuple[float, float, float, float]:
     try:
         import mathutils
@@ -378,11 +434,11 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
     if props is None or not bool(getattr(props, "enabled", False)):
         return None
 
-    try:
-        obj_ptr = int(obj.as_pointer())
-        data_ptr = int(obj.data.as_pointer()) if obj.data is not None else 0
-    except Exception:
+    obj_ptr = _object_pointer(obj)
+    if obj_ptr == 0:
         return None
+    data_ptr = _object_data_pointer(obj)
+    world_position, world_rotation_wxyz = _world_transform_wxyz(obj)
 
     body_type = str(getattr(props, "body_type", "DYNAMIC"))
     mass = max(float(getattr(props, "mass", 1.0)), 0.001)
@@ -433,6 +489,8 @@ def build_rigid_body_spec(obj) -> RigidBodySpec | None:
         obj=obj,
         obj_ptr=obj_ptr,
         data_ptr=data_ptr,
+        world_position=world_position,
+        world_rotation_wxyz=world_rotation_wxyz,
         body_type=body_type,
         mass=mass,
         friction=friction,
@@ -476,7 +534,9 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     try:
         if empty_obj.type != "EMPTY":
             return None
-        empty_ptr = int(empty_obj.as_pointer())
+        empty_ptr = _object_pointer(empty_obj)
+        if empty_ptr == 0:
+            return None
     except Exception:
         return None
 
@@ -489,6 +549,9 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         constraint_type = "FIXED"
     target_a = getattr(props, "target_a", None)
     target_b = getattr(props, "target_b", None)
+    target_a_ptr = _object_pointer(target_a)
+    target_b_ptr = _object_pointer(target_b)
+    anchor_position, anchor_rotation_wxyz = _world_transform_wxyz(empty_obj)
 
     constraint_priority = max(0, int(getattr(props, "constraint_priority", 0)))
     solver_velocity_steps = _clamp(int(getattr(props, "solver_velocity_steps", 0)), 0, 255)
@@ -526,6 +589,10 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         constraint_type=constraint_type,
         target_a=target_a,
         target_b=target_b,
+        target_a_ptr=target_a_ptr,
+        target_b_ptr=target_b_ptr,
+        anchor_position=anchor_position,
+        anchor_rotation_wxyz=anchor_rotation_wxyz,
         constraint_priority=constraint_priority,
         solver_velocity_steps=solver_velocity_steps,
         solver_position_steps=solver_position_steps,
