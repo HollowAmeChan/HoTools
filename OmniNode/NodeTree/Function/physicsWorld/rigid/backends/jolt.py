@@ -46,15 +46,38 @@ def _get_native_const(attr: str, default):
 
 def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
     """
-    从 hotools_rigid_body PropertyGroup 读取碰撞形状参数。
-    如果 spec.obj 有 hotools_object_collision（简单碰撞属性），优先用那里的形状。
-    否则使用 obj.dimensions 的包围球作为 fallback。
+    从 RigidBodySpec 提取碰撞形状参数，优先级：
+      1. hotools_rigid_body.shape_type 显式设置（非 AUTO）
+      2. hotools_object_collision（简单碰撞属性，旧行为兼容）
+      3. Object.dimensions AABB 包围盒 BOX（fallback）
     """
     obj = spec.obj
     if obj is None:
         return {"shape_type": "SPHERE", "shape_radius": 0.1}
 
-    # 优先读 hotools_object_collision
+    # ── 优先：刚体自身形状设置 ─────────────────────────────────────────────
+    rb = getattr(obj, "hotools_rigid_body", None)
+    if rb is not None:
+        stype = str(getattr(rb, "shape_type", "AUTO"))
+        if stype == "SPHERE":
+            return {"shape_type": "SPHERE",
+                    "shape_radius": max(float(getattr(rb, "shape_radius", 0.5)), 0.001)}
+        if stype == "CAPSULE":
+            return {"shape_type": "CAPSULE",
+                    "shape_radius":      max(float(getattr(rb, "shape_radius",      0.3)), 0.001),
+                    "shape_half_height": max(float(getattr(rb, "shape_half_height", 0.5)), 0.001)}
+        if stype == "BOX":
+            he = getattr(rb, "shape_half_extents", None)
+            if he is not None:
+                hx = max(float(he[0]), 0.001)
+                hy = max(float(he[1]), 0.001)
+                hz = max(float(he[2]), 0.001)
+            else:
+                hx = hy = hz = 0.5
+            return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
+        # AUTO：继续向下走
+
+    # ── 次优：hotools_object_collision（简单碰撞属性，兼容旧流程）────────────
     col = getattr(obj, "hotools_object_collision", None)
     if col is not None and bool(getattr(col, "enabled", False)):
         ctype = str(getattr(col, "collision_type", "NONE"))
@@ -64,18 +87,16 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
         if ctype == "CAPSULE":
             r = max(float(getattr(col, "radius", 0.1)), 0.001)
             h = max(float(getattr(col, "length", 0.2)), 0.001) * 0.5
-            return {"shape_type": "CAPSULE", "shape_radius": r,
-                    "shape_half_height": h}
+            return {"shape_type": "CAPSULE", "shape_radius": r, "shape_half_height": h}
         if ctype == "BOX":
             bx = getattr(col, "box_size", None)
             if bx is not None:
                 hx = max(float(bx[0]) * 0.5, 0.001)
                 hy = max(float(bx[1]) * 0.5, 0.001)
                 hz = max(float(bx[2]) * 0.5, 0.001)
-                return {"shape_type": "BOX",
-                        "shape_half_extents": (hx, hy, hz)}
+                return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
 
-    # fallback：对象包围盒的 AABB 半尺寸
+    # ── Fallback：对象包围盒 AABB ─────────────────────────────────────────────
     try:
         dims = obj.dimensions
         hx = max(float(dims.x) * 0.5, 0.01)
@@ -261,9 +282,15 @@ class JoltAdapter:
         把 Jolt 结果写回 Blender 对象变换。
         只处理 DYNAMIC body；KINEMATIC/STATIC 由动画驱动，不写回。
         返回成功写回的 slot_id 列表。
+
+        注意：这是 Phase 5 的 legacy inline writeback 路径。
+        未来统一写入节点（Physics Writeback）落地后，此方法将被替换。
         """
         import mathutils
         written = []
+        # 收集本次写回了哪些 armature/object，最后统一 update_tag
+        updated_objects = set()
+
         for slot_id, handle in self._body_handles.items():
             slot = solver_slots.get(slot_id)
             if slot is None:
@@ -274,17 +301,43 @@ class JoltAdapter:
             obj = spec.obj
             if obj is None:
                 continue
+
+            result = self._jw.get_body_transform(handle)
+            if result is None:
+                slot.data["_writeback_error"] = "get_body_transform 返回 None"
+                continue
+
             try:
-                pos_arr, rot_arr = self._jw.get_body_transform(handle)
+                pos_arr, rot_arr = result
                 obj.location = mathutils.Vector(pos_arr)
-                # rot_arr = (w, x, y, z)
+
                 q = mathutils.Quaternion(
-                    (rot_arr[0], rot_arr[1], rot_arr[2], rot_arr[3])
+                    (float(rot_arr[0]), float(rot_arr[1]),
+                     float(rot_arr[2]), float(rot_arr[3]))
                 )
-                obj.rotation_euler = q.to_euler()
+                # 兼容不同旋转模式
+                if obj.rotation_mode == "QUATERNION":
+                    obj.rotation_quaternion = q
+                elif obj.rotation_mode == "AXIS_ANGLE":
+                    aa = q.to_axis_angle()
+                    obj.rotation_axis_angle = (aa[1], aa[0].x, aa[0].y, aa[0].z)
+                else:
+                    obj.rotation_euler = q.to_euler(obj.rotation_mode)
+
+                updated_objects.add(obj)
                 written.append(slot_id)
+                slot.data.pop("_writeback_error", None)
+
+            except Exception as exc:
+                slot.data["_writeback_error"] = str(exc)
+
+        # 统一 update_tag，通知 depsgraph 刷新
+        for obj in updated_objects:
+            try:
+                obj.update_tag()
             except Exception:
                 pass
+
         return written
 
     # ---- Info ------------------------------------------------------------

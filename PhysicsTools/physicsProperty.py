@@ -231,8 +231,10 @@ class PG_Hotools_RigidBody(PropertyGroup):
     2. mass 只对 DYNAMIC 有效；STATIC / KINEMATIC 不消耗质量。
     3. friction / restitution 影响碰撞响应，语义与 Jolt 等物理引擎一致。
     4. collision_group 与现有碰撞组体系对齐，值域 1..16。
-    5. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
-    6. 节点图通过 hotools_rigid_body.body_type 等字段读取，视为只读。
+    5. shape_type 决定刚体的碰撞形状；AUTO 时先尝试读 hotools_object_collision，
+       失败则按 Object.dimensions 的 AABB 包围盒生成 BOX。
+    6. Jolt BodyID 等 native handle 只存在于 runtime solver slot，不写回到此属性组。
+    7. 节点图通过 hotools_rigid_body.body_type 等字段读取，视为只读。
     """
 
     enabled: BoolProperty(
@@ -282,6 +284,49 @@ class PG_Hotools_RigidBody(PropertyGroup):
         default=1,
         min=1,
         max=_COLLISION_GROUP_COUNT,
+    )  # type: ignore
+
+    # ── 碰撞形状 ────────────────────────────────────────────────────────────
+
+    shape_type: EnumProperty(
+        name="形状",
+        description="刚体碰撞形状类型",
+        items=[
+            ("AUTO",    "自动",   "优先读 hotools_object_collision，否则用对象包围盒生成 BOX"),
+            ("SPHERE",  "球体",   "球形；由半径决定大小"),
+            ("CAPSULE", "胶囊",   "胶囊；由半径和高度决定大小"),
+            ("BOX",     "长方体", "轴对齐长方体；由三轴半尺寸决定大小"),
+        ],
+        default="AUTO",
+    )  # type: ignore
+
+    shape_radius: FloatProperty(
+        name="半径",
+        description="球体半径（SPHERE）或胶囊截面半径（CAPSULE）",
+        default=0.5,
+        min=0.001,
+        soft_max=10.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    shape_half_height: FloatProperty(
+        name="半高",
+        description="胶囊中段的半长（CAPSULE）；总高度 = 半高×2 + 半径×2",
+        default=0.5,
+        min=0.001,
+        soft_max=10.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    shape_half_extents: FloatVectorProperty(
+        name="半尺寸",
+        description="长方体在 X/Y/Z 轴的半尺寸（BOX）",
+        default=(0.5, 0.5, 0.5),
+        min=0.001,
+        soft_max=10.0,
+        size=3,
+        unit="LENGTH",
+        subtype="XYZ",
     )  # type: ignore
 
 

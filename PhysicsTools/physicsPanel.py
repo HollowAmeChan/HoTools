@@ -250,12 +250,41 @@ class PT_Hotools_Physics_RigidBody(Panel):
         layout.use_property_decorate = False
 
         layout.prop(props, "body_type")
+
         col = layout.column(align=True)
         col.enabled = (props.body_type == "DYNAMIC")
         col.prop(props, "mass")
+
         layout.prop(props, "friction")
         layout.prop(props, "restitution")
         layout.prop(props, "collision_group")
+
+        # ── 碰撞形状 ──────────────────────────────────────────────────────────
+        layout.separator()
+        layout.label(text="碰撞形状", icon="MESH_DATA")
+        layout.prop(props, "shape_type")
+
+        stype = props.shape_type
+        if stype == "SPHERE":
+            layout.prop(props, "shape_radius")
+        elif stype == "CAPSULE":
+            col2 = layout.column(align=True)
+            col2.prop(props, "shape_radius")
+            col2.prop(props, "shape_half_height")
+        elif stype == "BOX":
+            layout.prop(props, "shape_half_extents")
+        elif stype == "AUTO":
+            # 显示当前实际使用的形状来源（仅提示，不可编辑）
+            obj = context.object
+            col_info = layout.column(align=True)
+            col_info.enabled = False
+            col_info.scale_y = 0.85
+            col_obj_col = getattr(obj, "hotools_object_collision", None)
+            if col_obj_col is not None and bool(getattr(col_obj_col, "enabled", False)):
+                ctype = str(getattr(col_obj_col, "collision_type", "NONE"))
+                col_info.label(text=f"→ 读取简单碰撞：{ctype}", icon="INFO")
+            else:
+                col_info.label(text="→ 使用对象包围盒（BOX）", icon="INFO")
 
 
 # ---------------------------------------------------------------------------
