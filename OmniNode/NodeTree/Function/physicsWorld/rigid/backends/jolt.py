@@ -202,23 +202,7 @@ class JoltAdapter:
             allowed_dofs=int(getattr(spec, "allowed_dofs", 0x3F)),
             collide_kinematic_vs_non_dynamic=bool(getattr(spec, "collide_kinematic_vs_non_dynamic", False)),
         )
-        try:
-            handle = self._jw.add_body(**kwargs)
-        except TypeError:
-            # 兼容尚未重编的旧 hotools_jolt.pyd；新字段会在重编后生效。
-            legacy_keys = {
-                "body_type",
-                "mass",
-                "friction",
-                "restitution",
-                "position",
-                "rotation_wxyz",
-                "shape_type",
-                "shape_radius",
-                "shape_half_height",
-                "shape_half_extents",
-            }
-            handle = self._jw.add_body(**{k: v for k, v in kwargs.items() if k in legacy_keys})
+        handle = self._jw.add_body(**kwargs)
         self._body_handles[slot_id] = handle
         return handle
 
@@ -303,17 +287,7 @@ class JoltAdapter:
             motor_target_position=float(getattr(spec, "motor_target_position", 0.0)),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
         )
-        try:
-            handle = self._jw.add_constraint(**kwargs)
-        except TypeError:
-            legacy_keys = {
-                "constraint_type",
-                "body_a_handle",
-                "body_b_handle",
-                "anchor_pos",
-                "anchor_rot_wxyz",
-            }
-            handle = self._jw.add_constraint(**{k: v for k, v in kwargs.items() if k in legacy_keys})
+        handle = self._jw.add_constraint(**kwargs)
         self._constraint_handles[slot_id] = handle
         return handle
 

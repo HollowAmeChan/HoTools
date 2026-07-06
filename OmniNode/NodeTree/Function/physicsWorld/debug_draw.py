@@ -84,6 +84,12 @@ def _sphere_lines(lines, center, radius):
     _circle(lines, center, y, z, radius)
 
 
+def _sphere_lines_oriented(lines, center, axis_x, axis_y, axis_z, radius):
+    _circle(lines, center, axis_x.normalized(), axis_y.normalized(), radius)
+    _circle(lines, center, axis_x.normalized(), axis_z.normalized(), radius)
+    _circle(lines, center, axis_y.normalized(), axis_z.normalized(), radius)
+
+
 def _capsule_lines(lines, seg_a, seg_b, radius):
     if radius <= 1e-7:
         return
@@ -146,6 +152,67 @@ def _box_lines(lines, center, axis_x, axis_y, axis_z):
         (3, 7),
     ):
         _line(lines, corners[start], corners[end])
+
+
+def _world_location(obj) -> mathutils.Vector:
+    try:
+        return obj.matrix_world.translation.copy()
+    except Exception:
+        try:
+            return obj.location.copy()
+        except Exception:
+            return mathutils.Vector((0.0, 0.0, 0.0))
+
+
+def _rigid_body_matrix(spec) -> mathutils.Matrix | None:
+    obj = getattr(spec, "obj", None)
+    if obj is None:
+        return None
+    try:
+        loc, rot, _scale = obj.matrix_world.decompose()
+        return mathutils.Matrix.Translation(loc) @ rot.to_matrix().to_4x4()
+    except Exception:
+        return None
+
+
+def _shape_matrix(spec) -> mathutils.Matrix | None:
+    body = _rigid_body_matrix(spec)
+    if body is None:
+        return None
+    try:
+        offset = mathutils.Vector(getattr(spec, "shape_offset", (0.0, 0.0, 0.0)))
+    except Exception:
+        offset = mathutils.Vector((0.0, 0.0, 0.0))
+    try:
+        q = mathutils.Quaternion(getattr(spec, "shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))
+    except Exception:
+        q = mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+    return body @ mathutils.Matrix.Translation(offset) @ q.to_matrix().to_4x4()
+
+
+def _draw_rigid_shape(lines, spec) -> None:
+    mat = _shape_matrix(spec)
+    if mat is None:
+        return
+    center = mat.translation.copy()
+    axis_x = mathutils.Vector(mat.col[0][:3]).normalized()
+    axis_y = mathutils.Vector(mat.col[1][:3]).normalized()
+    axis_z = mathutils.Vector(mat.col[2][:3]).normalized()
+    stype = str(getattr(spec, "shape_type", "SPHERE"))
+
+    if stype == "BOX":
+        try:
+            hx, hy, hz = (float(v) for v in getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5)))
+        except Exception:
+            hx = hy = hz = 0.5
+        _box_lines(lines, center, axis_x * hx, axis_y * hy, axis_z * hz)
+    elif stype == "CAPSULE":
+        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
+        half_height = max(float(getattr(spec, "shape_half_height", 0.5)), 0.0)
+        _capsule_lines(lines, center - axis_y * half_height, center + axis_y * half_height, radius)
+    else:
+        radius = max(float(getattr(spec, "shape_radius", 0.5)), 0.0)
+        _sphere_lines_oriented(lines, center, axis_x, axis_y, axis_z, radius)
 
 
 
@@ -276,14 +343,10 @@ def _build_draw_calls(data: dict) -> list[tuple]:
             spec = slot.get("spec")
             if spec is None:
                 continue
-            obj = getattr(spec, "obj", None)
-            if obj is None:
-                continue
             body_type = str(getattr(spec, "body_type", "DYNAMIC"))
             target = dyn_lines if body_type == "DYNAMIC" else (sta_lines if body_type == "STATIC" else kin_lines)
             try:
-                r = max(obj.dimensions) * 0.5
-                _sphere_lines(target, obj.location.copy(), r * 0.6)
+                _draw_rigid_shape(target, spec)
             except Exception:
                 pass
         if dyn_lines:
@@ -372,7 +435,8 @@ def _draw_physics_debug_2d():
                 if empty_obj is None:
                     continue
                 try:
-                    sc = location_3d_to_region_2d(region, rv3d, empty_obj.location)
+                    anchor_pos = _world_location(empty_obj)
+                    sc = location_3d_to_region_2d(region, rv3d, anchor_pos)
                     if sc is None:
                         continue
                     sx, sy = sc
@@ -386,7 +450,7 @@ def _draw_physics_debug_2d():
                                 empty_obj.matrix_world.col[2][:3]
                             ).normalized()
                             tip_sc = location_3d_to_region_2d(
-                                region, rv3d, empty_obj.location + z_w * 0.2
+                                region, rv3d, anchor_pos + z_w * 0.2
                             )
                             if tip_sc:
                                 ddx = tip_sc[0] - sx
@@ -412,7 +476,7 @@ def _draw_physics_debug_2d():
                         if is_self:
                             continue
                         try:
-                            t_sc = location_3d_to_region_2d(region, rv3d, target.location)
+                            t_sc = location_3d_to_region_2d(region, rv3d, _world_location(target))
                             if t_sc:
                                 _l2(con_lines, (sx, sy), tuple(t_sc))
                         except Exception:
@@ -543,7 +607,7 @@ def update_draw_store(
                         except Exception:
                             is_bug = True
                 if is_bug:
-                    bug_positions.append(tuple(empty_obj.location))
+                    bug_positions.append(tuple(_world_location(empty_obj)))
             except Exception:
                 pass
 
