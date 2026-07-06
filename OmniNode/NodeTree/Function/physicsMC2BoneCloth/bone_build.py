@@ -122,11 +122,12 @@ def flatten_bone_cloth_chain_settings(values) -> list[dict]:
 
 
 def chains_from_settings(settings: list[dict]) -> list[dict]:
-    """把链设置 dict 列表转成 bone_build 内部骨链格式 [{"root", "bones", "params"?}, ...]。
+    """把链设置 dict 列表转成 bone_build 内部骨链格式 [{"root", "bones", "params"?, "lateral_group"?}, ...]。
 
     禁用的链（enabled=False）会被跳过。
     per-chain 物理参数（由 boneClothMC2ChainPhysics 节点注入）以 "params" 键透传，
     供 expand_chain_params_to_particle_arrays 展开成粒子数组。
+    lateral_group 用于防止不同节点调用的链之间产生错误的横向连接。
     """
     chains: list[dict] = []
     for setting in settings:
@@ -140,6 +141,11 @@ def chains_from_settings(settings: list[dict]) -> list[dict]:
             per_chain_params = setting.get("params")
             if isinstance(per_chain_params, dict) and per_chain_params:
                 chain["params"] = per_chain_params
+            # 携带横向组 ID：同一 boneClothMC2ChainPhysics 节点调用产出的链共享同一 ID，
+            # 不同节点调用的链不应产生横向连接。
+            lateral_group = setting.get("lateral_group")
+            if lateral_group is not None:
+                chain["lateral_group"] = lateral_group
             chains.append(chain)
     return chains
 
@@ -403,16 +409,32 @@ def compute_bone_depths(chains: list[dict], positions: np.ndarray) -> np.ndarray
 def _lateral_edges(
     chain_indices: list[list[int]],
     connection_mode: int,
+    chain_groups: list | None = None,
 ) -> list[tuple[int, int]]:
     """横向顺序连接边：按 root 列表下标顺序，配对相邻链的同深度粒子。
 
     不做任何距离查找——列表顺序就是横向连接顺序。
     SequentialLoop 额外连接首末链。
+
+    chain_groups：每条链对应的横向组 ID（来自 lateral_group 字段）。
+    两条相邻链若 group ID 均非 None 且不相等，则跳过横向连接，
+    避免不同 boneClothMC2ChainPhysics 节点调用的链之间产生伪横向边。
     """
     lateral: list[tuple[int, int]] = []
     chain_count = len(chain_indices)
     if chain_count < 2:
         return lateral
+
+    def same_group(i: int, j: int) -> bool:
+        """判断两条链是否属于同一横向组。无组信息时默认可以连接。"""
+        if chain_groups is None:
+            return True
+        gi = chain_groups[i] if i < len(chain_groups) else None
+        gj = chain_groups[j] if j < len(chain_groups) else None
+        # 两个 ID 都有值且不相等 → 跨组，不连接
+        if gi is not None and gj is not None and gi != gj:
+            return False
+        return True
 
     def connect_pair(a: list[int], b: list[int]) -> None:
         common = min(len(a), len(b))
@@ -422,10 +444,12 @@ def _lateral_edges(
             lateral.append((i, j) if i < j else (j, i))
 
     for chain_index in range(chain_count - 1):
-        connect_pair(chain_indices[chain_index], chain_indices[chain_index + 1])
+        if same_group(chain_index, chain_index + 1):
+            connect_pair(chain_indices[chain_index], chain_indices[chain_index + 1])
 
     if connection_mode == CONNECTION_MODE_SEQUENTIAL_LOOP and chain_count >= 3:
-        connect_pair(chain_indices[-1], chain_indices[0])
+        if same_group(chain_count - 1, 0):
+            connect_pair(chain_indices[-1], chain_indices[0])
     return lateral
 
 
@@ -505,7 +529,9 @@ def build_bone_topology(
     if connection_mode == CONNECTION_MODE_LINE:
         lateral: list[tuple[int, int]] = []
     else:
-        lateral = _lateral_edges(chain_indices, connection_mode)
+        # 提取每条链的横向组 ID，防止不同节点调用的链之间产生伪横向边
+        chain_groups = [ch.get("lateral_group") for ch in chains]
+        lateral = _lateral_edges(chain_indices, connection_mode, chain_groups)
 
     all_edges = list(longitudinal) + list(lateral)
 
@@ -782,16 +808,20 @@ def bone_topology_key(
     armature_obj: bpy.types.Object,
     bone_names: list[str],
     connection_mode: int,
+    chain_groups: list | None = None,
 ) -> tuple:
-    """拓扑缓存 key：骨架身份 + 骨名序列 + 连接模式。
+    """拓扑缓存 key：骨架身份 + 骨名序列 + 连接模式 + 横向组序列。
 
-    骨骼增删或列表顺序改变都会失效重建，与 MeshCloth 拓扑变化需 reset 的约定一致。
+    骨骼增删、列表顺序或横向组归属改变都会失效重建。
+    chain_groups：每条链的 lateral_group ID 列表，用于区分不同节点调用的链组合。
     """
+    group_key = tuple(chain_groups) if chain_groups is not None else ()
     return (
         armature_obj.name_full,
         int(armature_obj.as_pointer()),
         tuple(bone_names),
         int(connection_mode),
+        group_key,
     )
 
 

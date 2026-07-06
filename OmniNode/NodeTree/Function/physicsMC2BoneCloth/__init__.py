@@ -256,6 +256,9 @@ def boneClothMC2ChainPhysics(
             "bones":     ch["bones"],
             "enabled":   bool(enabled),
             "params":    physics,
+            # 同一节点调用产出的所有链共享同一横向组 ID（physics 对象地址），
+            # 解算器据此判断哪些链之间允许建横向连接，防止跨节点调用的链产生伪横向边。
+            "lateral_group": id(physics),
         }
         for armature_obj, ch in collected_chains
     ]

@@ -205,7 +205,9 @@ def _run_for_single_armature(
     bone_names = bone_build.flatten_chain_bone_names(chains)
     vertex_count = len(bone_names)
     output_key = armature.name_full
-    topology_key = bone_build.bone_topology_key(armature, bone_names, int(connection_mode))
+    # 提取每条链的横向组 ID，纳入拓扑 key，确保组归属变化时缓存正确失效
+    chain_groups = [ch.get("lateral_group") for ch in chains]
+    topology_key = bone_build.bone_topology_key(armature, bone_names, int(connection_mode), chain_groups)
     collision_config_key = bone_build.bone_collision_config_key(armature, bone_names)
 
     cache_owner = arm_cache_state if isinstance(arm_cache_state, mc2_state.MC2RuntimeOwner) else None
