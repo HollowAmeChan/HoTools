@@ -702,7 +702,161 @@ def _exec_subtree(call: SubtreeCall, parent_graph, ctx, observer):
 
 ---
 
+## 调试系统适配（Debug System）
 
+懒求值系统引入了新的执行状态（skip / no_change / version_bump），现有四类 debug 机制都需要扩展，否则节点"消失了"但不知道是跳过了还是出错了。
+
+### 1. `debug_runtime_trace`（运行时完整追踪）
+
+新增三类 trace 事件，由 `RuntimeObserver` 输出：
+
+```python
+class RuntimeObserver:
+
+    def log_skip(self, op: OpCall) -> None:
+        """节点被 skip：所有输入版本号与上帧相同。"""
+        if not self.debug:
+            return
+        self.trace.append(
+            f"  [SKIP]    {op.node.name} — inputs unchanged, output reused"
+        )
+
+    def log_no_change(self, op: OpCall, output_index: int) -> None:
+        """节点执行后返回 OMNI_NO_CHANGE：输出版本号不递增。"""
+        if not self.debug:
+            return
+        self.trace.append(
+            f"  [NO_CHG]  {op.node.name}.output{output_index} — OMNI_NO_CHANGE, version not bumped"
+        )
+
+    def log_version_bump(self, graph_name: str, reg: int, old_ver: int) -> None:
+        """寄存器版本号递增（debug_version_trace 开启时）。"""
+        if not self.debug:
+            return
+        self.trace.append(
+            f"  [DIRTY]   {graph_name} reg[{reg}]: version {old_ver} → {old_ver + 1}"
+        )
+
+    def log_subtree_skip(self, call) -> None:
+        """SubtreeCall 整块被 skip。"""
+        if not self.debug:
+            return
+        name = getattr(call.compiled_graph, "tree_name", "<subtree>")
+        self.trace.append(
+            f"  [SKIP_ST] SubtreeCall({name}) — inputs unchanged, group output reused"
+        )
+```
+
+trace 输出示例（`debug_runtime_trace=True`）：
+
+```text
+Run Tree: MyPhysicsTree
+  step0: CONST r0 = <Scene>
+  step1: CONST r1 = 1.0
+  [SKIP]    springChainSetting — inputs unchanged, output reused
+  [SKIP]    springChainSetting.1 — inputs unchanged, output reused
+  step4: springBoneVRM_CPP (always_run) → executed
+  [NO_CHG]  springBoneVRM_CPP.output0 — OMNI_NO_CHANGE, version not bumped
+  step6: CACHE_WRITE
+```
+
+---
+
+### 2. `debug_runtime_timing`（帧级计时报告）
+
+新增 skip 统计行和 stage 名称：
+
+```text
+OMNI DEBUG TIMING   |  Frame: MyPhysicsTree
+  [Summary]:  samples=5  fps=30.1  frame=33ms
+    handler       = 8.6ms  (26%)
+    engine/redraw = 24.4ms  (74%)
+  [Lazy Eval]:
+    nodes_total   = 87
+    nodes_skipped = 74  (85%)
+    nodes_run     = 13
+    skip_check    = 0.03ms
+  [Breakdown]:
+    01. springBoneVRM_CPP   = 6.5ms  (75%)
+    ...
+    07. skip_check_total    = 0.03ms  (<1%)
+```
+
+新增 timing stage 名称（`timing_stage_name` 函数扩展）：
+
+| 情况 | stage 名称 |
+|---|---|
+| 节点被 skip | `step{N}:{NodeName}:SKIP` |
+| 节点执行但返回 OMNI_NO_CHANGE | `step{N}:{NodeName}:NO_CHG` |
+| SubtreeCall 整块 skip | `step{N}:{NodeName}:SUBTREE_SKIP` |
+
+---
+
+### 3. 版本变化诊断（`debug_version_trace`，新增开关）
+
+用于回答"这一帧为什么 NodeX 没被跳过"：
+
+```python
+# OmniNodeTree 上的新属性
+debug_version_trace: BoolProperty(
+    name="版本变化追踪",
+    description="记录每帧哪些寄存器版本递增，诊断意外重算",
+    default=False
+)
+```
+
+`_write_reg` 里触发：
+
+```python
+def _write_reg(graph, reg, value):
+    if graph.reg_values[reg] is not value:
+        old_ver = graph.reg_versions[reg]
+        graph.reg_values[reg] = value
+        graph.reg_versions[reg] += 1
+        if getattr(graph.tree_ref, "debug_version_trace", False):
+            # 注意：observer 需要从 ctx 取，不要在 write_reg 里持有全局引用
+            graph._pending_dirty_log.append((reg, old_ver))
+```
+
+输出示例：
+
+```text
+[DIRTY] MyTree reg[3]: version 12→13   ← stiffness CONST 寄存器
+[DIRTY] MyTree reg[7]: version 5→6     ← springChainSetting 输出
+```
+
+---
+
+### 4. 节点级 `debug_output` 补充声明
+
+物理 solver 节点的 `debug_output=True` 输出里补充 lazy eval 状态：
+
+```text
+[spring_vrm_cpp] frame=42 | always_run=True | executed
+  pack: 0.20ms  native_core: 6.50ms  write: 0.30ms  total: 7.00ms
+
+[springChainSetting] frame=42 | always_run=False | SKIPPED
+```
+
+---
+
+### 5. Tracy zone 适配
+
+skip 路径也产生 zone，与执行路径区分：
+
+```python
+# step_begin 里
+if will_skip:
+    zone_name = f"OmniNode/skip:{op.node.name}"  # 极短，仅 skip 判定耗时
+else:
+    zone_name = f"OmniNode/{timing_stage_name(op)}"  # 真实执行
+```
+
+Tracy profiler 里两类 zone 的时长比例直观展示懒求值效果。
+
+---
+
+## 实现改动范围
 
 | 文件 | 改动类型 | 影响 |
 |---|---|---|
