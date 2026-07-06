@@ -31,6 +31,7 @@ from .world import (
 )
 from .debug import (
     snapshot_to_text,
+    result_items_to_text,
     validate_world,
     print_world_summary,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "build_collider_snapshot",
     # debug
     "snapshot_to_text",
+    "result_items_to_text",
     "validate_world",
     "print_world_summary",
 ]

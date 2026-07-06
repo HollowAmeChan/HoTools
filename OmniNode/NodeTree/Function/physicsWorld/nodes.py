@@ -9,6 +9,7 @@ physicsWorld.nodes — 对外暴露的通用函数节点
   physicsWorldBegin            — 物理世界帧开始
   physicsWorldCommit           — 物理世界帧提交
   physicsWorldDebugSnapshot    — 输出 PhysicsWorldCache debug snapshot dict
+  physicsWorldResultStream     — 按 channel / solver 读取 world result stream
   physicsWorldDebugText        — 输出 PhysicsWorldCache debug 可读文本
 """
 
@@ -24,7 +25,7 @@ from .scope import (
     make_scope,
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
-from .debug import snapshot_to_text, validate_world, print_world_summary
+from .debug import snapshot_to_text, result_items_to_text, validate_world, print_world_summary
 from .debug_draw import update_draw_store, clear_draw_store
 from .writeback import apply_all_writebacks, clear_all_deltas
 
@@ -220,6 +221,51 @@ def physicsWorldDebugSnapshot(
         return world, {"error": f"world 不是 PhysicsWorldCache（{type(world).__name__}）"}
     snapshot = world.omni_cache_debug_snapshot()
     return world, snapshot
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="物理世界-结果流",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "通道", "Solver", "仅当前帧", "仅当前代"],
+    _OUTPUT_NAME=["物理世界", "结果列表", "数量", "结果文本"],
+    omni_description="""
+    从 PhysicsWorldCache.result_streams 读取 solver 输出。
+
+    通道为空时读取全部 result channel；Solver 为空时不过滤 solver。
+    默认只读取当前 frame 和当前 generation，避免误看旧帧数据。
+
+    这是通用观察节点，不访问 solver slot 私有结构或 backend handle。
+    """,
+)
+def physicsWorldResultStream(
+    world: object,
+    channel: str = "",
+    solver: str = "",
+    current_frame_only: bool = True,
+    current_generation_only: bool = True,
+) -> tuple[object, list, int, str]:
+    if not isinstance(world, PhysicsWorldCache):
+        msg = f"world 不是 PhysicsWorldCache（{type(world).__name__}）"
+        return world, [], 0, msg
+
+    fc = world.frame_context
+    frame = int(fc.frame) if bool(current_frame_only) else None
+    generation = int(world.generation) if bool(current_generation_only) else None
+    ch = str(channel).strip() or None
+    solver_id = str(solver).strip() or None
+    items = [
+        dict(item) for item in world.consume_results(
+            ch,
+            solver=solver_id,
+            frame=frame,
+            generation=generation,
+        )
+        if isinstance(item, dict)
+    ]
+    return world, items, len(items), result_items_to_text(items)
 
 
 @omni(

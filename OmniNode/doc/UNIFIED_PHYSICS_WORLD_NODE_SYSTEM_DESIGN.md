@@ -624,6 +624,7 @@ OmniNode object scope
   -> Jolt adapter build/update
   -> Jolt step
   -> world.result_streams["rigid_transform"]
+  -> world.result_streams["rigid_solver_stats"]
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
 ```

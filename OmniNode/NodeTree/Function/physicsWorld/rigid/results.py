@@ -10,6 +10,7 @@ from __future__ import annotations
 
 
 RIGID_TRANSFORM_CHANNEL = "rigid_transform"
+RIGID_SOLVER_STATS_CHANNEL = "rigid_solver_stats"
 RIGID_SOLVER_ID = "rigid_jolt"
 
 
@@ -124,3 +125,110 @@ def get_rigid_transform_result(
 
 def clear_rigid_transform_results(world) -> None:
     world.clear_results(RIGID_TRANSFORM_CHANNEL, solver=RIGID_SOLVER_ID)
+
+
+def make_rigid_solver_stats_result(
+    frame: int,
+    generation: int,
+    body_count: int,
+    constraint_count: int,
+    step_ms: float,
+    dt: float,
+    substeps: int,
+    same_frame: bool,
+    restart_required: bool,
+    transform_count: int,
+    command_count: int = 0,
+    command_failed: int = 0,
+    command_errors: list[str] | None = None,
+    sync_error_count: int = 0,
+    result_error_count: int = 0,
+    backend: str = "jolt",
+) -> dict:
+    return {
+        "channel": RIGID_SOLVER_STATS_CHANNEL,
+        "solver": RIGID_SOLVER_ID,
+        "backend": str(backend),
+        "frame": int(frame),
+        "generation": int(generation),
+        "body_count": int(body_count),
+        "constraint_count": int(constraint_count),
+        "step_ms": float(step_ms),
+        "dt": float(dt),
+        "substeps": int(substeps),
+        "same_frame": bool(same_frame),
+        "restart_required": bool(restart_required),
+        "transform_count": int(transform_count),
+        "command_count": int(command_count),
+        "command_failed": int(command_failed),
+        "command_errors": list(command_errors or ()),
+        "sync_error_count": int(sync_error_count),
+        "result_error_count": int(result_error_count),
+    }
+
+
+def publish_rigid_solver_stats_result(
+    world,
+    frame: int,
+    generation: int,
+    body_count: int,
+    constraint_count: int,
+    step_ms: float,
+    dt: float,
+    substeps: int,
+    same_frame: bool,
+    restart_required: bool,
+    transform_count: int,
+    command_count: int = 0,
+    command_failed: int = 0,
+    command_errors: list[str] | None = None,
+    sync_error_count: int = 0,
+    result_error_count: int = 0,
+    backend: str = "jolt",
+) -> dict | None:
+    world.clear_results(RIGID_SOLVER_STATS_CHANNEL, solver=RIGID_SOLVER_ID)
+    result = make_rigid_solver_stats_result(
+        frame=frame,
+        generation=generation,
+        body_count=body_count,
+        constraint_count=constraint_count,
+        step_ms=step_ms,
+        dt=dt,
+        substeps=substeps,
+        same_frame=same_frame,
+        restart_required=restart_required,
+        transform_count=transform_count,
+        command_count=command_count,
+        command_failed=command_failed,
+        command_errors=command_errors,
+        sync_error_count=sync_error_count,
+        result_error_count=result_error_count,
+        backend=backend,
+    )
+    return world.publish_result(result, channel=RIGID_SOLVER_STATS_CHANNEL, solver=RIGID_SOLVER_ID)
+
+
+def iter_rigid_solver_stats_results(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> list[dict]:
+    items = world.consume_results(
+        RIGID_SOLVER_STATS_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+        frame=frame,
+        generation=generation,
+    )
+    return [
+        item for item in items
+        if isinstance(item, dict) and item.get("channel") == RIGID_SOLVER_STATS_CHANNEL
+    ]
+
+
+def get_rigid_solver_stats_result(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> dict | None:
+    items = iter_rigid_solver_stats_results(world, frame=frame, generation=generation)
+    return items[-1] if items else None

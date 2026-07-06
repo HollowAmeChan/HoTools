@@ -143,10 +143,13 @@ _load_pw("types",                "types.py")
 _load_pw("scope",                "scope.py")
 _load_pw("rigid.results",        "rigid/results.py")
 _load_pw("writeback",            "writeback.py")
+_load_pw("debug",                "debug.py")
 _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
 _load_pw("rigid.backends.jolt",  "rigid/backends/jolt.py")
+_load_pw("debug_draw",           "debug_draw.py")
+_load_pw("nodes",                "nodes.py")
 _load_pw("rigid.nodes",          "rigid/nodes.py")
 
 
@@ -165,6 +168,8 @@ build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
+get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_result
+physicsWorldResultStream = _pw("nodes").physicsWorldResultStream
 physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 
@@ -299,6 +304,15 @@ def test_world_lifecycle():
     assert len(world.consume_exchange("test_exchange")) == 1
     snapshot = world.omni_cache_debug_snapshot()
     assert snapshot["exchange_channels"]["test_exchange"] == 1
+    result = world.publish_result({
+        "channel": "test_result",
+        "solver": "test",
+        "value": 2,
+    })
+    assert result is not None
+    assert len(world.consume_results("test_result", solver="test")) == 1
+    snapshot = world.omni_cache_debug_snapshot()
+    assert snapshot["result_channels"]["test_result"] == 1
 
     cache_val, _, _ = physicsWorldCommit(world, enabled=True)
 
@@ -306,6 +320,7 @@ def test_world_lifecycle():
         cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
     assert not world2.replace_required, "连续帧应 mutate"
     assert world2.consume_exchange("test_exchange") == [], "Begin 应清空 frame exchange"
+    assert world2.consume_results("test_result") == [], "Begin 应清空 result stream"
     world2.omni_cache_dispose("test")
 
 
@@ -340,6 +355,18 @@ def test_rigid_body_commands_exchange():
     assert result["linear_velocity"][2] > 3.0
     snapshot = world.omni_cache_debug_snapshot()
     assert snapshot["result_channels"]["rigid_transform"] == 1
+    assert snapshot["result_channels"]["rigid_solver_stats"] == 1
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation)
+    assert stats is not None
+    assert stats["body_count"] == 1
+    assert stats["transform_count"] == 1
+    assert stats["command_count"] == 1
+    assert stats["command_failed"] == 0
+    _, items, count, text = physicsWorldResultStream(
+        world, "rigid_solver_stats", "", True, True)
+    assert count == 1 and len(items) == 1
+    assert "rigid_solver_stats" in text and "command_count" in text
 
     adapter = world.backend_resources.get("rigid_solver")
     assert adapter is not None
@@ -350,6 +377,10 @@ def test_rigid_body_commands_exchange():
     step_rigid_bodies(world, enabled=True)
     debug2 = adapter.debug_snapshot()
     assert debug2["last_command_count"] == 0, "同一 frame item 不应重复消费"
+    stats2 = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation)
+    assert stats2 is not None
+    assert stats2["command_count"] == 0
 
     world.omni_cache_dispose("test_commands")
     _del(ball)
@@ -458,6 +489,13 @@ def test_full_rigid_pipeline():
     assert "linear_velocity" in result and "angular_velocity" in result
     assert isinstance(result.get("active"), bool)
     assert isinstance(result.get("sleeping"), bool)
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation)
+    assert stats is not None
+    assert stats["body_count"] == 2
+    assert stats["transform_count"] == 2
+    assert stats["sync_error_count"] == 0
+    assert stats["result_error_count"] == 0
 
     world.omni_cache_dispose("test_end")
     _del(ground, ball)

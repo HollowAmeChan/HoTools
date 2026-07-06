@@ -2,9 +2,10 @@
 physicsWorld.debug — PhysicsWorldCache 调试输出工具
 
 提供：
-  snapshot_to_text    — 把 debug snapshot dict 转成可读文本
-  validate_world      — 校验 world 状态，返回问题列表
-  print_world_summary — 直接打印简洁的 world 摘要到控制台
+  snapshot_to_text     — 把 debug snapshot dict 转成可读文本
+  result_items_to_text — 把 result stream item list 转成可读文本
+  validate_world       — 校验 world 状态，返回问题列表
+  print_world_summary  — 直接打印简洁的 world 摘要到控制台
 """
 
 from __future__ import annotations
@@ -34,6 +35,8 @@ def snapshot_to_text(snapshot: dict, indent: int = 0) -> str:
         "frame", "previous_frame", "continuous", "same_frame", "restart_required",
         "dt", "time_scale", "substeps",
         "objects", "collider_sources", "colliders",
+        "exchange_channels", "exchange_item_count",
+        "result_channels", "result_item_count",
         "solver_slots", "backend_resources", "backend_resource_details",
     ]
     shown = set()
@@ -72,6 +75,57 @@ def snapshot_to_text(snapshot: dict, indent: int = 0) -> str:
             continue
         lines.append(f"{prefix}{key}: {value}")
 
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# result stream → 可读文本
+# ---------------------------------------------------------------------------
+
+def _format_result_value(value) -> str:
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (list, tuple)):
+        if len(value) > 8:
+            head = ", ".join(_format_result_value(v) for v in value[:8])
+            return f"({head}, ... +{len(value) - 8})"
+        return "(" + ", ".join(_format_result_value(v) for v in value) + ")"
+    if isinstance(value, dict):
+        keys = list(value.keys())
+        shown = ", ".join(str(k) for k in keys[:8])
+        suffix = f", ... +{len(keys) - 8}" if len(keys) > 8 else ""
+        return "{" + shown + suffix + "}"
+    return str(value)
+
+
+def result_items_to_text(items: list[dict], max_items: int = 20) -> str:
+    """
+    把 world result stream item list 转成多行文本。
+
+    result item 必须是纯 dict/tuple 数据；此函数只做展示，不回读 solver slot
+    或 backend handle。
+    """
+    if not items:
+        return "<empty result stream>"
+
+    lines: list[str] = []
+    visible_items = items[:max(0, int(max_items))]
+    header_keys = {"channel", "solver", "frame", "generation"}
+
+    for index, item in enumerate(visible_items):
+        if not isinstance(item, dict):
+            lines.append(f"[{index}] {item}")
+            continue
+        channel = item.get("channel", "<none>")
+        solver = item.get("solver", "<none>")
+        frame = item.get("frame", "<none>")
+        generation = item.get("generation", "<none>")
+        lines.append(f"[{index}] channel={channel} solver={solver} frame={frame} generation={generation}")
+        for key in sorted(k for k in item.keys() if k not in header_keys):
+            lines.append(f"  {key}: {_format_result_value(item.get(key))}")
+
+    if len(items) > len(visible_items):
+        lines.append(f"... +{len(items) - len(visible_items)} items")
     return "\n".join(lines)
 
 

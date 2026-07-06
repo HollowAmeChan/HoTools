@@ -17,6 +17,7 @@ from .specs import (
 from .results import (
     clear_rigid_transform_results,
     publish_rigid_transform_result,
+    publish_rigid_solver_stats_result,
 )
 
 
@@ -327,6 +328,48 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     return published
 
 
+def _rigid_slot_error_counts(world: PhysicsWorldCache) -> tuple[int, int]:
+    sync_error_count = 0
+    result_error_count = 0
+    for slot in world.solver_slots.values():
+        if slot.kind not in {"rigid_body", "rigid_constraint"}:
+            continue
+        if slot.data.get("_jolt_error"):
+            sync_error_count += 1
+        if slot.data.get("_result_error"):
+            result_error_count += 1
+    return sync_error_count, result_error_count
+
+
+def _publish_rigid_solver_stats(
+    world: PhysicsWorldCache,
+    adapter,
+    step_ms: float,
+    transform_count: int,
+) -> dict | None:
+    fc = world.frame_context
+    sync_error_count, result_error_count = _rigid_slot_error_counts(world)
+    return publish_rigid_solver_stats_result(
+        world,
+        frame=int(getattr(fc, "frame", 0) or 0),
+        generation=int(world.generation),
+        body_count=int(getattr(adapter, "body_count", 0) or 0),
+        constraint_count=int(getattr(adapter, "constraint_count", 0) or 0),
+        step_ms=float(step_ms),
+        dt=float(getattr(fc, "dt", 0.0) or 0.0),
+        substeps=int(getattr(fc, "substeps", 1) or 1),
+        same_frame=bool(getattr(fc, "same_frame", False)),
+        restart_required=bool(getattr(fc, "restart_required", False)),
+        transform_count=int(transform_count),
+        command_count=int(getattr(adapter, "last_command_count", 0) or 0),
+        command_failed=int(getattr(adapter, "last_command_failed", 0) or 0),
+        command_errors=list(getattr(adapter, "last_command_errors", []) or []),
+        sync_error_count=sync_error_count,
+        result_error_count=result_error_count,
+        backend=getattr(adapter, "BACKEND", "jolt"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 5：Jolt 模拟步
 # ---------------------------------------------------------------------------
@@ -359,7 +402,11 @@ def step_rigid_bodies(
         adapter = world.backend_resources.get("rigid_solver")
         body_count = int(getattr(adapter, "body_count", 0) or 0)
         if adapter is not None:
-            _publish_rigid_transform_results(world, adapter)
+            adapter.last_command_count = 0
+            adapter.last_command_failed = 0
+            adapter.last_command_errors = []
+            transform_count = _publish_rigid_transform_results(world, adapter)
+            _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
         return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter
@@ -393,6 +440,7 @@ def step_rigid_bodies(
                     adapter.sync_body(slot_id, spec)
                     slot.data["_jolt_generation"] = world.generation
                     slot.data.pop("_jolt_kinematic_pose_dirty", None)
+                    slot.data.pop("_jolt_error", None)
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
             elif spec.body_type == "KINEMATIC":
@@ -415,18 +463,21 @@ def step_rigid_bodies(
                 try:
                     adapter.sync_constraint(slot_id, spec)
                     slot.data["_jolt_generation"] = world.generation
+                    slot.data.pop("_jolt_error", None)
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
 
         _apply_rigid_body_commands(world, adapter)
 
         if same_frame:
-            _publish_rigid_transform_results(world, adapter)
+            transform_count = _publish_rigid_transform_results(world, adapter)
+            _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
             return adapter.body_count, 0.0
 
         # --- step ---
         step_ms = adapter.step(dt, substeps)
-        _publish_rigid_transform_results(world, adapter)
+        transform_count = _publish_rigid_transform_results(world, adapter)
+        _publish_rigid_solver_stats(world, adapter, step_ms, transform_count)
 
         # 注意：写回由下游 Physics Writeback 节点统一处理。
         # adapter.writeback_transforms 不在此处调用，以便写回节点能先捕获 frame=0 初始位置。

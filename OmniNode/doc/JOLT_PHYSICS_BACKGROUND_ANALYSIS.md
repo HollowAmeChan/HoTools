@@ -383,9 +383,11 @@ HoTools 当前 constraint spec 只有：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
 - solver 每帧把 body state 纯快照发布到 `world.result_streams["rigid_transform"]`。
+- solver 每次调用把统计快照发布到 `world.result_streams["rigid_solver_stats"]`，包括 body/constraint 数量、step 时间、dt/substeps、same-frame/restart 状态、transform 输出数量、命令消费数量和错误计数。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
 - `physicsWorldDebugDraw` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `physicsRigidReadState` 直接从 `rigid_transform` result 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
+- `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_solver_stats` 等 channel，后续 contact、query 和 constraint lambda 也应按同一模式输出。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 应补的核心输出

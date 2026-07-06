@@ -325,8 +325,10 @@ export cache stream
 
 - `physicsRigidSolver` 向 `world.result_streams["rigid_transform"]` 写入每个 rigid body 的本帧结果。
 - `rigid_transform` result 是本帧纯快照 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`。
+- `physicsRigidSolver` 同时向 `world.result_streams["rigid_solver_stats"]` 写入本次 solver 调用统计，包含 `body_count`、`constraint_count`、`step_ms`、`dt`、`substeps`、`same_frame`、`restart_required`、`transform_count`、`command_count`、`command_failed`、`sync_error_count`、`result_error_count`。
 - `physicsWriteback`、`physicsWorldDebugDraw` 和 `physicsRigidReadState` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。
+- `physicsWorldResultStream` 是通用观察节点，可按 channel / solver 读取当前 frame + generation 的 result stream，用于调试后续 contact、constraint lambda、query 等输出。
 
 模式：
 
