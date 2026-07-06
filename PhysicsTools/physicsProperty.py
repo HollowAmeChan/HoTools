@@ -292,12 +292,11 @@ class PG_Hotools_RigidBody(PropertyGroup):
         name="形状",
         description="刚体碰撞形状类型",
         items=[
-            ("AUTO",    "自动",   "优先读 hotools_object_collision，否则用对象包围盒生成 BOX"),
             ("SPHERE",  "球体",   "球形；由半径决定大小"),
             ("CAPSULE", "胶囊",   "胶囊；由半径和高度决定大小"),
             ("BOX",     "长方体", "轴对齐长方体；由三轴半尺寸决定大小"),
         ],
-        default="AUTO",
+        default="SPHERE",
     )  # type: ignore
 
     shape_radius: FloatProperty(

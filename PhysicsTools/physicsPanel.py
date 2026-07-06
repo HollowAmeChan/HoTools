@@ -273,18 +273,6 @@ class PT_Hotools_Physics_RigidBody(Panel):
             col2.prop(props, "shape_half_height")
         elif stype == "BOX":
             layout.prop(props, "shape_half_extents")
-        elif stype == "AUTO":
-            # 显示当前实际使用的形状来源（仅提示，不可编辑）
-            obj = context.object
-            col_info = layout.column(align=True)
-            col_info.enabled = False
-            col_info.scale_y = 0.85
-            col_obj_col = getattr(obj, "hotools_object_collision", None)
-            if col_obj_col is not None and bool(getattr(col_obj_col, "enabled", False)):
-                ctype = str(getattr(col_obj_col, "collision_type", "NONE"))
-                col_info.label(text=f"→ 读取简单碰撞：{ctype}", icon="INFO")
-            else:
-                col_info.label(text="→ 使用对象包围盒（BOX）", icon="INFO")
 
 
 # ---------------------------------------------------------------------------

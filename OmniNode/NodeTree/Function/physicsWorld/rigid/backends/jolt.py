@@ -46,19 +46,17 @@ def _get_native_const(attr: str, default):
 
 def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
     """
-    从 RigidBodySpec 提取碰撞形状参数，优先级：
-      1. hotools_rigid_body.shape_type 显式设置（非 AUTO）
-      2. hotools_object_collision（简单碰撞属性，旧行为兼容）
-      3. Object.dimensions AABB 包围盒 BOX（fallback）
+    从 RigidBodySpec 提取碰撞形状参数，读取顺序：
+      1. hotools_rigid_body.shape_type（SPHERE/CAPSULE/BOX，默认 SPHERE）
+      2. Fallback：对象 dimensions AABB 生成 BOX（shape_type 值异常时）
     """
     obj = spec.obj
     if obj is None:
         return {"shape_type": "SPHERE", "shape_radius": 0.1}
 
-    # ── 优先：刚体自身形状设置 ─────────────────────────────────────────────
     rb = getattr(obj, "hotools_rigid_body", None)
     if rb is not None:
-        stype = str(getattr(rb, "shape_type", "AUTO"))
+        stype = str(getattr(rb, "shape_type", "SPHERE"))
         if stype == "SPHERE":
             return {"shape_type": "SPHERE",
                     "shape_radius": max(float(getattr(rb, "shape_radius", 0.5)), 0.001)}
@@ -75,28 +73,8 @@ def _shape_params_from_spec(spec: "RigidBodySpec") -> dict:
             else:
                 hx = hy = hz = 0.5
             return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
-        # AUTO：继续向下走
 
-    # ── 次优：hotools_object_collision（简单碰撞属性，兼容旧流程）────────────
-    col = getattr(obj, "hotools_object_collision", None)
-    if col is not None and bool(getattr(col, "enabled", False)):
-        ctype = str(getattr(col, "collision_type", "NONE"))
-        if ctype == "SPHERE":
-            r = max(float(getattr(col, "radius", 0.1)), 0.001)
-            return {"shape_type": "SPHERE", "shape_radius": r}
-        if ctype == "CAPSULE":
-            r = max(float(getattr(col, "radius", 0.1)), 0.001)
-            h = max(float(getattr(col, "length", 0.2)), 0.001) * 0.5
-            return {"shape_type": "CAPSULE", "shape_radius": r, "shape_half_height": h}
-        if ctype == "BOX":
-            bx = getattr(col, "box_size", None)
-            if bx is not None:
-                hx = max(float(bx[0]) * 0.5, 0.001)
-                hy = max(float(bx[1]) * 0.5, 0.001)
-                hz = max(float(bx[2]) * 0.5, 0.001)
-                return {"shape_type": "BOX", "shape_half_extents": (hx, hy, hz)}
-
-    # ── Fallback：对象包围盒 AABB ─────────────────────────────────────────────
+    # Fallback：对象包围盒
     try:
         dims = obj.dimensions
         hx = max(float(dims.x) * 0.5, 0.01)
