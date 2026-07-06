@@ -595,6 +595,10 @@ def physicsWorldBegin(
 
     # 每帧开始清写入锁（防止上帧异常退出留下锁）
     world.clear_write_lock()
+    if hasattr(world, "clear_exchange"):
+        world.clear_exchange()
+    else:
+        world.exchange = {}
 
     fc = world.frame_context
     current_frame = int(getattr(scene, "frame_current", 0) or 0)

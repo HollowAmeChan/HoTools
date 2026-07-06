@@ -21,6 +21,10 @@ from .results import (
 )
 
 
+RIGID_BODY_COMMANDS_CHANNEL = "rigid_body_commands"
+_RIGID_COMMAND_CONSUMER_KEY = "_consumed_by_rigid_solver"
+
+
 # ---------------------------------------------------------------------------
 # 刚体 spec 注册
 # ---------------------------------------------------------------------------
@@ -132,6 +136,8 @@ def _flatten(objects) -> list:
 
 
 def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
+    if _has_pending_rigid_body_commands(world):
+        return True
     for slot in world.solver_slots.values():
         if slot.kind not in {"rigid_body", "rigid_constraint"}:
             continue
@@ -142,6 +148,133 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
         if slot.kind == "rigid_body" and slot.data.get("_jolt_kinematic_pose_dirty"):
             return True
     return False
+
+
+def _consume_exchange(world: PhysicsWorldCache, channel: str) -> list[dict]:
+    consume = getattr(world, "consume_exchange", None)
+    if callable(consume):
+        return [item for item in consume(channel) if isinstance(item, dict)]
+    exchange = getattr(world, "exchange", None)
+    if isinstance(exchange, dict):
+        return [item for item in exchange.get(channel, ()) if isinstance(item, dict)]
+    return []
+
+
+def _rigid_command_token(world: PhysicsWorldCache) -> tuple[int, int]:
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    return (int(getattr(world, "generation", 0) or 0), frame)
+
+
+def _has_pending_rigid_body_commands(world: PhysicsWorldCache) -> bool:
+    token = _rigid_command_token(world)
+    for item in _consume_exchange(world, RIGID_BODY_COMMANDS_CHANNEL):
+        if item.get(_RIGID_COMMAND_CONSUMER_KEY) != token:
+            return True
+    return False
+
+
+def _vec3(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except Exception:
+        return (float(fallback[0]), float(fallback[1]), float(fallback[2]))
+
+
+def _bool_value(value, fallback: bool = False) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    try:
+        return bool(value)
+    except Exception:
+        return bool(fallback)
+
+
+def _apply_rigid_body_commands(world: PhysicsWorldCache, adapter) -> tuple[int, int]:
+    """
+    消费 frame exchange 中的 rigid_body_commands。
+
+    item 会被打上本 generation/frame 的 consumer 标记，避免同一图执行里
+    多次调用 rigid solver 时重复应用 impulse / force。
+    """
+    token = _rigid_command_token(world)
+    applied = 0
+    failed = 0
+    errors: list[str] = []
+
+    for item in _consume_exchange(world, RIGID_BODY_COMMANDS_CHANNEL):
+        if item.get(_RIGID_COMMAND_CONSUMER_KEY) == token:
+            continue
+        item[_RIGID_COMMAND_CONSUMER_KEY] = token
+
+        slot_id = str(item.get("target_slot_id") or item.get("slot_id") or "")
+        command = str(item.get("command") or "").strip().lower()
+        ok = False
+        error_recorded = False
+        try:
+            if not slot_id or not command:
+                raise ValueError("missing target_slot_id or command")
+            if command in {"set_velocity", "set_body_velocity"}:
+                ok = adapter.set_body_velocity(
+                    slot_id,
+                    _vec3(item.get("linear_velocity")),
+                    _vec3(item.get("angular_velocity")),
+                )
+            elif command in {"add_force", "add_body_force"}:
+                ok = adapter.add_body_force(
+                    slot_id,
+                    _vec3(item.get("force")),
+                    _vec3(item.get("torque")),
+                )
+            elif command in {"add_impulse", "add_body_impulse"}:
+                ok = adapter.add_body_impulse(
+                    slot_id,
+                    _vec3(item.get("impulse")),
+                    _vec3(item.get("angular_impulse")),
+                )
+            elif command in {"set_gravity_factor", "set_body_gravity_factor"}:
+                ok = adapter.set_body_gravity_factor(
+                    slot_id,
+                    float(item.get("gravity_factor", 1.0)),
+                )
+            elif command in {"set_material_response", "set_body_material_response"}:
+                ok = adapter.set_body_material_response(
+                    slot_id,
+                    float(item.get("friction", 0.5)),
+                    float(item.get("restitution", 0.0)),
+                )
+            elif command in {"set_motion_quality", "set_body_motion_quality"}:
+                ok = adapter.set_body_motion_quality(
+                    slot_id,
+                    str(item.get("motion_quality", "DISCRETE")),
+                )
+            elif command in {"set_active", "activate_body"}:
+                ok = adapter.set_body_active(
+                    slot_id,
+                    _bool_value(item.get("active", True), True),
+                )
+            else:
+                raise ValueError(f"unknown command {command!r}")
+        except Exception as exc:
+            errors.append(f"{slot_id or '<missing>'}:{command or '<missing>'}:{exc}")
+            error_recorded = True
+            ok = False
+
+        if ok:
+            applied += 1
+        else:
+            failed += 1
+            if not error_recorded:
+                errors.append(f"{slot_id or '<missing>'}:{command or '<missing>'}:adapter returned False")
+
+    try:
+        adapter.last_command_count = applied
+        adapter.last_command_failed = failed
+        adapter.last_command_errors = errors[-5:]
+    except Exception:
+        pass
+
+    return applied, failed
 
 
 def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
@@ -288,6 +421,8 @@ def step_rigid_bodies(
                     slot.data["_jolt_generation"] = world.generation
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
+
+        _apply_rigid_body_commands(world, adapter)
 
         if same_frame:
             _publish_rigid_transform_results(world, adapter)

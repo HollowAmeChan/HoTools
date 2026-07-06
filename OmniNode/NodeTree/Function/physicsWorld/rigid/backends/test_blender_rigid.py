@@ -273,13 +273,68 @@ def test_world_lifecycle():
         cache_state=None, scene=scene, object_scope=scope, enabled=True)
     assert isinstance(world, PhysicsWorldCache)
     assert world.replace_required, "首帧应 replace"
+    item = world.publish_exchange({
+        "channel": "test_exchange",
+        "producer": "test",
+        "scope": "frame",
+        "value": 1,
+    })
+    assert item is not None
+    assert len(world.consume_exchange("test_exchange")) == 1
+    snapshot = world.omni_cache_debug_snapshot()
+    assert snapshot["exchange_channels"]["test_exchange"] == 1
 
     cache_val, _, _ = physicsWorldCommit(world, enabled=True)
 
     world2, _, _, _ = physicsWorldBegin(
         cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
     assert not world2.replace_required, "连续帧应 mutate"
+    assert world2.consume_exchange("test_exchange") == [], "Begin 应清空 frame exchange"
     world2.omni_cache_dispose("test")
+
+
+def test_rigid_body_commands_exchange():
+    scene = bpy.context.scene
+    ball = _make_obj("T3B_CommandBall", (0, 0, 5), body_type="DYNAMIC")
+
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True)
+    spec = build_rigid_body_spec(ball)
+    assert spec is not None
+    cmd = world.publish_exchange({
+        "channel": "rigid_body_commands",
+        "producer": "test",
+        "scope": "frame",
+        "target_slot_id": spec.slot_id,
+        "command": "set_velocity",
+        "linear_velocity": (0, 0, 4),
+        "angular_velocity": (0, 0, 0),
+    })
+    assert cmd is not None
+
+    step_rigid_bodies(world, enabled=True)
+    slot = world.solver_slots.get(spec.slot_id)
+    result = slot.data.get(RIGID_TRANSFORM_RESULT_KEY)
+    assert result is not None
+    assert result["linear_velocity"][2] > 3.0
+
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None
+    debug = adapter.debug_snapshot()
+    assert debug["last_command_count"] == 1
+    assert debug["last_command_failed"] == 0
+
+    step_rigid_bodies(world, enabled=True)
+    debug2 = adapter.debug_snapshot()
+    assert debug2["last_command_count"] == 0, "同一 frame item 不应重复消费"
+
+    world.omni_cache_dispose("test_commands")
+    _del(ball)
 
 
 def test_constraint_spec_disable_collisions():
@@ -391,6 +446,7 @@ if __name__ == "__main__":
     check("PropertyGroup 注册",         test_props_registered)
     check("JoltAdapter 直接测试",        test_jolt_adapter_direct)
     check("PhysicsWorldCache 生命周期",  test_world_lifecycle)
+    check("rigid body commands exchange", test_rigid_body_commands_exchange)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
 

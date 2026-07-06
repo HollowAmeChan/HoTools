@@ -204,6 +204,9 @@ class JoltAdapter:
         self._body_handles: dict[str, int] = {}
         self._constraint_handles: dict[str, int] = {}
         self.last_step_ms: float = 0.0
+        self.last_command_count: int = 0
+        self.last_command_failed: int = 0
+        self.last_command_errors: list[str] = []
         self._valid = True
         self._last_generation: int = -1   # generation 变化时 flush handles
 
@@ -479,6 +482,9 @@ class JoltAdapter:
             "body_count": self._jw.body_count,
             "constraint_count": self._jw.constraint_count,
             "last_step_ms": round(self.last_step_ms, 3),
+            "last_command_count": int(getattr(self, "last_command_count", 0) or 0),
+            "last_command_failed": int(getattr(self, "last_command_failed", 0) or 0),
+            "last_command_errors": list(getattr(self, "last_command_errors", []) or []),
         }
 
     @property

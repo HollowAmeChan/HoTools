@@ -85,7 +85,7 @@ Jolt body 的基本运动类型：
 - 激活、休眠、重置 sleep timer。
 - 获取 body user data、material、active 状态和 world transform。
 
-当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`rigid_collision_group` / `rigid_collides_with_groups`、基础 shape（sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder）的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。仍未接入 force/impulse runtime command、惯性全量覆写、shape material、advanced shape 和 body update API。
+当前 HoTools 已从最小字段扩展到：`body_type`、`mass`、`friction`、`restitution`、`rigid_collision_group` / `rigid_collides_with_groups`、基础 shape（sphere / capsule / box / plane / cylinder / tapered capsule / tapered cylinder）的尺寸、shape offset/local rotation、初始速度、阻尼、gravity factor、sleep、CCD、sensor、max velocity 和 allowed DOFs。runtime body control 已覆盖 velocity、force/torque、impulse/angular impulse、gravity factor、material response、motion quality 和 activation；仍未接入惯性全量覆写、shape material、advanced shape 和结构性 body update API。
 
 ### Shape
 
@@ -322,7 +322,7 @@ HoTools 当前 `RigidBodySpec` 已覆盖基础刚体输入：
 - shape offset / local rotation。
 - initial velocity、damping、gravity factor、sleep、CCD、sensor、axis locks。
 
-下一步的输入补齐重点不再是基础 shape，而是高级 shape、节点侧 runtime command stream、惯性覆写和更完整的 material / body update API。底层 Jolt adapter 已有 velocity / force / impulse / gravity factor / material response / motion quality / activate 控制 API，后续需要把节点命令流映射到这些 API。
+下一步的输入补齐重点不再是基础 shape，而是高级 shape、惯性覆写、contact/query 输出和更完整的 material / body update API。节点侧 `rigid_body_commands` 已可通过 `world.exchange` 进入 rigid solver，并映射到底层 velocity / force / impulse / gravity factor / material response / motion quality / activate 控制 API。
 
 ### Constraint 级输入
 

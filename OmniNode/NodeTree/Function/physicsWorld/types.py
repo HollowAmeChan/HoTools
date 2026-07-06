@@ -226,6 +226,7 @@ class PhysicsWorldCache:
       collider_snapshot      — 当帧碰撞快照（dict list）
       previous_collider_snapshot — 上帧快照（供 MC2 moving collider 使用）
       solver_slots           — 各 solver 的私有状态槽
+      exchange               — 当前图执行内的帧级交换 item registry
       backend_resources      — native backend 资源（如 Jolt world context）
       generation             — 每次 world 重建时递增
       replace_required       — 当帧 Commit 是否走 replace（由 Begin 写入，Commit 只读）
@@ -242,6 +243,7 @@ class PhysicsWorldCache:
         self.collider_snapshot: dict = {"frame": None, "colliders": [], "source_count": 0}
         self.previous_collider_snapshot: dict | None = None
         self.solver_slots: dict[str, PhysicsSolverSlot] = {}
+        self.exchange: dict[str, list[dict]] = {}
         self.runtime_caches: dict = {}
         self.backend_resources: dict = {}
         self.generation: int = 0
@@ -302,6 +304,58 @@ class PhysicsWorldCache:
     def set_runtime_cache(self, name: str, value) -> None:
         self.runtime_caches[name] = value
 
+    def clear_exchange(self) -> None:
+        """清空当前图执行内的 frame scratch exchange。"""
+        self.exchange.clear()
+
+    def publish_exchange(
+        self,
+        item: dict | None = None,
+        channel: str | None = None,
+        producer: str = "unknown",
+        scope: str = "frame",
+        **payload,
+    ) -> dict | None:
+        """
+        发布帧级 exchange item。
+
+        返回实际存入的 dict；channel 缺失时返回 None，避免节点链路因
+        临时 payload 不完整而崩溃。
+        """
+        data = dict(item) if isinstance(item, dict) else {}
+        if payload:
+            data.update(payload)
+        ch = str(channel or data.get("channel") or "").strip()
+        if not ch:
+            return None
+        data["channel"] = ch
+        data.setdefault("producer", producer)
+        data.setdefault("scope", scope)
+        data.setdefault("frame", int(getattr(self.frame_context, "frame", 0) or 0))
+        data.setdefault("generation", int(self.generation))
+        self.exchange.setdefault(ch, []).append(data)
+        return data
+
+    def consume_exchange(
+        self,
+        channel: str | None = None,
+        producer: str | None = None,
+        scope: str | None = None,
+    ) -> list[dict]:
+        """读取 exchange item。此操作不删除 item，consumer 自行记录消费状态。"""
+        if channel is None:
+            items = [item for bucket in self.exchange.values() for item in bucket]
+        else:
+            items = list(self.exchange.get(str(channel), ()))
+        if producer is not None:
+            items = [item for item in items if item.get("producer") == producer]
+        if scope is not None:
+            items = [item for item in items if item.get("scope") == scope]
+        return items
+
+    def exchange_counts(self) -> dict[str, int]:
+        return {str(channel): len(items) for channel, items in self.exchange.items()}
+
     # ---- omni_cache_dispose 协议 ---------------------------------------
 
     def omni_cache_dispose(self, reason: str) -> None:
@@ -330,6 +384,7 @@ class PhysicsWorldCache:
 
         # 清理 runtime caches（Python 容器，GC 即可，但显式 clear 更安全）
         self.runtime_caches.clear()
+        self.exchange.clear()
 
         # 重置碰撞快照（不持有 native 资源，直接清空）
         self.collider_snapshot = {"frame": None, "colliders": [], "source_count": 0}
@@ -382,6 +437,8 @@ class PhysicsWorldCache:
             "objects": self.collider_snapshot.get("object_count", 0),
             "collider_sources": self.collider_snapshot.get("source_count", 0),
             "colliders": len(self.collider_snapshot.get("colliders") or []),
+            "exchange_channels": self.exchange_counts(),
+            "exchange_item_count": sum(len(items) for items in self.exchange.values()),
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),
             "backend_resource_details": backend_snapshots,

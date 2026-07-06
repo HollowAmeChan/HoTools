@@ -81,7 +81,7 @@ Cache Read
 - 构建公共 source / collider snapshot。
 - 清理上一帧异常残留的 write lock。
 - 根据 validity、reset、跳帧、倒放、scope 变化设置 `replace_required`。
-- 准备 frame exchange registry。
+- 准备 frame exchange registry：`world.clear_exchange()` 会在 Begin 清理上一轮帧级 scratch。
 
 不负责：
 
@@ -273,6 +273,8 @@ debug_markers
 - consumer 必须声明自己消费哪些 channel。
 - 不允许 consumer 依赖 producer 的私有 slot 结构。
 - 如需跨帧存在，必须升级为 spec 或 slot state。
+- 当前最小 API：`world.publish_exchange(...)`、`world.consume_exchange(channel)`、`world.clear_exchange()`、`world.exchange_counts()`。
+- `consume_exchange` 是非破坏性读取；需要避免重复消费时，consumer 在 item 上写入自己的私有 `_consumed_by_*` 标记。
 
 `rigid_body_commands` 建议 payload：
 
@@ -292,7 +294,7 @@ debug_markers
 }
 ```
 
-Rigid solver 必须把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。
+Rigid solver 已把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。当前 consumer 标记为 `_consumed_by_rigid_solver`，同一 generation/frame 内不会重复应用 impulse / force。
 
 ### Physics Writeback / Export / Preview
 

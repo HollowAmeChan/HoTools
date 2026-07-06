@@ -239,6 +239,7 @@ PhysicsWorldCache
   collider_snapshot
   previous_collider_snapshot
   solver_slots
+  exchange
   backend_resources
   debug counters
 ```
@@ -268,6 +269,7 @@ class PhysicsFrameContext:
 - `same_frame=True`：`current_frame == previous_frame`。是否允许同帧重复执行由 world policy 决定。
 - `restart_required=True`：reset、倒放、跳帧、scope 改变或 world invalid。
 - `generation`：world 每次重建或全局 restart 时递增，solver slot 可用它判断是否需要冷启动。
+- `exchange`：当前图执行内的帧级 scratch registry。`Physics World Begin` 会清空上一轮 exchange；需要跨帧保存的数据必须升级为 spec、solver slot 或 world state。
 
 ### Object Source
 
@@ -795,6 +797,8 @@ finally:
     "objects": object_count,
     "collider_sources": source_count,
     "colliders": collider_count,
+    "exchange_channels": {"rigid_body_commands": 2},
+    "exchange_item_count": 2,
     "solver_slots": {
         slot_id: slot.debug_snapshot(),
     },
@@ -1077,6 +1081,7 @@ class PhysicsWorldCache:
         self.collider_snapshot = {"frame": None, "colliders": []}
         self.previous_collider_snapshot = None
         self.solver_slots = {}
+        self.exchange = {}
         self.runtime_caches = {}
         self.backend_resources = {}
         self.generation = 0
@@ -1087,6 +1092,12 @@ class PhysicsWorldCache:
         ...
 
     def runtime_cache(self, name):
+        ...
+
+    def publish_exchange(self, item=None, channel=None, producer="unknown", scope="frame", **payload):
+        ...
+
+    def consume_exchange(self, channel=None, producer=None, scope=None):
         ...
 
     def omni_cache_dispose(self, reason):
@@ -1152,7 +1163,7 @@ object scope 限制的是 OmniNode 自己的扫描和打包范围。只要 solve
 ```text
 用 object scope 限定物理世界能感知的对象。
 用 PhysicsTools 属性解释这些对象的碰撞、pin、自碰撞和组语义。
-用 PhysicsWorldCache 统一 frame/collider/resource/slot 生命周期。
+用 PhysicsWorldCache 统一 frame/collider/exchange/resource/slot 生命周期。
 用 solver slot 保持各解算器自己的拓扑、参数、状态和写回逻辑。
 用 OmniNode rigid specs 表达刚体和约束，用 Jolt adapter 做内部求解。
 用 Physics World Commit 把同一个 world owner 提交回 runtime cache。
