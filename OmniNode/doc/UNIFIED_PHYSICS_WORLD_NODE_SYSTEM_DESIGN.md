@@ -1148,7 +1148,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 Phase 5 的 world-aware vertical slice 已可作为迁移样板。后续推荐顺序：
 
-1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** Python slot 侧已先落 `native_context` façade，常驻 chain topology signature 和 numpy buffers，并验证连续帧复用与 stale slot dispose。下一步是把 façade 后面的 35 参数单次调用替换为 C++ handle：static arrays / dynamic arrays / result readback 分层，减少每帧 pack/unpack。
+1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** Python slot 侧已先落 `native_context` façade，常驻 chain topology signature 和 numpy buffers，并验证连续帧复用、stale slot dispose、stats/debug 摘要。下一步是把 façade 后面的 35 参数单次调用替换为 C++ handle：static arrays / dynamic arrays / result readback 分层，减少每帧 pack/unpack。
 2. **再做 MC2 MeshCloth / BoneCloth 的最小 world-aware slice。** 它们更能验证 native resident state、mesh delta 写回和大数组 result/writeback，但改动面更大。
 3. **最后做跨 solver 交互。** 例如 cloth 读取 rigid collider、spring bone 发布/消费动态 collider，应走显式 exchange/result channel，不让 solver 互读私有 slot。
 

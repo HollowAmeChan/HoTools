@@ -991,7 +991,7 @@ world.begin
   -> world.commit/cache.write
 ```
 
-第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。当前 SpringBone slot 还先落了 Python 侧 `native_context` façade，按 chain root 常驻 topology signature 与 numpy buffers，连续帧复用、stale slot dispose 都有后台测试覆盖。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
+第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。当前 SpringBone slot 还先落了 Python 侧 `native_context` façade，按 chain root 常驻 topology signature 与 numpy buffers，连续帧复用、stale slot dispose、stats/debug 摘要都有后台测试覆盖。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
 
 优先预演对象：
 
@@ -1064,7 +1064,7 @@ rigid.jolt_step
 
 ## 当前建议
 
-从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；它的 Python `native_context` façade 已固定 owner、topology signature、buffer 复用和 dispose 边界。下一步应把 façade 后面的 35 参数单次 native 调用替换为真正 C++ native context 双调用模型，并把同一 contract 推到 MC2 / BoneCloth。
+从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；它的 Python `native_context` façade 已固定 owner、topology signature、buffer 复用、dispose 和 debug 摘要边界。下一步应把 façade 后面的 35 参数单次 native 调用替换为真正 C++ native context 双调用模型，并把同一 contract 推到 MC2 / BoneCloth。
 
 在文档和 timing 稳定后，再决定：
 

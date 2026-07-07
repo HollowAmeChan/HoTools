@@ -273,6 +273,59 @@ def _records_signature(records: list[dict]) -> tuple:
     )
 
 
+def native_context_debug_dict(native_context) -> dict:
+    if not isinstance(native_context, dict):
+        return {"available": False}
+    chains = native_context.get("chains")
+    chain_items = []
+    if isinstance(chains, dict):
+        for root_bone, chain_context in sorted(chains.items(), key=lambda item: str(item[0])):
+            if not isinstance(chain_context, dict):
+                continue
+            arrays = chain_context.get("arrays")
+            array_shapes = {}
+            if isinstance(arrays, dict):
+                for name, value in sorted(arrays.items(), key=lambda item: str(item[0])):
+                    if isinstance(value, np.ndarray):
+                        array_shapes[str(name)] = tuple(int(dim) for dim in value.shape)
+            chain_items.append({
+                "root_bone": str(root_bone),
+                "bone_count": int(chain_context.get("bone_count", 0) or 0),
+                "topology_serial": int(chain_context.get("topology_serial", 0) or 0),
+                "step_count": int(chain_context.get("step_count", 0) or 0),
+                "last_frame": int(chain_context.get("last_frame", 0) or 0),
+                "last_collider_count": int(chain_context.get("last_collider_count", 0) or 0),
+                "last_substeps": int(chain_context.get("last_substeps", 0) or 0),
+                "buffer_count": len(array_shapes),
+                "array_shapes": array_shapes,
+            })
+    return {
+        "available": True,
+        "schema": str(native_context.get("schema") or ""),
+        "spec_hash": str(native_context.get("spec_hash") or ""),
+        "armature_ptr": int(native_context.get("armature_ptr", 0) or 0),
+        "armature_data_ptr": int(native_context.get("armature_data_ptr", 0) or 0),
+        "topology_serial": int(native_context.get("topology_serial", 0) or 0),
+        "chain_count": len(chain_items),
+        "chains": chain_items,
+    }
+
+
+def native_context_stats_dict(native_context) -> dict:
+    debug = native_context_debug_dict(native_context)
+    chains = debug.get("chains") if isinstance(debug, dict) else ()
+    if not isinstance(chains, list):
+        chains = []
+    return {
+        "available": bool(debug.get("available", False)),
+        "schema": str(debug.get("schema") or ""),
+        "topology_serial": int(debug.get("topology_serial", 0) or 0),
+        "chain_count": int(debug.get("chain_count", 0) or 0),
+        "buffer_count": sum(int(chain.get("buffer_count", 0) or 0) for chain in chains if isinstance(chain, dict)),
+        "step_count": sum(int(chain.get("step_count", 0) or 0) for chain in chains if isinstance(chain, dict)),
+    }
+
+
 def _get_valid_armature(spec):
     """获取 spec 上有效的 armature bpy 引用。
 

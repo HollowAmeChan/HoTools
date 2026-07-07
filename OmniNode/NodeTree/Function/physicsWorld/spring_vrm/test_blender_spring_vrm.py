@@ -572,7 +572,7 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
     armature = _make_chain_armature("PW_SpringVRM_NativeContext")
     try:
         cache = _OmniCache()
-        cache, world1, _stats1, _results1 = _run_spring_frame(
+        cache, world1, stats1, _results1 = _run_spring_frame(
             cache,
             armature,
             90,
@@ -585,9 +585,11 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert chain_context1.get("bone_count") == 2
         assert chain_context1.get("last_frame") == 90
         assert chain_context1.get("step_count") == 1
+        assert stats1.get("native_context", {}).get("chain_count") == 1
+        assert stats1.get("native_context", {}).get("buffer_count") == len(arrays1)
         buffer_ids = {name: id(value) for name, value in arrays1.items()}
 
-        cache, world2, _stats2, _results2 = _run_spring_frame(
+        cache, world2, stats2, _results2 = _run_spring_frame(
             cache,
             armature,
             91,
@@ -602,6 +604,17 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert chain_context2.get("last_frame") == 91
         assert chain_context2.get("step_count") == 2
         assert {name: id(value) for name, value in chain_context2["arrays"].items()} == buffer_ids
+        assert stats2.get("native_context", {}).get("step_count") == 2
+
+        debug_snapshot = slot2.debug_snapshot()
+        debug_context = debug_snapshot.get("native_context")
+        assert debug_context and debug_context.get("available") is True
+        assert debug_context.get("schema") == "spring_vrm_python_buffer_context_v1"
+        assert debug_context.get("chain_count") == 1
+        debug_chain = debug_context.get("chains", [])[0]
+        assert debug_chain.get("root_bone") == "root"
+        assert debug_chain.get("array_shapes", {}).get("current_tails") == (2, 3)
+        assert debug_chain.get("array_shapes", {}).get("target_matrices") == (2, 16)
     finally:
         _delete_object(armature)
 

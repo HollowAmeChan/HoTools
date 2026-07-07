@@ -86,8 +86,9 @@ def make_spring_vrm_stats_result(
     backend: str = "cpp",
     status: str = "ok",
     errors: list[str] | None = None,
+    native_context: dict | None = None,
 ) -> dict:
-    return {
+    result = {
         "channel": SPRING_VRM_STATS_CHANNEL,
         "solver": SPRING_VRM_SOLVER_ID,
         "backend": str(backend),
@@ -102,6 +103,9 @@ def make_spring_vrm_stats_result(
         "status": str(status),
         "errors": list(errors or ()),
     }
+    if isinstance(native_context, dict):
+        result["native_context"] = dict(native_context)
+    return result
 
 
 def publish_spring_vrm_stats_result(world, **kwargs) -> dict | None:

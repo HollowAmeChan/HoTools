@@ -915,7 +915,7 @@ SpringBone Step
 - 完整 runtime cache 路径已在 Blender 后台测试中通过真实 `OmniRuntimeState.write_cache()` / `delete_cache()` / `clear_all()` 验证。
 - `writeback.clear_all_deltas()` 已同时清理 Object delta 与 SpringBone 写过的 `PoseBone.matrix_basis`。
 - `spring_vrm` solver 已在注册/step 阶段 prune 不再活跃的 SpringBone slot；spec hash 变化不会遗留旧 frame_state / native_context。
-- `slot.data["native_context"]` 已开始承载 Python 侧最小 context façade：按 chain root 保存 topology signature、常驻 numpy buffers、step_count、last_frame 和 last_collider_count。连续帧会复用同一组 buffers，spec prune / slot dispose 会清空该 context。
+- `slot.data["native_context"]` 已开始承载 Python 侧最小 context façade：按 chain root 保存 topology signature、常驻 numpy buffers、step_count、last_frame 和 last_collider_count。连续帧会复用同一组 buffers，spec prune / slot dispose 会清空该 context；`spring_vrm_stats` 和 slot debug snapshot 只暴露 schema / serial / count / buffer shape 摘要，不暴露 numpy 原始数组。
 
 ### 阶段 5：native context 与双调用模型
 
@@ -927,7 +927,7 @@ SpringBone Step
 
 当前落地状态（2026-07-07）：
 
-- 底层仍使用 35 参数单次调用 ABI，但 SpringBone slot 已先把 chain buffers 常驻到 `native_context`，并有 Blender 后台测试验证连续帧复用与 stale slot dispose。这样后续替换为真正 C++ context 时，Python owner / topology signature / result readback 边界已经固定。
+- 底层仍使用 35 参数单次调用 ABI，但 SpringBone slot 已先把 chain buffers 常驻到 `native_context`，并有 Blender 后台测试验证连续帧复用、stale slot dispose、stats/debug 摘要。这样后续替换为真正 C++ context 时，Python owner / topology signature / result readback / debug 边界已经固定。
 - C++ kernel 已支持 SpringBone 使用的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider type code；Blender 集成测试覆盖 world snapshot 打包，native 单测覆盖 binding 层 shape/dtype 校验。
 - 下一步不应先扩大公开节点功能，而应把当前 Python façade 落到 C++ handle：static topology arrays 常驻、dynamic pose/collider arrays 每帧上传、step 后读回 current_tails / target_matrices。
 
