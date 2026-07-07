@@ -711,6 +711,7 @@ def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) ->
     """
     try:
         from .rigid.specs import build_rigid_body_spec, build_constraint_spec
+        from .rigid.implicit_objects import active_generated_constraint_slot_ids
         from .rigid.solver import _flatten
     except Exception:
         return  # rigid domain 未加载时静默跳过
@@ -719,7 +720,7 @@ def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) ->
     world.acquire_write(solver_id)
     try:
         active_body_ids: set[str] = set()
-        active_constraint_ids: set[str] = set()
+        active_constraint_ids: set[str] = set(active_generated_constraint_slot_ids(world))
         spec_sync_dirty = False
 
         for obj in _flatten(scope.objects):

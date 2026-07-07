@@ -158,6 +158,7 @@ _load_pw("debug",                "debug.py")
 _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
 _load_pw("rigid.declaration",    "rigid/declaration.py")
+_load_pw("rigid.implicit_objects", "rigid/implicit_objects.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
 _load_pw("rigid.backends.jolt",  "rigid/backends/jolt.py")
 _load_pw("debug_draw",           "debug_draw.py")
@@ -181,9 +182,13 @@ step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
 get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_result
+make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
+register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
+active_generated_constraint_slot_ids = _pw("rigid.implicit_objects").active_generated_constraint_slot_ids
 physicsWorldResultStream = _pw("nodes").physicsWorldResultStream
 physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
+physicsRigidGeneratedConstraintRegister = _pw("rigid.nodes").physicsRigidGeneratedConstraintRegister
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -465,6 +470,65 @@ def test_constraint_spec_disable_collisions():
     _del(c, a, b)
 
 
+def test_generated_constraint_implicit_object_pipeline():
+    scene = bpy.context.scene
+    a = _make_obj("T3D_GeneratedBodyA", (-0.5, 0, 2), body_type="DYNAMIC")
+    b = _make_obj("T3D_GeneratedBodyB", (0.5, 0, 2), body_type="DYNAMIC")
+
+    scope = make_scope([a, b], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True)
+
+    props = make_rigid_generated_constraint_properties(
+        a, b, None, "POINT", True, True, "test_generated_pair")
+    assert len(props) == 1
+
+    count, dirty, version = register_rigid_generated_constraint_objects(
+        world, props, enabled=True)
+    assert count == 1 and dirty == 1 and version == 1
+    assert world.implicit_object_counts().get("rigid.generated_constraint") == 1
+
+    active_ids = active_generated_constraint_slot_ids(world)
+    assert len(active_ids) == 1
+    generated_slot_id = next(iter(active_ids))
+
+    step_rigid_bodies(world, enabled=True)
+    assert generated_slot_id in world.solver_slots
+    assert world.solver_slots[generated_slot_id].kind == "rigid_constraint"
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation)
+    assert stats is not None
+    assert stats["body_count"] == 2
+    assert stats["constraint_count"] == 1
+    assert stats["sync_error_count"] == 0
+
+    cache_val, _, _ = physicsWorldCommit(world, enabled=True)
+
+    scene.frame_set(2)
+    world2, _, _, _ = physicsWorldBegin(
+        cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
+    assert generated_slot_id in world2.solver_slots, \
+        "Begin 不应 prune 上一帧已注册的 generated constraint slot"
+
+    _, count2, dirty2, _version2 = physicsRigidGeneratedConstraintRegister(
+        world2, props, enabled=False)
+    assert count2 == 1 and dirty2 == 1
+
+    step_rigid_bodies(world2, enabled=True)
+    assert generated_slot_id not in world2.solver_slots
+    stats2 = get_rigid_solver_stats_result(
+        world2, frame=scene.frame_current, generation=world2.generation)
+    assert stats2 is not None
+    assert stats2["constraint_count"] == 0
+
+    world2.omni_cache_dispose("test_generated_constraint")
+    _del(a, b)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 测试 4：完整刚体链路（60帧，DYNAMIC 球下落写回 Blender）
 # ─────────────────────────────────────────────────────────────────────────────
@@ -563,6 +627,7 @@ if __name__ == "__main__":
     check("dispose + 重建",             test_dispose_and_rebuild)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
+    check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 
     passed = sum(_results)
     total  = len(_results)

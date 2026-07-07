@@ -116,6 +116,8 @@ RIGID_SOLVER_DECLARATION = {
     "nodes": [
         "刚体注册",
         "刚体约束注册",
+        "刚体生成约束属性",
+        "刚体生成约束注册",
         "刚体模拟步",
     ],
     "writers": [
@@ -127,6 +129,7 @@ RIGID_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "RigidBodySpec from solver slots",
         "ConstraintSpec from solver slots",
+        f'world.implicit_objects["{RIGID_GENERATED_CONSTRAINT_OBJECT_TAG}"]',
         f'world.exchange["{RIGID_BODY_COMMANDS_CHANNEL}"]',
     ],
     "produces": [
@@ -144,6 +147,7 @@ RIGID_SOLVER_DECLARATION = {
         "frame_context.restart_required",
         "RigidBodySpec.signature",
         "ConstraintSpec.signature",
+        f'world.implicit_objects["{RIGID_GENERATED_CONSTRAINT_OBJECT_TAG}"].signature',
         f'world.exchange["{RIGID_BODY_COMMANDS_CHANNEL}"]',
     ],
     "same_frame_policy": "sync_pending_or_publish_cached_transforms_no_step",
@@ -155,15 +159,16 @@ RIGID_SOLVER_DECLARATION = {
         "same_frame": "publish_cached_transforms_no_time_step_unless_pending_sync",
     },
     "implicit_objects": {
-        "consumes": [],
-        "planned": [
+        "consumes": [
             RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
+        ],
+        "planned": [
             RIGID_MATERIAL_PRESET_OBJECT_TAG,
             RIGID_RAGDOLL_PROXY_OBJECT_TAG,
         ],
         "entry_kind": "rigid_generated_object",
-        "producer_nodes": [],
-        "update_policy": "planned_lazy_by_signature",
+        "producer_nodes": ["刚体生成约束注册"],
+        "update_policy": "lazy_by_tag_stable_id_signature",
         "conflict_policy": "same_tag_and_stable_id_last_writer_wins",
     },
     "writeback": {

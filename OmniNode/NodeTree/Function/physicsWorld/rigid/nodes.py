@@ -12,6 +12,10 @@ from ....FunctionNodeCore import omni
 from ... import _Color
 from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
+from .implicit_objects import (
+    make_rigid_generated_constraint_properties,
+    register_rigid_generated_constraint_objects,
+)
 from .results import get_rigid_transform_result
 from .solver import step_rigid_bodies
 from .specs import build_rigid_body_spec
@@ -163,6 +167,102 @@ def physicsRigidReadState(
         bool(result.get("sleeping", False)),
         result,
     )
+
+
+@omni(
+    enable=True,
+    bl_label="刚体生成约束属性",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "目标A", "目标B", "锚点对象", "约束类型", "启用", "禁用连接碰撞", "来源ID",
+        "优先级", "速度步数", "位置步数", "启用限制",
+        "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
+    ],
+    input_init={
+        "constraint_type": {"default_value": "FIXED"},
+        "constraint_priority": {"min_value": 0, "max_value": 255},
+        "solver_velocity_steps": {"min_value": 0, "max_value": 255},
+        "solver_position_steps": {"min_value": 0, "max_value": 255},
+        "angular_limit_min": {"min_value": -3.141592653589793, "max_value": 0.0},
+        "angular_limit_max": {"min_value": 0.0, "max_value": 3.141592653589793},
+        "cone_half_angle": {"min_value": 0.0, "max_value": 3.141592653589793},
+    },
+    _OUTPUT_NAME=["生成约束属性"],
+    omni_description="""
+    构造可注册到物理世界的刚体生成约束属性。
+
+    本节点不创建 Empty、不写 solver slot、不访问 Jolt。约束类型使用
+    FIXED / HINGE / SLIDER / CONE / POINT。锚点对象为空时，锚点位置取
+    目标 A/B 的中点，旋转取目标 A 的 world rotation。
+    """,
+)
+def physicsRigidGeneratedConstraintProperties(
+    target_a: bpy.types.Object,
+    target_b: bpy.types.Object = None,
+    anchor_object: bpy.types.Object = None,
+    constraint_type: str = "FIXED",
+    enabled: bool = True,
+    disable_collisions: bool = True,
+    source_id: str = "",
+    constraint_priority: int = 0,
+    solver_velocity_steps: int = 0,
+    solver_position_steps: int = 0,
+    limit_enabled: bool = False,
+    angular_limit_min: float = -3.141592653589793,
+    angular_limit_max: float = 3.141592653589793,
+    linear_limit_min: float = -1.0,
+    linear_limit_max: float = 1.0,
+    cone_half_angle: float = 0.0,
+) -> list[object]:
+    return make_rigid_generated_constraint_properties(
+        target_a=target_a,
+        target_b=target_b,
+        anchor_object=anchor_object,
+        constraint_type=constraint_type,
+        enabled=bool(enabled),
+        disable_collisions=bool(disable_collisions),
+        source_id=str(source_id or ""),
+        constraint_priority=int(constraint_priority),
+        solver_velocity_steps=int(solver_velocity_steps),
+        solver_position_steps=int(solver_position_steps),
+        limit_enabled=bool(limit_enabled),
+        angular_limit_min=float(angular_limit_min),
+        angular_limit_max=float(angular_limit_max),
+        linear_limit_min=float(linear_limit_min),
+        linear_limit_max=float(linear_limit_max),
+        cone_half_angle=float(cone_half_angle),
+    )
+
+
+@omni(
+    enable=True,
+    bl_label="刚体生成约束注册",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "生成约束属性", "启用"],
+    _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
+    omni_description="""
+    把刚体生成约束注册到 PhysicsWorldCache.implicit_objects。
+
+    注册结果使用 tag rigid.generated_constraint；刚体模拟步会在 prepare 阶段
+    读取它们并转成普通 ConstraintSpec slot。相同来源/目标的约束按内部
+    stable_id 更新，不会因为节点重复执行而无限累积。
+    """,
+)
+def physicsRigidGeneratedConstraintRegister(
+    world: object,
+    generated_constraint_properties: list[object],
+    enabled: bool = True,
+) -> tuple[object, int, int, int]:
+    if not isinstance(world, PhysicsWorldCache):
+        return world, 0, 0, 0
+    count, dirty_count, version = register_rigid_generated_constraint_objects(
+        world,
+        generated_constraint_properties,
+        enabled=bool(enabled),
+    )
+    return world, int(count), int(dirty_count), int(version)
 
 
 @omni(

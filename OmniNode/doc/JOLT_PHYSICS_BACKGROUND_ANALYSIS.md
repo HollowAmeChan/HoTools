@@ -346,14 +346,15 @@ Constraint 创建最低需要：
 - break threshold policy。
 - connected bodies collision policy。
 
-HoTools 当前 constraint spec 只有：
+HoTools 当前 constraint spec 覆盖：
 
 - Empty 对象。
 - constraint type。
 - target A / target B。
 - anchor transform 来自 Empty。
+- `rigid.generated_constraint` 隐式对象生成的持久约束；它不创建 Empty，但会在 solver prepare 阶段转成同一类 `ConstraintSpec` slot。
 
-当前 adapter 直接用 Empty 的 position/rotation 同时填 body1/body2 的 frame。它能跑基础 demo，但不能表达两个 body 的不同 local anchor，也不能表达 limit/motor。
+当前 adapter 直接用 `ConstraintSpec.anchor_position` / `anchor_rotation_wxyz` 同时填 body1/body2 的 frame。它能跑基础 demo，但不能表达两个 body 的不同 local anchor，也不能表达 limit/motor。
 
 ### Per-frame 输入
 
@@ -878,6 +879,8 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 关键边界：`rigid_jolt` 消费刚体/约束 slot 与 `rigid_body_commands`，输出 `rigid_transform` / `rigid_solver_stats`，写回统一走 `physicsWorld.writeback -> Object.delta_transform`。
 
-`physicsWorld/names.py` 已预留 planned implicit object tag：`rigid.generated_constraint`、`rigid.material_preset`、`rigid.ragdoll_proxy`。这些 tag 当前只占位，不被 solver 消费。
+`physicsWorld/names.py` 中的 `rigid.generated_constraint` 已由刚体 solver 消费：`刚体生成约束属性 -> 刚体生成约束注册` 会写入 `world.implicit_objects`，solver prepare 会转成普通 `ConstraintSpec` slot，并在同帧禁用时移除 slot/native constraint。
+
+`rigid.material_preset`、`rigid.ragdoll_proxy` 仍是 planned implicit object tag，当前只占位，不被 solver 消费。
 
 后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。

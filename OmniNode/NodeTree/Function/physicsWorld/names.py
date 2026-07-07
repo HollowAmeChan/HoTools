@@ -28,8 +28,10 @@ RIGID_BODY_REGISTER_WRITER_ID = "rigid_body_solver"
 RIGID_CONSTRAINT_REGISTER_WRITER_ID = "constraint_solver"
 JOLT_STEP_WRITER_ID = "jolt_step"
 
-# 这些是后续刚体生成/批处理节点会写入 world.implicit_objects 的全局 tag。
-# 当前刚体 solver 还不消费它们，但声明里会把它们列为 planned，避免后续命名分叉。
+# 刚体生成/批处理节点写入 world.implicit_objects 的全局 tag。
+#
+# rigid.generated_constraint 已由刚体 solver 消费；其它 tag 仍只在声明里占位，
+# 避免后续命名分叉。
 RIGID_GENERATED_CONSTRAINT_OBJECT_TAG = "rigid.generated_constraint"
 RIGID_MATERIAL_PRESET_OBJECT_TAG = "rigid.material_preset"
 RIGID_RAGDOLL_PROXY_OBJECT_TAG = "rigid.ragdoll_proxy"

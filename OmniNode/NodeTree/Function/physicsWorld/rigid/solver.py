@@ -23,6 +23,10 @@ from .specs import (
     build_rigid_body_spec,
     build_constraint_spec,
 )
+from .implicit_objects import (
+    has_pending_generated_constraints,
+    sync_generated_constraint_slots,
+)
 from .results import (
     clear_rigid_transform_results,
     publish_rigid_transform_result,
@@ -148,6 +152,8 @@ def _flatten(objects) -> list:
 
 def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     if _has_pending_rigid_body_commands(world):
+        return True
+    if has_pending_generated_constraints(world):
         return True
     for slot in world.solver_slots.values():
         if slot.kind not in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
@@ -433,6 +439,10 @@ def step_rigid_bodies(
         dt = float(fc.dt) if fc is not None and fc.dt > 0.0 else 1.0 / 60.0
         substeps = max(1, int(fc.substeps)) if fc is not None else 1
         restart = bool(fc.restart_required) if fc is not None else True
+
+        # generated constraints are persistent implicit objects, not Empty scope objects.
+        # Sync them into regular constraint slots before Jolt body/constraint sync.
+        sync_generated_constraint_slots(world, adapter=adapter)
 
         # --- sync rigid bodies ---
         for slot_id, slot in list(world.solver_slots.items()):

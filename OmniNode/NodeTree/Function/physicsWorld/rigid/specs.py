@@ -227,6 +227,7 @@ class ConstraintSpec:
         self,
         empty_obj,
         empty_ptr: int,
+        slot_id: str | None = None,
         constraint_type: str = "FIXED",
         target_a=None,
         target_b=None,
@@ -261,7 +262,7 @@ class ConstraintSpec:
     ) -> None:
         self.empty_obj = empty_obj
         self.empty_ptr: int = empty_ptr
-        self.slot_id: str = f"constraint:{empty_ptr}"
+        self.slot_id: str = str(slot_id or f"constraint:{empty_ptr}")
         self.constraint_type: str = constraint_type
         self.target_a = target_a   # bpy.types.Object 或 None（固定到世界）
         self.target_b = target_b   # bpy.types.Object 或 None

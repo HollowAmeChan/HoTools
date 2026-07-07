@@ -383,6 +383,8 @@ Physics World Begin
 
 Rigid solver 已把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。当前 consumer 标记为 `_consumed_by_rigid_solver`，同一 generation/frame 内不会重复应用 impulse / force。第一批节点入口已落地在 `physicsWorld/rigid/nodes.py`：设置速度、施加力、施加冲量、重力倍率、材质响应、运动质量和激活状态。
 
+Rigid solver 也已消费第一类刚体隐式对象：`rigid.generated_constraint`。`刚体生成约束属性 -> 刚体生成约束注册` 会把程序化约束写入 `world.implicit_objects`；`刚体模拟步` 在 prepare 阶段将其同步成普通 `ConstraintSpec` slot，再走同一条 Jolt adapter 约束同步路径。`Physics World Begin` 的 stale slot prune 已把上一帧 enabled generated constraint 视为活跃约束，避免隐式约束每帧被误删重建。`physicsWorld/rigid/backends/test_blender_rigid.py` 覆盖了注册、slot 同步、下一帧保留和同帧禁用移除。
+
 ### Physics Writeback / Export / Preview
 
 职责：
