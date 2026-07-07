@@ -357,6 +357,80 @@ class OmniCurvePresetFactory:
             curve_kinds={"float_curve"},
         )
 
+    @staticmethod
+    def constant_one_payload(curve_kind="float_curve", extend="CLAMP"):
+        """水平线 y=1（全 1）。"""
+        return float_curve_payload(
+            points=[
+                {"x": 0.0, "y": 1.0, "interpolation": "LINEAR"},
+                {"x": 1.0, "y": 1.0, "interpolation": "LINEAR"},
+            ],
+            value=1.0,
+            interpolation="LINEAR",
+            extend=extend,
+        )
+
+    @staticmethod
+    def constant_zero_payload(curve_kind="float_curve", extend="CLAMP"):
+        """水平线 y=0（全 0）。"""
+        return float_curve_payload(
+            points=[
+                {"x": 0.0, "y": 0.0, "interpolation": "LINEAR"},
+                {"x": 1.0, "y": 0.0, "interpolation": "LINEAR"},
+            ],
+            value=0.0,
+            interpolation="LINEAR",
+            extend=extend,
+        )
+
+    @staticmethod
+    def inverted_bezier_points_payload(x1, y1, x2, y2, extend="CLAMP"):
+        """原曲线的 y 轴翻转版本（1 - f(x)），从 1 降到 0。"""
+        return float_curve_payload(
+            points=[
+                OmniCurvePresetFactory.float_point(
+                    0.0,
+                    1.0,
+                    right_handle=(float(x1), 1.0 - float(y1)),
+                    interpolation="BEZIER",
+                ),
+                OmniCurvePresetFactory.float_point(
+                    1.0,
+                    0.0,
+                    left_handle=(float(x2), 1.0 - float(y2)),
+                    interpolation="BEZIER",
+                ),
+            ],
+            interpolation="BEZIER",
+            extend=extend,
+        )
+
+    @staticmethod
+    def make_inverted_bezier_payload(x1, y1, x2, y2):
+        def payload(curve_kind="float_curve", extend="CLAMP"):
+            return OmniCurvePresetFactory.inverted_bezier_points_payload(x1, y1, x2, y2, extend=extend)
+        return payload
+
+    @staticmethod
+    def make_float_bezier_inverted_preset(identifier, name, description, x1, y1, x2, y2):
+        """生成一个 bezier 曲线预设的 y 轴反转版本（1 → 0）。"""
+        return OmniCurvePresetFactory.make_fixed_preset(
+            identifier,
+            name,
+            description,
+            OmniCurvePresetFactory.make_inverted_bezier_payload(x1, y1, x2, y2),
+            curve_kinds={"float_curve"},
+        )
+
+    @staticmethod
+    def make_float_inverted_function_preset(identifier, name, description, func, samples=6, positions=None):
+        """生成一个函数曲线预设的 y 轴反转版本（1 - f(x)）。"""
+        def inverted_func(x):
+            return 1.0 - func(x)
+        return OmniCurvePresetFactory.make_float_function_preset(
+            identifier, name, description, inverted_func, samples=samples, positions=positions
+        )
+
 
 class OmniCurveEaseFunctions:
     @staticmethod
@@ -544,6 +618,20 @@ FLOAT_CURVE_PRESET_CLASSES = [
         "1 → 0",
         "从 1 线性变化到 0",
         OmniCurvePresetFactory.reverse_linear_payload,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CONSTANT_ONE",
+        "全 1",
+        "恒等于 1 的水平线",
+        OmniCurvePresetFactory.constant_one_payload,
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_fixed_preset(
+        "CONSTANT_ZERO",
+        "全 0",
+        "恒等于 0 的水平线",
+        OmniCurvePresetFactory.constant_zero_payload,
         curve_kinds={"float_curve"},
     ),
     OmniCurvePresetFactory.make_fixed_preset(
@@ -845,6 +933,271 @@ FLOAT_CURVE_PRESET_CLASSES = [
         "Elastic In Out",
         "双端弹性近似",
         OmniCurveMotionPresetSpecs.ELASTIC_IN_OUT,
+    ),
+    # ── 反转系列（1 - f(x)，从 1 降到 0） ────────────────────────────────
+    OmniCurvePresetFactory.make_fixed_preset(
+        "EASE_IN_OUT_INV",
+        "缓进缓出 反转",
+        "从 1 平滑变化到 0",
+        OmniCurvePresetFactory.make_inverted_bezier_payload(0.42, 0.0, 0.58, 1.0),
+        curve_kinds={"float_curve"},
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "CSS_EASE_INV",
+        "CSS Ease 反转",
+        "CSS ease 曲线反转",
+        0.25, 0.1, 0.25, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "CSS_EASE_IN_INV",
+        "CSS Ease In 反转",
+        "CSS ease-in 曲线反转",
+        0.42, 0.0, 1.0, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "CSS_EASE_OUT_INV",
+        "CSS Ease Out 反转",
+        "CSS ease-out 曲线反转",
+        0.0, 0.0, 0.58, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "CSS_EASE_IN_OUT_INV",
+        "CSS Ease In Out 反转",
+        "CSS ease-in-out 曲线反转",
+        0.42, 0.0, 0.58, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "MATERIAL_STANDARD_INV",
+        "Material 标准 反转",
+        "Material Design 标准曲线反转",
+        0.4, 0.0, 0.2, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "MATERIAL_ACCELERATE_INV",
+        "Material 加速 反转",
+        "Material Design 加速曲线反转",
+        0.4, 0.0, 1.0, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "MATERIAL_DECELERATE_INV",
+        "Material 减速 反转",
+        "Material Design 减速曲线反转",
+        0.0, 0.0, 0.2, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "MATERIAL_SHARP_INV",
+        "Material 锐利 反转",
+        "Material Design 锐利曲线反转",
+        0.4, 0.0, 0.6, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "FLOW_SNAPPY_INV",
+        "Snappy 反转",
+        "快速进入并柔和落位，反转",
+        0.22, 1.0, 0.36, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "FLOW_SOFT_INV",
+        "Soft 反转",
+        "柔和通用缓动，反转",
+        0.25, 0.1, 0.35, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "FLOW_SMOOTH_INV",
+        "Smooth 反转",
+        "平滑稳定动效曲线，反转",
+        0.37, 0.0, 0.63, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "OVERSHOOT_INV",
+        "Overshoot 反转",
+        "越过目标后回落，反转",
+        0.34, 1.56, 0.64, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "ANTICIPATE_INV",
+        "Anticipate 反转",
+        "先反向再进入，反转",
+        0.36, 0.0, 0.66, -0.56,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "BACK_IN_INV",
+        "Back In 反转",
+        "先回撤再加速进入，反转",
+        0.36, 0.0, 0.66, -0.56,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "BACK_OUT_INV",
+        "Back Out 反转",
+        "越过目标后回收，反转",
+        0.34, 1.56, 0.64, 1.0,
+    ),
+    OmniCurvePresetFactory.make_float_bezier_inverted_preset(
+        "BACK_IN_OUT_INV",
+        "Back In Out 反转",
+        "两端都有回撤感，反转",
+        0.68, -0.60, 0.32, 1.60,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "SINE_IN_INV",
+        "Sine In 反转",
+        "正弦加速，反转",
+        OmniCurveEaseFunctions.sine_in,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "SINE_OUT_INV",
+        "Sine Out 反转",
+        "正弦减速，反转",
+        OmniCurveEaseFunctions.sine_out,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "SINE_IN_OUT_INV",
+        "Sine In Out 反转",
+        "正弦缓进缓出，反转",
+        OmniCurveEaseFunctions.sine_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUAD_IN_INV",
+        "Quad In 反转",
+        "二次方加速，反转",
+        OmniCurveEaseFunctions.quad_in,
+        samples=3,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUAD_OUT_INV",
+        "Quad Out 反转",
+        "二次方减速，反转",
+        OmniCurveEaseFunctions.quad_out,
+        samples=3,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUAD_IN_OUT_INV",
+        "Quad In Out 反转",
+        "二次方缓进缓出，反转",
+        OmniCurveEaseFunctions.quad_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CUBIC_IN_INV",
+        "Cubic In 反转",
+        "三次方加速，反转",
+        OmniCurveEaseFunctions.cubic_in,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CUBIC_OUT_INV",
+        "Cubic Out 反转",
+        "三次方减速，反转",
+        OmniCurveEaseFunctions.cubic_out,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CUBIC_IN_OUT_INV",
+        "Cubic In Out 反转",
+        "三次方缓进缓出，反转",
+        OmniCurveEaseFunctions.cubic_in_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUART_IN_INV",
+        "Quart In 反转",
+        "四次方加速，反转",
+        OmniCurveEaseFunctions.quart_in,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUART_OUT_INV",
+        "Quart Out 反转",
+        "四次方减速，反转",
+        OmniCurveEaseFunctions.quart_out,
+        samples=5,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUART_IN_OUT_INV",
+        "Quart In Out 反转",
+        "四次方缓进缓出，反转",
+        OmniCurveEaseFunctions.quart_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUINT_IN_INV",
+        "Quint In 反转",
+        "五次方加速，反转",
+        OmniCurveEaseFunctions.quint_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUINT_OUT_INV",
+        "Quint Out 反转",
+        "五次方减速，反转",
+        OmniCurveEaseFunctions.quint_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "QUINT_IN_OUT_INV",
+        "Quint In Out 反转",
+        "五次方缓进缓出，反转",
+        OmniCurveEaseFunctions.quint_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "EXPO_IN_INV",
+        "Expo In 反转",
+        "指数加速，反转",
+        OmniCurveEaseFunctions.expo_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "EXPO_OUT_INV",
+        "Expo Out 反转",
+        "指数减速，反转",
+        OmniCurveEaseFunctions.expo_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "EXPO_IN_OUT_INV",
+        "Expo In Out 反转",
+        "指数缓进缓出，反转",
+        OmniCurveEaseFunctions.expo_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CIRC_IN_INV",
+        "Circ In 反转",
+        "圆形加速，反转",
+        OmniCurveEaseFunctions.circ_in,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CIRC_OUT_INV",
+        "Circ Out 反转",
+        "圆形减速，反转",
+        OmniCurveEaseFunctions.circ_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "CIRC_IN_OUT_INV",
+        "Circ In Out 反转",
+        "圆形缓进缓出，反转",
+        OmniCurveEaseFunctions.circ_in_out,
+        samples=6,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "SMOOTHSTEP_INV",
+        "Smoothstep 反转",
+        "平滑阶跃，反转",
+        OmniCurveEaseFunctions.smoothstep,
+        samples=4,
+    ),
+    OmniCurvePresetFactory.make_float_inverted_function_preset(
+        "SMOOTHERSTEP_INV",
+        "Smootherstep 反转",
+        "更平滑的阶跃，反转",
+        OmniCurveEaseFunctions.smootherstep,
+        samples=6,
     ),
 ]
 
