@@ -309,38 +309,48 @@ def test_context_api_reset_state_restores_pose_tail():
 
 def test_context_api_capsule_collider():
     _skip_if_no_context_api()
-    """capsule collider 推动 tail 与旧路径行为一致（不为零偏移）。"""
-    ctx = _context_from_base()
-    # capsule collider：轴线在 (0,0,0)→(0,0,2)，半径 0.8
-    seg_a = np.asarray([[0., 0., 0.]], dtype=np.float32)
-    seg_b = np.asarray([[0., 0., 2.]], dtype=np.float32)
-    centers = (seg_a + seg_b) * 0.5
+    """sphere collider 位于骨骼轴线旁侧，应把 tail 推离初始方向。
 
+    设计：
+      - 骨骼 head=(0,0,0)，pose tail=(0,0,1)，长度=1，朝 +Z
+      - sphere 圆心=(0.5, 0, 0.8)，半径=0.8
+      - tail 到圆心距离 ≈ 0.539 < (0.8 + hit_radius 0.01 = 0.81) → 碰撞
+      - push 方向 = (tail - center)/‖...‖ = (-0.93, 0, +0.37) → 明确向 -X 推
+      - 不在 capsule 轴线上，push 方向不会退化为 fallback 轴
+    先 reset_state，确保内部 current/prev tails 从 pose tail (0,0,1) 出发。
+    """
+    ctx = _context_from_base()
+
+    # sphere collider：中心偏轴，确保碰撞法线不退化
+    sphere_c = np.asarray([[0.5, 0., 0.8]], dtype=np.float32)
     a = _base_args()
-    zero3  = np.zeros(3, dtype=np.float32)
-    ident  = _identity_matrix()
+    zero3   = np.zeros(3, dtype=np.float32)
+    ident   = _identity_matrix()
     id_quat = np.asarray((0., 0., 0., 1.), dtype=np.float32)
+
     hotools_native.spring_vrm_update_dynamic(
         ctx,
         a[4].ravel(), a[5].ravel(), a[6].ravel(), a[7].ravel(), a[8].ravel(),
         ident, ident, id_quat, zero3,
-        np.zeros(3, dtype=np.float32),  # gravity_dir=0，不施重力
-        np.asarray((0.01,), dtype=np.float32),   # hit_radii
-        np.asarray((1,),    dtype=np.int32),      # collided_by_groups（组1）
-        np.asarray([1],  dtype=np.int32),         # collider_types: CAPSULE=1
-        np.asarray([1],  dtype=np.int32),         # collider_groups: 组1
-        centers.ravel(),
-        seg_a.ravel(),
-        seg_b.ravel(),
-        np.asarray([0.8], dtype=np.float32),      # collider_radii
+        zero3,                                       # gravity_dir = 0
+        np.asarray((0.01,), dtype=np.float32),       # hit_radii
+        np.asarray((1,),    dtype=np.int32),          # collided_by_groups（组1）
+        np.asarray([0],  dtype=np.int32),             # collider_types: SPHERE=0
+        np.asarray([1],  dtype=np.int32),             # collider_groups: 组1
+        sphere_c.ravel(),                            # centers
+        sphere_c.ravel(),                            # segment_a（sphere 不用，传中心占位）
+        sphere_c.ravel(),                            # segment_b
+        np.asarray([0.8], dtype=np.float32),         # collider_radii
     )
+    # 把内部 current/prev tails 初始化到 pose tail (0,0,1)
+    hotools_native.spring_vrm_reset_state(ctx)
+    # gravity=stiffness=drag=0，唯一外力是碰撞体
     hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 0.0)
 
     out_mat  = np.zeros(16, dtype=np.float32)
     out_quat = np.zeros(4,  dtype=np.float32)
     hotools_native.spring_vrm_read_results(ctx, out_mat, out_quat)
 
-    # tail 的骨骼应被碰撞体推开，矩阵应偏离 identity
     identity = np.eye(4, dtype=np.float32).ravel()
     assert not np.allclose(out_mat, identity, atol=1e-4), \
-        "capsule collider 应推动 tail 偏离初始方向"
+        f"sphere collider 应把 tail 推离 +Z 方向，但 target_matrix 仍接近 identity:\n{out_mat.reshape(4,4)}"
