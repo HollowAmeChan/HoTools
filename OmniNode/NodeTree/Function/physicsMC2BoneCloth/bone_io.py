@@ -6,6 +6,28 @@
   C++ 实现在 _native/src/mc2_bonecloth_io.cpp，通过 hotools_native.solve_mc2_bonecloth_io 调用。
   Python 退化路径在 _write_per_bone_independent，作为 native 不可用时的兜底。
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 写回层的骨骼角色划分（与 bone_build.py 中的深度定义完全对应）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# root_bone（节点输入的共用父级）
+#   不在 records 里，写回层对其完全无感知，位置和旋转始终保持动画状态。
+#
+# depth = 0（链首固定骨，MC2_ATTR_FIXED）
+#   位置由 solver 每帧还原到 base_positions（动画姿态），写回层尊重此约束：
+#     head_pose = 当前动画骨头位置，不走链式传播
+#     （若走链式传播，其父骨 root_bone 不在 parent_pose_matrices 中，
+#      会错误回退到 root_bone 原点，导致所有链头吸到同一点）
+#   旋转由 C++ 按 root_rotation 参数（默认 1.0）计算后写回，
+#   使链首骨能跟随子骨链方向旋转，而不是永远朝向动画方向。
+#
+# depth ≥ 1（可动骨，MC2_ATTR_MOVE）
+#   位置和旋转均由物理驱动。
+#   head_pose 由父骨矩阵链式传播（父骨尾 = 子骨头），保证骨链视觉连续。
+#   旋转由 rotational_interpolation 参数控制与动画的混合比例。
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 写回路径与 SpringBone 一致：
   - connected 子骨通过 matrix_basis 写回，不直接改 PoseBone.matrix
   - 写回顺序按深度升序（父先于子），避免子骨参考旧父矩阵

@@ -5,6 +5,38 @@
 只吃 edges / rest_world / rest_world_normals / attributes，不关心来源是 mesh 还是骨骼。
 因此 BoneCloth 只需产出骨骼版的这几个输入数组，其余全部走 MeshCloth 同一套地基。
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 骨骼层级与粒子深度定义（重要：此处定义在整个 BoneCloth 模块中统一使用）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# 节点输入"根骨骼"（root_bone）
+#   用户填入所有链的共用父级骨骼，例如裙摆控制骨 SkirtCtrl。
+#   此骨骼 *** 不属于任何链 ***，不会被采集进粒子数组，
+#   其位置和旋转始终由动画驱动，物理系统对其完全无权修改。
+#
+# depth = 0（链首固定骨，chain head bone）
+#   root_bone 的直接子骨，例如 Skirt_A_01、Skirt_B_01……
+#   每条链的第一个粒子。属性为 MC2_ATTR_FIXED，位置在每个 substep 末尾
+#   强制还原到 base_positions（动画姿态），永远不被物理推动。
+#   但其 *** 旋转 *** 由写回层（bone_io）根据 C++ 计算的 world_rotations
+#   写回，使其视觉上跟随子骨链方向旋转（head_pose 取动画头位置，不走链式传播）。
+#
+# depth = 1, 2, 3, …（可动骨，movable bones）
+#   链内后续所有骨骼。属性为 MC2_ATTR_MOVE | MC2_ATTR_MOTION，
+#   位置和旋转均由物理完全驱动。写回时头部位置由父骨矩阵链式传播，
+#   旋转由 rotational_interpolation 参数控制混合比例。
+#
+# 示意图（以裙摆为例）：
+#   SkirtCtrl          ← root_bone 输入，不入链，动画锁定
+#   ├── Skirt_A_01     ← depth=0，位置锁动画，旋转写回
+#   │   ├── Skirt_A_02 ← depth=1，完全物理
+#   │   └── ...
+#   ├── Skirt_B_01     ← depth=0，位置锁动画，旋转写回
+#   │   └── ...
+#   └── ...
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 连接模式（对应 MC2 RenderSetupData.BoneConnectionMode，去掉 AutomaticMesh）：
   0 = Line              仅纵向父子边
   1 = SequentialNonLoop 按 root 列表顺序连接相邻链，首尾不成环（默认）
