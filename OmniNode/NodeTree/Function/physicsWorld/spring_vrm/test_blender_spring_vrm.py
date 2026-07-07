@@ -512,6 +512,9 @@ def test_spring_vrm_same_frame_republishes_cached_results():
         assert len(slot_ids1) == 1
         assert stats1.get("writeback_count") == 2
         assert len(results1) == 2
+        _slot1, _native_context1, chain_context1 = _spring_chain_context(world1)
+        step_count1 = int(chain_context1.get("step_count", 0) or 0)
+        assert step_count1 == 1
 
         cache, world2, stats2, results2 = _run_spring_frame(
             cache,
@@ -527,6 +530,10 @@ def test_spring_vrm_same_frame_republishes_cached_results():
         assert stats2.get("step_ms") == 0.0
         assert stats2.get("writeback_count") == 2
         assert len(results2) == 2
+        _slot2, _native_context2, chain_context2 = _spring_chain_context(world2)
+        assert chain_context2 is chain_context1
+        assert int(chain_context2.get("step_count", 0) or 0) == step_count1
+        assert stats2.get("native_context", {}).get("step_count") == step_count1
     finally:
         _delete_object(armature)
 
@@ -615,6 +622,12 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert debug_chain.get("root_bone") == "root"
         assert debug_chain.get("array_shapes", {}).get("current_tails") == (2, 3)
         assert debug_chain.get("array_shapes", {}).get("target_matrices") == (2, 16)
+
+        world_debug = world2.omni_cache_debug_snapshot()
+        world_slot_debug = world_debug.get("solver_slots", {}).get(slot2.slot_id, {})
+        world_context = world_slot_debug.get("native_context", {})
+        assert world_context.get("available") is True
+        assert world_context.get("chains", [])[0].get("array_shapes", {}).get("current_tails") == (2, 3)
     finally:
         _delete_object(armature)
 
