@@ -433,7 +433,7 @@ Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：
 其它 solver 迁移前还缺的是工程验收，而不是 Jolt feature：
 
 - 真实 Cache Delete / `OmniRuntimeState.clear_all()` background smoke 已补：测试通过真实 runtime cache replace/mutate、delete 和 clear_all 路径验证 Jolt world dispose 与 writeback delta 归零。
-- 帧语义矩阵已补连续帧、same-frame、跳回首帧和 scope prune；还缺 reset、静态/运动学 transform dirty、shape dirty 和 constraint target dirty 的专门 smoke。
+- 帧语义矩阵已补连续帧、same-frame、跳回首帧、reset、scope prune、静态/运动学 transform dirty、shape dirty 和 constraint target dirty 的专门 smoke。
 - 需要 PoseBone 和 mesh delta 的统一 writeback contract，因为 SpringBone/MC2 不写 Object.delta。
 - 需要第一条非 Jolt solver 的窄切片，把 result stream 和 solver slot 用起来。
 

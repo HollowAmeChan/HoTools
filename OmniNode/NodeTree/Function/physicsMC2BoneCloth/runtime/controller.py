@@ -22,7 +22,7 @@ from __future__ import annotations
 import bpy
 
 from ....OmniNodeSocketMapping import _OmniCache
-from ...physicsMC2MeshCloth import collision, state as mc2_state
+from ...physicsMC2MeshCloth import collision, math_utils as _math_utils, state as mc2_state
 from ...physicsMC2MeshCloth.backends import normalize_backend_label, solver_for_backend
 from ...physicsMC2MeshCloth.runtime.restart import cold_restart_runtime_state
 from ...physicsMC2MeshCloth.runtime.timing import begin_timing
@@ -409,6 +409,62 @@ def _run_for_single_armature(
             f"self_collision={bool(use_self_collision)} "
             f"碰撞体总数={len(colliders)}（骨骼={bone_coll_count} 物体={obj_coll_count}）"
         )
+        # ── 碰撞组诊断 ─────────────────────────────────────────────────────────
+        # 1. 本骨架布料粒子的被动响应组 mask
+        cloth_cbg = bone_build.build_bone_collided_by_groups(armature, bone_names)
+        cloth_groups = [g for g in range(1, 17) if cloth_cbg & _math_utils.collision_group_bit(g)]
+        cloth_groups_str = ",".join(str(g) for g in cloth_groups) if cloth_groups else "无（=0，碰撞不生效！）"
+
+        # 2. 碰撞体按 primary_group 统计数量
+        coll_by_group: dict[int, int] = {}
+        for _c in colliders:
+            _g = max(1, min(16, int(_c.get("primary_group", 1) or 1)))
+            coll_by_group[_g] = coll_by_group.get(_g, 0) + 1
+
+        # 3. 有效碰撞体（primary_group 在布料响应组内的）
+        effective_count = sum(
+            cnt for g, cnt in coll_by_group.items()
+            if cloth_cbg & _math_utils.collision_group_bit(g)
+        )
+        coll_dist_str = "  ".join(
+            f"组{g}({'有效' if cloth_cbg & _math_utils.collision_group_bit(g) else '无效'})={cnt}个"
+            for g, cnt in sorted(coll_by_group.items())
+        ) or "空"
+
+        print(
+            f"[BoneCloth COLL GROUPS] armature={armature.name}\n"
+            f"  布料粒子响应组: [{cloth_groups_str}]  mask=0x{cloth_cbg:04X}\n"
+            f"  碰撞体分组分布: {coll_dist_str}\n"
+            f"  有效碰撞体（组匹配）: {effective_count}/{len(colliders)}个"
+        )
+
+        # 4. 每根骨骼的碰撞形状设置（汇总相同配置的骨骼，避免刷屏）
+        _data_bones = armature.data.bones if armature.data is not None else None
+        if _data_bones is not None:
+            _bone_summary: dict[str, int] = {}  # "描述" -> 骨骼数
+            for _bn in bone_names:
+                _bone = _data_bones.get(_bn)
+                _props = getattr(_bone, "hotools_collision", None) if _bone is not None else None
+                if _props is None:
+                    _key = "无 hotools_collision 属性(fallback 全组)"
+                else:
+                    _ctype = str(getattr(_props, "collision_type", "NONE") or "NONE")
+                    _radius = float(getattr(_props, "radius", 0.0) or 0.0)
+                    if _ctype not in {"SPHERE", "CAPSULE"}:
+                        _key = f"collision_type={_ctype}（不参与主动碰撞形状，使用 fallback 全组）"
+                    else:
+                        _cbg_val = _math_utils.clamp_group_mask(
+                            getattr(_props, "collided_by_groups", 0)
+                        )
+                        _cbg_list = [g for g in range(1, 17) if _cbg_val & _math_utils.collision_group_bit(g)]
+                        _cbg_str = ",".join(str(g) for g in _cbg_list) if _cbg_list else "无(=0，不响应任何碰撞！)"
+                        _key = (
+                            f"type={_ctype} radius={_radius:.4f} "
+                            f"collided_by_groups=[{_cbg_str}] mask=0x{_cbg_val:04X}"
+                        )
+                _bone_summary[_key] = _bone_summary.get(_key, 0) + 1
+            for _desc, _cnt in sorted(_bone_summary.items(), key=lambda x: -x[1]):
+                print(f"    {_cnt}根骨骼: {_desc}")
 
     solve_func = solver_for_backend(backend_label)
 

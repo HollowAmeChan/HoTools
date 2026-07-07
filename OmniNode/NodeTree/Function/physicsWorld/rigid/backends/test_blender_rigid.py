@@ -929,6 +929,191 @@ def test_scope_prune_removes_rigid_slot_and_resyncs_remaining_body():
     _del(a, b)
 
 
+def test_reset_restarts_generation_and_clears_writeback_delta():
+    scene = bpy.context.scene
+    ball = _make_obj("T6D_ResetBall", (0, 0, 4), body_type="DYNAMIC")
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1, writeback=True)
+    assert stats1 is not None
+    assert abs(float(ball.delta_location.z)) > 1e-6
+    generation1 = world.generation
+    spec = build_rigid_body_spec(ball)
+    assert spec is not None and spec.slot_id in world.solver_slots
+
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 2, reset=True, writeback=False)
+    assert world2 is world
+    assert world2.generation == generation1 + 1
+    assert world2.frame_context.reset_requested is True
+    assert world2.frame_context.restart_required is True
+    assert stats2 is not None
+    assert stats2["restart_required"] is True
+    assert stats2["body_count"] == 1
+    assert world2.solver_slots[spec.slot_id].data.get("_jolt_generation") == world2.generation
+    _assert_delta_cleared(ball, "reset")
+
+    world2.omni_cache_dispose("test_reset_semantics")
+    _del(ball)
+
+
+def test_static_transform_dirty_resyncs_jolt_body_without_generation_restart():
+    scene = bpy.context.scene
+    block = _make_obj("T6E_StaticDirty", (0, 0, 0), body_type="STATIC")
+    scope = make_scope([block], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    spec = build_rigid_body_spec(block)
+    assert spec is not None
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
+    assert stats1 is not None and stats1["body_count"] == 1
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None and adapter.body_count == 1
+    generation1 = world.generation
+    signature1 = world.solver_slots[spec.slot_id].data.get("_sync_signature")
+
+    block.location.z = 1.25
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 2)
+    assert world2 is world
+    assert world2.generation == generation1
+    assert world2.frame_context.restart_required is False
+    assert stats2 is not None
+    assert stats2["restart_required"] is False
+    assert stats2["body_count"] == 1
+    slot = world2.solver_slots[spec.slot_id]
+    assert slot.data.get("_sync_signature") != signature1
+    assert slot.data.get("_jolt_generation") == world2.generation
+    assert world2.backend_resources.get("rigid_solver") is adapter
+    assert adapter.body_count == 1
+
+    world2.omni_cache_dispose("test_static_dirty")
+    _del(block)
+
+
+def test_kinematic_transform_dirty_updates_jolt_body_without_resync_generation():
+    scene = bpy.context.scene
+    mover = _make_obj("T6F_KinematicDirty", (0, 0, 1), body_type="KINEMATIC")
+    scope = make_scope([mover], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    spec = build_rigid_body_spec(mover)
+    assert spec is not None
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
+    assert stats1 is not None and stats1["body_count"] == 1
+    generation1 = world.generation
+    signature1 = world.solver_slots[spec.slot_id].data.get("_sync_signature")
+    pose_signature1 = world.solver_slots[spec.slot_id].data.get("_kinematic_pose_signature")
+
+    scene.frame_set(2)
+    mover.location.z = 2.5
+    bpy.context.view_layer.update()
+    world2, _, _, restart = physicsWorldBegin(
+        cache_state=cache_value,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    assert world2 is world
+    assert restart is False
+    assert world2.generation == generation1
+    slot = world2.solver_slots[spec.slot_id]
+    assert slot.data.get("_sync_signature") == signature1
+    assert slot.data.get("_kinematic_pose_signature") != pose_signature1
+    assert slot.data.get("_jolt_kinematic_pose_dirty") is True
+
+    step_rigid_bodies(world2, enabled=True)
+    stats2 = get_rigid_solver_stats_result(
+        world2, frame=scene.frame_current, generation=world2.generation)
+    assert stats2 is not None
+    assert stats2["restart_required"] is False
+    assert stats2["body_count"] == 1
+    assert "_jolt_kinematic_pose_dirty" not in slot.data
+    state = world2.backend_resources["rigid_solver"].get_body_state(spec.slot_id)
+    assert state is not None
+    assert abs(float(state["position"][2]) - 2.5) < 0.05
+    physicsWorldCommit(world2, enabled=True)
+
+    world2.omni_cache_dispose("test_kinematic_dirty")
+    _del(mover)
+
+
+def test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart():
+    scene = bpy.context.scene
+    ball = _make_obj("T6G_ShapeDirty", (0, 0, 4), body_type="DYNAMIC")
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    spec = build_rigid_body_spec(ball)
+    assert spec is not None
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
+    assert stats1 is not None and stats1["body_count"] == 1
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None
+    generation1 = world.generation
+    signature1 = world.solver_slots[spec.slot_id].data.get("_sync_signature")
+
+    ball.hotools_rigid_body.shape_radius = 0.9
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 2)
+    assert world2 is world
+    assert world2.generation == generation1
+    assert world2.frame_context.restart_required is False
+    assert stats2 is not None
+    assert stats2["restart_required"] is False
+    assert stats2["body_count"] == 1
+    slot = world2.solver_slots[spec.slot_id]
+    assert slot.data.get("_sync_signature") != signature1
+    assert slot.data.get("_jolt_generation") == world2.generation
+    assert world2.backend_resources.get("rigid_solver") is adapter
+    assert adapter.body_count == 1
+
+    world2.omni_cache_dispose("test_shape_dirty")
+    _del(ball)
+
+
+def test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart():
+    scene = bpy.context.scene
+    a = _make_obj("T6H_TargetA", (-1, 0, 2), body_type="DYNAMIC")
+    b = _make_obj("T6H_TargetB", (0, 0, 2), body_type="DYNAMIC")
+    c = _make_obj("T6H_TargetC", (1, 0, 2), body_type="DYNAMIC")
+    empty = _make_constraint_empty("T6H_TargetConstraint", a, b, loc=(0, 0, 2))
+    scope = make_scope([a, b, c, empty], include_rigid_body=True, include_rigid_constraint=True,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    spec = build_constraint_spec(empty)
+    assert spec is not None
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
+    assert stats1 is not None
+    assert stats1["body_count"] == 3
+    assert stats1["constraint_count"] == 1
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None and adapter.constraint_count == 1
+    generation1 = world.generation
+    signature1 = world.solver_slots[spec.slot_id].data.get("_sync_signature")
+
+    empty.hotools_rigid_constraint.target_b = c
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 2)
+    assert world2 is world
+    assert world2.generation == generation1
+    assert world2.frame_context.restart_required is False
+    assert stats2 is not None
+    assert stats2["restart_required"] is False
+    assert stats2["body_count"] == 3
+    assert stats2["constraint_count"] == 1
+    slot = world2.solver_slots[spec.slot_id]
+    assert slot.data.get("_sync_signature") != signature1
+    assert slot.data.get("_jolt_generation") == world2.generation
+    assert world2.backend_resources.get("rigid_solver") is adapter
+    assert adapter.constraint_count == 1
+
+    world2.omni_cache_dispose("test_constraint_target_dirty")
+    _del(a, b, c, empty)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -950,6 +1135,11 @@ if __name__ == "__main__":
     check("same-frame cached result semantics", test_same_frame_repeats_publish_cached_results_without_step)
     check("frame jump restart semantics", test_frame_jump_back_replaces_world_and_restarts)
     check("scope prune rigid slot semantics", test_scope_prune_removes_rigid_slot_and_resyncs_remaining_body)
+    check("reset restart semantics", test_reset_restarts_generation_and_clears_writeback_delta)
+    check("static transform dirty resync", test_static_transform_dirty_resyncs_jolt_body_without_generation_restart)
+    check("kinematic transform dirty update", test_kinematic_transform_dirty_updates_jolt_body_without_resync_generation)
+    check("shape parameter dirty resync", test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart)
+    check("constraint target dirty resync", test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
