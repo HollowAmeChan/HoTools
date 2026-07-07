@@ -56,9 +56,13 @@ for fname in tests:
         try:
             fn()
         except Exception as exc:
-            failed.append(f"{fname}::{fn.__name__}: {exc}")
-            file_failed = True
-            traceback.print_exc()
+            msg = str(exc)
+            if msg.startswith("SKIP:"):
+                skipped.append(f"{fname}::{fn.__name__}: {msg}")
+            else:
+                failed.append(f"{fname}::{fn.__name__}: {exc}")
+                file_failed = True
+                traceback.print_exc()
     if not file_failed:
         passed.append(fname)
 

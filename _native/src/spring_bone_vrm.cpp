@@ -811,4 +811,209 @@ void solve_spring_bone_vrm_cpp(SpringBoneVrmChainView& view) {
     solve_spring_bone_vrm_chain(view);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// dual-call context 实现
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+template <typename T>
+static void copy_n(const T* src, std::size_t n, std::vector<T>& dst) {
+    dst.assign(src, src + n);
+}
+
+template <typename T>
+static void fill_n(std::size_t n, T value, std::vector<T>& dst) {
+    dst.assign(n, value);
+}
+
+}  // namespace
+
+SpringVrmContext* spring_vrm_context_create(
+    int            schema,
+    std::int64_t   bone_count,
+    const float*   lengths,
+    const float*   init_axis_local,
+    const float*   init_axis_parent,
+    const float*   init_rotations,
+    const float*   init_scales,
+    const std::int32_t* parent_indices,
+    const std::uint8_t* pinned,
+    const std::uint8_t* use_connect)
+{
+    if (bone_count <= 0) return nullptr;
+    const auto n = static_cast<std::size_t>(bone_count);
+
+    auto* ctx = new SpringVrmContext();
+    ctx->schema     = schema;
+    ctx->bone_count = bone_count;
+
+    // 静态数组（深拷贝，C++ 完全持有）
+    copy_n(lengths,           n,     ctx->lengths);
+    copy_n(init_axis_local,   n * 3, ctx->init_axis_local);
+    copy_n(init_axis_parent,  n * 3, ctx->init_axis_parent);
+    copy_n(init_rotations,    n * 4, ctx->init_rotations);
+    copy_n(init_scales,       n * 3, ctx->init_scales);
+    copy_n(parent_indices,    n,     ctx->parent_indices);
+    copy_n(pinned,            n,     ctx->pinned);
+    copy_n(use_connect,       n,     ctx->use_connect);
+
+    // 动态输入缓冲区（分配，等待 update_dynamic 填充）
+    ctx->current_heads.resize(n * 3, 0.f);
+    ctx->current_pose_matrices.resize(n * 16, 0.f);
+    ctx->current_pose_quaternions.resize(n * 4, 0.f);
+    ctx->parent_pose_quaternions.resize(n * 4, 0.f);
+    ctx->current_pose_tails.resize(n * 3, 0.f);
+    ctx->hit_radii.resize(n, 0.f);
+    ctx->collided_by_groups.resize(n, 0);
+
+    // 模拟状态（初始为零，reset_state 会从 pose 覆盖）
+    ctx->current_tails.resize(n * 3, 0.f);
+    ctx->prev_tails.resize(n * 3, 0.f);
+
+    // 结果缓冲区
+    ctx->target_matrices.resize(n * 16, 0.f);
+    ctx->target_quaternions.resize(n * 4, 0.f);
+
+    return ctx;
+}
+
+void spring_vrm_context_reset_state(SpringVrmContext* ctx) {
+    if (!ctx || ctx->bone_count <= 0) return;
+    // 把 current/prev tails 重置为当前 pose tail（来自最近一次 update_dynamic）
+    ctx->current_tails = ctx->current_pose_tails;
+    ctx->prev_tails    = ctx->current_pose_tails;
+}
+
+void spring_vrm_context_update_dynamic(
+    SpringVrmContext*   ctx,
+    const float*        current_heads,
+    const float*        current_pose_matrices,
+    const float*        current_pose_quaternions,
+    const float*        parent_pose_quaternions,
+    const float*        current_pose_tails,
+    const float*        armature_world,
+    const float*        armature_world_inv,
+    const float*        root_quaternion,
+    const float*        root_tail_world,
+    const float*        gravity_dir,
+    const float*        hit_radii,
+    const std::int32_t* collided_by_groups,
+    const std::int32_t* collider_types,
+    const std::int32_t* collider_groups,
+    const float*        collider_centers,
+    const float*        collider_segment_a,
+    const float*        collider_segment_b,
+    const float*        collider_radii,
+    std::int64_t        collider_count)
+{
+    if (!ctx || ctx->bone_count <= 0) return;
+    const auto n = static_cast<std::size_t>(ctx->bone_count);
+    const auto m = static_cast<std::size_t>(collider_count > 0 ? collider_count : 0);
+
+    copy_n(current_heads,              n,      ctx->current_heads);
+    copy_n(current_pose_matrices,      n * 16, ctx->current_pose_matrices);
+    copy_n(current_pose_quaternions,   n * 4,  ctx->current_pose_quaternions);
+    copy_n(parent_pose_quaternions,    n * 4,  ctx->parent_pose_quaternions);
+    copy_n(current_pose_tails,         n * 3,  ctx->current_pose_tails);
+    copy_n(hit_radii,                  n,      ctx->hit_radii);
+    copy_n(collided_by_groups,         n,      ctx->collided_by_groups);
+
+    for (int i = 0; i < 16; ++i) ctx->armature_world[i]     = armature_world[i];
+    for (int i = 0; i < 16; ++i) ctx->armature_world_inv[i] = armature_world_inv[i];
+    for (int i = 0; i <  4; ++i) ctx->root_quaternion[i]    = root_quaternion[i];
+    for (int i = 0; i <  3; ++i) ctx->root_tail_world[i]    = root_tail_world[i];
+    for (int i = 0; i <  3; ++i) ctx->gravity_dir[i]        = gravity_dir[i];
+
+    ctx->collider_count = static_cast<std::int64_t>(m);
+    if (m > 0) {
+        copy_n(collider_types,    m,     ctx->collider_types);
+        copy_n(collider_groups,   m,     ctx->collider_groups);
+        copy_n(collider_centers,  m * 3, ctx->collider_centers);
+        copy_n(collider_segment_a,m * 3, ctx->collider_segment_a);
+        copy_n(collider_segment_b,m * 3, ctx->collider_segment_b);
+        copy_n(collider_radii,    m,     ctx->collider_radii);
+    } else {
+        ctx->collider_types.clear();
+        ctx->collider_groups.clear();
+        ctx->collider_centers.clear();
+        ctx->collider_segment_a.clear();
+        ctx->collider_segment_b.clear();
+        ctx->collider_radii.clear();
+    }
+}
+
+void spring_vrm_context_step(
+    SpringVrmContext* ctx,
+    float dt,
+    int   substeps,
+    float stiffness_force,
+    float drag_force,
+    float gravity_power)
+{
+    if (!ctx || ctx->bone_count <= 0) return;
+
+    ctx->stiffness_force = stiffness_force;
+    ctx->drag_force      = drag_force;
+    ctx->gravity_power   = gravity_power;
+
+    // 通过旧 View 接口复用已有解算核（无需重写）
+    SpringBoneVrmChainView view;
+    view.current_tails            = ctx->current_tails.data();
+    view.prev_tails               = ctx->prev_tails.data();
+    view.target_matrices          = ctx->target_matrices.data();
+    view.target_quaternions       = ctx->target_quaternions.data();
+    view.current_heads            = ctx->current_heads.data();
+    view.current_pose_matrices    = ctx->current_pose_matrices.data();
+    view.current_pose_quaternions = ctx->current_pose_quaternions.data();
+    view.parent_pose_quaternions  = ctx->parent_pose_quaternions.data();
+    view.current_pose_tails       = ctx->current_pose_tails.data();
+    view.lengths                  = ctx->lengths.data();
+    view.init_axis_local          = ctx->init_axis_local.data();
+    view.init_axis_parent         = ctx->init_axis_parent.data();
+    view.init_rotations           = ctx->init_rotations.data();
+    view.init_scales              = ctx->init_scales.data();
+    view.parent_indices           = ctx->parent_indices.data();
+    view.pinned                   = ctx->pinned.data();
+    view.use_connect              = ctx->use_connect.data();
+    view.root_quaternion          = ctx->root_quaternion;
+    view.root_tail_world          = ctx->root_tail_world;
+    view.armature_world           = ctx->armature_world;
+    view.armature_world_inv       = ctx->armature_world_inv;
+    view.gravity_dir              = ctx->gravity_dir;
+    view.hit_radii                = ctx->hit_radii.data();
+    view.collided_by_groups       = ctx->collided_by_groups.data();
+    view.collider_count           = ctx->collider_count;
+    if (ctx->collider_count > 0) {
+        view.collider_types    = ctx->collider_types.data();
+        view.collider_groups   = ctx->collider_groups.data();
+        view.collider_centers  = ctx->collider_centers.data();
+        view.collider_segment_a= ctx->collider_segment_a.data();
+        view.collider_segment_b= ctx->collider_segment_b.data();
+        view.collider_radii    = ctx->collider_radii.data();
+    }
+    view.bone_count      = ctx->bone_count;
+    view.dt              = dt;
+    view.substeps        = substeps;
+    view.stiffness_force = stiffness_force;
+    view.drag_force      = drag_force;
+    view.gravity_power   = gravity_power;
+
+    solve_spring_bone_vrm_chain(view);
+}
+
+void spring_vrm_context_read_results(
+    const SpringVrmContext* ctx,
+    float* out_matrices,
+    float* out_quaternions)
+{
+    if (!ctx || ctx->bone_count <= 0) return;
+    if (out_matrices)    std::copy(ctx->target_matrices.begin(),    ctx->target_matrices.end(),    out_matrices);
+    if (out_quaternions) std::copy(ctx->target_quaternions.begin(), ctx->target_quaternions.end(), out_quaternions);
+}
+
+void spring_vrm_context_free(SpringVrmContext* ctx) {
+    delete ctx;
+}
+
 }  // namespace hotools

@@ -250,3 +250,210 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     hotools::solve_spring_bone_vrm_cpp(view);
     Py_RETURN_NONE;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// dual-call context bindings
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void spring_vrm_context_capsule_destructor(PyObject* capsule) {
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(capsule, "spring_vrm_context"));
+    hotools::spring_vrm_context_free(ctx);
+}
+
+// spring_vrm_create_context(schema, bone_count,
+//     lengths, init_axis_local, init_axis_parent, init_rotations, init_scales,
+//     parent_indices, pinned, use_connect) -> capsule
+PyObject* spring_vrm_create_context(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 10) {
+        PyErr_SetString(PyExc_TypeError, "spring_vrm_create_context expects 10 arguments");
+        return nullptr;
+    }
+
+    const long schema     = as_long(PyTuple_GET_ITEM(args, 0), "schema");
+    if (PyErr_Occurred()) return nullptr;
+    const long bone_count = as_long(PyTuple_GET_ITEM(args, 1), "bone_count");
+    if (PyErr_Occurred()) return nullptr;
+    if (bone_count <= 0) {
+        PyErr_SetString(PyExc_ValueError, "bone_count must be > 0");
+        return nullptr;
+    }
+
+    Buffer lengths, init_axis_local, init_axis_parent, init_rotations, init_scales;
+    Buffer parent_indices, pinned, use_connect;
+
+    if (!lengths.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "lengths") ||
+        !init_axis_local.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "init_axis_local") ||
+        !init_axis_parent.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "init_axis_parent") ||
+        !init_rotations.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "init_rotations") ||
+        !init_scales.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "init_scales") ||
+        !parent_indices.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
+        !pinned.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "pinned") ||
+        !use_connect.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "use_connect")) {
+        return nullptr;
+    }
+
+    auto* ctx = hotools::spring_vrm_context_create(
+        static_cast<int>(schema),
+        static_cast<std::int64_t>(bone_count),
+        float_ptr(lengths),
+        float_ptr(init_axis_local),
+        float_ptr(init_axis_parent),
+        float_ptr(init_rotations),
+        float_ptr(init_scales),
+        int32_ptr(parent_indices),
+        static_cast<const std::uint8_t*>(pinned.view.buf),
+        static_cast<const std::uint8_t*>(use_connect.view.buf));
+
+    if (!ctx) {
+        PyErr_SetString(PyExc_RuntimeError, "spring_vrm_create_context: allocation failed");
+        return nullptr;
+    }
+    return PyCapsule_New(ctx, "spring_vrm_context", spring_vrm_context_capsule_destructor);
+}
+
+// spring_vrm_reset_state(capsule) -> None
+PyObject* spring_vrm_reset_state(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "spring_vrm_reset_state expects 1 argument");
+        return nullptr;
+    }
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(PyTuple_GET_ITEM(args, 0), "spring_vrm_context"));
+    if (!ctx) return nullptr;
+    hotools::spring_vrm_context_reset_state(ctx);
+    Py_RETURN_NONE;
+}
+
+// spring_vrm_update_dynamic(capsule,
+//     current_heads, current_pose_matrices, current_pose_quaternions,
+//     parent_pose_quaternions, current_pose_tails,
+//     armature_world, armature_world_inv, root_quaternion, root_tail_world, gravity_dir,
+//     hit_radii, collided_by_groups,
+//     collider_types, collider_groups, collider_centers,
+//     collider_segment_a, collider_segment_b, collider_radii) -> None
+PyObject* spring_vrm_update_dynamic(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 19;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "spring_vrm_update_dynamic expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(PyTuple_GET_ITEM(args, 0), "spring_vrm_context"));
+    if (!ctx) return nullptr;
+
+    Buffer current_heads, current_pose_matrices, current_pose_quaternions;
+    Buffer parent_pose_quaternions, current_pose_tails;
+    Buffer armature_world, armature_world_inv, root_quaternion, root_tail_world, gravity_dir;
+    Buffer hit_radii, collided_by_groups;
+    Buffer collider_types, collider_groups, collider_centers;
+    Buffer collider_segment_a, collider_segment_b, collider_radii;
+
+    if (!current_heads.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "current_heads") ||
+        !current_pose_matrices.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "current_pose_matrices") ||
+        !current_pose_quaternions.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "current_pose_quaternions") ||
+        !parent_pose_quaternions.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "parent_pose_quaternions") ||
+        !current_pose_tails.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "current_pose_tails") ||
+        !armature_world.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "armature_world") ||
+        !armature_world_inv.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "armature_world_inv") ||
+        !root_quaternion.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "root_quaternion") ||
+        !root_tail_world.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "root_tail_world") ||
+        !gravity_dir.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "gravity_dir") ||
+        !hit_radii.get(PyTuple_GET_ITEM(args, 11), PyBUF_FORMAT | PyBUF_ND, "hit_radii") ||
+        !collided_by_groups.get(PyTuple_GET_ITEM(args, 12), PyBUF_FORMAT | PyBUF_ND, "collided_by_groups") ||
+        !collider_types.get(PyTuple_GET_ITEM(args, 13), PyBUF_FORMAT | PyBUF_ND, "collider_types") ||
+        !collider_groups.get(PyTuple_GET_ITEM(args, 14), PyBUF_FORMAT | PyBUF_ND, "collider_groups") ||
+        !collider_centers.get(PyTuple_GET_ITEM(args, 15), PyBUF_FORMAT | PyBUF_ND, "collider_centers") ||
+        !collider_segment_a.get(PyTuple_GET_ITEM(args, 16), PyBUF_FORMAT | PyBUF_ND, "collider_segment_a") ||
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 17), PyBUF_FORMAT | PyBUF_ND, "collider_segment_b") ||
+        !collider_radii.get(PyTuple_GET_ITEM(args, 18), PyBUF_FORMAT | PyBUF_ND, "collider_radii")) {
+        return nullptr;
+    }
+
+    Py_ssize_t collider_count = 0;
+    if (collider_types.view.ndim == 1 && collider_types.view.shape)
+        collider_count = collider_types.view.shape[0];
+
+    hotools::spring_vrm_context_update_dynamic(
+        ctx,
+        float_ptr(current_heads),
+        float_ptr(current_pose_matrices),
+        float_ptr(current_pose_quaternions),
+        float_ptr(parent_pose_quaternions),
+        float_ptr(current_pose_tails),
+        float_ptr(armature_world),
+        float_ptr(armature_world_inv),
+        float_ptr(root_quaternion),
+        float_ptr(root_tail_world),
+        float_ptr(gravity_dir),
+        float_ptr(hit_radii),
+        int32_ptr(collided_by_groups),
+        int32_ptr(collider_types),
+        int32_ptr(collider_groups),
+        float_ptr(collider_centers),
+        float_ptr(collider_segment_a),
+        float_ptr(collider_segment_b),
+        float_ptr(collider_radii),
+        static_cast<std::int64_t>(collider_count));
+
+    Py_RETURN_NONE;
+}
+
+// spring_vrm_step(capsule, dt, substeps, stiffness, drag, gravity_power) -> None
+PyObject* spring_vrm_step(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 6) {
+        PyErr_SetString(PyExc_TypeError, "spring_vrm_step expects 6 arguments");
+        return nullptr;
+    }
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(PyTuple_GET_ITEM(args, 0), "spring_vrm_context"));
+    if (!ctx) return nullptr;
+
+    const double dt            = as_double(PyTuple_GET_ITEM(args, 1), "dt");
+    if (PyErr_Occurred()) return nullptr;
+    const long substeps        = as_long(PyTuple_GET_ITEM(args, 2), "substeps");
+    if (PyErr_Occurred()) return nullptr;
+    const double stiffness     = as_double(PyTuple_GET_ITEM(args, 3), "stiffness_force");
+    if (PyErr_Occurred()) return nullptr;
+    const double drag          = as_double(PyTuple_GET_ITEM(args, 4), "drag_force");
+    if (PyErr_Occurred()) return nullptr;
+    const double gravity_power = as_double(PyTuple_GET_ITEM(args, 5), "gravity_power");
+    if (PyErr_Occurred()) return nullptr;
+
+    hotools::spring_vrm_context_step(
+        ctx,
+        static_cast<float>(dt),
+        static_cast<int>(substeps),
+        static_cast<float>(stiffness),
+        static_cast<float>(drag),
+        static_cast<float>(gravity_power));
+
+    Py_RETURN_NONE;
+}
+
+// spring_vrm_read_results(capsule, out_matrices, out_quaternions) -> None
+// out_matrices:    (N, 16) float32 writable
+// out_quaternions: (N,  4) float32 writable
+PyObject* spring_vrm_read_results(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(PyExc_TypeError, "spring_vrm_read_results expects 3 arguments");
+        return nullptr;
+    }
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(PyTuple_GET_ITEM(args, 0), "spring_vrm_context"));
+    if (!ctx) return nullptr;
+
+    Buffer out_matrices, out_quaternions;
+    if (!out_matrices.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_matrices") ||
+        !out_quaternions.get(PyTuple_GET_ITEM(args, 2), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_quaternions")) {
+        return nullptr;
+    }
+
+    hotools::spring_vrm_context_read_results(
+        ctx,
+        float_ptr(out_matrices),
+        float_ptr(out_quaternions));
+
+    Py_RETURN_NONE;
+}

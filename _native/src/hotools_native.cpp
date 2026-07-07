@@ -18,6 +18,11 @@
 #include <vector>
 
 PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject*);
+PyObject* spring_vrm_create_context(PyObject*, PyObject*);
+PyObject* spring_vrm_reset_state(PyObject*, PyObject*);
+PyObject* spring_vrm_update_dynamic(PyObject*, PyObject*);
+PyObject* spring_vrm_step(PyObject*, PyObject*);
+PyObject* spring_vrm_read_results(PyObject*, PyObject*);
 
 namespace nb = nanobind;
 
@@ -692,6 +697,21 @@ NB_MODULE(hotools_native, m) {
     m.def("solve_spring_bone_vrm_cpp",
         [](nb::args a) { call_legacy(solve_spring_bone_vrm_cpp, a); },
         "Solve one VRM spring bone chain in-place.");
+    m.def("spring_vrm_create_context",
+        [](nb::args a) { return steal_or_throw(spring_vrm_create_context(nullptr, a.ptr())); },
+        "Create a VRM SpringBone context (dual-call API).");
+    m.def("spring_vrm_reset_state",
+        [](nb::args a) { call_legacy(spring_vrm_reset_state, a); },
+        "Reset tail state to current pose tails (restart 时调用).");
+    m.def("spring_vrm_update_dynamic",
+        [](nb::args a) { call_legacy(spring_vrm_update_dynamic, a); },
+        "Upload per-frame pose and collider arrays.");
+    m.def("spring_vrm_step",
+        [](nb::args a) { call_legacy(spring_vrm_step, a); },
+        "Step spring bone simulation.");
+    m.def("spring_vrm_read_results",
+        [](nb::args a) { call_legacy(spring_vrm_read_results, a); },
+        "Copy result matrices/quaternions into pre-allocated output buffers.");
 
     // ---- MC2 上下文管理 ----
     m.def("create_meshcloth_mc2_context",
