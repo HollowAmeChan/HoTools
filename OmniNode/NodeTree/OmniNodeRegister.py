@@ -69,31 +69,22 @@ cls.extend(node_cls_physics_world)
 cls.extend(node_cls_physics_world_rigid)
 cls.extend(node_cls_physics_world_spring_vrm)
 
-# ── 物理世界子分类（按 bl_label 前缀拆分）─────────────────────────────────────
-# 1. 物理世界：对象范围 + 帧开始/提交 + 写回
+# ── 物理世界子分类（3块）─────────────────────────────────────────────────────
+# 物理世界：对象范围 + 帧开始/提交 + 写回
 _pw_lifecycle = _label_startswith(
     node_cls_physics_world,
     "物理对象", "物理世界-帧", "物理写回",
 )
-# 2. 物理调试：调试快照/文本/可视化 + 结果流
+# 物理世界调试：调试快照/文本/可视化 + 结果流
 _pw_debug = _label_startswith(
     node_cls_physics_world,
     "物理世界-调试", "物理世界-结果", "物理世界-可视化",
 )
-# 3. 刚体：模拟步 + 结果读取
-_rigid_solver = _label_startswith(
-    node_cls_physics_world_rigid,
-    "刚体模拟步", "刚体结果",
-)
-# 4. 刚体设置：世界级参数 + 生成约束
-_rigid_settings = _label_startswith(
-    node_cls_physics_world_rigid,
-    "刚体世界", "刚体生成约束",
-)
-# 5. 刚体命令：运行时单帧控制
-_rigid_commands = _label_startswith(
-    node_cls_physics_world_rigid,
-    "刚体命令",
+# 解算器：所有 solver + 配套属性/注册/命令（刚体全部 + 弹簧骨全部）
+# 排序：属性 → 注册 → 模拟步 → 命令/结果，使同一 solver 的节点自然聚合
+_solver_items = (
+    node_cls_physics_world_rigid        # 刚体（模拟步 + 结果 + Jolt设置 + 生成约束 + 命令）
+    + node_cls_physics_world_spring_vrm # 弹簧骨（VRM骨链属性 + 注册 + 模拟步）
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -153,24 +144,15 @@ node_categories = [
     ] + [
         NodeItem(i.bl_idname) for i in node_cls_physics_bonecloth
     ]),
-    # ── 物理世界：6个子分类 ─────────────────────────────────────────────────────
+    # ── 物理世界：3个子分类 ─────────────────────────────────────────────────────
     OmniNodeCategory("PHYSICS_WORLD", "物理世界", items=[
         NodeItem(i.bl_idname) for i in _pw_lifecycle
     ]),
-    OmniNodeCategory("PHYSICS_WORLD_DEBUG", "物理调试", items=[
+    OmniNodeCategory("PHYSICS_SOLVER", "解算器", items=[
+        NodeItem(i.bl_idname) for i in _solver_items
+    ]),
+    OmniNodeCategory("PHYSICS_WORLD_DEBUG", "物理世界调试", items=[
         NodeItem(i.bl_idname) for i in _pw_debug
-    ]),
-    OmniNodeCategory("RIGID_SOLVER", "刚体", items=[
-        NodeItem(i.bl_idname) for i in _rigid_solver
-    ]),
-    OmniNodeCategory("RIGID_SETTINGS", "刚体设置", items=[
-        NodeItem(i.bl_idname) for i in _rigid_settings
-    ]),
-    OmniNodeCategory("RIGID_COMMANDS", "刚体命令", items=[
-        NodeItem(i.bl_idname) for i in _rigid_commands
-    ]),
-    OmniNodeCategory("SPRING_BONE", "弹簧骨", items=[
-        NodeItem(i.bl_idname) for i in node_cls_physics_world_spring_vrm
     ]),
 ]
 
