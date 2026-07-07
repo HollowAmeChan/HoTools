@@ -7,7 +7,8 @@ import sys, os, importlib.util, types as _types
 # ── 路径根 ────────────────────────────────────────────────────────────────────
 _ADDONS   = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons"
 _HOTOOLS  = os.path.join(_ADDONS, "HoTools")
-_JOLT_LIB = os.path.join(_HOTOOLS, "_Lib", "py311", "HotoolsPackage")
+_PY_LIB   = "py313" if sys.version_info >= (3, 13) else "py311"
+_JOLT_LIB = os.path.join(_HOTOOLS, "_Lib", _PY_LIB, "HotoolsPackage")
 _NT_DIR   = os.path.join(_HOTOOLS, "OmniNode", "NodeTree")
 _PW_ROOT  = os.path.join(_NT_DIR, "Function", "physicsWorld")
 
@@ -185,10 +186,13 @@ get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_resu
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
 active_generated_constraint_slot_ids = _pw("rigid.implicit_objects").active_generated_constraint_slot_ids
+make_rigid_jolt_world_setting_properties = _pw("rigid.implicit_objects").make_rigid_jolt_world_setting_properties
+register_rigid_jolt_world_setting_objects = _pw("rigid.implicit_objects").register_rigid_jolt_world_setting_objects
 physicsWorldResultStream = _pw("nodes").physicsWorldResultStream
 physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 physicsRigidGeneratedConstraintRegister = _pw("rigid.nodes").physicsRigidGeneratedConstraintRegister
+physicsRigidJoltWorldSettingsRegister = _pw("rigid.nodes").physicsRigidJoltWorldSettingsRegister
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -265,7 +269,16 @@ def test_jolt_adapter_direct():
     a.sync_body(spec_b.slot_id, spec_b)
     assert a._jw.body_count == 2
 
-    z0 = ball.location.z
+    assert a.set_gravity((0, 0, 0)) is True
+    for _ in range(5):
+        a.step(1/60.0, 1)
+    zero_g_state = a.get_body_state(spec_b.slot_id)
+    assert zero_g_state is not None
+    assert abs(zero_g_state["linear_velocity"][2]) < 1e-4
+    assert a.debug_snapshot()["jolt_world_gravity"] == (0.0, 0.0, 0.0)
+    assert a.set_gravity((0, 0, -9.81)) is True
+
+    z0 = zero_g_state["position"][2]
     for _ in range(20):
         a.step(1/60.0, 2)
 
@@ -452,6 +465,66 @@ def test_rigid_body_command_nodes():
     _del(ball)
 
 
+def test_rigid_jolt_world_settings_implicit_object_pipeline():
+    scene = bpy.context.scene
+    ball = _make_obj("T3E_WorldSettingBall", (0, 0, 5), body_type="DYNAMIC")
+
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True)
+
+    props = make_rigid_jolt_world_setting_properties(
+        gravity=(0, 0, 0),
+        enabled=True,
+        source_id="test_zero_gravity",
+        priority=10,
+    )
+    count, dirty, version = register_rigid_jolt_world_setting_objects(
+        world, props, enabled=True)
+    assert count == 1 and dirty == 1 and version == 1
+    assert world.implicit_object_counts().get("rigid_jolt.world_setting") == 1
+
+    step_rigid_bodies(world, enabled=True)
+    spec = build_rigid_body_spec(ball)
+    result = get_rigid_transform_result(
+        world, slot_id=spec.slot_id, frame=scene.frame_current, generation=world.generation)
+    assert result is not None
+    assert abs(result["linear_velocity"][2]) < 1e-4
+    assert abs(result["position"][2] - ball.location.z) < 1e-3
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None
+    debug = adapter.debug_snapshot()
+    assert debug["jolt_world_gravity"] == (0.0, 0.0, 0.0)
+    assert debug["jolt_world_settings_signature"] != "default"
+
+    cache_val, _, _ = physicsWorldCommit(world, enabled=True)
+
+    scene.frame_set(2)
+    world2, _, _, _ = physicsWorldBegin(
+        cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
+    _, count2, dirty2, _version2 = physicsRigidJoltWorldSettingsRegister(
+        world2, props, enabled=False)
+    assert count2 == 1 and dirty2 == 1
+
+    step_rigid_bodies(world2, enabled=True)
+    result2 = get_rigid_transform_result(
+        world2, slot_id=spec.slot_id, frame=scene.frame_current, generation=world2.generation)
+    assert result2 is not None
+    assert result2["linear_velocity"][2] < -0.01
+    adapter2 = world2.backend_resources.get("rigid_solver")
+    assert adapter2 is adapter
+    debug2 = adapter2.debug_snapshot()
+    assert debug2["jolt_world_gravity"] == (0.0, 0.0, -9.81)
+    assert debug2["jolt_world_settings_signature"] == "default"
+
+    world2.omni_cache_dispose("test_world_settings")
+    _del(ball)
+
+
 def test_constraint_spec_disable_collisions():
     a = _make_obj("T3A_BodyA", (-1, 0, 1))
     b = _make_obj("T3A_BodyB", (1, 0, 1))
@@ -623,6 +696,7 @@ if __name__ == "__main__":
     check("PhysicsWorldCache 生命周期",  test_world_lifecycle)
     check("rigid body commands exchange", test_rigid_body_commands_exchange)
     check("rigid body command nodes", test_rigid_body_command_nodes)
+    check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
 

@@ -1082,6 +1082,7 @@ physicsWorld/
 刚体命令-施加力（physicsRigidAddForce）               ← 发布 add_force
 刚体命令-施加冲量（physicsRigidAddImpulse）           ← 发布 add_impulse
 刚体命令-重力倍率（physicsRigidSetGravityFactor）     ← 发布 set_gravity_factor
+刚体世界-Jolt设置属性/注册（physicsRigidJoltWorldSettings*） ← 通过 rigid_jolt.world_setting 热更新 Jolt 刚体世界 gravity
 刚体命令-材质响应（physicsRigidSetMaterialResponse）  ← 发布 set_material_response
 刚体命令-运动质量（physicsRigidSetMotionQuality）     ← 发布 set_motion_quality
 刚体命令-激活状态（physicsRigidSetActive）            ← 发布 set_active
@@ -1125,7 +1126,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 - `physicsWriteback` 已验证 Object transform 的统一写回路径：只写 `Object.delta_*`，不改原始 transform。
 - `physicsWorldDebugDraw` 和 `physicsWorldResultStream` 消费纯快照，不读取 live bpy 对象、Jolt handle 或 solver 私有 transform。
 - Jolt adapter 主路径只消费 `RigidBodySpec` / `ConstraintSpec` 快照，不再回读 Object / Empty。
-- Blender 后台集成测试已覆盖：Jolt adapter 直接运行、world 生命周期、刚体命令 exchange、结果读取节点、60 帧落地、dispose + rebuild、约束 disable collisions。
+- Blender 后台集成测试已覆盖：Jolt adapter 直接运行、world 生命周期、刚体命令 exchange、world gravity setting、结果读取节点、60 帧落地、dispose + rebuild、约束 disable collisions。
 
 **Phase 5 真正还缺的 P0：**
 

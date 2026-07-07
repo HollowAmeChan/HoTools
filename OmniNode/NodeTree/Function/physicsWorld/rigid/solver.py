@@ -25,7 +25,9 @@ from .specs import (
 )
 from .implicit_objects import (
     has_pending_generated_constraints,
+    has_pending_jolt_world_settings,
     sync_generated_constraint_slots,
+    sync_rigid_jolt_world_settings,
 )
 from .results import (
     clear_rigid_transform_results,
@@ -152,6 +154,8 @@ def _flatten(objects) -> list:
 
 def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     if _has_pending_rigid_body_commands(world):
+        return True
+    if has_pending_jolt_world_settings(world):
         return True
     if has_pending_generated_constraints(world):
         return True
@@ -440,8 +444,9 @@ def step_rigid_bodies(
         substeps = max(1, int(fc.substeps)) if fc is not None else 1
         restart = bool(fc.restart_required) if fc is not None else True
 
-        # generated constraints are persistent implicit objects, not Empty scope objects.
-        # Sync them into regular constraint slots before Jolt body/constraint sync.
+        # Jolt rigid-world settings and generated constraints are persistent implicit objects.
+        # Apply Jolt rigid-world settings first, then materialize generated constraints as regular slots.
+        sync_rigid_jolt_world_settings(world, adapter)
         sync_generated_constraint_slots(world, adapter=adapter)
 
         # --- sync rigid bodies ---

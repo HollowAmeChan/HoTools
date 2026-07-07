@@ -16,6 +16,7 @@ physicsWorld.rigid.backends.jolt — Jolt Physics Python 适配器
 from __future__ import annotations
 
 import importlib
+import math
 import time
 from typing import TYPE_CHECKING
 
@@ -99,6 +100,16 @@ def _transform_from_constraint_spec(spec: "ConstraintSpec") -> tuple[tuple, tupl
         raise ValueError(f"ConstraintSpec {slot_id} has invalid anchor transform snapshot") from exc
 
 
+def _vec3_tuple(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    try:
+        result = (float(value[0]), float(value[1]), float(value[2]))
+    except Exception:
+        result = (float(fallback[0]), float(fallback[1]), float(fallback[2]))
+    if not all(math.isfinite(v) for v in result):
+        return (float(fallback[0]), float(fallback[1]), float(fallback[2]))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # JoltAdapter
 # ---------------------------------------------------------------------------
@@ -131,6 +142,8 @@ class JoltAdapter:
         self.last_command_count: int = 0
         self.last_command_failed: int = 0
         self.last_command_errors: list[str] = []
+        self.last_jolt_world_gravity: tuple[float, float, float] = (0.0, 0.0, -9.81)
+        self._jolt_world_settings_signature: str = "default"
         self._valid = True
         self._last_generation: int = -1   # generation 变化时 flush handles
 
@@ -282,6 +295,14 @@ class JoltAdapter:
             return False
         return bool(self._jw.activate_body(handle, bool(active)))
 
+    def set_gravity(self, gravity=(0.0, 0.0, -9.81)) -> bool:
+        if self._jw is None or not hasattr(self._jw, "set_gravity"):
+            return False
+        vec = _vec3_tuple(gravity, (0.0, 0.0, -9.81))
+        self._jw.set_gravity(vec)
+        self.last_jolt_world_gravity = vec
+        return True
+
     def get_body_transform(self, slot_id: str):
         """返回 (position_xyz, rotation_wxyz) 或 None。"""
         handle = self._get_body_handle(slot_id)
@@ -409,6 +430,8 @@ class JoltAdapter:
             "last_command_count": int(getattr(self, "last_command_count", 0) or 0),
             "last_command_failed": int(getattr(self, "last_command_failed", 0) or 0),
             "last_command_errors": list(getattr(self, "last_command_errors", []) or []),
+            "jolt_world_gravity": tuple(getattr(self, "last_jolt_world_gravity", (0.0, 0.0, -9.81))),
+            "jolt_world_settings_signature": str(getattr(self, "_jolt_world_settings_signature", "default") or "default"),
         }
 
     @property

@@ -14,7 +14,9 @@ from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
 from .implicit_objects import (
     make_rigid_generated_constraint_properties,
+    make_rigid_jolt_world_setting_properties,
     register_rigid_generated_constraint_objects,
+    register_rigid_jolt_world_setting_objects,
 )
 from .results import get_rigid_transform_result
 from .solver import step_rigid_bodies
@@ -167,6 +169,63 @@ def physicsRigidReadState(
         bool(result.get("sleeping", False)),
         result,
     )
+
+
+@omni(
+    enable=True,
+    bl_label="刚体世界-Jolt设置属性",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["重力", "启用", "来源ID", "优先级"],
+    input_init={
+        "gravity": {"default_value": mathutils.Vector((0.0, 0.0, -9.81))},
+        "priority": {"min_value": -255, "max_value": 255},
+    },
+    _OUTPUT_NAME=["Jolt世界设置属性"],
+    omni_description="""
+    构造 Jolt 刚体世界级设置对象。当前落地项是 Jolt 刚体世界 gravity；对象本身不访问 Jolt，
+    需要交给“刚体世界-Jolt设置注册”写入 world.implicit_objects。
+    """,
+)
+def physicsRigidJoltWorldSettingsProperties(
+    gravity: mathutils.Vector = mathutils.Vector((0.0, 0.0, -9.81)),
+    enabled: bool = True,
+    source_id: str = "default",
+    priority: int = 0,
+) -> list[object]:
+    return make_rigid_jolt_world_setting_properties(
+        gravity=_vec3(gravity, (0.0, 0.0, -9.81)),
+        enabled=bool(enabled),
+        source_id=str(source_id or "default"),
+        priority=int(priority),
+    )
+
+
+@omni(
+    enable=True,
+    bl_label="刚体世界-Jolt设置注册",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "世界设置属性", "启用"],
+    _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
+    omni_description="""
+    把 Jolt 刚体世界级设置注册到 PhysicsWorldCache.implicit_objects。
+    刚体模拟步会在同步 body/constraint 前读取 tag rigid_jolt.world_setting，并把 gravity 热更新到 Jolt adapter。
+    """,
+)
+def physicsRigidJoltWorldSettingsRegister(
+    world: object,
+    world_setting_properties: list[object],
+    enabled: bool = True,
+) -> tuple[object, int, int, int]:
+    if not isinstance(world, PhysicsWorldCache):
+        return world, 0, 0, 0
+    count, dirty_count, version = register_rigid_jolt_world_setting_objects(
+        world,
+        world_setting_properties,
+        enabled=bool(enabled),
+    )
+    return world, int(count), int(dirty_count), int(version)
 
 
 @omni(

@@ -33,6 +33,7 @@ JOLT_STEP_WRITER_ID = "jolt_step"
 # rigid.generated_constraint 已由刚体 solver 消费；其它 tag 仍只在声明里占位，
 # 避免后续命名分叉。
 RIGID_GENERATED_CONSTRAINT_OBJECT_TAG = "rigid.generated_constraint"
+RIGID_JOLT_WORLD_SETTING_OBJECT_TAG = "rigid_jolt.world_setting"
 RIGID_MATERIAL_PRESET_OBJECT_TAG = "rigid.material_preset"
 RIGID_RAGDOLL_PROXY_OBJECT_TAG = "rigid.ragdoll_proxy"
 

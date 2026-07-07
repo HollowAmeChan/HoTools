@@ -7,7 +7,8 @@ import sys, os
 
 # hotools_jolt 编译产物路径
 _HOTOOLS_ROOT = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
-_JOLT_LIB    = os.path.join(_HOTOOLS_ROOT, "_Lib", "py311", "HotoolsPackage")
+_PY_LIB      = "py313" if sys.version_info >= (3, 13) else "py311"
+_JOLT_LIB    = os.path.join(_HOTOOLS_ROOT, "_Lib", _PY_LIB, "HotoolsPackage")
 _ADDON_ROOT  = os.path.dirname(_HOTOOLS_ROOT)
 
 for p in [_JOLT_LIB, _HOTOOLS_ROOT, _ADDON_ROOT]:
@@ -79,6 +80,18 @@ def test_gravity_fall():
     z1 = pos1[2]
 
     assert z1 < z0, f"球体应下落：z0={z0:.3f} z1={z1:.3f}"
+    jw.clear()
+
+def test_set_gravity_zero():
+    jw = hotools_jolt.JoltWorld(32, 64, 32)
+    jw.set_gravity((0.0, 0.0, 0.0))
+    ball = jw.add_body("DYNAMIC", 1.0, 0.5, 0.0,
+                       (0, 0, 5), (1, 0, 0, 0),
+                       "SPHERE", 0.5, 0.5, (0.5, 0.5, 0.5))
+    for _ in range(10):
+        jw.step(1/60.0, 1)
+    _pos, _rot, lin, _ang, _active, _sleeping = jw.get_body_state(ball)
+    assert abs(lin[2]) < 1e-4, f"零重力下 Z 线速度应接近 0，得到 {lin[2]}"
     jw.clear()
 
 def test_body_state():
@@ -214,6 +227,7 @@ if __name__ == "__main__":
         ("创建 JoltWorld",          test_create_world),
         ("添加/删除刚体",           test_add_remove_bodies),
         ("重力下落验证",            test_gravity_fall),
+        ("set_gravity 零重力",       test_set_gravity_zero),
         ("body state 输出",          test_body_state),
         ("runtime 控制 API",         test_runtime_controls),
         ("运动学 body 驱动",        test_kinematic_drive),

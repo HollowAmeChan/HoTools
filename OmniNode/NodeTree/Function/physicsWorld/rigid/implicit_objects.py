@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import math
 import mathutils
 import bpy
 
 from ..names import (
+    RIGID_BACKEND_RESOURCE_KEY,
     RIGID_CONSTRAINT_SLOT_KIND,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
+    RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
 )
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
@@ -16,7 +19,10 @@ from .specs import ConstraintSpec
 
 
 RIGID_GENERATED_CONSTRAINT_REGISTER_PRODUCER = "physicsRigidGeneratedConstraintRegister"
+RIGID_JOLT_WORLD_SETTING_REGISTER_PRODUCER = "physicsRigidJoltWorldSettingsRegister"
 GENERATED_CONSTRAINT_SLOT_PREFIX = "constraint.generated:"
+DEFAULT_RIGID_GRAVITY = (0.0, 0.0, -9.81)
+DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE = "default"
 _PI = 3.141592653589793
 
 
@@ -39,6 +45,13 @@ def _float3(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
         return (float(value[0]), float(value[1]), float(value[2]))
     except Exception:
         return tuple(float(v) for v in fallback)
+
+
+def _finite_float3(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
+    result = _float3(value, fallback)
+    if not all(math.isfinite(v) for v in result):
+        return tuple(float(v) for v in fallback)
+    return result
 
 
 def _float4(value, fallback=(1.0, 0.0, 0.0, 0.0)) -> tuple[float, float, float, float]:
@@ -101,6 +114,176 @@ def _normalize_constraint_type(value) -> str:
     if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT"}:
         return "FIXED"
     return constraint_type
+
+
+def make_rigid_jolt_world_setting_properties(
+    gravity: mathutils.Vector = mathutils.Vector(DEFAULT_RIGID_GRAVITY),
+    enabled: bool = True,
+    source_id: str = "default",
+    priority: int = 0,
+) -> list[dict]:
+    """构造一个可注册的 Jolt 刚体世界设置对象。"""
+    return [{
+        "gravity": _finite_float3(gravity, DEFAULT_RIGID_GRAVITY),
+        "enabled": bool(enabled),
+        "source_id": str(source_id or "default"),
+        "priority": int(priority),
+    }]
+
+
+def _copy_jolt_world_setting_object(item: dict) -> dict:
+    return {
+        "gravity": _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY),
+        "enabled": bool(item.get("enabled", True)),
+        "source_id": str(item.get("source_id", "default") or "default"),
+        "priority": int(item.get("priority", 0) or 0),
+    }
+
+
+def normalize_rigid_jolt_world_setting_objects(world_setting_properties) -> list[dict]:
+    objects: list[dict] = []
+    for item in _flatten(world_setting_properties):
+        if isinstance(item, dict):
+            objects.append(_copy_jolt_world_setting_object(item))
+    return objects
+
+
+def rigid_jolt_world_setting_stable_id(item: dict) -> str:
+    source_id = str(item.get("source_id", "default") or "default").strip() or "default"
+    suffix = stable_short_hash([source_id], 16)
+    return f"{RIGID_JOLT_WORLD_SETTING_OBJECT_TAG}:{suffix}"
+
+
+def rigid_jolt_world_setting_signature(item: dict) -> str:
+    payload = [
+        str(item.get("source_id", "default") or "default"),
+        int(item.get("priority", 0) or 0),
+        "1" if bool(item.get("enabled", True)) else "0",
+        ",".join(f"{v:.8g}" for v in _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY)),
+    ]
+    return stable_short_hash(payload, 16)
+
+
+def register_rigid_jolt_world_setting_objects(
+    world: PhysicsWorldCache,
+    world_setting_properties,
+    enabled: bool = True,
+    producer: str = RIGID_JOLT_WORLD_SETTING_REGISTER_PRODUCER,
+) -> tuple[int, int, int]:
+    """把 Jolt 刚体世界级设置注册为 world.implicit_objects。"""
+    if not isinstance(world, PhysicsWorldCache):
+        return 0, 0, 0
+
+    objects = normalize_rigid_jolt_world_setting_objects(world_setting_properties)
+    writer = str(producer or RIGID_JOLT_WORLD_SETTING_REGISTER_PRODUCER)
+    dirty_count = 0
+    version_max = 0
+
+    world.acquire_write(writer)
+    try:
+        for item in objects:
+            item["enabled"] = bool(enabled) and bool(item.get("enabled", True))
+            stable_id = rigid_jolt_world_setting_stable_id(item)
+            entry = world.append_implicit_object(
+                tag=RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
+                producer=writer,
+                stable_id=stable_id,
+                signature=rigid_jolt_world_setting_signature(item),
+                enabled=bool(item.get("enabled", True)),
+                schema=1,
+                payload=item,
+            )
+            if isinstance(entry, dict):
+                dirty_count += 1 if bool(entry.get("dirty", False)) else 0
+                version_max = max(version_max, int(entry.get("version", 0) or 0))
+    finally:
+        world.release_write(writer)
+
+    return len(objects), dirty_count, version_max
+
+
+def _enabled_jolt_world_setting_entries(world: PhysicsWorldCache) -> list[dict]:
+    if not isinstance(world, PhysicsWorldCache):
+        return []
+    return world.iter_implicit_objects(
+        tag=RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
+        enabled=True,
+    )
+
+
+def selected_rigid_jolt_world_setting(world: PhysicsWorldCache) -> dict | None:
+    """返回当前生效的 Jolt 刚体世界设置；priority 高者胜，同优先级按 registry 顺序后者胜。"""
+    candidates: list[tuple[int, int, int, dict, dict]] = []
+    for index, entry in enumerate(_enabled_jolt_world_setting_entries(world)):
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        item = _copy_jolt_world_setting_object(payload)
+        candidates.append((
+            int(item.get("priority", 0) or 0),
+            int(entry.get("last_seen_frame", 0) or 0),
+            index,
+            item,
+            entry,
+        ))
+    if not candidates:
+        return None
+
+    _priority, _frame, _index, item, entry = sorted(candidates, key=lambda row: row[:3])[-1]
+    return {
+        "gravity": _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY),
+        "source_id": str(item.get("source_id", "default") or "default"),
+        "priority": int(item.get("priority", 0) or 0),
+        "stable_id": str(entry.get("stable_id") or rigid_jolt_world_setting_stable_id(item)),
+        "signature": str(entry.get("signature") or rigid_jolt_world_setting_signature(item)),
+        "version": int(entry.get("version", 0) or 0),
+    }
+
+
+def active_rigid_jolt_world_setting_signature(world: PhysicsWorldCache) -> tuple[str, tuple[float, float, float]]:
+    selected = selected_rigid_jolt_world_setting(world)
+    if selected is None:
+        return DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE, DEFAULT_RIGID_GRAVITY
+    return str(selected.get("signature") or DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE), _finite_float3(
+        selected.get("gravity", DEFAULT_RIGID_GRAVITY),
+        DEFAULT_RIGID_GRAVITY,
+    )
+
+
+def has_pending_jolt_world_settings(world: PhysicsWorldCache, adapter=None) -> bool:
+    """检查 Jolt 刚体世界级设置是否需要同步到 Jolt adapter。"""
+    if not isinstance(world, PhysicsWorldCache):
+        return False
+    signature, gravity = active_rigid_jolt_world_setting_signature(world)
+    adapter = adapter or world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
+    if adapter is None:
+        return signature != DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE or gravity != DEFAULT_RIGID_GRAVITY
+    return str(getattr(adapter, "_jolt_world_settings_signature", DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE)) != signature
+
+
+def sync_rigid_jolt_world_settings(world: PhysicsWorldCache, adapter) -> bool:
+    """把当前 Jolt 刚体世界设置同步到 Jolt adapter，当前只覆盖 gravity。"""
+    if not isinstance(world, PhysicsWorldCache) or adapter is None:
+        return False
+
+    signature, gravity = active_rigid_jolt_world_setting_signature(world)
+    if str(getattr(adapter, "_jolt_world_settings_signature", DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE)) == signature:
+        return False
+
+    set_gravity = getattr(adapter, "set_gravity", None)
+    if not callable(set_gravity):
+        return False
+    if not bool(set_gravity(gravity)):
+        return False
+
+    try:
+        adapter._jolt_world_settings_signature = signature
+        adapter.last_jolt_world_gravity = gravity
+        world.set_runtime_cache("rigid_jolt_world_settings_signature", signature)
+        world.set_runtime_cache("rigid_jolt_world_gravity", gravity)
+    except Exception:
+        pass
+    return True
 
 
 def make_rigid_generated_constraint_properties(
