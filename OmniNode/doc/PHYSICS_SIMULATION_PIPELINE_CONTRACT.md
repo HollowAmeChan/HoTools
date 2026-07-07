@@ -974,7 +974,7 @@ physicsWorld/utils/
 7. 如需隐式对象或生成 spec，必须先定义 `implicit_objects` tag / schema / stable_id / signature / conflict policy。
 8. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
 
-当前 rigid/Jolt 后台 smoke 已覆盖第 1 项：`physicsWorld/rigid/backends/test_blender_rigid.py` 通过真实 `OmniRuntimeState.write_cache()` 提交 `PhysicsWorldCommit` 的 replace/mutate intent，并验证 `delete_cache()` / `clear_all()` 会释放 world、Jolt adapter、solver slots，同时清空 Object delta writeback。
+当前 rigid/Jolt 后台 smoke 已覆盖第 1 项：`physicsWorld/rigid/backends/test_blender_rigid.py` 通过真实 `OmniRuntimeState.write_cache()` 提交 `PhysicsWorldCommit` 的 replace/mutate intent，并验证 `delete_cache()` / `clear_all()` 会释放 world、Jolt adapter、solver slots，同时清空 Object delta writeback。帧语义 smoke 已覆盖连续帧、same-frame、跳帧/首帧回退、scope prune 和 dispose；reset 与 dirty spec resync 仍需补齐。
 
 迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
 

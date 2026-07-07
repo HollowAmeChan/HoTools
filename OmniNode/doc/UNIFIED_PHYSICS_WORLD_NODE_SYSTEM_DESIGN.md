@@ -1128,10 +1128,11 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 - Jolt adapter 主路径只消费 `RigidBodySpec` / `ConstraintSpec` 快照，不再回读 Object / Empty。
 - Blender 后台集成测试已覆盖：Jolt adapter 直接运行、world 生命周期、刚体命令 exchange、Jolt 刚体世界 gravity/capacity setting、结果读取节点、60 帧落地、dispose + rebuild、约束 disable collisions。
 - 真实 runtime cache 生命周期 smoke 已覆盖：Physics World Commit 输出的 replace/mutate intent 进入 `OmniRuntimeState.write_cache()`；`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 `PhysicsWorldCache`、rigid slots、`backend_resources["rigid_solver"]`，并清空 writeback delta。
+- 帧语义 smoke 已覆盖：same-frame 重复求值只发布 cached result、不推进 Jolt step；`2 -> 1` 跳回首帧会 replace world 并 restart；scope 删除刚体会 prune 对应 slot，并让剩余刚体重新同步到 Jolt。
 
 **Phase 5 仍缺的 P0：**
 
-1. **帧语义验收矩阵。** 现有测试覆盖连续 60 帧，但还需要明确测试这些场景：`1 -> 60 -> 1` 跳回首帧、same-frame 重复求值、显式 reset、scope 删除刚体、静态体 transform 改变、运动学体 transform 改变、shape 参数改变、约束目标改变。每项都要验证 generation/restart、Jolt resync、result stream 和 writeback delta。
+1. **帧语义验收矩阵剩余项。** 现有测试已覆盖连续 60 帧、same-frame、跳回首帧和 scope 删除刚体；还需要补显式 reset、静态体 transform 改变、运动学体 transform 改变、shape 参数改变、约束目标改变。每项都要验证 generation/restart、Jolt resync、result stream 和 writeback delta。
 2. **非 Object 写回 contract。** Jolt 已证明 Object.delta 写回；SpringBone/BoneCloth 还需要 PoseBone / matrix_basis 的统一写回模式，MC2 需要 mesh delta attribute / shape key / modifier 参数的统一写回模式。这里不要求 Jolt 实现，但要求 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 写清 result -> writeback 的公共结构。
 3. **迁移第一条 solver 的最小 vertical slice。** 不要等所有 Jolt contact/query/constraint lambda 完成。Phase 5 退出前应选 SpringBone VRM 或 MC2 做一个极窄迁移：进入 `world.solver_slots`、读取 `world.frame_context`、发布 result stream，但先只覆盖最小输出和统一 debug，不一次性搬完整功能。
 

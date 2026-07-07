@@ -725,6 +725,24 @@ def _runtime_cache_rigid_step(scene, cache_state, scope, frame):
     return world, cache_value, write_count
 
 
+def _begin_step_commit(scene, cache_state, scope, frame, *, reset=False, writeback=False):
+    scene.frame_set(frame)
+    world, _, _, restart = physicsWorldBegin(
+        cache_state=cache_state,
+        scene=scene,
+        object_scope=scope,
+        reset=bool(reset),
+        enabled=True,
+    )
+    step_rigid_bodies(world, enabled=True)
+    if writeback:
+        apply_all_writebacks(world, restart=restart)
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation)
+    cache_value, _, _ = physicsWorldCommit(world, enabled=True)
+    return world, cache_value, stats
+
+
 def _assert_delta_cleared(obj, label):
     delta = getattr(obj, "delta_location", (0.0, 0.0, 0.0))
     assert abs(float(delta[0])) < 1e-6, f"{label} delta_location.x 未清零"
@@ -806,6 +824,111 @@ def test_runtime_cache_delete_and_clear_all_dispose():
     _del(ball, ball2)
 
 
+def test_same_frame_repeats_publish_cached_results_without_step():
+    scene = bpy.context.scene
+    ball = _make_obj("T6A_SameFrameBall", (0, 0, 4), body_type="DYNAMIC")
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope, 1)
+    assert stats1 is not None
+    assert stats1["same_frame"] is False
+    assert stats1["restart_required"] is True
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None and adapter._valid
+    generation = world.generation
+
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 1)
+    assert world2 is world
+    assert world2.generation == generation
+    assert world2.frame_context.same_frame is True
+    assert world2.frame_context.restart_required is False
+    assert stats2 is not None
+    assert stats2["same_frame"] is True
+    assert stats2["restart_required"] is False
+    assert stats2["step_ms"] == 0.0
+    assert stats2["body_count"] == 1
+    assert stats2["transform_count"] == 1
+    assert world2.backend_resources.get("rigid_solver") is adapter
+
+    world2.omni_cache_dispose("test_same_frame")
+    _del(ball)
+
+
+def test_frame_jump_back_replaces_world_and_restarts():
+    scene = bpy.context.scene
+    ball = _make_obj("T6B_JumpBackBall", (0, 0, 4), body_type="DYNAMIC")
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    world1, cache_value, _stats1 = _begin_step_commit(scene, None, scope, 1)
+    world2, cache_value, stats2 = _begin_step_commit(scene, cache_value, scope, 2)
+    assert world2 is world1
+    assert stats2 is not None
+    adapter2 = world2.backend_resources.get("rigid_solver")
+    assert adapter2 is not None and adapter2._valid
+
+    world_back, _cache_value_back, stats_back = _begin_step_commit(scene, cache_value, scope, 1)
+    assert world_back is not world2
+    assert world_back.replace_required is False, "Commit 后 replace_required 应已清除"
+    assert world_back.frame_context.previous_frame == 2
+    assert world_back.frame_context.frame == 1
+    assert world_back.frame_context.restart_required is True
+    assert world_back.frame_context.same_frame is False
+    assert stats_back is not None
+    assert stats_back["restart_required"] is True
+    assert stats_back["same_frame"] is False
+    assert stats_back["body_count"] == 1
+    assert world_back.backend_resources.get("rigid_solver") is not adapter2
+
+    world2.omni_cache_dispose("test_jump_old_world")
+    world_back.omni_cache_dispose("test_jump_new_world")
+    _del(ball)
+
+
+def test_scope_prune_removes_rigid_slot_and_resyncs_remaining_body():
+    scene = bpy.context.scene
+    a = _make_obj("T6C_PruneA", (0, 0, 4), body_type="DYNAMIC")
+    b = _make_obj("T6C_PruneB", (1, 0, 4), body_type="DYNAMIC")
+    scope_both = make_scope([a, b], include_rigid_body=True, include_rigid_constraint=False,
+                            include_passive_collision=False, include_bone_collision=False,
+                            include_mesh_collision=False)
+    scope_one = make_scope([a], include_rigid_body=True, include_rigid_constraint=False,
+                           include_passive_collision=False, include_bone_collision=False,
+                           include_mesh_collision=False)
+
+    spec_a = build_rigid_body_spec(a)
+    spec_b = build_rigid_body_spec(b)
+    assert spec_a is not None and spec_b is not None
+
+    world, cache_value, stats1 = _begin_step_commit(scene, None, scope_both, 1)
+    assert stats1 is not None
+    assert stats1["body_count"] == 2
+    assert spec_a.slot_id in world.solver_slots
+    assert spec_b.slot_id in world.solver_slots
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None and adapter.body_count == 2
+    generation1 = world.generation
+
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope_one, 2)
+    assert world2 is world
+    assert world2.generation == generation1 + 1
+    assert world2.frame_context.restart_required is True
+    assert spec_a.slot_id in world2.solver_slots
+    assert spec_b.slot_id not in world2.solver_slots
+    assert world2.solver_slots[spec_a.slot_id].data.get("_jolt_generation") == world2.generation
+    assert stats2 is not None
+    assert stats2["restart_required"] is True
+    assert stats2["body_count"] == 1
+    assert stats2["transform_count"] == 1
+    assert adapter.body_count == 1
+
+    world2.omni_cache_dispose("test_scope_prune")
+    _del(a, b)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -824,6 +947,9 @@ if __name__ == "__main__":
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
     check("runtime cache delete + clear_all dispose", test_runtime_cache_delete_and_clear_all_dispose)
+    check("same-frame cached result semantics", test_same_frame_repeats_publish_cached_results_without_step)
+    check("frame jump restart semantics", test_frame_jump_back_replaces_world_and_restarts)
+    check("scope prune rigid slot semantics", test_scope_prune_removes_rigid_slot_and_resyncs_remaining_body)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
