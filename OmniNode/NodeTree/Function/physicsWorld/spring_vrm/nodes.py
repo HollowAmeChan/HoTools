@@ -1,7 +1,5 @@
 """VRM SpringBone 新物理世界节点定义。"""
 
-from __future__ import annotations
-
 import mathutils
 
 from ....FunctionNodeCore import omni

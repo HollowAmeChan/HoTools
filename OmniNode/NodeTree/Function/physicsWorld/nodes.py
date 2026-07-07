@@ -22,6 +22,7 @@ from .. import _Color
 from .types import PhysicsObjectScope, PhysicsWorldCache
 from .scope import (
     objects_from_collection,
+    objects_from_scene,
     make_scope,
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
@@ -55,6 +56,29 @@ def physicsObjectsFromCollection(
     if collection is None:
         return []
     return objects_from_collection(collection, recursive=bool(recursive), include_hidden=True)
+
+
+@omni(
+    enable=True,
+    bl_label="物理对象-从场景",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["场景", "包含隐藏"],
+    _OUTPUT_NAME=["对象列表"],
+    omni_description="""
+    从整个场景收集所有对象，供 Physics Object Scope 节点使用。
+
+    无需指定集合，一键获取场景内全部对象，适合快速搭建或测试。
+    若需精确控制参与物理的对象范围，改用「物理对象-从集合」并手动组织集合。
+
+    包含隐藏=False（默认）时跳过不可见对象。
+    """,
+)
+def physicsObjectsFromScene(
+    scene: bpy.types.Scene,
+    include_hidden: bool = False,
+) -> list[bpy.types.Object]:
+    return objects_from_scene(scene, include_hidden=bool(include_hidden))
 
 
 @omni(

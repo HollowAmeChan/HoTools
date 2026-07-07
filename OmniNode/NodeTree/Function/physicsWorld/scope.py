@@ -198,6 +198,46 @@ def filter_objects_by_type(objects, obj_type: str) -> list:
 
 
 # ---------------------------------------------------------------------------
+# 从场景收集对象
+# ---------------------------------------------------------------------------
+
+def objects_from_scene(scene, include_hidden: bool = False) -> list:
+    """
+    从 bpy.types.Scene 直接收集所有对象（scene.objects 平铺列表，不区分集合层级）。
+
+    等价于把整个场景的所有对象一次性放入物理世界，
+    适合快速搭建测试场景或不需要按集合精确筛选时使用。
+
+    include_hidden=False 时跳过不可见对象（与 objects_from_collection 行为一致）。
+    """
+    if scene is None:
+        try:
+            scene = bpy.context.scene
+        except Exception:
+            return []
+
+    if not isinstance(scene, bpy.types.Scene):
+        return []
+
+    result = []
+    seen: set[int] = set()
+    for obj in (scene.objects or []):
+        if not _obj_is_valid(obj):
+            continue
+        if not include_hidden and not _obj_is_visible(obj):
+            continue
+        try:
+            ptr = int(obj.as_pointer())
+        except Exception:
+            continue
+        if ptr in seen:
+            continue
+        seen.add(ptr)
+        result.append(obj)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 构造 PhysicsObjectScope
 # ---------------------------------------------------------------------------
 
