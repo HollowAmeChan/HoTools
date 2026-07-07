@@ -22,6 +22,9 @@ RIGID_GENERATED_CONSTRAINT_REGISTER_PRODUCER = "physicsRigidGeneratedConstraintR
 RIGID_JOLT_WORLD_SETTING_REGISTER_PRODUCER = "physicsRigidJoltWorldSettingsRegister"
 GENERATED_CONSTRAINT_SLOT_PREFIX = "constraint.generated:"
 DEFAULT_RIGID_GRAVITY = (0.0, 0.0, -9.81)
+DEFAULT_RIGID_JOLT_MAX_BODIES = 1024
+DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS = DEFAULT_RIGID_JOLT_MAX_BODIES * 4
+DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS = DEFAULT_RIGID_JOLT_MAX_BODIES * 2
 DEFAULT_RIGID_JOLT_WORLD_SETTING_SIGNATURE = "default"
 _PI = 3.141592653589793
 
@@ -52,6 +55,29 @@ def _finite_float3(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float
     if not all(math.isfinite(v) for v in result):
         return tuple(float(v) for v in fallback)
     return result
+
+
+def _positive_int(value, fallback: int, low: int = 1, high: int = 1_000_000) -> int:
+    try:
+        number = int(value)
+    except Exception:
+        number = int(fallback)
+    if number < low:
+        number = int(fallback)
+    return max(low, min(high, number))
+
+
+def _jolt_capacity_tuple(
+    max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
+    max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+    max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
+) -> tuple[int, int, int]:
+    bodies = _positive_int(max_bodies, DEFAULT_RIGID_JOLT_MAX_BODIES)
+    # Keep <= 0 as a compatibility fallback for older node graphs that used
+    # zero to mean "derive from max_bodies"; public defaults use real values.
+    pairs = _positive_int(max_body_pairs, bodies * 4)
+    contacts = _positive_int(max_contact_constraints, bodies * 2)
+    return bodies, pairs, contacts
 
 
 def _float4(value, fallback=(1.0, 0.0, 0.0, 0.0)) -> tuple[float, float, float, float]:
@@ -121,10 +147,21 @@ def make_rigid_jolt_world_setting_properties(
     enabled: bool = True,
     source_id: str = "default",
     priority: int = 0,
+    max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
+    max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+    max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
 ) -> list[dict]:
     """构造一个可注册的 Jolt 刚体世界设置对象。"""
+    bodies, pairs, contacts = _jolt_capacity_tuple(
+        max_bodies,
+        max_body_pairs,
+        max_contact_constraints,
+    )
     return [{
         "gravity": _finite_float3(gravity, DEFAULT_RIGID_GRAVITY),
+        "max_bodies": bodies,
+        "max_body_pairs": pairs,
+        "max_contact_constraints": contacts,
         "enabled": bool(enabled),
         "source_id": str(source_id or "default"),
         "priority": int(priority),
@@ -132,8 +169,16 @@ def make_rigid_jolt_world_setting_properties(
 
 
 def _copy_jolt_world_setting_object(item: dict) -> dict:
+    bodies, pairs, contacts = _jolt_capacity_tuple(
+        item.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES),
+        item.get("max_body_pairs", 0),
+        item.get("max_contact_constraints", 0),
+    )
     return {
         "gravity": _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY),
+        "max_bodies": bodies,
+        "max_body_pairs": pairs,
+        "max_contact_constraints": contacts,
         "enabled": bool(item.get("enabled", True)),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
@@ -160,6 +205,9 @@ def rigid_jolt_world_setting_signature(item: dict) -> str:
         int(item.get("priority", 0) or 0),
         "1" if bool(item.get("enabled", True)) else "0",
         ",".join(f"{v:.8g}" for v in _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY)),
+        int(item.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES) or DEFAULT_RIGID_JOLT_MAX_BODIES),
+        int(item.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS) or DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
+        int(item.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS) or DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
     ]
     return stable_short_hash(payload, 16)
 
@@ -232,6 +280,9 @@ def selected_rigid_jolt_world_setting(world: PhysicsWorldCache) -> dict | None:
     _priority, _frame, _index, item, entry = sorted(candidates, key=lambda row: row[:3])[-1]
     return {
         "gravity": _finite_float3(item.get("gravity", DEFAULT_RIGID_GRAVITY), DEFAULT_RIGID_GRAVITY),
+        "max_bodies": int(item.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES) or DEFAULT_RIGID_JOLT_MAX_BODIES),
+        "max_body_pairs": int(item.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS) or DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
+        "max_contact_constraints": int(item.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS) or DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
         "source_id": str(item.get("source_id", "default") or "default"),
         "priority": int(item.get("priority", 0) or 0),
         "stable_id": str(entry.get("stable_id") or rigid_jolt_world_setting_stable_id(item)),
@@ -250,6 +301,21 @@ def active_rigid_jolt_world_setting_signature(world: PhysicsWorldCache) -> tuple
     )
 
 
+def active_rigid_jolt_world_capacities(world: PhysicsWorldCache) -> tuple[int, int, int]:
+    selected = selected_rigid_jolt_world_setting(world)
+    if selected is None:
+        return (
+            DEFAULT_RIGID_JOLT_MAX_BODIES,
+            DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+            DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
+        )
+    return _jolt_capacity_tuple(
+        selected.get("max_bodies", DEFAULT_RIGID_JOLT_MAX_BODIES),
+        selected.get("max_body_pairs", DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS),
+        selected.get("max_contact_constraints", DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS),
+    )
+
+
 def has_pending_jolt_world_settings(world: PhysicsWorldCache, adapter=None) -> bool:
     """检查 Jolt 刚体世界级设置是否需要同步到 Jolt adapter。"""
     if not isinstance(world, PhysicsWorldCache):
@@ -262,7 +328,7 @@ def has_pending_jolt_world_settings(world: PhysicsWorldCache, adapter=None) -> b
 
 
 def sync_rigid_jolt_world_settings(world: PhysicsWorldCache, adapter) -> bool:
-    """把当前 Jolt 刚体世界设置同步到 Jolt adapter，当前只覆盖 gravity。"""
+    """把当前 Jolt 刚体世界可热更新设置同步到 adapter；容量由 adapter 重建处理。"""
     if not isinstance(world, PhysicsWorldCache) or adapter is None:
         return False
 

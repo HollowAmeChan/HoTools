@@ -20,7 +20,11 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from ...names import RIGID_BACKEND_RESOURCE_KEY
+from ...names import (
+    RIGID_BACKEND_RESOURCE_KEY,
+    RIGID_BODY_SLOT_KIND,
+    RIGID_CONSTRAINT_SLOT_KIND,
+)
 
 if TYPE_CHECKING:
     from ..specs import RigidBodySpec, ConstraintSpec
@@ -110,6 +114,30 @@ def _vec3_tuple(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
     return result
 
 
+def _positive_int(value, fallback: int, low: int = 1, high: int = 1_000_000) -> int:
+    try:
+        number = int(value)
+    except Exception:
+        number = int(fallback)
+    if number < low:
+        number = int(fallback)
+    return max(low, min(high, number))
+
+
+def _capacity_tuple(
+    max_bodies: int = 1024,
+    max_body_pairs: int | None = None,
+    max_contact_constraints: int | None = None,
+) -> tuple[int, int, int]:
+    bodies = _positive_int(max_bodies, 1024)
+    pairs = _positive_int(max_body_pairs if max_body_pairs is not None else bodies * 4, bodies * 4)
+    contacts = _positive_int(
+        max_contact_constraints if max_contact_constraints is not None else bodies * 2,
+        bodies * 2,
+    )
+    return bodies, pairs, contacts
+
+
 # ---------------------------------------------------------------------------
 # JoltAdapter
 # ---------------------------------------------------------------------------
@@ -125,16 +153,34 @@ class JoltAdapter:
 
     BACKEND = "jolt"
 
-    def __init__(self, max_bodies: int = 1024):
+    def __init__(
+        self,
+        max_bodies: int = 1024,
+        max_body_pairs: int | None = None,
+        max_contact_constraints: int | None = None,
+    ):
         native = _load_native()
         if native is None:
             raise RuntimeError(
                 "hotools_jolt 模块未找到。请先编译 native binding（build.bat）。"
             )
+        max_bodies, max_body_pairs, max_contact_constraints = _capacity_tuple(
+            max_bodies,
+            max_body_pairs,
+            max_contact_constraints,
+        )
         self._jw = native.JoltWorld(
             max_bodies=max_bodies,
-            max_body_pairs=max_bodies * 4,
-            max_contact_constraints=max_bodies * 2,
+            max_body_pairs=max_body_pairs,
+            max_contact_constraints=max_contact_constraints,
+        )
+        self.jolt_max_bodies: int = max_bodies
+        self.jolt_max_body_pairs: int = max_body_pairs
+        self.jolt_max_contact_constraints: int = max_contact_constraints
+        self._jolt_capacity_signature: tuple[int, int, int] = (
+            max_bodies,
+            max_body_pairs,
+            max_contact_constraints,
         )
         self._body_handles: dict[str, int] = {}
         self._constraint_handles: dict[str, int] = {}
@@ -432,6 +478,9 @@ class JoltAdapter:
             "last_command_errors": list(getattr(self, "last_command_errors", []) or []),
             "jolt_world_gravity": tuple(getattr(self, "last_jolt_world_gravity", (0.0, 0.0, -9.81))),
             "jolt_world_settings_signature": str(getattr(self, "_jolt_world_settings_signature", "default") or "default"),
+            "jolt_max_bodies": int(getattr(self, "jolt_max_bodies", 0) or 0),
+            "jolt_max_body_pairs": int(getattr(self, "jolt_max_body_pairs", 0) or 0),
+            "jolt_max_contact_constraints": int(getattr(self, "jolt_max_contact_constraints", 0) or 0),
         }
 
     @property
@@ -483,21 +532,38 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
     若存在但 world generation 变化，清空 adapter 内所有 handles（不重建 JoltWorld）。
     native 不可用时返回 None。
     """
+    desired_capacity = _jolt_world_capacity_from_settings(world)
     existing = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
     if isinstance(existing, JoltAdapter) and existing._valid:
-        # generation 变化：清空 handles，下一帧的 sync 会重新注册
-        fc = world.frame_context if world.frame_context else None
-        if fc is not None and existing._last_generation != fc.generation:
-            existing._flush_handles()
-            existing._last_generation = fc.generation
-        return existing
+        if getattr(existing, "_jolt_capacity_signature", None) != desired_capacity:
+            try:
+                existing.dispose("rigid_jolt_world_capacity_changed")
+            except Exception:
+                pass
+            world.backend_resources.pop(RIGID_BACKEND_RESOURCE_KEY, None)
+            _mark_rigid_slots_for_resync(world)
+            try:
+                world.replace_required = True
+            except Exception:
+                pass
+        else:
+            # generation 变化：清空 handles，下一帧的 sync 会重新注册
+            fc = world.frame_context if world.frame_context else None
+            if fc is not None and existing._last_generation != fc.generation:
+                existing._flush_handles()
+                existing._last_generation = fc.generation
+            return existing
 
     # 已有其他 backend 就不覆盖
     if existing is not None and not isinstance(existing, JoltAdapter):
         return None
 
     try:
-        adapter = JoltAdapter()
+        adapter = JoltAdapter(
+            max_bodies=desired_capacity[0],
+            max_body_pairs=desired_capacity[1],
+            max_contact_constraints=desired_capacity[2],
+        )
         fc = world.frame_context if world.frame_context else None
         adapter._last_generation = fc.generation if fc else 0
         world.backend_resources[RIGID_BACKEND_RESOURCE_KEY] = adapter
@@ -506,3 +572,24 @@ def ensure_jolt_adapter(world) -> "JoltAdapter | None":
         import traceback
         traceback.print_exc()
         return None
+
+
+def _jolt_world_capacity_from_settings(world) -> tuple[int, int, int]:
+    try:
+        from ..implicit_objects import active_rigid_jolt_world_capacities
+        return active_rigid_jolt_world_capacities(world)
+    except Exception:
+        return _capacity_tuple()
+
+
+def _mark_rigid_slots_for_resync(world) -> None:
+    try:
+        slots = list(world.solver_slots.values())
+    except Exception:
+        return
+    for slot in slots:
+        if getattr(slot, "kind", None) in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
+            try:
+                slot.data.pop("_jolt_generation", None)
+            except Exception:
+                pass

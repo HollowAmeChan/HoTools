@@ -13,6 +13,9 @@ from ... import _Color
 from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
 from .implicit_objects import (
+    DEFAULT_RIGID_JOLT_MAX_BODIES,
+    DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+    DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
     make_rigid_generated_constraint_properties,
     make_rigid_jolt_world_setting_properties,
     register_rigid_generated_constraint_objects,
@@ -176,25 +179,35 @@ def physicsRigidReadState(
     bl_label="刚体世界-Jolt设置属性",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["重力", "启用", "来源ID", "优先级"],
+    _INPUT_NAME=["重力", "最大刚体数", "最大刚体对", "最大接触约束", "启用", "来源ID", "优先级"],
     input_init={
         "gravity": {"default_value": mathutils.Vector((0.0, 0.0, -9.81))},
+        "max_bodies": {"default_value": DEFAULT_RIGID_JOLT_MAX_BODIES, "min_value": 1, "max_value": 1000000},
+        "max_body_pairs": {"default_value": DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS, "min_value": 1, "max_value": 4000000},
+        "max_contact_constraints": {"default_value": DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS, "min_value": 1, "max_value": 2000000},
         "priority": {"min_value": -255, "max_value": 255},
     },
-    _OUTPUT_NAME=["Jolt世界设置属性"],
+    _OUTPUT_NAME=["Jolt刚体世界设置属性"],
     omni_description="""
-    构造 Jolt 刚体世界级设置对象。当前落地项是 Jolt 刚体世界 gravity；对象本身不访问 Jolt，
+    构造 Jolt 刚体世界级设置对象。当前落地项是 Jolt 刚体世界 gravity 和容量上限；
+    对象本身不访问 Jolt，
     需要交给“刚体世界-Jolt设置注册”写入 world.implicit_objects。
     """,
 )
 def physicsRigidJoltWorldSettingsProperties(
     gravity: mathutils.Vector = mathutils.Vector((0.0, 0.0, -9.81)),
+    max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
+    max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
+    max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
     enabled: bool = True,
     source_id: str = "default",
     priority: int = 0,
 ) -> list[object]:
     return make_rigid_jolt_world_setting_properties(
         gravity=_vec3(gravity, (0.0, 0.0, -9.81)),
+        max_bodies=int(max_bodies),
+        max_body_pairs=int(max_body_pairs),
+        max_contact_constraints=int(max_contact_constraints),
         enabled=bool(enabled),
         source_id=str(source_id or "default"),
         priority=int(priority),
@@ -206,11 +219,12 @@ def physicsRigidJoltWorldSettingsProperties(
     bl_label="刚体世界-Jolt设置注册",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "世界设置属性", "启用"],
+    _INPUT_NAME=["物理世界", "Jolt刚体世界设置属性", "启用"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
     omni_description="""
     把 Jolt 刚体世界级设置注册到 PhysicsWorldCache.implicit_objects。
     刚体模拟步会在同步 body/constraint 前读取 tag rigid_jolt.world_setting，并把 gravity 热更新到 Jolt adapter。
+    容量上限是 JoltWorld 构造期参数；签名变化会触发 Jolt adapter 重建并重新同步刚体/约束。
     """,
 )
 def physicsRigidJoltWorldSettingsRegister(

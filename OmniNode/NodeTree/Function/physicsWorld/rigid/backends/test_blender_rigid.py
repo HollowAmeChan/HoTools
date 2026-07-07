@@ -260,7 +260,11 @@ def test_jolt_adapter_direct():
     ground = _make_ground("T2_Ground")
     ball   = _make_obj("T2_Ball", (0, 0, 5))
 
-    a = JoltAdapter(max_bodies=32)
+    a = JoltAdapter(max_bodies=32, max_body_pairs=64, max_contact_constraints=32)
+    direct_debug = a.debug_snapshot()
+    assert direct_debug["jolt_max_bodies"] == 32
+    assert direct_debug["jolt_max_body_pairs"] == 64
+    assert direct_debug["jolt_max_contact_constraints"] == 32
     spec_g = build_rigid_body_spec(ground)
     spec_b = build_rigid_body_spec(ball)
     assert spec_g is not None and spec_b is not None
@@ -469,6 +473,11 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
     scene = bpy.context.scene
     ball = _make_obj("T3E_WorldSettingBall", (0, 0, 5), body_type="DYNAMIC")
 
+    defaults = make_rigid_jolt_world_setting_properties()
+    assert defaults[0]["max_bodies"] == 1024
+    assert defaults[0]["max_body_pairs"] == 4096
+    assert defaults[0]["max_contact_constraints"] == 2048
+
     scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
                        include_passive_collision=False, include_bone_collision=False,
                        include_mesh_collision=False)
@@ -479,6 +488,9 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
 
     props = make_rigid_jolt_world_setting_properties(
         gravity=(0, 0, 0),
+        max_bodies=32,
+        max_body_pairs=64,
+        max_contact_constraints=32,
         enabled=True,
         source_id="test_zero_gravity",
         priority=10,
@@ -500,6 +512,9 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
     debug = adapter.debug_snapshot()
     assert debug["jolt_world_gravity"] == (0.0, 0.0, 0.0)
     assert debug["jolt_world_settings_signature"] != "default"
+    assert debug["jolt_max_bodies"] == 32
+    assert debug["jolt_max_body_pairs"] == 64
+    assert debug["jolt_max_contact_constraints"] == 32
 
     cache_val, _, _ = physicsWorldCommit(world, enabled=True)
 
@@ -516,10 +531,13 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
     assert result2 is not None
     assert result2["linear_velocity"][2] < -0.01
     adapter2 = world2.backend_resources.get("rigid_solver")
-    assert adapter2 is adapter
+    assert adapter2 is not adapter
     debug2 = adapter2.debug_snapshot()
     assert debug2["jolt_world_gravity"] == (0.0, 0.0, -9.81)
     assert debug2["jolt_world_settings_signature"] == "default"
+    assert debug2["jolt_max_bodies"] == 1024
+    assert debug2["jolt_max_body_pairs"] == 4096
+    assert debug2["jolt_max_contact_constraints"] == 2048
 
     world2.omni_cache_dispose("test_world_settings")
     _del(ball)
