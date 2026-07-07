@@ -253,6 +253,21 @@ def _make_sphere_collider(name: str, location, radius: float, group: int = 1):
     return obj
 
 
+def _make_capsule_collider(name: str, location, radius: float, length: float, group: int = 1):
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    obj.location = location
+    props = obj.hotools_object_collision
+    props.enabled = True
+    props.collision_type = "CAPSULE"
+    props.radius = float(radius)
+    props.length = float(length)
+    props.primary_collision_group = int(group)
+    bpy.context.view_layer.update()
+    return obj
+
+
 def _make_plane_collider(name: str, location, normal_axis: str = "+X", group: int = 1):
     mesh = bpy.data.meshes.new(f"{name}Mesh")
     obj = bpy.data.objects.new(name, mesh)
@@ -625,6 +640,87 @@ def test_spring_vrm_collider_snapshot():
         _delete_object(armature_hit)
 
 
+def test_spring_vrm_collider_group_mask_filters_snapshot():
+    armature_free = _make_chain_armature("PW_SpringVRM_GroupFree")
+    armature_miss = _make_chain_armature("PW_SpringVRM_GroupMiss")
+    collider = None
+    try:
+        _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
+        _enable_bone_hit_radius(armature_miss, "bone_1", radius=0.15, mask=1)
+
+        _run_spring_frame(_OmniCache(), armature_free, 21, reset=True, expected_collider_count=0)
+        bpy.context.view_layer.update()
+        free_tail = _tail_world(armature_free, "bone_1").copy()
+
+        collider = _make_sphere_collider(
+            "PW_SpringVRM_GroupMismatchCollider",
+            (free_tail.x - 0.05, free_tail.y, free_tail.z),
+            0.35,
+            group=2,
+        )
+        _run_spring_frame(
+            _OmniCache(),
+            armature_miss,
+            22,
+            reset=True,
+            extra_objects=[collider],
+            include_passive_collision=True,
+            expected_collider_count=1,
+        )
+        bpy.context.view_layer.update()
+        miss_tail = _tail_world(armature_miss, "bone_1").copy()
+
+        assert (miss_tail - free_tail).length < 1.0e-4, (
+            f"group mismatch should keep bone_1 tail on the no-collider path, free={tuple(free_tail)} miss={tuple(miss_tail)}"
+        )
+    finally:
+        if collider is not None:
+            _delete_object(collider)
+        _delete_object(armature_free)
+        _delete_object(armature_miss)
+
+
+def test_spring_vrm_capsule_collider_snapshot():
+    armature_free = _make_chain_armature("PW_SpringVRM_NoCapsule")
+    armature_hit = _make_chain_armature("PW_SpringVRM_WithCapsule")
+    capsule = None
+    try:
+        _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
+        _enable_bone_hit_radius(armature_hit, "bone_1", radius=0.15, mask=1)
+
+        _run_spring_frame(_OmniCache(), armature_free, 25, reset=True, expected_collider_count=0)
+        bpy.context.view_layer.update()
+        free_tail = _tail_world(armature_free, "bone_1").copy()
+
+        capsule = _make_capsule_collider(
+            "PW_SpringVRM_Capsule",
+            (free_tail.x - 0.12, free_tail.y, free_tail.z),
+            0.25,
+            1.0,
+            group=1,
+        )
+        _run_spring_frame(
+            _OmniCache(),
+            armature_hit,
+            26,
+            reset=True,
+            extra_objects=[capsule],
+            include_passive_collision=True,
+            expected_collider_count=1,
+        )
+        bpy.context.view_layer.update()
+        hit_tail = _tail_world(armature_hit, "bone_1").copy()
+
+        assert hit_tail.x > free_tail.x + 0.03, (
+            f"capsule collider should push bone_1 tail away from the capsule axis, free={tuple(free_tail)} hit={tuple(hit_tail)}"
+        )
+    finally:
+        if capsule is not None:
+            _delete_object(capsule)
+        _delete_object(armature_free)
+        _delete_object(armature_hit)
+
+
 def test_spring_vrm_plane_collider_snapshot():
     armature_free = _make_chain_armature("PW_SpringVRM_NoPlane")
     armature_hit = _make_chain_armature("PW_SpringVRM_WithPlane")
@@ -715,6 +811,8 @@ check("SpringBone same-frame cached result semantics", test_spring_vrm_same_fram
 check("SpringBone spec change prunes stale slot", test_spring_vrm_spec_change_prunes_stale_slot)
 check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
 check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)
+check("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot)
+check("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule_collider_snapshot)
 check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
 check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)
 

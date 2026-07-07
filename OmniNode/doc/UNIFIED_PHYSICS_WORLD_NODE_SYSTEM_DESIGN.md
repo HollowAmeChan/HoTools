@@ -623,7 +623,7 @@ SpringBone VRM 现在有自己的 collision source cache 和 C++ arrays cache。
 - chain state 放到 spring solver slot。
 - `frame` 和跳帧恢复策略读取 world frame context。
 - root hard pin 仍由 chain 输入决定，不放进 world。
-- 当前最小链路已覆盖 `VRM骨链属性 -> VRM骨链对象注册 -> SpringBone VRM模拟步 -> 物理写回`，并有 Blender 后台测试验证 native step、PoseBone 写回、连续帧状态和 collider snapshot 投影。
+- 当前最小链路已覆盖 `VRM骨链属性 -> VRM骨链对象注册 -> SpringBone VRM模拟步 -> 物理写回`，并有 Blender 后台测试验证 native step、PoseBone 写回、连续帧状态、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 的 PoseBone 复位，以及 collider snapshot 投影。
 
 ### Mesh XPBD 参考迁移
 
@@ -1130,10 +1130,11 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 - 真实 runtime cache 生命周期 smoke 已覆盖：Physics World Commit 输出的 replace/mutate intent 进入 `OmniRuntimeState.write_cache()`；`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 `PhysicsWorldCache`、rigid slots、`backend_resources["rigid_solver"]`，并清空 writeback delta。
 - 帧语义 smoke 已覆盖：连续 60 帧、same-frame 重复求值、`2 -> 1` 跳回首帧、显式 reset、scope 删除刚体、静态体 transform dirty、运动学体 transform dirty、shape 参数 dirty、约束目标 dirty。测试会验证 generation/restart、Jolt resync、result stream 和 writeback delta。
 
-**Phase 5 仍缺的 P0：**
+**Phase 5 P0 已关闭：**
 
-1. **非 Object 写回 contract。** Jolt 已证明 Object.delta 写回；SpringBone/BoneCloth 还需要 PoseBone / matrix_basis 的统一写回模式，MC2 需要 mesh delta attribute / shape key / modifier 参数的统一写回模式。这里不要求 Jolt 实现，但要求 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 写清 result -> writeback 的公共结构。
-2. **迁移第一条 solver 的最小 vertical slice。** 不要等所有 Jolt contact/query/constraint lambda 完成。Phase 5 退出前应选 SpringBone VRM 或 MC2 做一个极窄迁移：进入 `world.solver_slots`、读取 `world.frame_context`、发布 result stream，但先只覆盖最小输出和统一 debug，不一次性搬完整功能。
+1. **非 Object 写回 contract 已落地到 PoseBone。** SpringBone VRM 通过 `spring_vrm_pose` result stream 和 `physicsWorld.writeback -> PoseBone.matrix_basis` 写回，不在 solver step 中直接写 bpy。`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 world、slot 和 writeback cleanup，并把已写过的 PoseBone matrix_basis 复位。
+2. **第一条非 Jolt solver vertical slice 已落地。** `physicsWorld/spring_vrm/` 已进入 `world.solver_slots`，读取 `world.frame_context` 与 `world.collider_snapshot`，调用 C++ native step，发布 `spring_vrm_pose` / `spring_vrm_stats`，并由统一 writeback 消费。后台测试覆盖 native step、same-frame、spec prune、runtime cache lifecycle、sphere / capsule / plane / box collider 投影和 group mask 过滤。
+3. **当前 Jolt 能力不是 Phase 5 退出阻塞项。** Jolt 已作为刚体 backend 验证 world owner、native resource、result stream、Object delta writeback 和 runtime cache lifecycle；contact/query/lambda 等能力应进入后续 Jolt capability 阶段。
 
 **不是 Phase 5 退出阻塞项，可放到 Jolt 后续能力阶段：**
 
@@ -1145,11 +1146,11 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 **是否可以开始其它 solver 重写：**
 
-可以开始，但只能开始“world-aware vertical slice”，不能开始大规模功能搬迁。推荐顺序：
+Phase 5 的 world-aware vertical slice 已可作为迁移样板。后续推荐顺序：
 
-1. **先做 SpringBone VRM 的 world-aware rewrite vertical slice。** 它已经有 `SPRINGBONE_VRM_PIPELINE_REHEARSAL.md` 和 `physicsWorld/spring_vrm/` 新入口，适合验证 PoseBone result/writeback contract、per-armature slot、collider scope 收敛。旧 `_SpringBoneVRM` 只作为审查和数值参考，不作为兼容层迁移。
-2. **再做 MC2 MeshCloth / BoneCloth。** 它们更能验证 native resident state、mesh delta 写回和大数组 result/writeback，但改动面更大。
-3. **最后做跨 solver 交互。** 例如 cloth 读取 rigid collider、spring bone 读取 rigid body collider，应走显式 bridge/result channel，不让 solver 互读私有 slot。
+1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** 现有 35 参数单次调用已经可测，下一步是把 static arrays / dynamic arrays / result readback 分层，减少每帧 pack/unpack。
+2. **再做 MC2 MeshCloth / BoneCloth 的最小 world-aware slice。** 它们更能验证 native resident state、mesh delta 写回和大数组 result/writeback，但改动面更大。
+3. **最后做跨 solver 交互。** 例如 cloth 读取 rigid collider、spring bone 发布/消费动态 collider，应走显式 exchange/result channel，不让 solver 互读私有 slot。
 
 新迁移 solver 只保留 C++ / native 计算路径。Python 层负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化，不再维护 Python / C++ 两套运行时 solver，也不再按 backend 拆两套公开节点。
 
@@ -1380,4 +1381,4 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
 
-Phase 5 的声明样板缺口已关闭。剩余重点是 runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone / Mesh 类非 Object 写回测试。
+Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。剩余重点是 SpringBone native context 双调用模型、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/lambda 能力边界。

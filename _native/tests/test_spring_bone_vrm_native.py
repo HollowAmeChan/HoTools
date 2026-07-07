@@ -141,6 +141,38 @@ def test_spring_bone_vrm_plane_collider_pushes_tail():
     assert _tail(args)[0] > 0.1
 
 
+def test_spring_bone_vrm_capsule_collider_pushes_tail():
+    args = _solve(_base_args(
+        gravity_power=0.0,
+        hit_radius=0.2,
+        collided_by_groups=1,
+        collider_types=(1,),
+        collider_groups=(1,),
+        collider_centers=((0.1, 0.0, 1.0),),
+        collider_segment_a=((0.1, -0.5, 1.0),),
+        collider_segment_b=((0.1, 0.5, 1.0),),
+        collider_radii=(0.2,),
+    ))
+    tail = _tail(args)
+    assert tail[0] < -0.1
+    assert abs(float(np.linalg.norm(tail)) - 1.0) < 1.0e-5
+
+
+def test_spring_bone_vrm_group_mask_skips_unmatched_collider():
+    args = _solve(_base_args(
+        gravity_power=0.0,
+        hit_radius=0.2,
+        collided_by_groups=1,
+        collider_types=(0,),
+        collider_groups=(2,),
+        collider_centers=((0.0, 0.0, 1.0),),
+        collider_segment_a=((0.0, 0.0, 0.0),),
+        collider_segment_b=((0.0, 0.0, 0.0),),
+        collider_radii=(0.35,),
+    ))
+    assert np.allclose(_tail(args), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
+
+
 def test_spring_bone_vrm_box_collider_pushes_tail():
     args = _solve(_base_args(
         gravity_power=0.0,

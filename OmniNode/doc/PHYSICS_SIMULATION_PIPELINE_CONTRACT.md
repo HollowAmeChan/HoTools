@@ -360,7 +360,8 @@ Physics World Begin
 
 - `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、`spring_vrm_pose` result stream、统一 PoseBone writeback。
 - SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并从每根模拟骨的 `Bone.hotools_collision` 读取 hit radius 与 collided mask。
-- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留和 sphere / plane / box collider snapshot 投影。
+- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box collider snapshot 投影和 group mask 过滤。
+- `_native/tests/test_spring_bone_vrm_native.py` 已提供 Python 3.13 native 直连测试，覆盖基础重力步进、capsule / plane / box collider 投影、group mask 过滤和 binding 参数 shape 校验。
 - SpringBone native ABI 沿用公共 collider type code：`SPHERE=0`、`CAPSULE=1`、`PLANE=2`、`BOX=3`。这些常量由 `physicsWorld/names.py` 集中保存，避免 Python wrapper、C++ solver 和后续 solver 迁移错位。
 
 `rigid_body_commands` 建议 payload：
@@ -976,6 +977,8 @@ physicsWorld/utils/
 
 当前 rigid/Jolt 后台 smoke 已覆盖第 1 项：`physicsWorld/rigid/backends/test_blender_rigid.py` 通过真实 `OmniRuntimeState.write_cache()` 提交 `PhysicsWorldCommit` 的 replace/mutate intent，并验证 `delete_cache()` / `clear_all()` 会释放 world、Jolt adapter、solver slots，同时清空 Object delta writeback。帧语义 smoke 已覆盖连续帧、same-frame、跳帧/首帧回退、reset、scope prune、static/kinematic transform dirty、shape dirty、constraint target dirty 和 dispose。
 
+当前 SpringBone 后台 smoke 已补齐 PoseBone 类非 Object 写回：`physicsWorld/spring_vrm/test_blender_spring_vrm.py` 通过真实 runtime cache 路径验证 `spring_vrm` world slot、native step、result stream、统一 `PoseBone.matrix_basis` 写回、same-frame 复发、spec prune、`delete_cache()` / `clear_all()` 释放与 PoseBone 复位。它证明第 2、3、4、6、8 项不只适用于 Jolt/Object delta，也适用于非 Object 写回 solver。
+
 迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
 
 ```text
@@ -988,7 +991,7 @@ world.begin
   -> world.commit/cache.write
 ```
 
-第一条明确迁移 SpringBone VRM，因为它比较小但覆盖面完整：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、多骨架分组都能被验证。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
+第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
 
 优先预演对象：
 
@@ -1061,7 +1064,7 @@ rigid.jolt_step
 
 ## 当前建议
 
-从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。先以 VRM SpringBone 做预演，把一条稳定 solver 的内部阶段映射到本文契约，确认职责拆分是否真的减少重复转换、提高可读性，并暴露出更新频率和 dirty 策略差异。
+从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；下一步应把它的 35 参数单次 native 调用收敛为 native context 双调用模型，并把同一 contract 推到 MC2 / BoneCloth。
 
 在文档和 timing 稳定后，再决定：
 
