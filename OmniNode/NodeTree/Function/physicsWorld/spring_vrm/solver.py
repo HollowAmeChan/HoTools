@@ -54,7 +54,7 @@ def register_spring_vrm_specs(
             slot.data["spec"] = spec
             slot.data["declaration"] = SPRING_VRM_SOLVER_DECLARATION
             slot.data.setdefault("frame_state", {})
-            slot.data.setdefault("native_context", {})
+            slot.data.setdefault("_native_ctxs", {})
             slot.data.setdefault("writeback_plan", {})
             _install_slot_debug_snapshot(slot, spec)
 
@@ -113,7 +113,7 @@ def step_spring_vrm(
             slot.data["spec"] = spec
             slot.data["declaration"] = SPRING_VRM_SOLVER_DECLARATION
             slot.data.setdefault("frame_state", {})
-            slot.data.setdefault("native_context", {})
+            slot.data.setdefault("_native_ctxs", {})
             slot.data.setdefault("writeback_plan", {})
             _install_slot_debug_snapshot(slot, spec)
 
@@ -192,7 +192,7 @@ def _install_slot_debug_snapshot(slot, spec: SpringVRMSolverSpec) -> None:
 
 def _slot_debug_snapshot(slot, spec: SpringVRMSolverSpec) -> dict:
     snapshot = spec.debug_dict()
-    snapshot["native_context"] = native_context_debug_dict(slot.data.get("native_context"))
+    snapshot["native_context"] = native_context_debug_dict(slot.data.get("_native_ctxs"))
     frame_state = slot.data.get("frame_state")
     if isinstance(frame_state, dict):
         chains = frame_state.get("chains")
@@ -209,7 +209,7 @@ def _native_context_stats_for_slots(world: PhysicsWorldCache, slot_ids: list[str
         slot = world.solver_slots.get(slot_id)
         if slot is None:
             continue
-        contexts.append(native_context_stats_dict(slot.data.get("native_context")))
+        contexts.append(native_context_stats_dict(slot.data.get("_native_ctxs")))
     return {
         "available": any(bool(item.get("available", False)) for item in contexts),
         "slot_count": len(contexts),

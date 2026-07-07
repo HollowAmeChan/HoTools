@@ -18,6 +18,36 @@ physicsWorldCommit:
         # ... solver kernel ...
     finally:
         world.release_write(solver_id)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# physicsWorldBegin 可以内置的内容边界（严格约束，禁止蔓延）
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# physicsWorldBegin 的职责是"从 scope 对象读取 PhysicsTools 属性，构建公共上下文"。
+# 这个职责允许内置的内容仅限于：
+#
+#   ✅ 允许（属于 scope 扫描 + PhysicsTools 属性解析的范畴）：
+#     - 从 Object.hotools_object_collision 构建 collider source
+#     - 从 Bone.hotools_collision 构建 bone collider source
+#     - 从 Object.hotools_rigid_body 构建 RigidBodySpec（slot 注册）
+#     - 从 Object.hotools_rigid_constraint 构建 ConstraintSpec（slot 注册）
+#     - collider snapshot 构建（汇总以上 source）
+#     - scope key 计算（检测 scope 变化触发 restart）
+#
+#   ❌ 禁止内置（属于 solver 职责，必须由 solver 节点自己处理）：
+#     - SpringBone chain 设置（hotools_collision.spring_root 或任何 VRM 链设置）
+#     - MC2 mesh cloth 设置（hotools_mesh_collision 里的布料参数）
+#     - MC2 bone cloth 设置（MC2 骨骼链拓扑）
+#     - 任何 solver 的 spec build 逻辑（只要不是 "从 PhysicsTools 读物理属性"）
+#     - 任何 solver 的 native context / handle 创建
+#     - 任何 solver 的 result stream 发布
+#
+# 判断标准：如果新增的内容在 ARCHITECTURE.md 里写的是
+#   "节点图不应该知道这些业务参数"，就不该放进 Begin。
+#
+# 违反这条边界的后果：Begin 会逐渐变成"知道所有 solver"的上帝节点，
+# 破坏"Begin 不应该知道 MeshCloth/SpringBone 业务参数"的架构原则。
+# ──────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
@@ -706,8 +736,30 @@ def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) ->
     遍历 scope.objects，把启用了 hotools_rigid_body / hotools_rigid_constraint
     的对象自动注册到 world solver slot。
 
-    这和碰撞 snapshot 同级——都是"从 scope 读取 PhysicsTools 属性"，
-    不需要用户额外接节点。
+    为什么这里可以内置（不违反 Begin 边界）
+    ─────────────────────────────────────────
+    hotools_rigid_body / hotools_rigid_constraint 是 PhysicsTools 的持久化属性，
+    挂在 Blender Object 上，与 hotools_object_collision（passive collider）性质完全相同：
+    都是"scope 对象携带的物理类型标记"，不是 solver 的业务逻辑。
+    Begin 的职责正是"扫描 scope 对象并读取这些属性，构建公共上下文（spec slot + collider snapshot）"。
+
+    严格边界（何时不允许添加新的内置逻辑）
+    ─────────────────────────────────────────
+    如果某个域的"属性读取"满足以下任意一条，就 **不能** 内置进此函数：
+
+      ❌ 读取的是 solver 的私有参数（如 SpringBone 链的 stiffness/drag，MC2 骨链拓扑）
+      ❌ 包含 solver 的 native handle 创建或 native context 管理
+      ❌ 包含 solver 的 spec build 业务逻辑（超过简单读取 PhysicsTools 属性）
+      ❌ 发布 result stream 或写 Blender 数据
+      ❌ 需要感知其它 solver 的状态或执行顺序
+
+    通过以上标准，以下内容永远不应进入此函数：
+      - SpringBone VRM 链设置（physicsWorld/spring_vrm/）
+      - MC2 MeshCloth / BoneCloth 设置（physicsMC2*/）
+      - 任何 "xxx_solver_spec" 的业务构建逻辑（除 rigid_body / rigid_constraint）
+
+    追加新域时应先在 ARCHITECTURE.md「physicsWorldBegin 可以内置的内容边界」一节补充判定结论，
+    再动代码。
     """
     try:
         from .rigid.specs import build_rigid_body_spec, build_constraint_spec
