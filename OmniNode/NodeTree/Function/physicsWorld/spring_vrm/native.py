@@ -61,9 +61,11 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
         frame_state["spec_hash"] = spec.spec_hash
         frame_state["chains"] = {}
 
-    armature = spec.armature
-    if armature is None or getattr(armature, "pose", None) is None:
-        return 0, 0.0, ["armature 无效"]
+    # 渲染期间 Blender 可能已释放上一帧的评估资源，先校验并刷新引用，
+    # 再使用 armature，防止访问已释放的 C 层指针导致崩溃
+    armature = _get_valid_armature(spec)
+    if armature is None:
+        return 0, 0.0, ["armature 无效或已被 Blender 释放"]
 
     chain_states = frame_state.setdefault("chains", {})
     published = 0
@@ -208,6 +210,58 @@ def _step_chain(module, world, spec, chain, chain_state: dict, dt: float, subste
 
     chain_state["last_results"] = last_results
     return published
+
+
+def _get_valid_armature(spec):
+    """获取 spec 上有效的 armature bpy 引用。
+
+    若当前引用已失效（Blender 渲染时释放了评估资源），则尝试通过
+    armature_ptr + armature_data_ptr 双指针重新解析活体对象，
+    并把结果回写到 spec.armature 以便后续帧复用。
+    """
+    armature = getattr(spec, "armature", None)
+
+    # 快速路径：引用有效且 pose 可访问
+    if armature is not None:
+        try:
+            pose = armature.pose
+            if pose is not None:
+                # 指针仍与记录匹配，直接使用
+                try:
+                    ptr = getattr(spec, "armature_ptr", 0) or 0
+                    data_ptr = getattr(spec, "armature_data_ptr", 0) or 0
+                    if ptr > 0 and armature.as_pointer() == ptr:
+                        data = getattr(armature, "data", None)
+                        if data is not None and data.as_pointer() == data_ptr:
+                            return armature
+                except Exception:
+                    return armature  # 无法校验指针时，能用就用
+        except ReferenceError:
+            pass  # 引用已失效，走下方重解析
+        except Exception:
+            pass
+
+    # 慢速路径：按双指针重新查找
+    try:
+        from ....render_safety import resolve_armature_by_ptr
+        ptr = int(getattr(spec, "armature_ptr", 0) or 0)
+        data_ptr = int(getattr(spec, "armature_data_ptr", 0) or 0)
+        fresh = resolve_armature_by_ptr(ptr, data_ptr)
+        if fresh is not None:
+            try:
+                # 回写以加速后续帧
+                spec.armature = fresh
+            except Exception:
+                pass
+            # 同步刷新所有 chain spec 的引用
+            for chain in getattr(spec, "chains", ()) or ():
+                try:
+                    chain.armature = fresh
+                except Exception:
+                    pass
+        return fresh
+    except Exception:
+        return None
 
 
 def _chain_records(armature, chain) -> list[dict]:

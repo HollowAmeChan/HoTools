@@ -24,6 +24,8 @@ TREE_ID_NAME = "OmniNodeTree"
 # tree key -> CompiledGraph. Keeps compile artifacts for multiple OmniNodeTree datablocks.
 _COMPILED_TREE_CACHE = {}
 _FRAME_HANDLER_RUNNING = False
+# 渲染期间为 True；frame_change_post 触发时据此决定是否强制刷新 bpy 引用
+_IS_RENDERING = False
 
 
 def _tree_cache_key(tree):
@@ -67,6 +69,10 @@ def _omni_frame_change_post(scene, depsgraph=None):
             if not getattr(tree, "is_frame_run_enabled", False):
                 continue
             try:
+                # 渲染期间每帧触发前，先通知物理系统刷新 bpy 对象引用，
+                # 防止上一渲染帧释放评估资源后悬空指针导致崩溃
+                if _IS_RENDERING:
+                    _notify_render_frame_start()
                 tree.run_frame_cached()
             except Exception as exc:
                 try:
@@ -79,6 +85,38 @@ def _omni_frame_change_post(scene, depsgraph=None):
         _FRAME_HANDLER_RUNNING = False
 
 
+def _notify_render_frame_start():
+    """渲染期间每帧触发，通知物理模块刷新 bpy 引用，避免跨帧悬空指针崩溃。"""
+    try:
+        from .render_safety import on_render_frame_start
+        on_render_frame_start()
+    except Exception:
+        pass
+
+
+@persistent
+def _omni_render_pre(scene):
+    """渲染开始前：设置渲染标志，并清除物理世界缓存中的直接 bpy 引用。"""
+    global _IS_RENDERING
+    _IS_RENDERING = True
+    _notify_render_frame_start()
+
+
+@persistent
+def _omni_render_complete(scene):
+    """渲染正常结束：清除渲染标志。"""
+    global _IS_RENDERING
+    _IS_RENDERING = False
+
+
+@persistent
+def _omni_render_cancel(scene):
+    """渲染被取消：清除渲染标志，同时清理物理缓存防止脏状态残留。"""
+    global _IS_RENDERING
+    _IS_RENDERING = False
+    _notify_render_frame_start()
+
+
 def _ensure_frame_handler():
     handlers = bpy.app.handlers.frame_change_post
     if _omni_frame_change_post not in handlers:
@@ -89,6 +127,27 @@ def _remove_frame_handler():
     handlers = bpy.app.handlers.frame_change_post
     while _omni_frame_change_post in handlers:
         handlers.remove(_omni_frame_change_post)
+
+
+def _ensure_render_handlers():
+    """注册渲染生命周期 handlers，防止渲染期间 bpy 引用失效崩溃。"""
+    for handler_list, func in (
+        (bpy.app.handlers.render_pre, _omni_render_pre),
+        (bpy.app.handlers.render_complete, _omni_render_complete),
+        (bpy.app.handlers.render_cancel, _omni_render_cancel),
+    ):
+        if func not in handler_list:
+            handler_list.append(func)
+
+
+def _remove_render_handlers():
+    for handler_list, func in (
+        (bpy.app.handlers.render_pre, _omni_render_pre),
+        (bpy.app.handlers.render_complete, _omni_render_complete),
+        (bpy.app.handlers.render_cancel, _omni_render_cancel),
+    ):
+        while func in handler_list:
+            handler_list.remove(func)
 
 
 class OmniNodeTree(NodeTree):
@@ -382,12 +441,14 @@ def register():
         bpy.utils.register_class(item)
     register_object_mount_props()
     _ensure_frame_handler()
+    _ensure_render_handlers()
     bpy.types.NODE_PT_node_tree_properties.append(draw_in_NODE_PT_node_tree_properties)
 
 
 def unregister():
     bpy.types.NODE_PT_node_tree_properties.remove(draw_in_NODE_PT_node_tree_properties)
     _remove_frame_handler()
+    _remove_render_handlers()
     # 清空所有持久化寄存器，释放 bpy 引用后再清 dict
     for graph in _COMPILED_TREE_CACHE.values():
         try:
