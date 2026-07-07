@@ -112,6 +112,16 @@ for _pkg, _dir in _pkg_dirs:
         _m.__path__ = [_dir]; _m.__package__ = _pkg
         sys.modules[_pkg] = _m
 
+_rt_key = "HoTools.OmniNode.NodeTree.OmniRuntimeState"
+if _rt_key not in sys.modules:
+    _rt_path = os.path.join(_NT_DIR, "OmniRuntimeState.py")
+    _rt_spec = importlib.util.spec_from_file_location(_rt_key, _rt_path)
+    _rt_mod = importlib.util.module_from_spec(_rt_spec)
+    _rt_mod.__package__ = "HoTools.OmniNode.NodeTree"
+    sys.modules[_rt_key] = _rt_mod
+    _rt_spec.loader.exec_module(_rt_mod)
+OmniRuntimeState = sys.modules[_rt_key]
+
 # OmniNodeSocketMapping stub（world.py: from ...OmniNodeSocketMapping import _OmniCache）
 # 真实路径：NodeTree/OmniNodeSocketMapping.py → 注册为 HoTools.OmniNode.NodeTree.OmniNodeSocketMapping
 _nt_omni_key = "HoTools.OmniNode.NodeTree.OmniNodeSocketMapping"
@@ -119,12 +129,13 @@ if _nt_omni_key not in sys.modules:
     _sm = _types.ModuleType(_nt_omni_key)
     _sm.__package__ = "HoTools.OmniNode.NodeTree"
     class _OmniCache:
-        """stub：满足 world.py 中 hasattr(raw, 'value') 检查。"""
-        def __init__(self, value=None): self.value = value
+        """stub：用真实 runtime intent，避免无头测试绕过 Cache Write 语义。"""
+        def __new__(cls, value=None):
+            return OmniRuntimeState.cache_replace(value)
         @classmethod
-        def replace(cls, v): return cls(v)
+        def replace(cls, v): return OmniRuntimeState.cache_replace(v)
         @classmethod
-        def mutate(cls, v): return cls(v)
+        def mutate(cls, v): return OmniRuntimeState.cache_mutate(v)
     _sm._OmniCache = _OmniCache
     class _OmniBone(dict):
         """stub：满足 spring_vrm 结果模块导入链。"""
@@ -700,6 +711,101 @@ def test_dispose_and_rebuild():
     _del(ball)
 
 
+def _runtime_cache_rigid_step(scene, cache_state, scope, frame):
+    scene.frame_set(frame)
+    world, _, _, restart = physicsWorldBegin(
+        cache_state=cache_state,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    step_rigid_bodies(world, enabled=True)
+    write_count = apply_all_writebacks(world, restart=restart)
+    cache_value, _, _ = physicsWorldCommit(world, enabled=True)
+    return world, cache_value, write_count
+
+
+def _assert_delta_cleared(obj, label):
+    delta = getattr(obj, "delta_location", (0.0, 0.0, 0.0))
+    assert abs(float(delta[0])) < 1e-6, f"{label} delta_location.x 未清零"
+    assert abs(float(delta[1])) < 1e-6, f"{label} delta_location.y 未清零"
+    assert abs(float(delta[2])) < 1e-6, f"{label} delta_location.z 未清零"
+
+
+def _assert_world_disposed(world, adapter, label):
+    assert not bool(getattr(world, "valid", True)), f"{label} world.valid 应为 False"
+    assert not world.solver_slots, f"{label} solver_slots 应清空"
+    assert not world.backend_resources, f"{label} backend_resources 应清空"
+    assert not world.implicit_objects, f"{label} implicit_objects 应清空"
+    assert not world.result_streams, f"{label} result_streams 应清空"
+    if adapter is not None:
+        assert not bool(getattr(adapter, "_valid", True)), f"{label} JoltAdapter 应失效"
+
+
+def test_runtime_cache_delete_and_clear_all_dispose():
+    scene = bpy.context.scene
+    root_tree = scene
+    cache_key = "test_rigid_physics_world_runtime_cache"
+    OmniRuntimeState.clear_all()
+
+    ball = _make_obj("T5B_RuntimeCacheBall", (0, 0, 4), body_type="DYNAMIC")
+    scope = make_scope([ball], include_rigid_body=True, include_rigid_constraint=False,
+                       include_passive_collision=False, include_bone_collision=False,
+                       include_mesh_collision=False)
+
+    ctx = OmniRuntimeState.begin_run(root_tree)
+    hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+    assert not hit and cache_state is None
+    world, cache_value, write_count = _runtime_cache_rigid_step(scene, cache_state, scope, 1)
+    assert write_count == 1
+    adapter = world.backend_resources.get("rigid_solver")
+    assert adapter is not None and adapter._valid
+    OmniRuntimeState.write_cache(ctx, cache_key, cache_value)
+    OmniRuntimeState.finish_run(ctx)
+
+    ctx = OmniRuntimeState.begin_run(root_tree)
+    hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+    assert hit and cache_state is world, "dispose-owner cache read 应返回同一个 world owner"
+    world2, cache_value2, write_count2 = _runtime_cache_rigid_step(scene, cache_state, scope, 2)
+    assert world2 is world
+    assert write_count2 == 1
+    assert abs(float(ball.delta_location.z)) > 1e-6, "写回应产生非零 delta，供 delete 清理验证"
+    OmniRuntimeState.write_cache(ctx, cache_key, cache_value2)
+    OmniRuntimeState.finish_run(ctx)
+
+    ctx = OmniRuntimeState.begin_run(root_tree)
+    deleted = OmniRuntimeState.delete_cache(ctx, cache_key)
+    assert deleted == 1
+    OmniRuntimeState.finish_run(ctx)
+    _assert_world_disposed(world, adapter, "Cache Delete")
+    _assert_delta_cleared(ball, "Cache Delete")
+
+    ctx = OmniRuntimeState.begin_run(root_tree)
+    hit, _cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+    assert not hit
+    OmniRuntimeState.finish_run(ctx)
+
+    ball2 = _make_obj("T5C_RuntimeClearAllBall", (0, 0, 4), body_type="DYNAMIC")
+    scope2 = make_scope([ball2], include_rigid_body=True, include_rigid_constraint=False,
+                        include_passive_collision=False, include_bone_collision=False,
+                        include_mesh_collision=False)
+
+    ctx = OmniRuntimeState.begin_run(root_tree)
+    world_clear, cache_value_clear, write_count_clear = _runtime_cache_rigid_step(scene, None, scope2, 1)
+    assert write_count_clear == 1
+    adapter_clear = world_clear.backend_resources.get("rigid_solver")
+    assert adapter_clear is not None and adapter_clear._valid
+    assert abs(float(ball2.delta_location.z)) > 1e-6
+    OmniRuntimeState.write_cache(ctx, cache_key, cache_value_clear)
+    OmniRuntimeState.finish_run(ctx)
+
+    OmniRuntimeState.clear_all()
+    _assert_world_disposed(world_clear, adapter_clear, "clear_all")
+    _assert_delta_cleared(ball2, "clear_all")
+
+    _del(ball, ball2)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -717,6 +823,7 @@ if __name__ == "__main__":
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
+    check("runtime cache delete + clear_all dispose", test_runtime_cache_delete_and_clear_all_dispose)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
