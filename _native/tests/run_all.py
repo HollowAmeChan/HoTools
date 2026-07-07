@@ -1,22 +1,32 @@
-"""
-快速回归测试运行器：逐个执行所有 test_*.py，汇报通过/失败。
-用法：
-  python run_all.py
-"""
-import sys
-import os
+"""Run native Python regression tests for the current Python ABI."""
+
+from __future__ import annotations
+
 import importlib.util
+import os
+import sys
 import traceback
 
-# 把 _Lib/py311 加到路径，让 HotoolsPackage 可被 import
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-LIB = os.path.join(HERE, "..", "..", "..", "_Lib", "py311")
+PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
+LIB = os.environ.get(
+    "HOTOOLS_NATIVE_TEST_DIR",
+    os.path.join(HERE, "..", "..", "_Lib", PY_LIB, "HotoolsPackage"),
+)
 sys.path.insert(0, os.path.normpath(LIB))
 
 tests = sorted(f for f in os.listdir(HERE) if f.startswith("test_") and f.endswith(".py"))
 
-passed = []
-failed = []
+passed: list[str] = []
+failed: list[str] = []
+skipped: list[str] = []
 
 for fname in tests:
     path = os.path.join(HERE, fname)
@@ -24,25 +34,46 @@ for fname in tests:
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)
-        # 找并运行所有 test_* 函数
-        fns = [v for k, v in vars(mod).items() if k.startswith("test_") and callable(v)]
-        for fn in fns:
-            try:
-                fn()
-            except Exception as e:
-                failed.append(f"{fname}::{fn.__name__}: {e}")
-                traceback.print_exc()
-                continue
-        passed.append(fname)
-    except Exception as e:
-        failed.append(f"{fname}: {e}")
+    except ModuleNotFoundError as exc:
+        if getattr(exc, "name", "") == "bpy":
+            skipped.append(f"{fname}: requires bpy")
+            continue
+        failed.append(f"{fname}: {exc}")
         traceback.print_exc()
+        continue
+    except Exception as exc:
+        failed.append(f"{fname}: {exc}")
+        traceback.print_exc()
+        continue
 
-print(f"\n{'='*50}")
-print(f"通过: {len(passed)}  失败: {len(failed)}")
+    file_failed = False
+    functions = [
+        value
+        for name, value in vars(mod).items()
+        if name.startswith("test_") and callable(value)
+    ]
+    for fn in functions:
+        try:
+            fn()
+        except Exception as exc:
+            failed.append(f"{fname}::{fn.__name__}: {exc}")
+            file_failed = True
+            traceback.print_exc()
+    if not file_failed:
+        passed.append(fname)
+
+print(f"\n{'=' * 50}")
+print(f"passed: {len(passed)}  skipped: {len(skipped)}  failed: {len(failed)}")
+if skipped:
+    print("skipped:")
+    for item in skipped:
+        print(f"  SKIP {item}")
 if failed:
-    print("失败项:")
-    for f in failed:
-        print(f"  ✗ {f}")
+    print("failed:")
+    for item in failed:
+        print(f"  FAIL {item}")
 else:
-    print("全部通过 ✓")
+    print("all runnable tests passed")
+
+if failed:
+    raise SystemExit(1)

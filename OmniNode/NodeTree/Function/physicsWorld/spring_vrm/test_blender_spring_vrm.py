@@ -17,7 +17,8 @@ import types as _types
 
 _ADDONS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons"
 _HOTOOLS = os.path.join(_ADDONS, "HoTools")
-_NATIVE_LIB = os.path.join(_HOTOOLS, "_Lib", "py311", "HotoolsPackage")
+_PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
+_NATIVE_LIB = os.path.join(_HOTOOLS, "_Lib", _PY_LIB, "HotoolsPackage")
 _NT_DIR = os.path.join(_HOTOOLS, "OmniNode", "NodeTree")
 _PW_ROOT = os.path.join(_NT_DIR, "Function", "physicsWorld")
 _PKG_PREFIX = "HoTools.OmniNode.NodeTree.Function.physicsWorld"
@@ -101,22 +102,33 @@ for _pkg, _dir in _pkg_dirs:
         sys.modules[_pkg] = _m
 
 
+_rt_key = "HoTools.OmniNode.NodeTree.OmniRuntimeState"
+if _rt_key not in sys.modules:
+    _rt_path = os.path.join(_NT_DIR, "OmniRuntimeState.py")
+    _rt_spec = importlib.util.spec_from_file_location(_rt_key, _rt_path)
+    _rt_mod = importlib.util.module_from_spec(_rt_spec)
+    _rt_mod.__package__ = "HoTools.OmniNode.NodeTree"
+    sys.modules[_rt_key] = _rt_mod
+    _rt_spec.loader.exec_module(_rt_mod)
+OmniRuntimeState = sys.modules[_rt_key]
+
+
 _nt_omni_key = "HoTools.OmniNode.NodeTree.OmniNodeSocketMapping"
 if _nt_omni_key not in sys.modules:
     _sm = _types.ModuleType(_nt_omni_key)
     _sm.__package__ = "HoTools.OmniNode.NodeTree"
 
     class _OmniCache:
-        def __init__(self, value=None):
-            self.value = value
+        def __new__(cls, value=None):
+            return OmniRuntimeState.cache_replace(value)
 
         @classmethod
         def replace(cls, value):
-            return cls(value)
+            return OmniRuntimeState.cache_replace(value)
 
         @classmethod
         def mutate(cls, value):
-            return cls(value)
+            return OmniRuntimeState.cache_mutate(value)
 
     class _OmniBone(dict):
         pass
@@ -167,6 +179,7 @@ def _pw(suffix: str):
 
 
 _OmniCache = sys.modules[_nt_omni_key]._OmniCache
+PhysicsWorldCache = _pw("types").PhysicsWorldCache
 make_scope = _pw("scope").make_scope
 physicsWorldBegin = _pw("world").physicsWorldBegin
 physicsWorldCommit = _pw("world").physicsWorldCommit
@@ -335,6 +348,12 @@ def _run_spring_frame(
     extra_objects: list | None = None,
     include_passive_collision: bool = False,
     expected_collider_count: int | None = None,
+    stiffness_force: float = 0.0,
+    drag_force: float = 0.0,
+    gravity_dir=None,
+    gravity_power: float = 9.8,
+    substeps: int = 1,
+    return_details: bool = False,
 ):
     world, _frame, _collider_count, restart = _world_for_frame(
         cache,
@@ -347,16 +366,16 @@ def _run_spring_frame(
     properties = physicsSpringVRMChainProperties(
         [_bone_value(armature, "root")],
         enabled=True,
-        stiffness_force=0.0,
-        drag_force=0.0,
-        gravity_dir=mathutils.Vector((1.0, 0.0, 0.0)),
-        gravity_power=9.8,
+        stiffness_force=float(stiffness_force),
+        drag_force=float(drag_force),
+        gravity_dir=mathutils.Vector(gravity_dir or (1.0, 0.0, 0.0)),
+        gravity_power=float(gravity_power),
     )
     world, object_count, dirty_count, _version = physicsSpringVRMChainRegister(world, properties, enabled=True)
     assert object_count == 1, f"应注册 1 条 VRM 骨链，实际 {object_count}"
     assert dirty_count >= 0
 
-    world, write_count, _step_ms = physicsSpringVRMSolver(world, enabled=True, substeps=1)
+    world, write_count, _step_ms = physicsSpringVRMSolver(world, enabled=True, substeps=max(1, int(substeps)))
     assert write_count == 2, f"应产生 2 个 PoseBone 写回项，实际 {write_count}"
 
     results = list(iter_spring_vrm_pose_results(
@@ -379,7 +398,43 @@ def _run_spring_frame(
 
     cache, _world, solver_count = physicsWorldCommit(world, enabled=True)
     assert solver_count == 1, f"应只有 1 个 SpringBone solver slot，实际 {solver_count}"
+    if return_details:
+        return cache, world, stats, results
     return cache
+
+
+def _spring_slot_ids(world) -> list[str]:
+    return [
+        str(slot_id)
+        for slot_id, slot in world.solver_slots.items()
+        if getattr(slot, "kind", "") == "spring_vrm"
+    ]
+
+
+def _runtime_cache_spring_step(scene, cache_state, armature, frame: int):
+    scene.frame_set(frame)
+    cache_value, world, stats, results = _run_spring_frame(
+        cache_state,
+        armature,
+        frame,
+        reset=(frame == 1),
+        return_details=True,
+    )
+    return world, cache_value, stats, results
+
+
+def _assert_world_disposed(world, label: str) -> None:
+    assert isinstance(world, PhysicsWorldCache), f"{label} world type mismatch"
+    assert not bool(getattr(world, "valid", True)), f"{label} world.valid should be False"
+    assert not world.solver_slots, f"{label} solver_slots should be empty"
+    assert not world.backend_resources, f"{label} backend_resources should be empty"
+    assert not world.implicit_objects, f"{label} implicit_objects should be empty"
+    assert not world.result_streams, f"{label} result_streams should be empty"
+
+
+def _assert_basis_identity(armature, bone_name: str, label: str) -> None:
+    delta = _basis_delta_from_identity(armature.pose.bones[bone_name])
+    assert delta < 1.0e-6, f"{label} {bone_name} matrix_basis should be identity, delta={delta}"
 
 
 def test_native_available():
@@ -412,6 +467,129 @@ def test_spring_vrm_vertical_slice():
         assert cache.value is not None
     finally:
         _delete_object(armature)
+
+
+def test_spring_vrm_same_frame_republishes_cached_results():
+    armature = _make_chain_armature("PW_SpringVRM_SameFrame")
+    try:
+        cache = _OmniCache()
+        cache, world1, stats1, results1 = _run_spring_frame(
+            cache,
+            armature,
+            70,
+            reset=True,
+            return_details=True,
+        )
+        slot_ids1 = _spring_slot_ids(world1)
+        assert len(slot_ids1) == 1
+        assert stats1.get("writeback_count") == 2
+        assert len(results1) == 2
+
+        cache, world2, stats2, results2 = _run_spring_frame(
+            cache,
+            armature,
+            70,
+            reset=False,
+            return_details=True,
+        )
+        assert world2 is world1
+        assert world2.frame_context.same_frame is True
+        assert world2.frame_context.restart_required is False
+        assert _spring_slot_ids(world2) == slot_ids1
+        assert stats2.get("step_ms") == 0.0
+        assert stats2.get("writeback_count") == 2
+        assert len(results2) == 2
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_spec_change_prunes_stale_slot():
+    armature = _make_chain_armature("PW_SpringVRM_Prune")
+    try:
+        cache = _OmniCache()
+        cache, world1, stats1, _results1 = _run_spring_frame(
+            cache,
+            armature,
+            80,
+            reset=True,
+            gravity_power=2.0,
+            return_details=True,
+        )
+        slot_ids1 = _spring_slot_ids(world1)
+        assert len(slot_ids1) == 1
+        assert stats1.get("slot_count") == 1
+
+        cache, world2, stats2, _results2 = _run_spring_frame(
+            cache,
+            armature,
+            81,
+            reset=False,
+            gravity_power=7.0,
+            return_details=True,
+        )
+        slot_ids2 = _spring_slot_ids(world2)
+        assert world2 is world1
+        assert len(slot_ids2) == 1
+        assert stats2.get("slot_count") == 1
+        assert slot_ids2[0] != slot_ids1[0], "spec hash change should replace the SpringBone slot"
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_runtime_cache_delete_and_clear_all_dispose():
+    scene = bpy.context.scene
+    root_tree = scene
+    cache_key = "test_spring_vrm_physics_world_runtime_cache"
+    OmniRuntimeState.clear_all()
+
+    armature = _make_chain_armature("PW_SpringVRM_RuntimeDelete")
+    try:
+        ctx = OmniRuntimeState.begin_run(root_tree)
+        hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+        assert not hit and cache_state is None
+        world, cache_value, _stats, _results = _runtime_cache_spring_step(scene, cache_state, armature, 1)
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) > 1.0e-6
+        OmniRuntimeState.write_cache(ctx, cache_key, cache_value)
+        OmniRuntimeState.finish_run(ctx)
+
+        ctx = OmniRuntimeState.begin_run(root_tree)
+        hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+        assert hit and cache_state is world
+        world2, cache_value2, _stats2, _results2 = _runtime_cache_spring_step(scene, cache_state, armature, 2)
+        assert world2 is world
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) > 1.0e-6
+        OmniRuntimeState.write_cache(ctx, cache_key, cache_value2)
+        OmniRuntimeState.finish_run(ctx)
+
+        ctx = OmniRuntimeState.begin_run(root_tree)
+        deleted = OmniRuntimeState.delete_cache(ctx, cache_key)
+        assert deleted == 1
+        OmniRuntimeState.finish_run(ctx)
+        _assert_world_disposed(world, "Cache Delete")
+        _assert_basis_identity(armature, "bone_1", "Cache Delete")
+        _assert_basis_identity(armature, "bone_2", "Cache Delete")
+    finally:
+        _delete_object(armature)
+
+    armature_clear = _make_chain_armature("PW_SpringVRM_RuntimeClearAll")
+    try:
+        ctx = OmniRuntimeState.begin_run(root_tree)
+        world_clear, cache_value_clear, _stats_clear, _results_clear = _runtime_cache_spring_step(
+            scene,
+            None,
+            armature_clear,
+            1,
+        )
+        assert _basis_delta_from_identity(armature_clear.pose.bones["bone_1"]) > 1.0e-6
+        OmniRuntimeState.write_cache(ctx, cache_key, cache_value_clear)
+        OmniRuntimeState.finish_run(ctx)
+
+        OmniRuntimeState.clear_all()
+        _assert_world_disposed(world_clear, "clear_all")
+        _assert_basis_identity(armature_clear, "bone_1", "clear_all")
+        _assert_basis_identity(armature_clear, "bone_2", "clear_all")
+    finally:
+        _delete_object(armature_clear)
 
 
 def test_spring_vrm_collider_snapshot():
@@ -533,6 +711,9 @@ print("----------------------------------------------------------")
 
 check("native 模块可用", test_native_available)
 check("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice)
+check("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results)
+check("SpringBone spec change prunes stale slot", test_spring_vrm_spec_change_prunes_stale_slot)
+check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
 check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)
 check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
 check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)

@@ -11,10 +11,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PY_LIB = "py313" if sys.version_info >= (3, 13) else "py311"
 NATIVE_DIR = os.environ.get("HOTOOLS_NATIVE_TEST_DIR")
 if NATIVE_DIR:
     sys.path.insert(0, NATIVE_DIR)
-sys.path.insert(0, str(REPO_ROOT / "_Lib" / "py311" / "HotoolsPackage"))
+else:
+    sys.path.insert(0, str(REPO_ROOT / "_Lib" / PY_LIB / "HotoolsPackage"))
 sys.path.insert(0, str(REPO_ROOT.parent))
 
 hotools_package = types.ModuleType("HoTools")

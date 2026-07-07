@@ -32,8 +32,9 @@ from .utils.values import matrix_from_16
 # 受影响对象注册表 key
 # ---------------------------------------------------------------------------
 
-_TOUCHED_OBJECTS_KEY    = "_writeback_touched_objects"
-_CLEANUP_RESOURCE_KEY   = "_writeback_cleanup"
+_TOUCHED_OBJECTS_KEY     = "_writeback_touched_objects"
+_TOUCHED_POSE_BONES_KEY  = "_writeback_touched_pose_bones"
+_CLEANUP_RESOURCE_KEY    = "_writeback_cleanup"
 
 
 class WritebackCleanupResource:
@@ -42,18 +43,13 @@ class WritebackCleanupResource:
     实现 omni_cache_dispose 协议：world 被 Cache Delete / addon 注销时
     自动将所有曾写过 delta 的对象归零，不残留物理偏移。
     """
-    def __init__(self, touched: set):
-        self._touched = touched
+    def __init__(self, touched_objects: set, touched_pose_bones: dict):
+        self._touched_objects = touched_objects
+        self._touched_pose_bones = touched_pose_bones
 
     def omni_cache_dispose(self, reason: str) -> None:
-        for obj in list(self._touched):
-            try:
-                obj.delta_location       = (0.0, 0.0, 0.0)
-                obj.delta_rotation_euler = (0.0, 0.0, 0.0)
-                obj.update_tag()
-            except Exception:
-                pass
-        self._touched.clear()
+        _reset_rigid_objects(self._touched_objects)
+        _reset_pose_bones(self._touched_pose_bones)
 
 
 def _get_touched_set(world) -> set:
@@ -62,6 +58,65 @@ def _get_touched_set(world) -> set:
     if _TOUCHED_OBJECTS_KEY not in br:
         br[_TOUCHED_OBJECTS_KEY] = set()
     return br[_TOUCHED_OBJECTS_KEY]
+
+
+def _get_touched_pose_bones(world) -> dict:
+    br = world.backend_resources
+    if _TOUCHED_POSE_BONES_KEY not in br:
+        br[_TOUCHED_POSE_BONES_KEY] = {}
+    return br[_TOUCHED_POSE_BONES_KEY]
+
+
+def _ensure_cleanup_resource(world) -> None:
+    if _CLEANUP_RESOURCE_KEY not in world.backend_resources:
+        world.backend_resources[_CLEANUP_RESOURCE_KEY] = WritebackCleanupResource(
+            _get_touched_set(world),
+            _get_touched_pose_bones(world),
+        )
+
+
+def _reset_rigid_objects(touched) -> None:
+    if not touched:
+        return
+    for obj in list(touched):
+        try:
+            obj.delta_location       = (0.0, 0.0, 0.0)
+            obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+            obj.update_tag()
+        except Exception:
+            pass
+    try:
+        touched.clear()
+    except Exception:
+        pass
+
+
+def _reset_pose_bones(touched) -> None:
+    if not touched:
+        return
+    identity = mathutils.Matrix.Identity(4)
+    updated_armatures = set()
+    values = list(touched.values()) if isinstance(touched, dict) else list(touched)
+    for item in values:
+        try:
+            armature, bone_name = item
+            pose = getattr(armature, "pose", None)
+            pose_bone = pose.bones.get(str(bone_name or "")) if pose is not None else None
+            if pose_bone is None:
+                continue
+            pose_bone.matrix_basis = identity.copy()
+            updated_armatures.add(armature)
+        except Exception:
+            pass
+    for armature in updated_armatures:
+        try:
+            armature.update_tag()
+        except Exception:
+            pass
+    try:
+        touched.clear()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -102,17 +157,9 @@ def clear_all_deltas(world) -> None:
     清除本 world 期间所有曾被写过 delta 的对象（无论是否在 solver_slots 里）。
     在 omni_cache_dispose / Cache Delete / 停止模拟时调用，确保对象归位。
     """
-    touched = getattr(world, "backend_resources", {}).get(_TOUCHED_OBJECTS_KEY)
-    if not touched:
-        return
-    for obj in list(touched):
-        try:
-            obj.delta_location       = (0.0, 0.0, 0.0)
-            obj.delta_rotation_euler = (0.0, 0.0, 0.0)
-            obj.update_tag()
-        except Exception:
-            pass
-    touched.clear()
+    br = getattr(world, "backend_resources", {})
+    _reset_rigid_objects(br.get(_TOUCHED_OBJECTS_KEY))
+    _reset_pose_bones(br.get(_TOUCHED_POSE_BONES_KEY))
 
 
 def writeback_rigid_body_deltas(world) -> int:
@@ -129,10 +176,8 @@ def writeback_rigid_body_deltas(world) -> int:
     frame = int(getattr(fc, "frame", 0) or 0)
     generation = int(getattr(world, "generation", 0) or 0)
 
-    touched = _get_touched_set(world)
-    # 首次写回时注册清理资源，确保 world dispose 时自动归零 delta
-    if _CLEANUP_RESOURCE_KEY not in world.backend_resources:
-        world.backend_resources[_CLEANUP_RESOURCE_KEY] = WritebackCleanupResource(touched)
+    # Register cleanup once so cache dispose can restore written transforms.
+    _ensure_cleanup_resource(world)
 
     updated = set()
     written = 0
@@ -200,6 +245,8 @@ def writeback_bone_transforms(world) -> int:
 
     updated_armatures = set()
     written = 0
+    touched_pose_bones = _get_touched_pose_bones(world)
+    _ensure_cleanup_resource(world)
 
     for slot in list(world.solver_slots.values()):
         if slot.kind != SPRING_VRM_SLOT_KIND:
@@ -222,6 +269,10 @@ def writeback_bone_transforms(world) -> int:
                 if pose_bone is None:
                     continue
                 pose_bone.matrix_basis = matrix_from_16(result.get("matrix_basis"))
+                try:
+                    touched_pose_bones[(int(armature.as_pointer()), bone_name)] = (armature, bone_name)
+                except Exception:
+                    pass
                 updated_armatures.add(armature)
                 written += 1
                 slot.data.pop("_writeback_error", None)

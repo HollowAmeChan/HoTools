@@ -62,6 +62,8 @@ def register_spring_vrm_specs(
             chain_count += int(spec.chain_count)
             bone_count += int(spec.simulated_bone_count)
 
+        _prune_stale_spring_vrm_slots(world, registered_ids)
+
         publish_spring_vrm_stats_result(
             world,
             frame=int(getattr(world.frame_context, "frame", 0) or 0),
@@ -117,6 +119,8 @@ def step_spring_vrm(
             registered_ids.append(spec.slot_id)
             chain_count += int(spec.chain_count)
             bone_count += int(spec.simulated_bone_count)
+
+        _prune_stale_spring_vrm_slots(world, registered_ids)
 
         fc = getattr(world, "frame_context", None)
         restart = bool(getattr(fc, "restart_required", False))
@@ -178,6 +182,26 @@ def _resolve_chain_objects(
     world: PhysicsWorldCache,
 ) -> list[dict]:
     return collect_spring_vrm_chain_objects(world)
+
+
+def _prune_stale_spring_vrm_slots(world: PhysicsWorldCache, active_slot_ids) -> int:
+    active = set(str(slot_id) for slot_id in (active_slot_ids or ()))
+    stale_ids = [
+        slot_id
+        for slot_id, slot in list(world.solver_slots.items())
+        if slot.kind == SPRING_VRM_SLOT_KIND and slot_id not in active
+    ]
+    for slot_id in stale_ids:
+        slot = world.solver_slots.pop(slot_id, None)
+        if slot is None:
+            continue
+        try:
+            slot.dispose("spring_vrm_scope_prune")
+        except Exception:
+            pass
+    if stale_ids:
+        world.replace_required = True
+    return len(stale_ids)
 
 
 def _republish_last_results(world: PhysicsWorldCache, slot_ids: list[str]) -> None:
