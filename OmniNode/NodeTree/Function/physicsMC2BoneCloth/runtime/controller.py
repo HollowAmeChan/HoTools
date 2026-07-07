@@ -325,6 +325,7 @@ def _run_for_single_armature(
                 baseline_data=state.get("baseline_data"),
                 attributes=state.get("attributes"),
                 anime_ratio=float(animation_pose_ratio),
+                root_rotation=1.0,
             )
             armature.update_tag()
         cache_owner.replace_state(next_state)
@@ -354,6 +355,7 @@ def _run_for_single_armature(
                 baseline_data=state.get("baseline_data"),
                 attributes=state.get("attributes"),
                 anime_ratio=float(animation_pose_ratio),
+                root_rotation=1.0,
             )
             armature.update_tag()
         next_state = mc2_state.inherit_runtime_slots(state, dict(state))
@@ -537,6 +539,7 @@ def _run_for_single_armature(
             baseline_data=next_state.get("baseline_data"),
             attributes=next_state.get("attributes"),
             anime_ratio=float(animation_pose_ratio),
+            root_rotation=1.0,
         )
         armature.update_tag()
 

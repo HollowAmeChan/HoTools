@@ -234,7 +234,7 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
       _matrix_basis_from_target 写入前再次剔除缩放，双重保险。
       若允许缩放进入 matrix_basis，每帧累积后骨骼视觉被拉长，最终爆炸。
 
-    【头部位置：父链传播，不用粒子坐标】
+    【head部位置：父链传播，不用粒子坐标】
       每根骨骼的 head_pose 由父骨矩阵链式推算（父骨尾 = 子骨头），
       与 MC2 中 Transform 层级位置由父子关系决定的逻辑等价。
       不直接取 display_positions 作 head_pose：物理距离约束有柔性，
@@ -246,8 +246,9 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
       Disconnected 骨骼：Translation 也生效，head_pose 由父链传播提供正确值。
       推荐使用 Connected 骨骼：与 MC2 原生行为最贴近，位置由动画层级保证稳定。
 
-    【depth=0 root 骨不写回，只保留动画矩阵】
-      Root 骨（FIXED 粒子）由动画驱动，物理只负责其子骨链的旋转。
+    【depth=0 链首固定骨也参与写回】
+      Root 骨（FIXED 粒子）位置由动画锁定，但其旋转通过 C++ root_rotation 参数
+      按子骨链方向计算，写回后首骨可以跟随物理方向旋转，防止链首"卡死"。
     """
     _MC2_FORWARD = np.asarray([0.0, 0.0, 1.0], dtype=np.float32)
 
@@ -259,7 +260,7 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
         return v + 2.0 * (nq[3] * uv + uuv)
 
     ordered = sorted(
-        [rec for rec in records if rec.get("depth", 0) > 0],
+        records,   # depth=0（链首固定骨）也纳入写回，使其随子骨链方向旋转
         key=lambda r: r["depth"],
     )
 
@@ -273,17 +274,19 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
         pidx = record["particle_index"]
         depth = record.get("depth", 0)
 
-        if depth == 0:
-            parent_pose_matrices[bone_name] = record["pose_bone"].matrix.copy()
-            continue
-
         if pidx < 0 or pidx >= len(world_rotations):
+            # 粒子索引越界：depth=0 退回到动画矩阵（保证后续链不断裂），其余跳过
+            if depth == 0:
+                parent_pose_matrices[bone_name] = record["pose_bone"].matrix.copy()
             continue
 
         wq = world_rotations[pidx]
         dir_np = _qrot_np(wq, _MC2_FORWARD)
         desired_local = arm_inv_3x3 @ mathutils.Vector((float(dir_np[0]), float(dir_np[1]), float(dir_np[2])))
         if desired_local.length <= EPSILON:
+            # 方向退化：同上退回
+            if depth == 0:
+                parent_pose_matrices[bone_name] = record["pose_bone"].matrix.copy()
             continue
         desired_local.normalize()
 
@@ -294,19 +297,26 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
         init_axis.normalize()
         arm_quat = init_axis.rotation_difference(desired_local) @ bone.matrix_local.to_quaternion()
 
-        # 头部位置：MC2 链式传播——父骨尾部即子骨头部，保证骨链视觉连续。
-        # 不用 display_positions 直接作头部：物理有弹性拉伸时粒子距离 ≠ rest 长度，
-        # 直接取粒子坐标会导致相邻骨骼出现视觉断缝。
-        parent = record.get("parent")
-        parent_name = record.get("parent_name") or ""
-        if parent is not None and record.get("parent_rest_inv") is not None:
-            par_mat = parent_pose_matrices.get(parent_name)
-            if par_mat is not None:
-                head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
-            else:
-                head_pose = parent.matrix.translation.copy()
-        else:
+        # 头部位置：
+        # depth=0（链首固定骨）：粒子位置由动画锁定，直接取当前动画头位置。
+        #   不走链式传播——其父骨（root_bone 共享父级）不在 parent_pose_matrices 里，
+        #   若走传播会退到 parent.matrix.translation（根骨原点），导致所有链头吸到同一点。
+        # depth>0：MC2 链式传播——父骨尾部即子骨头部，保证骨链视觉连续。
+        #   不用 display_positions 直接作头部：物理有弹性拉伸时粒子距离 ≠ rest 长度，
+        #   直接取粒子坐标会导致相邻骨骼出现视觉断缝。
+        if depth == 0:
             head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
+        else:
+            parent = record.get("parent")
+            parent_name = record.get("parent_name") or ""
+            if parent is not None and record.get("parent_rest_inv") is not None:
+                par_mat = parent_pose_matrices.get(parent_name)
+                if par_mat is not None:
+                    head_pose = (par_mat @ record["parent_rest_inv"] @ record["bone_rest"]).translation
+                else:
+                    head_pose = parent.matrix.translation.copy()
+            else:
+                head_pose = (mat_world_inv @ record["pose_bone"].head).to_3d()
 
         target_matrix = mathutils.Matrix.LocRotScale(head_pose, arm_quat, mathutils.Vector((1.0, 1.0, 1.0)))
         parent_pose_matrices[bone_name] = target_matrix
@@ -321,7 +331,7 @@ def _write_from_world_rotations(armature_obj, records, world_rotations, write_ru
 def _write_per_bone_independent(armature_obj, records, display_positions, rotational_interpolation, write_runtime):
     matrix_world = armature_obj.matrix_world
     ordered = sorted(
-        [rec for rec in records if rec.get("depth", 0) > 0],
+        records,   # depth=0 链首固定骨也纳入，使其跟随子骨链方向旋转
         key=lambda r: r["depth"],
     )
     target_pose_matrices = {}
