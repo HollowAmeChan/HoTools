@@ -68,6 +68,7 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
         return 0, 0.0, ["armature 无效或已被 Blender 释放"]
 
     chain_states = frame_state.setdefault("chains", {})
+    native_context = _slot_native_context(slot, spec)
     published = 0
     errors: list[str] = []
     started = time.perf_counter()
@@ -80,6 +81,7 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
                 spec,
                 chain,
                 chain_states.setdefault(chain.root_bone, {}),
+                native_context,
                 dt,
                 substeps,
             )
@@ -90,13 +92,14 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
     return published, (time.perf_counter() - started) * 1000.0, errors
 
 
-def _step_chain(module, world, spec, chain, chain_state: dict, dt: float, substeps: int) -> int:
+def _step_chain(module, world, spec, chain, chain_state: dict, native_context: dict, dt: float, substeps: int) -> int:
     records = _chain_records(spec.armature, chain)
     bone_count = len(records)
     if bone_count <= 0 or not bool(chain.enabled):
         return 0
 
-    arrays = _build_arrays(spec.armature, chain, chain_state, records)
+    chain_context = _prepare_chain_context(native_context, chain, records)
+    arrays = _build_arrays(spec.armature, chain, chain_state, records, chain_context)
     if arrays is None:
         return 0
 
@@ -173,11 +176,16 @@ def _step_chain(module, world, spec, chain, chain_state: dict, dt: float, subste
         float(chain.gravity_power),
     )
 
+    frame = int(getattr(world.frame_context, "frame", 0) or 0)
+    chain_context["step_count"] = int(chain_context.get("step_count", 0) or 0) + 1
+    chain_context["last_frame"] = frame
+    chain_context["last_collider_count"] = int(len(collider_types))
+    chain_context["last_substeps"] = max(1, int(substeps))
+
     target_pose_matrices: dict[str, mathutils.Matrix] = {}
     published = 0
     tails = chain_state.setdefault("tails", {})
     last_results = []
-    frame = int(getattr(world.frame_context, "frame", 0) or 0)
 
     for index, record in enumerate(records):
         bone_name = record["bone_name"]
@@ -210,6 +218,59 @@ def _step_chain(module, world, spec, chain, chain_state: dict, dt: float, subste
 
     chain_state["last_results"] = last_results
     return published
+
+
+def _slot_native_context(slot, spec) -> dict:
+    native_context = slot.data.get("native_context")
+    if not isinstance(native_context, dict):
+        native_context = {}
+        slot.data["native_context"] = native_context
+
+    if native_context.get("spec_hash") != spec.spec_hash:
+        native_context.clear()
+        native_context["schema"] = "spring_vrm_python_buffer_context_v1"
+        native_context["spec_hash"] = spec.spec_hash
+        native_context["chains"] = {}
+        native_context["topology_serial"] = 0
+
+    native_context["armature_ptr"] = int(getattr(spec, "armature_ptr", 0) or 0)
+    native_context["armature_data_ptr"] = int(getattr(spec, "armature_data_ptr", 0) or 0)
+    native_context.setdefault("chains", {})
+    return native_context
+
+
+def _prepare_chain_context(native_context: dict, chain, records: list[dict]) -> dict:
+    chains = native_context.setdefault("chains", {})
+    root_bone = str(getattr(chain, "root_bone", "") or "")
+    signature = _records_signature(records)
+    chain_context = chains.get(root_bone)
+    if not isinstance(chain_context, dict) or chain_context.get("signature") != signature:
+        topology_serial = int(native_context.get("topology_serial", 0) or 0) + 1
+        native_context["topology_serial"] = topology_serial
+        chain_context = {
+            "root_bone": root_bone,
+            "signature": signature,
+            "bone_count": len(records),
+            "topology_serial": topology_serial,
+            "step_count": 0,
+            "arrays": _allocate_chain_arrays(len(records)),
+        }
+        chains[root_bone] = chain_context
+    else:
+        chain_context["bone_count"] = len(records)
+    return chain_context
+
+
+def _records_signature(records: list[dict]) -> tuple:
+    return tuple(
+        (
+            str(record.get("bone_name") or ""),
+            str(record.get("parent_name") or ""),
+            int(record.get("pose_index", -1)),
+            bool(getattr(getattr(record.get("pose_bone"), "bone", None), "use_connect", False)),
+        )
+        for record in records
+    )
 
 
 def _get_valid_armature(spec):
@@ -283,28 +344,32 @@ def _chain_records(armature, chain) -> list[dict]:
     return records
 
 
-def _build_arrays(armature, chain, chain_state: dict, records: list[dict]):
+def _build_arrays(armature, chain, chain_state: dict, records: list[dict], chain_context: dict | None = None):
     bone_count = len(records)
     parent_lookup = {record["bone_name"]: index for index, record in enumerate(records)}
     tails = chain_state.setdefault("tails", {})
 
-    current_tails = np.empty((bone_count, 3), dtype=np.float32)
-    prev_tails = np.empty((bone_count, 3), dtype=np.float32)
-    target_matrices = np.empty((bone_count, 16), dtype=np.float32)
-    target_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-    current_heads = np.empty((bone_count, 3), dtype=np.float32)
-    current_pose_matrices = np.empty((bone_count, 16), dtype=np.float32)
-    current_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-    parent_pose_quaternions = np.empty((bone_count, 4), dtype=np.float32)
-    current_pose_tails = np.empty((bone_count, 3), dtype=np.float32)
-    lengths = np.empty(bone_count, dtype=np.float32)
-    init_axis_local = np.empty((bone_count, 3), dtype=np.float32)
-    init_axis_parent = np.empty((bone_count, 3), dtype=np.float32)
-    init_rotations = np.empty((bone_count, 4), dtype=np.float32)
-    init_scales = np.empty((bone_count, 3), dtype=np.float32)
-    parent_indices = np.full(bone_count, -1, dtype=np.int32)
-    pinned = np.zeros(bone_count, dtype=np.uint8)
-    use_connect = np.zeros(bone_count, dtype=np.uint8)
+    buffers = _chain_array_buffers(chain_context, bone_count)
+    current_tails = buffers["current_tails"]
+    prev_tails = buffers["prev_tails"]
+    target_matrices = buffers["target_matrices"]
+    target_quaternions = buffers["target_quaternions"]
+    current_heads = buffers["current_heads"]
+    current_pose_matrices = buffers["current_pose_matrices"]
+    current_pose_quaternions = buffers["current_pose_quaternions"]
+    parent_pose_quaternions = buffers["parent_pose_quaternions"]
+    current_pose_tails = buffers["current_pose_tails"]
+    lengths = buffers["lengths"]
+    init_axis_local = buffers["init_axis_local"]
+    init_axis_parent = buffers["init_axis_parent"]
+    init_rotations = buffers["init_rotations"]
+    init_scales = buffers["init_scales"]
+    parent_indices = buffers["parent_indices"]
+    pinned = buffers["pinned"]
+    use_connect = buffers["use_connect"]
+    parent_indices.fill(-1)
+    pinned.fill(0)
+    use_connect.fill(0)
 
     armature_world = armature.matrix_world
     for index, record in enumerate(records):
@@ -362,6 +427,52 @@ def _build_arrays(armature, chain, chain_state: dict, records: list[dict]):
         pinned,
         use_connect,
     )
+
+
+def _chain_array_buffers(chain_context: dict | None, bone_count: int) -> dict[str, np.ndarray]:
+    if isinstance(chain_context, dict):
+        arrays = chain_context.get("arrays")
+        if not _chain_arrays_match(arrays, bone_count):
+            arrays = _allocate_chain_arrays(bone_count)
+            chain_context["arrays"] = arrays
+            chain_context["bone_count"] = bone_count
+        return arrays
+    return _allocate_chain_arrays(bone_count)
+
+
+def _chain_arrays_match(arrays, bone_count: int) -> bool:
+    if not isinstance(arrays, dict):
+        return False
+    current_tails = arrays.get("current_tails")
+    target_matrices = arrays.get("target_matrices")
+    return (
+        isinstance(current_tails, np.ndarray)
+        and current_tails.shape == (bone_count, 3)
+        and isinstance(target_matrices, np.ndarray)
+        and target_matrices.shape == (bone_count, 16)
+    )
+
+
+def _allocate_chain_arrays(bone_count: int) -> dict[str, np.ndarray]:
+    return {
+        "current_tails": np.empty((bone_count, 3), dtype=np.float32),
+        "prev_tails": np.empty((bone_count, 3), dtype=np.float32),
+        "target_matrices": np.empty((bone_count, 16), dtype=np.float32),
+        "target_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+        "current_heads": np.empty((bone_count, 3), dtype=np.float32),
+        "current_pose_matrices": np.empty((bone_count, 16), dtype=np.float32),
+        "current_pose_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+        "parent_pose_quaternions": np.empty((bone_count, 4), dtype=np.float32),
+        "current_pose_tails": np.empty((bone_count, 3), dtype=np.float32),
+        "lengths": np.empty(bone_count, dtype=np.float32),
+        "init_axis_local": np.empty((bone_count, 3), dtype=np.float32),
+        "init_axis_parent": np.empty((bone_count, 3), dtype=np.float32),
+        "init_rotations": np.empty((bone_count, 4), dtype=np.float32),
+        "init_scales": np.empty((bone_count, 3), dtype=np.float32),
+        "parent_indices": np.empty(bone_count, dtype=np.int32),
+        "pinned": np.empty(bone_count, dtype=np.uint8),
+        "use_connect": np.empty(bone_count, dtype=np.uint8),
+    }
 
 
 def _empty_collision_arrays() -> tuple:

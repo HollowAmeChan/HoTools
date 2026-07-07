@@ -426,6 +426,19 @@ def _spring_slot_ids(world) -> list[str]:
     ]
 
 
+def _spring_chain_context(world, root_bone: str = "root"):
+    slot_ids = _spring_slot_ids(world)
+    assert len(slot_ids) == 1, f"expected one SpringBone slot, got {slot_ids}"
+    slot = world.solver_slots[slot_ids[0]]
+    native_context = slot.data.get("native_context")
+    assert isinstance(native_context, dict), "SpringBone slot should keep a native_context dict"
+    chains = native_context.get("chains")
+    assert isinstance(chains, dict), "SpringBone native_context should contain chain contexts"
+    chain_context = chains.get(root_bone)
+    assert isinstance(chain_context, dict), f"missing SpringBone chain context for {root_bone!r}"
+    return slot, native_context, chain_context
+
+
 def _runtime_cache_spring_step(scene, cache_state, armature, frame: int):
     scene.frame_set(frame)
     cache_value, world, stats, results = _run_spring_frame(
@@ -533,6 +546,9 @@ def test_spring_vrm_spec_change_prunes_stale_slot():
         slot_ids1 = _spring_slot_ids(world1)
         assert len(slot_ids1) == 1
         assert stats1.get("slot_count") == 1
+        stale_slot = world1.solver_slots[slot_ids1[0]]
+        _slot, _native_context, chain_context = _spring_chain_context(world1)
+        assert chain_context.get("arrays"), "first SpringBone slot should build native_context buffers"
 
         cache, world2, stats2, _results2 = _run_spring_frame(
             cache,
@@ -547,6 +563,45 @@ def test_spring_vrm_spec_change_prunes_stale_slot():
         assert len(slot_ids2) == 1
         assert stats2.get("slot_count") == 1
         assert slot_ids2[0] != slot_ids1[0], "spec hash change should replace the SpringBone slot"
+        assert not stale_slot.data, "stale SpringBone slot dispose should clear native_context and frame_state"
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_native_context_reuses_chain_buffers():
+    armature = _make_chain_armature("PW_SpringVRM_NativeContext")
+    try:
+        cache = _OmniCache()
+        cache, world1, _stats1, _results1 = _run_spring_frame(
+            cache,
+            armature,
+            90,
+            reset=True,
+            return_details=True,
+        )
+        slot1, native_context1, chain_context1 = _spring_chain_context(world1)
+        arrays1 = chain_context1.get("arrays")
+        assert isinstance(arrays1, dict) and arrays1, "SpringBone native_context should own chain buffers"
+        assert chain_context1.get("bone_count") == 2
+        assert chain_context1.get("last_frame") == 90
+        assert chain_context1.get("step_count") == 1
+        buffer_ids = {name: id(value) for name, value in arrays1.items()}
+
+        cache, world2, _stats2, _results2 = _run_spring_frame(
+            cache,
+            armature,
+            91,
+            reset=False,
+            return_details=True,
+        )
+        slot2, native_context2, chain_context2 = _spring_chain_context(world2)
+        assert world2 is world1
+        assert slot2 is slot1
+        assert native_context2 is native_context1
+        assert chain_context2 is chain_context1
+        assert chain_context2.get("last_frame") == 91
+        assert chain_context2.get("step_count") == 2
+        assert {name: id(value) for name, value in chain_context2["arrays"].items()} == buffer_ids
     finally:
         _delete_object(armature)
 
@@ -809,6 +864,7 @@ check("native 模块可用", test_native_available)
 check("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice)
 check("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results)
 check("SpringBone spec change prunes stale slot", test_spring_vrm_spec_change_prunes_stale_slot)
+check("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers)
 check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
 check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)
 check("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot)
