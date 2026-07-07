@@ -9,6 +9,13 @@ from .ids import (
     make_typed_slot_id,
     stable_short_hash,
 )
+from .geometry import (
+    clamp_int,
+    matrix_scale_radius,
+    numpy_vec3,
+    signed_third_axis_length,
+    vec3_length,
+)
 from .values import (
     float3,
     matrix16,
@@ -18,11 +25,16 @@ from .writeback_pose import matrix_basis_from_pose_matrix
 
 __all__ = [
     "as_pointer",
+    "clamp_int",
     "data_pointer",
     "float3",
     "make_typed_slot_id",
     "matrix16",
     "matrix_basis_from_pose_matrix",
     "matrix_from_16",
+    "matrix_scale_radius",
+    "numpy_vec3",
+    "signed_third_axis_length",
     "stable_short_hash",
+    "vec3_length",
 ]

@@ -69,7 +69,7 @@ def register_spring_vrm_specs(
             slot_count=len(registered_ids),
             chain_count=chain_count,
             bone_count=bone_count,
-            collider_count=int((world.collider_snapshot or {}).get("source_count", 0) or 0),
+            collider_count=int(len((world.collider_snapshot or {}).get("colliders") or ())),
             status="registered",
         )
         return len(registered_ids), registered_ids
@@ -162,7 +162,7 @@ def step_spring_vrm(
             slot_count=len(registered_ids),
             chain_count=chain_count,
             bone_count=bone_count,
-            collider_count=0,
+            collider_count=int(len((world.collider_snapshot or {}).get("colliders") or ())),
             step_ms=step_ms,
             writeback_count=published,
             backend="cpp",

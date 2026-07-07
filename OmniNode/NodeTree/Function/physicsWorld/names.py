@@ -26,3 +26,11 @@ RIGID_BODY_COMMANDS_CHANNEL = "rigid_body_commands"
 RIGID_BODY_REGISTER_WRITER_ID = "rigid_body_solver"
 RIGID_CONSTRAINT_REGISTER_WRITER_ID = "constraint_solver"
 JOLT_STEP_WRITER_ID = "jolt_step"
+
+
+# ---- Collider native ABI -----------------------------------------------
+
+COLLIDER_TYPE_SPHERE = 0
+COLLIDER_TYPE_CAPSULE = 1
+COLLIDER_TYPE_PLANE = 2
+COLLIDER_TYPE_BOX = 3

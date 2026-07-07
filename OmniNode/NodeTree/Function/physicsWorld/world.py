@@ -41,6 +41,7 @@ from .scope import (
     _obj_is_valid,
     _obj_is_visible,
 )
+from .utils.geometry import matrix_scale_radius
 
 
 # ---------------------------------------------------------------------------
@@ -68,14 +69,6 @@ def _scene_delta_time(scene) -> float:
         return 1.0 / fps if fps > _EPSILON else 0.0
     except Exception:
         return 1.0 / 24.0
-
-
-def _matrix_scale_radius(matrix: mathutils.Matrix) -> float:
-    try:
-        scale = matrix.to_scale()
-        return max(abs(float(scale.x)), abs(float(scale.y)), abs(float(scale.z)))
-    except Exception:
-        return 1.0
 
 
 def _vector3(value, fallback: mathutils.Vector) -> mathutils.Vector:
@@ -467,7 +460,7 @@ def _collider_from_source(source: PhysicsColliderSource) -> dict | None:
     }
 
     if collision_type in {"SPHERE", "CAPSULE"}:
-        radius = max(float(getattr(props, "radius", 0.0)), 0.0) * _matrix_scale_radius(matrix)
+        radius = max(float(getattr(props, "radius", 0.0)), 0.0) * matrix_scale_radius(matrix)
         if radius <= _EPSILON:
             return None
         collider["radius"] = radius

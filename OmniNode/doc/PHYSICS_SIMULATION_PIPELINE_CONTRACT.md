@@ -356,6 +356,13 @@ Physics World Begin
   -> Physics World Commit
 ```
 
+当前进展（2026-07-07）：
+
+- `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、`spring_vrm_pose` result stream、统一 PoseBone writeback。
+- SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并从每根模拟骨的 `Bone.hotools_collision` 读取 hit radius 与 collided mask。
+- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留和 sphere / plane / box collider snapshot 投影。
+- SpringBone native ABI 沿用公共 collider type code：`SPHERE=0`、`CAPSULE=1`、`PLANE=2`、`BOX=3`。这些常量由 `physicsWorld/names.py` 集中保存，避免 Python wrapper、C++ solver 和后续 solver 迁移错位。
+
 `rigid_body_commands` 建议 payload：
 
 ```python

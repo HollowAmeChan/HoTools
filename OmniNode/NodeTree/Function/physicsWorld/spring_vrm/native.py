@@ -8,6 +8,19 @@ import time
 import mathutils
 import numpy as np
 
+from ..names import (
+    COLLIDER_TYPE_BOX,
+    COLLIDER_TYPE_CAPSULE,
+    COLLIDER_TYPE_PLANE,
+    COLLIDER_TYPE_SPHERE,
+)
+from ..utils.geometry import (
+    clamp_int,
+    matrix_scale_radius,
+    numpy_vec3,
+    signed_third_axis_length,
+    vec3_length,
+)
 from ..utils.values import matrix16
 from ..utils.writeback_pose import matrix_basis_from_pose_matrix
 from .results import publish_spring_vrm_pose_result
@@ -105,14 +118,20 @@ def _step_chain(module, world, spec, chain, chain_state: dict, dt: float, subste
         use_connect,
     ) = arrays
 
-    collider_types, collider_groups, collider_centers, collider_segment_a, collider_segment_b, collider_radii = _empty_collision_arrays()
+    (
+        collider_types,
+        collider_groups,
+        collider_centers,
+        collider_segment_a,
+        collider_segment_b,
+        collider_radii,
+    ) = _collision_arrays_from_world(world, spec.armature, chain)
     armature_world = np.asarray(matrix16(spec.armature.matrix_world), dtype=np.float32)
     armature_world_inv = np.asarray(matrix16(spec.armature.matrix_world.inverted()), dtype=np.float32)
     root_quaternion = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
     root_tail_world = np.zeros(3, dtype=np.float32)
     gravity_dir = np.asarray(chain.gravity_dir, dtype=np.float32)
-    hit_radii = np.zeros(bone_count, dtype=np.float32)
-    collided_by_groups = np.zeros(bone_count, dtype=np.int32)
+    hit_radii, collided_by_groups = _bone_collision_profiles(spec.armature, records)
 
     module.solve_spring_bone_vrm_cpp(
         current_tails,
@@ -300,6 +319,132 @@ def _empty_collision_arrays() -> tuple:
         np.empty((0, 3), dtype=np.float32),
         np.empty(0, dtype=np.float32),
     )
+
+
+def _collision_arrays_from_world(world, armature, chain) -> tuple:
+    snapshot = getattr(world, "collider_snapshot", None)
+    colliders = snapshot.get("colliders") if isinstance(snapshot, dict) else None
+    if not colliders:
+        return _empty_collision_arrays()
+
+    chain_bones = set(str(name or "") for name in getattr(chain, "bones", ()) or ())
+    collider_types = []
+    collider_groups = []
+    collider_centers = []
+    collider_segment_a = []
+    collider_segment_b = []
+    collider_radii = []
+    zero = np.zeros(3, dtype=np.float32)
+
+    for collider in colliders:
+        if not isinstance(collider, dict):
+            continue
+        if _is_self_chain_collider(collider, armature, chain_bones):
+            continue
+
+        collider_type = str(collider.get("type", "SPHERE") or "SPHERE")
+        center = numpy_vec3(collider.get("center"))
+        if collider_type == "SPHERE":
+            if center is None:
+                continue
+            segment_a = center
+            segment_b = center
+            radius = max(float(collider.get("radius", 0.0) or 0.0), 0.0)
+            if radius <= 1.0e-8:
+                continue
+            type_code = COLLIDER_TYPE_SPHERE
+        elif collider_type == "CAPSULE":
+            segment_a = numpy_vec3(collider.get("segment_a"))
+            segment_b = numpy_vec3(collider.get("segment_b"))
+            if segment_a is None or segment_b is None:
+                continue
+            if center is None:
+                center = (segment_a + segment_b) * 0.5
+            radius = max(float(collider.get("radius", 0.0) or 0.0), 0.0)
+            if radius <= 1.0e-8:
+                continue
+            type_code = COLLIDER_TYPE_CAPSULE
+        elif collider_type == "PLANE":
+            if center is None:
+                continue
+            normal = numpy_vec3(collider.get("normal"))
+            if normal is None or vec3_length(normal) <= 1.0e-8:
+                continue
+            segment_a = normal
+            segment_b = zero
+            radius = 0.0
+            type_code = COLLIDER_TYPE_PLANE
+        elif collider_type == "BOX":
+            if center is None:
+                continue
+            axis_x = numpy_vec3(collider.get("box_axis_x"))
+            axis_y = numpy_vec3(collider.get("box_axis_y"))
+            axis_z = numpy_vec3(collider.get("box_axis_z"))
+            signed_half_z = signed_third_axis_length(axis_x, axis_y, axis_z)
+            if axis_x is None or axis_y is None or signed_half_z is None:
+                continue
+            segment_a = axis_x
+            segment_b = axis_y
+            radius = signed_half_z
+            type_code = COLLIDER_TYPE_BOX
+        else:
+            continue
+
+        collider_types.append(type_code)
+        collider_groups.append(max(1, min(16, int(collider.get("primary_group", 1) or 1))))
+        collider_centers.append(center)
+        collider_segment_a.append(segment_a)
+        collider_segment_b.append(segment_b)
+        collider_radii.append(radius)
+
+    if not collider_types:
+        return _empty_collision_arrays()
+
+    return (
+        np.ascontiguousarray(collider_types, dtype=np.int32),
+        np.ascontiguousarray(collider_groups, dtype=np.int32),
+        np.ascontiguousarray(collider_centers, dtype=np.float32).reshape((-1, 3)),
+        np.ascontiguousarray(collider_segment_a, dtype=np.float32).reshape((-1, 3)),
+        np.ascontiguousarray(collider_segment_b, dtype=np.float32).reshape((-1, 3)),
+        np.ascontiguousarray(collider_radii, dtype=np.float32),
+    )
+
+
+def _bone_collision_profiles(armature, records: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    hit_radii = np.zeros(len(records), dtype=np.float32)
+    collided_by_groups = np.zeros(len(records), dtype=np.int32)
+    for index, record in enumerate(records):
+        radius, mask = _bone_collision_profile(armature, str(record.get("bone_name") or ""))
+        hit_radii[index] = float(radius)
+        collided_by_groups[index] = int(mask)
+    return hit_radii, collided_by_groups
+
+
+def _bone_collision_profile(armature, bone_name: str) -> tuple[float, int]:
+    bone = getattr(getattr(armature, "data", None), "bones", {}).get(bone_name)
+    props = getattr(bone, "hotools_collision", None) if bone is not None else None
+    if props is None:
+        return 0.0, 0
+
+    collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
+    if collision_type not in {"SPHERE", "CAPSULE"}:
+        return 0.0, 0
+
+    pose_bone = getattr(getattr(armature, "pose", None), "bones", {}).get(bone_name)
+    local_matrix = pose_bone.matrix if pose_bone is not None else bone.matrix_local
+    radius = max(float(getattr(props, "radius", 0.0) or 0.0), 0.0)
+    radius *= matrix_scale_radius(armature.matrix_world @ local_matrix)
+    if radius <= 1.0e-8:
+        return 0.0, 0
+    return radius, clamp_int(getattr(props, "collided_by_groups", 0), 0, 0xFFFF, 0)
+
+
+def _is_self_chain_collider(collider: dict, armature, chain_bones: set[str]) -> bool:
+    if collider.get("owner_type") != "BONE":
+        return False
+    if collider.get("owner") is not armature:
+        return False
+    return str(collider.get("bone") or "") in chain_bones
 
 
 def _vector_from_state(state, key: str, fallback: mathutils.Vector) -> mathutils.Vector:

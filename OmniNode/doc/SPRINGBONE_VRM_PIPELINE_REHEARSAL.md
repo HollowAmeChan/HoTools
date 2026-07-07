@@ -880,6 +880,15 @@ SpringBone Step
 - 引入 solver slot 内的 lazy collider arrays cache：`collider_source_key` 变化时重新打包成 CPP 格式，否则复用。
 - 不保留 scene-wide collider fallback；未放入 object scope 的 collider 不参与新 world-aware 路径。
 
+当前落地状态（2026-07-07）：
+
+- `physicsWorld/spring_vrm/native.py` 已从 `world.collider_snapshot` 打包 SpringBone native ABI 支持的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays。
+- 每根模拟骨已经从 `Bone.hotools_collision` 读取 `radius` 与 `collided_by_groups`，作为 C++ `hit_radii` / `collided_by_groups` 输入。
+- 同一 armature、同一链内的骨骼碰撞体会从被动 collider arrays 中排除，避免 SpringBone 自己撞自己。
+- `SpringBone VRM模拟步` 的 stats result 已报告真实 `collider_count`。
+- `PLANE` 用 `collider_segment_a` 传法线，`BOX` 用 `collider_segment_a/b` 传 X/Y 半轴、`collider_radii` 传带符号 Z 半轴长度；这只是 SpringBone native ABI 的打包约定，world snapshot 仍保留语义字段。
+- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已覆盖：隐式对象注册、native step、PoseBone 写回、连续帧状态保留，以及 sphere / plane / box world collider snapshot 对 SpringBone tail 投影的影响。
+
 验收：
 
 - 同一帧多个 solver（例如 SpringBone + BoneCloth）不重复扫描 scene。
