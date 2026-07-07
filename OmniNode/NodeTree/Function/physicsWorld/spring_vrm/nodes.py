@@ -60,6 +60,7 @@ def physicsSpringVRMChainProperties(
     本节点不需要用户提供 key。每条骨链对象带有统一 tag，SpringBone solver 会直接收集全部 VRM 骨链对象。
     相同骨架、根骨和骨链会按内部 stable_id 更新，不会因为节点重复执行而无限累积。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsSpringVRMChainRegister(
     world: object,
@@ -103,6 +104,7 @@ def physicsSpringVRMChainRegister(
     当前 vertical slice 先验证骨链、native step、result stream 和 PoseBone 写回闭环；
     外部碰撞体打包会在下一步接入 world.collider_snapshot。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsSpringVRMSolver(
     world: object,

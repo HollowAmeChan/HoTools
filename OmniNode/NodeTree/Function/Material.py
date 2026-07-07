@@ -87,6 +87,7 @@ def _get_material_slot_by_material(
     omni_description="""
     给目标物体添加一个材质槽并赋予指定材质。
     """,
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectAddMaterialSlot(
     obj: bpy.types.Object,
@@ -320,6 +321,7 @@ def materialSlotClearMaterial(
     omni_description="""
     设置活动材质槽。
     """,
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectSetActiveMaterialSlot(
     obj: bpy.types.Object,
@@ -342,6 +344,7 @@ def objectSetActiveMaterialSlot(
     omni_description="""
     移除指定物体上的材质槽。
     """,
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectRemoveMaterialSlotByIndex(
     obj: bpy.types.Object,

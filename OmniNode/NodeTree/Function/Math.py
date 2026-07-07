@@ -14,7 +14,8 @@ def _to_vector(value) -> mathutils.Vector:
 
 @omni(enable=True,
     bl_label="Lerp",
-    base_color=_Color.colorCat["Math"],)
+    base_color=_Color.colorCat["Math"],
+    mute_passthrough={"_OUTPUT0": "a"},)
 def lerp(a: NodeSocketColor, b: NodeSocketColor, weight: float) -> NodeSocketColor:
     return a*(1-weight)+b*weight
 
@@ -34,6 +35,7 @@ def smoothStep(x: float) -> float:
     bl_label="Float加法",
     base_color=_Color.colorCat["Math"],
     color_tag = "CONVERTER",
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatAdd(a: float, b: float) -> float:
     return a+b
@@ -42,6 +44,7 @@ def floatAdd(a: float, b: float) -> float:
 @omni(enable=True,
     bl_label="Float减法",
     base_color=_Color.colorCat["Math"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatSubtract(a: float, b: float) -> float:
     return a - b
@@ -50,6 +53,7 @@ def floatSubtract(a: float, b: float) -> float:
 @omni(enable=True,
     bl_label="Float乘法",
     base_color=_Color.colorCat["Math"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatMultiply(a: float, b: float) -> float:
     return a * b
@@ -58,6 +62,7 @@ def floatMultiply(a: float, b: float) -> float:
 @omni(enable=True,
     bl_label="Float除法",
     base_color=_Color.colorCat["Math"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatDivide(a: float, b: float) -> float:
     if b == 0:
@@ -70,6 +75,7 @@ def floatDivide(a: float, b: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["值", "最小值", "最大值"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "x"},
     )
 def clamp(x: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
     if min_value > max_value:
@@ -82,6 +88,7 @@ def clamp(x: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["值", "输入最小", "输入最大", "输出最小", "输出最大", "钳制结果"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "x"},
     )
 def remap(
     x: float,
@@ -119,6 +126,7 @@ def floatAbs(x: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["值A", "值B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatMin(a: float, b: float) -> float:
     return min(a, b)
@@ -129,6 +137,7 @@ def floatMin(a: float, b: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["值A", "值B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def floatMax(a: float, b: float) -> float:
     return max(a, b)
@@ -139,6 +148,7 @@ def floatMax(a: float, b: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["底数", "指数"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "base"},
     )
 def floatPower(base: float, exponent: float) -> float:
     return base ** exponent
@@ -161,6 +171,7 @@ def floatSqrt(x: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["值", "小数位"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "x"},
     )
 def floatRound(x: float, digits: int = 0) -> float:
     return round(x, digits)
@@ -211,6 +222,7 @@ def cosValue(x: float) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def vectorAdd(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     return _to_vector(a) + _to_vector(b)
@@ -221,6 +233,7 @@ def vectorAdd(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def vectorSubtract(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     return _to_vector(a) - _to_vector(b)
@@ -231,6 +244,7 @@ def vectorSubtract(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["向量", "缩放"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "vec"},
     )
 def vectorScale(vec: mathutils.Vector, scale: float) -> mathutils.Vector:
     return _to_vector(vec) * scale
@@ -251,6 +265,7 @@ def vectorDot(a: mathutils.Vector, b: mathutils.Vector) -> float:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["向量A", "向量B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def vectorCross(a: mathutils.Vector, b: mathutils.Vector) -> mathutils.Vector:
     return _to_vector(a).to_3d().cross(_to_vector(b).to_3d())
@@ -340,6 +355,7 @@ def sumVector(values: list[mathutils.Vector]) -> mathutils.Vector:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intAdd(a: int, b: int) -> int:
     return a + b
@@ -350,6 +366,7 @@ def intAdd(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intSubtract(a: int, b: int) -> int:
     return a - b
@@ -360,6 +377,7 @@ def intSubtract(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intMultiply(a: int, b: int) -> int:
     return a * b
@@ -370,6 +388,7 @@ def intMultiply(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intFloorDivide(a: int, b: int) -> int:
     if b == 0:
@@ -382,6 +401,7 @@ def intFloorDivide(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intModulo(a: int, b: int) -> int:
     if b == 0:
@@ -416,6 +436,7 @@ def intAbs(x: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intMin(a: int, b: int) -> int:
     return min(a, b)
@@ -426,6 +447,7 @@ def intMin(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数A", "整数B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
     )
 def intMax(a: int, b: int) -> int:
     return max(a, b)
@@ -436,6 +458,7 @@ def intMax(a: int, b: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["底数", "指数"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "base"},
     )
 def intPower(base: int, exponent: int) -> int:
     if exponent < 0:
@@ -448,6 +471,7 @@ def intPower(base: int, exponent: int) -> int:
     base_color=_Color.colorCat["Math"],
     _INPUT_NAME=["整数", "最小值", "最大值"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "x"},
     )
 def intClamp(x: int, min_value: int, max_value: int) -> int:
     if min_value > max_value:

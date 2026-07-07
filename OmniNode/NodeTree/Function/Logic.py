@@ -12,6 +12,7 @@ from . import _Color
     base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
 )
 def logic_and(a: bool, b: bool) -> bool:
     return a and b
@@ -22,6 +23,7 @@ def logic_and(a: bool, b: bool) -> bool:
     base_color=_Color.colorCat["Logic"],
     _INPUT_NAME=["条件A","条件B"],
     _OUTPUT_NAME=["结果"],
+    mute_passthrough={"_OUTPUT0": "a"},
 )
 def logic_or(a: bool, b: bool) -> bool:
     return a or b
@@ -172,6 +174,7 @@ def is_not_none(x: Any) -> bool:
     omni_description="""
     值真返回值2，值假返回值1
     """,
+    mute_passthrough={"_OUTPUT0": "value1"},
     )
 def switch(condition: bool, value1: Any, value2: Any) -> Any:
     return value2 if condition else value1

@@ -297,6 +297,7 @@ def _degrees_vector_to_quaternion(value) -> mathutils.Quaternion:
     FollowCtrl  是一个裸物体接收变换，需要追踪的物体/骨骼使用【子级】约束跟随 FollowCtrl
     子级约束中可以配置每个轴的权重和影响。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state"},
 )
 def softFollow(
     target_obj: bpy.types.Object,

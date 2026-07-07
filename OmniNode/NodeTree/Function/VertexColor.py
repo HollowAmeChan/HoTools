@@ -121,6 +121,7 @@ def _get_render_color_attribute(obj: bpy.types.Object) -> bpy.types.Attribute:
         颜色类型可选 BYTE_COLOR（8位颜色）或 FLOAT_COLOR（32位颜色）。
         属性域可选 POINT（顶点）、CORNER（角落/面-顶点）、EDGE（边）或 FACE（面）。
     """,
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectCreateColorAttribute(
     obj: bpy.types.Object,
@@ -270,6 +271,7 @@ def objectGetColorAttributeIndex(
     is_output_node=False,
     _INPUT_NAME=["顶点色属性", "新名称"],
     _OUTPUT_NAME=["顶点色属性", "属性名称"],
+    mute_passthrough={"_OUTPUT0": "color_attribute"},
 )
 def colorAttributeRename(
     color_attribute: _OmniColorAttribute,
@@ -288,6 +290,7 @@ def colorAttributeRename(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT1": "color_attribute"},
 )
 def objectSetActiveColorAttribute(
     obj: bpy.types.Object,
@@ -309,6 +312,7 @@ def objectSetActiveColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体", "属性索引"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectSetActiveColorAttributeByIndex(
     obj: bpy.types.Object,
@@ -327,6 +331,7 @@ def objectSetActiveColorAttributeByIndex(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体", "顶点色属性"],
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT1": "color_attribute"},
 )
 def objectSetRenderColorAttribute(
     obj: bpy.types.Object,
@@ -355,6 +360,7 @@ def objectSetRenderColorAttribute(
     is_output_node=False,
     _INPUT_NAME=["物体", "顶点色属性"],
     _OUTPUT_NAME=["物体"],
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectRemoveColorAttribute(
     obj: bpy.types.Object,

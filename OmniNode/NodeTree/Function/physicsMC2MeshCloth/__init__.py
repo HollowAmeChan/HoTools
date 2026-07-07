@@ -121,6 +121,7 @@ def _mesh_objects_from_input(values) -> list[bpy.types.Object]:
     通过"网格布料设置"输入传入。本节点只保留解算器级别参数：
     子步、重力、惯性、限速、Teleport、时间缩放。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state"},
 )
 def meshClothMC2(
     cache_state: _OmniCache,

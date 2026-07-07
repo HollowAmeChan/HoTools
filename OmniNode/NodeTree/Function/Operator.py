@@ -179,6 +179,7 @@ def _euler_order(obj: bpy.types.Object) -> str:
       移动写入 object.location，旋转写入 object.rotation_euler，缩放写入 object.scale。
       旋转单位为弧度；如果物体当前使用四元数或轴角旋转，会切换到 XYZ 欧拉旋转。
       """,
+      mute_passthrough={"_OUTPUT0": "obj"},
       )
 def objectWriteFullTransform(
     obj: bpy.types.Object,
@@ -298,6 +299,11 @@ def objectSetLocationByColorCurve(
       旋转输入/输出单位都是弧度，可直接接写入物体完整变换节点。
       漂浮节点默认缩放输出为 1,1,1，因此缩放相乘时不会改变基础缩放。
       """,
+      mute_passthrough={
+          "_OUTPUT0": "base_location",
+          "_OUTPUT1": "base_rotation",
+          "_OUTPUT2": "base_scale",
+      },
       )
 def composeTransform(
     base_location: NodeSocketVector,
@@ -345,6 +351,7 @@ def composeTransform(
       移动写入 object.delta_location，旋转写入 object.delta_rotation_euler，旋转单位为弧度。
       该节点不会修改普通 location/rotation_euler。
       """,
+      mute_passthrough={"_OUTPUT0": "obj"},
       )
 def objectWriteDeltaTransform(
     obj: bpy.types.Object,
@@ -363,6 +370,7 @@ def objectWriteDeltaTransform(
       base_color=_Color.colorCat["Operator"],
       is_output_node=False,
       _INPUT_NAME=["数据块","属性名称","属性值"],
+      mute_passthrough={"_OUTPUT0": "value"},
       )
 def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) -> Any:
     _write_datablock_property(datablock, prop_name, value)
@@ -380,6 +388,7 @@ def setDatablockProperty(datablock: _OmniDatablock, prop_name: str, value: Any) 
     在输入的Mesh上创建一个UV层，返回Mesh和UV层名称
     如果已经存在同名UV层，则不创建，直接返回已有的层
     """,
+    mute_passthrough={"_OUTPUT0": "obj", "_OUTPUT1": "uv_layer_name"},
     )
 def meshCreateUVLayer(obj: bpy.types.Object, uv_layer_name: str) -> tuple[bpy.types.Object,str]:
     mesh = obj.data
@@ -448,6 +457,7 @@ def scanFilePath(
     is_output_node=False,
     _INPUT_NAME=["字符串1","字符串2"],
     _OUTPUT_NAME=["字符串"],
+    mute_passthrough={"_OUTPUT0": "str1"},
     )
 def combineStrs(str1: str, str2: str) -> str:
     return str1 + str2

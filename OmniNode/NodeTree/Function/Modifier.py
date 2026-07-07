@@ -140,6 +140,7 @@ def _apply_modifier_operator(obj: bpy.types.Object, modifier: bpy.types.Modifier
     给目标物体添加一个修改器。
     如果修改器名称为空，会根据修改器类型自动生成默认名称。
     """,
+    mute_passthrough={"_OUTPUT0": "obj"},
 )
 def objectAddModifier(
     obj: bpy.types.Object,
@@ -290,6 +291,7 @@ def modifierRemove(
     将修改器移动到指定的堆栈索引位置。
     目标索引会自动限制在有效范围内。
     """,
+    mute_passthrough={"_OUTPUT1": "modifier"},
 )
 def modifierMove(
     modifier: _OmniModifier,

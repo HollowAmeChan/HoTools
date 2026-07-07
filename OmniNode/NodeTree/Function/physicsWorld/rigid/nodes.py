@@ -123,6 +123,7 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
 
     hotools_jolt 未编译时透传 world，输出 (world, 0, 0.0)，不报错。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSolver(
     world: object,
@@ -147,6 +148,7 @@ def physicsRigidSolver(
     world.result_streams 中的 rigid_transform。应放在"刚体模拟步"之后；
     若本帧还没有结果，命中为 False，其余输出为默认值。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidReadState(
     world: object,
@@ -226,6 +228,7 @@ def physicsRigidJoltWorldSettingsProperties(
     刚体模拟步会在同步 body/constraint 前读取 tag rigid_jolt.world_setting，并把 gravity 热更新到 Jolt adapter。
     容量上限是 JoltWorld 构造期参数；签名变化会触发 Jolt adapter 重建并重新同步刚体/约束。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidJoltWorldSettingsRegister(
     world: object,
@@ -322,6 +325,7 @@ def physicsRigidGeneratedConstraintProperties(
     读取它们并转成普通 ConstraintSpec slot。相同来源/目标的约束按内部
     stable_id 更新，不会因为节点重复执行而无限累积。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidGeneratedConstraintRegister(
     world: object,
@@ -352,6 +356,7 @@ def physicsRigidGeneratedConstraintRegister(
     节点只写入 world.exchange 的 rigid_body_commands item，不直接访问 Jolt handle。
     将本节点放在"刚体模拟步"之前，solver 会在本帧同步 body 后应用速度。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSetVelocity(
     world: object,
@@ -384,6 +389,7 @@ def physicsRigidSetVelocity(
 
     这是持续力；启用时每帧都会发布一次。需要脉冲式效果时请使用"刚体命令-施加冲量"。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidAddForce(
     world: object,
@@ -416,6 +422,7 @@ def physicsRigidAddForce(
 
     这是瞬时冲量；启用输入如果一直为 True，就会每帧发布一次。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidAddImpulse(
     world: object,
@@ -449,6 +456,7 @@ def physicsRigidAddImpulse(
 
     该命令用于运行中改变单个刚体受到的重力强度，不修改 HoTools 持久化属性。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSetGravityFactor(
     world: object,
@@ -483,6 +491,7 @@ def physicsRigidSetGravityFactor(
 
     当前覆盖 friction / restitution。它是运行中命令，不修改 HoTools 持久化属性。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSetMaterialResponse(
     world: object,
@@ -517,6 +526,7 @@ def physicsRigidSetMaterialResponse(
 
     motion_quality 使用 DISCRETE 或 LINEAR_CAST；LINEAR_CAST 对高速刚体启用连续碰撞检测。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSetMotionQuality(
     world: object,
@@ -550,6 +560,7 @@ def physicsRigidSetMotionQuality(
 
     可用于唤醒 sleeping body，或显式切换 active 状态。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidSetActive(
     world: object,

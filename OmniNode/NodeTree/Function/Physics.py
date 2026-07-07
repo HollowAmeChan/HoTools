@@ -4407,6 +4407,7 @@ def _run_spring_bone_vrm_node(
     “骨架列表”是本帧参与解算的骨架对象列表。
     “链数量”和”碰撞体数量”是所有骨架的汇总值，用于快速确认本帧实际参与解算的数据规模。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state"},
 )
 def springBoneVRM(
     cache_state: _OmniCache,
@@ -4459,6 +4460,7 @@ def springBoneVRM(
     节点输入、输出、缓存协议、跳帧规则和姿态写回方式与 Python 版保持一致。
     Python 层只负责收集 Blender 数据、维护 cache、生成 native 数组和写回 PoseBone；弹簧积分、长度约束、碰撞投影和子步循环由 hotools_native 执行。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state"},
 )
 def springBoneVRM_CPP(
     cache_state: _OmniCache,
@@ -4550,6 +4552,7 @@ def springBoneVRM_CPP(
     topology、pin、碰撞半径或碰撞组配置变化后，需要 reset、跳帧保护或 cache 重建路径生效。
     当前被动碰撞消费范围包括骨骼/Object 球体与胶囊。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state", "_OUTPUT1": "obj"},
 )
 def meshPhysicsXPBD(
     cache_state: _OmniCache,
@@ -4645,6 +4648,7 @@ def meshPhysicsXPBD(
     Python 版是行为参考；CPP 版只能替换求解热路径，不改变节点使用方式、cache 语义、碰撞过滤或跳帧行为。
     两端结果不一致时，优先检查 Python 桥接层生成的 native 输入数组。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state", "_OUTPUT1": "obj"},
 )
 def meshPhysicsXPBDCpp(
     cache_state: _OmniCache,
@@ -4791,6 +4795,7 @@ def meshPhysicsXPBDCpp(
     之后加碰撞、center、缩放补偿、多子步时，都应保持“先模拟完整链，最后批量写 matrix_basis”的结构。
     若要在 Pose Mode 下交互调试，播放期间同时写同一套 PoseBone 仍可能触发 Blender C 层崩溃，应考虑主动跳过写入或暂停每帧运行。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state", "_OUTPUT1": "bone_chain"},
 )
 def springBoneBase(
     cache_state: _OmniCache,
@@ -4933,6 +4938,7 @@ def springBoneBase(
     本节点只负责把当前已经写入 PoseBone 的姿态 K 到当前帧。
     bake 时建议用稳定的逐帧播放/运行流程，不要在同一帧手动反复执行。
     """,
+    mute_passthrough={"_OUTPUT0": "bones"},
 )
 def keyframePoseBones(
     bones: list[_OmniBone],

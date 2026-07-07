@@ -209,6 +209,7 @@ def physicsWorldBegin(
       物理世界  — 裸 world，供后续 debug/输出节点使用
       Solver数量 — 当前活跃的 solver slot 数量
     """,
+    mute_passthrough={"_OUTPUT1": "world"},
 )
 def physicsWorldCommit(
     world: object,
@@ -237,6 +238,7 @@ def physicsWorldCommit(
 
     物理世界 透传，方便在节点链中插入调试而不打断 world 流向。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsWorldDebugSnapshot(
     world: object,
@@ -263,6 +265,7 @@ def physicsWorldDebugSnapshot(
 
     这是通用观察节点，不访问 solver slot 私有结构或 backend handle。
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsWorldResultStream(
     world: object,
@@ -308,6 +311,7 @@ def physicsWorldResultStream(
       调试文本  — 多行可读文本（可接 Debug Print 节点）
       问题列表  — 校验发现的问题描述列表（空列表表示无问题）
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsWorldDebugText(
     world: object,
@@ -403,6 +407,7 @@ def physicsWorldDebugDraw(
     接法：
       Physics World Begin → Rigid Body Solver → 物理写回 → Physics World Commit
     """,
+    mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsWriteback(
     world:   object,

@@ -345,6 +345,7 @@ def boneClothMC2ChainPhysics(
     横向约束（连接模式）在同一骨架的骨链之间生效，跨骨架的骨链无横向连接。
     本节点只保留解算器级别参数：子步、重力、惯性、限速、Teleport、时间缩放、自碰撞。
     """,
+    mute_passthrough={"_OUTPUT0": "cache_state"},
 )
 def boneClothMC2(
     cache_state: _OmniCache,

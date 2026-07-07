@@ -12,6 +12,7 @@ from ..FunctionNodeCore import omni
     omni_description="打印输入值并原样输出。标题输入用于区分多个 Debug 节点；标题为空时使用默认前缀。",
     _INPUT_NAME=["值", "标题"],
     _OUTPUT_NAME=["value"],
+    mute_passthrough={"_OUTPUT0": "value"},
 )
 def debug_print_any(value: Any, title: str = "") -> Any:
     title_text = str(title).strip() if title is not None else ""

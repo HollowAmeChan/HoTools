@@ -280,6 +280,7 @@ def sample_texture(src_pixels, src_uvs, src_w, src_h, scale, enable_aa):
     3. 直接保存图像到指定文件路径，支持的格式：PNG, JPG, JPEG, TGA, BMP，然后导入到Blender中
     4. 膨胀像素数用于消除UV边缘缝隙
     """,
+    mute_passthrough={"_OUTPUT0": "img"},
     )
 def uv_reprojectionTransfer(
     objs:list[bpy.types.Object],
@@ -721,6 +722,7 @@ def _load_pil_rgba(path: _OmniFolderPath) -> Image.Image:
     如果保存位置是目录或没有文件后缀，会使用输出名称和格式自动生成文件名。
     数据贴图不会做色彩空间转换，但会阻止保存为 JPEG，避免数据被有损压缩。
     """,
+    mute_passthrough={"_OUTPUT0": "file_path"},
 )
 def combineImageFiles(
     imagePaths: list[_OmniFolderPath],
@@ -784,7 +786,8 @@ def combineImageFiles(
     _OUTPUT_NAME=["文件路径"],
     omni_description="""
     该节点用于将Blender图片保存到指定路径，支持 PNG、JPEG、EXR 等格式
-    """
+    """,
+    mute_passthrough={"_OUTPUT0": "file_path"},
 )
 def saveImage(bl_img: bpy.types.Image, file_path:_OmniFolderPath, format: _OmniImageFormat) -> _OmniFolderPath:
 
@@ -962,6 +965,7 @@ def splitImageChannels(
     将四张通道图合并为一张 RGBA 图片。
     每个输入图片默认读取其 R 通道作为目标通道值；若 A 通道图为空，则 Alpha 默认为 1。
     """,
+    mute_passthrough={"_OUTPUT0": "r_img"},
 )
 def mergeImageChannels(
     r_img: bpy.types.Image,
@@ -1027,6 +1031,7 @@ def mergeImageChannels(
     强度为 0 时输出平面法线，强度为 1 时保持原图，强度大于 1 时增强凹凸。
     输出图像自动使用 Non-Color 色彩空间；填写文件路径时会同时保存到磁盘。
     """,
+    mute_passthrough={"_OUTPUT0": "img"},
 )
 def adjustNormalMapStrength(
     img: bpy.types.Image,
