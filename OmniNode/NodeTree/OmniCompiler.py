@@ -18,6 +18,15 @@ from .OmniIR import (
 import inspect
 
 
+class _MutedPassthroughLink:
+    def __init__(self, from_socket, to_socket, muted_path):
+        self.from_socket = from_socket
+        self.from_node = from_socket.node
+        self.to_socket = to_socket
+        self.to_node = to_socket.node
+        self.muted_path = tuple(muted_path)
+
+
 class OmniCompiler:
     GROUP_NODE_IDNAME = "HO_OmniNode_GroupNode"
     BATCH_GROUP_NODE_IDNAME = "HO_OmniNode_BatchGroupNode"
@@ -132,6 +141,7 @@ class CompilerContext:
         self.topo = []
         self.reachable_nodes = set()
         self.muted_nodes = set()
+        self.muted_passthrough_links = {}
 
         OmniRuntimeState.ensure_tree_runtime_uids(tree)
 
@@ -167,6 +177,112 @@ class CompilerContext:
         cycle_path = [getattr(t, "name", "<tree>") for t in self.compiling_stack + [self.tree]]
         raise RuntimeError("Cycle detected in OmniNode subtree: " + " -> ".join(cycle_path))
 
+    @staticmethod
+    def _socket_key(sock):
+        try:
+            return int(sock.as_pointer())
+        except Exception:
+            return id(sock)
+
+    @staticmethod
+    def _socket_by_identifier(sockets, identifier):
+        for sock in sockets:
+            if getattr(sock, "identifier", None) == identifier:
+                return sock
+        try:
+            return sockets.get(identifier)
+        except Exception:
+            return None
+
+    def _muted_passthrough_input_socket(self, node, output_socket):
+        mapping = getattr(node, "_omni_mute_passthrough", None) or {}
+        output_id = getattr(output_socket, "identifier", None)
+        input_id = mapping.get(output_id)
+        if input_id is None:
+            return None
+        return self._socket_by_identifier(getattr(node, "inputs", ()), input_id)
+
+    def _add_muted_passthrough_link(self, link):
+        key = self._socket_key(link.to_socket)
+        links = self.muted_passthrough_links.setdefault(key, [])
+        signature = (
+            link.from_node.name,
+            getattr(link.from_socket, "identifier", ""),
+            link.to_node.name,
+            getattr(link.to_socket, "identifier", ""),
+            tuple(node.name for node in link.muted_path),
+        )
+        for existing in links:
+            existing_signature = (
+                existing.from_node.name,
+                getattr(existing.from_socket, "identifier", ""),
+                existing.to_node.name,
+                getattr(existing.to_socket, "identifier", ""),
+                tuple(node.name for node in existing.muted_path),
+            )
+            if existing_signature == signature:
+                return
+        links.append(link)
+
+    def _resolve_muted_passthrough_links(self, muted_node, output_socket, target_socket, seen=None):
+        seen = tuple(seen or ())
+        if muted_node in seen:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                f"Stop MUTED passthrough cycle at {OmniDebug.node_name(muted_node)}",
+            )
+            return []
+
+        path = seen + (muted_node,)
+        self.muted_nodes.add(muted_node)
+        input_socket = self._muted_passthrough_input_socket(muted_node, output_socket)
+        if input_socket is None:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                f"Block MUTED {OmniDebug.node_name(muted_node)}."
+                f"{OmniDebug.socket_name(output_socket)} without mute_passthrough",
+            )
+            return []
+
+        resolved = []
+        for input_link in input_socket.links:
+            source_node = input_link.from_node
+            if OmniCompiler._is_muted_node(source_node):
+                resolved.extend(
+                    self._resolve_muted_passthrough_links(
+                        source_node,
+                        input_link.from_socket,
+                        target_socket,
+                        seen=path,
+                    )
+                )
+                continue
+
+            resolved.append(
+                _MutedPassthroughLink(
+                    input_link.from_socket,
+                    target_socket,
+                    path,
+                )
+            )
+
+        if not resolved:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                f"MUTED {OmniDebug.node_name(muted_node)}."
+                f"{OmniDebug.socket_name(output_socket)} passthrough has no active upstream link",
+            )
+            return []
+
+        for link in resolved:
+            OmniDebug.append_compile_trace(
+                self.graph,
+                f"Pass MUTED {' -> '.join(OmniDebug.node_name(node) for node in link.muted_path)} "
+                f"as {link.from_node.name}.{OmniDebug.socket_name(link.from_socket)} -> "
+                f"{OmniDebug.node_name(target_socket.node)}.{OmniDebug.socket_name(target_socket)}",
+            )
+        return resolved
+
     def _collect_reachable_graph(self):
         output_nodes = [node for node in self.tree.nodes if getattr(node, "is_output_node", False)]
         visited = set()
@@ -176,9 +292,9 @@ class CompilerContext:
             if node in visited:
                 return
             if OmniCompiler._is_muted_node(node):
+                self.muted_nodes.add(node)
                 # muted 节点不生成输出寄存器，也不继续向输入侧搜索；
                 # 下游仍保留的可见连线会在编译输入时按 reachable_nodes 再过滤。
-                self.muted_nodes.add(node)
                 OmniDebug.append_compile_trace(
                     self.graph,
                     f"Block MUTED node {OmniDebug.node_name(node)} and skip its upstream",
@@ -193,6 +309,17 @@ class CompilerContext:
             for input_socket in node.inputs:
                 for link in input_socket.links:
                     if OmniCompiler._is_muted_node(link.from_node):
+                        passthrough_links = self._resolve_muted_passthrough_links(
+                            link.from_node,
+                            link.from_socket,
+                            input_socket,
+                        )
+                        if passthrough_links:
+                            for passthrough_link in passthrough_links:
+                                self._add_muted_passthrough_link(passthrough_link)
+                                links.add(passthrough_link)
+                                dfs(passthrough_link.from_node)
+                            continue
                         # 到 muted 节点的 link 只属于编辑器可视连接，不参与运行时数据流。
                         self.muted_nodes.add(link.from_node)
                         OmniDebug.append_compile_trace(
@@ -223,7 +350,7 @@ class CompilerContext:
         if self.muted_nodes:
             OmniDebug.append_compile_trace(
                 self.graph,
-                "Muted nodes blocked: " + ", ".join(
+                "Muted nodes seen: " + ", ".join(
                     sorted(OmniDebug.node_name(node) for node in self.muted_nodes)
                 ),
             )
@@ -237,6 +364,7 @@ class CompilerContext:
             for link in sock.links
             if link.from_node in active_nodes and link.to_node in active_nodes
         ]
+        links.extend(self.muted_passthrough_links.get(self._socket_key(sock), ()))
         return sorted(
             links,
             key=lambda link: (link.from_node.name, link.from_socket.identifier),

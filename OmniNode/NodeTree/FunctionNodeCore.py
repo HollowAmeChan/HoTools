@@ -114,6 +114,7 @@ def CheckMetaInfo(func) -> tuple[dict, dict[dict], dict[dict], dict[dict], dict[
     NodeInfo["_INPUT_NAME"] = []
     NodeInfo["input_init"] = {}
     NodeInfo["_OUTPUT_NAME"] = ["输出"]
+    NodeInfo["mute_passthrough"] = None
     NodeInfo.update(func.__meta)
 
     # -------------------------
@@ -246,10 +247,118 @@ def _compose_input_default_dict(SocketDefaultDict, SocketInputSettings):
     return defaults
 
 
+def _socket_identifier_lookup(socket_meta_dict):
+    lookup = {}
+    for identifier, meta in socket_meta_dict.items():
+        keys = [
+            identifier,
+            meta.get("identifier", identifier) if isinstance(meta, dict) else identifier,
+        ]
+        if isinstance(meta, dict):
+            keys.append(meta.get("name"))
+
+        for key in keys:
+            if key is None:
+                continue
+            lookup.setdefault(str(key), identifier)
+    return lookup
+
+
+def _auto_mute_passthrough_map(SocketInMetaDict, SocketOutMetaDict, SocketIsMulti):
+    input_by_type = {}
+    output_by_type = {}
+
+    for identifier, meta in SocketInMetaDict.items():
+        if SocketIsMulti.get(identifier, False):
+            continue
+        socket_type = meta.get("type") if isinstance(meta, dict) else None
+        if socket_type:
+            input_by_type.setdefault(socket_type, []).append(identifier)
+
+    for identifier, meta in SocketOutMetaDict.items():
+        if SocketIsMulti.get(identifier, False):
+            continue
+        socket_type = meta.get("type") if isinstance(meta, dict) else None
+        if socket_type:
+            output_by_type.setdefault(socket_type, []).append(identifier)
+
+    passthrough = {}
+    for socket_type, input_ids in input_by_type.items():
+        output_ids = output_by_type.get(socket_type, [])
+        if len(input_ids) == 1 and len(output_ids) == 1:
+            passthrough[output_ids[0]] = input_ids[0]
+    return passthrough
+
+
+def _passthrough_endpoint(item, names):
+    for name in names:
+        if name in item:
+            return item[name]
+    return None
+
+
+def _add_passthrough_pair(mapping, input_key, output_key, input_lookup, output_lookup, source):
+    input_id = input_lookup.get(str(input_key))
+    output_id = output_lookup.get(str(output_key))
+    if input_id is None or output_id is None:
+        raise ValueError(f"Invalid mute_passthrough entry {source!r}")
+    mapping[output_id] = input_id
+
+
+def _resolve_mute_passthrough_map(spec, SocketInMetaDict, SocketOutMetaDict, SocketIsMulti):
+    if spec is False:
+        return {}
+    if spec is None or spec is True or spec == "auto":
+        return _auto_mute_passthrough_map(SocketInMetaDict, SocketOutMetaDict, SocketIsMulti)
+
+    input_lookup = _socket_identifier_lookup(SocketInMetaDict)
+    output_lookup = _socket_identifier_lookup(SocketOutMetaDict)
+    mapping = {}
+
+    if isinstance(spec, str):
+        if len(SocketOutMetaDict) != 1:
+            raise ValueError("String mute_passthrough requires exactly one output socket")
+        output_key = next(iter(SocketOutMetaDict.keys()))
+        _add_passthrough_pair(mapping, spec, output_key, input_lookup, output_lookup, spec)
+        return mapping
+
+    if isinstance(spec, dict):
+        input_key = _passthrough_endpoint(spec, ("input", "from", "from_socket"))
+        output_key = _passthrough_endpoint(spec, ("output", "to", "to_socket"))
+        if input_key is not None or output_key is not None:
+            _add_passthrough_pair(mapping, input_key, output_key, input_lookup, output_lookup, spec)
+            return mapping
+
+        for output_key, input_key in spec.items():
+            _add_passthrough_pair(mapping, input_key, output_key, input_lookup, output_lookup, spec)
+        return mapping
+
+    if isinstance(spec, (list, tuple)):
+        for item in spec:
+            if isinstance(item, dict):
+                input_key = _passthrough_endpoint(item, ("input", "from", "from_socket"))
+                output_key = _passthrough_endpoint(item, ("output", "to", "to_socket"))
+                _add_passthrough_pair(mapping, input_key, output_key, input_lookup, output_lookup, item)
+                continue
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise ValueError(f"Invalid mute_passthrough entry {item!r}")
+            input_key, output_key = item
+            _add_passthrough_pair(mapping, input_key, output_key, input_lookup, output_lookup, item)
+        return mapping
+
+    raise ValueError(f"Unsupported mute_passthrough spec {spec!r}")
+
+
 def CreateNodeClass(func) -> OmniNode:
     NodeInfo, SocketInMetaDict, SocketOutMetaDict,SocketDefaultDict,SocketIsMulti,SocketInputSettings = CheckMetaInfo(func)
     func_meta = getattr(func, "__meta", {})
     SocketResetDefaultDict = _compose_input_default_dict(SocketDefaultDict, SocketInputSettings)
+    MutePassthroughMap = _resolve_mute_passthrough_map(
+        NodeInfo.get("mute_passthrough"),
+        SocketInMetaDict,
+        SocketOutMetaDict,
+        SocketIsMulti,
+    )
 
     class OmniNodeClassInstance(OmniNode, Node):
         bl_label = NodeInfo.get("bl_label")
@@ -260,6 +369,7 @@ def CreateNodeClass(func) -> OmniNode:
         _omni_presets = NodeInfo.get("omni_presets", [])
         _socket_is_multi = SocketIsMulti
         _omni_socket_defaults = SocketResetDefaultDict
+        _omni_mute_passthrough = MutePassthroughMap
 
         def build(self):
             PutInitMetaInfo(self, NodeInfo, SocketInMetaDict,
