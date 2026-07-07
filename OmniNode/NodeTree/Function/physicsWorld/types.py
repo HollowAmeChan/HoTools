@@ -623,6 +623,12 @@ class PhysicsWorldCache:
             except Exception as e:
                 backend_snapshots[name] = {"error": str(e)}
 
+        try:
+            from .declarations import solver_declarations_debug_snapshot
+            solver_declarations = solver_declarations_debug_snapshot()
+        except Exception as e:
+            solver_declarations = {"error": str(e)}
+
         return {
             "kind": self.kind,
             "schema": self.schema,
@@ -646,6 +652,7 @@ class PhysicsWorldCache:
             "exchange_item_count": sum(len(items) for items in self.exchange.values()),
             "result_channels": self.result_stream_counts(),
             "result_item_count": sum(len(items) for items in self.result_streams.values()),
+            "solver_declarations": solver_declarations,
             "solver_slots": slot_snapshots,
             "backend_resources": list(self.backend_resources.keys()),
             "backend_resource_details": backend_snapshots,

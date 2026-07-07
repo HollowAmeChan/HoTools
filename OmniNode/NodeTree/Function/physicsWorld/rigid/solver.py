@@ -28,6 +28,7 @@ from .results import (
     publish_rigid_transform_result,
     publish_rigid_solver_stats_result,
 )
+from .declaration import RIGID_SOLVER_DECLARATION
 
 
 _RIGID_COMMAND_CONSUMER_KEY = "_consumed_by_rigid_solver"
@@ -72,6 +73,7 @@ def register_rigid_bodies(
                 slot.world_generation = world.generation
 
             slot.data["spec"] = spec
+            slot.data["declaration"] = RIGID_SOLVER_DECLARATION
             slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
             registered_ids.append(spec.slot_id)
 
@@ -116,6 +118,7 @@ def register_constraints(
                 slot.world_generation = world.generation
 
             slot.data["spec"] = spec
+            slot.data["declaration"] = RIGID_SOLVER_DECLARATION
             slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
             registered_ids.append(spec.slot_id)
 

@@ -1045,3 +1045,12 @@ Blender ID 强引用，用于追加或链接工作流；它不创建独立运行
 
 如果多个空物体指向同一棵 `OmniNodeTree`，UI 只把按对象名稳定排序后的第一个当作有效挂载。
 其它空物体只视为重复引用，不应表现为独立运行实例。
+## 2026-07-07 追加：物理世界 solver 声明入口
+
+`physicsWorld/declarations.py` 是 solver 声明 registry；`physicsWorld/names.py` 仍是跨 solver 名称集中点。
+
+约定：domain 内 `declaration.py` 只重导出或补充 audit；`PhysicsWorldCache.omni_cache_debug_snapshot()` 输出 `solver_declarations`；新 solver 先补声明再接节点/native。
+
+硬约束：`writeback.solver_inline_writeback=False`，solver 内不直接写 Blender 数据。
+
+当前内置声明：`spring_vrm`、`rigid_jolt`。

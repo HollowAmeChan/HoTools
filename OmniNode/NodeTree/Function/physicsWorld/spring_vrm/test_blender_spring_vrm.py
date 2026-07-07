@@ -144,6 +144,7 @@ if _nt_fnc_key not in sys.modules:
 
 
 _load_pw("names", "names.py")
+_load_pw("declarations", "declarations.py")
 _load_pw("utils.ids", "utils/ids.py")
 _load_pw("utils.values", "utils/values.py")
 _load_pw("utils.writeback_pose", "utils/writeback_pose.py")

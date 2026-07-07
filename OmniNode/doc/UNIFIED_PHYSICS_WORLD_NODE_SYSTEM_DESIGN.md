@@ -1372,3 +1372,12 @@ BONE 上下文（Bone Properties，Pose 模式）
 | —（新增） | `include_rigid_body` | 刚体 |
 | —（新增） | `include_rigid_constraint` | 刚体约束 |
 | `include_hidden` | `include_hidden`（不变） | 包含隐藏 |
+## 2026-07-07 追加：Solver 声明 registry
+
+统一物理世界的 solver 声明已落到 `physicsWorld/declarations.py`，并进入 `PhysicsWorldCache.omni_cache_debug_snapshot()["solver_declarations"]`。
+
+当前内置声明：`spring_vrm` 与 `rigid_jolt`。后续 solver 迁移必须先在 `physicsWorld/names.py` 定义公共名称，再在 `physicsWorld/declarations.py` 声明 `consumes / produces / persistent_state / dirty_keys / same_frame_policy / update_policy / writeback`。
+
+硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
+
+Phase 5 的声明样板缺口已关闭。剩余重点是 runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone / Mesh 类非 Object 写回测试。

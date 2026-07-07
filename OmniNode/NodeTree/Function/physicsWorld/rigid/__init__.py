@@ -19,12 +19,18 @@ from .solver import (
     register_rigid_bodies,
     register_constraints,
 )
+from .declaration import (
+    RIGID_SOLVER_DECLARATION,
+    rigid_declaration_debug_dict,
+)
 
 __all__ = [
+    "RIGID_SOLVER_DECLARATION",
     "RigidBodySpec",
     "ConstraintSpec",
     "build_rigid_body_spec",
     "build_constraint_spec",
     "register_rigid_bodies",
     "register_constraints",
+    "rigid_declaration_debug_dict",
 ]

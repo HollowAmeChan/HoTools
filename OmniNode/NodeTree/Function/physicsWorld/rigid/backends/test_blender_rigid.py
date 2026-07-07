@@ -148,6 +148,7 @@ if _nt_fnc_key not in sys.modules:
 
 # 按依赖顺序加载
 _load_pw("names",                "names.py")
+_load_pw("declarations",         "declarations.py")
 _load_pw("types",                "types.py")
 _load_pw("scope",                "scope.py")
 _load_pw("rigid.results",        "rigid/results.py")
@@ -156,6 +157,7 @@ _load_pw("writeback",            "writeback.py")
 _load_pw("debug",                "debug.py")
 _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
+_load_pw("rigid.declaration",    "rigid/declaration.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
 _load_pw("rigid.backends.jolt",  "rigid/backends/jolt.py")
 _load_pw("debug_draw",           "debug_draw.py")

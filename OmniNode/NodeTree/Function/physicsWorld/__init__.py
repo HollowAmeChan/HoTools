@@ -1,15 +1,16 @@
-# physicsWorld — 统一物理世界包
+# physicsWorld - 统一物理世界包
 #
 # 目录语义：
-#   types.py   — PhysicsWorldCache、PhysicsFrameContext、PhysicsObjectScope、PhysicsColliderSource
-#   scope.py   — 对象列表合并、过滤、去重、作用域键计算
-#   world.py   — 开始 / 提交 / 生命周期 / 槽管理
-#   debug.py   — 调试快照、文本展开、校验结果
-#   nodes.py   — 对外暴露的通用函数节点（由 OmniNodeRegister 加载注册）
-#   names.py   — solver/channel/backend/implicit object 使用的全局名称常量
-#   utils/     — 新物理世界通用数学、id、buffer 辅助函数
-#   rigid/     — 刚体领域（阶段 4+）
-#   spring_vrm/ — VRM SpringBone 重写领域（面向物理世界的垂直切片）
+#   types.py        - PhysicsWorldCache、FrameContext、Scope、SolverSlot
+#   scope.py        - 对象列表合并、过滤、去重、作用域 key
+#   world.py        - World Begin / Commit / collider snapshot / 生命周期
+#   debug.py        - 调试快照、文本展开、状态校验
+#   declarations.py - solver 声明 registry 和迁移审查入口
+#   nodes.py        - 对外暴露的通用函数节点
+#   names.py        - solver/channel/backend/implicit object 全局名称常量
+#   utils/          - 新物理世界通用数学、id、buffer 辅助函数
+#   rigid/          - 刚体 / Jolt domain
+#   spring_vrm/     - VRM SpringBone 重写 domain
 
 from .types import (
     PhysicsObjectScope,
@@ -38,6 +39,19 @@ from .debug import (
     validate_world,
     print_world_summary,
 )
+from .declarations import (
+    RIGID_SOLVER_DECLARATION,
+    SOLVER_DECLARATION_REQUIRED_KEYS,
+    SPRING_VRM_SOLVER_DECLARATION,
+    all_solver_declarations,
+    get_solver_declaration,
+    normalize_solver_declaration,
+    register_solver_declaration,
+    solver_declaration_summary,
+    solver_declarations_debug_snapshot,
+    unregister_solver_declaration,
+    validate_solver_declaration,
+)
 from .names import (
     JOLT_STEP_WRITER_ID,
     RIGID_BACKEND_RESOURCE_KEY,
@@ -46,6 +60,9 @@ from .names import (
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_REGISTER_WRITER_ID,
     RIGID_CONSTRAINT_SLOT_KIND,
+    RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
+    RIGID_MATERIAL_PRESET_OBJECT_TAG,
+    RIGID_RAGDOLL_PROXY_OBJECT_TAG,
     RIGID_SOLVER_ID,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,
@@ -81,6 +98,18 @@ __all__ = [
     "result_items_to_text",
     "validate_world",
     "print_world_summary",
+    # declarations
+    "RIGID_SOLVER_DECLARATION",
+    "SOLVER_DECLARATION_REQUIRED_KEYS",
+    "SPRING_VRM_SOLVER_DECLARATION",
+    "all_solver_declarations",
+    "get_solver_declaration",
+    "normalize_solver_declaration",
+    "register_solver_declaration",
+    "solver_declaration_summary",
+    "solver_declarations_debug_snapshot",
+    "unregister_solver_declaration",
+    "validate_solver_declaration",
     # names
     "JOLT_STEP_WRITER_ID",
     "RIGID_BACKEND_RESOURCE_KEY",
@@ -89,6 +118,9 @@ __all__ = [
     "RIGID_BODY_SLOT_KIND",
     "RIGID_CONSTRAINT_REGISTER_WRITER_ID",
     "RIGID_CONSTRAINT_SLOT_KIND",
+    "RIGID_GENERATED_CONSTRAINT_OBJECT_TAG",
+    "RIGID_MATERIAL_PRESET_OBJECT_TAG",
+    "RIGID_RAGDOLL_PROXY_OBJECT_TAG",
     "RIGID_SOLVER_ID",
     "RIGID_SOLVER_STATS_CHANNEL",
     "RIGID_TRANSFORM_CHANNEL",

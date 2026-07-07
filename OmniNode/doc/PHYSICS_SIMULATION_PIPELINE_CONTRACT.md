@@ -1064,3 +1064,17 @@ rigid.jolt_step
 - 哪些结果进入统一 writeback。
 - 哪些跨 solver hack 升级为 exchange channel。
 - 哪些数学、buffer、id、writeback helper 抽到 `physicsWorld/utils/`。
+## 2026-07-07 追加：Solver 声明 registry 契约
+
+代码入口：`physicsWorld/declarations.py`。debug 入口：`solver_declarations_debug_snapshot()`。
+
+每个新 solver 必须先声明再接节点。最小字段：`solver_id`、`slot_kind`、`stage`、`consumes`、`produces`、`persistent_state`、`dirty_keys`、`same_frame_policy`、`update_policy`、`writeback`。
+
+规则：
+
+- `consumes` / `produces` 只列公开通道：world snapshot、implicit object tag、exchange、result stream、solver slot 摘要。
+- result 不能只藏在 solver slot 或 native handle 里。
+- `writeback.solver_inline_writeback=False` 是硬约束。
+- `same_frame_policy` 必须说明同帧重复求值是否 step、sync 或只重发结果。
+
+当前内置声明：`spring_vrm`、`rigid_jolt`。后续 MC2 / BoneCloth / SoftBody 迁移先补 `names.py` 常量和 declaration；旧实现只作审查与数值参考。

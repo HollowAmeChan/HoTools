@@ -872,3 +872,12 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 ```
 
 这批字段足以覆盖 Jolt 的基础刚体和常用约束能力，并为 debug 可视化、断裂、传感器、事件流和后续 sixdof/ragdoll 铺路。
+## 2026-07-07 追加：Rigid/Jolt 声明状态
+
+`RIGID_SOLVER_DECLARATION` 已落在 `physicsWorld/declarations.py`，并由 `physicsWorld/rigid/declaration.py` 重导出。
+
+关键边界：`rigid_jolt` 消费刚体/约束 slot 与 `rigid_body_commands`，输出 `rigid_transform` / `rigid_solver_stats`，写回统一走 `physicsWorld.writeback -> Object.delta_transform`。
+
+`physicsWorld/names.py` 已预留 planned implicit object tag：`rigid.generated_constraint`、`rigid.material_preset`、`rigid.ragdoll_proxy`。这些 tag 当前只占位，不被 solver 消费。
+
+后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。
