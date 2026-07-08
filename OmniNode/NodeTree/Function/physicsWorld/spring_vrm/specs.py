@@ -14,17 +14,12 @@ def _simulated_bones(bones: tuple[str, ...]) -> tuple[str, ...]:
 def _spec_hash(chains: tuple["SpringVRMChainSpec", ...], backend: str, substeps: int) -> str:
     payload = [
         str(backend),
-        str(int(substeps)),
     ]
     for chain in chains:
         payload.extend((
             chain.root_bone,
             ",".join(chain.bones),
             "1" if chain.enabled else "0",
-            f"{chain.stiffness_force:.8g}",
-            f"{chain.drag_force:.8g}",
-            ",".join(f"{item:.8g}" for item in chain.gravity_dir),
-            f"{chain.gravity_power:.8g}",
         ))
     return stable_short_hash(payload, 12)
 

@@ -88,11 +88,14 @@ def step_spring_vrm(
     if not enabled or world is None or not isinstance(world, PhysicsWorldCache):
         return 0, 0.0
 
+    fc = getattr(world, "frame_context", None)
+    effective_substeps = max(1, int(getattr(fc, "substeps", substeps) or substeps or 1))
+
     chain_objects = _resolve_chain_objects(world)
     specs = build_spring_vrm_solver_specs(
         chain_objects,
         backend="cpp",
-        substeps=max(1, int(substeps)),
+        substeps=effective_substeps,
     )
 
     solver_id = SPRING_VRM_STEP_WRITER_ID
@@ -123,7 +126,6 @@ def step_spring_vrm(
 
         _prune_stale_spring_vrm_slots(world, registered_ids)
 
-        fc = getattr(world, "frame_context", None)
         restart = bool(getattr(fc, "restart_required", False))
         same_frame = bool(getattr(fc, "same_frame", False))
         dt = float(getattr(fc, "dt", 0.0) or 0.0)
@@ -141,7 +143,7 @@ def step_spring_vrm(
                     world,
                     slot,
                     dt=dt,
-                    substeps=max(1, int(substeps)),
+                    substeps=effective_substeps,
                     restart=restart,
                 )
                 published += int(count)

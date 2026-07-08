@@ -221,7 +221,7 @@ class SpringVRMNativeContext:
             return 0
         if self._handle is not None:
             return self._step_via_context_api(module, world, armature, chain, chain_state, dt, substeps, restart)
-        return self._step_via_legacy_bridge(module, world, armature, chain, chain_state, dt, substeps)
+        return self._step_via_legacy_bridge(module, world, armature, chain, chain_state, dt, substeps, restart)
 
     def dispose(self) -> None:
         """释放 C++ handle 和 numpy buffer，清空所有 bpy 对象引用。"""
@@ -301,6 +301,10 @@ class SpringVRMNativeContext:
         # restart 时（跳帧/重置）：pose tails 已上传，在 step 前把 current/prev tails 重置到当前 pose 位置
         if restart:
             module.spring_vrm_reset_state(self._handle)
+            self._reset_dynamic_tails_to_pose()
+            frame = int(getattr(world.frame_context, "frame", 0) or 0)
+            self._last_frame = frame
+            return self._publish_current_pose(world, chain, chain_state, frame)
         module.spring_vrm_step(
             self._handle,
             float(dt),
@@ -320,6 +324,61 @@ class SpringVRMNativeContext:
         self._last_frame = frame
 
         return self._publish_from_result_buffers(world, chain, chain_state, frame)
+
+    def _reset_dynamic_tails_to_pose(self) -> None:
+        d = self._dynamic
+        if d is None:
+            return
+        np.copyto(d["current_tails"], d["current_pose_tails"])
+        np.copyto(d["prev_tails"], d["current_pose_tails"])
+        np.copyto(d["target_matrices"], d["current_pose_matrices"])
+        np.copyto(d["target_quaternions"], d["current_pose_quaternions"])
+
+    def _publish_current_pose(
+        self, world, chain, chain_state: dict, frame: int
+    ) -> int:
+        target_pose_matrices: dict[str, mathutils.Matrix] = {}
+        published = 0
+        tails = chain_state.setdefault("tails", {})
+        last_results = []
+
+        d = self._dynamic
+        if d is None:
+            return 0
+
+        for index, record in enumerate(self._records):
+            bone_name = record["bone_name"]
+            target_matrix = _matrix_from_row(d["current_pose_matrices"][index])
+            target_pose_matrices[bone_name] = target_matrix
+            basis_matrix = matrix_basis_from_pose_matrix(
+                record["pose_bone"], target_matrix, target_pose_matrices
+            )
+            current_tail = _tuple3(d["current_pose_tails"][index])
+            tails[bone_name] = {
+                "current_tail": current_tail,
+                "prev_tail":    current_tail,
+            }
+            result = publish_spring_vrm_pose_result(
+                world,
+                slot_id=self._slot_id,
+                armature_ptr=self._armature_ptr,
+                armature_data_ptr=self._armature_data_ptr,
+                frame=frame,
+                generation=world.generation,
+                bone_name=bone_name,
+                pose_index=int(record["pose_index"]),
+                matrix_basis=basis_matrix,
+                target_pose_matrix=target_matrix,
+                current_tail=current_tail,
+                chain_root=chain.root_bone,
+                backend="cpp",
+            )
+            if result is not None:
+                last_results.append(result)
+                published += 1
+
+        chain_state["last_results"] = last_results
+        return published
 
     def _publish_from_result_buffers(
         self, world, chain, chain_state: dict, frame: int
@@ -367,7 +426,10 @@ class SpringVRMNativeContext:
         return published
 
     def debug_dict(self) -> dict:
-        arrays = self._static or {}
+        arrays = {}
+        for source in (self._static, self._dynamic):
+            if isinstance(source, dict):
+                arrays.update(source)
         return {
             "schema": self.SCHEMA,
             "root_bone": self.root_bone,
@@ -395,6 +457,7 @@ class SpringVRMNativeContext:
         chain_state: dict,
         dt: float,
         substeps: int,
+        restart: bool = False,
     ) -> int:
         """
         TRANSITIONAL — 桥接到现有 solve_spring_bone_vrm_cpp (35 参数)。
@@ -424,6 +487,12 @@ class SpringVRMNativeContext:
         hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records)
 
         self._last_collider_count = len(collider_types)
+
+        if restart:
+            self._reset_dynamic_tails_to_pose()
+            frame = int(getattr(world.frame_context, "frame", 0) or 0)
+            self._last_frame = frame
+            return self._publish_current_pose(world, chain, chain_state, frame)
 
         module.solve_spring_bone_vrm_cpp(
             d["current_tails"],
@@ -472,7 +541,7 @@ class SpringVRMNativeContext:
         tails = chain_state.setdefault("tails", {})
         last_results = []
 
-        for index, record in enumerate(self._records_ref):
+        for index, record in enumerate(self._records):
             bone_name = record["bone_name"]
             target_matrix = _matrix_from_row(d["target_matrices"][index])
             target_pose_matrices[bone_name] = target_matrix
@@ -557,14 +626,32 @@ def _fill_static(s: dict[str, np.ndarray], records: list[dict]) -> None:
         s["use_connect"][i] = (
             1 if bool(getattr(getattr(pb, "bone", None), "use_connect", False)) else 0
         )
+        s["pinned"][i] = 1 if _record_is_effectively_pinned(rec) else 0
 
         axis = pb.tail - pb.head
         if axis.length <= 1.0e-8:
             axis = mathutils.Vector((0.0, 0.0, 1.0))
         else:
             axis.normalize()
+
+        init_axis_parent = axis.copy()
+        parent = rec.get("parent")
+        if parent is not None:
+            try:
+                init_axis_parent = parent.matrix.to_quaternion().inverted() @ axis
+            except Exception:
+                init_axis_parent = axis.copy()
+            if init_axis_parent.length <= 1.0e-8:
+                init_axis_parent = axis.copy()
+            else:
+                init_axis_parent.normalize()
+
         s["init_axis_local"][i]  = (float(axis.x), float(axis.y), float(axis.z))
-        s["init_axis_parent"][i] = (float(axis.x), float(axis.y), float(axis.z))
+        s["init_axis_parent"][i] = (
+            float(init_axis_parent.x),
+            float(init_axis_parent.y),
+            float(init_axis_parent.z),
+        )
 
         q = pb.matrix.to_quaternion()
         s["init_rotations"][i] = (float(q.x), float(q.y), float(q.z), float(q.w))
@@ -581,6 +668,20 @@ def _fill_static(s: dict[str, np.ndarray], records: list[dict]) -> None:
         world_scale = pb.id_data.matrix_world.to_scale()
         avg_scale = (abs(world_scale.x) + abs(world_scale.y) + abs(world_scale.z)) / 3.0
         s["lengths"][i] = max(float(rest_vec.length) * avg_scale, 0.0)
+
+
+def _record_is_effectively_pinned(record: dict) -> bool:
+    bone_name = str(record.get("bone_name") or "")
+    root_name = str(record.get("root_name") or "")
+    if bone_name and bone_name == root_name:
+        return True
+
+    pb = record.get("pose_bone")
+    armature = getattr(pb, "id_data", None)
+    bones = getattr(getattr(armature, "data", None), "bones", None)
+    bone = bones.get(bone_name) if bones is not None else None
+    props = getattr(bone, "hotools_collision", None) if bone is not None else None
+    return bool(props is not None and getattr(props, "pin", False))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -821,6 +922,7 @@ def _chain_records(armature, chain) -> list[dict]:
         parent = getattr(pb, "parent", None)
         records.append({
             "bone_name":   bone_name,
+            "root_name":   str(getattr(chain, "root_bone", "") or ""),
             "pose_bone":   pb,
             "parent":      parent,
             "parent_name": parent.name if parent is not None else "",
@@ -980,4 +1082,5 @@ def native_context_stats_dict(native_ctxs) -> dict:
         "step_count":      sum(int(c.get("step_count", 0)) for c in chain_items),
         "cpp_handle_count":sum(1 for c in chain_items if c.get("cpp_handle")),
         "static_ready_count": sum(1 for c in chain_items if c.get("static_ready")),
+        "buffer_count":    sum(len(c.get("buffer_shapes") or {}) for c in chain_items),
     }

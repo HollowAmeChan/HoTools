@@ -307,6 +307,29 @@ def test_context_api_reset_state_restores_pose_tail():
         f"reset 后 gravity=0 一帧，target_matrix 应接近 identity，实际：{out_mat}"
 
 
+def test_context_api_preserves_full_current_head_vector():
+    _skip_if_no_context_api()
+    """update_dynamic must copy all XYZ head components, not just one float per bone."""
+    ctx = _context_from_base()
+    args = _base_args(gravity_power=0.0)
+    args[4] = np.asarray(((1.0, 2.0, 3.0),), dtype=np.float32)
+    args[8] = np.asarray(((1.0, 2.0, 4.0),), dtype=np.float32)
+    args[0] = args[8].copy()
+    args[1] = args[8].copy()
+
+    _update_dynamic_from_base(ctx, args)
+    hotools_native.spring_vrm_reset_state(ctx)
+    hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 0.0)
+
+    out_mat = np.zeros(16, dtype=np.float32)
+    out_quat = np.zeros(4, dtype=np.float32)
+    hotools_native.spring_vrm_read_results(ctx, out_mat, out_quat)
+
+    translation = out_mat.reshape((4, 4))[:3, 3]
+    assert np.allclose(translation, (1.0, 2.0, 3.0), atol=1.0e-6), \
+        f"context update_dynamic 应保留完整 head XYZ，实际 translation={translation}"
+
+
 def test_context_api_capsule_collider():
     _skip_if_no_context_api()
     """sphere collider 位于骨骼轴线旁侧，应把 tail 推离初始方向。

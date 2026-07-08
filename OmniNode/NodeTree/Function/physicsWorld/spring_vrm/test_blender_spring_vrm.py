@@ -418,6 +418,11 @@ def _run_spring_frame(
     return cache
 
 
+def _run_spring_after_reset(cache, armature, frame: int, **kwargs):
+    cache = _run_spring_frame(cache, armature, frame, reset=True, **kwargs)
+    return _run_spring_frame(cache, armature, frame + 1, reset=False, **kwargs)
+
+
 def _spring_slot_ids(world) -> list[str]:
     return [
         str(slot_id)
@@ -430,12 +435,10 @@ def _spring_chain_context(world, root_bone: str = "root"):
     slot_ids = _spring_slot_ids(world)
     assert len(slot_ids) == 1, f"expected one SpringBone slot, got {slot_ids}"
     slot = world.solver_slots[slot_ids[0]]
-    native_context = slot.data.get("native_context")
-    assert isinstance(native_context, dict), "SpringBone slot should keep a native_context dict"
-    chains = native_context.get("chains")
-    assert isinstance(chains, dict), "SpringBone native_context should contain chain contexts"
-    chain_context = chains.get(root_bone)
-    assert isinstance(chain_context, dict), f"missing SpringBone chain context for {root_bone!r}"
+    native_context = slot.data.get("_native_ctxs")
+    assert isinstance(native_context, dict), "SpringBone slot should keep native contexts in _native_ctxs"
+    chain_context = native_context.get(root_bone)
+    assert hasattr(chain_context, "debug_dict"), f"missing SpringBone native context for {root_bone!r}"
     return slot, native_context, chain_context
 
 
@@ -479,19 +482,85 @@ def test_spring_vrm_vertical_slice():
         cache = _run_spring_frame(cache, armature, 1, reset=True)
         bpy.context.view_layer.update()
 
-        after_tail = _tail_world(armature, "bone_1")
-        after_basis_delta = _basis_delta_from_identity(armature.pose.bones["bone_1"])
-        assert after_tail.x > before_tail.x + 1.0e-4, (
-            f"bone_1 tail 应沿 X 方向被 SpringBone 推动，before={tuple(before_tail)} after={tuple(after_tail)}"
+        reset_tail = _tail_world(armature, "bone_1")
+        reset_basis_delta = _basis_delta_from_identity(armature.pose.bones["bone_1"])
+        assert (reset_tail - before_tail).length < 1.0e-5, (
+            f"reset frame should publish the input pose, before={tuple(before_tail)} reset={tuple(reset_tail)}"
         )
-        assert after_basis_delta > before_basis_delta + 1.0e-6, "matrix_basis 未发生可观测写回"
+        assert reset_basis_delta <= before_basis_delta + 1.0e-6, "reset frame should not write a simulated basis"
 
         cache = _run_spring_frame(cache, armature, 2, reset=False)
         bpy.context.view_layer.update()
         second_tail = _tail_world(armature, "bone_1")
-        assert second_tail.x >= after_tail.x - 1.0e-4, (
-            f"连续帧不应回退到初始姿态，after={tuple(after_tail)} second={tuple(second_tail)}"
+        second_basis_delta = _basis_delta_from_identity(armature.pose.bones["bone_1"])
+        assert second_tail.x > before_tail.x + 1.0e-4, (
+            f"bone_1 tail 应沿 X 方向被 SpringBone 推动，before={tuple(before_tail)} second={tuple(second_tail)}"
         )
+        assert second_basis_delta > before_basis_delta + 1.0e-6, "matrix_basis 未发生可观测写回"
+        assert cache.value is not None
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_stiffness_rest_pose_has_no_side_force():
+    armature = _make_chain_armature("PW_SpringVRM_NoSideForce")
+    try:
+        before_tail = _tail_world(armature, "bone_1").copy()
+        cache = _OmniCache()
+        cache = _run_spring_frame(
+            cache,
+            armature,
+            100,
+            reset=True,
+            stiffness_force=1.0,
+            gravity_power=0.0,
+        )
+        cache = _run_spring_frame(
+            cache,
+            armature,
+            101,
+            reset=False,
+            stiffness_force=1.0,
+            gravity_power=0.0,
+        )
+        bpy.context.view_layer.update()
+        after_tail = _tail_world(armature, "bone_1")
+        assert (after_tail - before_tail).length < 1.0e-5, (
+            f"rest pose should not get a synthetic side force, before={tuple(before_tail)} after={tuple(after_tail)}"
+        )
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
+        assert cache.value is not None
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_frame_jump_resets_without_step():
+    armature = _make_chain_armature("PW_SpringVRM_FrameJump")
+    try:
+        initial_tail = _tail_world(armature, "bone_1").copy()
+        cache = _OmniCache()
+        cache = _run_spring_frame(cache, armature, 1, reset=True)
+        cache = _run_spring_frame(cache, armature, 2, reset=False)
+        bpy.context.view_layer.update()
+        moved_tail = _tail_world(armature, "bone_1").copy()
+        assert moved_tail.x > initial_tail.x + 1.0e-4, (
+            f"continuous frame should move before jump, initial={tuple(initial_tail)} moved={tuple(moved_tail)}"
+        )
+
+        cache, world, _stats, _results = _run_spring_frame(
+            cache,
+            armature,
+            10,
+            reset=False,
+            return_details=True,
+        )
+        bpy.context.view_layer.update()
+        reset_tail = _tail_world(armature, "bone_1")
+        assert bool(getattr(world.frame_context, "restart_required", False)) is True
+        assert (reset_tail - initial_tail).length < 1.0e-5, (
+            f"jump frame should restore input pose, initial={tuple(initial_tail)} reset={tuple(reset_tail)}"
+        )
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
         assert cache.value is not None
     finally:
         _delete_object(armature)
@@ -513,8 +582,8 @@ def test_spring_vrm_same_frame_republishes_cached_results():
         assert stats1.get("writeback_count") == 2
         assert len(results1) == 2
         _slot1, _native_context1, chain_context1 = _spring_chain_context(world1)
-        step_count1 = int(chain_context1.get("step_count", 0) or 0)
-        assert step_count1 == 1
+        step_count1 = int(chain_context1.debug_dict().get("step_count", 0) or 0)
+        assert step_count1 == 0
 
         cache, world2, stats2, results2 = _run_spring_frame(
             cache,
@@ -532,13 +601,13 @@ def test_spring_vrm_same_frame_republishes_cached_results():
         assert len(results2) == 2
         _slot2, _native_context2, chain_context2 = _spring_chain_context(world2)
         assert chain_context2 is chain_context1
-        assert int(chain_context2.get("step_count", 0) or 0) == step_count1
+        assert int(chain_context2.debug_dict().get("step_count", 0) or 0) == step_count1
         assert stats2.get("native_context", {}).get("step_count") == step_count1
     finally:
         _delete_object(armature)
 
 
-def test_spring_vrm_spec_change_prunes_stale_slot():
+def test_spring_vrm_runtime_parameter_change_reuses_slot():
     armature = _make_chain_armature("PW_SpringVRM_Prune")
     try:
         cache = _OmniCache()
@@ -553,9 +622,9 @@ def test_spring_vrm_spec_change_prunes_stale_slot():
         slot_ids1 = _spring_slot_ids(world1)
         assert len(slot_ids1) == 1
         assert stats1.get("slot_count") == 1
-        stale_slot = world1.solver_slots[slot_ids1[0]]
         _slot, _native_context, chain_context = _spring_chain_context(world1)
-        assert chain_context.get("arrays"), "first SpringBone slot should build native_context buffers"
+        assert chain_context.debug_dict().get("buffer_shapes"), "first SpringBone slot should build native context buffers"
+        step_count1 = int(chain_context.debug_dict().get("step_count", 0) or 0)
 
         cache, world2, stats2, _results2 = _run_spring_frame(
             cache,
@@ -569,8 +638,38 @@ def test_spring_vrm_spec_change_prunes_stale_slot():
         assert world2 is world1
         assert len(slot_ids2) == 1
         assert stats2.get("slot_count") == 1
-        assert slot_ids2[0] != slot_ids1[0], "spec hash change should replace the SpringBone slot"
-        assert not stale_slot.data, "stale SpringBone slot dispose should clear native_context and frame_state"
+        assert slot_ids2[0] == slot_ids1[0], "runtime parameter changes should not replace the SpringBone slot"
+        slot2, _native_context2, chain_context2 = _spring_chain_context(world2)
+        assert slot2 is _slot
+        assert chain_context2 is chain_context
+        assert int(chain_context2.debug_dict().get("step_count", 0) or 0) == step_count1 + 1
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_non_root_pin_keeps_pose():
+    armature = _make_chain_armature("PW_SpringVRM_Pin")
+    try:
+        armature.data.bones["bone_1"].hotools_collision.pin = True
+        cache = _OmniCache()
+        cache = _run_spring_frame(
+            cache,
+            armature,
+            85,
+            reset=True,
+            gravity_power=9.8,
+        )
+        cache = _run_spring_frame(
+            cache,
+            armature,
+            86,
+            reset=False,
+            gravity_power=9.8,
+        )
+        bpy.context.view_layer.update()
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6, (
+            "non-root hotools_collision.pin should keep the simulated bone pose unchanged"
+        )
     finally:
         _delete_object(armature)
 
@@ -587,13 +686,14 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
             return_details=True,
         )
         slot1, native_context1, chain_context1 = _spring_chain_context(world1)
-        arrays1 = chain_context1.get("arrays")
+        debug1 = chain_context1.debug_dict()
+        arrays1 = getattr(chain_context1, "_dynamic", None)
         assert isinstance(arrays1, dict) and arrays1, "SpringBone native_context should own chain buffers"
-        assert chain_context1.get("bone_count") == 2
-        assert chain_context1.get("last_frame") == 90
-        assert chain_context1.get("step_count") == 1
+        assert debug1.get("bone_count") == 2
+        assert debug1.get("last_frame") == 90
+        assert debug1.get("step_count") == 0
         assert stats1.get("native_context", {}).get("chain_count") == 1
-        assert stats1.get("native_context", {}).get("buffer_count") == len(arrays1)
+        assert stats1.get("native_context", {}).get("buffer_count") >= len(arrays1)
         buffer_ids = {name: id(value) for name, value in arrays1.items()}
 
         cache, world2, stats2, _results2 = _run_spring_frame(
@@ -608,26 +708,27 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert slot2 is slot1
         assert native_context2 is native_context1
         assert chain_context2 is chain_context1
-        assert chain_context2.get("last_frame") == 91
-        assert chain_context2.get("step_count") == 2
-        assert {name: id(value) for name, value in chain_context2["arrays"].items()} == buffer_ids
-        assert stats2.get("native_context", {}).get("step_count") == 2
+        debug2 = chain_context2.debug_dict()
+        assert debug2.get("last_frame") == 91
+        assert debug2.get("step_count") == 1
+        assert {name: id(value) for name, value in getattr(chain_context2, "_dynamic").items()} == buffer_ids
+        assert stats2.get("native_context", {}).get("step_count") == 1
 
         debug_snapshot = slot2.debug_snapshot()
         debug_context = debug_snapshot.get("native_context")
         assert debug_context and debug_context.get("available") is True
-        assert debug_context.get("schema") == "spring_vrm_python_buffer_context_v1"
+        assert debug_context.get("schema") == "spring_vrm_native_context_v2"
         assert debug_context.get("chain_count") == 1
         debug_chain = debug_context.get("chains", [])[0]
         assert debug_chain.get("root_bone") == "root"
-        assert debug_chain.get("array_shapes", {}).get("current_tails") == (2, 3)
-        assert debug_chain.get("array_shapes", {}).get("target_matrices") == (2, 16)
+        assert debug_chain.get("buffer_shapes", {}).get("current_tails") == [2, 3]
+        assert debug_chain.get("buffer_shapes", {}).get("target_matrices") == [2, 16]
 
         world_debug = world2.omni_cache_debug_snapshot()
         world_slot_debug = world_debug.get("solver_slots", {}).get(slot2.slot_id, {})
         world_context = world_slot_debug.get("native_context", {})
         assert world_context.get("available") is True
-        assert world_context.get("chains", [])[0].get("array_shapes", {}).get("current_tails") == (2, 3)
+        assert world_context.get("chains", [])[0].get("buffer_shapes", {}).get("current_tails") == [2, 3]
     finally:
         _delete_object(armature)
 
@@ -644,7 +745,7 @@ def test_spring_vrm_runtime_cache_delete_and_clear_all_dispose():
         hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
         assert not hit and cache_state is None
         world, cache_value, _stats, _results = _runtime_cache_spring_step(scene, cache_state, armature, 1)
-        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) > 1.0e-6
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
         OmniRuntimeState.write_cache(ctx, cache_key, cache_value)
         OmniRuntimeState.finish_run(ctx)
 
@@ -676,6 +777,19 @@ def test_spring_vrm_runtime_cache_delete_and_clear_all_dispose():
             armature_clear,
             1,
         )
+        assert _basis_delta_from_identity(armature_clear.pose.bones["bone_1"]) < 1.0e-6
+        OmniRuntimeState.write_cache(ctx, cache_key, cache_value_clear)
+        OmniRuntimeState.finish_run(ctx)
+
+        ctx = OmniRuntimeState.begin_run(root_tree)
+        hit, cache_state = OmniRuntimeState.read_cache(ctx, cache_key)
+        assert hit and cache_state is world_clear
+        world_clear, cache_value_clear, _stats_clear, _results_clear = _runtime_cache_spring_step(
+            scene,
+            cache_state,
+            armature_clear,
+            2,
+        )
         assert _basis_delta_from_identity(armature_clear.pose.bones["bone_1"]) > 1.0e-6
         OmniRuntimeState.write_cache(ctx, cache_key, cache_value_clear)
         OmniRuntimeState.finish_run(ctx)
@@ -696,15 +810,14 @@ def test_spring_vrm_collider_snapshot():
         _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
         _enable_bone_hit_radius(armature_hit, "bone_1", radius=0.15, mask=1)
 
-        _run_spring_frame(_OmniCache(), armature_free, 10, reset=True, expected_collider_count=0)
+        _run_spring_after_reset(_OmniCache(), armature_free, 10, expected_collider_count=0)
         bpy.context.view_layer.update()
         free_tail = _tail_world(armature_free, "bone_1").copy()
 
-        _run_spring_frame(
+        _run_spring_after_reset(
             _OmniCache(),
             armature_hit,
             20,
-            reset=True,
             extra_objects=[collider],
             include_passive_collision=True,
             expected_collider_count=1,
@@ -729,7 +842,7 @@ def test_spring_vrm_collider_group_mask_filters_snapshot():
         _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
         _enable_bone_hit_radius(armature_miss, "bone_1", radius=0.15, mask=1)
 
-        _run_spring_frame(_OmniCache(), armature_free, 21, reset=True, expected_collider_count=0)
+        _run_spring_after_reset(_OmniCache(), armature_free, 21, expected_collider_count=0)
         bpy.context.view_layer.update()
         free_tail = _tail_world(armature_free, "bone_1").copy()
 
@@ -739,11 +852,10 @@ def test_spring_vrm_collider_group_mask_filters_snapshot():
             0.35,
             group=2,
         )
-        _run_spring_frame(
+        _run_spring_after_reset(
             _OmniCache(),
             armature_miss,
             22,
-            reset=True,
             extra_objects=[collider],
             include_passive_collision=True,
             expected_collider_count=1,
@@ -769,7 +881,7 @@ def test_spring_vrm_capsule_collider_snapshot():
         _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
         _enable_bone_hit_radius(armature_hit, "bone_1", radius=0.15, mask=1)
 
-        _run_spring_frame(_OmniCache(), armature_free, 25, reset=True, expected_collider_count=0)
+        _run_spring_after_reset(_OmniCache(), armature_free, 25, expected_collider_count=0)
         bpy.context.view_layer.update()
         free_tail = _tail_world(armature_free, "bone_1").copy()
 
@@ -780,11 +892,10 @@ def test_spring_vrm_capsule_collider_snapshot():
             1.0,
             group=1,
         )
-        _run_spring_frame(
+        _run_spring_after_reset(
             _OmniCache(),
             armature_hit,
             26,
-            reset=True,
             extra_objects=[capsule],
             include_passive_collision=True,
             expected_collider_count=1,
@@ -810,7 +921,7 @@ def test_spring_vrm_plane_collider_snapshot():
         _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
         _enable_bone_hit_radius(armature_hit, "bone_1", radius=0.15, mask=1)
 
-        _run_spring_frame(_OmniCache(), armature_free, 30, reset=True, expected_collider_count=0)
+        _run_spring_after_reset(_OmniCache(), armature_free, 30, expected_collider_count=0)
         bpy.context.view_layer.update()
         free_tail = _tail_world(armature_free, "bone_1").copy()
 
@@ -820,11 +931,10 @@ def test_spring_vrm_plane_collider_snapshot():
             normal_axis="+X",
             group=1,
         )
-        _run_spring_frame(
+        _run_spring_after_reset(
             _OmniCache(),
             armature_hit,
             40,
-            reset=True,
             extra_objects=[plane],
             include_passive_collision=True,
             expected_collider_count=1,
@@ -850,7 +960,7 @@ def test_spring_vrm_box_collider_snapshot():
         _enable_bone_hit_radius(armature_free, "bone_1", radius=0.15, mask=1)
         _enable_bone_hit_radius(armature_hit, "bone_1", radius=0.15, mask=1)
 
-        _run_spring_frame(_OmniCache(), armature_free, 50, reset=True, expected_collider_count=0)
+        _run_spring_after_reset(_OmniCache(), armature_free, 50, expected_collider_count=0)
         bpy.context.view_layer.update()
         free_tail = _tail_world(armature_free, "bone_1").copy()
 
@@ -860,11 +970,10 @@ def test_spring_vrm_box_collider_snapshot():
             (0.8, 2.0, 2.0),
             group=1,
         )
-        _run_spring_frame(
+        _run_spring_after_reset(
             _OmniCache(),
             armature_hit,
             60,
-            reset=True,
             extra_objects=[box],
             include_passive_collision=True,
             expected_collider_count=1,
@@ -888,8 +997,11 @@ print("----------------------------------------------------------")
 
 check("native 模块可用", test_native_available)
 check("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice)
+check("SpringBone rest pose has no synthetic side force", test_spring_vrm_stiffness_rest_pose_has_no_side_force)
+check("SpringBone frame jump resets without stepping", test_spring_vrm_frame_jump_resets_without_step)
 check("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results)
-check("SpringBone spec change prunes stale slot", test_spring_vrm_spec_change_prunes_stale_slot)
+check("SpringBone runtime parameter changes reuse slot", test_spring_vrm_runtime_parameter_change_reuses_slot)
+check("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose)
 check("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers)
 check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
 check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)

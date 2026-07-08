@@ -911,7 +911,7 @@ void spring_vrm_context_update_dynamic(
     const auto n = static_cast<std::size_t>(ctx->bone_count);
     const auto m = static_cast<std::size_t>(collider_count > 0 ? collider_count : 0);
 
-    copy_n(current_heads,              n,      ctx->current_heads);
+    copy_n(current_heads,              n * 3,  ctx->current_heads);
     copy_n(current_pose_matrices,      n * 16, ctx->current_pose_matrices);
     copy_n(current_pose_quaternions,   n * 4,  ctx->current_pose_quaternions);
     copy_n(parent_pose_quaternions,    n * 4,  ctx->parent_pose_quaternions);

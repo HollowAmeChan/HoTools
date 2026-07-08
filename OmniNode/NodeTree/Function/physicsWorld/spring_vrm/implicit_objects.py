@@ -66,8 +66,11 @@ def _chain_from_bone_names(
             continue
         seen.add(name)
         chain_bones.append(name)
-    if root_name and root_name not in seen and armature_obj.pose.bones.get(root_name) is not None:
-        chain_bones.insert(0, root_name)
+    if root_name and armature_obj.pose.bones.get(root_name) is not None:
+        if root_name in seen:
+            chain_bones = [root_name] + [name for name in chain_bones if name != root_name]
+        else:
+            chain_bones.insert(0, root_name)
     if not chain_bones:
         chain_bones = _chain_bone_names_from_root(armature_obj, root_name)
     return {

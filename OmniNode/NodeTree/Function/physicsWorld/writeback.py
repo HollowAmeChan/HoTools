@@ -113,6 +113,12 @@ def _reset_pose_bones(touched) -> None:
             armature.update_tag()
         except Exception:
             pass
+    if updated_armatures:
+        try:
+            import bpy
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
     try:
         touched.clear()
     except Exception:
@@ -179,6 +185,7 @@ def writeback_rigid_body_deltas(world) -> int:
     # Register cleanup once so cache dispose can restore written transforms.
     _ensure_cleanup_resource(world)
 
+    touched = _get_touched_set(world)
     updated = set()
     written = 0
 
