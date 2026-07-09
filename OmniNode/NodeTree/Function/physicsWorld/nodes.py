@@ -27,7 +27,7 @@ from .scope import (
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, result_items_to_text, validate_world, print_world_summary
-from .writeback import apply_all_writebacks, clear_all_deltas
+from .writeback import apply_all_writebacks
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +143,6 @@ def physicsObjectScope(
         "缓存",
         "场景",
         "对象范围",
-        "启用",
         "重置",
         "时间缩放",
         "子步数",
@@ -171,7 +170,6 @@ def physicsWorldBegin(
     cache_state: _OmniCache,
     scene: bpy.types.Scene,
     object_scope: object,
-    enabled: bool = True,
     reset: bool = False,
     time_scale: float = 1.0,
     substeps: int = 1,
@@ -181,7 +179,7 @@ def physicsWorldBegin(
         cache_state=cache_state,
         scene=scene,
         object_scope=object_scope,
-        enabled=bool(enabled),
+        enabled=True,
         reset=bool(reset),
         time_scale=float(time_scale),
         substeps=int(substeps),
@@ -195,7 +193,7 @@ def physicsWorldBegin(
     bl_label="物理世界-帧提交",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用"],
+    _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["缓存值", "物理世界", "Solver数量"],
     omni_description="""
     物理世界帧提交节点。
@@ -212,9 +210,8 @@ def physicsWorldBegin(
 )
 def physicsWorldCommit(
     world: object,
-    enabled: bool = True,
 ) -> tuple[_OmniCache, object, int]:
-    return _commit(world=world, enabled=bool(enabled))
+    return _commit(world=world, enabled=True)
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +337,7 @@ def physicsWorldDebugText(
     bl_label="物理写回",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用"],
+    _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "写回数量"],
     omni_description="""
     物理写回节点——将本帧所有物理 solver 的结果写回 Blender 对象变换。
@@ -350,11 +347,11 @@ def physicsWorldDebugText(
       · 骨骼：PoseBone.matrix_basis（未来扩展，offset from rest pose）
       · GN属性：mesh attribute offset（未来扩展）
 
-    初始状态约定：
+      初始状态约定：
       Blender 增量变换默认为 (0,0,0)，即"无物理偏移"。
       跳帧/复位时节点自动将 delta 归零，再写入新的物理结果。
       停止模拟后 delta 保留（视觉结果持续可见）；如需清空，
-      将"启用"关闭运行一帧，或删除缓存触发自动清理。
+      删除缓存触发自动清理，或使用后续专门的清理节点。
 
     跳帧/复位处理：
       world.frame_context.restart_required=True 时先将 delta 归零，
@@ -367,19 +364,9 @@ def physicsWorldDebugText(
 )
 def physicsWriteback(
     world:   object,
-    enabled: bool = True,
 ) -> tuple[object, int]:
 
     from .types import PhysicsWorldCache
-
-    # enabled=False：清空上次模拟留下的 delta，对象归位
-    if not enabled:
-        if isinstance(world, PhysicsWorldCache):
-            try:
-                clear_all_deltas(world)
-            except Exception:
-                pass
-        return world, 0
 
     if not isinstance(world, PhysicsWorldCache):
         return world, 0

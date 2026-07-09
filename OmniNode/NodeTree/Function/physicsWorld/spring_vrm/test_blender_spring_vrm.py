@@ -390,17 +390,16 @@ def _run_spring_frame(
     )
     properties = physicsSpringVRMChainProperties(
         [_bone_value(armature, "root")],
-        enabled=True,
         stiffness_force=float(stiffness_force),
         drag_force=float(drag_force),
         gravity_dir=mathutils.Vector(gravity_dir or (1.0, 0.0, 0.0)),
         gravity_power=float(gravity_power),
     )
-    world, object_count, dirty_count, _version = physicsSpringVRMChainRegister(world, properties, enabled=True)
+    world, object_count, dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
     assert object_count == 1, f"应注册 1 条 VRM 骨链，实际 {object_count}"
     assert dirty_count >= 0
 
-    world, write_count, _step_ms = physicsSpringVRMSolver(world, enabled=True, substeps=max(1, int(substeps)))
+    world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=max(1, int(substeps)))
     assert write_count == 2, f"应产生 2 个 PoseBone 写回项，实际 {write_count}"
 
     results = list(iter_spring_vrm_pose_results(

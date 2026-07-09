@@ -565,9 +565,9 @@ Physics World Begin
 - 用户不需要提供额外 key；solver 直接按 tag 收集全部 VRM 骨链对象。
 - payload 是规范化后的单条骨链对象，不包含 native handle。
 - stable_id 由 armature pointer、armature data pointer、root bone 和骨链 hash 组成，只用于 registry 内部去重。
-- signature 覆盖 armature pointer、armature data pointer、root bone、bone list、stiffness、drag、gravity 和 enabled。
+- signature 覆盖 armature pointer、armature data pointer、root bone、bone list、stiffness、drag 和 gravity。
 - signature 不变时 version 不递增，solver 不应重建 slot 或 native static context。
-- solver step 只接 world、启用和子步数；后续新 solver 也不应把大批对象 socket 直接堆在 step 节点上。
+- solver step 只接 world 和子步数；后续新 solver 也不应把大批对象 socket 直接堆在 step 节点上。
 
 ### 骨骼碰撞覆写隐式对象
 

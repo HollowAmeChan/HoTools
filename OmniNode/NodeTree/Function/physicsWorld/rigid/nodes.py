@@ -46,11 +46,10 @@ def _publish_rigid_body_command(
     world: object,
     target: bpy.types.Object,
     command: str,
-    enabled: bool = True,
     producer: str = "physicsRigidCommand",
     **payload,
 ) -> tuple[object, object]:
-    if not bool(enabled) or not isinstance(world, PhysicsWorldCache):
+    if not isinstance(world, PhysicsWorldCache):
         return world, None
 
     spec = build_rigid_body_spec(target)
@@ -108,7 +107,7 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     bl_label="刚体模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用"],
+    _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "刚体数量", "耗时ms"],
     omni_description="""
     执行 Jolt 刚体模拟步，结果发布到 world.result_streams["rigid_transform"]。
@@ -128,9 +127,8 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
 )
 def physicsRigidSolver(
     world: object,
-    enabled: bool = True,
 ) -> tuple[object, int, float]:
-    body_count, step_ms = step_rigid_bodies(world, bool(enabled))
+    body_count, step_ms = step_rigid_bodies(world, True)
     return world, body_count, float(step_ms)
 
 
@@ -183,7 +181,7 @@ def physicsRigidReadState(
     bl_label="Jolt刚体可视化调试",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用", "显示刚体", "显示约束", "显示问题"],
+    _INPUT_NAME=["物理世界", "显示刚体", "显示约束", "显示问题"],
     _OUTPUT_NAME=["物理世界"],
     omni_description="""
     刚体/Jolt 自有可视化调试节点。
@@ -196,7 +194,6 @@ def physicsRigidReadState(
 )
 def physicsRigidJoltDebugDraw(
     world: object,
-    enabled: bool = True,
     show_bodies: bool = True,
     show_constraints: bool = True,
     show_problems: bool = True,
@@ -204,7 +201,7 @@ def physicsRigidJoltDebugDraw(
     update_rigid_debug_draw_store(
         str(id(world)),
         world,
-        bool(enabled),
+        True,
         bool(show_bodies),
         bool(show_constraints),
         bool(show_problems),
@@ -217,7 +214,7 @@ def physicsRigidJoltDebugDraw(
     bl_label="刚体世界-Jolt设置属性",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["重力", "最大刚体数", "最大刚体对", "最大接触约束", "启用", "来源ID", "优先级"],
+    _INPUT_NAME=["重力", "最大刚体数", "最大刚体对", "最大接触约束", "来源ID", "优先级"],
     input_init={
         "gravity": {"default_value": mathutils.Vector((0.0, 0.0, -9.81))},
         "max_bodies": {"default_value": DEFAULT_RIGID_JOLT_MAX_BODIES, "min_value": 1, "max_value": 1000000},
@@ -237,7 +234,6 @@ def physicsRigidJoltWorldSettingsProperties(
     max_bodies: int = DEFAULT_RIGID_JOLT_MAX_BODIES,
     max_body_pairs: int = DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
     max_contact_constraints: int = DEFAULT_RIGID_JOLT_MAX_CONTACT_CONSTRAINTS,
-    enabled: bool = True,
     source_id: str = "default",
     priority: int = 0,
 ) -> list[object]:
@@ -246,7 +242,7 @@ def physicsRigidJoltWorldSettingsProperties(
         max_bodies=int(max_bodies),
         max_body_pairs=int(max_body_pairs),
         max_contact_constraints=int(max_contact_constraints),
-        enabled=bool(enabled),
+        enabled=True,
         source_id=str(source_id or "default"),
         priority=int(priority),
     )
@@ -257,7 +253,7 @@ def physicsRigidJoltWorldSettingsProperties(
     bl_label="刚体世界-Jolt设置注册",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "Jolt刚体世界设置属性", "启用"],
+    _INPUT_NAME=["物理世界", "Jolt刚体世界设置属性"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
     omni_description="""
     把 Jolt 刚体世界级设置注册到 PhysicsWorldCache.implicit_objects。
@@ -269,14 +265,13 @@ def physicsRigidJoltWorldSettingsProperties(
 def physicsRigidJoltWorldSettingsRegister(
     world: object,
     world_setting_properties: list[object],
-    enabled: bool = True,
 ) -> tuple[object, int, int, int]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0, 0
     count, dirty_count, version = register_rigid_jolt_world_setting_objects(
         world,
         world_setting_properties,
-        enabled=bool(enabled),
+        enabled=True,
     )
     return world, int(count), int(dirty_count), int(version)
 
@@ -287,7 +282,7 @@ def physicsRigidJoltWorldSettingsRegister(
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
     _INPUT_NAME=[
-        "目标A", "目标B", "锚点对象", "约束类型", "启用", "禁用连接碰撞", "来源ID",
+        "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
         "优先级", "速度步数", "位置步数", "启用限制",
         "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
     ],
@@ -314,7 +309,6 @@ def physicsRigidGeneratedConstraintProperties(
     target_b: bpy.types.Object = None,
     anchor_object: bpy.types.Object = None,
     constraint_type: str = "FIXED",
-    enabled: bool = True,
     disable_collisions: bool = True,
     source_id: str = "",
     constraint_priority: int = 0,
@@ -332,7 +326,7 @@ def physicsRigidGeneratedConstraintProperties(
         target_b=target_b,
         anchor_object=anchor_object,
         constraint_type=constraint_type,
-        enabled=bool(enabled),
+        enabled=True,
         disable_collisions=bool(disable_collisions),
         source_id=str(source_id or ""),
         constraint_priority=int(constraint_priority),
@@ -352,7 +346,7 @@ def physicsRigidGeneratedConstraintProperties(
     bl_label="刚体生成约束注册",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "生成约束属性", "启用"],
+    _INPUT_NAME=["物理世界", "生成约束属性"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
     omni_description="""
     把刚体生成约束注册到 PhysicsWorldCache.implicit_objects。
@@ -366,14 +360,13 @@ def physicsRigidGeneratedConstraintProperties(
 def physicsRigidGeneratedConstraintRegister(
     world: object,
     generated_constraint_properties: list[object],
-    enabled: bool = True,
 ) -> tuple[object, int, int, int]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0, 0
     count, dirty_count, version = register_rigid_generated_constraint_objects(
         world,
         generated_constraint_properties,
-        enabled=bool(enabled),
+        enabled=True,
     )
     return world, int(count), int(dirty_count), int(version)
 
@@ -384,7 +377,7 @@ def physicsRigidGeneratedConstraintRegister(
     bl_label="刚体命令-设置速度",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "线速度", "角速度", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "线速度", "角速度"],
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
     向当前物理世界发布刚体速度命令。
@@ -399,13 +392,11 @@ def physicsRigidSetVelocity(
     target: bpy.types.Object,
     linear_velocity: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
     angular_velocity: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
-    enabled: bool = True,
 ) -> tuple[object, object]:
     return _publish_rigid_body_command(
         world,
         target,
         "set_velocity",
-        enabled,
         producer="physicsRigidSetVelocity",
         linear_velocity=_vec3(linear_velocity),
         angular_velocity=_vec3(angular_velocity),
@@ -418,12 +409,12 @@ def physicsRigidSetVelocity(
     bl_label="刚体命令-施加力",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "力", "扭矩", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "力", "扭矩"],
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
     向当前物理世界发布刚体 force / torque 命令。
 
-    这是持续力；启用时每帧都会发布一次。需要脉冲式效果时请使用"刚体命令-施加冲量"。
+    这是持续力；节点运行时每帧都会发布一次。需要脉冲式效果时请使用"刚体命令-施加冲量"。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
@@ -432,13 +423,11 @@ def physicsRigidAddForce(
     target: bpy.types.Object,
     force: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
     torque: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
-    enabled: bool = True,
 ) -> tuple[object, object]:
     return _publish_rigid_body_command(
         world,
         target,
         "add_force",
-        enabled,
         producer="physicsRigidAddForce",
         force=_vec3(force),
         torque=_vec3(torque),
@@ -451,12 +440,12 @@ def physicsRigidAddForce(
     bl_label="刚体命令-施加冲量",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "冲量", "角冲量", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "冲量", "角冲量"],
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
     向当前物理世界发布刚体 impulse / angular impulse 命令。
 
-    这是瞬时冲量；启用输入如果一直为 True，就会每帧发布一次。
+    这是瞬时冲量；节点如果持续运行，就会每帧发布一次。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
@@ -465,13 +454,11 @@ def physicsRigidAddImpulse(
     target: bpy.types.Object,
     impulse: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
     angular_impulse: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
-    enabled: bool = True,
 ) -> tuple[object, object]:
     return _publish_rigid_body_command(
         world,
         target,
         "add_impulse",
-        enabled,
         producer="physicsRigidAddImpulse",
         impulse=_vec3(impulse),
         angular_impulse=_vec3(angular_impulse),
@@ -484,7 +471,7 @@ def physicsRigidAddImpulse(
     bl_label="刚体命令-重力倍率",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "重力倍率", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "重力倍率"],
     input_init={"gravity_factor": {"min_value": -10.0, "max_value": 10.0}},
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
@@ -498,13 +485,11 @@ def physicsRigidSetGravityFactor(
     world: object,
     target: bpy.types.Object,
     gravity_factor: float = 1.0,
-    enabled: bool = True,
 ) -> tuple[object, object]:
     return _publish_rigid_body_command(
         world,
         target,
         "set_gravity_factor",
-        enabled,
         producer="physicsRigidSetGravityFactor",
         gravity_factor=float(gravity_factor),
     )
@@ -516,7 +501,7 @@ def physicsRigidSetGravityFactor(
     bl_label="刚体命令-材质响应",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "摩擦", "弹性", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "摩擦", "弹性"],
     input_init={
         "friction": {"min_value": 0.0, "max_value": 1.0},
         "restitution": {"min_value": 0.0, "max_value": 1.0},
@@ -534,7 +519,6 @@ def physicsRigidSetMaterialResponse(
     target: bpy.types.Object,
     friction: float = 0.5,
     restitution: float = 0.0,
-    enabled: bool = True,
 ) -> tuple[object, object]:
     friction = max(0.0, min(1.0, float(friction)))
     restitution = max(0.0, min(1.0, float(restitution)))
@@ -542,7 +526,6 @@ def physicsRigidSetMaterialResponse(
         world,
         target,
         "set_material_response",
-        enabled,
         producer="physicsRigidSetMaterialResponse",
         friction=friction,
         restitution=restitution,
@@ -555,7 +538,7 @@ def physicsRigidSetMaterialResponse(
     bl_label="刚体命令-运动质量",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "运动质量", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "运动质量"],
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
     向当前物理世界发布刚体运动质量命令。
@@ -568,7 +551,6 @@ def physicsRigidSetMotionQuality(
     world: object,
     target: bpy.types.Object,
     motion_quality: str = "DISCRETE",
-    enabled: bool = True,
 ) -> tuple[object, object]:
     quality = str(motion_quality or "DISCRETE").strip().upper()
     if quality not in {"DISCRETE", "LINEAR_CAST"}:
@@ -577,7 +559,6 @@ def physicsRigidSetMotionQuality(
         world,
         target,
         "set_motion_quality",
-        enabled,
         producer="physicsRigidSetMotionQuality",
         motion_quality=quality,
     )
@@ -589,7 +570,7 @@ def physicsRigidSetMotionQuality(
     bl_label="刚体命令-激活状态",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "目标刚体", "激活", "启用"],
+    _INPUT_NAME=["物理世界", "目标刚体", "激活"],
     _OUTPUT_NAME=["物理世界", "命令"],
     omni_description="""
     向当前物理世界发布刚体激活状态命令。
@@ -602,13 +583,11 @@ def physicsRigidSetActive(
     world: object,
     target: bpy.types.Object,
     active: bool = True,
-    enabled: bool = True,
 ) -> tuple[object, object]:
     return _publish_rigid_body_command(
         world,
         target,
         "set_active",
-        enabled,
         producer="physicsRigidSetActive",
         active=bool(active),
     )

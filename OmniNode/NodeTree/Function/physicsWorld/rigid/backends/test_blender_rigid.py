@@ -445,11 +445,7 @@ def test_rigid_body_command_nodes():
     world, _, _, _ = physicsWorldBegin(
         cache_state=None, scene=scene, object_scope=scope, enabled=True)
 
-    _, skipped = physicsRigidSetVelocity(world, ball, (0, 0, 2), (0, 0, 0), False)
-    assert skipped is None
-    assert world.exchange_counts().get("rigid_body_commands", 0) == 0
-
-    _, item = physicsRigidSetVelocity(world, ball, (0, 0, 5), (0, 0, 0), True)
+    _, item = physicsRigidSetVelocity(world, ball, (0, 0, 5), (0, 0, 0))
     assert item is not None
     assert item["command"] == "set_velocity"
     assert item["target_object"] == ball.name
@@ -534,7 +530,7 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
     scene.frame_set(2)
     world2, _, _, _ = physicsWorldBegin(
         cache_state=cache_val, scene=scene, object_scope=scope, enabled=True)
-    _, count2, dirty2, _version2 = physicsRigidJoltWorldSettingsRegister(
+    count2, dirty2, _version2 = register_rigid_jolt_world_setting_objects(
         world2, props, enabled=False)
     assert count2 == 1 and dirty2 == 1
 
@@ -618,7 +614,7 @@ def test_generated_constraint_implicit_object_pipeline():
     assert generated_slot_id in world2.solver_slots, \
         "Begin 不应 prune 上一帧已注册的 generated constraint slot"
 
-    _, count2, dirty2, _version2 = physicsRigidGeneratedConstraintRegister(
+    count2, dirty2, _version2 = register_rigid_generated_constraint_objects(
         world2, props, enabled=False)
     assert count2 == 1 and dirty2 == 1
 

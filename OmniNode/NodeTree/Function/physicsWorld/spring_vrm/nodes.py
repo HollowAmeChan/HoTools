@@ -16,7 +16,7 @@ from .solver import step_spring_vrm
     bl_label="VRM骨链属性",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["骨链", "启用", "刚度", "阻尼", "重力方向", "重力强度"],
+    _INPUT_NAME=["骨链", "刚度", "阻尼", "重力方向", "重力强度"],
     input_init={
         "stiffness_force": {"min_value": 0.0, "max_value": 200.0},
         "drag_force": {"min_value": 0.0, "max_value": 1.0},
@@ -32,7 +32,6 @@ from .solver import step_spring_vrm
 )
 def physicsSpringVRMChainProperties(
     bone_chain: list[_OmniBone],
-    enabled: bool = True,
     stiffness_force: float = 1.0,
     drag_force: float = 0.4,
     gravity_dir: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
@@ -40,7 +39,7 @@ def physicsSpringVRMChainProperties(
 ) -> list[object]:
     return make_spring_vrm_chain_properties(
         bone_chain,
-        enabled=bool(enabled),
+        enabled=True,
         stiffness_force=float(stiffness_force),
         drag_force=float(drag_force),
         gravity_dir=gravity_dir,
@@ -53,7 +52,7 @@ def physicsSpringVRMChainProperties(
     bl_label="VRM骨链对象注册",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "骨链属性", "启用"],
+    _INPUT_NAME=["物理世界", "骨链属性"],
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
     omni_description="""
     把 VRM SpringBone 骨链属性注册为 PhysicsWorldCache.implicit_objects。
@@ -66,14 +65,13 @@ def physicsSpringVRMChainProperties(
 def physicsSpringVRMChainRegister(
     world: object,
     vrm_chain_properties: list[object],
-    enabled: bool = True,
 ) -> tuple[object, int, int, int]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0, 0
     count, dirty_count, version = register_spring_vrm_chain_objects(
         world,
         vrm_chain_properties,
-        enabled=bool(enabled),
+        enabled=True,
     )
     return world, int(count), int(dirty_count), int(version)
 
@@ -84,7 +82,7 @@ def physicsSpringVRMChainRegister(
     bl_label="SpringBone VRM模拟步",
     base_color=_Color.colorCat["Operator"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用", "子步数"],
+    _INPUT_NAME=["物理世界", "子步数"],
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
     },
@@ -109,14 +107,13 @@ def physicsSpringVRMChainRegister(
 )
 def physicsSpringVRMSolver(
     world: object,
-    enabled: bool = True,
     substeps: int = 1,
 ) -> tuple[object, int, float]:
     if not isinstance(world, PhysicsWorldCache):
         return world, 0, 0.0
     write_count, step_ms = step_spring_vrm(
         world,
-        enabled=bool(enabled),
+        enabled=True,
         substeps=max(1, int(substeps)),
     )
     return world, int(write_count), float(step_ms)
@@ -128,7 +125,7 @@ def physicsSpringVRMSolver(
     bl_label="SpringBone VRM可视化调试",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用", "显示解算链条", "显示根骨", "显示碰撞体", "碰撞组颜色"],
+    _INPUT_NAME=["物理世界", "显示解算链条", "显示根骨", "显示碰撞体", "碰撞组颜色"],
     _OUTPUT_NAME=["物理世界"],
     omni_description="""
     SpringBone VRM 自有可视化调试节点。
@@ -141,7 +138,6 @@ def physicsSpringVRMSolver(
 )
 def physicsSpringVRMDebugDraw(
     world: object,
-    enabled: bool = True,
     show_solved_chain: bool = True,
     show_roots: bool = True,
     show_colliders: bool = True,
@@ -150,7 +146,7 @@ def physicsSpringVRMDebugDraw(
     update_spring_vrm_debug_draw_store(
         str(id(world)),
         world,
-        bool(enabled),
+        True,
         bool(show_solved_chain),
         bool(show_roots),
         bool(show_colliders),

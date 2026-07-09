@@ -560,7 +560,6 @@ def physicsWorldBegin(
     cache_state: _OmniCache,
     scene: bpy.types.Scene,
     object_scope: PhysicsObjectScope,
-    enabled: bool = True,
     reset: bool = False,
     time_scale: float = 1.0,
     substeps: int = 1,
@@ -602,7 +601,6 @@ restart_required
 ```python
 def physicsWorldCommit(
     world: PhysicsWorldCache,
-    enabled: bool = True,
 ) -> tuple[_OmniCache, PhysicsWorldCache, int]:
     ...
 ```
@@ -1368,15 +1366,15 @@ class PhysicsWorldCache:
 ```
 
 ```python
-def physicsWorldBegin(cache_state, scene, object_scope, enabled=True, reset=False, time_scale=1.0, substeps=1):
+def physicsWorldBegin(cache_state, scene, object_scope, reset=False, time_scale=1.0, substeps=1):
     world = cache_state if isinstance(cache_state, PhysicsWorldCache) else PhysicsWorldCache()
     world.begin_frame(scene, object_scope, reset=reset, time_scale=time_scale, substeps=substeps)
     return world, world.frame, world.collider_count, world.restart_required
 ```
 
 ```python
-def physicsWorldCommit(world, enabled=True):
-    if not enabled or world is None:
+def physicsWorldCommit(world):
+    if world is None:
         return _OmniCache.replace(None), world, 0
     cache_value = _OmniCache.replace(world) if world.replace_required else _OmniCache.mutate(world)
     return cache_value, world, len(world.solver_slots)
