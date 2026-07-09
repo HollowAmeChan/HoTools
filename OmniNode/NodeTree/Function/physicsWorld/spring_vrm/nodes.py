@@ -128,30 +128,32 @@ def physicsSpringVRMSolver(
     bl_label="SpringBone VRM可视化调试",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用", "显示骨骼姿态", "显示解算尾端", "显示根骨"],
+    _INPUT_NAME=["物理世界", "启用", "显示解算链条", "显示根骨", "显示碰撞体", "碰撞组颜色"],
     _OUTPUT_NAME=["物理世界"],
     omni_description="""
     SpringBone VRM 自有可视化调试节点。
 
     本节点从 SpringBone solver slot、frame_state 与 bone_transform result stream
-    采样纯线段快照，绘制骨链姿态、解算尾端和根骨标记。绘制语义归 spring_vrm/debug.py
-    与 spring_vrm/debug_draw.py 持有，不再走物理世界通用 debug draw。
+    采样纯线段快照，绘制连续的解算链条、根骨标记、外部碰撞体和骨骼自身碰撞体。
+    碰撞体按真实类型绘制为球、胶囊、平面或盒子，并可按碰撞组使用固定颜色。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsSpringVRMDebugDraw(
     world: object,
     enabled: bool = True,
-    show_pose: bool = True,
-    show_simulated_tail: bool = True,
+    show_solved_chain: bool = True,
     show_roots: bool = True,
+    show_colliders: bool = True,
+    color_by_group: bool = True,
 ) -> object:
     update_spring_vrm_debug_draw_store(
         str(id(world)),
         world,
         bool(enabled),
-        bool(show_pose),
-        bool(show_simulated_tail),
+        bool(show_solved_chain),
         bool(show_roots),
+        bool(show_colliders),
+        bool(color_by_group),
     )
     return world

@@ -199,6 +199,7 @@ iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_re
 get_spring_vrm_stats_result = _pw("spring_vrm.results").get_spring_vrm_stats_result
 resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_collision_fields
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
+spring_vrm_debug_draw = _pw("spring_vrm.debug_draw")
 
 
 def _delete_object(obj) -> None:
@@ -1070,6 +1071,142 @@ def test_spring_vrm_bone_collision_resolver_matches_legacy():
         _delete_object(armature)
 
 
+def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
+    draw = spring_vrm_debug_draw
+    shape_cases = [
+        {
+            "type": "SPHERE",
+            "center": mathutils.Vector((0.0, 0.0, 0.0)),
+            "radius": 0.5,
+            "primary_group": 1,
+        },
+        {
+            "type": "CAPSULE",
+            "segment_a": mathutils.Vector((0.0, 0.0, 0.0)),
+            "segment_b": mathutils.Vector((0.0, 1.0, 0.0)),
+            "radius": 0.25,
+            "primary_group": 2,
+        },
+        {
+            "type": "PLANE",
+            "center": mathutils.Vector((0.0, 0.0, 0.0)),
+            "normal": mathutils.Vector((0.0, 0.0, 1.0)),
+            "plane_axis_x": mathutils.Vector((1.0, 0.0, 0.0)),
+            "plane_axis_y": mathutils.Vector((0.0, 1.0, 0.0)),
+            "primary_group": 3,
+        },
+        {
+            "type": "BOX",
+            "center": mathutils.Vector((0.0, 0.0, 0.0)),
+            "box_axis_x": mathutils.Vector((0.5, 0.0, 0.0)),
+            "box_axis_y": mathutils.Vector((0.0, 0.5, 0.0)),
+            "box_axis_z": mathutils.Vector((0.0, 0.0, 0.5)),
+            "primary_group": 4,
+        },
+    ]
+    for case in shape_cases:
+        lines = []
+        assert draw._append_collider_shape_lines(lines, case), f"{case['type']} 应生成 debug 线段"
+        assert lines, f"{case['type']} debug 线段不能为空"
+
+    sphere_lines = []
+    capsule_lines = []
+    assert draw._append_collider_shape_lines(sphere_lines, shape_cases[0])
+    assert draw._append_collider_shape_lines(capsule_lines, shape_cases[1])
+    assert len(capsule_lines) > len(sphere_lines), "CAPSULE 应绘制半球弧线，而不只是两端圆和侧线"
+
+    assert draw._collider_color(1, True) != draw._collider_color(2, True)
+    assert draw._collider_color(99, True) == draw._collider_color(16, True)
+    assert draw._collider_color(1, True) == (0.10, 0.63, 1.00, 0.86)
+    assert draw._collider_color(16, True) == (0.78, 0.78, 0.78, 0.86)
+    assert draw._collider_color(1, False) == (0.62, 0.66, 0.72, 0.58)
+
+    armature = _make_chain_armature("PW_DebugDraw_BoneCollider")
+    try:
+        props = armature.data.bones["bone_1"].hotools_collision
+        props.collision_type = "CAPSULE"
+        props.radius = 0.1
+        props.length = 0.8
+        props.primary_collision_group = 5
+
+        tail_1 = mathutils.Vector((0.4, 0.0, 1.6))
+        tail_2 = mathutils.Vector((0.8, 0.0, 2.2))
+        chain_lines = []
+        draw._append_spec_lines(
+            _types.SimpleNamespace(
+                armature=armature,
+                chains=(
+                    _types.SimpleNamespace(root_bone="root", bones=("root", "bone_1", "bone_2")),
+                ),
+            ),
+            {
+                "chains": {
+                    "root": {
+                        "tails": {
+                            "bone_1": {"current_tail": tail_1},
+                            "bone_2": {"current_tail": tail_2},
+                        },
+                    },
+                },
+            },
+            {},
+            chain_lines,
+            None,
+            None,
+            color_by_group=True,
+            spring_bone_keys=set(),
+        )
+
+        def _rounded(value):
+            return tuple(round(float(item), 6) for item in value)
+
+        pairs = [
+            (_rounded(start), _rounded(end))
+            for start, end in zip(chain_lines[0::2], chain_lines[1::2])
+        ]
+        assert len(pairs) == 3, f"解算链条应只绘制连续骨链段，实际线段: {pairs}"
+        assert pairs[1] == (_rounded((0.0, 0.0, 1.0)), _rounded(tail_1)), pairs
+        assert pairs[2] == (_rounded(tail_1), _rounded(tail_2)), pairs
+        assert (_rounded((0.0, 0.0, 2.0)), _rounded(tail_2)) not in pairs, (
+            "解算链条不应绘制静态 bone_2 head 到动态 tail 的引导线"
+        )
+
+        batches = []
+        draw._append_bone_collider_batch(
+            batches,
+            armature,
+            "bone_1",
+            armature.pose.bones["bone_1"],
+            color_by_group=True,
+        )
+        assert batches and batches[0][0], "骨骼 CAPSULE 碰撞体应生成胶囊线段"
+        assert batches[0][1] == draw._collider_color(5, True)
+
+        snapshot_world = _types.SimpleNamespace(collider_snapshot={
+            "colliders": [
+                {
+                    "type": "SPHERE",
+                    "owner_type": "BONE",
+                    "owner": armature,
+                    "bone": "bone_1",
+                    "center": mathutils.Vector((0.0, 0.0, 0.0)),
+                    "radius": 0.1,
+                    "primary_group": 5,
+                }
+            ]
+        })
+        batches = []
+        draw._append_world_collider_batches(
+            batches,
+            snapshot_world,
+            color_by_group=True,
+            skip_bone_keys={(id(armature), "bone_1")},
+        )
+        assert not batches, "SpringBone 自身骨骼碰撞体不应从 world snapshot 重复绘制"
+    finally:
+        _delete_object(armature)
+
+
 print("\n----------------------------------------------------------")
 print("  SpringBone VRM 新物理世界集成测试")
 print("----------------------------------------------------------")
@@ -1089,6 +1226,7 @@ check("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule
 check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
 check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)
 check("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy)
+check("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors)
 
 passed = sum(1 for item in _results if item)
 total = len(_results)

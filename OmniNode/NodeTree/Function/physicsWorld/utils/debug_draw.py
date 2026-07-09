@@ -127,6 +127,12 @@ def add_sphere_lines(lines: list, center, axis_x, axis_y, axis_z, radius: float)
 
 
 def add_capsule_lines(lines: list, segment_a, segment_b, radius: float) -> None:
+    segment_a = vector3(segment_a)
+    segment_b = vector3(segment_b)
+    radius = float(radius)
+    if radius <= 1e-7:
+        return
+
     axis = segment_b - segment_a
     if axis.length <= 1e-7:
         add_sphere_lines(
@@ -146,6 +152,19 @@ def add_capsule_lines(lines: list, segment_a, segment_b, radius: float) -> None:
     add_circle_lines(lines, segment_b, axis_a, axis_b, radius)
     for side in (axis_a, -axis_a, axis_b, -axis_b):
         add_line(lines, segment_a + side * radius, segment_b + side * radius)
+    for side in (axis_a, axis_b):
+        _add_capsule_cap_arc_lines(lines, segment_a, side, -axis, radius)
+        _add_capsule_cap_arc_lines(lines, segment_b, side, axis, radius)
+
+
+def _add_capsule_cap_arc_lines(lines: list, center, side, pole_axis, radius: float) -> None:
+    points = [
+        center + math.cos(math.pi * index / _SEGMENTS) * side * radius
+        + math.sin(math.pi * index / _SEGMENTS) * pole_axis * radius
+        for index in range(_SEGMENTS + 1)
+    ]
+    for index in range(len(points) - 1):
+        add_line(lines, points[index], points[index + 1])
 
 
 def add_plane_lines(lines: list, center, axis_x, axis_y, normal) -> None:
