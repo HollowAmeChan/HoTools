@@ -20,48 +20,21 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 ## 性能结论和排查优先级
 
-### 案例：VRM 弹簧骨缓存零拷贝优化（2026-07）
+性能排查的第一动作是用帧调试器（见 Debug 章节「帧级统一计时」）看 `handler` 占 `frame` 的比例，而不是凭感觉改代码。据此把开销分成两类，各有明确的处理边界。
 
-一次针对 `springBoneVRM_CPP` 每帧掉帧的精细测试，把帧调试器做成单一统一报告（见 Debug 章节「帧级统一计时」），并据此定位、消除了缓存层的全部冗余开销。
+### addon 侧（handler）：缓存层是固定开销的常见来源
 
-优化前后实测（同一角色，连续播放）：
+每帧固定开销里，真正的数值解算往往只占小头，缓存层的深拷贝/回收扫描才是大头。逐帧「读 → 原地改 → 写回同一对象」的滚动大状态（嵌套 dict、numpy 数组、大量含 Matrix 的记录）如果走默认快照隔离语义，会被每帧深拷贝多次、深度遍历多次。解法是让状态实现 dispose 协议走零拷贝路径——具体机制和实测收益见「7.1 Runtime cache 的资源值协议」的零拷贝加速一节。
 
-| 指标 | 优化前 | 优化后 |
-|---|---|---|
-| 整帧 frame | 84.7ms | 31.4ms |
-| FPS | 11.8 | 31.8 |
-| handler（addon 内） | 59.5ms（最高 81ms） | 8.6ms |
-| engine/redraw（引擎侧） | 22.8ms | 22.8ms（不变） |
+### 引擎侧（engine/redraw）：固有成本，不该在 addon 里找优化
 
-handler 内优化前的耗时分布几乎全是缓存浪费，而真正的物理解算只有 ~6.5ms：
+帧调试器报告里的 `engine/redraw = frame − handler` 是**反推值**，覆盖 `frame_change_post` 返回后 Blender 在 C 层做的事，Python 计时探不进去，addon 代码也改不动。它主要由三部分构成，都可用零代码隔离实验验证：
 
-- `CACHE_READ` ~10.7ms：`read_cache` 每帧深拷贝一次缓存值。
-- `CACHE_WRITE` ~13ms：`write_cache` 把 replace 值深拷贝成缓存私有副本。
-- `[finish] snapshot` ~10ms：提交时 `_snapshot_value` 又深拷贝一次。
-- `[finish] committed_ids` ~16ms：回收前重算「可达对象 id 集合」，且在提交循环里**每个 key 重算一次**，复杂度 O(K×N)。
-- `[finish] dispose` ~8.5ms：递归回收旧值。
+- **角色网格蒙皮变形**：armature modifier 每帧按新骨骼姿态重新变形整个角色网格（隐藏该网格可验证）。属于建模/绑定层（低模代理、降顶点数、GPU 蒙皮），不是 addon 能改的。
+- **视口重绘**：关闭 3D 视口可验证。视口是必须绘制的，关不掉。
+- **骨骼姿态求值 + depsgraph 依赖重算**：只要每帧改骨骼让物理生效，armature 全部骨骼的最终矩阵、约束、子物体重算就省不掉。
 
-同一个大 state dict（9 条链的 joints + 数百条含 Matrix 的 write_records + numpy 数组）每帧被深拷贝三次、深度遍历多次，而它本质是「读 → 原地改 → 写回同一对象」的逐帧滚动状态。
-
-三步修复：
-
-1. `finish_run` 改两阶段提交：先应用所有变更到最终状态、收集待回收候选，再用一次 `_committed_value_ids()` 扫描统一回收。committed_ids 从 O(K×N) 降到 O(N)。
-2. 消除提交期冗余深拷贝：`write_cache` 排入 pending 时已拷成私有副本，`finish_run` 直接采用，不再二次 `_snapshot_value`。
-3. 零拷贝缓存 owner：把物理 state 包成 `OmniCacheOwnerDict`（实现了 `omni_cache_dispose` 协议的 dict 子类）。runtime 对带 dispose 协议的对象，`_snapshot_value` 直接返回本体（读/写/提交都不深拷贝），`_collect_cache_value_ids` / `_dispose_cache_value` 把它当不透明 owner 不再递归深入。读返回 committed 本体、节点原地改后按 replace 写回，提交时 `old is new`，dispose 与 committed_ids 整段跳过。具体写法见「7.1 Runtime cache 的资源值协议」的零拷贝加速一节。
-
-贡献最大的是第 3 步。这套修复后，缓存五项全部从榜单消失，handler 内 81% 是真实物理计算。
-
-### 诚实说明：引擎侧 engine/redraw 的固有成本
-
-帧调试器报告里的 `engine/redraw = frame − handler` 是**反推值**，覆盖 `frame_change_post` 返回后 Blender 在 C 层做的事，Python 计时探不进去，addon 代码也改不动。上面案例里这部分是 22.8ms，零代码隔离实验拆解如下：
-
-- **角色网格蒙皮变形 ~7ms**：armature modifier 每帧按新骨骼姿态重新变形整个角色网格。隐藏该网格可验证。这属于建模/绑定层（低模代理、降顶点数、GPU 蒙皮），不是 addon 能改的。
-- **视口重绘 ~7ms**：关闭 3D 视口可验证。视口是必须绘制的，关不掉。
-- **骨骼姿态求值 + 其它依赖 ~8ms**：depsgraph 重算 armature 全部骨骼的最终矩阵、约束、子物体。只要每帧改骨骼让物理生效，这个重算就省不掉。
-
-结论：当 handler 已压到个位数毫秒、而 frame 仍受 engine/redraw 主导时，剩余开销是「每帧驱动骨骼/网格」方案的物理成本，**不应再到 addon 代码里找优化**。任何声称能从 Python 层压低这部分的改动都是盲改，给不出可验证的收益。能做的只有建模/绑定层（代理网格、降面）或接受现状。
-
-判定何时停手：用帧调试器看 handler 占 frame 的比例。handler 占比已经很低（例如 < 30%）说明 addon 侧已榨干，瓶颈在引擎，优化重心应转移或收尾。
+**判定何时停手**：当 handler 已压到个位数毫秒、占 frame 比例已低（例如 < 30%），说明 addon 侧已榨干，瓶颈在引擎。此时任何声称能从 Python 层压低 engine/redraw 的改动都是盲改，给不出可验证收益；能做的只有建模/绑定层（代理网格、降面）或接受现状。优化重心应转移或收尾。
 
 ## 核心边界
 
@@ -292,9 +265,11 @@ return _OmniCache(_as_cache_owner(state))   # replace 写回同一本体
 - **`dict()` 浅拷贝便宜，深递归才贵**：每帧浅拷一个新 owner dict 只是几微秒，真正省下的是 `_snapshot_value` 的深递归和 dispose/committed_ids 的深扫描。只要顶层是 owner，内部子结构不会被递归深入。
 - **范围最小化**：只在物理这类大状态节点的产出边界改，不要动全局 `cache_replace` / `read_cache` 默认行为，否则会破坏其它缓存使用者的隔离假设。
 
+案例（VRM 弹簧骨零拷贝）：`springBoneVRM_CPP` 每帧掉帧时，一个大 state dict（9 条链 joints + 数百条含 Matrix 的 write_records + numpy 数组）本质是「读 → 原地改 → 写回同一对象」的逐帧滚动状态，却被快照隔离每帧深拷贝三次、深度遍历多次。用帧调试器定位到缓存五项吃掉约 50ms（`CACHE_READ` 深拷 + `CACHE_WRITE` 深拷 + 提交期 `_snapshot_value` 再深拷 + `committed_ids` 在提交循环里 O(K×N) 重算可达 id + `dispose` 递归回收），真实物理只有 ~6.5ms。三步修复：（1）`finish_run` 改两阶段提交，`committed_ids` 从 O(K×N) 降到 O(N)；（2）`write_cache` 入 pending 时已拷私有副本，提交不再二次 `_snapshot_value`；（3）上述零拷贝 owner 协议，读写提交全程 `old is new`，dispose/committed_ids 整段跳过。贡献最大的是第 3 步，修复后缓存五项全部从耗时榜消失，handler 内 81% 是真实物理计算。这印证前述原则：零拷贝真正省的是深递归与深扫描，而不是浅拷贝本身。
+
 ### 7.2 缓存失效边界：哪些数据必须每帧重建
 
-缓存优化的核心风险是**缓存太狠导致该失效的数据没失效**。2026-07 的零拷贝优化后曾出现网格静态碰撞失效的回归（碰撞源列表被永久缓存，用户新增/修改碰撞体不生效），根因就是缓存 key 太粗、失效条件太宽。
+缓存优化的核心风险是**缓存太狠导致该失效的数据没失效**。一个典型反例：碰撞源列表（哪些物体/骨骼启用碰撞）若只用 `scene` 指针做 key，就等价于永久缓存，用户新增/修改碰撞体不生效——根因是缓存 key 太粗、失效条件太宽。
 
 新增或优化任何缓存前，必须先把数据按「失效频率」分类，并显式选择匹配的缓存 key。下表是物理解算器的分类基准：
 
@@ -324,24 +299,13 @@ return result
 
 **顶点组权重的设计约束（有意的性能权衡）**：pin 顶点组和碰撞半径顶点组的权重 hash 只在拓扑数量变化时失效，权重值重绘**不会**自动触发 cache 重建。这是运行期不允许热修改权重的显式约定——需要改权重时，用户必须停止运行、修改、reset 或清缓存后重新运行。此约束写在 `physicsMC2/mesh_build.py` 的 `cached_vertex_group_weights_hash` 文档里。
 
-### 7.3 配置真值来源必须唯一：SpringBone 链 root 的判定
+### 7.3 配置真值来源必须唯一
 
-和缓存失效边界并列的另一个物理侧原则：**同一个语义只能有一个真值来源**。当一份配置既能从 A 处推断、又能从 B 处标记时，A 和 B 迟早会不一致，其中一个会腐烂成误导性的死数据。
+和缓存失效边界并列的另一个框架级原则：**同一个语义只能有一个真值来源**。当一份配置既能从 A 处推断、又能从 B 处标记时，A 和 B 迟早会不一致，其中一个会腐烂成误导性的死数据。运行时推断（节点输入、已有数据、拓扑）和持久标记（Blender 属性）尤其容易脱钩：解算器只认前者，某个预览/UI 却去消费后者，于是二者天然分叉。
 
-具体案例（2026-07）：VRM/基础 SpringBone 的「链 root」曾有两个来源——
+维护约定：新增骨骼/物体/节点级配置时，先问“这个语义是否已经能从别处（节点输入、已有数据、拓扑）确定”。能确定就不要再加一个并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。预览也不该去猜解算行为——猜不到就诚实地不显示，而不是引入一个解算器不读的旁路标记。
 
-- **解算侧**：`boneChainFromRoot`（“从根获取骨链”节点）输入的骨骼即 root，`bone_is_effectively_pinned` 靠 `bone_name == root_name` 判定硬 Pin，root_name 就是这个输入。
-- **数据侧**：`Bone.hotools_collision.spring_root` 布尔标记，配套整套「设为 Root / 清空 / 选择」operator 和面板。
-
-问题是解算器**从不读** `spring_root`，它只认节点输入的骨。`spring_root` 仅被 PhysicsTools 预览侧消费，用来离线猜哪根骨是 root 并画成 Pin 高亮。于是两套判定天然脱钩：节点里填了骨 A 当 root，但只要 A 没勾 `spring_root`，预览就显示不出它是 Pin。预览在“猜”一个解算器根本不参考的标记。
-
-结论与已执行的处理：删除 `spring_root` 属性、三个 operator 和面板批量管理块，`_effective_bone_pin` 退化为只看 `pin`。root 的唯一真值来源就是“从根获取骨链”输入的骨骼。代价是预览不再离线高亮 root 的强制 Pin（预览本就无法离线得知解算器会拿哪根骨当 root），这是诚实的：**预览不该猜解算行为**。
-
-维护约定：新增骨骼/物体级配置时，先问“这个语义是否已经能从别处（节点输入、已有数据、拓扑）确定”。能确定就不要再加一个并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。
-
-新物理世界路径的补充（2026-07）：链 root 的判定已经比“输入骨即 root”复杂。`physicsWorld/spring_vrm/implicit_objects.py` 的 `_chains_from_direct_bone_values` 会按骨架父子关系分析输入骨集合——检测输入骨之间是否存在父链关系，据此在“单根递归收集”和“多 root 分组（每个无父输入骨各自成链，子骨按拓扑归属）”之间选择。但真值来源原则不变：root 始终来自骨骼输入本身（直接输入骨或“从根获取骨链”列表），不存在并行的持久 root 标记。
-
-骨骼碰撞字段（含 pin）在新路径也不再由 solver 直读 `Bone.hotools_collision`。`physicsWorld/spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin` 是统一 resolver，解析优先级为 `bone_collision.override` 隐式对象（计划中）> 旧 `Bone.hotools_collision` > `BONE_COLLISION_CAPABILITY` 默认值。native 消费端只认 resolver，不再各写一份 `getattr`。这样等 override 隐式对象节点落地、以及属性注册最终迁到物理世界侧时，唯一真值来源始终收敛在 capability + resolver 上，不与运行时推断竞争。
+> 该原则在物理世界模块的具体应用（SpringBone 链 root 判定、`bone_collision` 字段 resolver、`spring_root` 旁路标记的移除）见 `doc/UNIFIED_PHYSICS_WORLD_NODE_SYSTEM_DESIGN.md`。
 
 ### 8. 编译缓存和 runtime cache 是两套系统
 
@@ -400,6 +364,12 @@ C++ 侧职责：
 - 不直接访问 `bpy`。
 - 不保存 Blender 对象指针。
 - 不保存跨帧 solver 全局状态。
+
+### 为什么不把编译器/执行器整体迁到 C++
+
+已评估并否决。根本障碍：`op.func(*args)` 永远是 Python 回调（GIL 和调用边界不消失）；编译器必须读 Blender `NodeTree`/`Node`/`Socket`/`Link`（全是 RNA，只能 Python 访问）；cache 值是任意 Python 对象（`bpy.types.Object`、numpy、`OmniCacheOwnerDict`）无法进 C++ 容器。把执行器 for 循环搬到 C++ 每帧只省 isinstance 和 list 分配（~50–150µs/100 节点），而函数体本身通常 0.5–10ms，收益比极低、成本极高。
+
+正确分层是固定结论：**Python 管调度和 Blender 边界，C++ 管数值计算热点**（solver kernel、persistent native context、collider/矩阵批量转换）。
 
 ## 编译流程
 
@@ -514,16 +484,22 @@ OmniExecutor.run(compiled, debug=False)
 - cache read/write/delete/dump 日志。
 - subtree / batch subtree 进入和退出日志。
 
-### 节点级懒求值（已落地）
+### 节点级懒求值
 
-执行器已实现"输入未变则跳过节点"的懒求值机制，详细设计见 `doc/OMNINODE_LAZY_EVALUATION_DESIGN.md`。当前落地状态：
+执行器实现了"输入未变则跳过节点"的懒求值：连续帧里只有输入真正变化的节点才重新执行，参数类节点（数值、preset 等）在用户不调参时被跳过，复用上帧输出。物理 solver 等每帧必须推进的节点通过 `always_run` 绕过跳过。
 
-- **寄存器版本跟踪已落地**：`CompiledGraph` 持有 `reg_values`（跨帧值）和 `reg_versions`（`array.array` 整数版本号）。`OmniExecutor._write_reg` 用身份比较（`is not`），值变化才递增版本号；`OMNI_NO_CHANGE` sentinel 让 always_run 节点主动声明"输出未变"，不递增版本。
-- **skip 判定已落地**：`_should_skip_opcall` 对非 always_run 节点比对输入寄存器版本快照（`last_snapshot`），未变则跳过函数调用、复用上帧输出。`_should_skip_subtree` 对子树整块跳过。
-- **always_run 已落地**：`@omni(always_run=True)` 由 `FunctionNodeCore` 识别，`OmniCompiler` emit OpCall 时写入 `has_always_run`（默认取 `is_output_node`）；编译期 `_compute_has_always_run` 递归标注 `CompiledGraph.has_always_run_node`。物理 solver、Cache 节点、输出节点、debug 节点必须标 always_run。
-- **共享子树防污染已落地**：编译期 `_compute_ref_counts` 统计每个子树被引用次数，`inner_lazy_eval = (ref_count == 1)`；被多个 group 引用的共享子树不做内部逐节点 skip，避免跨调用路径的版本快照污染。
-- **op_type dict 派发已落地**：IR 类型带 `op_type` 类常量，执行走查表而非 isinstance 链。
-- **唯一未落地项：曲线 CONST 版本化**。CONST 仍是裸 tuple `("CONST", reg, value)`，编译时固化 `default_value`；设计文档里的 `ConstInstruction` / `is_curve` / `_curve_hash`（运行中改曲线 socket 时按内容 hash 更新版本）尚未实现。运行中修改未连接曲线 socket 的默认值目前不会自动失效下游。
+运行机制：
+
+- **寄存器版本跟踪**：`CompiledGraph` 持有跨帧的 `reg_values`（任意 Python 值，`list`）和 `reg_versions`（整数版本号，`array.array`，C 层批量比较）。`OmniExecutor._write_reg` 用身份比较（`is not`），值变化才递增版本号。`OMNI_NO_CHANGE` sentinel 让 always_run 节点主动声明"本输出未变"，执行了但不递增版本，避免下游连锁重算。
+- **skip 判定**：`_should_skip_opcall` 把当前输入寄存器版本填进预分配 buffer，与上次执行的 `last_snapshot` 做 C 层批量比较；相等则跳过函数调用。`_should_skip_subtree` 基于父树寄存器对整棵子树做同样判定。热路径零内存分配。
+- **always_run**：`@omni(always_run=True)` 由 `FunctionNodeCore` 识别，`OmniCompiler` emit OpCall 时写入 `has_always_run`（默认取 `is_output_node`）；编译期 `_compute_has_always_run` 递归标注 `CompiledGraph.has_always_run_node`。物理 solver、Cache 节点、输出节点、debug 节点必须标 always_run。
+- **共享子树防污染**：编译期 `_compute_ref_counts` 统计每棵子树被 SubtreeCall/BatchSubtreeCall 引用的次数，`inner_lazy_eval = (ref_count == 1)`。被多个组实例引用的共享子树只做整块 skip、不做内部逐节点 skip，避免不同调用路径共用一份 `reg_values` 时版本快照互相污染。
+- **op_type 派发**：IR 类型带 `op_type` 类常量，执行器按整数码分派而非 isinstance 顺序链。
+
+CONST 的语义边界（不是缺口，是设计）：
+
+- 未连接的输入 socket 编译成裸 tuple `("CONST", reg, value)`，`value` 在编译期从 `socket.default_value` 固化。运行时只做 `registers[reg] = value`，不重读 RNA、版本恒为 0，下游可安全 skip。曲线 socket 同样在编译期固化 payload，不产生每帧 RNA 遍历开销。
+- **改 socket 默认值需手动重编译才生效**，这对所有 socket（数值、曲线等）统一成立，是有意契约：编辑期改值 → 用户点编译 → `CompiledGraph` 重建、CONST 重新固化。运行时不去嗅探 socket 默认值变化，因此没有"运行中改曲线自动失效下游"这一路径，也不需要为此加特化 IR。若将来确实需要"运行中难判脏的 socket 值"自动失效，应设计成 socket 级的通用脏签名协议 + 一条通用 IR，而不是给曲线打补丁。
 
 维护约定：
 

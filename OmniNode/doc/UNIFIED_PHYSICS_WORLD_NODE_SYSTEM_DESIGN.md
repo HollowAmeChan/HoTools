@@ -1,6 +1,26 @@
-# OmniNode 通用物理世界节点系统设计展望
+# OmniNode 通用物理世界节点系统设计
 
-本文记录 OmniNode 物理节点系统从“每个解算器各自维护 cache”走向“统一物理世界 owner + 多解算器协作”的设计方向。它是设计展望和实施路线，不是当前已完全落地的架构约定。
+本文是 OmniNode **物理世界模块**的权威设计文档（与 `ARCHITECTURE.md` 的 OmniNode 框架文档分工：框架文档只讲编译/执行/缓存/懒求值等框架机制，物理世界的解算器组织、身份卡、世界状态、写回、隐式表达等都归本文）。
+
+## 已固定的架构支柱
+
+下列方向是**已确定的架构决策**，不再重新讨论；本文其余章节和各 Phase 只是它们的展开与分阶段落地进度：
+
+1. **框架 + 模块化 solver**：物理世界是一层薄框架，每个 solver 是 `physicsWorld/<domain>/` 下自带 names/capabilities/declaration/nodes/specs/solver 的可装卸模块。
+2. **显式声明身份卡**：每个 solver 有一份声明（solver_id / slot_kind / consumes / produces / persistent_state / dirty_keys / writeback / update_policy），作为跨模块识别与迁移审查的单一事实源。
+3. **通用世界状态输入**：frame / dt / reset / 跳帧 / 倒放 / object scope / collider snapshot 由 `Physics World Begin` 统一产出，solver 只消费不重算。
+4. **通用写回**：solver 只发布写回指令到 result stream，真实 Blender 写入（Object delta / PoseBone / GN 属性）和 `update_tag` 由统一 writeback 执行，`solver_inline_writeback=False` 是硬约束。
+5. **支持隐式表达**：authoring 对象通过 `world.implicit_objects`（跨帧、按 tag/stable_id/signature 收集）进入 solver，用户无需手连大批 socket。
+6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧 Python 实现只作审查/数值参考。
+7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容（见 Phase 7）。
+8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作（见 Phase 8）。
+9. **物理属性由物理世界动态注册的规划**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI（见「物理属性注册职责」）。
+
+支柱已固定，**实现是分阶段推进**：当前 spring_vrm 领先（已原子化 + resolver），rigid 次之（vertical slice 已跑通、尚未原子化），MeshCloth/BoneCloth 仍待迁移。各 Phase 的 ✅/⚠️ 标注反映真实进度。
+
+## 设计方向
+
+统一物理世界把物理节点系统从“每个解算器各自维护 cache”重构为“统一物理世界 owner + 多解算器协作”。
 
 核心判断：
 
@@ -687,6 +707,14 @@ SpringBone VRM 现在有自己的 collision source cache 和 C++ arrays cache。
 - `frame` 和跳帧恢复策略读取 world frame context。
 - root hard pin 仍由 chain 输入决定，不放进 world。
 - 当前最小链路已覆盖 `VRM骨链属性 -> VRM骨链对象注册 -> SpringBone VRM模拟步 -> 物理写回`，并有 Blender 后台测试验证 native step、PoseBone 写回、连续帧状态、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 的 PoseBone 复位，以及 collider snapshot 投影。
+
+#### 案例：链 root 与骨骼碰撞的单一真值源
+
+SpringBone 是「同一语义只能有一个真值来源」原则（见 `ARCHITECTURE.md` §7.3）在物理侧的具体应用，值得作为后续 solver 的参考。
+
+**链 root**：曾经有两个来源——解算侧靠“从根获取骨链”节点输入的骨决定 root，数据侧又有 `Bone.hotools_collision.spring_root` 布尔标记配套一整套 operator 和面板。但解算器**从不读** `spring_root`，它只被预览侧用来离线猜 root 画 Pin 高亮，于是两套判定天然脱钩：节点里填了骨 A 当 root，只要 A 没勾 `spring_root`，预览就显示不出。已删除 `spring_root` 属性、三个 operator 和面板块，root 的唯一真值来源就是骨骼输入本身。新路径的 root 判定虽已比“输入骨即 root”复杂（`spring_vrm/implicit_objects.py` 的 `_chains_from_direct_bone_values` 按父子关系在“单根递归”和“多 root 分组”间选择），但真值来源不变：始终来自骨骼输入，不存在并行持久标记。
+
+**骨骼碰撞字段（含 pin）**：新路径不再由 solver 直读 `Bone.hotools_collision`。`spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin` 是统一 resolver，解析优先级 `bone_collision.override` 隐式对象（计划中）> 旧 `Bone.hotools_collision` > `BONE_COLLISION_CAPABILITY` 默认值。native 消费端只认 resolver，不再各写一份 `getattr`。这样等 override 隐式对象节点落地、属性注册最终迁到物理世界侧（支柱 9）时，唯一真值来源始终收敛在 capability + resolver 上。
 
 ### Mesh XPBD 参考迁移
 
