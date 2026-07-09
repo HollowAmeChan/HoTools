@@ -45,6 +45,7 @@ _EXPORTS = {
     "build_constraint_spec": ".specs",
     "register_rigid_bodies": ".solver",
     "register_constraints": ".solver",
+    "collect_rigid_specs_from_scope": ".scope_sync",
 }
 
 

@@ -880,7 +880,7 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 关键边界：`rigid_jolt` 消费刚体/约束 slot 与 `rigid_body_commands`，输出 `rigid_transform` / `rigid_solver_stats`，写回统一走 `physicsWorld.writeback -> Object.delta_transform`。
 
-`physicsWorld/names.py` 中的 `rigid.generated_constraint` 已由刚体 solver 消费：`刚体生成约束属性 -> 刚体生成约束注册` 会写入 `world.implicit_objects`，solver prepare 会转成普通 `ConstraintSpec` slot，并在同帧禁用时移除 slot/native constraint。
+`physicsWorld/rigid/names.py` 中的 `rigid.generated_constraint` 已由刚体 solver 消费：`刚体生成约束属性 -> 刚体生成约束注册` 会写入 `world.implicit_objects`，solver prepare 会转成普通 `ConstraintSpec` slot，并在同帧禁用时移除 slot/native constraint。
 
 `rigid_jolt.world_setting` 已接入第一批 Jolt 刚体世界级能力：`刚体世界-Jolt设置属性 -> 刚体世界-Jolt设置注册` 写入 gravity、max bodies、max body pairs 和 max contact constraints。rigid solver 在同步 body/constraint 前调用 `JoltAdapter.set_gravity()`；容量签名变化会重建 JoltAdapter 并重新同步刚体/约束。这让零重力、横向重力、恢复默认重力和 JoltWorld 容量上限都可以作为跨帧 Jolt 刚体世界配置表达，而不是临时 frame command。
 

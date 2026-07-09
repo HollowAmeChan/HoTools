@@ -331,7 +331,7 @@ debug_markers
 规则：
 
 - `tag` 是对象类型标记，必须使用名称常量而不是各写一份裸字符串。例如 `SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"`。
-- 名称常量的组织方式已分层：跨 solver 通用的 channel / collider ABI 常量仍集中在 `physicsWorld/names.py`；各 solver 自有的 tag / slot_kind / solver_id 等权威定义已开始拆回各自子模块的 `names.py`（`spring_vrm` 已拆到 `spring_vrm/names.py`，rigid 仍在中央 `names.py`、待拆），中央 `physicsWorld/names.py` 通过 `__getattr__` 保留惰性重导出兼容，避免跨 solver 识别名称错位。
+- 名称常量的组织方式已分层：跨 solver 通用的 channel / collider ABI 常量仍集中在 `physicsWorld/names.py`；各 solver 自有的 tag / slot_kind / solver_id 等权威定义已拆回各自子模块的 `names.py`（`spring_vrm/names.py`、`rigid/names.py`）。中央 `physicsWorld/names.py` 只保留惰性重导出兼容，避免跨 solver 识别名称错位。
 - `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
 - `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
 - `dirty=True` 只表示该 entry 相对上一轮写入发生了设置变化，不表示本帧必须 step。

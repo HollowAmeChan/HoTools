@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import mathutils
 
-from .names import RIGID_BODY_SLOT_KIND
+from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
 from .utils.values import matrix_from_16
 from .writeback_commands import iter_bone_transform_writebacks

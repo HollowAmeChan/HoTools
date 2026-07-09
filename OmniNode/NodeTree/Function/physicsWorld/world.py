@@ -60,16 +60,9 @@ from .types import (
     PhysicsObjectScope,
     PhysicsColliderSource,
 )
-from .names import (
-    RIGID_BACKEND_RESOURCE_KEY,
-    RIGID_BODY_SLOT_KIND,
-    RIGID_CONSTRAINT_SLOT_KIND,
-)
 from .scope import (
     build_scope_key,
     collect_physics_sources,
-    _obj_is_valid,
-    _obj_is_visible,
 )
 from .utils.geometry import matrix_scale_radius
 
@@ -275,163 +268,6 @@ def _clear_scope_dynamic_rigid_deltas(scope: PhysicsObjectScope) -> None:
             bpy.context.view_layer.update()
         except Exception:
             pass
-
-
-def _flush_rigid_backend_handles(world: PhysicsWorldCache) -> None:
-    adapter = world.backend_resources.get(RIGID_BACKEND_RESOURCE_KEY)
-    flush = getattr(adapter, "_flush_handles", None)
-    if callable(flush):
-        try:
-            flush()
-        except Exception:
-            pass
-
-
-def _round_float(value, digits: int = 8) -> float:
-    try:
-        return round(float(value), digits)
-    except Exception:
-        return 0.0
-
-
-def _round_tuple(values, digits: int = 8) -> tuple[float, ...]:
-    try:
-        return tuple(_round_float(v, digits) for v in values)
-    except Exception:
-        return ()
-
-
-def _rigid_body_sync_signature(spec) -> tuple:
-    """
-    返回会影响 Jolt body 创建参数的轻量签名。
-
-    动态/运动学 body 的 world transform 不放进签名：动态 transform 来自
-    物理写回 delta，运动学 transform 由 update_kinematic 每帧驱动。静态
-    body 没有写回路径，位置变化需要重新同步。
-    """
-    body_type = str(getattr(spec, "body_type", "DYNAMIC") or "DYNAMIC")
-    static_pose = ()
-    if body_type == "STATIC":
-        static_pose = (
-            _round_tuple(getattr(spec, "world_position", (0.0, 0.0, 0.0))),
-            _round_tuple(getattr(spec, "world_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-        )
-
-    return (
-        body_type,
-        _round_float(getattr(spec, "mass", 1.0)),
-        _round_float(getattr(spec, "friction", 0.5)),
-        _round_float(getattr(spec, "restitution", 0.0)),
-        int(getattr(spec, "rigid_collision_group", 1) or 1),
-        int(getattr(spec, "rigid_collides_with_groups", 0xFFFF) or 0),
-        str(getattr(spec, "shape_type", "SPHERE") or "SPHERE"),
-        _round_float(getattr(spec, "shape_radius", 0.5)),
-        _round_float(getattr(spec, "shape_half_height", 0.5)),
-        _round_tuple(getattr(spec, "shape_half_extents", (0.5, 0.5, 0.5))),
-        _round_float(getattr(spec, "shape_plane_half_extent", 10.0)),
-        _round_float(getattr(spec, "shape_top_radius", 0.5)),
-        _round_float(getattr(spec, "shape_bottom_radius", 0.3)),
-        _round_float(getattr(spec, "shape_convex_radius", 0.05)),
-        _round_tuple(getattr(spec, "shape_offset", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "shape_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "linear_velocity", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "angular_velocity", (0.0, 0.0, 0.0))),
-        _round_float(getattr(spec, "linear_damping", 0.05)),
-        _round_float(getattr(spec, "angular_damping", 0.05)),
-        _round_float(getattr(spec, "gravity_factor", 1.0)),
-        bool(getattr(spec, "allow_sleeping", True)),
-        str(getattr(spec, "motion_quality", "DISCRETE") or "DISCRETE"),
-        _round_float(getattr(spec, "max_linear_velocity", 500.0)),
-        _round_float(getattr(spec, "max_angular_velocity", 47.1239)),
-        bool(getattr(spec, "is_sensor", False)),
-        bool(getattr(spec, "collide_kinematic_vs_non_dynamic", False)),
-        int(getattr(spec, "allowed_dofs", 0x3F) or 0),
-        static_pose,
-    )
-
-
-def _kinematic_pose_signature(spec) -> tuple:
-    if str(getattr(spec, "body_type", "DYNAMIC") or "DYNAMIC") != "KINEMATIC":
-        return ()
-    return (
-        _round_tuple(getattr(spec, "world_position", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "world_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-    )
-
-
-def _constraint_sync_signature(spec) -> tuple:
-    return (
-        str(getattr(spec, "constraint_type", "FIXED") or "FIXED"),
-        int(getattr(spec, "target_a_ptr", 0) or 0),
-        int(getattr(spec, "target_b_ptr", 0) or 0),
-        bool(getattr(spec, "disable_collisions", True)),
-        _round_tuple(getattr(spec, "anchor_position", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-        int(getattr(spec, "constraint_priority", 0) or 0),
-        int(getattr(spec, "solver_velocity_steps", 0) or 0),
-        int(getattr(spec, "solver_position_steps", 0) or 0),
-        _round_float(getattr(spec, "draw_constraint_size", 1.0)),
-        bool(getattr(spec, "limit_enabled", False)),
-        _round_float(getattr(spec, "angular_limit_min", -3.141592653589793)),
-        _round_float(getattr(spec, "angular_limit_max", 3.141592653589793)),
-        _round_float(getattr(spec, "linear_limit_min", -1.0)),
-        _round_float(getattr(spec, "linear_limit_max", 1.0)),
-        _round_float(getattr(spec, "limit_spring_frequency", 0.0)),
-        _round_float(getattr(spec, "limit_spring_damping", 0.0)),
-        _round_float(getattr(spec, "max_friction_torque", 0.0)),
-        _round_float(getattr(spec, "max_friction_force", 0.0)),
-        str(getattr(spec, "motor_state", "OFF") or "OFF"),
-        _round_float(getattr(spec, "motor_frequency", 2.0)),
-        _round_float(getattr(spec, "motor_damping", 1.0)),
-        _round_float(getattr(spec, "motor_force_limit", 0.0)),
-        _round_float(getattr(spec, "motor_torque_limit", 0.0)),
-        _round_float(getattr(spec, "motor_target_angular_velocity", 0.0)),
-        _round_float(getattr(spec, "motor_target_angle", 0.0)),
-        _round_float(getattr(spec, "motor_target_velocity", 0.0)),
-        _round_float(getattr(spec, "motor_target_position", 0.0)),
-        _round_float(getattr(spec, "cone_half_angle", 0.0)),
-    )
-
-
-def _mark_all_rigid_slots_for_resync(world: PhysicsWorldCache) -> None:
-    _flush_rigid_backend_handles(world)
-    for slot in world.solver_slots.values():
-        if slot.kind in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
-            slot.data.pop("_jolt_generation", None)
-
-
-def _prune_stale_rigid_slots(
-    world: PhysicsWorldCache,
-    active_body_ids: set[str],
-    active_constraint_ids: set[str],
-) -> int:
-    """
-    删除本帧 scope 中已经不存在的刚体/约束 slot。
-
-    旧 slot 如果继续留在 world 里，rigid solver 会在 restart 后把它们重新
-    sync 到 Jolt，看起来就像首帧没有重新收集世界信息。
-    """
-    stale_ids = []
-    for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind == RIGID_BODY_SLOT_KIND and slot_id not in active_body_ids:
-            stale_ids.append(slot_id)
-        elif slot.kind == RIGID_CONSTRAINT_SLOT_KIND and slot_id not in active_constraint_ids:
-            stale_ids.append(slot_id)
-
-    if not stale_ids:
-        return 0
-
-    for slot_id in stale_ids:
-        slot = world.solver_slots.pop(slot_id, None)
-        if slot is not None:
-            try:
-                slot.dispose("rigid_scope_prune")
-            except Exception:
-                pass
-
-    # 约束/body 拓扑变化后，直接 flush Jolt handles 并强制剩余 slot 重 sync。
-    _mark_all_rigid_slots_for_resync(world)
-    return len(stale_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -733,113 +569,17 @@ def physicsWorldBegin(
 
 def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
     """
-    遍历 scope.objects，把启用了 hotools_rigid_body / hotools_rigid_constraint
-    的对象自动注册到 world solver slot。
+    委托刚体 domain 从 scope 中同步 RigidBodySpec / ConstraintSpec slot。
 
-    为什么这里可以内置（不违反 Begin 边界）
-    ─────────────────────────────────────────
-    hotools_rigid_body / hotools_rigid_constraint 是 PhysicsTools 的持久化属性，
-    挂在 Blender Object 上，与 hotools_object_collision（passive collider）性质完全相同：
-    都是"scope 对象携带的物理类型标记"，不是 solver 的业务逻辑。
-    Begin 的职责正是"扫描 scope 对象并读取这些属性，构建公共上下文（spec slot + collider snapshot）"。
-
-    严格边界（何时不允许添加新的内置逻辑）
-    ─────────────────────────────────────────
-    如果某个域的"属性读取"满足以下任意一条，就 **不能** 内置进此函数：
-
-      ❌ 读取的是 solver 的私有参数（如 SpringBone 链的 stiffness/drag，MC2 骨链拓扑）
-      ❌ 包含 solver 的 native handle 创建或 native context 管理
-      ❌ 包含 solver 的 spec build 业务逻辑（超过简单读取 PhysicsTools 属性）
-      ❌ 发布 result stream 或写 Blender 数据
-      ❌ 需要感知其它 solver 的状态或执行顺序
-
-    通过以上标准，以下内容永远不应进入此函数：
-      - SpringBone VRM 链设置（physicsWorld/spring_vrm/）
-      - MC2 MeshCloth / BoneCloth 设置（physicsMC2*/）
-      - 任何 "xxx_solver_spec" 的业务构建逻辑（除 rigid_body / rigid_constraint）
-
-    追加新域时应先在 ARCHITECTURE.md「physicsWorldBegin 可以内置的内容边界」一节补充判定结论，
-    再动代码。
+    Physics World Begin 只负责 frame/scope 生命周期；刚体签名、slot prune、
+    Jolt resync dirty policy 都归 rigid 子模块持有。
     """
     try:
-        from .rigid.specs import build_rigid_body_spec, build_constraint_spec
-        from .rigid.implicit_objects import active_generated_constraint_slot_ids
-        from .rigid.solver import _flatten
+        from .rigid.scope_sync import collect_rigid_specs_from_scope
     except Exception:
         return  # rigid domain 未加载时静默跳过
 
-    solver_id = "_world_begin_rigid_auto"
-    world.acquire_write(solver_id)
-    try:
-        active_body_ids: set[str] = set()
-        active_constraint_ids: set[str] = set(active_generated_constraint_slot_ids(world))
-        spec_sync_dirty = False
-
-        for obj in _flatten(scope.objects):
-            # 刚体
-            if scope.include_rigid_body:
-                spec = build_rigid_body_spec(obj)
-                if spec is not None:
-                    active_body_ids.add(spec.slot_id)
-                    slot = world.ensure_solver_slot(spec.slot_id, RIGID_BODY_SLOT_KIND)
-                    if slot.world_generation != world.generation:
-                        slot.data.clear()
-                        slot.world_generation = world.generation
-
-                    signature = _rigid_body_sync_signature(spec)
-                    previous_signature = slot.data.get("_sync_signature")
-                    if previous_signature is not None and previous_signature != signature:
-                        spec_sync_dirty = True
-                    slot.data["_sync_signature"] = signature
-
-                    pose_signature = _kinematic_pose_signature(spec)
-                    previous_pose_signature = slot.data.get("_kinematic_pose_signature")
-                    if pose_signature:
-                        if (
-                            previous_pose_signature is not None
-                            and previous_pose_signature != pose_signature
-                        ):
-                            slot.data["_jolt_kinematic_pose_dirty"] = True
-                        slot.data["_kinematic_pose_signature"] = pose_signature
-                    else:
-                        slot.data.pop("_kinematic_pose_signature", None)
-                        slot.data.pop("_jolt_kinematic_pose_dirty", None)
-
-                    slot.data["spec"] = spec
-                    slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
-
-            # 约束（只对 EMPTY 对象，受 include_rigid_constraint 控制）
-            if scope.include_rigid_constraint:
-                try:
-                    if obj.type == "EMPTY":
-                        cspec = build_constraint_spec(obj)
-                        if cspec is not None:
-                            active_constraint_ids.add(cspec.slot_id)
-                            cslot = world.ensure_solver_slot(cspec.slot_id, RIGID_CONSTRAINT_SLOT_KIND)
-                            if cslot.world_generation != world.generation:
-                                cslot.data.clear()
-                                cslot.world_generation = world.generation
-
-                            signature = _constraint_sync_signature(cspec)
-                            previous_signature = cslot.data.get("_sync_signature")
-                            if previous_signature is not None and previous_signature != signature:
-                                spec_sync_dirty = True
-                            cslot.data["_sync_signature"] = signature
-
-                            cslot.data["spec"] = cspec
-                            cslot.data["_debug_snapshot"] = lambda s=cspec: s.debug_dict()
-                except Exception:
-                    pass
-
-        pruned = _prune_stale_rigid_slots(world, active_body_ids, active_constraint_ids)
-        if spec_sync_dirty:
-            _mark_all_rigid_slots_for_resync(world)
-        if pruned:
-            world.replace_required = True
-        elif spec_sync_dirty:
-            world.replace_required = True
-    finally:
-        world.release_write(solver_id)
+    collect_rigid_specs_from_scope(world, scope)
 
 
 # ---------------------------------------------------------------------------
