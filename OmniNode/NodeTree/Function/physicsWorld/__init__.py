@@ -40,9 +40,12 @@ from .debug import (
     print_world_summary,
 )
 from .declarations import (
+    BONE_COLLISION_CAPABILITY,
+    BONE_COLLISION_CAPABILITY_ID,
     RIGID_SOLVER_DECLARATION,
     SOLVER_DECLARATION_REQUIRED_KEYS,
     SPRING_VRM_SOLVER_DECLARATION,
+    SPRING_VRM_UPDATE_FREQUENCY_TABLE,
     all_solver_declarations,
     get_solver_declaration,
     normalize_solver_declaration,
@@ -53,6 +56,7 @@ from .declarations import (
     validate_solver_declaration,
 )
 from .names import (
+    BONE_COLLISION_OVERRIDE_OBJECT_TAG,
     JOLT_STEP_WRITER_ID,
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_BODY_COMMANDS_CHANNEL,
@@ -99,9 +103,12 @@ __all__ = [
     "validate_world",
     "print_world_summary",
     # declarations
+    "BONE_COLLISION_CAPABILITY",
+    "BONE_COLLISION_CAPABILITY_ID",
     "RIGID_SOLVER_DECLARATION",
     "SOLVER_DECLARATION_REQUIRED_KEYS",
     "SPRING_VRM_SOLVER_DECLARATION",
+    "SPRING_VRM_UPDATE_FREQUENCY_TABLE",
     "all_solver_declarations",
     "get_solver_declaration",
     "normalize_solver_declaration",
@@ -111,6 +118,7 @@ __all__ = [
     "unregister_solver_declaration",
     "validate_solver_declaration",
     # names
+    "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
     "JOLT_STEP_WRITER_ID",
     "RIGID_BACKEND_RESOURCE_KEY",
     "RIGID_BODY_COMMANDS_CHANNEL",
