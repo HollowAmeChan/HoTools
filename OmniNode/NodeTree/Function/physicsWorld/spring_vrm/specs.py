@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..names import SPRING_VRM_SLOT_KIND
+from .names import SPRING_VRM_SLOT_KIND
 from ..utils.ids import as_pointer, data_pointer, make_typed_slot_id, stable_short_hash
 from ..utils.values import float3
 

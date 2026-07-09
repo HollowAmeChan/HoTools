@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from ..names import SPRING_VRM_POSE_CHANNEL, SPRING_VRM_SLOT_KIND, SPRING_VRM_STEP_WRITER_ID
 from ..types import PhysicsWorldCache
 from .declaration import SPRING_VRM_SOLVER_DECLARATION
-from .results import (
+from .names import (
+    SPRING_VRM_POSE_CHANNEL,
+    SPRING_VRM_SLOT_KIND,
     SPRING_VRM_SOLVER_ID,
+    SPRING_VRM_STEP_WRITER_ID,
+)
+from .results import (
     clear_spring_vrm_pose_results,
     publish_spring_vrm_stats_result,
 )

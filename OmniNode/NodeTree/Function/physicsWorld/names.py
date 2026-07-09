@@ -1,18 +1,34 @@
 """统一物理世界公开名称常量。"""
 
+from __future__ import annotations
+
+from importlib import import_module
+
 # solver id、result channel、exchange channel、backend resource key、slot kind
 # 和 world.implicit_objects tag 都集中在这里，避免跨模块识别名称写散后错位。
 
 
 # ---- SpringBone VRM -----------------------------------------------------
+#
+# 兼容惰性重导出。SpringBone 的名称权威定义位于 spring_vrm/names.py。
+_SPRING_VRM_COMPAT_NAMES = {
+    "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
+    "SPRING_VRM_CHAIN_OBJECT_TAG",
+    "SPRING_VRM_POSE_CHANNEL",
+    "SPRING_VRM_SLOT_KIND",
+    "SPRING_VRM_SOLVER_ID",
+    "SPRING_VRM_STATS_CHANNEL",
+    "SPRING_VRM_STEP_WRITER_ID",
+}
 
-SPRING_VRM_SOLVER_ID = "spring_vrm"
-SPRING_VRM_STEP_WRITER_ID = "spring_vrm_step"
-SPRING_VRM_SLOT_KIND = "spring_vrm"
-SPRING_VRM_POSE_CHANNEL = "spring_vrm_pose"
-SPRING_VRM_STATS_CHANNEL = "spring_vrm_stats"
-SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"
-BONE_COLLISION_OVERRIDE_OBJECT_TAG = "bone_collision.override"
+
+def __getattr__(name: str):
+    if name in _SPRING_VRM_COMPAT_NAMES:
+        module = import_module(".spring_vrm.names", __package__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(name)
 
 
 # ---- Rigid / Jolt -------------------------------------------------------

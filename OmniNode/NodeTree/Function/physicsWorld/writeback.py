@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import mathutils
 
-from .names import RIGID_BODY_SLOT_KIND, SPRING_VRM_SLOT_KIND
+from .names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
+from .spring_vrm.names import SPRING_VRM_SLOT_KIND
 from .spring_vrm.results import iter_spring_vrm_pose_results
 from .utils.values import matrix_from_16
 

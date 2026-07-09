@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..names import (
+from .names import (
     SPRING_VRM_POSE_CHANNEL,
     SPRING_VRM_SOLVER_ID,
     SPRING_VRM_STATS_CHANNEL,

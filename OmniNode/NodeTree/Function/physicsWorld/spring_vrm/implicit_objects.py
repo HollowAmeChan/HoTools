@@ -6,7 +6,7 @@ import bpy
 import mathutils
 
 from ....OmniNodeSocketMapping import _OmniBone
-from ..names import SPRING_VRM_CHAIN_OBJECT_TAG
+from .names import SPRING_VRM_CHAIN_OBJECT_TAG
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
 from ..utils.values import float3
