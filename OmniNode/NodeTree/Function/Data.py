@@ -1,4 +1,4 @@
-from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup, _OmniShapeKey, _OmniFloatCurve, _OmniColorCurve, _OmniBone
+from ..OmniNodeSocketMapping import _OmniFolderPath, _OmniImageFormat,_OmniRegex, _OmniGlob, _OmniDatablock, _OmniModifierType, _OmniModifier, _OmniMaterialSlot, _OmniUVLayer, _OmniColorAttribute, _OmniVertexGroup, _OmniShapeKey, _OmniFloatCurve, _OmniColorCurve, _OmniBone, _OmniBitMask
 from ..FunctionNodeCore import omni
 from bpy.types import NodeSocketVector
 import ast
@@ -126,6 +126,59 @@ def vectorInput(vec: NodeSocketVector) -> NodeSocketVector:
       base_color=_Color.colorCat["GetData"],)
 def intInput(v: int) -> int:
     return v
+
+
+def _bitmask_result(mask: _OmniBitMask, hex_width: int) -> tuple[_OmniBitMask, int, str]:
+    value = int(mask or 0)
+    return _OmniBitMask(value), value, f"0x{value:0{hex_width}X}"
+
+
+@omni(enable=True,
+      bl_label="掩码 4位",
+      base_color=_Color.colorCat["GetData"],
+      _INPUT_NAME=["掩码"],
+      _OUTPUT_NAME=["掩码", "整数", "十六进制"],
+      input_init={
+          "mask": {
+              "mask_length": 4,
+              "default_value": 0b0011,
+          },
+      },
+      )
+def bitMask4Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
+    return _bitmask_result(mask, 1)
+
+
+@omni(enable=True,
+      bl_label="掩码 8位",
+      base_color=_Color.colorCat["GetData"],
+      _INPUT_NAME=["掩码"],
+      _OUTPUT_NAME=["掩码", "整数", "十六进制"],
+      input_init={
+          "mask": {
+              "mask_length": 8,
+              "default_value": 0b00001111,
+          },
+      },
+      )
+def bitMask8Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
+    return _bitmask_result(mask, 2)
+
+
+@omni(enable=True,
+      bl_label="掩码 16位",
+      base_color=_Color.colorCat["GetData"],
+      _INPUT_NAME=["掩码"],
+      _OUTPUT_NAME=["掩码", "整数", "十六进制"],
+      input_init={
+          "mask": {
+              "mask_length": 16,
+              "default_value": 0xFFFF,
+          },
+      },
+      )
+def bitMask16Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
+    return _bitmask_result(mask, 4)
 
 @omni(enable=True,
       bl_label="浮点数",

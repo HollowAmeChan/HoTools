@@ -1243,6 +1243,7 @@ class OmniNodeApplyPreset(Operator):
             "NodeSocketColor": (0.0, 0.0, 0.0, 1.0),
             "OmniNodeSocketAny": 0.0,
             "OmniNodeSocketCache": "",
+            "OmniNodeSocketBitMask": 0,
             "OmniNodeSocketImageFormat": "PNG",
             "OmniNodeSocketRegex": "",
             "OmniNodeSocketGlob": "",

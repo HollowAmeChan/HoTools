@@ -3,6 +3,7 @@ from .OmniNodeSocket import (
     OmniNodeSocketScene,
     OmniNodeSocketAny,
     OmniNodeSocketCache,
+    OmniNodeSocketBitMask,
     OmniNodeSocketFloatCurve,
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
@@ -99,6 +100,15 @@ class _OmniCache(str):
         from .OmniRuntimeState import cache_mutate
 
         return cache_mutate(owner)
+class _OmniBitMask(int):
+    """函数签名标记类型。
+
+    运行时值是普通 int 掩码；位数通过 socket 的 input_init 属性配置，
+    例如 {"mask_length": 16}。
+    """
+
+    def __new__(cls, value=0):
+        return int.__new__(cls, value)
 class _OmniBone():
     def __init__():
         return
@@ -194,6 +204,7 @@ SKT_DIC = {
     _OmniRegex: OmniNodeSocketRegex,
     _OmniGlob: OmniNodeSocketGlob,
     _OmniCache: OmniNodeSocketCache,
+    _OmniBitMask: OmniNodeSocketBitMask,
     _OmniFloatCurve: OmniNodeSocketFloatCurve,
     _OmniColorCurve: OmniNodeSocketColorCurve,
     _OmniBone: OmniNodeSocketBone,

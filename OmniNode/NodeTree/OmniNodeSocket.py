@@ -80,7 +80,7 @@ def _find_node_socket(node, socket_identifier, socket_name):
     return None
 
 
-def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name):
+def _find_socket(context, tree_name, node_name, socket_identifier, socket_name):
     tree = bpy.data.node_groups.get(tree_name)
     if tree is None:
         space = getattr(context, "space_data", None)
@@ -94,6 +94,10 @@ def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_
 
     socket = _find_node_socket(node, socket_identifier, socket_name)
     return tree, node, socket
+
+
+def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name):
+    return _find_socket(context, tree_name, node_name, socket_identifier, socket_name)
 
 
 def _apply_curve_socket_preset(context, tree_name, node_name, socket_identifier, socket_name, preset_id):
@@ -230,6 +234,155 @@ def _draw_curve_socket_controls(socket, layout, node, text, curve):
     op.node_name = getattr(node, "name", "")
     op.socket_identifier = getattr(socket, "identifier", "")
     op.socket_name = getattr(socket, "name", "")
+
+
+_OMNI_MASK_MAX_BITS = 31
+_OMNI_MASK_ROW_SIZE = 8
+
+
+def _safe_int(value, fallback=0):
+    try:
+        return int(value)
+    except Exception:
+        return fallback
+
+
+def _clamp_mask_length(value):
+    return max(1, min(_OMNI_MASK_MAX_BITS, _safe_int(value, 16)))
+
+
+def _mask_limit(length):
+    return (1 << _clamp_mask_length(length)) - 1
+
+
+def _clamp_mask_value(value, length):
+    return max(0, _safe_int(value, 0)) & _mask_limit(length)
+
+
+def _mask_socket_length(socket):
+    return _clamp_mask_length(getattr(socket, "mask_length", 16))
+
+
+def _mask_socket_value(socket):
+    return _clamp_mask_value(getattr(socket, "mask_value", 0), _mask_socket_length(socket))
+
+
+def _draw_mask_socket_controls(socket, layout, node, text):
+    length = _mask_socket_length(socket)
+    mask = _mask_socket_value(socket)
+
+    col = layout.column(align=True)
+    col.label(text=text or socket.name)
+    for start in range(0, length, _OMNI_MASK_ROW_SIZE):
+        row = col.row(align=True)
+        for bit_index in range(start, min(start + _OMNI_MASK_ROW_SIZE, length)):
+            op = row.operator(
+                OmniMaskSocketToggleBit.bl_idname,
+                text=str(bit_index + 1),
+                depress=bool(mask & (1 << bit_index)),
+            )
+            op.node_tree_name = getattr(node.id_data, "name_full", "")
+            op.node_name = getattr(node, "name", "")
+            op.socket_identifier = getattr(socket, "identifier", "")
+            op.socket_name = getattr(socket, "name", "")
+            op.bit_index = bit_index
+
+
+class OmniMaskSocketToggleBit(Operator):
+    bl_idname = "ho.omni_mask_socket_toggle_bit"
+    bl_label = "切换掩码位"
+    bl_description = "切换 Omni 掩码接口的一个位"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    node_tree_name: bpy.props.StringProperty(default="")  # type: ignore
+    node_name: bpy.props.StringProperty(default="")  # type: ignore
+    socket_identifier: bpy.props.StringProperty(default="")  # type: ignore
+    socket_name: bpy.props.StringProperty(default="")  # type: ignore
+    bit_index: bpy.props.IntProperty(default=0, min=0)  # type: ignore
+
+    def execute(self, context):
+        _tree, _node, socket = _find_socket(
+            context,
+            self.node_tree_name,
+            self.node_name,
+            self.socket_identifier,
+            self.socket_name,
+        )
+        if socket is None or not hasattr(socket, "mask_value"):
+            self.report({'WARNING'}, "找不到掩码接口")
+            return {'CANCELLED'}
+
+        length = _mask_socket_length(socket)
+        bit_index = _safe_int(self.bit_index, -1)
+        if bit_index < 0 or bit_index >= length:
+            return {'CANCELLED'}
+
+        socket.mask_value = _clamp_mask_value(_mask_socket_value(socket) ^ (1 << bit_index), length)
+        area = getattr(context, "area", None)
+        if area is not None:
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
+class OmniNodeSocketBitMask(NodeSocket):
+    bl_label = "掩码-Omni"
+    bl_idname = "OmniNodeSocketBitMask"
+
+    # Blender 的 IntProperty 是有符号 32 位整数，因此可配置掩码最多支持 31 位。
+    # 节点 UI 只暴露掩码位开关，长度由 Python/节点元数据指定。
+    mask_length: bpy.props.IntProperty(
+        name="掩码长度",
+        default=16,
+        min=1,
+        max=_OMNI_MASK_MAX_BITS,
+        options={"HIDDEN"},
+        description="有效掩码位数。由 Python/节点元数据指定。",
+    )  # type: ignore
+    mask_value: bpy.props.IntProperty(
+        name="掩码",
+        default=0,
+        min=0,
+        options={"HIDDEN"},
+        description="位掩码值。",
+    )  # type: ignore
+
+    @property
+    def default_value(self):
+        return _mask_socket_value(self)
+
+    @default_value.setter
+    def default_value(self, value):
+        if isinstance(value, dict):
+            length = value.get("mask_length", value.get("length"))
+            if length is not None:
+                self.mask_length = _clamp_mask_length(length)
+            for key in ("mask", "mask_value", "value"):
+                if key in value:
+                    value = value[key]
+                    break
+            else:
+                self.mask_value = _clamp_mask_value(self.mask_value, _mask_socket_length(self))
+                return
+
+        if isinstance(value, (list, tuple)):
+            mask = 0
+            for index, enabled in enumerate(value[:_mask_socket_length(self)]):
+                if enabled:
+                    mask |= 1 << index
+            self.mask_value = _clamp_mask_value(mask, _mask_socket_length(self))
+            return
+
+        self.mask_value = _clamp_mask_value(value, _mask_socket_length(self))
+
+    def draw(self, context, layout, node, text):
+        if self.is_output or self.is_linked:
+            layout.label(text=self.name)
+            return
+        _draw_mask_socket_controls(self, layout, node, text)
+
+    @classmethod
+    def draw_color_simple(cls):
+        return (0.9, 0.78, 0.25, 1.0)
 
 
 class OmniNodeSocketFloatCurve(NodeSocket):
@@ -749,6 +902,7 @@ socket_cls = [
     OmniNodeSocketText,
     OmniNodeSocketAny,
     OmniNodeSocketCache,
+    OmniNodeSocketBitMask,
     OmniNodeSocketFloatCurve,
     OmniNodeSocketColorCurve,
     OmniNodeSocketBone,
@@ -765,7 +919,7 @@ socket_cls = [
     OmniNodeSocketShapeKey,
 ]
 
-operator_cls = [OmniCurveSocketPresetPopup]
+operator_cls = [OmniCurveSocketPresetPopup, OmniMaskSocketToggleBit]
 
 # 保留旧入口，图节点 IO 类型枚举和外部脚本还会读取 OmniNodeSocket.cls。
 cls = socket_cls
