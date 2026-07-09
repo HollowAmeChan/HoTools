@@ -28,7 +28,13 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\('boneFanSide.py', doraise=True\\); print\\('boneFanSide OK'\\)\")",
       "Bash(sed -i '1416,1524d' boneFanSingle.py)",
       "Bash(sed -i '/^    OP_RemoveFanSingleBone,$/d' boneFanSingle.py)",
-      "Bash(python -c \"import py_compile; py_compile.compile\\('boneFanSingle.py', doraise=True\\); print\\('boneFanSingle OK'\\)\")"
+      "Bash(python -c \"import py_compile; py_compile.compile\\('boneFanSingle.py', doraise=True\\); print\\('boneFanSingle OK'\\)\")",
+      "Read(//c/Users/hhh12/.claude/projects/c--Users-hhh12-AppData-Roaming-Blender-Foundation-Blender-4-5-scripts-addons-HoTools/memory/**)",
+      "Bash(python -m py_compile OmniNode/NodeTree/Function/physicsWorld/spring_vrm/bone_collision.py OmniNode/NodeTree/Function/physicsWorld/spring_vrm/native.py)",
+      "Bash(python -m py_compile OmniNode/NodeTree/Function/physicsWorld/spring_vrm/test_blender_spring_vrm.py OmniNode/NodeTree/Function/physicsWorld/spring_vrm/bone_collision.py OmniNode/NodeTree/Function/physicsWorld/spring_vrm/native.py)",
+      "Bash(python -m py_compile OmniNode/NodeTree/Function/physicsWorld/spring_vrm/solver.py)",
+      "Bash(python -m py_compile \"OmniNode/NodeTree/Function/physicsWorld/spring_vrm/native.py\" \"OmniNode/NodeTree/Function/physicsWorld/declarations.py\" \"OmniNode/NodeTree/Function/physicsWorld/spring_vrm/nodes.py\")",
+      "Bash(python -m py_compile OmniNode/NodeTree/Function/physicsWorld/spring_vrm/declaration.py OmniNode/NodeTree/Function/physicsWorld/declarations.py OmniNode/NodeTree/Function/physicsWorld/spring_vrm/nodes.py)"
     ]
   }
 }

@@ -1,22 +1,14 @@
-# OmniNode 通用物理世界节点系统设计
+# OmniNode 物理世界实现推进日志
 
-本文是 OmniNode **物理世界模块**的权威设计文档（与 `ARCHITECTURE.md` 的 OmniNode 框架文档分工：框架文档只讲编译/执行/缓存/懒求值等框架机制，物理世界的解算器组织、身份卡、世界状态、写回、隐式表达等都归本文）。
+本文是 OmniNode 物理世界的**实现推进日志**：记录分阶段落地进度、各 solver 迁移状态、测试覆盖和实施期变更。它是"现在做到哪了"的记录，不是架构权威。
 
-## 已固定的架构支柱
+文档分工：
 
-下列方向是**已确定的架构决策**，不再重新讨论；本文其余章节和各 Phase 只是它们的展开与分阶段落地进度：
+- **`PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`（架构设计）**：物理世界的结构约定与已固定的架构支柱，是"应该怎么组织"的权威。任何结构性判断以它为准。
+- **本文（实现推进日志）**：Phase 进度、solver 迁移状态、测试覆盖、实施期变更记录。
+- **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制。
 
-1. **框架 + 模块化 solver**：物理世界是一层薄框架，每个 solver 是 `physicsWorld/<domain>/` 下自带 names/capabilities/declaration/nodes/specs/solver 的可装卸模块。
-2. **显式声明身份卡**：每个 solver 有一份声明（solver_id / slot_kind / consumes / produces / persistent_state / dirty_keys / writeback / update_policy），作为跨模块识别与迁移审查的单一事实源。
-3. **通用世界状态输入**：frame / dt / reset / 跳帧 / 倒放 / object scope / collider snapshot 由 `Physics World Begin` 统一产出，solver 只消费不重算。
-4. **通用写回**：solver 只发布写回指令到 result stream，真实 Blender 写入（Object delta / PoseBone / GN 属性）和 `update_tag` 由统一 writeback 执行，`solver_inline_writeback=False` 是硬约束。
-5. **支持隐式表达**：authoring 对象通过 `world.implicit_objects`（跨帧、按 tag/stable_id/signature 收集）进入 solver，用户无需手连大批 socket。
-6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧 Python 实现只作审查/数值参考。
-7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容（见 Phase 7）。
-8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作（见 Phase 8）。
-9. **物理属性由物理世界动态注册的规划**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI（见「物理属性注册职责」）。
-
-支柱已固定，**实现是分阶段推进**：当前 spring_vrm 领先（已原子化 + resolver），rigid 次之（vertical slice 已跑通、尚未原子化），MeshCloth/BoneCloth 仍待迁移。各 Phase 的 ✅/⚠️ 标注反映真实进度。
+九条已固定架构支柱（框架+模块化 solver、显式身份卡、通用世界状态输入、通用写回、隐式表达、纯 C++ 后端、旧 solver 移除、跨 solver 交互、物理属性动态注册）见架构设计文档。当前落地态：spring_vrm 领先（已原子化 + resolver），rigid 次之（vertical slice 已跑通、尚未原子化），MeshCloth/BoneCloth 仍待迁移。
 
 ## 设计方向
 

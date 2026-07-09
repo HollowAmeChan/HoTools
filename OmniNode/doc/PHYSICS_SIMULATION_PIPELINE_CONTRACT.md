@@ -1,15 +1,14 @@
-# OmniNode 物理模拟流程契约
+# OmniNode 物理世界架构设计
 
-本文定义 OmniNode 物理系统的长期流程边界。它不是某个 backend 的接入计划，也不是现有节点的用户手册，而是未来刚体、布料、弹簧骨、软体、流体和跨 solver 交互共同遵守的架构契约。
+本文是 OmniNode 物理世界的**权威架构设计文档**。它定义未来刚体、布料、弹簧骨、软体、流体和跨 solver 交互共同遵守的长期结构边界：阶段职责、数据通道、生命周期、声明协议和写回时序。它不是某个 backend 的接入计划，也不是现有节点的用户手册。
 
-现有 `UNIFIED_PHYSICS_WORLD_NODE_SYSTEM_DESIGN.md` 已经定义了“统一 `PhysicsWorldCache` owner + 多 solver 协作”的方向。本文进一步拆开每个阶段的职责，回答下面这些问题：
+三份文档的分工：
 
-- 每个物理节点到底拥有什么数据。
-- 每帧运行、dirty 更新、懒更新和重建的边界在哪里。
-- solver 如何声明自己消费和产生的数据。
-- 程序化实体、临时物理对象和跨 solver 交互如何进入系统。
-- 写回、导出缓存和预览如何共用同一套结果流。
-- Python cache 与 native context 如何分工，避免隐藏全局状态。
+- **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
+- **`UNIFIED_PHYSICS_WORLD_NODE_SYSTEM_DESIGN.md`（实现推进日志）**：分阶段落地进度、各 solver 迁移状态、测试覆盖、实施期变更记录。是"现在做到哪了"的记录，不是架构权威。
+- **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
+
+本文只写"结构应该怎样"，具体 solver 的落地进度、测试覆盖、Phase 状态一律归 UNIFIED 日志。
 
 ## 设计结论
 
@@ -44,6 +43,22 @@ Cache Read
 7. 每个 solver 必须声明 consumes、produces、persistent state、update policy、writeback 和 export 能力。
 8. Python 管 Blender 边界、cache 生命周期和 debug；C++ 管适合常驻的纯数据 context 和数值热路径。
 9. 隐式写入会参与模拟的 solver 对象必须走 `world.implicit_objects`，不能写 `exchange`、不能直接写 solver slot、不能放进模块全局状态。
+
+## 已固定的架构支柱
+
+下列方向是**已确定的架构决策**，不再重新讨论；本文其余章节是它们的展开，UNIFIED 日志里各 Phase 只是它们的分阶段落地进度：
+
+1. **框架 + 模块化 solver**：物理世界是一层薄框架，每个 solver 是 `physicsWorld/<domain>/` 下自带 names/capabilities/declaration/nodes/specs/solver 的可装卸模块。
+2. **显式声明身份卡**：每个 solver 有一份声明（solver_id / slot_kind / consumes / produces / persistent_state / dirty_keys / writeback / update_policy），作为跨模块识别与迁移审查的单一事实源。
+3. **通用世界状态输入**：frame / dt / reset / 跳帧 / 倒放 / object scope / collider snapshot 由 `Physics World Begin` 统一产出，solver 只消费不重算。
+4. **通用写回**：solver 只发布写回指令到 result stream，真实 Blender 写入（Object delta / PoseBone / GN 属性）和 `update_tag` 由统一 writeback 执行，`solver_inline_writeback=False` 是硬约束。
+5. **支持隐式表达**：authoring 对象通过 `world.implicit_objects`（跨帧、按 tag/stable_id/signature 收集）进入 solver，用户无需手连大批 socket。
+6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧 Python 实现只作审查/数值参考。
+7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
+8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
+9. **物理属性由物理世界动态注册的规划**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI。
+
+支柱已固定，**实现分阶段推进**：各 solver 当前进度、Phase 状态、测试覆盖见 UNIFIED 日志。
 
 ## 阶段职责
 
@@ -345,25 +360,18 @@ debug_markers
   行为：读取声明的 implicit object tag，注册/更新 solver slot，调用 native，发布 result stream
 ```
 
-当前第一条落地是 VRM SpringBone：
+示例（VRM SpringBone 骨链隐式对象链路）：
 
 ```text
 Physics World Begin
-  -> VRM骨链属性
-  -> VRM骨链对象注册
+  -> VRM骨链属性                    # <Domain>属性节点
+  -> VRM骨链对象注册                # <Domain>对象注册节点，append world.implicit_objects[tag]
   -> SpringBone VRM模拟步          # 读取 tag=SPRING_VRM_CHAIN_OBJECT_TAG 的全部隐式对象
   -> Physics Writeback
   -> Physics World Commit
 ```
 
-当前进展（2026-07-07）：
-
-- `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、通用 `bone_transform` 写回指令、统一 PoseBone writeback。
-- SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并按每根模拟骨的碰撞字段解析出 hit radius 与 collided mask。
-- 骨骼碰撞字段解析已落地在 `spring_vrm/bone_collision.py`（`resolve_bone_collision_fields` / `resolve_bone_pin`）：优先级为 override 隐式对象 > 旧属性 `Bone.hotools_collision` > capability 默认值三级；native.py 已改为消费该 resolver，不再直读 `Bone.hotools_collision`。其中 override 隐式对象层仍是空实现（计划中），当前实际只走 legacy 属性 + capability 默认值两层。
-- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box collider snapshot 投影和 group mask 过滤。
-- `_native/tests/test_spring_bone_vrm_native.py` 已提供 Python 3.13 native 直连测试，覆盖基础重力步进、capsule / plane / box collider 投影、group mask 过滤和 binding 参数 shape 校验。
-- SpringBone native ABI 沿用公共 collider type code：`SPHERE=0`、`CAPSULE=1`、`PLANE=2`、`BOX=3`。这些常量由 `physicsWorld/names.py` 集中保存，避免 Python wrapper、C++ solver 和后续 solver 迁移错位。
+> 各 solver 隐式对象链路的落地进度、测试覆盖见 UNIFIED 日志。
 
 `rigid_body_commands` 建议 payload：
 
@@ -383,11 +391,11 @@ Physics World Begin
 }
 ```
 
-Rigid solver 已把这些命令翻译到 adapter 的 slot_id API，不允许命令节点直接保存或读取 Jolt native handle。当前 consumer 标记为 `_consumed_by_rigid_solver`，同一 generation/frame 内不会重复应用 impulse / force。第一批节点入口已落地在 `physicsWorld/rigid/nodes.py`：设置速度、施加力、施加冲量、重力倍率、材质响应、运动质量和激活状态。
+命令通道的架构约束：
 
-Rigid solver 也已消费第一类刚体隐式对象：`rigid.generated_constraint`。`刚体生成约束属性 -> 刚体生成约束注册` 会把程序化约束写入 `world.implicit_objects`；`刚体模拟步` 在 prepare 阶段将其同步成普通 `ConstraintSpec` slot，再走同一条 Jolt adapter 约束同步路径。`Physics World Begin` 的 stale slot prune 已把上一帧 enabled generated constraint 视为活跃约束，避免隐式约束每帧被误删重建。`physicsWorld/rigid/backends/test_blender_rigid.py` 覆盖了注册、slot 同步、下一帧保留和同帧禁用移除。
-
-Rigid solver 也已消费 `rigid_jolt.world_setting`。`刚体世界-Jolt设置属性 -> 刚体世界-Jolt设置注册` 会把 Jolt 刚体世界级参数写入 `world.implicit_objects`；当前落地字段是 `gravity`、`max_bodies`、`max_body_pairs` 和 `max_contact_constraints`。solver prepare 会在 body/constraint 同步前调用 `JoltAdapter.set_gravity()`；容量字段是 `JoltWorld(...)` 构造期参数，签名变化会重建 Jolt adapter 并重新同步刚体/约束。这类持久设置不走 `rigid_body_commands`，因为它不是单帧 impulse/force，而是直到被同 stable_id 的 disabled entry 或新签名覆盖前都持续生效的 Jolt 刚体世界配置。
+- 命令由 solver 翻译到 backend 的 slot_id API，命令节点不得直接保存或读取 backend native handle。
+- 一次性命令（impulse / force）必须防重复消费：consumer 在 item 上写私有 `_consumed_by_*` 标记，同一 generation/frame 内不重复应用。
+- **单帧命令走 `exchange`，持久配置走 `implicit_objects`**。二者的区分是架构性的：impulse / force / activate 这类单帧事件属于 `rigid_body_commands` exchange；而刚体世界级设置（重力、容量上限等）持续生效直到被同 stable_id 的 disabled entry 或新签名覆盖，属于持久隐式对象，不走命令通道。容量类字段变化触发 backend 重建，重力类字段变化只触发参数刷新——对应下文 config_key 与 param_key 的区分。
 
 ### Physics Writeback / Export / Preview
 
@@ -414,14 +422,13 @@ export cache stream
 - writeback plan 可以由 solver prepare 生成，但执行写回应由统一 writeback 阶段完成。
 - 导出缓存应消费同一 result stream，不能重新从 solver 私有状态里猜。
 
-当前刚体落地点：
+result channel 的结构约定（以 transform + stats 双通道为例）：
 
-- `physicsRigidSolver` 向 `world.result_streams["rigid_transform"]` 写入每个 rigid body 的本帧结果。
-- `rigid_transform` result 是本帧纯快照 dict/tuple 数据，包含 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`。
-- `physicsRigidSolver` 同时向 `world.result_streams["rigid_solver_stats"]` 写入本次 solver 调用统计，包含 `body_count`、`constraint_count`、`step_ms`、`dt`、`substeps`、`same_frame`、`restart_required`、`transform_count`、`command_count`、`command_failed`、`sync_error_count`、`result_error_count`。
-- `physicsWriteback`、`physicsWorldDebugDraw` 和 `physicsRigidReadState` 消费该 result，不读取 `JoltAdapter._jw`、`_body_handles` 或其他 backend-private handle。
-- solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。
-- `physicsWorldResultStream` 是通用观察节点，可按 channel / solver 读取当前 frame + generation 的 result stream，用于调试后续 contact、constraint lambda、query 等输出。
+- solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
+- solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
+- writeback、debug draw、read-state 节点只消费 result stream，不读 backend-private handle（如 Jolt adapter 内部字段）。
+- solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
+- 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。
 
 模式：
 
@@ -976,9 +983,7 @@ physicsWorld/utils/
 7. 如需隐式对象或生成 spec，必须先定义 `implicit_objects` tag / schema / stable_id / signature / conflict policy。
 8. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
 
-当前 rigid/Jolt 后台 smoke 已覆盖第 1 项：`physicsWorld/rigid/backends/test_blender_rigid.py` 通过真实 `OmniRuntimeState.write_cache()` 提交 `PhysicsWorldCommit` 的 replace/mutate intent，并验证 `delete_cache()` / `clear_all()` 会释放 world、Jolt adapter、solver slots，同时清空 Object delta writeback。帧语义 smoke 已覆盖连续帧、same-frame、跳帧/首帧回退、reset、scope prune、static/kinematic transform dirty、shape dirty、constraint target dirty 和 dispose。
-
-当前 SpringBone 后台 smoke 已补齐 PoseBone 类非 Object 写回：`physicsWorld/spring_vrm/test_blender_spring_vrm.py` 通过真实 runtime cache 路径验证 `spring_vrm` world slot、native step、result stream、统一 `PoseBone.matrix_basis` 写回、same-frame 复发、spec prune、`delete_cache()` / `clear_all()` 释放与 PoseBone 复位。它证明第 2、3、4、6、8 项不只适用于 Jolt/Object delta，也适用于非 Object 写回 solver。
+> 各 solver 对上述条件的实际覆盖情况（rigid/Jolt、SpringBone 的后台 smoke 范围）见 UNIFIED 日志。
 
 迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
 
@@ -992,7 +997,7 @@ world.begin
   -> world.commit/cache.write
 ```
 
-第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。当前 SpringBone slot 已落地按 chain root 常驻的 `SpringVRMNativeContext`（`spring_vrm/native.py`），常驻 topology signature 与 numpy buffers：Python 侧的 dual-call context 封装已完整实现——native 模块导出 `spring_vrm_create_context` 时走新 dual-call 路径（`spring_vrm_update_dynamic` → `spring_vrm_step` → `spring_vrm_read_results`），否则回退到旧的 35 参数单次调用 `solve_spring_bone_vrm_cpp`（`_step_via_legacy_bridge`）作为未编译 dual-call 时的兼容回退。连续帧复用、stale slot dispose、stats/debug 摘要都有后台测试覆盖。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
+每个 solver 的第一条迁移都应是这样一条 vertical slice：先打通 slot 生命周期、result stream、writeback、runtime cache dispose 的最小闭环，再逐步补齐 collider、多目标、参数热更新等能力。哪个 solver 已经走完 vertical slice、走到什么程度，见 UNIFIED 日志。
 
 优先预演对象：
 
@@ -1063,28 +1068,17 @@ rigid.jolt_step
 9. writeback/export 支持状态。
 10. 不兼容变更说明。
 
-## 当前建议
+## Solver 声明 registry
 
-从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；它的 `SpringVRMNativeContext` 已固定 owner、topology signature、buffer 复用、dispose 和 debug 摘要边界。Python 侧的 dual-call context 封装已完整实现，并按 native 是否编译进 dual-call symbol 决定实际路径：导出 `spring_vrm_create_context` 时走新 dual-call 模型（update_dynamic → step → read_results），否则回退到旧的 35 参数单次调用 bridge。下一步是在 native 侧真正编译出 dual-call symbol，让 35 参数 bridge 回退退役，并把同一 contract 推到 MC2 / BoneCloth。
+solver 声明不仅是文档表格，还必须落成运行时可查询的 registry。代码入口 `physicsWorld/declarations.py`，debug 入口 `solver_declarations_debug_snapshot()`。
 
-在文档和 timing 稳定后，再决定：
+**每个新 solver 必须先声明再接节点。** 最小字段：`solver_id`、`slot_kind`、`stage`、`consumes`、`produces`、`persistent_state`、`dirty_keys`、`same_frame_policy`、`update_policy`、`writeback`。
 
-- 哪些静态数组进入 native context。
-- 哪些公共数据进入 world。
-- 哪些结果进入统一 writeback。
-- 哪些跨 solver hack 升级为 exchange channel。
-- 哪些数学、buffer、id、writeback helper 抽到 `physicsWorld/utils/`。
-## 2026-07-07 追加：Solver 声明 registry 契约
-
-代码入口：`physicsWorld/declarations.py`。debug 入口：`solver_declarations_debug_snapshot()`。
-
-每个新 solver 必须先声明再接节点。最小字段：`solver_id`、`slot_kind`、`stage`、`consumes`、`produces`、`persistent_state`、`dirty_keys`、`same_frame_policy`、`update_policy`、`writeback`。
-
-规则：
+registry 校验规则：
 
 - `consumes` / `produces` 只列公开通道：world snapshot、implicit object tag、exchange、result stream、solver slot 摘要。
-- result 不能只藏在 solver slot 或 native handle 里。
-- `writeback.solver_inline_writeback=False` 是硬约束。
-- `same_frame_policy` 必须说明同帧重复求值是否 step、sync 或只重发结果。
+- result 不能只藏在 solver slot 或 native handle 里，否则无法被统一 writeback / export / debug 消费。
+- `writeback.solver_inline_writeback=False` 是硬约束（对应写回时序语义的目标模式）。
+- `same_frame_policy` 必须说明同帧重复求值是 step、sync 还是只重发结果。
 
-当前内置声明：`spring_vrm`、`rigid_jolt`。后续 MC2 / BoneCloth / SoftBody 迁移先补 `names.py` 常量和 declaration；旧实现只作审查与数值参考。
+后续 solver 迁移先补 `names.py` 常量和 declaration，再接节点；已注册的内置声明清单见 UNIFIED 日志。
