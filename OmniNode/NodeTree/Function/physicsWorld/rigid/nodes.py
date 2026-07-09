@@ -12,6 +12,7 @@ from ....FunctionNodeCore import omni
 from ... import _Color
 from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
+from .debug_draw import update_rigid_debug_draw_store
 from .implicit_objects import (
     DEFAULT_RIGID_JOLT_MAX_BODIES,
     DEFAULT_RIGID_JOLT_MAX_BODY_PAIRS,
@@ -174,6 +175,41 @@ def physicsRigidReadState(
         bool(result.get("sleeping", False)),
         result,
     )
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="Jolt刚体可视化调试",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "启用", "显示刚体", "显示约束", "显示问题"],
+    _OUTPUT_NAME=["物理世界"],
+    omni_description="""
+    刚体/Jolt 自有可视化调试节点。
+
+    本节点从 rigid solver slot 与 rigid_transform result stream 采样纯线段快照，
+    绘制刚体形状、生成约束和约束问题标记。绘制语义归 rigid/Jolt domain 持有，
+    不再走物理世界通用 debug draw。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsRigidJoltDebugDraw(
+    world: object,
+    enabled: bool = True,
+    show_bodies: bool = True,
+    show_constraints: bool = True,
+    show_problems: bool = True,
+) -> object:
+    update_rigid_debug_draw_store(
+        str(id(world)),
+        world,
+        bool(enabled),
+        bool(show_bodies),
+        bool(show_constraints),
+        bool(show_problems),
+    )
+    return world
 
 
 @omni(

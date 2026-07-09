@@ -22,6 +22,7 @@ _LAZY_EXPORTS = {
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG": ".names",
     "SPRING_VRM_CHAIN_OBJECT_TAG": ".names",
     "SPRING_VRM_POSE_CHANNEL": ".names",
+    "SPRING_VRM_DEBUG_DRAW_MODE": ".names",
     "SPRING_VRM_SLOT_KIND": ".names",
     "SPRING_VRM_SOLVER_ID": ".names",
     "SPRING_VRM_STATS_CHANNEL": ".names",
@@ -33,6 +34,11 @@ _LAZY_EXPORTS = {
     # declaration.py
     "SPRING_VRM_LEGACY_DISCARD_AUDIT": ".declaration",
     "SPRING_VRM_SOLVER_DECLARATION": ".declaration",
+    # debug.py
+    "install_spring_vrm_slot_debug_snapshot": ".debug",
+    "SPRING_VRM_DEBUG_DRAW_MODES": ".debug",
+    "spring_vrm_native_context_stats_for_slots": ".debug",
+    "spring_vrm_slot_debug_snapshot": ".debug",
     # results.py
     "clear_spring_vrm_pose_results": ".results",
     "clear_spring_vrm_stats_results": ".results",
@@ -81,6 +87,8 @@ __all__ = [
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
     "SPRING_VRM_LEGACY_DISCARD_AUDIT",
     "SPRING_VRM_POSE_CHANNEL",
+    "SPRING_VRM_DEBUG_DRAW_MODE",
+    "SPRING_VRM_DEBUG_DRAW_MODES",
     "SPRING_VRM_CHAIN_OBJECT_TAG",
     "SPRING_VRM_OBJECT_REGISTER_PRODUCER",
     "SPRING_VRM_SLOT_KIND",
@@ -96,6 +104,7 @@ __all__ = [
     "clear_spring_vrm_pose_results",
     "clear_spring_vrm_stats_results",
     "get_spring_vrm_stats_result",
+    "install_spring_vrm_slot_debug_snapshot",
     "iter_spring_vrm_pose_results",
     "iter_spring_vrm_stats_results",
     "make_spring_vrm_pose_result",
@@ -110,7 +119,9 @@ __all__ = [
     "register_spring_vrm_chain_objects",
     "register_spring_vrm_from_chain_properties",
     "register_spring_vrm_specs",
+    "spring_vrm_native_context_stats_for_slots",
     "spring_vrm_chain_object_signature",
     "spring_vrm_chain_object_stable_id",
+    "spring_vrm_slot_debug_snapshot",
     "step_spring_vrm",
 ]

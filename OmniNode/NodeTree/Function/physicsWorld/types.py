@@ -594,12 +594,17 @@ class PhysicsWorldCache:
         self.previous_collider_snapshot = None
         self.valid = False
 
-        # 同步清除可视化调试绘制条目，避免缓存销毁后残影留在视口
-        try:
-            from .debug_draw import clear_draw_store
-            clear_draw_store(str(id(self)))
-        except Exception:
-            pass
+        # 同步清除各 solver 自有可视化调试绘制条目，避免缓存销毁后残影留在视口。
+        for module_name, function_name in (
+            (".rigid.debug_draw", "clear_rigid_debug_draw_store"),
+            (".spring_vrm.debug_draw", "clear_spring_vrm_debug_draw_store"),
+        ):
+            try:
+                from importlib import import_module
+                clear_fn = getattr(import_module(module_name, __package__), function_name)
+                clear_fn(world_id=str(id(self)))
+            except Exception:
+                pass
 
     # ---- omni_cache_debug_snapshot 协议 --------------------------------
 

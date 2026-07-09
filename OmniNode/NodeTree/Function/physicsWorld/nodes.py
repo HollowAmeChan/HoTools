@@ -27,7 +27,6 @@ from .scope import (
 )
 from .world import physicsWorldBegin as _begin, physicsWorldCommit as _commit
 from .debug import snapshot_to_text, result_items_to_text, validate_world, print_world_summary
-from .debug_draw import update_draw_store, clear_draw_store
 from .writeback import apply_all_writebacks, clear_all_deltas
 
 
@@ -329,49 +328,6 @@ def physicsWorldDebugText(
         print_world_summary(world)
 
     return world, text, problems
-
-
-@omni(
-    enable=True,
-    always_run=True,   # 写入 draw store，每帧刷新视口绘制
-    bl_label="物理世界-可视化调试",
-    base_color=_Color.colorCat["GetData"],
-    is_output_node=False,
-    _INPUT_NAME=["物理世界", "启用", "显示碰撞体", "显示刚体", "显示约束", "显示Bug"],
-    _OUTPUT_NAME=["物理世界"],
-    omni_description="""
-    在 3D 视口中可视化物理世界内容，比文字快照更直观。
-
-    节点执行时把 PhysicsWorldCache 里的数据采样成纯绘制快照：
-      显示碰撞体 — collider_snapshot 里的球/胶囊/平面/盒子（蓝=简单碰撞/黄绿=骨骼）
-      显示刚体   — rigid_body slot 的轮廓（绿=动态/灰=静态/蓝=运动学）
-      显示约束   — constraint slot 的 Empty 锚点 + 连线到目标（橙黄）
-                   FIXED=轴框/HINGE=半圆/SLIDER=双箭头/CONE=锥/POINT=圆
-      显示Bug    — 约束缺目标或连到自身时以红色标出
-
-    _DRAW_STORE 不保存 bpy 对象、spec 引用或 live matrix；draw handler 只读快照。
-    因此该节点应放在你想观察的写回/求解阶段之后。
-    物理世界 透传，可插在链路任意位置。
-    """,
-)
-def physicsWorldDebugDraw(
-    world: object,
-    enabled: bool = True,
-    show_colliders: bool = True,
-    show_rigid: bool = True,
-    show_constraints: bool = True,
-    show_bugs: bool = True,
-) -> object:
-    update_draw_store(
-        str(id(world)),
-        world,
-        bool(enabled),
-        bool(show_colliders),
-        bool(show_rigid),
-        bool(show_constraints),
-        bool(show_bugs),
-    )
-    return world
 
 
 # ---------------------------------------------------------------------------

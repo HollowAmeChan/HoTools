@@ -421,7 +421,7 @@ Physics World Begin
 - solver 每帧把 body state 纯快照发布到 `world.result_streams["rigid_transform"]`。
 - solver 每次调用把统计快照发布到 `world.result_streams["rigid_solver_stats"]`，包括 body/constraint 数量、step 时间、dt/substeps、same-frame/restart 状态、transform 输出数量、命令消费数量和错误计数。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
-- `physicsWorldDebugDraw` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
+- `Jolt刚体可视化调试` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `physicsRigidReadState` 直接从 `rigid_transform` result 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
 - `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_solver_stats` 等 channel，后续 contact、query 和 constraint lambda 也应按同一模式输出。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
@@ -452,7 +452,7 @@ Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：
 
 这些输出不应直接写到 Blender 自定义属性里。推荐写入 `world.result_streams` 或 `world.exchange`，再由：
 
-- debug draw 节点消费。
+- Jolt 自有 debug draw 节点消费。
 - Physics Writeback 消费。
 - bake/export 消费。
 - event/hack 规则节点消费。
@@ -706,7 +706,7 @@ RigidDebugFrame
   stats: [body_count, active_count, constraint_count, contact_count, step_ms]
 ```
 
-HoTools overlay 的 draw store 也应保持同样规则：它是 `physicsWorldDebugDraw` 节点执行时生成的纯快照，不保存 live `bpy` 对象、spec 引用或 `matrix_world`。视口 draw handler 只能消费快照坐标、类型和调试参数。这样 debug 结果才能准确表达节点链路中该节点所在阶段，而不是表达后续 Blender 依赖图或手动编辑后的状态。
+HoTools overlay 的 draw store 也应保持同样规则：它由 Jolt 自有 debug draw 节点执行时生成纯快照，不保存 live `bpy` 对象、spec 引用或 `matrix_world`。视口 draw handler 只能消费快照坐标、类型和调试参数。这样 debug 结果才能准确表达节点链路中该节点所在阶段，而不是表达后续 Blender 依赖图或手动编辑后的状态。
 
 ## 推荐实现路线
 

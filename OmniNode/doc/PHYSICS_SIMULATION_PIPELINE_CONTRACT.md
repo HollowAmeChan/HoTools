@@ -426,7 +426,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 
 - solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。
 - solver 同时向 `world.result_streams["<domain>_solver_stats"]` 写本次调用统计（body/constraint 数、step_ms、dt、substeps、same_frame、各类 error count），供 debug/观察节点读取。
-- writeback、debug draw、read-state 节点只消费 result stream，不读 backend-private handle（如 Jolt adapter 内部字段）。
+- writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
 - 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。
 
@@ -499,6 +499,7 @@ Physics Writeback 统一写 PoseBone + mesh delta
 - 按 `world.replace_required` 生成 `_OmniCache.replace(world)` 或 `_OmniCache.mutate(world)`。
 - 透传 world 用于 debug。
 - 统计 solver slot、exchange、writeback、backend resource 状态。
+- 透出 solver 自己注册的 debug 摘要和 debug draw mode；世界级可视化 debug 不定义或绘制 solver 私有调试语义。公共绘制工具只放在 `physicsWorld/utils/debug_draw.py`，具体采样和 draw store 归各 solver。
 
 不负责：
 

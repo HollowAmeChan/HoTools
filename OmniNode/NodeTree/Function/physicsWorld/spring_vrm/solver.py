@@ -16,7 +16,11 @@ from .results import (
 )
 from .specs import SpringVRMSolverSpec, build_spring_vrm_solver_specs
 from .implicit_objects import collect_spring_vrm_chain_objects
-from .native import native_context_debug_dict, native_context_stats_dict, step_spring_vrm_slot
+from .debug import (
+    install_spring_vrm_slot_debug_snapshot,
+    spring_vrm_native_context_stats_for_slots,
+)
+from .native import step_spring_vrm_slot
 
 
 def register_spring_vrm_from_chain_properties(
@@ -60,7 +64,7 @@ def _register_slots_from_specs(
         slot.data.setdefault("frame_state", {})
         slot.data.setdefault("_native_ctxs", {})
         slot.data.setdefault("writeback_plan", {})
-        _install_slot_debug_snapshot(slot, spec)
+        install_spring_vrm_slot_debug_snapshot(slot, spec)
 
         registered_ids.append(spec.slot_id)
         chain_count += int(spec.chain_count)
@@ -92,7 +96,7 @@ def register_spring_vrm_specs(
             bone_count=bone_count,
             collider_count=int(len((world.collider_snapshot or {}).get("colliders") or ())),
             status="registered",
-            native_context=_native_context_stats_for_slots(world, registered_ids),
+            native_context=spring_vrm_native_context_stats_for_slots(world, registered_ids),
         )
         return len(registered_ids), registered_ids
     finally:
@@ -176,7 +180,7 @@ def step_spring_vrm(
             backend="cpp",
             status="ok" if not errors else "error",
             errors=errors[-8:],
-            native_context=_native_context_stats_for_slots(world, registered_ids),
+            native_context=spring_vrm_native_context_stats_for_slots(world, registered_ids),
         )
         return published, step_ms
     finally:
@@ -187,40 +191,6 @@ def _resolve_chain_objects(
     world: PhysicsWorldCache,
 ) -> list[dict]:
     return collect_spring_vrm_chain_objects(world)
-
-
-def _install_slot_debug_snapshot(slot, spec: SpringVRMSolverSpec) -> None:
-    slot.data["_debug_snapshot"] = lambda slot=slot, spec=spec: _slot_debug_snapshot(slot, spec)
-
-
-def _slot_debug_snapshot(slot, spec: SpringVRMSolverSpec) -> dict:
-    snapshot = spec.debug_dict()
-    snapshot["native_context"] = native_context_debug_dict(slot.data.get("_native_ctxs"))
-    frame_state = slot.data.get("frame_state")
-    if isinstance(frame_state, dict):
-        chains = frame_state.get("chains")
-        snapshot["frame_state"] = {
-            "spec_hash": str(frame_state.get("spec_hash") or ""),
-            "chain_count": len(chains) if isinstance(chains, dict) else 0,
-        }
-    return snapshot
-
-
-def _native_context_stats_for_slots(world: PhysicsWorldCache, slot_ids: list[str]) -> dict:
-    contexts = []
-    for slot_id in slot_ids:
-        slot = world.solver_slots.get(slot_id)
-        if slot is None:
-            continue
-        contexts.append(native_context_stats_dict(slot.data.get("_native_ctxs")))
-    return {
-        "available": any(bool(item.get("available", False)) for item in contexts),
-        "slot_count": len(contexts),
-        "chain_count": sum(int(item.get("chain_count", 0) or 0) for item in contexts),
-        "buffer_count": sum(int(item.get("buffer_count", 0) or 0) for item in contexts),
-        "step_count": sum(int(item.get("step_count", 0) or 0) for item in contexts),
-        "topology_serial": sum(int(item.get("topology_serial", 0) or 0) for item in contexts),
-    }
 
 
 def _prune_stale_spring_vrm_slots(world: PhysicsWorldCache, active_slot_ids) -> int:

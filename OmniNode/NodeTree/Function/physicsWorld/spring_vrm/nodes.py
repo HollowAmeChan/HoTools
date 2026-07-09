@@ -6,6 +6,7 @@ from ....FunctionNodeCore import omni
 from ....OmniNodeSocketMapping import _OmniBone
 from ... import _Color
 from ..types import PhysicsWorldCache
+from .debug_draw import update_spring_vrm_debug_draw_store
 from .implicit_objects import make_spring_vrm_chain_properties, register_spring_vrm_chain_objects
 from .solver import step_spring_vrm
 
@@ -119,3 +120,38 @@ def physicsSpringVRMSolver(
         substeps=max(1, int(substeps)),
     )
     return world, int(write_count), float(step_ms)
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="SpringBone VRM可视化调试",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "启用", "显示骨骼姿态", "显示解算尾端", "显示根骨"],
+    _OUTPUT_NAME=["物理世界"],
+    omni_description="""
+    SpringBone VRM 自有可视化调试节点。
+
+    本节点从 SpringBone solver slot、frame_state 与 bone_transform result stream
+    采样纯线段快照，绘制骨链姿态、解算尾端和根骨标记。绘制语义归 spring_vrm/debug.py
+    与 spring_vrm/debug_draw.py 持有，不再走物理世界通用 debug draw。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsSpringVRMDebugDraw(
+    world: object,
+    enabled: bool = True,
+    show_pose: bool = True,
+    show_simulated_tail: bool = True,
+    show_roots: bool = True,
+) -> object:
+    update_spring_vrm_debug_draw_store(
+        str(id(world)),
+        world,
+        bool(enabled),
+        bool(show_pose),
+        bool(show_simulated_tail),
+        bool(show_roots),
+    )
+    return world

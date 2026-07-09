@@ -381,7 +381,8 @@ physicsWorld/<solver_domain>/
 - 名称冲突检查：solver id、channel、implicit object tag、debug draw mode id 不能重复。
 - capability registry：汇总 solver 暴露的能力表，供面板、节点生成、隐式对象注册和测试审查使用。
 - property registration：根据 solver capability 注册或注销 Blender PropertyGroup / PointerProperty / 面板入口。
-- common draw service：提供线段、点、shape snapshot 等通用绘制 primitive；solver 只声明自己的 debug draw mode 和把结果转换成公共 draw item。
+- common draw service：`physicsWorld/utils/debug_draw.py` 只提供线段、GPU batch、向量/矩阵转换和基础 shape 线框等无语义函数；solver 自己持有 debug snapshot 摘要、debug draw mode 和精细绘制语义。
+- world debug draw：不再承载 collider / rigid / SpringBone 等具体绘制。刚体/Jolt、SpringBone 等精细绘制已经下沉到各自 solver 的 debug 模块；未来若恢复世界级可视化，只用于 exchange item、result stream 和跨 solver 关系。
 - world 生命周期：frame context、scope、collider snapshot、solver slot、exchange、result stream、commit/dispose。
 
 solver 子模块必须提供：
@@ -1121,8 +1122,8 @@ physicsWorld/
 上面的目录清单是**目标结构**，当前尚未完全落地。实际进度是“spring_vrm 领先、rigid 待原子化”：
 
 - `physicsWorld/` 根目录**缺 `registry.py` 和 `sources.py`**：solver 子模块装载/卸载、名称冲突检查仍未有独立装载器；source 解析目前仍并入 `world.py` / `physicsWorldBegin`，未单独成文件。
-- `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py` 均已建，但**缺 `debug.py`**（debug snapshot 摘要与 debug draw mode 尚未拆出）。
-- `rigid/` 仍是过渡结构：**既缺 `capabilities.py` 也缺 `debug.py`**，rigid 的 solver 声明仍整块内联在中央 `declarations.py`，rigid 名称常量仍留在中央 `names.py`，尚未拆回子模块。
+- `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py`、`debug.py`、`debug_draw.py` 均已建；当前 `debug.py` 持有 debug snapshot 摘要、native context 统计和 debug draw mode 声明，`debug_draw.py` 持有骨链/尾端可视化采样与 draw store。
+- `rigid/` 仍是过渡结构：**既缺 `capabilities.py` 也缺正式 `debug.py`**，rigid 的 solver 声明仍整块内联在中央 `declarations.py`，rigid 名称常量仍留在中央 `names.py`，尚未拆回子模块；但 Jolt 刚体可视化已经从世界层拆到 `rigid/debug_draw.py`。
 - 中央 `physicsWorld/names.py` 目前只对 spring_vrm 做了权威下沉：spring_vrm 名称常量已迁到 `spring_vrm/names.py`，中央文件仅用 `__getattr__` 惰性重导出兼容；rigid 名称尚未下沉。
 
 因此 Phase 0 不能记作“目录结构已完成”，只能记作“骨架已建、spring_vrm 接近目标、rigid 与公共装载层（registry/sources）待补齐”。
@@ -1149,12 +1150,13 @@ physicsWorld/
 ```text
 物理世界-调试快照（physicsWorldDebugSnapshot）
 物理世界-调试文本（physicsWorldDebugText）
-物理世界-可视化调试（physicsWorldDebugDraw）
+Jolt刚体可视化调试（physicsRigidJoltDebugDraw）
+SpringBone VRM可视化调试（physicsSpringVRMDebugDraw）
 ```
 
 验证结论：frame/continuous/restart/replace/mutate 行为稳定，跳帧检测正常。
 
-`physicsWorldDebugDraw` 的 `_DRAW_STORE` 必须是纯快照：节点执行时把 collider / rigid shape / constraint anchor 采样成 tuple/list/dict，不保存 `bpy` 对象、spec 引用或 live `matrix_world`。draw handler 只负责把快照转成 GPU lines，不允许在绘制阶段重新读取 Blender 对象。这样 debug 视图表达的是节点链路中该节点所在位置的状态，而不是视口重绘时的外部状态。
+可视化 debug 的 store 必须由各 solver 自己持有，并且必须是纯快照：节点执行时把刚体 shape / constraint anchor / SpringBone bone-tail 等采样成 tuple/list/dict，不保存 `bpy` 对象、spec 引用或 live `matrix_world`。draw handler 只负责把快照转成 GPU lines，不允许在绘制阶段重新读取 Blender 对象。这样 debug 视图表达的是节点链路中该节点所在位置的状态，而不是视口重绘时的外部状态。公共绘制函数只放在 `physicsWorld/utils/debug_draw.py`。
 
 ### Phase 4：刚体 domain ✅ 已完成
 
@@ -1240,7 +1242,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 - `physicsWorldBegin` 每帧重采集 scope / collider / rigid spec，并处理 restart、scope change、slot prune、spec sync signature、kinematic pose dirty。
 - `physicsRigidSolver` 不直接写 Blender；它发布 `rigid_transform` 和 `rigid_solver_stats` result stream。
 - `physicsWriteback` 已验证 Object transform 的统一写回路径：只写 `Object.delta_*`，不改原始 transform。
-- `physicsWorldDebugDraw` 和 `physicsWorldResultStream` 消费纯快照，不读取 live bpy 对象、Jolt handle 或 solver 私有 transform。
+- Jolt / SpringBone 自有 debug draw 节点和 `physicsWorldResultStream` 消费纯快照，不读取 live bpy 对象、Jolt handle 或其它 solver 私有 transform。
 - Jolt adapter 主路径只消费 `RigidBodySpec` / `ConstraintSpec` 快照，不再回读 Object / Empty。
 - Blender 后台集成测试已覆盖：Jolt adapter 直接运行、world 生命周期、刚体命令 exchange、Jolt 刚体世界 gravity/capacity setting、结果读取节点、60 帧落地、dispose + rebuild、约束 disable collisions。
 - 真实 runtime cache 生命周期 smoke 已覆盖：Physics World Commit 输出的 replace/mutate intent 进入 `OmniRuntimeState.write_cache()`；`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 `PhysicsWorldCache`、rigid slots、`backend_resources["rigid_solver"]`，并清空 writeback delta。

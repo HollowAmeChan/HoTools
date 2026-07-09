@@ -1053,7 +1053,7 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Debug / stats（供 solver.py 的 _install_slot_debug_snapshot 调用）
+# Debug / stats（供 spring_vrm.debug 汇总）
 # ─────────────────────────────────────────────────────────────────────────────
 
 def native_context_debug_dict(native_ctxs) -> dict:
