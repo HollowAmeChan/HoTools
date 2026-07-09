@@ -52,10 +52,12 @@ Cache Read / Cache Write 仍然作为跨帧生命周期边界。
 3. `Physics World Begin` 统一处理当前帧上下文、reset、跳帧、倒放和公共 object scope。
 4. solver 节点只处理自己的拓扑、参数、求解和写回。
 5. collider 和可动对象范围由显式对象列表控制，避免每帧扫描整个 scene。
-6. 碰撞语义继续使用 `PhysicsTools` 已挂在 Object / Bone 上的属性，不在节点图上重复定义。
+6. 物理语义由 solver/domain 自己的 capability 声明持有；显式属性、隐式对象、调试绘制和面板字段都应引用同一份 capability。
 7. 未来刚体、cloth、spring、mesh XPBD、soft body、fluid 都能共享同一个 physics world owner。
 8. Jolt 这类第三方物理库只作为 solver backend，不成为 OmniNode 公开物理语义。
 9. Cache Delete、clear runtime cache、插件注销仍然能释放所有物理资源。
+10. 每个 solver 应作为 `physicsWorld` 下可装载/卸载的子模块存在，自己持有 names、capabilities、declaration、nodes、debug draw modes 和属性注册声明。
+11. 物理世界核心负责装载 solver 子模块、注册/注销物理属性、汇总 debug 能力、维护公共 world 生命周期，而不成为所有 solver 语义的集中事实源。
 
 ### 不做
 
@@ -66,6 +68,8 @@ Cache Read / Cache Write 仍然作为跨帧生命周期边界。
 5. 不要求第一版实现真正的多 solver 双向耦合，只先建立共同容器和公共上下文。
 6. 不承诺 Blender depsgraph 只求值 object scope 内对象。object scope 只能限制 OmniNode 自己的枚举、打包和物理输入范围。
 7. 不把 Jolt BodyID、ConstraintID、shape enum、constraint enum 等 backend 概念暴露成节点图的稳定公共协议。
+8. 不把 `physicsWorld/names.py` 或 `physicsWorld/declarations.py` 发展成永久性的全局大 registry；它们当前可以作为过渡汇总层，但最终权威声明应回到各 solver 子模块内部。
+9. 不让 `PhysicsTools` 成为新的全局物理语义所有者；它可以在过渡期提供面板和工具，但属性注册与字段能力最终应由 `physicsWorld` 装载 solver 时统一处理。
 
 ## 总体节点形态
 
@@ -315,7 +319,7 @@ native body / constraint handle                -> solver slot / backend resource
 1. 属性节点和注册节点都是普通函数节点，不是 GraphNode。
 2. 注册节点必须接收并返回同一个 `PhysicsWorldCache`，保证 world 链路仍然线性。
 3. 注册节点不直接创建 solver slot，不写 backend handle，不写 Blender，不写 `exchange`。
-4. `tag` 必须使用 `physicsWorld/names.py` 里的全局名称常量，例如 `SPRING_VRM_CHAIN_OBJECT_TAG`，避免注册节点和 solver 字符串错位。
+4. `tag` 必须来自 solver 子模块自己的 names 声明，例如 `physicsWorld/spring_vrm/names.py` 中的 `SPRING_VRM_CHAIN_OBJECT_TAG`；物理世界核心只在装载 solver 时汇总这些名称，避免注册节点和 solver 字符串错位。
 5. `stable_id` 是 registry 内部去重/替换用，不暴露成用户设置。相同 tag + stable_id 后写覆盖前写。
 6. 同一 tag 下可以自然 append 多个对象；solver 直接按 tag 收集全部对象。
 7. `signature` 必须由拓扑、配置和参数输入组成。签名不变时 `version` 不递增，solver 不应重建。
@@ -323,7 +327,7 @@ native body / constraint handle                -> solver slot / backend resource
 9. `implicit_objects` 在 world replace 时浅拷贝，在 Cache Delete / clear runtime cache / world dispose 时清除。
 10. 隐式对象默认不参与写回。即使某个 payload 表达了虚拟刚体、批量约束或临时 attachment，Physics Writeback 也只能消费 result stream；没有显式 owner resolver 时不得把隐式对象当作 Blender `Object` 或 `PoseBone` 写回。
 
-`physicsWorld/names.py` 是跨模块识别名称的集中点。后续新增 solver 时，solver id、slot kind、result channel、exchange channel、backend resource key 和 implicit object tag 都应先进入这个文件，再由节点、solver、debug、writeback 共同引用。
+当前 `physicsWorld/names.py` 可以作为过渡汇总层，但长期不应成为永久集中事实源。后续新增 solver 时，solver id、slot kind、result channel、exchange channel、backend resource key、implicit object tag 和 debug draw mode 都应先定义在 solver 子模块内部，再由物理世界核心在装载阶段注册到公共索引。公共索引只负责查找和冲突检查，不拥有语义。
 
 未来 solver 迁移时不再把大量对象/设置 socket 全塞进 solver step 节点。推荐拆成：
 
@@ -337,6 +341,63 @@ World Begin
 ```
 
 solver step 的职责是读取自己声明的 `implicit_objects` tag，构建/更新 spec 和 solver slot，再调用 native 后端。这样 SpringBone、Jolt 约束生成、MC2 规则设置会走同一套隐式对象模式。
+
+### Solver 子模块装载协议
+
+长期结构应把每个 solver 当成 `physicsWorld` 下的可拆卸小模块，而不是把所有声明集中塞进物理世界根目录。物理世界核心只定义装载协议和公共服务；solver 子模块自己持有完整生态。
+
+推荐 solver 子模块结构：
+
+```text
+physicsWorld/<solver_domain>/
+  __init__.py
+  names.py              # solver id、slot kind、result/exchange channel、implicit object tag、debug draw mode id
+  capabilities.py       # 显式属性、隐式对象、面板字段、resolver 共用的能力表
+  declaration.py        # consumes / produces / persistent_state / update_policy / writeback
+  nodes.py              # 属性节点、注册节点、模拟步节点
+  specs.py              # 规范化 spec / payload / signature
+  solver.py             # slot 生命周期和求解调度
+  debug.py              # debug snapshot 摘要、debug draw mode 声明
+  backends/             # native / 第三方 backend adapter
+```
+
+物理世界核心提供：
+
+- solver module discovery / register / unregister。
+- 名称冲突检查：solver id、channel、implicit object tag、debug draw mode id 不能重复。
+- capability registry：汇总 solver 暴露的能力表，供面板、节点生成、隐式对象注册和测试审查使用。
+- property registration：根据 solver capability 注册或注销 Blender PropertyGroup / PointerProperty / 面板入口。
+- common draw service：提供线段、点、shape snapshot 等通用绘制 primitive；solver 只声明自己的 debug draw mode 和把结果转换成公共 draw item。
+- world 生命周期：frame context、scope、collider snapshot、solver slot、exchange、result stream、commit/dispose。
+
+solver 子模块必须提供：
+
+- `SOLVER_DECLARATION`。
+- `NAMES` 或等价的 names 常量集合。
+- `CAPABILITIES`，包括显式属性和隐式对象引用的同源字段表。
+- 可选 `PROPERTY_REGISTRATION`，声明需要挂到 `Object`、`Bone`、`Scene` 等 Blender owner 上的属性。
+- 可选 `DEBUG_DRAW_MODES`，声明自己支持的调试绘制模式和对应 result/debug snapshot 来源。
+- `register_nodes()` / `unregister_nodes()` 或等价节点注册入口。
+- `dispose_world_resources(world)` 或 slot/backend dispose 钩子，保证 Cache Delete、clear runtime cache 和插件注销可以释放资源。
+
+这样做的边界是：物理世界核心知道“有哪些 solver 插件、它们声明了哪些公开通道、如何装载/卸载”，但不直接拥有 SpringBone、Rigid、MC2、BoneCloth 的具体字段语义。具体字段语义由 solver capability 拥有。
+
+### 物理属性注册职责
+
+物理属性注册也应逐步收归 `physicsWorld` 装载流程，而不是长期由外部 `PhysicsTools` 模块独立维护事实源。
+
+过渡期：
+
+- `PhysicsTools/physicsProperty.py` 继续保存现有 `Bone.hotools_collision`、`Object.hotools_object_collision`、`Object.hotools_mesh_collision` 等 PropertyGroup，避免破坏旧面板和旧节点。
+- solver capability 先 copy 一份同构字段表，用测试证明 resolver 输出与旧属性直读完全一致。
+- 外部物理面板改为引用 capability 或由 capability 审查字段，减少字段定义分叉。
+
+目标期：
+
+- solver capability 是字段、默认值、显示名、范围、更新频率和 resolver 的单一事实源。
+- `physicsWorld` 在装载 solver 时注册它声明的显式属性，并在卸载 solver 时注销。
+- 显式属性和隐式对象只是同一 capability 的两种 authoring interface。
+- `PhysicsTools` 退化为 UI/操作器/预览工具集合，不再拥有 solver contract。
 
 ### Object Source
 
@@ -991,12 +1052,29 @@ physicsWorld/
   sources.py
   world.py
   debug.py
+  registry.py
   nodes.py
+  spring_vrm/
+    __init__.py
+    names.py
+    capabilities.py
+    declaration.py
+    implicit_objects.py
+    nodes.py
+    specs.py
+    solver.py
+    debug.py
+    backends/
   rigid/
     __init__.py
+    names.py
+    capabilities.py
+    declaration.py
     specs.py
     constraints.py
+    nodes.py
     solver.py
+    debug.py
     backends/
       jolt.py
 ```
@@ -1008,8 +1086,13 @@ physicsWorld/
 - `sources.py`：从 object scope 解析 Object / Bone / Mesh 的物理 source。
 - `world.py`：begin / commit / lifecycle / slot 管理。
 - `debug.py`：debug snapshot、flatten text、校验结果。
+- `registry.py`：solver 子模块装载/卸载、名称冲突检查、capability/property/debug draw mode 汇总。
 - `nodes.py`：对外暴露的通用函数节点。
-- `rigid/`：刚体 domain 的 spec、约束、solver 和 backend adapter。
+- `<solver>/names.py`：该 solver 自己的 id、slot kind、channel、implicit object tag、debug draw mode id。
+- `<solver>/capabilities.py`：该 solver 的显式/隐式属性能力表。
+- `<solver>/declaration.py`：该 solver 的 consumes / produces / persistent_state / update_policy / writeback。
+- `<solver>/debug.py`：该 solver 的 debug snapshot 摘要与 debug draw mode 声明。
+- `<solver>/backends/`：native 或第三方 backend adapter。
 
 ### Phase 0：命名和目录边界 ✅ 已完成
 
@@ -1298,16 +1381,17 @@ object scope 限制的是 OmniNode 自己的扫描和打包范围。只要 solve
 
 ## 最终建议
 
-第一版不要做复杂 participant schema。现有 `PhysicsTools` 属性系统已经承担物理语义，节点层只需要显式提供对象范围。
+第一版不要做复杂 participant schema。短期仍可读取现有 `PhysicsTools` 属性作为 legacy storage，但物理语义的权威来源应逐步迁到各 solver 子模块的 capability 声明。
 
 推荐核心口径：
 
 ```text
 用 object scope 限定物理世界能感知的对象。
-用 PhysicsTools 属性解释这些对象的碰撞、pin、自碰撞和组语义。
+用 solver capability 解释这些对象的碰撞、pin、自碰撞、组和 solver 参数语义。
 用 PhysicsWorldCache 统一 frame/collider/exchange/resource/slot 生命周期。
 用 solver slot 保持各解算器自己的拓扑、参数、状态和写回逻辑。
-用 OmniNode rigid specs 表达刚体和约束，用 Jolt adapter 做内部求解。
+用 solver 子模块持有 names、capabilities、declaration、nodes、debug draw modes 和 backend adapter。
+用 physicsWorld registry 装载/卸载 solver 子模块，并汇总属性注册、debug 绘制模式和公开通道。
 用 Physics World Commit 把同一个 world owner 提交回 runtime cache。
 ```
 
@@ -1377,8 +1461,22 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 统一物理世界的 solver 声明已落到 `physicsWorld/declarations.py`，并进入 `PhysicsWorldCache.omni_cache_debug_snapshot()["solver_declarations"]`。
 
-当前内置声明：`spring_vrm` 与 `rigid_jolt`。后续 solver 迁移必须先在 `physicsWorld/names.py` 定义公共名称，再在 `physicsWorld/declarations.py` 声明 `consumes / produces / persistent_state / dirty_keys / same_frame_policy / update_policy / writeback`。
+当前内置声明：`spring_vrm` 与 `rigid_jolt`。这是 Phase 5 为了快速验证 debug snapshot 和声明审查而采用的集中式过渡实现，不是最终边界。
 
 硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
 
 Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。剩余重点是 SpringBone native context 双调用模型、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/lambda 能力边界。
+
+## 2026-07-09 追加：Solver 子模块原子化方向
+
+后续架构应把集中式 `physicsWorld/names.py` / `physicsWorld/declarations.py` 拆回 solver 子模块：
+
+- `physicsWorld/spring_vrm/names.py` 持有 SpringBone 的 id、slot kind、result channel、implicit object tag 和 debug draw mode id。
+- `physicsWorld/spring_vrm/capabilities.py` 持有 SpringBone 消费或声明的能力表，例如 `bone_collision`。
+- `physicsWorld/spring_vrm/declaration.py` 持有 SpringBone 的完整 solver 声明。
+- `physicsWorld/spring_vrm/debug.py` 持有 SpringBone 自己的 debug snapshot 摘要和 debug draw mode 声明。
+- `physicsWorld/registry.py` 或等价装载器只负责发现、注册、冲突检查和卸载这些子模块。
+
+物理世界核心应像装载插件一样装载 solver：读取 names、capabilities、declaration、nodes、debug draw modes、property registration，并在插件 disable、Cache Delete 或 clear runtime cache 时按声明释放资源。这样 SpringBone、Rigid、MC2、BoneCloth 都可以成为边界清晰的小模块，后续新增 solver 不需要继续修改一个越来越大的全局声明表。
+
+物理属性注册也应进入这个装载流程。外部 `PhysicsTools` 面板和操作器可以继续存在，但字段事实源应来自 solver capability；面板只负责呈现和编辑，不再定义 solver contract。
