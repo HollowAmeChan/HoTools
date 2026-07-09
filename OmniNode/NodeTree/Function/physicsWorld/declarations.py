@@ -5,8 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from importlib import import_module
 
-from .rigid.names import RIGID_SOLVER_ID
-
 
 SOLVER_DECLARATION_REQUIRED_KEYS = (
     "solver_id",
@@ -22,7 +20,6 @@ SOLVER_DECLARATION_REQUIRED_KEYS = (
 )
 
 
-_SPRING_VRM_SOLVER_ID = "spring_vrm"
 _COMPAT_EXPORTS = {
     "BONE_COLLISION_CAPABILITY": ".spring_vrm.capabilities",
     "BONE_COLLISION_CAPABILITY_ID": ".spring_vrm.capabilities",
@@ -45,23 +42,32 @@ def __getattr__(name: str):
 
 
 def _load_spring_vrm_solver_declaration() -> dict:
-    module = import_module(".spring_vrm.declaration", __package__)
-    return module.SPRING_VRM_SOLVER_DECLARATION
+    declaration = _load_builtin_solver_declaration("spring_vrm")
+    if declaration is None:
+        module = import_module(".spring_vrm.declaration", __package__)
+        return module.SPRING_VRM_SOLVER_DECLARATION
+    return declaration
 
 
 def _load_rigid_solver_declaration() -> dict:
-    module = import_module(".rigid.declaration", __package__)
-    return module.RIGID_SOLVER_DECLARATION
+    declaration = _load_builtin_solver_declaration("rigid")
+    if declaration is None:
+        module = import_module(".rigid.declaration", __package__)
+        return module.RIGID_SOLVER_DECLARATION
+    return declaration
+
+
+def _load_builtin_solver_declaration(domain: str) -> dict | None:
+    try:
+        from .registry import resolve_solver_declaration
+    except Exception:
+        return None
+
+    return resolve_solver_declaration(domain)
 
 
 # 兼容旧导入路径的符号。权威声明位于 physicsWorld/rigid/declaration.py。
 RIGID_SOLVER_DECLARATION = _load_rigid_solver_declaration()
-
-
-_BUILTIN_SOLVER_DECLARATION_LOADERS = {
-    _SPRING_VRM_SOLVER_ID: _load_spring_vrm_solver_declaration,
-    RIGID_SOLVER_ID: _load_rigid_solver_declaration,
-}
 
 _RUNTIME_SOLVER_DECLARATIONS: dict[str, dict] = {}
 
@@ -144,8 +150,10 @@ def get_solver_declaration(solver_id: str) -> dict | None:
     solver_key = str(solver_id or "")
     declaration = _RUNTIME_SOLVER_DECLARATIONS.get(solver_key)
     if declaration is None:
-        loader = _BUILTIN_SOLVER_DECLARATION_LOADERS.get(solver_key)
-        declaration = loader() if loader is not None else None
+        for module_entry in _iter_builtin_solver_declaration_entries():
+            if str(module_entry.get("solver_id") or "") == solver_key:
+                declaration = module_entry.get("declaration")
+                break
     if declaration is None:
         return None
     return normalize_solver_declaration(declaration)
@@ -153,11 +161,34 @@ def get_solver_declaration(solver_id: str) -> dict | None:
 
 def all_solver_declarations() -> dict[str, dict]:
     declarations: dict[str, dict] = {}
-    for solver_id, loader in _BUILTIN_SOLVER_DECLARATION_LOADERS.items():
-        declarations[str(solver_id)] = normalize_solver_declaration(loader())
+    for module_entry in _iter_builtin_solver_declaration_entries():
+        solver_id = str(module_entry.get("solver_id") or "")
+        declaration = module_entry.get("declaration")
+        if solver_id and isinstance(declaration, dict):
+            declarations[solver_id] = normalize_solver_declaration(declaration)
     for solver_id, declaration in _RUNTIME_SOLVER_DECLARATIONS.items():
         declarations[str(solver_id)] = normalize_solver_declaration(declaration)
     return declarations
+
+
+def _iter_builtin_solver_declaration_entries() -> list[dict]:
+    try:
+        from .registry import iter_solver_declarations
+    except Exception:
+        return [
+            {
+                "domain": "spring_vrm",
+                "solver_id": "spring_vrm",
+                "declaration": _load_spring_vrm_solver_declaration(),
+            },
+            {
+                "domain": "rigid",
+                "solver_id": str(RIGID_SOLVER_DECLARATION.get("solver_id") or "rigid_jolt"),
+                "declaration": RIGID_SOLVER_DECLARATION,
+            },
+        ]
+
+    return iter_solver_declarations()
 
 
 def solver_declaration_summary(declaration: dict) -> dict:

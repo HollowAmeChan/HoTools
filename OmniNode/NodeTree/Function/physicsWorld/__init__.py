@@ -3,11 +3,12 @@
 # 目录语义：
 #   types.py        - PhysicsWorldCache、FrameContext、Scope、SolverSlot
 #   scope.py        - 对象列表合并、过滤、去重、作用域 key
-#   world.py        - World Begin / Commit / collider snapshot / 生命周期
+#   world.py        - 物理世界 Begin / Commit / 碰撞快照 / 生命周期
 #   debug.py        - 调试快照、文本展开、状态校验
-#   declarations.py - solver 声明 registry 和迁移审查入口
+#   registry.py     - 解算器子模块装载、回调汇总和运行入口
+#   declarations.py - 解算器声明注册表和迁移审查入口
 #   nodes.py        - 对外暴露的通用函数节点
-#   names.py        - solver/channel/backend/implicit object 全局名称常量
+#   names.py        - 解算器 / 通道 / 后端 / 隐式对象全局名称常量
 #   utils/          - 新物理世界通用数学、id、buffer 辅助函数
 #   rigid/          - 刚体 / Jolt domain
 #   spring_vrm/     - VRM SpringBone 重写 domain
@@ -40,6 +41,18 @@ from .debug import (
     result_items_to_text,
     validate_world,
     print_world_summary,
+)
+from .registry import (
+    all_solver_module_descriptors,
+    builtin_solver_domains,
+    collect_scope_solver_specs,
+    iter_scope_collectors,
+    iter_scope_restart_handlers,
+    iter_solver_declarations,
+    register_solver_module,
+    resolve_solver_declaration,
+    run_scope_restart_handlers,
+    unregister_solver_module,
 )
 from .declarations import (
     RIGID_CAPABILITIES,
@@ -126,7 +139,18 @@ __all__ = [
     "result_items_to_text",
     "validate_world",
     "print_world_summary",
-    # declarations
+    # solver 装载器
+    "all_solver_module_descriptors",
+    "builtin_solver_domains",
+    "collect_scope_solver_specs",
+    "iter_scope_collectors",
+    "iter_scope_restart_handlers",
+    "iter_solver_declarations",
+    "register_solver_module",
+    "resolve_solver_declaration",
+    "run_scope_restart_handlers",
+    "unregister_solver_module",
+    # 声明
     "BONE_COLLISION_CAPABILITY",
     "BONE_COLLISION_CAPABILITY_ID",
     "RIGID_CAPABILITIES",

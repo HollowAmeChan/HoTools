@@ -8,7 +8,7 @@
 - **本文（实现推进日志）**：Phase 进度、solver 迁移状态、测试覆盖、实施期变更记录。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制。
 
-九条已固定架构支柱（框架+模块化 solver、显式身份卡、通用世界状态输入、通用写回、隐式表达、纯 C++ 后端、旧 solver 移除、跨 solver 交互、物理属性动态注册）见架构设计文档。当前落地态：spring_vrm 领先（已原子化 + resolver），rigid/Jolt 已完成 names/capabilities/declaration/debug 下沉并开始拆出 scope 同步边界，MeshCloth/BoneCloth 仍待迁移。
+九条已固定架构支柱（框架+模块化 solver、显式身份卡、通用世界状态输入、通用写回、隐式表达、纯 C++ 后端、旧 solver 移除、跨 solver 交互、物理属性动态注册）见架构设计文档。当前落地态：spring_vrm 领先（已原子化 + resolver），rigid/Jolt 已完成 names/capabilities/declaration/debug 下沉，并通过 registry scope hook 接入 Begin 阶段，MeshCloth/BoneCloth 仍待迁移。
 
 ## 设计方向
 
@@ -390,6 +390,10 @@ solver 子模块必须提供：
 - `SOLVER_DECLARATION`。
 - `NAMES` 或等价的 names 常量集合。
 - `CAPABILITIES`，包括显式属性和隐式对象引用的同源字段表。
+- 可选 `SOLVER_MODULE` 描述符，用于让 `physicsWorld/registry.py` 装载 solver declaration 和 solver hook。当前已使用的字段包括：
+  - `declaration`：solver 自有 declaration 的模块引用，例如 `".declaration:RIGID_SOLVER_DECLARATION"`；中央 `declarations.py` 只做兼容汇总。
+  - `scope_restart_handlers`：Physics World Begin 判定 restart 后、重新收集 spec 前执行，例如 rigid/Jolt 清理动态刚体 Object delta。
+  - `scope_collectors`：Physics World Begin 完成公共 collider snapshot 后执行，例如 rigid/Jolt 从 scope 同步 `RigidBodySpec` / `ConstraintSpec` slot。
 - 可选 `PROPERTY_REGISTRATION`，声明需要挂到 `Object`、`Bone`、`Scene` 等 Blender owner 上的属性。
 - 可选 `DEBUG_DRAW_MODES`，声明自己支持的调试绘制模式和对应 result/debug snapshot 来源。
 - `register_nodes()` / `unregister_nodes()` 或等价节点注册入口。
@@ -1119,12 +1123,12 @@ physicsWorld/
 
 上面的目录清单是**目标结构**，当前尚未完全落地。实际进度是“spring_vrm 领先、rigid/Jolt 正在原子化收口”：
 
-- `physicsWorld/` 根目录**缺 `registry.py` 和 `sources.py`**：solver 子模块装载/卸载、名称冲突检查仍未有独立装载器；source 解析目前仍并入 `world.py` / `physicsWorldBegin`，未单独成文件。
+- `physicsWorld/` 根目录已建立最小 `registry.py`：当前负责内置 solver 子模块描述、runtime module 注册、solver declaration 装载、scope restart hook 和 scope collector 汇总运行。名称冲突检查、property registration 和 debug draw mode 汇总仍待补齐；`sources.py` 仍缺，source 解析目前仍并入 `world.py` / `physicsWorldBegin`。
 - `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py`、`debug.py`、`debug_draw.py` 均已建；当前 `debug.py` 持有 debug snapshot 摘要、native context 统计和 debug draw mode 声明，`debug_draw.py` 持有骨链/尾端可视化采样与 draw store。
-- `rigid/` 已补齐 `names.py`、`capabilities.py`、`declaration.py`、`debug.py`、`debug_draw.py`、`implicit_objects.py`、`scope_sync.py`；刚体/Jolt 自有名称、能力表、声明、debug draw mode 和 Begin 阶段的 rigid spec/slot dirty policy 已回到子模块。中央 `declarations.py` / `names.py` 仍保留过渡汇总和惰性重导出。
-- `physicsWorld/world.py` 仍负责公共 frame/scope/collider 生命周期，但刚体从 scope 自动同步 `RigidBodySpec` / `ConstraintSpec` 的签名判断、slot prune 和 Jolt resync dirty policy 已拆到 `rigid/scope_sync.py`。
+- `rigid/` 已补齐 `names.py`、`capabilities.py`、`declaration.py`、`debug.py`、`debug_draw.py`、`implicit_objects.py`、`scope_sync.py`；刚体/Jolt 自有名称、能力表、声明、debug draw mode 和 Begin 阶段的 rigid spec/slot dirty policy 已回到子模块。`rigid/__init__.py` 通过 `SOLVER_MODULE` 声明 declaration、`scope_restart_handlers` 与 `scope_collectors`。
+- `physicsWorld/world.py` 仍负责公共 frame/scope/collider 生命周期，但不再直接点名 rigid/Jolt。restart-time scope 清理和 scope spec 收集统一通过 `registry.py` 调度到已装载 solver module；rigid 的 `RigidBodySpec` / `ConstraintSpec` 签名判断、slot prune 和 Jolt resync dirty policy 位于 `rigid/scope_sync.py`。
 
-因此 Phase 0 不能记作“目录结构已完成”，只能记作“骨架已建、spring_vrm 接近目标、rigid/Jolt 原子化切口已推进，公共装载层（registry/sources）待补齐”。
+因此 Phase 0 不能记作“目录结构已完成”，只能记作“骨架已建、spring_vrm 接近目标、rigid/Jolt 原子化切口已推进，公共装载层已有最小 registry，sources 和完整冲突检查/属性注册/debug 汇总仍待补齐”。
 
 ### Phase 1：低层物理世界基础 ✅ 已完成
 
@@ -1237,7 +1241,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 **已完成，可作为迁移参照的部分：**
 
 - `PhysicsWorldCache` 已持有 frame context、scope key、collider snapshot、solver slots、implicit_objects、exchange、result streams、backend resources。
-- `physicsWorldBegin` 每帧重采集 scope / collider / rigid spec，并处理 restart、scope change、slot prune、spec sync signature、kinematic pose dirty。
+- `physicsWorldBegin` 每帧重采集 scope / collider，并通过 registry scope hook 触发各 solver 自己的 spec 收集。rigid/Jolt 的 slot prune、spec sync signature、kinematic pose dirty 和 Jolt resync dirty policy 已由 `rigid/scope_sync.py` 持有。
 - `physicsRigidSolver` 不直接写 Blender；它发布 `rigid_transform` 和 `rigid_solver_stats` result stream。
 - `physicsWriteback` 已验证 Object transform 的统一写回路径：只写 `Object.delta_*`，不改原始 transform。
 - Jolt / SpringBone 自有 debug draw 节点和 `physicsWorldResultStream` 消费纯快照，不读取 live bpy 对象、Jolt handle 或其它 solver 私有 transform。

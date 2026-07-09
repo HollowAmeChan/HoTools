@@ -211,20 +211,6 @@ def _compact_collider_snapshot(colliders: list[dict] | None) -> dict:
     return {"colliders": snapshots}
 
 
-def _flatten_scope_objects(objects) -> list:
-    result = []
-    stack = list(objects) if isinstance(objects, (list, tuple)) else (
-        [objects] if objects is not None else []
-    )
-    while stack:
-        item = stack.pop(0)
-        if isinstance(item, (list, tuple)):
-            stack[0:0] = list(item)
-        else:
-            result.append(item)
-    return result
-
-
 def _clear_writeback_deltas_for_world(world: PhysicsWorldCache) -> None:
     """清除旧 world 已写过的物理 delta，避免 restart 后残留末帧姿态。"""
     try:
@@ -232,42 +218,6 @@ def _clear_writeback_deltas_for_world(world: PhysicsWorldCache) -> None:
         clear_all_deltas(world)
     except Exception:
         pass
-
-
-def _clear_scope_dynamic_rigid_deltas(scope: PhysicsObjectScope) -> None:
-    """
-    在 collider/spec 收集前清掉当前 scope 动态刚体 delta。
-
-    Jolt 冷启动会从 obj.matrix_world 读取初始姿态；matrix_world 会包含
-    delta_location / delta_rotation_euler，所以这一步必须早于 solver sync。
-    """
-    if not getattr(scope, "include_rigid_body", False):
-        return
-
-    updated = set()
-    for obj in _flatten_scope_objects(getattr(scope, "objects", ())):
-        rb = getattr(obj, "hotools_rigid_body", None)
-        if rb is None or not bool(getattr(rb, "enabled", False)):
-            continue
-        if str(getattr(rb, "body_type", "DYNAMIC") or "DYNAMIC") != "DYNAMIC":
-            continue
-        try:
-            obj.delta_location = (0.0, 0.0, 0.0)
-            obj.delta_rotation_euler = (0.0, 0.0, 0.0)
-            updated.add(obj)
-        except Exception:
-            pass
-
-    for obj in updated:
-        try:
-            obj.update_tag()
-        except Exception:
-            pass
-    if updated:
-        try:
-            bpy.context.view_layer.update()
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +347,7 @@ def build_collider_snapshot(world: PhysicsWorldCache, sources: list[PhysicsColli
 
 
 # ---------------------------------------------------------------------------
-# Physics World Begin
+# 物理世界 Begin
 # ---------------------------------------------------------------------------
 
 def physicsWorldBegin(
@@ -516,7 +466,7 @@ def physicsWorldBegin(
 
     restart_required = bool(reset) or scope_changed or (not continuous and not same_frame) or (previous_frame is None)
     if restart_required:
-        _clear_scope_dynamic_rigid_deltas(object_scope)
+        _run_scope_restart_handlers(world, object_scope)
 
     # 更新 FrameContext
     fc.scene_key = _scene_key(scene)
@@ -547,10 +497,9 @@ def physicsWorldBegin(
 
     collider_count = len(new_snapshot.get("colliders") or [])
 
-    # 自动从 scope 收集刚体和约束 spec，写入 world slot
-    # 与碰撞 snapshot 同级：都是"从 scope 对象读取 PhysicsTools 属性"，
-    # 不是 solver 职责，不应要求用户额外接节点。
-    _collect_rigid_specs(world, object_scope)
+    # 允许已装载解算器从对象作用域正式收集自己的规格和槽输入。
+    # 物理世界 Begin 不直接知道刚体、弹簧、布料等解算器的私有脏标记策略。
+    _collect_scope_solver_specs(world, object_scope)
 
     if debug_output:
         print(
@@ -564,26 +513,31 @@ def physicsWorldBegin(
 
 
 # ---------------------------------------------------------------------------
-# 内部：从 scope 自动收集刚体和约束 spec
+# 内部：运行解算器模块的对象作用域回调
 # ---------------------------------------------------------------------------
 
-def _collect_rigid_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
-    """
-    委托刚体 domain 从 scope 中同步 RigidBodySpec / ConstraintSpec slot。
-
-    Physics World Begin 只负责 frame/scope 生命周期；刚体签名、slot prune、
-    Jolt resync dirty policy 都归 rigid 子模块持有。
-    """
+def _run_scope_restart_handlers(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
+    """运行解算器模块声明的重启阶段对象作用域回调。"""
     try:
-        from .rigid.scope_sync import collect_rigid_specs_from_scope
+        from .registry import run_scope_restart_handlers
     except Exception:
-        return  # rigid domain 未加载时静默跳过
+        return
 
-    collect_rigid_specs_from_scope(world, scope)
+    run_scope_restart_handlers(world, scope)
+
+
+def _collect_scope_solver_specs(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
+    """运行解算器模块声明的对象作用域收集器。"""
+    try:
+        from .registry import collect_scope_solver_specs
+    except Exception:
+        return
+
+    collect_scope_solver_specs(world, scope)
 
 
 # ---------------------------------------------------------------------------
-# Physics World Commit
+# 物理世界 Commit
 # ---------------------------------------------------------------------------
 
 def physicsWorldCommit(

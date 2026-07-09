@@ -884,6 +884,8 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 `rigid_jolt.world_setting` 已接入第一批 Jolt 刚体世界级能力：`刚体世界-Jolt设置属性 -> 刚体世界-Jolt设置注册` 写入 gravity、max bodies、max body pairs 和 max contact constraints。rigid solver 在同步 body/constraint 前调用 `JoltAdapter.set_gravity()`；容量签名变化会重建 JoltAdapter 并重新同步刚体/约束。这让零重力、横向重力、恢复默认重力和 JoltWorld 容量上限都可以作为跨帧 Jolt 刚体世界配置表达，而不是临时 frame command。
 
+刚体/Jolt 从 object scope 自动收集 `RigidBodySpec` / `ConstraintSpec` 的逻辑已从 `physicsWorld/world.py` 下沉到 `physicsWorld/rigid/scope_sync.py`，并由 `rigid.SOLVER_MODULE` 暴露为 registry scope hook。Physics World Begin 只调用 `physicsWorld/registry.py`，不再直接点名 Jolt/rigid；Jolt 冷启动前清理动态刚体 Object delta 也作为 rigid 的 `scope_restart_handlers` 执行。rigid 的 solver declaration 也由 `SOLVER_MODULE.declaration` 汇入 registry，再由 `physicsWorld/declarations.py` 做兼容汇总。
+
 `rigid.material_preset`、`rigid.ragdoll_proxy` 仍是 planned implicit object tag，当前只占位，不被 solver 消费。
 
 后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。

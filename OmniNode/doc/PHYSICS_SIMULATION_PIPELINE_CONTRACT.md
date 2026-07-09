@@ -106,6 +106,7 @@ Cache Read
 - 不执行 solver prepare 或 solver step。
 - 不写 Blender。
 - 不提交 runtime cache。
+- 不直接导入或点名具体 solver 域。需要从 scope 派生 solver spec 时，只能通过 `physicsWorld/registry.py` 调用已装载 solver module 声明的 hook；solver declaration 汇总也由 registry descriptor 提供，公共层只保留兼容导出。
 
 ### Physics Entity / Spec Build
 

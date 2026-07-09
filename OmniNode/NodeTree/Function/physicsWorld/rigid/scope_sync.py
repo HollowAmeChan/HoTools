@@ -1,11 +1,13 @@
-"""Rigid/Jolt scope-to-slot synchronization.
+"""刚体/Jolt 的对象作用域到解算器槽同步。
 
-Physics World Begin owns frame/scope lifecycle.  The rigid domain owns how
-PhysicsTools rigid properties become RigidBodySpec / ConstraintSpec slots and
-which changes require Jolt resync.
+物理世界 Begin 只负责帧和对象作用域生命周期。刚体领域负责决定
+PhysicsTools 刚体属性如何变成 RigidBodySpec / ConstraintSpec 槽，
+以及哪些变化需要触发 Jolt 重新同步。
 """
 
 from __future__ import annotations
+
+import bpy
 
 from ..types import PhysicsObjectScope, PhysicsWorldCache
 from .declaration import RIGID_SOLVER_DECLARATION
@@ -32,6 +34,45 @@ def _flatten(values) -> list:
     return result
 
 
+def clear_scope_dynamic_rigid_deltas(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
+    """
+    在重启阶段收集规格前清理动态刚体对象 delta。
+
+    Jolt 冷启动会读取 obj.matrix_world 作为初始刚体姿态；Blender 的
+    matrix_world 会包含 delta_location / delta_rotation_euler，所以重建
+    刚体规格前必须先清掉旧写回残留的 delta。
+    """
+    if not isinstance(scope, PhysicsObjectScope):
+        return
+    if not getattr(scope, "include_rigid_body", False):
+        return
+
+    updated = set()
+    for obj in _flatten(getattr(scope, "objects", ())):
+        rb = getattr(obj, "hotools_rigid_body", None)
+        if rb is None or not bool(getattr(rb, "enabled", False)):
+            continue
+        if str(getattr(rb, "body_type", "DYNAMIC") or "DYNAMIC") != "DYNAMIC":
+            continue
+        try:
+            obj.delta_location = (0.0, 0.0, 0.0)
+            obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+            updated.add(obj)
+        except Exception:
+            pass
+
+    for obj in updated:
+        try:
+            obj.update_tag()
+        except Exception:
+            pass
+    if updated:
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
+
+
 def _round_float(value, digits: int = 8) -> float:
     try:
         return round(float(value), digits)
@@ -47,7 +88,7 @@ def _round_tuple(values, digits: int = 8) -> tuple[float, ...]:
 
 
 def _rigid_body_sync_signature(spec) -> tuple:
-    """Return the fields that affect Jolt body creation/sync."""
+    """返回会影响 Jolt 刚体创建和同步的字段。"""
     body_type = str(getattr(spec, "body_type", "DYNAMIC") or "DYNAMIC")
     static_pose = ()
     if body_type == "STATIC":
@@ -177,7 +218,7 @@ def _prune_stale_rigid_slots(
 
 
 def collect_rigid_specs_from_scope(world: PhysicsWorldCache, scope: PhysicsObjectScope) -> None:
-    """Collect rigid body/constraint specs from the current object scope."""
+    """从当前对象作用域收集刚体和约束规格。"""
     if not isinstance(world, PhysicsWorldCache) or not isinstance(scope, PhysicsObjectScope):
         return
     if not (scope.include_rigid_body or scope.include_rigid_constraint):

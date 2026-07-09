@@ -17,6 +17,13 @@ from __future__ import annotations
 from importlib import import_module
 
 
+SOLVER_MODULE = {
+    "domain": "spring_vrm",
+    "solver_id": "spring_vrm",
+    "declaration": ".declaration:SPRING_VRM_SOLVER_DECLARATION",
+}
+
+
 _LAZY_EXPORTS = {
     # names.py
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG": ".names",

@@ -5,6 +5,19 @@ from __future__ import annotations
 from importlib import import_module
 
 
+SOLVER_MODULE = {
+    "domain": "rigid",
+    "solver_id": "rigid_jolt",
+    "declaration": ".declaration:RIGID_SOLVER_DECLARATION",
+    "scope_restart_handlers": (
+        ".scope_sync:clear_scope_dynamic_rigid_deltas",
+    ),
+    "scope_collectors": (
+        ".scope_sync:collect_rigid_specs_from_scope",
+    ),
+}
+
+
 _EXPORTS = {
     "JOLT_STEP_WRITER_ID": ".names",
     "RIGID_BACKEND_RESOURCE_KEY": ".names",
