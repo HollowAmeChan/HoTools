@@ -3,11 +3,16 @@
 import mathutils
 
 from ....FunctionNodeCore import omni
-from ....OmniNodeSocketMapping import _OmniBone
+from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone
 from ... import _Color
 from ..types import PhysicsWorldCache
 from .debug_draw import update_spring_vrm_debug_draw_store
-from .implicit_objects import make_spring_vrm_chain_properties, register_spring_vrm_chain_objects
+from .implicit_objects import (
+    make_bone_collision_override_properties,
+    make_spring_vrm_chain_properties,
+    register_bone_collision_override_objects,
+    register_spring_vrm_chain_objects,
+)
 from .solver import step_spring_vrm
 
 
@@ -72,6 +77,92 @@ def physicsSpringVRMChainRegister(
         world,
         vrm_chain_properties,
         enabled=True,
+    )
+    return world, int(count), int(dirty_count), int(version)
+
+
+@omni(
+    enable=True,
+    bl_label="骨骼碰撞覆写属性",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=[
+        "骨骼", "启用",
+        "覆写Pin", "Pin",
+        "覆写碰撞体", "碰撞体",
+        "覆写半径", "半径",
+        "覆写长度", "长度",
+        "覆写偏移", "偏移",
+        "覆写主碰撞组", "主碰撞组",
+        "覆写被碰撞组", "被碰撞组",
+    ],
+    input_init={
+        "radius": {"min_value": 0.0, "max_value": 10.0},
+        "length": {"min_value": 0.0, "max_value": 10.0},
+        "primary_collision_group": {"min_value": 1, "max_value": 16},
+        "collided_by_groups": {"mask_length": 16, "default_value": 0},
+    },
+    _OUTPUT_NAME=["骨骼碰撞覆写"],
+    omni_description="""
+    构建 bone_collision.override 隐式对象 payload。
+    未勾选覆写的字段会继续从 Bone.hotools_collision 或 capability 默认值回退读取。
+    """,
+)
+def physicsBoneCollisionOverrideProperties(
+    bone: _OmniBone,
+    enabled: bool = True,
+    override_pin: bool = False,
+    pin: bool = False,
+    override_collision_type: bool = False,
+    collision_type: str = "SPHERE",
+    override_radius: bool = False,
+    radius: float = 0.05,
+    override_length: bool = False,
+    length: float = 0.2,
+    override_offset: bool = False,
+    offset: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    override_primary_collision_group: bool = False,
+    primary_collision_group: int = 1,
+    override_collided_by_groups: bool = False,
+    collided_by_groups: _OmniBitMask = 0,
+) -> dict:
+    return make_bone_collision_override_properties(
+        bone,
+        enabled=bool(enabled),
+        pin=bool(pin) if override_pin else None,
+        collision_type=str(collision_type or "SPHERE") if override_collision_type else None,
+        radius=float(radius) if override_radius else None,
+        length=float(length) if override_length else None,
+        offset=offset if override_offset else None,
+        primary_collision_group=int(primary_collision_group) if override_primary_collision_group else None,
+        collided_by_groups=int(collided_by_groups) if override_collided_by_groups else None,
+    )
+
+
+@omni(
+    enable=True,
+    bl_label="骨骼碰撞覆写注册",
+    base_color=_Color.colorCat["Operator"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "骨骼碰撞覆写", "启用"],
+    _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
+    omni_description="""
+    把 bone_collision.override payload 注册到 PhysicsWorldCache.implicit_objects。
+    SpringBone resolver 会优先读取该隐式对象，再回退到 Bone.hotools_collision。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsBoneCollisionOverrideRegister(
+    world: object,
+    bone_collision_override_properties: list[object],
+    enabled: bool = True,
+) -> tuple[object, int, int, int]:
+    if not isinstance(world, PhysicsWorldCache):
+        return world, 0, 0, 0
+    count, dirty_count, version = register_bone_collision_override_objects(
+        world,
+        bone_collision_override_properties,
+        enabled=bool(enabled),
     )
     return world, int(count), int(dirty_count), int(version)
 

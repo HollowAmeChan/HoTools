@@ -144,7 +144,7 @@ class SpringVRMNativeContext:
             or self._topology_signature != _records_signature(records)
         )
 
-    def rebuild(self, spec, records: list[dict]) -> None:
+    def rebuild(self, spec, records: list[dict], world=None) -> None:
         """
         topology dirty / restart 时调用。
         捕获静态数组，存储 spec 级引用，并在新 API 可用时创建 C++ context。
@@ -166,7 +166,7 @@ class SpringVRMNativeContext:
         self._armature_data_ptr = int(getattr(spec, "armature_data_ptr", 0) or 0)
 
         self._static = _alloc_static(n)
-        _fill_static(self._static, records)
+        _fill_static(self._static, records, world=world)
 
         self._dynamic = _alloc_dynamic(n)
         self._result = np.zeros(n * 16, dtype=np.float32)
@@ -268,7 +268,7 @@ class SpringVRMNativeContext:
             collider_types, collider_groups, collider_centers,
             collider_segment_a, collider_segment_b, collider_radii,
         ) = _collision_arrays_from_world(world, armature, chain)
-        hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records)
+        hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records, world=world)
 
         arm_world     = np.ascontiguousarray(matrix16(armature.matrix_world),            dtype=np.float32)
         arm_world_inv = np.ascontiguousarray(matrix16(armature.matrix_world.inverted()),  dtype=np.float32)
@@ -485,7 +485,7 @@ class SpringVRMNativeContext:
         root_quaternion    = np.asarray((0.0, 0.0, 0.0, 1.0),                       dtype=np.float32)
         root_tail_world    = np.zeros(3, dtype=np.float32)
         gravity_dir        = np.asarray(chain.gravity_dir,                           dtype=np.float32)
-        hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records)
+        hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records, world=world)
 
         self._last_collider_count = len(collider_types)
 
@@ -611,7 +611,7 @@ def _alloc_static(n: int) -> dict[str, np.ndarray]:
     }
 
 
-def _fill_static(s: dict[str, np.ndarray], records: list[dict]) -> None:
+def _fill_static(s: dict[str, np.ndarray], records: list[dict], world=None) -> None:
     """
     从当前 pose 填充静态数组。
 
@@ -627,7 +627,7 @@ def _fill_static(s: dict[str, np.ndarray], records: list[dict]) -> None:
         s["use_connect"][i] = (
             1 if bool(getattr(getattr(pb, "bone", None), "use_connect", False)) else 0
         )
-        s["pinned"][i] = 1 if _record_is_effectively_pinned(rec) else 0
+        s["pinned"][i] = 1 if _record_is_effectively_pinned(rec, world=world) else 0
 
         axis = pb.tail - pb.head
         if axis.length <= 1.0e-8:
@@ -671,7 +671,7 @@ def _fill_static(s: dict[str, np.ndarray], records: list[dict]) -> None:
         s["lengths"][i] = max(float(rest_vec.length) * avg_scale, 0.0)
 
 
-def _record_is_effectively_pinned(record: dict) -> bool:
+def _record_is_effectively_pinned(record: dict, world=None) -> bool:
     bone_name = str(record.get("bone_name") or "")
     root_name = str(record.get("root_name") or "")
     if bone_name and bone_name == root_name:
@@ -681,7 +681,7 @@ def _record_is_effectively_pinned(record: dict) -> bool:
     armature = getattr(pb, "id_data", None)
     if armature is None or not bone_name:
         return False
-    return resolve_bone_pin(armature, bone_name)
+    return resolve_bone_pin(armature, bone_name, world=world)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -880,19 +880,19 @@ def _is_self_chain_collider(c: dict, armature, chain_bones: set[str]) -> bool:
     return str(c.get("bone") or "") in chain_bones
 
 
-def _bone_collision_profiles(armature, records: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+def _bone_collision_profiles(armature, records: list[dict], world=None) -> tuple[np.ndarray, np.ndarray]:
     n = len(records)
     radii  = np.zeros(n, dtype=np.float32)
     masks  = np.zeros(n, dtype=np.int32)
     for i, rec in enumerate(records):
-        r, m = _bone_collision_profile(armature, str(rec.get("bone_name") or ""))
+        r, m = _bone_collision_profile(armature, str(rec.get("bone_name") or ""), world=world)
         radii[i] = r
         masks[i] = m
     return radii, masks
 
 
-def _bone_collision_profile(armature, bone_name: str) -> tuple[float, int]:
-    profile = resolve_bone_collision_fields(armature, bone_name)
+def _bone_collision_profile(armature, bone_name: str, world=None) -> tuple[float, int]:
+    profile = resolve_bone_collision_fields(armature, bone_name, world=world)
     if str(profile.collision_type or "NONE") not in {"SPHERE", "CAPSULE"}:
         return 0.0, 0
     name = str(bone_name or "")
@@ -1031,7 +1031,7 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
 
             # rebuild: topology 变化 OR restart（需重新捕获 init 姿态）
             if restart or ctx.needs_rebuild(records):
-                ctx.rebuild(spec, records)
+                ctx.rebuild(spec, records, world=world)
 
             chain_state = chain_states.setdefault(root, {})
             ctx.fill_dynamic(armature, chain_state, records)

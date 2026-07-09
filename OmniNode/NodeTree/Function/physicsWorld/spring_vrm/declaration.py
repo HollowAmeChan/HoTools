@@ -24,14 +24,13 @@ SPRING_VRM_SOLVER_DECLARATION = {
     "stage": "spring_vrm_world_vertical_slice",
     "native_strategy": "cpp_only_no_python_runtime_backend",
     "nodes": [
+        "骨骼碰撞覆写属性",
+        "骨骼碰撞覆写注册",
         "VRM骨链属性",
         "VRM骨链对象注册",
         "SpringBone VRM模拟步",
     ],
-    "planned_nodes": [
-        "骨骼碰撞覆写属性",
-        "骨骼碰撞覆写注册",
-    ],
+    "planned_nodes": [],
     "writers": [
         SPRING_VRM_STEP_WRITER_ID,
         SPRING_VRM_SOLVER_ID,
@@ -41,7 +40,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "PhysicsWorldCache.collider_snapshot",
         f'world.implicit_objects["{SPRING_VRM_CHAIN_OBJECT_TAG}"]',
         f"capability[{BONE_COLLISION_CAPABILITY_ID}] 通过旧 Bone.hotools_collision 回退读取",
-        f"计划中的 capability[{BONE_COLLISION_CAPABILITY_ID}] 通过 "
+        f"capability[{BONE_COLLISION_CAPABILITY_ID}] 覆写层通过 "
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"]',
     ],
     "produces": [
@@ -78,11 +77,11 @@ SPRING_VRM_SOLVER_DECLARATION = {
     },
     "update_frequency_table": SPRING_VRM_UPDATE_FREQUENCY_TABLE,
     "implicit_objects": {
-        "consumes": [SPRING_VRM_CHAIN_OBJECT_TAG],
-        "planned": [BONE_COLLISION_OVERRIDE_OBJECT_TAG],
-        "entry_kind": "spring_vrm_chain",
-        "producer_nodes": ["VRM骨链对象注册"],
-        "planned_producer_nodes": ["骨骼碰撞覆写注册"],
+        "consumes": [SPRING_VRM_CHAIN_OBJECT_TAG, BONE_COLLISION_OVERRIDE_OBJECT_TAG],
+        "planned": [],
+        "entry_kind": "spring_vrm_chain 或 bone_collision.override",
+        "producer_nodes": ["VRM骨链对象注册", "骨骼碰撞覆写注册"],
+        "planned_producer_nodes": [],
         "update_policy": "lazy_by_signature",
         "conflict_policy": "same_tag_and_stable_id_last_writer_wins",
         "capability_binding": {

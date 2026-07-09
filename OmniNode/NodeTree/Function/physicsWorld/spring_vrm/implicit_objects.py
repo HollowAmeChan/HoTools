@@ -6,7 +6,8 @@ import bpy
 import mathutils
 
 from ....OmniNodeSocketMapping import _OmniBone
-from .names import SPRING_VRM_CHAIN_OBJECT_TAG
+from .capabilities import BONE_COLLISION_CAPABILITY, BONE_COLLISION_CAPABILITY_ID
+from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG, SPRING_VRM_CHAIN_OBJECT_TAG
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
 from ..utils.values import float3
@@ -14,6 +15,18 @@ from .specs import normalize_spring_vrm_chain_properties
 
 
 SPRING_VRM_OBJECT_REGISTER_PRODUCER = "physicsSpringVRMChainRegister"
+BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER = "physicsBoneCollisionOverrideRegister"
+
+_BONE_COLLISION_FIELDS = tuple(
+    str(field.get("name") or "")
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ())
+    if field.get("name")
+)
+_BONE_COLLISION_FIELD_META = {
+    str(field.get("name") or ""): dict(field)
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ())
+    if field.get("name")
+}
 
 
 def _resolve_bone_value(value) -> tuple[bpy.types.Object, str]:
@@ -309,6 +322,200 @@ def collect_spring_vrm_chain_objects(world: PhysicsWorldCache) -> list[dict]:
 
     result: list[dict] = []
     for entry in world.iter_implicit_objects(tag=SPRING_VRM_CHAIN_OBJECT_TAG, enabled=True):
+        payload = entry.get("payload")
+        if isinstance(payload, dict):
+            result.append(payload)
+    return result
+
+
+def _field_default(name: str):
+    return _BONE_COLLISION_FIELD_META.get(name, {}).get("default")
+
+
+def _coerce_bool(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"0", "false", "no", "off"}:
+            return False
+        if text in {"1", "true", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def _coerce_bone_collision_field(name: str, value):
+    if value is None or value == "":
+        return None
+    meta = _BONE_COLLISION_FIELD_META.get(name, {})
+    typ = str(meta.get("type") or "")
+    if typ == "bool":
+        return _coerce_bool(value)
+    if typ == "enum":
+        text = str(value or "").strip().upper()
+        values = {str(item) for item in meta.get("values", ())}
+        if values and text not in values:
+            text = str(meta.get("default") or "")
+        return text
+    if typ == "float":
+        return float(value)
+    if typ in {"int", "bitmask"}:
+        return int(value)
+    if typ == "float3":
+        return float3(value, fallback=_field_default(name) or (0.0, 0.0, 0.0))
+    return value
+
+
+def _bone_collision_override_fields(**values) -> dict:
+    fields = {}
+    for name in _BONE_COLLISION_FIELDS:
+        value = _coerce_bone_collision_field(name, values.get(name))
+        if value is not None:
+            fields[name] = value
+    return fields
+
+
+def make_bone_collision_override_properties(
+    bone: _OmniBone,
+    *,
+    enabled: bool = True,
+    pin=None,
+    collision_type=None,
+    radius=None,
+    length=None,
+    offset=None,
+    primary_collision_group=None,
+    collided_by_groups=None,
+) -> dict:
+    armature_obj, bone_name = _resolve_bone_value(bone)
+    fields = _bone_collision_override_fields(
+        pin=pin,
+        collision_type=collision_type,
+        radius=radius,
+        length=length,
+        offset=offset,
+        primary_collision_group=primary_collision_group,
+        collided_by_groups=collided_by_groups,
+    )
+    return {
+        "capability_id": BONE_COLLISION_CAPABILITY_ID,
+        "armature": armature_obj,
+        "bone_name": bone_name,
+        "fields": fields,
+        "enabled": bool(enabled),
+    }
+
+
+def _copy_bone_collision_override_object(setting: dict) -> dict:
+    armature = setting.get("armature")
+    bone_name = str(setting.get("bone_name") or setting.get("bone") or "").strip()
+    raw_fields = setting.get("fields")
+    fields = {}
+    if isinstance(raw_fields, dict):
+        fields.update(_bone_collision_override_fields(**raw_fields))
+    fields.update(_bone_collision_override_fields(
+        **{name: setting.get(name) for name in _BONE_COLLISION_FIELDS if name in setting}
+    ))
+    return {
+        "capability_id": BONE_COLLISION_CAPABILITY_ID,
+        "armature": armature,
+        "bone_name": bone_name,
+        "fields": fields,
+        "enabled": bool(setting.get("enabled", True)),
+    }
+
+
+def normalize_bone_collision_override_objects(override_properties) -> list[dict]:
+    if override_properties is None:
+        return []
+    result: list[dict] = []
+    stack = list(override_properties) if isinstance(override_properties, (list, tuple)) else [override_properties]
+    while stack:
+        item = stack.pop(0)
+        if item is None:
+            continue
+        if isinstance(item, (list, tuple)):
+            stack[0:0] = list(item)
+            continue
+        if isinstance(item, dict):
+            copied = _copy_bone_collision_override_object(item)
+            if copied.get("armature") is not None and copied.get("bone_name"):
+                result.append(copied)
+    return result
+
+
+def bone_collision_override_stable_id(setting: dict) -> str:
+    armature = setting.get("armature")
+    return (
+        f"{BONE_COLLISION_OVERRIDE_OBJECT_TAG}:"
+        f"{as_pointer(armature)}:{data_pointer(armature)}:"
+        f"{str(setting.get('bone_name') or '')}"
+    )
+
+
+def bone_collision_override_signature(setting: dict) -> str:
+    fields = setting.get("fields") if isinstance(setting.get("fields"), dict) else {}
+    payload = [
+        str(as_pointer(setting.get("armature"))),
+        str(data_pointer(setting.get("armature"))),
+        str(setting.get("bone_name") or ""),
+        "1" if bool(setting.get("enabled", True)) else "0",
+    ]
+    for name in _BONE_COLLISION_FIELDS:
+        if name not in fields:
+            continue
+        value = fields.get(name)
+        if isinstance(value, (list, tuple)):
+            encoded = ",".join(f"{float(item):.8g}" for item in value)
+        elif isinstance(value, float):
+            encoded = f"{value:.8g}"
+        else:
+            encoded = str(value)
+        payload.append(f"{name}={encoded}")
+    return stable_short_hash(payload, 16)
+
+
+def register_bone_collision_override_objects(
+    world: PhysicsWorldCache,
+    override_properties,
+    enabled: bool = True,
+    producer: str = BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER,
+) -> tuple[int, int, int]:
+    if not isinstance(world, PhysicsWorldCache):
+        return 0, 0, 0
+
+    objects = normalize_bone_collision_override_objects(override_properties)
+    writer = str(producer or BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER)
+    dirty_count = 0
+    version_max = 0
+
+    world.acquire_write(writer)
+    try:
+        for item in objects:
+            item["enabled"] = bool(enabled) and bool(item.get("enabled", True))
+            entry = world.append_implicit_object(
+                tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG,
+                producer=writer,
+                stable_id=bone_collision_override_stable_id(item),
+                signature=bone_collision_override_signature(item),
+                enabled=bool(item.get("enabled", True)),
+                schema=1,
+                payload=item,
+            )
+            if isinstance(entry, dict):
+                dirty_count += 1 if bool(entry.get("dirty", False)) else 0
+                version_max = max(version_max, int(entry.get("version", 0) or 0))
+    finally:
+        world.release_write(writer)
+
+    return len(objects), dirty_count, version_max
+
+
+def collect_bone_collision_override_objects(world: PhysicsWorldCache) -> list[dict]:
+    if not isinstance(world, PhysicsWorldCache):
+        return []
+    result = []
+    for entry in world.iter_implicit_objects(tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG, enabled=True):
         payload = entry.get("payload")
         if isinstance(payload, dict):
             result.append(payload)

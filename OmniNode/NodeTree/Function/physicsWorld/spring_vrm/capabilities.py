@@ -27,7 +27,7 @@ BONE_COLLISION_CAPABILITY = {
         },
         "implicit_override_object": {
             "tag": BONE_COLLISION_OVERRIDE_OBJECT_TAG,
-            "status": "计划中",
+            "status": "已实现最小注册与 resolver 覆盖",
             "input": "_OmniBone 骨骼 socket；armature 与 bone name 从 socket 值解析",
             "stable_id": (
                 f"{BONE_COLLISION_OVERRIDE_OBJECT_TAG}:"
@@ -165,3 +165,124 @@ SPRING_VRM_UPDATE_FREQUENCY_TABLE = [
         "policy": "topology_dirty_or_restart_only_allocation",
     },
 ]
+
+def bone_collision_capability_fields() -> tuple[dict, ...]:
+    return tuple(dict(field) for field in BONE_COLLISION_CAPABILITY.get("fields", ()))
+
+
+def bone_collision_capability_field_names() -> tuple[str, ...]:
+    return tuple(
+        str(field.get("name") or "")
+        for field in BONE_COLLISION_CAPABILITY.get("fields", ())
+        if field.get("name")
+    )
+
+
+def _rna_properties(property_group):
+    rna = getattr(property_group, "bl_rna", property_group)
+    return getattr(rna, "properties", None)
+
+
+def _rna_property_get(properties, name: str):
+    if properties is None:
+        return None
+    getter = getattr(properties, "get", None)
+    if callable(getter):
+        return getter(name)
+    try:
+        return properties[name]
+    except Exception:
+        pass
+    try:
+        for item in properties:
+            if getattr(item, "identifier", None) == name:
+                return item
+    except Exception:
+        pass
+    return None
+
+
+def _enum_identifiers(prop) -> tuple[str, ...]:
+    items = getattr(prop, "enum_items", None)
+    if items is None:
+        return ()
+    result = []
+    try:
+        iterator = items
+        values = getattr(items, "values", None)
+        if callable(values):
+            iterator = values()
+        for item in iterator:
+            identifier = getattr(item, "identifier", None)
+            if identifier is not None:
+                result.append(str(identifier))
+    except Exception:
+        return ()
+    return tuple(result)
+
+
+def _rna_default(prop, typ: str):
+    if typ == "float3":
+        default_array = getattr(prop, "default_array", None)
+        if default_array is not None:
+            return tuple(float(item) for item in default_array)
+        value = getattr(prop, "default", None)
+        if value is not None:
+            try:
+                return tuple(float(item) for item in value)
+            except Exception:
+                return value
+        return None
+    return getattr(prop, "default", None)
+
+
+def _defaults_match(expected, actual, typ: str) -> bool:
+    if typ == "bool":
+        return bool(actual) is bool(expected)
+    if typ in {"int", "bitmask"}:
+        return int(actual) == int(expected)
+    if typ == "float":
+        return abs(float(actual) - float(expected)) <= 1.0e-8
+    if typ == "float3":
+        if actual is None:
+            return False
+        return (
+            len(tuple(actual)) == len(tuple(expected))
+            and all(abs(float(a) - float(b)) <= 1.0e-8 for a, b in zip(actual, expected))
+        )
+    if typ == "enum":
+        return str(actual) == str(expected)
+    return actual == expected
+
+
+def audit_bone_collision_legacy_property_group(property_group) -> list[str]:
+    """Return capability drift issues for legacy Bone.hotools_collision RNA."""
+    properties = _rna_properties(property_group)
+    issues: list[str] = []
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
+        name = str(field.get("name") or "")
+        if not name:
+            continue
+        prop = _rna_property_get(properties, name)
+        if prop is None:
+            issues.append(f"missing legacy property: {name}")
+            continue
+
+        typ = str(field.get("type") or "")
+        expected_default = field.get("default")
+        actual_default = _rna_default(prop, typ)
+        if not _defaults_match(expected_default, actual_default, typ):
+            issues.append(
+                f"default mismatch for {name}: capability={expected_default!r} "
+                f"legacy={actual_default!r}"
+            )
+
+        if typ == "enum":
+            expected_values = tuple(str(item) for item in field.get("values", ()))
+            actual_values = _enum_identifiers(prop)
+            if actual_values != expected_values:
+                issues.append(
+                    f"enum mismatch for {name}: capability={expected_values!r} "
+                    f"legacy={actual_values!r}"
+                )
+    return issues

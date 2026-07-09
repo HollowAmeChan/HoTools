@@ -57,6 +57,8 @@ def _register_physics_props() -> None:
 
 _register_physics_props()
 
+from PhysicsTools.physicsProperty import PG_Hotools_BoneCollision
+
 
 def check(name, fn) -> None:
     try:
@@ -133,8 +135,13 @@ if _nt_omni_key not in sys.modules:
     class _OmniBone(dict):
         pass
 
+    class _OmniBitMask(int):
+        def __new__(cls, value=0):
+            return int.__new__(cls, value)
+
     _sm._OmniCache = _OmniCache
     _sm._OmniBone = _OmniBone
+    _sm._OmniBitMask = _OmniBitMask
     sys.modules[_nt_omni_key] = _sm
     sys.modules.setdefault("OmniNodeSocketMapping", _sm)
 
@@ -197,8 +204,12 @@ physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
 iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_results
 get_spring_vrm_stats_result = _pw("spring_vrm.results").get_spring_vrm_stats_result
+audit_bone_collision_legacy_property_group = _pw("spring_vrm.capabilities").audit_bone_collision_legacy_property_group
 resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_collision_fields
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
+make_bone_collision_override_properties = _pw("spring_vrm.implicit_objects").make_bone_collision_override_properties
+register_bone_collision_override_objects = _pw("spring_vrm.implicit_objects").register_bone_collision_override_objects
+native_bone_collision_profile = _pw("spring_vrm.native")._bone_collision_profile
 spring_vrm_debug_draw = _pw("spring_vrm.debug_draw")
 
 
@@ -1070,6 +1081,64 @@ def test_spring_vrm_bone_collision_resolver_matches_legacy():
         _delete_object(armature)
 
 
+def test_spring_vrm_bone_collision_capability_audits_legacy_rna():
+    issues = audit_bone_collision_legacy_property_group(PG_Hotools_BoneCollision)
+    assert not issues, "Bone.hotools_collision drifted from BONE_COLLISION_CAPABILITY: " + "; ".join(issues)
+
+
+def test_spring_vrm_bone_collision_override_preempts_legacy():
+    armature = _make_chain_armature("PW_SpringVRM_Override")
+    try:
+        props = armature.data.bones["bone_1"].hotools_collision
+        props.pin = False
+        props.collision_type = "CAPSULE"
+        props.radius = 0.11
+        props.length = 0.44
+        props.offset = (0.02, 0.03, 0.04)
+        props.primary_collision_group = 3
+        props.collided_by_groups = 5
+
+        world = PhysicsWorldCache()
+        override = make_bone_collision_override_properties(
+            {"armature": armature, "bone": "bone_1"},
+            pin=True,
+            radius=0.27,
+            collided_by_groups=12,
+        )
+        count, dirty_count, version = register_bone_collision_override_objects(world, [override])
+        assert count == 1
+        assert dirty_count == 1
+        assert version >= 1
+
+        prof = resolve_bone_collision_fields(armature, "bone_1", world=world)
+        assert prof.source == "override"
+        assert prof.pin is True
+        assert prof.collision_type == "CAPSULE"
+        assert abs(prof.radius - 0.27) < 1e-6
+        assert abs(prof.length - float(props.length)) < 1e-6
+        assert prof.primary_collision_group == int(props.primary_collision_group)
+        assert prof.collided_by_groups == 12
+        assert resolve_bone_pin(armature, "bone_1", world=world) is True
+
+        native_radius, native_mask = native_bone_collision_profile(armature, "bone_1", world=world)
+        assert abs(native_radius - 0.27) < 1e-5, native_radius
+        assert native_mask == 12
+
+        disabled = dict(override)
+        disabled["enabled"] = False
+        count, dirty_count, version = register_bone_collision_override_objects(world, [disabled], enabled=False)
+        assert count == 1
+        assert dirty_count == 1
+
+        fallback = resolve_bone_collision_fields(armature, "bone_1", world=world)
+        assert fallback.source == "legacy_property"
+        assert fallback.pin is False
+        assert abs(fallback.radius - float(props.radius)) < 1e-6
+        assert fallback.collided_by_groups == int(props.collided_by_groups)
+    finally:
+        _delete_object(armature)
+
+
 def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
     draw = spring_vrm_debug_draw
     shape_cases = [
@@ -1225,6 +1294,8 @@ check("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule
 check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
 check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)
 check("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy)
+check("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna)
+check("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy)
 check("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors)
 
 passed = sum(1 for item in _results if item)

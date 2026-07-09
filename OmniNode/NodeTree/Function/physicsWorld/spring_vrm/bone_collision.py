@@ -1,7 +1,7 @@
 """SpringBone 骨骼碰撞字段 resolver。
 
 统一解析"骨骼碰撞字段值是什么"，解析优先级：
-  1. implicit override 对象（bone_collision.override）—— 计划中，当前为空实现
+  1. implicit override 对象（bone_collision.override）
   2. 旧显式属性 Bone.hotools_collision —— 当前唯一真实来源
   3. capability 默认值（BONE_COLLISION_CAPABILITY.fields）
 
@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections import namedtuple
 
 from .capabilities import BONE_COLLISION_CAPABILITY
+from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
+from ..utils.ids import as_pointer, data_pointer
 
 
 # 从能力表读默认值，避免 resolver 里重抄一份 magic number。
@@ -26,6 +28,12 @@ _CAP_FIELD_DEFAULTS = {
     for field in BONE_COLLISION_CAPABILITY.get("fields", ())
     if field.get("name")
 }
+_CAP_FIELD_META = {
+    str(field.get("name") or ""): dict(field)
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ())
+    if field.get("name")
+}
+_CAP_FIELD_NAMES = tuple(_CAP_FIELD_DEFAULTS)
 
 
 def _default(name: str, fallback):
@@ -82,13 +90,95 @@ def _profile_from_legacy_props(props) -> BoneCollisionProfile:
     )
 
 
-def _resolve_override_profile(armature, bone_name: str):
+def _coerce_bool(value, fallback: bool) -> bool:
+    if value is None:
+        return bool(fallback)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"0", "false", "no", "off"}:
+            return False
+        if text in {"1", "true", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def _coerce_field(name: str, value, fallback):
+    if value is None:
+        return fallback
+    typ = str(_CAP_FIELD_META.get(name, {}).get("type") or "")
+    if typ == "bool":
+        return _coerce_bool(value, fallback)
+    if typ == "enum":
+        text = str(value or "").strip().upper()
+        values = {str(item) for item in _CAP_FIELD_META.get(name, {}).get("values", ())}
+        if values and text not in values:
+            return fallback
+        return text
+    if typ == "float":
+        return float(value)
+    if typ in {"int", "bitmask"}:
+        return int(value)
+    if typ == "float3":
+        try:
+            values = tuple(float(item) for item in value)
+            if len(values) == 3:
+                return values
+        except Exception:
+            return fallback
+        return fallback
+    return value
+
+
+def _profile_from_field_mapping(fields: dict, base: BoneCollisionProfile, source: str) -> BoneCollisionProfile:
+    values = {name: getattr(base, name) for name in _CAP_FIELD_NAMES}
+    for name in _CAP_FIELD_NAMES:
+        if name in fields:
+            values[name] = _coerce_field(name, fields.get(name), values[name])
+    return BoneCollisionProfile(
+        pin=bool(values["pin"]),
+        collision_type=str(values["collision_type"] or "NONE"),
+        radius=float(values["radius"]),
+        length=float(values["length"]),
+        offset=tuple(values["offset"]),
+        primary_collision_group=int(values["primary_collision_group"]),
+        collided_by_groups=int(values["collided_by_groups"]),
+        source=source,
+    )
+
+
+def _override_stable_id(armature, bone_name: str) -> str:
+    return (
+        f"{BONE_COLLISION_OVERRIDE_OBJECT_TAG}:"
+        f"{as_pointer(armature)}:{data_pointer(armature)}:"
+        f"{str(bone_name or '')}"
+    )
+
+
+def _resolve_override_profile(armature, bone_name: str, world=None, base: BoneCollisionProfile | None = None):
     """implicit override 层解析入口（bone_collision.override）。
 
-    override 隐式对象节点尚未实现，当前恒返回 None，走 legacy + default。
-    override 节点落地后只需在这里按 stable_id 命中 world.implicit_objects
-    并返回 source="override" 的 profile，native 消费端无需改动。
+    按 stable_id 命中 world.implicit_objects，并把 payload.fields 覆盖到
+    legacy/default profile 上。未覆写字段继续沿用下一层来源。
     """
+    if world is None or not hasattr(world, "iter_implicit_objects"):
+        return None
+    stable_id = _override_stable_id(armature, bone_name)
+    base_profile = base if base is not None else _default_profile()
+
+    for entry in world.iter_implicit_objects(tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG, enabled=True):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("stable_id") or "") != stable_id:
+            continue
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        fields = payload.get("fields")
+        if not isinstance(fields, dict):
+            fields = {name: payload.get(name) for name in _CAP_FIELD_NAMES if name in payload}
+        if not fields:
+            continue
+        return _profile_from_field_mapping(fields, base_profile, "override")
     return None
 
 
@@ -104,23 +194,24 @@ def _legacy_bone_collision_props(armature, bone_name: str):
     return getattr(bone, "hotools_collision", None)
 
 
-def resolve_bone_collision_fields(armature, bone_name: str) -> BoneCollisionProfile:
+def resolve_bone_collision_fields(armature, bone_name: str, world=None) -> BoneCollisionProfile:
     """解析单根骨骼的碰撞字段值。
 
     优先级：override 隐式对象 > 旧 Bone.hotools_collision > capability 默认值。
     只返回原始字段值，几何缩放 / clamp / collider 打包由调用方（native）负责。
     """
-    override = _resolve_override_profile(armature, bone_name)
-    if override is not None:
-        return override
-
     props = _legacy_bone_collision_props(armature, bone_name)
     if props is not None:
-        return _profile_from_legacy_props(props)
+        base = _profile_from_legacy_props(props)
+    else:
+        base = _default_profile()
 
-    return _default_profile()
+    override = _resolve_override_profile(armature, bone_name, world=world, base=base)
+    if override is not None:
+        return override
+    return base
 
 
-def resolve_bone_pin(armature, bone_name: str) -> bool:
+def resolve_bone_pin(armature, bone_name: str, world=None) -> bool:
     """解析单根骨骼的 pin 标记（不含 root 硬 pin 逻辑，那属于解算侧）。"""
-    return bool(resolve_bone_collision_fields(armature, bone_name).pin)
+    return bool(resolve_bone_collision_fields(armature, bone_name, world=world).pin)
