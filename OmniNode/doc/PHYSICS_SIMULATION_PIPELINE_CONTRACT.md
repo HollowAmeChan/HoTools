@@ -315,8 +315,8 @@ debug_markers
 
 规则：
 
-- `tag` 是对象类型标记，必须使用 `physicsWorld/names.py` 里的全局名称常量，不允许 solver 和注册节点各写一份字符串。例如 `SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"`。
-- `physicsWorld/names.py` 是统一物理世界的跨模块名称集中点。solver id、slot kind、result channel、exchange channel、backend resource key 和 implicit object tag 都应放在这里，避免未来跨 solver 识别名称错位。
+- `tag` 是对象类型标记，必须使用名称常量而不是各写一份裸字符串。例如 `SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"`。
+- 名称常量的组织方式已分层：跨 solver 通用的 channel / collider ABI 常量仍集中在 `physicsWorld/names.py`；各 solver 自有的 tag / slot_kind / solver_id 等权威定义已开始拆回各自子模块的 `names.py`（`spring_vrm` 已拆到 `spring_vrm/names.py`，rigid 仍在中央 `names.py`、待拆），中央 `physicsWorld/names.py` 通过 `__getattr__` 保留惰性重导出兼容，避免跨 solver 识别名称错位。
 - `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
 - `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
 - `dirty=True` 只表示该 entry 相对上一轮写入发生了设置变化，不表示本帧必须 step。
@@ -359,7 +359,8 @@ Physics World Begin
 当前进展（2026-07-07）：
 
 - `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、通用 `bone_transform` 写回指令、统一 PoseBone writeback。
-- SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并从每根模拟骨的 `Bone.hotools_collision` 读取 hit radius 与 collided mask。
+- SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并按每根模拟骨的碰撞字段解析出 hit radius 与 collided mask。
+- 骨骼碰撞字段解析已落地在 `spring_vrm/bone_collision.py`（`resolve_bone_collision_fields` / `resolve_bone_pin`）：优先级为 override 隐式对象 > 旧属性 `Bone.hotools_collision` > capability 默认值三级；native.py 已改为消费该 resolver，不再直读 `Bone.hotools_collision`。其中 override 隐式对象层仍是空实现（计划中），当前实际只走 legacy 属性 + capability 默认值两层。
 - `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box collider snapshot 投影和 group mask 过滤。
 - `_native/tests/test_spring_bone_vrm_native.py` 已提供 Python 3.13 native 直连测试，覆盖基础重力步进、capsule / plane / box collider 投影、group mask 过滤和 binding 参数 shape 校验。
 - SpringBone native ABI 沿用公共 collider type code：`SPHERE=0`、`CAPSULE=1`、`PLANE=2`、`BOX=3`。这些常量由 `physicsWorld/names.py` 集中保存，避免 Python wrapper、C++ solver 和后续 solver 迁移错位。
@@ -991,7 +992,7 @@ world.begin
   -> world.commit/cache.write
 ```
 
-第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。当前 SpringBone slot 还先落了 Python 侧 `native_context` façade，按 chain root 常驻 topology signature 与 numpy buffers，连续帧复用、stale slot dispose、stats/debug 摘要都有后台测试覆盖。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
+第一条迁移 SpringBone VRM 已作为 Phase 5 vertical slice 落地：PoseBone 写回、per-armature slot、collider snapshot、native 数组核、same-frame、runtime cache lifecycle 和 stale slot prune 都能被验证。当前 SpringBone slot 已落地按 chain root 常驻的 `SpringVRMNativeContext`（`spring_vrm/native.py`），常驻 topology signature 与 numpy buffers：Python 侧的 dual-call context 封装已完整实现——native 模块导出 `spring_vrm_create_context` 时走新 dual-call 路径（`spring_vrm_update_dynamic` → `spring_vrm_step` → `spring_vrm_read_results`），否则回退到旧的 35 参数单次调用 `solve_spring_bone_vrm_cpp`（`_step_via_legacy_bridge`）作为未编译 dual-call 时的兼容回退。连续帧复用、stale slot dispose、stats/debug 摘要都有后台测试覆盖。迁移方式是 `physicsWorld/spring_vrm/` 直接重写，不把 `Physics.py` 的旧 `_SpringBoneVRM` 黑箱搬入 world。MC2 MeshCloth / BoneCloth 作为第二条，因为它们更适合验证 native resident state、大数组 result 和 mesh delta 写回。
 
 优先预演对象：
 
@@ -1064,7 +1065,7 @@ rigid.jolt_step
 
 ## 当前建议
 
-从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；它的 Python `native_context` façade 已固定 owner、topology signature、buffer 复用、dispose 和 debug 摘要边界。下一步应把 façade 后面的 35 参数单次 native 调用替换为真正 C++ native context 双调用模型，并把同一 contract 推到 MC2 / BoneCloth。
+从现在开始，新迁移 solver 默认只写 C++ / native 计算路径，不再维护 Python / C++ 双实现。VRM SpringBone 已作为第一条预演链路，证明职责拆分可以覆盖 slot 生命周期、result stream、PoseBone 写回和 runtime cache dispose；它的 `SpringVRMNativeContext` 已固定 owner、topology signature、buffer 复用、dispose 和 debug 摘要边界。Python 侧的 dual-call context 封装已完整实现，并按 native 是否编译进 dual-call symbol 决定实际路径：导出 `spring_vrm_create_context` 时走新 dual-call 模型（update_dynamic → step → read_results），否则回退到旧的 35 参数单次调用 bridge。下一步是在 native 侧真正编译出 dual-call symbol，让 35 参数 bridge 回退退役，并把同一 contract 推到 MC2 / BoneCloth。
 
 在文档和 timing 稳定后，再决定：
 

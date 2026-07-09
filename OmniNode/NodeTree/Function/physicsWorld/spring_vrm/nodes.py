@@ -101,8 +101,8 @@ def physicsSpringVRMChainRegister(
     4. 发布 world.result_streams["bone_transform"] 通用写回指令。
     5. 下游 物理写回 节点统一写 PoseBone.matrix_basis。
 
-    当前 vertical slice 先验证骨链、native step、result stream 和 PoseBone 写回闭环；
-    外部碰撞体打包会在下一步接入 world.collider_snapshot。
+    外部碰撞体已接入 world.collider_snapshot（SPHERE/CAPSULE/PLANE/BOX 四类），
+    骨骼自身 hit radius / collided_by_groups 经 bone_collision resolver 解析。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )

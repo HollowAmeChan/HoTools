@@ -339,6 +339,10 @@ return result
 
 维护约定：新增骨骼/物体级配置时，先问“这个语义是否已经能从别处（节点输入、已有数据、拓扑）确定”。能确定就不要再加一个并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。
 
+新物理世界路径的补充（2026-07）：链 root 的判定已经比“输入骨即 root”复杂。`physicsWorld/spring_vrm/implicit_objects.py` 的 `_chains_from_direct_bone_values` 会按骨架父子关系分析输入骨集合——检测输入骨之间是否存在父链关系，据此在“单根递归收集”和“多 root 分组（每个无父输入骨各自成链，子骨按拓扑归属）”之间选择。但真值来源原则不变：root 始终来自骨骼输入本身（直接输入骨或“从根获取骨链”列表），不存在并行的持久 root 标记。
+
+骨骼碰撞字段（含 pin）在新路径也不再由 solver 直读 `Bone.hotools_collision`。`physicsWorld/spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin` 是统一 resolver，解析优先级为 `bone_collision.override` 隐式对象（计划中）> 旧 `Bone.hotools_collision` > `BONE_COLLISION_CAPABILITY` 默认值。native 消费端只认 resolver，不再各写一份 `getattr`。这样等 override 隐式对象节点落地、以及属性注册最终迁到物理世界侧时，唯一真值来源始终收敛在 capability + resolver 上，不与运行时推断竞争。
+
 ### 8. 编译缓存和 runtime cache 是两套系统
 
 `OmniNodeTree._COMPILED_TREE_CACHE` 缓存的是 `CompiledGraph`，目的是避免每帧重复编译图。
@@ -497,8 +501,8 @@ OmniExecutor.run(compiled, debug=False)
 执行时：
 
 1. 创建 root `RuntimeCacheContext`。
-2. 分配 `registers = [None] * compiled.reg_count`。
-3. 按顺序执行 IR。
+2. `compiled.ensure_reg_arrays()` 确保持久化寄存器数组存在，`registers = compiled.reg_values`（跨帧复用，不再每帧 `[None] * reg_count`）。
+3. 按顺序执行 IR，写寄存器统一走 `_write_reg`（身份比较，变化才递增版本号）。
 4. 出错时标记 run failed，并把错误写到节点 bug state。
 5. root run 结束时提交或丢弃 pending cache。
 6. 返回 `output_regs` 对应的结果字典。
@@ -509,6 +513,22 @@ OmniExecutor.run(compiled, debug=False)
 - 每步 timing stage 名称。
 - cache read/write/delete/dump 日志。
 - subtree / batch subtree 进入和退出日志。
+
+### 节点级懒求值（已落地）
+
+执行器已实现"输入未变则跳过节点"的懒求值机制，详细设计见 `doc/OMNINODE_LAZY_EVALUATION_DESIGN.md`。当前落地状态：
+
+- **寄存器版本跟踪已落地**：`CompiledGraph` 持有 `reg_values`（跨帧值）和 `reg_versions`（`array.array` 整数版本号）。`OmniExecutor._write_reg` 用身份比较（`is not`），值变化才递增版本号；`OMNI_NO_CHANGE` sentinel 让 always_run 节点主动声明"输出未变"，不递增版本。
+- **skip 判定已落地**：`_should_skip_opcall` 对非 always_run 节点比对输入寄存器版本快照（`last_snapshot`），未变则跳过函数调用、复用上帧输出。`_should_skip_subtree` 对子树整块跳过。
+- **always_run 已落地**：`@omni(always_run=True)` 由 `FunctionNodeCore` 识别，`OmniCompiler` emit OpCall 时写入 `has_always_run`（默认取 `is_output_node`）；编译期 `_compute_has_always_run` 递归标注 `CompiledGraph.has_always_run_node`。物理 solver、Cache 节点、输出节点、debug 节点必须标 always_run。
+- **共享子树防污染已落地**：编译期 `_compute_ref_counts` 统计每个子树被引用次数，`inner_lazy_eval = (ref_count == 1)`；被多个 group 引用的共享子树不做内部逐节点 skip，避免跨调用路径的版本快照污染。
+- **op_type dict 派发已落地**：IR 类型带 `op_type` 类常量，执行走查表而非 isinstance 链。
+- **唯一未落地项：曲线 CONST 版本化**。CONST 仍是裸 tuple `("CONST", reg, value)`，编译时固化 `default_value`；设计文档里的 `ConstInstruction` / `is_curve` / `_curve_hash`（运行中改曲线 socket 时按内容 hash 更新版本）尚未实现。运行中修改未连接曲线 socket 的默认值目前不会自动失效下游。
+
+维护约定：
+
+- 有 Blender 副作用（写 bpy、调 ops）或每帧必须推进状态的节点，必须标 `always_run=True`，否则会被错误跳过。
+- 失效边界必须可靠：重编译 / 清编译缓存时 `CompiledGraph` 整体重建，版本数组随对象丢弃；`reg_values` 跨帧持有 bpy 引用，重编译或删树时必须显式置空防悬空引用。
 
 ## Debug 系统
 

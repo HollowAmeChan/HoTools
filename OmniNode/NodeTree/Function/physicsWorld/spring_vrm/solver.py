@@ -33,6 +33,42 @@ def register_spring_vrm_from_chain_properties(
     return register_spring_vrm_specs(world, specs)
 
 
+def _register_slots_from_specs(
+    world: PhysicsWorldCache,
+    specs,
+) -> tuple[list[str], int, int]:
+    """把 specs 落进 world.solver_slots，返回 (registered_ids, chain_count, bone_count)。
+
+    register_spring_vrm_specs（外部注册入口）和 step_spring_vrm（节点每帧路径）
+    共用这段 slot 生命周期逻辑，避免两处并行真值源漂移（见 ARCHITECTURE §7.3）。
+    调用方负责 acquire_write / clear_spring_vrm_pose_results / prune / 发布 stats。
+    """
+    registered_ids: list[str] = []
+    chain_count = 0
+    bone_count = 0
+
+    for spec in list(specs or ()):
+        if not isinstance(spec, SpringVRMSolverSpec):
+            continue
+        slot = world.ensure_solver_slot(spec.slot_id, SPRING_VRM_SLOT_KIND)
+        if slot.world_generation != world.generation:
+            slot.dispose("world_generation_changed")
+            slot.world_generation = world.generation
+
+        slot.data["spec"] = spec
+        slot.data["declaration"] = SPRING_VRM_SOLVER_DECLARATION
+        slot.data.setdefault("frame_state", {})
+        slot.data.setdefault("_native_ctxs", {})
+        slot.data.setdefault("writeback_plan", {})
+        _install_slot_debug_snapshot(slot, spec)
+
+        registered_ids.append(spec.slot_id)
+        chain_count += int(spec.chain_count)
+        bone_count += int(spec.simulated_bone_count)
+
+    return registered_ids, chain_count, bone_count
+
+
 def register_spring_vrm_specs(
     world: PhysicsWorldCache,
     specs,
@@ -43,28 +79,7 @@ def register_spring_vrm_specs(
     world.acquire_write(SPRING_VRM_SOLVER_ID)
     try:
         clear_spring_vrm_pose_results(world)
-        registered_ids = []
-        chain_count = 0
-        bone_count = 0
-
-        for spec in list(specs or ()):
-            if not isinstance(spec, SpringVRMSolverSpec):
-                continue
-            slot = world.ensure_solver_slot(spec.slot_id, SPRING_VRM_SLOT_KIND)
-            if slot.world_generation != world.generation:
-                slot.dispose("world_generation_changed")
-                slot.world_generation = world.generation
-
-            slot.data["spec"] = spec
-            slot.data["declaration"] = SPRING_VRM_SOLVER_DECLARATION
-            slot.data.setdefault("frame_state", {})
-            slot.data.setdefault("_native_ctxs", {})
-            slot.data.setdefault("writeback_plan", {})
-            _install_slot_debug_snapshot(slot, spec)
-
-            registered_ids.append(spec.slot_id)
-            chain_count += int(spec.chain_count)
-            bone_count += int(spec.simulated_bone_count)
+        registered_ids, chain_count, bone_count = _register_slots_from_specs(world, specs)
 
         _prune_stale_spring_vrm_slots(world, registered_ids)
 
@@ -106,27 +121,9 @@ def step_spring_vrm(
     world.acquire_write(solver_id)
     try:
         clear_spring_vrm_pose_results(world)
-        registered_ids = []
-        chain_count = 0
-        bone_count = 0
         errors: list[str] = []
 
-        for spec in specs:
-            slot = world.ensure_solver_slot(spec.slot_id, SPRING_VRM_SLOT_KIND)
-            if slot.world_generation != world.generation:
-                slot.dispose("world_generation_changed")
-                slot.world_generation = world.generation
-
-            slot.data["spec"] = spec
-            slot.data["declaration"] = SPRING_VRM_SOLVER_DECLARATION
-            slot.data.setdefault("frame_state", {})
-            slot.data.setdefault("_native_ctxs", {})
-            slot.data.setdefault("writeback_plan", {})
-            _install_slot_debug_snapshot(slot, spec)
-
-            registered_ids.append(spec.slot_id)
-            chain_count += int(spec.chain_count)
-            bone_count += int(spec.simulated_bone_count)
+        registered_ids, chain_count, bone_count = _register_slots_from_specs(world, specs)
 
         _prune_stale_spring_vrm_slots(world, registered_ids)
 

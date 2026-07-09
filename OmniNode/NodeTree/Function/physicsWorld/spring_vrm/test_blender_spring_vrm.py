@@ -170,6 +170,8 @@ _load_pw("world", "world.py")
 _load_pw("spring_vrm.specs", "spring_vrm/specs.py")
 _load_pw("spring_vrm.implicit_objects", "spring_vrm/implicit_objects.py")
 _load_pw("spring_vrm.declaration", "spring_vrm/declaration.py")
+_load_pw("spring_vrm.capabilities", "spring_vrm/capabilities.py")
+_load_pw("spring_vrm.bone_collision", "spring_vrm/bone_collision.py")
 _load_pw("spring_vrm.native", "spring_vrm/native.py")
 _load_pw("spring_vrm.solver", "spring_vrm/solver.py")
 _load_pw("spring_vrm.nodes", "spring_vrm/nodes.py")
@@ -192,6 +194,8 @@ physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
 iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_results
 get_spring_vrm_stats_result = _pw("spring_vrm.results").get_spring_vrm_stats_result
+resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_collision_fields
+resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
 
 
 def _delete_object(obj) -> None:
@@ -1002,6 +1006,67 @@ def test_spring_vrm_box_collider_snapshot():
         _delete_object(armature_hit)
 
 
+def test_spring_vrm_bone_collision_resolver_matches_legacy():
+    """resolver 逐字段对照旧 Bone.hotools_collision 直读。
+
+    这一步是外部属性迁移的验收护栏（REHEARSAL 2026-07-09 要求）：
+    resolver 必须与旧直读产出完全一致，才能后续把 native 消费端从直读切到
+    resolver、并最终把属性注册挪到物理世界侧。
+    """
+    armature = _make_chain_armature("PW_SpringVRM_Resolver")
+    try:
+        # 1) 显式设过值的骨骼：resolver 必须逐字段等于直读
+        props = armature.data.bones["bone_1"].hotools_collision
+        props.pin = True
+        props.collision_type = "CAPSULE"
+        props.radius = 0.17
+        props.length = 0.42
+        props.offset = (0.01, -0.02, 0.03)
+        props.primary_collision_group = 2
+        props.collided_by_groups = 5
+
+        prof = resolve_bone_collision_fields(armature, "bone_1")
+        assert prof.pin is bool(props.pin), f"pin 不一致: {prof.pin} vs {props.pin}"
+        assert prof.collision_type == str(props.collision_type), (
+            f"collision_type 不一致: {prof.collision_type} vs {props.collision_type}"
+        )
+        assert abs(prof.radius - float(props.radius)) < 1e-6, (
+            f"radius 不一致: {prof.radius} vs {props.radius}"
+        )
+        assert abs(prof.length - float(props.length)) < 1e-6, (
+            f"length 不一致: {prof.length} vs {props.length}"
+        )
+        assert all(abs(a - b) < 1e-6 for a, b in zip(prof.offset, tuple(props.offset))), (
+            f"offset 不一致: {prof.offset} vs {tuple(props.offset)}"
+        )
+        assert prof.primary_collision_group == int(props.primary_collision_group), (
+            f"primary_collision_group 不一致: {prof.primary_collision_group} vs {props.primary_collision_group}"
+        )
+        assert prof.collided_by_groups == int(props.collided_by_groups), (
+            f"collided_by_groups 不一致: {prof.collided_by_groups} vs {props.collided_by_groups}"
+        )
+        assert prof.source == "legacy_property", f"有旧属性时 source 应为 legacy_property，实际 {prof.source}"
+
+        # 2) 未改动的骨骼：resolver 仍应等于直读的 PropertyGroup 默认值
+        base_props = armature.data.bones["bone_2"].hotools_collision
+        base_prof = resolve_bone_collision_fields(armature, "bone_2")
+        assert base_prof.pin is bool(base_props.pin)
+        assert base_prof.collision_type == str(base_props.collision_type)
+        assert abs(base_prof.radius - float(base_props.radius)) < 1e-6
+        assert base_prof.collided_by_groups == int(base_props.collided_by_groups)
+
+        # 3) resolve_bone_pin 与直读 pin 一致
+        assert resolve_bone_pin(armature, "bone_1") is bool(props.pin)
+        assert resolve_bone_pin(armature, "bone_2") is bool(base_props.pin)
+
+        # 4) 不存在的骨骼：走能力默认值，不抛错
+        missing = resolve_bone_collision_fields(armature, "no_such_bone")
+        assert missing.source == "default", f"缺失骨骼应返回 default，实际 {missing.source}"
+        assert missing.collision_type == "NONE"
+    finally:
+        _delete_object(armature)
+
+
 print("\n----------------------------------------------------------")
 print("  SpringBone VRM 新物理世界集成测试")
 print("----------------------------------------------------------")
@@ -1020,6 +1085,7 @@ check("SpringBone collider group mask filters snapshot", test_spring_vrm_collide
 check("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule_collider_snapshot)
 check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
 check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)
+check("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy)
 
 passed = sum(1 for item in _results if item)
 total = len(_results)

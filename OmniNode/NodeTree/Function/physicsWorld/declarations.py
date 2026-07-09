@@ -66,14 +66,23 @@ RIGID_SOLVER_DECLARATION = {
     "slot_kind": [RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND],
     "stage": "jolt_vertical_slice",
     "native_strategy": "jolt_backend_with_python_world_glue",
+    # 节点名必须与 rigid/nodes.py 的 bl_label 一致。旧的"刚体注册/刚体约束注册"
+    # 独立节点已并入 physicsWorldBegin（对象范围自动登记刚体/约束），不再作为节点存在；
+    # 这里只列真实存在的 rigid 节点，避免 debug snapshot 展示幽灵节点。
     "nodes": [
-        "刚体注册",
-        "刚体约束注册",
+        "刚体模拟步",
+        "刚体结果-读取状态",
         "刚体世界-Jolt设置属性",
         "刚体世界-Jolt设置注册",
         "刚体生成约束属性",
         "刚体生成约束注册",
-        "刚体模拟步",
+        "刚体命令-设置速度",
+        "刚体命令-施加力",
+        "刚体命令-施加冲量",
+        "刚体命令-重力倍率",
+        "刚体命令-材质响应",
+        "刚体命令-运动质量",
+        "刚体命令-激活状态",
     ],
     "writers": [
         RIGID_BODY_REGISTER_WRITER_ID,

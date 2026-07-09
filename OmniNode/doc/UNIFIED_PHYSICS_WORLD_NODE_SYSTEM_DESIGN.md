@@ -88,6 +88,8 @@ Cache Read
   -> Cache Write
 ```
 
+> 注：`MeshCloth Solver` / `BoneCloth Solver` 为规划中示意，尚未实现；当前仅 `SpringBone Solver`（spring_vrm）与 `Rigid Body Solver`（rigid）两个 domain 已落地。上图展示的是目标形态，含未实现 solver，仅作链路示意。
+
 其中：
 
 - `Cache Read` 读取上一轮 committed 的 `PhysicsWorldCache`。
@@ -1094,7 +1096,16 @@ physicsWorld/
 - `<solver>/debug.py`：该 solver 的 debug snapshot 摘要与 debug draw mode 声明。
 - `<solver>/backends/`：native 或第三方 backend adapter。
 
-### Phase 0：命名和目录边界 ✅ 已完成
+### Phase 0：命名和目录边界 ⚠️ 部分完成
+
+上面的目录清单是**目标结构**，当前尚未完全落地。实际进度是“spring_vrm 领先、rigid 待原子化”：
+
+- `physicsWorld/` 根目录**缺 `registry.py` 和 `sources.py`**：solver 子模块装载/卸载、名称冲突检查仍未有独立装载器；source 解析目前仍并入 `world.py` / `physicsWorldBegin`，未单独成文件。
+- `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py` 均已建，但**缺 `debug.py`**（debug snapshot 摘要与 debug draw mode 尚未拆出）。
+- `rigid/` 仍是过渡结构：**既缺 `capabilities.py` 也缺 `debug.py`**，rigid 的 solver 声明仍整块内联在中央 `declarations.py`，rigid 名称常量仍留在中央 `names.py`，尚未拆回子模块。
+- 中央 `physicsWorld/names.py` 目前只对 spring_vrm 做了权威下沉：spring_vrm 名称常量已迁到 `spring_vrm/names.py`，中央文件仅用 `__getattr__` 惰性重导出兼容；rigid 名称尚未下沉。
+
+因此 Phase 0 不能记作“目录结构已完成”，只能记作“骨架已建、spring_vrm 接近目标、rigid 与公共装载层（registry/sources）待补齐”。
 
 ### Phase 1：低层物理世界基础 ✅ 已完成
 
@@ -1173,6 +1184,8 @@ physicsWorld/
 ```
 
 `刚体注册` 节点已移除（功能并入 physicsWorldBegin）。
+
+**声明表与真实节点对齐（历史修正）：** 中央 `physicsWorld/declarations.py` 的 rigid 声明 nodes 列表曾残留 `刚体注册` / `刚体约束注册` 这两个已不存在的幽灵节点名（它们是上述"刚体注册功能并入 physicsWorldBegin"之前的旧命名）。该列表现已修正为真实注册节点名——`刚体模拟步` / `刚体结果-读取状态` / `刚体世界-Jolt设置属性` / `刚体世界-Jolt设置注册` / `刚体生成约束属性` / `刚体生成约束注册` 等，使声明表与实际落地节点、以及本 Phase 4 描述保持一致，不再引用幽灵节点。
 
 ### Phase 5：Jolt backend 接入
 
@@ -1451,7 +1464,7 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 | 旧字段名 | 新字段名 | 对应 UI |
 |---|---|---|
-| `include_object_colliders` | `include_passive_collision` → 改为 `include_passive_collision` | 简单碰撞 |
+| `include_object_colliders` | `include_passive_collision` | 简单碰撞 |
 | `include_bone_colliders` | `include_bone_collision` | 骨骼碰撞 |
 | `include_mesh_collision` | `include_mesh_collision`（不变） | 简单布料 |
 | —（新增） | `include_rigid_body` | 刚体 |

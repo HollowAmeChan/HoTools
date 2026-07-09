@@ -5,32 +5,32 @@
 每条链对应一个 SpringVRMNativeContext 实例，生命周期如下：
 
   topology/restart 变化时：
-    ctx.rebuild(records, chain)
+    ctx.rebuild(spec, records)
       → 捕获静态数组（init_axis / init_rotation / topology）
-      → TODO: 调用 create_spring_vrm_context() 传静态数组到 C++ 侧
+      → is_context_api_available() 为 True 时调用 spring_vrm_create_context()
+        把静态数组上传到 C++ 侧，拿到 self._handle
 
   每帧：
     ctx.fill_dynamic(armature, chain_state, records)
       → 从当前 pose 填充动态数组（head/tail/matrix）
 
-    ctx.step_and_publish(module, world, chain, chain_state, dt, substeps)
-      → TODO: update_spring_vrm_dynamic + step_spring_vrm + read_spring_vrm_results
-      → TRANSITIONAL: 当前桥接到现有 35 参数单次调用
+    ctx.step_and_publish(module, world, armature, chain, chain_state, dt, substeps)
+      → self._handle 有效：走 _step_via_context_api
+        （spring_vrm_update_dynamic → [reset_state] → spring_vrm_step →
+         spring_vrm_read_results → publish）
+      → 否则回退 _step_via_legacy_bridge（旧 35 参数单次调用）
 
   dispose 时：
     ctx.dispose()
-      → TODO: free_spring_vrm_context(cpp_handle)
+      → free_spring_vrm_context(self._handle)（若有）+ 清空 numpy/bpy 引用
 
-目标 C++ API（待实现）：
-  handle = create_spring_vrm_context(schema, static_arrays...)
-  update_spring_vrm_dynamic(handle, dynamic_arrays..., collider_arrays..., scalars...)
-  step_spring_vrm(handle, dt, substeps)
-  read_spring_vrm_results(handle, out_basis_values)  # 写入预分配 buffer
-  free_spring_vrm_context(handle)
+调用路径由 native 模块是否导出 dual-call symbol 决定：
+  is_available()            → 有 solve_spring_bone_vrm_cpp（35 参数 bridge，最低要求）
+  is_context_api_available() → 有 spring_vrm_create_context（新 dual-call API）
 
-当前只有 Python 侧接口，C++ 侧仍使用旧 35 参数 solve_spring_bone_vrm_cpp，
-以 _step_via_legacy_bridge 方法桥接。新 C++ API 就绪后，替换 step_and_publish
-内的调用路径，删除 _step_via_legacy_bridge 即可。
+Python 侧 dual-call 路径已完整实现并在 handle 有效时激活；当前发布的 native
+产物是否编译进 dual-call symbol 决定实际走哪条路。_step_via_legacy_bridge 作为
+未编译 dual-call 时的兼容回退保留，等新 ABI 成为唯一发布目标后可删除。
 """
 
 from __future__ import annotations
@@ -56,6 +56,7 @@ from ..utils.geometry import (
 )
 from ..utils.values import matrix16
 from ..utils.writeback_pose import matrix_basis_from_pose_matrix
+from .bone_collision import resolve_bone_collision_fields, resolve_bone_pin
 from .results import publish_spring_vrm_pose_result
 
 
@@ -678,10 +679,9 @@ def _record_is_effectively_pinned(record: dict) -> bool:
 
     pb = record.get("pose_bone")
     armature = getattr(pb, "id_data", None)
-    bones = getattr(getattr(armature, "data", None), "bones", None)
-    bone = bones.get(bone_name) if bones is not None else None
-    props = getattr(bone, "hotools_collision", None) if bone is not None else None
-    return bool(props is not None and getattr(props, "pin", False))
+    if armature is None or not bone_name:
+        return False
+    return resolve_bone_pin(armature, bone_name)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -892,19 +892,20 @@ def _bone_collision_profiles(armature, records: list[dict]) -> tuple[np.ndarray,
 
 
 def _bone_collision_profile(armature, bone_name: str) -> tuple[float, int]:
-    bone  = getattr(getattr(armature, "data", None), "bones", {}).get(bone_name)
-    props = getattr(bone, "hotools_collision", None) if bone is not None else None
-    if props is None:
+    profile = resolve_bone_collision_fields(armature, bone_name)
+    if str(profile.collision_type or "NONE") not in {"SPHERE", "CAPSULE"}:
         return 0.0, 0
-    if str(getattr(props, "collision_type", "NONE") or "NONE") not in {"SPHERE", "CAPSULE"}:
+    name = str(bone_name or "")
+    bone = getattr(getattr(armature, "data", None), "bones", {}).get(name)
+    if bone is None:
         return 0.0, 0
-    pb     = getattr(getattr(armature, "pose", None), "bones", {}).get(bone_name)
+    pb     = getattr(getattr(armature, "pose", None), "bones", {}).get(name)
     lmat   = pb.matrix if pb is not None else bone.matrix_local
-    radius = max(float(getattr(props, "radius", 0.0) or 0.0), 0.0)
+    radius = max(float(profile.radius or 0.0), 0.0)
     radius *= matrix_scale_radius(armature.matrix_world @ lmat)
     if radius <= 1e-8:
         return 0.0, 0
-    return radius, clamp_int(getattr(props, "collided_by_groups", 0), 0, 0xFFFF, 0)
+    return radius, clamp_int(profile.collided_by_groups, 0, 0xFFFF, 0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

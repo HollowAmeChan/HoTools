@@ -146,11 +146,51 @@ SPRING_VRM_LEGACY_DISCARD_AUDIT = [
         "decision": "keep_as_kernel_reference",
         "reason": "纯数组计算核不持有 Blender 对象，适合作为新 C++ 单实现的数值参考。",
     },
+    {
+        "legacy_symbol": "springBoneBase",
+        "source": "OmniNode/NodeTree/Function/Physics.py",
+        "decision": "migrate_then_discard",
+        "reason": (
+            "非 VRM 基础弹簧骨，共享 _BonePhysics 但走旧 cache/直写 PoseBone 路径。"
+            "纳入统一物理世界迁移；新路径落地并验证后与旧 VRM 节点一起删除。"
+        ),
+    },
 ]
+
+
+# 删除清单：新路径在 Blender 内验证与旧路径行为一致后，一次性移除下列符号。
+# 本轮只登记，不删除（用户决定：先留作对照，补完 + Blender 验证后再删）。
+SPRING_VRM_LEGACY_DELETE_CHECKLIST = {
+    "gate": "新 physicsWorld/spring_vrm 路径在 Blender 内与旧 VRM 节点逐帧行为对齐后执行",
+    "nodes": [
+        "springBoneVRMChainSetting",  # 弹簧骨-VRM链设置
+        "springBoneVRM",              # 弹簧骨-VRM
+        "springBoneVRM_CPP",          # 弹簧骨-VRM-CPP
+        "springBoneBase",             # 弹簧骨（基础，需先迁移出新路径）
+    ],
+    "classes": [
+        "_SpringBoneVRM",
+        "_SpringBoneVRMCppBackend",
+    ],
+    "shared_class_methods_to_remove": {
+        # _BonePhysics 是共享类（springBoneBase/keyframePoseBones 也用），不整删；
+        # 只删这两个 VRM 专属方法。
+        "_BonePhysics": [
+            "flatten_vrm_spring_bone_chain_settings",
+            "vrm_spring_bone_collision_profile",
+        ],
+    },
+    "dangling_after_delete": [
+        # 删除后需顺手清理的无害残留（非阻塞）。
+        "OmniNode/NodeTree/OmniDebug.py: section 标签列表里的 'springBoneVRM' 字符串",
+        "physicsMC2BoneCloth/bone_build.py: 注释里引用 flatten_vrm_spring_bone_chain_settings",
+    ],
+}
 
 
 def spring_vrm_declaration_debug_dict() -> dict:
     return {
         "declaration": dict(SPRING_VRM_SOLVER_DECLARATION),
         "legacy_discard_audit": [dict(item) for item in SPRING_VRM_LEGACY_DISCARD_AUDIT],
+        "legacy_delete_checklist": dict(SPRING_VRM_LEGACY_DELETE_CHECKLIST),
     }

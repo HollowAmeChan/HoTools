@@ -1,6 +1,10 @@
 # OmniNode 节点级懒求值设计
 
-本文分析 OmniNode 当前执行模型的调度开销来源，并设计一套"输入未变则跳过节点"的懒求值机制（Lazy Node Evaluation），以降低复杂 nodetree 在连续帧中的固定 Python 开销。
+本文描述 OmniNode 的"输入未变则跳过节点"懒求值机制（Lazy Node Evaluation），用于降低复杂 nodetree 在连续帧中的固定 Python 开销。
+
+> **落地状态**：本文描述的机制 **除"曲线 socket 的 CONST 版本化"外均已落地在运行代码中**，分布于 `OmniExecutor.py`（`_should_skip_opcall` / `_should_skip_subtree` / `_write_reg` / 持久化 `reg_values` 主循环）、`OmniCompiler.py`（`_compute_has_always_run` / `_compute_ref_counts` / 编译期写入 `has_always_run`）、`OmniIR.py`（`OMNI_NO_CHANGE` sentinel、各指令类的 `op_type` 整数常量、CompiledGraph 的 `reg_values` / `reg_versions` / `inner_lazy_eval` / `ref_count`）与 `FunctionNodeCore.py`（`@omni(always_run=...)` 参数）。
+>
+> 因此下文的代码示例应视为**当前实现说明**（现状），而非待实施的提案。唯一尚未落地的子特性是"CONST 指令版本化（曲线 socket 特殊处理）"一节，详见该节节首说明。
 
 同时本文附录分析了"将整个编译/执行/缓存系统迁移到 C++"的可行性。
 
@@ -52,11 +56,11 @@ for step_index, op in enumerate(compiled.instructions):
 - 普通数值 socket：编译时固化，运行时 `registers[reg] = value`，成本极低。
 - **曲线类型 socket**：`default_value` 读取触发 Blender RNA 遍历曲线控制点列表。若曲线 socket 未连接，CONST 指令每帧都执行一次 RNA 曲线读取，成本显著高于预期。
 
-### 执行器调度优化（与懒求值独立，可先于懒求值落地）
+### 执行器调度优化（与懒求值独立）
 
-以下优化不依赖版本跟踪，可以单独实施。
+以下优化不依赖版本跟踪。它们**已落地**：`op_type` 整数常量已在 `OmniIR.py` 中定义（`OP_CALL` / `OP_CONST` / `OP_SUBTREE` / `OP_BATCH` / `OP_CACHE_*` / `OP_TIMING_*`），主循环已按 `op_type` 派发。
 
-**① op_type 整数 + dict 派发，替代 isinstance 链**
+**① op_type 整数 + dict 派发，替代 isinstance 链（已落地）**
 
 ```python
 # OmniIR.py：给每个指令类型一个类级别整数常量
@@ -119,12 +123,14 @@ self.graph.instructions = tuple(self.instructions)   # list → tuple
 
 ## 设计目标
 
-1. 输入寄存器版本未变的节点，跳过执行，复用上次输出。
-2. 声明 `always_run=True` 的节点（物理 solver、debug 输出、Cache Write 等）无论如何都执行。
-3. 曲线 socket 的 CONST 指令只在内容变化时更新寄存器版本。
-4. 子树（SubtreeCall）若所有输入未变且内部无 always_run 节点，整块跳过。
-5. 不改变现有 `@omni(...)` 节点的编写方式，只在执行层和 IR 层增加版本跟踪。
-6. 失效边界（cache clear、scope 变化、world restart）必须能可靠地使所有相关版本失效。
+以下目标除第 3 项外均**已实现**：
+
+1. 输入寄存器版本未变的节点，跳过执行，复用上次输出。（已实现）
+2. 声明 `always_run=True` 的节点（物理 solver、debug 输出、Cache Write 等）无论如何都执行。（已实现）
+3. 曲线 socket 的 CONST 指令只在内容变化时更新寄存器版本。（**未实现**：CONST 当前仍为裸 tuple，曲线未连接 socket 每帧仍触发一次 RNA 读取，详见对应章节）
+4. 子树（SubtreeCall）若所有输入未变且内部无 always_run 节点，整块跳过。（已实现）
+5. 不改变现有 `@omni(...)` 节点的编写方式，只在执行层和 IR 层增加版本跟踪。（已实现）
+6. 失效边界（cache clear、scope 变化、world restart）必须能可靠地使所有相关版本失效。（已实现）
 
 ---
 
@@ -212,15 +218,15 @@ def springBoneVRM_CPP(cache_state: _OmniCache, ...) -> _OmniCache:
 
 ## 核心机制：寄存器版本跟踪
 
-### 数据结构变更
+### 数据结构（已落地）
 
 ```python
 import array as _array
 
-# 现在：每帧重新分配，从零开始
+# 旧模型：每帧重新分配，从零开始
 registers = [None] * compiled.reg_count
 
-# 新方案：跨帧持久化（存储在 CompiledGraph 上，与树生命周期绑定）
+# 现行实现：跨帧持久化（存储在 CompiledGraph 上，与树生命周期绑定）
 class CompiledGraph:
     reg_values: list          # 跨帧寄存器值（任意 Python 对象），初始全 None，必须用 list
     reg_versions: array.array # 只存整数版本号，用 array.array('l', ...) 代替 list[int]
@@ -253,7 +259,7 @@ def write_reg(graph, reg, value, force_bump=False):
 
 注意：版本比较用 `is not`（身份比较），而非 `==`（值比较）。对于 numpy array 等不可廉价比较的对象，身份比较已足够——如果 solver 每帧产生新 array，版本自然递增。
 
-### 版本快照存储与 OpCall 完整新结构
+### 版本快照存储与 OpCall 完整结构
 
 ```python
 import array as _array
@@ -478,6 +484,8 @@ def springBoneVRM_CPP(cache_state, vrm_chain_settings, scene, ...):
 
 ## CONST 指令版本化（曲线 socket 特殊处理）
 
+> **⚠️ 本节是整套懒求值机制中唯一尚未实现的部分。** 其余机制（寄存器版本跟踪、skip 判定、always_run、OMNI_NO_CHANGE、op_type dict 派发、共享子树 ref_count/inner_lazy_eval 保护）均已落地在 OmniExecutor / OmniCompiler / OmniIR / FunctionNodeCore 中；本节描述的 `ConstInstruction` 类、`is_curve`、`_curve_hash`、`source_socket` 弱引用**均未实现**。当前编译器里 CONST 仍是裸 tuple `("CONST", reg, value)`（见 `OmniCompiler.py` 中 `self.instructions.append(("CONST", reg, default_value))`），因此**曲线 socket 未连接时每帧仍会执行一次 RNA 读取**，本节内容属待办优化。
+
 当前 CONST 指令：
 
 ```python
@@ -486,7 +494,7 @@ def springBoneVRM_CPP(cache_state, vrm_chain_settings, scene, ...):
 
 问题：曲线 socket 的 value 是编译时的 RNA 快照，如果用户在运行中调整曲线，CONST 指令无法感知变化（value 已经固化）。
 
-新设计：
+拟议设计（尚未实现）：
 
 ```python
 class ConstInstruction:
@@ -858,14 +866,27 @@ Tracy profiler 里两类 zone 的时长比例直观展示懒求值效果。
 
 ## 实现改动范围
 
-| 文件 | 改动类型 | 影响 |
+下表列出各文件的改动，并标注**落地状态**。除曲线 CONST 版本化外，所有条目均已落地在运行代码中。
+
+| 文件 | 改动类型 | 落地状态 |
 |---|---|---|
-| `OmniIR.py` | 新增 `OP_*` 整数常量；OpCall 替换为新字段结构（`single_regs`、`call_structure`、`output0`、`_args_buf`、版本跟踪字段）；CompiledGraph 增加 `reg_values`、`reg_versions`、`has_always_run_node`；`instructions` 改为 `tuple` | IR 结构，向前不兼容 |
-| `OmniExecutor.py` | 主循环改为 `_DISPATCH[op.op_type](...)` 表驱动；拆出各 handler 函数；`_execute_core` 使用持久化 `graph.reg_values`；`write_reg` 封装版本递增 | 核心执行路径 |
-| `OmniCompiler.py` | `emit_function_call` 初始化 OpCall 新字段；`instructions.append` → 最后 `tuple(instructions)`；CONST 改为 `ConstInstruction` 对象；编译时计算 `has_always_run_node` | 编译输出 |
-| `OmniNodeTree.py` | `run_frame_cached` 不再每帧重建 registers，改用 `graph.reg_values`；`clear_compile_cache` 时显式将 `graph.reg_values` 置 None 防悬空引用 | 树级状态 |
-| `FunctionNodeCore.py` | `@omni(always_run=True)` 参数支持；生成 OpCall 时写入 `has_always_run` | 装饰器 |
-| 所有 solver 节点 | 添加 `always_run=True` 标记 | 逐个标注 |
+| `OmniIR.py` | 新增 `OP_*` 整数常量；OpCall 携带 `op_type` / `has_always_run` 等字段；CompiledGraph 增加 `reg_values`（list）、`reg_versions`（`array.array('l')`）、`has_always_run_node`、`inner_lazy_eval`、`ref_count`；`OMNI_NO_CHANGE` sentinel | ✅ 已落地 |
+| `OmniExecutor.py` | 主循环按 `op_type` 派发；`_should_skip_opcall` / `_should_skip_subtree` 做 skip 判定；`_write_reg` 封装版本递增（处理 `OMNI_NO_CHANGE`、身份比较）；主循环用 `graph.reg_values` 持久化寄存器 | ✅ 已落地 |
+| `OmniCompiler.py` | `emit_function_call` 写入 `has_always_run`；`_compute_has_always_run` 编译期标注子树；`_compute_ref_counts` 统计共享子树引用数，ref_count>1 时置 `inner_lazy_eval=False` 防跨路径污染 | ✅ 已落地 |
+| `OmniCompiler.py`（CONST 部分） | CONST 改为 `ConstInstruction` 对象、`is_curve` / `_curve_hash` / `source_socket` 弱引用 | ❌ **未落地**：CONST 仍是裸 tuple `("CONST", reg, value)`，曲线未连接 socket 每帧仍触发 RNA 读取 |
+| `OmniNodeTree.py` | 帧执行不再每帧重建 registers，改用 `graph.reg_values`；重编译/树删除时置空防悬空引用 | ✅ 已落地 |
+| `FunctionNodeCore.py` | `@omni(always_run=...)` 参数支持；生成 OpCall 时写入 `has_always_run` | ✅ 已落地 |
+| 所有 solver 节点 | 添加 `always_run=True` 标记 | ✅ 已落地 |
+
+**逐项落地状态小结：**
+
+- 寄存器版本跟踪（`reg_values` / `reg_versions`）：**已落地**
+- skip 判定（`_should_skip_opcall` / `_should_skip_subtree`）：**已落地**
+- `always_run` 标记（`@omni(always_run=...)` → `has_always_run`）：**已落地**
+- `OMNI_NO_CHANGE` sentinel（主动声明输出未变）：**已落地**
+- `op_type` 整数 + dict 派发（替代 isinstance 链）：**已落地**
+- 共享子树 `ref_count` / `inner_lazy_eval` 保护：**已落地**
+- 曲线 CONST 版本化（`ConstInstruction` / `is_curve` / `_curve_hash`）：**未落地**，仍是裸 tuple CONST，曲线未连接 socket 每帧仍触发 RNA 读取
 
 **高风险点**：
 

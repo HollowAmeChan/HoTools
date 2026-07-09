@@ -667,6 +667,8 @@ SpringBone 读取骨骼碰撞 profile 时的优先级：
 3. solver 默认值
 ```
 
+**当前落地状态（2026-07-09）：** resolver 已落地（`spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin`），从 `capabilities.py` 的 `BONE_COLLISION_CAPABILITY.fields` 读默认值；native（`native.py` 的 `_bone_collision_profile` / `_record_is_effectively_pinned`）已改为消费 resolver，不再直读 `Bone.hotools_collision`。但当前实际只走上面第 2、3 两层（legacy 属性 + capability 默认值）：第 1 层 override 隐式对象仍是空实现（`_resolve_override_profile` 恒返回 `None`），`骨骼碰撞覆写属性` / `骨骼碰撞覆写注册` 两个节点仍未实现，属于本节声明的 planned_nodes。因此本节其余内容（tag、stable_id、payload、override_mode、字段覆盖规则等）描述的是 override 层落地后的目标契约，不是当前已具备的行为。
+
 这条优先级必须同时用于：
 
 - SpringBone 自身模拟骨的 `hit_radii`。
@@ -1110,7 +1112,7 @@ SpringBone Step
 当前落地状态（2026-07-07）：
 
 - `physicsWorld/spring_vrm/native.py` 已从 `world.collider_snapshot` 打包 SpringBone native ABI 支持的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays。
-- 每根模拟骨当前已经从 `Bone.hotools_collision` 读取 `radius` 与 `collided_by_groups`，作为 C++ `hit_radii` / `collided_by_groups` 输入；引入骨骼碰撞覆写后，这里应改为统一读取 BoneCollisionProfile resolver，`Bone.hotools_collision` 只作为 fallback layer。
+- 每根模拟骨当前已经统一通过 BoneCollisionProfile resolver（`bone_collision.resolve_bone_collision_fields` / `resolve_bone_pin`）读取 `radius`、`collided_by_groups` 与 `pin`，作为 C++ `hit_radii` / `collided_by_groups` / `pinned` 输入，不再直读 `Bone.hotools_collision`。resolver 当前只有两层生效：legacy 属性 `Bone.hotools_collision` + capability 默认值；override 隐式对象层仍是空实现，`Bone.hotools_collision` 目前实际是唯一真实来源。
 - 同一 armature、同一链内的骨骼碰撞体会从被动 collider arrays 中排除，避免 SpringBone 自己撞自己。
 - `SpringBone VRM模拟步` 的 stats result 已报告真实 `collider_count`。
 - `PLANE` 用 `collider_segment_a` 传法线，`BOX` 用 `collider_segment_a/b` 传 X/Y 半轴、`collider_radii` 传带符号 Z 半轴长度；这只是 SpringBone native ABI 的打包约定，world snapshot 仍保留语义字段。
