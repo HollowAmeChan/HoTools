@@ -5,7 +5,7 @@ from __future__ import annotations
 import bpy
 import mathutils
 
-from ..names import RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND
+from .names import RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND
 from ..types import PhysicsWorldCache
 from ..utils.debug_draw import (
     add_box_lines,

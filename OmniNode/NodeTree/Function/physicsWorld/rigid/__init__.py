@@ -1,36 +1,61 @@
-# physicsWorld.rigid — 刚体 domain
-#
-# 刚体是物理世界里的一个 domain，放在 physicsWorld 下面，不单独建立刚体世界。
-# 公开语义使用 OmniNode / Blender 名称，Jolt 只作 backend（Phase 5 接入）。
-#
-#   specs.py    — RigidBodySpec、ConstraintSpec 及从 PropertyGroup 构造的工具函数
-#   solver.py   — 把 specs 注册到 PhysicsWorldCache solver slot 的逻辑
-#   results.py  — solver 每帧输出给 writeback/debug/export 的稳定结果
-#   nodes.py    — @omni 装饰的节点定义
-#   backends/   — native backend 适配层（Phase 5 加入 jolt.py）
+"""physicsWorld.rigid - Rigid/Jolt 领域包。"""
 
-from .specs import (
-    RigidBodySpec,
-    ConstraintSpec,
-    build_rigid_body_spec,
-    build_constraint_spec,
-)
-from .solver import (
-    register_rigid_bodies,
-    register_constraints,
-)
-from .declaration import (
-    RIGID_SOLVER_DECLARATION,
-    rigid_declaration_debug_dict,
-)
+from __future__ import annotations
 
-__all__ = [
-    "RIGID_SOLVER_DECLARATION",
-    "RigidBodySpec",
-    "ConstraintSpec",
-    "build_rigid_body_spec",
-    "build_constraint_spec",
-    "register_rigid_bodies",
-    "register_constraints",
-    "rigid_declaration_debug_dict",
-]
+from importlib import import_module
+
+
+_EXPORTS = {
+    "JOLT_STEP_WRITER_ID": ".names",
+    "RIGID_BACKEND_RESOURCE_KEY": ".names",
+    "RIGID_BODY_COMMANDS_CHANNEL": ".names",
+    "RIGID_BODY_REGISTER_WRITER_ID": ".names",
+    "RIGID_BODY_SLOT_KIND": ".names",
+    "RIGID_CONSTRAINT_REGISTER_WRITER_ID": ".names",
+    "RIGID_CONSTRAINT_SLOT_KIND": ".names",
+    "RIGID_DEBUG_DRAW_MODE": ".names",
+    "RIGID_GENERATED_CONSTRAINT_OBJECT_TAG": ".names",
+    "RIGID_JOLT_WORLD_SETTING_OBJECT_TAG": ".names",
+    "RIGID_MATERIAL_PRESET_OBJECT_TAG": ".names",
+    "RIGID_RAGDOLL_PROXY_OBJECT_TAG": ".names",
+    "RIGID_SOLVER_ID": ".names",
+    "RIGID_SOLVER_STATS_CHANNEL": ".names",
+    "RIGID_TRANSFORM_CHANNEL": ".names",
+    "RIGID_BODY_CAPABILITY": ".capabilities",
+    "RIGID_BODY_CAPABILITY_ID": ".capabilities",
+    "RIGID_BODY_COMMAND_CAPABILITY": ".capabilities",
+    "RIGID_BODY_COMMAND_CAPABILITY_ID": ".capabilities",
+    "RIGID_CAPABILITIES": ".capabilities",
+    "RIGID_CONSTRAINT_CAPABILITY": ".capabilities",
+    "RIGID_CONSTRAINT_CAPABILITY_ID": ".capabilities",
+    "RIGID_JOLT_WORLD_SETTING_CAPABILITY": ".capabilities",
+    "RIGID_JOLT_WORLD_SETTING_CAPABILITY_ID": ".capabilities",
+    "RIGID_UPDATE_FREQUENCY_TABLE": ".capabilities",
+    "RIGID_JOLT_CAPABILITY_BACKLOG": ".declaration",
+    "RIGID_SOLVER_DECLARATION": ".declaration",
+    "RIGID_DEBUG_DRAW_MODES": ".debug",
+    "install_rigid_slot_debug_snapshot": ".debug",
+    "rigid_backend_debug_snapshot": ".debug",
+    "rigid_debug_summary_for_world": ".debug",
+    "rigid_slot_debug_snapshot": ".debug",
+    "rigid_declaration_debug_dict": ".declaration",
+    "RigidBodySpec": ".specs",
+    "ConstraintSpec": ".specs",
+    "build_rigid_body_spec": ".specs",
+    "build_constraint_spec": ".specs",
+    "register_rigid_bodies": ".solver",
+    "register_constraints": ".solver",
+}
+
+
+def __getattr__(name: str):
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+__all__ = sorted(_EXPORTS)

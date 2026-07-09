@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from importlib import import_module
 
-# solver id、result channel、exchange channel、backend resource key、slot kind
-# 和 world.implicit_objects tag 都集中在这里，避免跨模块识别名称写散后错位。
+# 解算器 id、结果通道、交换通道、后端资源 key、槽位类型
+# 和 world.implicit_objects 标签都集中在这里，避免跨模块识别名称写散后错位。
 
 
-# ---- 通用写回 result channel -------------------------------------------
+# ---- 通用写回结果通道 ---------------------------------------------------
 #
-# solver 只发布写回指令；Object/PoseBone/GN attribute 的实际 Blender 写入统一由
+# 解算器只发布写回指令；Object/PoseBone/GN 属性的实际 Blender 写入统一由
 # physicsWorld.writeback 执行。
 RIGID_BODY_DELTA_CHANNEL = "rigid_body_delta"
 BONE_TRANSFORM_CHANNEL = "bone_transform"
@@ -39,31 +39,27 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-# ---- Rigid / Jolt -------------------------------------------------------
+# ---- 刚体 / Jolt --------------------------------------------------------
 
-RIGID_SOLVER_ID = "rigid_jolt"
-RIGID_BODY_SLOT_KIND = "rigid_body"
-RIGID_CONSTRAINT_SLOT_KIND = "rigid_constraint"
-RIGID_BACKEND_RESOURCE_KEY = "rigid_solver"
-RIGID_TRANSFORM_CHANNEL = "rigid_transform"
-RIGID_SOLVER_STATS_CHANNEL = "rigid_solver_stats"
-RIGID_BODY_COMMANDS_CHANNEL = "rigid_body_commands"
+from .rigid.names import (
+    JOLT_STEP_WRITER_ID,
+    RIGID_BACKEND_RESOURCE_KEY,
+    RIGID_BODY_COMMANDS_CHANNEL,
+    RIGID_BODY_REGISTER_WRITER_ID,
+    RIGID_BODY_SLOT_KIND,
+    RIGID_CONSTRAINT_REGISTER_WRITER_ID,
+    RIGID_CONSTRAINT_SLOT_KIND,
+    RIGID_DEBUG_DRAW_MODE,
+    RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
+    RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
+    RIGID_MATERIAL_PRESET_OBJECT_TAG,
+    RIGID_RAGDOLL_PROXY_OBJECT_TAG,
+    RIGID_SOLVER_ID,
+    RIGID_SOLVER_STATS_CHANNEL,
+    RIGID_TRANSFORM_CHANNEL,
+)
 
-RIGID_BODY_REGISTER_WRITER_ID = "rigid_body_solver"
-RIGID_CONSTRAINT_REGISTER_WRITER_ID = "constraint_solver"
-JOLT_STEP_WRITER_ID = "jolt_step"
-
-# 刚体生成/批处理节点写入 world.implicit_objects 的全局 tag。
-#
-# rigid.generated_constraint 已由刚体 solver 消费；其它 tag 仍只在声明里占位，
-# 避免后续命名分叉。
-RIGID_GENERATED_CONSTRAINT_OBJECT_TAG = "rigid.generated_constraint"
-RIGID_JOLT_WORLD_SETTING_OBJECT_TAG = "rigid_jolt.world_setting"
-RIGID_MATERIAL_PRESET_OBJECT_TAG = "rigid.material_preset"
-RIGID_RAGDOLL_PROXY_OBJECT_TAG = "rigid.ragdoll_proxy"
-
-
-# ---- Collider native ABI -----------------------------------------------
+# ---- 碰撞体原生 ABI -----------------------------------------------------
 
 COLLIDER_TYPE_SPHERE = 0
 COLLIDER_TYPE_CAPSULE = 1

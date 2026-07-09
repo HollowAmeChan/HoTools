@@ -6,7 +6,7 @@ import math
 import mathutils
 import bpy
 
-from ..names import (
+from .names import (
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_CONSTRAINT_SLOT_KIND,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
@@ -14,6 +14,7 @@ from ..names import (
 )
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
+from .debug import install_rigid_slot_debug_snapshot
 from .declaration import RIGID_SOLVER_DECLARATION
 from .specs import ConstraintSpec
 
@@ -725,7 +726,7 @@ def sync_generated_constraint_slots(world: PhysicsWorldCache, adapter=None) -> t
         slot.data["_sync_signature"] = signature
         slot.data["spec"] = spec
         slot.data["declaration"] = RIGID_SOLVER_DECLARATION
-        slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
+        install_rigid_slot_debug_snapshot(slot, spec)
 
     stale_ids = [
         slot_id

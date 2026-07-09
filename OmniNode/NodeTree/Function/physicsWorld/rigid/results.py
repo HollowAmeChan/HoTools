@@ -8,7 +8,7 @@ these results instead of reaching into backend-private Jolt handles.
 
 from __future__ import annotations
 
-from ..names import (
+from .names import (
     RIGID_SOLVER_ID,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,

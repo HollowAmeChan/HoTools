@@ -7,7 +7,7 @@ Phase 5：step_rigid_bodies — 接入 Jolt adapter，执行模拟步。
 
 from __future__ import annotations
 
-from ..names import (
+from .names import (
     JOLT_STEP_WRITER_ID,
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_BODY_COMMANDS_CHANNEL,
@@ -35,6 +35,7 @@ from .results import (
     publish_rigid_solver_stats_result,
 )
 from .declaration import RIGID_SOLVER_DECLARATION
+from .debug import install_rigid_slot_debug_snapshot
 
 
 _RIGID_COMMAND_CONSUMER_KEY = "_consumed_by_rigid_solver"
@@ -80,7 +81,7 @@ def register_rigid_bodies(
 
             slot.data["spec"] = spec
             slot.data["declaration"] = RIGID_SOLVER_DECLARATION
-            slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
+            install_rigid_slot_debug_snapshot(slot, spec)
             registered_ids.append(spec.slot_id)
 
         return len(registered_ids), registered_ids
@@ -125,7 +126,7 @@ def register_constraints(
 
             slot.data["spec"] = spec
             slot.data["declaration"] = RIGID_SOLVER_DECLARATION
-            slot.data["_debug_snapshot"] = lambda s=spec: s.debug_dict()
+            install_rigid_slot_debug_snapshot(slot, spec)
             registered_ids.append(spec.slot_id)
 
         return len(registered_ids), registered_ids

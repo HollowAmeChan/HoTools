@@ -1,26 +1,11 @@
-"""统一物理世界的 solver 声明 registry。"""
+"""统一物理世界的解算器声明注册表。"""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from importlib import import_module
 
-from .names import (
-    JOLT_STEP_WRITER_ID,
-    RIGID_BACKEND_RESOURCE_KEY,
-    RIGID_BODY_COMMANDS_CHANNEL,
-    RIGID_BODY_REGISTER_WRITER_ID,
-    RIGID_BODY_SLOT_KIND,
-    RIGID_CONSTRAINT_REGISTER_WRITER_ID,
-    RIGID_CONSTRAINT_SLOT_KIND,
-    RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
-    RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
-    RIGID_MATERIAL_PRESET_OBJECT_TAG,
-    RIGID_RAGDOLL_PROXY_OBJECT_TAG,
-    RIGID_SOLVER_ID,
-    RIGID_SOLVER_STATS_CHANNEL,
-    RIGID_TRANSFORM_CHANNEL,
-)
+from .rigid.names import RIGID_SOLVER_ID
 
 
 SOLVER_DECLARATION_REQUIRED_KEYS = (
@@ -38,16 +23,19 @@ SOLVER_DECLARATION_REQUIRED_KEYS = (
 
 
 _SPRING_VRM_SOLVER_ID = "spring_vrm"
-_SPRING_VRM_COMPAT_EXPORTS = {
+_COMPAT_EXPORTS = {
     "BONE_COLLISION_CAPABILITY": ".spring_vrm.capabilities",
     "BONE_COLLISION_CAPABILITY_ID": ".spring_vrm.capabilities",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".spring_vrm.capabilities",
     "SPRING_VRM_SOLVER_DECLARATION": ".spring_vrm.declaration",
+    "RIGID_CAPABILITIES": ".rigid.capabilities",
+    "RIGID_UPDATE_FREQUENCY_TABLE": ".rigid.capabilities",
+    "RIGID_SOLVER_DECLARATION": ".rigid.declaration",
 }
 
 
 def __getattr__(name: str):
-    module_name = _SPRING_VRM_COMPAT_EXPORTS.get(name)
+    module_name = _COMPAT_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(name)
     module = import_module(module_name, __package__)
@@ -61,101 +49,18 @@ def _load_spring_vrm_solver_declaration() -> dict:
     return module.SPRING_VRM_SOLVER_DECLARATION
 
 
-RIGID_SOLVER_DECLARATION = {
-    "solver_id": RIGID_SOLVER_ID,
-    "slot_kind": [RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND],
-    "stage": "jolt_vertical_slice",
-    "native_strategy": "jolt_backend_with_python_world_glue",
-    # 节点名必须与 rigid/nodes.py 的 bl_label 一致。旧的"刚体注册/刚体约束注册"
-    # 独立节点已并入 physicsWorldBegin（对象范围自动登记刚体/约束），不再作为节点存在；
-    # 这里只列真实存在的 rigid 节点，避免 debug snapshot 展示幽灵节点。
-    "nodes": [
-        "刚体模拟步",
-        "刚体结果-读取状态",
-        "刚体世界-Jolt设置属性",
-        "刚体世界-Jolt设置注册",
-        "刚体生成约束属性",
-        "刚体生成约束注册",
-        "刚体命令-设置速度",
-        "刚体命令-施加力",
-        "刚体命令-施加冲量",
-        "刚体命令-重力倍率",
-        "刚体命令-材质响应",
-        "刚体命令-运动质量",
-        "刚体命令-激活状态",
-    ],
-    "writers": [
-        RIGID_BODY_REGISTER_WRITER_ID,
-        RIGID_CONSTRAINT_REGISTER_WRITER_ID,
-        JOLT_STEP_WRITER_ID,
-    ],
-    "consumes": [
-        "PhysicsWorldCache.frame_context",
-        "来自 solver slot 的 RigidBodySpec",
-        "来自 solver slot 的 ConstraintSpec",
-        f'world.implicit_objects["{RIGID_JOLT_WORLD_SETTING_OBJECT_TAG}"]',
-        f'world.implicit_objects["{RIGID_GENERATED_CONSTRAINT_OBJECT_TAG}"]',
-        f'world.exchange["{RIGID_BODY_COMMANDS_CHANNEL}"]',
-    ],
-    "produces": [
-        f'world.result_streams["{RIGID_TRANSFORM_CHANNEL}"]',
-        f'world.result_streams["{RIGID_SOLVER_STATS_CHANNEL}"]',
-    ],
-    "persistent_state": [
-        f'world.backend_resources["{RIGID_BACKEND_RESOURCE_KEY}"]',
-        "slot.data.spec",
-        "slot.data._jolt_generation",
-        "slot.data._jolt_kinematic_pose_dirty",
-    ],
-    "dirty_keys": [
-        "world.generation",
-        "frame_context.restart_required",
-        "RigidBodySpec.signature",
-        "ConstraintSpec.signature",
-        f'world.implicit_objects["{RIGID_JOLT_WORLD_SETTING_OBJECT_TAG}"].signature',
-        f'world.implicit_objects["{RIGID_GENERATED_CONSTRAINT_OBJECT_TAG}"].signature',
-        f'world.exchange["{RIGID_BODY_COMMANDS_CHANNEL}"]',
-    ],
-    "same_frame_policy": "sync_pending_or_publish_cached_transforms_no_step",
-    "update_policy": {
-        "body_spec": "sync_to_jolt_when_generation_or_signature_changes",
-        "constraint_spec": "sync_to_jolt_when_generation_or_signature_changes",
-        "kinematic_pose": "update_without_time_step_when_same_frame",
-        "jolt_world_settings": "sync_to_jolt_adapter_by_implicit_object_signature",
-        "commands": "consume_once_per_generation_frame_token",
-        "same_frame": "publish_cached_transforms_no_time_step_unless_pending_sync",
-    },
-    "implicit_objects": {
-        "consumes": [
-            RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
-            RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
-        ],
-        "planned": [
-            RIGID_MATERIAL_PRESET_OBJECT_TAG,
-            RIGID_RAGDOLL_PROXY_OBJECT_TAG,
-        ],
-        "entry_kind": "rigid_generated_object_or_jolt_world_setting",
-        "producer_nodes": ["刚体世界-Jolt设置注册", "刚体生成约束注册"],
-        "update_policy": "lazy_by_tag_stable_id_signature",
-        "conflict_policy": "same_tag_and_stable_id_last_writer_wins",
-    },
-    "writeback": {
-        "owner": "physicsWorld.writeback",
-        "target": "Object.delta_transform",
-        "solver_inline_writeback": False,
-        "update_tag_owner": "writeback.apply",
-    },
-    "export": {
-        "result_channels": [RIGID_TRANSFORM_CHANNEL, RIGID_SOLVER_STATS_CHANNEL],
-        "supports_bake": False,
-    },
-    "legacy_policy": "new_world_only_no_compatibility",
-}
+def _load_rigid_solver_declaration() -> dict:
+    module = import_module(".rigid.declaration", __package__)
+    return module.RIGID_SOLVER_DECLARATION
+
+
+# 兼容旧导入路径的符号。权威声明位于 physicsWorld/rigid/declaration.py。
+RIGID_SOLVER_DECLARATION = _load_rigid_solver_declaration()
 
 
 _BUILTIN_SOLVER_DECLARATION_LOADERS = {
     _SPRING_VRM_SOLVER_ID: _load_spring_vrm_solver_declaration,
-    RIGID_SOLVER_ID: lambda: RIGID_SOLVER_DECLARATION,
+    RIGID_SOLVER_ID: _load_rigid_solver_declaration,
 }
 
 _RUNTIME_SOLVER_DECLARATIONS: dict[str, dict] = {}
@@ -172,7 +77,7 @@ def _as_list(value) -> list:
 
 
 def normalize_solver_declaration(declaration: dict) -> dict:
-    """返回声明的深拷贝，并把常用单值字段整理成稳定形态。"""
+    """返回解算器声明的稳定深拷贝形态。"""
     data = deepcopy(declaration) if isinstance(declaration, dict) else {}
     if "slot_kind" in data:
         data["slot_kind"] = _as_list(data.get("slot_kind"))
@@ -189,7 +94,6 @@ def normalize_solver_declaration(declaration: dict) -> dict:
 
 
 def validate_solver_declaration(declaration: dict) -> list[str]:
-    """校验 solver 声明的最小结构，供 debug 节点和迁移审查使用。"""
     problems: list[str] = []
     data = normalize_solver_declaration(declaration)
 
@@ -224,11 +128,10 @@ def validate_solver_declaration(declaration: dict) -> list[str]:
 
 
 def register_solver_declaration(declaration: dict) -> dict:
-    """注册运行时 solver 声明；未来外部 solver 接入时使用。"""
     data = normalize_solver_declaration(declaration)
     solver_id = str(data.get("solver_id") or "").strip()
     if not solver_id:
-        raise ValueError("solver 声明需要 solver_id")
+        raise ValueError("解算器声明需要 solver_id")
     _RUNTIME_SOLVER_DECLARATIONS[solver_id] = data
     return deepcopy(data)
 

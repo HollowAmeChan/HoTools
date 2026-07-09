@@ -10,7 +10,7 @@ import mathutils
 
 from ....FunctionNodeCore import omni
 from ... import _Color
-from ..names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
+from .names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
 from ..types import PhysicsWorldCache
 from .debug_draw import update_rigid_debug_draw_store
 from .implicit_objects import (

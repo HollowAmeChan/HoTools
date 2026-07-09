@@ -20,7 +20,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from ...names import (
+from ..names import (
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_SLOT_KIND,
@@ -468,20 +468,9 @@ class JoltAdapter:
     # ---- Info ------------------------------------------------------------
 
     def debug_snapshot(self) -> dict:
-        return {
-            "backend": self.BACKEND,
-            "body_count": self._jw.body_count,
-            "constraint_count": self._jw.constraint_count,
-            "last_step_ms": round(self.last_step_ms, 3),
-            "last_command_count": int(getattr(self, "last_command_count", 0) or 0),
-            "last_command_failed": int(getattr(self, "last_command_failed", 0) or 0),
-            "last_command_errors": list(getattr(self, "last_command_errors", []) or []),
-            "jolt_world_gravity": tuple(getattr(self, "last_jolt_world_gravity", (0.0, 0.0, -9.81))),
-            "jolt_world_settings_signature": str(getattr(self, "_jolt_world_settings_signature", "default") or "default"),
-            "jolt_max_bodies": int(getattr(self, "jolt_max_bodies", 0) or 0),
-            "jolt_max_body_pairs": int(getattr(self, "jolt_max_body_pairs", 0) or 0),
-            "jolt_max_contact_constraints": int(getattr(self, "jolt_max_contact_constraints", 0) or 0),
-        }
+        from ..debug import rigid_backend_debug_snapshot
+
+        return rigid_backend_debug_snapshot(self)
 
     @property
     def body_count(self) -> int:
