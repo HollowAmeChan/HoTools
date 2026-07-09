@@ -96,30 +96,6 @@ def _find_socket(context, tree_name, node_name, socket_identifier, socket_name):
     return tree, node, socket
 
 
-def _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name):
-    return _find_socket(context, tree_name, node_name, socket_identifier, socket_name)
-
-
-def _apply_curve_socket_preset(context, tree_name, node_name, socket_identifier, socket_name, preset_id):
-    tree, node, socket = _find_curve_socket(context, tree_name, node_name, socket_identifier, socket_name)
-    if tree is None:
-        return False, "找不到节点树"
-    if node is None:
-        return False, "找不到节点"
-    if socket is None:
-        return False, "找不到曲线 socket"
-
-    payload = _curve_socket_preset_payload(socket, preset_id)
-    if payload is None:
-        return False, "找不到曲线预设"
-
-    socket.default_value = payload
-    area = getattr(context, "area", None)
-    if area is not None:
-        area.tag_redraw()
-    return True, ""
-
-
 def _curve_socket_preset_items(socket, context):
     curve_kind = _curve_socket_kind(socket)
     presets = PropertyCurvePresetRegistry.classes(curve_kind)
@@ -154,7 +130,7 @@ def _curve_socket_preset_update(socket, context):
 
 
 def _curve_socket_preset_popup_socket(operator, context):
-    _tree, _node, socket = _find_curve_socket(
+    _tree, _node, socket = _find_socket(
         context,
         getattr(operator, "node_tree_name", ""),
         getattr(operator, "node_name", ""),

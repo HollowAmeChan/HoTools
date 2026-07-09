@@ -141,7 +141,7 @@ def _bitmask_result(mask: _OmniBitMask, hex_width: int) -> tuple[_OmniBitMask, i
       input_init={
           "mask": {
               "mask_length": 4,
-              "default_value": 0b0011,
+              "default_value": 0,
           },
       },
       )
@@ -157,7 +157,7 @@ def bitMask4Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
       input_init={
           "mask": {
               "mask_length": 8,
-              "default_value": 0b00001111,
+              "default_value": 0,
           },
       },
       )
@@ -173,7 +173,7 @@ def bitMask8Input(mask: _OmniBitMask = 0) -> tuple[_OmniBitMask, int, str]:
       input_init={
           "mask": {
               "mask_length": 16,
-              "default_value": 0xFFFF,
+              "default_value": 0,
           },
       },
       )
