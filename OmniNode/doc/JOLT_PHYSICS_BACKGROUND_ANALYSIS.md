@@ -886,6 +886,8 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 刚体/Jolt 从 object scope 自动收集 `RigidBodySpec` / `ConstraintSpec` 的逻辑已从 `physicsWorld/world.py` 下沉到 `physicsWorld/rigid/scope_sync.py`，并由 `rigid.SOLVER_MODULE` 暴露为 registry scope hook。Physics World Begin 只调用 `physicsWorld/registry.py`，不再直接点名 Jolt/rigid；Jolt 冷启动前清理动态刚体 Object delta 也作为 rigid 的 `scope_restart_handlers` 执行。rigid 的 solver declaration 也由 `SOLVER_MODULE.declaration` 汇入 registry，再由 `physicsWorld/declarations.py` 做兼容汇总。
 
+公共 `physicsWorld/names.py`、`physicsWorld/declarations.py` 和根级 `physicsWorld/__init__.py` 对 rigid/Jolt 自有名称、能力表和声明已改为兼容惰性导出；只有实际访问 `RIGID_*` / `JOLT_*` 符号时才进入 rigid 子模块，公共包导入阶段不再主动拉起 Jolt 私有实现。
+
 `rigid.material_preset`、`rigid.ragdoll_proxy` 仍是 planned implicit object tag，当前只占位，不被 solver 消费。
 
 后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。

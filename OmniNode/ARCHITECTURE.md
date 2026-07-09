@@ -1055,6 +1055,8 @@ Blender ID 强引用，用于追加或链接工作流；它不创建独立运行
 
 `physicsWorld/registry.py` 是 solver 子模块描述符的装载入口。公共 `world.py` 只能通过 registry 调用 `scope_restart_handlers` / `scope_collectors` 等通用 hook；`declarations.py` 也通过 registry 汇总内建 solver declaration。公共层不能直接导入 rigid/Jolt、SpringBone 或未来 cloth domain 的私有实现。
 
+`physicsWorld/names.py` 与根级 `physicsWorld/__init__.py` 对 solver 自有名称、能力和声明只保留兼容惰性重导出；导入公共包不应主动装载 rigid/Jolt 私有模块。
+
 约定：domain 内 `declaration.py` 只重导出或补充 audit；`PhysicsWorldCache.omni_cache_debug_snapshot()` 输出 `solver_declarations`；新 solver 先补声明再接节点/native。
 
 硬约束：`writeback.solver_inline_writeback=False`，solver 内不直接写 Blender 数据。

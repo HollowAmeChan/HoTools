@@ -1,7 +1,7 @@
 # physicsWorld.spring_vrm - 统一物理世界里的 VRM SpringBone 领域
 #
 # 包初始化必须保持轻量。根级 physicsWorld.names 会兼容重导出 spring_vrm.names；
-# 如果这里提前导入 solver/native，会在插件启用时形成 names -> spring_vrm -> native
+# 如果这里提前导入解算器或原生模块，会在插件启用时形成 names -> spring_vrm -> 原生模块
 # -> names 的循环导入。
 #
 #   names.py       - SpringBone 自有 id / channel / tag 常量

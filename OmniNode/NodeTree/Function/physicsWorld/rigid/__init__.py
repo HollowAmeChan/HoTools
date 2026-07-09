@@ -1,4 +1,4 @@
-"""physicsWorld.rigid - Rigid/Jolt 领域包。"""
+"""physicsWorld.rigid - 刚体/Jolt 领域包。"""
 
 from __future__ import annotations
 

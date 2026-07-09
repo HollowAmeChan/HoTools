@@ -667,7 +667,7 @@ SpringBone 读取骨骼碰撞 profile 时的优先级：
 3. solver 默认值
 ```
 
-**当前落地状态（2026-07-09）：** resolver 已落地（`spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin`），从 `capabilities.py` 的 `BONE_COLLISION_CAPABILITY.fields` 读默认值；native（`native.py` 的 `_bone_collision_profile` / `_record_is_effectively_pinned`）已改为消费 resolver，不再直读 `Bone.hotools_collision`。但当前实际只走上面第 2、3 两层（legacy 属性 + capability 默认值）：第 1 层 override 隐式对象仍是空实现（`_resolve_override_profile` 恒返回 `None`），`骨骼碰撞覆写属性` / `骨骼碰撞覆写注册` 两个节点仍未实现，属于本节声明的 planned_nodes。因此本节其余内容（tag、stable_id、payload、override_mode、字段覆盖规则等）描述的是 override 层落地后的目标契约，不是当前已具备的行为。
+**当前落地状态（2026-07-09 更新）：** resolver 已落地（`spring_vrm/bone_collision.py` 的 `resolve_bone_collision_fields` / `resolve_bone_pin`），从 `capabilities.py` 的 `BONE_COLLISION_CAPABILITY.fields` 读默认值；native（`native.py` 的 `_bone_collision_profile` / `_record_is_effectively_pinned`）已改为消费 resolver，不再直读 `Bone.hotools_collision`。`bone_collision.override` 隐式对象层也已落地：`骨骼碰撞覆写属性` / `骨骼碰撞覆写注册` 会写入 `world.implicit_objects["bone_collision.override"]`，`_resolve_override_profile` 按 `armature_ptr + armature_data_ptr + bone_name` 命中并以 partial 覆写语义覆盖 legacy/default profile。Blender 后台测试已覆盖 override 优先于 legacy、禁用 override 后回退 legacy，以及 native `_bone_collision_profile` 消费 override 后的 `radius` / `collided_by_groups`。
 
 这条优先级必须同时用于：
 
@@ -1112,7 +1112,7 @@ SpringBone Step
 当前落地状态（2026-07-07）：
 
 - `physicsWorld/spring_vrm/native.py` 已从 `world.collider_snapshot` 打包 SpringBone native ABI 支持的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays。
-- 每根模拟骨当前已经统一通过 BoneCollisionProfile resolver（`bone_collision.resolve_bone_collision_fields` / `resolve_bone_pin`）读取 `radius`、`collided_by_groups` 与 `pin`，作为 C++ `hit_radii` / `collided_by_groups` / `pinned` 输入，不再直读 `Bone.hotools_collision`。resolver 当前只有两层生效：legacy 属性 `Bone.hotools_collision` + capability 默认值；override 隐式对象层仍是空实现，`Bone.hotools_collision` 目前实际是唯一真实来源。
+- 每根模拟骨当前已经统一通过 BoneCollisionProfile resolver（`bone_collision.resolve_bone_collision_fields` / `resolve_bone_pin`）读取 `radius`、`collided_by_groups` 与 `pin`，作为 C++ `hit_radii` / `collided_by_groups` / `pinned` 输入，不再直读 `Bone.hotools_collision`。resolver 当前三层均已生效：`bone_collision.override` 隐式对象优先，其次 legacy 属性 `Bone.hotools_collision`，最后 capability 默认值；`Bone.hotools_collision` 只是过渡期 fallback storage，不再是唯一真实来源。
 - 同一 armature、同一链内的骨骼碰撞体会从被动 collider arrays 中排除，避免 SpringBone 自己撞自己。
 - `SpringBone VRM模拟步` 的 stats result 已报告真实 `collider_count`。
 - `PLANE` 用 `collider_segment_a` 传法线，`BOX` 用 `collider_segment_a/b` 传 X/Y 半轴、`collider_radii` 传带符号 Z 半轴长度；这只是 SpringBone native ABI 的打包约定，world snapshot 仍保留语义字段。
@@ -1154,11 +1154,12 @@ SpringBone Step
 - static arrays 常驻 C++ context，topology dirty 才重传。
 - 每帧只传 animated arrays + collider arrays + 标量参数。
 
-当前落地状态（2026-07-07）：
+当前落地状态（2026-07-09 更新）：
 
-- 底层仍使用 35 参数单次调用 ABI，但 SpringBone slot 已先把 chain buffers 常驻到 `native_context`，并有 Blender 后台测试验证连续帧复用、stale slot dispose、stats/debug 摘要。这样后续替换为真正 C++ context 时，Python owner / topology signature / result readback / debug 边界已经固定。
+- Python slot 侧的 `SpringVRMNativeContext` 已实现 dual-call 路径：`spring_vrm_create_context` 常驻 static topology arrays，`spring_vrm_update_dynamic` 每帧上传 pose/collider arrays，`spring_vrm_step` 推进，`spring_vrm_read_results` 读回 target matrices / quaternions。
+- 发布的 native 绑定已导出 `spring_vrm_create_context` / `spring_vrm_update_dynamic` / `spring_vrm_step` / `spring_vrm_read_results` / `spring_vrm_reset_state`。`_native/tests/test_spring_bone_vrm_native.py` 已覆盖 context create、reset、gravity、collider 和完整 head XYZ 保留。
+- 旧 35 参数 `solve_spring_bone_vrm_cpp` 仍作为 transitional bridge 保留，只有在当前 native 模块没有 dual-call symbol 或 handle 创建失败时才回退。完整验收前需要把发布目标固定为 dual-call ABI，并删除 `_step_via_legacy_bridge` 及其死字段。
 - C++ kernel 已支持 SpringBone 使用的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider type code；Blender 集成测试覆盖 world snapshot 打包，native 单测覆盖 binding 层 shape/dtype 校验。
-- 下一步不应先扩大公开节点功能，而应把当前 Python façade 落到 C++ handle：static topology arrays 常驻、dynamic pose/collider arrays 每帧上传、step 后读回 current_tails / target_matrices。
 
 **当前代码 → 新接口映射：**
 

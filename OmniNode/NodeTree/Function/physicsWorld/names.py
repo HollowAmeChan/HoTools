@@ -30,9 +30,33 @@ _SPRING_VRM_COMPAT_NAMES = {
 }
 
 
+_RIGID_COMPAT_NAMES = {
+    "JOLT_STEP_WRITER_ID",
+    "RIGID_BACKEND_RESOURCE_KEY",
+    "RIGID_BODY_COMMANDS_CHANNEL",
+    "RIGID_BODY_REGISTER_WRITER_ID",
+    "RIGID_BODY_SLOT_KIND",
+    "RIGID_CONSTRAINT_REGISTER_WRITER_ID",
+    "RIGID_CONSTRAINT_SLOT_KIND",
+    "RIGID_DEBUG_DRAW_MODE",
+    "RIGID_GENERATED_CONSTRAINT_OBJECT_TAG",
+    "RIGID_JOLT_WORLD_SETTING_OBJECT_TAG",
+    "RIGID_MATERIAL_PRESET_OBJECT_TAG",
+    "RIGID_RAGDOLL_PROXY_OBJECT_TAG",
+    "RIGID_SOLVER_ID",
+    "RIGID_SOLVER_STATS_CHANNEL",
+    "RIGID_TRANSFORM_CHANNEL",
+}
+
+
 def __getattr__(name: str):
     if name in _SPRING_VRM_COMPAT_NAMES:
         module = import_module(".spring_vrm.names", __package__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    if name in _RIGID_COMPAT_NAMES:
+        module = import_module(".rigid.names", __package__)
         value = getattr(module, name)
         globals()[name] = value
         return value
@@ -40,24 +64,6 @@ def __getattr__(name: str):
 
 
 # ---- 刚体 / Jolt --------------------------------------------------------
-
-from .rigid.names import (
-    JOLT_STEP_WRITER_ID,
-    RIGID_BACKEND_RESOURCE_KEY,
-    RIGID_BODY_COMMANDS_CHANNEL,
-    RIGID_BODY_REGISTER_WRITER_ID,
-    RIGID_BODY_SLOT_KIND,
-    RIGID_CONSTRAINT_REGISTER_WRITER_ID,
-    RIGID_CONSTRAINT_SLOT_KIND,
-    RIGID_DEBUG_DRAW_MODE,
-    RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
-    RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
-    RIGID_MATERIAL_PRESET_OBJECT_TAG,
-    RIGID_RAGDOLL_PROXY_OBJECT_TAG,
-    RIGID_SOLVER_ID,
-    RIGID_SOLVER_STATS_CHANNEL,
-    RIGID_TRANSFORM_CHANNEL,
-)
 
 # ---- 碰撞体原生 ABI -----------------------------------------------------
 

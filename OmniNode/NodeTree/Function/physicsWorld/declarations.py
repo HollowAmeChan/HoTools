@@ -66,9 +66,6 @@ def _load_builtin_solver_declaration(domain: str) -> dict | None:
     return resolve_solver_declaration(domain)
 
 
-# 兼容旧导入路径的符号。权威声明位于 physicsWorld/rigid/declaration.py。
-RIGID_SOLVER_DECLARATION = _load_rigid_solver_declaration()
-
 _RUNTIME_SOLVER_DECLARATIONS: dict[str, dict] = {}
 
 
@@ -175,6 +172,7 @@ def _iter_builtin_solver_declaration_entries() -> list[dict]:
     try:
         from .registry import iter_solver_declarations
     except Exception:
+        rigid_declaration = _load_rigid_solver_declaration()
         return [
             {
                 "domain": "spring_vrm",
@@ -183,8 +181,8 @@ def _iter_builtin_solver_declaration_entries() -> list[dict]:
             },
             {
                 "domain": "rigid",
-                "solver_id": str(RIGID_SOLVER_DECLARATION.get("solver_id") or "rigid_jolt"),
-                "declaration": RIGID_SOLVER_DECLARATION,
+                "solver_id": str(rigid_declaration.get("solver_id") or "rigid_jolt"),
+                "declaration": rigid_declaration,
             },
         ]
 
