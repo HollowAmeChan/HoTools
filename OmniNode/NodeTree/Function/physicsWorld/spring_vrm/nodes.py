@@ -6,6 +6,7 @@ from ....FunctionNodeCore import omni
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone
 from ... import _Color
 from ..types import PhysicsWorldCache
+from .capabilities import BONE_COLLISION_CAPABILITY
 from .debug_draw import update_spring_vrm_debug_draw_store
 from .implicit_objects import (
     make_bone_collision_override_properties,
@@ -14,6 +15,34 @@ from .implicit_objects import (
     register_spring_vrm_chain_objects,
 )
 from .solver import step_spring_vrm
+
+
+def _bone_collision_type_values() -> tuple[str, ...]:
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
+        if str(field.get("name") or "") == "collision_type":
+            values = tuple(str(item) for item in field.get("values", ()) if str(item))
+            if values:
+                return values
+    return ("NONE", "SPHERE", "CAPSULE")
+
+
+def _bone_collision_type_socket_description() -> str:
+    items = "\n".join(
+        f"{index}={name}"
+        for index, name in enumerate(_bone_collision_type_values())
+    )
+    return f"collision_type:\n{items}"
+
+
+def _bone_collision_type_from_socket(value) -> str:
+    # Int socket -> BONE_COLLISION_CAPABILITY.fields['collision_type'].values index.
+    values = _bone_collision_type_values()
+    try:
+        index = int(value)
+    except Exception:
+        index = 0
+    index = max(0, min(len(values) - 1, index))
+    return values[index]
 
 
 @omni(
@@ -97,6 +126,15 @@ def physicsSpringVRMChainRegister(
         "覆写被碰撞组", "被碰撞组",
     ],
     input_init={
+        "collision_type": {
+            "min_value": 0,
+            "max_value": len(_bone_collision_type_values()) - 1,
+            "description": _bone_collision_type_socket_description(),
+            "default_value": (
+                _bone_collision_type_values().index("SPHERE")
+                if "SPHERE" in _bone_collision_type_values() else 0
+            ),
+        },
         "radius": {"min_value": 0.0, "max_value": 10.0},
         "length": {"min_value": 0.0, "max_value": 10.0},
         "primary_collision_group": {"min_value": 1, "max_value": 16},
@@ -109,12 +147,12 @@ def physicsSpringVRMChainRegister(
     """,
 )
 def physicsBoneCollisionOverrideProperties(
-    bone: _OmniBone,
+    bone: list[_OmniBone],
     enabled: bool = True,
     override_pin: bool = False,
     pin: bool = False,
     override_collision_type: bool = False,
-    collision_type: str = "SPHERE",
+    collision_type: int = 1,
     override_radius: bool = False,
     radius: float = 0.05,
     override_length: bool = False,
@@ -125,18 +163,23 @@ def physicsBoneCollisionOverrideProperties(
     primary_collision_group: int = 1,
     override_collided_by_groups: bool = False,
     collided_by_groups: _OmniBitMask = 0,
-) -> dict:
-    return make_bone_collision_override_properties(
-        bone,
-        enabled=bool(enabled),
-        pin=bool(pin) if override_pin else None,
-        collision_type=str(collision_type or "SPHERE") if override_collision_type else None,
-        radius=float(radius) if override_radius else None,
-        length=float(length) if override_length else None,
-        offset=offset if override_offset else None,
-        primary_collision_group=int(primary_collision_group) if override_primary_collision_group else None,
-        collided_by_groups=int(collided_by_groups) if override_collided_by_groups else None,
-    )
+) -> list[object]:
+    bones = list(bone) if isinstance(bone, (list, tuple)) else [bone]
+    return [
+        make_bone_collision_override_properties(
+            item,
+            enabled=bool(enabled),
+            pin=bool(pin) if override_pin else None,
+            collision_type=_bone_collision_type_from_socket(collision_type) if override_collision_type else None,
+            radius=float(radius) if override_radius else None,
+            length=float(length) if override_length else None,
+            offset=offset if override_offset else None,
+            primary_collision_group=int(primary_collision_group) if override_primary_collision_group else None,
+            collided_by_groups=int(collided_by_groups) if override_collided_by_groups else None,
+        )
+        for item in bones
+        if item is not None
+    ]
 
 
 @omni(

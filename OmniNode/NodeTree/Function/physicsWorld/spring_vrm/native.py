@@ -84,6 +84,14 @@ def is_context_api_available() -> bool:
     return is_available()
 
 
+def is_context_debug_api_available(module=None) -> bool:
+    try:
+        module = native_module() if module is None else module
+    except Exception:
+        return False
+    return hasattr(module, "spring_vrm_read_debug")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SpringVRMNativeContext — 单条链的 native context holder
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +129,7 @@ class SpringVRMNativeContext:
         self._dynamic: dict[str, np.ndarray] | None = None
         self._result: np.ndarray | None = None       # (N*16,) float32，target_matrices
         self._result_quat: np.ndarray | None = None  # (N*4,)  float32，target_quaternions
+        self._debug_snapshot: dict | None = None
 
         # records 在 rebuild 时存储，publish 和每帧 profile 解析读取
         self._records: list[dict] = []
@@ -221,6 +230,7 @@ class SpringVRMNativeContext:
         self._dynamic = None
         self._result = None
         self._result_quat = None
+        self._debug_snapshot = None
         self._topology_signature = None
         # 清空 bpy 引用，避免 Blender 对象被 GC 延迟释放
         self._records = []
@@ -307,6 +317,7 @@ class SpringVRMNativeContext:
             module.spring_vrm_reset_state(self._handle)
             self._reset_dynamic_tails_to_pose()
             frame = int(getattr(world.frame_context, "frame", 0) or 0)
+            self._refresh_debug_snapshot(module, armature, chain, world, frame)
             self._last_frame = frame
             return self._publish_current_pose(world, chain, chain_state, frame)
         module.spring_vrm_step(
@@ -324,6 +335,7 @@ class SpringVRMNativeContext:
         module.spring_vrm_read_results(self._handle, self._result, self._result_quat)
 
         frame = int(getattr(world.frame_context, "frame", 0) or 0)
+        self._refresh_debug_snapshot(module, armature, chain, world, frame)
         self._step_count += 1
         self._last_frame = frame
 
@@ -337,6 +349,168 @@ class SpringVRMNativeContext:
         np.copyto(d["prev_tails"], d["current_pose_tails"])
         np.copyto(d["target_matrices"], d["current_pose_matrices"])
         np.copyto(d["target_quaternions"], d["current_pose_quaternions"])
+
+    def _refresh_debug_snapshot(self, module, armature, chain, world, frame: int) -> None:
+        snapshot = self._read_cpp_debug_snapshot(module, armature, chain, world, frame)
+        if snapshot is None:
+            snapshot = self._python_debug_snapshot(chain, frame)
+        self._debug_snapshot = snapshot
+
+    def _read_cpp_debug_snapshot(self, module, armature, chain, world, frame: int) -> dict | None:
+        if self._handle is None or self._dynamic is None:
+            return None
+        if not is_context_debug_api_available(module):
+            return None
+
+        n = max(0, int(self._bone_count))
+        m = max(0, int(self._last_collider_count))
+        if n <= 0:
+            return None
+
+        current_heads = np.zeros((n, 3), dtype=np.float32)
+        current_tails = np.zeros((n, 3), dtype=np.float32)
+        prev_tails = np.zeros((n, 3), dtype=np.float32)
+        current_pose_tails = np.zeros((n, 3), dtype=np.float32)
+        hit_radii = np.zeros(n, dtype=np.float32)
+        collided_by_groups = np.zeros(n, dtype=np.int32)
+        collider_types = np.zeros(m, dtype=np.int32)
+        collider_groups = np.zeros(m, dtype=np.int32)
+        collider_centers = np.zeros((m, 3), dtype=np.float32)
+        collider_segment_a = np.zeros((m, 3), dtype=np.float32)
+        collider_segment_b = np.zeros((m, 3), dtype=np.float32)
+        collider_radii = np.zeros(m, dtype=np.float32)
+
+        module.spring_vrm_read_debug(
+            self._handle,
+            current_heads.ravel(),
+            current_tails.ravel(),
+            prev_tails.ravel(),
+            current_pose_tails.ravel(),
+            hit_radii,
+            collided_by_groups,
+            collider_types,
+            collider_groups,
+            collider_centers.ravel(),
+            collider_segment_a.ravel(),
+            collider_segment_b.ravel(),
+            collider_radii,
+        )
+
+        d = self._dynamic
+        np.copyto(d["current_tails"], current_tails)
+        np.copyto(d["prev_tails"], prev_tails)
+        np.copyto(d["current_pose_tails"], current_pose_tails)
+
+        return {
+            "source": "cpp_context",
+            "root_bone": self.root_bone,
+            "frame": int(frame),
+            "chain_root": str(getattr(chain, "root_bone", self.root_bone) or self.root_bone),
+            "bones": self._debug_bone_items(
+                current_heads,
+                current_tails,
+                prev_tails,
+                current_pose_tails,
+                hit_radii,
+                collided_by_groups,
+                armature=armature,
+                chain=chain,
+                world=world,
+            ),
+            "colliders": _debug_colliders_from_arrays(
+                collider_types,
+                collider_groups,
+                collider_centers,
+                collider_segment_a,
+                collider_segment_b,
+                collider_radii,
+            ),
+            "collider_count": int(m),
+        }
+
+    def _python_debug_snapshot(self, chain, frame: int) -> dict | None:
+        d = self._dynamic
+        if d is None or self._bone_count <= 0:
+            return None
+        hit_radii = np.zeros(self._bone_count, dtype=np.float32)
+        collided_by_groups = np.zeros(self._bone_count, dtype=np.int32)
+        return {
+            "source": "python_dynamic_fallback",
+            "root_bone": self.root_bone,
+            "frame": int(frame),
+            "chain_root": str(getattr(chain, "root_bone", self.root_bone) or self.root_bone),
+            "bones": self._debug_bone_items(
+                d["current_heads"],
+                d["current_tails"],
+                d["prev_tails"],
+                d["current_pose_tails"],
+                hit_radii,
+                collided_by_groups,
+                chain=chain,
+            ),
+            "colliders": [],
+            "collider_count": 0,
+        }
+
+    def _debug_bone_items(
+        self,
+        current_heads,
+        current_tails,
+        prev_tails,
+        current_pose_tails,
+        hit_radii,
+        collided_by_groups,
+        armature=None,
+        chain=None,
+        world=None,
+    ) -> list[dict]:
+        pinned = self._static.get("pinned") if isinstance(self._static, dict) else None
+        simulated_items: dict[str, dict] = {}
+        for index, record in enumerate(self._records):
+            if index >= len(current_tails):
+                break
+            bone_name = str(record.get("bone_name") or "")
+            item = {
+                "bone_name": bone_name,
+                "root_name": str(record.get("root_name") or self.root_bone or ""),
+                "current_head": _tuple3(current_heads[index]),
+                "current_tail": _tuple3(current_tails[index]),
+                "prev_tail": _tuple3(prev_tails[index]),
+                "current_pose_tail": _tuple3(current_pose_tails[index]),
+                "hit_radius": float(hit_radii[index]) if index < len(hit_radii) else 0.0,
+                "collided_by_groups": int(collided_by_groups[index]) if index < len(collided_by_groups) else 0,
+                "pinned": bool(pinned[index]) if pinned is not None and index < len(pinned) else False,
+                "cxx_consumed": True,
+            }
+            simulated_items[bone_name] = item
+
+        bone_names = tuple(getattr(chain, "bones", ()) or ()) if chain is not None else tuple(simulated_items)
+        if not bone_names:
+            bone_names = tuple(simulated_items)
+
+        items = []
+        for bone_name in bone_names:
+            bone_name = str(bone_name or "")
+            item = dict(simulated_items.get(bone_name) or {})
+            if not item:
+                item = _debug_unsimulated_bone_item(armature, bone_name, self.root_bone)
+            if armature is not None:
+                shape = _debug_bone_collider_shape(
+                    armature,
+                    bone_name,
+                    world=world,
+                    hit_radius=item.get("hit_radius") if item.get("cxx_consumed") else None,
+                    cxx_consumed=bool(item.get("cxx_consumed", False)),
+                )
+                if shape is not None:
+                    item["collider_shape"] = shape
+                    item["hit_radius"] = float(shape.get("radius", item.get("hit_radius", 0.0)) or 0.0)
+                    item["collided_by_groups"] = int(shape.get("collided_by_groups", item.get("collided_by_groups", 0)) or 0)
+            items.append(item)
+        return items
+
+    def debug_draw_snapshot(self) -> dict | None:
+        return self._debug_snapshot
 
     def _publish_current_pose(
         self, world, chain, chain_state: dict, frame: int
@@ -456,6 +630,11 @@ class SpringVRMNativeContext:
                     int(len(self._collider_cache_arrays[0]))
                     if self._collider_cache_arrays is not None else 0
                 ),
+            },
+            "debug_snapshot": {
+                "source": str(self._debug_snapshot.get("source", "")) if isinstance(self._debug_snapshot, dict) else "",
+                "bone_count": len(self._debug_snapshot.get("bones", ())) if isinstance(self._debug_snapshot, dict) else 0,
+                "collider_count": int(self._debug_snapshot.get("collider_count", 0) or 0) if isinstance(self._debug_snapshot, dict) else 0,
             },
         }
 
@@ -665,9 +844,148 @@ def _tuple3(value) -> tuple[float, float, float]:
     return (float(value[0]), float(value[1]), float(value[2]))
 
 
+def _debug_unsimulated_bone_item(armature, bone_name: str, root_bone: str) -> dict:
+    item = {
+        "bone_name": str(bone_name or ""),
+        "root_name": str(root_bone or ""),
+        "current_head": (0.0, 0.0, 0.0),
+        "current_tail": (0.0, 0.0, 0.0),
+        "prev_tail": (0.0, 0.0, 0.0),
+        "current_pose_tail": (0.0, 0.0, 0.0),
+        "hit_radius": 0.0,
+        "collided_by_groups": 0,
+        "pinned": bool(bone_name and bone_name == root_bone),
+        "cxx_consumed": False,
+    }
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    pose_bone = pose_bones.get(str(bone_name or "")) if pose_bones is not None else None
+    if pose_bone is None:
+        return item
+    arm_world = getattr(armature, "matrix_world", mathutils.Matrix.Identity(4))
+    head = arm_world @ pose_bone.head
+    tail = arm_world @ pose_bone.tail
+    item["current_head"] = _tuple3(head)
+    item["current_tail"] = _tuple3(tail)
+    item["prev_tail"] = _tuple3(tail)
+    item["current_pose_tail"] = _tuple3(tail)
+    return item
+
+
+def _debug_bone_collider_shape(
+    armature,
+    bone_name: str,
+    world=None,
+    hit_radius=None,
+    cxx_consumed: bool = False,
+) -> dict | None:
+    profile = resolve_bone_collision_fields(armature, bone_name, world=world)
+    collider_type = str(profile.collision_type or "NONE")
+    if collider_type not in {"SPHERE", "CAPSULE"}:
+        return None
+
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    pose_bone = pose_bones.get(str(bone_name or "")) if pose_bones is not None else None
+    if pose_bone is None:
+        return None
+
+    try:
+        matrix = armature.matrix_world @ pose_bone.matrix
+    except Exception:
+        return None
+
+    radius = float(hit_radius) if hit_radius is not None else 0.0
+    if radius <= 1.0e-8:
+        radius = max(float(profile.radius or 0.0), 0.0) * matrix_scale_radius(matrix)
+    if radius <= 1.0e-8:
+        return None
+
+    offset = mathutils.Vector(profile.offset or (0.0, 0.0, 0.0))
+    shape = {
+        "type": collider_type,
+        "center": _tuple3(matrix @ offset),
+        "radius": float(radius),
+        "primary_group": int(profile.primary_collision_group),
+        "collided_by_groups": int(profile.collided_by_groups),
+        "profile_source": str(profile.source),
+        "source": "cpp_context_resolved_profile" if cxx_consumed else "resolved_profile",
+        "cxx_consumed": bool(cxx_consumed),
+    }
+    if collider_type == "CAPSULE":
+        half_length = max(float(profile.length or 0.0), 0.0) * 0.5
+        axis = mathutils.Vector((0.0, 1.0, 0.0))
+        shape["segment_a"] = _tuple3(matrix @ (offset - axis * half_length))
+        shape["segment_b"] = _tuple3(matrix @ (offset + axis * half_length))
+    return shape
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Collision 辅助
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _debug_colliders_from_arrays(
+    collider_types,
+    collider_groups,
+    collider_centers,
+    collider_segment_a,
+    collider_segment_b,
+    collider_radii,
+) -> list[dict]:
+    result = []
+    count = int(len(collider_types))
+    for index in range(count):
+        type_code = int(collider_types[index])
+        center = _tuple3(collider_centers[index])
+        group = int(collider_groups[index]) if index < len(collider_groups) else 1
+        radius = float(collider_radii[index]) if index < len(collider_radii) else 0.0
+        segment_a = _tuple3(collider_segment_a[index])
+        segment_b = _tuple3(collider_segment_b[index])
+
+        if type_code == COLLIDER_TYPE_SPHERE:
+            result.append({
+                "type": "SPHERE",
+                "center": center,
+                "radius": max(radius, 0.0),
+                "primary_group": group,
+                "source": "cpp_context",
+            })
+        elif type_code == COLLIDER_TYPE_CAPSULE:
+            result.append({
+                "type": "CAPSULE",
+                "center": center,
+                "segment_a": segment_a,
+                "segment_b": segment_b,
+                "radius": max(radius, 0.0),
+                "primary_group": group,
+                "source": "cpp_context",
+            })
+        elif type_code == COLLIDER_TYPE_PLANE:
+            result.append({
+                "type": "PLANE",
+                "center": center,
+                "normal": segment_a,
+                "primary_group": group,
+                "source": "cpp_context",
+            })
+        elif type_code == COLLIDER_TYPE_BOX:
+            axis_x = np.asarray(collider_segment_a[index], dtype=np.float32)
+            axis_y = np.asarray(collider_segment_b[index], dtype=np.float32)
+            axis_z = np.cross(axis_x, axis_y)
+            axis_len = float(np.linalg.norm(axis_z))
+            if axis_len > 1.0e-8:
+                axis_z = axis_z * (float(radius) / axis_len)
+            else:
+                axis_z = np.asarray((0.0, 0.0, float(radius)), dtype=np.float32)
+            result.append({
+                "type": "BOX",
+                "center": center,
+                "box_axis_x": segment_a,
+                "box_axis_y": segment_b,
+                "box_axis_z": _tuple3(axis_z),
+                "primary_group": group,
+                "source": "cpp_context",
+            })
+    return result
+
 
 def _empty_collision_arrays() -> tuple:
     z3 = np.empty((0, 3), dtype=np.float32)

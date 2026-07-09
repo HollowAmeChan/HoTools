@@ -814,7 +814,14 @@ C++ native context:
     - 将 C++ 内部结果写入 Python 预分配 buffer
     - 不返回新 Python 对象
 
-阶段 6：释放（dispose 时）
+阶段 6：调试读取（可选，每帧，在 debug draw / debug snapshot 需要时）
+  read_{solver}_debug(ctx, debug_output_arrays)
+    - 只读拷贝后端 context 中已经被 update/step 消费或产出的真实状态
+    - 可包含用于绘制的语义化数组，例如 resolved collider、constraint anchor、current tail、hit radius、mask、pinned state
+    - 不推进模拟、不重新解析 Blender 属性、不重新计算一套预览状态
+    - 不暴露 native handle 或 C++ 内部对象，只返回纯数组/纯 dict 快照
+
+阶段 7：释放（dispose 时）
   free_{solver}_context(ctx)
     - 按顺序释放：先 bodies/constraints/sub-resources，再 world/context 本体
     - 必须幂等
@@ -829,6 +836,7 @@ C++ native context:
 - C++ context 必须由 Python owner 持有并可释放（存入 solver slot 的 native_context 字段，slot dispose 时触发 free）。
 - dispose 必须幂等（多次调用不崩溃）。
 - debug snapshot 只输出数量统计和状态摘要，不直接暴露 C++ 内部对象。
+- solver 自有 debug draw 必须使用 result stream 或 `read_{solver}_debug()` 读回的后端真实快照。不得在 Python 绘制层根据 Blender 当前对象、属性面板或 result matrix 重新推导一套可能与后端不一致的状态。
 
 ## Writeback Result Stream
 

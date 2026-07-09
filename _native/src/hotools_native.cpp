@@ -23,6 +23,7 @@ PyObject* spring_vrm_reset_state(PyObject*, PyObject*);
 PyObject* spring_vrm_update_dynamic(PyObject*, PyObject*);
 PyObject* spring_vrm_step(PyObject*, PyObject*);
 PyObject* spring_vrm_read_results(PyObject*, PyObject*);
+PyObject* spring_vrm_read_debug(PyObject*, PyObject*);
 
 namespace nb = nanobind;
 
@@ -712,6 +713,9 @@ NB_MODULE(hotools_native, m) {
     m.def("spring_vrm_read_results",
         [](nb::args a) { call_legacy(spring_vrm_read_results, a); },
         "Copy result matrices/quaternions into pre-allocated output buffers.");
+    m.def("spring_vrm_read_debug",
+        [](nb::args a) { call_legacy(spring_vrm_read_debug, a); },
+        "Copy SpringBone context debug/state arrays into pre-allocated output buffers.");
 
     // ---- MC2 上下文管理 ----
     m.def("create_meshcloth_mc2_context",

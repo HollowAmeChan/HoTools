@@ -382,6 +382,7 @@ physicsWorld/<solver_domain>/
 - capability registry：汇总 solver 暴露的能力表，供面板、节点生成、隐式对象注册和测试审查使用。
 - property registration：根据 solver capability 注册或注销 Blender PropertyGroup / PointerProperty / 面板入口。
 - common draw service：`physicsWorld/utils/debug_draw.py` 只提供线段、GPU batch、向量/矩阵转换和基础 shape 线框等无语义函数；solver 自己持有 debug snapshot 摘要、debug draw mode 和精细绘制语义。
+- solver 自有 debug draw 的数据源必须对齐后端真实消费/产出的数据。可视化节点不得在 Python 绘制层重新推导一套碰撞、约束、骨链 tail、覆写属性或矩阵状态；如果这些数据由 native/C++ context 消费或更新，solver 必须提供只读 readback/debug snapshot，把后端 context 中的真实数组或其语义化副本采样成纯 Python 快照后再绘制。这样 debug draw 的职责是验证 solver 实际输入/输出，而不是展示另一套近似预览。
 - world debug draw：不再承载 collider / rigid / SpringBone 等具体绘制。刚体/Jolt、SpringBone 等精细绘制已经下沉到各自 solver 的 debug 模块；未来若恢复世界级可视化，只用于 exchange item、result stream 和跨 solver 关系。
 - world 生命周期：frame context、scope、collider snapshot、solver slot、exchange、result stream、commit/dispose。
 
@@ -1166,6 +1167,8 @@ SpringBone VRM可视化调试（physicsSpringVRMDebugDraw）
 验证结论：frame/continuous/restart/replace/mutate 行为稳定，跳帧检测正常。
 
 可视化 debug 的 store 必须由各 solver 自己持有，并且必须是纯快照：节点执行时把刚体 shape / constraint anchor / SpringBone bone-tail 等采样成 tuple/list/dict，不保存 `bpy` 对象、spec 引用或 live `matrix_world`。draw handler 只负责把快照转成 GPU lines，不允许在绘制阶段重新读取 Blender 对象。这样 debug 视图表达的是节点链路中该节点所在位置的状态，而不是视口重绘时的外部状态。公共绘制函数只放在 `physicsWorld/utils/debug_draw.py`。
+
+更强的约束：solver 自有 debug draw 必须优先绘制后端实际消费/产出的状态。对于 C++ / native context solver，debug 快照应来自 step/update 后的 context readback 或 result stream，而不是在 Python 绘制层根据 Blender 当前姿态、属性面板或 result matrix 临时重算。凡是会影响后端行为的字段，例如碰撞组、hit radius、pin、约束参数、collider arrays、隐式覆写属性，都必须通过同一条 solver 消费链进入 debug 快照；否则 debug draw 只能说明“Python 预览如何理解”，不能承担验证 solver 的职责。
 
 ### Phase 4：刚体 domain ✅ 已完成
 

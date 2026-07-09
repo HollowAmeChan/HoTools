@@ -73,9 +73,19 @@ def update_spring_vrm_debug_draw_store(
     root_lines: list[tuple[float, float, float]] = []
     collider_batches: list[tuple[list[tuple[float, float, float]], tuple[float, float, float, float], float]] = []
     spring_bone_keys: set[tuple[int, str]] = set()
+    used_cpp_context_debug = False
 
     for slot_id, slot in list(world.solver_slots.items()):
         if slot.kind != SPRING_VRM_SLOT_KIND:
+            continue
+        if _append_slot_context_debug_lines(
+            slot,
+            chain_lines if show_solved_chain else None,
+            root_lines if show_roots else None,
+            collider_batches if show_colliders else None,
+            color_by_group=bool(color_by_group),
+        ):
+            used_cpp_context_debug = True
             continue
         spec = slot.data.get("spec")
         if spec is None:
@@ -101,7 +111,7 @@ def update_spring_vrm_debug_draw_store(
             spring_bone_keys=spring_bone_keys,
         )
 
-    if show_colliders:
+    if show_colliders and not used_cpp_context_debug:
         _append_world_collider_batches(
             collider_batches,
             world,
@@ -115,6 +125,7 @@ def update_spring_vrm_debug_draw_store(
         "root_lines": root_lines,
         "collider_batches": collider_batches,
     }
+    _tag_view3d_redraw()
 
 
 def clear_spring_vrm_debug_draw_store(
@@ -133,6 +144,7 @@ def clear_spring_vrm_debug_draw_store(
 
     if not _SPRING_VRM_DRAW_STORE:
         _remove_spring_vrm_draw_handler()
+    _tag_view3d_redraw()
 
 
 def _ensure_spring_vrm_draw_handler() -> None:
@@ -162,6 +174,126 @@ def _draw_spring_vrm_debug() -> None:
         draw_line_batches(item.get("collider_batches") or ())
     draw_line_batches((item.get("chain_lines"), _COLOR_SOLVED_CHAIN, 2.0) for item in data)
     draw_line_batches((item.get("root_lines"), _COLOR_ROOT, 2.0) for item in data)
+
+
+def _tag_view3d_redraw() -> None:
+    try:
+        windows = getattr(bpy.context.window_manager, "windows", ())
+    except Exception:
+        windows = ()
+    for window in windows:
+        screen = getattr(window, "screen", None)
+        for area in getattr(screen, "areas", ()) if screen is not None else ():
+            if getattr(area, "type", "") == "VIEW_3D":
+                try:
+                    area.tag_redraw()
+                except Exception:
+                    pass
+
+
+def _append_slot_context_debug_lines(
+    slot,
+    chain_lines: list | None,
+    root_lines: list | None,
+    collider_batches: list | None,
+    color_by_group: bool = True,
+) -> bool:
+    native_ctxs = slot.data.get("_native_ctxs") if hasattr(slot, "data") else None
+    if not isinstance(native_ctxs, dict):
+        return False
+    used = False
+    for ctx in list(native_ctxs.values()):
+        snapshot_func = getattr(ctx, "debug_draw_snapshot", None)
+        snapshot = snapshot_func() if callable(snapshot_func) else None
+        if not isinstance(snapshot, dict) or snapshot.get("source") != "cpp_context":
+            continue
+        _append_context_debug_snapshot(
+            snapshot,
+            chain_lines,
+            root_lines,
+            collider_batches,
+            color_by_group=bool(color_by_group),
+        )
+        used = True
+    return used
+
+
+def _append_context_debug_snapshot(
+    snapshot: dict,
+    chain_lines: list | None,
+    root_lines: list | None,
+    collider_batches: list | None,
+    color_by_group: bool = True,
+) -> None:
+    bones = snapshot.get("bones") if isinstance(snapshot.get("bones"), list) else []
+    root_name = str(snapshot.get("root_bone") or snapshot.get("chain_root") or "")
+    previous_tail = None
+    for bone in bones:
+        if not isinstance(bone, dict):
+            continue
+        head = vector3(bone.get("current_head"), (0.0, 0.0, 0.0))
+        tail = vector3(bone.get("current_tail"), head)
+        if chain_lines is not None:
+            add_line(chain_lines, previous_tail if previous_tail is not None else head, tail)
+        previous_tail = tail
+        if root_lines is not None and str(bone.get("bone_name") or "") == root_name:
+            add_cross_lines(root_lines, head, 0.06)
+        if collider_batches is not None:
+            _append_debug_bone_collider_batch(
+                collider_batches,
+                bone,
+                color_by_group=bool(color_by_group),
+            )
+
+    if collider_batches is not None:
+        for collider in snapshot.get("colliders") or ():
+            if not isinstance(collider, dict):
+                continue
+            lines: list[tuple[float, float, float]] = []
+            if not _append_collider_shape_lines(lines, collider):
+                continue
+            collider_batches.append((
+                lines,
+                _collider_color(collider.get("primary_group", 1), color_by_group),
+                1.4,
+            ))
+
+
+def _append_debug_bone_collider_batch(
+    batches: list,
+    bone: dict,
+    color_by_group: bool,
+) -> None:
+    shape = bone.get("collider_shape") if isinstance(bone.get("collider_shape"), dict) else None
+    if shape is not None:
+        lines: list[tuple[float, float, float]] = []
+        if _append_collider_shape_lines(lines, shape):
+            batches.append((
+                lines,
+                _collider_color(shape.get("primary_group", 1), color_by_group),
+                1.8,
+            ))
+        return
+
+    radius = max(float_value(bone.get("hit_radius", 0.0), 0.0), 0.0)
+    if radius <= 1e-8:
+        return
+    center = vector3(bone.get("current_tail"), (0.0, 0.0, 0.0))
+    lines: list[tuple[float, float, float]] = []
+    add_sphere_lines(
+        lines,
+        center,
+        mathutils.Vector((1.0, 0.0, 0.0)),
+        mathutils.Vector((0.0, 1.0, 0.0)),
+        mathutils.Vector((0.0, 0.0, 1.0)),
+        radius,
+    )
+    if lines:
+        batches.append((
+            lines,
+            _collider_color(_first_mask_group(bone.get("collided_by_groups", 0)), color_by_group),
+            1.8,
+        ))
 
 
 def _append_spec_lines(
@@ -209,7 +341,12 @@ def _append_spec_lines(
                 )
             current_tail = rest_tail
             if bone_name != str(getattr(chain, "root_bone", "")):
-                current_tail = _current_tail_for_bone(bone_name, tails, result_by_bone, rest_tail)
+                current_tail = _current_tail_for_bone(
+                    bone_name,
+                    tails,
+                    result_by_bone,
+                    rest_tail,
+                )
             if chain_lines is not None:
                 add_line(chain_lines, previous_tail if previous_tail is not None else head, current_tail)
             previous_tail = current_tail
@@ -355,7 +492,9 @@ def _append_collider_shape_lines(lines: list, collider: dict) -> bool:
         axis_y = _vector_or_none(collider.get("plane_axis_y"))
         normal = _vector_or_none(collider.get("normal"))
         if axis_x is None or axis_y is None or normal is None or normal.length <= 1e-8:
-            return False
+            if normal is None or normal.length <= 1e-8:
+                return False
+            axis_x, axis_y = _plane_axes_from_normal(normal)
         add_plane_lines(lines, center, axis_x, axis_y, normal)
         return True
 
@@ -382,6 +521,35 @@ def _collider_color(group_value, color_by_group: bool) -> tuple[float, float, fl
         group = 1
     group = max(1, min(16, group))
     return _GROUP_COLORS[group - 1]
+
+
+def _first_mask_group(mask_value) -> int:
+    try:
+        mask = int(mask_value)
+    except Exception:
+        return 1
+    for index in range(16):
+        if mask & (1 << index):
+            return index + 1
+    return 1
+
+
+def _plane_axes_from_normal(normal: mathutils.Vector) -> tuple[mathutils.Vector, mathutils.Vector]:
+    n = normal.normalized()
+    ref = mathutils.Vector((0.0, 0.0, 1.0))
+    if abs(float(n.dot(ref))) > 0.9:
+        ref = mathutils.Vector((1.0, 0.0, 0.0))
+    axis_x = ref.cross(n)
+    if axis_x.length <= 1e-8:
+        axis_x = mathutils.Vector((1.0, 0.0, 0.0))
+    else:
+        axis_x.normalize()
+    axis_y = n.cross(axis_x)
+    if axis_y.length <= 1e-8:
+        axis_y = mathutils.Vector((0.0, 1.0, 0.0))
+    else:
+        axis_y.normalize()
+    return axis_x, axis_y
 
 
 def _vector_or_none(value) -> mathutils.Vector | None:

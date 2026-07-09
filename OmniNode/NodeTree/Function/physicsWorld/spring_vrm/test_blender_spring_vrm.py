@@ -200,6 +200,7 @@ physicsWorldCommit = _pw("world").physicsWorldCommit
 apply_all_writebacks = _pw("writeback").apply_all_writebacks
 physicsSpringVRMChainProperties = _pw("spring_vrm.nodes").physicsSpringVRMChainProperties
 physicsSpringVRMChainRegister = _pw("spring_vrm.nodes").physicsSpringVRMChainRegister
+physicsBoneCollisionOverrideProperties = _pw("spring_vrm.nodes").physicsBoneCollisionOverrideProperties
 physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
 iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_results
@@ -1196,6 +1197,118 @@ def test_spring_vrm_bone_collision_override_preempts_legacy():
         _delete_object(armature)
 
 
+def test_spring_vrm_bone_collision_override_node_uses_capability_type_index():
+    armature = _make_chain_armature("PW_SpringVRM_OverrideNodeTypeIndex")
+    try:
+        payloads = physicsBoneCollisionOverrideProperties(
+            [_bone_value(armature, "bone_1"), _bone_value(armature, "bone_2")],
+            override_collision_type=True,
+            collision_type=2,
+            override_radius=True,
+            radius=0.23,
+        )
+        assert len(payloads) == 2, payloads
+        assert all(item.get("fields", {}).get("collision_type") == "CAPSULE" for item in payloads), payloads
+        assert all(abs(float(item.get("fields", {}).get("radius", 0.0)) - 0.23) < 1e-6 for item in payloads), payloads
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_cpp_debug_snapshot_uses_override_profile():
+    armature = _make_chain_armature("PW_SpringVRM_DebugOverride")
+    try:
+        root_props = armature.data.bones["root"].hotools_collision
+        root_props.collision_type = "SPHERE"
+        root_props.radius = 0.19
+        root_props.primary_collision_group = 6
+
+        props = armature.data.bones["bone_1"].hotools_collision
+        props.collision_type = "SPHERE"
+        props.radius = 0.05
+        props.length = 0.2
+        props.offset = (0.0, 0.0, 0.0)
+        props.primary_collision_group = 1
+        props.collided_by_groups = 1
+
+        cache = _OmniCache()
+        frame = 77
+        world, _frame, _collider_count, _restart = _world_for_frame(
+            cache,
+            armature,
+            frame,
+            reset=True,
+        )
+        properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
+        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
+        assert object_count == 1
+        override = make_bone_collision_override_properties(
+            _bone_value(armature, "bone_1"),
+            collision_type="CAPSULE",
+            radius=0.31,
+            length=0.72,
+            offset=(0.03, 0.04, 0.05),
+            primary_collision_group=9,
+            collided_by_groups=8,
+        )
+        count, _dirty_count, _version = register_bone_collision_override_objects(world, [override])
+        assert count == 1
+
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 2
+        _slot, _native_context, chain_context = _spring_chain_context(world)
+        snapshot = chain_context.debug_draw_snapshot()
+        assert isinstance(snapshot, dict), "SpringBone native context 应提供 debug draw snapshot"
+        assert snapshot.get("source") == "cpp_context", snapshot
+        root = next((item for item in snapshot.get("bones", []) if item.get("bone_name") == "root"), None)
+        assert root is not None, snapshot
+        root_shape = root.get("collider_shape")
+        assert isinstance(root_shape, dict), root
+        assert root_shape.get("type") == "SPHERE", root_shape
+        assert abs(float(root_shape.get("radius", 0.0)) - 0.19) < 1e-5, root_shape
+        assert int(root_shape.get("primary_group", 0)) == 6, root_shape
+
+        bone_1 = next((item for item in snapshot.get("bones", []) if item.get("bone_name") == "bone_1"), None)
+        assert bone_1 is not None, snapshot
+        assert abs(float(bone_1.get("hit_radius", 0.0)) - 0.31) < 1e-5, bone_1
+        assert int(bone_1.get("collided_by_groups", 0)) == 8, bone_1
+        shape = bone_1.get("collider_shape")
+        assert isinstance(shape, dict), bone_1
+        assert shape.get("type") == "CAPSULE", shape
+        assert abs(float(shape.get("radius", 0.0)) - 0.31) < 1e-5, shape
+        assert int(shape.get("primary_group", 0)) == 9, shape
+        assert int(shape.get("collided_by_groups", 0)) == 8, shape
+        assert shape.get("segment_a") is not None and shape.get("segment_b") is not None, shape
+
+        pose_matrix = armature.matrix_world @ armature.pose.bones["bone_1"].matrix
+        offset = mathutils.Vector((0.03, 0.04, 0.05))
+        half_length = 0.72 * 0.5
+        axis = mathutils.Vector((0.0, 1.0, 0.0))
+        expected_center = pose_matrix @ offset
+        expected_a = pose_matrix @ (offset - axis * half_length)
+        expected_b = pose_matrix @ (offset + axis * half_length)
+        assert (mathutils.Vector(shape.get("center")) - expected_center).length < 1e-5, shape
+        assert (mathutils.Vector(shape.get("segment_a")) - expected_a).length < 1e-5, shape
+        assert (mathutils.Vector(shape.get("segment_b")) - expected_b).length < 1e-5, shape
+
+        batches = []
+        spring_vrm_debug_draw._append_debug_bone_collider_batch(
+            batches,
+            bone_1,
+            color_by_group=True,
+        )
+        assert batches, "C++ debug snapshot bone collider shape should be drawable"
+        assert batches[0][1] == spring_vrm_debug_draw._collider_color(9, True), batches[0]
+        sphere_lines = []
+        capsule_lines = batches[0][0]
+        spring_vrm_debug_draw._append_collider_shape_lines(
+            sphere_lines,
+            {"type": "SPHERE", "center": shape.get("center"), "radius": 0.31},
+        )
+        assert len(capsule_lines) > len(sphere_lines), "bone_1 override CAPSULE should draw as capsule, not tail sphere"
+    finally:
+        _delete_object(armature)
+
+
 def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
     draw = spring_vrm_debug_draw
     shape_cases = [
@@ -1328,6 +1441,53 @@ def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
             skip_bone_keys={(id(armature), "bone_1")},
         )
         assert not batches, "SpringBone 自身骨骼碰撞体不应从 world snapshot 重复绘制"
+
+        chain_lines = []
+        root_lines = []
+        batches = []
+        draw._append_context_debug_snapshot(
+            {
+                "source": "cpp_context",
+                "root_bone": "root",
+                "bones": [
+                    {
+                        "bone_name": "root",
+                        "current_head": (0.0, 0.0, 0.0),
+                        "current_tail": (0.0, 0.0, 1.0),
+                        "hit_radius": 0.0,
+                        "collided_by_groups": 0,
+                    },
+                    {
+                        "bone_name": "bone_1",
+                        "current_head": (0.0, 0.0, 1.0),
+                        "current_tail": tuple(tail_1),
+                        "hit_radius": 0.27,
+                        "collided_by_groups": 4,
+                    },
+                    {
+                        "bone_name": "bone_2",
+                        "current_head": (0.0, 0.0, 2.0),
+                        "current_tail": tuple(tail_2),
+                        "hit_radius": 0.0,
+                        "collided_by_groups": 0,
+                    },
+                ],
+                "colliders": [shape_cases[0]],
+            },
+            chain_lines,
+            root_lines,
+            batches,
+            color_by_group=True,
+        )
+        context_pairs = [
+            (_rounded(start), _rounded(end))
+            for start, end in zip(chain_lines[0::2], chain_lines[1::2])
+        ]
+        assert context_pairs[1] == (_rounded((0.0, 0.0, 1.0)), _rounded(tail_1)), context_pairs
+        assert root_lines, "C++ context debug snapshot 应绘制 root 标记"
+        assert batches and batches[0][1] == draw._collider_color(3, True), (
+            "骨骼 hit radius 应按 C++ 消费的 collided_by_groups mask 着色"
+        )
     finally:
         _delete_object(armature)
 
@@ -1354,6 +1514,8 @@ check("world box collider 接入 SpringBone native", test_spring_vrm_box_collide
 check("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy)
 check("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna)
 check("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy)
+check("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index)
+check("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile)
 check("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors)
 
 passed = sum(1 for item in _results if item)

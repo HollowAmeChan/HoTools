@@ -1012,6 +1012,63 @@ void spring_vrm_context_read_results(
     if (out_quaternions) std::copy(ctx->target_quaternions.begin(), ctx->target_quaternions.end(), out_quaternions);
 }
 
+void spring_vrm_context_read_debug(
+    const SpringVrmContext* ctx,
+    float* out_current_heads,
+    float* out_current_tails,
+    float* out_prev_tails,
+    float* out_current_pose_tails,
+    float* out_hit_radii,
+    std::int32_t* out_collided_by_groups,
+    std::int32_t* out_collider_types,
+    std::int32_t* out_collider_groups,
+    float* out_collider_centers,
+    float* out_collider_segment_a,
+    float* out_collider_segment_b,
+    float* out_collider_radii)
+{
+    if (!ctx || ctx->bone_count <= 0) return;
+
+    if (out_current_heads) {
+        std::copy(ctx->current_heads.begin(), ctx->current_heads.end(), out_current_heads);
+    }
+    if (out_current_tails) {
+        std::copy(ctx->current_tails.begin(), ctx->current_tails.end(), out_current_tails);
+    }
+    if (out_prev_tails) {
+        std::copy(ctx->prev_tails.begin(), ctx->prev_tails.end(), out_prev_tails);
+    }
+    if (out_current_pose_tails) {
+        std::copy(ctx->current_pose_tails.begin(), ctx->current_pose_tails.end(), out_current_pose_tails);
+    }
+    if (out_hit_radii) {
+        std::copy(ctx->hit_radii.begin(), ctx->hit_radii.end(), out_hit_radii);
+    }
+    if (out_collided_by_groups) {
+        std::copy(ctx->collided_by_groups.begin(), ctx->collided_by_groups.end(), out_collided_by_groups);
+    }
+
+    if (ctx->collider_count <= 0) return;
+    if (out_collider_types) {
+        std::copy(ctx->collider_types.begin(), ctx->collider_types.end(), out_collider_types);
+    }
+    if (out_collider_groups) {
+        std::copy(ctx->collider_groups.begin(), ctx->collider_groups.end(), out_collider_groups);
+    }
+    if (out_collider_centers) {
+        std::copy(ctx->collider_centers.begin(), ctx->collider_centers.end(), out_collider_centers);
+    }
+    if (out_collider_segment_a) {
+        std::copy(ctx->collider_segment_a.begin(), ctx->collider_segment_a.end(), out_collider_segment_a);
+    }
+    if (out_collider_segment_b) {
+        std::copy(ctx->collider_segment_b.begin(), ctx->collider_segment_b.end(), out_collider_segment_b);
+    }
+    if (out_collider_radii) {
+        std::copy(ctx->collider_radii.begin(), ctx->collider_radii.end(), out_collider_radii);
+    }
+}
+
 void spring_vrm_context_free(SpringVrmContext* ctx) {
     delete ctx;
 }

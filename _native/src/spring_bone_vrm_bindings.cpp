@@ -457,3 +457,56 @@ PyObject* spring_vrm_read_results(PyObject*, PyObject* args) {
 
     Py_RETURN_NONE;
 }
+
+// spring_vrm_read_debug(capsule,
+//     out_current_heads, out_current_tails, out_prev_tails, out_current_pose_tails,
+//     out_hit_radii, out_collided_by_groups,
+//     out_collider_types, out_collider_groups, out_collider_centers,
+//     out_collider_segment_a, out_collider_segment_b, out_collider_radii) -> None
+PyObject* spring_vrm_read_debug(PyObject*, PyObject* args) {
+    constexpr Py_ssize_t kArgCount = 13;
+    if (PyTuple_GET_SIZE(args) != kArgCount) {
+        PyErr_Format(PyExc_TypeError, "spring_vrm_read_debug expects %zd arguments", kArgCount);
+        return nullptr;
+    }
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(PyTuple_GET_ITEM(args, 0), "spring_vrm_context"));
+    if (!ctx) return nullptr;
+
+    Buffer current_heads, current_tails, prev_tails, current_pose_tails;
+    Buffer hit_radii, collided_by_groups;
+    Buffer collider_types, collider_groups, collider_centers;
+    Buffer collider_segment_a, collider_segment_b, collider_radii;
+
+    if (!current_heads.get(PyTuple_GET_ITEM(args, 1), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_current_heads") ||
+        !current_tails.get(PyTuple_GET_ITEM(args, 2), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_current_tails") ||
+        !prev_tails.get(PyTuple_GET_ITEM(args, 3), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_prev_tails") ||
+        !current_pose_tails.get(PyTuple_GET_ITEM(args, 4), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_current_pose_tails") ||
+        !hit_radii.get(PyTuple_GET_ITEM(args, 5), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_hit_radii") ||
+        !collided_by_groups.get(PyTuple_GET_ITEM(args, 6), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collided_by_groups") ||
+        !collider_types.get(PyTuple_GET_ITEM(args, 7), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_types") ||
+        !collider_groups.get(PyTuple_GET_ITEM(args, 8), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_groups") ||
+        !collider_centers.get(PyTuple_GET_ITEM(args, 9), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_centers") ||
+        !collider_segment_a.get(PyTuple_GET_ITEM(args, 10), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_segment_a") ||
+        !collider_segment_b.get(PyTuple_GET_ITEM(args, 11), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_segment_b") ||
+        !collider_radii.get(PyTuple_GET_ITEM(args, 12), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_radii")) {
+        return nullptr;
+    }
+
+    hotools::spring_vrm_context_read_debug(
+        ctx,
+        float_ptr(current_heads),
+        float_ptr(current_tails),
+        float_ptr(prev_tails),
+        float_ptr(current_pose_tails),
+        float_ptr(hit_radii),
+        int32_ptr(collided_by_groups),
+        int32_ptr(collider_types),
+        int32_ptr(collider_groups),
+        float_ptr(collider_centers),
+        float_ptr(collider_segment_a),
+        float_ptr(collider_segment_b),
+        float_ptr(collider_radii));
+
+    Py_RETURN_NONE;
+}

@@ -185,6 +185,24 @@ void spring_vrm_context_read_results(
     float* out_quaternions
 );
 
+// Read back the exact context state consumed/produced by the last update/step.
+// This is debug/state introspection, not a second solver path.
+void spring_vrm_context_read_debug(
+    const SpringVrmContext* ctx,
+    float* out_current_heads,
+    float* out_current_tails,
+    float* out_prev_tails,
+    float* out_current_pose_tails,
+    float* out_hit_radii,
+    std::int32_t* out_collided_by_groups,
+    std::int32_t* out_collider_types,
+    std::int32_t* out_collider_groups,
+    float* out_collider_centers,
+    float* out_collider_segment_a,
+    float* out_collider_segment_b,
+    float* out_collider_radii
+);
+
 // 释放 context（delete）
 void spring_vrm_context_free(SpringVrmContext* ctx);
 
