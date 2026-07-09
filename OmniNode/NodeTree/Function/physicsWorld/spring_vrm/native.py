@@ -115,6 +115,10 @@ class SpringVRMNativeContext:
         self._step_count: int = 0
         self._last_frame: int = -1
         self._last_collider_count: int = 0
+        self._collider_cache_key: tuple | None = None
+        self._collider_cache_arrays: tuple | None = None
+        self._collider_cache_hits: int = 0
+        self._collider_cache_misses: int = 0
 
         self._static: dict[str, np.ndarray] | None = None
         self._dynamic: dict[str, np.ndarray] | None = None
@@ -235,6 +239,8 @@ class SpringVRMNativeContext:
         # 清空 bpy 引用，避免 Blender 对象被 GC 延迟释放
         self._records = []
         self._armature = None
+        self._collider_cache_key = None
+        self._collider_cache_arrays = None
 
     # ── 内部工具 ──────────────────────────────────────────────────────────────
 
@@ -245,6 +251,18 @@ class SpringVRMNativeContext:
             except Exception:
                 pass
             self._handle = None
+
+    def _collision_arrays(self, world, armature, chain) -> tuple:
+        key = _collider_arrays_cache_key(world, armature, chain)
+        if key == self._collider_cache_key and self._collider_cache_arrays is not None:
+            self._collider_cache_hits += 1
+            return self._collider_cache_arrays
+
+        arrays = _collision_arrays_from_world(world, armature, chain)
+        self._collider_cache_key = key
+        self._collider_cache_arrays = arrays
+        self._collider_cache_misses += 1
+        return arrays
 
     def _step_via_context_api(
         self,
@@ -267,7 +285,7 @@ class SpringVRMNativeContext:
         (
             collider_types, collider_groups, collider_centers,
             collider_segment_a, collider_segment_b, collider_radii,
-        ) = _collision_arrays_from_world(world, armature, chain)
+        ) = self._collision_arrays(world, armature, chain)
         hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records, world=world)
 
         arm_world     = np.ascontiguousarray(matrix16(armature.matrix_world),            dtype=np.float32)
@@ -445,6 +463,15 @@ class SpringVRMNativeContext:
                 if isinstance(v, np.ndarray)
             },
             "last_collider_count": self._last_collider_count,
+            "collider_cache": {
+                "hits": int(self._collider_cache_hits),
+                "misses": int(self._collider_cache_misses),
+                "ready": self._collider_cache_arrays is not None,
+                "collider_count": (
+                    int(len(self._collider_cache_arrays[0]))
+                    if self._collider_cache_arrays is not None else 0
+                ),
+            },
         }
 
     # ── TRANSITIONAL 桥接（35 参数旧 ABI，新 API 就绪后整段删除）────────────
@@ -478,7 +505,7 @@ class SpringVRMNativeContext:
             collider_segment_a,
             collider_segment_b,
             collider_radii,
-        ) = _collision_arrays_from_world(world, armature, chain)
+        ) = self._collision_arrays(world, armature, chain)
 
         armature_world     = np.asarray(matrix16(armature.matrix_world),            dtype=np.float32)
         armature_world_inv = np.asarray(matrix16(armature.matrix_world.inverted()),  dtype=np.float32)
@@ -796,6 +823,25 @@ def _empty_collision_arrays() -> tuple:
     )
 
 
+def _collider_arrays_cache_key(world, armature, chain) -> tuple:
+    snapshot = getattr(world, "collider_snapshot", None)
+    colliders = snapshot.get("colliders") if isinstance(snapshot, dict) else None
+    try:
+        armature_ptr = int(armature.as_pointer())
+    except Exception:
+        armature_ptr = id(armature)
+    chain_bones = tuple(sorted(str(n or "") for n in getattr(chain, "bones", ()) or ()))
+    return (
+        id(snapshot),
+        id(colliders),
+        int(snapshot.get("frame", -1) if isinstance(snapshot, dict) else -1),
+        int(snapshot.get("source_count", 0) if isinstance(snapshot, dict) else 0),
+        len(colliders) if isinstance(colliders, list) else 0,
+        armature_ptr,
+        chain_bones,
+    )
+
+
 def _collision_arrays_from_world(world, armature, chain) -> tuple:
     snapshot = getattr(world, "collider_snapshot", None)
     colliders = snapshot.get("colliders") if isinstance(snapshot, dict) else None
@@ -1084,4 +1130,12 @@ def native_context_stats_dict(native_ctxs) -> dict:
         "cpp_handle_count":sum(1 for c in chain_items if c.get("cpp_handle")),
         "static_ready_count": sum(1 for c in chain_items if c.get("static_ready")),
         "buffer_count":    sum(len(c.get("buffer_shapes") or {}) for c in chain_items),
+        "collider_cache_hits": sum(
+            int((c.get("collider_cache") or {}).get("hits", 0) or 0)
+            for c in chain_items
+        ),
+        "collider_cache_misses": sum(
+            int((c.get("collider_cache") or {}).get("misses", 0) or 0)
+            for c in chain_items
+        ),
     }

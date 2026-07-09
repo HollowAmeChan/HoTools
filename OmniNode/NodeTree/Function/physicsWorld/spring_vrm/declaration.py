@@ -69,7 +69,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "topology": "rebuild_slot_on_armature_or_chain_topology_change",
         "params": "refresh_native_arrays_without_python_solver_backend",
         "bone_collision_profile": "resolve_capability_override_then_legacy_property_then_default",
-        "colliders": "sample_world_collider_snapshot_each_step",
+        "colliders": "lazy_cached_arrays_by_collider_snapshot_and_chain",
         "same_frame": "republish_last_pose_results_no_time_step",
     },
     "capabilities": {

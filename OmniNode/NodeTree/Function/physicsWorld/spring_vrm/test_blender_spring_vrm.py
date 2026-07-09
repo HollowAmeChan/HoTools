@@ -762,6 +762,59 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         _delete_object(armature)
 
 
+def test_spring_vrm_collider_arrays_cache_reuses_snapshot():
+    armature = _make_chain_armature("PW_SpringVRM_ColliderArrayCache")
+    collider = _make_sphere_collider(
+        "PW_SpringVRM_ColliderArrayCacheSphere",
+        (0.35, 0.0, 1.93),
+        0.35,
+        group=1,
+    )
+    try:
+        _enable_bone_hit_radius(armature, "bone_1", radius=0.15, mask=1)
+        cache = _OmniCache()
+        cache, world1, _stats1, _results1 = _run_spring_frame(
+            cache,
+            armature,
+            95,
+            reset=True,
+            extra_objects=[collider],
+            include_passive_collision=True,
+            expected_collider_count=1,
+            return_details=True,
+        )
+        slot1, _native_context1, chain_context1 = _spring_chain_context(world1)
+        spec1 = slot1.data.get("spec")
+        chain1 = spec1.chains[0]
+        before = chain_context1.debug_dict().get("collider_cache") or {}
+        assert int(before.get("misses", 0) or 0) >= 1
+        arrays1 = chain_context1._collision_arrays(world1, armature, chain1)
+        arrays2 = chain_context1._collision_arrays(world1, armature, chain1)
+        assert arrays2 is arrays1, "same-frame SpringBone collider arrays should reuse the context cache tuple"
+        after_hits = chain_context1.debug_dict().get("collider_cache") or {}
+        assert int(after_hits.get("hits", 0) or 0) >= int(before.get("hits", 0) or 0) + 2
+
+        cache, world2, _stats2, _results2 = _run_spring_frame(
+            cache,
+            armature,
+            96,
+            reset=False,
+            extra_objects=[collider],
+            include_passive_collision=True,
+            expected_collider_count=1,
+            return_details=True,
+        )
+        _slot2, _native_context2, chain_context2 = _spring_chain_context(world2)
+        assert chain_context2 is chain_context1
+        after_miss = chain_context2.debug_dict().get("collider_cache") or {}
+        assert int(after_miss.get("misses", 0) or 0) > int(after_hits.get("misses", 0) or 0), (
+            "new PhysicsWorld collider_snapshot should invalidate SpringBone collider array cache"
+        )
+    finally:
+        _delete_object(collider)
+        _delete_object(armature)
+
+
 def test_spring_vrm_runtime_cache_delete_and_clear_all_dispose():
     scene = bpy.context.scene
     root_tree = scene
@@ -1287,6 +1340,7 @@ check("SpringBone same-frame cached result semantics", test_spring_vrm_same_fram
 check("SpringBone runtime parameter changes reuse slot", test_spring_vrm_runtime_parameter_change_reuses_slot)
 check("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose)
 check("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers)
+check("SpringBone collider arrays cache reuses snapshot", test_spring_vrm_collider_arrays_cache_reuses_snapshot)
 check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
 check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)
 check("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot)
