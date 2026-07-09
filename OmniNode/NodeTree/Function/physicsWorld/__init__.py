@@ -56,8 +56,11 @@ from .declarations import (
     validate_solver_declaration,
 )
 from .names import (
+    BONE_TRANSFORM_CHANNEL,
     BONE_COLLISION_OVERRIDE_OBJECT_TAG,
+    GN_ATTRIBUTE_CHANNEL,
     JOLT_STEP_WRITER_ID,
+    RIGID_BODY_DELTA_CHANNEL,
     RIGID_BACKEND_RESOURCE_KEY,
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_BODY_REGISTER_WRITER_ID,
@@ -118,8 +121,11 @@ __all__ = [
     "unregister_solver_declaration",
     "validate_solver_declaration",
     # names
+    "BONE_TRANSFORM_CHANNEL",
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
+    "GN_ATTRIBUTE_CHANNEL",
     "JOLT_STEP_WRITER_ID",
+    "RIGID_BODY_DELTA_CHANNEL",
     "RIGID_BACKEND_RESOURCE_KEY",
     "RIGID_BODY_COMMANDS_CHANNEL",
     "RIGID_BODY_REGISTER_WRITER_ID",

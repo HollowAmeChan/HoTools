@@ -1215,8 +1215,8 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 **Phase 5 P0 已关闭：**
 
-1. **非 Object 写回 contract 已落地到 PoseBone。** SpringBone VRM 通过 `spring_vrm_pose` result stream 和 `physicsWorld.writeback -> PoseBone.matrix_basis` 写回，不在 solver step 中直接写 bpy。`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 world、slot 和 writeback cleanup，并把已写过的 PoseBone matrix_basis 复位。
-2. **第一条非 Jolt solver vertical slice 已落地。** `physicsWorld/spring_vrm/` 已进入 `world.solver_slots`，读取 `world.frame_context` 与 `world.collider_snapshot`，调用 C++ native step，发布 `spring_vrm_pose` / `spring_vrm_stats`，并由统一 writeback 消费。后台测试覆盖 native step、same-frame、spec prune、runtime cache lifecycle、sphere / capsule / plane / box collider 投影和 group mask 过滤。
+1. **非 Object 写回 contract 已落地到 PoseBone。** SpringBone VRM 通过通用 `bone_transform` 写回指令和 `physicsWorld.writeback -> PoseBone.matrix_basis` 写回，不在 solver step 中直接写 bpy。`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 world、slot 和 writeback cleanup，并把已写过的 PoseBone matrix_basis 复位。
+2. **第一条非 Jolt solver vertical slice 已落地。** `physicsWorld/spring_vrm/` 已进入 `world.solver_slots`，读取 `world.frame_context` 与 `world.collider_snapshot`，调用 C++ native step，发布通用 `bone_transform` 写回指令和 `spring_vrm_stats`，并由统一 writeback 消费。后台测试覆盖 native step、same-frame、spec prune、runtime cache lifecycle、sphere / capsule / plane / box collider 投影和 group mask 过滤。
 3. **当前 Jolt 能力不是 Phase 5 退出阻塞项。** Jolt 已作为刚体 backend 验证 world owner、native resource、result stream、Object delta writeback 和 runtime cache lifecycle；contact/query/lambda 等能力应进入后续 Jolt capability 阶段。
 
 **不是 Phase 5 退出阻塞项，可放到 Jolt 后续能力阶段：**

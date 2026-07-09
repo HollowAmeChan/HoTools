@@ -98,7 +98,7 @@ def physicsSpringVRMChainRegister(
     1. 从 world 隐式对象构建 SpringVRMSolverSpec。
     2. 注册到 world.solver_slots["spring_vrm:..."]。
     3. 调用 hotools_native.solve_spring_bone_vrm_cpp。
-    4. 发布 world.result_streams["spring_vrm_pose"]。
+    4. 发布 world.result_streams["bone_transform"] 通用写回指令。
     5. 下游 物理写回 节点统一写 PoseBone.matrix_basis。
 
     当前 vertical slice 先验证骨链、native step、result stream 和 PoseBone 写回闭环；

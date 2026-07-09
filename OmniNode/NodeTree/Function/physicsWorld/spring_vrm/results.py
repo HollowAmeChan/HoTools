@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from .names import (
-    SPRING_VRM_POSE_CHANNEL,
-    SPRING_VRM_SOLVER_ID,
-    SPRING_VRM_STATS_CHANNEL,
+from ..writeback_commands import (
+    clear_bone_transform_writebacks,
+    iter_bone_transform_writebacks,
+    make_bone_transform_writeback,
 )
-from ..utils.values import float3, matrix16
+from .names import SPRING_VRM_SOLVER_ID, SPRING_VRM_STATS_CHANNEL
 
 
 def make_spring_vrm_pose_result(
@@ -24,30 +24,29 @@ def make_spring_vrm_pose_result(
     chain_root: str = "",
     backend: str = "cpp",
 ) -> dict:
-    result = {
-        "channel": SPRING_VRM_POSE_CHANNEL,
-        "solver": SPRING_VRM_SOLVER_ID,
-        "backend": str(backend),
-        "slot_id": str(slot_id),
-        "frame": int(frame),
-        "generation": int(generation),
-        "armature_ptr": int(armature_ptr),
-        "armature_data_ptr": int(armature_data_ptr),
-        "chain_root": str(chain_root or ""),
-        "bone_name": str(bone_name or ""),
-        "pose_index": int(pose_index),
-        "matrix_basis": matrix16(matrix_basis),
-    }
-    if target_pose_matrix is not None:
-        result["target_pose_matrix"] = matrix16(target_pose_matrix)
-    if current_tail is not None:
-        result["current_tail"] = float3(current_tail)
+    result = make_bone_transform_writeback(
+        solver=SPRING_VRM_SOLVER_ID,
+        slot_id=slot_id,
+        armature_ptr=armature_ptr,
+        armature_data_ptr=armature_data_ptr,
+        frame=frame,
+        generation=generation,
+        bone_name=bone_name,
+        pose_index=pose_index,
+        matrix_basis=matrix_basis,
+        target_pose_matrix=target_pose_matrix,
+        current_tail=current_tail,
+        source_kind="spring_vrm",
+        source_root=chain_root,
+        backend=backend,
+    )
+    result["chain_root"] = str(chain_root or "")
     return result
 
 
 def publish_spring_vrm_pose_result(world, **kwargs) -> dict | None:
     result = make_spring_vrm_pose_result(**kwargs)
-    return world.publish_result(result, channel=SPRING_VRM_POSE_CHANNEL, solver=SPRING_VRM_SOLVER_ID)
+    return world.publish_result(result, channel=result.get("channel"), solver=SPRING_VRM_SOLVER_ID)
 
 
 def iter_spring_vrm_pose_results(
@@ -56,22 +55,21 @@ def iter_spring_vrm_pose_results(
     generation: int | None = None,
     slot_id: str | None = None,
 ) -> list[dict]:
-    items = world.consume_results(
-        SPRING_VRM_POSE_CHANNEL,
+    items = iter_bone_transform_writebacks(
+        world,
         solver=SPRING_VRM_SOLVER_ID,
         frame=frame,
         generation=generation,
+        slot_id=slot_id,
     )
-    if slot_id is not None:
-        items = [item for item in items if item.get("slot_id") == str(slot_id)]
     return [
         item for item in items
-        if isinstance(item, dict) and item.get("channel") == SPRING_VRM_POSE_CHANNEL
+        if isinstance(item, dict) and item.get("solver") == SPRING_VRM_SOLVER_ID
     ]
 
 
 def clear_spring_vrm_pose_results(world) -> None:
-    world.clear_results(SPRING_VRM_POSE_CHANNEL, solver=SPRING_VRM_SOLVER_ID)
+    clear_bone_transform_writebacks(world, solver=SPRING_VRM_SOLVER_ID)
 
 
 def make_spring_vrm_stats_result(

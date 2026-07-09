@@ -7,10 +7,10 @@ from .capabilities import (
     BONE_COLLISION_CAPABILITY_ID,
     SPRING_VRM_UPDATE_FREQUENCY_TABLE,
 )
+from ..names import BONE_TRANSFORM_CHANNEL
 from .names import (
     BONE_COLLISION_OVERRIDE_OBJECT_TAG,
     SPRING_VRM_CHAIN_OBJECT_TAG,
-    SPRING_VRM_POSE_CHANNEL,
     SPRING_VRM_SLOT_KIND,
     SPRING_VRM_SOLVER_ID,
     SPRING_VRM_STATS_CHANNEL,
@@ -45,7 +45,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"]',
     ],
     "produces": [
-        f'world.result_streams["{SPRING_VRM_POSE_CHANNEL}"]',
+        f'world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
         f'world.result_streams["{SPRING_VRM_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
@@ -96,7 +96,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [SPRING_VRM_POSE_CHANNEL, SPRING_VRM_STATS_CHANNEL],
+        "result_channels": [BONE_TRANSFORM_CHANNEL, SPRING_VRM_STATS_CHANNEL],
         "supports_bake": False,
     },
     "legacy_policy": "rewrite_only_no_compatibility",

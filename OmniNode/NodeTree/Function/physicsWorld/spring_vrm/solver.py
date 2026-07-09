@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from ..types import PhysicsWorldCache
+from ..names import BONE_TRANSFORM_CHANNEL
 from .declaration import SPRING_VRM_SOLVER_DECLARATION
 from .names import (
-    SPRING_VRM_POSE_CHANNEL,
     SPRING_VRM_SLOT_KIND,
     SPRING_VRM_SOLVER_ID,
     SPRING_VRM_STEP_WRITER_ID,
@@ -160,7 +160,7 @@ def step_spring_vrm(
         else:
             _republish_last_results(world, registered_ids)
             published = len(world.consume_results(
-                SPRING_VRM_POSE_CHANNEL,
+                BONE_TRANSFORM_CHANNEL,
                 solver=SPRING_VRM_SOLVER_ID,
                 frame=int(getattr(fc, "frame", 0) or 0),
                 generation=world.generation,

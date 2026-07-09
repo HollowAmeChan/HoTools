@@ -24,9 +24,8 @@ import mathutils
 
 from .names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
-from .spring_vrm.names import SPRING_VRM_SLOT_KIND
-from .spring_vrm.results import iter_spring_vrm_pose_results
 from .utils.values import matrix_from_16
+from .writeback_commands import iter_bone_transform_writebacks
 
 
 # ---------------------------------------------------------------------------
@@ -256,35 +255,29 @@ def writeback_bone_transforms(world) -> int:
     touched_pose_bones = _get_touched_pose_bones(world)
     _ensure_cleanup_resource(world)
 
-    for slot in list(world.solver_slots.values()):
-        if slot.kind != SPRING_VRM_SLOT_KIND:
-            continue
-        spec = slot.data.get("spec")
-        armature = getattr(spec, "armature", None)
-        pose = getattr(armature, "pose", None)
-        if pose is None:
-            continue
+    for result in iter_bone_transform_writebacks(world, frame=frame, generation=generation):
+        slot = _slot_for_writeback_result(world, result)
+        try:
+            armature = _armature_for_bone_writeback(world, result, slot)
+            pose = getattr(armature, "pose", None)
+            if pose is None:
+                continue
 
-        for result in iter_spring_vrm_pose_results(
-            world,
-            frame=frame,
-            generation=generation,
-            slot_id=slot.slot_id,
-        ):
+            bone_name = str(result.get("bone_name") or "")
+            pose_bone = pose.bones.get(bone_name)
+            if pose_bone is None:
+                continue
+            pose_bone.matrix_basis = matrix_from_16(result.get("matrix_basis"))
             try:
-                bone_name = str(result.get("bone_name") or "")
-                pose_bone = pose.bones.get(bone_name)
-                if pose_bone is None:
-                    continue
-                pose_bone.matrix_basis = matrix_from_16(result.get("matrix_basis"))
-                try:
-                    touched_pose_bones[(int(armature.as_pointer()), bone_name)] = (armature, bone_name)
-                except Exception:
-                    pass
-                updated_armatures.add(armature)
-                written += 1
+                touched_pose_bones[(int(armature.as_pointer()), bone_name)] = (armature, bone_name)
+            except Exception:
+                pass
+            updated_armatures.add(armature)
+            written += 1
+            if slot is not None:
                 slot.data.pop("_writeback_error", None)
-            except Exception as exc:
+        except Exception as exc:
+            if slot is not None:
                 slot.data["_writeback_error"] = str(exc)
 
     for armature in updated_armatures:
@@ -294,6 +287,61 @@ def writeback_bone_transforms(world) -> int:
             pass
 
     return written
+
+
+def _slot_for_writeback_result(world, result):
+    slot_id = str(result.get("slot_id") or "")
+    if not slot_id:
+        return None
+    return getattr(world, "solver_slots", {}).get(slot_id)
+
+
+def _armature_for_bone_writeback(world, result, slot):
+    spec = slot.data.get("spec") if slot is not None else None
+    armature = getattr(spec, "armature", None)
+    if _armature_matches_writeback(armature, result):
+        return armature
+
+    armature = _find_armature_by_pointer(result.get("armature_ptr"))
+    if armature is not None:
+        return armature
+    return None
+
+
+def _armature_matches_writeback(armature, result) -> bool:
+    if armature is None:
+        return False
+    try:
+        armature_ptr = int(result.get("armature_ptr", 0) or 0)
+        if armature_ptr and int(armature.as_pointer()) != armature_ptr:
+            return False
+        data_ptr = int(result.get("armature_data_ptr", 0) or 0)
+        data = getattr(armature, "data", None)
+        if data_ptr and (data is None or int(data.as_pointer()) != data_ptr):
+            return False
+    except Exception:
+        return False
+    return True
+
+
+def _find_armature_by_pointer(armature_ptr):
+    try:
+        target = int(armature_ptr or 0)
+    except Exception:
+        return None
+    if not target:
+        return None
+    try:
+        import bpy
+    except Exception:
+        return None
+    for obj in getattr(bpy.data, "objects", ()):
+        try:
+            if int(obj.as_pointer()) == target:
+                return obj
+        except Exception:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -358,7 +358,7 @@ Physics World Begin
 
 当前进展（2026-07-07）：
 
-- `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、`spring_vrm_pose` result stream、统一 PoseBone writeback。
+- `physicsWorld/spring_vrm/` 已建立新的 world-aware SpringBone 垂直链路：隐式骨链对象、per-armature solver slot、native C++ step、通用 `bone_transform` 写回指令、统一 PoseBone writeback。
 - SpringBone step 已从 `world.collider_snapshot` 打包 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider arrays，并从每根模拟骨的 `Bone.hotools_collision` 读取 hit radius 与 collided mask。
 - `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已提供 Blender 后台集成测试，覆盖隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box collider snapshot 投影和 group mask 过滤。
 - `_native/tests/test_spring_bone_vrm_native.py` 已提供 Python 3.13 native 直连测试，覆盖基础重力步进、capsule / plane / box collider 投影、group mask 过滤和 binding 参数 shape 校验。
@@ -464,7 +464,7 @@ Cloth step 读到 SpringBone 已写回的骨骼状态
 **目标模式：solver 结果进入 `world.result_streams` / `world.exchange`，链路末尾统一写 bpy**
 
 ```text
-SpringBone step → 写 world.result_streams["spring_bone_matrices"]
+SpringBone step → 写 world.result_streams["bone_transform"] 通用写回指令
   ↓ (world result stream / exchange，无 bpy 写)
 Cloth step 读声明的 result / exchange channel（不读 bpy）
   ↓

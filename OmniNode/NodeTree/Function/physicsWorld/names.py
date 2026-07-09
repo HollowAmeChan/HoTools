@@ -8,6 +8,14 @@ from importlib import import_module
 # 和 world.implicit_objects tag 都集中在这里，避免跨模块识别名称写散后错位。
 
 
+# ---- 通用写回 result channel -------------------------------------------
+#
+# solver 只发布写回指令；Object/PoseBone/GN attribute 的实际 Blender 写入统一由
+# physicsWorld.writeback 执行。
+RIGID_BODY_DELTA_CHANNEL = "rigid_body_delta"
+BONE_TRANSFORM_CHANNEL = "bone_transform"
+GN_ATTRIBUTE_CHANNEL = "gn_attribute"
+
 # ---- SpringBone VRM -----------------------------------------------------
 #
 # 兼容惰性重导出。SpringBone 的名称权威定义位于 spring_vrm/names.py。
