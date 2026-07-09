@@ -57,5 +57,7 @@ def spring_vrm_native_context_stats_for_slots(
         "chain_count": sum(int(item.get("chain_count", 0) or 0) for item in contexts),
         "buffer_count": sum(int(item.get("buffer_count", 0) or 0) for item in contexts),
         "step_count": sum(int(item.get("step_count", 0) or 0) for item in contexts),
+        "cpp_handle_count": sum(int(item.get("cpp_handle_count", 0) or 0) for item in contexts),
+        "static_ready_count": sum(int(item.get("static_ready_count", 0) or 0) for item in contexts),
         "topology_serial": sum(int(item.get("topology_serial", 0) or 0) for item in contexts),
     }

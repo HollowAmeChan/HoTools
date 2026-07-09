@@ -1123,12 +1123,19 @@ physicsWorld/
 
 上面的目录清单是**目标结构**，当前尚未完全落地。实际进度是“spring_vrm 领先、rigid/Jolt 正在原子化收口”：
 
-- `physicsWorld/` 根目录已建立最小 `registry.py`：当前负责内置 solver 子模块描述、runtime module 注册、solver declaration 装载、scope restart hook 和 scope collector 汇总运行。`names.py`、`declarations.py` 与根级 `__init__.py` 对 rigid/Jolt 的兼容导出已改为惰性装载，公共导入路径不再主动拉起 rigid 私有实现。名称冲突检查、property registration 和 debug draw mode 汇总仍待补齐；`sources.py` 仍缺，source 解析目前仍并入 `world.py` / `physicsWorldBegin`。
+- `physicsWorld/` 根目录已建立 `registry.py`：当前负责内置 solver 子模块描述、runtime module 注册、solver declaration 装载、solver node module 装载、capability/debug draw mode 汇总、scope restart hook 和 scope collector 汇总运行，并提供 solver id、slot kind、result channel、implicit object tag、debug draw mode id 的基础冲突检查。`names.py`、`declarations.py` 与根级 `__init__.py` 对 rigid/Jolt 的兼容导出已改为惰性装载，公共导入路径不再主动拉起 rigid 私有实现。property registration 仍待接入；`sources.py` 仍缺，source 解析目前仍并入 `world.py` / `physicsWorldBegin`。
 - `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py`、`debug.py`、`debug_draw.py` 均已建；当前 `debug.py` 持有 debug snapshot 摘要、native context 统计和 debug draw mode 声明，`debug_draw.py` 持有骨链/尾端可视化采样与 draw store。
-- `rigid/` 已补齐 `names.py`、`capabilities.py`、`declaration.py`、`debug.py`、`debug_draw.py`、`implicit_objects.py`、`scope_sync.py`；刚体/Jolt 自有名称、能力表、声明、debug draw mode 和 Begin 阶段的 rigid spec/slot dirty policy 已回到子模块。`rigid/__init__.py` 通过 `SOLVER_MODULE` 声明 declaration、`scope_restart_handlers` 与 `scope_collectors`。
+- `rigid/` 已补齐 `names.py`、`capabilities.py`、`declaration.py`、`debug.py`、`debug_draw.py`、`implicit_objects.py`、`scope_sync.py`；刚体/Jolt 自有名称、能力表、声明、nodes、debug draw mode 和 Begin 阶段的 rigid spec/slot dirty policy 已回到子模块。`rigid/__init__.py` 通过 `SOLVER_MODULE` 声明 nodes、capabilities、debug_draw_modes、declaration、`scope_restart_handlers` 与 `scope_collectors`。
+
+刚体/Jolt 原子化验收关口：
+
+1. 已完成：`OmniNodeRegister.py` 不再直接导入 `physicsWorld.rigid.nodes` / `spring_vrm.nodes`，而是通过 `physicsWorld/registry.py` 从 solver module descriptor 装载节点模块。
+2. 已完成主体：`SOLVER_MODULE` 描述符覆盖 `nodes`、`capabilities`、`debug_draw_modes`、`declaration`、scope hooks；`property_registration` 仍待接入。
+3. 已完成基础版：`registry.py` 对 solver id、slot kind、result channel、implicit object tag、debug draw mode id 做冲突检查；exchange channel 显式索引仍待从 declaration/capability 抽出。
+4. 已完成主体：中央 `names.py` / `declarations.py` 只保留兼容惰性导出，不再作为任何 solver 自有语义的权威事实源。
 - `physicsWorld/world.py` 仍负责公共 frame/scope/collider 生命周期，但不再直接点名 rigid/Jolt。restart-time scope 清理和 scope spec 收集统一通过 `registry.py` 调度到已装载 solver module；rigid 的 `RigidBodySpec` / `ConstraintSpec` 签名判断、slot prune 和 Jolt resync dirty policy 位于 `rigid/scope_sync.py`。
 
-因此 Phase 0 不能记作“目录结构已完成”，只能记作“骨架已建、spring_vrm 接近目标、rigid/Jolt 原子化切口已推进，公共装载层已有最小 registry，sources 和完整冲突检查/属性注册/debug 汇总仍待补齐”。
+因此 Phase 0 可以记作“solver 子模块装载骨架已闭合、spring_vrm 与 rigid/Jolt 主体已原子化”。剩余不是目录结构问题，而是 `sources.py` 拆分、property registration 接入、exchange channel 显式索引和后续 MC2/BoneCloth 迁移。
 
 ### Phase 1：低层物理世界基础 ✅ 已完成
 
@@ -1268,7 +1275,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 Phase 5 的 world-aware vertical slice 已可作为迁移样板。后续推荐顺序：
 
-1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** Python slot 侧已落 `SpringVRMNativeContext`，并在 native 模块导出 dual-call symbols 时走 C++ handle：static arrays 常驻、dynamic arrays 每帧同步、step 后 readback。剩余收口是把发布目标固定为 dual-call ABI，删除 35 参数 `_step_via_legacy_bridge` 兼容路径，并用 timing 基线确认每帧 pack/unpack 成本确实下降。
+1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** Python slot 侧已落 `SpringVRMNativeContext`，并强制要求 native 模块导出 dual-call symbols：static arrays 常驻、dynamic arrays 每帧同步、step 后 readback。35 参数 `_step_via_legacy_bridge` 兼容路径已从新路径删除；剩余收口是用 timing 基线确认每帧 pack/unpack 成本确实下降。
 2. **再做 MC2 MeshCloth / BoneCloth 的最小 world-aware slice。** 它们更能验证 native resident state、mesh delta 写回和大数组 result/writeback，但改动面更大。
 3. **最后做跨 solver 交互。** 例如 cloth 读取 rigid collider、spring bone 发布/消费动态 collider，应走显式 exchange/result channel，不让 solver 互读私有 slot。
 
@@ -1502,7 +1509,7 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
 
-Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖；剩余重点是删除 35 参数兼容桥、补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/lambda 能力边界。
+Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖，35 参数兼容桥已从新路径删除；剩余重点是补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/lambda 能力边界。
 
 ## 2026-07-09 追加：Solver 子模块原子化方向
 

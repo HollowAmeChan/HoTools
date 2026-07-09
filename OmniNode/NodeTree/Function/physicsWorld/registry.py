@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import importlib.util
 from importlib import import_module
 from copy import deepcopy
 from typing import Callable
@@ -20,7 +23,32 @@ def builtin_solver_domains() -> tuple[str, ...]:
 
 
 def _load_solver_package(domain: str):
-    return import_module(f".{domain}", __package__)
+    package_name = f"{__package__}.{domain}"
+    package = import_module(f".{domain}", __package__)
+    if getattr(package, "SOLVER_MODULE", None) is not None:
+        return package
+
+    package_paths = list(getattr(package, "__path__", ()) or ())
+    if not package_paths:
+        return package
+
+    init_path = os.path.join(package_paths[0], "__init__.py")
+    if not os.path.exists(init_path):
+        return package
+
+    spec = importlib.util.spec_from_file_location(
+        package_name,
+        init_path,
+        submodule_search_locations=package_paths,
+    )
+    if spec is None or spec.loader is None:
+        return package
+    module = importlib.util.module_from_spec(spec)
+    module.__package__ = package_name
+    module.__path__ = package_paths
+    sys.modules[package_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _default_descriptor(domain: str) -> dict:
@@ -28,6 +56,9 @@ def _default_descriptor(domain: str) -> dict:
         "domain": str(domain),
         "solver_id": str(domain),
         "declaration": None,
+        "nodes": (),
+        "capabilities": None,
+        "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
     }
@@ -97,6 +128,13 @@ def _resolve_ref(domain: str, ref):
     return getattr(module, attr_name, None)
 
 
+def _resolve_module_ref(domain: str, ref):
+    if not isinstance(ref, str) or ":" in ref:
+        return None
+    package = f"{__package__}.{domain}"
+    return import_module(ref, package=package) if ref.startswith(".") else import_module(ref)
+
+
 def _resolve_hook(domain: str, hook_ref) -> Callable | None:
     hook = _resolve_ref(domain, hook_ref)
     return hook if callable(hook) else None
@@ -163,6 +201,109 @@ def iter_solver_declarations() -> list[dict]:
             "declaration": declaration,
         })
     return declarations
+
+
+def iter_solver_node_modules() -> list[dict]:
+    modules: list[dict] = []
+    for domain, descriptor in all_solver_module_descriptors().items():
+        for module_ref in _as_tuple(descriptor.get("nodes")):
+            module = _resolve_module_ref(domain, module_ref)
+            if module is None:
+                continue
+            modules.append({
+                "domain": domain,
+                "solver_id": _descriptor_solver_id(domain, descriptor),
+                "module_ref": module_ref,
+                "module": module,
+            })
+    return modules
+
+
+def resolve_solver_capabilities(domain: str) -> dict:
+    descriptor = _solver_descriptor(domain)
+    ref = descriptor.get("capabilities")
+    value = _resolve_ref(domain, ref)
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def resolve_solver_debug_draw_modes(domain: str) -> dict:
+    descriptor = _solver_descriptor(domain)
+    ref = descriptor.get("debug_draw_modes")
+    value = _resolve_ref(domain, ref)
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def iter_solver_capabilities() -> list[dict]:
+    return [
+        {
+            "domain": domain,
+            "solver_id": _descriptor_solver_id(domain, descriptor),
+            "capabilities": resolve_solver_capabilities(domain),
+        }
+        for domain, descriptor in all_solver_module_descriptors().items()
+    ]
+
+
+def iter_solver_debug_draw_modes() -> list[dict]:
+    return [
+        {
+            "domain": domain,
+            "solver_id": _descriptor_solver_id(domain, descriptor),
+            "debug_draw_modes": resolve_solver_debug_draw_modes(domain),
+        }
+        for domain, descriptor in all_solver_module_descriptors().items()
+    ]
+
+
+def validate_solver_registry() -> dict:
+    problems: list[dict] = []
+    seen_solver_ids: dict[str, str] = {}
+    seen_slot_kinds: dict[str, str] = {}
+    seen_result_channels: dict[str, str] = {}
+    seen_implicit_tags: dict[str, str] = {}
+    seen_debug_modes: dict[str, str] = {}
+
+    def _check_unique(bucket: dict[str, str], kind: str, value: str, domain: str) -> None:
+        key = str(value or "").strip()
+        if not key:
+            return
+        previous = bucket.get(key)
+        if previous is not None and previous != domain:
+            problems.append({
+                "kind": kind,
+                "id": key,
+                "domains": [previous, domain],
+            })
+            return
+        bucket[key] = domain
+
+    for domain, descriptor in all_solver_module_descriptors().items():
+        _check_unique(seen_solver_ids, "solver_id", _descriptor_solver_id(domain, descriptor), domain)
+        declaration = resolve_solver_declaration(domain) or {}
+
+        for slot_kind in _as_tuple(declaration.get("slot_kind")):
+            _check_unique(seen_slot_kinds, "slot_kind", slot_kind, domain)
+
+        export = declaration.get("export") if isinstance(declaration.get("export"), dict) else {}
+        for channel in _as_tuple(export.get("result_channels")):
+            _check_unique(seen_result_channels, "result_channel", channel, domain)
+
+        implicit = declaration.get("implicit_objects") if isinstance(declaration.get("implicit_objects"), dict) else {}
+        for tag in _as_tuple(implicit.get("consumes")) + _as_tuple(implicit.get("planned")):
+            _check_unique(seen_implicit_tags, "implicit_object_tag", tag, domain)
+
+        for mode_id in resolve_solver_debug_draw_modes(domain):
+            _check_unique(seen_debug_modes, "debug_draw_mode", mode_id, domain)
+
+    return {
+        "valid": not problems,
+        "problems": problems,
+        "solver_ids": dict(seen_solver_ids),
+        "slot_kinds": dict(seen_slot_kinds),
+        "result_channels": dict(seen_result_channels),
+        "implicit_object_tags": dict(seen_implicit_tags),
+        "debug_draw_modes": dict(seen_debug_modes),
+    }
 
 
 def _record_hook_error(world, domain: str, hook_key: str, exc: Exception) -> None:

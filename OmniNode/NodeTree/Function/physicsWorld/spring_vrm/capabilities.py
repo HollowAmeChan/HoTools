@@ -94,6 +94,11 @@ BONE_COLLISION_CAPABILITY = {
 }
 
 
+SPRING_VRM_CAPABILITIES = {
+    BONE_COLLISION_CAPABILITY_ID: BONE_COLLISION_CAPABILITY,
+}
+
+
 # SpringBone 更新频率权威表。
 #
 # 这张表必须留在代码里，保证 solver 声明、debug 视图、未来节点生成器和迁移测试

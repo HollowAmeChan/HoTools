@@ -21,6 +21,9 @@ SOLVER_MODULE = {
     "domain": "spring_vrm",
     "solver_id": "spring_vrm",
     "declaration": ".declaration:SPRING_VRM_SOLVER_DECLARATION",
+    "nodes": (".nodes",),
+    "capabilities": ".capabilities:SPRING_VRM_CAPABILITIES",
+    "debug_draw_modes": ".debug:SPRING_VRM_DEBUG_DRAW_MODES",
 }
 
 
@@ -40,6 +43,7 @@ _LAZY_EXPORTS = {
     "BONE_COLLISION_CAPABILITY_ID": ".capabilities",
     "bone_collision_capability_field_names": ".capabilities",
     "bone_collision_capability_fields": ".capabilities",
+    "SPRING_VRM_CAPABILITIES": ".capabilities",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".capabilities",
     # declaration.py
     "SPRING_VRM_LEGACY_DISCARD_AUDIT": ".declaration",
@@ -117,6 +121,7 @@ __all__ = [
     "SPRING_VRM_SOLVER_ID",
     "SPRING_VRM_STATS_CHANNEL",
     "SPRING_VRM_STEP_WRITER_ID",
+    "SPRING_VRM_CAPABILITIES",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE",
     "SpringVRMChainSpec",
     "SpringVRMSolverSpec",

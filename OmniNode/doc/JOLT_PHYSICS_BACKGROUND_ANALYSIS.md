@@ -891,3 +891,11 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 `rigid.material_preset`、`rigid.ragdoll_proxy` 仍是 planned implicit object tag，当前只占位，不被 solver 消费。
 
 后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。
+
+## 2026-07-10 追加：Rigid/Jolt 原子化收口
+
+Rigid/Jolt 的 solver 子模块入口已从公共注册层收口到 `rigid.SOLVER_MODULE`：descriptor 现在声明 `nodes`、`capabilities`、`debug_draw_modes`、`declaration`、`scope_restart_handlers` 和 `scope_collectors`。`OmniNodeRegister.py` 不再直接导入 `physicsWorld.rigid.nodes`，而是通过 `physicsWorld/registry.py` 的 solver node loader 装载内置 solver 节点模块。
+
+`registry.py` 现在同时提供 capability/debug draw mode 汇总和基础冲突检查，覆盖 solver id、slot kind、result channel、implicit object tag 与 debug draw mode id。为兼容后台测试和未来部分装载器先注册空包的场景，registry 在发现 solver 包已存在但缺少 `SOLVER_MODULE` 时，会补载该包的 `__init__.py`，保证 rigid scope collector 仍能被 Begin 阶段发现。
+
+验收状态：`test_blender_rigid.py` 后台集成测试 19/19 通过，覆盖 Jolt adapter、world 生命周期、命令 exchange、world setting 隐式对象、完整 60 帧刚体链路、runtime cache dispose、same-frame/frame-jump/reset、scope prune、transform/shape/constraint dirty resync 和 generated constraint 隐式对象链路。

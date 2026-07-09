@@ -498,7 +498,7 @@ def _assert_basis_identity(armature, bone_name: str, label: str) -> None:
 
 
 def test_native_available():
-    assert is_native_available(), "hotools_native.solve_spring_bone_vrm_cpp 不可用"
+    assert is_native_available(), "hotools_native SpringBone context API 不可用"
 
 
 def test_spring_vrm_vertical_slice():
@@ -721,7 +721,9 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert debug1.get("bone_count") == 2
         assert debug1.get("last_frame") == 90
         assert debug1.get("step_count") == 0
+        assert debug1.get("cpp_handle") is True
         assert stats1.get("native_context", {}).get("chain_count") == 1
+        assert stats1.get("native_context", {}).get("cpp_handle_count") == 1
         assert stats1.get("native_context", {}).get("buffer_count") >= len(arrays1)
         buffer_ids = {name: id(value) for name, value in arrays1.items()}
 
@@ -742,6 +744,7 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert debug2.get("step_count") == 1
         assert {name: id(value) for name, value in getattr(chain_context2, "_dynamic").items()} == buffer_ids
         assert stats2.get("native_context", {}).get("step_count") == 1
+        assert stats2.get("native_context", {}).get("cpp_handle_count") == 1
 
         debug_snapshot = slot2.debug_snapshot()
         debug_context = debug_snapshot.get("native_context")
@@ -749,6 +752,7 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert debug_context.get("schema") == "spring_vrm_native_context_v2"
         assert debug_context.get("chain_count") == 1
         debug_chain = debug_context.get("chains", [])[0]
+        assert debug_chain.get("cpp_handle") is True
         assert debug_chain.get("root_bone") == "root"
         assert debug_chain.get("buffer_shapes", {}).get("current_tails") == [2, 3]
         assert debug_chain.get("buffer_shapes", {}).get("target_matrices") == [2, 16]

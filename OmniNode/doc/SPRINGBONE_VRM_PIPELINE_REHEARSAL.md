@@ -1158,7 +1158,7 @@ SpringBone Step
 
 - Python slot 侧的 `SpringVRMNativeContext` 已实现 dual-call 路径：`spring_vrm_create_context` 常驻 static topology arrays，`spring_vrm_update_dynamic` 每帧上传 pose/collider arrays，`spring_vrm_step` 推进，`spring_vrm_read_results` 读回 target matrices / quaternions。
 - 发布的 native 绑定已导出 `spring_vrm_create_context` / `spring_vrm_update_dynamic` / `spring_vrm_step` / `spring_vrm_read_results` / `spring_vrm_reset_state`。`_native/tests/test_spring_bone_vrm_native.py` 已覆盖 context create、reset、gravity、collider 和完整 head XYZ 保留。
-- 旧 35 参数 `solve_spring_bone_vrm_cpp` 仍作为 transitional bridge 保留，只有在当前 native 模块没有 dual-call symbol 或 handle 创建失败时才回退。完整验收前需要把发布目标固定为 dual-call ABI，并删除 `_step_via_legacy_bridge` 及其死字段。
+- SpringBone world-aware 路径已固定为 dual-call ABI，`_step_via_legacy_bridge` 和相关死字段已删除。旧 35 参数 `solve_spring_bone_vrm_cpp` 只保留给 legacy 节点和 native 对照测试，不再作为新路径 fallback。
 - C++ kernel 已支持 SpringBone 使用的 `SPHERE` / `CAPSULE` / `PLANE` / `BOX` collider type code；Blender 集成测试覆盖 world snapshot 打包，native 单测覆盖 binding 层 shape/dtype 校验。
 
 **当前代码 → 新接口映射：**
@@ -1168,9 +1168,9 @@ SpringBone Step
 | `build_cpp_chain_runtime()` 构建 static arrays | `create_spring_vrm_context(schema, static_arrays)` | topology dirty / generation 变化 |
 | `refresh_cpp_chain_runtime()` 更新 static | `update_spring_vrm_static(ctx, static_arrays)` | config dirty（不重建）|
 | `solve_cpp()` 每帧 pack animated arrays | `update_spring_vrm_dynamic(ctx, pose_arrays, collider_arrays, scalars)` | 每帧 |
-| `hotools_native.solve_spring_bone_vrm_cpp(...)` | `step_spring_vrm(ctx, dt, substeps)` | 每帧（在 dynamic 之后）|
+| `hotools_native.solve_spring_bone_vrm_cpp(...)` | 已从新路径移除；legacy/native 对照测试保留 | 不参与 world-aware SpringBone |
 | 解包 `current_tails` / `target_matrices` | `read_spring_vrm_results(ctx, out_basis_values)` | 每帧（在 step 之后）|
-| Python owner dispose | `free_spring_vrm_context(ctx)` | slot dispose |
+| Python owner dispose | `free_spring_vrm_context(ctx)`（可用时 best-effort） | slot dispose |
 
 验收：
 

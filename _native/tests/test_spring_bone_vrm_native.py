@@ -208,7 +208,7 @@ _HAS_CONTEXT_API = hasattr(hotools_native, "spring_vrm_create_context")
 
 def _skip_if_no_context_api():
     if not _HAS_CONTEXT_API:
-        raise Exception("SKIP: spring_vrm_create_context not available in this build")
+        raise AssertionError("spring_vrm_create_context not available in this build")
 
 def _context_from_base() -> object:
     """用 _base_args() 里的静态数据创建一个 SpringVrmContext capsule。"""

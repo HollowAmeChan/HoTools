@@ -5,8 +5,7 @@ from nodeitems_utils import NodeCategory, NodeItem
 from .OmniNodeTree import TREE_ID
 from .Function import Data, Math,Operator, RigTooKit,Logic,DataTypeCast,Image,Modifier,Material,UV,VertexColor,VertexGroup,Debug,Cache,Physics,physicsMC2MeshCloth,physicsMC2BoneCloth,Armature
 from .Function.physicsWorld import nodes as physicsWorld
-from .Function.physicsWorld.rigid import nodes as physicsWorldRigid
-from .Function.physicsWorld.spring_vrm import nodes as physicsWorldSpringVRM
+from .Function.physicsWorld import registry as physicsWorldRegistry
 from .GraphNode import CLS_GRAPH
 
 class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
@@ -18,6 +17,13 @@ class OmniNodeCategory(NodeCategory):  # 定义一个节点集合类
 def _label_startswith(node_list, *prefixes):
     """按 bl_label 前缀过滤节点类列表。"""
     return [n for n in node_list if any(n.bl_label.startswith(p) for p in prefixes)]
+
+
+def _load_physics_world_solver_nodes():
+    nodes = []
+    for entry in physicsWorldRegistry.iter_solver_node_modules():
+        nodes.extend(FunctionNodeCore.loadRegisterFuncNodes(entry["module"]))
+    return nodes
 
 
 cls = []
@@ -45,8 +51,7 @@ node_cls_physics = FunctionNodeCore.loadRegisterFuncNodes(Physics)
 node_cls_physics_mc2 = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2MeshCloth)
 node_cls_physics_bonecloth = FunctionNodeCore.loadRegisterFuncNodes(physicsMC2BoneCloth)
 node_cls_physics_world = FunctionNodeCore.loadRegisterFuncNodes(physicsWorld)
-node_cls_physics_world_rigid = FunctionNodeCore.loadRegisterFuncNodes(physicsWorldRigid)
-node_cls_physics_world_spring_vrm = FunctionNodeCore.loadRegisterFuncNodes(physicsWorldSpringVRM)
+node_cls_physics_world_solvers = _load_physics_world_solver_nodes()
 cls.extend(node_cls_data)
 cls.extend(node_cls_armature)
 cls.extend(node_cls_math)
@@ -66,8 +71,7 @@ cls.extend(node_cls_physics)
 cls.extend(node_cls_physics_mc2)
 cls.extend(node_cls_physics_bonecloth)
 cls.extend(node_cls_physics_world)
-cls.extend(node_cls_physics_world_rigid)
-cls.extend(node_cls_physics_world_spring_vrm)
+cls.extend(node_cls_physics_world_solvers)
 
 # ── 物理世界子分类（3块）─────────────────────────────────────────────────────
 # 物理世界：对象范围 + 帧开始/提交 + 写回
@@ -83,8 +87,7 @@ _pw_debug = _label_startswith(
 # 解算器：所有 solver + 配套属性/注册/命令（刚体全部 + 弹簧骨全部）
 # 排序：属性 → 注册 → 模拟步 → 命令/结果，使同一 solver 的节点自然聚合
 _solver_items = (
-    node_cls_physics_world_rigid        # 刚体（模拟步 + 结果 + Jolt设置 + 生成约束 + 命令）
-    + node_cls_physics_world_spring_vrm # 弹簧骨（VRM骨链属性 + 注册 + 模拟步）
+    node_cls_physics_world_solvers
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

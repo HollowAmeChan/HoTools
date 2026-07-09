@@ -9,6 +9,9 @@ SOLVER_MODULE = {
     "domain": "rigid",
     "solver_id": "rigid_jolt",
     "declaration": ".declaration:RIGID_SOLVER_DECLARATION",
+    "nodes": (".nodes",),
+    "capabilities": ".capabilities:RIGID_CAPABILITIES",
+    "debug_draw_modes": ".debug:RIGID_DEBUG_DRAW_MODES",
     "scope_restart_handlers": (
         ".scope_sync:clear_scope_dynamic_rigid_deltas",
     ),

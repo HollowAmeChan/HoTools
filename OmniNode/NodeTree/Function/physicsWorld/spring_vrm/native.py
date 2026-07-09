@@ -7,7 +7,7 @@
   topology/restart 变化时：
     ctx.rebuild(spec, records)
       → 捕获静态数组（init_axis / init_rotation / topology）
-      → is_context_api_available() 为 True 时调用 spring_vrm_create_context()
+      → 调用 spring_vrm_create_context()
         把静态数组上传到 C++ 侧，拿到 self._handle
 
   每帧：
@@ -15,22 +15,16 @@
       → 从当前 pose 填充动态数组（head/tail/matrix）
 
     ctx.step_and_publish(module, world, armature, chain, chain_state, dt, substeps)
-      → self._handle 有效：走 _step_via_context_api
+      → 走 _step_via_context_api
         （spring_vrm_update_dynamic → [reset_state] → spring_vrm_step →
          spring_vrm_read_results → publish）
-      → 否则回退 _step_via_legacy_bridge（旧 35 参数单次调用）
 
   dispose 时：
     ctx.dispose()
       → free_spring_vrm_context(self._handle)（若有）+ 清空 numpy/bpy 引用
 
-调用路径由 native 模块是否导出 dual-call symbol 决定：
-  is_available()            → 有 solve_spring_bone_vrm_cpp（35 参数 bridge，最低要求）
-  is_context_api_available() → 有 spring_vrm_create_context（新 dual-call API）
-
-Python 侧 dual-call 路径已完整实现并在 handle 有效时激活；当前发布的 native
-产物是否编译进 dual-call symbol 决定实际走哪条路。_step_via_legacy_bridge 作为
-未编译 dual-call 时的兼容回退保留，等新 ABI 成为唯一发布目标后可删除。
+SpringBone world-aware 路径要求 native 模块导出 dual-call symbols；旧 35 参数
+solve_spring_bone_vrm_cpp 只保留给 legacy 节点和 native 对照测试，不再作为本路径 fallback。
 """
 
 from __future__ import annotations
@@ -75,16 +69,19 @@ def is_available() -> bool:
         module = native_module()
     except Exception:
         return False
-    return hasattr(module, "solve_spring_bone_vrm_cpp")
+    required = (
+        "spring_vrm_create_context",
+        "spring_vrm_update_dynamic",
+        "spring_vrm_reset_state",
+        "spring_vrm_step",
+        "spring_vrm_read_results",
+    )
+    return all(hasattr(module, name) for name in required)
 
 
 def is_context_api_available() -> bool:
     """新 dual-call API 是否已编译进当前 native 模块。"""
-    try:
-        module = native_module()
-    except Exception:
-        return False
-    return hasattr(module, "spring_vrm_create_context")
+    return is_available()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +96,7 @@ class SpringVRMNativeContext:
       _static  — topology/restart 变化时从 pose 一次性捕获的静态数组
       _dynamic — 每帧预分配并重填的动态数组
       _result  — C++ 原地写入的结果 basis buffer（直接给 foreach_set 消费）
-      _handle  — 未来 C++ context capsule（当前为 None，新 API 就绪后填充）
+      _handle  — C++ context capsule
 
     update_policy（参考 PHYSICS_SIMULATION_PIPELINE_CONTRACT.md）：
       restart_only  → _static 数组
@@ -125,18 +122,13 @@ class SpringVRMNativeContext:
         self._result: np.ndarray | None = None       # (N*16,) float32，target_matrices
         self._result_quat: np.ndarray | None = None  # (N*4,)  float32，target_quaternions
 
-        # records 在 rebuild 时存储，bridge 路径读取
+        # records 在 rebuild 时存储，publish 和每帧 profile 解析读取
         self._records: list[dict] = []
 
-        # rebuild 时存储的 spec 级信息（bridge 路径用）
-        # TODO: 新 C++ API 落地后 bridge 整段删除，届时连同此字段一起清理。
-        #       当前 bridge 不再读取 self._armature（改由调用方传入），此字段已是死字段。
-        self._armature = None
         self._slot_id: str = ""
         self._armature_ptr: int = 0
         self._armature_data_ptr: int = 0
 
-        # TODO: 新 C++ API 就绪后由 create_spring_vrm_context() 填充
         self._handle = None
 
     # ── 生命周期 ──────────────────────────────────────────────────────────────
@@ -163,8 +155,7 @@ class SpringVRMNativeContext:
         self._bone_count = n
         self._records = records
 
-        # spec 级信息（bridge 路径和 publish 共用）
-        self._armature = spec.armature
+        # spec 级信息（publish 用）
         self._slot_id = str(getattr(spec, "slot_id", "") or "")
         self._armature_ptr = int(getattr(spec, "armature_ptr", 0) or 0)
         self._armature_data_ptr = int(getattr(spec, "armature_data_ptr", 0) or 0)
@@ -176,24 +167,23 @@ class SpringVRMNativeContext:
         self._result = np.zeros(n * 16, dtype=np.float32)
         self._result_quat = np.zeros(n * 4, dtype=np.float32)
 
-        # 创建 C++ context（新 dual-call API）
-        if is_context_api_available():
-            try:
-                s = self._static
-                self._handle = native_module().spring_vrm_create_context(
-                    1,  # schema
-                    n,
-                    np.ascontiguousarray(s["lengths"],          dtype=np.float32),
-                    np.ascontiguousarray(s["init_axis_local"],  dtype=np.float32).ravel(),
-                    np.ascontiguousarray(s["init_axis_parent"], dtype=np.float32).ravel(),
-                    np.ascontiguousarray(s["init_rotations"],   dtype=np.float32).ravel(),
-                    np.ascontiguousarray(s["init_scales"],      dtype=np.float32).ravel(),
-                    np.ascontiguousarray(s["parent_indices"],   dtype=np.int32),
-                    np.ascontiguousarray(s["pinned"],           dtype=np.uint8),
-                    np.ascontiguousarray(s["use_connect"],      dtype=np.uint8),
-                )
-            except Exception:
-                self._handle = None
+        if not is_available():
+            raise RuntimeError("hotools_native is missing required SpringBone context API symbols")
+        s = self._static
+        self._handle = native_module().spring_vrm_create_context(
+            1,  # schema
+            n,
+            np.ascontiguousarray(s["lengths"],          dtype=np.float32),
+            np.ascontiguousarray(s["init_axis_local"],  dtype=np.float32).ravel(),
+            np.ascontiguousarray(s["init_axis_parent"], dtype=np.float32).ravel(),
+            np.ascontiguousarray(s["init_rotations"],   dtype=np.float32).ravel(),
+            np.ascontiguousarray(s["init_scales"],      dtype=np.float32).ravel(),
+            np.ascontiguousarray(s["parent_indices"],   dtype=np.int32),
+            np.ascontiguousarray(s["pinned"],           dtype=np.uint8),
+            np.ascontiguousarray(s["use_connect"],      dtype=np.uint8),
+        )
+        if self._handle is None:
+            raise RuntimeError("spring_vrm_create_context returned None")
 
     def fill_dynamic(self, armature, chain_state: dict, records: list[dict]) -> None:
         """每帧从当前 pose 采样动态数组（预分配 buffer，复用不重新分配）。"""
@@ -215,18 +205,14 @@ class SpringVRMNativeContext:
         """
         推进解算，把结果发布到 world.result_streams，返回写回骨骼数。
 
-        armature 由调用方传入（来自已经过 _get_valid_armature 验证的引用），
-        而不是用 self._armature，避免 _get_valid_armature 刷新引用但未 rebuild 时
-        bridge 内部使用了过期 bpy 指针。
-
-        当 self._handle 有效时走新 dual-call 路径；
-        否则退回旧 35 参数 bridge（_step_via_legacy_bridge）。
+        armature 由调用方传入（来自已经过 _get_valid_armature 验证的引用）。
+        SpringBone world-aware 路径只走 dual-call native context，不再回退旧 35 参数 ABI。
         """
         if self._static is None or self._dynamic is None or self._result is None:
             return 0
-        if self._handle is not None:
-            return self._step_via_context_api(module, world, armature, chain, chain_state, dt, substeps, restart)
-        return self._step_via_legacy_bridge(module, world, armature, chain, chain_state, dt, substeps, restart)
+        if self._handle is None:
+            raise RuntimeError("SpringBone native context handle is not initialized")
+        return self._step_via_context_api(module, world, armature, chain, chain_state, dt, substeps, restart)
 
     def dispose(self) -> None:
         """释放 C++ handle 和 numpy buffer，清空所有 bpy 对象引用。"""
@@ -238,7 +224,6 @@ class SpringVRMNativeContext:
         self._topology_signature = None
         # 清空 bpy 引用，避免 Blender 对象被 GC 延迟释放
         self._records = []
-        self._armature = None
         self._collider_cache_key = None
         self._collider_cache_arrays = None
 
@@ -473,135 +458,6 @@ class SpringVRMNativeContext:
                 ),
             },
         }
-
-    # ── TRANSITIONAL 桥接（35 参数旧 ABI，新 API 就绪后整段删除）────────────
-
-    def _step_via_legacy_bridge(
-        self,
-        module,
-        world,
-        armature,
-        chain,
-        chain_state: dict,
-        dt: float,
-        substeps: int,
-        restart: bool = False,
-    ) -> int:
-        """
-        TRANSITIONAL — 桥接到现有 solve_spring_bone_vrm_cpp (35 参数)。
-
-        armature 由调用方传入（已过 _get_valid_armature 验证），不使用 self._armature。
-
-        新 C++ API（create/update_dynamic/step/read_results）就绪后：
-          1. 用 step_and_publish 里的新路径替换
-          2. 删除此方法
-        """
-        d = self._dynamic
-        s = self._static
-        (
-            collider_types,
-            collider_groups,
-            collider_centers,
-            collider_segment_a,
-            collider_segment_b,
-            collider_radii,
-        ) = self._collision_arrays(world, armature, chain)
-
-        armature_world     = np.asarray(matrix16(armature.matrix_world),            dtype=np.float32)
-        armature_world_inv = np.asarray(matrix16(armature.matrix_world.inverted()),  dtype=np.float32)
-        root_quaternion    = np.asarray((0.0, 0.0, 0.0, 1.0),                       dtype=np.float32)
-        root_tail_world    = np.zeros(3, dtype=np.float32)
-        gravity_dir        = np.asarray(chain.gravity_dir,                           dtype=np.float32)
-        hit_radii, collided_by_groups = _bone_collision_profiles(armature, self._records, world=world)
-
-        self._last_collider_count = len(collider_types)
-
-        if restart:
-            self._reset_dynamic_tails_to_pose()
-            frame = int(getattr(world.frame_context, "frame", 0) or 0)
-            self._last_frame = frame
-            return self._publish_current_pose(world, chain, chain_state, frame)
-
-        module.solve_spring_bone_vrm_cpp(
-            d["current_tails"],
-            d["prev_tails"],
-            d["target_matrices"],
-            d["target_quaternions"],
-            d["current_heads"],
-            d["current_pose_matrices"],
-            d["current_pose_quaternions"],
-            d["parent_pose_quaternions"],
-            d["current_pose_tails"],
-            s["lengths"],
-            s["init_axis_local"],
-            s["init_axis_parent"],
-            s["init_rotations"],
-            s["init_scales"],
-            s["parent_indices"],
-            s["pinned"],
-            s["use_connect"],
-            root_quaternion,
-            root_tail_world,
-            armature_world,
-            armature_world_inv,
-            gravity_dir,
-            hit_radii,
-            collided_by_groups,
-            collider_types,
-            collider_groups,
-            collider_centers,
-            collider_segment_a,
-            collider_segment_b,
-            collider_radii,
-            float(dt),
-            max(1, int(substeps)),
-            float(chain.stiffness_force),
-            float(chain.drag_force),
-            float(chain.gravity_power),
-        )
-
-        frame = int(getattr(world.frame_context, "frame", 0) or 0)
-        self._step_count += 1
-        self._last_frame = frame
-
-        target_pose_matrices: dict[str, mathutils.Matrix] = {}
-        published = 0
-        tails = chain_state.setdefault("tails", {})
-        last_results = []
-
-        for index, record in enumerate(self._records):
-            bone_name = record["bone_name"]
-            target_matrix = _matrix_from_row(d["target_matrices"][index])
-            target_pose_matrices[bone_name] = target_matrix
-            basis_matrix = matrix_basis_from_pose_matrix(
-                record["pose_bone"], target_matrix, target_pose_matrices
-            )
-            tails[bone_name] = {
-                "current_tail": _tuple3(d["current_tails"][index]),
-                "prev_tail":    _tuple3(d["prev_tails"][index]),
-            }
-            result = publish_spring_vrm_pose_result(
-                world,
-                slot_id=self._slot_id,
-                armature_ptr=self._armature_ptr,
-                armature_data_ptr=self._armature_data_ptr,
-                frame=frame,
-                generation=world.generation,
-                bone_name=bone_name,
-                pose_index=int(record["pose_index"]),
-                matrix_basis=basis_matrix,
-                target_pose_matrix=target_matrix,
-                current_tail=_tuple3(d["current_tails"][index]),
-                chain_root=chain.root_bone,
-                backend="cpp",
-            )
-            if result is not None:
-                last_results.append(result)
-                published += 1
-
-        chain_state["last_results"] = last_results
-        return published
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 拓扑签名
@@ -1043,8 +899,8 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
         module = native_module()
     except Exception as exc:
         return 0, 0.0, [f"hotools_native 不可用: {exc}"]
-    if not hasattr(module, "solve_spring_bone_vrm_cpp"):
-        return 0, 0.0, ["hotools_native 缺少 solve_spring_bone_vrm_cpp"]
+    if not is_available():
+        return 0, 0.0, ["hotools_native 缺少 SpringBone context API"]
 
     # restart 时清空 frame_state（tails）
     frame_state = slot.data.setdefault("frame_state", {})
