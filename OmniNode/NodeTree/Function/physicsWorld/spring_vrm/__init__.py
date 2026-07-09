@@ -16,27 +16,23 @@ from __future__ import annotations
 
 from importlib import import_module
 
-from .capabilities import (
-    BONE_COLLISION_CAPABILITY,
-    BONE_COLLISION_CAPABILITY_ID,
-    SPRING_VRM_UPDATE_FREQUENCY_TABLE,
-)
-from .declaration import (
-    SPRING_VRM_LEGACY_DISCARD_AUDIT,
-    SPRING_VRM_SOLVER_DECLARATION,
-)
-from .names import (
-    BONE_COLLISION_OVERRIDE_OBJECT_TAG,
-    SPRING_VRM_CHAIN_OBJECT_TAG,
-    SPRING_VRM_POSE_CHANNEL,
-    SPRING_VRM_SLOT_KIND,
-    SPRING_VRM_SOLVER_ID,
-    SPRING_VRM_STATS_CHANNEL,
-    SPRING_VRM_STEP_WRITER_ID,
-)
-
 
 _LAZY_EXPORTS = {
+    # names.py
+    "BONE_COLLISION_OVERRIDE_OBJECT_TAG": ".names",
+    "SPRING_VRM_CHAIN_OBJECT_TAG": ".names",
+    "SPRING_VRM_POSE_CHANNEL": ".names",
+    "SPRING_VRM_SLOT_KIND": ".names",
+    "SPRING_VRM_SOLVER_ID": ".names",
+    "SPRING_VRM_STATS_CHANNEL": ".names",
+    "SPRING_VRM_STEP_WRITER_ID": ".names",
+    # capabilities.py
+    "BONE_COLLISION_CAPABILITY": ".capabilities",
+    "BONE_COLLISION_CAPABILITY_ID": ".capabilities",
+    "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".capabilities",
+    # declaration.py
+    "SPRING_VRM_LEGACY_DISCARD_AUDIT": ".declaration",
+    "SPRING_VRM_SOLVER_DECLARATION": ".declaration",
     # results.py
     "clear_spring_vrm_pose_results": ".results",
     "clear_spring_vrm_stats_results": ".results",

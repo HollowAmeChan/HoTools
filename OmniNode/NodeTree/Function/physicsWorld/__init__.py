@@ -12,6 +12,8 @@
 #   rigid/          - 刚体 / Jolt domain
 #   spring_vrm/     - VRM SpringBone 重写 domain
 
+from importlib import import_module
+
 from .types import (
     PhysicsObjectScope,
     PhysicsFrameContext,
@@ -40,12 +42,8 @@ from .debug import (
     print_world_summary,
 )
 from .declarations import (
-    BONE_COLLISION_CAPABILITY,
-    BONE_COLLISION_CAPABILITY_ID,
     RIGID_SOLVER_DECLARATION,
     SOLVER_DECLARATION_REQUIRED_KEYS,
-    SPRING_VRM_SOLVER_DECLARATION,
-    SPRING_VRM_UPDATE_FREQUENCY_TABLE,
     all_solver_declarations,
     get_solver_declaration,
     normalize_solver_declaration,
@@ -57,7 +55,6 @@ from .declarations import (
 )
 from .names import (
     BONE_TRANSFORM_CHANNEL,
-    BONE_COLLISION_OVERRIDE_OBJECT_TAG,
     GN_ATTRIBUTE_CHANNEL,
     JOLT_STEP_WRITER_ID,
     RIGID_BODY_DELTA_CHANNEL,
@@ -73,13 +70,33 @@ from .names import (
     RIGID_SOLVER_ID,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,
-    SPRING_VRM_CHAIN_OBJECT_TAG,
-    SPRING_VRM_POSE_CHANNEL,
-    SPRING_VRM_SLOT_KIND,
-    SPRING_VRM_SOLVER_ID,
-    SPRING_VRM_STATS_CHANNEL,
-    SPRING_VRM_STEP_WRITER_ID,
 )
+
+
+_SPRING_VRM_COMPAT_EXPORTS = {
+    "BONE_COLLISION_CAPABILITY": ".declarations",
+    "BONE_COLLISION_CAPABILITY_ID": ".declarations",
+    "SPRING_VRM_SOLVER_DECLARATION": ".declarations",
+    "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".declarations",
+    "BONE_COLLISION_OVERRIDE_OBJECT_TAG": ".names",
+    "SPRING_VRM_CHAIN_OBJECT_TAG": ".names",
+    "SPRING_VRM_POSE_CHANNEL": ".names",
+    "SPRING_VRM_SLOT_KIND": ".names",
+    "SPRING_VRM_SOLVER_ID": ".names",
+    "SPRING_VRM_STATS_CHANNEL": ".names",
+    "SPRING_VRM_STEP_WRITER_ID": ".names",
+}
+
+
+def __getattr__(name: str):
+    module_name = _SPRING_VRM_COMPAT_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     # types

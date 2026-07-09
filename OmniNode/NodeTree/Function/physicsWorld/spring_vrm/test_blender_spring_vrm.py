@@ -181,6 +181,7 @@ def _pw(suffix: str):
 
 _OmniCache = sys.modules[_nt_omni_key]._OmniCache
 PhysicsWorldCache = _pw("types").PhysicsWorldCache
+BONE_TRANSFORM_CHANNEL = _pw("names").BONE_TRANSFORM_CHANNEL
 make_scope = _pw("scope").make_scope
 physicsWorldBegin = _pw("world").physicsWorldBegin
 physicsWorldCommit = _pw("world").physicsWorldCommit
@@ -400,6 +401,15 @@ def _run_spring_frame(
         generation=world.generation,
     ))
     assert len(results) == 2, f"result stream 应包含 2 项，实际 {len(results)}"
+    assert all(item.get("channel") == BONE_TRANSFORM_CHANNEL for item in results), (
+        f"SpringBone 应输出通用 bone_transform 写回通道，实际 {results}"
+    )
+    assert all(item.get("writeback_type") == "bone_transform" for item in results), (
+        f"SpringBone 应输出通用骨骼写回指令，实际 {results}"
+    )
+    assert all(item.get("source_kind") == "spring_vrm" for item in results), (
+        f"SpringBone 写回指令应保留 source_kind=spring_vrm，实际 {results}"
+    )
 
     written = apply_all_writebacks(world, restart=restart)
     assert written == 2, f"应写回 2 根模拟骨骼，实际 {written}"
