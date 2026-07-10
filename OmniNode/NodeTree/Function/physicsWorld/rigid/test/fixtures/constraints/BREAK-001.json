@@ -1,0 +1,106 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "BREAK-001",
+  "title": "可断裂约束的冲量阈值与断裂后释放运动",
+  "source": "hotools_policy:breakable_constraint_impulse_threshold",
+  "tags": ["p0", "constraint", "breakable", "policy-layer"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 3
+  },
+  "bodies": [
+    {
+      "id": "breaks",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [-2.0, 0.0, 0.0],
+      "linear_velocity": [3.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "holds",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [2.0, 0.0, 0.0],
+      "linear_velocity": [3.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "low_threshold",
+      "type": "FIXED",
+      "body_a": "WORLD",
+      "body_b": "breaks",
+      "anchor_position": [-2.0, 0.0, 0.0],
+      "breakable": true,
+      "breaking_threshold": 2.5
+    },
+    {
+      "id": "high_threshold",
+      "type": "FIXED",
+      "body_a": "WORLD",
+      "body_b": "holds",
+      "anchor_position": [2.0, 0.0, 0.0],
+      "breakable": true,
+      "breaking_threshold": 3.5
+    }
+  ],
+  "timeline": [
+    {"frame": 2, "phase": "pre_step", "op": "add_impulse", "body": "breaks", "impulse": [1.0, 0.0, 0.0]},
+    {"frame": 2, "phase": "pre_step", "op": "add_impulse", "body": "holds", "impulse": [1.0, 0.0, 0.0]}
+  ],
+  "sample_frames": [0, 1, 2, 3],
+  "parity_through_frame": 0,
+  "assertions": [
+    {
+      "kind": "constraint_break_sequence",
+      "constraint": "low_threshold",
+      "first_broken_frame": 1,
+      "threshold": 2.5,
+      "breaking_impulse": 3.0,
+      "impulse_abs": 0.00002,
+      "end_frame": 3,
+      "runners": ["blender_pipeline_v1"]
+    },
+    {
+      "kind": "constraint_break_state",
+      "constraint": "high_threshold",
+      "frame": 3,
+      "broken": false,
+      "enabled": true,
+      "breaking_impulse": 0.0,
+      "impulse_abs": 0.00002,
+      "runners": ["blender_pipeline_v1"]
+    },
+    {
+      "kind": "body_state_near",
+      "body": "breaks",
+      "frame": 3,
+      "position": [-1.9666666666666666, 0.0, 0.0],
+      "linear_velocity": [1.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 0.0],
+      "abs": 0.00003,
+      "rel": 0.000001,
+      "runners": ["blender_pipeline_v1"]
+    },
+    {
+      "kind": "body_state_near",
+      "body": "holds",
+      "frame": 3,
+      "position": [2.0, 0.0, 0.0],
+      "linear_velocity": [0.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 0.0],
+      "abs": 0.00003,
+      "rel": 0.000001,
+      "runners": ["blender_pipeline_v1"]
+    },
+    {"kind": "finite_all"}
+  ]
+}

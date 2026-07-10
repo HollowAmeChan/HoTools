@@ -63,6 +63,7 @@ def test_jolt_semantic_fixture_catalog():
     assert len(ids) == len(set(ids)), "semantic fixture ids must be unique"
     assert {
         "BODY-001", "FREE-001", "FREE-002", "FREE-003",
+        "BREAK-001", "BREAK-002",
         "FIXED-001", "POINT-001", "DIST-001", "DIST-002", "HINGE-001",
         "HINGE-002", "SLIDER-001", "SLIDER-002", "CONE-001", "CONE-002",
         "DIST-003", "HINGE-003", "HINGE-004", "HINGE-005", "HINGE-006",
@@ -88,6 +89,14 @@ def test_jolt_semantic_fixture_catalog():
         assert "p0" in fixture.tags
         assert fixture.assertions
         assert fixture.sample_frames[0] == 0
+    break_fixture = next(fixture for fixture in fixtures if fixture.id == "BREAK-001")
+    assert break_fixture.parity_through_frame == 0
+    assert break_fixture.constraints_by_id["low_threshold"].breakable is True
+    assert break_fixture.constraints_by_id["low_threshold"].breaking_threshold == 2.5
+    assert any(
+        assertion.runners == ("blender_pipeline_v1",)
+        for assertion in break_fixture.assertions
+    )
 
 
 def test_jolt_fixture_rejects_degenerate_shapes():

@@ -152,6 +152,8 @@ class BlenderFixtureRuntime:
         props.target_b = self.objects.get(constraint.body_b)
         direct = {
             "disable_collisions": constraint.disable_collisions,
+            "breakable": constraint.breakable,
+            "breaking_threshold": constraint.breaking_threshold,
             "constraint_priority": constraint.priority,
             "solver_velocity_steps": constraint.solver_velocity_steps,
             "solver_position_steps": constraint.solver_position_steps,
@@ -378,7 +380,12 @@ class BlenderFixtureRuntime:
             )
             if result is not None:
                 constraints.append(canonical_constraint_state(
-                    constraint_id, self._constraint_state_tuple(result)
+                    constraint_id,
+                    self._constraint_state_tuple(result),
+                    breakable=result["breakable"],
+                    breaking_threshold=result["breaking_threshold"],
+                    broken=result["broken"],
+                    breaking_impulse=result["breaking_impulse"],
                 ))
         contacts = []
         for event in self.api["iter_rigid_contact_event_results"](
@@ -667,10 +674,28 @@ class BlenderFixtureRuntime:
                             f"same-frame replay advanced or changed state: "
                             f"{same_frame_comparison.differences}"
                         )
+                verify_same_frame_policy = (
+                    "same-frame-policy" in fixture.tags
+                    and bool(events.get((frame, "post_step"), ()))
+                )
+                before_post_replay = (
+                    self._sample(fixture, world, frame)
+                    if verify_same_frame_policy else None
+                )
                 for event in events.get((frame, "post_step"), ()):
                     self._publish_event(world, event)
                     world.frame_context.same_frame = True
                     self.api["step_rigid_bodies"](world, enabled=True)
+                if before_post_replay is not None:
+                    after_post_replay = self._sample(fixture, world, frame)
+                    replay_comparison = compare_traces(
+                        [before_post_replay], [after_post_replay]
+                    )
+                    if not replay_comparison.passed:
+                        raise RuntimeError(
+                            "post-step 同帧重放改变了 canonical 状态："
+                            f"{replay_comparison.differences}"
+                        )
                 if frame in set(fixture.sample_frames):
                     trace.append(self._sample(fixture, world, frame))
                 self.api["apply_all_writebacks"](world, restart=restart)
@@ -690,12 +715,17 @@ class BlenderFixtureRuntime:
                 )
             assertion_results = evaluate_assertions(fixture, trace)
             native_result = NativeFixtureRuntime(self.native).run(fixture, repeat_index)
-            comparison = compare_traces(native_result.trace, trace)
+            parity_frame = fixture.parity_through_frame
+            comparison = compare_traces(
+                [item for item in native_result.trace if item["frame"] <= parity_frame],
+                [item for item in trace if item["frame"] <= parity_frame],
+            )
             assertion_results.append({
                 "kind": "runner_parity",
                 "passed": comparison.passed,
                 "message": (
-                    f"S1/S3 max_abs={comparison.max_abs_error:.9g}; "
+                    f"S1/S3 through_frame={parity_frame} "
+                    f"max_abs={comparison.max_abs_error:.9g}; "
                     f"differences={comparison.differences}"
                 ),
             })

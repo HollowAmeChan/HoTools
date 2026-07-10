@@ -984,13 +984,33 @@ def test_constraint_state_result_pipeline():
     assert len(result["lambda_rotation"]) == 3
     assert result["lambda_max_abs"] >= 0.0
 
+    # restart 帧内带命令的同帧重放不得再次创建约束或清空断裂状态。
+    breaking_impulse = result["breaking_impulse"]
+    _, replay_command = physicsRigidSetVelocity(
+        world, b, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+    )
+    assert replay_command is not None
+    world.frame_context.same_frame = True
+    _body_count, replay_step_ms = step_rigid_bodies(world, enabled=True)
+    assert replay_step_ms == 0.0
+    replay_result = get_rigid_constraint_state_result(
+        world,
+        slot_id=spec.slot_id,
+        frame=scene.frame_current,
+        generation=world.generation,
+    )
+    assert replay_result is not None
+    assert replay_result["broken"] is True
+    assert replay_result["enabled"] is False
+    assert replay_result["breaking_impulse"] == breaking_impulse
+
     node_result = physicsRigidConstraintReadState(world, c)
     assert node_result[1] is True
     assert node_result[2] is False
     assert node_result[3] == "HINGE"
     assert node_result[4] == "angle"
     assert node_result[11] is True
-    assert node_result[12] is result
+    assert node_result[12] is replay_result
     assert tuple(node_result[13]) == (0.0, 0.0, 0.0)
     assert tuple(node_result[14]) == (0.0, 0.0, 0.0)
 

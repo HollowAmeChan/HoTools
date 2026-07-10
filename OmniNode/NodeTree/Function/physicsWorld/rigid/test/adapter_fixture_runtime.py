@@ -141,6 +141,8 @@ class AdapterFixtureRuntime:
             target_a_ptr=target_a_ptr,
             target_b_ptr=target_b_ptr,
             disable_collisions=constraint.disable_collisions,
+            breakable=constraint.breakable,
+            breaking_threshold=constraint.breaking_threshold,
             anchor_mode=(
                 "LOCAL_FRAMES" if constraint.use_separate_anchor_frames
                 else "SHARED_WORLD"
@@ -317,12 +319,16 @@ class AdapterFixtureRuntime:
         ]
         constraints = []
         for constraint_id in sorted(self.constraint_slots):
+            constraint = fixture.constraints_by_id[constraint_id]
             state = self.adapter.get_constraint_state(
                 self.constraint_slots[constraint_id]
             )
             if state is not None:
                 constraints.append(canonical_constraint_state(
-                    constraint_id, self._constraint_state_tuple(state)
+                    constraint_id,
+                    self._constraint_state_tuple(state),
+                    breakable=constraint.breakable,
+                    breaking_threshold=constraint.breaking_threshold,
                 ))
 
         contacts = []

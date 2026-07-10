@@ -293,6 +293,8 @@ class NativeFixtureRuntime:
             canonical_constraint_state(
                 constraint.id,
                 self.world.get_constraint_state(self.constraint_handles[constraint.id]),
+                breakable=constraint.breakable,
+                breaking_threshold=constraint.breaking_threshold,
             )
             for constraint in sorted(fixture.constraints, key=lambda item: item.id)
             if constraint.id in self.constraint_handles

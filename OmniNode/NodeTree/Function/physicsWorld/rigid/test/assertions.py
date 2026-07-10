@@ -819,6 +819,117 @@ def _assert_constraint_lambda_active(
         )
 
 
+def _assert_constraint_break_state(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    constraint_id = _constraint_id(parameters)
+    frame_number = int(_number(parameters.get("frame"), "frame"))
+    frames = _frames_by_number(trace)
+    if frame_number not in frames:
+        raise FixtureError(f"断裂状态断言要求采样第 {frame_number} 帧")
+    state = _constraint_at(frames[frame_number], constraint_id)
+    for field in ("broken", "enabled"):
+        expected = parameters.get(field)
+        if not isinstance(expected, bool):
+            raise FixtureError(f"约束断裂状态字段 {field} 必须是布尔值")
+        if bool(state[field]) is not expected:
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id}.{field} "
+                f"为 {state[field]!r}，预期 {expected!r}"
+            )
+    impulse = float(state["breaking_impulse"])
+    tolerance = _number(parameters.get("impulse_abs"), "impulse_abs", 2.0e-5)
+    if "breaking_impulse" in parameters:
+        expected = _number(parameters["breaking_impulse"], "breaking_impulse")
+        if abs(impulse - expected) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id}.breaking_impulse "
+                f"为 {impulse:.12g}，预期 {expected:.12g}，容差 {tolerance:g}"
+            )
+    if "impulse_min" in parameters and impulse < _number(
+        parameters["impulse_min"], "impulse_min"
+    ):
+        raise SemanticAssertionError(
+            f"{fixture.id} 第 {frame_number} 帧 {constraint_id}.breaking_impulse "
+            f"{impulse:.12g} 小于下限 {parameters['impulse_min']}"
+        )
+    if "impulse_max" in parameters and impulse > _number(
+        parameters["impulse_max"], "impulse_max"
+    ):
+        raise SemanticAssertionError(
+            f"{fixture.id} 第 {frame_number} 帧 {constraint_id}.breaking_impulse "
+            f"{impulse:.12g} 超过上限 {parameters['impulse_max']}"
+        )
+
+
+def _assert_constraint_break_sequence(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    constraint_id = _constraint_id(parameters)
+    constraint = fixture.constraints_by_id.get(constraint_id)
+    if constraint is None or not constraint.breakable:
+        raise FixtureError(
+            f"断裂序列断言要求可断裂约束：{constraint_id}"
+        )
+    first_broken = int(_number(
+        parameters.get("first_broken_frame"), "first_broken_frame"
+    ))
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames)
+    ))
+    threshold = _number(
+        parameters.get("threshold"), "threshold", constraint.breaking_threshold
+    )
+    tolerance = _number(parameters.get("impulse_abs"), "impulse_abs", 2.0e-5)
+    expected_impulse = parameters.get("breaking_impulse")
+    stable_impulse = None
+    seen_first = False
+    for frame in trace:
+        frame_number = int(frame["frame"])
+        if frame_number > end_frame:
+            continue
+        state = _constraint_at(frame, constraint_id)
+        if frame_number < first_broken:
+            if bool(state["broken"]) or not bool(state["enabled"]):
+                raise SemanticAssertionError(
+                    f"{fixture.id} {constraint_id} 在第 {first_broken} 帧前提前断裂"
+                )
+            if abs(float(state["breaking_impulse"])) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} {constraint_id} 在断裂前发布了断裂冲量"
+                )
+            continue
+        seen_first = seen_first or frame_number == first_broken
+        if not bool(state["broken"]) or bool(state["enabled"]):
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id} 未保持断裂状态"
+            )
+        impulse = float(state["breaking_impulse"])
+        if impulse <= threshold:
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id} 冲量 "
+                f"{impulse:.12g} 未超过阈值 {threshold:.12g}"
+            )
+        if expected_impulse is not None and abs(
+            impulse - _number(expected_impulse, "breaking_impulse")
+        ) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id} 冲量 "
+                f"{impulse:.12g} 与预期 {expected_impulse} 不同"
+            )
+        if stable_impulse is None:
+            stable_impulse = impulse
+        elif abs(impulse - stable_impulse) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} 第 {frame_number} 帧 {constraint_id} 的断裂冲量"
+                f"从 {stable_impulse:.12g} 变为 {impulse:.12g}"
+            )
+    if not seen_first:
+        raise FixtureError(
+            f"断裂序列断言要求采样第 {first_broken} 帧"
+        )
+
+
 def _assert_linear_implicit_spring_trajectory(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
 ) -> None:
@@ -1371,6 +1482,12 @@ def evaluate_assertions(
         "constraint_lambda_active": lambda spec: _assert_constraint_lambda_active(
             fixture, trace, spec.parameters,
         ),
+        "constraint_break_state": lambda spec: _assert_constraint_break_state(
+            fixture, trace, spec.parameters,
+        ),
+        "constraint_break_sequence": lambda spec: _assert_constraint_break_sequence(
+            fixture, trace, spec.parameters,
+        ),
         "angular_speed_trajectory": lambda spec: _assert_angular_speed_trajectory(
             fixture, trace, spec.parameters,
         ),
@@ -1405,7 +1522,17 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
     }
+    runner = str(trace[0].get("runner", "")) if trace else ""
     for index, assertion in enumerate(fixture.assertions):
+        if assertion.runners and runner not in assertion.runners:
+            results.append({
+                "index": index,
+                "kind": assertion.kind,
+                "passed": True,
+                "skipped": True,
+                "message": f"不适用于运行器 {runner}",
+            })
+            continue
         try:
             dispatch[assertion.kind](assertion)
         except Exception as exc:

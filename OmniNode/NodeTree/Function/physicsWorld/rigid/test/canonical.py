@@ -70,7 +70,15 @@ def canonical_body_state(body_id: str, state: Sequence[Any]) -> dict[str, Any]:
     }
 
 
-def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict[str, Any]:
+def canonical_constraint_state(
+    constraint_id: str,
+    state: Sequence[Any],
+    *,
+    breakable: bool = False,
+    breaking_threshold: float = 1000.0,
+    broken: bool = False,
+    breaking_impulse: float = 0.0,
+) -> dict[str, Any]:
     """将 native 约束状态转换为稳定 trace，兼容旧的八字段 ABI。"""
     if len(state) not in {8, 10}:
         raise NonFiniteTraceError(
@@ -101,10 +109,20 @@ def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict
         [current_value] + lambda_position + lambda_rotation
         + [lambda_limit, lambda_motor] + current_translation + current_rotation
     )
+    threshold = finite_float(
+        breaking_threshold, f"constraints.{constraint_id}.breaking_threshold"
+    )
+    impulse = finite_float(
+        breaking_impulse, f"constraints.{constraint_id}.breaking_impulse"
+    )
     return {
         "id": constraint_id,
         "type": constraint_type,
         "enabled": state[1],
+        "breakable": bool(breakable),
+        "breaking_threshold": threshold,
+        "broken": bool(broken),
+        "breaking_impulse": impulse,
         "current_value_kind": value_kind,
         "current_value": current_value,
         "current_translation": current_translation,

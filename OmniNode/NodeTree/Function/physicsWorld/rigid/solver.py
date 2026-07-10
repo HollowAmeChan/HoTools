@@ -681,12 +681,21 @@ def step_rigid_bodies(
     try:
         dt = float(fc.dt) if fc is not None and fc.dt > 0.0 else 1.0 / 60.0
         substeps = max(1, int(fc.substeps)) if fc is not None else 1
-        restart = bool(fc.restart_required) if fc is not None else True
-
         # Jolt rigid-world settings and generated constraints are persistent implicit objects.
         # Apply Jolt rigid-world settings first, then materialize generated constraints as regular slots.
         sync_rigid_jolt_world_settings(world, adapter)
         sync_generated_constraint_slots(world, adapter=adapter)
+
+        # frame 0 -> 1 是不递增 generation 的 restart。每帧只消费一次，
+        # 首次求值重建 native 状态，同帧命令重放不得再次重建。
+        restart = bool(fc.restart_required) if fc is not None else True
+        restart_token = (int(world.generation), int(getattr(fc, "frame", 0) or 0))
+        consumed_restart = world.runtime_cache("rigid_restart_sync_token")
+        if restart and consumed_restart != restart_token:
+            for slot in world.solver_slots.values():
+                if slot.kind in {RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND}:
+                    slot.data.pop("_jolt_generation", None)
+            world.set_runtime_cache("rigid_restart_sync_token", restart_token)
 
         # --- sync rigid bodies ---
         for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
@@ -694,10 +703,7 @@ def step_rigid_bodies(
             if spec is None:
                 continue
 
-            needs_sync = (
-                restart
-                or slot.data.get("_jolt_generation") != world.generation
-            )
+            needs_sync = slot.data.get("_jolt_generation") != world.generation
             if needs_sync:
                 try:
                     adapter.sync_body(slot_id, spec)
@@ -714,10 +720,7 @@ def step_rigid_bodies(
         for slot_id, slot in _ordered_constraint_slots(world):
             spec = slot.data["spec"]
 
-            needs_sync = (
-                restart
-                or slot.data.get("_jolt_generation") != world.generation
-            )
+            needs_sync = slot.data.get("_jolt_generation") != world.generation
             if needs_sync:
                 try:
                     adapter.sync_constraint(slot_id, spec)

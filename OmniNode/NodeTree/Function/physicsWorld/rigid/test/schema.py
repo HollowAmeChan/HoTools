@@ -356,6 +356,8 @@ class ConstraintSpec:
     twist_min_angle: float
     twist_max_angle: float
     disable_collisions: bool
+    breakable: bool
+    breaking_threshold: float
     distance_min: float
     distance_max: float
     pulley_fixed_point_a: tuple[float, float, float]
@@ -395,7 +397,8 @@ class ConstraintSpec:
             "six_dof_target_orientation_wxyz",
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
-            "disable_collisions", "distance_min", "distance_max",
+            "disable_collisions", "breakable", "breaking_threshold",
+            "distance_min", "distance_max",
             "pulley_fixed_point_a", "pulley_fixed_point_b", "pulley_ratio",
             "pulley_min_length", "pulley_max_length",
             "reference_constraint_a", "reference_constraint_b", "gear_ratio",
@@ -594,6 +597,11 @@ class ConstraintSpec:
             disable_collisions=_bool(
                 data.get("disable_collisions", False), f"{path}.disable_collisions",
             ),
+            breakable=_bool(data.get("breakable", False), f"{path}.breakable"),
+            breaking_threshold=_number(
+                data.get("breaking_threshold", 1000.0),
+                f"{path}.breaking_threshold",
+            ),
             distance_min=_number(data.get("distance_min", 0.0), f"{path}.distance_min"),
             distance_max=_number(data.get("distance_max", 1.0), f"{path}.distance_max"),
             pulley_fixed_point_a=_vec(
@@ -628,7 +636,7 @@ class ConstraintSpec:
             "max_friction_force", "motor_frequency", "motor_damping",
             "motor_force_limit", "motor_torque_limit", "cone_half_angle",
             "swing_normal_half_angle", "swing_plane_half_angle",
-            "distance_min", "distance_max",
+            "breaking_threshold", "distance_min", "distance_max",
         ):
             if getattr(result, name) < 0.0:
                 raise FixtureError(f"{path}.{name} must be >= 0")
@@ -759,11 +767,27 @@ class TimelineEvent:
 class AssertionSpec:
     kind: str
     parameters: Mapping[str, Any]
+    runners: tuple[str, ...] = ()
 
     @classmethod
     def from_data(cls, value: Any, path: str) -> "AssertionSpec":
         data = dict(_mapping(value, path))
         kind = _string(data.pop("kind", None), f"{path}.kind")
+        runners = tuple(
+            _string(item, f"{path}.runners[{index}]")
+            for index, item in enumerate(
+                _sequence(data.pop("runners", []), f"{path}.runners")
+            )
+        )
+        supported_runners = {
+            "native_binding_v1", "adapter_binding_v1", "blender_pipeline_v1",
+        }
+        unknown_runners = set(runners) - supported_runners
+        if unknown_runners:
+            raise FixtureError(
+                f"{path}.runners 包含不支持的运行器："
+                f"{sorted(unknown_runners)}"
+            )
         supported = {
             "finite_all", "semi_implicit_free_fall", "constant_linear_motion",
             "impulse_delta_velocity", "body_state_near", "constraint_state_schema",
@@ -784,6 +808,7 @@ class AssertionSpec:
             "contact_absent",
             "body_axis_range",
             "coupled_axis_relation",
+            "constraint_break_state", "constraint_break_sequence",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -898,9 +923,17 @@ class AssertionSpec:
                 "body_b", "field_b", "axis_b", "coefficient_b",
                 "abs", "start_frame", "end_frame",
             },
+            "constraint_break_state": {
+                "constraint", "frame", "broken", "enabled",
+                "breaking_impulse", "impulse_abs", "impulse_min", "impulse_max",
+            },
+            "constraint_break_sequence": {
+                "constraint", "first_broken_frame", "threshold",
+                "breaking_impulse", "impulse_abs", "end_frame",
+            },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
-        return cls(kind=kind, parameters=data)
+        return cls(kind=kind, parameters=data, runners=runners)
 
 
 @dataclass(frozen=True)
@@ -956,6 +989,7 @@ class Fixture:
     queries: tuple[QuerySpec, ...]
     sample_frames: tuple[int, ...]
     assertions: tuple[AssertionSpec, ...]
+    parity_through_frame: int
     path: Path
     content_hash: str
 
@@ -979,6 +1013,7 @@ def load_fixture(path: str | Path) -> Fixture:
     _reject_unknown(data, {
         "schema", "id", "title", "source", "tags", "world", "bodies",
         "constraints", "timeline", "queries", "sample_frames", "assertions",
+        "parity_through_frame",
     }, "fixture")
     schema = _string(data.get("schema"), "fixture.schema")
     if schema != "hotools_jolt_fixture_v1":
@@ -1023,6 +1058,15 @@ def load_fixture(path: str | Path) -> Fixture:
         raise FixtureError("fixture.sample_frames must include frame 0")
     if sample_frames[-1] > world.frames:
         raise FixtureError("fixture.sample_frames exceeds world.frames")
+    parity_through_frame = _integer(
+        data.get("parity_through_frame", world.frames),
+        "fixture.parity_through_frame",
+        minimum=0,
+    )
+    if parity_through_frame > world.frames:
+        raise FixtureError("fixture.parity_through_frame 不能超过 world.frames")
+    if parity_through_frame not in set(sample_frames):
+        raise FixtureError("fixture.parity_through_frame 必须是采样帧")
     queries = tuple(
         QuerySpec.from_data(item, f"fixture.queries[{index}]")
         for index, item in enumerate(_sequence(data.get("queries", []), "fixture.queries"))
@@ -1105,6 +1149,10 @@ def load_fixture(path: str | Path) -> Fixture:
         _string(item, f"fixture.tags[{index}]")
         for index, item in enumerate(_sequence(data.get("tags", []), "fixture.tags"))
     )
+    if parity_through_frame < world.frames and "policy-layer" not in tags:
+        raise FixtureError(
+            "只有显式标记 policy-layer 的 fixture 才能截断 runner parity"
+        )
     return Fixture(
         schema=schema,
         id=fixture_id,
@@ -1118,6 +1166,7 @@ def load_fixture(path: str | Path) -> Fixture:
         queries=queries,
         sample_frames=sample_frames,
         assertions=assertions,
+        parity_through_frame=parity_through_frame,
         path=fixture_path,
         content_hash=hashlib.sha256(raw).hexdigest(),
     )
