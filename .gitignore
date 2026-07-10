@@ -3,6 +3,13 @@ __pycache__/
 *.pyo
 *.blend*
 
+# MagicaCloth2 is commercial source. Oracle tools may reference an external
+# checkout, but no vendored/embedded MC2 package may enter this repository.
+MagicaCloth2/
+**/MagicaCloth2/
+**/com.magicasoft.magica-cloth2/
+**/com.magicasoft.magica-cloth2@*/
+
 # Local IDE metadata.
 .idea/
 .vs/

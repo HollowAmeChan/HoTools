@@ -1,0 +1,13 @@
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+ProjectSettings/*
+!ProjectSettings/ProjectVersion.txt
+
+# MagicaCloth2 is commercial source. It must remain an external local package
+# and must never be copied or committed through this oracle project.
+Assets/MagicaCloth2*/
+Packages/com.magicasoft.magica-cloth2*/
+LocalPackages/

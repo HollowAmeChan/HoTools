@@ -200,7 +200,7 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 | D-03 | 用户输入 mesh 是否永远视为最终 proxy？ | **已决**：是。用户负责制作低模代理，solver 对输入 mesh 原样计算。 | 禁止 SelectionMesh、merge、reduction、optimization 和 render mapping；vertex count/order/topology 不得被 solver 改写。 |
 | D-04 | Normal/Split 调度是否只迁移共同数学顺序？ | 倾向是。 | 不照搬 Unity Job/TeamManager 结构到 Python。 |
 | D-05 | 第一版 native context 的最小 constraint 集合是什么？ | 等 S1 后确定。 | 不先冻结 ABI 或 capability 字段。 |
-| D-06 | Tier A fixture host 放在哪里？ | HoClothUnity 已废弃并排除；应新建最小、可复现的 Unity 验证工程。 | 不修改 HoClothUnity，不把其输出或适配代码升级为 Tier A。 |
+| D-06 | Tier A fixture host 放在哪里？ | **已决并落地**：`tools/mc2_unity_oracle`，Unity `6000.3.15f1`；只以外部 local package 引用固定 MC2 checkout。HoClothUnity 已废弃并排除。 | 不修改/运行 HoClothUnity 作为 oracle，不把其输出升级为 Tier A；MC2 商业源码永久忽略且不得提交。 |
 | D-07 | Curve runtime representation 如何冻结？ | source 使用 16-float `float4x4` samples；HoTools 当前只保存 authoring curve payload。 | 不把当前 effective payload 直接作为 native ABI。 |
 | D-08 | 骨架驱动 MeshCloth 的逐帧输入和 GN 写回如何隔离？ | **已决且唯一支持**：双对象 + 常驻 GN。静态拓扑来自 final-proxy Mesh data；逐帧 pose 来自永久移除物理 GN output 的同拓扑 BasePose evaluated snapshot；同帧 display/base 差值转 object-local offset 后在源对象修改器栈末端应用。 | 禁止 BlendShape 写回、单对象切换/移动 GN、读取已含物理 offset 的源对象 evaluated mesh、把动画 pose 写入 N0，或接受会改变 vertex identity/count/order/topology 的基础修改器。 |
 
@@ -220,4 +220,4 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。当前证据仍是源码手推 Tier B，`proxy_static_triangle_contract_001` 仍只关闭 contract shape。下一步先用独立最小 Unity 工程为 Mesh baseline 数组补 Tier A dump并校验 equal-cost intentional tie boundary，再实现 D-08 的 Blender N0/N3 双对象 adapter；不能复用或继续扩展已废弃的 HoClothUnity。
+S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、same-frontier parent、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。`tools/mc2_unity_oracle` 已在 Unity `6000.3.15f1`、MC2 `2.18.1@418f89f`、Burst `1.8.29`、Collections `2.6.5`、Mathematics `1.3.3` 下导出 9 个 Tier A case：8 个完整语义数组与 HoTools 对拍通过，另 1 个 high-first case证明 equal-cost 是 source first-enumerated，而 HoTools 固定 lowest-index 是已登记 intentional deviation。下一步实现 D-08 的 Blender N0/N3 双对象 adapter；不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。

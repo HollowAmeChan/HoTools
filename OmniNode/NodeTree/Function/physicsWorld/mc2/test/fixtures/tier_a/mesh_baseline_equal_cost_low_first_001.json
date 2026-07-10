@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "case_id": "mesh_baseline_equal_cost_low_first_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateMeshBaseLine","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateBaseLinePose","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateVertexRootAndDepth"]
+  },
+  "scope": "Equal Fixed cost with lower vertex index enumerated first.",
+  "comparison": {
+    "float_abs_tolerance": 1e-6,
+    "float_rel_tolerance": 1e-6,
+    "unordered_fields": ["baseline.child_data siblings within one parent","baseline.baseline_data sibling traversal"],
+    "source_equal_cost_policy": "first_enumerated",
+    "hotools_equal_cost_policy": "lowest_vertex_index",
+    "compare_to_hotools": true
+  },
+  "input": {
+    "task_id": "mc2:mesh_cloth:mesh_baseline_equal_cost_low_first_001",
+    "setup_type": "mesh_cloth",
+    "vertex_identities": ["mesh:v0","mesh:v1","mesh:v2"],
+    "local_positions": [[-1,0,0],[1,0,0],[0,0,0]],
+    "local_normals": [[0,0,1],[0,0,1],[0,0,1]],
+    "local_tangents": [[1,0,0],[1,0,0],[1,0,0]],
+    "uvs": [[0,0],[0,0],[0,0]],
+    "vertex_attributes": [1,1,2],
+    "edges": [[0,2],[1,2]],
+    "triangles": [],
+    "source_adjacency": [[2],[2],[0,1]]
+  },
+  "expected": {
+    "proxy": {
+      "vertex_attributes": [1,1,2]
+    },
+    "baseline": {
+      "parent_indices": [-1,-1,0],
+      "child_ranges": [[0,1],[1,0],[1,0]],
+      "child_data": [2],
+      "baseline_flags": [1],
+      "baseline_ranges": [[0,2]],
+      "baseline_data": [0,2],
+      "root_indices": [-1,-1,0],
+      "depths": [0,0,1],
+      "vertex_local_positions": [[0,0,0],[0,0,0],[0,0,1]],
+      "vertex_local_rotations": [[0,0,0,1],[0,0,0,0],[0,0,0,1]]
+    }
+  }
+}

@@ -102,7 +102,7 @@ Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Arma
 | `vertex_to_triangle_ranges/data` | `int32[N,2]` / semantic records | triangle normal/tangent accumulation + flip flags。 |
 | `source_vertex_identity` | host mapping table | native index -> stable bone/mesh target；不由 kernel 解释。 |
 
-`mc2/static_data.py` 实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；`mc2/mesh_baseline.py` 已按固定 source entry 实现纯 Mesh baseline builder，返回可能因 ZeroDistance 更新 signature 的 final proxy 与 baseline。它不读 Blender/N3 pose、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 仍只是 Tier B contract-shape case，不能证明 builder parity；当前 builder tests 是源码手推 Tier B 规则覆盖，仍需 Tier A dump。
+`mc2/static_data.py` 实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；`mc2/mesh_baseline.py` 已按固定 source entry 实现纯 Mesh baseline builder，返回可能因 ZeroDistance 更新 signature 的 final proxy 与 baseline。它不读 Blender/N3 pose、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 仍只是 Tier B contract-shape case；另有 9 个 Unity `6000.3.15f1` Tier A Mesh baseline fixtures，其中 8 个完整语义数组 parity 通过、1 个关闭 equal-cost intentional tie boundary。该证据只关闭 builder slice，不代表 Blender adapter/native solver capability。
 
 ### N1 Constraint static
 
@@ -269,7 +269,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | 能力 | v0 状态 | 验收条件 |
 |---|---|---|
 | one solver / three setup identities | supported contract | registry/declaration test。 |
-| final-proxy MeshCloth static build | planned | W1-W3 Tier A/B full-array fixture。 |
+| final-proxy MeshCloth baseline build | builder verified, integration planned | 8 个 Tier A full-array parity case + 1 个 equal-cost boundary case；尚未接 Blender adapter/slot/native。 |
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
 | Distance | planned | per-vertex signed layout fixture。 |
@@ -311,14 +311,15 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | C-04 | center v0 支持范围？ | component transform + fixed center；anchor/sync/negative scale/wind deferred。 |
 | C-05 | Bone connection mode 3 是否公开？ | 内部 enum/fixture 保留，节点 surface 等产品决定。 |
 | C-06 | 当前 B4 如何清理？ | **已执行**：整体移除算法/spec 改动，只通过新测试重建可保留的 lifecycle intent。 |
-| C-07 | Tier A host？ | 独立最小 Unity 验证工程；明确排除废弃 HoClothUnity。 |
+| C-07 | Tier A host？ | **已决并落地**：`tools/mc2_unity_oracle`；Unity 6000.3 batch host，外部引用固定 MC2 checkout，商业源码 ignore；明确排除废弃 HoClothUnity。 |
 | C-08 | 骨架驱动 Mesh 的动态 pose/writeback 边界？ | **已决且唯一支持**：双对象常驻；N0 静态 topology + N3 无反馈 BasePose evaluated snapshot + 同帧 object-local final offset；源对象共享 GN 常驻且只更新 POINT attribute。 |
 
 ## S2 Exit Checklist
 
 - [x] C-01 final-proxy/identity mapping 已冻结。
 - [x] C-08 animated BasePose/GN writeback 边界已冻结。
-- [ ] C-02 至 C-05、C-07 完成人工决策。
+- [ ] C-02 至 C-05 完成人工决策。
+- [x] C-07 独立 Tier A host 已落地并关闭 Mesh baseline slice。
 - [ ] N0/N1 每个字段有 W1-W7 producer/consumer 和最小 oracle。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。
