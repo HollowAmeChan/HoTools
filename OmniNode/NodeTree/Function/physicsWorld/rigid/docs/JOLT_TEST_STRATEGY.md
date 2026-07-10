@@ -40,7 +40,7 @@
 - py311/py313 各自 50/50 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、八种显式约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴 Free/Fixed/Limited 首切片、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SixDOF 生成约束与逐轴 motor/friction、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、八种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴 Free/Fixed/Limited 首切片、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SixDOF 逐轴 motor/friction、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 

@@ -830,6 +830,31 @@ def test_six_dof_constraint_spec_and_adapter():
     assert len(state["lambda_position"]) == 3
     assert len(state["lambda_rotation"]) == 3
     adapter.dispose("test_six_dof_constraint")
+
+    generated = make_rigid_generated_constraint_properties(
+        target_a=a,
+        target_b=b,
+        constraint_type="SIX_DOF",
+        six_dof_axis_modes=(
+            "LIMITED", "FREE", "invalid", "FIXED", "FIXED", "LIMITED",
+        ),
+        six_dof_limit_min=(0.5, -2.0, -3.0, 0.2, -0.3, 0.6),
+        six_dof_limit_max=(-0.5, 2.0, 3.0, -0.2, 0.3, -0.4),
+        six_dof_swing_type="invalid",
+    )
+    assert generated[0]["constraint_type"] == "SIX_DOF"
+    assert generated[0]["six_dof_axis_modes"] == (
+        "LIMITED", "FREE", "FIXED", "FIXED", "FIXED", "LIMITED",
+    )
+    assert generated[0]["six_dof_limit_min"] == (-0.5, -2.0, -3.0, -0.2, -0.3, -0.4)
+    assert generated[0]["six_dof_limit_max"] == (0.5, 2.0, 3.0, 0.2, 0.3, 0.6)
+    assert generated[0]["six_dof_swing_type"] == "PYRAMID"
+    signature = rigid_generated_constraint_signature(generated[0])
+    changed = dict(generated[0])
+    changed["six_dof_axis_modes"] = (
+        "FREE", "FREE", "FIXED", "FIXED", "FIXED", "LIMITED",
+    )
+    assert rigid_generated_constraint_signature(changed) != signature
     _del(c, a, b)
 
 

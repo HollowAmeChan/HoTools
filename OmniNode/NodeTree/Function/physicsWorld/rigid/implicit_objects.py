@@ -88,6 +88,44 @@ def _float4(value, fallback=(1.0, 0.0, 0.0, 0.0)) -> tuple[float, float, float, 
         return tuple(float(v) for v in fallback)
 
 
+def _float6(value, fallback) -> tuple[float, float, float, float, float, float]:
+    try:
+        if len(value) != 6:
+            raise ValueError
+        return tuple(float(value[index]) for index in range(6))
+    except Exception:
+        return tuple(float(v) for v in fallback)
+
+
+def _normalize_six_dof_arrays(modes, minimum, maximum):
+    """规范化 SixDOF 六轴模式与范围，旋转轴限制在正负 π。"""
+    raw_modes = tuple(modes) if isinstance(modes, (list, tuple)) and len(modes) == 6 else ("FIXED",) * 6
+    normalized_modes = []
+    normalized_minimum = []
+    normalized_maximum = []
+    minimum = _float6(minimum, (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25))
+    maximum = _float6(maximum, (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25))
+    for index in range(6):
+        mode = str(raw_modes[index] or "FIXED").upper()
+        if mode not in {"FREE", "FIXED", "LIMITED"}:
+            mode = "FIXED"
+        low = minimum[index]
+        high = maximum[index]
+        if index >= 3:
+            low = _clamp(low, -_PI, _PI)
+            high = _clamp(high, -_PI, _PI)
+        low, high = _ordered_pair(low, high)
+        if low == high:
+            if index >= 3 and high >= _PI:
+                low = high - 1.0e-4
+            else:
+                high = low + 1.0e-4
+        normalized_modes.append(mode)
+        normalized_minimum.append(low)
+        normalized_maximum.append(high)
+    return tuple(normalized_modes), tuple(normalized_minimum), tuple(normalized_maximum)
+
+
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -140,6 +178,7 @@ def _normalize_constraint_type(value) -> str:
     constraint_type = str(value or "FIXED").strip().upper()
     if constraint_type not in {
         "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
+        "SIX_DOF",
     }:
         return "FIXED"
     return constraint_type
@@ -384,6 +423,10 @@ def make_rigid_generated_constraint_properties(
     motor_torque_limit: float = 0.0,
     swing_twist_target_angular_velocity=(0.0, 0.0, 0.0),
     swing_twist_target_rotation=(0.0, 0.0, 0.0),
+    six_dof_axis_modes=("FIXED", "FIXED", "FIXED", "FIXED", "FIXED", "FIXED"),
+    six_dof_limit_min=(-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25),
+    six_dof_limit_max=(1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
+    six_dof_swing_type: str = "PYRAMID",
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -437,6 +480,12 @@ def make_rigid_generated_constraint_properties(
         normalized_swing_motor_state = "OFF"
     if normalized_twist_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
         normalized_twist_motor_state = "OFF"
+    six_dof_axis_modes, six_dof_limit_min, six_dof_limit_max = _normalize_six_dof_arrays(
+        six_dof_axis_modes, six_dof_limit_min, six_dof_limit_max,
+    )
+    normalized_six_dof_swing_type = str(six_dof_swing_type or "PYRAMID").upper()
+    if normalized_six_dof_swing_type not in {"CONE", "PYRAMID"}:
+        normalized_six_dof_swing_type = "PYRAMID"
 
     return [{
         "target_a": target_a if _is_object(target_a) else None,
@@ -485,6 +534,10 @@ def make_rigid_generated_constraint_properties(
         "swing_twist_target_orientation_wxyz": _rotation_wxyz_from_euler(
             swing_twist_target_rotation
         ),
+        "six_dof_axis_modes": six_dof_axis_modes,
+        "six_dof_limit_min": six_dof_limit_min,
+        "six_dof_limit_max": six_dof_limit_max,
+        "six_dof_swing_type": normalized_six_dof_swing_type,
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
         "swing_type": normalized_swing_type,
         "swing_normal_half_angle": _clamp(float(swing_normal_half_angle), 0.0, _PI),
@@ -527,6 +580,14 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         swing_motor_state = "OFF"
     if twist_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
         twist_motor_state = "OFF"
+    six_dof_axis_modes, six_dof_limit_min, six_dof_limit_max = _normalize_six_dof_arrays(
+        item.get("six_dof_axis_modes", ("FIXED",) * 6),
+        item.get("six_dof_limit_min", (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25)),
+        item.get("six_dof_limit_max", (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25)),
+    )
+    six_dof_swing_type = str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID").upper()
+    if six_dof_swing_type not in {"CONE", "PYRAMID"}:
+        six_dof_swing_type = "PYRAMID"
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
@@ -576,6 +637,10 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "swing_twist_target_orientation_wxyz": _float4(
             item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
         ),
+        "six_dof_axis_modes": six_dof_axis_modes,
+        "six_dof_limit_min": six_dof_limit_min,
+        "six_dof_limit_max": six_dof_limit_max,
+        "six_dof_swing_type": six_dof_swing_type,
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
         "swing_type": swing_type,
         "swing_normal_half_angle": _clamp(float(item.get("swing_normal_half_angle", _PI * 0.25)), 0.0, _PI),
@@ -686,6 +751,16 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         ",".join(f"{value:.8g}" for value in _float4(
             item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
         )),
+        ",".join(str(value) for value in item.get("six_dof_axis_modes", ("FIXED",) * 6)),
+        ",".join(f"{value:.8g}" for value in _float6(
+            item.get("six_dof_limit_min", (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25)),
+            (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25),
+        )),
+        ",".join(f"{value:.8g}" for value in _float6(
+            item.get("six_dof_limit_max", (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25)),
+            (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
+        )),
+        str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
@@ -806,6 +881,16 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         swing_twist_target_orientation_wxyz=_float4(
             item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
         ),
+        six_dof_axis_modes=tuple(item.get("six_dof_axis_modes", ("FIXED",) * 6)),
+        six_dof_limit_min=_float6(
+            item.get("six_dof_limit_min", (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25)),
+            (-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25),
+        ),
+        six_dof_limit_max=_float6(
+            item.get("six_dof_limit_max", (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25)),
+            (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
+        ),
+        six_dof_swing_type=str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
         swing_type=str(item.get("swing_type", "CONE") or "CONE"),
         swing_normal_half_angle=float(item.get("swing_normal_half_angle", _PI * 0.25)),
