@@ -51,12 +51,13 @@ def canonical_body_state(body_id: str, state: Sequence[Any]) -> dict[str, Any]:
     if len(state) != 6:
         raise NonFiniteTraceError(f"body {body_id} state expected 6 fields, got {len(state)}")
     position = vector(state[0], 3, f"bodies.{body_id}.position")
+    raw_rotation = vector(state[1], 4, f"bodies.{body_id}.rotation_wxyz")
     rotation = quaternion_wxyz(state[1], f"bodies.{body_id}.rotation_wxyz")
     linear_velocity = vector(state[2], 3, f"bodies.{body_id}.linear_velocity")
     angular_velocity = vector(state[3], 3, f"bodies.{body_id}.angular_velocity")
     if not isinstance(state[4], bool) or not isinstance(state[5], bool):
         raise NonFiniteTraceError(f"body {body_id} active/sleeping fields must be boolean")
-    raw_values = position + rotation + linear_velocity + angular_velocity
+    raw_values = position + raw_rotation + linear_velocity + angular_velocity
     return {
         "id": body_id,
         "position": position,
@@ -66,6 +67,44 @@ def canonical_body_state(body_id: str, state: Sequence[Any]) -> dict[str, Any]:
         "active": state[4],
         "sleeping": state[5],
         "raw_f32_hex": f32_hex(raw_values),
+    }
+
+
+def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict[str, Any]:
+    """将 native 约束的 8 字段状态转换为稳定 trace 结构。"""
+    if len(state) != 8:
+        raise NonFiniteTraceError(
+            f"constraint {constraint_id} state expected 8 fields, got {len(state)}"
+        )
+    constraint_type = str(state[0])
+    if not isinstance(state[1], bool):
+        raise NonFiniteTraceError(f"constraint {constraint_id} enabled field must be boolean")
+    value_kind = str(state[2])
+    current_value = finite_float(state[3], f"constraints.{constraint_id}.current_value")
+    lambda_position = vector(
+        state[4], 3, f"constraints.{constraint_id}.lambda_position",
+    )
+    lambda_rotation = vector(
+        state[5], 3, f"constraints.{constraint_id}.lambda_rotation",
+    )
+    lambda_limit = finite_float(state[6], f"constraints.{constraint_id}.lambda_limit")
+    lambda_motor = finite_float(state[7], f"constraints.{constraint_id}.lambda_motor")
+    numeric = (
+        [current_value] + lambda_position + lambda_rotation
+        + [lambda_limit, lambda_motor]
+    )
+    return {
+        "id": constraint_id,
+        "type": constraint_type,
+        "enabled": state[1],
+        "current_value_kind": value_kind,
+        "current_value": current_value,
+        "lambda_position": lambda_position,
+        "lambda_rotation": lambda_rotation,
+        "lambda_limit": lambda_limit,
+        "lambda_motor": lambda_motor,
+        "lambda_max_abs": max(abs(value) for value in numeric[1:]),
+        "raw_f32_hex": f32_hex(numeric),
     }
 
 

@@ -1,0 +1,59 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "POINT-001",
+  "title": "点约束锁定锚点但保留旋转自由",
+  "source": "metamorphic:point_anchor_and_free_rotation",
+  "tags": ["p0", "constraint", "point", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 60
+  },
+  "bodies": [
+    {
+      "id": "spinner",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [0.0, 0.0, 0.0],
+      "linear_velocity": [2.0, -1.0, 0.5],
+      "angular_velocity": [0.0, 0.0, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "point_to_world",
+      "type": "POINT",
+      "body_a": "WORLD",
+      "body_b": "spinner",
+      "anchor_position": [0.0, 0.0, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {
+      "kind": "constraint_state_schema",
+      "constraint": "point_to_world",
+      "type": "POINT",
+      "current_value_kind": "none",
+      "enabled": true
+    },
+    {
+      "kind": "point_anchor_coincidence",
+      "constraint": "point_to_world",
+      "distance_abs": 0.0002,
+      "start_frame": 1
+    },
+    {
+      "kind": "rotation_changed_min",
+      "body": "spinner",
+      "frame": 60,
+      "angle_min": 1.0
+    },
+    {"kind": "finite_all"}
+  ]
+}

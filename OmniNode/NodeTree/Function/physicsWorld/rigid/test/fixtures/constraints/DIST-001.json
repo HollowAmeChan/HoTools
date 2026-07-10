@@ -1,0 +1,66 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "DIST-001",
+  "title": "等长距离约束收敛到目标长度",
+  "source": "jolt_unit_test:DistanceConstraint",
+  "tags": ["p0", "constraint", "distance", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 30
+  },
+  "bodies": [
+    {
+      "id": "rod_end",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [0.0, 0.0, 3.0],
+      "linear_velocity": [0.0, 0.0, 4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "rigid_rod",
+      "type": "DISTANCE",
+      "body_a": "WORLD",
+      "body_b": "rod_end",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [0.0, 0.0, 3.0],
+      "distance_min": 1.0,
+      "distance_max": 1.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30],
+  "assertions": [
+    {
+      "kind": "constraint_state_schema",
+      "constraint": "rigid_rod",
+      "type": "DISTANCE",
+      "current_value_kind": "distance",
+      "enabled": true
+    },
+    {
+      "kind": "distance_converges_to_range",
+      "constraint": "rigid_rod",
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "final_abs": 0.0002,
+      "monotonic_abs": 0.000002
+    },
+    {
+      "kind": "distance_range",
+      "constraint": "rigid_rod",
+      "minimum": 1.0,
+      "maximum": 1.0,
+      "distance_abs": 0.0002,
+      "start_frame": 30
+    },
+    {"kind": "finite_all"}
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SLIDER-002",
+  "title": "滑块正负方向分别撞击线性上下限",
+  "source": "jolt_unit_test:SliderConstraintLimits",
+  "tags": ["p0", "constraint", "slider", "limit"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 120
+  },
+  "bodies": [
+    {
+      "id": "negative_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.3, 0.3]},
+      "position": [-3.0, 0.0, 0.0],
+      "linear_velocity": [0.0, 0.0, -4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "positive_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.3, 0.3]},
+      "position": [3.0, 0.0, 0.0],
+      "linear_velocity": [0.0, 0.0, 4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "negative_limit",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "negative_slider",
+      "anchor_position": [-3.0, 0.0, 0.0],
+      "limit_enabled": true,
+      "linear_limit_min": -1.0,
+      "linear_limit_max": 1.0
+    },
+    {
+      "id": "positive_limit",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "positive_slider",
+      "anchor_position": [3.0, 0.0, 0.0],
+      "limit_enabled": true,
+      "linear_limit_min": -1.0,
+      "linear_limit_max": 1.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "negative_limit", "type": "SLIDER", "current_value_kind": "position", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "positive_limit", "type": "SLIDER", "current_value_kind": "position", "enabled": true},
+    {"kind": "constraint_value_in_range", "constraint": "negative_limit", "minimum": -1.0, "maximum": 1.0, "value_abs": 0.003, "start_frame": 0},
+    {"kind": "constraint_value_in_range", "constraint": "positive_limit", "minimum": -1.0, "maximum": 1.0, "value_abs": 0.003, "start_frame": 0},
+    {"kind": "constraint_value_near", "constraint": "negative_limit", "frame": 120, "expected": -1.0, "value_abs": 0.003, "current_value_kind": "position"},
+    {"kind": "constraint_value_near", "constraint": "positive_limit", "frame": 120, "expected": 1.0, "value_abs": 0.003, "current_value_kind": "position"},
+    {"kind": "finite_all"}
+  ]
+}

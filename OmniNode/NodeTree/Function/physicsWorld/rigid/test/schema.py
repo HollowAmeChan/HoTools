@@ -265,6 +265,12 @@ class BodySpec:
         )
         if result.mass <= 0.0:
             raise FixtureError(f"{path}.mass must be > 0")
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", result.id) is None:
+            raise FixtureError(
+                f"{path}.id may contain only ASCII letters, digits, dot, underscore and dash"
+            )
+        if result.id == "WORLD":
+            raise FixtureError(f"{path}.id uses reserved id WORLD")
         if result.friction < 0.0:
             raise FixtureError(f"{path}.friction must be >= 0")
         if not 0.0 <= result.restitution <= 1.0:
@@ -281,6 +287,200 @@ class BodySpec:
             raise FixtureError(f"{path}.allowed_dofs must fit 6 bits")
         if sum(component * component for component in result.rotation_wxyz) <= 1.0e-20:
             raise FixtureError(f"{path}.rotation_wxyz cannot be zero")
+        return result
+
+
+@dataclass(frozen=True)
+class ConstraintSpec:
+    """一条可直接映射到 JoltWorld.add_constraint 的约束描述。"""
+
+    id: str
+    type: str
+    body_a: str
+    body_b: str
+    anchor_position: tuple[float, float, float]
+    anchor_rotation_wxyz: tuple[float, float, float, float]
+    use_separate_anchor_frames: bool
+    anchor_position_a: tuple[float, float, float]
+    anchor_rotation_wxyz_a: tuple[float, float, float, float]
+    anchor_position_b: tuple[float, float, float]
+    anchor_rotation_wxyz_b: tuple[float, float, float, float]
+    priority: int
+    solver_velocity_steps: int
+    solver_position_steps: int
+    draw_size: float
+    limit_enabled: bool
+    angular_limit_min: float
+    angular_limit_max: float
+    linear_limit_min: float
+    linear_limit_max: float
+    limit_spring_frequency: float
+    limit_spring_damping: float
+    max_friction_torque: float
+    max_friction_force: float
+    motor_state: str
+    motor_frequency: float
+    motor_damping: float
+    motor_force_limit: float
+    motor_torque_limit: float
+    motor_target_angular_velocity: float
+    motor_target_angle: float
+    motor_target_velocity: float
+    motor_target_position: float
+    cone_half_angle: float
+    disable_collisions: bool
+    distance_min: float
+    distance_max: float
+
+    @classmethod
+    def from_data(cls, value: Any, path: str) -> "ConstraintSpec":
+        data = _mapping(value, path)
+        _reject_unknown(data, {
+            "id", "type", "body_a", "body_b", "anchor_position",
+            "anchor_rotation_wxyz", "use_separate_anchor_frames",
+            "anchor_position_a", "anchor_rotation_wxyz_a", "anchor_position_b",
+            "anchor_rotation_wxyz_b", "priority", "solver_velocity_steps",
+            "solver_position_steps", "draw_size", "limit_enabled",
+            "angular_limit_min", "angular_limit_max", "linear_limit_min",
+            "linear_limit_max", "limit_spring_frequency", "limit_spring_damping",
+            "max_friction_torque", "max_friction_force", "motor_state",
+            "motor_frequency", "motor_damping", "motor_force_limit",
+            "motor_torque_limit", "motor_target_angular_velocity",
+            "motor_target_angle", "motor_target_velocity", "motor_target_position",
+            "cone_half_angle", "disable_collisions", "distance_min", "distance_max",
+        }, path)
+        constraint_type = _string(data.get("type"), f"{path}.type").upper()
+        if constraint_type not in {"FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"}:
+            raise FixtureError(f"{path}.type is unsupported: {constraint_type}")
+        body_a = _string(data.get("body_a"), f"{path}.body_a")
+        body_b = _string(data.get("body_b"), f"{path}.body_b")
+        if body_a == "WORLD" and body_b == "WORLD":
+            raise FixtureError(f"{path} cannot connect WORLD to WORLD")
+        shared_position = _vec(
+            data.get("anchor_position", (0.0, 0.0, 0.0)), 3,
+            f"{path}.anchor_position",
+        )
+        shared_rotation = _vec(
+            data.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)), 4,
+            f"{path}.anchor_rotation_wxyz",
+        )
+        use_separate = _bool(
+            data.get("use_separate_anchor_frames", False),
+            f"{path}.use_separate_anchor_frames",
+        )
+        result = cls(
+            id=_string(data.get("id"), f"{path}.id"),
+            type=constraint_type,
+            body_a=body_a,
+            body_b=body_b,
+            anchor_position=shared_position,
+            anchor_rotation_wxyz=shared_rotation,
+            use_separate_anchor_frames=use_separate,
+            anchor_position_a=_vec(
+                data.get("anchor_position_a", shared_position), 3,
+                f"{path}.anchor_position_a",
+            ),
+            anchor_rotation_wxyz_a=_vec(
+                data.get("anchor_rotation_wxyz_a", shared_rotation), 4,
+                f"{path}.anchor_rotation_wxyz_a",
+            ),
+            anchor_position_b=_vec(
+                data.get("anchor_position_b", shared_position), 3,
+                f"{path}.anchor_position_b",
+            ),
+            anchor_rotation_wxyz_b=_vec(
+                data.get("anchor_rotation_wxyz_b", shared_rotation), 4,
+                f"{path}.anchor_rotation_wxyz_b",
+            ),
+            priority=_integer(data.get("priority", 0), f"{path}.priority", minimum=0),
+            solver_velocity_steps=_integer(
+                data.get("solver_velocity_steps", 0), f"{path}.solver_velocity_steps", minimum=0,
+            ),
+            solver_position_steps=_integer(
+                data.get("solver_position_steps", 0), f"{path}.solver_position_steps", minimum=0,
+            ),
+            draw_size=_number(data.get("draw_size", 1.0), f"{path}.draw_size"),
+            limit_enabled=_bool(data.get("limit_enabled", False), f"{path}.limit_enabled"),
+            angular_limit_min=_number(
+                data.get("angular_limit_min", -math.pi), f"{path}.angular_limit_min",
+            ),
+            angular_limit_max=_number(
+                data.get("angular_limit_max", math.pi), f"{path}.angular_limit_max",
+            ),
+            linear_limit_min=_number(
+                data.get("linear_limit_min", -1.0), f"{path}.linear_limit_min",
+            ),
+            linear_limit_max=_number(
+                data.get("linear_limit_max", 1.0), f"{path}.linear_limit_max",
+            ),
+            limit_spring_frequency=_number(
+                data.get("limit_spring_frequency", 0.0), f"{path}.limit_spring_frequency",
+            ),
+            limit_spring_damping=_number(
+                data.get("limit_spring_damping", 0.0), f"{path}.limit_spring_damping",
+            ),
+            max_friction_torque=_number(
+                data.get("max_friction_torque", 0.0), f"{path}.max_friction_torque",
+            ),
+            max_friction_force=_number(
+                data.get("max_friction_force", 0.0), f"{path}.max_friction_force",
+            ),
+            motor_state=_string(data.get("motor_state", "OFF"), f"{path}.motor_state").upper(),
+            motor_frequency=_number(data.get("motor_frequency", 2.0), f"{path}.motor_frequency"),
+            motor_damping=_number(data.get("motor_damping", 1.0), f"{path}.motor_damping"),
+            motor_force_limit=_number(
+                data.get("motor_force_limit", 0.0), f"{path}.motor_force_limit",
+            ),
+            motor_torque_limit=_number(
+                data.get("motor_torque_limit", 0.0), f"{path}.motor_torque_limit",
+            ),
+            motor_target_angular_velocity=_number(
+                data.get("motor_target_angular_velocity", 0.0),
+                f"{path}.motor_target_angular_velocity",
+            ),
+            motor_target_angle=_number(
+                data.get("motor_target_angle", 0.0), f"{path}.motor_target_angle",
+            ),
+            motor_target_velocity=_number(
+                data.get("motor_target_velocity", 0.0), f"{path}.motor_target_velocity",
+            ),
+            motor_target_position=_number(
+                data.get("motor_target_position", 0.0), f"{path}.motor_target_position",
+            ),
+            cone_half_angle=_number(
+                data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
+            ),
+            disable_collisions=_bool(
+                data.get("disable_collisions", False), f"{path}.disable_collisions",
+            ),
+            distance_min=_number(data.get("distance_min", 0.0), f"{path}.distance_min"),
+            distance_max=_number(data.get("distance_max", 1.0), f"{path}.distance_max"),
+        )
+        for name in (
+            "limit_spring_frequency", "limit_spring_damping", "max_friction_torque",
+            "max_friction_force", "motor_frequency", "motor_damping",
+            "motor_force_limit", "motor_torque_limit", "cone_half_angle",
+            "distance_min", "distance_max",
+        ):
+            if getattr(result, name) < 0.0:
+                raise FixtureError(f"{path}.{name} must be >= 0")
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", result.id) is None:
+            raise FixtureError(
+                f"{path}.id may contain only ASCII letters, digits, dot, underscore and dash"
+            )
+        if result.draw_size < 0.0:
+            raise FixtureError(f"{path}.draw_size must be >= 0")
+        if result.motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+            raise FixtureError(f"{path}.motor_state is unsupported: {result.motor_state}")
+        if result.solver_velocity_steps > 255 or result.solver_position_steps > 255:
+            raise FixtureError(f"{path} solver step overrides must be <= 255")
+        for name, quat in (
+            ("anchor_rotation_wxyz", result.anchor_rotation_wxyz),
+            ("anchor_rotation_wxyz_a", result.anchor_rotation_wxyz_a),
+            ("anchor_rotation_wxyz_b", result.anchor_rotation_wxyz_b),
+        ):
+            if sum(component * component for component in quat) <= 1.0e-20:
+                raise FixtureError(f"{path}.{name} cannot be zero")
         return result
 
 
@@ -340,7 +540,12 @@ class AssertionSpec:
         kind = _string(data.pop("kind", None), f"{path}.kind")
         supported = {
             "finite_all", "semi_implicit_free_fall", "constant_linear_motion",
-            "impulse_delta_velocity", "body_state_near",
+            "impulse_delta_velocity", "body_state_near", "constraint_state_schema",
+            "fixed_relative_transform", "point_anchor_coincidence", "distance_range",
+            "distance_converges_to_range", "rotation_changed_min",
+            "constraint_anchor_coincidence", "rotation_axis_only",
+            "linear_axis_only", "cone_swing_limit",
+            "constraint_value_in_range", "constraint_value_near",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -359,6 +564,44 @@ class AssertionSpec:
                 "body", "frame", "position", "linear_velocity", "angular_velocity",
                 "active", "sleeping", "abs", "rel",
             },
+            "constraint_state_schema": {
+                "constraint", "type", "current_value_kind", "enabled",
+            },
+            "fixed_relative_transform": {
+                "constraint", "position_abs", "rotation_abs", "start_frame",
+            },
+            "point_anchor_coincidence": {
+                "constraint", "distance_abs", "start_frame",
+            },
+            "distance_range": {
+                "constraint", "minimum", "maximum", "distance_abs", "start_frame",
+            },
+            "distance_converges_to_range": {
+                "constraint", "minimum", "maximum", "final_abs", "monotonic_abs",
+            },
+            "rotation_changed_min": {
+                "body", "frame", "angle_min",
+            },
+            "constraint_anchor_coincidence": {
+                "constraint", "distance_abs", "start_frame",
+            },
+            "rotation_axis_only": {
+                "body", "frame", "axis", "off_axis_abs", "angle_min",
+            },
+            "linear_axis_only": {
+                "body", "frame", "axis", "off_axis_abs", "displacement_min",
+                "rotation_abs",
+            },
+            "cone_swing_limit": {
+                "constraint", "angle_abs", "swing_min", "start_frame",
+            },
+            "constraint_value_in_range": {
+                "constraint", "minimum", "maximum", "value_abs", "start_frame",
+            },
+            "constraint_value_near": {
+                "constraint", "frame", "expected", "value_abs",
+                "current_value_kind",
+            },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
         return cls(kind=kind, parameters=data)
@@ -373,7 +616,7 @@ class Fixture:
     tags: tuple[str, ...]
     world: WorldSpec
     bodies: tuple[BodySpec, ...]
-    constraints: tuple[Mapping[str, Any], ...]
+    constraints: tuple[ConstraintSpec, ...]
     timeline: tuple[TimelineEvent, ...]
     sample_frames: tuple[int, ...]
     assertions: tuple[AssertionSpec, ...]
@@ -383,6 +626,10 @@ class Fixture:
     @property
     def bodies_by_id(self) -> dict[str, BodySpec]:
         return {body.id: body for body in self.bodies}
+
+    @property
+    def constraints_by_id(self) -> dict[str, ConstraintSpec]:
+        return {constraint.id: constraint for constraint in self.constraints}
 
 
 def load_fixture(path: str | Path) -> Fixture:
@@ -449,11 +696,24 @@ def load_fixture(path: str | Path) -> Fixture:
     if not assertions:
         raise FixtureError("fixture.assertions cannot be empty")
     constraints = tuple(
-        dict(_mapping(item, f"fixture.constraints[{index}]"))
+        ConstraintSpec.from_data(item, f"fixture.constraints[{index}]")
         for index, item in enumerate(
             _sequence(data.get("constraints", []), "fixture.constraints")
         )
     )
+    constraint_ids = [constraint.id for constraint in constraints]
+    if len(constraint_ids) != len(set(constraint_ids)):
+        raise FixtureError("fixture.constraints contains duplicate ids")
+    known_body_refs = set(body_ids) | {"WORLD"}
+    for constraint in constraints:
+        if constraint.body_a not in known_body_refs:
+            raise FixtureError(
+                f"constraint {constraint.id} references unknown body_a: {constraint.body_a}"
+            )
+        if constraint.body_b not in known_body_refs:
+            raise FixtureError(
+                f"constraint {constraint.id} references unknown body_b: {constraint.body_b}"
+            )
     tags = tuple(
         _string(item, f"fixture.tags[{index}]")
         for index, item in enumerate(_sequence(data.get("tags", []), "fixture.tags"))

@@ -32,11 +32,15 @@
 - position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- `BODY-001`、`FREE-001`、`FREE-002`、`FREE-003` 四个 P0 fixture；
+- `BODY-001`、`FREE-001`、`FREE-002`、`FREE-003` 四个刚体 P0 fixture；
+- 六种已接入约束共十个 P0 fixture，连同刚体切片共十四个；
+- Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
+- Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
+- Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
 - py311/py313 独立运行，当前四个 physical hash 在两套 ABI 间完全一致；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前只验收 body-only S1 切片。约束、adapter parity、Blender E2E、contact/query oracle 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前验收 body 与六种基础约束自由度的 S1 切片。Hinge/Slider limit、spring、friction、motor，Distance spring，复杂 A/B frame 组合、adapter parity、Blender E2E、contact/query oracle 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -208,23 +212,23 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 
 | ID | 场景 | 核心判据 | Oracle | 优先级 | 当前 |
 |---|---|---|---|---|---|
-| FIXED-001 | Fixed 受重力/冲量 | 相对位置/旋转保持，六自由度残差有界 | 不变量 | P0 | 现有弱覆盖 |
-| POINT-001 | Point 受离轴冲量 | anchors 重合，相对旋转可自由变化 | 不变量 | P0 | 现有弱覆盖 |
-| DIST-001 | `min == max` 刚性杆 | 距离收敛到目标且横向自由 | 解析/Jolt | P0 | 现有弱覆盖 |
-| DIST-002 | `[min,max]` 区间 | 区间内无纠正，越界纠正至最近边界 | Jolt | P0 | 现有弱覆盖 |
+| FIXED-001 | Fixed 受重力/冲量 | 相对位置/旋转保持，六自由度残差有界 | 不变量 | P0 | PASS (S1) |
+| POINT-001 | Point 受离轴冲量 | anchors 重合，相对旋转可自由变化 | 不变量 | P0 | PASS (S1) |
+| DIST-001 | `min == max` 刚性杆 | 距离收敛到目标且横向自由 | 解析/Jolt | P0 | PASS (S1) |
+| DIST-002 | `[min,max]` 区间 | 区间内无纠正，越界纠正至最近边界 | Jolt | P0 | PASS (S1) |
 | DIST-003 | limit spring | 多帧轨迹与 Jolt DistanceConstraintTests 同义 case 一致 | Jolt official | P0 | 缺失 |
-| HINGE-001 | Hinge 自由度 | 三平移、两旋转锁定，只绕 frame Z 转 | 不变量 | P0 | 仅创建 |
-| HINGE-002 | angular min/max | 正负方向撞限，超量和速度有界 | Jolt | P0 | 缺失 |
+| HINGE-001 | Hinge 自由度 | 三平移、两旋转锁定，只绕 frame Z 转 | 不变量 | P0 | PASS (S1) |
+| HINGE-002 | angular min/max | 正负方向撞限，超量和速度有界 | Jolt | P0 | PASS (S1) |
 | HINGE-003 | limit spring | 角轨迹与 Jolt HingeConstraintTests 同义 case 一致 | Jolt official | P0 | 缺失 |
 | HINGE-004 | velocity/position motor | 目标、torque limit 和停机行为正确 | Jolt | P0 | 缺失 |
 | HINGE-005 | friction torque | 角速度按最大摩擦 torque 衰减 | 解析/Jolt | P1 | 缺失 |
-| SLIDER-001 | Slider 自由度 | 两横向平移和全部旋转锁定，只沿 frame Z 移动 | 不变量 | P0 | 仅创建 |
-| SLIDER-002 | linear min/max | 正负方向撞限，位置/速度符合官方 case | Jolt official | P0 | 缺失 |
+| SLIDER-001 | Slider 自由度 | 两横向平移和全部旋转锁定，只沿 frame Z 移动 | 不变量 | P0 | PASS (S1) |
+| SLIDER-002 | linear min/max | 正负方向撞限，位置/速度符合官方 case | Jolt official | P0 | PASS (S1) |
 | SLIDER-003 | limit spring | 位置轨迹与官方同义 case 一致 | Jolt official | P0 | 缺失 |
 | SLIDER-004 | velocity/position motor | 目标、force limit、动态-动态反作用正确 | Jolt official | P0 | 缺失 |
 | SLIDER-005 | friction force | 速度/位置符合力上限解析结果 | 解析/Jolt | P1 | 缺失 |
-| CONE-001 | cone swing limit | anchor 重合，swing 不超 half angle | 不变量 | P0 | 仅创建 |
-| CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | 缺失 |
+| CONE-001 | cone swing limit | anchor 重合，swing 不超 half angle | 不变量 | P0 | PASS (S1) |
+| CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | PASS (S1) |
 | FRAME-001 | 独立 A/B anchors | body 原点不同且 shape offset 时 anchor 仍正确 | 解析/差分 | P0 | 现有弱覆盖 |
 | FRAME-002 | frame 旋转/轴约定 | HoTools local Z 与 Jolt Hinge/Slider axis 映射正确 | 变形 | P0 | 缺失 |
 | CONS-001 | solver step override | 低/高迭代残差排序正确，0 使用默认 | Jolt | P1 | 缺失 |

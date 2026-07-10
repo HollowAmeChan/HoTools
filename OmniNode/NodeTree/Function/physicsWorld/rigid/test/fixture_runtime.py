@@ -10,12 +10,22 @@ from typing import Any, Mapping
 
 try:
     from .assertions import evaluate_assertions
-    from .canonical import canonical_body_state, canonical_value, physical_trace_hash
-    from .schema import BodySpec, Fixture, FixtureError, TimelineEvent
+    from .canonical import (
+        canonical_body_state,
+        canonical_constraint_state,
+        canonical_value,
+        physical_trace_hash,
+    )
+    from .schema import BodySpec, ConstraintSpec, Fixture, FixtureError, TimelineEvent
 except ImportError:  # 支持脚本直接执行。
     from assertions import evaluate_assertions
-    from canonical import canonical_body_state, canonical_value, physical_trace_hash
-    from schema import BodySpec, Fixture, FixtureError, TimelineEvent
+    from canonical import (
+        canonical_body_state,
+        canonical_constraint_state,
+        canonical_value,
+        physical_trace_hash,
+    )
+    from schema import BodySpec, ConstraintSpec, Fixture, FixtureError, TimelineEvent
 
 
 @dataclass
@@ -65,6 +75,7 @@ class NativeFixtureRuntime:
         self.native = native_module
         self.world = None
         self.handles: dict[str, int] = {}
+        self.constraint_handles: dict[str, int] = {}
         self._last_step_ms = 0.0
 
     def _add_body(self, body: BodySpec) -> int:
@@ -100,6 +111,51 @@ class NativeFixtureRuntime:
             shape_top_radius=shape.top_radius,
             shape_bottom_radius=shape.bottom_radius,
             shape_convex_radius=shape.convex_radius,
+        ))
+
+    def _constraint_body_handle(self, body_id: str) -> int:
+        if body_id == "WORLD":
+            return int(self.native.WORLD_HANDLE)
+        return self._require_handle(body_id)
+
+    def _add_constraint(self, constraint: ConstraintSpec) -> int:
+        return int(self.world.add_constraint(
+            constraint_type=constraint.type,
+            body_a_handle=self._constraint_body_handle(constraint.body_a),
+            body_b_handle=self._constraint_body_handle(constraint.body_b),
+            anchor_pos=constraint.anchor_position,
+            anchor_rot_wxyz=constraint.anchor_rotation_wxyz,
+            constraint_priority=constraint.priority,
+            solver_velocity_steps=constraint.solver_velocity_steps,
+            solver_position_steps=constraint.solver_position_steps,
+            draw_constraint_size=constraint.draw_size,
+            limit_enabled=constraint.limit_enabled,
+            angular_limit_min=constraint.angular_limit_min,
+            angular_limit_max=constraint.angular_limit_max,
+            linear_limit_min=constraint.linear_limit_min,
+            linear_limit_max=constraint.linear_limit_max,
+            limit_spring_frequency=constraint.limit_spring_frequency,
+            limit_spring_damping=constraint.limit_spring_damping,
+            max_friction_torque=constraint.max_friction_torque,
+            max_friction_force=constraint.max_friction_force,
+            motor_state=constraint.motor_state,
+            motor_frequency=constraint.motor_frequency,
+            motor_damping=constraint.motor_damping,
+            motor_force_limit=constraint.motor_force_limit,
+            motor_torque_limit=constraint.motor_torque_limit,
+            motor_target_angular_velocity=constraint.motor_target_angular_velocity,
+            motor_target_angle=constraint.motor_target_angle,
+            motor_target_velocity=constraint.motor_target_velocity,
+            motor_target_position=constraint.motor_target_position,
+            cone_half_angle=constraint.cone_half_angle,
+            disable_collisions=constraint.disable_collisions,
+            distance_min=constraint.distance_min,
+            distance_max=constraint.distance_max,
+            use_separate_anchor_frames=constraint.use_separate_anchor_frames,
+            anchor_pos_a=constraint.anchor_position_a,
+            anchor_rot_wxyz_a=constraint.anchor_rotation_wxyz_a,
+            anchor_pos_b=constraint.anchor_position_b,
+            anchor_rot_wxyz_b=constraint.anchor_rotation_wxyz_b,
         ))
 
     def _require_handle(self, body_id: str) -> int:
@@ -159,6 +215,13 @@ class NativeFixtureRuntime:
             canonical_body_state(body.id, self.world.get_body_state(self.handles[body.id]))
             for body in sorted(fixture.bodies, key=lambda item: item.id)
         ]
+        constraints = [
+            canonical_constraint_state(
+                constraint.id,
+                self.world.get_constraint_state(self.constraint_handles[constraint.id]),
+            )
+            for constraint in sorted(fixture.constraints, key=lambda item: item.id)
+        ]
         contacts = []
         if hasattr(self.world, "get_contact_events"):
             contacts = canonical_value(
@@ -172,7 +235,7 @@ class NativeFixtureRuntime:
             "dt": fixture.world.dt,
             "substeps": fixture.world.substeps,
             "bodies": bodies,
-            "constraints": [],
+            "constraints": constraints,
             "contacts": contacts,
             "queries": [],
             "stats": {
@@ -185,10 +248,9 @@ class NativeFixtureRuntime:
         }
 
     def run(self, fixture: Fixture, repeat_index: int = 0) -> NativeRunResult:
-        if fixture.constraints:
-            raise FixtureError(
-                f"{fixture.id}: constraints are reserved by schema v1 but not yet supported "
-                "by native_binding_v1"
+        if fixture.constraints and not hasattr(self.native.JoltWorld, "get_constraint_state"):
+            raise RuntimeError(
+                f"{fixture.id}: 当前 hotools_jolt 二进制缺少约束状态 ABI，请先重建对应 Python ABI"
             )
         settings = fixture.world
         self.world = self.native.JoltWorld(
@@ -197,6 +259,7 @@ class NativeFixtureRuntime:
             max_contact_constraints=settings.max_contact_constraints,
         )
         self.handles = {}
+        self.constraint_handles = {}
         trace: list[dict[str, Any]] = []
         sample_frames = set(fixture.sample_frames)
         events: dict[tuple[int, str], list[TimelineEvent]] = {}
@@ -209,6 +272,11 @@ class NativeFixtureRuntime:
                 if handle == int(getattr(self.native, "INVALID_HANDLE", 0)):
                     raise RuntimeError(f"native failed to add body {body.id}")
                 self.handles[body.id] = handle
+            for constraint in sorted(fixture.constraints, key=lambda item: item.id):
+                handle = self._add_constraint(constraint)
+                if handle == int(getattr(self.native, "INVALID_HANDLE", 0)):
+                    raise RuntimeError(f"native failed to add constraint {constraint.id}")
+                self.constraint_handles[constraint.id] = handle
             if 0 in sample_frames:
                 trace.append(self._sample(fixture, 0))
             for frame in range(1, settings.frames + 1):
@@ -235,3 +303,4 @@ class NativeFixtureRuntime:
                 finally:
                     self.world = None
                     self.handles = {}
+                    self.constraint_handles = {}

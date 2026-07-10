@@ -1,0 +1,44 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "CONE-001",
+  "title": "锥形约束限制 swing 但不锁死锥内运动",
+  "source": "metamorphic:cone_swing_limit",
+  "tags": ["p0", "constraint", "cone", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 120
+  },
+  "bodies": [
+    {
+      "id": "swing_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "CAPSULE", "radius": 0.2, "half_height": 0.5},
+      "position": [0.0, 0.0, 0.0],
+      "angular_velocity": [2.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "cone_swing",
+      "type": "CONE",
+      "body_a": "WORLD",
+      "body_b": "swing_body",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [1.0, 0.0, 0.0, 0.0],
+      "cone_half_angle": 0.3
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "cone_swing", "type": "CONE", "current_value_kind": "none", "enabled": true},
+    {"kind": "constraint_anchor_coincidence", "constraint": "cone_swing", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "cone_swing_limit", "constraint": "cone_swing", "angle_abs": 0.003, "swing_min": 0.25, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

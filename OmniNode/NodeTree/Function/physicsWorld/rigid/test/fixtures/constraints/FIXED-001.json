@@ -1,0 +1,55 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FIXED-001",
+  "title": "固定约束锁定相对位置和旋转",
+  "source": "metamorphic:fixed_relative_transform",
+  "tags": ["p0", "constraint", "fixed", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 60
+  },
+  "bodies": [
+    {
+      "id": "locked_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.4, 0.3]},
+      "position": [0.0, 0.0, 0.0],
+      "linear_velocity": [3.0, -2.0, 1.0],
+      "angular_velocity": [1.0, 2.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "fixed_to_world",
+      "type": "FIXED",
+      "body_a": "WORLD",
+      "body_b": "locked_body",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [1.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {
+      "kind": "constraint_state_schema",
+      "constraint": "fixed_to_world",
+      "type": "FIXED",
+      "current_value_kind": "none",
+      "enabled": true
+    },
+    {
+      "kind": "fixed_relative_transform",
+      "constraint": "fixed_to_world",
+      "position_abs": 0.0002,
+      "rotation_abs": 0.0002,
+      "start_frame": 1
+    },
+    {"kind": "finite_all"}
+  ]
+}

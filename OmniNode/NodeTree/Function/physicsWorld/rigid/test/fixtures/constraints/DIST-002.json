@@ -1,0 +1,91 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "DIST-002",
+  "title": "区间距离约束分别处理下界、区间内部和上界",
+  "source": "metamorphic:distance_interval",
+  "tags": ["p0", "constraint", "distance", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 30
+  },
+  "bodies": [
+    {
+      "id": "above_max",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.2},
+      "position": [4.0, 0.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "below_min",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.2},
+      "position": [-4.0, 0.0, 0.5],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "inside_range",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.2},
+      "position": [0.0, 0.0, 1.5],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "above_limit",
+      "type": "DISTANCE",
+      "body_a": "WORLD",
+      "body_b": "above_max",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [4.0, 0.0, 0.0],
+      "anchor_position_b": [4.0, 0.0, 3.0],
+      "distance_min": 1.0,
+      "distance_max": 2.0
+    },
+    {
+      "id": "below_limit",
+      "type": "DISTANCE",
+      "body_a": "WORLD",
+      "body_b": "below_min",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [-4.0, 0.0, 0.0],
+      "anchor_position_b": [-4.0, 0.0, 0.5],
+      "distance_min": 1.0,
+      "distance_max": 2.0
+    },
+    {
+      "id": "inside_limit",
+      "type": "DISTANCE",
+      "body_a": "WORLD",
+      "body_b": "inside_range",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [0.0, 0.0, 1.5],
+      "distance_min": 1.0,
+      "distance_max": 2.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "above_limit", "type": "DISTANCE", "current_value_kind": "distance", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "below_limit", "type": "DISTANCE", "current_value_kind": "distance", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "inside_limit", "type": "DISTANCE", "current_value_kind": "distance", "enabled": true},
+    {"kind": "distance_converges_to_range", "constraint": "above_limit", "minimum": 1.0, "maximum": 2.0, "final_abs": 0.0002, "monotonic_abs": 0.000002},
+    {"kind": "distance_converges_to_range", "constraint": "below_limit", "minimum": 1.0, "maximum": 2.0, "final_abs": 0.0002, "monotonic_abs": 0.000002},
+    {"kind": "distance_range", "constraint": "above_limit", "minimum": 1.0, "maximum": 2.0, "distance_abs": 0.0002, "start_frame": 30},
+    {"kind": "distance_range", "constraint": "below_limit", "minimum": 1.0, "maximum": 2.0, "distance_abs": 0.0002, "start_frame": 30},
+    {"kind": "distance_range", "constraint": "inside_limit", "minimum": 1.0, "maximum": 2.0, "distance_abs": 0.0002, "start_frame": 0},
+    {"kind": "body_state_near", "body": "inside_range", "frame": 30, "position": [0.0, 0.0, 1.5], "linear_velocity": [0.0, 0.0, 0.0], "abs": 0.00002},
+    {"kind": "finite_all"}
+  ]
+}

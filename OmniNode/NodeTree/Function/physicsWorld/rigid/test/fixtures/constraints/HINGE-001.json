@@ -1,0 +1,44 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "HINGE-001",
+  "title": "铰链约束只保留局部 Z 轴旋转",
+  "source": "metamorphic:hinge_degrees_of_freedom",
+  "tags": ["p0", "constraint", "hinge", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 60
+  },
+  "bodies": [
+    {
+      "id": "hinge_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [0.0, 0.0, 0.0],
+      "linear_velocity": [1.0, -2.0, 0.5],
+      "angular_velocity": [1.0, -1.5, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "hinge_to_world",
+      "type": "HINGE",
+      "body_a": "WORLD",
+      "body_b": "hinge_body",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [1.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "hinge_to_world", "type": "HINGE", "current_value_kind": "angle", "enabled": true},
+    {"kind": "constraint_anchor_coincidence", "constraint": "hinge_to_world", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "rotation_axis_only", "body": "hinge_body", "frame": 60, "axis": "Z", "off_axis_abs": 0.0003, "angle_min": 1.0},
+    {"kind": "finite_all"}
+  ]
+}

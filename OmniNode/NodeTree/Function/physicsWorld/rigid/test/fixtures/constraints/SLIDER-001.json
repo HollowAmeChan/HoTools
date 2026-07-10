@@ -1,0 +1,43 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SLIDER-001",
+  "title": "滑块约束只保留局部 Z 轴平移",
+  "source": "metamorphic:slider_degrees_of_freedom",
+  "tags": ["p0", "constraint", "slider", "invariant"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 60
+  },
+  "bodies": [
+    {
+      "id": "slider_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.3, 0.3]},
+      "position": [0.0, 0.0, 0.0],
+      "linear_velocity": [1.0, -2.0, 3.0],
+      "angular_velocity": [1.0, -1.5, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "slider_to_world",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "slider_body",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [1.0, 0.0, 0.0, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "slider_to_world", "type": "SLIDER", "current_value_kind": "position", "enabled": true},
+    {"kind": "linear_axis_only", "body": "slider_body", "frame": 60, "axis": "Z", "off_axis_abs": 0.0003, "displacement_min": 2.5, "rotation_abs": 0.0003},
+    {"kind": "finite_all"}
+  ]
+}
