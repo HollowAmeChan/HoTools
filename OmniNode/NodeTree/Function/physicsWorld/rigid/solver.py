@@ -177,13 +177,47 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     return False
 
 
+def _ordered_solver_slots(
+    world: PhysicsWorldCache,
+    kind: str,
+) -> list[tuple[str, object]]:
+    """按语义身份排序，并拒绝缺失或冲突的模拟排序键。"""
+    keyed: dict[tuple[str, ...], list[tuple[str, object]]] = {}
+    for slot_id, slot in world.solver_slots.items():
+        if slot.kind != kind:
+            continue
+        spec = slot.data.get("spec")
+        if spec is None:
+            continue
+        raw_key = getattr(spec, "simulation_order_key", ())
+        key = tuple(str(part) for part in raw_key) if isinstance(raw_key, (tuple, list)) else ()
+        if not key or not any(key):
+            message = f"模拟排序键缺失或无效: {slot_id}"
+            slot.data["_simulation_order_error"] = message
+            slot.data["_jolt_error"] = message
+            continue
+        keyed.setdefault(key, []).append((slot_id, slot))
+
+    ordered: list[tuple[str, object]] = []
+    for key in sorted(keyed):
+        entries = keyed[key]
+        if len(entries) != 1:
+            message = f"模拟排序键冲突: {key!r}"
+            for _slot_id, slot in entries:
+                slot.data["_simulation_order_error"] = message
+                slot.data["_jolt_error"] = message
+            continue
+        slot_id, slot = entries[0]
+        previous = slot.data.pop("_simulation_order_error", None)
+        if previous and slot.data.get("_jolt_error") == previous:
+            slot.data.pop("_jolt_error", None)
+        ordered.append((slot_id, slot))
+    return ordered
+
+
 def _ordered_constraint_slots(world: PhysicsWorldCache) -> list[tuple[str, object]]:
     """按 constraint-to-constraint 依赖排序，并把无效拓扑留在 slot diagnostics。"""
-    entries = [
-        (slot_id, slot)
-        for slot_id, slot in world.solver_slots.items()
-        if slot.kind == RIGID_CONSTRAINT_SLOT_KIND and slot.data.get("spec") is not None
-    ]
+    entries = _ordered_solver_slots(world, RIGID_CONSTRAINT_SLOT_KIND)
     slots_by_id = dict(entries)
     state: dict[str, int] = {}
     ordered: list[tuple[str, object]] = []
@@ -251,6 +285,21 @@ def _consume_exchange(world: PhysicsWorldCache, channel: str) -> list[dict]:
     return [item for item in world.consume_exchange(channel) if isinstance(item, dict)]
 
 
+def _ordered_rigid_body_commands(world: PhysicsWorldCache) -> list[dict]:
+    """保留图中显式 command 次序，同时让次序成为可检查的普通数据。"""
+    items = _consume_exchange(world, RIGID_BODY_COMMANDS_CHANNEL)
+    decorated = []
+    for fallback_index, item in enumerate(items):
+        raw_key = item.get("command_order_key")
+        if isinstance(raw_key, (tuple, list)) and raw_key:
+            key = tuple(str(part) for part in raw_key)
+        else:
+            key = (f"{fallback_index:012d}",)
+        decorated.append((key, fallback_index, item))
+    decorated.sort(key=lambda row: (row[0], row[1]))
+    return [item for _key, _index, item in decorated]
+
+
 def _rigid_command_token(world: PhysicsWorldCache) -> tuple[int, int]:
     fc = getattr(world, "frame_context", None)
     frame = int(getattr(fc, "frame", 0) or 0)
@@ -259,7 +308,7 @@ def _rigid_command_token(world: PhysicsWorldCache) -> tuple[int, int]:
 
 def _has_pending_rigid_body_commands(world: PhysicsWorldCache) -> bool:
     token = _rigid_command_token(world)
-    for item in _consume_exchange(world, RIGID_BODY_COMMANDS_CHANNEL):
+    for item in _ordered_rigid_body_commands(world):
         if item.get(_RIGID_COMMAND_CONSUMER_KEY) != token:
             return True
     return False
@@ -293,7 +342,7 @@ def _apply_rigid_body_commands(world: PhysicsWorldCache, adapter) -> tuple[int, 
     failed = 0
     errors: list[str] = []
 
-    for item in _consume_exchange(world, RIGID_BODY_COMMANDS_CHANNEL):
+    for item in _ordered_rigid_body_commands(world):
         if item.get(_RIGID_COMMAND_CONSUMER_KEY) == token:
             continue
         item[_RIGID_COMMAND_CONSUMER_KEY] = token
@@ -380,9 +429,7 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     published = 0
     clear_rigid_transform_results(world)
 
-    for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind != RIGID_BODY_SLOT_KIND:
-            continue
+    for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
         spec = slot.data.get("spec")
         if spec is None:
             continue
@@ -432,9 +479,7 @@ def _publish_rigid_constraint_state_results(world: PhysicsWorldCache, adapter) -
     published = 0
     clear_rigid_constraint_state_results(world)
 
-    for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
-            continue
+    for slot_id, slot in _ordered_constraint_slots(world):
         spec = slot.data.get("spec")
         if spec is None:
             continue
@@ -506,9 +551,7 @@ def _publish_rigid_contact_event_results(
 def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter) -> int:
     """在 Jolt step 后按每步约束冲量禁用超过阈值的约束。"""
     broken_count = 0
-    for slot_id, slot in list(world.solver_slots.items()):
-        if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
-            continue
+    for slot_id, slot in _ordered_constraint_slots(world):
         spec = slot.data.get("spec")
         if spec is None or not bool(getattr(spec, "breakable", False)):
             continue
@@ -646,9 +689,7 @@ def step_rigid_bodies(
         sync_generated_constraint_slots(world, adapter=adapter)
 
         # --- sync rigid bodies ---
-        for slot_id, slot in list(world.solver_slots.items()):
-            if slot.kind != RIGID_BODY_SLOT_KIND:
-                continue
+        for slot_id, slot in _ordered_solver_slots(world, RIGID_BODY_SLOT_KIND):
             spec = slot.data.get("spec")
             if spec is None:
                 continue

@@ -64,12 +64,19 @@ def _publish_rigid_body_command(
     if slot is None or slot.kind != RIGID_BODY_SLOT_KIND:
         return world, None
 
+    command_index = len(world.exchange.get(RIGID_BODY_COMMANDS_CHANNEL, ()))
     item = {
         "channel": RIGID_BODY_COMMANDS_CHANNEL,
         "producer": producer,
         "scope": "frame",
         "target_slot_id": spec.slot_id,
         "target_object": getattr(target, "name", ""),
+        "target_simulation_order_key": spec.simulation_order_key,
+        "command_order_key": (
+            f"{command_index:012d}",
+            str(producer),
+            str(command),
+        ),
         "command": str(command),
     }
     item.update(payload)

@@ -45,7 +45,7 @@
 
 2026-07-11 起暂停新增 Jolt feature surface，按以下门禁推进：
 
-1. `DET-003` 与生产路径 `simulation_order_key`；
+1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator；
 3. 共用 fixture 的最小 Blender semantic runner；
 4. breakable、跨 ABI、overflow、soak 和性能门禁；

@@ -39,6 +39,7 @@
 - Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
 - py311/py313 各自 56/56 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
+- 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
 
 当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
@@ -275,7 +276,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | LIFE-003 | prune/delete/dispose | native 数量回零，Blender delta 清理 | Contract | P0 | 已覆盖 |
 | DET-001 | 两个新 world 同步重放 | 每帧原始 float bitwise 相等 | Jolt determinism | P0 | 已实现 |
 | DET-002 | 同 fixture 跨进程运行 10 次 | canonical physical hash 一致 | Jolt determinism | P0 | 已实现 |
-| DET-003 | Blender scope 枚举随机打乱 | stable-id 排序后 API 调用序与 trace 不变 | HoTools | P0 | 缺失 |
+| DET-003 | Blender scope 枚举随机打乱 | `simulation_order_key` 排序后 API 调用序与 trace 不变；冲突拒绝 | HoTools | P0 | PASS（生产路径） |
 | DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | 两 ABI 各自 56/56；自动容差差分报告缺失 |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | 缺失 |
 | PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 缺失 |

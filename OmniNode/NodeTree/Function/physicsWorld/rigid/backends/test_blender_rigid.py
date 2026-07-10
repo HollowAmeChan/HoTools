@@ -492,18 +492,24 @@ def test_rigid_body_command_nodes():
     assert item["command"] == "set_velocity"
     assert item["target_object"] == ball.name
     assert item["linear_velocity"] == (0.0, 0.0, 5.0)
-    assert world.exchange_counts()["rigid_body_commands"] == 1
+    assert tuple(item["target_simulation_order_key"]) == tuple(
+        build_rigid_body_spec(ball).simulation_order_key
+    )
+    assert item["command_order_key"][0] == "000000000000"
+    _, item2 = physicsRigidSetVelocity(world, ball, (0, 0, 6), (0, 0, 0))
+    assert item2["command_order_key"][0] == "000000000001"
+    assert world.exchange_counts()["rigid_body_commands"] == 2
 
     step_rigid_bodies(world, enabled=True)
     spec = build_rigid_body_spec(ball)
     result = get_rigid_transform_result(
         world, slot_id=spec.slot_id, frame=scene.frame_current, generation=world.generation)
     assert result is not None
-    assert result["linear_velocity"][2] > 4.0
+    assert result["linear_velocity"][2] > 5.0
 
     adapter = world.backend_resources.get("rigid_solver")
     debug = adapter.debug_snapshot()
-    assert debug["last_command_count"] == 1
+    assert debug["last_command_count"] == 2
     assert debug["last_command_failed"] == 0
 
     _, found, position, rotation, linear_velocity, angular_velocity, active, sleeping, raw_result = physicsRigidReadState(world, ball)
@@ -1998,6 +2004,159 @@ def test_constraint_debug_renderer_registry_and_semantics():
     assert unknown["base"], "未注册类型仍应显示通用 anchor frame"
 
 
+def test_scope_enumeration_order_is_simulation_stable():
+    """DET-003：打乱 scope 枚举不得改变 Jolt 添加顺序或物理结果。"""
+    scene = bpy.context.scene
+    ground = _make_ground("TDET_Ground")
+    body_a = _make_obj("TDET_BodyA", (-1.0, 0.0, 3.0), mass=1.0)
+    body_b = _make_obj("TDET_BodyB", (1.0, 0.0, 3.0), mass=2.0)
+    constraint_a = _make_constraint_empty(
+        "TDET_ConstraintA", body_a, ground, loc=(-1.0, 0.0, 2.0)
+    )
+    constraint_b = _make_constraint_empty(
+        "TDET_ConstraintB", body_b, ground, loc=(1.0, 0.0, 2.0)
+    )
+    bpy.context.view_layer.update()
+
+    def run_with_scope_order(objects):
+        scope = make_scope(
+            objects,
+            include_rigid_body=True,
+            include_rigid_constraint=True,
+            include_passive_collision=False,
+            include_bone_collision=False,
+            include_mesh_collision=False,
+        )
+        scene.frame_set(1)
+        world, _, _, _ = physicsWorldBegin(
+            cache_state=None, scene=scene, object_scope=scope, enabled=True
+        )
+        step_rigid_bodies(world, enabled=True)
+        adapter = world.backend_resources["rigid_solver"]
+
+        body_order = tuple(
+            world.solver_slots[slot_id].data["spec"].simulation_order_key
+            for slot_id in adapter._body_handles
+        )
+        constraint_order = tuple(
+            world.solver_slots[slot_id].data["spec"].simulation_order_key
+            for slot_id in adapter._constraint_handles
+        )
+        body_states = tuple(sorted(
+            (
+                tuple(world.solver_slots[item["slot_id"]].data["spec"].simulation_order_key),
+                tuple(item["position"]),
+                tuple(item["rotation_wxyz"]),
+                tuple(item["linear_velocity"]),
+                tuple(item["angular_velocity"]),
+                bool(item["active"]),
+                bool(item["sleeping"]),
+            )
+            for item in world.result_streams.get("rigid_transform", ())
+        ))
+        constraint_states = tuple(sorted(
+            (
+                tuple(world.solver_slots[item["slot_id"]].data["spec"].simulation_order_key),
+                item["constraint_type"],
+                item["current_value_kind"],
+                tuple(item.get("lambda_position", ())),
+                tuple(item.get("lambda_rotation", ())),
+            )
+            for item in world.result_streams.get("rigid_constraint_state", ())
+        ))
+        snapshot = (body_order, constraint_order, body_states, constraint_states)
+        world.omni_cache_dispose("test_det_003")
+        return snapshot
+
+    first = run_with_scope_order([
+        constraint_b, body_b, ground, constraint_a, body_a,
+    ])
+    second = run_with_scope_order([
+        body_a, constraint_a, ground, body_b, constraint_b,
+    ])
+    assert first == second, "scope 枚举顺序改变了 Jolt 添加顺序或物理 trace"
+    assert first[0] == tuple(sorted(first[0]))
+    assert first[1] == tuple(sorted(first[1]))
+    _del(constraint_b, constraint_a, body_b, body_a, ground)
+
+
+def test_simulation_order_key_collision_is_rejected():
+    scene = bpy.context.scene
+    body_a = _make_obj("TDET_CollisionA", (-1.0, 0.0, 2.0))
+    body_b = _make_obj("TDET_CollisionB", (1.0, 0.0, 2.0))
+    scope = make_scope(
+        [body_a, body_b],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True
+    )
+    slots = [
+        slot for slot in world.solver_slots.values()
+        if slot.kind == "rigid_body"
+    ]
+    assert len(slots) == 2
+    slots[1].data["spec"].simulation_order_key = slots[0].data["spec"].simulation_order_key
+
+    body_count, _ = step_rigid_bodies(world, enabled=True)
+    assert body_count == 0, "冲突 key 不得回退到 pointer 顺序创建 body"
+    assert all("模拟排序键冲突" in slot.data.get("_jolt_error", "") for slot in slots)
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation
+    )
+    assert stats is not None and stats["sync_error_count"] == 2
+    world.omni_cache_dispose("test_simulation_order_collision")
+    _del(body_b, body_a)
+
+
+def test_generated_constraint_source_id_collision_is_rejected():
+    scene = bpy.context.scene
+    body_a = _make_obj("TDET_GeneratedA", (-1.0, 0.0, 2.0))
+    body_b = _make_obj("TDET_GeneratedB", (0.0, 0.0, 2.0))
+    body_c = _make_obj("TDET_GeneratedC", (1.0, 0.0, 2.0))
+    scope = make_scope(
+        [body_c, body_a, body_b],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True
+    )
+    generated = (
+        make_rigid_generated_constraint_properties(
+            body_a, body_b, None, "POINT", True, True, "duplicate_source"
+        )
+        + make_rigid_generated_constraint_properties(
+            body_a, body_c, None, "POINT", True, True, "duplicate_source"
+        )
+    )
+    register_rigid_generated_constraint_objects(world, generated, enabled=True)
+    step_rigid_bodies(world, enabled=True)
+
+    generated_slots = [
+        slot for slot in world.solver_slots.values()
+        if slot.kind == "rigid_constraint"
+    ]
+    assert len(generated_slots) == 2
+    assert all(
+        "模拟排序键冲突" in slot.data.get("_jolt_error", "")
+        for slot in generated_slots
+    )
+    adapter = world.backend_resources["rigid_solver"]
+    assert adapter.constraint_count == 0
+    world.omni_cache_dispose("test_generated_simulation_order_collision")
+    _del(body_c, body_b, body_a)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2027,6 +2186,9 @@ if __name__ == "__main__":
     check("shape parameter dirty resync", test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart)
     check("constraint target dirty resync", test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart)
     check("constraint debug renderer semantics", test_constraint_debug_renderer_registry_and_semantics)
+    check("DET-003 scope enumeration determinism", test_scope_enumeration_order_is_simulation_stable)
+    check("simulation order key collision rejection", test_simulation_order_key_collision_is_rejected)
+    check("generated constraint source-id collision rejection", test_generated_constraint_source_id_collision_is_rejected)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)

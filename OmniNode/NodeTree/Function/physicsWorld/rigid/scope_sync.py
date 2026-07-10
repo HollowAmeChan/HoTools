@@ -98,6 +98,7 @@ def _rigid_body_sync_signature(spec) -> tuple:
         )
 
     return (
+        tuple(getattr(spec, "simulation_order_key", ())),
         body_type,
         _round_float(getattr(spec, "mass", 1.0)),
         _round_float(getattr(spec, "friction", 0.5)),
@@ -141,6 +142,7 @@ def _kinematic_pose_signature(spec) -> tuple:
 
 def _constraint_sync_signature(spec) -> tuple:
     return (
+        tuple(getattr(spec, "simulation_order_key", ())),
         str(getattr(spec, "constraint_type", "FIXED") or "FIXED"),
         int(getattr(spec, "target_a_ptr", 0) or 0),
         int(getattr(spec, "target_b_ptr", 0) or 0),

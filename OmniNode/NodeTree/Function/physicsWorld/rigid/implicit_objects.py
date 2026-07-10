@@ -16,7 +16,7 @@ from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash
 from .debug import install_rigid_slot_debug_snapshot
 from .declaration import RIGID_SOLVER_DECLARATION
-from .specs import ConstraintSpec
+from .specs import ConstraintSpec, blender_id_simulation_order_key
 
 
 RIGID_GENERATED_CONSTRAINT_REGISTER_PRODUCER = "physicsRigidGeneratedConstraintRegister"
@@ -788,6 +788,20 @@ def _target_parts(obj) -> tuple[int, int]:
     return as_pointer(obj), data_pointer(obj)
 
 
+def rigid_generated_constraint_simulation_order_key(item: dict) -> tuple[str, ...]:
+    """生成约束的跨进程排序身份；重复 derived key 会由 solver 拒绝。"""
+    source_id = str(item.get("source_id", "") or "").strip()
+    if source_id:
+        return ("rigid_generated_constraint", "source", source_id)
+    return (
+        "rigid_generated_constraint",
+        "derived",
+        str(item.get("constraint_type", "FIXED") or "FIXED"),
+        *blender_id_simulation_order_key(item.get("target_a"), "target_a"),
+        *blender_id_simulation_order_key(item.get("target_b"), "target_b"),
+    )
+
+
 def rigid_generated_constraint_stable_id(item: dict) -> str:
     target_a = item.get("target_a")
     target_b = item.get("target_b")
@@ -829,6 +843,7 @@ def rigid_generated_constraint_signature(item: dict) -> str:
     reference_a_ptr, reference_a_data_ptr = _target_parts(reference_constraint_a)
     reference_b_ptr, reference_b_data_ptr = _target_parts(reference_constraint_b)
     payload = [
+        *rigid_generated_constraint_simulation_order_key(item),
         a_ptr,
         a_data_ptr,
         b_ptr,
@@ -1003,6 +1018,7 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         empty_obj=None,
         empty_ptr=0,
         slot_id=slot_id,
+        simulation_order_key=rigid_generated_constraint_simulation_order_key(item),
         constraint_type=str(item.get("constraint_type", "FIXED") or "FIXED"),
         target_a=target_a,
         target_b=target_b,

@@ -14,6 +14,50 @@ Phase 4 先只收集和调试，不要求 Jolt step 和写回。
 from __future__ import annotations
 
 
+def _normalized_simulation_order_key(value) -> tuple[str, ...]:
+    if isinstance(value, str):
+        value = (value,)
+    if not isinstance(value, (tuple, list)):
+        return ()
+    return tuple(str(part) for part in value)
+
+
+def blender_id_simulation_order_key(id_block, role: str) -> tuple[str, ...]:
+    """返回不依赖运行时 pointer 的 Blender ID 语义身份。"""
+    if id_block is None:
+        return (str(role), "<world>", "")
+    library = getattr(id_block, "library", None)
+    library_path = str(getattr(library, "filepath", "") or "")
+    name_full = str(
+        getattr(id_block, "name_full", "")
+        or getattr(id_block, "name", "")
+        or ""
+    )
+    return (str(role), library_path, name_full)
+
+
+def rigid_body_simulation_order_key(obj) -> tuple[str, ...]:
+    data = getattr(obj, "data", None) if obj is not None else None
+    return (
+        "rigid_body",
+        *blender_id_simulation_order_key(obj, "object"),
+        *blender_id_simulation_order_key(data, "data"),
+    )
+
+
+def rigid_constraint_simulation_order_key(
+    empty_obj,
+    target_a=None,
+    target_b=None,
+) -> tuple[str, ...]:
+    return (
+        "rigid_constraint",
+        *blender_id_simulation_order_key(empty_obj, "object"),
+        *blender_id_simulation_order_key(target_a, "target_a"),
+        *blender_id_simulation_order_key(target_b, "target_b"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # RigidBodySpec
 # ---------------------------------------------------------------------------
@@ -31,6 +75,7 @@ class RigidBodySpec:
         "obj_ptr",
         "data_ptr",
         "slot_id",
+        "simulation_order_key",
         "world_position",
         "world_rotation_wxyz",
         "body_type",
@@ -68,6 +113,7 @@ class RigidBodySpec:
         obj,
         obj_ptr: int,
         data_ptr: int,
+        simulation_order_key: tuple[str, ...] | None = None,
         world_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         world_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         body_type: str = "DYNAMIC",
@@ -103,6 +149,10 @@ class RigidBodySpec:
         self.obj_ptr: int = obj_ptr
         self.data_ptr: int = data_ptr
         self.slot_id: str = f"rigid:{obj_ptr}:{data_ptr}"
+        self.simulation_order_key: tuple[str, ...] = (
+            _normalized_simulation_order_key(simulation_order_key)
+            or rigid_body_simulation_order_key(obj)
+        )
         self.world_position: tuple[float, float, float] = world_position
         self.world_rotation_wxyz: tuple[float, float, float, float] = world_rotation_wxyz
         self.body_type: str = body_type
@@ -137,6 +187,7 @@ class RigidBodySpec:
     def debug_dict(self) -> dict:
         return {
             "slot_id": self.slot_id,
+            "simulation_order_key": self.simulation_order_key,
             "world_position": self.world_position,
             "world_rotation_wxyz": self.world_rotation_wxyz,
             "body_type": self.body_type,
@@ -190,6 +241,7 @@ class ConstraintSpec:
         "empty_obj",
         "empty_ptr",
         "slot_id",
+        "simulation_order_key",
         "constraint_type",
         "target_a",
         "target_b",
@@ -267,6 +319,7 @@ class ConstraintSpec:
         empty_obj,
         empty_ptr: int,
         slot_id: str | None = None,
+        simulation_order_key: tuple[str, ...] | None = None,
         constraint_type: str = "FIXED",
         target_a=None,
         target_b=None,
@@ -353,6 +406,10 @@ class ConstraintSpec:
         self.empty_obj = empty_obj
         self.empty_ptr: int = empty_ptr
         self.slot_id: str = str(slot_id or f"constraint:{empty_ptr}")
+        self.simulation_order_key: tuple[str, ...] = (
+            _normalized_simulation_order_key(simulation_order_key)
+            or rigid_constraint_simulation_order_key(empty_obj, target_a, target_b)
+        )
         self.constraint_type: str = constraint_type
         self.target_a = target_a   # bpy.types.Object 或 None（固定到世界）
         self.target_b = target_b   # bpy.types.Object 或 None
@@ -427,6 +484,7 @@ class ConstraintSpec:
     def debug_dict(self) -> dict:
         return {
             "slot_id": self.slot_id,
+            "simulation_order_key": self.simulation_order_key,
             "constraint_type": self.constraint_type,
             "target_a": self.target_a.name if self.target_a is not None else None,
             "target_b": self.target_b.name if self.target_b is not None else None,
