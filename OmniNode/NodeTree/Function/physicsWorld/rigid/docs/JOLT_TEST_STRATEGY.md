@@ -21,7 +21,7 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1 `56/56`、旧式 Blender 后台集成 `31/31`；后者仍只记作链路 smoke，fixture 化 S3 由独立 runner 给出结论。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `58/58`、S3 `58/58 × repeat 2`、旧式 Blender 后台集成 `31/31`；后者仍只记作链路 smoke，fixture 化 S3 由独立 runner 给出结论。
 
 ### 2026-07-10 实现状态
 
@@ -32,7 +32,7 @@
 - position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- 56 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询和约束；
+- 58 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询、约束和断裂策略；
 - 十一种已接入约束均有 schema、state trace 和独立物理 oracle；
 - Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
 - Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
@@ -40,10 +40,10 @@
 - py311/py313 各自 56/56 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 - 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
-- `adapter_binding_v1` 已复用全部 56 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
-- `blender_pipeline_v1` 已复用全部 56 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、result、Quaternion writeback、same-frame、jump、reset 和 dispose；2026-07-11 全矩阵 `repeat=2` 为 56/56，全部通过 S1/S3 tolerant parity 和重复 hash 检查。
+- `adapter_binding_v1` 已复用全部 58 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
+- `blender_pipeline_v1` 已复用全部 58 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 56 个 P0 fixture。复杂 Cone/SwingTwist A/B frame 组合、breakable 强语义、跨 ABI 自动差分报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 58 个 P0 fixture，S3 另验收 breakable 强语义。复杂 Cone/SwingTwist A/B frame 组合、跨 ABI 自动差分报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ### 2026-07-11 实施决定
 
@@ -52,7 +52,7 @@
 1. 先写失败的 `DET-003`，再为 body、constraint 和有序 command 引入独立 `simulation_order_key`；pointer-based `slot_id` 只负责当前进程的生命周期和去重。
 2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
-4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。
+4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（`BREAK-001/002` 已于 2026-07-11 完成）
 5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。
 
 每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
@@ -264,8 +264,8 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | CONS-001 | solver step override | 低/高迭代残差排序正确，0 使用默认 | Jolt | P1 | 缺失 |
 | CONS-002 | priority | 冲突依赖链中改变顺序且结果可重复 | Jolt | P2 | 缺失 |
 | CONS-003 | draw size | 只改 debug geometry，不改 physical hash | 变形 | P0 | 已实现 |
-| BREAK-001 | impulse threshold | 仅真实 step 后按 `lambda_max_abs` 断裂 | HoTools | P0 | 现有弱覆盖 |
-| BREAK-002 | dt 与 same-frame | 阈值不被误当力；same-frame 不重复判定 | HoTools | P0 | 现有弱覆盖 |
+| BREAK-001 | impulse threshold | 仅真实 step 后按 `lambda_max_abs` 断裂；高低阈值对照且断裂后恢复运动 | HoTools | P0 | PASS（S3 policy oracle） |
+| BREAK-002 | dt 与 same-frame | 阈值不被误当力；restart 帧的 same-frame 命令不重建约束或覆盖断裂冲量 | HoTools | P0 | PASS（S3 policy oracle） |
 
 ### Query、生命周期、确定性、稳定性
 

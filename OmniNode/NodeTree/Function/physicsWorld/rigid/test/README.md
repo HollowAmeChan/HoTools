@@ -44,9 +44,10 @@
 
 当前切片（`blender_pipeline_v1`）：
 
-- 后台 Blender 为全部 56 个 P0 fixture 创建真实 RNA 对象和约束；
+- 后台 Blender 为全部 58 个 P0 fixture 创建真实 RNA 对象和约束；
 - 跑 scope、world setting、命令、contact/query、solver result 和统一 writeback；
 - 覆盖十一种约束、Quaternion 写回、same-frame、jump、reset 和 dispose；
+- `BREAK-001/002` 分层验证原生 lambda 基线、HoTools 冲量阈值、断裂后释放和同帧重放；
 - 每次运行内置 S1/S3 tolerant parity，不以自身输出作为正确性 oracle。
 
 当前切片尚未实现：
@@ -61,7 +62,7 @@
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
 3. 共用 fixture 的完整 P0 Blender semantic runner（2026-07-11 已完成）；
-4. breakable、跨 ABI、overflow、soak 和性能门禁；
+4. 跨 ABI、overflow、soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
 
 旧式 `backends/test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
