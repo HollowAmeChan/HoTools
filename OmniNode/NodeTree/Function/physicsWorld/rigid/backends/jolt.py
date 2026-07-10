@@ -596,6 +596,12 @@ class JoltAdapter:
             six_dof_max_friction=tuple(getattr(
                 spec, "six_dof_max_friction", (0.0,) * 6,
             )),
+            six_dof_limit_spring_frequency=tuple(getattr(
+                spec, "six_dof_limit_spring_frequency", (0.0,) * 3,
+            )),
+            six_dof_limit_spring_damping=tuple(getattr(
+                spec, "six_dof_limit_spring_damping", (0.0,) * 3,
+            )),
             six_dof_motor_states=tuple(getattr(
                 spec, "six_dof_motor_states", ("OFF",) * 6,
             )),

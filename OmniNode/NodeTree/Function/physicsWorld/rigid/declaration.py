@@ -166,7 +166,7 @@ RIGID_JOLT_CAPABILITY_BACKLOG = [
     },
     {
         "capability": "高级约束类型",
-        "status": "SwingTwist 已接限制、摩擦与双 motor；SixDOF 已接显式/生成六轴模式、friction 与逐轴 motor，逐轴 spring 待接；Path/Gear/RackAndPinion/Pulley 计划中",
+        "status": "SwingTwist 已接限制、摩擦与双 motor；SixDOF 已接显式/生成六轴模式、friction、逐轴 motor 与三平移轴 limit spring；Path/Gear/RackAndPinion/Pulley 计划中",
         "boundary": "每种类型同时补 spec、binding、result、专用 renderer、用户文档和测试",
     },
     {

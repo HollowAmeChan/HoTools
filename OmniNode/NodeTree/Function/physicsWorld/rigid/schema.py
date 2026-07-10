@@ -175,7 +175,7 @@ RIGID_BODY_RNA_FIELDS = ({'name': 'enabled', 'property': 'bool', 'kwargs': {'nam
 
 
 def _six_dof_axis_rna_fields() -> tuple[dict, ...]:
-    """生成 SixDOF 六轴模式和范围属性，保持字段命名与 native 轴序一致。"""
+    """生成 SixDOF 六轴属性，保持字段命名与 native 轴序一致。"""
     definitions = (
         ("translation_x", "平移X", "LENGTH", -1.0, 1.0),
         ("translation_y", "平移Y", "LENGTH", -1.0, 1.0),
@@ -216,6 +216,31 @@ def _six_dof_axis_rna_fields() -> tuple[dict, ...]:
                 "property": "float",
                 "kwargs": kwargs,
             })
+        if axis_name.startswith("translation"):
+            fields.extend((
+                {
+                    "name": f"six_dof_{axis_name}_limit_spring_frequency",
+                    "property": "float",
+                    "kwargs": {
+                        "name": f"{label}限制弹簧频率",
+                        "description": f"SixDOF {label}软限制的频率；0表示硬限制",
+                        "default": 0.0,
+                        "min": 0.0,
+                        "soft_max": 20.0,
+                    },
+                },
+                {
+                    "name": f"six_dof_{axis_name}_limit_spring_damping",
+                    "property": "float",
+                    "kwargs": {
+                        "name": f"{label}限制弹簧阻尼",
+                        "description": f"SixDOF {label}软限制的阻尼比",
+                        "default": 0.0,
+                        "min": 0.0,
+                        "soft_max": 2.0,
+                    },
+                },
+            ))
         friction_kind = "摩擦力" if axis_name.startswith("translation") else "摩擦力矩"
         fields.append({
             "name": f"six_dof_{axis_name}_friction",

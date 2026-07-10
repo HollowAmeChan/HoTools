@@ -140,7 +140,7 @@ Jolt 支持的主要 two-body constraint：
 | Slider | 单轴平移，支持线性 limit、limit spring、friction force、motor | 已接类型，并已接基础 limit/friction/motor |
 | Cone | 点约束 + swing cone angle | 已接类型，并已接 half cone angle |
 | SwingTwist | 肩关节/球窝角限制，支持 normal/twist/plane half cone angle、twist min/max、friction、motor | 已接 CONE/PYRAMID 摆角、twist min/max、friction、独立 swing/twist motor |
-| SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 已接六轴模式、friction、逐轴 motor 和调试；三平移轴 limit spring 已完成 native S1，公共属性待接 |
+| SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 已接六轴模式、friction、逐轴 motor、三平移轴 limit spring 和调试 |
 | Gear | 两个 hinge 角速度/角度关系 | 未接 |
 | RackAndPinion | slider 与 hinge 的线性/旋转关系 | 未接 |
 | Pulley | 两个点通过绳长比例约束 | 未接 |
@@ -355,7 +355,7 @@ HoTools 当前 constraint spec 覆盖：
 - anchor transform 来自 Empty。
 - `rigid.generated_constraint` 隐式对象生成的持久约束；它不创建 Empty，但会在 solver prepare 阶段转成同一类 `ConstraintSpec` slot。
 
-当前 adapter 已优先使用 `ConstraintSpec.anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 填 body1/body2 frame；共享 frame 仍作为兼容模式。Hinge/Slider 的 limit、friction、spring 和 motor，Cone half angle、Distance min/max/spring，SwingTwist 的 CONE/PYRAMID 摆角、twist min/max、friction 和双 motor，以及 SixDOF 的六轴模式、范围、friction、逐轴 motor 和三平移轴 limit spring 均已进入 native binding。尚未接入的是 constraint 运行时命令流、auto detect point、SixDOF spring 公共属性和 constraint-to-constraint 拓扑类型。
+当前 adapter 已优先使用 `ConstraintSpec.anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 填 body1/body2 frame；共享 frame 仍作为兼容模式。Hinge/Slider 的 limit、friction、spring 和 motor，Cone half angle、Distance min/max/spring，SwingTwist 的 CONE/PYRAMID 摆角、twist min/max、friction 和双 motor，以及 SixDOF 的六轴模式、范围、friction、逐轴 motor 和三平移轴 limit spring 均已进入 native binding 与公共属性链路。尚未接入的是 constraint 运行时命令流、auto detect point 和 constraint-to-constraint 拓扑类型。
 
 ### Per-frame 输入
 
@@ -667,7 +667,7 @@ Native 侧当前特点：
 | Distance | min distance、max distance、spring | 已接 |
 | Point | point1/point2 separate anchors | 已接 |
 | Fixed | separate frames 已接；auto detect 未接 | 部分已接 |
-| SixDOF | per-axis free/fixed/limited、limits、friction、motors 已接；translation limit spring 已完成 native S1、公共属性待接 | 部分已接 |
+| SixDOF | per-axis free/fixed/limited、limits、friction、motors、translation limit spring 已接 | 已接 |
 | SwingTwist | twist/swing limits、friction、motor | P2 |
 
 建议新增 constraint 类型：

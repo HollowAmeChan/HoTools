@@ -11,7 +11,7 @@
 | `SLIDER` | 沿本地 Z 单轴平移 | 线性 limit、spring、friction force、linear motor | 活塞、抽屉、滑轨 |
 | `CONE` | cone 范围内 swing，twist 自由 | half cone angle | 摆锤、简化球窝角限制 |
 | `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque、双 motor | 肩关节、受限球窝、布偶关节 |
-| `SIX_DOF` | 六个轴分别 Free、Fixed 或 Limited | 六轴模式、六轴 min/max、逐轴 friction、逐轴 motor、旋转 swing type | 复合机械关节、自定义平移旋转边界 |
+| `SIX_DOF` | 六个轴分别 Free、Fixed 或 Limited | 六轴模式、六轴 min/max、逐轴 friction、逐轴 motor、平移 limit spring、旋转 swing type | 复合机械关节、自定义平移旋转边界 |
 
 ## 类型细节
 
@@ -79,7 +79,9 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 每个轴都有独立的 `six_dof_*_motor_state`，可选择 `OFF / VELOCITY / POSITION`。三个平移轴分别读取 `six_dof_target_velocity` 或 `six_dof_target_position` 的 XYZ 分量；三个旋转轴分别读取 `six_dof_target_angular_velocity` 的 XYZ 分量，位置 Motor 共用 `six_dof_target_rotation` 目标姿态。六轴共用 `motor_frequency`、`motor_damping`，平移轴使用 `motor_force_limit`，旋转轴使用 `motor_torque_limit`。
 
-显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。native S1 已按 Jolt 官方公式验收三个平移轴的 limit spring，但公共属性尚未接入；Jolt 原生不支持 SixDOF 旋转软限制。逐轴 current-value result 也尚未接入。
+三个平移轴分别提供 `six_dof_translation_*_limit_spring_frequency` 和 `six_dof_translation_*_limit_spring_damping`；频率为 0 时保持硬限制。Jolt 原生不支持 SixDOF 旋转软限制，因此旋转轴没有对应 spring 属性。
+
+显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor、三平移轴 limit spring 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。逐轴 current-value result 尚未接入。
 
 ## 通用参数
 

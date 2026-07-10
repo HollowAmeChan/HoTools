@@ -115,11 +115,6 @@ def _normalize_six_dof_arrays(modes, minimum, maximum):
             low = _clamp(low, -_PI, _PI)
             high = _clamp(high, -_PI, _PI)
         low, high = _ordered_pair(low, high)
-        if low == high:
-            if index >= 3 and high >= _PI:
-                low = high - 1.0e-4
-            else:
-                high = low + 1.0e-4
         normalized_modes.append(mode)
         normalized_minimum.append(low)
         normalized_maximum.append(high)
@@ -429,6 +424,8 @@ def make_rigid_generated_constraint_properties(
     six_dof_limit_max=(1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
     six_dof_swing_type: str = "PYRAMID",
     six_dof_max_friction=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    six_dof_limit_spring_frequency=(0.0, 0.0, 0.0),
+    six_dof_limit_spring_damping=(0.0, 0.0, 0.0),
     six_dof_motor_states=("OFF", "OFF", "OFF", "OFF", "OFF", "OFF"),
     six_dof_target_velocity=(0.0, 0.0, 0.0),
     six_dof_target_angular_velocity=(0.0, 0.0, 0.0),
@@ -496,6 +493,12 @@ def make_rigid_generated_constraint_properties(
     six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
         six_dof_max_friction, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     ))
+    six_dof_limit_spring_frequency = tuple(max(value, 0.0) for value in _float3(
+        six_dof_limit_spring_frequency,
+    ))
+    six_dof_limit_spring_damping = tuple(max(value, 0.0) for value in _float3(
+        six_dof_limit_spring_damping,
+    ))
     normalized_six_dof_motor_states = []
     for state in tuple(six_dof_motor_states or ())[:6]:
         normalized_state = str(state or "OFF").upper()
@@ -559,6 +562,8 @@ def make_rigid_generated_constraint_properties(
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": normalized_six_dof_swing_type,
         "six_dof_max_friction": six_dof_max_friction,
+        "six_dof_limit_spring_frequency": six_dof_limit_spring_frequency,
+        "six_dof_limit_spring_damping": six_dof_limit_spring_damping,
         "six_dof_motor_states": normalized_six_dof_motor_states,
         "six_dof_target_velocity": _float3(six_dof_target_velocity),
         "six_dof_target_angular_velocity": _float3(six_dof_target_angular_velocity),
@@ -618,6 +623,12 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         six_dof_swing_type = "PYRAMID"
     six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
         item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+    ))
+    six_dof_limit_spring_frequency = tuple(max(value, 0.0) for value in _float3(
+        item.get("six_dof_limit_spring_frequency", (0.0,) * 3),
+    ))
+    six_dof_limit_spring_damping = tuple(max(value, 0.0) for value in _float3(
+        item.get("six_dof_limit_spring_damping", (0.0,) * 3),
     ))
     six_dof_motor_states = []
     for state in tuple(item.get("six_dof_motor_states", ("OFF",) * 6) or ())[:6]:
@@ -681,6 +692,8 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": six_dof_swing_type,
         "six_dof_max_friction": six_dof_max_friction,
+        "six_dof_limit_spring_frequency": six_dof_limit_spring_frequency,
+        "six_dof_limit_spring_damping": six_dof_limit_spring_damping,
         "six_dof_motor_states": six_dof_motor_states,
         "six_dof_target_velocity": _float3(
             item.get("six_dof_target_velocity", (0.0, 0.0, 0.0))
@@ -817,6 +830,12 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         ",".join(f"{value:.8g}" for value in _float6(
             item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        )),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("six_dof_limit_spring_frequency", (0.0,) * 3)
+        )),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("six_dof_limit_spring_damping", (0.0,) * 3)
         )),
         ",".join(str(value) for value in item.get("six_dof_motor_states", ("OFF",) * 6)),
         ",".join(f"{value:.8g}" for value in _float3(
@@ -963,6 +982,12 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         six_dof_swing_type=str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         six_dof_max_friction=_float6(
             item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        ),
+        six_dof_limit_spring_frequency=_float3(
+            item.get("six_dof_limit_spring_frequency", (0.0,) * 3)
+        ),
+        six_dof_limit_spring_damping=_float3(
+            item.get("six_dof_limit_spring_damping", (0.0,) * 3)
         ),
         six_dof_motor_states=tuple(item.get("six_dof_motor_states", ("OFF",) * 6)),
         six_dof_target_velocity=_float3(

@@ -237,7 +237,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式 | Jolt official/不变量 | P0 | PASS (S1)，公共 spec/adapter/debug 已接 |
 | SIX_DOF-002 | 每轴 friction | 平移 X 按最大摩擦力/质量衰减；旋转 Z 按最大摩擦力矩/惯量衰减；lambda 活跃 | 解析/Jolt | P0 | PASS (S1)，公共 spec/生成约束已接 |
 | SIX_DOF-003 | 每轴 motor | 平移 X 速度 motor 按力上限加速；旋转 Z 位置 motor 收敛到目标姿态；lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束/debug 已接 |
-| SIX_DOF-004 | 平移 limit spring | 平移 X 软限制逐帧符合 Jolt FrequencyAndDamping 隐式欧拉轨迹；limit lambda 活跃 | Jolt official/解析 | P0 | PASS (S1 native-only)，公共属性待接 |
+| SIX_DOF-004 | 平移 limit spring | 平移 X 软限制逐帧符合 Jolt FrequencyAndDamping 隐式欧拉轨迹；limit lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束已接 |
 | PAIR-001 | 不同质量 Distance spring | 两端轨迹正确且总线动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-002 | 不同质量 Slider motor | 限力反作用与质量倒数成比例，总动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-003 | 不同转动惯量 Hinge motor | 限矩反作用正确，总角动量守恒 | 解析/Jolt | P0 | 已实现 |

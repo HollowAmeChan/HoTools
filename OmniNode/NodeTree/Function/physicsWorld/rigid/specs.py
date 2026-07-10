@@ -236,6 +236,8 @@ class ConstraintSpec:
         "six_dof_limit_max",
         "six_dof_swing_type",
         "six_dof_max_friction",
+        "six_dof_limit_spring_frequency",
+        "six_dof_limit_spring_damping",
         "six_dof_motor_states",
         "six_dof_target_velocity",
         "six_dof_target_angular_velocity",
@@ -310,6 +312,8 @@ class ConstraintSpec:
         six_dof_max_friction: tuple[float, float, float, float, float, float] = (
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         ),
+        six_dof_limit_spring_frequency: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        six_dof_limit_spring_damping: tuple[float, float, float] = (0.0, 0.0, 0.0),
         six_dof_motor_states: tuple[str, str, str, str, str, str] = (
             "OFF", "OFF", "OFF", "OFF", "OFF", "OFF",
         ),
@@ -377,6 +381,8 @@ class ConstraintSpec:
         self.six_dof_limit_max: tuple[float, float, float, float, float, float] = six_dof_limit_max
         self.six_dof_swing_type: str = six_dof_swing_type
         self.six_dof_max_friction: tuple[float, float, float, float, float, float] = six_dof_max_friction
+        self.six_dof_limit_spring_frequency: tuple[float, float, float] = six_dof_limit_spring_frequency
+        self.six_dof_limit_spring_damping: tuple[float, float, float] = six_dof_limit_spring_damping
         self.six_dof_motor_states: tuple[str, str, str, str, str, str] = six_dof_motor_states
         self.six_dof_target_velocity: tuple[float, float, float] = six_dof_target_velocity
         self.six_dof_target_angular_velocity: tuple[float, float, float] = six_dof_target_angular_velocity
@@ -440,6 +446,8 @@ class ConstraintSpec:
             "six_dof_limit_max": self.six_dof_limit_max,
             "six_dof_swing_type": self.six_dof_swing_type,
             "six_dof_max_friction": self.six_dof_max_friction,
+            "six_dof_limit_spring_frequency": self.six_dof_limit_spring_frequency,
+            "six_dof_limit_spring_damping": self.six_dof_limit_spring_damping,
             "six_dof_motor_states": self.six_dof_motor_states,
             "six_dof_target_velocity": self.six_dof_target_velocity,
             "six_dof_target_angular_velocity": self.six_dof_target_angular_velocity,
@@ -776,6 +784,8 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     six_dof_limit_min = []
     six_dof_limit_max = []
     six_dof_max_friction = []
+    six_dof_limit_spring_frequency = []
+    six_dof_limit_spring_damping = []
     six_dof_motor_states = []
     for index, axis_name in enumerate(six_dof_axis_names):
         mode = str(getattr(props, f"six_dof_{axis_name}_mode", "FIXED") or "FIXED").upper()
@@ -787,17 +797,19 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
             minimum = _clamp(minimum, -_PI, _PI)
             maximum = _clamp(maximum, -_PI, _PI)
         minimum, maximum = _ordered_pair(minimum, maximum)
-        if minimum == maximum:
-            if index >= 3 and maximum >= _PI:
-                minimum = maximum - 1.0e-4
-            else:
-                maximum = minimum + 1.0e-4
         six_dof_axis_modes.append(mode)
         six_dof_limit_min.append(minimum)
         six_dof_limit_max.append(maximum)
         six_dof_max_friction.append(max(float(getattr(
             props, f"six_dof_{axis_name}_friction", 0.0,
         )), 0.0))
+        if index < 3:
+            six_dof_limit_spring_frequency.append(max(float(getattr(
+                props, f"six_dof_{axis_name}_limit_spring_frequency", 0.0,
+            )), 0.0))
+            six_dof_limit_spring_damping.append(max(float(getattr(
+                props, f"six_dof_{axis_name}_limit_spring_damping", 0.0,
+            )), 0.0))
         axis_motor_state = str(getattr(
             props, f"six_dof_{axis_name}_motor_state", "OFF",
         ) or "OFF").upper()
@@ -889,6 +901,8 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         six_dof_limit_max=tuple(six_dof_limit_max),
         six_dof_swing_type=six_dof_swing_type,
         six_dof_max_friction=tuple(six_dof_max_friction),
+        six_dof_limit_spring_frequency=tuple(six_dof_limit_spring_frequency),
+        six_dof_limit_spring_damping=tuple(six_dof_limit_spring_damping),
         six_dof_motor_states=tuple(six_dof_motor_states),
         six_dof_target_velocity=six_dof_target_velocity,
         six_dof_target_angular_velocity=six_dof_target_angular_velocity,
