@@ -63,6 +63,8 @@ def test_jolt_semantic_fixture_catalog():
         "SLIDER-003", "SLIDER-004", "SLIDER-005", "SLIDER-006",
         "PAIR-001", "PAIR-002", "PAIR-003",
         "EVENT-001", "EVENT-002", "QUERY-001",
+        "BODY-004", "BODY-005", "BODY-006", "COLL-001", "COLL-002",
+        "FILTER-001",
     }.issubset(ids)
     for fixture in fixtures:
         assert "p0" in fixture.tags

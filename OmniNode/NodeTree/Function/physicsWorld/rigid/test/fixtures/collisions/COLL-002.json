@@ -1,0 +1,25 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "COLL-002",
+  "title": "锁定旋转的滑块按三档库仑摩擦系数减速",
+  "source": "analytic:coulomb_friction_on_plane",
+  "tags": ["p0", "collision", "friction"],
+  "world": {"gravity": [0.0, 0.0, -9.81], "dt": 0.016666666666666666, "substeps": 1, "frames": 30},
+  "bodies": [
+    {"id": "ground_0", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [10.0, 1.5, 0.5]}, "position": [0.0, -5.0, 0.0], "friction": 0.0, "restitution": 0.0},
+    {"id": "slider_0", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]}, "position": [-3.0, -5.0, 1.0], "mass": 1.0, "friction": 0.0, "restitution": 0.0, "linear_velocity": [3.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allowed_dofs": 5, "allow_sleeping": false},
+    {"id": "ground_05", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [10.0, 1.5, 0.5]}, "position": [0.0, 0.0, 0.0], "friction": 0.5, "restitution": 0.0},
+    {"id": "slider_05", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]}, "position": [-3.0, 0.0, 1.0], "mass": 1.0, "friction": 0.5, "restitution": 0.0, "linear_velocity": [3.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allowed_dofs": 5, "allow_sleeping": false},
+    {"id": "ground_1", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [10.0, 1.5, 0.5]}, "position": [0.0, 5.0, 0.0], "friction": 1.0, "restitution": 0.0},
+    {"id": "slider_1", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]}, "position": [-3.0, 5.0, 1.0], "mass": 1.0, "friction": 1.0, "restitution": 0.0, "linear_velocity": [3.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allowed_dofs": 5, "allow_sleeping": false}
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 15, 20, 25, 30],
+  "assertions": [
+    {"kind": "coulomb_slide_trajectory", "body": "slider_0", "axis": "X", "friction": 0.0, "gravity_axis": "Z", "velocity_abs": 0.002},
+    {"kind": "coulomb_slide_trajectory", "body": "slider_05", "axis": "X", "friction": 0.5, "gravity_axis": "Z", "velocity_abs": 0.002},
+    {"kind": "coulomb_slide_trajectory", "body": "slider_1", "axis": "X", "friction": 1.0, "gravity_axis": "Z", "velocity_abs": 0.002},
+    {"kind": "finite_all"}
+  ]
+}

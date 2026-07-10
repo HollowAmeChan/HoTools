@@ -40,7 +40,7 @@
 - py311/py313 独立运行，当前四个 physical hash 在两套 ABI 间完全一致；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前验收 body、六种基础约束自由度、Distance/Hinge/Slider 数值行为、动态-动态反作用，以及 contact 状态机和 RayCast 几何语义。复杂 A/B frame 组合、adapter parity、Blender E2E、碰撞材质/CCD/filter 矩阵和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前验收 body 积分/阻尼/速度上限/DOF、六种基础约束自由度、Distance/Hinge/Slider 数值行为、动态-动态反作用、碰撞恢复/摩擦/filter，以及 contact 状态机和 RayCast 几何语义。复杂 A/B frame 组合、CCD、adapter parity、Blender E2E 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -180,9 +180,9 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | BODY-001 | 线性冲量、质量 `1/2/10` | `delta_v = J/m` | 解析 | P0 | 部分：mass 2 PASS (S1) |
 | BODY-002 | angular impulse | 方向正确且符合 shape inertia 响应 | Jolt/解析 | P1 | 现有弱覆盖 |
 | BODY-003 | 恒力/torque | 单步和多步速度变化正确 | 解析/Jolt | P0 | 现有弱覆盖 |
-| BODY-004 | linear/angular damping `0/0.1/1` | 衰减单调，三层逐帧一致 | Jolt/差分 | P0 | 缺失 |
-| BODY-005 | max linear/angular velocity | 超限输入按 Jolt 规则钳制 | Jolt | P1 | 缺失 |
-| BODY-006 | allowed DOFs 六轴逐轴锁定 | 锁轴残差在容差内，未锁轴可动 | 不变量 | P0 | 缺失 |
+| BODY-004 | linear/angular damping `0/0.1/1` | 逐帧符合 Jolt 阻尼公式 | Jolt/解析 | P0 | 已实现 |
+| BODY-005 | max linear/angular velocity | 超限输入按向量模长钳制并保持方向 | Jolt | P0 | 已实现 |
+| BODY-006 | allowed DOFs 六轴逐轴锁定 | 锁轴残差在容差内，未锁轴可动 | 不变量 | P0 | 已实现 |
 | BODY-007 | sleeping、唤醒、禁用 sleep | 状态转换和冲量/接触唤醒正确 | Jolt | P0 | 现有弱覆盖 |
 | SHAPE-001 | sphere/box/capsule/cylinder | RayCast 支撑点和落地高度符合几何 | 解析 | P0 | 现有弱覆盖 |
 | SHAPE-002 | tapered capsule/cylinder | 两端半径方向及旋转后命中正确 | 解析/Jolt | P1 | 仅创建 |
@@ -194,12 +194,12 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 
 | ID | 场景 | 核心判据 | Oracle | 优先级 | 当前 |
 |---|---|---|---|---|---|
-| COLL-001 | 无摩擦正碰，restitution `0/0.5/1` | 法向速度符合质量/恢复系数关系 | 解析 | P0 | 缺失 |
-| COLL-002 | 平面摩擦 `0/0.5/1` | 切向速度衰减排序正确，零摩擦无额外阻力 | 解析/变形 | P0 | 缺失 |
+| COLL-001 | 无摩擦正碰，restitution `0/0.5/1` | 法向速度符合质量/恢复系数关系 | 解析 | P0 | 已实现 |
+| COLL-002 | 平面摩擦 `0/0.5/1` | 锁定旋转后逐帧符合库仑摩擦解析轨迹 | 解析/Jolt | P0 | 已实现 |
 | COLL-003 | dynamic/static/kinematic 配对 | static 不动；kinematic 正确推动 dynamic | Jolt | P0 | 现有弱覆盖 |
 | COLL-004 | sensor 穿越 | added/persisted/removed 完整且不阻挡轨迹 | Jolt SensorTests | P0 | 已实现 |
 | COLL-005 | DISCRETE vs LINEAR_CAST 高速薄墙 | 离散可穿透、CCD 命中并产生正确事件 | Jolt MotionQualityLinearCastTests | P0 | 缺失 |
-| FILTER-001 | 16 组双向 mask | 只有双方 mask 均允许时碰撞 | HoTools/Jolt | P0 | 缺失 |
+| FILTER-001 | 第 1/16 组双向 mask 边界 | 只有双方 mask 均允许时碰撞 | HoTools/Jolt | P0 | 已实现 |
 | FILTER-002 | constraint disable collisions | 约束存在时无接触，删除/断裂后恢复 | HoTools | P0 | 仅生命周期 |
 | FILTER-003 | 多约束 pair-filter 引用计数 | 删除最后一个约束时才恢复碰撞 | HoTools | P0 | 现有弱覆盖 |
 | EVENT-001 | contact 状态机 | added -> persisted -> removed，字段有界 | Jolt | P0 | 已实现 |

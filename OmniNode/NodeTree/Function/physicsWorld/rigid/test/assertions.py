@@ -1036,6 +1036,128 @@ def _assert_ray_query_near(
         )
 
 
+def _assert_damping_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """按 Jolt 每步线性阻尼公式复算线速度与角速度。"""
+    body_id = _body_id(parameters)
+    body = fixture.bodies_by_id.get(body_id)
+    if body is None:
+        raise FixtureError(f"damping assertion references unknown body: {body_id}")
+    tolerance = _number(parameters.get("velocity_abs"), "velocity_abs", 3.0e-5)
+    linear_factor = max(0.0, 1.0 - min(body.linear_damping, 1.0) * fixture.world.dt)
+    angular_factor = max(0.0, 1.0 - min(body.angular_damping, 1.0) * fixture.world.dt)
+    for frame in trace:
+        frame_number = int(frame["frame"])
+        state = _body_at(frame, body_id)
+        expected_linear = [
+            value * linear_factor ** frame_number for value in body.linear_velocity
+        ]
+        expected_angular = [
+            value * angular_factor ** frame_number for value in body.angular_velocity
+        ]
+        _assert_vector_near(
+            state["linear_velocity"], expected_linear,
+            abs_tol=tolerance, rel_tol=1.0e-6,
+            label=f"{fixture.id} frame {frame_number} {body_id}.linear_velocity",
+        )
+        _assert_vector_near(
+            state["angular_velocity"], expected_angular,
+            abs_tol=tolerance, rel_tol=1.0e-6,
+            label=f"{fixture.id} frame {frame_number} {body_id}.angular_velocity",
+        )
+
+
+def _assert_pair_collision_1d(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """用一维碰撞解析解验证质量与恢复系数映射。"""
+    body_a_id = parameters.get("body_a")
+    body_b_id = parameters.get("body_b")
+    if not isinstance(body_a_id, str) or not isinstance(body_b_id, str):
+        raise FixtureError("collision assertion requires body_a and body_b")
+    body_a = fixture.bodies_by_id.get(body_a_id)
+    body_b = fixture.bodies_by_id.get(body_b_id)
+    if body_a is None or body_b is None:
+        raise FixtureError("collision assertion references unknown body")
+    axis = _axis_index(parameters.get("axis"))
+    restitution = _number(parameters.get("restitution"), "restitution")
+    frame_number = int(_number(parameters.get("frame"), "frame"))
+    tolerance = _number(parameters.get("velocity_abs"), "velocity_abs", 2.0e-3)
+    frames = _frames_by_number(trace)
+    if frame_number not in frames:
+        raise FixtureError(f"pair_collision_1d needs sampled frame {frame_number}")
+    mass_sum = body_a.mass + body_b.mass
+    velocity_a = body_a.linear_velocity[axis]
+    velocity_b = body_b.linear_velocity[axis]
+    relative = velocity_a - velocity_b
+    expected_a = (
+        body_a.mass * velocity_a + body_b.mass * velocity_b
+        - body_b.mass * restitution * relative
+    ) / mass_sum
+    expected_b = (
+        body_a.mass * velocity_a + body_b.mass * velocity_b
+        + body_a.mass * restitution * relative
+    ) / mass_sum
+    final_a = float(_body_at(frames[frame_number], body_a_id)["linear_velocity"][axis])
+    final_b = float(_body_at(frames[frame_number], body_b_id)["linear_velocity"][axis])
+    if abs(final_a - expected_a) > tolerance or abs(final_b - expected_b) > tolerance:
+        raise SemanticAssertionError(
+            f"{fixture.id} frame {frame_number} collision velocities "
+            f"({final_a:.12g}, {final_b:.12g}), expected "
+            f"({expected_a:.12g}, {expected_b:.12g}) within {tolerance:g}"
+        )
+
+
+def _assert_coulomb_slide_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """复算锁定旋转后的平面库仑摩擦减速轨迹。"""
+    body_id = _body_id(parameters)
+    body = fixture.bodies_by_id.get(body_id)
+    if body is None:
+        raise FixtureError(f"friction assertion references unknown body: {body_id}")
+    axis = _axis_index(parameters.get("axis"))
+    friction = _number(parameters.get("friction"), "friction")
+    gravity_axis = _axis_index(parameters.get("gravity_axis", "Z"))
+    tolerance = _number(parameters.get("velocity_abs"), "velocity_abs", 2.0e-3)
+    initial = body.linear_velocity[axis]
+    deceleration_step = friction * abs(fixture.world.gravity[gravity_axis]) * fixture.world.dt
+    expected = initial
+    for frame_number in range(fixture.world.frames + 1):
+        for frame in trace:
+            if int(frame["frame"]) != frame_number:
+                continue
+            actual = float(_body_at(frame, body_id)["linear_velocity"][axis])
+            if abs(actual - expected) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_id} friction velocity "
+                    f"{actual:.12g}, expected {expected:.12g} within {tolerance:g}"
+                )
+            break
+        if expected > 0.0:
+            expected = max(0.0, expected - deceleration_step)
+        elif expected < 0.0:
+            expected = min(0.0, expected + deceleration_step)
+
+
+def _assert_contact_absent(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """确认指定刚体对在全部采样帧均未产生 contact 事件。"""
+    body_a = parameters.get("body_a")
+    body_b = parameters.get("body_b")
+    if not isinstance(body_a, str) or not isinstance(body_b, str):
+        raise FixtureError("contact_absent requires body_a and body_b")
+    pair = tuple(sorted((body_a, body_b)))
+    for frame in trace:
+        for event in frame.get("contacts", []):
+            if (event.get("body_a"), event.get("body_b")) == pair:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame['frame']} unexpected contact for {pair!r}"
+                )
+
+
 def evaluate_assertions(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1110,6 +1232,18 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "ray_query_near": lambda spec: _assert_ray_query_near(
+            fixture, trace, spec.parameters,
+        ),
+        "damping_trajectory": lambda spec: _assert_damping_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "pair_collision_1d": lambda spec: _assert_pair_collision_1d(
+            fixture, trace, spec.parameters,
+        ),
+        "coulomb_slide_trajectory": lambda spec: _assert_coulomb_slide_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "contact_absent": lambda spec: _assert_contact_absent(
             fixture, trace, spec.parameters,
         ),
     }

@@ -8,6 +8,7 @@
 - 按 fixture id 固定刚体创建顺序和命令顺序；
 - 输出包含原始 float32 位模式的规范化刚体/contact trace；
 - 提供自由落体、恒速运动和冲量解析 oracle；
+- 验证阻尼、速度上限和六个 allowed DOF 位的刚体参数语义；
 - 支持六种已接入约束的 schema、state trace 和基础自由度 oracle；
 - 验证 Fixed 相对变换、Point 锚点/旋转自由、Distance 区间收敛；
 - 验证 Hinge 只绕局部 Z、Slider 只沿局部 Z、Cone swing/twist 语义；
@@ -16,6 +17,7 @@
 - 验证不同质量或转动惯量的双动态体反作用与总动量守恒；
 - 验证 contact/sensor 状态机、接触几何字段和传感器非阻挡运动；
 - 验证 RayCast 最近命中、解析几何、sensor/ignore 过滤和安全 miss；
+- 解析验证 restitution 正碰、平面库仑摩擦和双向 collision mask；
 - 使用全新世界执行逐位重放检查；
 - 输出 JSONL trace、断言报告和机器可读 manifest；
 - 使用匹配的 native 模块在 CPython 3.11 和 3.13 下运行。
@@ -25,7 +27,7 @@
 - Cone 旋转 frame 与独立 A/B frame 组合；
 - adapter parity runner；
 - Blender 端到端 runner；
-- 碰撞材质、CCD、filter 语义矩阵和已批准 golden。
+- CCD、复杂 shape/frame、完整 16 组 filter 扫描和已批准 golden。
 
 使用两个全新世界运行全部 P0 fixture：
 

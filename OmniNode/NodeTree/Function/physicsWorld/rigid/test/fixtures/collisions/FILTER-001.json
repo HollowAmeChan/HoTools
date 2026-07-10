@@ -1,0 +1,28 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FILTER-001",
+  "title": "第 1 与第 16 碰撞组必须双向允许才产生接触",
+  "source": "hotools_contract:bidirectional_collision_masks",
+  "tags": ["p0", "collision", "filter", "contact"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 3},
+  "bodies": [
+    {"id": "mutual_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.0, -6.0, 0.0], "collision_group": 1, "collided_by_groups": 32768, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "mutual_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.5, -6.0, 0.0], "collision_group": 16, "collided_by_groups": 1, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "only_a_allows_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.0, -2.0, 0.0], "collision_group": 1, "collided_by_groups": 32768, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "only_a_allows_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.5, -2.0, 0.0], "collision_group": 16, "collided_by_groups": 0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "only_b_allows_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.0, 2.0, 0.0], "collision_group": 1, "collided_by_groups": 0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "only_b_allows_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.5, 2.0, 0.0], "collision_group": 16, "collided_by_groups": 1, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "neither_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.0, 6.0, 0.0], "collision_group": 1, "collided_by_groups": 0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "neither_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.5, 6.0, 0.0], "collision_group": 16, "collided_by_groups": 0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false}
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 3],
+  "assertions": [
+    {"kind": "contact_state_sequence", "body_a": "mutual_a", "body_b": "mutual_b", "states": ["added", "persisted"], "is_sensor": false, "normal_abs": 0.002, "penetration_abs": 0.0002, "require_points": true},
+    {"kind": "contact_absent", "body_a": "only_a_allows_a", "body_b": "only_a_allows_b"},
+    {"kind": "contact_absent", "body_a": "only_b_allows_a", "body_b": "only_b_allows_b"},
+    {"kind": "contact_absent", "body_a": "neither_a", "body_b": "neither_b"},
+    {"kind": "finite_all"}
+  ]
+}

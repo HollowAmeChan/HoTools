@@ -1,0 +1,25 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "COLL-001",
+  "title": "不同恢复系数的无摩擦一维正碰符合解析解",
+  "source": "analytic:one_dimensional_collision",
+  "tags": ["p0", "collision", "restitution", "momentum"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {"id": "e0_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [-1.5, -4.0, 0.0], "mass": 1.0, "friction": 0.0, "restitution": 0.0, "linear_velocity": [2.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "e0_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [1.5, -4.0, 0.0], "mass": 2.0, "friction": 0.0, "restitution": 0.0, "linear_velocity": [-1.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "e05_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [-1.5, 0.0, 0.0], "mass": 1.0, "friction": 0.0, "restitution": 0.5, "linear_velocity": [2.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "e05_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [1.5, 0.0, 0.0], "mass": 2.0, "friction": 0.0, "restitution": 0.5, "linear_velocity": [-1.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "e1_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [-1.5, 4.0, 0.0], "mass": 1.0, "friction": 0.0, "restitution": 1.0, "linear_velocity": [2.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "e1_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [1.5, 4.0, 0.0], "mass": 2.0, "friction": 0.0, "restitution": 1.0, "linear_velocity": [-1.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false}
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 10, 30, 40, 41, 60, 120],
+  "assertions": [
+    {"kind": "pair_collision_1d", "body_a": "e0_a", "body_b": "e0_b", "axis": "X", "restitution": 0.0, "frame": 120, "velocity_abs": 0.002},
+    {"kind": "pair_collision_1d", "body_a": "e05_a", "body_b": "e05_b", "axis": "X", "restitution": 0.5, "frame": 120, "velocity_abs": 0.002},
+    {"kind": "pair_collision_1d", "body_a": "e1_a", "body_b": "e1_b", "axis": "X", "restitution": 1.0, "frame": 120, "velocity_abs": 0.002},
+    {"kind": "finite_all"}
+  ]
+}

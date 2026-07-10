@@ -551,6 +551,9 @@ class AssertionSpec:
             "angular_speed_trajectory",
             "pair_axis_momentum_conserved", "pair_axis_speed_trajectory",
             "contact_state_sequence", "ray_query_near",
+            "damping_trajectory", "pair_collision_1d",
+            "coulomb_slide_trajectory",
+            "contact_absent",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -637,6 +640,18 @@ class AssertionSpec:
             "ray_query_near": {
                 "query", "hit", "body", "position", "normal", "fraction",
                 "is_sensor", "abs",
+            },
+            "damping_trajectory": {
+                "body", "velocity_abs",
+            },
+            "pair_collision_1d": {
+                "body_a", "body_b", "axis", "restitution", "frame", "velocity_abs",
+            },
+            "coulomb_slide_trajectory": {
+                "body", "axis", "friction", "gravity_axis", "velocity_abs",
+            },
+            "contact_absent": {
+                "body_a", "body_b",
             },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
