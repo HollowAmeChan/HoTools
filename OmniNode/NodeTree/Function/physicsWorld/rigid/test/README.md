@@ -44,15 +44,14 @@
 
 当前切片（`blender_pipeline_v1`）：
 
-- 后台 Blender 从 `FREE-001` / `FRAME-002` 创建真实 RNA 对象和约束；
-- 跑 scope、world setting、solver result 和统一 writeback；
-- 验证 Quaternion 写回、same-frame、jump、reset 和 dispose；
+- 后台 Blender 为全部 56 个 P0 fixture 创建真实 RNA 对象和约束；
+- 跑 scope、world setting、命令、contact/query、solver result 和统一 writeback；
+- 覆盖十一种约束、Quaternion 写回、same-frame、jump、reset 和 dispose；
 - 每次运行内置 S1/S3 tolerant parity，不以自身输出作为正确性 oracle。
 
 当前切片尚未实现：
 
 - Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
-- Blender 端到端 runner 的完整 P0 扩展；
 - 断裂语义、跨 ABI 报告和已批准 golden。
 
 ## 当前实施顺序
@@ -61,7 +60,7 @@
 
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
-3. 共用 fixture 的最小 Blender semantic runner（2026-07-11 已完成，完整 P0 待扩展）；
+3. 共用 fixture 的完整 P0 Blender semantic runner（2026-07-11 已完成）；
 4. breakable、跨 ABI、overflow、soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
 
@@ -81,7 +80,7 @@
   run_adapter_semantics.py --tag p0 --repeat 2
 ```
 
-运行最小后台 Blender semantic slice：
+运行完整后台 Blender semantic matrix：
 
 ```powershell
 & 'D:\Blender\Blender 4.5\blender.exe' --background --factory-startup --python `
