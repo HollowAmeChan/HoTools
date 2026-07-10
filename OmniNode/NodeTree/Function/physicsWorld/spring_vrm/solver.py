@@ -112,7 +112,7 @@ def step_spring_vrm(
         return 0, 0.0
 
     fc = getattr(world, "frame_context", None)
-    effective_substeps = max(1, int(getattr(fc, "substeps", substeps) or substeps or 1))
+    effective_substeps = max(1, min(16, int(substeps or 1)))
 
     chain_objects = _resolve_chain_objects(world)
     specs = build_spring_vrm_solver_specs(

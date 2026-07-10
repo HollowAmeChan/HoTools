@@ -199,6 +199,17 @@ def test_spring_bone_vrm_rejects_bad_current_tail_shape():
         raise AssertionError("bad current_tails shape should raise ValueError")
 
 
+def test_spring_bone_vrm_rejects_mismatched_bone_counts():
+    args = _base_args()
+    args[2] = np.zeros((2, 16), dtype=np.float32)
+    try:
+        hotools_native.solve_spring_bone_vrm_cpp(*args)
+    except ValueError as exc:
+        assert "target_matrices" in str(exc)
+    else:
+        raise AssertionError("mismatched target_matrices bone count should raise ValueError")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Context API（dual-call）smoke tests
 # ─────────────────────────────────────────────────────────────────────────────
@@ -210,9 +221,7 @@ def _skip_if_no_context_api():
     if not _HAS_CONTEXT_API:
         raise AssertionError("spring_vrm_create_context not available in this build")
 
-def _context_from_base() -> object:
-    """用 _base_args() 里的静态数据创建一个 SpringVrmContext capsule。"""
-    a = _base_args()
+def _context_from_args(a) -> object:
     # static: lengths, init_axis_local, init_axis_parent, init_rotations, init_scales,
     #         parent_indices, pinned, use_connect  → base_args 里的索引 9-16
     return hotools_native.spring_vrm_create_context(
@@ -229,11 +238,12 @@ def _context_from_base() -> object:
     )
 
 
-def _update_dynamic_from_base(ctx, args=None):
-    a = args if args is not None else _base_args()
-    zero3  = np.zeros(3,  dtype=np.float32)
-    ident  = _identity_matrix()
-    id_quat = np.asarray((0., 0., 0., 1.), dtype=np.float32)
+def _context_from_base() -> object:
+    """用 _base_args() 里的静态数据创建一个 SpringVrmContext capsule。"""
+    return _context_from_args(_base_args())
+
+
+def _update_context_from_args(ctx, a):
     hotools_native.spring_vrm_update_dynamic(
         ctx,
         a[4].ravel(),   # current_heads
@@ -241,20 +251,50 @@ def _update_dynamic_from_base(ctx, args=None):
         a[6].ravel(),   # current_pose_quaternions
         a[7].ravel(),   # parent_pose_quaternions
         a[8].ravel(),   # current_pose_tails
-        ident,          # armature_world
-        ident,          # armature_world_inv
-        id_quat,        # root_quaternion
-        zero3,          # root_tail_world
-        np.asarray((1., 0., 0.), dtype=np.float32),  # gravity_dir
+        a[19],          # armature_world
+        a[20],          # armature_world_inv
+        a[17],          # root_quaternion
+        a[18],          # root_tail_world
+        a[21],          # gravity_dir
         a[22],          # hit_radii
         a[23],          # collided_by_groups
-        np.empty(0, dtype=np.int32),                 # collider_types
-        np.empty(0, dtype=np.int32),                 # collider_groups
-        np.empty(0, dtype=np.float32),               # collider_centers
-        np.empty(0, dtype=np.float32),               # collider_segment_a
-        np.empty(0, dtype=np.float32),               # collider_segment_b
-        np.empty(0, dtype=np.float32),               # collider_radii
+        a[24],          # collider_types
+        a[25],          # collider_groups
+        a[26].ravel(),  # collider_centers
+        a[27].ravel(),  # collider_segment_a
+        a[28].ravel(),  # collider_segment_b
+        a[29],          # collider_radii
     )
+
+
+def _update_dynamic_from_base(ctx, args=None):
+    _update_context_from_args(ctx, args if args is not None else _base_args())
+
+
+def _read_context_state(ctx, bone_count=1, collider_count=0):
+    matrices = np.zeros(bone_count * 16, dtype=np.float32)
+    quaternions = np.zeros(bone_count * 4, dtype=np.float32)
+    hotools_native.spring_vrm_read_results(ctx, matrices, quaternions)
+
+    heads = np.zeros(bone_count * 3, dtype=np.float32)
+    tails = np.zeros(bone_count * 3, dtype=np.float32)
+    prev_tails = np.zeros(bone_count * 3, dtype=np.float32)
+    pose_tails = np.zeros(bone_count * 3, dtype=np.float32)
+    hit_radii = np.zeros(bone_count, dtype=np.float32)
+    masks = np.zeros(bone_count, dtype=np.int32)
+    collider_types = np.zeros(collider_count, dtype=np.int32)
+    collider_groups = np.zeros(collider_count, dtype=np.int32)
+    collider_centers = np.zeros(collider_count * 3, dtype=np.float32)
+    collider_a = np.zeros(collider_count * 3, dtype=np.float32)
+    collider_b = np.zeros(collider_count * 3, dtype=np.float32)
+    collider_radii = np.zeros(collider_count, dtype=np.float32)
+    hotools_native.spring_vrm_read_debug(
+        ctx,
+        heads, tails, prev_tails, pose_tails, hit_radii, masks,
+        collider_types, collider_groups, collider_centers,
+        collider_a, collider_b, collider_radii,
+    )
+    return matrices, quaternions, tails, prev_tails
 
 
 def test_context_api_create_and_free():
@@ -263,6 +303,60 @@ def test_context_api_create_and_free():
     ctx = _context_from_base()
     assert ctx is not None
     # capsule 本身没有 Python 释放 API（析构器自动调用），测通过意味着不崩溃
+
+
+def test_context_api_rejects_bad_static_buffer_length():
+    _skip_if_no_context_api()
+    a = _base_args()
+    try:
+        hotools_native.spring_vrm_create_context(
+            1, 1,
+            np.empty(0, dtype=np.float32),
+            a[10].ravel(), a[11].ravel(), a[12].ravel(), a[13].ravel(),
+            a[14], a[15], a[16],
+        )
+    except ValueError as exc:
+        assert "lengths" in str(exc)
+    else:
+        raise AssertionError("short context static buffer should raise ValueError")
+
+
+def test_context_api_rejects_bad_dynamic_buffer_length():
+    _skip_if_no_context_api()
+    ctx = _context_from_base()
+    a = _base_args()
+    ident = _identity_matrix()
+    zero3 = np.zeros(3, dtype=np.float32)
+    id_quat = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    try:
+        hotools_native.spring_vrm_update_dynamic(
+            ctx,
+            np.zeros(2, dtype=np.float32),
+            a[5].ravel(), a[6].ravel(), a[7].ravel(), a[8].ravel(),
+            ident, ident, id_quat, zero3, zero3, a[22], a[23],
+            np.empty(0, dtype=np.int32), np.empty(0, dtype=np.int32),
+            np.empty(0, dtype=np.float32), np.empty(0, dtype=np.float32),
+            np.empty(0, dtype=np.float32), np.empty(0, dtype=np.float32),
+        )
+    except ValueError as exc:
+        assert "current_heads" in str(exc)
+    else:
+        raise AssertionError("short context dynamic buffer should raise ValueError")
+
+
+def test_context_api_rejects_bad_result_buffer_length():
+    _skip_if_no_context_api()
+    ctx = _context_from_base()
+    try:
+        hotools_native.spring_vrm_read_results(
+            ctx,
+            np.zeros(15, dtype=np.float32),
+            np.zeros(4, dtype=np.float32),
+        )
+    except ValueError as exc:
+        assert "out_matrices" in str(exc)
+    else:
+        raise AssertionError("short context result buffer should raise ValueError")
 
 
 def test_context_api_gravity_projects_to_bone_length():
@@ -280,6 +374,50 @@ def test_context_api_gravity_projects_to_bone_length():
     identity = np.eye(4, dtype=np.float32).ravel()
     assert not np.allclose(out_mat, identity, atol=1e-4), \
         "经过一帧重力作用后 target_matrix 应偏离单位矩阵"
+
+
+def test_context_api_matches_legacy_parameter_matrix_over_multiple_frames():
+    _skip_if_no_context_api()
+    cases = (
+        dict(gravity_dir=(1.0, 0.0, 0.0), gravity_power=9.8, substeps=1),
+        dict(gravity_dir=(-0.4, 0.3, -0.8), gravity_power=4.2, substeps=4,
+             stiffness_force=2.5, drag_force=0.7),
+        dict(gravity_dir=(0.0, 0.0, 0.0), gravity_power=0.0, substeps=3,
+             stiffness_force=8.0, drag_force=1.0),
+        dict(
+            gravity_dir=(0.0, 0.0, 0.0), gravity_power=0.0,
+            hit_radius=0.05, collided_by_groups=1,
+            collider_types=(0,), collider_groups=(1,),
+            collider_centers=((0.5, 0.0, 0.8),),
+            collider_segment_a=((0.5, 0.0, 0.8),),
+            collider_segment_b=((0.5, 0.0, 0.8),),
+            collider_radii=(0.8,),
+        ),
+    )
+    for case in cases:
+        legacy_args = _base_args(**case)
+        context_args = _base_args(**case)
+        ctx = _context_from_args(context_args)
+        for frame in range(6):
+            hotools_native.solve_spring_bone_vrm_cpp(*legacy_args)
+            _update_context_from_args(ctx, context_args)
+            if frame == 0:
+                hotools_native.spring_vrm_reset_state(ctx)
+            hotools_native.spring_vrm_step(
+                ctx,
+                context_args[30], context_args[31], context_args[32],
+                context_args[33], context_args[34],
+            )
+
+        matrices, quaternions, tails, prev_tails = _read_context_state(
+            ctx,
+            bone_count=1,
+            collider_count=len(context_args[24]),
+        )
+        assert np.allclose(tails.reshape((-1, 3)), legacy_args[0], atol=2.0e-5), case
+        assert np.allclose(prev_tails.reshape((-1, 3)), legacy_args[1], atol=2.0e-5), case
+        assert np.allclose(matrices.reshape((-1, 16)), legacy_args[2], atol=2.0e-5), case
+        assert np.allclose(quaternions.reshape((-1, 4)), legacy_args[3], atol=2.0e-5), case
 
 
 def test_context_api_reset_state_restores_pose_tail():

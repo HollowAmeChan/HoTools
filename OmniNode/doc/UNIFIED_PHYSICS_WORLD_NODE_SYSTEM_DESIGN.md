@@ -972,6 +972,57 @@ restart_required
 
 这样用户不用 dump 整个 cache 也能确认本帧实际参与物理的数据规模。
 
+### Native Debug Capture 请求状态机（系统级约定）
+
+native solver 的完整 debug readback 往往需要分配输出数组、跨 Python/C++ 边界复制 context 状态，并把低级数组语义化成可绘制快照。该成本不能默认并入每个正式模拟帧，也不能由 Debug Node 在 solver 已结束后反向调用 native context。所有 solver 统一采用“Debug Node 发请求，solver 在后续推进帧采样”的一次性请求状态机。
+
+建议每个 solver slot 持有以下轻量状态；字段名可以由 solver 封装，但语义必须一致：
+
+```python
+slot.data["_debug_capture_state"] = {
+    "requested": False,
+    "request_frame": -1,
+    "attempted_frame": -1,
+    "captured_frame": -1,
+    "capture_ms": 0.0,
+    "error": "",
+}
+```
+
+状态转换：
+
+```text
+Debug Node 在帧 F 执行
+  -> requested = True
+  -> request_frame = F
+  -> 只读取最近一次纯快照；首次没有 native 快照时使用普通 result/spec fallback
+
+solver 在后续非 same-frame 的推进帧 F' 执行
+  -> requested=True 且 request_frame != F' 时消费请求
+  -> 完成 update/step/reset 后执行一次 native readback
+  -> 无论成功失败都设置 requested=False、attempted_frame=F'
+  -> 成功：替换纯快照、captured_frame=F'、清除 error
+  -> 失败：保留上一份有效快照并记录 error，不改变 solver step/result/writeback 状态
+
+Debug Node 持续存在
+  -> 每帧读取上一轮 capture 后再次请求下一帧
+
+Debug Node 被删除、mute 或不再执行
+  -> 最多再产生一次已经登记的 capture，之后自动回到零 readback 成本
+```
+
+硬约束：
+
+1. Debug Node 只能写请求状态和读取纯快照，不能直接调用 native `read_debug`、修改 context 或推进 solver。
+2. 请求只能由 solver 在自己的生命周期和写锁范围内消费，确保 readback 对应一次完整的 update/step/reset 边界。
+3. `same_frame` 重入不消费请求、不推进时间；请求保留到下一个实际推进帧。
+4. debug capture 失败必须与物理异常域隔离。成功的 step 不能因为可视化失败而变成 solver error，也不能阻断 result publish/writeback。
+5. capture 成本必须单独记录为 `capture_ms` 或等价字段；正式性能基线必须关闭 debug capture，持续 debug 的成本另行报告。
+6. 快照必须有界并覆盖替换，不能按帧无限积累；slot dispose、scope prune、Cache Delete 和插件卸载必须同时清理请求与快照。
+7. draw handler 仍然只消费 tuple/list/dict 等纯数据，不得持有 slot、spec、native capsule、`bpy` 对象或 live matrix 引用。
+
+该协议适用于 SpringBone、Rigid/Jolt、MC2、BoneCloth 以及后续所有持有 native context 的 solver。SpringBone 是第一份落地样板：首帧 Debug Node 使用 result fallback，下一推进帧由 SpringBone slot 消费一次性请求；连续显示时形成稳定的一帧延迟流水线。
+
 ## replace / mutate 切换规则
 
 `replace_required` 是 `Physics World Commit` 决定写入模式的唯一依据。以下表格说明各种情况下该标志的正确状态：
@@ -1169,6 +1220,8 @@ SpringBone VRM可视化调试（physicsSpringVRMDebugDraw）
 可视化 debug 的 store 必须由各 solver 自己持有，并且必须是纯快照：节点执行时把刚体 shape / constraint anchor / SpringBone bone-tail 等采样成 tuple/list/dict，不保存 `bpy` 对象、spec 引用或 live `matrix_world`。draw handler 只负责把快照转成 GPU lines，不允许在绘制阶段重新读取 Blender 对象。这样 debug 视图表达的是节点链路中该节点所在位置的状态，而不是视口重绘时的外部状态。公共绘制函数只放在 `physicsWorld/utils/debug_draw.py`。
 
 更强的约束：solver 自有 debug draw 必须优先绘制后端实际消费/产出的状态。对于 C++ / native context solver，debug 快照应来自 step/update 后的 context readback 或 result stream，而不是在 Python 绘制层根据 Blender 当前姿态、属性面板或 result matrix 临时重算。凡是会影响后端行为的字段，例如碰撞组、hit radius、pin、约束参数、collider arrays、隐式覆写属性，都必须通过同一条 solver 消费链进入 debug 快照；否则 debug draw 只能说明“Python 预览如何理解”，不能承担验证 solver 的职责。
+
+完整 native readback 必须遵守本文件“Native Debug Capture 请求状态机”：Debug Node 只登记下一推进帧的一次性请求，solver 在自身 update/step 边界内采样并发布纯快照。不得为了获得同帧画面而让绘制节点越过 solver 生命周期直接读取 context。
 
 ### Phase 4：刚体 domain ✅ 已完成
 

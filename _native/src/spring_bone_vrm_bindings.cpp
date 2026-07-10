@@ -22,6 +22,45 @@ bool expect_matrix16_array(const Buffer& buffer, const char* name, Py_ssize_t* c
     return true;
 }
 
+bool expect_matrix16_count(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
+    Py_ssize_t count = 0;
+    if (!expect_matrix16_array(buffer, name, &count)) {
+        return false;
+    }
+    if (count != expected_count) {
+        PyErr_Format(PyExc_ValueError, "%s bone count mismatch", name);
+        return false;
+    }
+    return true;
+}
+
+bool expect_vector4_count(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
+    Py_ssize_t count = 0;
+    if (!hotools::py::expect_vector4_array(buffer, name, &count)) {
+        return false;
+    }
+    if (count != expected_count) {
+        PyErr_Format(PyExc_ValueError, "%s bone count mismatch", name);
+        return false;
+    }
+    return true;
+}
+
+bool expect_flat_float32(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
+    return hotools::py::expect_float32(buffer, name) &&
+           hotools::py::expect_1d_array(buffer, name, expected_count);
+}
+
+bool expect_flat_int32(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
+    return hotools::py::expect_int32(buffer, name) &&
+           hotools::py::expect_1d_array(buffer, name, expected_count);
+}
+
+bool expect_flat_uint8(const Buffer& buffer, const char* name, Py_ssize_t expected_count) {
+    return hotools::py::expect_uint8(buffer, name) &&
+           hotools::py::expect_1d_array(buffer, name, expected_count);
+}
+
 double as_double(PyObject* object, const char* name) {
     const double value = PyFloat_AsDouble(object);
     if (PyErr_Occurred()) {
@@ -130,18 +169,18 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
     Py_ssize_t bone_count = 0;
     if (!hotools::py::expect_vector3_array(current_tails, "current_tails", &bone_count) ||
         !hotools::py::expect_same_vertex_count(prev_tails, "prev_tails", bone_count) ||
-        !expect_matrix16_array(target_matrices, "target_matrices", &bone_count) ||
-        !hotools::py::expect_vector4_array(target_quaternions, "target_quaternions", &bone_count) ||
+        !expect_matrix16_count(target_matrices, "target_matrices", bone_count) ||
+        !expect_vector4_count(target_quaternions, "target_quaternions", bone_count) ||
         !hotools::py::expect_same_vertex_count(current_heads, "current_heads", bone_count) ||
-        !expect_matrix16_array(current_pose_matrices, "current_pose_matrices", &bone_count) ||
-        !hotools::py::expect_vector4_array(current_pose_quaternions, "current_pose_quaternions", &bone_count) ||
-        !hotools::py::expect_vector4_array(parent_pose_quaternions, "parent_pose_quaternions", &bone_count) ||
+        !expect_matrix16_count(current_pose_matrices, "current_pose_matrices", bone_count) ||
+        !expect_vector4_count(current_pose_quaternions, "current_pose_quaternions", bone_count) ||
+        !expect_vector4_count(parent_pose_quaternions, "parent_pose_quaternions", bone_count) ||
         !hotools::py::expect_same_vertex_count(current_pose_tails, "current_pose_tails", bone_count) ||
         !hotools::py::expect_float32(lengths, "lengths") ||
         !hotools::py::expect_1d_array(lengths, "lengths", bone_count) ||
         !hotools::py::expect_same_vertex_count(init_axis_local, "init_axis_local", bone_count) ||
         !hotools::py::expect_same_vertex_count(init_axis_parent, "init_axis_parent", bone_count) ||
-        !hotools::py::expect_vector4_array(init_rotations, "init_rotations", &bone_count) ||
+        !expect_vector4_count(init_rotations, "init_rotations", bone_count) ||
         !hotools::py::expect_same_vertex_count(init_scales, "init_scales", bone_count) ||
         !hotools::py::expect_int32(parent_indices, "parent_indices") ||
         !hotools::py::expect_1d_array(parent_indices, "parent_indices", bone_count) ||
@@ -149,6 +188,7 @@ PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject* args) {
         !hotools::py::expect_1d_array(pinned, "pinned", bone_count) ||
         !hotools::py::expect_uint8(use_connect, "use_connect") ||
         !hotools::py::expect_1d_array(use_connect, "use_connect", bone_count) ||
+        !hotools::py::expect_root_indices_or_minus_one(parent_indices, "parent_indices", bone_count) ||
         !hotools::py::expect_float32(root_quaternion, "root_quaternion") ||
         !hotools::py::expect_1d_array(root_quaternion, "root_quaternion", 4) ||
         !hotools::py::expect_float32(root_tail_world, "root_tail_world") ||
@@ -278,6 +318,10 @@ PyObject* spring_vrm_create_context(PyObject*, PyObject* args) {
         PyErr_SetString(PyExc_ValueError, "bone_count must be > 0");
         return nullptr;
     }
+    if (schema != 1) {
+        PyErr_SetString(PyExc_ValueError, "unsupported SpringBone context schema");
+        return nullptr;
+    }
 
     Buffer lengths, init_axis_local, init_axis_parent, init_rotations, init_scales;
     Buffer parent_indices, pinned, use_connect;
@@ -290,6 +334,19 @@ PyObject* spring_vrm_create_context(PyObject*, PyObject* args) {
         !parent_indices.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "parent_indices") ||
         !pinned.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "pinned") ||
         !use_connect.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "use_connect")) {
+        return nullptr;
+    }
+
+    const Py_ssize_t n = static_cast<Py_ssize_t>(bone_count);
+    if (!expect_flat_float32(lengths, "lengths", n) ||
+        !expect_flat_float32(init_axis_local, "init_axis_local", n * 3) ||
+        !expect_flat_float32(init_axis_parent, "init_axis_parent", n * 3) ||
+        !expect_flat_float32(init_rotations, "init_rotations", n * 4) ||
+        !expect_flat_float32(init_scales, "init_scales", n * 3) ||
+        !expect_flat_int32(parent_indices, "parent_indices", n) ||
+        !expect_flat_uint8(pinned, "pinned", n) ||
+        !expect_flat_uint8(use_connect, "use_connect", n) ||
+        !hotools::py::expect_root_indices_or_minus_one(parent_indices, "parent_indices", n)) {
         return nullptr;
     }
 
@@ -371,9 +428,40 @@ PyObject* spring_vrm_update_dynamic(PyObject*, PyObject* args) {
         return nullptr;
     }
 
+    const Py_ssize_t bone_count = static_cast<Py_ssize_t>(ctx->bone_count);
+    if (!expect_flat_float32(current_heads, "current_heads", bone_count * 3) ||
+        !expect_flat_float32(current_pose_matrices, "current_pose_matrices", bone_count * 16) ||
+        !expect_flat_float32(current_pose_quaternions, "current_pose_quaternions", bone_count * 4) ||
+        !expect_flat_float32(parent_pose_quaternions, "parent_pose_quaternions", bone_count * 4) ||
+        !expect_flat_float32(current_pose_tails, "current_pose_tails", bone_count * 3) ||
+        !expect_flat_float32(armature_world, "armature_world", 16) ||
+        !expect_flat_float32(armature_world_inv, "armature_world_inv", 16) ||
+        !expect_flat_float32(root_quaternion, "root_quaternion", 4) ||
+        !expect_flat_float32(root_tail_world, "root_tail_world", 3) ||
+        !expect_flat_float32(gravity_dir, "gravity_dir", 3) ||
+        !expect_flat_float32(hit_radii, "hit_radii", bone_count) ||
+        !expect_flat_int32(collided_by_groups, "collided_by_groups", bone_count) ||
+        !hotools::py::expect_int32(collider_types, "collider_types") ||
+        !hotools::py::expect_int32(collider_groups, "collider_groups") ||
+        !hotools::py::expect_float32(collider_centers, "collider_centers") ||
+        !hotools::py::expect_float32(collider_segment_a, "collider_segment_a") ||
+        !hotools::py::expect_float32(collider_segment_b, "collider_segment_b") ||
+        !hotools::py::expect_float32(collider_radii, "collider_radii")) {
+        return nullptr;
+    }
+
     Py_ssize_t collider_count = 0;
-    if (collider_types.view.ndim == 1 && collider_types.view.shape)
-        collider_count = collider_types.view.shape[0];
+    if (!hotools::py::expect_1d_array(collider_types, "collider_types", -1)) {
+        return nullptr;
+    }
+    collider_count = collider_types.view.shape[0];
+    if (!hotools::py::expect_1d_array(collider_groups, "collider_groups", collider_count) ||
+        !hotools::py::expect_1d_array(collider_centers, "collider_centers", collider_count * 3) ||
+        !hotools::py::expect_1d_array(collider_segment_a, "collider_segment_a", collider_count * 3) ||
+        !hotools::py::expect_1d_array(collider_segment_b, "collider_segment_b", collider_count * 3) ||
+        !hotools::py::expect_1d_array(collider_radii, "collider_radii", collider_count)) {
+        return nullptr;
+    }
 
     hotools::spring_vrm_context_update_dynamic(
         ctx,
@@ -450,6 +538,12 @@ PyObject* spring_vrm_read_results(PyObject*, PyObject* args) {
         return nullptr;
     }
 
+    const Py_ssize_t bone_count = static_cast<Py_ssize_t>(ctx->bone_count);
+    if (!expect_flat_float32(out_matrices, "out_matrices", bone_count * 16) ||
+        !expect_flat_float32(out_quaternions, "out_quaternions", bone_count * 4)) {
+        return nullptr;
+    }
+
     hotools::spring_vrm_context_read_results(
         ctx,
         float_ptr(out_matrices),
@@ -490,6 +584,23 @@ PyObject* spring_vrm_read_debug(PyObject*, PyObject* args) {
         !collider_segment_a.get(PyTuple_GET_ITEM(args, 10), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_segment_a") ||
         !collider_segment_b.get(PyTuple_GET_ITEM(args, 11), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_segment_b") ||
         !collider_radii.get(PyTuple_GET_ITEM(args, 12), PyBUF_WRITABLE | PyBUF_FORMAT | PyBUF_ND, "out_collider_radii")) {
+        return nullptr;
+    }
+
+    const Py_ssize_t bone_count = static_cast<Py_ssize_t>(ctx->bone_count);
+    const Py_ssize_t collider_count = static_cast<Py_ssize_t>(ctx->collider_count);
+    if (!expect_flat_float32(current_heads, "out_current_heads", bone_count * 3) ||
+        !expect_flat_float32(current_tails, "out_current_tails", bone_count * 3) ||
+        !expect_flat_float32(prev_tails, "out_prev_tails", bone_count * 3) ||
+        !expect_flat_float32(current_pose_tails, "out_current_pose_tails", bone_count * 3) ||
+        !expect_flat_float32(hit_radii, "out_hit_radii", bone_count) ||
+        !expect_flat_int32(collided_by_groups, "out_collided_by_groups", bone_count) ||
+        !expect_flat_int32(collider_types, "out_collider_types", collider_count) ||
+        !expect_flat_int32(collider_groups, "out_collider_groups", collider_count) ||
+        !expect_flat_float32(collider_centers, "out_collider_centers", collider_count * 3) ||
+        !expect_flat_float32(collider_segment_a, "out_collider_segment_a", collider_count * 3) ||
+        !expect_flat_float32(collider_segment_b, "out_collider_segment_b", collider_count * 3) ||
+        !expect_flat_float32(collider_radii, "out_collider_radii", collider_count)) {
         return nullptr;
     }
 

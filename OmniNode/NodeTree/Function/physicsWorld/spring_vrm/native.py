@@ -48,9 +48,11 @@ from ..utils.geometry import (
     signed_third_axis_length,
     vec3_length,
 )
+from ..utils.ids import as_pointer, data_pointer
 from ..utils.values import matrix16
 from ..utils.writeback_pose import matrix_basis_from_pose_matrix
 from .bone_collision import resolve_bone_collision_fields, resolve_bone_pin
+from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
 from .results import publish_spring_vrm_pose_result
 
 
@@ -317,7 +319,6 @@ class SpringVRMNativeContext:
             module.spring_vrm_reset_state(self._handle)
             self._reset_dynamic_tails_to_pose()
             frame = int(getattr(world.frame_context, "frame", 0) or 0)
-            self._refresh_debug_snapshot(module, armature, chain, world, frame)
             self._last_frame = frame
             return self._publish_current_pose(world, chain, chain_state, frame)
         module.spring_vrm_step(
@@ -335,7 +336,6 @@ class SpringVRMNativeContext:
         module.spring_vrm_read_results(self._handle, self._result, self._result_quat)
 
         frame = int(getattr(world.frame_context, "frame", 0) or 0)
-        self._refresh_debug_snapshot(module, armature, chain, world, frame)
         self._step_count += 1
         self._last_frame = frame
 
@@ -347,14 +347,18 @@ class SpringVRMNativeContext:
             return
         np.copyto(d["current_tails"], d["current_pose_tails"])
         np.copyto(d["prev_tails"], d["current_pose_tails"])
-        np.copyto(d["target_matrices"], d["current_pose_matrices"])
-        np.copyto(d["target_quaternions"], d["current_pose_quaternions"])
 
     def _refresh_debug_snapshot(self, module, armature, chain, world, frame: int) -> None:
         snapshot = self._read_cpp_debug_snapshot(module, armature, chain, world, frame)
         if snapshot is None:
             snapshot = self._python_debug_snapshot(chain, frame)
         self._debug_snapshot = snapshot
+
+    def refresh_debug_draw_snapshot(self, world, armature, chain) -> dict | None:
+        """按调试节点请求读取 C++ 状态，正式模拟帧不承担回读和分配成本。"""
+        frame = int(getattr(getattr(world, "frame_context", None), "frame", 0) or 0)
+        self._refresh_debug_snapshot(native_module(), armature, chain, world, frame)
+        return self._debug_snapshot
 
     def _read_cpp_debug_snapshot(self, module, armature, chain, world, frame: int) -> dict | None:
         if self._handle is None or self._dynamic is None:
@@ -728,9 +732,8 @@ def _fill_static(s: dict[str, np.ndarray], records: list[dict], world=None) -> N
         # 否则第一帧若有动画压缩/拉伸，rest length 会被错误捕获。
         bone = pb.bone
         rest_vec = bone.tail_local - bone.head_local
-        world_scale = pb.id_data.matrix_world.to_scale()
-        avg_scale = (abs(world_scale.x) + abs(world_scale.y) + abs(world_scale.z)) / 3.0
-        s["lengths"][i] = max(float(rest_vec.length) * avg_scale, 0.0)
+        world_rest_vec = pb.id_data.matrix_world.to_3x3() @ rest_vec
+        s["lengths"][i] = max(float(world_rest_vec.length), 0.0)
 
 
 def _record_is_effectively_pinned(record: dict, world=None) -> bool:
@@ -755,8 +758,6 @@ def _alloc_dynamic(n: int) -> dict[str, np.ndarray]:
     return {
         "current_tails":           np.empty((n, 3),  dtype=np.float32),
         "prev_tails":              np.empty((n, 3),  dtype=np.float32),
-        "target_matrices":         np.empty((n, 16), dtype=np.float32),
-        "target_quaternions":      np.empty((n, 4),  dtype=np.float32),
         "current_heads":           np.empty((n, 3),  dtype=np.float32),
         "current_pose_matrices":   np.empty((n, 16), dtype=np.float32),
         "current_pose_quaternions":np.empty((n, 4),  dtype=np.float32),
@@ -791,10 +792,8 @@ def _fill_dynamic(
         _write_vec3(d["current_heads"],   i, head)
         _write_vec3(d["current_pose_tails"], i, tail)
         _write_matrix(d["current_pose_matrices"],   i, pb.matrix)
-        _write_matrix(d["target_matrices"],         i, pb.matrix)
         q = pb.matrix.to_quaternion()
         _write_quat(d["current_pose_quaternions"],  i, q)
-        _write_quat(d["target_quaternions"],        i, q)
         _write_quat(d["parent_pose_quaternions"],   i,
                     parent.matrix.to_quaternion() if parent is not None else None)
 
@@ -827,7 +826,11 @@ def _write_quat(arr: np.ndarray, i: int, q) -> None:
 
 
 def _write_matrix(arr: np.ndarray, i: int, m) -> None:
-    arr[i] = np.asarray(matrix16(m), dtype=np.float32)
+    row = arr[i]
+    row[0] = float(m[0][0]); row[1] = float(m[0][1]); row[2] = float(m[0][2]); row[3] = float(m[0][3])
+    row[4] = float(m[1][0]); row[5] = float(m[1][1]); row[6] = float(m[1][2]); row[7] = float(m[1][3])
+    row[8] = float(m[2][0]); row[9] = float(m[2][1]); row[10] = float(m[2][2]); row[11] = float(m[2][3])
+    row[12] = float(m[3][0]); row[13] = float(m[3][1]); row[14] = float(m[3][2]); row[15] = float(m[3][3])
 
 
 def _matrix_from_row(row) -> mathutils.Matrix:
@@ -1104,28 +1107,79 @@ def _bone_collision_profiles(armature, records: list[dict], world=None) -> tuple
     n = len(records)
     radii  = np.zeros(n, dtype=np.float32)
     masks  = np.zeros(n, dtype=np.int32)
+    override_fields = _bone_collision_override_fields_by_bone(world, armature)
     for i, rec in enumerate(records):
-        r, m = _bone_collision_profile(armature, str(rec.get("bone_name") or ""), world=world)
+        bone_name = str(rec.get("bone_name") or "")
+        r, m = _bone_collision_profile(
+            armature,
+            bone_name,
+            world=world,
+            override_fields=override_fields.get(bone_name, {}),
+        )
         radii[i] = r
         masks[i] = m
     return radii, masks
 
 
-def _bone_collision_profile(armature, bone_name: str, world=None) -> tuple[float, int]:
-    profile = resolve_bone_collision_fields(armature, bone_name, world=world)
-    if str(profile.collision_type or "NONE") not in {"SPHERE", "CAPSULE"}:
-        return 0.0, 0
+def _bone_collision_override_fields_by_bone(world, armature) -> dict[str, dict]:
+    if world is None or not hasattr(world, "iter_implicit_objects"):
+        return {}
+    armature_ptr = as_pointer(armature)
+    armature_data_ptr = data_pointer(armature)
+    result = {}
+    for entry in world.iter_implicit_objects(tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG, enabled=True):
+        payload = entry.get("payload") if isinstance(entry, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        owner = payload.get("armature")
+        if owner is not armature and (
+            as_pointer(owner) != armature_ptr or data_pointer(owner) != armature_data_ptr
+        ):
+            continue
+        bone_name = str(payload.get("bone_name") or "")
+        fields = payload.get("fields")
+        if bone_name and isinstance(fields, dict):
+            result[bone_name] = fields
+    return result
+
+
+def _bone_collision_profile(
+    armature,
+    bone_name: str,
+    world=None,
+    override_fields: dict | None = None,
+) -> tuple[float, int]:
     name = str(bone_name or "")
     bone = getattr(getattr(armature, "data", None), "bones", {}).get(name)
     if bone is None:
         return 0.0, 0
+
+    if override_fields is None:
+        profile = resolve_bone_collision_fields(armature, name, world=world)
+        collision_type = str(profile.collision_type or "NONE")
+        radius_value = profile.radius
+        mask_value = profile.collided_by_groups
+    else:
+        props = getattr(bone, "hotools_collision", None)
+        collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")
+        radius_value = getattr(props, "radius", 0.0)
+        mask_value = getattr(props, "collided_by_groups", 0)
+        if "collision_type" in override_fields:
+            collision_type = str(override_fields.get("collision_type") or "NONE")
+        if "radius" in override_fields:
+            radius_value = override_fields.get("radius")
+        if "collided_by_groups" in override_fields:
+            mask_value = override_fields.get("collided_by_groups")
+
+    if collision_type not in {"SPHERE", "CAPSULE"}:
+        return 0.0, 0
     pb     = getattr(getattr(armature, "pose", None), "bones", {}).get(name)
     lmat   = pb.matrix if pb is not None else bone.matrix_local
-    radius = max(float(profile.radius or 0.0), 0.0)
+    radius = max(float(radius_value or 0.0), 0.0)
     radius *= matrix_scale_radius(armature.matrix_world @ lmat)
     if radius <= 1e-8:
         return 0.0, 0
-    return radius, clamp_int(profile.collided_by_groups, 0, 0xFFFF, 0)
+    return radius, clamp_int(mask_value, 0, 0xFFFF, 0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1233,6 +1287,15 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
 
     native_ctxs: dict[str, SpringVRMNativeContext] = slot.data.setdefault("_native_ctxs", {})
     chain_states = frame_state.setdefault("chains", {})
+    frame = int(getattr(getattr(world, "frame_context", None), "frame", 0) or 0)
+    debug_capture_state = slot.data.get("_debug_capture_state")
+    capture_debug = (
+        isinstance(debug_capture_state, dict)
+        and bool(debug_capture_state.get("requested", False))
+        and int(debug_capture_state.get("request_frame", frame) or 0) != frame
+    )
+    debug_captured = False
+    debug_capture_attempted = False
     published = 0
     errors: list[str] = []
     started = time.perf_counter()
@@ -1257,6 +1320,19 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
             ctx.fill_dynamic(armature, chain_state, records)
             count = ctx.step_and_publish(module, world, armature, chain, chain_state, dt, substeps, restart)
             published += count
+            if capture_debug:
+                debug_capture_attempted = True
+                capture_started = time.perf_counter()
+                try:
+                    ctx.refresh_debug_draw_snapshot(world, armature, chain)
+                    debug_captured = True
+                    debug_capture_state.pop("error", None)
+                except Exception as exc:
+                    debug_capture_state["error"] = str(exc)
+                finally:
+                    debug_capture_state["capture_ms"] = (
+                        time.perf_counter() - capture_started
+                    ) * 1000.0
         except Exception as exc:
             errors.append(f"{root}: {exc}")
 
@@ -1268,6 +1344,12 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
                 native_ctxs.pop(stale).dispose()
             except Exception:
                 pass
+
+    if debug_capture_attempted:
+        debug_capture_state["requested"] = False
+        debug_capture_state["attempted_frame"] = frame
+        if debug_captured:
+            debug_capture_state["captured_frame"] = frame
 
     return published, (time.perf_counter() - started) * 1000.0, errors
 

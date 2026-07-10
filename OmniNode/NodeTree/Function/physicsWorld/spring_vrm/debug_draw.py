@@ -80,6 +80,7 @@ def update_spring_vrm_debug_draw_store(
             continue
         if _append_slot_context_debug_lines(
             slot,
+            world,
             chain_lines if show_solved_chain else None,
             root_lines if show_roots else None,
             collider_batches if show_colliders else None,
@@ -193,6 +194,7 @@ def _tag_view3d_redraw() -> None:
 
 def _append_slot_context_debug_lines(
     slot,
+    world,
     chain_lines: list | None,
     root_lines: list | None,
     collider_batches: list | None,
@@ -201,6 +203,10 @@ def _append_slot_context_debug_lines(
     native_ctxs = slot.data.get("_native_ctxs") if hasattr(slot, "data") else None
     if not isinstance(native_ctxs, dict):
         return False
+    frame = int(getattr(getattr(world, "frame_context", None), "frame", 0) or 0)
+    capture_state = slot.data.setdefault("_debug_capture_state", {})
+    capture_state["requested"] = True
+    capture_state["request_frame"] = frame
     used = False
     for ctx in list(native_ctxs.values()):
         snapshot_func = getattr(ctx, "debug_draw_snapshot", None)

@@ -677,6 +677,153 @@ def test_spring_vrm_runtime_parameter_change_reuses_slot():
         _delete_object(armature)
 
 
+def test_spring_vrm_public_parameters_reach_native_context():
+    armature = _make_chain_armature("PW_SpringVRM_ParameterMatrix")
+    module = _pw("spring_vrm.native").native_module()
+    original_update = module.spring_vrm_update_dynamic
+    original_step = module.spring_vrm_step
+    observed = {"gravity_dir": [], "step": []}
+
+    def capture_update(*args):
+        observed["gravity_dir"].append(tuple(float(value) for value in args[10]))
+        return original_update(*args)
+
+    def capture_step(*args):
+        observed["step"].append(tuple(args[1:]))
+        return original_step(*args)
+
+    module.spring_vrm_update_dynamic = capture_update
+    module.spring_vrm_step = capture_step
+    try:
+        cache = _OmniCache()
+        cache = _run_spring_frame(
+            cache,
+            armature,
+            82,
+            reset=True,
+            stiffness_force=2.5,
+            drag_force=0.7,
+            gravity_dir=(0.0, 1.0, 0.0),
+            gravity_power=4.25,
+            substeps=5,
+        )
+        _run_spring_frame(
+            cache,
+            armature,
+            83,
+            reset=False,
+            stiffness_force=2.5,
+            drag_force=0.7,
+            gravity_dir=(0.0, 1.0, 0.0),
+            gravity_power=4.25,
+            substeps=5,
+        )
+        assert observed["gravity_dir"][-1] == (0.0, 1.0, 0.0), observed
+        dt, substeps, stiffness, drag, gravity_power = observed["step"][-1]
+        assert abs(float(dt) - (1.0 / 24.0)) < 1.0e-6, observed
+        assert int(substeps) == 5, observed
+        assert abs(float(stiffness) - 2.5) < 1.0e-6, observed
+        assert abs(float(drag) - 0.7) < 1.0e-6, observed
+        assert abs(float(gravity_power) - 4.25) < 1.0e-6, observed
+    finally:
+        module.spring_vrm_update_dynamic = original_update
+        module.spring_vrm_step = original_step
+        _delete_object(armature)
+
+
+def test_spring_vrm_spec_clamps_public_parameter_bounds():
+    armature = _make_chain_armature("PW_SpringVRM_ParameterBounds")
+    try:
+        properties = physicsSpringVRMChainProperties(
+            [_bone_value(armature, "root")],
+            stiffness_force=-3.0,
+            drag_force=4.0,
+            gravity_power=-8.0,
+        )
+        specs = _pw("spring_vrm.specs").build_spring_vrm_solver_specs(
+            properties,
+            backend="cpp",
+            substeps=99,
+        )
+        assert len(specs) == 1
+        spec = specs[0]
+        chain = spec.chains[0]
+        assert chain.stiffness_force == 0.0
+        assert chain.drag_force == 1.0
+        assert chain.gravity_power == 0.0
+        assert spec.substeps == 16
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_multiple_armatures_create_isolated_slots():
+    armature_a = _make_chain_armature("PW_SpringVRM_MultiA")
+    armature_b = _make_chain_armature("PW_SpringVRM_MultiB")
+    try:
+        cache = _OmniCache()
+        world, _frame, _collider_count, restart = _world_for_frame(
+            cache,
+            armature_a,
+            84,
+            reset=True,
+            extra_objects=[armature_b],
+        )
+        properties = []
+        for armature in (armature_a, armature_b):
+            properties.extend(physicsSpringVRMChainProperties([_bone_value(armature, "root")]))
+        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
+        assert object_count == 2
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 4
+        assert apply_all_writebacks(world, restart=restart) == 4
+        cache, committed_world, solver_count = physicsWorldCommit(world, enabled=True)
+        assert cache.value is committed_world
+        assert solver_count == 2
+        slot_ids = _spring_slot_ids(world)
+        assert len(slot_ids) == 2 and slot_ids[0] != slot_ids[1]
+    finally:
+        _delete_object(armature_b)
+        _delete_object(armature_a)
+
+
+def test_spring_vrm_override_pin_reaches_native_static_state():
+    armature = _make_chain_armature("PW_SpringVRM_OverridePinRuntime")
+
+    def run_frame(cache, frame: int, reset: bool):
+        world, _frame, _collider_count, restart = _world_for_frame(
+            cache,
+            armature,
+            frame,
+            reset=reset,
+        )
+        properties = physicsSpringVRMChainProperties(
+            [_bone_value(armature, "root")],
+            gravity_dir=(1.0, 0.0, 0.0),
+            gravity_power=9.8,
+        )
+        physicsSpringVRMChainRegister(world, properties)
+        override = make_bone_collision_override_properties(
+            _bone_value(armature, "bone_1"),
+            pin=True,
+        )
+        register_bone_collision_override_objects(world, [override])
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 2
+        apply_all_writebacks(world, restart=restart)
+        cache, _world, _solver_count = physicsWorldCommit(world, enabled=True)
+        return cache, world
+
+    try:
+        cache, _world1 = run_frame(_OmniCache(), 87, True)
+        cache, world2 = run_frame(cache, 88, False)
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
+        _slot, _contexts, context = _spring_chain_context(world2)
+        pinned = getattr(context, "_static", {}).get("pinned")
+        assert pinned is not None and int(pinned[0]) == 1, pinned
+    finally:
+        _delete_object(armature)
+
+
 def test_spring_vrm_non_root_pin_keeps_pose():
     armature = _make_chain_armature("PW_SpringVRM_Pin")
     try:
@@ -756,13 +903,102 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert debug_chain.get("cpp_handle") is True
         assert debug_chain.get("root_bone") == "root"
         assert debug_chain.get("buffer_shapes", {}).get("current_tails") == [2, 3]
-        assert debug_chain.get("buffer_shapes", {}).get("target_matrices") == [2, 16]
+        assert debug_chain.get("buffer_shapes", {}).get("current_pose_matrices") == [2, 16]
 
         world_debug = world2.omni_cache_debug_snapshot()
         world_slot_debug = world_debug.get("solver_slots", {}).get(slot2.slot_id, {})
         world_context = world_slot_debug.get("native_context", {})
         assert world_context.get("available") is True
         assert world_context.get("chains", [])[0].get("buffer_shapes", {}).get("current_tails") == [2, 3]
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_nonuniform_scale_uses_axis_world_length():
+    armature = _make_chain_armature("PW_SpringVRM_NonuniformScale")
+    try:
+        armature.scale = (2.0, 1.0, 3.0)
+        bpy.context.view_layer.update()
+        cache = _OmniCache()
+        _cache, world, _stats, _results = _run_spring_frame(
+            cache,
+            armature,
+            92,
+            reset=True,
+            gravity_power=0.0,
+            return_details=True,
+        )
+        _slot, _native_context, chain_context = _spring_chain_context(world)
+        lengths = getattr(chain_context, "_static", {}).get("lengths")
+        assert lengths is not None and len(lengths) == 2
+        assert all(abs(float(value) - 3.0) < 1.0e-5 for value in lengths), lengths
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_debug_capture_is_next_frame_state_machine():
+    armature = _make_chain_armature("PW_SpringVRM_DebugState")
+    try:
+        cache = _OmniCache()
+        cache, world1, _stats1, _results1 = _run_spring_frame(
+            cache,
+            armature,
+            93,
+            reset=True,
+            return_details=True,
+        )
+        slot1, _native_context1, chain_context1 = _spring_chain_context(world1)
+        assert chain_context1.debug_draw_snapshot() is None
+
+        used = spring_vrm_debug_draw._append_slot_context_debug_lines(
+            slot1,
+            world1,
+            [],
+            [],
+            [],
+        )
+        assert used is False, "first debug request should use the regular result fallback"
+        capture_state = slot1.data.get("_debug_capture_state")
+        assert capture_state == {"requested": True, "request_frame": 93}, capture_state
+
+        cache, world2, _stats2, _results2 = _run_spring_frame(
+            cache,
+            armature,
+            94,
+            reset=False,
+            return_details=True,
+        )
+        slot2, _native_context2, chain_context2 = _spring_chain_context(world2)
+        assert slot2 is slot1 and chain_context2 is chain_context1
+        snapshot = chain_context2.debug_draw_snapshot()
+        assert isinstance(snapshot, dict) and snapshot.get("source") == "cpp_context", snapshot
+        capture_state = slot2.data.get("_debug_capture_state")
+        assert capture_state.get("requested") is False
+        assert int(capture_state.get("captured_frame", -1)) == 94
+
+        spring_vrm_debug_draw._append_slot_context_debug_lines(slot2, world2, [], [], [])
+        original_refresh = chain_context2.refresh_debug_draw_snapshot
+
+        def fail_debug_capture(*_args, **_kwargs):
+            raise RuntimeError("intentional debug readback failure")
+
+        chain_context2.refresh_debug_draw_snapshot = fail_debug_capture
+        try:
+            _cache3, world3, stats3, results3 = _run_spring_frame(
+                cache,
+                armature,
+                95,
+                reset=False,
+                return_details=True,
+            )
+        finally:
+            chain_context2.refresh_debug_draw_snapshot = original_refresh
+        assert stats3.get("status") == "ok", stats3
+        assert len(results3) == 2
+        state3 = slot2.data.get("_debug_capture_state")
+        assert state3.get("requested") is False
+        assert int(state3.get("attempted_frame", -1)) == 95
+        assert "intentional debug readback failure" in str(state3.get("error"))
     finally:
         _delete_object(armature)
 
@@ -1255,7 +1491,9 @@ def test_spring_vrm_cpp_debug_snapshot_uses_override_profile():
 
         world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
         assert write_count == 2
-        _slot, _native_context, chain_context = _spring_chain_context(world)
+        slot, _native_context, chain_context = _spring_chain_context(world)
+        spec = slot.data.get("spec")
+        chain_context.refresh_debug_draw_snapshot(world, armature, spec.chains[0])
         snapshot = chain_context.debug_draw_snapshot()
         assert isinstance(snapshot, dict), "SpringBone native context 应提供 debug draw snapshot"
         assert snapshot.get("source") == "cpp_context", snapshot
@@ -1492,37 +1730,53 @@ def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
         _delete_object(armature)
 
 
-print("\n----------------------------------------------------------")
-print("  SpringBone VRM 新物理世界集成测试")
-print("----------------------------------------------------------")
+_TESTS = (
+    ("native 模块可用", test_native_available),
+    ("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice),
+    ("SpringBone rest pose has no synthetic side force", test_spring_vrm_stiffness_rest_pose_has_no_side_force),
+    ("SpringBone frame jump resets without stepping", test_spring_vrm_frame_jump_resets_without_step),
+    ("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results),
+    ("SpringBone runtime parameter changes reuse slot", test_spring_vrm_runtime_parameter_change_reuses_slot),
+    ("SpringBone public parameter matrix reaches native context", test_spring_vrm_public_parameters_reach_native_context),
+    ("SpringBone public parameter bounds clamp in solver spec", test_spring_vrm_spec_clamps_public_parameter_bounds),
+    ("SpringBone multiple armatures create isolated slots", test_spring_vrm_multiple_armatures_create_isolated_slots),
+    ("SpringBone override pin reaches native static state", test_spring_vrm_override_pin_reaches_native_static_state),
+    ("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose),
+    ("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers),
+    ("SpringBone nonuniform scale uses bone-axis world length", test_spring_vrm_nonuniform_scale_uses_axis_world_length),
+    ("SpringBone debug capture is a next-frame state machine", test_spring_vrm_debug_capture_is_next_frame_state_machine),
+    ("SpringBone collider arrays cache reuses snapshot", test_spring_vrm_collider_arrays_cache_reuses_snapshot),
+    ("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose),
+    ("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot),
+    ("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot),
+    ("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule_collider_snapshot),
+    ("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot),
+    ("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot),
+    ("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy),
+    ("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna),
+    ("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy),
+    ("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index),
+    ("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile),
+    ("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors),
+)
 
-check("native 模块可用", test_native_available)
-check("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice)
-check("SpringBone rest pose has no synthetic side force", test_spring_vrm_stiffness_rest_pose_has_no_side_force)
-check("SpringBone frame jump resets without stepping", test_spring_vrm_frame_jump_resets_without_step)
-check("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results)
-check("SpringBone runtime parameter changes reuse slot", test_spring_vrm_runtime_parameter_change_reuses_slot)
-check("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose)
-check("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers)
-check("SpringBone collider arrays cache reuses snapshot", test_spring_vrm_collider_arrays_cache_reuses_snapshot)
-check("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose)
-check("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot)
-check("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot)
-check("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule_collider_snapshot)
-check("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot)
-check("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot)
-check("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy)
-check("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna)
-check("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy)
-check("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index)
-check("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile)
-check("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors)
 
-passed = sum(1 for item in _results if item)
-total = len(_results)
-print("----------------------------------------------------------")
-print(f"  {passed}/{total} 通过  {'全部通过' if passed == total else '存在失败'}")
-print("----------------------------------------------------------")
+def main() -> None:
+    _results.clear()
+    print("\n----------------------------------------------------------")
+    print("  SpringBone VRM 新物理世界集成测试")
+    print("----------------------------------------------------------")
+    for name, fn in _TESTS:
+        check(name, fn)
 
-if passed != total:
-    raise SystemExit(1)
+    passed = sum(1 for item in _results if item)
+    total = len(_results)
+    print("----------------------------------------------------------")
+    print(f"  {passed}/{total} 通过  {'全部通过' if passed == total else '存在失败'}")
+    print("----------------------------------------------------------")
+    if passed != total:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

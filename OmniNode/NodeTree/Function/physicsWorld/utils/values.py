@@ -10,12 +10,16 @@ def float3(value, fallback=None) -> tuple[float, float, float]:
 
 
 def matrix16(value) -> tuple[float, ...]:
-    flat = list(value)
-    if len(flat) != 16:
-        flat = [item for row in value for item in row]
-    if len(flat) != 16:
-        raise ValueError("matrix payload 必须包含 16 个数值")
-    return tuple(float(item) for item in flat)
+    if len(value) == 16:
+        return tuple(float(value[index]) for index in range(16))
+    if len(value) == 4 and all(len(value[row]) == 4 for row in range(4)):
+        return (
+            float(value[0][0]), float(value[0][1]), float(value[0][2]), float(value[0][3]),
+            float(value[1][0]), float(value[1][1]), float(value[1][2]), float(value[1][3]),
+            float(value[2][0]), float(value[2][1]), float(value[2][2]), float(value[2][3]),
+            float(value[3][0]), float(value[3][1]), float(value[3][2]), float(value[3][3]),
+        )
+    raise ValueError("matrix payload 必须包含 16 个数值")
 
 
 def matrix_from_16(value):
