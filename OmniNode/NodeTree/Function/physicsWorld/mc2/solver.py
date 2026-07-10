@@ -1,18 +1,149 @@
-"""统一 MC2 模拟步的框架占位实现。"""
+"""统一 MC2 模拟步的 topology/slot 框架。"""
 
 from __future__ import annotations
 
+from ..types import PhysicsWorldCache
+from .declaration import MC2_SOLVER_DECLARATION
+from .names import MC2_SLOT_KIND, MC2_SOLVER_ID
 from .parameters import (
     MC2SolverSettingsSpec,
     make_mc2_effective_parameters,
     make_mc2_solver_settings,
 )
 from .specs import build_mc2_task_specs
+from .state import MC2SlotRuntimeState
+from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
-    "MC2 Physics World 框架已就绪；MeshCloth、BoneCloth、BoneSpring 后端尚未接入"
+    "MC2 topology/slot 框架已就绪；MeshCloth、BoneCloth、BoneSpring 后端尚未接入"
 )
+
+
+def _dispose_mc2_slot(slot, reason: str) -> None:
+    state = slot.data.get("runtime_state")
+    if isinstance(state, MC2SlotRuntimeState):
+        state.dispose(reason)
+
+
+def _slot_debug_snapshot(slot) -> dict:
+    topology = slot.data.get("topology")
+    state = slot.data.get("runtime_state")
+    spec = slot.data.get("spec")
+    return {
+        "slot_id": slot.slot_id,
+        "kind": slot.kind,
+        "world_generation": slot.world_generation,
+        "task": spec.debug_dict() if hasattr(spec, "debug_dict") else None,
+        "topology": topology.debug_dict() if hasattr(topology, "debug_dict") else None,
+        "runtime_state": state.debug_dict() if hasattr(state, "debug_dict") else None,
+        "has_backend": False,
+        "has_writeback_plan": bool(slot.data.get("writeback_plan")),
+    }
+
+
+def _install_mc2_slot(
+    slot,
+    *,
+    world: PhysicsWorldCache,
+    spec,
+    topology,
+    effective_parameters,
+    settings: MC2SolverSettingsSpec,
+    reset_reason: str,
+) -> MC2SlotRuntimeState:
+    state = MC2SlotRuntimeState(
+        topology_signature=topology.topology_signature,
+        config_signature=spec.config_signature,
+        parameter_signature=effective_parameters.parameter_signature,
+        settings_signature=settings.signature,
+        world_generation=int(world.generation),
+        particle_count=int(topology.particle_count),
+        last_reset_reason=str(reset_reason),
+    )
+    slot.kind = MC2_SLOT_KIND
+    slot.world_generation = int(world.generation)
+    slot.data.update(
+        {
+            "spec": spec,
+            "topology": topology,
+            "effective_parameters": effective_parameters,
+            "settings": settings,
+            "runtime_state": state,
+            "declaration": MC2_SOLVER_DECLARATION,
+            "frame_state": {},
+            "writeback_plan": {},
+            "_dispose": lambda reason, slot=slot: _dispose_mc2_slot(slot, reason),
+            "_debug_snapshot": lambda slot=slot: _slot_debug_snapshot(slot),
+        }
+    )
+    return state
+
+
+def _sync_mc2_slot(
+    world: PhysicsWorldCache,
+    spec,
+    settings: MC2SolverSettingsSpec,
+    topology,
+    effective,
+) -> tuple[str, object]:
+    existing = world.solver_slots.get(spec.task_id)
+    slot = world.ensure_solver_slot(spec.task_id, MC2_SLOT_KIND)
+    previous_state = slot.data.get("runtime_state")
+    rebuild_reason = ""
+    if existing is None or not isinstance(previous_state, MC2SlotRuntimeState):
+        rebuild_reason = "created"
+    elif slot.kind != MC2_SLOT_KIND:
+        rebuild_reason = "slot_kind_changed"
+    elif slot.world_generation != world.generation:
+        rebuild_reason = "world_generation_changed"
+    elif previous_state.topology_signature != topology.topology_signature:
+        rebuild_reason = "topology_changed"
+
+    if rebuild_reason:
+        if slot.data:
+            slot.dispose(rebuild_reason)
+        _install_mc2_slot(
+            slot,
+            world=world,
+            spec=spec,
+            topology=topology,
+            effective_parameters=effective,
+            settings=settings,
+            reset_reason=rebuild_reason,
+        )
+        return "created" if rebuild_reason == "created" else "rebuilt", slot
+
+    parameter_changed, settings_changed = previous_state.update_contracts(
+        config_signature=spec.config_signature,
+        parameter_signature=effective.parameter_signature,
+        settings_signature=settings.signature,
+    )
+    slot.data["spec"] = spec
+    slot.data["topology"] = topology
+    slot.data["effective_parameters"] = effective
+    slot.data["settings"] = settings
+    if parameter_changed:
+        slot.data["writeback_plan"] = {}
+    if parameter_changed or settings_changed:
+        return "updated", slot
+    return "reused", slot
+
+
+def _prune_stale_mc2_slots(world: PhysicsWorldCache, active_slot_ids) -> int:
+    active = set(str(slot_id) for slot_id in (active_slot_ids or ()))
+    stale_ids = [
+        slot_id
+        for slot_id, slot in list(world.solver_slots.items())
+        if slot.kind == MC2_SLOT_KIND and slot_id not in active
+    ]
+    for slot_id in stale_ids:
+        slot = world.solver_slots.pop(slot_id, None)
+        if slot is not None:
+            slot.dispose("mc2_scope_prune")
+    if stale_ids:
+        world.replace_required = True
+    return len(stale_ids)
 
 
 def step_mc2(
@@ -22,20 +153,52 @@ def step_mc2(
     settings: MC2SolverSettingsSpec | None = None,
     enabled: bool = True,
 ) -> tuple[object, bool, str]:
-    """安全空运行：不创建 slot、不发布结果、不调用任何旧 MC2 backend。"""
+    """同步 topology/slot；不调用 backend，也不发布 solver result。"""
     specs = build_mc2_task_specs(tasks)
     if settings is None:
         settings = make_mc2_solver_settings()
     if not isinstance(settings, MC2SolverSettingsSpec):
         raise TypeError("settings 必须是 MC2SolverSettingsSpec")
-    # 现在只冻结未来 solver 会接收的输入；不创建任何运行状态。
-    effective_parameters = tuple(
-        make_mc2_effective_parameters(spec.profile, settings, spec.setup_options)
-        for spec in specs
-        if spec.enabled and spec.sources
-    )
     if not enabled:
         return world, False, "MC2 模拟步已禁用"
-    active_count = len(effective_parameters)
-    status = f"{MC2_FRAMEWORK_STATUS}（有效任务 {active_count}）"
+    if not isinstance(world, PhysicsWorldCache):
+        return world, False, "MC2 模拟步需要 PhysicsWorldCache"
+
+    active_specs = tuple(spec for spec in specs if spec.enabled and spec.sources)
+    # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
+    prepared = tuple(
+        (
+            spec,
+            build_mc2_topology_spec(spec),
+            make_mc2_effective_parameters(
+                spec.profile,
+                settings,
+                spec.setup_options,
+            ),
+        )
+        for spec in active_specs
+    )
+    counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
+    active_slot_ids: list[str] = []
+    world.acquire_write(MC2_SOLVER_ID)
+    try:
+        for spec, topology, effective in prepared:
+            action, slot = _sync_mc2_slot(
+                world,
+                spec,
+                settings,
+                topology,
+                effective,
+            )
+            counts[action] += 1
+            active_slot_ids.append(slot.slot_id)
+        pruned = _prune_stale_mc2_slots(world, active_slot_ids)
+    finally:
+        world.release_write(MC2_SOLVER_ID)
+
+    status = (
+        f"{MC2_FRAMEWORK_STATUS}（任务 {len(active_specs)}，"
+        f"新建 {counts['created']}，重建 {counts['rebuilt']}，"
+        f"更新 {counts['updated']}，复用 {counts['reused']}，清理 {pruned}）"
+    )
     return world, False, status

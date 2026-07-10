@@ -1,0 +1,345 @@
+"""MC2 三种 setup 的纯静态拓扑快照。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import json
+import math
+
+from .specs import MC2TaskSpec, _source_token
+
+
+def _freeze(value):
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("MC2 topology 不能包含 NaN/Inf")
+        return value
+    if isinstance(value, dict):
+        return tuple(
+            (str(key), _freeze(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    raise TypeError(f"MC2 topology 包含不可冻结值: {type(value).__name__}")
+
+
+def _thaw(value):
+    if isinstance(value, tuple):
+        if all(
+            isinstance(item, tuple)
+            and len(item) == 2
+            and isinstance(item[0], str)
+            for item in value
+        ):
+            return {key: _thaw(item) for key, item in value}
+        return [_thaw(item) for item in value]
+    return value
+
+
+def _signature(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _vector3(value) -> tuple[float, float, float]:
+    if value is None:
+        return (0.0, 0.0, 0.0)
+    if all(hasattr(value, axis) for axis in ("x", "y", "z")):
+        values = (value.x, value.y, value.z)
+    else:
+        try:
+            values = tuple(value)
+        except TypeError:
+            return (0.0, 0.0, 0.0)
+    if len(values) < 3:
+        return (0.0, 0.0, 0.0)
+    result = tuple(float(values[index]) for index in range(3))
+    if not all(math.isfinite(component) for component in result):
+        raise ValueError("MC2 topology 坐标不能包含 NaN/Inf")
+    return result
+
+
+def _matrix16(value) -> tuple[float, ...]:
+    if value is None:
+        return ()
+    try:
+        rows = tuple(value)
+        flat = tuple(float(component) for row in rows for component in row)
+    except (TypeError, ValueError):
+        return ()
+    if len(flat) != 16:
+        return ()
+    if not all(math.isfinite(component) for component in flat):
+        raise ValueError("MC2 topology 矩阵不能包含 NaN/Inf")
+    return flat
+
+
+def _collection_get(collection, name: str):
+    getter = getattr(collection, "get", None)
+    if callable(getter):
+        try:
+            return getter(name)
+        except Exception:
+            return None
+    for item in collection or ():
+        if str(getattr(item, "name", "") or "") == name:
+            return item
+    return None
+
+
+def _pointer(value) -> int:
+    pointer = getattr(value, "as_pointer", None)
+    if not callable(pointer):
+        return 0
+    try:
+        return max(0, int(pointer()))
+    except Exception:
+        return 0
+
+
+def _mesh_payload(source) -> dict:
+    data = getattr(source, "data", None)
+    vertices = tuple(getattr(data, "vertices", ()) or ())
+    edges = tuple(getattr(data, "edges", ()) or ())
+    polygons = tuple(getattr(data, "polygons", ()) or ())
+    positions = tuple(_vector3(getattr(vertex, "co", None)) for vertex in vertices)
+    edge_indices = tuple(
+        tuple(int(index) for index in tuple(getattr(edge, "vertices", ()) or ())[:2])
+        for edge in edges
+    )
+    polygon_indices = tuple(
+        tuple(int(index) for index in tuple(getattr(polygon, "vertices", ()) or ()))
+        for polygon in polygons
+    )
+    triangles: list[tuple[int, int, int]] = []
+    for polygon in polygon_indices:
+        if len(polygon) < 3:
+            continue
+        root = polygon[0]
+        triangles.extend(
+            (root, polygon[index], polygon[index + 1])
+            for index in range(1, len(polygon) - 1)
+        )
+    return {
+        "resolved": data is not None,
+        "name": str(getattr(source, "name_full", getattr(source, "name", "")) or ""),
+        "positions": positions,
+        "edges": edge_indices,
+        "triangles": tuple(triangles),
+        "polygon_count": len(polygon_indices),
+    }
+
+
+def _bone_children(bone) -> tuple:
+    try:
+        return tuple(getattr(bone, "children", ()) or ())
+    except Exception:
+        return ()
+
+
+def _collect_bone_names(collection, requested: tuple[str, ...]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    stack = [
+        bone
+        for name in reversed(requested)
+        if (bone := _collection_get(collection, name)) is not None
+    ]
+    while stack:
+        bone = stack.pop()
+        name = str(getattr(bone, "name", "") or "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+        children = _bone_children(bone)
+        stack.extend(reversed(children))
+    return tuple(ordered)
+
+
+def _bone_payload(source) -> dict:
+    if isinstance(source, tuple) and len(source) == 2:
+        armature = source[0]
+        requested = (str(source[1] or ""),)
+        explicit_chain = False
+    elif isinstance(source, dict):
+        armature = source.get("armature")
+        explicit = tuple(str(name) for name in (source.get("bones") or ()) if str(name))
+        root = str(source.get("root_bone") or source.get("bone") or "").strip()
+        requested = explicit or ((root,) if root else ())
+        explicit_chain = bool(explicit)
+    else:
+        armature = None
+        requested = ()
+        explicit_chain = False
+
+    armature_data = getattr(armature, "data", None)
+    collection = getattr(armature_data, "bones", None)
+    if collection is None:
+        names = requested
+    elif explicit_chain:
+        names = tuple(name for name in requested if _collection_get(collection, name) is not None)
+    else:
+        names = _collect_bone_names(collection, requested)
+
+    name_to_index = {name: index for index, name in enumerate(names)}
+    records = []
+    for name in names:
+        bone = _collection_get(collection, name) if collection is not None else None
+        parent = getattr(bone, "parent", None)
+        parent_name = str(getattr(parent, "name", "") or "")
+        records.append(
+            {
+                "name": name,
+                "parent_index": name_to_index.get(parent_name, -1),
+                "head": _vector3(getattr(bone, "head_local", None)),
+                "tail": _vector3(getattr(bone, "tail_local", None)),
+                "matrix_local": _matrix16(getattr(bone, "matrix_local", None)),
+            }
+        )
+    return {
+        "resolved": collection is not None and len(records) == len(requested) if explicit_chain else collection is not None and bool(records),
+        "armature_name": str(getattr(armature, "name_full", getattr(armature, "name", "")) or ""),
+        "armature_pointer": _pointer(armature),
+        "requested": requested,
+        "bones": tuple(records),
+    }
+
+
+@dataclass(frozen=True)
+class MC2SourceTopologySpec:
+    source_index: int
+    source_kind: str
+    identity_signature: str
+    payload_signature: str
+    particle_count: int
+    resolved: bool
+    payload: tuple
+
+    def debug_dict(self, *, include_payload: bool = False) -> dict:
+        result = {
+            "source_index": self.source_index,
+            "source_kind": self.source_kind,
+            "identity_signature": self.identity_signature,
+            "payload_signature": self.payload_signature,
+            "particle_count": self.particle_count,
+            "resolved": self.resolved,
+        }
+        if include_payload:
+            result["payload"] = _thaw(self.payload)
+        return result
+
+
+@dataclass(frozen=True)
+class MC2TopologySpec:
+    task_id: str
+    setup_type: str
+    task_topology_signature: str
+    connection_mode: int
+    sources: tuple[MC2SourceTopologySpec, ...]
+    particle_count: int
+    topology_signature: str
+    schema_version: int = 1
+
+    def debug_dict(self, *, include_payload: bool = False) -> dict:
+        return {
+            "task_id": self.task_id,
+            "setup_type": self.setup_type,
+            "task_topology_signature": self.task_topology_signature,
+            "connection_mode": self.connection_mode,
+            "source_count": len(self.sources),
+            "particle_count": self.particle_count,
+            "topology_signature": self.topology_signature,
+            "schema_version": self.schema_version,
+            "sources": [
+                source.debug_dict(include_payload=include_payload)
+                for source in self.sources
+            ],
+        }
+
+
+def _build_source_topology(source_kind: str, source, source_index: int) -> MC2SourceTopologySpec:
+    token = _source_token(source)
+    identity_signature = _signature(token)
+    payload = _mesh_payload(source) if source_kind == "mesh" else _bone_payload(source)
+    if source_kind == "mesh":
+        particle_count = len(payload["positions"])
+    else:
+        particle_count = len(payload["bones"])
+    frozen_payload = _freeze(payload)
+    return MC2SourceTopologySpec(
+        source_index=source_index,
+        source_kind=source_kind,
+        identity_signature=identity_signature,
+        payload_signature=_signature(payload),
+        particle_count=particle_count,
+        resolved=bool(payload["resolved"]),
+        payload=frozen_payload,
+    )
+
+
+def build_mc2_mesh_source_topology(source, source_index: int) -> MC2SourceTopologySpec:
+    return _build_source_topology("mesh", source, source_index)
+
+
+def build_mc2_bone_source_topology(source, source_index: int) -> MC2SourceTopologySpec:
+    return _build_source_topology("bone_chain", source, source_index)
+
+
+def build_mc2_topology_spec(task: MC2TaskSpec) -> MC2TopologySpec:
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task 必须是 MC2TaskSpec")
+    # 局部导入避免 setup adapter 声明与 topology 类型之间形成模块初始化环。
+    from .setups import get_mc2_setup_adapter
+
+    adapter = get_mc2_setup_adapter(task.setup_type)
+    sources = tuple(
+        adapter.build_source_topology(source, index)
+        for index, source in enumerate(task.sources)
+    )
+    if sources and all(source.source_kind == "bone_chain" for source in sources):
+        seen_bones: set[tuple[int, str]] = set()
+        for source in sources:
+            payload = _thaw(source.payload)
+            armature_pointer = int(payload.get("armature_pointer", 0) or 0)
+            for record in payload.get("bones", ()):
+                key = (armature_pointer, str(record.get("name") or ""))
+                if key in seen_bones:
+                    raise ValueError(
+                        f"MC2 task 的骨链 source 重叠: {record.get('name')!r}"
+                    )
+                seen_bones.add(key)
+    signature_payload = {
+        "schema_version": 1,
+        "setup_type": task.setup_type,
+        "task_topology_signature": task.topology_signature,
+        "connection_mode": task.setup_options.connection_mode,
+        "source_payload_signatures": [source.payload_signature for source in sources],
+    }
+    return MC2TopologySpec(
+        task_id=task.task_id,
+        setup_type=task.setup_type,
+        task_topology_signature=task.topology_signature,
+        connection_mode=task.setup_options.connection_mode,
+        sources=sources,
+        particle_count=sum(source.particle_count for source in sources),
+        topology_signature=_signature(signature_payload),
+    )
+
+
+__all__ = [
+    "MC2SourceTopologySpec",
+    "MC2TopologySpec",
+    "build_mc2_bone_source_topology",
+    "build_mc2_mesh_source_topology",
+    "build_mc2_topology_spec",
+]

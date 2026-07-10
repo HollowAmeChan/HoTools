@@ -28,7 +28,16 @@ MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`（2.18.1，`418f89ff31a
 2. 节点产生不可变的 `MC2ParticleProfileSpec`、`MC2SolverSettingsSpec`、`MC2SetupOptionsSpec`；task 只持有 source 身份、setup、规格和分层签名。
 3. solver 入口以 Unity `ClothSerializeData.GetClothParameters()` 为语义边界，先生成 `MC2EffectiveParametersSpec`，之后的计算核心不再读取 Blender RNA、节点 socket 或旧 runtime dict。
 4. setup adapter 只负责输入拓扑和输出通道：MeshCloth 使用 mesh source/GN offset，BoneCloth 和 BoneSpring 使用 bone chain/bone transform。BasePose、exchange、GN 与骨骼写回都不属于 MC2 运算核心。
-5. B1 仍是安全空模拟步：不创建 slot、不调用旧 MC2 backend、不发布结果。参数契约稳定后再接共享粒子状态和 native context。
+5. B2 已建立 topology/slot 生命周期：活动 task 会在 Physics World 中持有纯拓扑快照、有效参数和轻量 runtime state；连续求值复用 slot，拓扑或 world generation 变化才重建，参数变化只增加 revision。当前仍不调用旧 MC2 backend、不发布结果。
+
+### B2 Topology/Slot 契约
+
+1. `MC2TopologySpec` 是 solver 静态输入，不持有 PropertyGroup。MeshCloth 冻结 rest positions、edges、triangles；BoneCloth/BoneSpring 冻结 bone name、parent index、head/tail 和 rest matrix。
+2. `task_id` 只表示稳定任务身份；`topology_signature` 额外包含 source 顺序和真实静态拓扑。BoneCloth 的 AutomaticMesh/SequentialLoopMesh 因而不会错误复用 root 顺序不同的状态。
+3. slot data 只包含 `spec`、`topology`、`effective_parameters`、`settings`、`runtime_state` 和空的 `writeback_plan`。未来 native context 必须挂在同一 slot dispose 链上，不能另建全局 cache。
+4. profile/config 或 step settings 变化更新现有 slot revision，不销毁未来粒子动态状态；拓扑、world generation、slot kind 变化执行 dispose + rebuild。
+5. step 禁用时不改 slot；task 从输入中移除或禁用时 prune 对应 MC2 slot。B2 的 `ready` 仍为 false，因为尚无 particle buffer、backend 或 result publication。
+6. 同一 step 的 topology 与有效参数先全部只读构建，再获取 world 写锁；任一 task 校验失败时不得部分更新已有 slot。
 
 ### Unity 源码映射
 
