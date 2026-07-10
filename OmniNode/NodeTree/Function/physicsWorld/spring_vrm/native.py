@@ -1,6 +1,6 @@
 """VRM SpringBone 的 native C++ 调用包装。
 
-设计模型（双调用 native context）
+设计模型（单一 native context API）
 ──────────────────────────────────────────────────────────────
 每条链对应一个 SpringVRMNativeContext 实例，生命周期如下：
 
@@ -23,8 +23,7 @@
     ctx.dispose()
       → free_spring_vrm_context(self._handle)（若有）+ 清空 numpy/bpy 引用
 
-SpringBone world-aware 路径要求 native 模块导出 dual-call symbols；旧 35 参数
-solve_spring_bone_vrm_cpp 只保留给 legacy 节点和 native 对照测试，不再作为本路径 fallback。
+SpringBone 只接受 context symbols；35 参数数组 ABI、Python solver 和直接写回路径均已删除。
 """
 
 from __future__ import annotations
@@ -82,7 +81,7 @@ def is_available() -> bool:
 
 
 def is_context_api_available() -> bool:
-    """新 dual-call API 是否已编译进当前 native 模块。"""
+    """SpringBone context API 是否已编译进当前 native 模块。"""
     return is_available()
 
 
@@ -217,7 +216,7 @@ class SpringVRMNativeContext:
         推进解算，把结果发布到 world.result_streams，返回写回骨骼数。
 
         armature 由调用方传入（来自已经过 _get_valid_armature 验证的引用）。
-        SpringBone world-aware 路径只走 dual-call native context，不再回退旧 35 参数 ABI。
+        SpringBone world-aware 路径只走 native context，不存在数组 ABI fallback。
         """
         if self._static is None or self._dynamic is None or self._result is None:
             return 0
@@ -276,7 +275,7 @@ class SpringVRMNativeContext:
         writeback_plan: dict,
         restart: bool = False,
     ) -> int:
-        """新 dual-call 路径：update_dynamic → (reset_state) → step → read_results → publish。
+        """context 路径：update_dynamic → (reset_state) → step → read_results → publish。
         static 数组已在 rebuild 时上传到 C++ handle，这里只需每帧 dynamic 数据。
         restart=True 时在 update_dynamic 之后、step 之前调用 reset_state，
         使 C++ 侧的 current/prev tails 从当前 pose tail 重新开始。

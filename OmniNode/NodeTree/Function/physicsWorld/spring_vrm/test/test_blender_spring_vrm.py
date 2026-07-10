@@ -41,25 +41,6 @@ FAIL = "[FAIL]"
 _results: list[bool] = []
 
 
-def _register_physics_props() -> None:
-    from PhysicsTools.physicsProperty import PG_Hotools_BoneCollision, PG_Hotools_ObjectCollision
-
-    for cls in (PG_Hotools_BoneCollision, PG_Hotools_ObjectCollision):
-        try:
-            bpy.utils.register_class(cls)
-        except Exception:
-            pass
-    if not hasattr(bpy.types.Bone, "hotools_collision"):
-        bpy.types.Bone.hotools_collision = bpy.props.PointerProperty(type=PG_Hotools_BoneCollision)
-    if not hasattr(bpy.types.Object, "hotools_object_collision"):
-        bpy.types.Object.hotools_object_collision = bpy.props.PointerProperty(type=PG_Hotools_ObjectCollision)
-
-
-_register_physics_props()
-
-from PhysicsTools.physicsProperty import PG_Hotools_BoneCollision
-
-
 def check(name, fn) -> None:
     try:
         fn()
@@ -179,6 +160,26 @@ _load_pw("spring_vrm.specs", "spring_vrm/specs.py")
 _load_pw("spring_vrm.implicit_objects", "spring_vrm/implicit_objects.py")
 _load_pw("spring_vrm.declaration", "spring_vrm/declaration.py")
 _load_pw("spring_vrm.capabilities", "spring_vrm/capabilities.py")
+_load_pw("spring_vrm.properties", "spring_vrm/properties.py")
+
+
+def _register_physics_props() -> None:
+    from PhysicsTools.physicsProperty import PG_Hotools_ObjectCollision
+
+    bone_cls = sys.modules[f"{_PKG_PREFIX}.spring_vrm.properties"].PG_Hotools_BoneCollision
+    for cls in (bone_cls, PG_Hotools_ObjectCollision):
+        try:
+            bpy.utils.register_class(cls)
+        except Exception:
+            pass
+    if not hasattr(bpy.types.Bone, "hotools_collision"):
+        bpy.types.Bone.hotools_collision = bpy.props.PointerProperty(type=bone_cls)
+    if not hasattr(bpy.types.Object, "hotools_object_collision"):
+        bpy.types.Object.hotools_object_collision = bpy.props.PointerProperty(type=PG_Hotools_ObjectCollision)
+
+
+_register_physics_props()
+PG_Hotools_BoneCollision = sys.modules[f"{_PKG_PREFIX}.spring_vrm.properties"].PG_Hotools_BoneCollision
 _load_pw("spring_vrm.bone_collision", "spring_vrm/bone_collision.py")
 _load_pw("spring_vrm.native", "spring_vrm/native.py")
 _load_pw("spring_vrm.debug", "spring_vrm/debug.py")
@@ -206,7 +207,7 @@ physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
 iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_results
 get_spring_vrm_stats_result = _pw("spring_vrm.results").get_spring_vrm_stats_result
-audit_bone_collision_legacy_property_group = _pw("spring_vrm.capabilities").audit_bone_collision_legacy_property_group
+audit_bone_collision_property_group = _pw("spring_vrm.capabilities").audit_bone_collision_property_group
 resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_collision_fields
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
 make_bone_collision_override_properties = _pw("spring_vrm.implicit_objects").make_bone_collision_override_properties
@@ -1618,12 +1619,11 @@ def test_spring_vrm_box_collider_snapshot():
         _delete_object(armature_hit)
 
 
-def test_spring_vrm_bone_collision_resolver_matches_legacy():
-    """resolver 逐字段对照旧 Bone.hotools_collision 直读。
+def test_spring_vrm_bone_collision_resolver_matches_explicit_rna():
+    """resolver 逐字段对照 solver 显式 Bone.hotools_collision RNA。
 
     这一步是外部属性迁移的验收护栏（REHEARSAL 2026-07-09 要求）：
-    resolver 必须与旧直读产出完全一致，才能后续把 native 消费端从直读切到
-    resolver、并最终把属性注册挪到物理世界侧。
+    resolver 必须与显式 RNA 产出完全一致，确保 native、面板和隐式覆写消费同一 schema。
     """
     armature = _make_chain_armature("PW_SpringVRM_Resolver")
     try:
@@ -1657,7 +1657,7 @@ def test_spring_vrm_bone_collision_resolver_matches_legacy():
         assert prof.collided_by_groups == int(props.collided_by_groups), (
             f"collided_by_groups 不一致: {prof.collided_by_groups} vs {props.collided_by_groups}"
         )
-        assert prof.source == "legacy_property", f"有旧属性时 source 应为 legacy_property，实际 {prof.source}"
+        assert prof.source == "explicit_property", f"有显式属性时 source 应为 explicit_property，实际 {prof.source}"
 
         # 2) 未改动的骨骼：resolver 仍应等于直读的 PropertyGroup 默认值
         base_props = armature.data.bones["bone_2"].hotools_collision
@@ -1679,12 +1679,13 @@ def test_spring_vrm_bone_collision_resolver_matches_legacy():
         _delete_object(armature)
 
 
-def test_spring_vrm_bone_collision_capability_audits_legacy_rna():
-    issues = audit_bone_collision_legacy_property_group(PG_Hotools_BoneCollision)
+def test_spring_vrm_bone_collision_capability_owns_explicit_rna():
+    assert PG_Hotools_BoneCollision.__module__.endswith("physicsWorld.spring_vrm.properties")
+    issues = audit_bone_collision_property_group(PG_Hotools_BoneCollision)
     assert not issues, "Bone.hotools_collision drifted from BONE_COLLISION_CAPABILITY: " + "; ".join(issues)
 
 
-def test_spring_vrm_bone_collision_override_preempts_legacy():
+def test_spring_vrm_bone_collision_override_preempts_explicit():
     armature = _make_chain_armature("PW_SpringVRM_Override")
     try:
         props = armature.data.bones["bone_1"].hotools_collision
@@ -1729,7 +1730,7 @@ def test_spring_vrm_bone_collision_override_preempts_legacy():
         assert dirty_count == 1
 
         fallback = resolve_bone_collision_fields(armature, "bone_1", world=world)
-        assert fallback.source == "legacy_property"
+        assert fallback.source == "explicit_property"
         assert fallback.pin is False
         assert abs(fallback.radius - float(props.radius)) < 1e-6
         assert fallback.collided_by_groups == int(props.collided_by_groups)
@@ -1759,8 +1760,8 @@ def test_spring_vrm_bone_collider_override_reaches_native_arrays():
     collider_armature = _make_chain_armature("PW_SpringVRM_BoneColliderSource")
     try:
         collider_armature.location = (0.4, -0.2, 0.1)
-        legacy = collider_armature.data.bones["bone_1"].hotools_collision
-        legacy.collision_type = "NONE"
+        explicit = collider_armature.data.bones["bone_1"].hotools_collision
+        explicit.collision_type = "NONE"
 
         scene = bpy.context.scene
         scene.frame_set(73)
@@ -1781,7 +1782,7 @@ def test_spring_vrm_bone_collider_override_reaches_native_arrays():
             substeps=1,
             debug_output=False,
         )
-        assert collider_count == 0, "legacy NONE should not create a world snapshot collider"
+        assert collider_count == 0, "explicit NONE should not create a world snapshot collider"
 
         properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
         world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
@@ -1838,7 +1839,7 @@ def test_spring_vrm_bone_collider_override_reaches_native_arrays():
         )
         register_bone_collision_override_objects(world, [disabled_shape])
         arrays3 = chain_context._collision_arrays(world, armature, chain)
-        assert len(arrays3[0]) == 0, "override NONE must remove the legacy-disabled bone collider"
+        assert len(arrays3[0]) == 0, "override NONE must remove the explicit-disabled bone collider"
     finally:
         _delete_object(collider_armature)
         _delete_object(armature)
@@ -2184,9 +2185,9 @@ _TESTS = (
     ("world capsule collider 接入 SpringBone native", test_spring_vrm_capsule_collider_snapshot),
     ("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot),
     ("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot),
-    ("骨骼碰撞 resolver 对照旧 hotools_collision 直读", test_spring_vrm_bone_collision_resolver_matches_legacy),
-    ("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna),
-    ("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy),
+    ("骨骼碰撞 resolver 对照 solver 显式 RNA", test_spring_vrm_bone_collision_resolver_matches_explicit_rna),
+    ("SpringBone capability owns explicit RNA", test_spring_vrm_bone_collision_capability_owns_explicit_rna),
+    ("SpringBone bone_collision.override preempts explicit profile", test_spring_vrm_bone_collision_override_preempts_explicit),
     ("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index),
     ("SpringBone bone collider override reaches native arrays", test_spring_vrm_bone_collider_override_reaches_native_arrays),
     ("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile),

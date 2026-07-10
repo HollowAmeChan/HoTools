@@ -50,9 +50,11 @@ from .registry import (
     iter_scope_restart_handlers,
     iter_solver_declarations,
     register_solver_module,
+    register_solver_blender_properties,
     resolve_solver_declaration,
     run_scope_restart_handlers,
     unregister_solver_module,
+    unregister_solver_blender_properties,
 )
 from .declarations import (
     SOLVER_DECLARATION_REQUIRED_KEYS,
@@ -152,9 +154,11 @@ __all__ = [
     "iter_scope_restart_handlers",
     "iter_solver_declarations",
     "register_solver_module",
+    "register_solver_blender_properties",
     "resolve_solver_declaration",
     "run_scope_restart_handlers",
     "unregister_solver_module",
+    "unregister_solver_blender_properties",
     # 声明
     "BONE_COLLISION_CAPABILITY",
     "BONE_COLLISION_CAPABILITY_ID",

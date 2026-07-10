@@ -2,15 +2,38 @@
 
 日期：2026-07-10
 
-基线：`main@f35eb61` 加最终双 ABI 重建验证
+基线：`main@b296691` 加 SpringBone 旧路径删除与 solver 属性原子化
 
 环境：Blender 4.5.0 / CPython 3.11 / Windows / Release native backend
 
 ## 验收结论
 
-当前结论：**通过 SpringBone solver 蓝本最终验收。**
+当前结论：**通过 SpringBone solver 蓝本最终验收与旧路径删除门槛。**
 
 发布验证覆盖 Blender 4.5 / CPython 3.11、独立 CPython 3.13 native ABI、1/8/32 armature 扩展曲线和 off/one-shot/continuous debug capture 性能矩阵。
+
+最终收口后的唯一运行链路是：
+
+```text
+VRM骨链属性 / 骨骼碰撞覆写属性
+  -> PhysicsWorldCache.implicit_objects
+  -> spring_vrm solver slot
+  -> hotools_native spring_vrm context API
+  -> bone_transform batch result
+  -> physicsWorld.writeback
+```
+
+本轮完成的结构性收口：
+
+| 项目 | 最终状态 |
+|---|---|
+| Python 旧节点 | `springBoneVRMChainSetting`、`springBoneVRM`、`springBoneVRM_CPP`、`springBoneBase` 已删除 |
+| Python 旧 runtime | `_SpringBoneVRM`、`_SpringBoneVRMCppBackend`、旧 cache/scene scan/inline writeback 已删除 |
+| Native 旧 ABI | 35 参数 `solve_spring_bone_vrm_cpp` binding、公开 `SpringBoneVrmChainView` 与 C++ wrapper 已删除 |
+| Native 唯一入口 | `spring_vrm_create_context/update_dynamic/reset_state/step/read_results/read_debug` |
+| 显式属性所有权 | `spring_vrm/capabilities.py` 持有字段 schema，`spring_vrm/properties.py` 生成 Blender RNA |
+| 属性注册权 | `physicsWorld.registry` 统一注册/注销 solver 声明的 class 与 `Bone.hotools_collision` binding |
+| 数据兼容 | 保留 `Bone.hotools_collision` 存储名，现有 `.blend` 字段路径不变；不保留旧 solver 调用兼容层 |
 
 ## 本轮代码审查
 
@@ -18,7 +41,7 @@
 
 | 严重度 | 问题 | 修复与验证 |
 |---|---|---|
-| P0 | legacy 35 参数 ABI 会被后续数组覆盖 `bone_count`；context ABI 未校验 dtype/长度，错误 buffer 可触发 C++ 越界访问 | 两套 ABI 统一校验 float32/int32/uint8、连续性、精确长度、parent index、schema 和输出 buffer；新增拒绝错误输入测试 |
+| P0 | legacy 35 参数 ABI 会被后续数组覆盖 `bone_count`；context ABI 未校验 dtype/长度，错误 buffer 可触发 C++ 越界访问 | context ABI 已完整校验 float32/int32/uint8、连续性、精确长度、parent index、schema 和输出 buffer；legacy ABI 在最终收口中整体删除 |
 | P1 | Solver 节点 `substeps` 被 `frame_context.substeps` 永久遮蔽，UI 参数不生效 | solver 输入成为 SpringBone 权威子步数，限制为 1-16；测试直接截获真实 native 调用并验证值为 5 |
 | P1 | 非均匀 Object scale 使用 XYZ 平均缩放估算骨长 | 改为 `matrix_world.to_3x3() @ rest_vec` 的真实轴向世界长度；`(2,1,3)` 缩放下 Z 轴骨长回归通过 |
 | P1 | 没有 Debug Node 时仍每帧分配数组并执行 `spring_vrm_read_debug` | 改成请求状态机：Debug Node 在 slot 留一次性请求，后续推进帧由 solver 消费并清除；节点移除后最多额外采样一帧 |
@@ -28,7 +51,7 @@
 | P2 | 连续帧重复解析 PoseBone records、维护未传入 context ABI 的 Python current/prev tail 状态 | topology 由 slot id 保证时复用 records；current/prev tail 只在 reset/debug readback 更新，不再进入正常播放热路径 |
 | P0 | SpringBone slot 没有注册 `_dispose`，拓扑 prune/world dispose 只清 Python dict，不释放旧 C++ context handle | slot 安装统一 dispose owner，逐个释放 native context；拓扑热改与 10,000 帧资源身份回归通过 |
 
-### 仍未解决
+### 此前阻塞项（均已解除）
 
 #### 已解除：新架构性能回退
 
@@ -72,11 +95,13 @@
 - `offset` -> 外部骨骼碰撞体 `center/segment_a/segment_b`
 - `primary_collision_group` -> 外部碰撞体 `collider_groups`
 
-实现不扩展 C++ ABI：SpringBone 打包 collider arrays 时只对命中 `bone_collision.override` 的骨骼重算 resolved profile，未覆写的 legacy 条目直接复用 Begin 快照；override 可以从 legacy `NONE` 新增碰撞体，也可以改成 `NONE` 删除条目。cache key 包含 override stable id/version/signature，因此同帧改写也会失效。
+实现不扩展 C++ ABI：SpringBone 打包 collider arrays 时只对命中 `bone_collision.override` 的骨骼重算 resolved profile，未覆写的显式 RNA 条目直接复用 Begin 快照；override 可以从显式 `NONE` 新增碰撞体，也可以改成 `NONE` 删除条目。cache key 包含 override stable id/version/signature，因此同帧改写也会失效。
 
 Blender 回归直接读取 solver 即将传给 `spring_vrm_update_dynamic` 的 collider arrays，验证 CAPSULE type、radius、length、offset、primary group、同帧版本失效与 `NONE` 禁用。
 
 ## 性能对比
+
+以下旧/新对比是删除前的最终留档。当前 benchmark 已收敛为 `spring_vrm_context_benchmark_v2`，只测发布包中的 context 路径，不再动态加载已删除的旧 solver。
 
 场景：单骨架、单链、无 collider、1 substep、debug capture 关闭；每轮 warmup 40 帧，测量 300 帧，共 3 个独立 Blender 进程。
 
@@ -117,11 +142,11 @@ one-shot 捕获所在帧总耗时为 `3.021-3.212 ms`。continuous 模式 Debug 
 
 建议门槛：
 
-- 正确性：旧/新 native 参数矩阵逐帧误差 `<= 2e-5`。
+- 正确性：删除前旧/context native 参数矩阵逐帧误差 `<= 2e-5`；删除后 context-only 回归必须全通过且旧符号必须不存在。
 - 性能：128 骨、无碰撞时新路径不高于旧路径 `1.15x`；带 32 collider 时不高于 `1.25x`。
 - 稳定性：连续 10,000 帧 native context/slot/buffer 数量不增长。
 
-复现：
+复现当前 context-only 性能：
 
 ```powershell
 $env:SPRING_BENCH_SIZES='8,32,128'
@@ -150,8 +175,8 @@ $env:SPRING_MATRIX_FRAMES='300'
 
 | ID | 域 | 参数/场景 | 真实运行判据 | 状态 |
 |---|---|---|---|---|
-| P-01 | Chain | stiffness_force | wrapper 截获 C++ 实参；旧/新 ABI 多帧对拍 | PASS |
-| P-02 | Chain | drag_force | wrapper 截获 C++ 实参；旧/新 ABI 多帧对拍 | PASS |
+| P-01 | Chain | stiffness_force | wrapper 截获 context step 实参；删除前完成旧/context 多帧对拍 | PASS |
+| P-02 | Chain | drag_force | wrapper 截获 context step 实参；删除前完成旧/context 多帧对拍 | PASS |
 | P-03 | Chain | gravity_dir | C++ 实参方向一致；重力产生对应偏转 | PASS |
 | P-04 | Chain | gravity_power | C++ 实参一致；0 与非 0 结果可区分 | PASS |
 | P-05 | Solver | substeps 1-16 | 节点值真实进入 `spring_vrm_step` | PASS |
@@ -170,7 +195,7 @@ $env:SPRING_MATRIX_FRAMES='300'
 | T-08 | Transform | 非均匀 Object scale | 骨长按骨轴世界变换计算 | PASS |
 | T-09 | Transform | 负缩放/镜像 | 长度、旋转和 box handedness 稳定 | PASS |
 | T-10 | Transform | 零长度骨 | native context 不崩溃、不发布 NaN | PASS |
-| C-01 | Bone profile | legacy pin | pinned 骨不发生 basis 偏转 | PASS |
+| C-01 | Bone profile | explicit RNA pin | pinned 骨不发生 basis 偏转 | PASS |
 | C-02 | Bone profile | override pin | reset 后进入 C++ static `pinned` | PASS |
 | C-03 | Bone profile | collision_type | NONE 禁用 hit/external collider，SPHERE/CAPSULE 启用 | PASS |
 | C-04 | Bone profile | radius | override 值进入 C++ `hit_radii` | PASS |
@@ -178,9 +203,9 @@ $env:SPRING_MATRIX_FRAMES='300'
 | C-06 | Bone profile | length | 改变真实 bone capsule 长度 | PASS |
 | C-07 | Bone profile | offset | 改变真实 bone collider 中心 | PASS |
 | C-08 | Bone profile | primary_collision_group | 改变真实 bone collider group | PASS |
-| C-09 | Bone profile | override disabled | 回退 legacy profile | PASS |
+| C-09 | Bone profile | override disabled | 回退 solver 显式 RNA profile | PASS |
 | C-10 | Registry | 删除/改名注册链并重编译 | 旧 stable id 不再被 solver 消费 | PASS |
-| C-11 | Registry | 删除 override 注册节点并重编译 | 新图首次运行回退 legacy | PASS |
+| C-11 | Registry | 删除 override 注册节点并重编译 | 新图首次运行回退 solver 显式 RNA | PASS |
 | W-01 | World collider | sphere | snapshot -> C++，尾端推出 | PASS |
 | W-02 | World collider | capsule | snapshot -> C++，尾端推出 | PASS |
 | W-03 | World collider | plane | snapshot -> C++，尾端推出 | PASS |
@@ -201,9 +226,11 @@ $env:SPRING_MATRIX_FRAMES='300'
 | R-01 | Result | bone_transform schema | channel/source/slot/frame/generation 完整 | PASS |
 | R-02 | Writeback | PoseBone.matrix_basis | solver 不直写，统一节点写回 | PASS |
 | R-03 | Writeback | 批量 writeback_plan | 预分配并避免逐骨 dict/matrix 重解析 | PASS |
-| A-01 | ABI | legacy/context 数值一致 | 4 组参数、碰撞、多帧误差 <= 2e-5 | PASS |
-| A-02 | ABI | 错误 dtype/shape/count | Python exception，不进入 C++ 越界 | PASS |
-| A-03 | ABI | py311 / py313 | 双 ABI 重建并运行同一完整 native 矩阵 | PASS |
+| A-01 | ABI | 删除前 legacy/context 数值一致 | 4 组参数、碰撞、多帧误差 <= 2e-5，作为删除门槛留档 | PASS |
+| A-02 | ABI | context 错误 dtype/shape/count | Python exception，不进入 C++ 越界 | PASS |
+| A-03 | ABI | py311 / py313 | 双 Python ABI 重建并运行同一 context-only native 矩阵 | PASS |
+| A-04 | ABI | 旧符号删除 | 两个 `.pyd` 均无 `solve_spring_bone_vrm_cpp` 属性 | PASS |
+| A-05 | RNA | solver 属性生命周期 | physicsWorld registry 注册/注销后 `Bone.hotools_collision` 对应出现/消失 | PASS |
 | F-01 | Perf | 8/32/128 骨无碰撞 | 三轮 300 帧统计 | PASS |
 | F-02 | Perf | 32/128 骨 + 32 collider | 新/旧同场景 P50/P95 | PASS |
 | F-03 | Perf | 多骨架 | 1/8/32 armature 扩展曲线 | PASS |
@@ -211,10 +238,11 @@ $env:SPRING_MATRIX_FRAMES='300'
 
 ## 已执行回归
 
-- Blender SpringBone 常规集成：35/35 通过。
 - Blender SpringBone 10,000 帧 soak 矩阵：36/36 通过。
 - OmniNode 编译/runtime cache 生命周期：3/3 通过；覆盖成功编译仅清当前根树、编译缓存命中保留运行态、编译失败保留运行态和旧编译结果。
-- SpringBone legacy/context 参数矩阵：4 组、每组 6 帧，误差阈值 `2e-5`。
+- SpringBone 删除前 legacy/context 参数矩阵：4 组、每组 6 帧，误差阈值 `2e-5`；该结果作为删除门槛留档，不再要求发布包携带 legacy ABI。
 - SpringBone `hotools_native` 的 Release py311 / py313 扩展统一重建成功。
-- SpringBone native 完整矩阵：py311 `17/17`，py313 `17/17`；包含错误 ABI 拒绝和零长度 context。
+- SpringBone native context-only 矩阵：py311 `10/10`，py313 `10/10`；包含旧符号缺失、错误 buffer 拒绝和零长度 context。
+- Blender SpringBone 常规集成：本轮重新执行 `35/35`；其中 capability-owned RNA、显式/隐式 resolver 和 native collider 数组均通过。
+- physicsWorld solver RNA 注册/注销 smoke：`1/1`，验证 `Bone.hotools_collision` 生命周期由 registry 接管。
 - 多骨架与 Debug capture 性能矩阵：3 个独立 Blender 进程，每个 case 40 帧 warmup + 300 帧测量；资源数量断言全部通过。

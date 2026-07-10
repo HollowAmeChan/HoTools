@@ -17,7 +17,6 @@
 #include <string>
 #include <vector>
 
-PyObject* solve_spring_bone_vrm_cpp(PyObject*, PyObject*);
 PyObject* spring_vrm_create_context(PyObject*, PyObject*);
 PyObject* spring_vrm_reset_state(PyObject*, PyObject*);
 PyObject* spring_vrm_update_dynamic(PyObject*, PyObject*);
@@ -695,9 +694,6 @@ NB_MODULE(hotools_native, m) {
         "Sample a native color curve or payload at explicit positions.");
 
     // ---- VRM spring bone ----
-    m.def("solve_spring_bone_vrm_cpp",
-        [](nb::args a) { call_legacy(solve_spring_bone_vrm_cpp, a); },
-        "Solve one VRM spring bone chain in-place.");
     m.def("spring_vrm_create_context",
         [](nb::args a) { return steal_or_throw(spring_vrm_create_context(nullptr, a.ptr())); },
         "Create a VRM SpringBone context (dual-call API).");

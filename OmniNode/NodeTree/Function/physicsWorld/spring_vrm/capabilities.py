@@ -1,9 +1,8 @@
 """SpringBone 领域能力声明。
 
 骨骼碰撞是 solver/domain 能力，不是某一种外部属性存储格式。
-当前显式面板存储仍然落在 Bone.hotools_collision 上；新的隐式覆写对象必须引用
-同一份能力表，不能另抄一套独立字段结构。等测试证明行为完全对齐后，旧的显式
-属性组应迁到这张表后面，只保留为生成层或适配层。
+显式 Blender RNA 与隐式覆写对象都由这张能力表生成/校验。Bone.hotools_collision
+只是稳定的持久化存储名，不再表示 PhysicsTools 或旧 solver 对字段语义有所有权。
 """
 
 from __future__ import annotations
@@ -18,12 +17,12 @@ BONE_COLLISION_CAPABILITY = {
     "capability_id": BONE_COLLISION_CAPABILITY_ID,
     "display_name": "骨骼碰撞",
     "semantic_owner": "physicsWorld solver 能力声明",
-    "legacy_explicit_storage": "Bone.hotools_collision",
+    "explicit_storage": "Bone.hotools_collision",
     "identity_input": "_OmniBone 骨骼 socket 值；内部解析 armature 与 bone name",
     "supported_interfaces": {
-        "explicit_legacy_property": {
+        "explicit_property": {
             "storage": "Bone.hotools_collision",
-            "status": "旧显式属性回退",
+            "status": "由 SpringBone solver 声明、physicsWorld 统一注册",
         },
         "implicit_override_object": {
             "tag": BONE_COLLISION_OVERRIDE_OBJECT_TAG,
@@ -41,7 +40,11 @@ BONE_COLLISION_CAPABILITY = {
             "name": "pin",
             "type": "bool",
             "default": False,
-            "legacy_property": "Bone.hotools_collision.pin",
+            "explicit_property": "Bone.hotools_collision.pin",
+            "rna": {
+                "name": "Pin",
+                "description": "固定这根骨骼，让物理解算保持当前姿态；链 root 由骨链输入决定并始终视为 Pin",
+            },
             "update_policy": "restart_only",
             "consumer_note": "SpringBone 在状态重建时读取非 root 骨骼 pin。",
         },
@@ -50,7 +53,16 @@ BONE_COLLISION_CAPABILITY = {
             "type": "enum",
             "values": ["NONE", "SPHERE", "CAPSULE"],
             "default": "NONE",
-            "legacy_property": "Bone.hotools_collision.collision_type",
+            "explicit_property": "Bone.hotools_collision.collision_type",
+            "rna": {
+                "name": "碰撞体",
+                "description": "这根骨骼携带的物理碰撞体类型",
+                "items": [
+                    ("NONE", "无", "不作为物理碰撞体"),
+                    ("SPHERE", "球体", "以骨骼局部偏移为中心的球形碰撞体"),
+                    ("CAPSULE", "胶囊", "沿骨骼局部 Y 轴延伸的胶囊碰撞体"),
+                ],
+            },
             "update_policy": "live_native_hit_and_external_collider_arrays",
             "consumer_note": "控制自身 hit radius 是否启用，也控制该骨骼作为外部 sphere/capsule 是否进入 native collider arrays。",
         },
@@ -58,15 +70,27 @@ BONE_COLLISION_CAPABILITY = {
             "name": "radius",
             "type": "float",
             "default": 0.05,
-            "legacy_property": "Bone.hotools_collision.radius",
-            "update_policy": "dirty_only_or_restart_only_legacy_cpp",
+            "explicit_property": "Bone.hotools_collision.radius",
+            "rna": {
+                "name": "半径",
+                "description": "碰撞体半径，使用 Blender 单位",
+                "min": 0.0,
+                "soft_max": 1.0,
+            },
+            "update_policy": "dirty_only_or_restart_only",
             "consumer_note": "SpringBone 将该字段映射到 native hit_radii。",
         },
         {
             "name": "length",
             "type": "float",
             "default": 0.2,
-            "legacy_property": "Bone.hotools_collision.length",
+            "explicit_property": "Bone.hotools_collision.length",
+            "rna": {
+                "name": "长度",
+                "description": "胶囊中段长度，球体类型会忽略这个参数",
+                "min": 0.0,
+                "soft_max": 2.0,
+            },
             "update_policy": "live_external_collider_arrays",
             "consumer_note": "CAPSULE 外部骨骼碰撞体的局部轴向长度，进入 native segment_a/segment_b。",
         },
@@ -74,7 +98,13 @@ BONE_COLLISION_CAPABILITY = {
             "name": "offset",
             "type": "float3",
             "default": (0.0, 0.0, 0.0),
-            "legacy_property": "Bone.hotools_collision.offset",
+            "explicit_property": "Bone.hotools_collision.offset",
+            "rna": {
+                "name": "中心偏移",
+                "description": "碰撞体中心相对骨骼局部空间的偏移",
+                "size": 3,
+                "subtype": "XYZ",
+            },
             "update_policy": "live_external_collider_arrays",
             "consumer_note": "外部骨骼碰撞体的局部偏移，进入 native center/segment_a/segment_b。",
         },
@@ -82,7 +112,13 @@ BONE_COLLISION_CAPABILITY = {
             "name": "primary_collision_group",
             "type": "int",
             "default": 1,
-            "legacy_property": "Bone.hotools_collision.primary_collision_group",
+            "explicit_property": "Bone.hotools_collision.primary_collision_group",
+            "rna": {
+                "name": "主碰撞组",
+                "description": "这根碰撞体所属的主碰撞组，叠加显示颜色由它决定",
+                "min": 1,
+                "max": 16,
+            },
             "update_policy": "live_external_collider_arrays",
             "consumer_note": "外部骨骼碰撞体所属组，进入 native collider_groups。",
         },
@@ -90,8 +126,14 @@ BONE_COLLISION_CAPABILITY = {
             "name": "collided_by_groups",
             "type": "bitmask",
             "default": 0,
-            "legacy_property": "Bone.hotools_collision.collided_by_groups",
-            "update_policy": "dirty_only_or_restart_only_legacy_cpp",
+            "explicit_property": "Bone.hotools_collision.collided_by_groups",
+            "rna": {
+                "name": "被碰撞组",
+                "description": "允许哪些主碰撞组碰撞到这根碰撞体的位掩码",
+                "min": 0,
+                "max": 65535,
+            },
+            "update_policy": "dirty_only_or_restart_only",
             "consumer_note": "SpringBone 将该字段映射到 native collided_by_groups。",
         },
     ],
@@ -151,12 +193,12 @@ SPRING_VRM_UPDATE_FREQUENCY_TABLE = [
     {
         "data": "bone_collision.radius -> hit_radii",
         "source": BONE_COLLISION_CAPABILITY_ID,
-        "policy": "dirty_only_recommended_or_restart_only_legacy_cpp",
+        "policy": "dirty_only_or_restart_only",
     },
     {
         "data": "bone_collision.collided_by_groups",
         "source": BONE_COLLISION_CAPABILITY_ID,
-        "policy": "dirty_only_recommended_or_restart_only_legacy_cpp",
+        "policy": "dirty_only_or_restart_only",
     },
     {
         "data": "bone_collision.collision_type/length/offset/primary_collision_group",
@@ -169,7 +211,7 @@ SPRING_VRM_UPDATE_FREQUENCY_TABLE = [
         "policy": "every_frame_by_world_begin",
     },
     {
-        "data": "碰撞体数组（spring_vrm_cpp ABI）",
+        "data": "碰撞体数组（SpringBone context API）",
         "source": "solver slot 懒构建碰撞体数组缓存",
         "policy": "lazy_on_access",
     },
@@ -269,8 +311,8 @@ def _defaults_match(expected, actual, typ: str) -> bool:
     return actual == expected
 
 
-def audit_bone_collision_legacy_property_group(property_group) -> list[str]:
-    """Return capability drift issues for legacy Bone.hotools_collision RNA."""
+def audit_bone_collision_property_group(property_group) -> list[str]:
+    """Return drift issues between generated Bone.hotools_collision RNA and capability."""
     properties = _rna_properties(property_group)
     issues: list[str] = []
     for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
@@ -279,7 +321,7 @@ def audit_bone_collision_legacy_property_group(property_group) -> list[str]:
             continue
         prop = _rna_property_get(properties, name)
         if prop is None:
-            issues.append(f"missing legacy property: {name}")
+            issues.append(f"missing explicit property: {name}")
             continue
 
         typ = str(field.get("type") or "")
@@ -288,7 +330,7 @@ def audit_bone_collision_legacy_property_group(property_group) -> list[str]:
         if not _defaults_match(expected_default, actual_default, typ):
             issues.append(
                 f"default mismatch for {name}: capability={expected_default!r} "
-                f"legacy={actual_default!r}"
+                f"rna={actual_default!r}"
             )
 
         if typ == "enum":
@@ -297,6 +339,6 @@ def audit_bone_collision_legacy_property_group(property_group) -> list[str]:
             if actual_values != expected_values:
                 issues.append(
                     f"enum mismatch for {name}: capability={expected_values!r} "
-                    f"legacy={actual_values!r}"
+                    f"rna={actual_values!r}"
                 )
     return issues

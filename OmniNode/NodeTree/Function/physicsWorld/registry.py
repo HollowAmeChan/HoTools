@@ -16,6 +16,8 @@ from typing import Callable
 
 _BUILTIN_SOLVER_DOMAINS = ("spring_vrm", "rigid")
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
+_REGISTERED_PROPERTY_CLASSES: list[type] = []
+_REGISTERED_PROPERTY_BINDINGS: list[tuple[object, str]] = []
 
 
 def builtin_solver_domains() -> tuple[str, ...]:
@@ -58,6 +60,7 @@ def _default_descriptor(domain: str) -> dict:
         "declaration": None,
         "nodes": (),
         "capabilities": None,
+        "blender_properties": None,
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
@@ -224,6 +227,74 @@ def resolve_solver_capabilities(domain: str) -> dict:
     ref = descriptor.get("capabilities")
     value = _resolve_ref(domain, ref)
     return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def resolve_solver_blender_properties(domain: str) -> dict:
+    """解析 solver 自己声明的 Blender class 与 RNA binding。"""
+    descriptor = _solver_descriptor(domain)
+    ref = descriptor.get("blender_properties")
+    value = _resolve_ref(domain, ref)
+    return value if isinstance(value, dict) else {}
+
+
+def register_solver_blender_properties() -> int:
+    """由物理世界统一注册所有 solver 拥有的 Blender 参数。"""
+    if _REGISTERED_PROPERTY_CLASSES or _REGISTERED_PROPERTY_BINDINGS:
+        return len(_REGISTERED_PROPERTY_BINDINGS)
+
+    import bpy
+
+    registered_classes: list[type] = []
+    registered_bindings: list[tuple[object, str]] = []
+    try:
+        declarations = [
+            resolve_solver_blender_properties(domain)
+            for domain in all_solver_module_descriptors()
+        ]
+        for declaration in declarations:
+            for cls in _as_tuple(declaration.get("classes")):
+                bpy.utils.register_class(cls)
+                registered_classes.append(cls)
+
+        for declaration in declarations:
+            for binding in _as_tuple(declaration.get("bindings")):
+                if not isinstance(binding, dict):
+                    continue
+                owner = binding.get("owner")
+                name = str(binding.get("name") or "").strip()
+                property_kind = str(binding.get("property") or "").strip()
+                property_type = binding.get("type")
+                if owner is None or not name or property_kind != "pointer" or property_type is None:
+                    raise ValueError(f"invalid solver Blender property binding: {binding!r}")
+                if hasattr(owner, name):
+                    raise RuntimeError(f"solver Blender property already registered: {owner.__name__}.{name}")
+                setattr(owner, name, bpy.props.PointerProperty(type=property_type))
+                registered_bindings.append((owner, name))
+    except Exception:
+        for owner, name in reversed(registered_bindings):
+            if hasattr(owner, name):
+                delattr(owner, name)
+        for cls in reversed(registered_classes):
+            bpy.utils.unregister_class(cls)
+        raise
+
+    _REGISTERED_PROPERTY_CLASSES.extend(registered_classes)
+    _REGISTERED_PROPERTY_BINDINGS.extend(registered_bindings)
+    return len(registered_bindings)
+
+
+def unregister_solver_blender_properties() -> None:
+    """按注册逆序释放 solver Blender 参数。"""
+    import bpy
+
+    for owner, name in reversed(_REGISTERED_PROPERTY_BINDINGS):
+        if hasattr(owner, name):
+            delattr(owner, name)
+    _REGISTERED_PROPERTY_BINDINGS.clear()
+
+    for cls in reversed(_REGISTERED_PROPERTY_CLASSES):
+        bpy.utils.unregister_class(cls)
+    _REGISTERED_PROPERTY_CLASSES.clear()
 
 
 def resolve_solver_debug_draw_modes(domain: str) -> dict:

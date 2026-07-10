@@ -14,6 +14,47 @@ constexpr int kColliderCapsule = 1;
 constexpr int kColliderPlane = 2;
 constexpr int kColliderBox = 3;
 
+// context 内部单步视图；不属于公开 ABI，也没有独立 Python binding。
+struct SpringVrmStepView {
+    float* current_tails = nullptr;
+    float* prev_tails = nullptr;
+    float* target_matrices = nullptr;
+    float* target_quaternions = nullptr;
+    const float* current_heads = nullptr;
+    const float* current_pose_matrices = nullptr;
+    const float* current_pose_quaternions = nullptr;
+    const float* parent_pose_quaternions = nullptr;
+    const float* current_pose_tails = nullptr;
+    const float* lengths = nullptr;
+    const float* init_axis_local = nullptr;
+    const float* init_axis_parent = nullptr;
+    const float* init_rotations = nullptr;
+    const float* init_scales = nullptr;
+    const std::int32_t* parent_indices = nullptr;
+    const std::uint8_t* pinned = nullptr;
+    const std::uint8_t* use_connect = nullptr;
+    const float* root_quaternion = nullptr;
+    const float* root_tail_world = nullptr;
+    const float* armature_world = nullptr;
+    const float* armature_world_inv = nullptr;
+    const float* gravity_dir = nullptr;
+    const float* hit_radii = nullptr;
+    const std::int32_t* collided_by_groups = nullptr;
+    const std::int32_t* collider_types = nullptr;
+    const std::int32_t* collider_groups = nullptr;
+    const float* collider_centers = nullptr;
+    const float* collider_segment_a = nullptr;
+    const float* collider_segment_b = nullptr;
+    const float* collider_radii = nullptr;
+    std::int64_t bone_count = 0;
+    std::int64_t collider_count = 0;
+    int substeps = 1;
+    float dt = 0.0f;
+    float stiffness_force = 0.0f;
+    float drag_force = 0.0f;
+    float gravity_power = 0.0f;
+};
+
 float clamp_float(float value, float lo, float hi) {
     return std::max(lo, std::min(hi, value));
 }
@@ -430,7 +471,7 @@ void closest_point_on_segment(
 void project_collision(
     float hit_radius,
     std::int32_t collided_by_groups,
-    const SpringBoneVrmChainView& view,
+    const SpringVrmStepView& view,
     const float head[3],
     const float fallback_axis[3],
     float length,
@@ -560,7 +601,7 @@ void project_collision(
     }
 }
 
-void solve_spring_bone_vrm_chain(SpringBoneVrmChainView& view) {
+void step_spring_vrm_context(SpringVrmStepView& view) {
     if (view.bone_count <= 0 || view.current_tails == nullptr || view.prev_tails == nullptr ||
         view.target_matrices == nullptr || view.current_heads == nullptr || view.current_pose_matrices == nullptr ||
         view.current_pose_quaternions == nullptr || view.current_pose_tails == nullptr || view.lengths == nullptr || view.init_axis_local == nullptr ||
@@ -807,10 +848,6 @@ void solve_spring_bone_vrm_chain(SpringBoneVrmChainView& view) {
 
 }  // namespace
 
-void solve_spring_bone_vrm_cpp(SpringBoneVrmChainView& view) {
-    solve_spring_bone_vrm_chain(view);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // dual-call context 实现
 // ─────────────────────────────────────────────────────────────────────────────
@@ -957,8 +994,7 @@ void spring_vrm_context_step(
     ctx->drag_force      = drag_force;
     ctx->gravity_power   = gravity_power;
 
-    // 通过旧 View 接口复用已有解算核（无需重写）
-    SpringBoneVrmChainView view;
+    SpringVrmStepView view;
     view.current_tails            = ctx->current_tails.data();
     view.prev_tails               = ctx->prev_tails.data();
     view.target_matrices          = ctx->target_matrices.data();
@@ -999,7 +1035,7 @@ void spring_vrm_context_step(
     view.drag_force      = drag_force;
     view.gravity_power   = gravity_power;
 
-    solve_spring_bone_vrm_chain(view);
+    step_spring_vrm_context(view);
 }
 
 void spring_vrm_context_read_results(

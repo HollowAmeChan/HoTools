@@ -442,7 +442,7 @@ Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：
 - 需要 PoseBone 和 mesh delta 的统一 writeback contract，因为 SpringBone/MC2 不写 Object.delta。
 - 需要第一条非 Jolt solver 的窄切片，把 result stream 和 solver slot 用起来。
 
-因此下一步应转向“SpringBone VRM world-aware rewrite vertical slice”，而不是继续把 Jolt Phase 5 扩成全功能刚体系统。SpringBone 旧 `_SpringBoneVRM` 只作为审查和数值参考；新路径应从 `physicsWorld/spring_vrm/` 的 spec / slot / result stream / writeback contract 直接重写。新迁移 solver 默认只保留 C++ / native 计算路径，Python 不再维护第二套运行时算法。
+该阶段随后已完成 SpringBone VRM world-aware vertical slice；截至 2026-07-10，旧 `_SpringBoneVRM`、旧节点和 35 参数 native ABI 均已删除，`physicsWorld/spring_vrm/` 的 spec / slot / context / result stream / writeback 是唯一运行链路。新迁移 solver 默认只保留 C++ / native 计算路径，Python 不再维护第二套运行时算法。
 
 ### 核心输出状态
 

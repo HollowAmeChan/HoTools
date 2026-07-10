@@ -6,7 +6,7 @@
 #
 #   names.py       - SpringBone 自有 id / channel / tag 常量
 #   capabilities.py - SpringBone 自有能力表和更新频率表
-#   declaration.py - 解算器契约和旧实现丢弃审查清单
+#   declaration.py - 解算器契约和已删除 surface 记录
 #   specs.py       - 从节点输入构建稳定的 SpringVRM 规格
 #   solver.py      - 把规格注册进 PhysicsWorldCache 解算器槽
 #   results.py     - 纯快照结果流辅助函数
@@ -23,6 +23,7 @@ SOLVER_MODULE = {
     "declaration": ".declaration:SPRING_VRM_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:SPRING_VRM_CAPABILITIES",
+    "blender_properties": ".properties:SPRING_VRM_BLENDER_PROPERTIES",
     "debug_draw_modes": ".debug:SPRING_VRM_DEBUG_DRAW_MODES",
 }
 
@@ -38,15 +39,18 @@ _LAZY_EXPORTS = {
     "SPRING_VRM_STATS_CHANNEL": ".names",
     "SPRING_VRM_STEP_WRITER_ID": ".names",
     # capabilities.py
-    "audit_bone_collision_legacy_property_group": ".capabilities",
+    "audit_bone_collision_property_group": ".capabilities",
     "BONE_COLLISION_CAPABILITY": ".capabilities",
     "BONE_COLLISION_CAPABILITY_ID": ".capabilities",
     "bone_collision_capability_field_names": ".capabilities",
     "bone_collision_capability_fields": ".capabilities",
     "SPRING_VRM_CAPABILITIES": ".capabilities",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".capabilities",
+    # properties.py
+    "PG_Hotools_BoneCollision": ".properties",
+    "SPRING_VRM_BLENDER_PROPERTIES": ".properties",
     # declaration.py
-    "SPRING_VRM_LEGACY_DISCARD_AUDIT": ".declaration",
+    "SPRING_VRM_REMOVED_SURFACES": ".declaration",
     "SPRING_VRM_SOLVER_DECLARATION": ".declaration",
     # debug.py
     "install_spring_vrm_slot_debug_snapshot": ".debug",
@@ -107,10 +111,10 @@ __all__ = [
     "BONE_COLLISION_CAPABILITY_ID",
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
     "BONE_COLLISION_OVERRIDE_REGISTER_PRODUCER",
-    "audit_bone_collision_legacy_property_group",
+    "audit_bone_collision_property_group",
     "bone_collision_capability_field_names",
     "bone_collision_capability_fields",
-    "SPRING_VRM_LEGACY_DISCARD_AUDIT",
+    "SPRING_VRM_REMOVED_SURFACES",
     "SPRING_VRM_POSE_CHANNEL",
     "SPRING_VRM_DEBUG_DRAW_MODE",
     "SPRING_VRM_DEBUG_DRAW_MODES",
@@ -123,6 +127,8 @@ __all__ = [
     "SPRING_VRM_STEP_WRITER_ID",
     "SPRING_VRM_CAPABILITIES",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE",
+    "PG_Hotools_BoneCollision",
+    "SPRING_VRM_BLENDER_PROPERTIES",
     "SpringVRMChainSpec",
     "SpringVRMSolverSpec",
     "bone_collision_override_signature",

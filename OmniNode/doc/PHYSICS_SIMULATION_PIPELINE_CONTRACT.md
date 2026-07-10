@@ -53,10 +53,10 @@ Cache Read
 3. **通用世界状态输入**：frame / dt / reset / 跳帧 / 倒放 / object scope / collider snapshot 由 `Physics World Begin` 统一产出，solver 只消费不重算。
 4. **通用写回**：solver 只发布写回指令到 result stream，真实 Blender 写入（Object delta / PoseBone / GN 属性）和 `update_tag` 由统一 writeback 执行，`solver_inline_writeback=False` 是硬约束。
 5. **支持隐式表达**：authoring 对象通过 `world.implicit_objects`（跨帧、按 tag/stable_id/signature 收集）进入 solver，用户无需手连大批 socket。
-6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧 Python 实现只作审查/数值参考。
+6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧实现只在删除前作审查/数值参考。
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
-9. **物理属性由物理世界动态注册的规划**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI。
+9. **物理属性由物理世界动态注册**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI。SpringBone 已完成该闭环，其它 domain 按此样板迁移。
 
 支柱已固定，**实现分阶段推进**：各 solver 当前进度、Phase 状态、测试覆盖见 UNIFIED 日志。
 
@@ -940,7 +940,9 @@ re_run_and_reset：
 7. 下游节点和 debug draw 只读公开 result / exchange，不读 solver slot 私有结构。
 8. 用后台集成测试锁住同帧、连续帧、跳帧、reset、dispose 行为。
 
-旧 solver 的 Python 包装层默认不迁移。它只能作为审查材料和数值参考；真正可复用的只有独立计算核、纯数学 helper、明确无 bpy 写回的 native 数组接口。
+旧 solver 的 Python 包装层默认不迁移，只能在删除前作为审查材料和数值参考。SpringBone 的旧 wrapper、旧节点和数组 ABI 已删除；其可复用数值 kernel 已收为 context 实现的私有 step，不再公开第二接口。
+
+属性迁移也遵循同样的单路径原则：保留 Blender 持久属性名不等于保留旧所有权。solver capability 持有 schema，domain `properties.py` 生成 RNA 声明，`physicsWorld.registry` 统一注册/注销；外部面板模块不得再定义同名 PropertyGroup。
 
 ## 新迁移 solver 的 C++ 单实现策略
 

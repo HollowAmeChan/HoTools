@@ -814,7 +814,7 @@ README.md
 6. 编译到对应 `HotoolsPackage`。
 7. 用 Blender Python import 验证，再在 Blender 中 smoke test 节点。
 
-统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧 Python 实现可以作为审查材料或测试 reference，但不能作为运行时 fallback。
+统一物理世界下的新迁移 solver 采用 C++ 单实现策略：不再新增平行 Python solver 节点，也不再按 backend 暴露 `xxx` / `xxx_CPP` 两套节点。Python 运行时只负责 spec、slot 生命周期、buffer 打包、result stream、writeback plan 和调试可视化。旧实现只允许在删除前作审查/对拍材料；SpringBone 已完成对拍并删除旧 Python runtime 与 35 参数 native ABI。
 
 常用构建命令见 `_native/README.md`。核心入口是：
 
@@ -1066,6 +1066,8 @@ Blender ID 强引用，用于追加或链接工作流；它不创建独立运行
 `physicsWorld/declarations.py` 是 solver 声明 registry 的过渡汇总层；`physicsWorld/names.py` 只保留跨 solver 通用常量和子模块名称的兼容重导出。solver 自有名称、能力、声明和 debug mode 的权威定义应位于各自子模块。
 
 `physicsWorld/registry.py` 是 solver 子模块描述符的装载入口。公共 `world.py` 只能通过 registry 调用 `scope_restart_handlers` / `scope_collectors` 等通用 hook；`declarations.py` 也通过 registry 汇总内建 solver declaration。公共层不能直接导入 rigid/Jolt、SpringBone 或未来 cloth domain 的私有实现。
+
+solver 描述符还可以声明 `blender_properties`。字段 schema、默认值、范围和 UI 元数据归 domain capability 所有，domain 的 `properties.py` 生成 Blender class/binding 声明，registry 负责统一 register/unregister。SpringBone 是首个闭环样板：`PG_Hotools_BoneCollision` 位于 `spring_vrm/properties.py`，持久路径仍为 `Bone.hotools_collision`，`PhysicsTools` 只消费该属性做面板/操作器/预览。
 
 `physicsWorld/names.py` 与根级 `physicsWorld/__init__.py` 对 solver 自有名称、能力和声明只保留兼容惰性重导出；导入公共包不应主动装载 rigid/Jolt 私有模块。
 

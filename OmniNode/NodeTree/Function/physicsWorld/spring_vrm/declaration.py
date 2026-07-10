@@ -22,7 +22,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
     "solver_id": SPRING_VRM_SOLVER_ID,
     "slot_kind": SPRING_VRM_SLOT_KIND,
     "stage": "spring_vrm_world_vertical_slice",
-    "native_strategy": "cpp_only_no_python_runtime_backend",
+    "native_strategy": "context_api_only_no_python_or_legacy_array_backend",
     "nodes": [
         "骨骼碰撞覆写属性",
         "骨骼碰撞覆写注册",
@@ -39,7 +39,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
         f'world.implicit_objects["{SPRING_VRM_CHAIN_OBJECT_TAG}"]',
-        f"capability[{BONE_COLLISION_CAPABILITY_ID}] 通过旧 Bone.hotools_collision 回退读取",
+        f"capability[{BONE_COLLISION_CAPABILITY_ID}] 生成并读取 Bone.hotools_collision 显式 RNA",
         f"capability[{BONE_COLLISION_CAPABILITY_ID}] 覆写层通过 "
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"]',
     ],
@@ -59,7 +59,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "implicit_object.signature",
         "implicit_object.version",
         f'world.implicit_objects["{BONE_COLLISION_OVERRIDE_OBJECT_TAG}"].signature',
-        "Bone.hotools_collision 能力回退 hash",
+        "Bone.hotools_collision capability hash",
         "collider_snapshot.source_key",
         "native_layout_version",
     ],
@@ -68,7 +68,7 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "implicit_objects": "lazy_by_tag_stable_id_signature",
         "topology": "rebuild_slot_on_armature_or_chain_topology_change",
         "params": "refresh_native_arrays_without_python_solver_backend",
-        "bone_collision_profile": "resolve_capability_override_then_legacy_property_then_default",
+        "bone_collision_profile": "resolve_capability_override_then_explicit_property_then_default",
         "colliders": "lazy_cached_arrays_by_collider_snapshot_chain_and_bone_override_version",
         "same_frame": "republish_last_pose_results_no_time_step",
         "paused_time": "dt_le_zero_republish_last_pose_results_no_time_step",
@@ -101,98 +101,36 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "bake_owner": "future unified writeback keyframe node",
         "solver_acceptance_blocker": False,
     },
-    "legacy_policy": "rewrite_only_no_compatibility",
+    "legacy_policy": "removed_no_runtime_compatibility",
 }
 
 
-SPRING_VRM_LEGACY_DISCARD_AUDIT = [
-    {
-        "legacy_symbol": "_run_spring_bone_vrm_node",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "discard",
-        "reason": "旧节点把 cache 分发、帧规则、solver 执行和写回合在一个黑箱入口里。",
-    },
-    {
-        "legacy_symbol": "_SpringBoneVRM.prepare",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "rewrite",
-        "reason": "旧实现混合输入校验、cache match、scene 碰撞扫描和跳帧处理。",
-    },
-    {
-        "legacy_symbol": "_SpringBoneVRM.write_pose",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "discard",
-        "reason": "旧实现会在 solver 流程内部直接写 PoseBone.matrix_basis。",
-    },
-    {
-        "legacy_symbol": "armature.update_tag in _SpringBoneVRM.run",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "discard",
-        "reason": "depsgraph invalidation 必须归属统一 writeback，而不是 solver step。",
-    },
-    {
-        "legacy_symbol": "_SpringBoneVRM.collision_snapshot/_collision_sources",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "discard",
-        "reason": "旧 scene 扫描已经替换为 PhysicsWorldCache.collider_snapshot。",
-    },
-    {
-        "legacy_symbol": "_SpringBoneVRM.solve_cpp pack/unpack wrapper",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "rewrite",
-        "reason": "数组映射可参考，但 state 和对象引用必须进入 solver slot 分区。",
-    },
-    {
-        "legacy_symbol": "hotools_native.solve_spring_bone_vrm_cpp",
-        "source": "_native/src/spring_bone_vrm.cpp",
-        "decision": "keep_as_kernel_reference",
-        "reason": "纯数组计算核不持有 Blender 对象，适合作为新 C++ 单实现的数值参考。",
-    },
-    {
-        "legacy_symbol": "springBoneBase",
-        "source": "OmniNode/NodeTree/Function/Physics.py",
-        "decision": "migrate_then_discard",
-        "reason": (
-            "非 VRM 基础弹簧骨，共享 _BonePhysics 但走旧 cache/直写 PoseBone 路径。"
-            "纳入统一物理世界迁移；新路径落地并验证后与旧 VRM 节点一起删除。"
-        ),
-    },
-]
 
-
-# 删除清单：新路径在 Blender 内验证与旧路径行为一致后，一次性移除下列符号。
-# 本轮只登记，不删除（用户决定：先留作对照，补完 + Blender 验证后再删）。
-SPRING_VRM_LEGACY_DELETE_CHECKLIST = {
-    "gate": "新 physicsWorld/spring_vrm 路径在 Blender 内与旧 VRM 节点逐帧行为对齐后执行",
-    "nodes": [
-        "springBoneVRMChainSetting",  # 弹簧骨-VRM链设置
-        "springBoneVRM",              # 弹簧骨-VRM
-        "springBoneVRM_CPP",          # 弹簧骨-VRM-CPP
-        "springBoneBase",             # 弹簧骨（基础，需先迁移出新路径）
-    ],
-    "classes": [
+SPRING_VRM_REMOVED_SURFACES = {
+    "python_nodes": (
+        "springBoneVRMChainSetting",
+        "springBoneVRM",
+        "springBoneVRM_CPP",
+        "springBoneBase",
+    ),
+    "python_runtime": (
         "_SpringBoneVRM",
         "_SpringBoneVRMCppBackend",
-    ],
-    "shared_class_methods_to_remove": {
-        # _BonePhysics 是共享类（springBoneBase/keyframePoseBones 也用），不整删；
-        # 只删这两个 VRM 专属方法。
-        "_BonePhysics": [
-            "flatten_vrm_spring_bone_chain_settings",
-            "vrm_spring_bone_collision_profile",
-        ],
-    },
-    "dangling_after_delete": [
-        # 删除后需顺手清理的无害残留（非阻塞）。
-        "OmniNode/NodeTree/OmniDebug.py: section 标签列表里的 'springBoneVRM' 字符串",
-        "physicsMC2BoneCloth/bone_build.py: 注释里引用 flatten_vrm_spring_bone_chain_settings",
-    ],
+        "_run_spring_bone_vrm_node",
+    ),
+    "native_abi": (
+        "hotools_native.solve_spring_bone_vrm_cpp",
+        "hotools::SpringBoneVrmChainView",
+        "hotools::solve_spring_bone_vrm_cpp",
+    ),
+    "property_owner": "physicsWorld.spring_vrm.properties",
+    "property_registration_owner": "physicsWorld.registry",
+    "persistent_storage_name": "Bone.hotools_collision",
 }
 
 
 def spring_vrm_declaration_debug_dict() -> dict:
     return {
         "declaration": dict(SPRING_VRM_SOLVER_DECLARATION),
-        "legacy_discard_audit": [dict(item) for item in SPRING_VRM_LEGACY_DISCARD_AUDIT],
-        "legacy_delete_checklist": dict(SPRING_VRM_LEGACY_DELETE_CHECKLIST),
+        "removed_surfaces": dict(SPRING_VRM_REMOVED_SURFACES),
     }

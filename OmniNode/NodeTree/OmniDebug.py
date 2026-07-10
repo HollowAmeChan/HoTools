@@ -279,7 +279,7 @@ class OmniDebug:
         """
         # 物理解算器和写入节点的函数名关键词
         _ALWAYS_RUN_HINTS = (
-            "springBoneVRM", "boneClothMC2", "meshcloth", "XPBD",
+            "physicsSpringVRM", "boneClothMC2", "meshcloth", "XPBD",
             "physicsWorldBegin", "physicsWorldCommit",
             "objectWrite", "setDatablock", "meshCreateUV",
             "debug_print", "physicsWorldDebug",

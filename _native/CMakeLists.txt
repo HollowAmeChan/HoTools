@@ -106,7 +106,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# hotools_native legacy CPython API module
+# hotools_native CPython API module
 # ---------------------------------------------------------------------------
 nanobind_add_module(hotools_native
     NB_STATIC

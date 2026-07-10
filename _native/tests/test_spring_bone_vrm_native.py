@@ -19,6 +19,10 @@ sys.path.insert(0, os.environ.get(
 import hotools_native  # noqa: E402
 
 
+def test_legacy_spring_vrm_entrypoint_is_removed():
+    assert not hasattr(hotools_native, "solve_spring_bone_vrm_cpp")
+
+
 def _identity_matrix() -> np.ndarray:
     return np.asarray((
         1.0, 0.0, 0.0, 0.0,
@@ -109,109 +113,8 @@ def _base_args(
     ]
 
 
-def _solve(args):
-    hotools_native.solve_spring_bone_vrm_cpp(*args)
-    return args
-
-
-def _tail(args) -> np.ndarray:
-    return args[0][0].copy()
-
-
-def test_spring_bone_vrm_gravity_projects_to_bone_length():
-    args = _solve(_base_args(gravity_dir=(1.0, 0.0, 0.0), gravity_power=9.8))
-    tail = _tail(args)
-    assert tail[0] > 0.01
-    assert abs(float(np.linalg.norm(tail)) - 1.0) < 1.0e-5
-    assert args[2][0, 0] < 1.0
-
-
-def test_spring_bone_vrm_plane_collider_pushes_tail():
-    args = _solve(_base_args(
-        gravity_power=0.0,
-        hit_radius=0.2,
-        collided_by_groups=1,
-        collider_types=(2,),
-        collider_groups=(1,),
-        collider_centers=((0.1, 0.0, 1.0),),
-        collider_segment_a=((1.0, 0.0, 0.0),),
-        collider_segment_b=((0.0, 0.0, 0.0),),
-        collider_radii=(0.0,),
-    ))
-    assert _tail(args)[0] > 0.1
-
-
-def test_spring_bone_vrm_capsule_collider_pushes_tail():
-    args = _solve(_base_args(
-        gravity_power=0.0,
-        hit_radius=0.2,
-        collided_by_groups=1,
-        collider_types=(1,),
-        collider_groups=(1,),
-        collider_centers=((0.1, 0.0, 1.0),),
-        collider_segment_a=((0.1, -0.5, 1.0),),
-        collider_segment_b=((0.1, 0.5, 1.0),),
-        collider_radii=(0.2,),
-    ))
-    tail = _tail(args)
-    assert tail[0] < -0.1
-    assert abs(float(np.linalg.norm(tail)) - 1.0) < 1.0e-5
-
-
-def test_spring_bone_vrm_group_mask_skips_unmatched_collider():
-    args = _solve(_base_args(
-        gravity_power=0.0,
-        hit_radius=0.2,
-        collided_by_groups=1,
-        collider_types=(0,),
-        collider_groups=(2,),
-        collider_centers=((0.0, 0.0, 1.0),),
-        collider_segment_a=((0.0, 0.0, 0.0),),
-        collider_segment_b=((0.0, 0.0, 0.0),),
-        collider_radii=(0.35,),
-    ))
-    assert np.allclose(_tail(args), np.asarray((0.0, 0.0, 1.0), dtype=np.float32))
-
-
-def test_spring_bone_vrm_box_collider_pushes_tail():
-    args = _solve(_base_args(
-        gravity_power=0.0,
-        hit_radius=0.05,
-        collided_by_groups=1,
-        collider_types=(3,),
-        collider_groups=(1,),
-        collider_centers=((0.0, 0.0, 1.0),),
-        collider_segment_a=((0.2, 0.0, 0.0),),
-        collider_segment_b=((0.0, 0.2, 0.0),),
-        collider_radii=(0.2,),
-    ))
-    assert _tail(args)[0] > 0.1
-
-
-def test_spring_bone_vrm_rejects_bad_current_tail_shape():
-    args = _base_args()
-    args[0] = np.zeros((1, 2), dtype=np.float32)
-    try:
-        hotools_native.solve_spring_bone_vrm_cpp(*args)
-    except ValueError as exc:
-        assert "current_tails" in str(exc)
-    else:
-        raise AssertionError("bad current_tails shape should raise ValueError")
-
-
-def test_spring_bone_vrm_rejects_mismatched_bone_counts():
-    args = _base_args()
-    args[2] = np.zeros((2, 16), dtype=np.float32)
-    try:
-        hotools_native.solve_spring_bone_vrm_cpp(*args)
-    except ValueError as exc:
-        assert "target_matrices" in str(exc)
-    else:
-        raise AssertionError("mismatched target_matrices bone count should raise ValueError")
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Context API（dual-call）smoke tests
+# Context API smoke tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 _HAS_CONTEXT_API = hasattr(hotools_native, "spring_vrm_create_context")
@@ -374,50 +277,6 @@ def test_context_api_gravity_projects_to_bone_length():
     identity = np.eye(4, dtype=np.float32).ravel()
     assert not np.allclose(out_mat, identity, atol=1e-4), \
         "经过一帧重力作用后 target_matrix 应偏离单位矩阵"
-
-
-def test_context_api_matches_legacy_parameter_matrix_over_multiple_frames():
-    _skip_if_no_context_api()
-    cases = (
-        dict(gravity_dir=(1.0, 0.0, 0.0), gravity_power=9.8, substeps=1),
-        dict(gravity_dir=(-0.4, 0.3, -0.8), gravity_power=4.2, substeps=4,
-             stiffness_force=2.5, drag_force=0.7),
-        dict(gravity_dir=(0.0, 0.0, 0.0), gravity_power=0.0, substeps=3,
-             stiffness_force=8.0, drag_force=1.0),
-        dict(
-            gravity_dir=(0.0, 0.0, 0.0), gravity_power=0.0,
-            hit_radius=0.05, collided_by_groups=1,
-            collider_types=(0,), collider_groups=(1,),
-            collider_centers=((0.5, 0.0, 0.8),),
-            collider_segment_a=((0.5, 0.0, 0.8),),
-            collider_segment_b=((0.5, 0.0, 0.8),),
-            collider_radii=(0.8,),
-        ),
-    )
-    for case in cases:
-        legacy_args = _base_args(**case)
-        context_args = _base_args(**case)
-        ctx = _context_from_args(context_args)
-        for frame in range(6):
-            hotools_native.solve_spring_bone_vrm_cpp(*legacy_args)
-            _update_context_from_args(ctx, context_args)
-            if frame == 0:
-                hotools_native.spring_vrm_reset_state(ctx)
-            hotools_native.spring_vrm_step(
-                ctx,
-                context_args[30], context_args[31], context_args[32],
-                context_args[33], context_args[34],
-            )
-
-        matrices, quaternions, tails, prev_tails = _read_context_state(
-            ctx,
-            bone_count=1,
-            collider_count=len(context_args[24]),
-        )
-        assert np.allclose(tails.reshape((-1, 3)), legacy_args[0], atol=2.0e-5), case
-        assert np.allclose(prev_tails.reshape((-1, 3)), legacy_args[1], atol=2.0e-5), case
-        assert np.allclose(matrices.reshape((-1, 16)), legacy_args[2], atol=2.0e-5), case
-        assert np.allclose(quaternions.reshape((-1, 4)), legacy_args[3], atol=2.0e-5), case
 
 
 def test_context_api_reset_state_restores_pose_tail():

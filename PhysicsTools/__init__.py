@@ -29,12 +29,11 @@ from .collisionPreview import (
     _remove_draw_handler,
     draw_collision_overlay_header,
 )
-from .physicsProperty import PG_Hotools_BoneCollision, PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
+from .physicsProperty import PG_Hotools_MeshCollision, PG_Hotools_ObjectCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
 from .physicsUtils import _overlay_show_update
 
 
 cls = [
-    PG_Hotools_BoneCollision,
     PG_Hotools_ObjectCollision,
     PG_Hotools_MeshCollision,
     PG_Hotools_RigidBody,
@@ -63,8 +62,6 @@ cls = [
 
 
 def reg_props():
-    bpy.types.Bone.hotools_collision = PointerProperty(type=PG_Hotools_BoneCollision)
-
     bpy.types.Object.hotools_object_collision = PointerProperty(type=PG_Hotools_ObjectCollision)
 
     bpy.types.Object.hotools_mesh_collision = PointerProperty(type=PG_Hotools_MeshCollision)
@@ -149,10 +146,12 @@ def ureg_props():
     del bpy.types.Scene.ho_collision_overlay_show
     del bpy.types.Object.hotools_object_collision
     del bpy.types.Object.hotools_mesh_collision
-    del bpy.types.Bone.hotools_collision
 
 
 def register():
+    from ..OmniNode.NodeTree.Function.physicsWorld.registry import register_solver_blender_properties
+
+    register_solver_blender_properties()
     for i in cls:
         bpy.utils.register_class(i)
     reg_props()
@@ -161,8 +160,11 @@ def register():
 
 
 def unregister():
+    from ..OmniNode.NodeTree.Function.physicsWorld.registry import unregister_solver_blender_properties
+
     bpy.types.VIEW3D_HT_header.remove(draw_collision_overlay_header)
     _remove_draw_handler()
     ureg_props()
     for i in reversed(cls):
         bpy.utils.unregister_class(i)
+    unregister_solver_blender_properties()

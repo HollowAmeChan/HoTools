@@ -2,7 +2,7 @@
 
 统一解析"骨骼碰撞字段值是什么"，解析优先级：
   1. implicit override 对象（bone_collision.override）
-  2. 旧显式属性 Bone.hotools_collision —— 当前唯一真实来源
+  2. solver 显式属性 Bone.hotools_collision
   3. capability 默认值（BONE_COLLISION_CAPABILITY.fields）
 
 本模块只负责"字段值是什么"，不做几何缩放、matrix_scale_radius、clamp 或
@@ -70,11 +70,10 @@ def _default_profile() -> BoneCollisionProfile:
     )
 
 
-def _profile_from_legacy_props(props) -> BoneCollisionProfile:
-    """从旧显式属性 Bone.hotools_collision 读字段值。
+def _profile_from_explicit_props(props) -> BoneCollisionProfile:
+    """从 solver 显式属性 Bone.hotools_collision 读字段值。
 
-    props 已确认非空。缺失字段回退到能力默认值，保证与旧直读的 getattr
-    默认值语义一致。
+    props 已确认非空。缺失字段回退到能力默认值。
     """
     base = _default_profile()
     offset = getattr(props, "offset", None)
@@ -86,7 +85,7 @@ def _profile_from_legacy_props(props) -> BoneCollisionProfile:
         offset=tuple(offset) if offset is not None else base.offset,
         primary_collision_group=int(getattr(props, "primary_collision_group", base.primary_collision_group) or 0),
         collided_by_groups=int(getattr(props, "collided_by_groups", base.collided_by_groups) or 0),
-        source="legacy_property",
+        source="explicit_property",
     )
 
 
@@ -158,7 +157,7 @@ def _resolve_override_profile(armature, bone_name: str, world=None, base: BoneCo
     """implicit override 层解析入口（bone_collision.override）。
 
     按 stable_id 命中 world.implicit_objects，并把 payload.fields 覆盖到
-    legacy/default profile 上。未覆写字段继续沿用下一层来源。
+    explicit/default profile 上。未覆写字段继续沿用下一层来源。
     """
     if world is None or not hasattr(world, "iter_implicit_objects"):
         return None
@@ -182,7 +181,7 @@ def _resolve_override_profile(armature, bone_name: str, world=None, base: BoneCo
     return None
 
 
-def _legacy_bone_collision_props(armature, bone_name: str):
+def _explicit_bone_collision_props(armature, bone_name: str):
     """取 Bone.hotools_collision（可能为 None）。"""
     name = str(bone_name or "")
     if not name:
@@ -197,12 +196,12 @@ def _legacy_bone_collision_props(armature, bone_name: str):
 def resolve_bone_collision_fields(armature, bone_name: str, world=None) -> BoneCollisionProfile:
     """解析单根骨骼的碰撞字段值。
 
-    优先级：override 隐式对象 > 旧 Bone.hotools_collision > capability 默认值。
+    优先级：override 隐式对象 > solver 显式 Bone.hotools_collision > capability 默认值。
     只返回原始字段值，几何缩放 / clamp / collider 打包由调用方（native）负责。
     """
-    props = _legacy_bone_collision_props(armature, bone_name)
+    props = _explicit_bone_collision_props(armature, bone_name)
     if props is not None:
-        base = _profile_from_legacy_props(props)
+        base = _profile_from_explicit_props(props)
     else:
         base = _default_profile()
 

@@ -17,6 +17,21 @@ from .implicit_objects import (
 from .solver import step_spring_vrm
 
 
+def _bone_collision_field(name: str) -> dict:
+    for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
+        if str(field.get("name") or "") == str(name):
+            return field
+    return {}
+
+
+def _bone_collision_default(name: str, fallback):
+    return _bone_collision_field(name).get("default", fallback)
+
+
+def _bone_collision_rna(name: str) -> dict:
+    return dict(_bone_collision_field(name).get("rna") or {})
+
+
 def _bone_collision_type_values() -> tuple[str, ...]:
     for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
         if str(field.get("name") or "") == "collision_type":
@@ -130,39 +145,52 @@ def physicsSpringVRMChainRegister(
             "min_value": 0,
             "max_value": len(_bone_collision_type_values()) - 1,
             "description": _bone_collision_type_socket_description(),
-            "default_value": (
-                _bone_collision_type_values().index("SPHERE")
-                if "SPHERE" in _bone_collision_type_values() else 0
+            "default_value": _bone_collision_type_values().index(
+                str(_bone_collision_default("collision_type", "NONE"))
             ),
         },
-        "radius": {"min_value": 0.0, "max_value": 10.0},
-        "length": {"min_value": 0.0, "max_value": 10.0},
-        "primary_collision_group": {"min_value": 1, "max_value": 16},
-        "collided_by_groups": {"mask_length": 16, "default_value": 0},
+        "radius": {
+            "min_value": _bone_collision_rna("radius").get("min", 0.0),
+            "max_value": _bone_collision_rna("radius").get("soft_max", 1.0),
+        },
+        "length": {
+            "min_value": _bone_collision_rna("length").get("min", 0.0),
+            "max_value": _bone_collision_rna("length").get("soft_max", 2.0),
+        },
+        "primary_collision_group": {
+            "min_value": _bone_collision_rna("primary_collision_group").get("min", 1),
+            "max_value": _bone_collision_rna("primary_collision_group").get("max", 16),
+        },
+        "collided_by_groups": {
+            "mask_length": 16,
+            "default_value": _bone_collision_default("collided_by_groups", 0),
+        },
     },
     _OUTPUT_NAME=["骨骼碰撞覆写"],
     omni_description="""
     构建 bone_collision.override 隐式对象 payload。
-    未勾选覆写的字段会继续从 Bone.hotools_collision 或 capability 默认值回退读取。
+    未勾选覆写的字段会继续从 solver 拥有的 Bone.hotools_collision 显式参数或 capability 默认值读取。
     """,
 )
 def physicsBoneCollisionOverrideProperties(
     bone: list[_OmniBone],
     enabled: bool = True,
     override_pin: bool = False,
-    pin: bool = False,
+    pin: bool = bool(_bone_collision_default("pin", False)),
     override_collision_type: bool = False,
-    collision_type: int = 1,
+    collision_type: int = _bone_collision_type_values().index(
+        str(_bone_collision_default("collision_type", "NONE"))
+    ),
     override_radius: bool = False,
-    radius: float = 0.05,
+    radius: float = float(_bone_collision_default("radius", 0.05)),
     override_length: bool = False,
-    length: float = 0.2,
+    length: float = float(_bone_collision_default("length", 0.2)),
     override_offset: bool = False,
-    offset: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    offset: mathutils.Vector = mathutils.Vector(_bone_collision_default("offset", (0.0, 0.0, 0.0))),
     override_primary_collision_group: bool = False,
-    primary_collision_group: int = 1,
+    primary_collision_group: int = int(_bone_collision_default("primary_collision_group", 1)),
     override_collided_by_groups: bool = False,
-    collided_by_groups: _OmniBitMask = 0,
+    collided_by_groups: _OmniBitMask = int(_bone_collision_default("collided_by_groups", 0)),
 ) -> list[object]:
     bones = list(bone) if isinstance(bone, (list, tuple)) else [bone]
     return [
@@ -191,7 +219,7 @@ def physicsBoneCollisionOverrideProperties(
     _OUTPUT_NAME=["物理世界", "对象数量", "变更数量", "版本"],
     omni_description="""
     把 bone_collision.override payload 注册到 PhysicsWorldCache.implicit_objects。
-    SpringBone resolver 会优先读取该隐式对象，再回退到 Bone.hotools_collision。
+    SpringBone resolver 会优先读取该隐式对象，再读取 solver 拥有的 Bone.hotools_collision 显式参数。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
