@@ -1,10 +1,24 @@
 import bpy
+from importlib import import_module
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
 from .physicsUtils import _ALL_COLLISION_GROUPS_MASK, _COLLISION_GROUP_COUNT
 
 _PI = 3.141592653589793
+
+
+def __getattr__(name: str):
+    """短期兼容旧导入；共享 class 的唯一实现仍位于 physicsWorld.collision。"""
+    if name != "PG_Hotools_ObjectCollision":
+        raise AttributeError(name)
+    package_root = __package__.split(".", 1)[0] if "." in __package__ else "HoTools"
+    module = import_module(
+        f"{package_root}.OmniNode.NodeTree.Function.physicsWorld.collision.properties"
+    )
+    value = module.PG_Hotools_ObjectCollision
+    globals()[name] = value
+    return value
 
 
 def _mesh_object_poll(self, obj):
@@ -14,69 +28,6 @@ def _mesh_object_poll(self, obj):
 # 这个文件只定义可保存到 Blender 数据块上的原始配置。
 # 不在 PropertyGroup 里缓存运行时对象、顶点数组或经过矩阵/顶点组加工后的结果；
 # 求解器和预览代码需要在各自运行时解析这些字段，并保持同一套语义。
-
-
-class PG_Hotools_ObjectCollision(PropertyGroup):
-    """
-    Object 级简单碰撞体的持久化配置。
-    ...（消费约定同前）
-    """
-
-    enabled: BoolProperty(
-        name="启用",
-        description="将此对象识别为简单碰撞体",
-        default=False,
-    )  # type: ignore
-
-    collision_type: EnumProperty(
-        name="碰撞体",
-        description="这个Object携带的简单碰撞体类型",
-        items=[
-            ("NONE", "无", "不作为简单碰撞体"),
-            ("SPHERE", "球体", "以Object局部偏移为中心的球形碰撞体"),
-            ("CAPSULE", "胶囊", "沿Object局部Y轴延伸的胶囊碰撞体"),
-            ("PLANE", "平面", "以Object局部XY平面为无限碰撞平面；运行时必须用Object.matrix_world求世界原点、切线和法线"),
-            ("BOX", "长方体", "以Object局部偏移为中心、按局部XYZ长度定义的有向长方体；运行时必须用Object.matrix_world求世界角点"),
-        ],
-        default="NONE",
-    )  # type: ignore
-    radius: FloatProperty(
-        name="半径",
-        description="球体和胶囊半径，使用Blender单位；平面类型不把它作为真实碰撞厚度",
-        default=0.05,
-        min=0.0,
-        soft_max=1.0,
-    )  # type: ignore
-    length: FloatProperty(
-        name="长度",
-        description="胶囊中段长度；平面类型把它作为叠加层方片的预览尺寸，不改变无限平面的物理语义",
-        default=1.0,
-        min=0.0,
-        soft_max=10.0,
-    )  # type: ignore
-    offset: FloatVectorProperty(
-        name="局部偏移",
-        description="球体/胶囊/长方体中心或平面原点相对Object局部空间的偏移",
-        size=3,
-        subtype="XYZ",
-        default=(0.0, 0.0, 0.0),
-    )  # type: ignore
-    box_size: FloatVectorProperty(
-        name="XYZ长度",
-        description="长方体在Object局部X/Y/Z方向上的全尺寸；实际世界尺寸和方向必须通过Object.matrix_world解析",
-        size=3,
-        subtype="XYZ",
-        default=(1.0, 1.0, 1.0),
-        min=0.0,
-        soft_max=10.0,
-    )  # type: ignore
-    primary_collision_group: IntProperty(
-        name="主碰撞组",
-        description="这个简单碰撞体所属的主碰撞组，叠加显示颜色由它决定",
-        default=1,
-        min=1,
-        max=_COLLISION_GROUP_COUNT,
-    )  # type: ignore
 
 
 class PG_Hotools_MeshCollision(PropertyGroup):

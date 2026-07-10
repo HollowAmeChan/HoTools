@@ -21,8 +21,8 @@ SOLVER_DECLARATION_REQUIRED_KEYS = (
 
 
 _COMPAT_EXPORTS = {
-    "BONE_COLLISION_CAPABILITY": ".spring_vrm.capabilities",
-    "BONE_COLLISION_CAPABILITY_ID": ".spring_vrm.capabilities",
+    "BONE_COLLISION_CAPABILITY": ".collision.capabilities",
+    "BONE_COLLISION_CAPABILITY_ID": ".collision.capabilities",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".spring_vrm.capabilities",
     "SPRING_VRM_SOLVER_DECLARATION": ".spring_vrm.declaration",
     "RIGID_CAPABILITIES": ".rigid.capabilities",

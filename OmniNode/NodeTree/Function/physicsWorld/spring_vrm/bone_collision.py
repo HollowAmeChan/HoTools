@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections import namedtuple
 
-from .capabilities import BONE_COLLISION_CAPABILITY
+from ..collision.capabilities import BONE_COLLISION_CAPABILITY
 from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
 from ..utils.ids import as_pointer, data_pointer
 

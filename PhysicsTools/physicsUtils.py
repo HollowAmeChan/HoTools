@@ -1,30 +1,21 @@
 import bpy
 
+from importlib import import_module
+
+
+_PACKAGE_ROOT = __package__.split(".", 1)[0] if "." in __package__ else "HoTools"
+_collision_groups = import_module(
+    f"{_PACKAGE_ROOT}.OmniNode.NodeTree.Function.physicsWorld.collision.groups"
+)
+
 
 # 预览绘制常量，由叠加层代码共享。
 _PIN_COLOR = (1.0, 0.82, 0.18, 0.92)
 _UNPIN_COLOR = (0.62, 0.66, 0.72, 0.58)
 _SHAPE_SEGMENTS = 32
-_COLLISION_GROUP_COUNT = 16
-_ALL_COLLISION_GROUPS_MASK = (1 << _COLLISION_GROUP_COUNT) - 1
-_COLLISION_GROUP_COLORS = (
-    (0.10, 0.63, 1.00, 0.86),
-    (1.00, 0.45, 0.25, 0.86),
-    (0.35, 0.90, 0.35, 0.86),
-    (1.00, 0.82, 0.18, 0.86),
-    (0.78, 0.48, 1.00, 0.86),
-    (0.12, 0.92, 0.82, 0.86),
-    (1.00, 0.35, 0.62, 0.86),
-    (0.62, 0.88, 0.18, 0.86),
-    (0.30, 0.48, 1.00, 0.86),
-    (1.00, 0.60, 0.12, 0.86),
-    (0.20, 0.78, 0.55, 0.86),
-    (0.92, 0.38, 1.00, 0.86),
-    (0.88, 0.75, 0.55, 0.86),
-    (0.52, 0.72, 0.95, 0.86),
-    (0.95, 0.52, 0.52, 0.86),
-    (0.78, 0.78, 0.78, 0.86),
-)
+_COLLISION_GROUP_COUNT = _collision_groups.COLLISION_GROUP_COUNT
+_ALL_COLLISION_GROUPS_MASK = _collision_groups.ALL_COLLISION_GROUPS_MASK
+_COLLISION_GROUP_COLORS = _collision_groups.COLLISION_GROUP_COLORS
 
 
 # 预览 batch 重建信号。外部代码（属性 update 回调等）调用 mark_overlay_rebuild()

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from .capabilities import (
+from ..collision.capabilities import (
     BONE_COLLISION_CAPABILITY,
     BONE_COLLISION_CAPABILITY_ID,
-    SPRING_VRM_UPDATE_FREQUENCY_TABLE,
 )
+from .capabilities import SPRING_VRM_UPDATE_FREQUENCY_TABLE
 from ..names import BONE_TRANSFORM_CHANNEL
 from .names import (
     BONE_COLLISION_OVERRIDE_OBJECT_TAG,
@@ -73,9 +73,8 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "same_frame": "republish_last_pose_results_no_time_step",
         "paused_time": "dt_le_zero_republish_last_pose_results_no_time_step",
     },
-    "capabilities": {
-        BONE_COLLISION_CAPABILITY_ID: BONE_COLLISION_CAPABILITY,
-    },
+    "capabilities": {},
+    "consumes_capabilities": [BONE_COLLISION_CAPABILITY_ID],
     "update_frequency_table": SPRING_VRM_UPDATE_FREQUENCY_TABLE,
     "implicit_objects": {
         "consumes": [SPRING_VRM_CHAIN_OBJECT_TAG, BONE_COLLISION_OVERRIDE_OBJECT_TAG],
@@ -123,7 +122,7 @@ SPRING_VRM_REMOVED_SURFACES = {
         "hotools::SpringBoneVrmChainView",
         "hotools::solve_spring_bone_vrm_cpp",
     ),
-    "property_owner": "physicsWorld.spring_vrm.properties",
+    "property_owner": "physicsWorld.collision.properties",
     "property_registration_owner": "physicsWorld.registry",
     "persistent_storage_name": "Bone.hotools_collision",
 }

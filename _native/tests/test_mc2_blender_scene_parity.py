@@ -40,6 +40,10 @@ ensure_package(
     ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "spring_vrm",
 )
 ensure_package(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision",
+    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "collision",
+)
+ensure_package(
     "HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth",
     ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsMC2MeshCloth",
 )
@@ -47,9 +51,11 @@ ensure_package(
 from bpy.props import PointerProperty  # noqa: E402
 from HoTools.PhysicsTools.physicsProperty import (  # noqa: E402
     PG_Hotools_MeshCollision,
+)
+from HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties import (  # noqa: E402
+    PG_Hotools_BoneCollision,
     PG_Hotools_ObjectCollision,
 )
-from HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm.properties import PG_Hotools_BoneCollision  # noqa: E402
 from HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth import collision, mesh_build, solver, state as mc2_state  # noqa: E402
 from HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth.constants import MC2SystemConstants  # noqa: E402
 
@@ -174,43 +180,75 @@ def collision_count(state):
     return int(np.count_nonzero(np.linalg.norm(normals, axis=1) > MC2SystemConstants.EPSILON))
 
 
-def solve_one(state, obj, scene, colliders, cpp, collider_collision_mode):
+def solve_one(runtime_owner, obj, scene, colliders, cpp, collider_collision_mode):
     func = solver.solve_meshcloth_native_core if cpp else solver.solve_meshcloth
-    return func(
-        state,
-        obj,
-        scene,
-        2,
-        3,
-        mathutils.Vector((0.0, -1.0, 0.0)),
-        5.0,
-        0.03,
-        0.85,
-        0.35,
-        0.2,
-        80.0,
-        0.75,
-        0.0,
-        0.4,
-        0.0,
-        0.1,
-        0.0,
-        5.0,
-        720.0,
-        -1.0,
-        -1.0,
-        4.0,
-        0,
-        0.5,
-        90.0,
-        0.0,
-        0.0,
-        0.0,
-        0.18,
-        collider_collision_mode,
-        None,
-        colliders,
+    result = func(
+        state=runtime_owner.state,
+        obj=obj,
+        scene=scene,
+        substeps=2,
+        iterations=3,
+        gravity_dir=mathutils.Vector((0.0, -1.0, 0.0)),
+        gravity_power=5.0,
+        gravity_falloff=0.03,
+        stablization_time_after_reset=0.85,
+        blend_weight=0.35,
+        damping=0.2,
+        damping_curve=None,
+        use_tether=True,
+        tether_compression=0.75,
+        use_distance=True,
+        distance_stiffness=0.4,
+        distance_stiffness_curve=None,
+        use_bend=True,
+        bend_stiffness=0.1,
+        bend_stiffness_curve=None,
+        use_angle_restoration=False,
+        angle_restoration_stiffness=0.0,
+        angle_restoration_stiffness_curve=None,
+        angle_restoration_velocity_attenuation=0.0,
+        angle_restoration_velocity_attenuation_curve=None,
+        angle_restoration_gravity_falloff=0.0,
+        use_angle_limit=False,
+        angle_limit=90.0,
+        angle_limit_curve=None,
+        angle_limit_stiffness=0.0,
+        anchor_obj=None,
+        anchor_inertia=0.0,
+        world_inertia=0.0,
+        movement_inertia_smoothing=0.0,
+        local_inertia=0.0,
+        depth_inertia=0.0,
+        centrifugal=0.0,
+        movement_speed_limit=-1.0,
+        rotation_speed_limit=-1.0,
+        local_movement_speed_limit=-1.0,
+        local_rotation_speed_limit=-1.0,
+        particle_speed_limit=-1.0,
+        teleport_mode=0,
+        teleport_distance=0.5,
+        teleport_rotation=90.0,
+        animation_pose_ratio=0.0,
+        use_max_distance=False,
+        max_distance=0.0,
+        max_distance_curve=None,
+        use_backstop=False,
+        backstop_radius=0.0,
+        backstop_distance=0.0,
+        backstop_distance_curve=None,
+        motion_stiffness=0.0,
+        normal_axis=1,
+        use_collider_collision=True,
+        collider_friction=0.18,
+        collider_collision_mode=collider_collision_mode,
+        timing=None,
+        colliders=colliders,
+        runtime_caches=runtime_owner.runtime_cache_slots(),
+        center_state=runtime_owner,
+        team_state=runtime_owner,
     )
+    runtime_owner.replace_state(result)
+    return runtime_owner
 
 
 def run_parity_for_mode(collider_collision_mode):
@@ -225,8 +263,8 @@ def run_parity_for_mode(collider_collision_mode):
     box_collider = make_box_collider()
     bpy.context.view_layer.update()
     initial = build_initial_state(cloth)
-    py_state = clone_state(initial)
-    cpp_state = clone_state(initial)
+    py_state = mc2_state.MC2RuntimeOwner(clone_state(initial))
+    cpp_state = mc2_state.MC2RuntimeOwner(clone_state(initial))
 
     max_delta = 0.0
     max_rms = 0.0

@@ -23,7 +23,6 @@ SOLVER_MODULE = {
     "declaration": ".declaration:SPRING_VRM_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:SPRING_VRM_CAPABILITIES",
-    "blender_properties": ".properties:SPRING_VRM_BLENDER_PROPERTIES",
     "debug_draw_modes": ".debug:SPRING_VRM_DEBUG_DRAW_MODES",
 }
 
@@ -39,16 +38,15 @@ _LAZY_EXPORTS = {
     "SPRING_VRM_STATS_CHANNEL": ".names",
     "SPRING_VRM_STEP_WRITER_ID": ".names",
     # capabilities.py
-    "audit_bone_collision_property_group": ".capabilities",
-    "BONE_COLLISION_CAPABILITY": ".capabilities",
-    "BONE_COLLISION_CAPABILITY_ID": ".capabilities",
-    "bone_collision_capability_field_names": ".capabilities",
-    "bone_collision_capability_fields": ".capabilities",
+    "audit_bone_collision_property_group": "..collision.capabilities",
+    "BONE_COLLISION_CAPABILITY": "..collision.capabilities",
+    "BONE_COLLISION_CAPABILITY_ID": "..collision.capabilities",
+    "bone_collision_capability_field_names": "..collision.capabilities",
+    "bone_collision_capability_fields": "..collision.capabilities",
     "SPRING_VRM_CAPABILITIES": ".capabilities",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE": ".capabilities",
-    # properties.py
-    "PG_Hotools_BoneCollision": ".properties",
-    "SPRING_VRM_BLENDER_PROPERTIES": ".properties",
+    # collision compatibility export
+    "PG_Hotools_BoneCollision": "..collision.properties",
     # declaration.py
     "SPRING_VRM_REMOVED_SURFACES": ".declaration",
     "SPRING_VRM_SOLVER_DECLARATION": ".declaration",
@@ -128,7 +126,6 @@ __all__ = [
     "SPRING_VRM_CAPABILITIES",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE",
     "PG_Hotools_BoneCollision",
-    "SPRING_VRM_BLENDER_PROPERTIES",
     "SpringVRMChainSpec",
     "SpringVRMSolverSpec",
     "bone_collision_override_signature",

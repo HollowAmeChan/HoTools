@@ -48,9 +48,10 @@ def _register_physics_props():
     _ht = os.path.join(_HOTOOLS)
     if _ht not in sys.path:
         sys.path.insert(0, _ht)
-    from PhysicsTools.physicsUtils import _ALL_COLLISION_GROUPS_MASK  # noqa
-    from PhysicsTools.physicsProperty import (
+    from HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties import (
         PG_Hotools_ObjectCollision,
+    )
+    from PhysicsTools.physicsProperty import (
         PG_Hotools_RigidBody,
         PG_Hotools_RigidConstraint,
     )
@@ -68,9 +69,6 @@ def _register_physics_props():
     if not hasattr(bpy.types.Object, "hotools_rigid_constraint"):
         bpy.types.Object.hotools_rigid_constraint = bpy.props.PointerProperty(
             type=PG_Hotools_RigidConstraint)
-
-_register_physics_props()
-
 
 # ── Step 1：手动注册包层次，绕过 __init__.py 的跨包 import ────────────────────
 # 模块名前缀：HoTools.OmniNode.NodeTree.Function.physicsWorld.*
@@ -100,6 +98,8 @@ _pkg_dirs = [
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld", _PW_ROOT),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.utils",
          os.path.join(_PW_ROOT, "utils")),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.collision",
+         os.path.join(_PW_ROOT, "collision")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm",
          os.path.join(_PW_ROOT, "spring_vrm")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid",
@@ -160,6 +160,11 @@ if _nt_fnc_key not in sys.modules:
     sys.modules[_nt_fnc_key] = _fm
 
 # 按依赖顺序加载
+_load_pw("collision.names",      "collision/names.py")
+_load_pw("collision.groups",     "collision/groups.py")
+_load_pw("collision.capabilities", "collision/capabilities.py")
+_load_pw("collision.properties", "collision/properties.py")
+_register_physics_props()
 _load_pw("names",                "names.py")
 _load_pw("declarations",         "declarations.py")
 _load_pw("utils.debug_draw",     "utils/debug_draw.py")

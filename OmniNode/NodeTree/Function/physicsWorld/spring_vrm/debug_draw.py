@@ -6,6 +6,7 @@ import bpy
 import mathutils
 
 from ..types import PhysicsWorldCache
+from ..collision.groups import COLLISION_GROUP_COLORS
 from ..utils.debug_draw import (
     add_box_lines,
     add_capsule_lines,
@@ -27,25 +28,7 @@ _COLOR_SOLVED_CHAIN = (1.00, 0.70, 0.20, 0.90)
 _COLOR_ROOT = (0.80, 0.95, 0.30, 0.85)
 _COLOR_COLLIDER_DEFAULT = (0.62, 0.66, 0.72, 0.58)  # 统一灰：对齐外部未固定碰撞预览
 
-# 与 PhysicsTools.physicsUtils._COLLISION_GROUP_COLORS 保持一致。
-_GROUP_COLORS = (
-    (0.10, 0.63, 1.00, 0.86),  # 组1：亮蓝
-    (1.00, 0.45, 0.25, 0.86),  # 组2：橙红
-    (0.35, 0.90, 0.35, 0.86),  # 组3：绿色
-    (1.00, 0.82, 0.18, 0.86),  # 组4：金黄
-    (0.78, 0.48, 1.00, 0.86),  # 组5：紫色
-    (0.12, 0.92, 0.82, 0.86),  # 组6：青色
-    (1.00, 0.35, 0.62, 0.86),  # 组7：粉红
-    (0.62, 0.88, 0.18, 0.86),  # 组8：黄绿
-    (0.30, 0.48, 1.00, 0.86),  # 组9：深蓝
-    (1.00, 0.60, 0.12, 0.86),  # 组10：橙色
-    (0.20, 0.78, 0.55, 0.86),  # 组11：青绿
-    (0.92, 0.38, 1.00, 0.86),  # 组12：洋红
-    (0.88, 0.75, 0.55, 0.86),  # 组13：沙金
-    (0.52, 0.72, 0.95, 0.86),  # 组14：浅蓝
-    (0.95, 0.52, 0.52, 0.86),  # 组15：浅红
-    (0.78, 0.78, 0.78, 0.86),  # 组16：中灰
-)
+_GROUP_COLORS = COLLISION_GROUP_COLORS
 
 _SPRING_VRM_DRAW_STORE: dict[str, dict] = {}
 _SPRING_VRM_DRAW_HANDLE = None

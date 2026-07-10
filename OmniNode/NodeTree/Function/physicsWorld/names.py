@@ -19,8 +19,12 @@ GN_ATTRIBUTE_CHANNEL = "gn_attribute"
 # ---- SpringBone VRM -----------------------------------------------------
 #
 # 兼容惰性重导出。SpringBone 的名称权威定义位于 spring_vrm/names.py。
-_SPRING_VRM_COMPAT_NAMES = {
+_COLLISION_COMPAT_NAMES = {
     "BONE_COLLISION_OVERRIDE_OBJECT_TAG",
+}
+
+
+_SPRING_VRM_COMPAT_NAMES = {
     "SPRING_VRM_CHAIN_OBJECT_TAG",
     "SPRING_VRM_POSE_CHANNEL",
     "SPRING_VRM_SLOT_KIND",
@@ -55,6 +59,11 @@ _RIGID_COMPAT_NAMES = {
 
 
 def __getattr__(name: str):
+    if name in _COLLISION_COMPAT_NAMES:
+        module = import_module(".collision.names", __package__)
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
     if name in _SPRING_VRM_COMPAT_NAMES:
         module = import_module(".spring_vrm.names", __package__)
         value = getattr(module, name)

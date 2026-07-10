@@ -6,7 +6,7 @@ import bpy
 import mathutils
 
 from ....OmniNodeSocketMapping import _OmniBone
-from .capabilities import BONE_COLLISION_CAPABILITY, BONE_COLLISION_CAPABILITY_ID
+from ..collision.capabilities import BONE_COLLISION_CAPABILITY, BONE_COLLISION_CAPABILITY_ID
 from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG, SPRING_VRM_CHAIN_OBJECT_TAG
 from ..types import PhysicsWorldCache
 from ..utils.ids import as_pointer, data_pointer, stable_short_hash

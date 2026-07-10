@@ -1,5 +1,7 @@
 """VRM SpringBone 解算器自有名称常量。"""
 
+from ..collision.names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
+
 SPRING_VRM_SOLVER_ID = "spring_vrm"
 SPRING_VRM_STEP_WRITER_ID = "spring_vrm_step"
 SPRING_VRM_SLOT_KIND = "spring_vrm"
@@ -8,4 +10,3 @@ SPRING_VRM_POSE_CHANNEL = "bone_transform"
 SPRING_VRM_STATS_CHANNEL = "spring_vrm_stats"
 SPRING_VRM_CHAIN_OBJECT_TAG = "spring_vrm.chain"
 SPRING_VRM_DEBUG_DRAW_MODE = "spring_vrm.debug"
-BONE_COLLISION_OVERRIDE_OBJECT_TAG = "bone_collision.override"

@@ -15,13 +15,68 @@ from typing import Callable
 
 
 _BUILTIN_SOLVER_DOMAINS = ("spring_vrm", "rigid")
+_BUILTIN_COMPONENT_DOMAINS = ("collision",)
 _RUNTIME_SOLVER_MODULES: dict[str, dict] = {}
-_REGISTERED_PROPERTY_CLASSES: list[type] = []
-_REGISTERED_PROPERTY_BINDINGS: list[tuple[object, str]] = []
+_REGISTERED_COMPONENT_PROPERTY_DOMAINS: list[str] = []
+_REGISTERED_SOLVER_PROPERTY_DOMAINS: list[str] = []
+_PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE = False
+_SOLVER_BLENDER_PROPERTIES_ACTIVE = False
 
 
 def builtin_solver_domains() -> tuple[str, ...]:
     return tuple(_BUILTIN_SOLVER_DOMAINS)
+
+
+def builtin_component_domains() -> tuple[str, ...]:
+    return tuple(_BUILTIN_COMPONENT_DOMAINS)
+
+
+def _component_descriptor(domain: str) -> dict:
+    package = import_module(f".{domain}", __package__)
+    declared = getattr(package, "COMPONENT_MODULE", None)
+    data = {
+        "component_id": str(domain),
+        "kind": "core",
+        "depends_on": (),
+        "capabilities": None,
+        "blender_properties": None,
+    }
+    if isinstance(declared, dict):
+        data.update(declared)
+    return data
+
+
+def all_component_descriptors() -> dict[str, dict]:
+    return {
+        domain: _component_descriptor(domain)
+        for domain in _BUILTIN_COMPONENT_DOMAINS
+    }
+
+
+def resolve_component_capabilities(domain: str) -> dict:
+    """解析 core component 拥有的共享 capability。"""
+    descriptor = _component_descriptor(domain)
+    value = _resolve_ref(domain, descriptor.get("capabilities"))
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def all_component_capabilities() -> dict[str, dict]:
+    """合并共享 capability，并拒绝不同 component 重复拥有同一 identifier。"""
+    capabilities: dict[str, dict] = {}
+    owners: dict[str, str] = {}
+    for domain in _BUILTIN_COMPONENT_DOMAINS:
+        for capability_id, declaration in resolve_component_capabilities(domain).items():
+            key = str(capability_id or "").strip()
+            if not key:
+                raise ValueError(f"component {domain} 声明了空 capability identifier")
+            previous_owner = owners.get(key)
+            if previous_owner is not None:
+                raise RuntimeError(
+                    f"共享 capability {key} 同时由 {previous_owner} 与 {domain} 拥有"
+                )
+            owners[key] = domain
+            capabilities[key] = deepcopy(declaration)
+    return capabilities
 
 
 def _load_solver_package(domain: str):
@@ -61,6 +116,7 @@ def _default_descriptor(domain: str) -> dict:
         "nodes": (),
         "capabilities": None,
         "blender_properties": None,
+        "property_dependencies": (),
         "debug_draw_modes": None,
         "scope_collectors": (),
         "scope_restart_handlers": (),
@@ -91,11 +147,33 @@ def register_solver_module(domain: str, descriptor: dict) -> dict:
         data.update(descriptor)
     data["domain"] = key
     _RUNTIME_SOLVER_MODULES[key] = data
+    if _SOLVER_BLENDER_PROPERTIES_ACTIVE:
+        declaration = resolve_solver_blender_properties(key)
+        if declaration.get("classes") or declaration.get("bindings"):
+            from .blender_registry import register_blender_property_domain
+
+            try:
+                register_blender_property_domain(
+                    key,
+                    declaration,
+                    dependencies=data.get("property_dependencies", ()),
+                )
+                if key not in _REGISTERED_SOLVER_PROPERTY_DOMAINS:
+                    _REGISTERED_SOLVER_PROPERTY_DOMAINS.append(key)
+            except Exception:
+                _RUNTIME_SOLVER_MODULES.pop(key, None)
+                raise
     return dict(data)
 
 
 def unregister_solver_module(domain: str) -> None:
-    _RUNTIME_SOLVER_MODULES.pop(str(domain or ""), None)
+    key = str(domain or "").strip()
+    if key in _REGISTERED_SOLVER_PROPERTY_DOMAINS:
+        from .blender_registry import unregister_blender_property_domain
+
+        unregister_blender_property_domain(key)
+        _REGISTERED_SOLVER_PROPERTY_DOMAINS.remove(key)
+    _RUNTIME_SOLVER_MODULES.pop(key, None)
 
 
 def all_solver_module_descriptors() -> dict[str, dict]:
@@ -117,6 +195,8 @@ def _as_tuple(value) -> tuple:
 
 
 def _resolve_ref(domain: str, ref):
+    if isinstance(ref, dict):
+        return ref
     if callable(ref):
         return ref
     if not isinstance(ref, str):
@@ -237,64 +317,121 @@ def resolve_solver_blender_properties(domain: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def register_solver_blender_properties() -> int:
-    """由物理世界统一注册所有 solver 拥有的 Blender 参数。"""
-    if _REGISTERED_PROPERTY_CLASSES or _REGISTERED_PROPERTY_BINDINGS:
-        return len(_REGISTERED_PROPERTY_BINDINGS)
+def resolve_component_blender_properties(domain: str) -> dict:
+    descriptor = _component_descriptor(domain)
+    ref = descriptor.get("blender_properties")
+    value = _resolve_ref(domain, ref)
+    return value if isinstance(value, dict) else {}
 
-    import bpy
 
-    registered_classes: list[type] = []
-    registered_bindings: list[tuple[object, str]] = []
+def register_physics_world_blender_properties() -> int:
+    """注册 core component 后再注册 solver domain 的全部 Blender 属性。"""
+    global _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE
+    from .blender_registry import (
+        blender_property_domain_snapshot,
+        register_blender_property_domain,
+        unregister_blender_property_domain,
+    )
+
+    if _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE:
+        domains = tuple(_REGISTERED_COMPONENT_PROPERTY_DOMAINS) + tuple(_REGISTERED_SOLVER_PROPERTY_DOMAINS)
+        return sum(
+            int(blender_property_domain_snapshot(domain).get("binding_count", 0))
+            for domain in domains
+        )
+
+    registered_now: list[str] = []
     try:
-        declarations = [
-            resolve_solver_blender_properties(domain)
-            for domain in all_solver_module_descriptors()
-        ]
-        for declaration in declarations:
-            for cls in _as_tuple(declaration.get("classes")):
-                bpy.utils.register_class(cls)
-                registered_classes.append(cls)
-
-        for declaration in declarations:
-            for binding in _as_tuple(declaration.get("bindings")):
-                if not isinstance(binding, dict):
-                    continue
-                owner = binding.get("owner")
-                name = str(binding.get("name") or "").strip()
-                property_kind = str(binding.get("property") or "").strip()
-                property_type = binding.get("type")
-                if owner is None or not name or property_kind != "pointer" or property_type is None:
-                    raise ValueError(f"invalid solver Blender property binding: {binding!r}")
-                if hasattr(owner, name):
-                    raise RuntimeError(f"solver Blender property already registered: {owner.__name__}.{name}")
-                setattr(owner, name, bpy.props.PointerProperty(type=property_type))
-                registered_bindings.append((owner, name))
+        for domain, descriptor in all_component_descriptors().items():
+            declaration = resolve_component_blender_properties(domain)
+            if not declaration.get("classes") and not declaration.get("bindings"):
+                continue
+            register_blender_property_domain(
+                domain,
+                declaration,
+                dependencies=descriptor.get("depends_on", ()),
+            )
+            registered_now.append(domain)
+        _REGISTERED_COMPONENT_PROPERTY_DOMAINS.extend(registered_now)
+        solver_count = register_solver_blender_properties()
     except Exception:
-        for owner, name in reversed(registered_bindings):
-            if hasattr(owner, name):
-                delattr(owner, name)
-        for cls in reversed(registered_classes):
-            bpy.utils.unregister_class(cls)
+        for domain in reversed(registered_now):
+            unregister_blender_property_domain(domain, force=True)
+        _REGISTERED_COMPONENT_PROPERTY_DOMAINS.clear()
         raise
 
-    _REGISTERED_PROPERTY_CLASSES.extend(registered_classes)
-    _REGISTERED_PROPERTY_BINDINGS.extend(registered_bindings)
-    return len(registered_bindings)
+    _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE = True
+    component_count = sum(
+        int(blender_property_domain_snapshot(domain).get("binding_count", 0))
+        for domain in _REGISTERED_COMPONENT_PROPERTY_DOMAINS
+    )
+    return component_count + int(solver_count)
+
+
+def unregister_physics_world_blender_properties() -> None:
+    """按 solver -> core component 的逆依赖顺序释放全部物理 RNA。"""
+    global _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE
+    from .blender_registry import unregister_blender_property_domain
+
+    unregister_solver_blender_properties()
+    for domain in reversed(tuple(_REGISTERED_COMPONENT_PROPERTY_DOMAINS)):
+        unregister_blender_property_domain(domain, force=True)
+    _REGISTERED_COMPONENT_PROPERTY_DOMAINS.clear()
+    _PHYSICS_WORLD_BLENDER_PROPERTIES_ACTIVE = False
+
+
+def register_solver_blender_properties() -> int:
+    """由物理世界统一注册所有 solver 拥有的 Blender 参数。"""
+    global _SOLVER_BLENDER_PROPERTIES_ACTIVE
+    from .blender_registry import (
+        blender_property_domain_snapshot,
+        register_blender_property_domain,
+        unregister_blender_property_domain,
+    )
+
+    if _SOLVER_BLENDER_PROPERTIES_ACTIVE:
+        return sum(
+            int(blender_property_domain_snapshot(domain).get("binding_count", 0))
+            for domain in _REGISTERED_SOLVER_PROPERTY_DOMAINS
+        )
+
+    registered_now: list[str] = []
+    try:
+        for domain, descriptor in all_solver_module_descriptors().items():
+            declaration = resolve_solver_blender_properties(domain)
+            if not declaration.get("classes") and not declaration.get("bindings"):
+                continue
+            register_blender_property_domain(
+                domain,
+                declaration,
+                dependencies=descriptor.get("property_dependencies", ()),
+            )
+            registered_now.append(domain)
+    except Exception:
+        for domain in reversed(registered_now):
+            unregister_blender_property_domain(domain, force=True)
+        raise
+
+    _REGISTERED_SOLVER_PROPERTY_DOMAINS.extend(
+        domain for domain in registered_now
+        if domain not in _REGISTERED_SOLVER_PROPERTY_DOMAINS
+    )
+    _SOLVER_BLENDER_PROPERTIES_ACTIVE = True
+    return sum(
+        int(blender_property_domain_snapshot(domain).get("binding_count", 0))
+        for domain in _REGISTERED_SOLVER_PROPERTY_DOMAINS
+    )
 
 
 def unregister_solver_blender_properties() -> None:
     """按注册逆序释放 solver Blender 参数。"""
-    import bpy
+    global _SOLVER_BLENDER_PROPERTIES_ACTIVE
+    from .blender_registry import unregister_blender_property_domain
 
-    for owner, name in reversed(_REGISTERED_PROPERTY_BINDINGS):
-        if hasattr(owner, name):
-            delattr(owner, name)
-    _REGISTERED_PROPERTY_BINDINGS.clear()
-
-    for cls in reversed(_REGISTERED_PROPERTY_CLASSES):
-        bpy.utils.unregister_class(cls)
-    _REGISTERED_PROPERTY_CLASSES.clear()
+    for domain in reversed(tuple(_REGISTERED_SOLVER_PROPERTY_DOMAINS)):
+        unregister_blender_property_domain(domain, force=True)
+    _REGISTERED_SOLVER_PROPERTY_DOMAINS.clear()
+    _SOLVER_BLENDER_PROPERTIES_ACTIVE = False
 
 
 def resolve_solver_debug_draw_modes(domain: str) -> dict:

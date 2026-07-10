@@ -6,7 +6,7 @@ from ....FunctionNodeCore import omni
 from ....OmniNodeSocketMapping import _OmniBitMask, _OmniBone
 from ... import _Color
 from ..types import PhysicsWorldCache
-from .capabilities import BONE_COLLISION_CAPABILITY
+from ..collision.capabilities import BONE_COLLISION_CAPABILITY
 from .debug_draw import update_spring_vrm_debug_draw_store
 from .implicit_objects import (
     make_bone_collision_override_properties,

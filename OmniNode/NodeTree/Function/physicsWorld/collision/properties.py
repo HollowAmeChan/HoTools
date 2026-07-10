@@ -1,4 +1,4 @@
-"""SpringBone 拥有的 Blender RNA 参数定义。"""
+"""Physics World 共享 Object/Bone collision Blender RNA。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
 from bpy.types import PropertyGroup
 
-from .capabilities import BONE_COLLISION_CAPABILITY
+from .capabilities import BONE_COLLISION_CAPABILITY, OBJECT_COLLISION_CAPABILITY
 
 
 def _field_property(field: dict):
@@ -27,11 +27,11 @@ def _field_property(field: dict):
         return FloatVectorProperty(**metadata)
     if field_type in {"int", "bitmask"}:
         return IntProperty(**metadata)
-    raise ValueError(f"unsupported bone_collision field type: {field_type}")
+    raise ValueError(f"unsupported collision field type: {field_type}")
 
 
 class PG_Hotools_BoneCollision(PropertyGroup):
-    """由 SpringBone capability 生成的骨骼碰撞持久参数。"""
+    """Physics World 共享骨骼碰撞持久参数。"""
 
 
 PG_Hotools_BoneCollision.__annotations__ = {
@@ -41,8 +41,19 @@ PG_Hotools_BoneCollision.__annotations__ = {
 }
 
 
-SPRING_VRM_BLENDER_PROPERTIES = {
-    "classes": (PG_Hotools_BoneCollision,),
+class PG_Hotools_ObjectCollision(PropertyGroup):
+    """Physics World 共享 Object 简单碰撞持久参数。"""
+
+
+PG_Hotools_ObjectCollision.__annotations__ = {
+    str(field["name"]): _field_property(field)
+    for field in OBJECT_COLLISION_CAPABILITY.get("fields", ())
+    if field.get("name")
+}
+
+
+COLLISION_BLENDER_PROPERTIES = {
+    "classes": (PG_Hotools_BoneCollision, PG_Hotools_ObjectCollision),
     "bindings": (
         {
             "owner": bpy.types.Bone,
@@ -50,8 +61,18 @@ SPRING_VRM_BLENDER_PROPERTIES = {
             "property": "pointer",
             "type": PG_Hotools_BoneCollision,
         },
+        {
+            "owner": bpy.types.Object,
+            "name": "hotools_object_collision",
+            "property": "pointer",
+            "type": PG_Hotools_ObjectCollision,
+        },
     ),
 }
 
 
-__all__ = ["PG_Hotools_BoneCollision", "SPRING_VRM_BLENDER_PROPERTIES"]
+__all__ = [
+    "COLLISION_BLENDER_PROPERTIES",
+    "PG_Hotools_BoneCollision",
+    "PG_Hotools_ObjectCollision",
+]

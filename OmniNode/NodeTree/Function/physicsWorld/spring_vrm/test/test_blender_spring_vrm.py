@@ -74,6 +74,7 @@ _pkg_dirs = [
     ("HoTools.OmniNode.NodeTree.Function", os.path.join(_NT_DIR, "Function")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld", _PW_ROOT),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.utils", os.path.join(_PW_ROOT, "utils")),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.collision", os.path.join(_PW_ROOT, "collision")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid", os.path.join(_PW_ROOT, "rigid")),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld.spring_vrm", os.path.join(_PW_ROOT, "spring_vrm")),
 ]
@@ -145,6 +146,10 @@ if _nt_fnc_key not in sys.modules:
 
 _load_pw("names", "names.py")
 _load_pw("declarations", "declarations.py")
+_load_pw("collision.names", "collision/names.py")
+_load_pw("collision.groups", "collision/groups.py")
+_load_pw("collision.capabilities", "collision/capabilities.py")
+_load_pw("collision.properties", "collision/properties.py")
 _load_pw("utils.ids", "utils/ids.py")
 _load_pw("utils.values", "utils/values.py")
 _load_pw("utils.writeback_pose", "utils/writeback_pose.py")
@@ -160,14 +165,13 @@ _load_pw("spring_vrm.specs", "spring_vrm/specs.py")
 _load_pw("spring_vrm.implicit_objects", "spring_vrm/implicit_objects.py")
 _load_pw("spring_vrm.declaration", "spring_vrm/declaration.py")
 _load_pw("spring_vrm.capabilities", "spring_vrm/capabilities.py")
-_load_pw("spring_vrm.properties", "spring_vrm/properties.py")
 
 
 def _register_physics_props() -> None:
-    from PhysicsTools.physicsProperty import PG_Hotools_ObjectCollision
-
-    bone_cls = sys.modules[f"{_PKG_PREFIX}.spring_vrm.properties"].PG_Hotools_BoneCollision
-    for cls in (bone_cls, PG_Hotools_ObjectCollision):
+    collision_properties = sys.modules[f"{_PKG_PREFIX}.collision.properties"]
+    bone_cls = collision_properties.PG_Hotools_BoneCollision
+    object_cls = collision_properties.PG_Hotools_ObjectCollision
+    for cls in (bone_cls, object_cls):
         try:
             bpy.utils.register_class(cls)
         except Exception:
@@ -175,11 +179,11 @@ def _register_physics_props() -> None:
     if not hasattr(bpy.types.Bone, "hotools_collision"):
         bpy.types.Bone.hotools_collision = bpy.props.PointerProperty(type=bone_cls)
     if not hasattr(bpy.types.Object, "hotools_object_collision"):
-        bpy.types.Object.hotools_object_collision = bpy.props.PointerProperty(type=PG_Hotools_ObjectCollision)
+        bpy.types.Object.hotools_object_collision = bpy.props.PointerProperty(type=object_cls)
 
 
 _register_physics_props()
-PG_Hotools_BoneCollision = sys.modules[f"{_PKG_PREFIX}.spring_vrm.properties"].PG_Hotools_BoneCollision
+PG_Hotools_BoneCollision = sys.modules[f"{_PKG_PREFIX}.collision.properties"].PG_Hotools_BoneCollision
 _load_pw("spring_vrm.bone_collision", "spring_vrm/bone_collision.py")
 _load_pw("spring_vrm.native", "spring_vrm/native.py")
 _load_pw("spring_vrm.debug", "spring_vrm/debug.py")
@@ -207,7 +211,7 @@ physicsSpringVRMSolver = _pw("spring_vrm.nodes").physicsSpringVRMSolver
 is_native_available = _pw("spring_vrm.native").is_available
 iter_spring_vrm_pose_results = _pw("spring_vrm.results").iter_spring_vrm_pose_results
 get_spring_vrm_stats_result = _pw("spring_vrm.results").get_spring_vrm_stats_result
-audit_bone_collision_property_group = _pw("spring_vrm.capabilities").audit_bone_collision_property_group
+audit_bone_collision_property_group = _pw("collision.capabilities").audit_bone_collision_property_group
 resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_collision_fields
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
 make_bone_collision_override_properties = _pw("spring_vrm.implicit_objects").make_bone_collision_override_properties
@@ -1679,8 +1683,8 @@ def test_spring_vrm_bone_collision_resolver_matches_explicit_rna():
         _delete_object(armature)
 
 
-def test_spring_vrm_bone_collision_capability_owns_explicit_rna():
-    assert PG_Hotools_BoneCollision.__module__.endswith("physicsWorld.spring_vrm.properties")
+def test_collision_component_owns_bone_collision_explicit_rna():
+    assert PG_Hotools_BoneCollision.__module__.endswith("physicsWorld.collision.properties")
     issues = audit_bone_collision_property_group(PG_Hotools_BoneCollision)
     assert not issues, "Bone.hotools_collision drifted from BONE_COLLISION_CAPABILITY: " + "; ".join(issues)
 
@@ -2239,7 +2243,7 @@ _TESTS = (
     ("world plane collider 接入 SpringBone native", test_spring_vrm_plane_collider_snapshot),
     ("world box collider 接入 SpringBone native", test_spring_vrm_box_collider_snapshot),
     ("骨骼碰撞 resolver 对照 solver 显式 RNA", test_spring_vrm_bone_collision_resolver_matches_explicit_rna),
-    ("SpringBone capability owns explicit RNA", test_spring_vrm_bone_collision_capability_owns_explicit_rna),
+    ("collision component owns BoneCollision explicit RNA", test_collision_component_owns_bone_collision_explicit_rna),
     ("SpringBone bone_collision.override preempts explicit profile", test_spring_vrm_bone_collision_override_preempts_explicit),
     ("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index),
     ("SpringBone node presets preserve profiles and capability value domain", test_spring_vrm_node_presets_preserve_profiles_and_value_domain),
