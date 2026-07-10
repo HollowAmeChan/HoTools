@@ -9,6 +9,7 @@ these results instead of reaching into backend-private Jolt handles.
 from __future__ import annotations
 
 from .names import (
+    RIGID_CONSTRAINT_STATE_CHANNEL,
     RIGID_SOLVER_ID,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,
@@ -126,6 +127,107 @@ def get_rigid_transform_result(
 
 def clear_rigid_transform_results(world) -> None:
     world.clear_results(RIGID_TRANSFORM_CHANNEL, solver=RIGID_SOLVER_ID)
+
+
+def make_rigid_constraint_state_result(
+    slot_id: str,
+    spec,
+    frame: int,
+    generation: int,
+    state: dict,
+    backend: str = "jolt",
+) -> dict:
+    return {
+        "channel": RIGID_CONSTRAINT_STATE_CHANNEL,
+        "solver": RIGID_SOLVER_ID,
+        "backend": str(backend),
+        "slot_id": str(slot_id),
+        "frame": int(frame),
+        "generation": int(generation),
+        "empty_ptr": int(getattr(spec, "empty_ptr", 0) or 0),
+        "target_a_ptr": int(getattr(spec, "target_a_ptr", 0) or 0),
+        "target_b_ptr": int(getattr(spec, "target_b_ptr", 0) or 0),
+        "constraint_type": str(state.get("constraint_type", getattr(spec, "constraint_type", "FIXED"))),
+        "enabled": bool(state.get("enabled", False)),
+        "breakable": bool(getattr(spec, "breakable", False)),
+        "breaking_threshold": float(getattr(spec, "breaking_threshold", 1000.0) or 0.0),
+        "broken": bool(state.get("broken", False)),
+        "breaking_impulse": float(state.get("breaking_impulse", 0.0) or 0.0),
+        "current_value_kind": str(state.get("current_value_kind", "none") or "none"),
+        "current_value": float(state.get("current_value", 0.0) or 0.0),
+        "lambda_position": _float3(state.get("lambda_position", (0.0, 0.0, 0.0))),
+        "lambda_rotation": _float3(state.get("lambda_rotation", (0.0, 0.0, 0.0))),
+        "lambda_limit": float(state.get("lambda_limit", 0.0) or 0.0),
+        "lambda_motor": float(state.get("lambda_motor", 0.0) or 0.0),
+        "lambda_max_abs": float(state.get("lambda_max_abs", 0.0) or 0.0),
+    }
+
+
+def publish_rigid_constraint_state_result(
+    world,
+    slot_id: str,
+    spec,
+    frame: int,
+    generation: int,
+    state: dict,
+    backend: str = "jolt",
+) -> dict | None:
+    result = make_rigid_constraint_state_result(
+        slot_id=slot_id,
+        spec=spec,
+        frame=frame,
+        generation=generation,
+        state=state,
+        backend=backend,
+    )
+    return world.publish_result(
+        result,
+        channel=RIGID_CONSTRAINT_STATE_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+    )
+
+
+def iter_rigid_constraint_state_results(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> list[dict]:
+    items = world.consume_results(
+        RIGID_CONSTRAINT_STATE_CHANNEL,
+        solver=RIGID_SOLVER_ID,
+        frame=frame,
+        generation=generation,
+    )
+    return [
+        item for item in items
+        if isinstance(item, dict) and item.get("channel") == RIGID_CONSTRAINT_STATE_CHANNEL
+    ]
+
+
+def get_rigid_constraint_state_result(
+    world,
+    slot_id: str | None = None,
+    empty_ptr: int | None = None,
+    frame: int | None = None,
+    generation: int | None = None,
+) -> dict | None:
+    slot_id = str(slot_id) if slot_id else None
+    empty_ptr = int(empty_ptr) if empty_ptr is not None else None
+    for result in iter_rigid_constraint_state_results(
+        world,
+        frame=frame,
+        generation=generation,
+    ):
+        if slot_id is not None and result.get("slot_id") != slot_id:
+            continue
+        if empty_ptr is not None and int(result.get("empty_ptr", 0) or 0) != empty_ptr:
+            continue
+        return result
+    return None
+
+
+def clear_rigid_constraint_state_results(world) -> None:
+    world.clear_results(RIGID_CONSTRAINT_STATE_CHANNEL, solver=RIGID_SOLVER_ID)
 
 
 def make_rigid_solver_stats_result(

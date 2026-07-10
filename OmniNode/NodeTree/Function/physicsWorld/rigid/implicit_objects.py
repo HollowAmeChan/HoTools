@@ -372,6 +372,8 @@ def make_rigid_generated_constraint_properties(
     cone_half_angle: float = 0.0,
     distance_min: float = 0.0,
     distance_max: float = 1.0,
+    breakable: bool = False,
+    breaking_threshold: float = 1000.0,
 ) -> list[dict]:
     """
     构造单个可注册的刚体生成约束属性。
@@ -404,6 +406,8 @@ def make_rigid_generated_constraint_properties(
         "constraint_type": _normalize_constraint_type(constraint_type),
         "enabled": bool(enabled),
         "disable_collisions": bool(disable_collisions),
+        "breakable": bool(breakable),
+        "breaking_threshold": max(float(breaking_threshold), 0.0),
         "source_id": str(source_id or ""),
         "anchor_position": anchor_position,
         "anchor_rotation_wxyz": anchor_rotation_wxyz,
@@ -452,6 +456,8 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "constraint_type": constraint_type,
         "enabled": bool(item.get("enabled", True)),
         "disable_collisions": bool(item.get("disable_collisions", True)),
+        "breakable": bool(item.get("breakable", False)),
+        "breaking_threshold": max(float(item.get("breaking_threshold", 1000.0) or 0.0), 0.0),
         "source_id": str(item.get("source_id", "") or ""),
         "anchor_position": _float3(item.get("anchor_position", (0.0, 0.0, 0.0))),
         "anchor_rotation_wxyz": _float4(item.get(
@@ -543,6 +549,8 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         str(item.get("constraint_type", "FIXED") or "FIXED"),
         "1" if bool(item.get("enabled", True)) else "0",
         "1" if bool(item.get("disable_collisions", True)) else "0",
+        "1" if bool(item.get("breakable", False)) else "0",
+        f"{float(item.get('breaking_threshold', 1000.0)):.8g}",
         ",".join(f"{v:.8g}" for v in _float3(item.get("anchor_position", (0.0, 0.0, 0.0)))),
         ",".join(f"{float(v):.8g}" for v in _float4(item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))),
         int(item.get("constraint_priority", 0) or 0),
@@ -635,6 +643,8 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         target_a_ptr=as_pointer(target_a),
         target_b_ptr=as_pointer(target_b),
         disable_collisions=bool(item.get("disable_collisions", True)),
+        breakable=bool(item.get("breakable", False)),
+        breaking_threshold=float(item.get("breaking_threshold", 1000.0) or 0.0),
         anchor_position=_float3(item.get("anchor_position", (0.0, 0.0, 0.0))),
         anchor_rotation_wxyz=_float4(item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
         constraint_priority=int(item.get("constraint_priority", 0) or 0),

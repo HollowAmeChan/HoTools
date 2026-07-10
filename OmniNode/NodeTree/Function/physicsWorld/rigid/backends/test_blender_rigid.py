@@ -195,6 +195,7 @@ build_constraint_spec = _pw("rigid.specs").build_constraint_spec
 step_rigid_bodies     = _pw("rigid.solver").step_rigid_bodies
 JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
+get_rigid_constraint_state_result = _pw("rigid.results").get_rigid_constraint_state_result
 get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_result
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
@@ -203,6 +204,7 @@ make_rigid_jolt_world_setting_properties = _pw("rigid.implicit_objects").make_ri
 register_rigid_jolt_world_setting_objects = _pw("rigid.implicit_objects").register_rigid_jolt_world_setting_objects
 physicsWorldResultStream = _pw("nodes").physicsWorldResultStream
 physicsRigidReadState = _pw("rigid.nodes").physicsRigidReadState
+physicsRigidConstraintReadState = _pw("rigid.nodes").physicsRigidConstraintReadState
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 physicsRigidGeneratedConstraintRegister = _pw("rigid.nodes").physicsRigidGeneratedConstraintRegister
 physicsRigidJoltWorldSettingsRegister = _pw("rigid.nodes").physicsRigidJoltWorldSettingsRegister
@@ -580,6 +582,8 @@ def test_distance_constraint_spec_and_generated_properties():
     props.distance_max = 0.5
     props.limit_spring_frequency = 3.0
     props.limit_spring_damping = 0.75
+    props.breakable = True
+    props.breaking_threshold = 12.5
 
     spec = build_constraint_spec(c)
     assert spec is not None
@@ -588,6 +592,8 @@ def test_distance_constraint_spec_and_generated_properties():
     assert spec.distance_max == 2.5
     assert spec.limit_spring_frequency == 3.0
     assert spec.limit_spring_damping == 0.75
+    assert spec.breakable is True
+    assert spec.breaking_threshold == 12.5
     assert spec.debug_dict()["distance_max"] == 2.5
 
     adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
@@ -599,6 +605,12 @@ def test_distance_constraint_spec_and_generated_properties():
     adapter.sync_constraint(spec.slot_id, spec)
     assert adapter.constraint_count == 1
     adapter.step(1.0 / 60.0, 1)
+    state = adapter.get_constraint_state(spec.slot_id)
+    assert state is not None
+    assert state["constraint_type"] == "DISTANCE"
+    assert state["current_value_kind"] == "distance"
+    assert state["enabled"] is True
+    assert state["lambda_max_abs"] >= 0.0
     adapter.dispose("test_distance_constraint")
 
     generated = make_rigid_generated_constraint_properties(
@@ -607,12 +619,95 @@ def test_distance_constraint_spec_and_generated_properties():
         constraint_type="DISTANCE",
         distance_min=4.0,
         distance_max=1.0,
+        breakable=True,
+        breaking_threshold=7.5,
     )
     assert len(generated) == 1
     assert generated[0]["constraint_type"] == "DISTANCE"
     assert generated[0]["distance_min"] == 1.0
     assert generated[0]["distance_max"] == 4.0
+    assert generated[0]["breakable"] is True
+    assert generated[0]["breaking_threshold"] == 7.5
 
+    _del(c, a, b)
+
+
+def test_constraint_state_result_pipeline():
+    scene = bpy.context.scene
+    a = _make_obj("T3C_StateBodyA", (-0.5, 0, 2), body_type="STATIC")
+    b = _make_obj("T3C_StateBodyB", (0.5, 0, 2), body_type="DYNAMIC")
+    c = _make_constraint_empty("T3C_StateConstraint", a, b, loc=(0, 0, 2))
+    props = c.hotools_rigid_constraint
+    props.constraint_type = "HINGE"
+    props.breakable = True
+    props.breaking_threshold = 0.0
+
+    scope = make_scope(
+        [a, b, c],
+        include_rigid_body=True,
+        include_rigid_constraint=True,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    step_rigid_bodies(world, enabled=True)
+
+    spec = build_constraint_spec(c)
+    assert spec is not None
+    result = get_rigid_constraint_state_result(
+        world,
+        slot_id=spec.slot_id,
+        frame=scene.frame_current,
+        generation=world.generation,
+    )
+    assert result is not None
+    assert result["constraint_type"] == "HINGE"
+    assert result["current_value_kind"] == "angle"
+    assert result["breakable"] is True
+    assert result["broken"] is True
+    assert result["enabled"] is False
+    assert result["breaking_impulse"] > 0.0
+    assert len(result["lambda_position"]) == 3
+    assert len(result["lambda_rotation"]) == 3
+    assert result["lambda_max_abs"] >= 0.0
+
+    node_result = physicsRigidConstraintReadState(world, c)
+    assert node_result[1] is True
+    assert node_result[2] is False
+    assert node_result[3] == "HINGE"
+    assert node_result[4] == "angle"
+    assert node_result[-2] is True
+    assert node_result[-1] is result
+
+    cache_value, _, _ = physicsWorldCommit(world, enabled=True)
+    props.breaking_threshold = 1000.0
+    scene.frame_set(2)
+    world2, _, _, _ = physicsWorldBegin(
+        cache_state=cache_value,
+        scene=scene,
+        object_scope=scope,
+        enabled=True,
+    )
+    step_rigid_bodies(world2, enabled=True)
+    result2 = get_rigid_constraint_state_result(
+        world2,
+        slot_id=spec.slot_id,
+        frame=scene.frame_current,
+        generation=world2.generation,
+    )
+    assert result2 is not None
+    assert result2["enabled"] is True
+    assert result2["broken"] is False
+    assert "_jolt_broken" not in world2.solver_slots[spec.slot_id].data
+
+    world2.omni_cache_dispose("test_constraint_state_result")
     _del(c, a, b)
 
 
@@ -1187,6 +1282,7 @@ if __name__ == "__main__":
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)
+    check("constraint state result pipeline", test_constraint_state_result_pipeline)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 
     passed = sum(_results)

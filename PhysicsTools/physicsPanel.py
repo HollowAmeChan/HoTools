@@ -362,6 +362,10 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
         layout.prop(props, "target_a")
         layout.prop(props, "target_b")
         layout.prop(props, "disable_collisions")
+        layout.prop(props, "breakable")
+        break_col = layout.column(align=True)
+        break_col.enabled = bool(props.breakable)
+        break_col.prop(props, "breaking_threshold")
 
         ctype = props.constraint_type
 

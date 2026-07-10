@@ -11,6 +11,7 @@ from .names import (
     RIGID_BODY_REGISTER_WRITER_ID,
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_REGISTER_WRITER_ID,
+    RIGID_CONSTRAINT_STATE_CHANNEL,
     RIGID_CONSTRAINT_SLOT_KIND,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
     RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
@@ -30,6 +31,7 @@ RIGID_SOLVER_DECLARATION = {
     "nodes": [
         "刚体模拟步",
         "刚体结果-读取状态",
+        "刚体约束结果-读取状态",
         "刚体世界-Jolt设置属性",
         "刚体世界-Jolt设置注册",
         "刚体生成约束属性",
@@ -64,6 +66,7 @@ RIGID_SOLVER_DECLARATION = {
     ],
     "produces": [
         f'world.result_streams["{RIGID_TRANSFORM_CHANNEL}"]',
+        f'world.result_streams["{RIGID_CONSTRAINT_STATE_CHANNEL}"]',
         f'world.result_streams["{RIGID_SOLVER_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
@@ -71,6 +74,7 @@ RIGID_SOLVER_DECLARATION = {
         "slot.data.spec",
         "slot.data._jolt_generation",
         "slot.data._jolt_kinematic_pose_dirty",
+        "constraint slot.data._jolt_broken / _jolt_breaking_impulse",
     ],
     "dirty_keys": [
         "world.generation",
@@ -85,6 +89,7 @@ RIGID_SOLVER_DECLARATION = {
     "update_policy": {
         "body_spec": "generation 或签名变化时同步到 Jolt",
         "constraint_spec": "generation 或签名变化时同步到 Jolt",
+        "breakable_constraint": "每次真实 Jolt step 后按 lambda_max_abs 与冲量阈值判定；same-frame 不重复判定",
         "kinematic_pose": "同帧请求时只更新运动学姿态，不推进时间",
         "jolt_world_settings": "按隐式对象签名同步到 Jolt 适配器",
         "commands": "按代次/帧令牌单次消费",
@@ -114,7 +119,11 @@ RIGID_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [RIGID_TRANSFORM_CHANNEL, RIGID_SOLVER_STATS_CHANNEL],
+        "result_channels": [
+            RIGID_TRANSFORM_CHANNEL,
+            RIGID_CONSTRAINT_STATE_CHANNEL,
+            RIGID_SOLVER_STATS_CHANNEL,
+        ],
         "supports_bake": False,
     },
     "legacy_policy": "只支持新物理世界路径，不提供旧实现兼容层",
@@ -134,7 +143,7 @@ RIGID_JOLT_CAPABILITY_BACKLOG = [
     },
     {
         "capability": "约束 lambda 与断裂策略",
-        "status": "计划中",
+        "status": "已接",
         "boundary": "由适配器读回结果；断裂策略负责禁用或移除命令",
     },
     {

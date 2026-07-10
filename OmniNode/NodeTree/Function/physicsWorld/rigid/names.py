@@ -5,6 +5,7 @@ RIGID_BODY_SLOT_KIND = "rigid_body"
 RIGID_CONSTRAINT_SLOT_KIND = "rigid_constraint"
 RIGID_BACKEND_RESOURCE_KEY = "rigid_solver"
 RIGID_TRANSFORM_CHANNEL = "rigid_transform"
+RIGID_CONSTRAINT_STATE_CHANNEL = "rigid_constraint_state"
 RIGID_SOLVER_STATS_CHANNEL = "rigid_solver_stats"
 RIGID_BODY_COMMANDS_CHANNEL = "rigid_body_commands"
 

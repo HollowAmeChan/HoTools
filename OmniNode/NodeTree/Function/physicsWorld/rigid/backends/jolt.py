@@ -449,6 +449,48 @@ class JoltAdapter:
         if handle is not None:
             self._jw.remove_constraint(handle)
 
+    def get_constraint_state(self, slot_id: str) -> dict | None:
+        """返回约束当前值和上一物理步 lambda 的 HoTools 快照。"""
+        handle = self._constraint_handles.get(slot_id)
+        if handle is None or not hasattr(self._jw, "get_constraint_state"):
+            return None
+
+        (
+            constraint_type,
+            enabled,
+            current_value_kind,
+            current_value,
+            lambda_position,
+            lambda_rotation,
+            lambda_limit,
+            lambda_motor,
+        ) = self._jw.get_constraint_state(handle)
+        position = _vec3_tuple(lambda_position)
+        rotation = _vec3_tuple(lambda_rotation)
+        peak = max(
+            math.sqrt(sum(value * value for value in position)),
+            math.sqrt(sum(value * value for value in rotation)),
+            abs(float(lambda_limit)),
+            abs(float(lambda_motor)),
+        )
+        return {
+            "constraint_type": str(constraint_type),
+            "enabled": bool(enabled),
+            "current_value_kind": str(current_value_kind or "none"),
+            "current_value": float(current_value),
+            "lambda_position": position,
+            "lambda_rotation": rotation,
+            "lambda_limit": float(lambda_limit),
+            "lambda_motor": float(lambda_motor),
+            "lambda_max_abs": float(peak),
+        }
+
+    def set_constraint_enabled(self, slot_id: str, enabled: bool) -> bool:
+        handle = self._constraint_handles.get(slot_id)
+        if handle is None or not hasattr(self._jw, "set_constraint_enabled"):
+            return False
+        return bool(self._jw.set_constraint_enabled(handle, bool(enabled)))
+
     # ---- Simulation step -------------------------------------------------
 
     def step(self, dt: float, substeps: int = 1) -> float:

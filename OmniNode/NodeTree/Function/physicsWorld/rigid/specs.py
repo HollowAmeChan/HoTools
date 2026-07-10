@@ -196,6 +196,8 @@ class ConstraintSpec:
         "target_a_ptr",
         "target_b_ptr",
         "disable_collisions",
+        "breakable",
+        "breaking_threshold",
         "anchor_position",
         "anchor_rotation_wxyz",
         "constraint_priority",
@@ -236,6 +238,8 @@ class ConstraintSpec:
         target_a_ptr: int = 0,
         target_b_ptr: int = 0,
         disable_collisions: bool = True,
+        breakable: bool = False,
+        breaking_threshold: float = 1000.0,
         anchor_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         anchor_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         constraint_priority: int = 0,
@@ -273,6 +277,8 @@ class ConstraintSpec:
         self.target_a_ptr: int = int(target_a_ptr or 0)
         self.target_b_ptr: int = int(target_b_ptr or 0)
         self.disable_collisions: bool = bool(disable_collisions)
+        self.breakable: bool = bool(breakable)
+        self.breaking_threshold: float = max(float(breaking_threshold), 0.0)
         self.anchor_position: tuple[float, float, float] = anchor_position
         self.anchor_rotation_wxyz: tuple[float, float, float, float] = anchor_rotation_wxyz
         self.constraint_priority: int = constraint_priority
@@ -310,6 +316,8 @@ class ConstraintSpec:
             "target_a_ptr": self.target_a_ptr,
             "target_b_ptr": self.target_b_ptr,
             "disable_collisions": self.disable_collisions,
+            "breakable": self.breakable,
+            "breaking_threshold": self.breaking_threshold,
             "anchor_position": self.anchor_position,
             "anchor_rotation_wxyz": self.anchor_rotation_wxyz,
             "constraint_priority": self.constraint_priority,
@@ -565,6 +573,8 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     target_a_ptr = _object_pointer(target_a)
     target_b_ptr = _object_pointer(target_b)
     disable_collisions = bool(getattr(props, "disable_collisions", True))
+    breakable = bool(getattr(props, "breakable", False))
+    breaking_threshold = max(float(getattr(props, "breaking_threshold", 1000.0)), 0.0)
     anchor_position, anchor_rotation_wxyz = _world_transform_wxyz(empty_obj)
 
     constraint_priority = max(0, int(getattr(props, "constraint_priority", 0)))
@@ -610,6 +620,8 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         target_a_ptr=target_a_ptr,
         target_b_ptr=target_b_ptr,
         disable_collisions=disable_collisions,
+        breakable=breakable,
+        breaking_threshold=breaking_threshold,
         anchor_position=anchor_position,
         anchor_rotation_wxyz=anchor_rotation_wxyz,
         constraint_priority=constraint_priority,

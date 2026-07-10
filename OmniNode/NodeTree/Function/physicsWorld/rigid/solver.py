@@ -30,7 +30,9 @@ from .implicit_objects import (
     sync_rigid_jolt_world_settings,
 )
 from .results import (
+    clear_rigid_constraint_state_results,
     clear_rigid_transform_results,
+    publish_rigid_constraint_state_result,
     publish_rigid_transform_result,
     publish_rigid_solver_stats_result,
 )
@@ -350,6 +352,79 @@ def _publish_rigid_transform_results(world: PhysicsWorldCache, adapter) -> int:
     return published
 
 
+def _publish_rigid_constraint_state_results(world: PhysicsWorldCache, adapter) -> int:
+    """发布本帧约束状态；结果不得暴露 native constraint handle。"""
+    fc = world.frame_context
+    frame = int(getattr(fc, "frame", 0) or 0)
+    published = 0
+    clear_rigid_constraint_state_results(world)
+
+    for slot_id, slot in list(world.solver_slots.items()):
+        if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
+            continue
+        spec = slot.data.get("spec")
+        if spec is None:
+            continue
+        try:
+            state = adapter.get_constraint_state(slot_id)
+            if state is None:
+                continue
+            state = dict(state)
+            state["broken"] = bool(slot.data.get("_jolt_broken", False))
+            state["breaking_impulse"] = float(
+                slot.data.get("_jolt_breaking_impulse", 0.0) or 0.0
+            )
+            result = publish_rigid_constraint_state_result(
+                world,
+                slot_id=slot_id,
+                spec=spec,
+                frame=frame,
+                generation=world.generation,
+                state=state,
+                backend=getattr(adapter, "BACKEND", "jolt"),
+            )
+            if result is None:
+                continue
+            slot.data.pop("_result_error", None)
+            published += 1
+        except Exception as exc:
+            slot.data["_result_error"] = str(exc)
+
+    return published
+
+
+def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter) -> int:
+    """在 Jolt step 后按每步约束冲量禁用超过阈值的约束。"""
+    broken_count = 0
+    for slot_id, slot in list(world.solver_slots.items()):
+        if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
+            continue
+        spec = slot.data.get("spec")
+        if spec is None or not bool(getattr(spec, "breakable", False)):
+            continue
+        if bool(slot.data.get("_jolt_broken", False)):
+            continue
+        try:
+            state = adapter.get_constraint_state(slot_id)
+            if state is None or not bool(state.get("enabled", False)):
+                continue
+            impulse = float(state.get("lambda_max_abs", 0.0) or 0.0)
+            threshold = max(
+                float(getattr(spec, "breaking_threshold", 1000.0) or 0.0),
+                0.0,
+            )
+            if impulse <= threshold:
+                continue
+            if not adapter.set_constraint_enabled(slot_id, False):
+                continue
+            slot.data["_jolt_broken"] = True
+            slot.data["_jolt_breaking_impulse"] = impulse
+            broken_count += 1
+        except Exception as exc:
+            slot.data["_jolt_error"] = str(exc)
+    return broken_count
+
+
 def _rigid_slot_error_counts(world: PhysicsWorldCache) -> tuple[int, int]:
     sync_error_count = 0
     result_error_count = 0
@@ -428,6 +503,7 @@ def step_rigid_bodies(
             adapter.last_command_failed = 0
             adapter.last_command_errors = []
             transform_count = _publish_rigid_transform_results(world, adapter)
+            _publish_rigid_constraint_state_results(world, adapter)
             _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
         return body_count, 0.0
 
@@ -490,6 +566,8 @@ def step_rigid_bodies(
                 try:
                     adapter.sync_constraint(slot_id, spec)
                     slot.data["_jolt_generation"] = world.generation
+                    slot.data.pop("_jolt_broken", None)
+                    slot.data.pop("_jolt_breaking_impulse", None)
                     slot.data.pop("_jolt_error", None)
                 except Exception as e:
                     slot.data["_jolt_error"] = str(e)
@@ -498,12 +576,15 @@ def step_rigid_bodies(
 
         if same_frame:
             transform_count = _publish_rigid_transform_results(world, adapter)
+            _publish_rigid_constraint_state_results(world, adapter)
             _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
             return adapter.body_count, 0.0
 
         # --- step ---
         step_ms = adapter.step(dt, substeps)
+        _apply_breakable_constraint_policy(world, adapter)
         transform_count = _publish_rigid_transform_results(world, adapter)
+        _publish_rigid_constraint_state_results(world, adapter)
         _publish_rigid_solver_stats(world, adapter, step_ms, transform_count)
 
         # 注意：写回由下游 Physics Writeback 节点统一处理。

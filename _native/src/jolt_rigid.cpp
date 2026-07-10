@@ -54,6 +54,7 @@ JPH_SUPPRESS_WARNINGS
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -240,6 +241,8 @@ struct ConstraintRecord {
     uint32_t body_a_handle;
     uint32_t body_b_handle;
     bool disable_collisions;
+    bool collision_pair_disabled;
+    std::string constraint_type;
 };
 
 class JoltWorld {
@@ -765,14 +768,120 @@ public:
         if (disable_collisions)
             disable_collision_pair(body_a_handle, body_b_handle);
         uint32_t handle = mNextHandle++;
-        mConstraints[handle] = {c, body_a_handle, body_b_handle, disable_collisions};
+        mConstraints[handle] = {
+            c,
+            body_a_handle,
+            body_b_handle,
+            disable_collisions,
+            disable_collisions,
+            constraint_type_str,
+        };
         return handle;
+    }
+
+    std::tuple<
+        std::string,
+        bool,
+        std::string,
+        float,
+        std::array<float,3>,
+        std::array<float,3>,
+        float,
+        float>
+    get_constraint_state(uint32_t handle) const {
+        auto it = mConstraints.find(handle);
+        if (it == mConstraints.end())
+            return {"", false, "none", 0.0f, {0,0,0}, {0,0,0}, 0.0f, 0.0f};
+
+        const ConstraintRecord& record = it->second;
+        TwoBodyConstraint* base = record.constraint.GetPtr();
+        std::string current_value_kind = "none";
+        float current_value = 0.0f;
+        std::array<float,3> lambda_position = {0.0f, 0.0f, 0.0f};
+        std::array<float,3> lambda_rotation = {0.0f, 0.0f, 0.0f};
+        float lambda_limit = 0.0f;
+        float lambda_motor = 0.0f;
+
+        if (record.constraint_type == "FIXED") {
+            auto* constraint = static_cast<FixedConstraint*>(base);
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            Vec3 r = constraint->GetTotalLambdaRotation();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+            lambda_rotation = {r.GetX(), r.GetY(), r.GetZ()};
+        } else if (record.constraint_type == "HINGE") {
+            auto* constraint = static_cast<HingeConstraint*>(base);
+            current_value_kind = "angle";
+            current_value = constraint->GetCurrentAngle();
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            Vector<2> r = constraint->GetTotalLambdaRotation();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+            lambda_rotation = {r[0], r[1], 0.0f};
+            lambda_limit = constraint->GetTotalLambdaRotationLimits();
+            lambda_motor = constraint->GetTotalLambdaMotor();
+        } else if (record.constraint_type == "SLIDER") {
+            auto* constraint = static_cast<SliderConstraint*>(base);
+            current_value_kind = "position";
+            current_value = constraint->GetCurrentPosition();
+            Vector<2> p = constraint->GetTotalLambdaPosition();
+            Vec3 r = constraint->GetTotalLambdaRotation();
+            lambda_position = {p[0], p[1], 0.0f};
+            lambda_rotation = {r.GetX(), r.GetY(), r.GetZ()};
+            lambda_limit = constraint->GetTotalLambdaPositionLimits();
+            lambda_motor = constraint->GetTotalLambdaMotor();
+        } else if (record.constraint_type == "CONE") {
+            auto* constraint = static_cast<ConeConstraint*>(base);
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+            lambda_rotation = {0.0f, 0.0f, constraint->GetTotalLambdaRotation()};
+        } else if (record.constraint_type == "POINT") {
+            auto* constraint = static_cast<PointConstraint*>(base);
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+        } else if (record.constraint_type == "DISTANCE") {
+            auto* constraint = static_cast<DistanceConstraint*>(base);
+            current_value_kind = "distance";
+            RVec3 point1 = constraint->GetBody1()->GetCenterOfMassTransform()
+                * constraint->GetConstraintToBody1Matrix().GetTranslation();
+            RVec3 point2 = constraint->GetBody2()->GetCenterOfMassTransform()
+                * constraint->GetConstraintToBody2Matrix().GetTranslation();
+            current_value = static_cast<float>((point2 - point1).Length());
+            lambda_position = {constraint->GetTotalLambdaPosition(), 0.0f, 0.0f};
+        }
+
+        return {
+            record.constraint_type,
+            base->GetEnabled(),
+            current_value_kind,
+            current_value,
+            lambda_position,
+            lambda_rotation,
+            lambda_limit,
+            lambda_motor,
+        };
+    }
+
+    bool set_constraint_enabled(uint32_t handle, bool enabled) {
+        auto it = mConstraints.find(handle);
+        if (it == mConstraints.end())
+            return false;
+        ConstraintRecord& record = it->second;
+        if (record.disable_collisions) {
+            if (enabled && !record.collision_pair_disabled) {
+                disable_collision_pair(record.body_a_handle, record.body_b_handle);
+                record.collision_pair_disabled = true;
+            } else if (!enabled && record.collision_pair_disabled) {
+                enable_collision_pair(record.body_a_handle, record.body_b_handle);
+                record.collision_pair_disabled = false;
+            }
+        }
+        record.constraint->SetEnabled(enabled);
+        return true;
     }
 
     void remove_constraint(uint32_t handle) {
         auto it = mConstraints.find(handle);
         if (it == mConstraints.end()) return;
-        if (it->second.disable_collisions)
+        if (it->second.collision_pair_disabled)
             enable_collision_pair(it->second.body_a_handle, it->second.body_b_handle);
         mPhysicsSystem->RemoveConstraint(it->second.constraint);
         mConstraints.erase(it);
@@ -1057,6 +1166,15 @@ NB_MODULE(hotools_jolt, m) {
         .def("remove_constraint", &JoltWorld::remove_constraint,
              nb::arg("handle"),
              "移除约束。")
+
+        .def("get_constraint_state", &JoltWorld::get_constraint_state,
+             nb::arg("handle"),
+             "返回约束类型、启用状态、当前值和上一物理步的 lambda 快照。")
+
+        .def("set_constraint_enabled", &JoltWorld::set_constraint_enabled,
+             nb::arg("handle"),
+             nb::arg("enabled"),
+             "启用或禁用约束；用于短期禁用和断裂策略。")
 
         // step
         .def("step", &JoltWorld::step,

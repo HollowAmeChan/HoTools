@@ -10,7 +10,11 @@ import mathutils
 
 from ....FunctionNodeCore import omni
 from ... import _Color
-from .names import RIGID_BODY_COMMANDS_CHANNEL, RIGID_BODY_SLOT_KIND
+from .names import (
+    RIGID_BODY_COMMANDS_CHANNEL,
+    RIGID_BODY_SLOT_KIND,
+    RIGID_CONSTRAINT_SLOT_KIND,
+)
 from ..types import PhysicsWorldCache
 from .debug_draw import update_rigid_debug_draw_store
 from .implicit_objects import (
@@ -22,9 +26,9 @@ from .implicit_objects import (
     register_rigid_generated_constraint_objects,
     register_rigid_jolt_world_setting_objects,
 )
-from .results import get_rigid_transform_result
+from .results import get_rigid_constraint_state_result, get_rigid_transform_result
 from .solver import step_rigid_bodies
-from .specs import build_rigid_body_spec
+from .specs import build_constraint_spec, build_rigid_body_spec
 
 
 def _vec3(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
@@ -90,6 +94,28 @@ def _rigid_result_for_target(world: object, target: bpy.types.Object) -> dict | 
     )
 
 
+def _rigid_constraint_result_for_target(
+    world: object,
+    target: bpy.types.Object,
+) -> dict | None:
+    if not isinstance(world, PhysicsWorldCache):
+        return None
+    spec = build_constraint_spec(target)
+    if spec is None:
+        return None
+    slot = world.solver_slots.get(spec.slot_id)
+    if slot is None or slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
+        return None
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    return get_rigid_constraint_state_result(
+        world,
+        slot_id=spec.slot_id,
+        frame=frame,
+        generation=world.generation,
+    )
+
+
 def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     try:
         quat = mathutils.Quaternion((
@@ -110,7 +136,8 @@ def _rotation_euler_from_wxyz(value) -> mathutils.Vector:
     _INPUT_NAME=["物理世界"],
     _OUTPUT_NAME=["物理世界", "刚体数量", "耗时ms"],
     omni_description="""
-    执行 Jolt 刚体模拟步，结果发布到 world.result_streams["rigid_transform"]。
+    执行 Jolt 刚体模拟步，刚体与约束状态分别发布到
+    world.result_streams["rigid_transform"] 和 ["rigid_constraint_state"]。
 
     刚体/约束 spec 已由"物理世界-帧开始"自动收集，无需手动注册节点。
 
@@ -171,6 +198,51 @@ def physicsRigidReadState(
         angular_velocity,
         bool(result.get("active", False)),
         bool(result.get("sleeping", False)),
+        result,
+    )
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="刚体约束结果-读取状态",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "约束对象"],
+    _OUTPUT_NAME=[
+        "物理世界", "命中", "启用", "约束类型", "当前值类型", "当前值",
+        "位置Lambda", "旋转Lambda", "限制Lambda", "Motor Lambda", "最大Lambda", "已断裂", "结果",
+    ],
+    omni_description="""
+    从 rigid_constraint_state result stream 读取显式 Empty 约束当前状态。
+
+    当前值对 Hinge 是角度、Slider 是位置、Distance 是锚点距离；lambda
+    来自上一物理步，可用于调试和后续断裂策略。节点不访问 Jolt handle。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsRigidConstraintReadState(
+    world: object,
+    target: bpy.types.Object,
+) -> tuple[object, bool, bool, str, str, float, mathutils.Vector, mathutils.Vector, float, float, float, bool, object]:
+    result = _rigid_constraint_result_for_target(world, target)
+    if result is None:
+        zero = mathutils.Vector((0.0, 0.0, 0.0))
+        return world, False, False, "", "none", 0.0, zero.copy(), zero.copy(), 0.0, 0.0, 0.0, False, None
+
+    return (
+        world,
+        True,
+        bool(result.get("enabled", False)),
+        str(result.get("constraint_type", "")),
+        str(result.get("current_value_kind", "none")),
+        float(result.get("current_value", 0.0) or 0.0),
+        mathutils.Vector(_vec3(result.get("lambda_position"))),
+        mathutils.Vector(_vec3(result.get("lambda_rotation"))),
+        float(result.get("lambda_limit", 0.0) or 0.0),
+        float(result.get("lambda_motor", 0.0) or 0.0),
+        float(result.get("lambda_max_abs", 0.0) or 0.0),
+        bool(result.get("broken", False)),
         result,
     )
 
@@ -285,7 +357,7 @@ def physicsRigidJoltWorldSettingsRegister(
         "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
         "优先级", "速度步数", "位置步数", "启用限制",
         "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
-        "距离最小", "距离最大",
+        "距离最小", "距离最大", "可断裂", "断裂冲量阈值",
     ],
     input_init={
         "constraint_type": {"default_value": "FIXED"},
@@ -323,6 +395,8 @@ def physicsRigidGeneratedConstraintProperties(
     cone_half_angle: float = 0.0,
     distance_min: float = 0.0,
     distance_max: float = 1.0,
+    breakable: bool = False,
+    breaking_threshold: float = 1000.0,
 ) -> list[object]:
     return make_rigid_generated_constraint_properties(
         target_a=target_a,
@@ -343,6 +417,8 @@ def physicsRigidGeneratedConstraintProperties(
         cone_half_angle=float(cone_half_angle),
         distance_min=float(distance_min),
         distance_max=float(distance_max),
+        breakable=bool(breakable),
+        breaking_threshold=float(breaking_threshold),
     )
 
 

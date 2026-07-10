@@ -155,7 +155,7 @@ Jolt 支持的主要 two-body constraint：
 - `draw_constraint_size`
 - `user_data`
 
-Breakable constraint 不是一个独立 setting。Jolt 的建议方式是读取 constraint 的 lambda / impulse，当超过阈值时 `SetEnabled(false)` 或 remove constraint。HoTools 如果要支持“可断裂”，应该在 adapter 层实现 break policy，而不是期待 Jolt 有单一 `breaking_threshold` 字段。
+Breakable constraint 不是一个独立 Jolt setting。HoTools 已按 Jolt 建议在 adapter/solver 边界读取 constraint lambda / impulse，超过 `breaking_threshold` 时调用 `SetEnabled(false)`；这个字段是 HoTools policy，不是假装存在于 Jolt 的原生属性。
 
 连接体之间是否互相碰撞不是 Jolt constraint 本身的字段。HoTools 的 `disable_collisions` 已映射到刚体 solver 私有的 pair filter：约束连接的两个 body 可以禁用直接碰撞，同时不影响它们与其他刚体的碰撞。
 
@@ -240,7 +240,7 @@ Contact manifold 可提供：
 
 注意：`OnContactAdded` 发生在 contact solver 前，真实 collision impulse 当时未知。若要做撞击音效/强度，需要估算或在 solver 后读其他累计数据。Constraint 的 lambda 可以在 update 后读取，适合做断裂阈值和 debug 强度。
 
-当前 HoTools binding 没有任何 contact listener、sensor event、query API 或 lambda 输出。
+当前 HoTools binding 已能在 Jolt update 后读取约束 current value 和 lambda；contact listener、sensor event 与 query API 仍未接入。
 
 ### 软体、角色、车辆、Ragdoll
 
@@ -414,21 +414,24 @@ Physics World Begin
 - `body_count`。
 - `constraint_count`。
 - body state：position、rotation、linear velocity、angular velocity、active、sleeping。
+- constraint state：enabled、current value kind/value、position/rotation/limit/motor lambda 与聚合峰值。
 
 当前写回机制：
 
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
 - solver 每帧把 body state 纯快照发布到 `world.result_streams["rigid_transform"]`。
+- solver 每帧把 constraint state 纯快照发布到 `world.result_streams["rigid_constraint_state"]`；lambda 是上一物理步求解冲量，不是力或扭矩，断裂阈值必须按该单位定义。
 - solver 每次调用把统计快照发布到 `world.result_streams["rigid_solver_stats"]`，包括 body/constraint 数量、step 时间、dt/substeps、same-frame/restart 状态、transform 输出数量、命令消费数量和错误计数。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
 - `Jolt刚体可视化调试` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `physicsRigidReadState` 直接从 `rigid_transform` result 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
-- `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_solver_stats` 等 channel，后续 contact、query 和 constraint lambda 也应按同一模式输出。
+- `physicsRigidConstraintReadState` 从 `rigid_constraint_state` 输出 Hinge 当前角度、Slider 当前位置、Distance 当前锚点距离，以及各类 lambda。
+- `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_constraint_state` / `rigid_solver_stats` 等 channel；后续 contact 和 query 也应按同一模式输出。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 迁移其它 solver 前的 Jolt 状态判断
 
-Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：它证明了 scope/spec/backend/result/writeback/debug/cache owner 这条链路能跑通。继续补 contact listener、query、constraint lambda、advanced shape 会提升刚体能力，但不是 SpringBone/MC2/BoneCloth 迁移的前置条件。
+Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：它证明了 scope/spec/backend/result/writeback/debug/cache owner 这条链路能跑通。继续补 contact listener、query、breakable policy 和 advanced shape 会提升刚体能力，但不是 SpringBone/MC2/BoneCloth 迁移的前置条件。
 
 其它 solver 迁移前还缺的是工程验收，而不是 Jolt feature：
 
@@ -439,13 +442,13 @@ Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：
 
 因此下一步应转向“SpringBone VRM world-aware rewrite vertical slice”，而不是继续把 Jolt Phase 5 扩成全功能刚体系统。SpringBone 旧 `_SpringBoneVRM` 只作为审查和数值参考；新路径应从 `physicsWorld/spring_vrm/` 的 spec / slot / result stream / writeback contract 直接重写。新迁移 solver 默认只保留 C++ / native 计算路径，Python 不再维护第二套运行时算法。
 
-### 应补的核心输出
+### 核心输出状态
 
 建议下一批补：
 
 - body type / shape type / bounds。
-- constraint current value：hinge angle、slider position、distance、6DOF limits 状态。
-- constraint lambda / impulse，用于 debug 和 breakable constraint。
+- constraint current value：hinge angle、slider position、distance 已接；6DOF limits 状态待约束类型接入。
+- constraint lambda / impulse 已接，用于 debug 和 breakable constraint。
 - contact list：body pair、normal、penetration、points、state added/persisted/removed。
 - sensor event。
 - query result：ray/shape cast hit body、point、normal、fraction、subshape。
@@ -739,8 +742,8 @@ HoTools overlay 的 draw store 也应保持同样规则：它由 Jolt 自有 deb
 - 先补 hinge/slider/cone 的真实参数。
 - 已新增 distance，并贯通显式属性、生成约束、spec、adapter 与 native binding。
 - 新增 generic sixdof。
-- 导出 constraint lambda / current angle / current position。
-- 实现 breakable policy。
+- 已导出 constraint lambda / current angle / current position。
+- 已实现 breakable policy。
 
 ### 阶段 4：debug 与事件
 
@@ -878,7 +881,7 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 `RIGID_SOLVER_DECLARATION` 已落在 `physicsWorld/declarations.py`，并由 `physicsWorld/rigid/declaration.py` 重导出。
 
-关键边界：`rigid_jolt` 消费刚体/约束 slot 与 `rigid_body_commands`，输出 `rigid_transform` / `rigid_solver_stats`，写回统一走 `physicsWorld.writeback -> Object.delta_transform`。
+关键边界：`rigid_jolt` 消费刚体/约束 slot 与 `rigid_body_commands`，输出 `rigid_transform` / `rigid_constraint_state` / `rigid_solver_stats`，写回统一走 `physicsWorld.writeback -> Object.delta_transform`。
 
 `physicsWorld/rigid/names.py` 中的 `rigid.generated_constraint` 已由刚体 solver 消费：`刚体生成约束属性 -> 刚体生成约束注册` 会写入 `world.implicit_objects`，solver prepare 会转成普通 `ConstraintSpec` slot，并在同帧禁用时移除 slot/native constraint。
 
@@ -907,3 +910,23 @@ Rigid/Jolt 的 solver 子模块入口已从公共注册层收口到 `rigid.SOLVE
 链路覆盖 `PG_Hotools_RigidConstraint -> ConstraintSpec -> scope sync signature -> JoltAdapter -> hotools_jolt`，生成约束也把距离范围纳入 payload、signature 和 materialized slot。native 对未知 constraint type 现在显式报错，不再静默退化成 Point。
 
 验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 26/26 通过；Blender 刚体后台集成测试 20/20 通过。下一步约束侧优先级是分离的 body A/B anchor frame、constraint state/lambda 输出和 breakable policy，再考虑 SixDOF。
+
+## 2026-07-10 追加：Constraint state / lambda 结果流
+
+native `get_constraint_state(handle)` 已覆盖当前六种约束。Hinge 输出当前角度，Slider 输出当前位置，Distance 输出两个实际锚点的当前距离；Fixed、Hinge、Slider、Cone、Point、Distance 分别读取其可用的 position / rotation / limit / motor lambda。adapter 将向量 lambda 保留为三元组，并给出 `lambda_max_abs` 作为调试与断裂策略的统一比较值。
+
+solver 每次新帧 step 或 same-frame 结果重发都会发布 `world.result_streams["rigid_constraint_state"]`。结果只包含 slot/owner 标识和普通数值，不包含 Jolt constraint handle。显式 Empty 可通过 `physicsRigidConstraintReadState` 读取；生成约束可按 slot id 或通用 result stream 节点读取。
+
+lambda 是 Jolt 上一物理步为满足约束施加的冲量。后续 `breaking_threshold` 不能把它命名或解释为力阈值；若 UI 需要力近似值，必须显式除以 dt 并使用独立字段。
+
+验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 27/27、legacy binding 12/12、Blender 刚体后台集成测试 21/21 通过。
+
+### Breakable policy
+
+`breakable` / `breaking_threshold` 已进入显式约束属性、`ConstraintSpec`、生成约束 payload/signature 和 scope sync signature。`breaking_threshold` 明确定义为“单个 Jolt update 后的约束冲量阈值”；solver 只在真实 step 后比较 `lambda_max_abs > breaking_threshold`，same-frame 重发不重复执行断裂判定。
+
+超过阈值时 adapter 调用 native `set_constraint_enabled(false)`，slot 记录 `_jolt_broken` 与实际 `breaking_impulse`，随后 `rigid_constraint_state` 发布 `broken=True`、`enabled=False`。spec 签名或 generation 变化会重新创建约束并清除断裂状态。
+
+断裂时如果约束配置了 `disable_collisions`，native 会同步撤销这条约束持有的 pair-filter 引用，使两个已分离刚体恢复碰撞；重新启用约束会重新应用过滤。配置状态和当前 pair-filter 应用状态分开保存，保证多约束引用计数、重复 disable/re-enable 与 remove 生命周期一致。
+
+当前约束侧下一优先级是分离的 body A/B anchor frame，再考虑 SixDOF。contact listener 与 query API 可独立并行推进。

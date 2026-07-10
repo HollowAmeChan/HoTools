@@ -60,6 +60,8 @@ RIGID_CONSTRAINT_CAPABILITY = {
         {"name": "target_a", "type": "Object", "update_policy": "规格签名"},
         {"name": "target_b", "type": "Object", "update_policy": "规格签名"},
         {"name": "disable_collisions", "type": "bool", "default": False, "update_policy": "规格签名"},
+        {"name": "breakable", "type": "bool", "default": False, "update_policy": "规格签名"},
+        {"name": "breaking_threshold", "type": "float", "default": 1000.0, "unit": "每步约束冲量", "update_policy": "规格签名"},
         {"name": "solver_velocity_steps_override", "type": "int", "default": 0, "update_policy": "规格签名"},
         {"name": "solver_position_steps_override", "type": "int", "default": 0, "update_policy": "规格签名"},
         {"name": "limit", "type": "constraint_limit", "update_policy": "规格签名"},
@@ -120,4 +122,5 @@ RIGID_UPDATE_FREQUENCY_TABLE = [
     {"data": "原生 Jolt 世界", "source": "world.backend_resources", "policy": "持续到 world dispose 或容量配置变化"},
     {"data": "刚体/约束句柄", "source": "解算器槽位私有状态", "policy": "持续到槽位被裁剪或签名变化"},
     {"data": "刚体变换结果", "source": "Jolt 适配器读回", "policy": "每次模拟步产生；同帧可重发缓存结果"},
+    {"data": "约束状态结果", "source": "Jolt 适配器读回 current value / lambda", "policy": "每次模拟步产生；同帧重发当前快照"},
 ]

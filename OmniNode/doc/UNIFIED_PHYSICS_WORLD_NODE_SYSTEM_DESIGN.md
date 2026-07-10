@@ -779,6 +779,7 @@ OmniNode object scope
   -> Jolt adapter build/update
   -> Jolt step
   -> world.result_streams["rigid_transform"]
+  -> world.result_streams["rigid_constraint_state"]
   -> world.result_streams["rigid_solver_stats"]
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
@@ -1259,6 +1260,7 @@ SpringBone VRM可视化调试（physicsSpringVRMDebugDraw）
 ```text
 刚体模拟步（physicsRigidSolver）  ← Jolt sync + step，不直接写回
 刚体结果-读取状态（physicsRigidReadState）             ← 读取 rigid_transform result stream
+刚体约束结果-读取状态（physicsRigidConstraintReadState） ← 读取 rigid_constraint_state result stream
 刚体命令-设置速度（physicsRigidSetVelocity）          ← 发布 set_velocity
 刚体命令-施加力（physicsRigidAddForce）               ← 发布 add_force
 刚体命令-施加冲量（physicsRigidAddImpulse）           ← 发布 add_impulse
@@ -1305,7 +1307,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 - `PhysicsWorldCache` 已持有 frame context、scope key、collider snapshot、solver slots、implicit_objects、exchange、result streams、backend resources。
 - `physicsWorldBegin` 每帧重采集 scope / collider，并通过 registry scope hook 触发各 solver 自己的 spec 收集。rigid/Jolt 的 slot prune、spec sync signature、kinematic pose dirty 和 Jolt resync dirty policy 已由 `rigid/scope_sync.py` 持有。
-- `physicsRigidSolver` 不直接写 Blender；它发布 `rigid_transform` 和 `rigid_solver_stats` result stream。
+- `physicsRigidSolver` 不直接写 Blender；它发布 `rigid_transform`、`rigid_constraint_state` 和 `rigid_solver_stats` result stream。
 - `physicsWriteback` 已验证 Object transform 的统一写回路径：只写 `Object.delta_*`，不改原始 transform。
 - Jolt / SpringBone 自有 debug draw 节点和 `physicsWorldResultStream` 消费纯快照，不读取 live bpy 对象、Jolt handle 或其它 solver 私有 transform。
 - Jolt adapter 主路径只消费 `RigidBodySpec` / `ConstraintSpec` 快照，不再回读 Object / Empty。
@@ -1317,12 +1319,12 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 1. **非 Object 写回 contract 已落地到 PoseBone。** SpringBone VRM 通过通用 `bone_transform` 写回指令和 `physicsWorld.writeback -> PoseBone.matrix_basis` 写回，不在 solver step 中直接写 bpy。`Cache Delete` / `OmniRuntimeState.clear_all()` 会释放 world、slot 和 writeback cleanup，并把已写过的 PoseBone matrix_basis 复位。
 2. **第一条非 Jolt solver vertical slice 已落地。** `physicsWorld/spring_vrm/` 已进入 `world.solver_slots`，读取 `world.frame_context` 与 `world.collider_snapshot`，调用 C++ native step，发布通用 `bone_transform` 写回指令和 `spring_vrm_stats`，并由统一 writeback 消费。后台测试覆盖 native step、same-frame、spec prune、runtime cache lifecycle、sphere / capsule / plane / box collider 投影和 group mask 过滤。
-3. **当前 Jolt 能力不是 Phase 5 退出阻塞项。** Jolt 已作为刚体 backend 验证 world owner、native resource、result stream、Object delta writeback 和 runtime cache lifecycle；contact/query/lambda 等能力应进入后续 Jolt capability 阶段。
+3. **当前 Jolt 能力不是 Phase 5 退出阻塞项。** Jolt 已作为刚体 backend 验证 world owner、native resource、result stream、Object delta writeback 和 runtime cache lifecycle；constraint state/lambda 已进入独立 result stream，contact/query 等能力继续留在后续 Jolt capability 阶段。
 
 **不是 Phase 5 退出阻塞项，可放到 Jolt 后续能力阶段：**
 
 - contact listener / sensor event / query API。
-- constraint lambda、breakable policy、hinge/slider current value。
+- 分离的 body A/B anchor frame。
 - advanced shape、compound、mesh static collider、convex hull。
 - Jolt material、inertia override、COM offset、shape cook cache。
 - cloth 直接读取 rigid body contact 或 rigid broadphase。
@@ -1565,7 +1567,7 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
 
-Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖，35 参数兼容桥已从新路径删除；剩余重点是补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/lambda 能力边界。
+Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖，35 参数兼容桥已从新路径删除；Jolt constraint state/lambda 与 breakable policy 已接入。剩余重点是补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/独立 anchor frame 能力边界。
 
 ## 2026-07-09 追加：Solver 子模块原子化方向
 

@@ -541,6 +541,20 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
         default=True,
     )  # type: ignore
 
+    breakable: BoolProperty(
+        name="可断裂",
+        description="当上一物理步的约束冲量超过阈值时禁用此约束",
+        default=False,
+    )  # type: ignore
+
+    breaking_threshold: FloatProperty(
+        name="断裂冲量阈值",
+        description="约束断裂阈值，单位是Jolt每个物理步累计的lambda/冲量，不是力",
+        default=1000.0,
+        min=0.0,
+        soft_max=10000.0,
+    )  # type: ignore
+
     constraint_priority: IntProperty(
         name="求解优先级",
         description="Jolt约束求解优先级；更高数值会更优先满足",
