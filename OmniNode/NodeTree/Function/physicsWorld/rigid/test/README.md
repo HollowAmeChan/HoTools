@@ -50,10 +50,18 @@
 - `BREAK-001/002` 分层验证原生 lambda 基线、HoTools 冲量阈值、断裂后释放和同帧重放；
 - 每次运行内置 S1/S3 tolerant parity，不以自身输出作为正确性 oracle。
 
+当前切片（跨 ABI 差分）：
+
+- `run_cross_abi_semantics.py` 自动发现 CPython 3.11 与 3.13；
+- 两套子运行固定加载 `_Lib/py311` 与 `_Lib/py313` 中匹配的 native 模块；
+- 校验 fixture 集合、内容 hash、子运行状态和 canonical trace 容差；
+- 输出 `hotools_jolt_cross_abi_report_v1` JSON 报告；
+- `_native/tests/test_jolt_cross_abi_semantics.py` 提供代表 fixture smoke，缺少任一解释器时明确报告 SKIP。
+
 当前切片尚未实现：
 
 - Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
-- 断裂语义、跨 ABI 报告和已批准 golden。
+- 已批准 golden，以及 overflow、soak 和性能门禁。
 
 ## 当前实施顺序
 
@@ -62,7 +70,7 @@
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
 3. 共用 fixture 的完整 P0 Blender semantic runner（2026-07-11 已完成）；
-4. 跨 ABI、overflow、soak 和性能门禁；
+4. 跨 ABI 门禁（2026-07-11 已完成），继续 overflow、soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
 
 旧式 `backends/test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
@@ -94,6 +102,16 @@
 & 'D:\Blender\Blender 4.5\4.5\python\bin\python.exe' `
   run_native_semantics.py --tag p0 --repeat 2
 ```
+
+自动运行 py311/py313 全矩阵并生成容差差分报告：
+
+```powershell
+& 'C:\Users\hhh12\AppData\Local\Programs\Python\Python313\python.exe' `
+  run_cross_abi_semantics.py --tag p0 --repeat 2
+```
+
+跨 ABI 产物默认写入 `C:\tmp\hotools_jolt_cross_abi\<run-id>`；总报告为
+`cross-abi-report.json`，两套原始 manifest/trace 分别保存在 `py311` 和 `py313` 子目录。
 
 只运行当前约束切片：
 
