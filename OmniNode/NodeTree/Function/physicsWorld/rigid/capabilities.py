@@ -10,6 +10,7 @@ from .names import (
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
     RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
+    RIGID_QUERY_RESULT_CHANNEL,
 )
 
 
@@ -17,6 +18,7 @@ RIGID_BODY_CAPABILITY_ID = "rigid_body"
 RIGID_CONSTRAINT_CAPABILITY_ID = "rigid_constraint"
 RIGID_JOLT_WORLD_SETTING_CAPABILITY_ID = "rigid_jolt_world_setting"
 RIGID_BODY_COMMAND_CAPABILITY_ID = "rigid_body_command"
+RIGID_QUERY_CAPABILITY_ID = "rigid_query"
 
 
 RIGID_BODY_CAPABILITY = {
@@ -107,11 +109,24 @@ RIGID_BODY_COMMAND_CAPABILITY = {
 }
 
 
+RIGID_QUERY_CAPABILITY = {
+    "capability_id": RIGID_QUERY_CAPABILITY_ID,
+    "display_name": "刚体空间查询",
+    "semantic_owner": "physicsWorld/rigid 查询边界",
+    "result_channel": RIGID_QUERY_RESULT_CHANNEL,
+    "queries": ["ray_cast_closest"],
+    "filters": ["include_sensors", "ignore_object"],
+    "handle_policy": "native body handle 必须在 adapter 内转换为 slot_id",
+    "update_policy": "节点执行时查询当前 Jolt world，不推进模拟时间",
+}
+
+
 RIGID_CAPABILITIES = {
     RIGID_BODY_CAPABILITY_ID: RIGID_BODY_CAPABILITY,
     RIGID_CONSTRAINT_CAPABILITY_ID: RIGID_CONSTRAINT_CAPABILITY,
     RIGID_JOLT_WORLD_SETTING_CAPABILITY_ID: RIGID_JOLT_WORLD_SETTING_CAPABILITY,
     RIGID_BODY_COMMAND_CAPABILITY_ID: RIGID_BODY_COMMAND_CAPABILITY,
+    RIGID_QUERY_CAPABILITY_ID: RIGID_QUERY_CAPABILITY,
 }
 
 
@@ -127,4 +142,5 @@ RIGID_UPDATE_FREQUENCY_TABLE = [
     {"data": "刚体变换结果", "source": "Jolt 适配器读回", "policy": "每次模拟步产生；同帧可重发缓存结果"},
     {"data": "约束状态结果", "source": "Jolt 适配器读回 current value / lambda", "policy": "每次模拟步产生；同帧重发当前快照"},
     {"data": "接触 / Sensor 事件", "source": "Jolt ContactListener 轻量快照", "policy": "每次真实模拟步产生；同帧重发上一快照"},
+    {"data": "RayCast 查询", "source": "Jolt NarrowPhaseQuery", "policy": "节点执行时即时查询；不推进时间"},
 ]

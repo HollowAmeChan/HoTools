@@ -23,6 +23,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 import bpy
+import mathutils
 
 PASS = "[PASS]"
 FAIL = "[FAIL]"
@@ -169,12 +170,14 @@ _load_pw("writeback_commands",   "writeback_commands.py")
 _load_pw("spring_vrm.results",   "spring_vrm/results.py")
 _load_pw("writeback",            "writeback.py")
 _load_pw("debug",                "debug.py")
+_load_pw("registry",             "registry.py")
 _load_pw("world",                "world.py")
 _load_pw("rigid.specs",          "rigid/specs.py")
 _load_pw("rigid.declaration",    "rigid/declaration.py")
 _load_pw("rigid.implicit_objects", "rigid/implicit_objects.py")
 _load_pw("rigid.solver",         "rigid/solver.py")
 _load_pw("rigid.backends.jolt",  "rigid/backends/jolt.py")
+_load_pw("rigid.queries",        "rigid/queries.py")
 _load_pw("rigid.debug_draw",     "rigid/debug_draw.py")
 _load_pw("nodes",                "nodes.py")
 _load_pw("rigid.nodes",          "rigid/nodes.py")
@@ -186,6 +189,7 @@ def _pw(suffix):
     return sys.modules[f"{_PKG_PREFIX}.{suffix}"]
 
 PhysicsWorldCache     = _pw("types").PhysicsWorldCache
+validate_solver_registry = _pw("registry").validate_solver_registry
 make_scope            = _pw("scope").make_scope
 physicsWorldBegin     = _pw("world").physicsWorldBegin
 physicsWorldCommit    = _pw("world").physicsWorldCommit
@@ -198,6 +202,10 @@ get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
 get_rigid_constraint_state_result = _pw("rigid.results").get_rigid_constraint_state_result
 get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_result
 iter_rigid_contact_event_results = _pw("rigid.results").iter_rigid_contact_event_results
+publish_rigid_contact_event_result = _pw("rigid.results").publish_rigid_contact_event_result
+build_rigid_debug_draw_snapshot = _pw("rigid.debug_draw").build_rigid_debug_draw_snapshot
+rigid_backend_debug_snapshot = _pw("rigid.debug").rigid_backend_debug_snapshot
+iter_rigid_query_results = _pw("rigid.queries").iter_rigid_query_results
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
 active_generated_constraint_slot_ids = _pw("rigid.implicit_objects").active_generated_constraint_slot_ids
@@ -209,6 +217,7 @@ physicsRigidConstraintReadState = _pw("rigid.nodes").physicsRigidConstraintReadS
 physicsRigidSetVelocity = _pw("rigid.nodes").physicsRigidSetVelocity
 physicsRigidGeneratedConstraintRegister = _pw("rigid.nodes").physicsRigidGeneratedConstraintRegister
 physicsRigidJoltWorldSettingsRegister = _pw("rigid.nodes").physicsRigidJoltWorldSettingsRegister
+physicsRigidRayCast = _pw("rigid.nodes").physicsRigidRayCast
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
@@ -265,6 +274,13 @@ def test_props_registered():
     assert hasattr(obj, "hotools_rigid_body"),       "缺 hotools_rigid_body"
     assert hasattr(obj, "hotools_object_collision"), "缺 hotools_object_collision"
     assert obj.hotools_rigid_body.body_type == "DYNAMIC"
+    registry = validate_solver_registry()
+    assert registry["valid"], registry["problems"]
+    assert registry["result_channels"].get("rigid_query_result") == "rigid"
+    assert physicsRigidRayCast.__meta["_INPUT_NAME"] == [
+        "物理世界", "起点", "方向", "最大距离", "包含传感器", "忽略对象",
+    ]
+    assert physicsRigidRayCast.__meta["input_init"]["max_distance"]["min_value"] == 0.0
     _del(obj)
 
 
@@ -275,6 +291,7 @@ def test_props_registered():
 def test_jolt_adapter_direct():
     ground = _make_ground("T2_Ground")
     ball   = _make_obj("T2_Ball", (0, 0, 5))
+    bpy.context.view_layer.update()
 
     a = JoltAdapter(max_bodies=32, max_body_pairs=64, max_contact_constraints=32)
     direct_debug = a.debug_snapshot()
@@ -288,6 +305,20 @@ def test_jolt_adapter_direct():
     a.sync_body(spec_g.slot_id, spec_g)
     a.sync_body(spec_b.slot_id, spec_b)
     assert a._jw.body_count == 2
+
+    ray_hit = a.ray_cast((0, 0, 10), (0, 0, -1), 20.0, include_sensors=False)
+    assert ray_hit["hit"] is True and ray_hit["slot_id"] == spec_b.slot_id, ray_hit
+    assert 0.0 < ray_hit["distance"] < 20.0
+    assert ray_hit["normal"][2] > 0.9
+    assert "body_handle" not in ray_hit
+    ray_ground = a.ray_cast(
+        (0, 0, 10),
+        (0, 0, -1),
+        20.0,
+        include_sensors=False,
+        ignore_slot_id=spec_b.slot_id,
+    )
+    assert ray_ground["hit"] is True and ray_ground["slot_id"] == spec_g.slot_id
 
     assert a.set_gravity((0, 0, 0)) is True
     for _ in range(5):
@@ -876,6 +907,67 @@ def test_contact_and_sensor_event_result_pipeline():
     assert stats["sensor_event_count"] == len(sensors)
     assert stats["contact_event_overflow"] == 0
 
+    publish_rigid_contact_event_result(
+        world,
+        event={
+            "state": "removed",
+            "body_a_slot_id": "rigid:debug:a",
+            "body_b_slot_id": "rigid:debug:b",
+            "body_a_sensor": False,
+            "body_b_sensor": False,
+            "is_sensor": False,
+            "normal": (0.0, 0.0, 1.0),
+            "penetration_depth": 0.2,
+            "points_on_a": ((2.0, 0.0, 0.0),),
+            "points_on_b": ((2.0, 0.0, 0.1),),
+            "sub_shape_a": 0,
+            "sub_shape_b": 0,
+        },
+        frame=1,
+        generation=world.generation,
+        event_index=999,
+    )
+    draw_snapshot = build_rigid_debug_draw_snapshot(
+        world,
+        show_bodies=False,
+        show_constraints=False,
+        show_problems=False,
+        show_contacts=True,
+        show_sensors=True,
+    )
+    assert draw_snapshot["sensor_lines"], "sensor event 应生成独立 overlay 线段"
+    assert draw_snapshot["removed_contact_lines"], "removed contact 应生成独立 overlay 线段"
+    assert not draw_snapshot["contact_lines"]
+    assert all(
+        isinstance(point, tuple) and len(point) == 3
+        for key in (
+            "sensor_lines",
+            "removed_contact_lines",
+        )
+        for point in draw_snapshot[key]
+    ), "draw snapshot 只能保存纯 tuple 坐标"
+    sensor_hidden = build_rigid_debug_draw_snapshot(
+        world,
+        show_bodies=False,
+        show_constraints=False,
+        show_problems=False,
+        show_contacts=False,
+        show_sensors=False,
+    )
+    assert not sensor_hidden["sensor_lines"] and not sensor_hidden["removed_contact_lines"]
+
+    backend_debug = rigid_backend_debug_snapshot(
+        world.backend_resources.get("rigid_solver"))
+    assert backend_debug["contact_event_count"] >= 1
+    assert backend_debug["sensor_event_count"] >= 1
+    assert backend_debug["contact_event_state_counts"]
+    assert backend_debug["contact_event_overflow"] == 0
+    assert backend_debug["contact_event_sample"]
+    assert all(
+        "body_a_handle" not in sample and "body_b_handle" not in sample
+        for sample in backend_debug["contact_event_sample"]
+    )
+
     world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 1)
     sensors2 = iter_rigid_contact_event_results(
         world2, frame=1, generation=world2.generation, sensor_only=True)
@@ -894,6 +986,89 @@ def test_contact_and_sensor_event_result_pipeline():
 
     world3.omni_cache_dispose("test_contact_sensor_events")
     _del(sensor, probe)
+
+
+def test_rigid_ray_cast_query_pipeline():
+    scene = bpy.context.scene
+    sensor = _make_obj("T4C_QuerySensor", (0, 0, 2), body_type="STATIC")
+    sensor.hotools_rigid_body.is_sensor = True
+    sensor.hotools_rigid_body.shape_radius = 0.5
+    solid = _make_obj("T4C_QuerySolid", (0, 0, 0), body_type="STATIC")
+    solid.hotools_rigid_body.shape_radius = 0.75
+    scope = make_scope(
+        [sensor, solid],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    world, _cache_value, _stats = _begin_step_commit(scene, None, scope, 1)
+    adapter = world.backend_resources.get("rigid_solver")
+    step_ms_before = adapter.last_step_ms
+
+    query = physicsRigidRayCast(
+        world,
+        mathutils.Vector((0.0, 0.0, 5.0)),
+        mathutils.Vector((0.0, 0.0, -1.0)),
+        10.0,
+        True,
+        None,
+    )
+    assert query[0] is world and query[1] is True and query[2] is sensor
+    assert abs(float(query[3].z) - 2.5) < 0.05
+    assert float(query[4].z) > 0.9
+    assert 0.0 < query[5] < 10.0 and 0.0 < query[6] < 1.0
+    assert query[7] is True
+    sensor_result = query[8]
+    assert sensor_result["slot_id"] == build_rigid_body_spec(sensor).slot_id
+    assert "body_handle" not in sensor_result
+
+    no_sensor = physicsRigidRayCast(
+        world,
+        mathutils.Vector((0.0, 0.0, 5.0)),
+        mathutils.Vector((0.0, 0.0, -1.0)),
+        10.0,
+        False,
+        None,
+    )
+    assert no_sensor[1] is True and no_sensor[2] is solid
+    assert no_sensor[7] is False
+
+    ignored = physicsRigidRayCast(
+        world,
+        mathutils.Vector((0.0, 0.0, 5.0)),
+        mathutils.Vector((0.0, 0.0, -1.0)),
+        10.0,
+        True,
+        sensor,
+    )
+    assert ignored[1] is True and ignored[2] is solid
+    assert ignored[8]["ignore_slot_id"] == build_rigid_body_spec(sensor).slot_id
+
+    invalid = physicsRigidRayCast(
+        world,
+        mathutils.Vector((0.0, 0.0, 5.0)),
+        mathutils.Vector((0.0, 0.0, 0.0)),
+        10.0,
+        True,
+        None,
+    )
+    assert invalid[1] is False and invalid[2] is None
+    assert invalid[8]["reason"] == "invalid_ray"
+    assert adapter.last_step_ms == step_ms_before, "RayCast 不得推进 Jolt 时间"
+
+    query_results = iter_rigid_query_results(
+        world,
+        frame=1,
+        generation=world.generation,
+    )
+    assert len(query_results) == 4
+    assert all(result["query_type"] == "ray_cast" for result in query_results)
+    assert all("body_handle" not in result for result in query_results)
+
+    world.omni_cache_dispose("test_ray_cast_query")
+    _del(sensor, solid)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1348,6 +1523,7 @@ if __name__ == "__main__":
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
+    check("rigid RayCast query pipeline", test_rigid_ray_cast_query_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
     check("runtime cache delete + clear_all dispose", test_runtime_cache_delete_and_clear_all_dispose)
     check("same-frame cached result semantics", test_same_frame_repeats_publish_cached_results_without_step)

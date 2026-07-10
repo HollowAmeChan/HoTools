@@ -15,7 +15,7 @@ RIGID_DEBUG_DRAW_MODES = {
     RIGID_DEBUG_DRAW_MODE: {
         "solver": RIGID_SOLVER_ID,
         "label": "Rigid/Jolt Debug",
-        "source": "solver_slot.debug_snapshot",
+        "source": "solver_slot.debug_snapshot + rigid result streams",
         "draw_item_contract": "physicsWorld.utils.debug_draw",
         "summary": (
             "Rigid/Jolt debug draw consumes plain slot/result snapshots and "
@@ -64,12 +64,31 @@ def rigid_backend_debug_snapshot(adapter) -> dict:
         constraint_count = int(getattr(adapter, "constraint_count", 0) or 0)
     except Exception:
         constraint_count = 0
+    try:
+        contact_events = list(adapter.get_contact_events())
+    except Exception:
+        contact_events = []
+    contact_state_counts: dict[str, int] = {}
+    for event in contact_events:
+        state = str(event.get("state", "unknown") or "unknown")
+        contact_state_counts[state] = contact_state_counts.get(state, 0) + 1
+    sensor_event_count = sum(
+        1 for event in contact_events if bool(event.get("is_sensor", False))
+    )
 
     return {
         "backend": getattr(adapter, "BACKEND", "jolt"),
         "available": bool(getattr(adapter, "_valid", False)),
         "body_count": body_count,
         "constraint_count": constraint_count,
+        "contact_event_count": len(contact_events),
+        "sensor_event_count": sensor_event_count,
+        "contact_event_state_counts": contact_state_counts,
+        "contact_event_overflow": int(
+            getattr(adapter, "last_contact_event_overflow", 0) or 0
+        ),
+        "contact_event_sample": [dict(event) for event in contact_events[:16]],
+        "contact_event_sample_truncated": max(0, len(contact_events) - 16),
         "last_step_ms": round(float(getattr(adapter, "last_step_ms", 0.0) or 0.0), 3),
         "last_command_count": int(getattr(adapter, "last_command_count", 0) or 0),
         "last_command_failed": int(getattr(adapter, "last_command_failed", 0) or 0),

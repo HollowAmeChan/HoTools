@@ -430,7 +430,7 @@ result channel 的结构约定（以 transform + stats 双通道为例）：
 - contact/sensor 等事件输出写入声明过的 result channel，例如 rigid/Jolt 的 `rigid_contact_event` / `rigid_sensor_event`。事件只含稳定 slot id 与普通数值快照，不含 backend body handle；same-frame 重发上一真实 step 快照，不重新触发 native step。
 - writeback、solver 自有 debug draw、read-state 节点只消费 result stream 或本 solver 的 slot debug 快照，不读 backend-private handle（如 Jolt adapter 内部字段）。
 - solver slot 不保存每帧 transform result；slot 只持有 spec、runtime sync 状态和 native 绑定状态。每帧结果只活在 result stream 里。
-- 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。
+- 通用观察节点按 channel / solver 读取当前 frame + generation 的 result stream，用于调试 contact、constraint lambda、query 等输出。空间查询必须在 domain adapter 内把 backend handle 转成 stable slot id 后再发布，例如 rigid/Jolt 的 `rigid_query_result`。
 
 模式：
 

@@ -621,6 +621,45 @@ def test_contact_and_sensor_event_snapshots():
     sensor_world.clear()
 
 
+def test_closest_ray_cast_query():
+    """RayCast 应返回最近命中，并支持 sensor 过滤和忽略 body。"""
+    jw = _make_world()
+    sensor = _add_sphere(
+        jw,
+        body_type="STATIC",
+        pos=(0.0, 0.0, 1.5),
+        radius=0.25,
+        is_sensor=True,
+    )
+    solid = _add_sphere(
+        jw,
+        body_type="STATIC",
+        pos=(0.0, 0.0, 0.0),
+        radius=0.5,
+    )
+
+    hit = jw.cast_ray((0.0, 0.0, 3.0), (0.0, 0.0, -6.0), True, 0)
+    assert hit[0] is True and hit[1] == sensor
+    assert abs(hit[2][2] - 1.75) < 1e-3
+    assert hit[3][2] > 0.99
+    assert 0.0 < hit[4] < 1.0
+    assert hit[6] is True
+
+    solid_hit = jw.cast_ray((0.0, 0.0, 3.0), (0.0, 0.0, -6.0), False, 0)
+    assert solid_hit[0] is True and solid_hit[1] == solid
+    assert abs(solid_hit[2][2] - 0.5) < 1e-3
+    assert solid_hit[6] is False
+
+    ignored = jw.cast_ray((0.0, 0.0, 3.0), (0.0, 0.0, -6.0), True, sensor)
+    assert ignored[0] is True and ignored[1] == solid
+
+    miss = jw.cast_ray((10.0, 0.0, 3.0), (0.0, 0.0, -6.0), True, 0)
+    assert miss[0] is False and miss[1] == 0 and miss[4] == 1.0
+    zero = jw.cast_ray((0.0, 0.0, 3.0), (0.0, 0.0, 0.0), True, 0)
+    assert zero[0] is False and zero[1] == 0
+    jw.clear()
+
+
 # ---------------------------------------------------------------------------
 # 测试：clear() 完整清理
 # ---------------------------------------------------------------------------

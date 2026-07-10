@@ -783,6 +783,7 @@ OmniNode object scope
   -> world.result_streams["rigid_constraint_state"]
   -> world.result_streams["rigid_contact_event"]
   -> world.result_streams["rigid_sensor_event"]
+  -> world.result_streams["rigid_query_result"]
   -> world.result_streams["rigid_solver_stats"]
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
@@ -1287,7 +1288,7 @@ SpringBone VRM可视化调试（physicsSpringVRMDebugDraw）
 - Jolt native context 只挂在 `world.backend_resources["rigid_solver"]`。
 - Jolt body / constraint handles 只保存在 rigid solver slot 内。
 - 公开节点仍然是 `Rigid Body Solver`，不是 `Jolt World`。
-- debug snapshot 只输出 backend 名称、body count、constraint count、step timing 和错误摘要。
+- debug snapshot 输出 backend 名称、body/constraint/contact/sensor 数量、step timing、事件状态/overflow 和错误摘要；事件样本只能包含 slot id 与普通数值，不能包含 Jolt handle。
 
 第一版 Jolt 接入建议先用最小场景验证：少量动态刚体、静态 collider、一个 Empty 约束点、无跨 solver 交互。
 

@@ -120,6 +120,39 @@ def _vec3_tuple(value, fallback=(0.0, 0.0, 0.0)) -> tuple[float, float, float]:
     return result
 
 
+def _missed_ray_result(
+    origin,
+    direction,
+    max_distance: float,
+    end_position=None,
+    reason: str = "",
+) -> dict:
+    ray_origin = _vec3_tuple(origin)
+    ray_direction = _vec3_tuple(direction)
+    distance_limit = max(float(max_distance), 0.0)
+    if end_position is None:
+        end_position = tuple(
+            ray_origin[index] + ray_direction[index] * distance_limit
+            for index in range(3)
+        )
+    return {
+        "hit": False,
+        "backend": "jolt",
+        "slot_id": "",
+        "origin": ray_origin,
+        "direction": ray_direction,
+        "max_distance": distance_limit,
+        "end_position": _vec3_tuple(end_position),
+        "position": _vec3_tuple(end_position),
+        "normal": (0.0, 0.0, 0.0),
+        "distance": distance_limit,
+        "fraction": 1.0,
+        "sub_shape_id": 0,
+        "is_sensor": False,
+        "reason": str(reason or ""),
+    }
+
+
 def _positive_int(value, fallback: int, low: int = 1, high: int = 1_000_000) -> int:
     try:
         number = int(value)
@@ -396,6 +429,89 @@ class JoltAdapter:
             "angular_velocity": tuple(ang),
             "active": bool(active),
             "sleeping": bool(sleeping),
+        }
+
+    def ray_cast(
+        self,
+        origin=(0.0, 0.0, 0.0),
+        direction=(0.0, 0.0, -1.0),
+        max_distance: float = 100.0,
+        include_sensors: bool = True,
+        ignore_slot_id: str | None = None,
+    ) -> dict:
+        """Query the closest body without exposing a native body handle."""
+        ray_origin = _vec3_tuple(origin)
+        ray_direction = _vec3_tuple(direction, (0.0, 0.0, -1.0))
+        direction_length = math.sqrt(sum(value * value for value in ray_direction))
+        distance_limit = max(float(max_distance), 0.0)
+        if direction_length <= 1.0e-12 or distance_limit <= 0.0:
+            return _missed_ray_result(
+                ray_origin,
+                ray_direction,
+                distance_limit,
+                reason="invalid_ray",
+            )
+
+        unit_direction = tuple(value / direction_length for value in ray_direction)
+        segment = tuple(value * distance_limit for value in unit_direction)
+        end_position = tuple(ray_origin[i] + segment[i] for i in range(3))
+        if self._jw is None or not hasattr(self._jw, "cast_ray"):
+            return _missed_ray_result(
+                ray_origin,
+                unit_direction,
+                distance_limit,
+                end_position=end_position,
+                reason="native_query_unavailable",
+            )
+
+        ignore_handle = self._body_handles.get(str(ignore_slot_id), 0) if ignore_slot_id else 0
+        (
+            hit,
+            body_handle,
+            position,
+            normal,
+            fraction,
+            sub_shape_id,
+            is_sensor,
+        ) = self._jw.cast_ray(
+            ray_origin,
+            segment,
+            bool(include_sensors),
+            int(ignore_handle or 0),
+        )
+        if not hit:
+            return _missed_ray_result(
+                ray_origin,
+                unit_direction,
+                distance_limit,
+                end_position=end_position,
+            )
+
+        slot_id = self._body_slots_by_handle.get(int(body_handle), "")
+        if not slot_id:
+            return _missed_ray_result(
+                ray_origin,
+                unit_direction,
+                distance_limit,
+                end_position=end_position,
+                reason="unmapped_body",
+            )
+        hit_fraction = min(max(float(fraction), 0.0), 1.0)
+        return {
+            "hit": True,
+            "backend": self.BACKEND,
+            "slot_id": str(slot_id),
+            "origin": ray_origin,
+            "direction": unit_direction,
+            "max_distance": distance_limit,
+            "end_position": end_position,
+            "position": _vec3_tuple(position),
+            "normal": _vec3_tuple(normal),
+            "distance": hit_fraction * distance_limit,
+            "fraction": hit_fraction,
+            "sub_shape_id": int(sub_shape_id),
+            "is_sensor": bool(is_sensor),
+            "reason": "",
         }
 
     # ---- Constraint 管理 -------------------------------------------------

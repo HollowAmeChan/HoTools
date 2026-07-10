@@ -39,7 +39,9 @@ _EXPORTS = {
     "RIGID_SOLVER_ID": ".names",
     "RIGID_SOLVER_STATS_CHANNEL": ".names",
     "RIGID_SENSOR_EVENT_CHANNEL": ".names",
+    "RIGID_QUERY_RESULT_CHANNEL": ".names",
     "RIGID_TRANSFORM_CHANNEL": ".names",
+    "RIGID_QUERY_WRITER_ID": ".names",
     "RIGID_BODY_CAPABILITY": ".capabilities",
     "RIGID_BODY_CAPABILITY_ID": ".capabilities",
     "RIGID_BODY_COMMAND_CAPABILITY": ".capabilities",
@@ -49,6 +51,8 @@ _EXPORTS = {
     "RIGID_CONSTRAINT_CAPABILITY_ID": ".capabilities",
     "RIGID_JOLT_WORLD_SETTING_CAPABILITY": ".capabilities",
     "RIGID_JOLT_WORLD_SETTING_CAPABILITY_ID": ".capabilities",
+    "RIGID_QUERY_CAPABILITY": ".capabilities",
+    "RIGID_QUERY_CAPABILITY_ID": ".capabilities",
     "RIGID_UPDATE_FREQUENCY_TABLE": ".capabilities",
     "RIGID_JOLT_CAPABILITY_BACKLOG": ".declaration",
     "RIGID_SOLVER_DECLARATION": ".declaration",
@@ -65,6 +69,7 @@ _EXPORTS = {
     "register_rigid_bodies": ".solver",
     "register_constraints": ".solver",
     "collect_rigid_specs_from_scope": ".scope_sync",
+    "perform_rigid_ray_cast": ".queries",
 }
 
 

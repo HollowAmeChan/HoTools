@@ -25,6 +25,11 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -222,6 +227,10 @@ static std::array<float, 3> from_vec3(RVec3 v) {
     return {static_cast<float>(v.GetX()),
             static_cast<float>(v.GetY()),
             static_cast<float>(v.GetZ())};
+}
+
+static std::array<float, 3> from_direction3(Vec3 v) {
+    return {v.GetX(), v.GetY(), v.GetZ()};
 }
 
 static std::array<float, 4> from_quat(Quat q) {
@@ -465,6 +474,24 @@ private:
     bool mRecordingStep = false;
 };
 
+class HoRayBodyFilter final : public BodyFilter {
+public:
+    HoRayBodyFilter(bool include_sensors, BodyID ignore_body)
+        : mIncludeSensors(include_sensors), mIgnoreBody(ignore_body) {}
+
+    bool ShouldCollide(const BodyID& body_id) const override {
+        return mIgnoreBody.IsInvalid() || body_id != mIgnoreBody;
+    }
+
+    bool ShouldCollideLocked(const Body& body) const override {
+        return mIncludeSensors || !body.IsSensor();
+    }
+
+private:
+    bool mIncludeSensors;
+    BodyID mIgnoreBody;
+};
+
 class JoltWorld {
 public:
     explicit JoltWorld(uint32_t max_bodies = 2048,
@@ -637,6 +664,7 @@ public:
 
         uint32_t handle = mNextHandle++;
         mBodies[handle] = {body->GetID(), motion, filter_id};
+        mBodyHandlesById[body->GetID().GetIndexAndSequenceNumber()] = handle;
         mContactListener.RegisterBody(body->GetID(), handle);
         return handle;
     }
@@ -649,6 +677,7 @@ public:
         bi.RemoveBody(it->second.id);
         bi.DestroyBody(it->second.id);
         mContactListener.UnregisterBody(it->second.id);
+        mBodyHandlesById.erase(it->second.id.GetIndexAndSequenceNumber());
         mBodies.erase(it);
     }
 
@@ -796,6 +825,57 @@ public:
             {angular_velocity.GetX(), angular_velocity.GetY(), angular_velocity.GetZ()},
             active,
             sleeping
+        };
+    }
+
+    std::tuple<
+        bool,
+        uint32_t,
+        std::array<float,3>,
+        std::array<float,3>,
+        float,
+        uint32_t,
+        bool>
+    cast_ray(
+        const std::array<float,3>& origin,
+        const std::array<float,3>& direction,
+        bool include_sensors,
+        uint32_t ignore_handle
+    ) const {
+        Vec3 ray_direction(direction[0], direction[1], direction[2]);
+        RRayCast ray(to_vec3(origin), ray_direction);
+        std::array<float,3> end_position = from_vec3(ray.GetPointOnRay(1.0f));
+        if (ray_direction.LengthSq() <= 1.0e-12f)
+            return {false, 0u, end_position, {0,0,0}, 1.0f, 0u, false};
+
+        BodyID ignore_body;
+        auto ignore_it = mBodies.find(ignore_handle);
+        if (ignore_it != mBodies.end())
+            ignore_body = ignore_it->second.id;
+        HoRayBodyFilter body_filter(include_sensors, ignore_body);
+
+        RayCastResult hit;
+        if (!mPhysicsSystem->GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, body_filter))
+            return {false, 0u, end_position, {0,0,0}, 1.0f, 0u, false};
+
+        auto handle_it = mBodyHandlesById.find(hit.mBodyID.GetIndexAndSequenceNumber());
+        if (handle_it == mBodyHandlesById.end())
+            return {false, 0u, end_position, {0,0,0}, 1.0f, 0u, false};
+
+        RVec3 position = ray.GetPointOnRay(hit.mFraction);
+        BodyLockRead lock(mPhysicsSystem->GetBodyLockInterface(), hit.mBodyID);
+        if (!lock.Succeeded())
+            return {false, 0u, end_position, {0,0,0}, 1.0f, 0u, false};
+        const Body& body = lock.GetBody();
+        Vec3 normal = body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, position);
+        return {
+            true,
+            handle_it->second,
+            from_vec3(position),
+            from_direction3(normal),
+            hit.mFraction,
+            hit.mSubShapeID2.GetValue(),
+            body.IsSensor(),
         };
     }
 
@@ -1193,6 +1273,7 @@ public:
             bi.DestroyBody(r.id);
         }
         mBodies.clear();
+        mBodyHandlesById.clear();
         mContactListener.Clear();
     }
 
@@ -1276,6 +1357,7 @@ private:
     std::unique_ptr<PhysicsSystem>            mPhysicsSystem;
 
     std::unordered_map<uint32_t, BodyRecord> mBodies;
+    std::unordered_map<uint32_t, uint32_t> mBodyHandlesById;
     std::unordered_map<uint32_t, ConstraintRecord> mConstraints;
     std::unordered_map<uint64_t, uint32_t> mDisabledPairRefCounts;
     uint32_t mNextFilterId = 1;
@@ -1402,6 +1484,13 @@ NB_MODULE(hotools_jolt, m) {
         .def("get_body_state", &JoltWorld::get_body_state,
              nb::arg("handle"),
              "返回 (position, rotation_wxyz, linear_velocity, angular_velocity, active, sleeping)。")
+
+        .def("cast_ray", &JoltWorld::cast_ray,
+             nb::arg("origin"),
+             nb::arg("direction"),
+             nb::arg("include_sensors") = true,
+             nb::arg("ignore_handle") = 0u,
+             "沿 direction 线段查询最近刚体，返回 handle 与纯数值命中快照。")
 
         // constraint
         .def("add_constraint", &JoltWorld::add_constraint,

@@ -22,7 +22,7 @@ from ..utils.debug_draw import (
     object_location,
     vector3,
 )
-from .results import get_rigid_transform_result
+from .results import get_rigid_transform_result, iter_rigid_contact_event_results
 
 
 _COLOR_BODY_DYNAMIC = (0.20, 0.90, 0.20, 0.85)
@@ -31,6 +31,13 @@ _COLOR_BODY_KINEMATIC = (0.40, 0.60, 1.00, 0.85)
 _COLOR_BODY_SLEEP = (0.35, 0.70, 0.35, 0.50)
 _COLOR_CONSTRAINT = (1.00, 0.75, 0.10, 0.90)
 _COLOR_PROBLEM = (1.00, 0.10, 0.10, 0.95)
+_COLOR_CONTACT = (0.95, 0.95, 0.95, 0.95)
+_COLOR_SENSOR = (1.00, 0.20, 0.80, 0.90)
+_COLOR_REMOVED_CONTACT = (1.00, 0.35, 0.10, 0.75)
+_COLOR_REMOVED_SENSOR = (0.65, 0.30, 1.00, 0.75)
+
+_MAX_DEBUG_CONTACT_EVENTS = 256
+_MAX_DEBUG_POINTS_PER_EVENT = 4
 
 _RIGID_DRAW_STORE: dict[str, dict] = {}
 _RIGID_DRAW_HANDLE = None
@@ -43,6 +50,8 @@ def update_rigid_debug_draw_store(
     show_bodies: bool = True,
     show_constraints: bool = True,
     show_problems: bool = True,
+    show_contacts: bool = True,
+    show_sensors: bool = True,
 ) -> None:
     node_key = str(node_uid)
     if not enabled or not isinstance(world, PhysicsWorldCache):
@@ -50,6 +59,28 @@ def update_rigid_debug_draw_store(
         return
 
     _ensure_rigid_draw_handler()
+
+    _RIGID_DRAW_STORE[node_key] = build_rigid_debug_draw_snapshot(
+        world,
+        show_bodies=show_bodies,
+        show_constraints=show_constraints,
+        show_problems=show_problems,
+        show_contacts=show_contacts,
+        show_sensors=show_sensors,
+    )
+
+
+def build_rigid_debug_draw_snapshot(
+    world,
+    show_bodies: bool = True,
+    show_constraints: bool = True,
+    show_problems: bool = True,
+    show_contacts: bool = True,
+    show_sensors: bool = True,
+) -> dict:
+    """Build an immutable-by-convention viewport snapshot from slots/results."""
+    if not isinstance(world, PhysicsWorldCache):
+        return _empty_rigid_debug_draw_snapshot(world)
 
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     generation = int(world.generation)
@@ -59,6 +90,10 @@ def update_rigid_debug_draw_store(
     sleeping_lines: list[tuple[float, float, float]] = []
     constraint_lines: list[tuple[float, float, float]] = []
     problem_lines: list[tuple[float, float, float]] = []
+    contact_lines: list[tuple[float, float, float]] = []
+    sensor_lines: list[tuple[float, float, float]] = []
+    removed_contact_lines: list[tuple[float, float, float]] = []
+    removed_sensor_lines: list[tuple[float, float, float]] = []
 
     for slot_id, slot in list(world.solver_slots.items()):
         spec = slot.data.get("spec")
@@ -90,14 +125,69 @@ def update_rigid_debug_draw_store(
                 spec,
             )
 
-    _RIGID_DRAW_STORE[node_key] = {
+    contact_events = iter_rigid_contact_event_results(
+        world,
+        frame=frame,
+        generation=generation,
+    ) if show_contacts or show_sensors else []
+    visible_contact_events = 0
+    visible_sensor_events = 0
+    for event in contact_events[:_MAX_DEBUG_CONTACT_EVENTS]:
+        is_sensor = bool(event.get("is_sensor", False))
+        if is_sensor and not show_sensors:
+            continue
+        if not is_sensor and not show_contacts:
+            continue
+        removed = str(event.get("state", "")) == "removed"
+        if is_sensor:
+            visible_sensor_events += 1
+            lines = removed_sensor_lines if removed else sensor_lines
+        else:
+            visible_contact_events += 1
+            lines = removed_contact_lines if removed else contact_lines
+        _append_contact_event_lines(lines, event)
+
+    return {
         "world_id": str(id(world)),
+        "frame": frame,
+        "generation": generation,
         "dynamic_lines": dynamic_lines,
         "static_lines": static_lines,
         "kinematic_lines": kinematic_lines,
         "sleeping_lines": sleeping_lines,
         "constraint_lines": constraint_lines,
         "problem_lines": problem_lines,
+        "contact_lines": contact_lines,
+        "sensor_lines": sensor_lines,
+        "removed_contact_lines": removed_contact_lines,
+        "removed_sensor_lines": removed_sensor_lines,
+        "contact_event_count": visible_contact_events,
+        "sensor_event_count": visible_sensor_events,
+        "contact_event_truncated": max(
+            0,
+            len(contact_events) - _MAX_DEBUG_CONTACT_EVENTS,
+        ),
+    }
+
+
+def _empty_rigid_debug_draw_snapshot(world=None) -> dict:
+    return {
+        "world_id": str(id(world)) if world is not None else "",
+        "frame": 0,
+        "generation": 0,
+        "dynamic_lines": [],
+        "static_lines": [],
+        "kinematic_lines": [],
+        "sleeping_lines": [],
+        "constraint_lines": [],
+        "problem_lines": [],
+        "contact_lines": [],
+        "sensor_lines": [],
+        "removed_contact_lines": [],
+        "removed_sensor_lines": [],
+        "contact_event_count": 0,
+        "sensor_event_count": 0,
+        "contact_event_truncated": 0,
     }
 
 
@@ -165,6 +255,51 @@ def _draw_rigid_debug() -> None:
         (data.get("problem_lines"), _COLOR_PROBLEM, 2.5)
         for data in list(_RIGID_DRAW_STORE.values())
     )
+    draw_line_batches(
+        (data.get("contact_lines"), _COLOR_CONTACT, 2.0)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("sensor_lines"), _COLOR_SENSOR, 2.0)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("removed_contact_lines"), _COLOR_REMOVED_CONTACT, 1.5)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("removed_sensor_lines"), _COLOR_REMOVED_SENSOR, 1.5)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+
+
+def _append_contact_event_lines(lines: list, event: dict) -> None:
+    points_a = list(event.get("points_on_a") or ())
+    points_b = list(event.get("points_on_b") or ())
+    point_count = min(
+        max(len(points_a), len(points_b)),
+        _MAX_DEBUG_POINTS_PER_EVENT,
+    )
+    centers = []
+    for index in range(point_count):
+        point_a = vector3(points_a[index] if index < len(points_a) else points_b[index])
+        point_b = vector3(points_b[index] if index < len(points_b) else points_a[index])
+        center = (point_a + point_b) * 0.5
+        centers.append(center)
+        add_cross_lines(lines, center, 0.035)
+        if (point_b - point_a).length_squared > 1.0e-12:
+            add_line(lines, point_a, point_b)
+
+    if not centers:
+        return
+    origin = sum(centers[1:], centers[0].copy()) / len(centers)
+    normal = vector3(event.get("normal", (0.0, 0.0, 0.0)))
+    if normal.length_squared <= 1.0e-12:
+        return
+    normal.normalize()
+    depth = abs(float_value(event.get("penetration_depth", 0.0), 0.0))
+    normal_length = max(0.15, min(depth, 0.75))
+    add_line(lines, origin, origin + normal * normal_length)
 
 
 def _body_line_target(

@@ -27,6 +27,7 @@ from .implicit_objects import (
     register_rigid_jolt_world_setting_objects,
 )
 from .results import get_rigid_constraint_state_result, get_rigid_transform_result
+from .queries import perform_rigid_ray_cast
 from .solver import step_rigid_bodies
 from .specs import build_constraint_spec, build_rigid_body_spec
 
@@ -253,14 +254,14 @@ def physicsRigidConstraintReadState(
     bl_label="Jolt刚体可视化调试",
     base_color=_Color.colorCat["GetData"],
     is_output_node=False,
-    _INPUT_NAME=["物理世界", "显示刚体", "显示约束", "显示问题"],
+    _INPUT_NAME=["物理世界", "显示刚体", "显示约束", "显示问题", "显示接触", "显示传感器"],
     _OUTPUT_NAME=["物理世界"],
     omni_description="""
     刚体/Jolt 自有可视化调试节点。
 
-    本节点从 rigid solver slot 与 rigid_transform result stream 采样纯线段快照，
-    绘制刚体形状、生成约束和约束问题标记。绘制语义归 rigid/Jolt domain 持有，
-    不再走物理世界通用 debug draw。
+    本节点从 rigid solver slot 与 result stream 采样纯线段快照，绘制刚体形状、
+    生成约束、约束问题、接触点/法线和传感器事件。绘制语义归 rigid/Jolt
+    domain 持有，不再走物理世界通用 debug draw。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
@@ -269,6 +270,8 @@ def physicsRigidJoltDebugDraw(
     show_bodies: bool = True,
     show_constraints: bool = True,
     show_problems: bool = True,
+    show_contacts: bool = True,
+    show_sensors: bool = True,
 ) -> object:
     update_rigid_debug_draw_store(
         str(id(world)),
@@ -277,8 +280,60 @@ def physicsRigidJoltDebugDraw(
         bool(show_bodies),
         bool(show_constraints),
         bool(show_problems),
+        bool(show_contacts),
+        bool(show_sensors),
     )
     return world
+
+
+@omni(
+    enable=True,
+    always_run=True,
+    bl_label="刚体查询-RayCast",
+    base_color=_Color.colorCat["GetData"],
+    is_output_node=False,
+    _INPUT_NAME=["物理世界", "起点", "方向", "最大距离", "包含传感器", "忽略对象"],
+    input_init={
+        "origin": {"default_value": mathutils.Vector((0.0, 0.0, 0.0))},
+        "direction": {"default_value": mathutils.Vector((0.0, 0.0, -1.0))},
+        "max_distance": {"default_value": 100.0, "min_value": 0.0},
+    },
+    _OUTPUT_NAME=["物理世界", "命中", "命中对象", "位置", "法线", "距离", "比例", "传感器", "结果"],
+    omni_description="""
+    查询当前 Jolt 刚体世界中的最近射线命中。方向会归一化，最大距离决定线段长度。
+
+    节点应放在"刚体模拟步"之后。可选择忽略一个刚体对象，并决定 sensor 是否参与
+    命中。结果会发布到 rigid_query_result，且不包含 Jolt body handle。
+    """,
+    mute_passthrough={"_OUTPUT0": "world"},
+)
+def physicsRigidRayCast(
+    world: object,
+    origin: mathutils.Vector = mathutils.Vector((0.0, 0.0, 0.0)),
+    direction: mathutils.Vector = mathutils.Vector((0.0, 0.0, -1.0)),
+    max_distance: float = 100.0,
+    include_sensors: bool = True,
+    ignore_object: bpy.types.Object = None,
+) -> tuple[object, bool, bpy.types.Object, mathutils.Vector, mathutils.Vector, float, float, bool, object]:
+    result, hit_object = perform_rigid_ray_cast(
+        world,
+        origin=_vec3(origin),
+        direction=_vec3(direction, (0.0, 0.0, -1.0)),
+        max_distance=float(max_distance),
+        include_sensors=bool(include_sensors),
+        ignore_object=ignore_object,
+    )
+    return (
+        world,
+        bool(result.get("hit", False)),
+        hit_object,
+        mathutils.Vector(_vec3(result.get("position"))),
+        mathutils.Vector(_vec3(result.get("normal"))),
+        float(result.get("distance", 0.0) or 0.0),
+        float(result.get("fraction", 1.0) or 0.0),
+        bool(result.get("is_sensor", False)),
+        result,
+    )
 
 
 @omni(
