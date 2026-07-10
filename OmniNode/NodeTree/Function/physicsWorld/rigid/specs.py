@@ -5,7 +5,7 @@ spec 是 OmniNode 自己的物理语义表达，不依赖 Jolt 类型。
 Jolt adapter（Phase 5）负责把 spec 映射到 Jolt BodyCreationSettings 等结构。
 
 属性来源：bpy.types.Object.hotools_rigid_body 和 hotools_rigid_constraint
-（PG_Hotools_RigidBody / PG_Hotools_RigidConstraint，由 PhysicsTools 注册），
+（PG_Hotools_RigidBody / PG_Hotools_RigidConstraint，由 rigid domain 注册），
 由 HoTools 面板维护，节点图视为只读。
 
 Phase 4 先只收集和调试，不要求 Jolt step 和写回。

@@ -29,14 +29,12 @@ from .collisionPreview import (
     _remove_draw_handler,
     draw_collision_overlay_header,
 )
-from .physicsProperty import PG_Hotools_MeshCollision, PG_Hotools_RigidBody, PG_Hotools_RigidConstraint
+from .physicsProperty import PG_Hotools_MeshCollision
 from .physicsUtils import _overlay_show_update
 
 
 cls = [
     PG_Hotools_MeshCollision,
-    PG_Hotools_RigidBody,
-    PG_Hotools_RigidConstraint,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
@@ -62,10 +60,6 @@ cls = [
 
 def reg_props():
     bpy.types.Object.hotools_mesh_collision = PointerProperty(type=PG_Hotools_MeshCollision)
-
-    bpy.types.Object.hotools_rigid_body = PointerProperty(type=PG_Hotools_RigidBody)
-
-    bpy.types.Object.hotools_rigid_constraint = PointerProperty(type=PG_Hotools_RigidConstraint)
 
     bpy.types.Scene.ho_collision_overlay_show = BoolProperty(
         name="HoTools碰撞预览",
@@ -129,8 +123,6 @@ def reg_props():
 
 
 def ureg_props():
-    del bpy.types.Object.hotools_rigid_constraint
-    del bpy.types.Object.hotools_rigid_body
     del bpy.types.Scene.ho_bone_collision_show_roots_section
     del bpy.types.Scene.ho_bone_collision_show_info_section
     del bpy.types.Scene.ho_collision_overlay_show_mesh_vertices

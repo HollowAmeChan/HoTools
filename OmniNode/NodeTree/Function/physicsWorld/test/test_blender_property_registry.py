@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """Physics World domain property registry 与迁移契约测试。
 
@@ -45,6 +46,9 @@ physics_property = importlib.import_module("HoTools.PhysicsTools.physicsProperty
 physics_utils = importlib.import_module("HoTools.PhysicsTools.physicsUtils")
 collision_property = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties"
+)
+rigid_property = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.properties"
 )
 collision_groups = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.groups"
@@ -164,8 +168,8 @@ def test_persistent_property_contracts_are_frozen():
         collision_property.PG_Hotools_BoneCollision,
         collision_property.PG_Hotools_ObjectCollision,
         physics_property.PG_Hotools_MeshCollision,
-        physics_property.PG_Hotools_RigidBody,
-        physics_property.PG_Hotools_RigidConstraint,
+        rigid_property.PG_Hotools_RigidBody,
+        rigid_property.PG_Hotools_RigidConstraint,
     )
     actual = {cls.__name__: _property_contract(cls) for cls in classes}
     assert actual == EXPECTED_PROPERTY_CONTRACTS, json.dumps(actual, ensure_ascii=False, indent=2)
@@ -182,6 +186,10 @@ def test_collision_component_owns_shared_capabilities():
     assert spring.get("capabilities") == {}
     assert spring.get("consumes_capabilities") == ["bone_collision"]
     assert physics_property.PG_Hotools_ObjectCollision is collision_property.PG_Hotools_ObjectCollision
+    assert physics_property.PG_Hotools_RigidBody is rigid_property.PG_Hotools_RigidBody
+    assert physics_property.PG_Hotools_RigidConstraint is rigid_property.PG_Hotools_RigidConstraint
+    assert rigid_property.PG_Hotools_RigidBody.__module__.endswith("physicsWorld.rigid.properties")
+    assert rigid_property.PG_Hotools_RigidConstraint.__module__.endswith("physicsWorld.rigid.properties")
     assert physics_utils._COLLISION_GROUP_COUNT == collision_groups.COLLISION_GROUP_COUNT
     assert physics_utils._ALL_COLLISION_GROUPS_MASK == collision_groups.ALL_COLLISION_GROUPS_MASK
     assert physics_utils._COLLISION_GROUP_COLORS is collision_groups.COLLISION_GROUP_COLORS
@@ -284,14 +292,14 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.unregister_solver_blender_properties()
 
     binding_count = solver_registry.register_physics_world_blender_properties()
-    assert binding_count == 2, {
+    assert binding_count == 4, {
         "binding_count": binding_count,
         "registry": blender_registry.blender_property_registry_snapshot(),
     }
     assert hasattr(bpy.types.Bone, "hotools_collision")
     assert hasattr(bpy.types.Object, "hotools_object_collision")
-    assert blender_registry.registered_blender_property_domains() == ("collision",)
-    assert solver_registry.register_physics_world_blender_properties() == 2
+    assert blender_registry.registered_blender_property_domains() == ("collision", "rigid")
+    assert solver_registry.register_physics_world_blender_properties() == 4
 
     class PG_PhysicsWorldDynamicSolverTest(bpy.types.PropertyGroup):
         enabled: bpy.props.BoolProperty(default=False)  # type: ignore
@@ -312,7 +320,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.register_solver_module("test_dynamic_solver", descriptor)
     assert hasattr(bpy.types.Object, "hotools_test_dynamic_solver_temp")
     assert blender_registry.registered_blender_property_domains() == (
-        "collision", "test_dynamic_solver",
+        "collision", "rigid", "test_dynamic_solver",
     )
 
     solver_registry.unregister_solver_module("test_dynamic_solver")
@@ -325,7 +333,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     assert not hasattr(bpy.types.Object, "hotools_object_collision")
     assert blender_registry.registered_blender_property_domains() == ()
 
-    assert solver_registry.register_physics_world_blender_properties() == 2
+    assert solver_registry.register_physics_world_blender_properties() == 4
     solver_registry.unregister_physics_world_blender_properties()
     assert blender_registry.registered_blender_property_domains() == ()
 
@@ -336,8 +344,8 @@ def _contract_property_declaration() -> dict:
             collision_property.PG_Hotools_BoneCollision,
             collision_property.PG_Hotools_ObjectCollision,
             physics_property.PG_Hotools_MeshCollision,
-            physics_property.PG_Hotools_RigidBody,
-            physics_property.PG_Hotools_RigidConstraint,
+            rigid_property.PG_Hotools_RigidBody,
+            rigid_property.PG_Hotools_RigidConstraint,
         ),
         "bindings": (
             {
@@ -362,13 +370,13 @@ def _contract_property_declaration() -> dict:
                 "owner": bpy.types.Object,
                 "name": "hotools_rigid_body",
                 "property": "pointer",
-                "type": physics_property.PG_Hotools_RigidBody,
+                "type": rigid_property.PG_Hotools_RigidBody,
             },
             {
                 "owner": bpy.types.Object,
                 "name": "hotools_rigid_constraint",
                 "property": "pointer",
-                "type": physics_property.PG_Hotools_RigidConstraint,
+                "type": rigid_property.PG_Hotools_RigidConstraint,
             },
         ),
     }
@@ -501,12 +509,12 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             ),
             "PG_Hotools_RigidBody": (
                 physical_obj.hotools_rigid_body,
-                physics_property.PG_Hotools_RigidBody,
+                rigid_property.PG_Hotools_RigidBody,
                 {},
             ),
             "PG_Hotools_RigidConstraint": (
                 constraint_obj.hotools_rigid_constraint,
-                physics_property.PG_Hotools_RigidConstraint,
+                rigid_property.PG_Hotools_RigidConstraint,
                 {"target_a": physical_obj, "target_b": base_pose_obj},
             ),
         }
@@ -540,11 +548,11 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             ),
             "PG_Hotools_RigidBody": (
                 physical_obj.hotools_rigid_body,
-                physics_property.PG_Hotools_RigidBody,
+                rigid_property.PG_Hotools_RigidBody,
             ),
             "PG_Hotools_RigidConstraint": (
                 constraint_obj.hotools_rigid_constraint,
-                physics_property.PG_Hotools_RigidConstraint,
+                rigid_property.PG_Hotools_RigidConstraint,
             ),
         }
         after = {

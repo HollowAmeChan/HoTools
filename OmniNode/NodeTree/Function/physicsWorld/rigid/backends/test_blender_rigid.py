@@ -51,7 +51,7 @@ def _register_physics_props():
     from HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties import (
         PG_Hotools_ObjectCollision,
     )
-    from PhysicsTools.physicsProperty import (
+    from HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.properties import (
         PG_Hotools_RigidBody,
         PG_Hotools_RigidConstraint,
     )
@@ -164,6 +164,7 @@ _load_pw("collision.names",      "collision/names.py")
 _load_pw("collision.groups",     "collision/groups.py")
 _load_pw("collision.capabilities", "collision/capabilities.py")
 _load_pw("collision.properties", "collision/properties.py")
+_load_pw("rigid.properties",     "rigid/properties.py")
 _register_physics_props()
 _load_pw("names",                "names.py")
 _load_pw("declarations",         "declarations.py")

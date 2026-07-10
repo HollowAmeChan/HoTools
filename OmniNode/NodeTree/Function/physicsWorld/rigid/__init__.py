@@ -11,6 +11,8 @@ SOLVER_MODULE = {
     "declaration": ".declaration:RIGID_SOLVER_DECLARATION",
     "nodes": (".nodes",),
     "capabilities": ".capabilities:RIGID_CAPABILITIES",
+    "blender_properties": ".properties:RIGID_BLENDER_PROPERTIES",
+    "property_dependencies": ("collision",),
     "debug_draw_modes": ".debug:RIGID_DEBUG_DRAW_MODES",
     "scope_restart_handlers": (
         ".scope_sync:clear_scope_dynamic_rigid_deltas",
@@ -63,6 +65,9 @@ _EXPORTS = {
     "rigid_slot_debug_snapshot": ".debug",
     "rigid_declaration_debug_dict": ".declaration",
     "RigidBodySpec": ".specs",
+    "PG_Hotools_RigidBody": ".properties",
+    "PG_Hotools_RigidConstraint": ".properties",
+    "RIGID_BLENDER_PROPERTIES": ".properties",
     "ConstraintSpec": ".specs",
     "build_rigid_body_spec": ".specs",
     "build_constraint_spec": ".specs",
