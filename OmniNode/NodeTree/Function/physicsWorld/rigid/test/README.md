@@ -41,6 +41,18 @@
 - Blender 端到端 runner；
 - 断裂语义、跨 ABI 报告和已批准 golden。
 
+## 当前实施顺序
+
+2026-07-11 起暂停新增 Jolt feature surface，按以下门禁推进：
+
+1. `DET-003` 与生产路径 `simulation_order_key`；
+2. 共用 fixture 的 adapter parity runner 与 trace comparator；
+3. 共用 fixture 的最小 Blender semantic runner；
+4. breakable、跨 ABI、overflow、soak 和性能门禁；
+5. 恢复 Path、高级 shape/query 等能力扩展。
+
+旧式 `backends/test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
+
 使用两个全新世界运行全部 P0 fixture：
 
 ```powershell

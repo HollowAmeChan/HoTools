@@ -1,6 +1,6 @@
 # Rigid/Jolt 语义测试策略与验收矩阵
 
-日期：2026-07-10
+日期：2026-07-11
 
 状态：设计基线。实现完成前，不得把现有回归通过解释为“Rigid/Jolt 物理语义已验收”。
 
@@ -21,7 +21,7 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 `native 30/30`、`Blender 23/23` 继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1 `56/56`、旧式 Blender 后台集成 `28/28`，但后者尚未复用 fixture，不能记作 S3 semantic pass。
 
 ### 2026-07-10 实现状态
 
@@ -41,6 +41,18 @@
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
 当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+
+### 2026-07-11 实施决定
+
+在三层 fixture 闭环成立前，暂停新增 Path、ShapeCast、overlap、compound shape 和其它高级能力。下一批工作固定为：
+
+1. 先写失败的 `DET-003`，再为 body、constraint 和有序 command 引入独立 `simulation_order_key`；pointer-based `slot_id` 只负责当前进程的生命周期和去重。
+2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。
+3. 实现最小 `blender_pipeline_v1` runner，先覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，再扩展全部 P0。
+4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。
+5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。
+
+每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
 
 ## 验收边界
 
