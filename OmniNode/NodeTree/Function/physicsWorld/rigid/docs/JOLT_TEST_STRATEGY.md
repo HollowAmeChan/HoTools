@@ -23,6 +23,21 @@
 
 所以 `native 30/30`、`Blender 23/23` 继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。
 
+### 2026-07-10 实现状态
+
+首个可执行切片 `physicsWorld/rigid/test/` 已落地：
+
+- `hotools_jolt_fixture_v1` 严格 JSON schema；
+- `native_binding_v1` runner，按 fixture body id 稳定创建刚体；
+- position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
+- 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
+- `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
+- `BODY-001`、`FREE-001`、`FREE-002`、`FREE-003` 四个 P0 fixture；
+- py311/py313 独立运行，当前四个 physical hash 在两套 ABI 间完全一致；
+- `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
+
+当前只验收 body-only S1 切片。约束、adapter parity、Blender E2E、contact/query oracle 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+
 ## 验收边界
 
 同一份声明式 fixture 必须能经过三条路径并产生相同格式的规范化 trace：
@@ -155,10 +170,10 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 
 | ID | 场景 | 核心判据 | Oracle | 优先级 | 当前 |
 |---|---|---|---|---|---|
-| FREE-001 | 零阻尼自由落体 | 多关键帧位置/速度符合固定步长积分；XY 不漂移 | 解析 | P0 | 现有弱覆盖 |
-| FREE-002 | 零重力恒速/恒角速 | 速度不变，位置和旋转线性 | 解析 | P0 | 缺失 |
-| FREE-003 | gravity factor `0/0.5/1/2` | 加速度按比例缩放 | 解析/变形 | P0 | 现有弱覆盖 |
-| BODY-001 | 线性冲量、质量 `1/2/10` | `delta_v = J/m` | 解析 | P0 | 现有弱覆盖 |
+| FREE-001 | 零阻尼自由落体 | 多关键帧位置/速度符合固定步长积分；XY 不漂移 | 解析 | P0 | PASS (S1) |
+| FREE-002 | 零重力恒速/恒角速 | 速度不变，位置和旋转线性 | 解析 | P0 | 部分：线性 PASS (S1) |
+| FREE-003 | gravity factor `0/0.5/1/2` | 加速度按比例缩放 | 解析/变形 | P0 | PASS (S1) |
+| BODY-001 | 线性冲量、质量 `1/2/10` | `delta_v = J/m` | 解析 | P0 | 部分：mass 2 PASS (S1) |
 | BODY-002 | angular impulse | 方向正确且符合 shape inertia 响应 | Jolt/解析 | P1 | 现有弱覆盖 |
 | BODY-003 | 恒力/torque | 单步和多步速度变化正确 | 解析/Jolt | P0 | 现有弱覆盖 |
 | BODY-004 | linear/angular damping `0/0.1/1` | 衰减单调，三层逐帧一致 | Jolt/差分 | P0 | 缺失 |

@@ -1,0 +1,65 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FREE-003",
+  "title": "重力倍率按比例缩放加速度",
+  "source": "analytic",
+  "tags": ["p0", "body", "gravity_factor", "analytic"],
+  "world": {
+    "gravity": [0.0, 0.0, -9.81],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 60
+  },
+  "bodies": [
+    {
+      "id": "factor_0",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [-4.5, 0.0, 30.0],
+      "gravity_factor": 0.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "factor_0_5",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [-1.5, 0.0, 30.0],
+      "gravity_factor": 0.5,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "factor_1",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [1.5, 0.0, 30.0],
+      "gravity_factor": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "factor_2",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [4.5, 0.0, 30.0],
+      "gravity_factor": 2.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 10, 30, 60],
+  "assertions": [
+    {"kind": "semi_implicit_free_fall", "body": "factor_0", "position_abs": 0.00003, "velocity_abs": 0.00003},
+    {"kind": "semi_implicit_free_fall", "body": "factor_0_5", "position_abs": 0.00003, "velocity_abs": 0.00003},
+    {"kind": "semi_implicit_free_fall", "body": "factor_1", "position_abs": 0.00003, "velocity_abs": 0.00003},
+    {"kind": "semi_implicit_free_fall", "body": "factor_2", "position_abs": 0.00004, "velocity_abs": 0.00004},
+    {"kind": "finite_all"}
+  ]
+}

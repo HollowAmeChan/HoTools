@@ -1,0 +1,54 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "BODY-001",
+  "title": "线性冲量满足速度变化等于冲量除以质量",
+  "source": "analytic",
+  "tags": ["p0", "body", "impulse", "analytic"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 1
+  },
+  "bodies": [
+    {
+      "id": "mass_2",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 2.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [
+    {
+      "frame": 1,
+      "phase": "pre_step",
+      "op": "add_impulse",
+      "body": "mass_2",
+      "impulse": [4.0, -2.0, 1.0]
+    }
+  ],
+  "sample_frames": [0, 1],
+  "assertions": [
+    {
+      "kind": "impulse_delta_velocity",
+      "body": "mass_2",
+      "frame": 1,
+      "impulse": [4.0, -2.0, 1.0],
+      "velocity_abs": 0.00002
+    },
+    {
+      "kind": "body_state_near",
+      "body": "mass_2",
+      "frame": 1,
+      "position": [0.03333333333333333, -0.016666666666666666, 0.008333333333333333],
+      "linear_velocity": [2.0, -1.0, 0.5],
+      "abs": 0.00002
+    },
+    {"kind": "finite_all"}
+  ]
+}

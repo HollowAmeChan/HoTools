@@ -1,0 +1,38 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FREE-002",
+  "title": "零重力恒定线性运动",
+  "source": "analytic",
+  "tags": ["p0", "body", "velocity", "analytic"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.008333333333333333,
+    "substeps": 1,
+    "frames": 120
+  },
+  "bodies": [
+    {
+      "id": "traveler",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [-2.0, 3.0, 5.0],
+      "linear_velocity": [1.25, -2.0, 0.5],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 30, 60, 120],
+  "assertions": [
+    {
+      "kind": "constant_linear_motion",
+      "body": "traveler",
+      "position_abs": 0.00002,
+      "velocity_abs": 0.00002,
+      "rel": 0.000001
+    },
+    {"kind": "finite_all"}
+  ]
+}
