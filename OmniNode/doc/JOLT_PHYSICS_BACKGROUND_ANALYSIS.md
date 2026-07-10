@@ -141,8 +141,8 @@ Jolt 支持的主要 two-body constraint：
 | Cone | 点约束 + swing cone angle | 已接类型，并已接 half cone angle |
 | SwingTwist | 肩关节/球窝角限制，支持 normal/twist/plane half cone angle、twist min/max、friction、motor | 已接 CONE/PYRAMID 摆角、twist min/max、friction、独立 swing/twist motor |
 | SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 已接六轴模式、friction、逐轴 motor、三平移轴 limit spring 和调试 |
-| Gear | 两个 hinge 角速度/角度关系 | 未接 |
-| RackAndPinion | slider 与 hinge 的线性/旋转关系 | 未接 |
+| Gear | 两个 hinge 角速度/角度关系 | native、公共 spec/RNA/生成约束、依赖拓扑、result/debug 与解析 S1 已接 |
+| RackAndPinion | slider 与 hinge 的线性/旋转关系 | native、公共 spec/RNA/生成约束、依赖拓扑、result/debug 与解析 S1 已接 |
 | Pulley | 两个点通过绳长比例约束 | native、公共 spec/属性/生成约束/result/debug 与 ratio=2 解析 S1 已接 |
 | Path | 沿平滑路径约束，支持 path fraction 和 motor | 未接 |
 | Vehicle | 车辆专用约束系统 | 未接，不建议近期混入通用刚体面板 |
@@ -355,7 +355,7 @@ HoTools 当前 constraint spec 覆盖：
 - anchor transform 来自 Empty。
 - `rigid.generated_constraint` 隐式对象生成的持久约束；它不创建 Empty，但会在 solver prepare 阶段转成同一类 `ConstraintSpec` slot。
 
-当前 adapter 已优先使用 `ConstraintSpec.anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 填 body1/body2 frame；共享 frame 仍作为兼容模式。Hinge/Slider 的 limit、friction、spring 和 motor，Cone half angle、Distance min/max/spring，SwingTwist 的 CONE/PYRAMID 摆角、twist min/max、friction 和双 motor，以及 SixDOF 的六轴模式、范围、friction、逐轴 motor 和三平移轴 limit spring 均已进入 native binding 与公共属性链路。尚未接入的是 constraint 运行时命令流、auto detect point 和 constraint-to-constraint 拓扑类型。
+当前 adapter 已优先使用 `ConstraintSpec.anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 填 body1/body2 frame；共享 frame 仍作为兼容模式。Hinge/Slider 的 limit、friction、spring 和 motor，Cone half angle、Distance min/max/spring，SwingTwist 的 CONE/PYRAMID 摆角、twist min/max、friction 和双 motor，SixDOF 的六轴模式、范围、friction、逐轴 motor 和三平移轴 limit spring，以及 Gear/RackAndPinion 的约束引用拓扑均已进入 native binding 与公共属性链路。solver 按依赖拓扑创建基础 Hinge/Slider 后再创建耦合约束，缺失引用和类型错误进入 slot diagnostics。尚未接入的是 constraint 运行时命令流和 auto detect point。
 
 ### Per-frame 输入
 
@@ -919,7 +919,7 @@ Rigid/Jolt 的 solver 子模块入口已从公共注册层收口到 `rigid.SOLVE
 
 ## 2026-07-10 追加：Constraint state / lambda 结果流
 
-native `get_constraint_state(handle)` 已覆盖当前七种约束。Hinge 输出当前角度，Slider 输出当前位置，Distance 输出两个实际锚点的当前距离，SwingTwist 输出总相对旋转角；Fixed、Hinge、Slider、Cone、Point、Distance、SwingTwist 分别读取其可用的 position / rotation / limit / motor lambda。adapter 将向量 lambda 保留为三元组，并给出 `lambda_max_abs` 作为调试与断裂策略的统一比较值。
+native `get_constraint_state(handle)` 已覆盖当前十一种约束。Hinge 输出当前角度，Slider 输出当前位置，Distance 输出两个实际锚点的当前距离，SwingTwist/SixDOF 输出相对旋转状态，Pulley 输出加权绳长，Gear/RackAndPinion 输出各自类型标记与耦合 lambda；所有类型按其能力读取 position / rotation / limit / motor lambda。adapter 将向量 lambda 保留为三元组，并给出 `lambda_max_abs` 作为调试与断裂策略的统一比较值。
 
 ## 2026-07-10 追加：SwingTwist 约束切片
 

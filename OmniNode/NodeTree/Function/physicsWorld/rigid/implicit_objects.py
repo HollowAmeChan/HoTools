@@ -173,7 +173,7 @@ def _normalize_constraint_type(value) -> str:
     constraint_type = str(value or "FIXED").strip().upper()
     if constraint_type not in {
         "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
-        "SIX_DOF", "PULLEY",
+        "SIX_DOF", "PULLEY", "GEAR", "RACK_AND_PINION",
     }:
         return "FIXED"
     return constraint_type
@@ -438,6 +438,10 @@ def make_rigid_generated_constraint_properties(
     pulley_ratio: float = 1.0,
     pulley_min_length: float = 0.0,
     pulley_max_length: float = -1.0,
+    reference_constraint_a: bpy.types.Object = None,
+    reference_constraint_b: bpy.types.Object = None,
+    gear_ratio: float = 1.0,
+    rack_and_pinion_ratio: float = 1.0,
     breakable: bool = False,
     breaking_threshold: float = 1000.0,
     anchor_object_a: bpy.types.Object = None,
@@ -595,6 +599,14 @@ def make_rigid_generated_constraint_properties(
         "pulley_ratio": max(float(pulley_ratio), 1.0e-4),
         "pulley_min_length": pulley_min_length,
         "pulley_max_length": pulley_max_length,
+        "reference_constraint_a": (
+            reference_constraint_a if _is_object(reference_constraint_a) else None
+        ),
+        "reference_constraint_b": (
+            reference_constraint_b if _is_object(reference_constraint_b) else None
+        ),
+        "gear_ratio": max(float(gear_ratio), 1.0e-4),
+        "rack_and_pinion_ratio": max(float(rack_and_pinion_ratio), 1.0e-4),
     }]
 
 
@@ -746,6 +758,18 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "pulley_ratio": max(float(item.get("pulley_ratio", 1.0) or 1.0), 1.0e-4),
         "pulley_min_length": pulley_min_length,
         "pulley_max_length": pulley_max_length,
+        "reference_constraint_a": (
+            item.get("reference_constraint_a")
+            if _is_object(item.get("reference_constraint_a")) else None
+        ),
+        "reference_constraint_b": (
+            item.get("reference_constraint_b")
+            if _is_object(item.get("reference_constraint_b")) else None
+        ),
+        "gear_ratio": max(float(item.get("gear_ratio", 1.0) or 1.0), 1.0e-4),
+        "rack_and_pinion_ratio": max(
+            float(item.get("rack_and_pinion_ratio", 1.0) or 1.0), 1.0e-4,
+        ),
     }
 
 
@@ -795,11 +819,15 @@ def rigid_generated_constraint_signature(item: dict) -> str:
     anchor_object = item.get("anchor_object")
     anchor_object_a = item.get("anchor_object_a")
     anchor_object_b = item.get("anchor_object_b")
+    reference_constraint_a = item.get("reference_constraint_a")
+    reference_constraint_b = item.get("reference_constraint_b")
     a_ptr, a_data_ptr = _target_parts(target_a)
     b_ptr, b_data_ptr = _target_parts(target_b)
     anchor_ptr, anchor_data_ptr = _target_parts(anchor_object)
     anchor_a_ptr, anchor_a_data_ptr = _target_parts(anchor_object_a)
     anchor_b_ptr, anchor_b_data_ptr = _target_parts(anchor_object_b)
+    reference_a_ptr, reference_a_data_ptr = _target_parts(reference_constraint_a)
+    reference_b_ptr, reference_b_data_ptr = _target_parts(reference_constraint_b)
     payload = [
         a_ptr,
         a_data_ptr,
@@ -811,6 +839,10 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         anchor_a_data_ptr,
         anchor_b_ptr,
         anchor_b_data_ptr,
+        reference_a_ptr,
+        reference_a_data_ptr,
+        reference_b_ptr,
+        reference_b_data_ptr,
         str(item.get("constraint_type", "FIXED") or "FIXED"),
         "1" if bool(item.get("enabled", True)) else "0",
         "1" if bool(item.get("disable_collisions", True)) else "0",
@@ -892,6 +924,8 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         f"{float(item.get('pulley_ratio', 1.0)):.8g}",
         f"{float(item.get('pulley_min_length', 0.0)):.8g}",
         f"{float(item.get('pulley_max_length', -1.0)):.8g}",
+        f"{float(item.get('gear_ratio', 1.0)):.8g}",
+        f"{float(item.get('rack_and_pinion_ratio', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
     ]
     return stable_short_hash(payload, 16)
@@ -960,6 +994,10 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
     target_b = item.get("target_b")
     if not _is_object(target_a) and not _is_object(target_b):
         return None, ""
+    reference_constraint_a = item.get("reference_constraint_a")
+    reference_constraint_b = item.get("reference_constraint_b")
+    reference_constraint_a_ptr = as_pointer(reference_constraint_a)
+    reference_constraint_b_ptr = as_pointer(reference_constraint_b)
 
     spec = ConstraintSpec(
         empty_obj=None,
@@ -1059,6 +1097,18 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         pulley_ratio=float(item.get("pulley_ratio", 1.0) or 1.0),
         pulley_min_length=float(item.get("pulley_min_length", 0.0)),
         pulley_max_length=float(item.get("pulley_max_length", -1.0)),
+        reference_constraint_a=(
+            f"constraint:{reference_constraint_a_ptr}"
+            if reference_constraint_a_ptr else ""
+        ),
+        reference_constraint_b=(
+            f"constraint:{reference_constraint_b_ptr}"
+            if reference_constraint_b_ptr else ""
+        ),
+        gear_ratio=float(item.get("gear_ratio", 1.0) or 1.0),
+        rack_and_pinion_ratio=float(
+            item.get("rack_and_pinion_ratio", 1.0) or 1.0
+        ),
     )
     return spec, str(entry.get("signature") or rigid_generated_constraint_signature(item))
 

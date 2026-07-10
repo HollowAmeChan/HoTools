@@ -226,6 +226,10 @@ def _constraint_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "pulley_ratio", 1.0)),
         _round_float(getattr(spec, "pulley_min_length", 0.0)),
         _round_float(getattr(spec, "pulley_max_length", -1.0)),
+        str(getattr(spec, "reference_constraint_a", "") or ""),
+        str(getattr(spec, "reference_constraint_b", "") or ""),
+        _round_float(getattr(spec, "gear_ratio", 1.0)),
+        _round_float(getattr(spec, "rack_and_pinion_ratio", 1.0)),
     )
 
 

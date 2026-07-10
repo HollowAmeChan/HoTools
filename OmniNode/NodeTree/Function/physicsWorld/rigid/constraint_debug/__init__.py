@@ -8,7 +8,10 @@ viewport handler.
 
 from __future__ import annotations
 
-from . import cone, distance, fixed, hinge, point, pulley, six_dof, slider, swing_twist
+from . import (
+    cone, distance, fixed, gear, hinge, point, pulley, rack_and_pinion,
+    six_dof, slider, swing_twist,
+)
 from .common import append_anchor_pair, append_frame_axes, make_context
 
 
@@ -22,6 +25,8 @@ CONSTRAINT_DEBUG_BUILDERS = {
     "SWING_TWIST": swing_twist.append_lines,
     "SIX_DOF": six_dof.append_lines,
     "PULLEY": pulley.append_lines,
+    "GEAR": gear.append_lines,
+    "RACK_AND_PINION": rack_and_pinion.append_lines,
 }
 
 

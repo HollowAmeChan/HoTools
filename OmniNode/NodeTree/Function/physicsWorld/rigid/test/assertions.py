@@ -1268,6 +1268,42 @@ def _assert_body_axis_range(
         )
 
 
+def _assert_coupled_axis_relation(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证两体轴速度的线性耦合关系 coefficient_a*a + coefficient_b*b = 0。"""
+    body_a = str(parameters.get("body_a", ""))
+    body_b = str(parameters.get("body_b", ""))
+    if body_a not in fixture.bodies_by_id or body_b not in fixture.bodies_by_id:
+        raise FixtureError("coupled_axis_relation references unknown body")
+    field_a = str(parameters.get("field_a", "angular_velocity"))
+    field_b = str(parameters.get("field_b", "angular_velocity"))
+    supported_fields = {"linear_velocity", "angular_velocity"}
+    if field_a not in supported_fields or field_b not in supported_fields:
+        raise FixtureError("coupled_axis_relation fields must be velocity vectors")
+    axis_a = _axis_index(parameters.get("axis_a", "Z"))
+    axis_b = _axis_index(parameters.get("axis_b", "Z"))
+    coefficient_a = _number(parameters.get("coefficient_a"), "coefficient_a", 1.0)
+    coefficient_b = _number(parameters.get("coefficient_b"), "coefficient_b", 1.0)
+    tolerance = _number(parameters.get("abs"), "abs", 5.0e-5)
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 1.0))
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    for frame in trace:
+        frame_number = int(frame["frame"])
+        if frame_number < start_frame or frame_number > end_frame:
+            continue
+        value_a = float(_body_at(frame, body_a)[field_a][axis_a])
+        value_b = float(_body_at(frame, body_b)[field_b][axis_b])
+        residual = coefficient_a * value_a + coefficient_b * value_b
+        if abs(residual) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} frame {frame_number} coupling residual {residual:.12g}, "
+                f"expected 0 within {tolerance:g}"
+            )
+
+
 def evaluate_assertions(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1363,6 +1399,9 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "body_axis_range": lambda spec: _assert_body_axis_range(
+            fixture, trace, spec.parameters,
+        ),
+        "coupled_axis_relation": lambda spec: _assert_coupled_axis_relation(
             fixture, trace, spec.parameters,
         ),
     }

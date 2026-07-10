@@ -87,7 +87,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
         "renderer_registry": "rigid.constraint_debug:CONSTRAINT_DEBUG_BUILDERS",
         "types": [
             "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
-            "SIX_DOF",
+            "SIX_DOF", "PULLEY", "GEAR", "RACK_AND_PINION",
         ],
         "line_groups": ["base", "limits", "motor", "state", "problem"],
         "dynamic_state_channel": RIGID_CONSTRAINT_STATE_CHANNEL,

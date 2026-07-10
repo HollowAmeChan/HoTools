@@ -256,6 +256,10 @@ class ConstraintSpec:
         "pulley_ratio",
         "pulley_min_length",
         "pulley_max_length",
+        "reference_constraint_a",
+        "reference_constraint_b",
+        "gear_ratio",
+        "rack_and_pinion_ratio",
     )
 
     def __init__(
@@ -341,6 +345,10 @@ class ConstraintSpec:
         pulley_ratio: float = 1.0,
         pulley_min_length: float = 0.0,
         pulley_max_length: float = -1.0,
+        reference_constraint_a: str = "",
+        reference_constraint_b: str = "",
+        gear_ratio: float = 1.0,
+        rack_and_pinion_ratio: float = 1.0,
     ) -> None:
         self.empty_obj = empty_obj
         self.empty_ptr: int = empty_ptr
@@ -411,6 +419,10 @@ class ConstraintSpec:
         self.pulley_ratio: float = pulley_ratio
         self.pulley_min_length: float = pulley_min_length
         self.pulley_max_length: float = pulley_max_length
+        self.reference_constraint_a: str = str(reference_constraint_a or "")
+        self.reference_constraint_b: str = str(reference_constraint_b or "")
+        self.gear_ratio: float = max(float(gear_ratio), 1.0e-4)
+        self.rack_and_pinion_ratio: float = max(float(rack_and_pinion_ratio), 1.0e-4)
 
     def debug_dict(self) -> dict:
         return {
@@ -481,6 +493,10 @@ class ConstraintSpec:
             "pulley_ratio": self.pulley_ratio,
             "pulley_min_length": self.pulley_min_length,
             "pulley_max_length": self.pulley_max_length,
+            "reference_constraint_a": self.reference_constraint_a,
+            "reference_constraint_b": self.reference_constraint_b,
+            "gear_ratio": self.gear_ratio,
+            "rack_and_pinion_ratio": self.rack_and_pinion_ratio,
         }
 
 
@@ -728,7 +744,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     constraint_type = str(getattr(props, "constraint_type", "FIXED"))
     if constraint_type not in {
         "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
-        "SIX_DOF", "PULLEY",
+        "SIX_DOF", "PULLEY", "GEAR", "RACK_AND_PINION",
     }:
         constraint_type = "FIXED"
     target_a = getattr(props, "target_a", None)
@@ -884,6 +900,20 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         pulley_min_length, pulley_max_length = _ordered_pair(
             pulley_min_length, pulley_max_length,
         )
+    reference_constraint_a_obj = getattr(props, "reference_constraint_a", None)
+    reference_constraint_b_obj = getattr(props, "reference_constraint_b", None)
+    reference_constraint_a_ptr = _object_pointer(reference_constraint_a_obj)
+    reference_constraint_b_ptr = _object_pointer(reference_constraint_b_obj)
+    reference_constraint_a = (
+        f"constraint:{reference_constraint_a_ptr}" if reference_constraint_a_ptr else ""
+    )
+    reference_constraint_b = (
+        f"constraint:{reference_constraint_b_ptr}" if reference_constraint_b_ptr else ""
+    )
+    gear_ratio = max(float(getattr(props, "gear_ratio", 1.0)), 1.0e-4)
+    rack_and_pinion_ratio = max(
+        float(getattr(props, "rack_and_pinion_ratio", 1.0)), 1.0e-4,
+    )
 
     return ConstraintSpec(
         empty_obj=empty_obj,
@@ -954,4 +984,8 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         pulley_ratio=pulley_ratio,
         pulley_min_length=pulley_min_length,
         pulley_max_length=pulley_max_length,
+        reference_constraint_a=reference_constraint_a,
+        reference_constraint_b=reference_constraint_b,
+        gear_ratio=gear_ratio,
+        rack_and_pinion_ratio=rack_and_pinion_ratio,
     )

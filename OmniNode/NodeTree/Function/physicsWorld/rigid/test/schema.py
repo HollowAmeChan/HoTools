@@ -67,6 +67,12 @@ def _string(value: Any, path: str) -> str:
     return value.strip()
 
 
+def _optional_string(value: Any, path: str) -> str:
+    if value is None or value == "":
+        return ""
+    return _string(value, path)
+
+
 def _vec(value: Any, size: int, path: str) -> tuple[float, ...]:
     values = _sequence(value, path)
     if len(values) != size:
@@ -357,6 +363,10 @@ class ConstraintSpec:
     pulley_ratio: float
     pulley_min_length: float
     pulley_max_length: float
+    reference_constraint_a: str
+    reference_constraint_b: str
+    gear_ratio: float
+    rack_and_pinion_ratio: float
 
     @classmethod
     def from_data(cls, value: Any, path: str) -> "ConstraintSpec":
@@ -388,11 +398,13 @@ class ConstraintSpec:
             "disable_collisions", "distance_min", "distance_max",
             "pulley_fixed_point_a", "pulley_fixed_point_b", "pulley_ratio",
             "pulley_min_length", "pulley_max_length",
+            "reference_constraint_a", "reference_constraint_b", "gear_ratio",
+            "rack_and_pinion_ratio",
         }, path)
         constraint_type = _string(data.get("type"), f"{path}.type").upper()
         if constraint_type not in {
             "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
-            "SIX_DOF", "PULLEY",
+            "SIX_DOF", "PULLEY", "GEAR", "RACK_AND_PINION",
         }:
             raise FixtureError(f"{path}.type is unsupported: {constraint_type}")
         body_a = _string(data.get("body_a"), f"{path}.body_a")
@@ -599,6 +611,17 @@ class ConstraintSpec:
             pulley_max_length=_number(
                 data.get("pulley_max_length", -1.0), f"{path}.pulley_max_length",
             ),
+            reference_constraint_a=_optional_string(
+                data.get("reference_constraint_a"), f"{path}.reference_constraint_a",
+            ),
+            reference_constraint_b=_optional_string(
+                data.get("reference_constraint_b"), f"{path}.reference_constraint_b",
+            ),
+            gear_ratio=_number(data.get("gear_ratio", 1.0), f"{path}.gear_ratio"),
+            rack_and_pinion_ratio=_number(
+                data.get("rack_and_pinion_ratio", 1.0),
+                f"{path}.rack_and_pinion_ratio",
+            ),
         )
         for name in (
             "limit_spring_frequency", "limit_spring_damping", "max_friction_torque",
@@ -662,6 +685,10 @@ class ConstraintSpec:
             raise FixtureError(f"{path} solver step overrides must be <= 255")
         if result.pulley_ratio <= 0.0:
             raise FixtureError(f"{path}.pulley_ratio must be > 0")
+        if result.gear_ratio <= 0.0:
+            raise FixtureError(f"{path}.gear_ratio must be > 0")
+        if result.rack_and_pinion_ratio <= 0.0:
+            raise FixtureError(f"{path}.rack_and_pinion_ratio must be > 0")
         if result.pulley_min_length < -1.0 or result.pulley_max_length < -1.0:
             raise FixtureError(f"{path} pulley lengths must be -1 or >= 0")
         for name, quat in (
@@ -756,6 +783,7 @@ class AssertionSpec:
             "coulomb_slide_trajectory",
             "contact_absent",
             "body_axis_range",
+            "coupled_axis_relation",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -864,6 +892,11 @@ class AssertionSpec:
             },
             "body_axis_range": {
                 "body", "frame", "field", "axis", "minimum", "maximum",
+            },
+            "coupled_axis_relation": {
+                "body_a", "field_a", "axis_a", "coefficient_a",
+                "body_b", "field_b", "axis_b", "coefficient_b",
+                "abs", "start_frame", "end_frame",
             },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
@@ -1024,6 +1057,8 @@ def load_fixture(path: str | Path) -> Fixture:
     if len(constraint_ids) != len(set(constraint_ids)):
         raise FixtureError("fixture.constraints contains duplicate ids")
     known_body_refs = set(body_ids) | {"WORLD"}
+    preceding_constraints: set[str] = set()
+    constraints_by_id = {constraint.id: constraint for constraint in constraints}
     for constraint in constraints:
         if constraint.body_a not in known_body_refs:
             raise FixtureError(
@@ -1033,6 +1068,34 @@ def load_fixture(path: str | Path) -> Fixture:
             raise FixtureError(
                 f"constraint {constraint.id} references unknown body_b: {constraint.body_b}"
             )
+        references = (
+            constraint.reference_constraint_a,
+            constraint.reference_constraint_b,
+        )
+        expected_reference_types = {
+            "GEAR": ("HINGE", "HINGE"),
+            "RACK_AND_PINION": ("HINGE", "SLIDER"),
+        }.get(constraint.type)
+        if expected_reference_types and not all(references):
+            raise FixtureError(
+                f"{constraint.type} constraint {constraint.id} requires two references"
+            )
+        for reference_index, reference in enumerate(filter(None, references)):
+            if reference not in preceding_constraints:
+                raise FixtureError(
+                    f"constraint {constraint.id} must reference an earlier constraint: {reference}"
+                )
+            if (
+                expected_reference_types
+                and constraints_by_id[reference].type
+                != expected_reference_types[reference_index]
+            ):
+                raise FixtureError(
+                    f"{constraint.type} constraint {constraint.id} reference "
+                    f"{reference_index + 1} must be {expected_reference_types[reference_index]}: "
+                    f"{reference}"
+                )
+        preceding_constraints.add(constraint.id)
     for event in timeline:
         if event.constraint and event.constraint not in set(constraint_ids):
             raise FixtureError(

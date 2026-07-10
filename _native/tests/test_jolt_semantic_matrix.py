@@ -80,6 +80,7 @@ def test_jolt_semantic_fixture_catalog():
         "SWING_TWIST-001",
         "SIX_DOF-001", "SIX_DOF-002", "SIX_DOF-003", "SIX_DOF-004",
         "PULLEY-001",
+        "GEAR-001", "RACK_AND_PINION-001",
     }.issubset(ids)
     for fixture in fixtures:
         assert "p0" in fixture.tags

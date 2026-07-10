@@ -1072,6 +1072,101 @@ def test_pulley_constraint_spec_and_adapter():
     _del(c, a, b)
 
 
+def test_coupled_constraint_spec_and_adapter():
+    a = _make_obj("T3C_CoupledBodyA", (-1, 0, 1), body_type="DYNAMIC")
+    b = _make_obj("T3C_CoupledBodyB", (1, 0, 1), body_type="DYNAMIC")
+    a.hotools_rigid_body.angular_velocity = (0.0, 0.0, 3.0)
+
+    hinge_a = _make_constraint_empty("T3C_HingeA", a, None, loc=(-1, 0, 1))
+    hinge_a.hotools_rigid_constraint.constraint_type = "HINGE"
+    hinge_b = _make_constraint_empty("T3C_HingeB", b, None, loc=(1, 0, 1))
+    hinge_b.hotools_rigid_constraint.constraint_type = "HINGE"
+    slider_b = _make_constraint_empty("T3C_SliderB", b, None, loc=(1, 0, 1))
+    slider_b.hotools_rigid_constraint.constraint_type = "SLIDER"
+
+    gear = _make_constraint_empty("T3C_Gear", a, b, loc=(0, 0, 1))
+    gear_props = gear.hotools_rigid_constraint
+    gear_props.constraint_type = "GEAR"
+    gear_props.reference_constraint_a = hinge_a
+    gear_props.reference_constraint_b = hinge_b
+    gear_props.gear_ratio = 2.0
+
+    rack = _make_constraint_empty("T3C_RackAndPinion", a, b, loc=(0, 0, 1))
+    rack_props = rack.hotools_rigid_constraint
+    rack_props.constraint_type = "RACK_AND_PINION"
+    rack_props.reference_constraint_a = hinge_a
+    rack_props.reference_constraint_b = slider_b
+    rack_props.rack_and_pinion_ratio = 2.5
+
+    specs = {
+        obj.name: build_constraint_spec(obj)
+        for obj in (hinge_a, hinge_b, slider_b, gear, rack)
+    }
+    assert specs[gear.name].reference_constraint_a == specs[hinge_a.name].slot_id
+    assert specs[gear.name].reference_constraint_b == specs[hinge_b.name].slot_id
+    assert specs[gear.name].gear_ratio == 2.0
+    assert specs[rack.name].reference_constraint_a == specs[hinge_a.name].slot_id
+    assert specs[rack.name].reference_constraint_b == specs[slider_b.name].slot_id
+    assert specs[rack.name].rack_and_pinion_ratio == 2.5
+
+    adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
+    for obj in (a, b):
+        body_spec = build_rigid_body_spec(obj)
+        adapter.sync_body(body_spec.slot_id, body_spec)
+    for obj in (hinge_a, hinge_b, slider_b, gear, rack):
+        spec = specs[obj.name]
+        adapter.sync_constraint(spec.slot_id, spec)
+    adapter.step(1.0 / 60.0, 1)
+    assert adapter.get_constraint_state(specs[gear.name].slot_id)["current_value_kind"] == "gear"
+    assert adapter.get_constraint_state(specs[rack.name].slot_id)["current_value_kind"] == "rack_and_pinion"
+    adapter.dispose("test_coupled_constraints")
+
+    scene = bpy.context.scene
+    scene.frame_set(1)
+    scope = make_scope(
+        [gear, rack, a, b, hinge_a, hinge_b, slider_b],
+        include_rigid_body=True,
+        include_rigid_constraint=True,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True,
+    )
+    step_rigid_bodies(world, enabled=True)
+    for obj in (hinge_a, hinge_b, slider_b, gear, rack):
+        slot = world.solver_slots[specs[obj.name].slot_id]
+        assert "_jolt_error" not in slot.data, slot.data.get("_jolt_error")
+        assert slot.data.get("_jolt_generation") == world.generation
+    assert get_rigid_constraint_state_result(
+        world, slot_id=specs[gear.name].slot_id,
+        frame=scene.frame_current, generation=world.generation,
+    )["constraint_type"] == "GEAR"
+    assert get_rigid_constraint_state_result(
+        world, slot_id=specs[rack.name].slot_id,
+        frame=scene.frame_current, generation=world.generation,
+    )["constraint_type"] == "RACK_AND_PINION"
+    world.omni_cache_dispose("test_coupled_constraint_topology")
+
+    generated = make_rigid_generated_constraint_properties(
+        target_a=a,
+        target_b=b,
+        constraint_type="GEAR",
+        reference_constraint_a=hinge_a,
+        reference_constraint_b=hinge_b,
+        gear_ratio=3.0,
+    )[0]
+    assert generated["reference_constraint_a"] is hinge_a
+    assert generated["reference_constraint_b"] is hinge_b
+    signature = rigid_generated_constraint_signature(generated)
+    changed = dict(generated)
+    changed["gear_ratio"] = 4.0
+    assert rigid_generated_constraint_signature(changed) != signature
+
+    _del(rack, gear, slider_b, hinge_b, hinge_a, a, b)
+
+
 def test_generated_constraint_implicit_object_pipeline():
     scene = bpy.context.scene
     a = _make_obj("T3D_GeneratedBodyA", (-0.5, 0, 2), body_type="DYNAMIC")
@@ -1859,6 +1954,8 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "pulley_ratio": 2.0,
         "pulley_min_length": 0.0,
         "pulley_max_length": -1.0,
+        "gear_ratio": 2.0,
+        "rack_and_pinion_ratio": 2.5,
     }
     states = {
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
@@ -1874,7 +1971,7 @@ def test_constraint_debug_renderer_registry_and_semantics():
     }
     for constraint_type in (
         "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
-        "SIX_DOF", "PULLEY",
+        "SIX_DOF", "PULLEY", "GEAR", "RACK_AND_PINION",
     ):
         spec = _types.SimpleNamespace(constraint_type=constraint_type, **common)
         groups = build_constraint_debug_lines(spec, states.get(constraint_type))
@@ -1936,6 +2033,7 @@ if __name__ == "__main__":
     check("SWING_TWIST constraint spec + generated properties", test_swing_twist_constraint_spec_and_generated_properties)
     check("SIX_DOF constraint spec + adapter", test_six_dof_constraint_spec_and_adapter)
     check("PULLEY constraint spec + adapter", test_pulley_constraint_spec_and_adapter)
+    check("GEAR/RACK_AND_PINION constraint topology + adapter", test_coupled_constraint_spec_and_adapter)
     check("constraint state result pipeline", test_constraint_state_result_pipeline)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 

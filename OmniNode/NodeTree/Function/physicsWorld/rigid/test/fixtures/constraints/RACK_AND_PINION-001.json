@@ -1,0 +1,25 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "RACK_AND_PINION-001",
+  "title": "铰链和滑轨通过齿条齿轮比耦合",
+  "source": "jolt_sample:RackAndPinionConstraintTest",
+  "tags": ["p0", "constraint", "rack-and-pinion", "constraint-reference"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {"id": "pinion", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.4, 0.4, 0.2]}, "position": [-1.0, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 3.0], "mass": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "rack", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.2, 0.2, 1.0]}, "position": [1.0, 0.0, 0.0], "mass": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false}
+  ],
+  "constraints": [
+    {"id": "pinion_hinge", "type": "HINGE", "body_a": "WORLD", "body_b": "pinion", "anchor_position": [-1.0, 0.0, 0.0], "disable_collisions": false},
+    {"id": "rack_slider", "type": "SLIDER", "body_a": "WORLD", "body_b": "rack", "anchor_position": [1.0, 0.0, 0.0], "disable_collisions": false},
+    {"id": "rack_drive", "type": "RACK_AND_PINION", "body_a": "pinion", "body_b": "rack", "reference_constraint_a": "pinion_hinge", "reference_constraint_b": "rack_slider", "rack_and_pinion_ratio": 2.0, "disable_collisions": true}
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "rack_drive", "type": "RACK_AND_PINION", "current_value_kind": "rack_and_pinion", "enabled": true},
+    {"kind": "coupled_axis_relation", "body_a": "pinion", "field_a": "angular_velocity", "axis_a": "Z", "coefficient_a": 1.0, "body_b": "rack", "field_b": "linear_velocity", "axis_b": "Z", "coefficient_b": -2.0, "abs": 0.00005, "start_frame": 1},
+    {"kind": "constraint_lambda_active", "constraint": "rack_drive", "field": "lambda_max_abs", "min_abs": 0.0001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

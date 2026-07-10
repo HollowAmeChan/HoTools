@@ -1,0 +1,25 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "GEAR-001",
+  "title": "两个铰链通过齿轮比耦合角速度",
+  "source": "jolt_sample:GearConstraintTest",
+  "tags": ["p0", "constraint", "gear", "constraint-reference"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {"id": "gear_a", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.4, 0.4, 0.2]}, "position": [-1.0, 0.0, 0.0], "mass": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "gear_b", "type": "DYNAMIC", "shape": {"type": "BOX", "half_extents": [0.4, 0.4, 0.2]}, "position": [1.0, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 3.0], "mass": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false}
+  ],
+  "constraints": [
+    {"id": "hinge_a", "type": "HINGE", "body_a": "WORLD", "body_b": "gear_a", "anchor_position": [-1.0, 0.0, 0.0], "disable_collisions": false},
+    {"id": "hinge_b", "type": "HINGE", "body_a": "WORLD", "body_b": "gear_b", "anchor_position": [1.0, 0.0, 0.0], "disable_collisions": false},
+    {"id": "gear_pair", "type": "GEAR", "body_a": "gear_a", "body_b": "gear_b", "reference_constraint_a": "hinge_a", "reference_constraint_b": "hinge_b", "gear_ratio": 2.0, "disable_collisions": true}
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "gear_pair", "type": "GEAR", "current_value_kind": "gear", "enabled": true},
+    {"kind": "coupled_axis_relation", "body_a": "gear_a", "field_a": "angular_velocity", "axis_a": "Z", "coefficient_a": 1.0, "body_b": "gear_b", "field_b": "angular_velocity", "axis_b": "Z", "coefficient_b": 2.0, "abs": 0.00005, "start_frame": 5},
+    {"kind": "constraint_lambda_active", "constraint": "gear_pair", "field": "lambda_max_abs", "min_abs": 0.0001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

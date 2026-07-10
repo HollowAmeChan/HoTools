@@ -376,6 +376,16 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
 
         ctype = props.constraint_type
 
+        if ctype in {"GEAR", "RACK_AND_PINION"}:
+            layout.separator()
+            layout.label(text="引用拓扑", icon="CONSTRAINT")
+            layout.prop(props, "reference_constraint_a")
+            layout.prop(props, "reference_constraint_b")
+            if ctype == "GEAR":
+                layout.prop(props, "gear_ratio")
+            else:
+                layout.prop(props, "rack_and_pinion_ratio")
+
         layout.separator()
         layout.label(text="求解", icon="MOD_PHYSICS")
         solver_col = layout.column(align=True)

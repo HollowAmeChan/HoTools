@@ -562,13 +562,14 @@ def test_constraint_state_output():
     )
     jw.step(1.0 / 60.0, 1)
     state = jw.get_constraint_state(ch)
-    assert len(state) == 8
+    assert len(state) == 10
     assert state[0] == "HINGE"
     assert state[1] is True
     assert state[2] == "angle"
     assert isinstance(state[3], float)
     assert len(state[4]) == 3 and len(state[5]) == 3
     assert isinstance(state[6], float) and isinstance(state[7], float)
+    assert len(state[8]) == 3 and len(state[9]) == 3
 
     assert jw.set_constraint_enabled(ch, False) is True
     assert jw.get_constraint_state(ch)[1] is False

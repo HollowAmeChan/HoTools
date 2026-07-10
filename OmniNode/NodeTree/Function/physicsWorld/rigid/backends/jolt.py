@@ -638,6 +638,14 @@ class JoltAdapter:
             pulley_ratio=float(getattr(spec, "pulley_ratio", 1.0)),
             pulley_min_length=float(getattr(spec, "pulley_min_length", 0.0)),
             pulley_max_length=float(getattr(spec, "pulley_max_length", -1.0)),
+            reference_constraint_a_handle=int(self._constraint_handles.get(
+                str(getattr(spec, "reference_constraint_a", "") or ""), world_handle,
+            )),
+            reference_constraint_b_handle=int(self._constraint_handles.get(
+                str(getattr(spec, "reference_constraint_b", "") or ""), world_handle,
+            )),
+            gear_ratio=float(getattr(spec, "gear_ratio", 1.0)),
+            rack_and_pinion_ratio=float(getattr(spec, "rack_and_pinion_ratio", 1.0)),
             disable_collisions=bool(getattr(spec, "disable_collisions", True)),
         )
         handle = self._jw.add_constraint(**kwargs)

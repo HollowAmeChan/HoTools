@@ -161,7 +161,7 @@ RIGID_JOLT_CAPABILITY_BACKLOG = [
     },
     {
         "capability": "约束语义调试绘制",
-        "status": "已接九种显式类型；运行时 frame readback 待接",
+        "status": "已接十一种显式类型及 Gear/RackAndPinion 引用拓扑；运行时 frame readback 待接",
         "boundary": "当前 frame/limit 使用 adapter 实际消费的 ConstraintSpec，current value/lambda 使用 result stream；后续 native readback 当前 A/B world frame",
     },
     {

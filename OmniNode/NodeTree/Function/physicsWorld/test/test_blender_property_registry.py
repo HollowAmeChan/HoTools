@@ -162,9 +162,10 @@ EXPECTED_PROPERTY_CONTRACTS = {
         ),
     },
     "PG_Hotools_RigidConstraint": {
-        "sha256": "5b2042671b7b399ddf2be817b7930b08b8369b1289de18e3449050474ed60488",
+        "sha256": "8f911c5efab9f1ac26dbe26171bd4a9c4979ad7ef82d9dbddd2ac44384e3948b",
         "fields": (
-            "enabled", "constraint_type", "target_a", "target_b", "anchor_mode",
+            "enabled", "constraint_type", "target_a", "target_b",
+            "reference_constraint_a", "reference_constraint_b", "anchor_mode",
             "local_point_a", "local_rotation_a", "local_point_b", "local_rotation_b",
             "disable_collisions", "breakable", "breaking_threshold",
             "constraint_priority", "solver_velocity_steps", "solver_position_steps",
@@ -174,8 +175,36 @@ EXPECTED_PROPERTY_CONTRACTS = {
             "max_friction_force", "motor_state", "motor_frequency", "motor_damping",
             "motor_force_limit", "motor_torque_limit",
             "motor_target_angular_velocity", "motor_target_angle",
-            "motor_target_velocity", "motor_target_position", "cone_half_angle",
-            "distance_min", "distance_max",
+            "motor_target_velocity", "motor_target_position", "swing_motor_state",
+            "twist_motor_state", "swing_twist_target_angular_velocity",
+            "swing_twist_target_rotation", "six_dof_swing_type",
+            "six_dof_translation_x_mode", "six_dof_translation_x_min",
+            "six_dof_translation_x_max", "six_dof_translation_x_limit_spring_frequency",
+            "six_dof_translation_x_limit_spring_damping",
+            "six_dof_translation_x_friction", "six_dof_translation_x_motor_state",
+            "six_dof_translation_y_mode", "six_dof_translation_y_min",
+            "six_dof_translation_y_max", "six_dof_translation_y_limit_spring_frequency",
+            "six_dof_translation_y_limit_spring_damping",
+            "six_dof_translation_y_friction", "six_dof_translation_y_motor_state",
+            "six_dof_translation_z_mode", "six_dof_translation_z_min",
+            "six_dof_translation_z_max", "six_dof_translation_z_limit_spring_frequency",
+            "six_dof_translation_z_limit_spring_damping",
+            "six_dof_translation_z_friction", "six_dof_translation_z_motor_state",
+            "six_dof_rotation_x_mode", "six_dof_rotation_x_min",
+            "six_dof_rotation_x_max", "six_dof_rotation_x_friction",
+            "six_dof_rotation_x_motor_state", "six_dof_rotation_y_mode",
+            "six_dof_rotation_y_min", "six_dof_rotation_y_max",
+            "six_dof_rotation_y_friction", "six_dof_rotation_y_motor_state",
+            "six_dof_rotation_z_mode", "six_dof_rotation_z_min",
+            "six_dof_rotation_z_max", "six_dof_rotation_z_friction",
+            "six_dof_rotation_z_motor_state", "six_dof_target_velocity",
+            "six_dof_target_angular_velocity", "six_dof_target_position",
+            "six_dof_target_rotation", "cone_half_angle", "swing_type",
+            "swing_normal_half_angle", "swing_plane_half_angle", "twist_min_angle",
+            "twist_max_angle", "distance_min", "distance_max",
+            "pulley_fixed_point_a", "pulley_fixed_point_b", "pulley_ratio",
+            "pulley_min_length", "pulley_max_length", "gear_ratio",
+            "rack_and_pinion_ratio",
         ),
     },
 }
@@ -269,7 +298,7 @@ def test_rigid_rna_and_capabilities_share_one_schema():
             rigid_capabilities.RIGID_CONSTRAINT_CAPABILITY,
         ),
     )
-    assert tuple(len(schema) for _storage, schema, _cls, _capability in pairs) == (34, 37)
+    assert tuple(len(schema) for _storage, schema, _cls, _capability in pairs) == (34, 96)
     for storage, schema, cls, capability in pairs:
         schema_names = tuple(str(field["name"]) for field in schema)
         assert tuple(cls.__annotations__) == schema_names
@@ -1193,7 +1222,12 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             "PG_Hotools_RigidConstraint": (
                 constraint_obj.hotools_rigid_constraint,
                 rigid_property.PG_Hotools_RigidConstraint,
-                {"target_a": physical_obj, "target_b": base_pose_obj},
+                {
+                    "target_a": physical_obj,
+                    "target_b": base_pose_obj,
+                    "reference_constraint_a": physical_obj,
+                    "reference_constraint_b": base_pose_obj,
+                },
             ),
         }
         for instance, cls, pointers in instances.values():

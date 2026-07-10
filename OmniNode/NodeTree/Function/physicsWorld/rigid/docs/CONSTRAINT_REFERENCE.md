@@ -13,6 +13,8 @@
 | `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque、双 motor | 肩关节、受限球窝、布偶关节 |
 | `SIX_DOF` | 六个轴分别 Free、Fixed 或 Limited | 六轴模式、六轴 min/max、逐轴 friction、逐轴 motor、平移 limit spring、旋转 swing type | 复合机械关节、自定义平移旋转边界 |
 | `PULLEY` | 两段绳长满足加权总长范围 | 两个固定点、ratio、min/max weighted length | 配重、滑轮组、倍率传动 |
+| `GEAR` | 两个 Hinge 的单轴旋转满足齿轮比 | Hinge 引用 A/B、gear ratio | 齿轮组、反向比例传动 |
+| `RACK_AND_PINION` | Hinge 旋转与 Slider 平移满足比例 | Hinge 引用、Slider 引用、rad/m ratio | 齿条齿轮、旋转直线转换 |
 
 ## 类型细节
 
@@ -88,6 +90,14 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 以 A/B 独立 anchor frame 的位置作为两个刚体连接点，分别连接到 `pulley_fixed_point_a/b` 世界固定点。求解器保持 `pulley_min_length <= LengthA + pulley_ratio * LengthB <= pulley_max_length`。长度设为 `-1` 时由 Jolt 按创建瞬间的加权绳长自动计算；min/max 都为 `-1` 表示固定加权总长。运行时 `current_value_kind` 为 `pulley_length`，调试绘制显示两段绳路和两个固定点。
 
+### Gear
+
+Gear 本身只耦合两个旋转自由度，必须引用两个已经存在的 Hinge。`reference_constraint_a/b` 的顺序分别对应刚体 A/B，关系为 `Gear1Rotation = -gear_ratio * Gear2Rotation`。solver 会按引用拓扑先创建两个 Hinge，再创建 Gear；引用缺失、类型不是 Hinge 或形成循环时，该 slot 会报告错误且不会进入 native。
+
+### RackAndPinion
+
+RackAndPinion 必须按顺序引用 pinion 的 Hinge 和 rack 的 Slider，并要求约束自身的刚体 A 是 pinion、刚体 B 是 rack。关系为 `PinionRotation = rack_and_pinion_ratio * RackTranslation`，比例单位是弧度/米。frame A/B 的本地 Z 分别定义旋转轴和滑动轴。
+
 ## 通用参数
 
 - `constraint_priority`：同一 island 中更高优先级的约束先求解；只在确有依赖次序时使用。
@@ -101,8 +111,6 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 | Jolt 类型 | 能力 | 接入前置 |
 |---|---|---|
 | Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
-| Gear | 连接两个 hinge 的齿轮比 | constraint-to-constraint 引用拓扑 |
-| RackAndPinion | hinge 与 slider 的线性/角度比例 | constraint-to-constraint 引用拓扑 |
 | Vehicle | 虚拟轮/履带车辆系统 | 独立 vehicle domain，不并入通用约束面板 |
 
 来源：[Jolt 官方约束总览](https://jrouwe.github.io/JoltPhysics/index.html#constraints)。

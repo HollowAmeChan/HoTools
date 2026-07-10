@@ -5,7 +5,7 @@
 建议阅读顺序：
 
 1. [约束快速上手](CONSTRAINT_QUICKSTART.md)：从两个刚体和一个 Empty 开始。
-2. [约束类型参考](CONSTRAINT_REFERENCE.md)：九种已接入约束的自由度、轴、限制和 motor。
+2. [约束类型参考](CONSTRAINT_REFERENCE.md)：十一种已接入约束的自由度、轴、限制和 motor。
 3. [约束调试绘制](DEBUG_DRAW_GUIDE.md)：读懂 viewport 中的颜色和图形。
 4. [Jolt 语义测试策略与验收矩阵](JOLT_TEST_STRATEGY.md)：定义 fixture、oracle、确定性、golden、门禁和完整测试矩阵。
 
@@ -16,7 +16,7 @@
 
 ## 当前边界
 
-HoTools 当前支持 `FIXED / POINT / DISTANCE / HINGE / SLIDER / CONE / SWING_TWIST / SIX_DOF / PULLEY`。Pulley 已接显式与生成约束、两个世界固定点、ratio、加权绳长范围、运行时结果和绳路调试绘制。Path、Gear、RackAndPinion 和 Vehicle 尚未进入公共链路。
+HoTools 当前支持 `FIXED / POINT / DISTANCE / HINGE / SLIDER / CONE / SWING_TWIST / SIX_DOF / PULLEY / GEAR / RACK_AND_PINION`。Gear 通过两个 Hinge 引用约束旋转比；RackAndPinion 通过 Hinge、Slider 引用耦合旋转和平移。两者均已进入显式属性、生成约束、依赖拓扑、运行时结果和专用调试绘制。Path 和 Vehicle 尚未进入公共链路。
 
 运行时约束结果位于 `rigid_constraint_state` result stream。用户和其它 solver 不应读取 Jolt constraint handle。
 

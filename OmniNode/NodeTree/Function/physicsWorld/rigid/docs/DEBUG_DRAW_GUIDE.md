@@ -22,6 +22,8 @@
 - Hinge：Z 轴直线、X 零位参考、角度 limit 弧和边界辐条；青色辐条是当前角，洋红辐条是 Position motor 目标。
 - Slider：Z 轴滑轨、min/max 端点刻度；青色刻度是当前位置，洋红刻度/箭头是 motor 目标。
 - Cone：Z twist axis、half-angle cone 边界和自由 twist 小环。
+- Gear：两个 Z 旋转轴、按 ratio 缩放的齿轮圆和轴心连线。
+- RackAndPinion：pinion 的 Z 旋转轴/齿轮圆、rack 的 Z 双向滑轨和两者连线。
 
 ## 模块边界
 

@@ -177,6 +177,76 @@ def _has_pending_jolt_work(world: PhysicsWorldCache) -> bool:
     return False
 
 
+def _ordered_constraint_slots(world: PhysicsWorldCache) -> list[tuple[str, object]]:
+    """按 constraint-to-constraint 依赖排序，并把无效拓扑留在 slot diagnostics。"""
+    entries = [
+        (slot_id, slot)
+        for slot_id, slot in world.solver_slots.items()
+        if slot.kind == RIGID_CONSTRAINT_SLOT_KIND and slot.data.get("spec") is not None
+    ]
+    slots_by_id = dict(entries)
+    state: dict[str, int] = {}
+    ordered: list[tuple[str, object]] = []
+
+    def visit(slot_id: str, stack: tuple[str, ...] = ()) -> bool:
+        status = state.get(slot_id, 0)
+        if status == 2:
+            return True
+        if status == -1:
+            return False
+        if status == 1:
+            cycle = " -> ".join(stack + (slot_id,))
+            slot = slots_by_id[slot_id]
+            slot.data["_jolt_error"] = f"约束依赖形成循环: {cycle}"
+            state[slot_id] = -1
+            return False
+
+        slot = slots_by_id[slot_id]
+        spec = slot.data["spec"]
+        constraint_type = str(getattr(spec, "constraint_type", "FIXED") or "FIXED")
+        expected_types = {
+            "GEAR": ("HINGE", "HINGE"),
+            "RACK_AND_PINION": ("HINGE", "SLIDER"),
+        }.get(constraint_type)
+        references = (
+            str(getattr(spec, "reference_constraint_a", "") or ""),
+            str(getattr(spec, "reference_constraint_b", "") or ""),
+        )
+        state[slot_id] = 1
+        if expected_types:
+            for index, reference in enumerate(references):
+                reference_slot = slots_by_id.get(reference)
+                if reference_slot is None:
+                    slot.data["_jolt_error"] = (
+                        f"{constraint_type} 缺少引用约束 {index + 1}: {reference or '<empty>'}"
+                    )
+                    state[slot_id] = -1
+                    return False
+                reference_spec = reference_slot.data.get("spec")
+                actual_type = str(
+                    getattr(reference_spec, "constraint_type", "") or ""
+                )
+                if actual_type != expected_types[index]:
+                    slot.data["_jolt_error"] = (
+                        f"{constraint_type} 引用约束 {index + 1} 必须是 "
+                        f"{expected_types[index]}，实际为 {actual_type or '<unknown>'}"
+                    )
+                    state[slot_id] = -1
+                    return False
+                if not visit(reference, stack + (slot_id,)):
+                    slot.data["_jolt_error"] = f"依赖约束同步失败: {reference}"
+                    state[slot_id] = -1
+                    return False
+
+        state[slot_id] = 2
+        ordered.append((slot_id, slot))
+        return True
+
+    for slot_id, _slot in entries:
+        visit(slot_id)
+    return ordered
+
+
 def _consume_exchange(world: PhysicsWorldCache, channel: str) -> list[dict]:
     return [item for item in world.consume_exchange(channel) if isinstance(item, dict)]
 
@@ -600,12 +670,8 @@ def step_rigid_bodies(
                 slot.data.pop("_jolt_kinematic_pose_dirty", None)
 
         # --- sync constraints ---
-        for slot_id, slot in list(world.solver_slots.items()):
-            if slot.kind != RIGID_CONSTRAINT_SLOT_KIND:
-                continue
-            spec = slot.data.get("spec")
-            if spec is None:
-                continue
+        for slot_id, slot in _ordered_constraint_slots(world):
+            spec = slot.data["spec"]
 
             needs_sync = (
                 restart

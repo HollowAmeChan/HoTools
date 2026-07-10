@@ -9,7 +9,7 @@
 - 输出包含原始 float32 位模式的规范化刚体/contact trace；
 - 提供自由落体、恒速运动和冲量解析 oracle；
 - 验证阻尼、速度上限和六个 allowed DOF 位的刚体参数语义；
-- 支持七种已接入约束的 schema、state trace 和基础自由度 oracle；
+- 支持十一种已接入约束的 schema、state trace 和基础自由度/耦合关系 oracle；
 - 验证 Fixed 相对变换、Point 锚点/旋转自由、Distance 区间收敛；
 - 验证 Hinge 只绕局部 Z、Slider 只沿局部 Z、Cone swing/twist 语义；
 - 验证 SwingTwist 的椭圆摆角和本地 Z 扭转限制彼此独立；
@@ -20,6 +20,7 @@
 - 按 Jolt 官方 FrequencyAndDamping 隐式欧拉公式逐帧验证 SixDOF 三平移轴 limit spring，并覆盖公共 spec 与生成约束映射；
 - 验证 SixDOF 约束空间 XYZ 平移/旋转 current-value readback、result stream 和调试绘制；
 - 解析验证 Pulley 固定加权绳长、ratio 有效质量速度投影与约束 lambda，并覆盖公共 spec、生成约束、result 与绳路调试；
+- 验证 Gear 的 Hinge/Hinge 引用拓扑与反向角速度比、RackAndPinion 的 Hinge/Slider 引用拓扑与旋转/平移比；
 - 按 Jolt `FrequencyAndDamping` 隐式欧拉公式复算 Distance/Hinge/Slider 弹簧；
 - 解析验证 Hinge/Slider 摩擦，以及速度/位置电机的限幅和收敛轨迹；
 - 验证不同质量或转动惯量的双动态体反作用与总动量守恒；

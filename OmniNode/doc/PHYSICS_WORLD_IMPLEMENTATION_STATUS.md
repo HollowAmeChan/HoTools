@@ -63,7 +63,7 @@ physicsWorld/
 | World core | 可用 | Begin/Commit、scope、collider snapshot、slot/resource/result/exchange、独占/共享/planned channel registry、共享 GN 最终 offset 写回、dispose、debug snapshot | 跨 solver 交互仍需真实业务闭环 |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
-| Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | 高级约束/shape/query 的 binding、native、debug 和 fixture 同步 |
+| Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
 | MC2 | 统一框架已建立 | 唯一 solver id；三种 setup adapter 契约；稳定 task id/source signature；共享 GN 最终 offset/bone writeback channel；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
 | 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |

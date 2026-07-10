@@ -60,6 +60,8 @@ JPH_SUPPRESS_WARNINGS
 #undef Ellipse
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Constraints/PulleyConstraint.h>
+#include <Jolt/Physics/Constraints/GearConstraint.h>
+#include <Jolt/Physics/Constraints/RackAndPinionConstraint.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -952,6 +954,10 @@ public:
         float                     pulley_ratio,
         float                     pulley_min_length,
         float                     pulley_max_length,
+        uint32_t                  reference_constraint_a_handle,
+        uint32_t                  reference_constraint_b_handle,
+        float                     gear_ratio,
+        float                     rack_and_pinion_ratio,
         bool                      use_separate_anchor_frames,
         const std::array<float,3>& anchor_pos_a,
         const std::array<float,4>& anchor_rot_wxyz_a,
@@ -1297,6 +1303,47 @@ public:
                 && s.mMinLength > s.mMaxLength)
                 std::swap(s.mMinLength, s.mMaxLength);
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+        } else if (constraint_type_str == "GEAR") {
+            if (gear_ratio <= 0.0f)
+                throw std::invalid_argument("Gear ratio 必须大于 0");
+            auto reference_a = mConstraints.find(reference_constraint_a_handle);
+            auto reference_b = mConstraints.find(reference_constraint_b_handle);
+            if (reference_a == mConstraints.end() || reference_b == mConstraints.end())
+                throw std::invalid_argument("Gear 必须引用两个已创建的 Hinge 约束");
+            if (reference_a->second.constraint_type != "HINGE"
+                || reference_b->second.constraint_type != "HINGE")
+                throw std::invalid_argument("Gear 引用约束必须都是 Hinge");
+            GearConstraintSettings s;
+            apply_common(s);
+            s.mHingeAxis1 = rot_a.RotateAxisZ();
+            s.mHingeAxis2 = rot_b.RotateAxisZ();
+            s.mRatio = gear_ratio;
+            GearConstraint* gear = static_cast<GearConstraint*>(s.Create(body_a, body_b));
+            gear->SetConstraints(
+                reference_a->second.constraint.GetPtr(),
+                reference_b->second.constraint.GetPtr());
+            c = static_cast<TwoBodyConstraint*>(gear);
+        } else if (constraint_type_str == "RACK_AND_PINION") {
+            if (rack_and_pinion_ratio <= 0.0f)
+                throw std::invalid_argument("RackAndPinion ratio 必须大于 0");
+            auto reference_a = mConstraints.find(reference_constraint_a_handle);
+            auto reference_b = mConstraints.find(reference_constraint_b_handle);
+            if (reference_a == mConstraints.end() || reference_b == mConstraints.end())
+                throw std::invalid_argument("RackAndPinion 必须引用已创建的 Hinge 和 Slider 约束");
+            if (reference_a->second.constraint_type != "HINGE"
+                || reference_b->second.constraint_type != "SLIDER")
+                throw std::invalid_argument("RackAndPinion 引用顺序必须是 Hinge、Slider");
+            RackAndPinionConstraintSettings s;
+            apply_common(s);
+            s.mHingeAxis = rot_a.RotateAxisZ();
+            s.mSliderAxis = rot_b.RotateAxisZ();
+            s.mRatio = rack_and_pinion_ratio;
+            RackAndPinionConstraint* rack_and_pinion =
+                static_cast<RackAndPinionConstraint*>(s.Create(body_a, body_b));
+            rack_and_pinion->SetConstraints(
+                reference_a->second.constraint.GetPtr(),
+                reference_b->second.constraint.GetPtr());
+            c = static_cast<TwoBodyConstraint*>(rack_and_pinion);
         } else {
             throw std::invalid_argument("不支持的约束类型: " + constraint_type_str);
         }
@@ -1452,6 +1499,16 @@ public:
             current_value_kind = "pulley_length";
             current_value = constraint->GetCurrentLength();
             lambda_position = {constraint->GetTotalLambdaPosition(), 0.0f, 0.0f};
+        } else if (record.constraint_type == "GEAR") {
+            auto* constraint = static_cast<GearConstraint*>(base);
+            current_value_kind = "gear";
+            lambda_rotation = {0.0f, 0.0f, constraint->GetTotalLambda()};
+            lambda_limit = std::abs(constraint->GetTotalLambda());
+        } else if (record.constraint_type == "RACK_AND_PINION") {
+            auto* constraint = static_cast<RackAndPinionConstraint*>(base);
+            current_value_kind = "rack_and_pinion";
+            lambda_rotation = {0.0f, 0.0f, constraint->GetTotalLambda()};
+            lambda_limit = std::abs(constraint->GetTotalLambda());
         }
 
         return {
@@ -1834,12 +1891,16 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("pulley_ratio") = 1.0f,
              nb::arg("pulley_min_length") = 0.0f,
              nb::arg("pulley_max_length") = -1.0f,
+             nb::arg("reference_constraint_a_handle") = UINT32_MAX,
+             nb::arg("reference_constraint_b_handle") = UINT32_MAX,
+             nb::arg("gear_ratio") = 1.0f,
+             nb::arg("rack_and_pinion_ratio") = 1.0f,
              nb::arg("use_separate_anchor_frames") = false,
              nb::arg("anchor_pos_a") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_a") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("anchor_pos_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_b") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
-             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST/SIX_DOF/PULLEY），返回 handle。\n"
+             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST/SIX_DOF/PULLEY/GEAR/RACK_AND_PINION），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
         .def("remove_constraint", &JoltWorld::remove_constraint,

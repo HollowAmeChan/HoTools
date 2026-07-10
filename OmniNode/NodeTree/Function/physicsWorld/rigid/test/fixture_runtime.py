@@ -30,6 +30,33 @@ except ImportError:  # 支持脚本直接执行。
     from schema import BodySpec, ConstraintSpec, Fixture, FixtureError, TimelineEvent
 
 
+def _constraint_creation_order(constraints) -> list[ConstraintSpec]:
+    """按引用拓扑排序；无依赖的同层约束按 fixture id 稳定排序。"""
+    constraints_by_id = {constraint.id: constraint for constraint in constraints}
+    state: dict[str, int] = {}
+    ordered: list[ConstraintSpec] = []
+
+    def visit(constraint: ConstraintSpec) -> None:
+        status = state.get(constraint.id, 0)
+        if status == 2:
+            return
+        if status == 1:
+            raise FixtureError(f"constraint dependency cycle at {constraint.id}")
+        state[constraint.id] = 1
+        for reference in (
+            constraint.reference_constraint_a,
+            constraint.reference_constraint_b,
+        ):
+            if reference:
+                visit(constraints_by_id[reference])
+        state[constraint.id] = 2
+        ordered.append(constraint)
+
+    for constraint in sorted(constraints, key=lambda item: item.id):
+        visit(constraint)
+    return ordered
+
+
 @dataclass
 class NativeRunResult:
     fixture: Fixture
@@ -179,6 +206,16 @@ class NativeFixtureRuntime:
             pulley_ratio=constraint.pulley_ratio,
             pulley_min_length=constraint.pulley_min_length,
             pulley_max_length=constraint.pulley_max_length,
+            reference_constraint_a_handle=(
+                self.constraint_handles[constraint.reference_constraint_a]
+                if constraint.reference_constraint_a else int(self.native.WORLD_HANDLE)
+            ),
+            reference_constraint_b_handle=(
+                self.constraint_handles[constraint.reference_constraint_b]
+                if constraint.reference_constraint_b else int(self.native.WORLD_HANDLE)
+            ),
+            gear_ratio=constraint.gear_ratio,
+            rack_and_pinion_ratio=constraint.rack_and_pinion_ratio,
             use_separate_anchor_frames=constraint.use_separate_anchor_frames,
             anchor_pos_a=constraint.anchor_position_a,
             anchor_rot_wxyz_a=constraint.anchor_rotation_wxyz_a,
@@ -329,7 +366,7 @@ class NativeFixtureRuntime:
                 if handle == int(getattr(self.native, "INVALID_HANDLE", 0)):
                     raise RuntimeError(f"native failed to add body {body.id}")
                 self.handles[body.id] = handle
-            for constraint in sorted(fixture.constraints, key=lambda item: item.id):
+            for constraint in _constraint_creation_order(fixture.constraints):
                 handle = self._add_constraint(constraint)
                 if handle == int(getattr(self.native, "INVALID_HANDLE", 0)):
                     raise RuntimeError(f"native failed to add constraint {constraint.id}")
