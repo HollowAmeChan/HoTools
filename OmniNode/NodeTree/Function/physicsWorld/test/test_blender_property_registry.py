@@ -50,6 +50,12 @@ collision_property = importlib.import_module(
 rigid_property = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.properties"
 )
+rigid_schema = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.schema"
+)
+rigid_capabilities = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.capabilities"
+)
 collision_groups = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.groups"
 )
@@ -193,6 +199,33 @@ def test_collision_component_owns_shared_capabilities():
     assert physics_utils._COLLISION_GROUP_COUNT == collision_groups.COLLISION_GROUP_COUNT
     assert physics_utils._ALL_COLLISION_GROUPS_MASK == collision_groups.ALL_COLLISION_GROUPS_MASK
     assert physics_utils._COLLISION_GROUP_COLORS is collision_groups.COLLISION_GROUP_COLORS
+
+
+def test_rigid_rna_and_capabilities_share_one_schema():
+    pairs = (
+        (
+            "Object.hotools_rigid_body",
+            rigid_schema.RIGID_BODY_RNA_FIELDS,
+            rigid_property.PG_Hotools_RigidBody,
+            rigid_capabilities.RIGID_BODY_CAPABILITY,
+        ),
+        (
+            "Object.hotools_rigid_constraint",
+            rigid_schema.RIGID_CONSTRAINT_RNA_FIELDS,
+            rigid_property.PG_Hotools_RigidConstraint,
+            rigid_capabilities.RIGID_CONSTRAINT_CAPABILITY,
+        ),
+    )
+    assert tuple(len(schema) for _storage, schema, _cls, _capability in pairs) == (34, 37)
+    for storage, schema, cls, capability in pairs:
+        schema_names = tuple(str(field["name"]) for field in schema)
+        assert tuple(cls.__annotations__) == schema_names
+        capability_fields = tuple(capability["fields"])
+        assert tuple(str(field["name"]) for field in capability_fields) == schema_names
+        for declaration, field in zip(schema, capability_fields):
+            assert field["rna"] == declaration["kwargs"]
+            assert field["default"] == declaration["kwargs"].get("default")
+            assert field["explicit_property"] == f"{storage}.{declaration['name']}"
 
 
 def test_domain_registry_dependencies_idempotency_and_rollback():
@@ -569,6 +602,7 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
 TESTS = (
     ("persistent PropertyGroup RNA contracts", test_persistent_property_contracts_are_frozen),
     ("collision component owns shared capabilities", test_collision_component_owns_shared_capabilities),
+    ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),
     (".blend roundtrip for all persistent fields", test_blend_roundtrip_preserves_all_persistent_property_fields),

@@ -2,7 +2,7 @@
 
 日期：2026-07-10
 
-状态：实施中；Phase 0/1/2 已完成，Phase 3 已完成 class/binding 所有权迁移，RNA schema 合一待续
+状态：实施中；Phase 0/1/2/3 已完成，下一步为 Phase 4 MeshCloth 属性与 Blender I/O
 
 范围：顶层 `PhysicsTools` 持有的持久物理属性、注册生命周期、面板、操作器、碰撞预览和 MeshCloth Blender I/O；后续把 MC2/BoneCloth 包并入 `physicsWorld`。
 
@@ -362,4 +362,10 @@ Phase 2 提交边界：当时 Rigid 与 MeshCloth 的 PropertyGroup 所有权尚
 - 真实 `PhysicsTools.register()/unregister()`：通过，domain 顺序为 `collision -> rigid`
 - Blender Rigid/Jolt：`24/24`
 
-Phase 3 尚未关闭：`rigid.capabilities` 仍是面向 solver 的聚合语义摘要，下一刀需要把 71 个真实 RNA 字段的 metadata/schema 与 capability 合成单一事实源；在此之前不进入 Phase 4 MeshCloth。
+Phase 3 第二刀已关闭：
+
+- 新增不导入 `bpy` 的 `rigid.schema`，完整保存 34 个 RigidBody 与 37 个 RigidConstraint 字段的 property factory、RNA metadata、默认值、范围、单位和 enum identifier。
+- `rigid.properties` 只从 schema 生成两个 PropertyGroup；`rigid.capabilities` 从同一 schema 投影完整 71 字段能力表，并只额外叠加 solver update policy。
+- 新增 schema/RNA/capability 三方逐字段一致性测试；原冻结 contract hash 无变化，证明生成式重构没有改变持久 RNA。
+
+Phase 3 已完成。下一步进入 Phase 4：建立 `physicsWorld.mesh_cloth` domain，迁移 `PG_Hotools_MeshCollision`、base-pose proxy 与 delta output；不在同一刀移动 MC2 整包。

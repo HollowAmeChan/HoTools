@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from .schema import RIGID_BODY_RNA_FIELDS, RIGID_CONSTRAINT_RNA_FIELDS
 from .names import (
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
@@ -22,32 +23,56 @@ RIGID_BODY_COMMAND_CAPABILITY_ID = "rigid_body_command"
 RIGID_QUERY_CAPABILITY_ID = "rigid_query"
 
 
+_PROPERTY_SEMANTIC_TYPES = {
+    "bool": "bool",
+    "enum": "enum",
+    "float": "float",
+    "float_vector": "float3",
+    "int": "int",
+    "pointer": "Object",
+}
+_BITMASK_FIELDS = {"rigid_collides_with_groups"}
+
+
+def _schema_capability_fields(storage: str, schema, policy_overrides=None) -> list[dict]:
+    policies = dict(policy_overrides or {})
+    result: list[dict] = []
+    for declaration in schema:
+        name = str(declaration.get("name") or "")
+        property_kind = str(declaration.get("property") or "")
+        kwargs = dict(declaration.get("kwargs") or {})
+        field = {
+            "name": name,
+            "type": "bitmask" if name in _BITMASK_FIELDS else _PROPERTY_SEMANTIC_TYPES[property_kind],
+            "default": kwargs.get("default"),
+            "explicit_property": f"{storage}.{name}",
+            "rna": kwargs,
+            "update_policy": policies.get(name, "规格签名"),
+        }
+        if property_kind == "enum":
+            field["values"] = [str(item[0]) for item in kwargs.get("items", ())]
+        result.append(field)
+    return result
+
+
+_BODY_UPDATE_POLICIES = {
+    "enabled": "每帧收集规格",
+    "friction": "运行时命令或规格签名",
+    "restitution": "运行时命令或规格签名",
+    "linear_velocity": "初始值或运行时命令",
+    "angular_velocity": "初始值或运行时命令",
+    "gravity_factor": "运行时命令或规格签名",
+    "motion_quality": "运行时命令或规格签名",
+}
+_CONSTRAINT_UPDATE_POLICIES = {"enabled": "每帧收集规格"}
+
+
 RIGID_BODY_CAPABILITY = {
     "capability_id": RIGID_BODY_CAPABILITY_ID,
     "display_name": "刚体",
     "semantic_owner": "physicsWorld/rigid 解算器能力声明",
     "legacy_explicit_storage": "Object.hotools_rigid_body",
-    "fields": [
-        {"name": "enabled", "type": "bool", "default": False, "update_policy": "每帧收集规格"},
-        {"name": "body_type", "type": "enum", "values": ["STATIC", "DYNAMIC", "KINEMATIC"], "default": "DYNAMIC", "update_policy": "规格签名"},
-        {"name": "mass", "type": "float", "default": 1.0, "update_policy": "规格签名"},
-        {"name": "friction", "type": "float", "default": 0.5, "update_policy": "运行时命令或规格签名"},
-        {"name": "restitution", "type": "float", "default": 0.0, "update_policy": "运行时命令或规格签名"},
-        {"name": "rigid_collision_group", "type": "int", "default": 1, "update_policy": "规格签名"},
-        {"name": "rigid_collides_with_groups", "type": "bitmask", "default": 0, "update_policy": "规格签名"},
-        {"name": "shape_type", "type": "enum", "update_policy": "规格签名"},
-        {"name": "shape_offset", "type": "float3", "default": (0.0, 0.0, 0.0), "update_policy": "规格签名"},
-        {"name": "shape_rotation", "type": "float3", "default": (0.0, 0.0, 0.0), "update_policy": "规格签名"},
-        {"name": "linear_velocity", "type": "float3", "default": (0.0, 0.0, 0.0), "update_policy": "初始值或命令"},
-        {"name": "angular_velocity", "type": "float3", "default": (0.0, 0.0, 0.0), "update_policy": "初始值或命令"},
-        {"name": "linear_damping", "type": "float", "default": 0.05, "update_policy": "规格签名"},
-        {"name": "angular_damping", "type": "float", "default": 0.05, "update_policy": "规格签名"},
-        {"name": "gravity_factor", "type": "float", "default": 1.0, "update_policy": "运行时命令或规格签名"},
-        {"name": "allow_sleeping", "type": "bool", "default": True, "update_policy": "规格签名"},
-        {"name": "motion_quality", "type": "enum", "values": ["DISCRETE", "CCD"], "default": "DISCRETE", "update_policy": "运行时命令或规格签名"},
-        {"name": "is_sensor", "type": "bool", "default": False, "update_policy": "规格签名"},
-        {"name": "axis_locks", "type": "dof_mask", "default": "全部解锁", "update_policy": "规格签名"},
-    ],
+    "fields": _schema_capability_fields("Object.hotools_rigid_body", RIGID_BODY_RNA_FIELDS, _BODY_UPDATE_POLICIES),
 }
 
 
@@ -57,24 +82,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
     "semantic_owner": "physicsWorld/rigid 解算器能力声明",
     "legacy_explicit_storage": "Object.hotools_rigid_constraint",
     "implicit_object_tag": RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
-    "fields": [
-        {"name": "enabled", "type": "bool", "default": False, "update_policy": "每帧收集规格"},
-        {"name": "constraint_type", "type": "enum", "values": ["FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"], "update_policy": "规格签名"},
-        {"name": "target_a", "type": "Object", "update_policy": "规格签名"},
-        {"name": "target_b", "type": "Object", "update_policy": "规格签名"},
-        {"name": "disable_collisions", "type": "bool", "default": False, "update_policy": "规格签名"},
-        {"name": "breakable", "type": "bool", "default": False, "update_policy": "规格签名"},
-        {"name": "breaking_threshold", "type": "float", "default": 1000.0, "unit": "每步约束冲量", "update_policy": "规格签名"},
-        {"name": "anchor_mode", "type": "enum", "values": ["SHARED_WORLD", "LOCAL_FRAMES"], "default": "SHARED_WORLD", "update_policy": "规格签名"},
-        {"name": "anchor_frame_a", "type": "local_transform", "update_policy": "采集时转世界快照；规格签名"},
-        {"name": "anchor_frame_b", "type": "local_transform", "update_policy": "采集时转世界快照；规格签名"},
-        {"name": "solver_velocity_steps_override", "type": "int", "default": 0, "update_policy": "规格签名"},
-        {"name": "solver_position_steps_override", "type": "int", "default": 0, "update_policy": "规格签名"},
-        {"name": "limit", "type": "constraint_limit", "update_policy": "规格签名"},
-        {"name": "spring", "type": "constraint_spring", "update_policy": "规格签名"},
-        {"name": "motor", "type": "constraint_motor", "update_policy": "规格签名"},
-        {"name": "distance_range", "type": "float2", "default": (0.0, 1.0), "update_policy": "规格签名"},
-    ],
+    "fields": _schema_capability_fields("Object.hotools_rigid_constraint", RIGID_CONSTRAINT_RNA_FIELDS, _CONSTRAINT_UPDATE_POLICIES),
     "debug_visualization": {
         "renderer_registry": "rigid.constraint_debug:CONSTRAINT_DEBUG_BUILDERS",
         "types": ["FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"],
