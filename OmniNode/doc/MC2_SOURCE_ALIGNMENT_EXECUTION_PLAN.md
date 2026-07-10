@@ -100,7 +100,7 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 
 目标：从 setup 输入一直追踪到 constraint data 和运行时 consumer，不先设计 HoTools class。
 
-当前进度：Bone connection、Selection/baseline、Distance/Bending 三张 worksheet 已完成第一轮审计，golden fixture v0 与 B1-B3 reverse audit 已记录；Inertia、particle registration/reset、output mapping 和参数字段 worksheet 尚未完成。
+当前进度：W1-W7 已完成第一轮审计，覆盖 Bone connection、Selection/baseline、Distance/Bending、Inertia center、particle registration/reset、output mapping 和 value parameter conversion；golden fixture v0 与 B1-B3 reverse audit 已同步扩展。尚缺可信 Tier A 运行宿主，以及 self-collision/collider/完整 frame order 等后续能力 worksheet。
 
 顺序：
 
@@ -196,6 +196,8 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 | D-03 | 用户输入 mesh 是否永远视为最终 proxy？ | 倾向是。 | 不实现 MC2 reduction/render mapping；文档必须说明输入域。 |
 | D-04 | Normal/Split 调度是否只迁移共同数学顺序？ | 倾向是。 | 不照搬 Unity Job/TeamManager 结构到 Python。 |
 | D-05 | 第一版 native context 的最小 constraint 集合是什么？ | 等 S1 后确定。 | 不先冻结 ABI 或 capability 字段。 |
+| D-06 | Tier A fixture host 放在哪里？ | HoClothUnity 已废弃并排除；应新建最小、可复现的 Unity 验证工程。 | 不修改 HoClothUnity，不把其输出或适配代码升级为 Tier A。 |
+| D-07 | Curve runtime representation 如何冻结？ | source 使用 16-float `float4x4` samples；HoTools 当前只保存 authoring curve payload。 | 不把当前 effective payload 直接作为 native ABI。 |
 
 ## 每阶段提交规则
 
@@ -213,4 +215,4 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-接下来搭建 Tier A MC2/Unity 中间数组 dump 入口，并补齐 Inertia、particle registration/reset、output mapping 和参数字段 worksheet。完成这些工作后，再决定当前 B4 工作区改动是拆分重写还是整体移除。
+接下来先依据 W1-W7 做一次 S2 契约草案，只冻结第一版必须的数据域和 deferred capability；同时决定当前 B4 工作区改动是拆分重写还是整体移除。Tier A dump 入口应在独立的最小 Unity 验证工程中建设，不能复用或继续扩展已废弃的 HoClothUnity。没有 Tier A 前，只允许用明确标级的 Tier B 极小 fixture 关闭局部分支，不进入 source-parity 宣称。
