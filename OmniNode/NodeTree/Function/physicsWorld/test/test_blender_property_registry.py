@@ -75,6 +75,24 @@ blender_registry = importlib.import_module(
 solver_registry = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.registry"
 )
+solver_declarations = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.declarations"
+)
+mc2_names = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
+)
+mc2_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+)
+mc2_solver = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
+)
+mc2_nodes = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+)
+function_node_core = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.FunctionNodeCore"
+)
 
 
 EXPECTED_PROPERTY_CONTRACTS = {
@@ -191,11 +209,12 @@ def test_persistent_property_contracts_are_frozen():
     assert actual == EXPECTED_PROPERTY_CONTRACTS, json.dumps(actual, ensure_ascii=False, indent=2)
 
 
-def test_collision_component_owns_shared_capabilities():
+def test_components_own_shared_and_solver_adapter_capabilities():
     capabilities = solver_registry.all_component_capabilities()
-    assert tuple(capabilities) == ("bone_collision", "object_collision")
+    assert tuple(capabilities) == ("bone_collision", "object_collision", "mesh_collision")
     assert capabilities["bone_collision"]["explicit_storage"] == "Bone.hotools_collision"
     assert capabilities["object_collision"]["explicit_storage"] == "Object.hotools_object_collision"
+    assert capabilities["mesh_collision"]["explicit_storage"] == "Object.hotools_mesh_collision"
 
     spring = solver_registry.resolve_solver_declaration("spring_vrm")
     assert spring is not None
@@ -246,6 +265,75 @@ def test_mesh_cloth_rna_and_capability_share_one_schema():
         assert field["rna"] == declaration["kwargs"]
         assert field["default"] == declaration["kwargs"].get("default")
         assert field["explicit_property"] == f"Object.hotools_mesh_collision.{declaration['name']}"
+
+
+def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
+    legacy_modules = (
+        "HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth",
+        "HoTools.OmniNode.NodeTree.Function.physicsMC2BoneCloth",
+    )
+    assert not any(name in sys.modules for name in legacy_modules)
+
+    assert solver_registry.builtin_solver_domains().count("mc2") == 1
+    assert "mesh_cloth" not in solver_registry.builtin_solver_domains()
+    assert solver_registry.builtin_component_domains() == ("collision", "mesh_cloth")
+    descriptor = solver_registry.all_solver_module_descriptors()["mc2"]
+    assert descriptor["solver_id"] == "mc2"
+    assert descriptor["nodes"] == (".nodes",)
+    assert tuple(
+        node.__meta["bl_label"]
+        for node in (
+            mc2_nodes.physicsMC2MeshClothTask,
+            mc2_nodes.physicsMC2BoneClothTask,
+            mc2_nodes.physicsMC2BoneSpringTask,
+            mc2_nodes.physicsMC2Step,
+        )
+    ) == (
+        "MC2 MeshCloth任务（框架）",
+        "MC2 BoneCloth任务（框架）",
+        "MC2 BoneSpring任务（框架）",
+        "MC2模拟步（框架）",
+    )
+    generated_node_classes = function_node_core.loadRegisterFuncNodes(mc2_nodes)
+    assert tuple(node.bl_label for node in generated_node_classes) == (
+        "MC2 BoneCloth任务（框架）",
+        "MC2 BoneSpring任务（框架）",
+        "MC2 MeshCloth任务（框架）",
+        "MC2模拟步（框架）",
+    )
+
+    declaration = solver_registry.resolve_solver_declaration("mc2")
+    assert declaration is not None
+    assert solver_declarations.validate_solver_declaration(declaration) == []
+    assert declaration["implementation_status"] == "framework_only"
+    assert tuple(declaration["setup_types"]) == (
+        mc2_names.MC2_SETUP_MESH_CLOTH,
+        mc2_names.MC2_SETUP_BONE_CLOTH,
+        mc2_names.MC2_SETUP_BONE_SPRING,
+    )
+    assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
+    assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
+    assert declaration["update_policy"]["framework"] == "no_slot_no_result_no_legacy_solver_call"
+
+    tasks = tuple(
+        mc2_specs.make_mc2_task_spec(setup_type, [object()])
+        for setup_type in declaration["setup_types"]
+    )
+    assert tuple(task.setup_type for task in tasks) == tuple(declaration["setup_types"])
+    assert {task.backend for task in tasks} == {"auto"}
+
+    world = {"sentinel": object(), "slots": [], "result_streams": {}}
+    before = {
+        "sentinel": world["sentinel"],
+        "slots": list(world["slots"]),
+        "result_streams": dict(world["result_streams"]),
+    }
+    returned_world, ready, status = mc2_solver.step_mc2(world, tasks)
+    assert returned_world is world
+    assert ready is False
+    assert "有效任务 3" in status
+    assert world == before
+    assert not any(name in sys.modules for name in legacy_modules)
 
 
 def test_domain_registry_dependencies_idempotency_and_rollback():
@@ -351,7 +439,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     }
     assert hasattr(bpy.types.Bone, "hotools_collision")
     assert hasattr(bpy.types.Object, "hotools_object_collision")
-    assert blender_registry.registered_blender_property_domains() == ("collision", "rigid", "mesh_cloth")
+    assert blender_registry.registered_blender_property_domains() == ("collision", "mesh_cloth", "rigid")
     assert solver_registry.register_physics_world_blender_properties() == 5
 
     class PG_PhysicsWorldDynamicSolverTest(bpy.types.PropertyGroup):
@@ -373,7 +461,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.register_solver_module("test_dynamic_solver", descriptor)
     assert hasattr(bpy.types.Object, "hotools_test_dynamic_solver_temp")
     assert blender_registry.registered_blender_property_domains() == (
-        "collision", "rigid", "mesh_cloth", "test_dynamic_solver",
+        "collision", "mesh_cloth", "rigid", "test_dynamic_solver",
     )
 
     solver_registry.unregister_solver_module("test_dynamic_solver")
@@ -621,9 +709,10 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
 
 TESTS = (
     ("persistent PropertyGroup RNA contracts", test_persistent_property_contracts_are_frozen),
-    ("collision component owns shared capabilities", test_collision_component_owns_shared_capabilities),
+    ("components own shared and adapter capabilities", test_components_own_shared_and_solver_adapter_capabilities),
     ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
     ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
+    ("one MC2 solver owns three safe framework setup types", test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),
     (".blend roundtrip for all persistent fields", test_blend_roundtrip_preserves_all_persistent_property_fields),

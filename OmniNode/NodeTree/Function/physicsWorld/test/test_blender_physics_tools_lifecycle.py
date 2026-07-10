@@ -56,7 +56,7 @@ def main() -> None:
     try:
         assert physics_blender.is_registered()
         assert blender_registry.registered_blender_property_domains() == (
-            "collision", "rigid", "mesh_cloth", "physics_ui",
+            "collision", "mesh_cloth", "rigid", "physics_ui",
         )
         assert hasattr(bpy.types.Bone, "hotools_collision")
         assert hasattr(bpy.types.Object, "hotools_object_collision")
