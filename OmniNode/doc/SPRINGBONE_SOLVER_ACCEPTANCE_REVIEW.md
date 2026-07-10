@@ -31,8 +31,8 @@ VRM骨链属性 / 骨骼碰撞覆写属性
 | Python 旧 runtime | `_SpringBoneVRM`、`_SpringBoneVRMCppBackend`、旧 cache/scene scan/inline writeback 已删除 |
 | Native 旧 ABI | 35 参数 `solve_spring_bone_vrm_cpp` binding、公开 `SpringBoneVrmChainView` 与 C++ wrapper 已删除 |
 | Native 唯一入口 | `spring_vrm_create_context/update_dynamic/reset_state/step/read_results/read_debug` |
-| 显式属性所有权 | `spring_vrm/capabilities.py` 持有字段 schema，`spring_vrm/properties.py` 生成 Blender RNA |
-| 属性注册权 | `physicsWorld.registry` 统一注册/注销 solver 声明的 class 与 `Bone.hotools_collision` binding |
+| 显式属性所有权 | `physicsWorld.collision.capabilities` 持有共享 BoneCollision schema，`collision.properties` 生成 Blender RNA |
+| 属性注册权 | `physicsWorld.registry` 统一注册/注销 collision component 的 class 与 `Bone.hotools_collision` binding |
 | 数据兼容 | 保留 `Bone.hotools_collision` 存储名，现有 `.blend` 字段路径不变；不保留旧 solver 调用兼容层 |
 
 ## 2026-07-10 破坏性变更独立复审

@@ -307,7 +307,7 @@ return result
 
 维护约定：新增骨骼/物体/节点级配置时，先问“这个语义是否已经能从别处（节点输入、已有数据、拓扑）确定”。能确定就不要再加一个并行标记；确实需要持久标记时，让它成为唯一来源，不要和运行时推断竞争。预览也不该去猜解算行为——猜不到就诚实地不显示，而不是引入一个解算器不读的旁路标记。
 
-> 该原则在物理世界模块的具体应用（SpringBone 链 root 判定、`bone_collision` 字段 resolver、`spring_root` 旁路标记的移除）见 `doc/UNIFIED_PHYSICS_WORLD_NODE_SYSTEM_DESIGN.md`。
+> 该原则在物理世界模块中的长期约束见 `doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`；各 domain 当前覆盖情况见 `doc/PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`。
 
 ### 8. 编译缓存和 runtime cache 是两套系统，但重编译是运行态边界
 
@@ -1067,7 +1067,7 @@ Blender ID 强引用，用于追加或链接工作流；它不创建独立运行
 
 `physicsWorld/registry.py` 是 solver 子模块描述符的装载入口。公共 `world.py` 只能通过 registry 调用 `scope_restart_handlers` / `scope_collectors` 等通用 hook；`declarations.py` 也通过 registry 汇总内建 solver declaration。公共层不能直接导入 rigid/Jolt、SpringBone 或未来 cloth domain 的私有实现。
 
-solver 描述符还可以声明 `blender_properties`。字段 schema、默认值、范围和 UI 元数据归 domain capability 所有，domain 的 `properties.py` 生成 Blender class/binding 声明，registry 负责统一 register/unregister。SpringBone 是首个闭环样板：`PG_Hotools_BoneCollision` 位于 `spring_vrm/properties.py`，持久路径仍为 `Bone.hotools_collision`，`PhysicsTools` 只消费该属性做面板/操作器/预览。
+component/solver 描述符还可以声明 `blender_properties`。字段 schema、默认值、范围和 UI 元数据归 capability 所有，domain 的 `properties.py` 生成 Blender class/binding 声明，registry 负责统一 register/unregister。共享 `PG_Hotools_BoneCollision` 位于 `physicsWorld.collision.properties`，持久路径仍为 `Bone.hotools_collision`；面板、操作器和预览位于 `physicsWorld.ui`，只消费该 capability。
 
 `physicsWorld/names.py` 与根级 `physicsWorld/__init__.py` 对 solver 自有名称、能力和声明只保留兼容惰性重导出；导入公共包不应主动装载 rigid/Jolt 私有模块。
 

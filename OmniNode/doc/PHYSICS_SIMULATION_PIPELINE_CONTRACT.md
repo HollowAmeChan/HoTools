@@ -2,13 +2,13 @@
 
 本文是 OmniNode 物理世界的**权威架构设计文档**。它定义未来刚体、布料、弹簧骨、软体、流体和跨 solver 交互共同遵守的长期结构边界：阶段职责、数据通道、生命周期、声明协议和写回时序。它不是某个 backend 的接入计划，也不是现有节点的用户手册。
 
-三份文档的分工：
+文档分工：
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
-- **`UNIFIED_PHYSICS_WORLD_NODE_SYSTEM_DESIGN.md`（实现推进日志）**：分阶段落地进度、各 solver 迁移状态、测试覆盖、实施期变更记录。是"现在做到哪了"的记录，不是架构权威。
+- **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
-本文只写"结构应该怎样"，具体 solver 的落地进度、测试覆盖、Phase 状态一律归 UNIFIED 日志。
+本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。
 
 ## 设计结论
 
@@ -46,7 +46,7 @@ Cache Read
 
 ## 已固定的架构支柱
 
-下列方向是**已确定的架构决策**，不再重新讨论；本文其余章节是它们的展开，UNIFIED 日志里各 Phase 只是它们的分阶段落地进度：
+下列方向是**已确定的架构决策**，不再重新讨论；本文其余章节是它们的展开：
 
 1. **框架 + 模块化 solver**：物理世界是一层薄框架，每个 solver 是 `physicsWorld/<domain>/` 下自带 names/capabilities/declaration/nodes/specs/solver 的可装卸模块。
 2. **显式声明身份卡**：每个 solver 有一份声明（solver_id / slot_kind / consumes / produces / persistent_state / dirty_keys / writeback / update_policy），作为跨模块识别与迁移审查的单一事实源。
@@ -56,9 +56,9 @@ Cache Read
 6. **纯 C++ 后端**：迁移后的 solver 采用 C++ 单实现，不再维护平行 Python solver、不再按 backend 暴露双节点；旧实现只在删除前作审查/数值参考。
 7. **移除全部旧 solver 的迁移计划**：新路径落地并验证后，旧 solver 一次性移除，不做长期兼容。
 8. **跨 solver 交互规划**：多 solver 在同一 world owner 上通过 result stream / exchange 协作。
-9. **物理属性由物理世界动态注册**：solver capability 是字段/默认值/范围/resolver 的单一事实源，物理世界装载 solver 时注册/注销 Blender property，PhysicsTools 退化为纯 UI。SpringBone 已完成该闭环，其它 domain 按此样板迁移。
+9. **物理属性由物理世界动态注册**：共享 component 或 solver capability 是字段、默认值、范围、RNA metadata 和 resolver 的单一事实源；`physicsWorld.registry` 按依赖注册/注销 Blender property，外部模块不得定义第二份 PropertyGroup 或 binding。
 
-支柱已固定，**实现分阶段推进**：各 solver 当前进度、Phase 状态、测试覆盖见 UNIFIED 日志。
+各 solver 对这些支柱的当前覆盖情况见实现状态文档。
 
 ## 阶段职责
 
@@ -118,7 +118,7 @@ Cache Read
 
 典型输入：
 
-- `PhysicsTools` 挂在 Object / Bone / Mesh 上的属性。
+- Physics World component/solver 挂在 Object / Bone / Mesh 上的持久属性。
 - 节点参数。
 - 对象列表、骨链、集合、命名规则。
 - 程序化生成规则。
@@ -372,7 +372,7 @@ Physics World Begin
   -> Physics World Commit
 ```
 
-> 各 solver 隐式对象链路的落地进度、测试覆盖见 UNIFIED 日志。
+> 各 solver 隐式对象链路的当前覆盖情况见实现状态文档。
 
 `rigid_body_commands` 建议 payload：
 
@@ -538,6 +538,76 @@ Physics Writeback 统一写 PoseBone + mesh delta
 - 持久化在 `.blend` 或节点树中。
 - 不能假设每帧稳定。
 - 需要参与 dirty key 或 spec key。
+
+### Blender Authoring 与 RNA 所有权
+
+“Physics World 持有属性”不表示把 Blender `PropertyGroup` 实例塞进 `PhysicsWorldCache`。长期边界固定为四层：
+
+```text
+Blender ID 数据块
+  保存稳定 RNA 路径和用户原始值
+          |
+          v
+Physics World component / solver domain
+  持有 capability schema、PropertyGroup class、binding 声明和注册生命周期
+          |
+          v
+resolver / spec builder
+  生成普通 profile/spec、签名和数组快照
+          |
+          v
+PhysicsWorldCache / solver slot
+  只持有归一化运行时数据，不跨帧保存 live PropertyGroup
+```
+
+当前稳定持久路径与语义 owner：
+
+| 持久路径 | 语义 owner | 主要消费者 |
+|---|---|---|
+| `Bone.hotools_collision` | `physicsWorld.collision` 的 `bone_collision` capability | SpringBone、MC2 BoneCloth/BoneSpring、scope、UI/preview |
+| `Object.hotools_object_collision` | `physicsWorld.collision` 的 `object_collision` capability | collider snapshot、SpringBone、MC2、UI/preview |
+| `Object.hotools_mesh_collision` | `physicsWorld.mc2.setups.mesh_cloth` 的 `mesh_collision` capability | MC2 MeshCloth、BasePose、mesh delta、UI |
+| `Object.hotools_rigid_body` | `physicsWorld.rigid` 的 `rigid_body` capability | Rigid/Jolt、scope、UI |
+| `Object.hotools_rigid_constraint` | `physicsWorld.rigid` 的 `rigid_constraint` capability | Rigid/Jolt、scope、UI |
+| `Scene.ho_*` 物理叠加层字段 | `physicsWorld.ui` | 面板、header、GPU preview |
+
+所有权规则：
+
+- 被多个 solver 消费、或在 World Begin/scope 阶段解析的语义进入共享 component，例如 Object/Bone collider 和碰撞组。
+- 只影响单个 solver/setup 的拓扑、参数或后端同步策略的字段留在所属 domain。
+- UI 展开、过滤和叠加层状态属于 `physicsWorld.ui`，不进入 solver capability 或 world generation。
+- Operator 自身参数只服务单次命令，不进入持久 property registry。
+- 显式 RNA 和隐式 override 必须进入同一个 resolver，生成同一种 profile/spec；solver 不得分别实现两套字段解释。
+- 面板、preview、scope 和 solver 只能消费 capability，不得复制默认值、枚举、范围或字段表。
+
+稳定存储契约：
+
+- 目录和 Python module 可以改变，稳定 RNA owner/name 不随内部重构改名。
+- 同一 `(bpy owner, property name)` 永远只有一个 binding；迁移时禁止同时注册旧 class 和新 class。
+- PropertyGroup class 名、字段顺序、property factory、默认值、范围、enum identifier 和 pointer poll 由契约测试冻结。
+- `.blend` 往返必须覆盖全部持久字段、bitmask、向量和 Object pointer。
+- 如需重命名持久路径，必须设计独立的版本化 data migration，不能夹带在目录重构中。
+
+注册生命周期：
+
+```text
+HoTools.register()
+  -> physicsWorld.blender.register()
+       -> collision component properties
+       -> mc2 MeshCloth adapter properties
+       -> rigid solver properties
+       -> physics UI classes/state/preview
+  -> OmniNode.register()                 # 仅节点功能开关启用时
+```
+
+- `physicsWorld.blender` 是物理 RNA/UI 的唯一根注册入口；物理属性不随 OmniNode 功能开关消失。
+- `physicsWorld.blender_registry` 按 domain 保存 class/binding/dependency journal，注册失败只回滚当前 domain。
+- 注册前检查 `(owner, name)` 冲突、重复 class、依赖缺失和同 domain 声明漂移。
+- 按依赖顺序注册、逆序注销；有 dependents 的 component 不能提前释放。
+- solver/component 在 Blender lifecycle 活跃时动态加入或移除，只影响自己的 domain。
+- UI 与 solver 不决定全局注册顺序，也不直接注册共享 capability。
+
+运行时禁止长期保存 `PropertyGroup`：resolver 必须把它转换为纯值 profile/spec、签名或数组。否则 RNA 注销、热修改或 class module 迁移会让 world cache 持有过期对象。
 
 ### Frame Input
 
@@ -998,7 +1068,7 @@ physicsWorld/utils/
 7. 如需隐式对象或生成 spec，必须先定义 `implicit_objects` tag / schema / stable_id / signature / conflict policy。
 8. 最小后台测试覆盖连续帧、same-frame、跳帧/首帧回退、reset、dispose。
 
-> 各 solver 对上述条件的实际覆盖情况（rigid/Jolt、SpringBone 的后台 smoke 范围）见 UNIFIED 日志。
+> 各 solver 对上述条件的实际覆盖情况见实现状态文档。
 
 迁移不是一次性把旧 solver 全搬完。每个 solver 的第一步必须是极窄 vertical slice：
 
@@ -1012,7 +1082,7 @@ world.begin
   -> world.commit/cache.write
 ```
 
-每个 solver 的第一条迁移都应是这样一条 vertical slice：先打通 slot 生命周期、result stream、writeback、runtime cache dispose 的最小闭环，再逐步补齐 collider、多目标、参数热更新等能力。哪个 solver 已经走完 vertical slice、走到什么程度，见 UNIFIED 日志。
+每个 solver 的第一条迁移都应是这样一条 vertical slice：先打通 slot 生命周期、result stream、writeback、runtime cache dispose 的最小闭环，再逐步补齐 collider、多目标、参数热更新等能力。当前完成度见实现状态文档。
 
 优先预演对象：
 
@@ -1096,4 +1166,4 @@ registry 校验规则：
 - `writeback.solver_inline_writeback=False` 是硬约束（对应写回时序语义的目标模式）。
 - `same_frame_policy` 必须说明同帧重复求值是 step、sync 还是只重发结果。
 
-后续 solver 迁移先补 `names.py` 常量和 declaration，再接节点；已注册的内置声明清单见 UNIFIED 日志。
+后续 solver 迁移先补 `names.py` 常量和 declaration，再接节点；已注册的内置声明清单见实现状态文档和运行时 registry snapshot。
