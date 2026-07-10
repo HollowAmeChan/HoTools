@@ -12,10 +12,9 @@
 
 阻塞项：
 
-1. 新 world/slot/context 全流程仍比旧单体 C++ 路径慢约 `1.68x-1.85x`。
-2. `implicit_objects` 缺少注册源租约或集合替换语义；删除注册节点或更换 stable id 后，旧链/覆写可能继续留在 world。
-3. 骨骼碰撞覆写的 `length / offset / primary_collision_group` 尚未进入实际 bone collider snapshot，只进入 resolver/debug；不能计为物理功能通过。
-4. `slot.data.writeback_plan` 只有声明和空字典，没有批量写回实现；逐骨 dict result stream 是当前主要架构成本之一。
+1. `implicit_objects` 缺少注册源租约或集合替换语义；删除注册节点或更换 stable id 后，旧链/覆写可能继续留在 world。
+2. 骨骼碰撞覆写的 `length / offset / primary_collision_group` 尚未进入实际 bone collider snapshot，只进入 resolver/debug；不能计为物理功能通过。
+3. bake/export 还没有可重复烘焙与导出闭环。
 
 ## 本轮代码审查
 
@@ -29,12 +28,14 @@
 | P1 | 没有 Debug Node 时仍每帧分配数组并执行 `spring_vrm_read_debug` | 改成请求状态机：Debug Node 在 slot 留一次性请求，后续推进帧由 solver 消费并清除；节点移除后最多额外采样一帧 |
 | P2 | dynamic context 保存并重填从未传入 C++ 的 target matrix/quaternion 数组 | 删除死 buffer 和重复矩阵打包 |
 | P2 | 每骨每帧构造完整 `BoneCollisionProfile` 并重复扫描 override registry | solver 热路径一次构建 override index，只解析 C++ 实际消费的 type/radius/mask；公共 resolver 保持完整语义 |
+| P1 | 新路径逐骨构造/复制 result dict，统一写回再逐骨解析 16-float matrix 和骨骼目标 | `slot.data.writeback_plan` 落地为跨帧复用的批次计划；result stream 每 slot 只发布一个 batch envelope，逐骨兼容结果按需展开；写回按 armature 通过一次 `foreach_set` 提交 |
+| P2 | 连续帧重复解析 PoseBone records、维护未传入 context ABI 的 Python current/prev tail 状态 | topology 由 slot id 保证时复用 records；current/prev tail 只在 reset/debug readback 更新，不再进入正常播放热路径 |
 
 ### 仍未解决
 
-#### P1：新架构性能回退
+#### 已解除：新架构性能回退
 
-新路径保留了 world 构建、slot/spec、逐骨 result dict 和统一写回等架构成本，但尚未兑现 `writeback_plan` 的批量化。128 骨代表轮次的阶段中位数：
+`writeback_plan` 批次化后，128 骨代表轮次的阶段中位数由：
 
 | 阶段 | ms/frame |
 |---|---:|
@@ -44,7 +45,17 @@
 | 统一写回 | 0.53 |
 | Commit | 0.01 |
 
-后续优化优先级：批量 result/writeback、减少每骨 Python matrix 转换、缓存 writeback target 解析、再检查 World Begin scope/collider 固定成本。
+下降到：
+
+| 阶段 | ms/frame |
+|---|---:|
+| Physics World Begin（含 `scene.frame_set`） | 0.57 |
+| 隐式对象注册 | 0.06 |
+| SpringBone solver wall time | 1.48 |
+| 统一写回 | 0.22 |
+| Commit | < 0.01 |
+
+最终纯 envelope 实现下，128 骨总耗时中位数稳定在 `2.347-2.395 ms`，旧路径为 `2.158-2.180 ms`，三轮独立 Blender 进程倍率为 `1.079x-1.099x`，已通过 `<= 1.15x` 门槛。
 
 #### P1：隐式对象会残留
 
@@ -75,11 +86,18 @@
 
 | 模拟骨数 | 旧架构 median ms | 新架构 median ms | 新/旧倍率范围 | 新架构 FPS |
 |---:|---:|---:|---:|---:|
-| 8 | 0.275 | 0.490 | 1.72x-1.85x | 2041 |
-| 32 | 0.759 | 1.298 | 1.68x-1.71x | 771 |
-| 128 | 2.202 | 3.796 | 1.68x-1.72x | 263 |
+| 8 | 0.268-0.276 | 0.347-0.356 | 1.260x-1.292x | 2811-2883 |
+| 32 | 0.753-0.754 | 0.851-0.856 | 1.129x-1.136x | 1169-1176 |
+| 128 | 2.158-2.180 | 2.347-2.395 | 1.079x-1.099x | 417-426 |
 
-优化前代表数据为 8/32/128 骨 `0.591 / 1.506 / 4.729 ms`；本轮热路径修复后约下降 `17% / 14% / 20%`，但仍未达到迁移门槛。
+批次化前同机代表数据为 8/32/128 骨 `0.480 / 1.241 / 3.731 ms`；本轮继续下降约 `26% / 31% / 37%`。8 骨仍有 world 固定成本，但验收约定的 128 骨迁移门槛已通过。
+
+32 collider 补充矩阵（300 帧，P50/P95）：
+
+| 模拟骨数 | 旧 P50/P95 ms | 新 P50/P95 ms | P50 新/旧 | 门槛 |
+|---:|---:|---:|---:|---:|
+| 32 | 1.065 / 1.196 | 1.197 / 1.378 | 1.124x | PASS (`<= 1.25x`) |
+| 128 | 2.387 / 2.679 | 2.632 / 2.934 | 1.103x | PASS (`<= 1.25x`) |
 
 建议门槛：
 
@@ -93,6 +111,7 @@
 $env:SPRING_BENCH_SIZES='8,32,128'
 $env:SPRING_BENCH_WARMUP='40'
 $env:SPRING_BENCH_FRAMES='300'
+$env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 & 'D:\Blender\Blender 4.5\blender.exe' --background --factory-startup --python `
   'OmniNode\NodeTree\Function\physicsWorld\spring_vrm\benchmark_blender_spring_vrm.py'
 ```
@@ -153,13 +172,13 @@ $env:SPRING_BENCH_FRAMES='300'
 | D-03 | Debug | 四类 collider 和组颜色 | C++ snapshot 与绘制一致 | PASS |
 | R-01 | Result | bone_transform schema | channel/source/slot/frame/generation 完整 | PASS |
 | R-02 | Writeback | PoseBone.matrix_basis | solver 不直写，统一节点写回 | PASS |
-| R-03 | Writeback | 批量 writeback_plan | 预分配并避免逐骨 dict/matrix 重解析 | BLOCKED |
+| R-03 | Writeback | 批量 writeback_plan | 预分配并避免逐骨 dict/matrix 重解析 | PASS |
 | R-04 | Bake | bake/export | 可重复烘焙并导出 | BLOCKED |
 | A-01 | ABI | legacy/context 数值一致 | 4 组参数、碰撞、多帧误差 <= 2e-5 | PASS |
 | A-02 | ABI | 错误 dtype/shape/count | Python exception，不进入 C++ 越界 | PASS |
 | A-03 | ABI | Blender 5.x / py313 | 重新构建并运行同一矩阵 | NOT RUN |
-| F-01 | Perf | 8/32/128 骨无碰撞 | 三轮 300 帧统计 | PASS（数据）/ BLOCKED（门槛） |
-| F-02 | Perf | 32/128 collider | 新/旧同场景 P50/P95 | NOT RUN |
+| F-01 | Perf | 8/32/128 骨无碰撞 | 三轮 300 帧统计 | PASS |
+| F-02 | Perf | 32/128 骨 + 32 collider | 新/旧同场景 P50/P95 | PASS |
 | F-03 | Perf | 多骨架 | 1/8/32 armature 扩展曲线 | NOT RUN |
 | F-04 | Perf | Debug capture | off/continuous/one-shot 成本 | NOT RUN |
 
@@ -173,6 +192,6 @@ $env:SPRING_BENCH_FRAMES='300'
 ## 下一验收批次
 
 1. 为 implicit object 注册引入 node/source lease，并补 C-10/C-11。
-2. 落地批量 writeback plan，把 128 骨倍率压到 `<= 1.15x`。
-3. 决定 `length/offset/primary_collision_group` 是本期实现 bone collider snapshot，还是从当前节点 UI 暂时隐藏。
-4. 补同骨架多链、分叉、拓扑热改、运动 collider、soak 和 py313。
+2. 决定 `length/offset/primary_collision_group` 是本期实现 bone collider snapshot，还是从当前节点 UI 暂时隐藏。
+3. 补同骨架多链、分叉、拓扑热改、运动 collider、soak 和 py313。
+4. 落地 bake/export，再做最终 solver 验收。

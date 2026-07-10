@@ -873,6 +873,16 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert stats1.get("native_context", {}).get("chain_count") == 1
         assert stats1.get("native_context", {}).get("cpp_handle_count") == 1
         assert stats1.get("native_context", {}).get("buffer_count") >= len(arrays1)
+        raw_results1 = world1.result_streams.get(BONE_TRANSFORM_CHANNEL) or []
+        assert len(raw_results1) == 1
+        assert raw_results1[0].get("writeback_type") == "bone_transform_batch"
+        assert raw_results1[0].get("bone_count") == 2
+        assert "armature" not in raw_results1[0] and "batches" not in raw_results1[0]
+        writeback_plan1 = slot1.data.get("writeback_plan")
+        assert writeback_plan1.get("schema") == "spring_vrm_writeback_plan_v1"
+        assert len(writeback_plan1.get("batches") or ()) == 1
+        basis_values1 = writeback_plan1.get("basis_values")
+        assert isinstance(basis_values1, list) and len(basis_values1) == len(armature.pose.bones) * 16
         buffer_ids = {name: id(value) for name, value in arrays1.items()}
 
         cache, world2, stats2, _results2 = _run_spring_frame(
@@ -887,6 +897,9 @@ def test_spring_vrm_native_context_reuses_chain_buffers():
         assert slot2 is slot1
         assert native_context2 is native_context1
         assert chain_context2 is chain_context1
+        writeback_plan2 = slot2.data.get("writeback_plan")
+        assert writeback_plan2 is writeback_plan1
+        assert writeback_plan2.get("basis_values") is basis_values1
         debug2 = chain_context2.debug_dict()
         assert debug2.get("last_frame") == 91
         assert debug2.get("step_count") == 1

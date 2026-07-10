@@ -703,6 +703,7 @@ SpringBone VRM 现在有自己的 collision source cache 和 C++ arrays cache。
 - `frame` 和跳帧恢复策略读取 world frame context。
 - root hard pin 仍由 chain 输入决定，不放进 world。
 - 当前最小链路已覆盖 `VRM骨链属性 -> VRM骨链对象注册 -> SpringBone VRM模拟步 -> 物理写回`，并有 Blender 后台测试验证 native step、PoseBone 写回、连续帧状态、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 的 PoseBone 复位，以及 collider snapshot 投影。
+- 2026-07-10 性能收口：`slot.data.writeback_plan` 已落地为批次计划，`bone_transform` 正常播放路径每 slot 只发布一个纯数据 batch envelope，统一写回按 armature 一次 `foreach_set`；逐骨 snapshot 只在 debug/测试/导出读取时按需展开。128 骨无碰撞三轮倍率 `1.079x-1.099x`，32/128 骨带 32 collider 倍率 `1.124x/1.103x`，分别通过 `1.15x/1.25x` 门槛。
 
 #### 案例：链 root 与骨骼碰撞的单一真值源
 
@@ -1333,7 +1334,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 
 Phase 5 的 world-aware vertical slice 已可作为迁移样板。后续推荐顺序：
 
-1. **继续收窄 SpringBone VRM 的 native context 双调用模型。** Python slot 侧已落 `SpringVRMNativeContext`，并强制要求 native 模块导出 dual-call symbols：static arrays 常驻、dynamic arrays 每帧同步、step 后 readback。35 参数 `_step_via_legacy_bridge` 兼容路径已从新路径删除；剩余收口是用 timing 基线确认每帧 pack/unpack 成本确实下降。
+1. **SpringBone VRM 的 native context 与 writeback 性能门槛已通过。** Python slot 侧 `SpringVRMNativeContext` 强制使用 dual-call symbols，static arrays 常驻、dynamic arrays 每帧同步、step 后 readback；35 参数兼容桥已从新路径删除。批次 result/writeback、records 复用和 32 collider 基准已经完成，后续重点转向 source lease、bone collider 字段闭环和 bake/export。
 2. **再做 MC2 MeshCloth / BoneCloth 的最小 world-aware slice。** 它们更能验证 native resident state、mesh delta 写回和大数组 result/writeback，但改动面更大。
 3. **最后做跨 solver 交互。** 例如 cloth 读取 rigid collider、spring bone 发布/消费动态 collider，应走显式 exchange/result channel，不让 solver 互读私有 slot。
 

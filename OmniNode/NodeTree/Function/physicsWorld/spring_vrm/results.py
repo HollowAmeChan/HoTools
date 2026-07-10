@@ -6,6 +6,7 @@ from ..writeback_commands import (
     clear_bone_transform_writebacks,
     iter_bone_transform_writebacks,
     make_bone_transform_writeback,
+    publish_bone_transform_batch_writeback,
 )
 from .names import SPRING_VRM_SOLVER_ID, SPRING_VRM_STATS_CHANNEL
 
@@ -47,6 +48,15 @@ def make_spring_vrm_pose_result(
 def publish_spring_vrm_pose_result(world, **kwargs) -> dict | None:
     result = make_spring_vrm_pose_result(**kwargs)
     return world.publish_result(result, channel=result.get("channel"), solver=SPRING_VRM_SOLVER_ID)
+
+
+def publish_spring_vrm_pose_batch_result(world, **kwargs) -> dict | None:
+    return publish_bone_transform_batch_writeback(
+        world,
+        solver=SPRING_VRM_SOLVER_ID,
+        backend="cpp",
+        **kwargs,
+    )
 
 
 def iter_spring_vrm_pose_results(

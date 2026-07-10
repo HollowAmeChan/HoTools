@@ -7,6 +7,7 @@ Environment:
     SPRING_BENCH_SIZES=8,32,128
     SPRING_BENCH_WARMUP=20
     SPRING_BENCH_FRAMES=120
+    SPRING_BENCH_COLLIDERS=0
 """
 
 from __future__ import annotations
@@ -127,7 +128,15 @@ def _summary(samples: list[float]) -> dict:
     }
 
 
-def _run_new(harness: dict, armature, properties, warmup: int, frames: int, frame_base: int) -> dict:
+def _run_new(
+    harness: dict,
+    armature,
+    properties,
+    colliders,
+    warmup: int,
+    frames: int,
+    frame_base: int,
+) -> dict:
     cache = harness["_OmniCache"]()
     samples = []
     solver_samples = []
@@ -142,7 +151,13 @@ def _run_new(harness: dict, armature, properties, warmup: int, frames: int, fram
             armature,
             frame,
             reset=(offset == 0),
+            extra_objects=colliders,
+            include_passive_collision=bool(colliders),
         )
+        if _collider_count != len(colliders):
+            raise AssertionError(
+                f"new architecture expected {len(colliders)} colliders, got {_collider_count}"
+            )
         begin_ms = (time.perf_counter() - stage_started) * 1000.0
         stage_started = time.perf_counter()
         world, object_count, _dirty_count, _version = harness["physicsSpringVRMChainRegister"](
@@ -234,10 +249,20 @@ def main() -> None:
     warmup = max(1, int(os.environ.get("SPRING_BENCH_WARMUP", "20")))
     frames = max(10, int(os.environ.get("SPRING_BENCH_FRAMES", "120")))
     profile = os.environ.get("SPRING_BENCH_PROFILE", "0") == "1"
+    collider_count = max(0, int(os.environ.get("SPRING_BENCH_COLLIDERS", "0")))
     results = []
 
     for case_index, bone_count in enumerate(_parse_sizes()):
         case = {"simulated_bones": bone_count}
+        colliders = [
+            harness["_make_sphere_collider"](
+                f"SpringBenchCollider{bone_count}_{index}",
+                (10.0 + index * 0.25, 0.0, 0.0),
+                0.1,
+                group=1,
+            )
+            for index in range(collider_count)
+        ]
         old_armature = _make_chain_armature(f"SpringBenchOld{bone_count}", bone_count)
         old_properties = harness["physicsSpringVRMChainProperties"](
             [{"armature": old_armature, "bone": "root"}],
@@ -262,11 +287,13 @@ def main() -> None:
             gravity_power=9.8,
         )
         new_args = (
-            harness, new_armature, new_properties,
+            harness, new_armature, new_properties, colliders,
             warmup, frames, 5000 + case_index * 1000,
         )
         case["new"] = _profiled("NEW", _run_new, *new_args) if profile else _run_new(*new_args)
         harness["_delete_object"](new_armature)
+        for collider in colliders:
+            harness["_delete_object"](collider)
 
         old_ms = case["old"]["median_ms"]
         new_ms = case["new"]["median_ms"]
@@ -280,7 +307,7 @@ def main() -> None:
         "warmup_frames": warmup,
         "measured_frames": frames,
         "debug_capture": "disabled",
-        "colliders": 0,
+        "colliders": collider_count,
         "substeps": 1,
         "cases": results,
     }

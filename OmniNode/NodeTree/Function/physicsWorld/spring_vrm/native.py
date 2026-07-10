@@ -11,10 +11,10 @@
         把静态数组上传到 C++ 侧，拿到 self._handle
 
   每帧：
-    ctx.fill_dynamic(armature, chain_state, records)
+    ctx.fill_dynamic(armature, records)
       → 从当前 pose 填充动态数组（head/tail/matrix）
 
-    ctx.step_and_publish(module, world, armature, chain, chain_state, dt, substeps)
+    ctx.step_and_publish(module, world, armature, chain, dt, substeps, writeback_plan)
       → 走 _step_via_context_api
         （spring_vrm_update_dynamic → [reset_state] → spring_vrm_step →
          spring_vrm_read_results → publish）
@@ -53,7 +53,7 @@ from ..utils.values import matrix16
 from ..utils.writeback_pose import matrix_basis_from_pose_matrix
 from .bone_collision import resolve_bone_collision_fields, resolve_bone_pin
 from .names import BONE_COLLISION_OVERRIDE_OBJECT_TAG
-from .results import publish_spring_vrm_pose_result
+from .results import publish_spring_vrm_pose_batch_result
 
 
 _NATIVE_MODULE = None
@@ -131,14 +131,11 @@ class SpringVRMNativeContext:
         self._dynamic: dict[str, np.ndarray] | None = None
         self._result: np.ndarray | None = None       # (N*16,) float32，target_matrices
         self._result_quat: np.ndarray | None = None  # (N*4,)  float32，target_quaternions
+        self._writeback_batch: dict | None = None
         self._debug_snapshot: dict | None = None
 
         # records 在 rebuild 时存储，publish 和每帧 profile 解析读取
         self._records: list[dict] = []
-
-        self._slot_id: str = ""
-        self._armature_ptr: int = 0
-        self._armature_data_ptr: int = 0
 
         self._handle = None
 
@@ -166,17 +163,20 @@ class SpringVRMNativeContext:
         self._bone_count = n
         self._records = records
 
-        # spec 级信息（publish 用）
-        self._slot_id = str(getattr(spec, "slot_id", "") or "")
-        self._armature_ptr = int(getattr(spec, "armature_ptr", 0) or 0)
-        self._armature_data_ptr = int(getattr(spec, "armature_data_ptr", 0) or 0)
-
         self._static = _alloc_static(n)
         _fill_static(self._static, records, world=world)
 
         self._dynamic = _alloc_dynamic(n)
         self._result = np.zeros(n * 16, dtype=np.float32)
         self._result_quat = np.zeros(n * 4, dtype=np.float32)
+        self._writeback_batch = {
+            "records": records,
+            "matrix_bases": [None] * n,
+            "target_pose_matrices": [None] * n,
+            "current_tails": [None] * n,
+            "source_kind": "spring_vrm",
+            "source_root": self.root_bone,
+        }
 
         if not is_available():
             raise RuntimeError("hotools_native is missing required SpringBone context API symbols")
@@ -196,11 +196,11 @@ class SpringVRMNativeContext:
         if self._handle is None:
             raise RuntimeError("spring_vrm_create_context returned None")
 
-    def fill_dynamic(self, armature, chain_state: dict, records: list[dict]) -> None:
+    def fill_dynamic(self, armature, records: list[dict]) -> None:
         """每帧从当前 pose 采样动态数组（预分配 buffer，复用不重新分配）。"""
         if self._dynamic is None:
             return
-        _fill_dynamic(self._dynamic, armature, chain_state, records)
+        _fill_dynamic(self._dynamic, armature, records)
 
     def step_and_publish(
         self,
@@ -208,9 +208,9 @@ class SpringVRMNativeContext:
         world,
         armature,
         chain,
-        chain_state: dict,
         dt: float,
         substeps: int,
+        writeback_plan: dict,
         restart: bool = False,
     ) -> int:
         """
@@ -223,7 +223,10 @@ class SpringVRMNativeContext:
             return 0
         if self._handle is None:
             raise RuntimeError("SpringBone native context handle is not initialized")
-        return self._step_via_context_api(module, world, armature, chain, chain_state, dt, substeps, restart)
+        return self._step_via_context_api(
+            module, world, armature, chain, dt, substeps,
+            writeback_plan, restart,
+        )
 
     def dispose(self) -> None:
         """释放 C++ handle 和 numpy buffer，清空所有 bpy 对象引用。"""
@@ -232,6 +235,7 @@ class SpringVRMNativeContext:
         self._dynamic = None
         self._result = None
         self._result_quat = None
+        self._writeback_batch = None
         self._debug_snapshot = None
         self._topology_signature = None
         # 清空 bpy 引用，避免 Blender 对象被 GC 延迟释放
@@ -267,9 +271,9 @@ class SpringVRMNativeContext:
         world,
         armature,
         chain,
-        chain_state: dict,
         dt: float,
         substeps: int,
+        writeback_plan: dict,
         restart: bool = False,
     ) -> int:
         """新 dual-call 路径：update_dynamic → (reset_state) → step → read_results → publish。
@@ -320,7 +324,7 @@ class SpringVRMNativeContext:
             self._reset_dynamic_tails_to_pose()
             frame = int(getattr(world.frame_context, "frame", 0) or 0)
             self._last_frame = frame
-            return self._publish_current_pose(world, chain, chain_state, frame)
+            return self._publish_current_pose(writeback_plan)
         module.spring_vrm_step(
             self._handle,
             float(dt),
@@ -339,7 +343,7 @@ class SpringVRMNativeContext:
         self._step_count += 1
         self._last_frame = frame
 
-        return self._publish_from_result_buffers(world, chain, chain_state, frame)
+        return self._publish_from_result_buffers(writeback_plan)
 
     def _reset_dynamic_tails_to_pose(self) -> None:
         d = self._dynamic
@@ -516,17 +520,16 @@ class SpringVRMNativeContext:
     def debug_draw_snapshot(self) -> dict | None:
         return self._debug_snapshot
 
-    def _publish_current_pose(
-        self, world, chain, chain_state: dict, frame: int
-    ) -> int:
+    def _publish_current_pose(self, writeback_plan: dict) -> int:
         target_pose_matrices: dict[str, mathutils.Matrix] = {}
-        published = 0
-        tails = chain_state.setdefault("tails", {})
-        last_results = []
 
         d = self._dynamic
-        if d is None:
+        batch = self._writeback_batch
+        if d is None or not isinstance(batch, dict):
             return 0
+        matrix_bases = batch["matrix_bases"]
+        target_matrices = batch["target_pose_matrices"]
+        current_tails = batch["current_tails"]
 
         for index, record in enumerate(self._records):
             bone_name = record["bone_name"]
@@ -536,42 +539,23 @@ class SpringVRMNativeContext:
                 record["pose_bone"], target_matrix, target_pose_matrices
             )
             current_tail = _tuple3(d["current_pose_tails"][index])
-            tails[bone_name] = {
-                "current_tail": current_tail,
-                "prev_tail":    current_tail,
-            }
-            result = publish_spring_vrm_pose_result(
-                world,
-                slot_id=self._slot_id,
-                armature_ptr=self._armature_ptr,
-                armature_data_ptr=self._armature_data_ptr,
-                frame=frame,
-                generation=world.generation,
-                bone_name=bone_name,
-                pose_index=int(record["pose_index"]),
-                matrix_basis=basis_matrix,
-                target_pose_matrix=target_matrix,
-                current_tail=current_tail,
-                chain_root=chain.root_bone,
-                backend="cpp",
-            )
-            if result is not None:
-                last_results.append(result)
-                published += 1
+            matrix_bases[index] = basis_matrix
+            target_matrices[index] = target_matrix
+            current_tails[index] = current_tail
 
-        chain_state["last_results"] = last_results
-        return published
+        writeback_plan.setdefault("batches", []).append(batch)
+        return self._bone_count
 
-    def _publish_from_result_buffers(
-        self, world, chain, chain_state: dict, frame: int
-    ) -> int:
+    def _publish_from_result_buffers(self, writeback_plan: dict) -> int:
         """从 self._result (matrices) 和 self._result_quat 发布结果。"""
         target_pose_matrices: dict[str, mathutils.Matrix] = {}
-        published = 0
-        tails = chain_state.setdefault("tails", {})
-        last_results = []
 
-        d = self._dynamic
+        batch = self._writeback_batch
+        if not isinstance(batch, dict):
+            return 0
+        matrix_bases = batch["matrix_bases"]
+        target_matrices = batch["target_pose_matrices"]
+        current_tails = batch["current_tails"]
         mat_arr = self._result.reshape((self._bone_count, 16))
 
         for index, record in enumerate(self._records):
@@ -581,31 +565,13 @@ class SpringVRMNativeContext:
             basis_matrix = matrix_basis_from_pose_matrix(
                 record["pose_bone"], target_matrix, target_pose_matrices
             )
-            tails[bone_name] = {
-                "current_tail": _tuple3(d["current_tails"][index]),
-                "prev_tail":    _tuple3(d["prev_tails"][index]),
-            }
-            result = publish_spring_vrm_pose_result(
-                world,
-                slot_id=self._slot_id,
-                armature_ptr=self._armature_ptr,
-                armature_data_ptr=self._armature_data_ptr,
-                frame=frame,
-                generation=world.generation,
-                bone_name=bone_name,
-                pose_index=int(record["pose_index"]),
-                matrix_basis=basis_matrix,
-                target_pose_matrix=target_matrix,
-                current_tail=_tuple3(d["current_tails"][index]),
-                chain_root=chain.root_bone,
-                backend="cpp",
-            )
-            if result is not None:
-                last_results.append(result)
-                published += 1
+            matrix_bases[index] = basis_matrix
+            target_matrices[index] = target_matrix
+            # Tail readback is intentionally debug-only in the context ABI.
+            current_tails[index] = None
 
-        chain_state["last_results"] = last_results
-        return published
+        writeback_plan.setdefault("batches", []).append(batch)
+        return self._bone_count
 
     def debug_dict(self) -> dict:
         arrays = {}
@@ -769,12 +735,10 @@ def _alloc_dynamic(n: int) -> dict[str, np.ndarray]:
 def _fill_dynamic(
     d: dict[str, np.ndarray],
     armature,
-    chain_state: dict,
     records: list[dict],
 ) -> None:
     """每帧从当前 pose 采样动态数组。"""
     arm_world = armature.matrix_world
-    tails = chain_state.setdefault("tails", {})
 
     for i, rec in enumerate(records):
         pb = rec["pose_bone"]
@@ -783,12 +747,10 @@ def _fill_dynamic(
         head = arm_world @ pb.head
         tail = arm_world @ pb.tail
 
-        tail_state   = tails.get(rec["bone_name"]) if isinstance(tails, dict) else None
-        cur_tail     = _vector_from_state(tail_state, "current_tail", tail)
-        prev_tail    = _vector_from_state(tail_state, "prev_tail",    cur_tail)
-
-        _write_vec3(d["current_tails"],   i, cur_tail)
-        _write_vec3(d["prev_tails"],      i, prev_tail)
+        # current_tails/prev_tails live in the native context after reset and
+        # are not inputs to spring_vrm_update_dynamic. They are populated only
+        # by explicit debug readback, so avoid maintaining a duplicate Python
+        # tail state during normal playback.
         _write_vec3(d["current_heads"],   i, head)
         _write_vec3(d["current_pose_tails"], i, tail)
         _write_matrix(d["current_pose_matrices"],   i, pb.matrix)
@@ -801,17 +763,6 @@ def _fill_dynamic(
 # ─────────────────────────────────────────────────────────────────────────────
 # 低级数组工具
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _vector_from_state(state, key: str, fallback: mathutils.Vector) -> mathutils.Vector:
-    if isinstance(state, dict):
-        value = state.get(key)
-        if value is not None:
-            try:
-                return mathutils.Vector((float(value[0]), float(value[1]), float(value[2])))
-            except Exception:
-                pass
-    return fallback.copy()
-
 
 def _write_vec3(arr: np.ndarray, i: int, v) -> None:
     arr[i, 0] = float(v[0]); arr[i, 1] = float(v[1]); arr[i, 2] = float(v[2])
@@ -1258,8 +1209,8 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
 
     对每条链：
       1. 若 restart 或 topology 变化 → ctx.rebuild(spec, records)
-      2. ctx.fill_dynamic(armature, chain_state, records)
-      3. ctx.step_and_publish(module, world, spec, chain, chain_state, dt, substeps)
+      2. ctx.fill_dynamic(armature, records)
+      3. ctx.step_and_publish(module, world, spec, chain, dt, substeps, writeback_plan)
 
     返回 (published_count, elapsed_ms, errors)。
     """
@@ -1288,6 +1239,18 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
     native_ctxs: dict[str, SpringVRMNativeContext] = slot.data.setdefault("_native_ctxs", {})
     chain_states = frame_state.setdefault("chains", {})
     frame = int(getattr(getattr(world, "frame_context", None), "frame", 0) or 0)
+    writeback_plan = slot.data.setdefault("writeback_plan", {})
+    writeback_plan.update({
+        "schema": "spring_vrm_writeback_plan_v1",
+        "slot_id": str(slot.slot_id),
+        "armature": armature,
+        "armature_ptr": int(getattr(spec, "armature_ptr", 0) or 0),
+        "armature_data_ptr": int(getattr(spec, "armature_data_ptr", 0) or 0),
+        "frame": frame,
+        "generation": int(world.generation),
+        "batches": [],
+        "bone_count": 0,
+    })
     debug_capture_state = slot.data.get("_debug_capture_state")
     capture_debug = (
         isinstance(debug_capture_state, dict)
@@ -1303,22 +1266,34 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
     for chain in spec.chains:
         root = chain.root_bone
         try:
-            records = _chain_records(armature, chain)
-            if not records or not bool(chain.enabled):
+            if not bool(chain.enabled):
                 continue
 
             ctx = native_ctxs.get(root)
             if not isinstance(ctx, SpringVRMNativeContext):
                 ctx = SpringVRMNativeContext(root)
                 native_ctxs[root] = ctx
+                records = _chain_records(armature, chain)
+            elif restart:
+                records = _chain_records(armature, chain)
+            else:
+                # The slot id includes the chain topology hash. A live context in
+                # the same slot can safely reuse its pre-resolved PoseBone records.
+                records = ctx._records
+            if not records:
+                continue
 
-            # rebuild: topology 变化 OR restart（需重新捕获 init 姿态）
-            if restart or ctx.needs_rebuild(records):
+            # A topology change creates another slot; restart rebuilds this one to
+            # recapture the initial pose and restart-only collision properties.
+            if restart or ctx._handle is None:
                 ctx.rebuild(spec, records, world=world)
 
-            chain_state = chain_states.setdefault(root, {})
-            ctx.fill_dynamic(armature, chain_state, records)
-            count = ctx.step_and_publish(module, world, armature, chain, chain_state, dt, substeps, restart)
+            chain_states.setdefault(root, {})
+            ctx.fill_dynamic(armature, records)
+            count = ctx.step_and_publish(
+                module, world, armature, chain, dt, substeps,
+                writeback_plan, restart,
+            )
             published += count
             if capture_debug:
                 debug_capture_attempted = True
@@ -1350,6 +1325,19 @@ def step_spring_vrm_slot(world, slot, dt: float, substeps: int, restart: bool) -
         debug_capture_state["attempted_frame"] = frame
         if debug_captured:
             debug_capture_state["captured_frame"] = frame
+
+    writeback_plan["bone_count"] = int(published)
+    if published:
+        publish_spring_vrm_pose_batch_result(
+            world,
+            slot_id=slot.slot_id,
+            armature_ptr=int(getattr(spec, "armature_ptr", 0) or 0),
+            armature_data_ptr=int(getattr(spec, "armature_data_ptr", 0) or 0),
+            frame=frame,
+            generation=int(world.generation),
+            bone_count=published,
+            plan_schema=str(writeback_plan.get("schema") or ""),
+        )
 
     return published, (time.perf_counter() - started) * 1000.0, errors
 

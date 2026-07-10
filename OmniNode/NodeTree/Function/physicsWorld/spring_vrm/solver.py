@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ..types import PhysicsWorldCache
-from ..names import BONE_TRANSFORM_CHANNEL
 from .declaration import SPRING_VRM_SOLVER_DECLARATION
 from .names import (
     SPRING_VRM_SLOT_KIND,
@@ -12,6 +11,7 @@ from .names import (
 )
 from .results import (
     clear_spring_vrm_pose_results,
+    publish_spring_vrm_pose_batch_result,
     publish_spring_vrm_stats_result,
 )
 from .specs import SpringVRMSolverSpec, build_spring_vrm_solver_specs
@@ -159,13 +159,7 @@ def step_spring_vrm(
                 else:
                     slot.data.pop("_spring_vrm_error", None)
         else:
-            _republish_last_results(world, registered_ids)
-            published = len(world.consume_results(
-                BONE_TRANSFORM_CHANNEL,
-                solver=SPRING_VRM_SOLVER_ID,
-                frame=int(getattr(fc, "frame", 0) or 0),
-                generation=world.generation,
-            ))
+            published = _republish_writeback_plans(world, registered_ids)
 
         publish_spring_vrm_stats_result(
             world,
@@ -213,24 +207,33 @@ def _prune_stale_spring_vrm_slots(world: PhysicsWorldCache, active_slot_ids) -> 
     return len(stale_ids)
 
 
-def _republish_last_results(world: PhysicsWorldCache, slot_ids: list[str]) -> None:
+def _republish_writeback_plans(world: PhysicsWorldCache, slot_ids: list[str]) -> int:
     frame = int(getattr(world.frame_context, "frame", 0) or 0)
     generation = int(world.generation)
+    published = 0
     for slot_id in slot_ids:
         slot = world.solver_slots.get(slot_id)
         if slot is None:
             continue
-        frame_state = slot.data.get("frame_state")
-        chains = frame_state.get("chains") if isinstance(frame_state, dict) else None
-        if not isinstance(chains, dict):
+        plan = slot.data.get("writeback_plan")
+        if not isinstance(plan, dict):
             continue
-        for chain_state in chains.values():
-            if not isinstance(chain_state, dict):
-                continue
-            for item in list(chain_state.get("last_results") or ()):
-                if not isinstance(item, dict):
-                    continue
-                result = dict(item)
-                result["frame"] = frame
-                result["generation"] = generation
-                world.publish_result(result, channel=result.get("channel"), solver=SPRING_VRM_SOLVER_ID)
+        batches = plan.get("batches") or ()
+        bone_count = max(0, int(plan.get("bone_count", 0) or 0))
+        armature = plan.get("armature")
+        if not batches or not bone_count or armature is None:
+            continue
+        plan["frame"] = frame
+        plan["generation"] = generation
+        publish_spring_vrm_pose_batch_result(
+            world,
+            slot_id=slot_id,
+            armature_ptr=int(plan.get("armature_ptr", 0) or 0),
+            armature_data_ptr=int(plan.get("armature_data_ptr", 0) or 0),
+            frame=frame,
+            generation=generation,
+            bone_count=bone_count,
+            plan_schema=str(plan.get("schema") or ""),
+        )
+        published += bone_count
+    return published

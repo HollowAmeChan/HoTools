@@ -255,9 +255,28 @@ def writeback_bone_transforms(world) -> int:
     touched_pose_bones = _get_touched_pose_bones(world)
     _ensure_cleanup_resource(world)
 
-    for result in iter_bone_transform_writebacks(world, frame=frame, generation=generation):
+    results = iter_bone_transform_writebacks(
+        world,
+        frame=frame,
+        generation=generation,
+        expand_batches=False,
+    )
+    for result in results:
         slot = _slot_for_writeback_result(world, result)
         try:
+            if result.get("writeback_type") == "bone_transform_batch":
+                armature, batch_written = _writeback_bone_transform_batch(
+                    result,
+                    slot,
+                    touched_pose_bones,
+                )
+                if armature is not None and batch_written:
+                    updated_armatures.add(armature)
+                    written += batch_written
+                if slot is not None:
+                    slot.data.pop("_writeback_error", None)
+                continue
+
             armature = _armature_for_bone_writeback(world, result, slot)
             pose = getattr(armature, "pose", None)
             if pose is None:
@@ -287,6 +306,83 @@ def writeback_bone_transforms(world) -> int:
             pass
 
     return written
+
+
+def _writeback_bone_transform_batch(result, slot, touched_pose_bones) -> tuple[object | None, int]:
+    plan = slot.data.get("writeback_plan") if slot is not None else None
+    armature = plan.get("armature") if isinstance(plan, dict) else None
+    if not _armature_matches_writeback(armature, result):
+        armature = _armature_for_bone_writeback(None, result, slot)
+    pose_bones = getattr(getattr(armature, "pose", None), "bones", None)
+    if pose_bones is None:
+        return armature, 0
+
+    buffer_size = len(pose_bones) * 16
+    basis_values = plan.get("basis_values") if isinstance(plan, dict) else None
+    if not isinstance(basis_values, list) or len(basis_values) != buffer_size:
+        basis_values = [0.0] * buffer_size
+        if isinstance(plan, dict):
+            plan["basis_values"] = basis_values
+
+    updates = []
+    for batch in (plan.get("batches") or ()) if isinstance(plan, dict) else ():
+        if not isinstance(batch, dict):
+            continue
+        records = batch.get("records") or ()
+        matrix_bases = batch.get("matrix_bases") or ()
+        for index, record in enumerate(records):
+            if not isinstance(record, dict) or index >= len(matrix_bases):
+                continue
+            basis_matrix = matrix_bases[index]
+            pose_bone = record.get("pose_bone")
+            pose_index = int(record.get("pose_index", -1))
+            if basis_matrix is None or pose_bone is None or pose_index < 0:
+                continue
+            updates.append((pose_bone, pose_index, basis_matrix, str(record.get("bone_name") or "")))
+
+    can_foreach_set = False
+    if updates:
+        try:
+            pose_bones.foreach_get("matrix_basis", basis_values)
+            for _pose_bone, pose_index, basis_matrix, _bone_name in updates:
+                _write_matrix_to_foreach_buffer(basis_values, pose_index * 16, basis_matrix)
+            pose_bones.foreach_set("matrix_basis", basis_values)
+            can_foreach_set = True
+        except Exception:
+            can_foreach_set = False
+
+    if not can_foreach_set:
+        for pose_bone, _pose_index, basis_matrix, _bone_name in updates:
+            pose_bone.matrix_basis = basis_matrix
+
+    try:
+        armature_ptr = int(armature.as_pointer())
+    except Exception:
+        armature_ptr = 0
+    for _pose_bone, _pose_index, _basis_matrix, bone_name in updates:
+        if armature_ptr and bone_name:
+            touched_pose_bones[(armature_ptr, bone_name)] = (armature, bone_name)
+    return armature, len(updates)
+
+
+def _write_matrix_to_foreach_buffer(values: list[float], offset: int, matrix) -> None:
+    """Blender's matrix foreach layout is column-major."""
+    values[offset + 0] = float(matrix[0][0])
+    values[offset + 1] = float(matrix[1][0])
+    values[offset + 2] = float(matrix[2][0])
+    values[offset + 3] = float(matrix[3][0])
+    values[offset + 4] = float(matrix[0][1])
+    values[offset + 5] = float(matrix[1][1])
+    values[offset + 6] = float(matrix[2][1])
+    values[offset + 7] = float(matrix[3][1])
+    values[offset + 8] = float(matrix[0][2])
+    values[offset + 9] = float(matrix[1][2])
+    values[offset + 10] = float(matrix[2][2])
+    values[offset + 11] = float(matrix[3][2])
+    values[offset + 12] = float(matrix[0][3])
+    values[offset + 13] = float(matrix[1][3])
+    values[offset + 14] = float(matrix[2][3])
+    values[offset + 15] = float(matrix[3][3])
 
 
 def _slot_for_writeback_result(world, result):
