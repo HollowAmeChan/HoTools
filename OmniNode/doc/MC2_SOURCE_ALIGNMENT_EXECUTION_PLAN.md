@@ -100,7 +100,7 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 
 目标：从 setup 输入一直追踪到 constraint data 和运行时 consumer，不先设计 HoTools class。
 
-当前进度：Bone connection、Selection/baseline、Distance/Bending 三张 worksheet 已完成第一轮审计；Inertia、particle registration/reset 和 output mapping 尚未完成。
+当前进度：Bone connection、Selection/baseline、Distance/Bending 三张 worksheet 已完成第一轮审计，golden fixture v0 与 B1-B3 reverse audit 已记录；Inertia、particle registration/reset、output mapping 和参数字段 worksheet 尚未完成。
 
 顺序：
 
@@ -213,4 +213,4 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-接下来为三张表定义可执行 golden fixture 格式，反审计已提交 B1-B3 的字段边界，并补齐 Inertia、particle registration/reset 和 output mapping worksheet。完成这些工作后，再决定当前 B4 工作区改动是拆分重写还是整体移除。
+接下来搭建 Tier A MC2/Unity 中间数组 dump 入口，并补齐 Inertia、particle registration/reset、output mapping 和参数字段 worksheet。完成这些工作后，再决定当前 B4 工作区改动是拆分重写还是整体移除。

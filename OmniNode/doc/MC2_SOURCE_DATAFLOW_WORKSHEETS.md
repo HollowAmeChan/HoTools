@@ -389,11 +389,146 @@ Blender authoring input
 - source hash-container 顺序的 canonical debug/fixture 格式；
 - Inertia、particle registration/reset 与 output mapping 的后续 worksheet。
 
+## Golden Fixture Contract v0
+
+### Oracle authority
+
+fixture 按可信度分三级：
+
+| Tier | 来源 | 可关闭的结论 |
+|---|---|---|
+| A | 在固定 commit 的 MC2/Unity 运行中导出中间数组。 | source parity；可以作为实现验收 oracle。 |
+| B | 对最小输入手工推导完整数组，并逐项引用 producer 分支。 | 可关闭局部分支；不能覆盖 Unity 容器顺序或未观察上下文。 |
+| C | HoTools 当前实现输出或旧 solver snapshot。 | 只能做 regression，不得证明 MC2 parity。 |
+
+首选 Tier A。没有可运行 Unity dump 时，可先用 Tier B 冻结极小 case，但必须保留 `oracle_tier`，以后不能静默升级为 Tier A。
+
+### File shape
+
+每个 case 使用一个 UTF-8 JSON 文件，逻辑结构如下：
+
+```json
+{
+  "schema_version": 1,
+  "case_id": "bone_automatic_reverse_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "producer": [
+      "Runtime/VirtualMesh/Function/VirtualMeshInputOutput.cs::ImportBoneType"
+    ]
+  },
+  "input": {
+    "setup_type": "bone_cloth",
+    "connection_mode": 1,
+    "vertex_identity": [],
+    "positions": [],
+    "parents": [],
+    "root_order": [],
+    "attributes": []
+  },
+  "expected": {
+    "imported_mesh": {},
+    "proxy": {},
+    "distance": {},
+    "bending": {}
+  },
+  "comparison": {
+    "float_abs_tolerance": 1e-6,
+    "float_rel_tolerance": 1e-6,
+    "unordered_fields": []
+  }
+}
+```
+
+`vertex_identity` 是 fixture 的稳定主键。Bone 使用 `(armature fixture id, transform path)`；Mesh 使用输入 vertex id。MC2 array index 与 HoTools array index 都必须先映射到 identity，再比较 topology/constraint records。
+
+### Stage payloads
+
+| Stage | 必需字段 |
+|---|---|
+| `imported_mesh` | vertex order/identity、local positions、canonical lines、canonical triangles。 |
+| `proxy` | byte attributes、canonical edges/triangles、parent、child ranges/data、baseline ranges/data、root、depth。 |
+| `distance` | vertex ranges、target identity、signed rest distance。 |
+| `bending` | ordered quad identity `(v0,v1,v2,v3)`、rest angle/volume、sign/volume marker。 |
+
+edge/triangle set 使用 identity 排序后的 canonical record；Distance 保留“source vertex -> ordered target list”分组语义；Bending quad 不能把四点全排序，因为 opposite/shared-edge 角色属于算法输入。
+
+### Comparison rules
+
+1. integer、bit flag、record count、parent/root identity 必须精确相等。
+2. position/distance/angle/volume 使用 fixture 自带容差；默认 abs/rel 都为 `1e-6`。
+3. 只有明确登记在 `unordered_fields` 的 hash-container 输出允许 canonicalize。
+4. `-0.0` 与 `0.0` 数值相等，但 Distance 的 horizontal 类型不能依赖 `-0.0`；zero-distance 必须单列类型 oracle。
+5. NaN/Inf 一律视为 fixture 或实现错误。
+6. 每个 expected stage 都带 producer；不能用下游 HoTools 输出回填上游 expected。
+
+### Initial case set
+
+| Case id | Tier target | 关闭的分支 |
+|---|---|---|
+| `bone_line_single_chain_001` | A | Line parent-child edge、default root Fixed。 |
+| `bone_automatic_reverse_001` | A | Automatic 过长边反转。 |
+| `bone_sequential_branch_001` | A | 同层多分支、多对多 link。 |
+| `mesh_baseline_multi_fixed_001` | A | Mesh parent distance/angle cost。 |
+| `bone_depth_unequal_length_001` | B -> A | 全 proxy 几何长度归一化。 |
+| `distance_square_shear_001` | A | vertical/horizontal/shear、signed rest。 |
+| `bending_dihedral_volume_001` | A | 同一 triangle pair 的 bending/volume 双 record。 |
+
+fixture contract 只定义数据交换与比较方式；当前阶段不创建伪造的 expected 数值。实际 fixture 必须来自 Tier A dump 或有完整手算证明的 Tier B。
+
+## B1-B3 Reverse Audit
+
+审计对象是 `5739ed3` 所在代码基线之前已经提交的 MC2 scaffold；未提交 B4 不作为既成接口。
+
+### B1 Task/Parameter contracts
+
+| 当前项 | 结论 | 后续动作 |
+|---|---|---|
+| `task_id = setup + order-independent source identity` | 保留。参数变化不应更换 slot identity。 | 增加 identity collision/Blender pointer reuse 测试。 |
+| ordered source signature 进入 topology signature | 保留。Sequential mode 明确依赖 root order。 | oracle 比较时与 vertex order 分开记录。 |
+| profile/setup/effective parameter 分层 | 方向保留。 | 仍需独立参数 worksheet 逐字段审计，当前不得整体标 source-aligned。 |
+| `MC2SetupOptionsSpec.connection_mode in 0..2` | 不完整。 | D-01 决定 mode 3 surface；内部 source enum 不得遗失。 |
+| `parameter_signature` 通过 default settings 构造 | 表达绕行但当前 payload 不含 settings，结果仍只覆盖 profile/setup。 | S2 改为直接、显式的 profile/setup signature，避免未来 payload 加入 settings 后静默改变 task contract。 |
+| `MC2EffectiveParametersSpec.settings_signature` 与 payload 分离 | 可保留调度签名，但命名容易误导。 | 参数 worksheet 决定 settings 是否属于 effective solver input metadata。 |
+
+### B2 Topology/slot
+
+| 当前项 | 结论 | 后续动作 |
+|---|---|---|
+| `MC2TopologySpec` | 实际是 authoring/source snapshot，不是 MC2 final proxy topology。 | S2 重命名或拆成 source topology 与 proxy topology，禁止原样进入 native ABI。 |
+| Mesh positions/normals/edges/fan triangles | HoTools 用户提供 proxy 的输入候选。Blender n-gon fan、loose edge、未求值 object data 都不是 MC2 通用 import 语义。 | 明确“最终 proxy、triangulated evaluated mesh”的输入前置条件或补 evaluated-mesh adapter。 |
+| 每个 Bone source 独立 DFS 后串接 | vertex order 与 MC2 `RenderSetupData` 栈顺序不同，且提前按 source 分区。 | 保留 identity snapshot；proxy builder 必须跨全部 roots 统一生成并用 identity remap 测试。 |
+| 拒绝重叠 bone source | 比 MC2 constructor 更严格，但可作为 HoTools 输入校验。 | 登记 intentional deviation，并给出错误信息/测试。 |
+| topology signature 包含真实 source payload | 保留。 | 未来加入 authoring selection 和 proxy builder version 的独立静态签名。 |
+| slot owner/dispose/prune | 与 Physics World 生命周期一致。 | 保留，并让未来 native context 接入同一 `_dispose` 链。 |
+| topology change rebuild、parameter/settings update reuse | 方向正确。 | selection/proxy/baseline signature 必须纳入静态重建判定。 |
+
+### B3 Initial state/particle buffer
+
+| 当前项 | 结论 | 后续动作 |
+|---|---|---|
+| world-space rest position/rotation | 可作为 registration/reset 输入候选。 | 用 particle registration/reset worksheet 校验首次帧和 reset 的精确来源。 |
+| `parent_indices/depths/fixed_mask` 放在 initial state | 阶段错误。它们分别来自 baseline、root/depth 和 proxy attribute。 | 从 initial pose 拆出，改由审计后的 static specs 提供。 |
+| Bone depth 按离散 parent 层数归一化 | 与源码不等价。 | 使用累计几何长度和全 proxy 最大长度。 |
+| 默认 root fixed | 只覆盖无有效 Bone selection 的 fallback。 | authoring selection/bone attribute override 必须先于 baseline。 |
+| particle persistent arrays | next/old/base/velocity/display 等 owner 方向可保留。 | reset worksheet 逐数组确认初始化和帧间语义。 |
+| `step_basic_positions/rotations` 放在 particle buffer | 物理内存可复用，但语义上属于 substep scratch。 | native context 中单独分组，不进入持久状态签名或跨帧行为承诺。 |
+| static `parent/depth/fixed/source mapping` 存进 particle buffer | 混合了 static mapping 与 dynamic state。 | static arrays 由 proxy/baseline spec 持有；context 可借用或复制，但生命周期与 dirty key 分开。 |
+| buffer 随 topology/world generation 重建 | 保留。 | selection/proxy signature 变化也重建；纯 profile/settings 更新复用动态状态。 |
+
+### Reverse-audit conclusion
+
+B1-B3 不需要整体回滚。可保留的是 identity/signature 地基、slot 生命周期、动态 particle owner 和参数热更新方向；必须重构的是 source topology 命名、selection/baseline 阶段、initial state 字段归属，以及 persistent/scratch 分组。
+
+在 S2 前不修改这些已提交代码，避免一边审计一边再次冻结新接口。未提交 B4 也不得作为修补 B3 的兼容层。
+
 ## S1 Status
 
-W1、W2、W3 已完成第一轮 producer/consumer 审计。下一步不是实现，而是：
+W1、W2、W3 已完成第一轮 producer/consumer 审计；golden fixture v0 与 B1-B3 reverse audit 已记录。下一步不是实现，而是：
 
-1. 为三张 worksheet 建立可执行 golden fixture 格式；
-2. 审查已提交 B1-B3 的字段是否跨越了错误阶段；
-3. 决定 B4 工作区草案整体移除还是仅保留 lifecycle 相关测试；
-4. 完成 Inertia、particle registration/reset 和 output mapping worksheet 后，再进入 S2 契约冻结。
+1. 决定并搭建 Tier A MC2/Unity 中间数组 dump 入口；
+2. 决定 B4 工作区草案整体移除还是仅保留 lifecycle 相关测试；
+3. 完成 Inertia、particle registration/reset 和 output mapping worksheet；
+4. 参数字段 worksheet 完成后，再进入 S2 契约冻结。
