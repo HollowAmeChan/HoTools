@@ -214,6 +214,7 @@ build_constraint_debug_lines = _pw("rigid.constraint_debug").build_constraint_de
 rigid_backend_debug_snapshot = _pw("rigid.debug").rigid_backend_debug_snapshot
 iter_rigid_query_results = _pw("rigid.queries").iter_rigid_query_results
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
+rigid_generated_constraint_signature = _pw("rigid.implicit_objects").rigid_generated_constraint_signature
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
 active_generated_constraint_slot_ids = _pw("rigid.implicit_objects").active_generated_constraint_slot_ids
 make_rigid_jolt_world_setting_properties = _pw("rigid.implicit_objects").make_rigid_jolt_world_setting_properties
@@ -706,6 +707,13 @@ def test_swing_twist_constraint_spec_and_generated_properties():
     props.twist_min_angle = 0.4
     props.twist_max_angle = -0.2
     props.max_friction_torque = 1.5
+    props.swing_motor_state = "POSITION"
+    props.twist_motor_state = "VELOCITY"
+    props.swing_twist_target_angular_velocity = (0.0, 0.0, 2.0)
+    props.swing_twist_target_rotation = (0.5, 0.0, 0.0)
+    props.motor_frequency = 3.0
+    props.motor_damping = 0.8
+    props.motor_torque_limit = 4.0
 
     spec = build_constraint_spec(c)
     assert spec is not None
@@ -716,6 +724,14 @@ def test_swing_twist_constraint_spec_and_generated_properties():
     assert abs(spec.twist_min_angle + 0.2) < 1.0e-6
     assert abs(spec.twist_max_angle - 0.4) < 1.0e-6
     assert abs(spec.max_friction_torque - 1.5) < 1.0e-6
+    assert spec.swing_motor_state == "POSITION"
+    assert spec.twist_motor_state == "VELOCITY"
+    assert spec.swing_twist_target_angular_velocity == (0.0, 0.0, 2.0)
+    assert abs(spec.swing_twist_target_orientation_wxyz[0] - 0.9689124) < 1.0e-6
+    assert abs(spec.swing_twist_target_orientation_wxyz[1] - 0.2474040) < 1.0e-6
+    assert abs(spec.motor_frequency - 3.0) < 1.0e-6
+    assert abs(spec.motor_damping - 0.8) < 1.0e-6
+    assert abs(spec.motor_torque_limit - 4.0) < 1.0e-6
 
     adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
     body_a = build_rigid_body_spec(a)
@@ -741,12 +757,33 @@ def test_swing_twist_constraint_spec_and_generated_properties():
         swing_plane_half_angle=0.3,
         twist_min_angle=0.8,
         twist_max_angle=-0.6,
+        swing_motor_state="invalid",
+        twist_motor_state="POSITION",
+        motor_frequency=4.0,
+        motor_damping=0.7,
+        motor_torque_limit=6.0,
+        swing_twist_target_angular_velocity=(1.0, 2.0, 3.0),
+        swing_twist_target_rotation=(0.0, 0.0, 0.5),
     )
     assert generated[0]["swing_type"] == "CONE"
     assert generated[0]["swing_normal_half_angle"] == 0.7
     assert generated[0]["swing_plane_half_angle"] == 0.3
     assert generated[0]["twist_min_angle"] == -0.6
     assert generated[0]["twist_max_angle"] == 0.8
+    assert generated[0]["swing_motor_state"] == "OFF"
+    assert generated[0]["twist_motor_state"] == "POSITION"
+    assert generated[0]["motor_frequency"] == 4.0
+    assert generated[0]["motor_damping"] == 0.7
+    assert generated[0]["motor_torque_limit"] == 6.0
+    assert generated[0]["swing_twist_target_angular_velocity"] == (1.0, 2.0, 3.0)
+    assert abs(generated[0]["swing_twist_target_orientation_wxyz"][3] - 0.2474040) < 1.0e-6
+    signature = rigid_generated_constraint_signature(generated[0])
+    changed = dict(generated[0])
+    changed["twist_motor_state"] = "VELOCITY"
+    assert rigid_generated_constraint_signature(changed) != signature
+    changed = dict(generated[0])
+    changed["swing_twist_target_angular_velocity"] = (3.0, 2.0, 1.0)
+    assert rigid_generated_constraint_signature(changed) != signature
 
     _del(c, a, b)
 
@@ -1595,6 +1632,10 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "motor_state": "POSITION",
         "motor_target_angle": 0.25,
         "motor_target_position": 1.25,
+        "swing_motor_state": "POSITION",
+        "twist_motor_state": "OFF",
+        "swing_twist_target_angular_velocity": (0.0, 0.0, 1.0),
+        "swing_twist_target_orientation_wxyz": (0.9689124, 0.2474040, 0.0, 0.0),
     }
     states = {
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
@@ -1611,8 +1652,9 @@ def test_constraint_debug_renderer_registry_and_semantics():
         assert groups["base"], f"{constraint_type} 应生成基础语义线段"
         if constraint_type in {"DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST"}:
             assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
-        if constraint_type in {"HINGE", "SLIDER"}:
+        if constraint_type in {"HINGE", "SLIDER", "SWING_TWIST"}:
             assert groups["motor"], f"{constraint_type} 应显示 motor target"
+        if constraint_type in {"HINGE", "SLIDER"}:
             assert groups["state"], f"{constraint_type} 应显示当前求解值"
         assert all(
             isinstance(point, tuple) and len(point) == 3

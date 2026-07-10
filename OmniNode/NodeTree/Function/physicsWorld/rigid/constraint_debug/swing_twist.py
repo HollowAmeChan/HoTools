@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+from mathutils import Quaternion, Vector
+
 from ...utils.debug_draw import add_line
 from .common import append_anchor_pair, append_axis_line
 
@@ -92,3 +94,37 @@ def append_lines(groups: dict[str, list], spec, context) -> None:
     for twist in (twist_min, twist_max):
         direction = math.cos(twist) * frame.axis_x + math.sin(twist) * frame.axis_y
         add_line(groups["limits"], frame.position, frame.position + direction * radius)
+
+    swing_motor_state = str(getattr(spec, "swing_motor_state", "OFF") or "OFF").upper()
+    twist_motor_state = str(getattr(spec, "twist_motor_state", "OFF") or "OFF").upper()
+    motor_states = {swing_motor_state, twist_motor_state}
+    if "POSITION" in motor_states:
+        target_wxyz = tuple(getattr(
+            spec, "swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0),
+        ))
+        if len(target_wxyz) == 4:
+            target_local = Quaternion(target_wxyz) @ Vector((0.0, 0.0, 1.0))
+            target_world = (
+                target_local.x * frame.axis_x
+                + target_local.y * frame.axis_y
+                + target_local.z * frame.axis_z
+            )
+            add_line(
+                groups["motor"], frame.position,
+                frame.position + target_world * context.size * 0.65,
+            )
+    if "VELOCITY" in motor_states:
+        target_velocity = tuple(getattr(
+            spec, "swing_twist_target_angular_velocity", (0.0, 0.0, 0.0),
+        ))
+        if len(target_velocity) == 3:
+            velocity_world = (
+                float(target_velocity[0]) * frame.axis_x
+                + float(target_velocity[1]) * frame.axis_y
+                + float(target_velocity[2]) * frame.axis_z
+            )
+            if velocity_world.length_squared > 1.0e-12:
+                add_line(
+                    groups["motor"], frame.position,
+                    frame.position + velocity_world.normalized() * context.size * 0.55,
+                )

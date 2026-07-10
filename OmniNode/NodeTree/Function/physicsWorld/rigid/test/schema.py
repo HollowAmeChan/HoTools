@@ -327,6 +327,10 @@ class ConstraintSpec:
     motor_target_angle: float
     motor_target_velocity: float
     motor_target_position: float
+    swing_motor_state: str
+    twist_motor_state: str
+    swing_twist_target_angular_velocity: tuple[float, float, float]
+    swing_twist_target_orientation_wxyz: tuple[float, float, float, float]
     cone_half_angle: float
     swing_type: str
     swing_normal_half_angle: float
@@ -352,6 +356,9 @@ class ConstraintSpec:
             "motor_frequency", "motor_damping", "motor_force_limit",
             "motor_torque_limit", "motor_target_angular_velocity",
             "motor_target_angle", "motor_target_velocity", "motor_target_position",
+            "swing_motor_state", "twist_motor_state",
+            "swing_twist_target_angular_velocity",
+            "swing_twist_target_orientation_wxyz",
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
             "disable_collisions", "distance_min", "distance_max",
@@ -456,6 +463,20 @@ class ConstraintSpec:
             motor_target_position=_number(
                 data.get("motor_target_position", 0.0), f"{path}.motor_target_position",
             ),
+            swing_motor_state=_string(
+                data.get("swing_motor_state", "OFF"), f"{path}.swing_motor_state",
+            ).upper(),
+            twist_motor_state=_string(
+                data.get("twist_motor_state", "OFF"), f"{path}.twist_motor_state",
+            ).upper(),
+            swing_twist_target_angular_velocity=_vec(
+                data.get("swing_twist_target_angular_velocity", (0.0, 0.0, 0.0)),
+                3, f"{path}.swing_twist_target_angular_velocity",
+            ),
+            swing_twist_target_orientation_wxyz=_vec(
+                data.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0)),
+                4, f"{path}.swing_twist_target_orientation_wxyz",
+            ),
             cone_half_angle=_number(
                 data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
             ),
@@ -499,6 +520,12 @@ class ConstraintSpec:
             raise FixtureError(f"{path}.draw_size must be >= 0")
         if result.motor_state not in {"OFF", "VELOCITY", "POSITION"}:
             raise FixtureError(f"{path}.motor_state is unsupported: {result.motor_state}")
+        for field_name, state in (
+            ("swing_motor_state", result.swing_motor_state),
+            ("twist_motor_state", result.twist_motor_state),
+        ):
+            if state not in {"OFF", "VELOCITY", "POSITION"}:
+                raise FixtureError(f"{path}.{field_name} is unsupported: {state}")
         if result.swing_type not in {"CONE", "PYRAMID"}:
             raise FixtureError(f"{path}.swing_type is unsupported: {result.swing_type}")
         if result.solver_velocity_steps > 255 or result.solver_position_steps > 255:
@@ -507,6 +534,7 @@ class ConstraintSpec:
             ("anchor_rotation_wxyz", result.anchor_rotation_wxyz),
             ("anchor_rotation_wxyz_a", result.anchor_rotation_wxyz_a),
             ("anchor_rotation_wxyz_b", result.anchor_rotation_wxyz_b),
+            ("swing_twist_target_orientation_wxyz", result.swing_twist_target_orientation_wxyz),
         ):
             if sum(component * component for component in quat) <= 1.0e-20:
                 raise FixtureError(f"{path}.{name} cannot be zero")

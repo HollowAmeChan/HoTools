@@ -176,6 +176,14 @@ def _constraint_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "motor_target_angle", 0.0)),
         _round_float(getattr(spec, "motor_target_velocity", 0.0)),
         _round_float(getattr(spec, "motor_target_position", 0.0)),
+        str(getattr(spec, "swing_motor_state", "OFF") or "OFF"),
+        str(getattr(spec, "twist_motor_state", "OFF") or "OFF"),
+        tuple(_round_float(value) for value in getattr(
+            spec, "swing_twist_target_angular_velocity", (0.0, 0.0, 0.0),
+        )),
+        tuple(_round_float(value) for value in getattr(
+            spec, "swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0),
+        )),
         _round_float(getattr(spec, "cone_half_angle", 0.0)),
         _round_float(getattr(spec, "distance_min", 0.0)),
         _round_float(getattr(spec, "distance_max", 1.0)),

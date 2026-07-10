@@ -920,6 +920,10 @@ public:
         float                     motor_target_angle,
         float                     motor_target_velocity,
         float                     motor_target_position,
+        const std::string&        swing_motor_state_str,
+        const std::string&        twist_motor_state_str,
+        const std::array<float,3>& swing_twist_target_angular_velocity,
+        const std::array<float,4>& swing_twist_target_orientation_wxyz,
         float                     cone_half_angle,
         const std::string&        swing_type_str,
         float                     swing_normal_half_angle,
@@ -1109,7 +1113,44 @@ public:
             s.mTwistMinAngle = twist_min;
             s.mTwistMaxAngle = twist_max;
             s.mMaxFrictionTorque = (std::max)(0.0f, max_friction_torque);
-            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+            apply_motor_settings(s.mSwingMotorSettings);
+            apply_motor_settings(s.mTwistMotorSettings);
+            auto parse_motor_state = [](const std::string& state, const char* label) {
+                if (state == "OFF")
+                    return EMotorState::Off;
+                if (state == "VELOCITY")
+                    return EMotorState::Velocity;
+                if (state == "POSITION")
+                    return EMotorState::Position;
+                throw std::invalid_argument(std::string("不支持的 ") + label + " motor 状态: " + state);
+            };
+            SwingTwistConstraint* swing_twist = static_cast<SwingTwistConstraint*>(
+                s.Create(body_a, body_b));
+            swing_twist->SetSwingMotorState(parse_motor_state(swing_motor_state_str, "swing"));
+            swing_twist->SetTwistMotorState(parse_motor_state(twist_motor_state_str, "twist"));
+            // Jolt 约束基为 Twist/(Plane×Twist)/Plane，因此 HoTools XYZ 映射为 (Z,-Y,X)。
+            swing_twist->SetTargetAngularVelocityCS(Vec3(
+                swing_twist_target_angular_velocity[2],
+                -swing_twist_target_angular_velocity[1],
+                swing_twist_target_angular_velocity[0]
+            ));
+            float target_length = std::sqrt(
+                swing_twist_target_orientation_wxyz[0] * swing_twist_target_orientation_wxyz[0]
+                + swing_twist_target_orientation_wxyz[1] * swing_twist_target_orientation_wxyz[1]
+                + swing_twist_target_orientation_wxyz[2] * swing_twist_target_orientation_wxyz[2]
+                + swing_twist_target_orientation_wxyz[3] * swing_twist_target_orientation_wxyz[3]);
+            Quat target_orientation = Quat::sIdentity();
+            if (target_length > 1.0e-8f) {
+                float inverse_length = 1.0f / target_length;
+                target_orientation = Quat(
+                    swing_twist_target_orientation_wxyz[3] * inverse_length,
+                    -swing_twist_target_orientation_wxyz[2] * inverse_length,
+                    swing_twist_target_orientation_wxyz[1] * inverse_length,
+                    swing_twist_target_orientation_wxyz[0] * inverse_length
+                );
+            }
+            swing_twist->SetTargetOrientationCS(target_orientation);
+            c = static_cast<TwoBodyConstraint*>(swing_twist);
         } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
@@ -1583,6 +1624,10 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("motor_target_angle") = 0.0f,
              nb::arg("motor_target_velocity") = 0.0f,
              nb::arg("motor_target_position") = 0.0f,
+             nb::arg("swing_motor_state") = "OFF",
+             nb::arg("twist_motor_state") = "OFF",
+             nb::arg("swing_twist_target_angular_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("swing_twist_target_orientation_wxyz") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("cone_half_angle") = 0.0f,
              nb::arg("swing_type") = "CONE",
              nb::arg("swing_normal_half_angle") = JPH_PI,

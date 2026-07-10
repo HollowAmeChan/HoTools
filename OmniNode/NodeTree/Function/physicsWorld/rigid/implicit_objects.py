@@ -377,6 +377,13 @@ def make_rigid_generated_constraint_properties(
     swing_plane_half_angle: float = _PI * 0.25,
     twist_min_angle: float = -_PI * 0.25,
     twist_max_angle: float = _PI * 0.25,
+    swing_motor_state: str = "OFF",
+    twist_motor_state: str = "OFF",
+    motor_frequency: float = 2.0,
+    motor_damping: float = 1.0,
+    motor_torque_limit: float = 0.0,
+    swing_twist_target_angular_velocity=(0.0, 0.0, 0.0),
+    swing_twist_target_rotation=(0.0, 0.0, 0.0),
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -424,6 +431,12 @@ def make_rigid_generated_constraint_properties(
         _clamp(float(twist_min_angle), -_PI, _PI),
         _clamp(float(twist_max_angle), -_PI, _PI),
     )
+    normalized_swing_motor_state = str(swing_motor_state or "OFF").upper()
+    normalized_twist_motor_state = str(twist_motor_state or "OFF").upper()
+    if normalized_swing_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        normalized_swing_motor_state = "OFF"
+    if normalized_twist_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        normalized_twist_motor_state = "OFF"
 
     return [{
         "target_a": target_a if _is_object(target_a) else None,
@@ -458,14 +471,20 @@ def make_rigid_generated_constraint_properties(
         "max_friction_torque": 0.0,
         "max_friction_force": 0.0,
         "motor_state": "OFF",
-        "motor_frequency": 2.0,
-        "motor_damping": 1.0,
+        "motor_frequency": max(float(motor_frequency), 0.0),
+        "motor_damping": max(float(motor_damping), 0.0),
         "motor_force_limit": 0.0,
-        "motor_torque_limit": 0.0,
+        "motor_torque_limit": max(float(motor_torque_limit), 0.0),
         "motor_target_angular_velocity": 0.0,
         "motor_target_angle": 0.0,
         "motor_target_velocity": 0.0,
         "motor_target_position": 0.0,
+        "swing_motor_state": normalized_swing_motor_state,
+        "twist_motor_state": normalized_twist_motor_state,
+        "swing_twist_target_angular_velocity": _float3(swing_twist_target_angular_velocity),
+        "swing_twist_target_orientation_wxyz": _rotation_wxyz_from_euler(
+            swing_twist_target_rotation
+        ),
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
         "swing_type": normalized_swing_type,
         "swing_normal_half_angle": _clamp(float(swing_normal_half_angle), 0.0, _PI),
@@ -502,6 +521,12 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         _clamp(float(item.get("twist_min_angle", -_PI * 0.25)), -_PI, _PI),
         _clamp(float(item.get("twist_max_angle", _PI * 0.25)), -_PI, _PI),
     )
+    swing_motor_state = str(item.get("swing_motor_state", "OFF") or "OFF").upper()
+    twist_motor_state = str(item.get("twist_motor_state", "OFF") or "OFF").upper()
+    if swing_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        swing_motor_state = "OFF"
+    if twist_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        twist_motor_state = "OFF"
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
@@ -543,6 +568,14 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "motor_target_angle": float(item.get("motor_target_angle", 0.0) or 0.0),
         "motor_target_velocity": float(item.get("motor_target_velocity", 0.0) or 0.0),
         "motor_target_position": float(item.get("motor_target_position", 0.0) or 0.0),
+        "swing_motor_state": swing_motor_state,
+        "twist_motor_state": twist_motor_state,
+        "swing_twist_target_angular_velocity": _float3(
+            item.get("swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
+        ),
+        "swing_twist_target_orientation_wxyz": _float4(
+            item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+        ),
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
         "swing_type": swing_type,
         "swing_normal_half_angle": _clamp(float(item.get("swing_normal_half_angle", _PI * 0.25)), 0.0, _PI),
@@ -642,6 +675,17 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         f"{float(item.get('swing_plane_half_angle', _PI * 0.25)):.8g}",
         f"{float(item.get('twist_min_angle', -_PI * 0.25)):.8g}",
         f"{float(item.get('twist_max_angle', _PI * 0.25)):.8g}",
+        str(item.get("swing_motor_state", "OFF") or "OFF"),
+        str(item.get("twist_motor_state", "OFF") or "OFF"),
+        f"{float(item.get('motor_frequency', 2.0)):.8g}",
+        f"{float(item.get('motor_damping', 1.0)):.8g}",
+        f"{float(item.get('motor_torque_limit', 0.0)):.8g}",
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
+        )),
+        ",".join(f"{value:.8g}" for value in _float4(
+            item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+        )),
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
@@ -754,6 +798,14 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         motor_target_angle=float(item.get("motor_target_angle", 0.0) or 0.0),
         motor_target_velocity=float(item.get("motor_target_velocity", 0.0) or 0.0),
         motor_target_position=float(item.get("motor_target_position", 0.0) or 0.0),
+        swing_motor_state=str(item.get("swing_motor_state", "OFF") or "OFF"),
+        twist_motor_state=str(item.get("twist_motor_state", "OFF") or "OFF"),
+        swing_twist_target_angular_velocity=_float3(
+            item.get("swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
+        ),
+        swing_twist_target_orientation_wxyz=_float4(
+            item.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+        ),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
         swing_type=str(item.get("swing_type", "CONE") or "CONE"),
         swing_normal_half_angle=float(item.get("swing_normal_half_angle", _PI * 0.25)),

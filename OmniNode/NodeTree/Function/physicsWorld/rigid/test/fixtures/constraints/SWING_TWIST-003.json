@@ -1,0 +1,72 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SWING_TWIST-003",
+  "title": "SwingTwist 独立摆动位置电机与扭转速度电机",
+  "source": "jolt_unit_test:PoweredSwingTwistConstraintTest",
+  "tags": ["p0", "constraint", "swing-twist", "motor"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "swing_position_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [-2.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "twist_velocity_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [2.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "swing_position",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "swing_position_body",
+      "anchor_position": [-2.0, 0.0, 0.0],
+      "swing_normal_half_angle": 1.0,
+      "swing_plane_half_angle": 1.0,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793,
+      "swing_motor_state": "POSITION",
+      "twist_motor_state": "OFF",
+      "motor_frequency": 2.0,
+      "motor_damping": 1.0,
+      "swing_twist_target_orientation_wxyz": [0.9689124217106447, 0.24740395925452294, 0.0, 0.0]
+    },
+    {
+      "id": "twist_velocity",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "twist_velocity_body",
+      "anchor_position": [2.0, 0.0, 0.0],
+      "swing_normal_half_angle": 3.141592653589793,
+      "swing_plane_half_angle": 3.141592653589793,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793,
+      "swing_motor_state": "OFF",
+      "twist_motor_state": "VELOCITY",
+      "swing_twist_target_angular_velocity": [0.0, 0.0, 2.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 20, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "swing_position", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "twist_velocity", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_value_near", "constraint": "swing_position", "frame": 120, "expected": 0.5, "value_abs": 0.003, "current_value_kind": "swing_twist"},
+    {"kind": "rotation_axis_only", "body": "swing_position_body", "frame": 120, "axis": "X", "off_axis_abs": 0.0003, "angle_min": 0.49},
+    {"kind": "body_state_near", "body": "twist_velocity_body", "frame": 30, "angular_velocity": [0.0, 0.0, 2.0], "abs": 0.0001},
+    {"kind": "constraint_lambda_active", "constraint": "swing_position", "field": "lambda_motor", "min_abs": 0.0001, "start_frame": 1, "end_frame": 20},
+    {"kind": "constraint_lambda_active", "constraint": "twist_velocity", "field": "lambda_motor", "min_abs": 0.0001, "start_frame": 1, "end_frame": 20},
+    {"kind": "finite_all"}
+  ]
+}

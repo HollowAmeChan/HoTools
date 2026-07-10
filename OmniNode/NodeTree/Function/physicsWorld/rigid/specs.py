@@ -227,6 +227,10 @@ class ConstraintSpec:
         "motor_target_angle",
         "motor_target_velocity",
         "motor_target_position",
+        "swing_motor_state",
+        "twist_motor_state",
+        "swing_twist_target_angular_velocity",
+        "swing_twist_target_orientation_wxyz",
         "cone_half_angle",
         "swing_type",
         "swing_normal_half_angle",
@@ -279,6 +283,10 @@ class ConstraintSpec:
         motor_target_angle: float = 0.0,
         motor_target_velocity: float = 0.0,
         motor_target_position: float = 0.0,
+        swing_motor_state: str = "OFF",
+        twist_motor_state: str = "OFF",
+        swing_twist_target_angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        swing_twist_target_orientation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
         cone_half_angle: float = 0.0,
         swing_type: str = "CONE",
         swing_normal_half_angle: float = 3.141592653589793,
@@ -328,6 +336,10 @@ class ConstraintSpec:
         self.motor_target_angle: float = motor_target_angle
         self.motor_target_velocity: float = motor_target_velocity
         self.motor_target_position: float = motor_target_position
+        self.swing_motor_state: str = swing_motor_state
+        self.twist_motor_state: str = twist_motor_state
+        self.swing_twist_target_angular_velocity: tuple[float, float, float] = swing_twist_target_angular_velocity
+        self.swing_twist_target_orientation_wxyz: tuple[float, float, float, float] = swing_twist_target_orientation_wxyz
         self.cone_half_angle: float = cone_half_angle
         self.swing_type: str = swing_type
         self.swing_normal_half_angle: float = swing_normal_half_angle
@@ -377,6 +389,10 @@ class ConstraintSpec:
             "motor_target_angle": self.motor_target_angle,
             "motor_target_velocity": self.motor_target_velocity,
             "motor_target_position": self.motor_target_position,
+            "swing_motor_state": self.swing_motor_state,
+            "twist_motor_state": self.twist_motor_state,
+            "swing_twist_target_angular_velocity": self.swing_twist_target_angular_velocity,
+            "swing_twist_target_orientation_wxyz": self.swing_twist_target_orientation_wxyz,
             "cone_half_angle": self.cone_half_angle,
             "swing_type": self.swing_type,
             "swing_normal_half_angle": self.swing_normal_half_angle,
@@ -687,6 +703,18 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     motor_target_angle = float(getattr(props, "motor_target_angle", 0.0))
     motor_target_velocity = float(getattr(props, "motor_target_velocity", 0.0))
     motor_target_position = float(getattr(props, "motor_target_position", 0.0))
+    swing_motor_state = str(getattr(props, "swing_motor_state", "OFF") or "OFF").upper()
+    twist_motor_state = str(getattr(props, "twist_motor_state", "OFF") or "OFF").upper()
+    if swing_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        swing_motor_state = "OFF"
+    if twist_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+        twist_motor_state = "OFF"
+    swing_twist_target_angular_velocity = _float3(
+        getattr(props, "swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
+    )
+    swing_twist_target_orientation_wxyz = _rotation_wxyz_from_euler(
+        getattr(props, "swing_twist_target_rotation", (0.0, 0.0, 0.0))
+    )
     cone_half_angle = _clamp(float(getattr(props, "cone_half_angle", 0.0)), 0.0, _PI)
     swing_type = str(getattr(props, "swing_type", "CONE") or "CONE").upper()
     if swing_type not in {"CONE", "PYRAMID"}:
@@ -746,6 +774,10 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         motor_target_angle=motor_target_angle,
         motor_target_velocity=motor_target_velocity,
         motor_target_position=motor_target_position,
+        swing_motor_state=swing_motor_state,
+        twist_motor_state=twist_motor_state,
+        swing_twist_target_angular_velocity=swing_twist_target_angular_velocity,
+        swing_twist_target_orientation_wxyz=swing_twist_target_orientation_wxyz,
         cone_half_angle=cone_half_angle,
         swing_type=swing_type,
         swing_normal_half_angle=swing_normal_half_angle,

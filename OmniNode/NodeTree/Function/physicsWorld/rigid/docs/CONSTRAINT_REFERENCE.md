@@ -10,7 +10,7 @@
 | `HINGE` | 绕本地 Z 单轴旋转 | 角度 limit、spring、friction torque、angular motor | 门轴、轮轴、机械关节 |
 | `SLIDER` | 沿本地 Z 单轴平移 | 线性 limit、spring、friction force、linear motor | 活塞、抽屉、滑轨 |
 | `CONE` | cone 范围内 swing，twist 自由 | half cone angle | 摆锤、简化球窝角限制 |
-| `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque | 肩关节、受限球窝、布偶关节 |
+| `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque、双 motor | 肩关节、受限球窝、布偶关节 |
 
 ## 类型细节
 
@@ -58,9 +58,13 @@
 - `swing_type = PYRAMID`：用相同的两个半角定义金字塔式摆动边界；
 - `twist_min_angle` / `twist_max_angle`：限制绕本地 Z 的扭转范围；
 - `max_friction_torque`：限制阻碍相对旋转的最大摩擦力矩；
+- `swing_motor_state` / `twist_motor_state`：分别启用摆动和扭转的速度或位置 motor；
+- `swing_twist_target_angular_velocity`：HoTools 约束 frame 局部 XYZ 目标角速度，其中 Z 是 twist axis；
+- `swing_twist_target_rotation`：HoTools 约束 frame 中的目标欧拉姿态；
+- `motor_frequency` / `motor_damping` / `motor_torque_limit`：两个 motor 共用的弹簧和力矩限制；
 - 当前相对旋转值以及 position、swing、twist、limit、motor lambda 结果。
 
-当前版本尚未暴露 SwingTwist orientation motor。需要电机驱动时不能借用 Hinge 的单轴 motor 参数假装等价。
+Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。binding 会把 HoTools 局部 XYZ 显式映射为 Jolt `(Z, -Y, X)`；用户不需要手工重排或翻转目标分量。
 
 ## 通用参数
 

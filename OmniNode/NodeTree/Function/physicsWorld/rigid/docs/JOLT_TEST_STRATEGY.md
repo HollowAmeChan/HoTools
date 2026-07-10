@@ -32,15 +32,15 @@
 - position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- 48 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询和约束；
+- 49 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询和约束；
 - 七种已接入约束均有 schema、state trace 和独立物理 oracle；
 - Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
 - Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
 - Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
-- py311/py313 各自 48/48 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
+- py311/py313 各自 49/49 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、七种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SwingTwist orientation motor、adapter parity、Blender E2E、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、七种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、adapter parity、Blender E2E、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -233,6 +233,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | PASS (S1) |
 | SWING_TWIST-001 | 摆角与扭转限制 | anchor 重合；纯摆动与纯扭转分别收敛到声明边界，非目标轴残差有界 | 不变量/Jolt | P0 | PASS (S1) |
 | SWING_TWIST-002 | Pyramid 轴映射与摩擦 | 本地 X/Y 分别命中 normal/plane 半角；摩擦力矩按惯量解析衰减并产生 lambda | 解析/Jolt official | P0 | PASS (S1) |
+| SWING_TWIST-003 | 独立双 motor | swing 位置 motor 收敛到局部 X 目标姿态；twist 速度 motor 达到局部 Z 目标角速度；motor lambda 活跃 | Jolt official/变形 | P0 | PASS (S1) |
 | PAIR-001 | 不同质量 Distance spring | 两端轨迹正确且总线动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-002 | 不同质量 Slider motor | 限力反作用与质量倒数成比例，总动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-003 | 不同转动惯量 Hinge motor | 限矩反作用正确，总角动量守恒 | 解析/Jolt | P0 | 已实现 |
@@ -256,7 +257,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | DET-001 | 两个新 world 同步重放 | 每帧原始 float bitwise 相等 | Jolt determinism | P0 | 已实现 |
 | DET-002 | 同 fixture 跨进程运行 10 次 | canonical physical hash 一致 | Jolt determinism | P0 | 已实现 |
 | DET-003 | Blender scope 枚举随机打乱 | stable-id 排序后 API 调用序与 trace 不变 | HoTools | P0 | 缺失 |
-| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | 两 ABI 各自 48/48；自动容差差分报告缺失 |
+| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | 两 ABI 各自 49/49；自动容差差分报告缺失 |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | 缺失 |
 | PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 缺失 |
 | PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 缺失 |

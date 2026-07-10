@@ -575,6 +575,14 @@ class JoltAdapter:
             motor_target_angle=float(getattr(spec, "motor_target_angle", 0.0)),
             motor_target_velocity=float(getattr(spec, "motor_target_velocity", 0.0)),
             motor_target_position=float(getattr(spec, "motor_target_position", 0.0)),
+            swing_motor_state=str(getattr(spec, "swing_motor_state", "OFF")),
+            twist_motor_state=str(getattr(spec, "twist_motor_state", "OFF")),
+            swing_twist_target_angular_velocity=tuple(
+                getattr(spec, "swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
+            ),
+            swing_twist_target_orientation_wxyz=tuple(
+                getattr(spec, "swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+            ),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
             swing_type=str(getattr(spec, "swing_type", "CONE")),
             swing_normal_half_angle=float(
