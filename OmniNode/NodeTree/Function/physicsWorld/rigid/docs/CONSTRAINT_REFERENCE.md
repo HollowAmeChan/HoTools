@@ -81,7 +81,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 三个平移轴分别提供 `six_dof_translation_*_limit_spring_frequency` 和 `six_dof_translation_*_limit_spring_damping`；频率为 0 时保持硬限制。Jolt 原生不支持 SixDOF 旋转软限制，因此旋转轴没有对应 spring 属性。
 
-显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor、三平移轴 limit spring 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。逐轴 current-value result 尚未接入。
+显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor、三平移轴 limit spring 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。`rigid_constraint_state.current_translation` 返回 body A 约束空间中的 XYZ 锚点位移，`current_rotation` 返回同一约束空间中的 XYZ 欧拉旋转；旧的 `current_value` 旋转幅值标量继续保留用于兼容。
 
 ## 通用参数
 

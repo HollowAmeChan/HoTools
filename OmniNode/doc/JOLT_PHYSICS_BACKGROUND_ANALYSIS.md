@@ -449,7 +449,7 @@ Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：
 建议下一批补：
 
 - body type / shape type / bounds。
-- constraint current value：hinge angle、slider position、distance 已接；6DOF limits 状态待约束类型接入。
+- constraint current value：hinge angle、slider position、distance，以及 SixDOF 约束空间 XYZ 平移/欧拉旋转已接。
 - constraint lambda / impulse 已接，用于 debug 和 breakable constraint。
 - contact list：body pair、normal、penetration、points、state added/persisted/removed。
 - sensor event。

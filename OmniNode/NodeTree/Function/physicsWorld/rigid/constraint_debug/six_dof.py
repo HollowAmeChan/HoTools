@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from mathutils import Quaternion, Vector
+from mathutils import Euler, Quaternion, Vector
 
 from ...utils.debug_draw import add_line
 from .common import append_anchor_pair, append_arc, append_frame_axes
@@ -145,4 +145,36 @@ def append_lines(groups: dict[str, list], spec, context) -> None:
             add_line(
                 groups["motor"], frame.position,
                 frame.position + world_angular_velocity * context.size * 0.48,
+            )
+
+    if str(context.state.get("current_value_kind", "none")) == "six_dof":
+        current_translation = tuple(context.state.get(
+            "current_translation", (0.0, 0.0, 0.0),
+        ))
+        if len(current_translation) == 3:
+            local_position = Vector(tuple(float(value) for value in current_translation))
+            world_position = (
+                local_position.x * frame.axis_x
+                + local_position.y * frame.axis_y
+                + local_position.z * frame.axis_z
+            )
+            add_line(
+                groups["state"], frame.position,
+                frame.position + world_position,
+            )
+        current_rotation = tuple(context.state.get(
+            "current_rotation", (0.0, 0.0, 0.0),
+        ))
+        if len(current_rotation) == 3:
+            local_direction = Euler(tuple(
+                float(value) for value in current_rotation
+            )).to_quaternion() @ Vector((0.0, 0.0, 1.0))
+            world_direction = (
+                local_direction.x * frame.axis_x
+                + local_direction.y * frame.axis_y
+                + local_direction.z * frame.axis_z
+            )
+            add_line(
+                groups["state"], frame.position,
+                frame.position + world_direction * context.size * 0.42,
             )

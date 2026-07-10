@@ -97,7 +97,9 @@
     {"kind": "linear_axis_only", "body": "translate_x", "frame": 60, "axis": "X", "off_axis_abs": 0.0005, "displacement_min": 1.5, "rotation_abs": 0.0005},
     {"kind": "rotation_axis_only", "body": "rotate_z", "frame": 60, "axis": "Z", "off_axis_abs": 0.0005, "angle_min": 2.5},
     {"kind": "body_axis_range", "body": "translate_limit_x", "frame": 120, "field": "position", "axis": "X", "minimum": 2.295, "maximum": 2.305},
+    {"kind": "constraint_vector_near", "constraint": "limited_translation_x", "frame": 120, "field": "current_translation", "expected": [0.3, 0.0, 0.0], "abs": 0.004},
     {"kind": "constraint_value_near", "constraint": "limited_rotation_z", "frame": 120, "expected": 0.4, "value_abs": 0.004, "current_value_kind": "six_dof"},
+    {"kind": "constraint_vector_near", "constraint": "limited_rotation_z", "frame": 120, "field": "current_rotation", "expected": [0.0, 0.0, 0.4], "abs": 0.004},
     {"kind": "finite_all"}
   ]
 }

@@ -213,23 +213,28 @@ def physicsRigidReadState(
     _OUTPUT_NAME=[
         "物理世界", "命中", "启用", "约束类型", "当前值类型", "当前值",
         "位置Lambda", "旋转Lambda", "限制Lambda", "Motor Lambda", "最大Lambda", "已断裂", "结果",
+        "SixDOF当前平移", "SixDOF当前旋转",
     ],
     omni_description="""
     从 rigid_constraint_state result stream 读取显式 Empty 约束当前状态。
 
-    当前值对 Hinge 是角度、Slider 是位置、Distance 是锚点距离；lambda
-    来自上一物理步，可用于调试和后续断裂策略。节点不访问 Jolt handle。
+    当前值对 Hinge 是角度、Slider 是位置、Distance 是锚点距离；SixDOF
+    额外输出约束空间 XYZ 平移和 XYZ 欧拉旋转。lambda 来自上一物理步，
+    可用于调试和后续断裂策略。节点不访问 Jolt handle。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
 def physicsRigidConstraintReadState(
     world: object,
     target: bpy.types.Object,
-) -> tuple[object, bool, bool, str, str, float, mathutils.Vector, mathutils.Vector, float, float, float, bool, object]:
+) -> tuple[object, bool, bool, str, str, float, mathutils.Vector, mathutils.Vector, float, float, float, bool, object, mathutils.Vector, mathutils.Vector]:
     result = _rigid_constraint_result_for_target(world, target)
     if result is None:
         zero = mathutils.Vector((0.0, 0.0, 0.0))
-        return world, False, False, "", "none", 0.0, zero.copy(), zero.copy(), 0.0, 0.0, 0.0, False, None
+        return (
+            world, False, False, "", "none", 0.0, zero.copy(), zero.copy(),
+            0.0, 0.0, 0.0, False, None, zero.copy(), zero.copy(),
+        )
 
     return (
         world,
@@ -245,6 +250,8 @@ def physicsRigidConstraintReadState(
         float(result.get("lambda_max_abs", 0.0) or 0.0),
         bool(result.get("broken", False)),
         result,
+        mathutils.Vector(_vec3(result.get("current_translation"))),
+        mathutils.Vector(_vec3(result.get("current_rotation"))),
     )
 
 

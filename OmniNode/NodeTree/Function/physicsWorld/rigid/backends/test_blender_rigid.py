@@ -860,6 +860,8 @@ def test_six_dof_constraint_spec_and_adapter():
     assert state is not None
     assert state["constraint_type"] == "SIX_DOF"
     assert state["current_value_kind"] == "six_dof"
+    assert len(state["current_translation"]) == 3
+    assert len(state["current_rotation"]) == 3
     assert len(state["lambda_position"]) == 3
     assert len(state["lambda_rotation"]) == 3
     adapter.dispose("test_six_dof_constraint")
@@ -969,6 +971,8 @@ def test_constraint_state_result_pipeline():
     assert result["broken"] is True
     assert result["enabled"] is False
     assert result["breaking_impulse"] > 0.0
+    assert result["current_translation"] == (0.0, 0.0, 0.0)
+    assert result["current_rotation"] == (0.0, 0.0, 0.0)
     assert len(result["lambda_position"]) == 3
     assert len(result["lambda_rotation"]) == 3
     assert result["lambda_max_abs"] >= 0.0
@@ -978,8 +982,10 @@ def test_constraint_state_result_pipeline():
     assert node_result[2] is False
     assert node_result[3] == "HINGE"
     assert node_result[4] == "angle"
-    assert node_result[-2] is True
-    assert node_result[-1] is result
+    assert node_result[11] is True
+    assert node_result[12] is result
+    assert tuple(node_result[13]) == (0.0, 0.0, 0.0)
+    assert tuple(node_result[14]) == (0.0, 0.0, 0.0)
 
     cache_value, _, _ = physicsWorldCommit(world, enabled=True)
     props.breaking_threshold = 1000.0
@@ -1794,6 +1800,12 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "SLIDER": {"current_value_kind": "position", "current_value": 0.4},
         "DISTANCE": {"current_value_kind": "distance", "current_value": 1.2},
         "SWING_TWIST": {"current_value_kind": "swing_twist", "current_value": 0.3},
+        "SIX_DOF": {
+            "current_value_kind": "six_dof",
+            "current_value": 0.4,
+            "current_translation": (0.3, 0.0, 0.0),
+            "current_rotation": (0.0, 0.0, 0.4),
+        },
     }
     for constraint_type in (
         "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
@@ -1809,7 +1821,7 @@ def test_constraint_debug_renderer_registry_and_semantics():
             assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
         if constraint_type in {"HINGE", "SLIDER", "SWING_TWIST", "SIX_DOF"}:
             assert groups["motor"], f"{constraint_type} 应显示 motor target"
-        if constraint_type in {"HINGE", "SLIDER"}:
+        if constraint_type in {"HINGE", "SLIDER", "SIX_DOF"}:
             assert groups["state"], f"{constraint_type} 应显示当前求解值"
         assert all(
             isinstance(point, tuple) and len(point) == 3

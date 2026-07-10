@@ -647,6 +647,7 @@ class JoltAdapter:
         if handle is None or not hasattr(self._jw, "get_constraint_state"):
             return None
 
+        raw_state = self._jw.get_constraint_state(handle)
         (
             constraint_type,
             enabled,
@@ -656,7 +657,14 @@ class JoltAdapter:
             lambda_rotation,
             lambda_limit,
             lambda_motor,
-        ) = self._jw.get_constraint_state(handle)
+            *extended_state,
+        ) = raw_state
+        current_translation = _vec3_tuple(
+            extended_state[0] if len(extended_state) >= 2 else (0.0, 0.0, 0.0)
+        )
+        current_rotation = _vec3_tuple(
+            extended_state[1] if len(extended_state) >= 2 else (0.0, 0.0, 0.0)
+        )
         position = _vec3_tuple(lambda_position)
         rotation = _vec3_tuple(lambda_rotation)
         peak = max(
@@ -670,6 +678,8 @@ class JoltAdapter:
             "enabled": bool(enabled),
             "current_value_kind": str(current_value_kind or "none"),
             "current_value": float(current_value),
+            "current_translation": current_translation,
+            "current_rotation": current_rotation,
             "lambda_position": position,
             "lambda_rotation": rotation,
             "lambda_limit": float(lambda_limit),

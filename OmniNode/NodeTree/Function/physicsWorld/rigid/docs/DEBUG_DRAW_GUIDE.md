@@ -2,7 +2,7 @@
 
 “Jolt刚体可视化调试”只消费 `ConstraintSpec`、solver slot 和 `rigid_constraint_state` 的纯快照，不调用 Jolt 原生 renderer，也不暴露 native handle。
 
-当前版本的 frame/limit glyph 使用 adapter 创建约束时实际消费的 `ConstraintSpec` world frame；angle/position/distance 与 lambda 使用 step 后的 `rigid_constraint_state`。因此约束语义和动态标量是真实输入/输出，但 native 当前 A/B world frame 的逐帧 readback 仍是下一阶段工作。snapshot 会明确给出 `constraint_frame_source=constraint_spec_backend_input` 和 `constraint_runtime_frame_readback=false`，不会把 authored frame 冒充为 native 动态 frame。
+当前版本的 frame/limit glyph 使用 adapter 创建约束时实际消费的 `ConstraintSpec` world frame；angle/position/distance、SixDOF 六轴 current value 与 lambda 使用 step 后的 `rigid_constraint_state`。因此约束语义和动态值是真实输入/输出，但 native 当前 A/B world frame 的逐帧 readback 仍是下一阶段工作。snapshot 会明确给出 `constraint_frame_source=constraint_spec_backend_input` 和 `constraint_runtime_frame_readback=false`，不会把 authored frame 冒充为 native 动态 frame。
 
 ## 颜色
 

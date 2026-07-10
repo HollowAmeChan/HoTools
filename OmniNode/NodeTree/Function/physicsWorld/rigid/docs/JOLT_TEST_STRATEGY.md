@@ -234,7 +234,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SWING_TWIST-001 | 摆角与扭转限制 | anchor 重合；纯摆动与纯扭转分别收敛到声明边界，非目标轴残差有界 | 不变量/Jolt | P0 | PASS (S1) |
 | SWING_TWIST-002 | Pyramid 轴映射与摩擦 | 本地 X/Y 分别命中 normal/plane 半角；摩擦力矩按惯量解析衰减并产生 lambda | 解析/Jolt official | P0 | PASS (S1) |
 | SWING_TWIST-003 | 独立双 motor | swing 位置 motor 收敛到局部 X 目标姿态；twist 速度 motor 达到局部 Z 目标角速度；motor lambda 活跃 | Jolt official/变形 | P0 | PASS (S1) |
-| SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式 | Jolt official/不变量 | P0 | PASS (S1)，公共 spec/adapter/debug 已接 |
+| SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式；六轴 current-value readback 与真实状态一致 | Jolt official/不变量 | P0 | PASS (S1)，公共 spec/adapter/result/debug 已接 |
 | SIX_DOF-002 | 每轴 friction | 平移 X 按最大摩擦力/质量衰减；旋转 Z 按最大摩擦力矩/惯量衰减；lambda 活跃 | 解析/Jolt | P0 | PASS (S1)，公共 spec/生成约束已接 |
 | SIX_DOF-003 | 每轴 motor | 平移 X 速度 motor 按力上限加速；旋转 Z 位置 motor 收敛到目标姿态；lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束/debug 已接 |
 | SIX_DOF-004 | 平移 limit spring | 平移 X 软限制逐帧符合 Jolt FrequencyAndDamping 隐式欧拉轨迹；limit lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束已接 |

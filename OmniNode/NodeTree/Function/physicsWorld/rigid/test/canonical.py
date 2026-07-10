@@ -71,10 +71,10 @@ def canonical_body_state(body_id: str, state: Sequence[Any]) -> dict[str, Any]:
 
 
 def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict[str, Any]:
-    """将 native 约束的 8 字段状态转换为稳定 trace 结构。"""
-    if len(state) != 8:
+    """将 native 约束状态转换为稳定 trace，兼容旧的八字段 ABI。"""
+    if len(state) not in {8, 10}:
         raise NonFiniteTraceError(
-            f"constraint {constraint_id} state expected 8 fields, got {len(state)}"
+            f"constraint {constraint_id} state expected 8 or 10 fields, got {len(state)}"
         )
     constraint_type = str(state[0])
     if not isinstance(state[1], bool):
@@ -89,9 +89,17 @@ def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict
     )
     lambda_limit = finite_float(state[6], f"constraints.{constraint_id}.lambda_limit")
     lambda_motor = finite_float(state[7], f"constraints.{constraint_id}.lambda_motor")
+    current_translation = vector(
+        state[8] if len(state) >= 10 else (0.0, 0.0, 0.0),
+        3, f"constraints.{constraint_id}.current_translation",
+    )
+    current_rotation = vector(
+        state[9] if len(state) >= 10 else (0.0, 0.0, 0.0),
+        3, f"constraints.{constraint_id}.current_rotation",
+    )
     numeric = (
         [current_value] + lambda_position + lambda_rotation
-        + [lambda_limit, lambda_motor]
+        + [lambda_limit, lambda_motor] + current_translation + current_rotation
     )
     return {
         "id": constraint_id,
@@ -99,6 +107,8 @@ def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict
         "enabled": state[1],
         "current_value_kind": value_kind,
         "current_value": current_value,
+        "current_translation": current_translation,
+        "current_rotation": current_rotation,
         "lambda_position": lambda_position,
         "lambda_rotation": lambda_rotation,
         "lambda_limit": lambda_limit,

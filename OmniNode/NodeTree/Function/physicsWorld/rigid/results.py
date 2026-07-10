@@ -162,6 +162,8 @@ def make_rigid_constraint_state_result(
         "breaking_impulse": float(state.get("breaking_impulse", 0.0) or 0.0),
         "current_value_kind": str(state.get("current_value_kind", "none") or "none"),
         "current_value": float(state.get("current_value", 0.0) or 0.0),
+        "current_translation": _float3(state.get("current_translation", (0.0, 0.0, 0.0))),
+        "current_rotation": _float3(state.get("current_rotation", (0.0, 0.0, 0.0))),
         "lambda_position": _float3(state.get("lambda_position", (0.0, 0.0, 0.0))),
         "lambda_rotation": _float3(state.get("lambda_rotation", (0.0, 0.0, 0.0))),
         "lambda_limit": float(state.get("lambda_limit", 0.0) or 0.0),

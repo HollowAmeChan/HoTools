@@ -659,6 +659,29 @@ def _assert_constraint_value_near(
         )
 
 
+def _assert_constraint_vector_near(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证约束状态中的三分量 current-value 向量。"""
+    constraint_id = _constraint_id(parameters)
+    frame_number = int(_number(parameters.get("frame"), "frame"))
+    field = str(parameters.get("field", ""))
+    if field not in {"current_translation", "current_rotation"}:
+        raise FixtureError(
+            "constraint vector field must be current_translation or current_rotation"
+        )
+    expected = _vec(parameters.get("expected"), 3, "expected")
+    tolerance = _number(parameters.get("abs"), "abs", 2.0e-3)
+    frames = _frames_by_number(trace)
+    if frame_number not in frames:
+        raise FixtureError(f"constraint_vector_near needs sampled frame {frame_number}")
+    actual = _constraint_at(frames[frame_number], constraint_id).get(field)
+    _assert_vector_near(
+        actual, expected, abs_tol=tolerance, rel_tol=0.0,
+        label=f"{fixture.id} frame {frame_number} {constraint_id}.{field}",
+    )
+
+
 def _assert_implicit_spring_trajectory(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
 ) -> None:
@@ -1295,6 +1318,9 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "constraint_value_near": lambda spec: _assert_constraint_value_near(
+            fixture, trace, spec.parameters,
+        ),
+        "constraint_vector_near": lambda spec: _assert_constraint_vector_near(
             fixture, trace, spec.parameters,
         ),
         "implicit_spring_trajectory": lambda spec: _assert_implicit_spring_trajectory(

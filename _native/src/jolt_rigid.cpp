@@ -1303,16 +1303,23 @@ public:
         std::array<float,3>,
         std::array<float,3>,
         float,
-        float>
+        float,
+        std::array<float,3>,
+        std::array<float,3>>
     get_constraint_state(uint32_t handle) const {
         auto it = mConstraints.find(handle);
         if (it == mConstraints.end())
-            return {"", false, "none", 0.0f, {0,0,0}, {0,0,0}, 0.0f, 0.0f};
+            return {
+                "", false, "none", 0.0f, {0,0,0}, {0,0,0}, 0.0f, 0.0f,
+                {0,0,0}, {0,0,0},
+            };
 
         const ConstraintRecord& record = it->second;
         TwoBodyConstraint* base = record.constraint.GetPtr();
         std::string current_value_kind = "none";
         float current_value = 0.0f;
+        std::array<float,3> current_translation = {0.0f, 0.0f, 0.0f};
+        std::array<float,3> current_rotation = {0.0f, 0.0f, 0.0f};
         std::array<float,3> lambda_position = {0.0f, 0.0f, 0.0f};
         std::array<float,3> lambda_rotation = {0.0f, 0.0f, 0.0f};
         float lambda_limit = 0.0f;
@@ -1375,6 +1382,21 @@ public:
             current_value_kind = "six_dof";
             Quat rotation = constraint->GetRotationInConstraintSpace();
             current_value = 2.0f * std::acos(std::clamp(std::abs(rotation.GetW()), 0.0f, 1.0f));
+            Mat44 constraint_to_body1 = constraint->GetConstraintToBody1Matrix();
+            RVec3 point1 = constraint->GetBody1()->GetCenterOfMassTransform()
+                * constraint_to_body1.GetTranslation();
+            RVec3 point2 = constraint->GetBody2()->GetCenterOfMassTransform()
+                * constraint->GetConstraintToBody2Matrix().GetTranslation();
+            Quat constraint_to_world = constraint->GetBody1()->GetRotation()
+                * constraint_to_body1.GetQuaternion();
+            Vec3 translation = constraint_to_world.Conjugated() * Vec3(point2 - point1);
+            Vec3 rotation_euler = rotation.GetEulerAngles();
+            current_translation = {
+                translation.GetX(), translation.GetY(), translation.GetZ(),
+            };
+            current_rotation = {
+                rotation_euler.GetX(), rotation_euler.GetY(), rotation_euler.GetZ(),
+            };
             Vec3 p = constraint->GetTotalLambdaPosition();
             Vec3 r = constraint->GetTotalLambdaRotation();
             lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
@@ -1414,6 +1436,8 @@ public:
             lambda_rotation,
             lambda_limit,
             lambda_motor,
+            current_translation,
+            current_rotation,
         };
     }
 

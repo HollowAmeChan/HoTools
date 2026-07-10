@@ -719,6 +719,7 @@ class AssertionSpec:
             "constraint_anchor_coincidence", "rotation_axis_only",
             "linear_axis_only", "cone_swing_limit",
             "constraint_value_in_range", "constraint_value_near",
+            "constraint_vector_near",
             "implicit_spring_trajectory", "linear_speed_trajectory",
             "linear_implicit_spring_trajectory",
             "constraint_lambda_active",
@@ -784,6 +785,9 @@ class AssertionSpec:
             "constraint_value_near": {
                 "constraint", "frame", "expected", "value_abs",
                 "current_value_kind",
+            },
+            "constraint_vector_near": {
+                "constraint", "frame", "field", "expected", "abs",
             },
             "implicit_spring_trajectory": {
                 "constraint", "target", "initial_velocity", "frequency", "damping",
