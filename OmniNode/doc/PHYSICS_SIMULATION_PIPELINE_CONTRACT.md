@@ -7,6 +7,7 @@
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
 - **`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`（MC2 执行计划）**：固定 MC2 源码基线、源码 worksheet、阶段门槛和实施顺序；只约束 MC2 domain，不覆盖本文的公共架构。
+- **`MC2_HOST_NATIVE_CONTRACT_DRAFT.md`（MC2 S2 边界草案）**：把已审查源码数据流映射到 host/native 生命周期和 ABI 候选；draft 不覆盖本文，也不代表已实现能力。
 - **`MC2_DESIGN_AND_WORKSHEET.md`（旧 MC2 参考）**：旧 MeshCloth 迁移审计、公式与踩坑档案，不再作为新 MC2 的执行计划。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
@@ -1149,8 +1150,8 @@ VRM SpringBone:
   旧实现已有 Python / C++ 双路径，cache、碰撞、PoseBone 写回、multi-armature 都齐全。
   新迁移只保留 C++ / native 计算路径，Python 只做 spec、slot、buffer、result、writeback glue。
 
-MC2 MeshCloth:
-  已有 native context 和 mesh delta 写回，适合验证 native resident state。
+旧 MC2 MeshCloth:
+  旧 package 已有 native context 和 mesh delta 写回，只能作为新统一 MC2 的对拍与 resident-state 参考；新 `physicsWorld.mc2` 尚无 native context。
 
 Rigid Jolt:
   适合验证 backend world resource、dispose 和 object transform writeback。

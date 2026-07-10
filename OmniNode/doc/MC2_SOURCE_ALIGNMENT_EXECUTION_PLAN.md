@@ -8,6 +8,8 @@
 
 S1 的逐字段 producer/consumer 记录见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
+S2 的 host/native 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`。其中 draft 字段和 open decisions 必须经人工审查，不能直接当作已实现 ABI。
+
 本文回答“下一步先查什么、冻结什么契约、通过什么门槛后才能写代码”。物理世界长期架构由 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 定义，当前落地状态由 `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md` 记录。`MC2_DESIGN_AND_WORKSHEET.md` 只保留旧 MeshCloth 迁移审计、公式参考和历史踩坑，不再决定新 `physicsWorld.mc2` 的实现顺序或数据结构。
 
 ## 核心结论

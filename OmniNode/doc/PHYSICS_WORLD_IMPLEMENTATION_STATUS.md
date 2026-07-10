@@ -4,7 +4,7 @@
 
 架构判断以 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 为唯一权威；OmniNode 编译、执行、缓存和懒求值机制见 `../ARCHITECTURE.md`。solver 自己的功能矩阵、backend 能力和测试说明应放在各 domain 的 `docs/` 或测试目录中。
 
-MC2 的当前源码对照与实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；`MC2_DESIGN_AND_WORKSHEET.md` 已降级为旧 MeshCloth 迁移审计与公式参考。
+MC2 的当前源码对照与实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，逐字段审计见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`，S2 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`；`MC2_DESIGN_AND_WORKSHEET.md` 已降级为旧 MeshCloth 迁移审计与公式参考。
 
 ## 当前系统边界
 
