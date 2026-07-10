@@ -85,10 +85,14 @@ MC2_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [
+        "result_channels": [],
+        "shared_result_channels": [],
+        "planned_result_channels": [
+            MC2_STATS_CHANNEL,
+        ],
+        "planned_shared_result_channels": [
             GN_ATTRIBUTE_CHANNEL,
             BONE_TRANSFORM_CHANNEL,
-            MC2_STATS_CHANNEL,
         ],
         "supports_bake": False,
         "solver_acceptance_blocker": True,

@@ -95,7 +95,10 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "update_tag_owner": "writeback.apply",
     },
     "export": {
-        "result_channels": [BONE_TRANSFORM_CHANNEL, SPRING_VRM_STATS_CHANNEL],
+        "result_channels": [SPRING_VRM_STATS_CHANNEL],
+        "shared_result_channels": [BONE_TRANSFORM_CHANNEL],
+        "planned_result_channels": [],
+        "planned_shared_result_channels": [],
         "supports_bake": False,
         "bake_owner": "future unified writeback keyframe node",
         "solver_acceptance_blocker": False,

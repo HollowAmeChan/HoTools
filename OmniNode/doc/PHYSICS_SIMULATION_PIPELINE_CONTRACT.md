@@ -423,6 +423,26 @@ export cache stream
 - writeback plan 可以由 solver prepare 生成，但执行写回应由统一 writeback 阶段完成。
 - 导出缓存应消费同一 result stream，不能重新从 solver 私有状态里猜。
 
+solver declaration 的 `export` 必须区分 channel 生命周期与所有权：
+
+| 字段 | 语义 | registry 规则 |
+|---|---|---|
+| `result_channels` | 当前实际发布、solver/domain 独占 | channel 名全局唯一 |
+| `shared_result_channels` | 当前实际发布、Physics World 共享写回 | 允许多个 solver，共享 schema |
+| `planned_result_channels` | 尚未发布、未来独占 | 只展示，不进入 active 冲突校验 |
+| `planned_shared_result_channels` | 尚未发布、未来共享写回 | 只展示，不进入 active 冲突校验 |
+
+`bone_transform` 与 `gn_attribute` 属于共享写回 channel，不应登记为 solver 独占
+channel。domain 自有 stats、event、query channel 仍应登记为独占。框架 no-op 不得把
+未来 channel 填入 active 字段，否则 declaration 会虚报运行能力。
+
+共享 channel 只表示多个生产者使用同一 payload schema，不自动规定目标合成策略：
+
+- `bone_transform` 按 result 发布时间顺序执行；同一 PoseBone 的后发布结果覆盖先发布
+  结果。图作者负责避免让多个 solver 重复解算同一骨骼。
+- `gn_attribute` 表示每个 Mesh 的单一最终 offset；其中间分量仍先经 `world.exchange`
+  归并，最终 writer 冲突策略见下节。
+
 #### 共享 GN 顶点 offset 契约
 
 Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”，不是任意属性

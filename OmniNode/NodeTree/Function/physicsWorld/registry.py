@@ -464,10 +464,18 @@ def iter_solver_debug_draw_modes() -> list[dict]:
 
 
 def validate_solver_registry() -> dict:
+    """校验 solver id 与独占资源，并汇总共享/计划中的 result channel。
+
+    ``result_channels`` 仍要求单一 domain owner；``shared_result_channels``
+    允许多个 solver 共同发布。planned 两类只做可观察汇总，不参与 active 冲突。
+    """
     problems: list[dict] = []
     seen_solver_ids: dict[str, str] = {}
     seen_slot_kinds: dict[str, str] = {}
     seen_result_channels: dict[str, str] = {}
+    seen_shared_result_channels: dict[str, list[str]] = {}
+    planned_result_channels: dict[str, list[str]] = {}
+    planned_shared_result_channels: dict[str, list[str]] = {}
     seen_implicit_tags: dict[str, str] = {}
     seen_debug_modes: dict[str, str] = {}
 
@@ -485,6 +493,28 @@ def validate_solver_registry() -> dict:
             return
         bucket[key] = domain
 
+    def _append_owner(bucket: dict[str, list[str]], value: str, domain: str) -> None:
+        key = str(value or "").strip()
+        if not key:
+            return
+        owners = bucket.setdefault(key, [])
+        if domain not in owners:
+            owners.append(domain)
+
+    def _ownership_problem(channel: str, exclusive_owner: str, shared_owners: list[str]) -> None:
+        domains = []
+        for domain in (exclusive_owner, *shared_owners):
+            if domain and domain not in domains:
+                domains.append(domain)
+        problem = {
+            "kind": "result_channel_ownership",
+            "id": channel,
+            "domains": domains,
+            "ownership": ["exclusive", "shared"],
+        }
+        if problem not in problems:
+            problems.append(problem)
+
     for domain, descriptor in all_solver_module_descriptors().items():
         _check_unique(seen_solver_ids, "solver_id", _descriptor_solver_id(domain, descriptor), domain)
         declaration = resolve_solver_declaration(domain) or {}
@@ -494,7 +524,21 @@ def validate_solver_registry() -> dict:
 
         export = declaration.get("export") if isinstance(declaration.get("export"), dict) else {}
         for channel in _as_tuple(export.get("result_channels")):
+            key = str(channel or "").strip()
+            shared_owners = seen_shared_result_channels.get(key, [])
+            if shared_owners:
+                _ownership_problem(key, domain, shared_owners)
             _check_unique(seen_result_channels, "result_channel", channel, domain)
+        for channel in _as_tuple(export.get("shared_result_channels")):
+            key = str(channel or "").strip()
+            exclusive_owner = seen_result_channels.get(key)
+            if exclusive_owner is not None:
+                _ownership_problem(key, exclusive_owner, [domain])
+            _append_owner(seen_shared_result_channels, key, domain)
+        for channel in _as_tuple(export.get("planned_result_channels")):
+            _append_owner(planned_result_channels, channel, domain)
+        for channel in _as_tuple(export.get("planned_shared_result_channels")):
+            _append_owner(planned_shared_result_channels, channel, domain)
 
         implicit = declaration.get("implicit_objects") if isinstance(declaration.get("implicit_objects"), dict) else {}
         for tag in _as_tuple(implicit.get("consumes")) + _as_tuple(implicit.get("planned")):
@@ -509,6 +553,18 @@ def validate_solver_registry() -> dict:
         "solver_ids": dict(seen_solver_ids),
         "slot_kinds": dict(seen_slot_kinds),
         "result_channels": dict(seen_result_channels),
+        "shared_result_channels": {
+            channel: list(domains)
+            for channel, domains in seen_shared_result_channels.items()
+        },
+        "planned_result_channels": {
+            channel: list(domains)
+            for channel, domains in planned_result_channels.items()
+        },
+        "planned_shared_result_channels": {
+            channel: list(domains)
+            for channel, domains in planned_shared_result_channels.items()
+        },
         "implicit_object_tags": dict(seen_implicit_tags),
         "debug_draw_modes": dict(seen_debug_modes),
     }

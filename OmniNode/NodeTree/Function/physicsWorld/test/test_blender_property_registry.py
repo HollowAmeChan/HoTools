@@ -326,10 +326,14 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert declaration["native_strategy"].endswith("single_native_context")
     assert declaration["update_policy"]["framework"] == "no_slot_no_result_no_legacy_solver_call"
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
-    assert tuple(declaration["export"]["result_channels"]) == (
+    assert declaration["export"]["result_channels"] == []
+    assert declaration["export"]["shared_result_channels"] == []
+    assert tuple(declaration["export"]["planned_result_channels"]) == (
+        mc2_names.MC2_STATS_CHANNEL,
+    )
+    assert tuple(declaration["export"]["planned_shared_result_channels"]) == (
         world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
-        mc2_names.MC2_STATS_CHANNEL,
     )
 
     task_nodes = (
@@ -463,6 +467,85 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert "有效任务 3" in status
     assert world == before
     assert not any(name in sys.modules for name in legacy_modules)
+
+
+def test_solver_registry_separates_owned_shared_and_planned_result_channels():
+    mc2_declaration = solver_registry.resolve_solver_declaration("mc2")
+    summary = solver_declarations.solver_declaration_summary(mc2_declaration)
+    assert summary["result_channels"] == []
+    assert summary["shared_result_channels"] == []
+    assert summary["planned_result_channels"] == [mc2_names.MC2_STATS_CHANNEL]
+    assert summary["planned_shared_result_channels"] == [
+        world_names.GN_ATTRIBUTE_CHANNEL,
+        world_names.BONE_TRANSFORM_CHANNEL,
+    ]
+
+    invalid_declaration = solver_registry.resolve_solver_declaration("spring_vrm")
+    invalid_declaration["export"] = {
+        "result_channels": [world_names.BONE_TRANSFORM_CHANNEL],
+        "shared_result_channels": [world_names.BONE_TRANSFORM_CHANNEL],
+    }
+    assert any(
+        "不能重复声明" in problem
+        for problem in solver_declarations.validate_solver_declaration(invalid_declaration)
+    )
+
+    baseline = solver_registry.validate_solver_registry()
+    assert baseline["valid"], baseline["problems"]
+    assert world_names.BONE_TRANSFORM_CHANNEL not in baseline["result_channels"]
+    assert baseline["shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL] == [
+        "spring_vrm"
+    ]
+    assert baseline["planned_result_channels"][mc2_names.MC2_STATS_CHANNEL] == ["mc2"]
+    assert baseline["planned_shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL] == [
+        "mc2"
+    ]
+    assert baseline["planned_shared_result_channels"][world_names.GN_ATTRIBUTE_CHANNEL] == [
+        "mc2"
+    ]
+
+    shared_domain = "test_shared_result_solver"
+    exclusive_domain = "test_exclusive_result_solver"
+    try:
+        solver_registry.register_solver_module(shared_domain, {
+            "solver_id": shared_domain,
+            "declaration": {
+                "solver_id": shared_domain,
+                "slot_kind": "test_shared_result_slot",
+                "export": {
+                    "result_channels": [],
+                    "shared_result_channels": [world_names.BONE_TRANSFORM_CHANNEL],
+                },
+            },
+        })
+        shared = solver_registry.validate_solver_registry()
+        assert shared["valid"], shared["problems"]
+        assert shared["shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL] == [
+            "spring_vrm",
+            shared_domain,
+        ]
+
+        solver_registry.register_solver_module(exclusive_domain, {
+            "solver_id": exclusive_domain,
+            "declaration": {
+                "solver_id": exclusive_domain,
+                "slot_kind": "test_exclusive_result_slot",
+                "export": {
+                    "result_channels": [world_names.BONE_TRANSFORM_CHANNEL],
+                    "shared_result_channels": [],
+                },
+            },
+        })
+        conflict = solver_registry.validate_solver_registry()
+        assert conflict["valid"] is False
+        assert any(
+            problem.get("kind") == "result_channel_ownership"
+            and problem.get("id") == world_names.BONE_TRANSFORM_CHANNEL
+            for problem in conflict["problems"]
+        )
+    finally:
+        solver_registry.unregister_solver_module(exclusive_domain)
+        solver_registry.unregister_solver_module(shared_domain)
 
 
 def test_domain_registry_dependencies_idempotency_and_rollback():
@@ -842,6 +925,7 @@ TESTS = (
     ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
     ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
     ("one MC2 solver owns three safe framework setup types", test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step),
+    ("solver registry separates owned/shared/planned result channels", test_solver_registry_separates_owned_shared_and_planned_result_channels),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),
     (".blend roundtrip for all persistent fields", test_blend_roundtrip_preserves_all_persistent_property_fields),

@@ -19,6 +19,13 @@ SOLVER_DECLARATION_REQUIRED_KEYS = (
     "writeback",
 )
 
+RESULT_CHANNEL_EXPORT_KEYS = (
+    "result_channels",
+    "shared_result_channels",
+    "planned_result_channels",
+    "planned_shared_result_channels",
+)
+
 
 _COMPAT_EXPORTS = {
     "BONE_COLLISION_CAPABILITY": ".collision.capabilities",
@@ -93,6 +100,10 @@ def normalize_solver_declaration(declaration: dict) -> dict:
         implicit["planned"] = _as_list(implicit.get("planned"))
         implicit["producer_nodes"] = _as_list(implicit.get("producer_nodes"))
         implicit["planned_producer_nodes"] = _as_list(implicit.get("planned_producer_nodes"))
+    export = data.get("export")
+    if isinstance(export, dict):
+        for key in RESULT_CHANNEL_EXPORT_KEYS:
+            export[key] = _as_list(export.get(key))
     return data
 
 
@@ -126,6 +137,27 @@ def validate_solver_declaration(declaration: dict) -> list[str]:
     implicit = data.get("implicit_objects")
     if implicit is not None and not isinstance(implicit, dict):
         problems.append("implicit_objects 存在时必须是 dict")
+
+    export = data.get("export")
+    if export is not None and not isinstance(export, dict):
+        problems.append("export 存在时必须是 dict")
+    elif isinstance(export, dict):
+        channel_groups: dict[str, set[str]] = {}
+        for key in RESULT_CHANNEL_EXPORT_KEYS:
+            channels = [str(value or "").strip() for value in export.get(key, ())]
+            if any(not channel for channel in channels):
+                problems.append(f"export.{key} 不能包含空 channel")
+            nonempty = [channel for channel in channels if channel]
+            if len(nonempty) != len(set(nonempty)):
+                problems.append(f"export.{key} 不能重复声明同一 channel")
+            channel_groups[key] = set(nonempty)
+        for index, left_key in enumerate(RESULT_CHANNEL_EXPORT_KEYS):
+            for right_key in RESULT_CHANNEL_EXPORT_KEYS[index + 1:]:
+                overlap = sorted(channel_groups[left_key] & channel_groups[right_key])
+                if overlap:
+                    problems.append(
+                        f"export.{left_key} 与 export.{right_key} 不能重复声明: {overlap}"
+                    )
 
     return problems
 
@@ -216,6 +248,15 @@ def solver_declaration_summary(declaration: dict) -> dict:
         "writeback_owner": writeback.get("owner", ""),
         "solver_inline_writeback": writeback.get("solver_inline_writeback"),
         "result_channels": list((data.get("export") or {}).get("result_channels") or []),
+        "shared_result_channels": list(
+            (data.get("export") or {}).get("shared_result_channels") or []
+        ),
+        "planned_result_channels": list(
+            (data.get("export") or {}).get("planned_result_channels") or []
+        ),
+        "planned_shared_result_channels": list(
+            (data.get("export") or {}).get("planned_shared_result_channels") or []
+        ),
     }
 
 

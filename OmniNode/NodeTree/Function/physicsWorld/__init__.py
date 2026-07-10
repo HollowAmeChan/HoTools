@@ -72,6 +72,7 @@ from .blender_registry import (
     unregister_blender_property_domain,
 )
 from .declarations import (
+    RESULT_CHANNEL_EXPORT_KEYS,
     SOLVER_DECLARATION_REQUIRED_KEYS,
     all_solver_declarations,
     get_solver_declaration,
@@ -199,6 +200,7 @@ __all__ = [
     "RIGID_CAPABILITIES",
     "RIGID_SOLVER_DECLARATION",
     "RIGID_UPDATE_FREQUENCY_TABLE",
+    "RESULT_CHANNEL_EXPORT_KEYS",
     "SOLVER_DECLARATION_REQUIRED_KEYS",
     "SPRING_VRM_SOLVER_DECLARATION",
     "SPRING_VRM_UPDATE_FREQUENCY_TABLE",
