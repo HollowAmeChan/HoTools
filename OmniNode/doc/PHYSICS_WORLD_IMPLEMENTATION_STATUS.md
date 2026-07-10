@@ -4,6 +4,8 @@
 
 架构判断以 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 为唯一权威；OmniNode 编译、执行、缓存和懒求值机制见 `../ARCHITECTURE.md`。solver 自己的功能矩阵、backend 能力和测试说明应放在各 domain 的 `docs/` 或测试目录中。
 
+MC2 的当前源码对照与实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；`MC2_DESIGN_AND_WORKSHEET.md` 已降级为旧 MeshCloth 迁移审计与公式参考。
+
 ## 当前系统边界
 
 ```text
@@ -64,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | 统一框架已建立 | 唯一 solver id；三种 setup adapter 契约；稳定 task id/source signature；共享 GN 最终 offset/bone writeback channel；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
+| MC2 | B3 framework scaffold，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；共享 GN 最终 offset/bone writeback planned channel | 已有 spec/静态数组仍需按固定 MC2 源码 commit 审计；尚无 native context、solver step 或 result publication |
 | 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
@@ -76,7 +78,7 @@ MC2 只有一个 solver identity：`mc2`。
 - `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
 - 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package 中的两套实现仅作为迁移与 parity 参考。
-- 当前新 MC2 step 是明确的 framework no-op：不创建 slot、不发布结果、不调用旧 MC2 package。
+- 当前新 MC2 step 只同步 framework slot、topology、initial state 和 particle buffer；不推进模拟、不发布结果、不调用旧 MC2 package。
 - no-op 阶段的 `mc2_stats`、`gn_attribute`、`bone_transform` 只登记为 planned channel，不虚报 active 输出。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
 - 在新路径完成 parity、same-frame、跳帧/reset、dispose 和写回验收前，旧 MeshCloth/BoneCloth package 继续承担当前运行实现。
@@ -114,7 +116,7 @@ MC2 只有一个 solver identity：`mc2`。
 ## 当前优先级
 
 1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 先完成一个最窄 world-aware vertical slice，再迁移 MeshCloth/BoneCloth kernel；BoneSpring 在共享核心稳定后补齐。
+2. MC2 先按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 完成源码数据流 worksheet、契约审查和静态 oracle，再开始最窄 native vertical slice；禁止继续按未验证的近似算法扩展 spec。
 3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
 4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
 

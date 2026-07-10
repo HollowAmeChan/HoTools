@@ -1,8 +1,10 @@
-# OmniNode BoneCloth 解算器任务大纲
+# OmniNode 旧 BoneCloth 设计草案
 
-更新日期：2026-07-04
+更新日期：2026-07-11
 
-本文是 BoneCloth 解算器的设计蓝图与任务清单，不是完成记录。实现推进后，稳定项应逐步迁进 `MC2_DESIGN_AND_WORKSHEET.md` 的完成度表，本文只保留待做项和设计约定。
+文档状态：**历史设计材料，不是当前任务清单**。
+
+本文记录统一 MC2 solver 决策前的 BoneCloth 独立节点方案，正文中仍包含 Python/C++ 双节点、独立 builder、AutomaticMesh 取舍等已经过期或互相矛盾的设想。当前实施顺序、源码对照和未决决策统一见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；不要把本文内容迁入 capability、slot 或 native ABI。
 
 MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`
 HoTools MeshCloth 现状：`OmniNode/NodeTree/Function/physicsMC2MeshCloth`
@@ -455,7 +457,6 @@ BoneCloth 的拓扑缓存 key 应包含骨骼名称列表的 hash，骨骼增删
 | AutomaticMesh | **不实现**（参考来源：`VirtualMeshInputOutput.cs` L542-612）|
 
 <!-- APPEND-DONE -->
-
 
 
 

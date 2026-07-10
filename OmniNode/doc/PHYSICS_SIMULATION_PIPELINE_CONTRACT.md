@@ -6,6 +6,8 @@
 
 - **本文（架构设计）**：物理世界的结构约定，是"应该怎么组织"的权威。回答——每个物理节点拥有什么数据、每帧/dirty/懒更新/重建的边界、solver 如何声明消费与产出、程序化实体与跨 solver 交互如何进入系统、写回与导出如何共用结果流、Python cache 与 native context 如何分工。
 - **`PHYSICS_WORLD_IMPLEMENTATION_STATUS.md`（当前实现状态）**：只记录各 domain 当前边界、未完成项和验收门槛，不保存逐次实施流水。
+- **`MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`（MC2 执行计划）**：固定 MC2 源码基线、源码 worksheet、阶段门槛和实施顺序；只约束 MC2 domain，不覆盖本文的公共架构。
+- **`MC2_DESIGN_AND_WORKSHEET.md`（旧 MC2 参考）**：旧 MeshCloth 迁移审计、公式与踩坑档案，不再作为新 MC2 的执行计划。
 - **`ARCHITECTURE.md`（OmniNode 框架）**：编译/执行/缓存/懒求值等框架机制，不含物理语义。
 
 本文只写"结构应该怎样"；具体 solver 当前做到哪里见实现状态文档，历史过程由 Git 保存。
