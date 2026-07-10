@@ -19,6 +19,7 @@
 - HoTools 刚体属性：`PhysicsTools/physicsProperty.py`、`PhysicsTools/physicsPanel.py`。
 - 统一物理流程契约：`OmniNode/doc/PHYSICS_SIMULATION_PIPELINE_CONTRACT.md`。
 - Blender 兼容记录：`_native/JOLT_BLENDER_COMPAT.md`。
+- 语义测试设计：`OmniNode/NodeTree/Function/physicsWorld/rigid/docs/JOLT_TEST_STRATEGY.md`。
 
 外部资料：
 
