@@ -1,4 +1,4 @@
-"""Run the minimal Rigid/Jolt semantic fixture slice inside background Blender."""
+"""Run the Rigid/Jolt semantic fixture matrix inside background Blender."""
 
 from __future__ import annotations
 

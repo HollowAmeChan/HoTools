@@ -213,6 +213,7 @@ build_rigid_debug_draw_snapshot = _pw("rigid.debug_draw").build_rigid_debug_draw
 build_constraint_debug_lines = _pw("rigid.constraint_debug").build_constraint_debug_lines
 rigid_backend_debug_snapshot = _pw("rigid.debug").rigid_backend_debug_snapshot
 iter_rigid_query_results = _pw("rigid.queries").iter_rigid_query_results
+perform_rigid_ray_cast = _pw("rigid.queries").perform_rigid_ray_cast
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
 rigid_generated_constraint_signature = _pw("rigid.implicit_objects").rigid_generated_constraint_signature
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects

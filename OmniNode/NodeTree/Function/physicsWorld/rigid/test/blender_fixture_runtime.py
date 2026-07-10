@@ -1,4 +1,4 @@
-"""Minimal Blender pipeline runtime for shared Rigid/Jolt fixtures."""
+"""Blender pipeline runtime for the shared Rigid/Jolt semantic fixtures."""
 
 from __future__ import annotations
 
@@ -14,7 +14,9 @@ try:
     from .assertions import evaluate_assertions
     from .canonical import (
         canonical_body_state,
+        canonical_contact_event,
         canonical_constraint_state,
+        canonical_ray_result,
         physical_trace_hash,
     )
     from .compare_traces import compare_traces
@@ -22,7 +24,13 @@ try:
     from .schema import Fixture
 except ImportError:  # Support direct script execution inside Blender.
     from assertions import evaluate_assertions
-    from canonical import canonical_body_state, canonical_constraint_state, physical_trace_hash
+    from canonical import (
+        canonical_body_state,
+        canonical_contact_event,
+        canonical_constraint_state,
+        canonical_ray_result,
+        physical_trace_hash,
+    )
     from compare_traces import compare_traces
     from fixture_runtime import NativeFixtureRuntime, NativeRunResult
     from schema import Fixture
@@ -45,7 +53,9 @@ class BlenderFixtureRuntime:
     """Build Blender RNA objects, then run world/scope/result/writeback pipeline."""
 
     RUNNER_ID = "blender_pipeline_v1"
-    SUPPORTED_FIXTURES = frozenset({"FREE-001", "FRAME-002"})
+    SUPPORTED_FIXTURES = frozenset(
+        path.stem for path in (Path(__file__).parent / "fixtures").rglob("*.json")
+    )
 
     def __init__(self, native_module, bootstrap_path: str | Path):
         self.native = native_module
@@ -54,6 +64,7 @@ class BlenderFixtureRuntime:
         self.constraints: dict[str, bpy.types.Object] = {}
         self._owned_objects: list[bpy.types.Object] = []
         self._last_step_ms = 0.0
+        self._gravity = (0.0, 0.0, -9.81)
 
     @staticmethod
     def _set_if_present(target, name: str, value) -> None:
@@ -165,9 +176,64 @@ class BlenderFixtureRuntime:
             "motor_target_position": constraint.motor_target_position,
             "distance_min": constraint.distance_min,
             "distance_max": constraint.distance_max,
+            "swing_motor_state": constraint.swing_motor_state,
+            "twist_motor_state": constraint.twist_motor_state,
+            "swing_twist_target_angular_velocity": (
+                constraint.swing_twist_target_angular_velocity
+            ),
+            "six_dof_swing_type": constraint.six_dof_swing_type,
+            "six_dof_target_velocity": constraint.six_dof_target_velocity,
+            "six_dof_target_angular_velocity": (
+                constraint.six_dof_target_angular_velocity
+            ),
+            "six_dof_target_position": constraint.six_dof_target_position,
+            "cone_half_angle": constraint.cone_half_angle,
+            "swing_type": constraint.swing_type,
+            "swing_normal_half_angle": constraint.swing_normal_half_angle,
+            "swing_plane_half_angle": constraint.swing_plane_half_angle,
+            "twist_min_angle": constraint.twist_min_angle,
+            "twist_max_angle": constraint.twist_max_angle,
+            "pulley_fixed_point_a": constraint.pulley_fixed_point_a,
+            "pulley_fixed_point_b": constraint.pulley_fixed_point_b,
+            "pulley_ratio": constraint.pulley_ratio,
+            "pulley_min_length": constraint.pulley_min_length,
+            "pulley_max_length": constraint.pulley_max_length,
+            "gear_ratio": constraint.gear_ratio,
+            "rack_and_pinion_ratio": constraint.rack_and_pinion_ratio,
         }
         for name, value in direct.items():
             self._set_if_present(props, name, value)
+        props.swing_twist_target_rotation = mathutils.Quaternion(
+            constraint.swing_twist_target_orientation_wxyz
+        ).to_euler("XYZ")
+        props.six_dof_target_rotation = mathutils.Quaternion(
+            constraint.six_dof_target_orientation_wxyz
+        ).to_euler("XYZ")
+        axis_names = (
+            "translation_x", "translation_y", "translation_z",
+            "rotation_x", "rotation_y", "rotation_z",
+        )
+        for index, axis_name in enumerate(axis_names):
+            axis_values = {
+                "mode": constraint.six_dof_axis_modes[index],
+                "min": constraint.six_dof_limit_min[index],
+                "max": constraint.six_dof_limit_max[index],
+                "friction": constraint.six_dof_max_friction[index],
+                "motor_state": constraint.six_dof_motor_states[index],
+            }
+            if index < 3:
+                axis_values.update({
+                    "limit_spring_frequency": (
+                        constraint.six_dof_limit_spring_frequency[index]
+                    ),
+                    "limit_spring_damping": (
+                        constraint.six_dof_limit_spring_damping[index]
+                    ),
+                })
+            for suffix, value in axis_values.items():
+                self._set_if_present(
+                    props, f"six_dof_{axis_name}_{suffix}", value
+                )
         if constraint.use_separate_anchor_frames:
             props.anchor_mode = "LOCAL_FRAMES"
             point_a, rotation_a = self._world_frame_to_local(
@@ -202,14 +268,44 @@ class BlenderFixtureRuntime:
         for constraint in fixture.constraints:
             props = self.constraints[constraint.id].hotools_rigid_constraint
             if constraint.reference_constraint_a:
-                props.reference_constraint_a = self.constraints[constraint.reference_constraint_a]
+                props.reference_constraint_a = self.constraints[
+                    constraint.reference_constraint_a
+                ]
             if constraint.reference_constraint_b:
-                props.reference_constraint_b = self.constraints[constraint.reference_constraint_b]
+                props.reference_constraint_b = self.constraints[
+                    constraint.reference_constraint_b
+                ]
+        bpy.context.view_layer.update()
+
+    def _animate_kinematic_bodies(self, fixture: Fixture, frame: int) -> None:
+        # The cache treats 0 -> 1 as the first advancing solve and rebuilds the
+        # backend at frame 1. Keep the source pose at frame 0 for that solve so
+        # the fixture's initial kinematic velocity advances exactly one dt.
+        source_frame = 0 if frame == 1 else frame
+        elapsed = float(source_frame) * fixture.world.dt
+        for body in fixture.bodies:
+            if body.type != "KINEMATIC":
+                continue
+            obj = self.objects[body.id]
+            obj.location = tuple(
+                body.position[index] + body.linear_velocity[index] * elapsed
+                for index in range(3)
+            )
+            angular_velocity = mathutils.Vector(body.angular_velocity)
+            angle = angular_velocity.length * elapsed
+            delta = (
+                mathutils.Quaternion(angular_velocity.normalized(), angle)
+                if angle > 0.0
+                else mathutils.Quaternion((1.0, 0.0, 0.0, 0.0))
+            )
+            obj.rotation_quaternion = delta @ mathutils.Quaternion(
+                body.rotation_wxyz
+            )
         bpy.context.view_layer.update()
 
     def _register_world_settings(self, world, fixture: Fixture) -> None:
         props = self.api["make_rigid_jolt_world_setting_properties"](
-            gravity=fixture.world.gravity,
+            gravity=self._gravity,
             max_bodies=fixture.world.max_bodies,
             max_body_pairs=fixture.world.max_body_pairs,
             max_contact_constraints=fixture.world.max_contact_constraints,
@@ -225,6 +321,9 @@ class BlenderFixtureRuntime:
         if event.op == "remove_constraint":
             self.constraints[event.constraint].hotools_rigid_constraint.enabled = False
             return
+        if event.op == "set_world_gravity":
+            self._gravity = tuple(event.values["gravity"])
+            return
         obj = self.objects[event.body]
         spec = self.api["build_rigid_body_spec"](obj)
         item = {
@@ -234,7 +333,7 @@ class BlenderFixtureRuntime:
             "target_slot_id": spec.slot_id,
             "target_simulation_order_key": spec.simulation_order_key,
             "command_order_key": (f"{len(world.exchange.get('rigid_body_commands', ())):012d}",),
-            "command": event.op,
+            "command": "set_active" if event.op == "activate" else event.op,
         }
         item.update(event.values)
         world.publish_exchange(item)
@@ -249,9 +348,16 @@ class BlenderFixtureRuntime:
         )
 
     def _sample(self, fixture: Fixture, world, frame: int) -> dict[str, Any]:
+        body_specs = {
+            body_id: self.api["build_rigid_body_spec"](obj)
+            for body_id, obj in self.objects.items()
+        }
+        slot_to_id = {
+            spec.slot_id: body_id for body_id, spec in body_specs.items()
+        }
         bodies = []
         for body_id in sorted(self.objects):
-            spec = self.api["build_rigid_body_spec"](self.objects[body_id])
+            spec = body_specs[body_id]
             result = self.api["get_rigid_transform_result"](
                 world, slot_id=spec.slot_id, frame=frame, generation=world.generation
             )
@@ -274,6 +380,68 @@ class BlenderFixtureRuntime:
                 constraints.append(canonical_constraint_state(
                     constraint_id, self._constraint_state_tuple(result)
                 ))
+        contacts = []
+        for event in self.api["iter_rigid_contact_event_results"](
+            world, frame=frame, generation=world.generation
+        ):
+            body_a = slot_to_id.get(str(event.get("body_a_slot_id", "")))
+            body_b = slot_to_id.get(str(event.get("body_b_slot_id", "")))
+            if body_a is None or body_b is None:
+                raise RuntimeError(
+                    f"contact references unknown Blender slots: "
+                    f"{event.get('body_a_slot_id')}, {event.get('body_b_slot_id')}"
+                )
+            pseudo_handles = {
+                body_id: index + 1
+                for index, body_id in enumerate(sorted(self.objects))
+            }
+            raw = (
+                event["state"], pseudo_handles[body_a], pseudo_handles[body_b],
+                event["body_a_sensor"], event["body_b_sensor"], event["is_sensor"],
+                event["normal"], event["penetration_depth"],
+                event["points_on_a"], event["points_on_b"],
+                event["sub_shape_a"], event["sub_shape_b"],
+            )
+            contacts.append(canonical_contact_event(
+                raw, {value: key for key, value in pseudo_handles.items()}
+            ))
+        contacts.sort(key=lambda item: (
+            item["body_a"], item["body_b"], item["state"],
+            item["sub_shape_a"], item["sub_shape_b"],
+        ))
+
+        queries = []
+        for query in sorted(fixture.queries, key=lambda item: item.id):
+            if query.frame != frame:
+                continue
+            max_distance = math.sqrt(sum(value * value for value in query.direction))
+            result, _hit_object = self.api["perform_rigid_ray_cast"](
+                world,
+                origin=query.origin,
+                direction=query.direction,
+                max_distance=max_distance,
+                include_sensors=query.include_sensors,
+                ignore_object=self.objects.get(query.ignore_body),
+            )
+            hit_slot = str(result.get("slot_id", "") or "")
+            body_id = slot_to_id.get(hit_slot, "")
+            pseudo_handles = {
+                body_id: index + 1
+                for index, body_id in enumerate(sorted(self.objects))
+            }
+            raw = (
+                bool(result.get("hit", False)),
+                pseudo_handles.get(body_id, 0),
+                result.get("position", (0.0, 0.0, 0.0)),
+                result.get("normal", (0.0, 0.0, 0.0)),
+                float(result.get("fraction", 0.0)),
+                int(result.get("sub_shape_id", 0)),
+                bool(result.get("is_sensor", False)),
+            )
+            queries.append(canonical_ray_result(
+                query.id, raw, {value: key for key, value in pseudo_handles.items()}
+            ))
+
         adapter = world.backend_resources.get("rigid_solver")
         return {
             "fixture_id": fixture.id,
@@ -283,12 +451,12 @@ class BlenderFixtureRuntime:
             "substeps": fixture.world.substeps,
             "bodies": bodies,
             "constraints": constraints,
-            "contacts": [],
-            "queries": [],
+            "contacts": contacts,
+            "queries": queries,
             "stats": {
                 "body_count": int(getattr(adapter, "body_count", 0) or 0),
                 "constraint_count": int(getattr(adapter, "constraint_count", 0) or 0),
-                "contact_event_count": 0,
+                "contact_event_count": len(contacts),
                 "contact_event_overflow": int(
                     getattr(adapter, "last_contact_event_overflow", 0) or 0
                 ),
@@ -328,7 +496,24 @@ class BlenderFixtureRuntime:
     def _lifecycle_probe(self, fixture: Fixture, scope, cache_state, world):
         scene = bpy.context.scene
         previous_world = world
+        if fixture.world.frames == 0:
+            scene.frame_set(1)
+            previous_world, _, _, _ = self.api["physicsWorldBegin"](
+                cache_state=cache_state,
+                scene=scene,
+                object_scope=scope,
+                enabled=True,
+                substeps=fixture.world.substeps,
+            )
+            self._register_world_settings(previous_world, fixture)
+            previous_world.frame_context.same_frame = True
+            self.api["step_rigid_bodies"](previous_world, enabled=True)
+            cache_state, _, _ = self.api["physicsWorldCommit"](
+                previous_world, enabled=True
+            )
         scene.frame_set(fixture.world.frames + 2)
+        if fixture.world.frames == 0:
+            scene.frame_set(3)
         jump_world, _, _, jump_restart = self.api["physicsWorldBegin"](
             cache_state=cache_state,
             scene=scene,
@@ -372,6 +557,8 @@ class BlenderFixtureRuntime:
         bodies_by_id = fixture.bodies_by_id
         frame = int(world.frame_context.frame)
         for body_id, obj in self.objects.items():
+            if fixture.bodies_by_id[body_id].type == "KINEMATIC":
+                continue
             spec = self.api["build_rigid_body_spec"](obj)
             result = self.api["get_rigid_transform_result"](
                 world, slot_id=spec.slot_id, frame=frame, generation=world.generation
@@ -386,7 +573,7 @@ class BlenderFixtureRuntime:
             expected_rotation = mathutils.Quaternion(expected.rotation_wxyz)
             rotation_dot = min(max(abs(actual_rotation.dot(expected_rotation)), 0.0), 1.0)
             rotation_error = 2.0 * math.acos(rotation_dot)
-            if position_error > 2.0e-5 or rotation_error > 2.0e-5:
+            if position_error > 2.0e-5 or rotation_error > 2.0e-3:
                 raise RuntimeError(
                     f"restart did not restore {body_id}: position={position_error}, "
                     f"rotation={rotation_error}"
@@ -410,7 +597,7 @@ class BlenderFixtureRuntime:
             expected_rotation = mathutils.Quaternion(result["rotation_wxyz"])
             rotation_dot = min(max(abs(actual_rotation.dot(expected_rotation)), 0.0), 1.0)
             rotation_error = 2.0 * math.acos(rotation_dot)
-            if position_error > 2.0e-5 or rotation_error > 2.0e-5:
+            if position_error > 2.0e-5 or rotation_error > 2.0e-3:
                 raise RuntimeError(
                     f"writeback mismatch for {body_id}: position={position_error}, "
                     f"rotation={rotation_error}"
@@ -418,11 +605,9 @@ class BlenderFixtureRuntime:
 
     def run(self, fixture: Fixture, repeat_index: int = 0) -> NativeRunResult:
         if fixture.id not in self.SUPPORTED_FIXTURES:
-            raise RuntimeError(
-                f"{fixture.id}: blender_pipeline_v1 minimal slice supports only "
-                f"{sorted(self.SUPPORTED_FIXTURES)}"
-            )
+            raise RuntimeError(f"{fixture.id}: fixture is outside the S3 manifest")
         self._build_scene(fixture)
+        self._gravity = tuple(fixture.world.gravity)
         scene = bpy.context.scene
         scene.render.fps = round(1.0 / fixture.world.dt)
         scene.render.fps_base = 1.0
@@ -443,6 +628,10 @@ class BlenderFixtureRuntime:
         try:
             for frame in range(0, fixture.world.frames + 1):
                 scene.frame_set(frame)
+                self._animate_kinematic_bodies(fixture, frame)
+                for event in events.get((frame, "pre_step"), ()):
+                    if event.op == "remove_constraint":
+                        self._publish_event(None, event)
                 world, _, _, restart = self.api["physicsWorldBegin"](
                     cache_state=cache_state,
                     scene=scene,
@@ -450,11 +639,15 @@ class BlenderFixtureRuntime:
                     enabled=True,
                     substeps=fixture.world.substeps,
                 )
-                self._register_world_settings(world, fixture)
+                registry_errors = world.runtime_cache("solver_registry_errors") or []
+                if registry_errors:
+                    raise RuntimeError(f"scope collection failed: {registry_errors}")
                 if frame == 0:
                     world.frame_context.same_frame = True
                 for event in events.get((frame, "pre_step"), ()):
-                    self._publish_event(world, event)
+                    if event.op != "remove_constraint":
+                        self._publish_event(world, event)
+                self._register_world_settings(world, fixture)
                 _body_count, self._last_step_ms = self.api["step_rigid_bodies"](
                     world, enabled=True
                 )

@@ -140,6 +140,27 @@ def _kinematic_pose_signature(spec) -> tuple:
     )
 
 
+def _constraint_anchor_sync_signature(spec) -> tuple:
+    anchor_mode = str(getattr(spec, "anchor_mode", "SHARED_WORLD") or "SHARED_WORLD")
+    if anchor_mode == "LOCAL_FRAMES":
+        empty_obj = getattr(spec, "empty_obj", None)
+        props = getattr(empty_obj, "hotools_rigid_constraint", None)
+        return (
+            anchor_mode,
+            _round_tuple(getattr(props, "local_point_a", (0.0, 0.0, 0.0))),
+            _round_tuple(getattr(props, "local_rotation_a", (0.0, 0.0, 0.0))),
+            _round_tuple(getattr(props, "local_point_b", (0.0, 0.0, 0.0))),
+            _round_tuple(getattr(props, "local_rotation_b", (0.0, 0.0, 0.0))),
+        )
+    return (
+        anchor_mode,
+        _round_tuple(getattr(spec, "anchor_position", (0.0, 0.0, 0.0))),
+        _round_tuple(getattr(
+            spec, "anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0),
+        )),
+    )
+
+
 def _constraint_sync_signature(spec) -> tuple:
     return (
         tuple(getattr(spec, "simulation_order_key", ())),
@@ -149,13 +170,7 @@ def _constraint_sync_signature(spec) -> tuple:
         bool(getattr(spec, "disable_collisions", True)),
         bool(getattr(spec, "breakable", False)),
         _round_float(getattr(spec, "breaking_threshold", 1000.0)),
-        str(getattr(spec, "anchor_mode", "SHARED_WORLD") or "SHARED_WORLD"),
-        _round_tuple(getattr(spec, "anchor_position", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_position_a", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_rotation_wxyz_a", (1.0, 0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_position_b", (0.0, 0.0, 0.0))),
-        _round_tuple(getattr(spec, "anchor_rotation_wxyz_b", (1.0, 0.0, 0.0, 0.0))),
+        _constraint_anchor_sync_signature(spec),
         int(getattr(spec, "constraint_priority", 0) or 0),
         int(getattr(spec, "solver_velocity_steps", 0) or 0),
         int(getattr(spec, "solver_position_steps", 0) or 0),
