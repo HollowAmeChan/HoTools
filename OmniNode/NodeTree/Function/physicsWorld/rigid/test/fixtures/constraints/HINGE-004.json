@@ -1,0 +1,38 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "HINGE-004",
+  "title": "铰链速度电机驱动到目标角速度",
+  "source": "jolt_unit_test:HingeConstraintVelocityMotor",
+  "tags": ["p0", "constraint", "hinge", "motor", "velocity"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "velocity_motor_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "hinge_velocity_motor",
+      "type": "HINGE",
+      "body_a": "WORLD",
+      "body_b": "velocity_motor_hinge",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "motor_state": "VELOCITY",
+      "motor_target_angular_velocity": 2.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {"kind": "body_state_near", "body": "velocity_motor_hinge", "frame": 1, "angular_velocity": [0.0, 0.0, 2.0], "abs": 0.00003, "rel": 0.000001},
+    {"kind": "body_state_near", "body": "velocity_motor_hinge", "frame": 60, "angular_velocity": [0.0, 0.0, 2.0], "abs": 0.00003, "rel": 0.000001},
+    {"kind": "constraint_lambda_active", "constraint": "hinge_velocity_motor", "field": "lambda_motor", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

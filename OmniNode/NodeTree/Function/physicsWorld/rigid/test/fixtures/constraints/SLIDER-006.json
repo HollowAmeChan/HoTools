@@ -1,0 +1,41 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SLIDER-006",
+  "title": "滑块位置电机遵循 Jolt 弹簧轨迹并收敛到目标",
+  "source": "jolt_unit_test:SliderConstraintPositionMotor",
+  "tags": ["p0", "constraint", "slider", "motor", "position"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "position_motor_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "slider_position_motor",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "position_motor_slider",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "motor_state": "POSITION",
+      "motor_frequency": 2.0,
+      "motor_damping": 1.0,
+      "motor_target_position": 2.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "implicit_spring_trajectory", "constraint": "slider_position_motor", "target": 2.0, "initial_velocity": 0.0, "frequency": 2.0, "damping": 1.0, "value_abs": 0.00003},
+    {"kind": "constraint_value_near", "constraint": "slider_position_motor", "frame": 120, "expected": 2.0, "value_abs": 0.0001, "current_value_kind": "position"},
+    {"kind": "constraint_lambda_active", "constraint": "slider_position_motor", "field": "lambda_motor", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

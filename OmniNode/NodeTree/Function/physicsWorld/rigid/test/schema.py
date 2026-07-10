@@ -546,6 +546,9 @@ class AssertionSpec:
             "constraint_anchor_coincidence", "rotation_axis_only",
             "linear_axis_only", "cone_swing_limit",
             "constraint_value_in_range", "constraint_value_near",
+            "implicit_spring_trajectory", "linear_speed_trajectory",
+            "constraint_lambda_active",
+            "angular_speed_trajectory",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -601,6 +604,21 @@ class AssertionSpec:
             "constraint_value_near": {
                 "constraint", "frame", "expected", "value_abs",
                 "current_value_kind",
+            },
+            "implicit_spring_trajectory": {
+                "constraint", "target", "initial_velocity", "frequency", "damping",
+                "value_abs", "start_frame", "end_frame", "absolute_value",
+            },
+            "linear_speed_trajectory": {
+                "body", "axis", "target_velocity", "max_force", "velocity_abs",
+                "position_abs", "end_frame",
+            },
+            "constraint_lambda_active": {
+                "constraint", "field", "min_abs", "start_frame", "end_frame",
+            },
+            "angular_speed_trajectory": {
+                "body", "axis", "target_velocity", "max_torque", "inertia",
+                "velocity_abs", "end_frame",
             },
         }
         _reject_unknown(data, allowed_parameters[kind], path)

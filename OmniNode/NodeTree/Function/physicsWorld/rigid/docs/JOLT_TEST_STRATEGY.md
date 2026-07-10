@@ -40,7 +40,7 @@
 - py311/py313 独立运行，当前四个 physical hash 在两套 ABI 间完全一致；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前验收 body 与六种基础约束自由度的 S1 切片。Hinge/Slider limit、spring、friction、motor，Distance spring，复杂 A/B frame 组合、adapter parity、Blender E2E、contact/query oracle 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前验收 body、六种基础约束自由度，以及 Distance/Hinge/Slider 的 limit、spring、friction、motor 数值切片。动态-动态反作用、复杂 A/B frame 组合、adapter parity、Blender E2E、contact/query oracle 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -216,17 +216,19 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | POINT-001 | Point 受离轴冲量 | anchors 重合，相对旋转可自由变化 | 不变量 | P0 | PASS (S1) |
 | DIST-001 | `min == max` 刚性杆 | 距离收敛到目标且横向自由 | 解析/Jolt | P0 | PASS (S1) |
 | DIST-002 | `[min,max]` 区间 | 区间内无纠正，越界纠正至最近边界 | Jolt | P0 | PASS (S1) |
-| DIST-003 | limit spring | 多帧轨迹与 Jolt DistanceConstraintTests 同义 case 一致 | Jolt official | P0 | 缺失 |
+| DIST-003 | limit spring | 多帧轨迹与 Jolt DistanceConstraintTests 同义 case 一致 | Jolt official | P0 | 已实现 |
 | HINGE-001 | Hinge 自由度 | 三平移、两旋转锁定，只绕 frame Z 转 | 不变量 | P0 | PASS (S1) |
 | HINGE-002 | angular min/max | 正负方向撞限，超量和速度有界 | Jolt | P0 | PASS (S1) |
-| HINGE-003 | limit spring | 角轨迹与 Jolt HingeConstraintTests 同义 case 一致 | Jolt official | P0 | 缺失 |
-| HINGE-004 | velocity/position motor | 目标、torque limit 和停机行为正确 | Jolt | P0 | 缺失 |
-| HINGE-005 | friction torque | 角速度按最大摩擦 torque 衰减 | 解析/Jolt | P1 | 缺失 |
+| HINGE-003 | limit spring | 角轨迹与 Jolt HingeConstraintTests 同义 case 一致 | Jolt official | P0 | 已实现 |
+| HINGE-004 | velocity motor | 目标角速度与 motor lambda 正确 | Jolt | P0 | 已实现 |
+| HINGE-005 | position motor | 位置弹簧轨迹与目标角度正确 | Jolt official | P0 | 已实现 |
+| HINGE-006 | friction torque | 角速度按最大摩擦 torque 衰减 | 解析/Jolt | P0 | 已实现 |
 | SLIDER-001 | Slider 自由度 | 两横向平移和全部旋转锁定，只沿 frame Z 移动 | 不变量 | P0 | PASS (S1) |
 | SLIDER-002 | linear min/max | 正负方向撞限，位置/速度符合官方 case | Jolt official | P0 | PASS (S1) |
-| SLIDER-003 | limit spring | 位置轨迹与官方同义 case 一致 | Jolt official | P0 | 缺失 |
-| SLIDER-004 | velocity/position motor | 目标、force limit、动态-动态反作用正确 | Jolt official | P0 | 缺失 |
-| SLIDER-005 | friction force | 速度/位置符合力上限解析结果 | 解析/Jolt | P1 | 缺失 |
+| SLIDER-003 | limit spring | 位置轨迹与官方同义 case 一致 | Jolt official | P0 | 已实现 |
+| SLIDER-004 | friction force | 速度/位置符合力上限解析结果 | 解析/Jolt | P0 | 已实现 |
+| SLIDER-005 | velocity motor | 目标速度与 force limit 正确 | Jolt official | P0 | 已实现 |
+| SLIDER-006 | position motor | 位置弹簧轨迹与目标位置正确 | Jolt official | P0 | 已实现 |
 | CONE-001 | cone swing limit | anchor 重合，swing 不超 half angle | 不变量 | P0 | PASS (S1) |
 | CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | PASS (S1) |
 | FRAME-001 | 独立 A/B anchors | body 原点不同且 shape offset 时 anchor 仍正确 | 解析/差分 | P0 | 现有弱覆盖 |

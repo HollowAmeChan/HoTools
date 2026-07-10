@@ -11,14 +11,16 @@
 - 支持六种已接入约束的 schema、state trace 和基础自由度 oracle；
 - 验证 Fixed 相对变换、Point 锚点/旋转自由、Distance 区间收敛；
 - 验证 Hinge 只绕局部 Z、Slider 只沿局部 Z、Cone swing/twist 语义；
+- 按 Jolt `FrequencyAndDamping` 隐式欧拉公式复算 Distance/Hinge/Slider 弹簧；
+- 解析验证 Hinge/Slider 摩擦，以及速度/位置电机的限幅和收敛轨迹；
 - 使用全新世界执行逐位重放检查；
 - 输出 JSONL trace、断言报告和机器可读 manifest；
 - 使用匹配的 native 模块在 CPython 3.11 和 3.13 下运行。
 
 当前切片尚未实现：
 
-- Hinge/Slider 的 spring、friction、motor 数值矩阵；
-- Distance spring、Cone 旋转 frame 与独立 A/B frame 组合；
+- Cone 旋转 frame 与独立 A/B frame 组合；
+- 动态-动态约束的弹簧、摩擦和电机反作用；
 - adapter parity runner；
 - Blender 端到端 runner；
 - contact/query 语义断言和已批准 golden。

@@ -1,0 +1,43 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "DIST-003",
+  "title": "距离约束弹簧遵循 Jolt 隐式欧拉轨迹",
+  "source": "jolt_unit_test:DistanceConstraintSpring",
+  "tags": ["p0", "constraint", "distance", "spring"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "spring_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [10.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "distance_spring",
+      "type": "DISTANCE",
+      "body_a": "WORLD",
+      "body_b": "spring_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [10.0, 0.0, 0.0],
+      "distance_min": 0.0,
+      "distance_max": 0.0,
+      "limit_spring_frequency": 2.0,
+      "limit_spring_damping": 0.1
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "distance_spring", "type": "DISTANCE", "current_value_kind": "distance", "enabled": true},
+    {"kind": "implicit_spring_trajectory", "constraint": "distance_spring", "target": 0.0, "initial_velocity": 0.0, "frequency": 2.0, "damping": 0.1, "absolute_value": true, "value_abs": 0.00002},
+    {"kind": "constraint_lambda_active", "constraint": "distance_spring", "field": "lambda_max_abs", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

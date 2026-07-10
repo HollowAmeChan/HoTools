@@ -1,0 +1,42 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "HINGE-003",
+  "title": "铰链限位弹簧遵循 Jolt 隐式欧拉轨迹",
+  "source": "jolt_unit_test:HingeConstraintSpring",
+  "tags": ["p0", "constraint", "hinge", "spring"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "spring_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "hinge_spring",
+      "type": "HINGE",
+      "body_a": "WORLD",
+      "body_b": "spring_hinge",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "limit_enabled": true,
+      "angular_limit_min": 0.0,
+      "angular_limit_max": 0.0,
+      "limit_spring_frequency": 2.0,
+      "limit_spring_damping": 0.1
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 3, 4, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "hinge_spring", "type": "HINGE", "current_value_kind": "angle", "enabled": true},
+    {"kind": "implicit_spring_trajectory", "constraint": "hinge_spring", "target": 0.0001, "initial_velocity": 4.0, "frequency": 2.0, "damping": 0.1, "value_abs": 0.0018, "start_frame": 1, "end_frame": 5},
+    {"kind": "constraint_lambda_active", "constraint": "hinge_spring", "field": "lambda_limit", "min_abs": 0.000001, "start_frame": 1, "end_frame": 5},
+    {"kind": "finite_all"}
+  ]
+}

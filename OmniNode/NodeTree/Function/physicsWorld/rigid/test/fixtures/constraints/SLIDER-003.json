@@ -1,0 +1,44 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SLIDER-003",
+  "title": "滑块上限弹簧遵循 Jolt 隐式欧拉轨迹",
+  "source": "jolt_unit_test:SliderConstraintSpring",
+  "tags": ["p0", "constraint", "slider", "spring"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "spring_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 10.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "slider_spring",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "spring_slider",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [0.0, 0.0, 10.0],
+      "limit_enabled": true,
+      "linear_limit_min": -100.0,
+      "linear_limit_max": 0.0,
+      "limit_spring_frequency": 2.0,
+      "limit_spring_damping": 0.1
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 3, 4, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "slider_spring", "type": "SLIDER", "current_value_kind": "position", "enabled": true},
+    {"kind": "implicit_spring_trajectory", "constraint": "slider_spring", "target": 0.0, "initial_velocity": 0.0, "frequency": 2.0, "damping": 0.1, "value_abs": 0.00002, "end_frame": 5},
+    {"kind": "constraint_lambda_active", "constraint": "slider_spring", "field": "lambda_limit", "min_abs": 0.000001, "start_frame": 1, "end_frame": 5},
+    {"kind": "finite_all"}
+  ]
+}

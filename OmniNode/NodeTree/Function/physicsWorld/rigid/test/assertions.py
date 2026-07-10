@@ -657,6 +657,182 @@ def _assert_constraint_value_near(
         )
 
 
+def _assert_implicit_spring_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """按 Jolt FrequencyAndDamping 的隐式欧拉公式复算约束轨迹。"""
+    constraint_id = _constraint_id(parameters)
+    spec = fixture.constraints_by_id.get(constraint_id)
+    if spec is None or spec.type not in {"DISTANCE", "HINGE", "SLIDER"}:
+        raise FixtureError(
+            f"implicit spring assertion requires distance/hinge/slider: {constraint_id}"
+        )
+    frames = _frames_by_number(trace)
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 0.0))
+    if start_frame not in frames:
+        raise FixtureError(
+            f"implicit_spring_trajectory requires sampled start frame {start_frame}"
+        )
+    initial_state = _constraint_at(frames[start_frame], constraint_id)
+    position = float(initial_state["current_value"])
+    target = _number(parameters.get("target"), "target", 0.0)
+    velocity = _number(parameters.get("initial_velocity"), "initial_velocity")
+    frequency = _number(
+        parameters.get("frequency"), "frequency", spec.limit_spring_frequency,
+    )
+    damping = _number(
+        parameters.get("damping"), "damping", spec.limit_spring_damping,
+    )
+    tolerance = _number(parameters.get("value_abs"), "value_abs", 5.0e-5)
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    absolute_value = bool(parameters.get("absolute_value", False))
+    if frequency <= 0.0:
+        raise FixtureError("implicit spring frequency must be > 0")
+    if damping < 0.0:
+        raise FixtureError("implicit spring damping must be >= 0")
+
+    displacement = position - target
+    dt = fixture.world.dt
+    omega = 2.0 * math.pi * frequency
+    denominator = 1.0 + 2.0 * dt * damping * omega + dt * dt * omega * omega
+    sampled = {
+        number: frame for number, frame in frames.items()
+        if start_frame <= number <= end_frame
+    }
+    for frame_number in range(start_frame, end_frame + 1):
+        if frame_number in sampled:
+            expected = target + displacement
+            if absolute_value:
+                expected = abs(expected)
+            state = _constraint_at(sampled[frame_number], constraint_id)
+            actual = float(state["current_value"])
+            if abs(actual - expected) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {constraint_id} spring value "
+                    f"{actual:.12g}, expected {expected:.12g} within {tolerance:g}"
+                )
+        if frame_number == end_frame:
+            break
+        velocity = (velocity - dt * omega * omega * displacement) / denominator
+        displacement += velocity * dt
+
+
+def _assert_linear_speed_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """复算恒定力上限下，滑块向目标速度收敛的半隐式轨迹。"""
+    body_id = _body_id(parameters)
+    body_spec = fixture.bodies_by_id.get(body_id)
+    if body_spec is None:
+        raise FixtureError(f"linear speed assertion references unknown body: {body_id}")
+    axis = _axis_index(parameters.get("axis"))
+    target_velocity = _number(parameters.get("target_velocity"), "target_velocity")
+    max_force = _number(parameters.get("max_force"), "max_force")
+    velocity_abs = _number(parameters.get("velocity_abs"), "velocity_abs", 3.0e-5)
+    position_abs = _number(parameters.get("position_abs"), "position_abs", 5.0e-5)
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    if max_force < 0.0:
+        raise FixtureError("linear speed max_force must be >= 0")
+    frames = _frames_by_number(trace)
+    if 0 not in frames:
+        raise FixtureError("linear_speed_trajectory requires sample frame 0")
+    initial = _body_at(frames[0], body_id)
+    position = float(initial["position"][axis])
+    velocity = float(initial["linear_velocity"][axis])
+    acceleration_step = max_force / body_spec.mass * fixture.world.dt
+    sampled = {number: frame for number, frame in frames.items() if number <= end_frame}
+    for frame_number in range(0, end_frame + 1):
+        if frame_number in sampled:
+            actual = _body_at(sampled[frame_number], body_id)
+            actual_velocity = float(actual["linear_velocity"][axis])
+            actual_position = float(actual["position"][axis])
+            if abs(actual_velocity - velocity) > velocity_abs:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_id} axis velocity "
+                    f"{actual_velocity:.12g}, expected {velocity:.12g} within {velocity_abs:g}"
+                )
+            if abs(actual_position - position) > position_abs:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_id} axis position "
+                    f"{actual_position:.12g}, expected {position:.12g} within {position_abs:g}"
+                )
+        if frame_number == end_frame:
+            break
+        delta = target_velocity - velocity
+        velocity += max(-acceleration_step, min(acceleration_step, delta))
+        position += velocity * fixture.world.dt
+
+
+def _assert_constraint_lambda_active(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """确认约束求解器确实在指定通道输出了非零冲量。"""
+    constraint_id = _constraint_id(parameters)
+    field = str(parameters.get("field", "lambda_motor"))
+    if field not in {"lambda_limit", "lambda_motor", "lambda_max_abs"}:
+        raise FixtureError(
+            "constraint lambda field must be lambda_limit, lambda_motor or lambda_max_abs"
+        )
+    minimum = _number(parameters.get("min_abs"), "min_abs", 1.0e-6)
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 1.0))
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    maximum = 0.0
+    for frame in trace:
+        frame_number = int(frame["frame"])
+        if start_frame <= frame_number <= end_frame:
+            maximum = max(maximum, abs(float(_constraint_at(frame, constraint_id)[field])))
+    if maximum < minimum:
+        raise SemanticAssertionError(
+            f"{fixture.id} {constraint_id}.{field} maximum {maximum:.12g} "
+            f"is below {minimum:g}"
+        )
+
+
+def _assert_angular_speed_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """复算恒定摩擦力矩下角速度向零收敛的限幅轨迹。"""
+    body_id = _body_id(parameters)
+    if body_id not in fixture.bodies_by_id:
+        raise FixtureError(f"angular speed assertion references unknown body: {body_id}")
+    axis = _axis_index(parameters.get("axis"))
+    target_velocity = _number(parameters.get("target_velocity"), "target_velocity", 0.0)
+    max_torque = _number(parameters.get("max_torque"), "max_torque")
+    inertia = _number(parameters.get("inertia"), "inertia")
+    tolerance = _number(parameters.get("velocity_abs"), "velocity_abs", 3.0e-5)
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    if max_torque < 0.0 or inertia <= 0.0:
+        raise FixtureError("angular speed requires max_torque >= 0 and inertia > 0")
+    frames = _frames_by_number(trace)
+    if 0 not in frames:
+        raise FixtureError("angular_speed_trajectory requires sample frame 0")
+    velocity = float(_body_at(frames[0], body_id)["angular_velocity"][axis])
+    velocity_step = max_torque / inertia * fixture.world.dt
+    sampled = {number: frame for number, frame in frames.items() if number <= end_frame}
+    for frame_number in range(0, end_frame + 1):
+        if frame_number in sampled:
+            actual = float(
+                _body_at(sampled[frame_number], body_id)["angular_velocity"][axis]
+            )
+            if abs(actual - velocity) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_id} axis angular velocity "
+                    f"{actual:.12g}, expected {velocity:.12g} within {tolerance:g}"
+                )
+        if frame_number == end_frame:
+            break
+        delta = target_velocity - velocity
+        velocity += max(-velocity_step, min(velocity_step, delta))
+
+
 def evaluate_assertions(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -707,6 +883,18 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "constraint_value_near": lambda spec: _assert_constraint_value_near(
+            fixture, trace, spec.parameters,
+        ),
+        "implicit_spring_trajectory": lambda spec: _assert_implicit_spring_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "linear_speed_trajectory": lambda spec: _assert_linear_speed_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "constraint_lambda_active": lambda spec: _assert_constraint_lambda_active(
+            fixture, trace, spec.parameters,
+        ),
+        "angular_speed_trajectory": lambda spec: _assert_angular_speed_trajectory(
             fixture, trace, spec.parameters,
         ),
     }

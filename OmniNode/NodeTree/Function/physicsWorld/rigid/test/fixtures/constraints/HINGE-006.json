@@ -1,0 +1,38 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "HINGE-006",
+  "title": "铰链摩擦力矩产生恒定限幅角减速度",
+  "source": "jolt_unit_test:HingeConstraintFriction",
+  "tags": ["p0", "constraint", "hinge", "friction"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "friction_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 1.0,
+      "angular_velocity": [0.0, 0.0, 4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "hinge_friction",
+      "type": "HINGE",
+      "body_a": "WORLD",
+      "body_b": "friction_hinge",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "max_friction_torque": 0.1
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "angular_speed_trajectory", "body": "friction_hinge", "axis": "Z", "target_velocity": 0.0, "max_torque": 0.1, "inertia": 0.16666666666666666, "velocity_abs": 0.00003},
+    {"kind": "constraint_lambda_active", "constraint": "hinge_friction", "field": "lambda_motor", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}
