@@ -1,4 +1,4 @@
-"""MeshCloth 持久 RNA 的纯数据 schema；不导入 bpy。"""
+"""MC2 MeshCloth setup 的持久 RNA 纯数据 schema；不导入 bpy。"""
 
 MESH_COLLISION_RNA_FIELDS = (
     {

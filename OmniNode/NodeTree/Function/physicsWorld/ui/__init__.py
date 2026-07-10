@@ -69,7 +69,7 @@ def register() -> None:
         register_blender_property_domain(
             "physics_ui",
             PHYSICS_UI_BLENDER_PROPERTIES,
-            dependencies=("collision", "rigid", "mesh_cloth"),
+            dependencies=("collision", "mc2", "rigid"),
         )
         _ensure_draw_handler()
         bpy.types.VIEW3D_HT_header.append(draw_collision_overlay_header)

@@ -1,5 +1,5 @@
 """
-MC2 BasePose 只读对象的集中管理模块。
+MC2 MeshCloth BasePose 只读对象的集中管理模块。
 
 这个文件只处理物理缓存对象的生命周期和轻量校验：
 1. 创建/刷新当前物理 Mesh 对应的 BasePose 只读对象。

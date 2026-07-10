@@ -1,4 +1,4 @@
-"""由 mesh_cloth.schema 生成 MeshCollision PropertyGroup。"""
+"""由 MC2 MeshCloth setup schema 生成 MeshCollision PropertyGroup。"""
 
 import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty

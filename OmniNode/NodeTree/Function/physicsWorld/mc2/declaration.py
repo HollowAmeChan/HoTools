@@ -6,7 +6,7 @@ from ..collision.capabilities import (
     BONE_COLLISION_CAPABILITY_ID,
     OBJECT_COLLISION_CAPABILITY_ID,
 )
-from ..mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
+from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 from .capabilities import MC2_CAPABILITIES, MC2_UPDATE_FREQUENCY_TABLE
 from .names import (
     MC2_BONE_RESULT_CHANNEL,

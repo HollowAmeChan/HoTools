@@ -1,5 +1,5 @@
 """
-物理解算后置 delta 输出工具。
+MC2 MeshCloth setup 的后置 delta 输出工具。
 
 这个文件只管理“点域 FLOAT_VECTOR 属性 + Geometry Nodes 后置位移修改器”的通用写回机制：
 1. 每个 solver 必须传入自己的 attribute/modifier/node group 名称，避免不同后端互相覆盖。

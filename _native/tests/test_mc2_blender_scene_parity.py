@@ -43,8 +43,16 @@ ensure_package(
     ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "collision",
 )
 ensure_package(
-    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth",
-    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mesh_cloth",
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2",
+    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2",
+)
+ensure_package(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups",
+    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2" / "setups",
+)
+ensure_package(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth",
+    ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2" / "setups" / "mesh_cloth",
 )
 ensure_package(
     "HoTools.OmniNode.NodeTree.Function.physicsMC2MeshCloth",
@@ -52,7 +60,7 @@ ensure_package(
 )
 
 from bpy.props import PointerProperty  # noqa: E402
-from HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.properties import (  # noqa: E402
+from HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.properties import (  # noqa: E402
     PG_Hotools_MeshCollision,
 )
 from HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties import (  # noqa: E402

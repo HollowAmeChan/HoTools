@@ -9,6 +9,15 @@ from __future__ import annotations
 from importlib import import_module
 
 
+COMPONENT_MODULE = {
+    "component_id": "mc2",
+    "kind": "solver_adapter",
+    "depends_on": ("collision",),
+    "capabilities": ".setups.mesh_cloth.capabilities:MESH_CLOTH_CAPABILITIES",
+    "blender_properties": ".setups.mesh_cloth.properties:MESH_CLOTH_BLENDER_PROPERTIES",
+}
+
+
 SOLVER_MODULE = {
     "domain": "mc2",
     "solver_id": "mc2",
@@ -16,7 +25,6 @@ SOLVER_MODULE = {
     "nodes": (".nodes",),
     "capabilities": ".capabilities:MC2_CAPABILITIES",
     "debug_draw_modes": ".debug:MC2_DEBUG_DRAW_MODES",
-    "property_dependencies": ("collision", "mesh_cloth"),
 }
 
 
@@ -38,6 +46,12 @@ _EXPORTS = {
     "MC2_SETUP_PROFILE_CAPABILITY": ".capabilities",
     "MC2_SETUP_PROFILE_CAPABILITY_ID": ".capabilities",
     "MC2_UPDATE_FREQUENCY_TABLE": ".capabilities",
+    "MESH_COLLISION_CAPABILITY": ".setups.mesh_cloth.capabilities",
+    "MESH_COLLISION_CAPABILITY_ID": ".setups.mesh_cloth.capabilities",
+    "MESH_CLOTH_CAPABILITIES": ".setups.mesh_cloth.capabilities",
+    "MESH_COLLISION_RNA_FIELDS": ".setups.mesh_cloth.schema",
+    "MESH_CLOTH_BLENDER_PROPERTIES": ".setups.mesh_cloth.properties",
+    "PG_Hotools_MeshCollision": ".setups.mesh_cloth.properties",
     "MC2_SOLVER_DECLARATION": ".declaration",
     "MC2_DEBUG_DRAW_MODES": ".debug",
     "MC2TaskSpec": ".specs",

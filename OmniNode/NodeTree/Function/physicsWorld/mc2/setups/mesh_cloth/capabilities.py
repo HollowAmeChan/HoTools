@@ -1,4 +1,4 @@
-"""MeshCloth solver/domain capability。"""
+"""MC2 MeshCloth setup capability。"""
 
 from .schema import MESH_COLLISION_RNA_FIELDS
 
@@ -32,7 +32,7 @@ def _capability_fields() -> list[dict]:
 MESH_COLLISION_CAPABILITY = {
     "capability_id": MESH_COLLISION_CAPABILITY_ID,
     "display_name": "网格布料碰撞",
-    "semantic_owner": "physicsWorld.mesh_cloth",
+    "semantic_owner": "physicsWorld.mc2.setups.mesh_cloth",
     "explicit_storage": "Object.hotools_mesh_collision",
     "fields": _capability_fields(),
 }

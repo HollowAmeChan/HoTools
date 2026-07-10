@@ -19,7 +19,7 @@ from .operators import (
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
-from ..mesh_cloth.base_pose import mesh_light_key
+from ..mc2.setups.mesh_cloth.base_pose import mesh_light_key
 from .utils import (
     _active_armature_object,
     _active_collision_props,

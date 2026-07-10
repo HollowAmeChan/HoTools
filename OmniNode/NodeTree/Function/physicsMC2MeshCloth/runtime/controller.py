@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import bpy
 import numpy as np
 
-from ...physicsWorld.mesh_cloth.base_pose import ensure_base_pose_proxy, ensure_delta_output
+from ...physicsWorld.mc2.setups.mesh_cloth.base_pose import ensure_base_pose_proxy, ensure_delta_output
 from ....OmniNodeSocketMapping import _OmniCache
 from .. import blender_io, collision, mesh_build, params, state as mc2_state
 from ..constants import MC2SystemConstants

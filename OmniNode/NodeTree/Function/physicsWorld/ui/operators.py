@@ -20,7 +20,7 @@ from .utils import (
     _set_collision_group_bit,
     _tag_view3d_redraw,
 )
-from ..mesh_cloth.base_pose import ensure_base_pose_proxy
+from ..mc2.setups.mesh_cloth.base_pose import ensure_base_pose_proxy
 
 
 class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):

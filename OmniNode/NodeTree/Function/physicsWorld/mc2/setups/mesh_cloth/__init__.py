@@ -1,15 +1,7 @@
-"""Physics World MeshCloth Blender data adapter component。"""
+"""统一 MC2 solver 的 MeshCloth setup Blender adapter。"""
 
 from importlib import import_module
 
-
-COMPONENT_MODULE = {
-    "component_id": "mesh_cloth",
-    "kind": "solver_adapter",
-    "depends_on": ("collision",),
-    "capabilities": ".capabilities:MESH_CLOTH_CAPABILITIES",
-    "blender_properties": ".properties:MESH_CLOTH_BLENDER_PROPERTIES",
-}
 
 _EXPORTS = {
     "MESH_COLLISION_CAPABILITY": ".capabilities",
