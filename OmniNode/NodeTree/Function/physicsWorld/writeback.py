@@ -5,8 +5,8 @@ physicsWorld.writeback — 物理写回算法
 
 写回类型（对应三种偏移量语义，归零即复位）：
   1. rigid_body_delta  → Object.delta_location / delta_rotation_euler
-  2. bone_transform    → PoseBone.matrix_basis（未来扩展占位）
-  3. gn_attribute      → mesh attribute offset（未来扩展占位）
+  2. bone_transform    → PoseBone.matrix_basis
+  3. gn_attribute      → 共享 mesh 顶点最终 offset
 
 初始状态约定：
   delta_location / delta_rotation_euler 在 Blender 中默认为 (0,0,0)，
@@ -24,8 +24,9 @@ import mathutils
 
 from .rigid.names import RIGID_BODY_SLOT_KIND
 from .rigid.results import get_rigid_transform_result
+from .gn_offset import clear_gn_local_offsets, normalize_local_offsets, write_gn_local_offsets
 from .utils.values import matrix_from_16
-from .writeback_commands import iter_bone_transform_writebacks
+from .writeback_commands import iter_bone_transform_writebacks, iter_gn_offset_writebacks
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +35,9 @@ from .writeback_commands import iter_bone_transform_writebacks
 
 _TOUCHED_OBJECTS_KEY     = "_writeback_touched_objects"
 _TOUCHED_POSE_BONES_KEY  = "_writeback_touched_pose_bones"
+_TOUCHED_GN_OBJECTS_KEY  = "_writeback_touched_gn_objects"
 _CLEANUP_RESOURCE_KEY    = "_writeback_cleanup"
+_GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
 
 
 class WritebackCleanupResource:
@@ -43,13 +46,20 @@ class WritebackCleanupResource:
     实现 omni_cache_dispose 协议：world 被 Cache Delete / addon 注销时
     自动将所有曾写过 delta 的对象归零，不残留物理偏移。
     """
-    def __init__(self, touched_objects: set, touched_pose_bones: dict):
+    def __init__(
+        self,
+        touched_objects: set,
+        touched_pose_bones: dict,
+        touched_gn_objects: dict,
+    ):
         self._touched_objects = touched_objects
         self._touched_pose_bones = touched_pose_bones
+        self._touched_gn_objects = touched_gn_objects
 
     def omni_cache_dispose(self, reason: str) -> None:
         _reset_rigid_objects(self._touched_objects)
         _reset_pose_bones(self._touched_pose_bones)
+        _reset_gn_objects(self._touched_gn_objects)
 
 
 def _get_touched_set(world) -> set:
@@ -67,11 +77,19 @@ def _get_touched_pose_bones(world) -> dict:
     return br[_TOUCHED_POSE_BONES_KEY]
 
 
+def _get_touched_gn_objects(world) -> dict:
+    br = world.backend_resources
+    if _TOUCHED_GN_OBJECTS_KEY not in br:
+        br[_TOUCHED_GN_OBJECTS_KEY] = {}
+    return br[_TOUCHED_GN_OBJECTS_KEY]
+
+
 def _ensure_cleanup_resource(world) -> None:
     if _CLEANUP_RESOURCE_KEY not in world.backend_resources:
         world.backend_resources[_CLEANUP_RESOURCE_KEY] = WritebackCleanupResource(
             _get_touched_set(world),
             _get_touched_pose_bones(world),
+            _get_touched_gn_objects(world),
         )
 
 
@@ -125,6 +143,21 @@ def _reset_pose_bones(touched) -> None:
         pass
 
 
+def _reset_gn_objects(touched) -> None:
+    if not touched:
+        return
+    values = list(touched.values()) if isinstance(touched, dict) else list(touched)
+    for obj in values:
+        try:
+            clear_gn_local_offsets(obj)
+        except Exception:
+            pass
+    try:
+        touched.clear()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 1. 刚体 delta 写回
 # ---------------------------------------------------------------------------
@@ -160,12 +193,13 @@ def reset_rigid_body_deltas(world) -> None:
 
 def clear_all_deltas(world) -> None:
     """
-    清除本 world 期间所有曾被写过 delta 的对象（无论是否在 solver_slots 里）。
-    在 omni_cache_dispose / Cache Delete / 停止模拟时调用，确保对象归位。
+    清除本 world 期间所有曾被写过的对象、骨骼和 GN offset。
+    在 omni_cache_dispose / Cache Delete / 停止模拟时调用，确保目标归位。
     """
     br = getattr(world, "backend_resources", {})
     _reset_rigid_objects(br.get(_TOUCHED_OBJECTS_KEY))
     _reset_pose_bones(br.get(_TOUCHED_POSE_BONES_KEY))
+    _reset_gn_objects(br.get(_TOUCHED_GN_OBJECTS_KEY))
 
 
 def writeback_rigid_body_deltas(world) -> int:
@@ -441,12 +475,162 @@ def _find_armature_by_pointer(armature_ptr):
 
 
 # ---------------------------------------------------------------------------
-# 3. GN 属性写回（未来扩展占位）
+# 3. GN 顶点最终 offset 写回
 # ---------------------------------------------------------------------------
 
+def reset_gn_offsets(world) -> None:
+    br = getattr(world, "backend_resources", {})
+    _reset_gn_objects(br.get(_TOUCHED_GN_OBJECTS_KEY))
+
+
+def _find_mesh_by_pointer(object_ptr, object_data_ptr):
+    try:
+        obj_target = int(object_ptr or 0)
+        data_target = int(object_data_ptr or 0)
+    except Exception:
+        return None
+    if obj_target <= 0 or data_target <= 0:
+        return None
+    try:
+        import bpy
+    except Exception:
+        return None
+    for obj in getattr(bpy.data, "objects", ()):
+        try:
+            if (
+                getattr(obj, "type", None) == "MESH"
+                and getattr(obj, "data", None) is not None
+                and int(obj.as_pointer()) == obj_target
+                and int(obj.data.as_pointer()) == data_target
+            ):
+                return obj
+        except Exception:
+            continue
+    return None
+
+
+def _gn_writeback_error(diagnostics: dict, result, message: object) -> None:
+    errors = diagnostics.setdefault("errors", [])
+    if len(errors) < 32:
+        errors.append({
+            "target_key": str(result.get("target_key") or "") if isinstance(result, dict) else "",
+            "writer_id": str(result.get("writer_id") or "") if isinstance(result, dict) else "",
+            "message": str(message),
+        })
+
+
+def _set_gn_slot_error(world, result, message: str | None) -> None:
+    slot_id = str(result.get("slot_id") or "") if isinstance(result, dict) else ""
+    slot = getattr(world, "solver_slots", {}).get(slot_id)
+    if slot is None:
+        return
+    if message:
+        slot.data["_writeback_error"] = str(message)
+    else:
+        slot.data.pop("_writeback_error", None)
+
+
+def get_gn_writeback_diagnostics(world) -> dict:
+    source = getattr(world, "runtime_caches", {}).get(_GN_DIAGNOSTICS_KEY, {})
+    snapshot = dict(source) if isinstance(source, dict) else {}
+    snapshot["errors"] = [dict(item) for item in snapshot.get("errors", ())]
+    return snapshot
+
+
 def writeback_gn_attributes(world) -> int:
-    # TODO：Phase 7 迁移 MeshCloth 时实现
-    return 0
+    """写入每个 Mesh 目标唯一的对象局部最终 offset。
+
+    同一 writer 在同一帧重复发布时取最后一个快照；同一目标若出现多个
+    writer，说明中间分量没有先在 exchange 归并，目标会清零并记录冲突。
+    """
+    fc = getattr(world, "frame_context", None)
+    frame = int(getattr(fc, "frame", 0) or 0)
+    generation = int(getattr(world, "generation", 0) or 0)
+    results = iter_gn_offset_writebacks(world, frame=frame, generation=generation)
+    diagnostics = {
+        "frame": frame,
+        "generation": generation,
+        "result_count": len(results),
+        "candidate_count": 0,
+        "superseded_count": 0,
+        "conflict_count": 0,
+        "written_count": 0,
+        "cleared_count": 0,
+        "errors": [],
+    }
+    world.runtime_caches[_GN_DIAGNOSTICS_KEY] = diagnostics
+    touched = _get_touched_gn_objects(world)
+    _ensure_cleanup_resource(world)
+
+    by_target: dict[str, dict[str, dict]] = {}
+    for result in results:
+        try:
+            obj_ptr = int(result.get("object_ptr", 0) or 0)
+            data_ptr = int(result.get("object_data_ptr", 0) or 0)
+            target_key = f"{obj_ptr}:{data_ptr}"
+            solver = str(result.get("solver") or "").strip()
+            slot_id = str(result.get("slot_id") or "").strip()
+            writer_id = f"{solver}:{slot_id}"
+            if obj_ptr <= 0 or data_ptr <= 0 or result.get("target_key") != target_key:
+                raise ValueError("target pointer/key 不一致")
+            if not solver or not slot_id or result.get("writer_id") != writer_id:
+                raise ValueError("writer_id 必须由 solver + stable slot_id 构成")
+            writers = by_target.setdefault(target_key, {})
+            if writer_id in writers:
+                diagnostics["superseded_count"] += 1
+            writers[writer_id] = result
+        except Exception as exc:
+            _gn_writeback_error(diagnostics, result, exc)
+            _set_gn_slot_error(world, result, str(exc))
+
+    diagnostics["candidate_count"] = len(by_target)
+    written_targets = set()
+    for target_key, writers in by_target.items():
+        if len(writers) != 1:
+            diagnostics["conflict_count"] += 1
+            message = "同一 Mesh 目标存在多个最终 GN offset writer；请先在 world.exchange 归并"
+            for result in writers.values():
+                _gn_writeback_error(diagnostics, result, message)
+                _set_gn_slot_error(world, result, message)
+            old_obj = touched.pop(target_key, None)
+            if old_obj is not None and clear_gn_local_offsets(old_obj):
+                diagnostics["cleared_count"] += 1
+            continue
+
+        result = next(iter(writers.values()))
+        try:
+            obj = _find_mesh_by_pointer(
+                result.get("object_ptr"),
+                result.get("object_data_ptr"),
+            )
+            if obj is None:
+                raise ValueError("GN offset 目标 Mesh 不存在或 data pointer 已变化")
+            vertex_count = int(result.get("vertex_count", -1))
+            values = normalize_local_offsets(
+                result.get("local_offsets"),
+                vertex_count,
+                copy=False,
+            )
+            if vertex_count != len(obj.data.vertices):
+                raise ValueError(
+                    f"GN offset 拓扑已变化：result={vertex_count} target={len(obj.data.vertices)}"
+                )
+            write_gn_local_offsets(obj, values)
+            touched[target_key] = obj
+            written_targets.add(target_key)
+            diagnostics["written_count"] += 1
+            _set_gn_slot_error(world, result, None)
+        except Exception as exc:
+            _gn_writeback_error(diagnostics, result, exc)
+            _set_gn_slot_error(world, result, str(exc))
+
+    for target_key, obj in list(touched.items()):
+        if target_key in written_targets:
+            continue
+        if clear_gn_local_offsets(obj):
+            diagnostics["cleared_count"] += 1
+        touched.pop(target_key, None)
+    return int(diagnostics["written_count"])
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +646,7 @@ def apply_all_writebacks(world, restart: bool) -> int:
     """
     if restart:
         reset_rigid_body_deltas(world)
+        reset_gn_offsets(world)
 
     total  = writeback_rigid_body_deltas(world)
     total += writeback_bone_transforms(world)

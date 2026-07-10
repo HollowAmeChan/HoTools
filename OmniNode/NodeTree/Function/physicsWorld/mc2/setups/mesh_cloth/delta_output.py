@@ -1,11 +1,11 @@
 """
 MC2 MeshCloth setup 的后置 delta 输出工具。
 
-这个文件只管理“点域 FLOAT_VECTOR 属性 + Geometry Nodes 后置位移修改器”的通用写回机制：
-1. 每个 solver 必须传入自己的 attribute/modifier/node group 名称，避免不同后端互相覆盖。
-2. 这里不保存运行时物理状态，也不理解 MC2、XPBD 或其他 solver 的求解语义。
-3. 写入值的语义统一为 world display position - world base position，再转成当前对象局部 offset。
-4. 修改器会被移动到当前对象修改器栈底部，用于在 Armature/基础变形之后叠加物理偏移。
+这是旧 MC2 运行路径的兼容工具，只管理其既有 ``mc2_delta`` 输出：
+1. 它不构成新 Physics World 的公开写回契约，也不得被新 solver 用来创建私有属性槽。
+2. 新路径统一发布对象局部最终 offset，由 ``physicsWorld.gn_offset`` 写入共享属性。
+3. 旧路径仍以 world display position - world base position 转换本地 offset，直到迁移完成。
+4. 修改器位于 Armature/基础变形之后，保证旧 MC2 当前行为不漂移。
 """
 
 from dataclasses import dataclass

@@ -31,6 +31,7 @@ physicsWorld/
   blender.py                 # 物理 RNA/UI 唯一根生命周期
   blender_registry.py        # domain 注册 journal、依赖和失败回滚
   registry.py                # component/solver 发现与装卸
+  gn_offset.py               # 单一共享 GN 顶点最终 offset 输出
   collision/                 # Object/Bone collider 共享 capability
   spring_vrm/                # VRM SpringBone solver
   rigid/                     # Rigid/Jolt solver
@@ -59,11 +60,11 @@ physicsWorld/
 
 | Domain | 当前状态 | 已成立边界 | 主要未完成项 |
 |---|---|---|---|
-| World core | 可用 | Begin/Commit、scope、collider snapshot、slot/resource/result/exchange、dispose、debug snapshot | 跨 solver 交互仍需真实业务闭环 |
+| World core | 可用 | Begin/Commit、scope、collider snapshot、slot/resource/result/exchange、共享 GN 最终 offset 写回、dispose、debug snapshot | 跨 solver 交互仍需真实业务闭环 |
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | 高级约束/shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | 统一框架已建立 | 唯一 solver id；三种 setup adapter 契约；稳定 task id/source signature；统一 GN/bone writeback channel；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
+| MC2 | 统一框架已建立 | 唯一 solver id；三种 setup adapter 契约；稳定 task id/source signature；共享 GN 最终 offset/bone writeback channel；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
 | 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
@@ -76,6 +77,7 @@ MC2 只有一个 solver identity：`mc2`。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
 - 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package 中的两套实现仅作为迁移与 parity 参考。
 - 当前新 MC2 step 是明确的 framework no-op：不创建 slot、不发布结果、不调用旧 MC2 package。
+- MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
 - 在新路径完成 parity、same-frame、跳帧/reset、dispose 和写回验收前，旧 MeshCloth/BoneCloth package 继续承担当前运行实现。
 
 ## 固定契约

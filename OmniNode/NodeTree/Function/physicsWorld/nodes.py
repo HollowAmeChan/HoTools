@@ -344,14 +344,17 @@ def physicsWorldDebugText(
 
     写回类型（全部基于偏移量语义，归零即复位）：
       · 刚体：Object.delta_location / delta_rotation_euler（不修改原始 location）
-      · 骨骼：PoseBone.matrix_basis（未来扩展，offset from rest pose）
-      · GN属性：mesh attribute offset（未来扩展）
+      · 骨骼：PoseBone.matrix_basis（offset from rest pose）
+      · GN属性：共享 mesh 顶点最终 offset（OBJECT_LOCAL）
+
+      GN 写回不为各 solver 创建私有属性。多个中间 offset 必须先在
+      world.exchange 中归并，result stream 对每个 Mesh 只接受一个最终 writer。
 
       初始状态约定：
       Blender 增量变换默认为 (0,0,0)，即"无物理偏移"。
       跳帧/复位时节点自动将 delta 归零，再写入新的物理结果。
-      停止模拟后 delta 保留（视觉结果持续可见）；如需清空，
-      删除缓存触发自动清理，或使用后续专门的清理节点。
+      刚体/骨骼停止模拟后 delta 保留；GN 最终 offset 在写回阶段发现本帧
+      无结果时会归零，防止残留上一帧 mesh 形变。删除缓存会统一自动清理。
 
     跳帧/复位处理：
       world.frame_context.restart_required=True 时先将 delta 归零，

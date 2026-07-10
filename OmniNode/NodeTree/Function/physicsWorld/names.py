@@ -15,6 +15,11 @@ from importlib import import_module
 RIGID_BODY_DELTA_CHANNEL = "rigid_body_delta"
 BONE_TRANSFORM_CHANNEL = "bone_transform"
 GN_ATTRIBUTE_CHANNEL = "gn_attribute"
+GN_OFFSET_ATTRIBUTE_NAME = "hotools_physics_offset"
+GN_OFFSET_MODIFIER_NAME = "HoTools 物理后置位移"
+GN_OFFSET_NODE_GROUP_NAME = "HoTools_PhysicsOffset"
+GN_OFFSET_WRITEBACK_TYPE = "mesh_vertex_offset"
+GN_OFFSET_SPACE = "OBJECT_LOCAL"
 
 # ---- SpringBone VRM -----------------------------------------------------
 #

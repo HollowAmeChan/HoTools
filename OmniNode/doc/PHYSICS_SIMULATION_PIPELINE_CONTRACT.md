@@ -423,6 +423,42 @@ export cache stream
 - writeback plan 可以由 solver prepare 生成，但执行写回应由统一 writeback 阶段完成。
 - 导出缓存应消费同一 result stream，不能重新从 solver 私有状态里猜。
 
+#### 共享 GN 顶点 offset 契约
+
+Geometry Nodes 写回只表示“目标 Mesh 在本帧的最终顶点 offset”，不是任意属性
+总线，也不是 solver 私有输出槽。公开结构固定为：
+
+```python
+{
+    "channel": "gn_attribute",
+    "writeback_type": "mesh_vertex_offset",
+    "offset_space": "OBJECT_LOCAL",
+    "solver": "mc2",
+    "slot_id": "稳定 task/slot id",
+    "writer_id": "<solver>:<slot_id>",
+    "object_ptr": 0,
+    "object_data_ptr": 0,
+    "target_key": "<object_ptr>:<object_data_ptr>",
+    "vertex_count": 0,
+    "local_offsets": "只读 float32[N,3] snapshot",
+}
+```
+
+- 写回层只维护一个共享 `hotools_physics_offset` 点域 `FLOAT_VECTOR` 属性和一个
+  栈底 Geometry Nodes 后置修改器；result 不允许指定 attribute name、modifier、
+  blend mode 或 solver 私有槽名。
+- offset 已经是对象局部空间最终值。writeback 不读取 base pose、不做 solver 混合，
+  也不从 display/base position 二次推导结果。
+- 同一 writer 在同帧重复发布采用 replace 语义，最后一个快照生效；同一目标出现
+  多个 writer 是未完成归并的契约错误，目标清零并产生可观察 diagnostics。
+- 多 solver 或多阶段的中间 offset、权重、优先级和分槽属于帧级 scratch data，必须
+  先在 `world.exchange` 的 setup/domain 通道中归并；归并者最后只发布一个最终 result。
+  `gn_attribute` result stream 本身不承担叠加器职责。
+- 目标 Mesh 数据必须单用户，result 顶点数必须与目标拓扑完全一致；不自动截断、
+  填充或复制 Mesh 数据。`hotools_physics_offset`、共享修改器和 node group 是 HoTools
+  保留名：同名内容会被接管，类型/schema 不匹配时直接替换。无本帧结果、restart
+  和 cache dispose 都会把曾写入目标归零，避免 stale offset。
+
 result channel 的结构约定（以 transform + stats 双通道为例）：
 
 - solver 向 `world.result_streams["<domain>_transform"]` 写每个模拟体的本帧结果，是纯快照 dict/tuple 数据（如 `frame`、`generation`、`slot_id`、`body_type`、`position`、`rotation_wxyz`、`linear_velocity`、`angular_velocity`、`active`、`sleeping`），不含 backend handle。

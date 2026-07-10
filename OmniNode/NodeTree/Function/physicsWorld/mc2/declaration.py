@@ -79,7 +79,8 @@ MC2_SOLVER_DECLARATION = {
     },
     "writeback": {
         "owner": "physicsWorld.writeback",
-        "target": "GN mesh delta or PoseBone.matrix_basis selected by setup adapter",
+        "target": "shared OBJECT_LOCAL mesh final offset or PoseBone.matrix_basis selected by setup adapter",
+        "composition": "intermediate offset parts stay in world.exchange; publish one final result per Mesh target",
         "solver_inline_writeback": False,
         "update_tag_owner": "writeback.apply",
     },
