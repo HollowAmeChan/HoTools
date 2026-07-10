@@ -1287,4 +1287,6 @@ Blender 4.5 / Release py311 实测：
 - 32/128 骨、32 collider 的 P50 倍率为 `1.124x / 1.103x`，通过 `<= 1.25x` 门槛。
 - Blender SpringBone 集成回归 `27/27` 通过，并新增 batch envelope、writeback plan、basis buffer 跨帧复用断言。
 
-性能阻塞已解除；整体 solver 验收仍受 implicit object source lease、`length/offset/primary_collision_group` 真实 bone collider snapshot 和 bake/export 缺口阻塞。
+性能阻塞已解除。后续收口中，根树成功重编译统一清 runtime cache 已替代 implicit object source lease；`length/offset/primary_collision_group` 已进入真实 SpringBone native collider arrays。Bake 不归 SpringBone 私有实现：骨骼 K 帧与属性动画应由后续统一 writeback bake 节点共同处理，不再作为本 solver 阻塞项。
+
+同轮补齐同骨架多链、重复 root/模拟骨重叠拒绝、分叉 parent index/use_connect、拓扑热改 context dispose、暂停/倒放、镜像缩放、运动 collider 和零长度 native context。SpringBone slot 原先缺失 `_dispose` 回调的问题已修复；10,000 帧 soak 中 slot、context、C++ handle 及 static/dynamic/result buffers 身份与数量保持稳定。Blender 常规矩阵 `35/35`，带 soak 矩阵 `36/36`。

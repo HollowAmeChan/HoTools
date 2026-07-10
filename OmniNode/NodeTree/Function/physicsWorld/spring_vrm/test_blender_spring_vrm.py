@@ -194,6 +194,7 @@ def _pw(suffix: str):
 _OmniCache = sys.modules[_nt_omni_key]._OmniCache
 PhysicsWorldCache = _pw("types").PhysicsWorldCache
 BONE_TRANSFORM_CHANNEL = _pw("names").BONE_TRANSFORM_CHANNEL
+COLLIDER_TYPE_CAPSULE = _pw("names").COLLIDER_TYPE_CAPSULE
 make_scope = _pw("scope").make_scope
 physicsWorldBegin = _pw("world").physicsWorldBegin
 physicsWorldCommit = _pw("world").physicsWorldCommit
@@ -210,6 +211,7 @@ resolve_bone_collision_fields = _pw("spring_vrm.bone_collision").resolve_bone_co
 resolve_bone_pin = _pw("spring_vrm.bone_collision").resolve_bone_pin
 make_bone_collision_override_properties = _pw("spring_vrm.implicit_objects").make_bone_collision_override_properties
 register_bone_collision_override_objects = _pw("spring_vrm.implicit_objects").register_bone_collision_override_objects
+register_spring_vrm_chain_objects = _pw("spring_vrm.implicit_objects").register_spring_vrm_chain_objects
 native_bone_collision_profile = _pw("spring_vrm.native")._bone_collision_profile
 spring_vrm_debug_draw = _pw("spring_vrm.debug_draw")
 
@@ -255,6 +257,57 @@ def _make_chain_armature(name: str = "PW_SpringVRM_Armature"):
     bone_2.use_connect = True
     bone_2.head = bone_1.tail
     bone_2.tail = (0.0, 0.0, 3.0)
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.update()
+    return arm_obj
+
+
+def _make_multi_chain_armature(name: str = "PW_SpringVRM_MultiChain"):
+    arm_data = bpy.data.armatures.new(f"{name}Data")
+    arm_obj = bpy.data.objects.new(name, arm_data)
+    bpy.context.scene.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    for x, prefix in ((-0.5, "a"), (0.5, "b")):
+        root = arm_data.edit_bones.new(f"root_{prefix}")
+        root.head = (x, 0.0, 0.0)
+        root.tail = (x, 0.0, 1.0)
+        bone_1 = arm_data.edit_bones.new(f"{prefix}_1")
+        bone_1.parent = root
+        bone_1.use_connect = True
+        bone_1.head = root.tail
+        bone_1.tail = (x, 0.0, 2.0)
+        bone_2 = arm_data.edit_bones.new(f"{prefix}_2")
+        bone_2.parent = bone_1
+        bone_2.use_connect = True
+        bone_2.head = bone_1.tail
+        bone_2.tail = (x, 0.0, 3.0)
+
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.update()
+    return arm_obj
+
+
+def _make_branch_armature(name: str = "PW_SpringVRM_Branch"):
+    arm_data = bpy.data.armatures.new(f"{name}Data")
+    arm_obj = bpy.data.objects.new(name, arm_data)
+    bpy.context.scene.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+    arm_obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+
+    root = arm_data.edit_bones.new("root")
+    root.head = (0.0, 0.0, 0.0)
+    root.tail = (0.0, 0.0, 1.0)
+    for x, name_suffix in ((-0.5, "left"), (0.5, "right")):
+        child = arm_data.edit_bones.new(name_suffix)
+        child.parent = root
+        child.use_connect = True
+        child.head = root.tail
+        child.tail = (x, 0.0, 2.0)
 
     bpy.ops.object.mode_set(mode="OBJECT")
     bpy.context.view_layer.update()
@@ -340,6 +393,7 @@ def _world_for_frame(
     reset: bool = False,
     extra_objects: list | None = None,
     include_passive_collision: bool = False,
+    time_scale: float = 1.0,
 ):
     scene = bpy.context.scene
     scene.frame_set(frame)
@@ -361,7 +415,7 @@ def _world_for_frame(
         scope,
         enabled=True,
         reset=reset,
-        time_scale=1.0,
+        time_scale=float(time_scale),
         substeps=1,
         debug_output=False,
     )
@@ -390,6 +444,7 @@ def _run_spring_frame(
     gravity_dir=None,
     gravity_power: float = 9.8,
     substeps: int = 1,
+    time_scale: float = 1.0,
     return_details: bool = False,
 ):
     world, _frame, _collider_count, restart = _world_for_frame(
@@ -399,6 +454,7 @@ def _run_spring_frame(
         reset=reset,
         extra_objects=extra_objects,
         include_passive_collision=include_passive_collision,
+        time_scale=float(time_scale),
     )
     properties = physicsSpringVRMChainProperties(
         [_bone_value(armature, "root")],
@@ -591,6 +647,16 @@ def test_spring_vrm_frame_jump_resets_without_step():
             f"jump frame should restore input pose, initial={tuple(initial_tail)} reset={tuple(reset_tail)}"
         )
         assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
+
+        cache, backward_world, _stats, _results = _run_spring_frame(
+            cache,
+            armature,
+            5,
+            reset=False,
+            return_details=True,
+        )
+        assert bool(getattr(backward_world.frame_context, "restart_required", False)) is True
+        assert _basis_delta_from_identity(armature.pose.bones["bone_1"]) < 1.0e-6
         assert cache.value is not None
     finally:
         _delete_object(armature)
@@ -633,6 +699,38 @@ def test_spring_vrm_same_frame_republishes_cached_results():
         assert chain_context2 is chain_context1
         assert int(chain_context2.debug_dict().get("step_count", 0) or 0) == step_count1
         assert stats2.get("native_context", {}).get("step_count") == step_count1
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_zero_or_negative_time_scale_pauses():
+    armature = _make_chain_armature("PW_SpringVRM_PausedTime")
+    try:
+        cache, world1, _stats1, _results1 = _run_spring_frame(
+            _OmniCache(), armature, 74, reset=True, return_details=True,
+        )
+        _slot1, _contexts1, context1 = _spring_chain_context(world1)
+        assert int(context1.debug_dict().get("step_count", 0) or 0) == 0
+
+        for frame, scale in ((75, 0.0), (76, -2.0)):
+            cache, world, stats, results = _run_spring_frame(
+                cache,
+                armature,
+                frame,
+                reset=False,
+                time_scale=scale,
+                return_details=True,
+            )
+            _slot, _contexts, context = _spring_chain_context(world)
+            assert context is context1
+            assert int(context.debug_dict().get("step_count", 0) or 0) == 0
+            assert stats.get("writeback_count") == 2
+            assert len(results) == 2
+            assert all(
+                math.isfinite(float(value))
+                for result in results
+                for value in result.get("matrix_basis", ())
+            )
     finally:
         _delete_object(armature)
 
@@ -784,6 +882,105 @@ def test_spring_vrm_multiple_armatures_create_isolated_slots():
     finally:
         _delete_object(armature_b)
         _delete_object(armature_a)
+
+
+def test_spring_vrm_multiple_chains_share_one_armature_slot():
+    armature = _make_multi_chain_armature()
+    try:
+        world, _frame, _collider_count, restart = _world_for_frame(
+            _OmniCache(), armature, 85, reset=True,
+        )
+        properties = physicsSpringVRMChainProperties([
+            _bone_value(armature, "root_a"),
+            _bone_value(armature, "root_b"),
+        ])
+        assert len(properties) == 2
+        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
+        assert object_count == 2
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 4
+        assert apply_all_writebacks(world, restart=restart) == 4
+        slot_ids = _spring_slot_ids(world)
+        assert len(slot_ids) == 1
+        slot = world.solver_slots[slot_ids[0]]
+        assert slot.data["spec"].chain_count == 2
+        assert set(slot.data["_native_ctxs"]) == {"root_a", "root_b"}
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_rejects_duplicate_roots_and_overlapping_bones():
+    armature = _make_chain_armature("PW_SpringVRM_InvalidTopology")
+    build_specs = _pw("spring_vrm.specs").build_spring_vrm_solver_specs
+    base = physicsSpringVRMChainProperties([_bone_value(armature, "root")])[0]
+    try:
+        try:
+            build_specs([base, dict(base)], backend="cpp", substeps=1)
+        except ValueError as exc:
+            assert "root bone 重复" in str(exc)
+        else:
+            raise AssertionError("duplicate SpringBone roots must be rejected")
+
+        nested = dict(base)
+        nested["root_bone"] = "bone_1"
+        nested["bones"] = ["bone_1", "bone_2"]
+        try:
+            build_specs([base, nested], backend="cpp", substeps=1)
+        except ValueError as exc:
+            assert "模拟骨重复" in str(exc)
+        else:
+            raise AssertionError("overlapping simulated bones must be rejected")
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_branch_chain_reaches_native_context():
+    armature = _make_branch_armature()
+    try:
+        world, _frame, _collider_count, _restart = _world_for_frame(
+            _OmniCache(), armature, 86, reset=True,
+        )
+        properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
+        assert properties[0]["bones"] == ["root", "left", "right"]
+        world, _count, _dirty, _version = physicsSpringVRMChainRegister(world, properties)
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 2
+        _slot, _contexts, context = _spring_chain_context(world)
+        assert [record["bone_name"] for record in context._records] == ["left", "right"]
+        assert tuple(int(value) for value in context._static["parent_indices"]) == (-1, -1)
+        assert tuple(int(value) for value in context._static["use_connect"]) == (1, 1)
+    finally:
+        _delete_object(armature)
+
+
+def test_spring_vrm_topology_change_disposes_old_slot():
+    armature = _make_multi_chain_armature("PW_SpringVRM_TopologyChange")
+    try:
+        cache = _OmniCache()
+        world, _frame, _collider_count, _restart = _world_for_frame(cache, armature, 87, reset=True)
+        chain_a = physicsSpringVRMChainProperties([_bone_value(armature, "root_a")])
+        register_spring_vrm_chain_objects(world, chain_a, enabled=True)
+        physicsSpringVRMSolver(world, substeps=1)
+        old_slot_id = _spring_slot_ids(world)[0]
+        old_slot = world.solver_slots[old_slot_id]
+        old_context = old_slot.data["_native_ctxs"]["root_a"]
+        assert old_context._handle is not None
+        cache, _committed, _count = physicsWorldCommit(world, enabled=True)
+
+        world, _frame, _collider_count, _restart = _world_for_frame(cache, armature, 88, reset=False)
+        register_spring_vrm_chain_objects(world, chain_a, enabled=False)
+        chain_b = physicsSpringVRMChainProperties([_bone_value(armature, "root_b")])
+        register_spring_vrm_chain_objects(world, chain_b, enabled=True)
+        physicsSpringVRMSolver(world, substeps=1)
+
+        new_slot_ids = _spring_slot_ids(world)
+        assert len(new_slot_ids) == 1 and new_slot_ids[0] != old_slot_id
+        assert old_slot.data == {}
+        assert old_context._handle is None
+        new_slot = world.solver_slots[new_slot_ids[0]]
+        assert set(new_slot.data["_native_ctxs"]) == {"root_b"}
+    finally:
+        _delete_object(armature)
 
 
 def test_spring_vrm_override_pin_reaches_native_static_state():
@@ -949,6 +1146,52 @@ def test_spring_vrm_nonuniform_scale_uses_axis_world_length():
         _delete_object(armature)
 
 
+def test_spring_vrm_mirrored_scale_and_box_are_finite():
+    armature = _make_chain_armature("PW_SpringVRM_Mirrored")
+    box = _make_box_collider(
+        "PW_SpringVRM_MirroredBox",
+        (0.4, 0.0, 1.8),
+        (0.5, 0.7, 0.9),
+        group=1,
+    )
+    try:
+        armature.scale = (-1.0, 1.5, 0.75)
+        box.scale = (-1.0, 1.0, 1.0)
+        bpy.context.view_layer.update()
+        cache = _run_spring_frame(
+            _OmniCache(),
+            armature,
+            89,
+            reset=True,
+            extra_objects=[box],
+            include_passive_collision=True,
+        )
+        cache, world, _stats, results = _run_spring_frame(
+            cache,
+            armature,
+            90,
+            reset=False,
+            extra_objects=[box],
+            include_passive_collision=True,
+            return_details=True,
+        )
+        assert cache.value is world
+        assert all(
+            math.isfinite(float(value))
+            for result in results
+            for value in result.get("matrix_basis", ())
+        )
+        _slot, _contexts, context = _spring_chain_context(world)
+        assert all(math.isfinite(float(value)) for value in context._static["lengths"])
+        assert all(float(value) > 0.0 for value in context._static["lengths"])
+        arrays = context._collider_cache_arrays
+        assert arrays is not None and len(arrays[0]) == 1
+        assert all(math.isfinite(float(value)) for array in arrays[2:] for value in array.ravel())
+    finally:
+        _delete_object(box)
+        _delete_object(armature)
+
+
 def test_spring_vrm_debug_capture_is_next_frame_state_machine():
     armature = _make_chain_armature("PW_SpringVRM_DebugState")
     try:
@@ -1064,6 +1307,54 @@ def test_spring_vrm_collider_arrays_cache_reuses_snapshot():
         assert int(after_miss.get("misses", 0) or 0) > int(after_hits.get("misses", 0) or 0), (
             "new PhysicsWorld collider_snapshot should invalidate SpringBone collider array cache"
         )
+    finally:
+        _delete_object(collider)
+        _delete_object(armature)
+
+
+def test_spring_vrm_moving_collider_refreshes_native_arrays():
+    armature = _make_chain_armature("PW_SpringVRM_MovingCollider")
+    collider = _make_sphere_collider(
+        "PW_SpringVRM_MovingColliderSphere",
+        (0.35, 0.0, 1.93),
+        0.2,
+        group=1,
+    )
+    try:
+        cache, world1, _stats1, _results1 = _run_spring_frame(
+            _OmniCache(),
+            armature,
+            97,
+            reset=True,
+            extra_objects=[collider],
+            include_passive_collision=True,
+            return_details=True,
+        )
+        slot1, _contexts1, context1 = _spring_chain_context(world1)
+        chain1 = slot1.data["spec"].chains[0]
+        arrays1 = context1._collision_arrays(world1, armature, chain1)
+        center1 = mathutils.Vector(arrays1[2][0])
+
+        collider.location.x += 0.8
+        collider.location.z -= 0.25
+        bpy.context.view_layer.update()
+        cache, world2, _stats2, _results2 = _run_spring_frame(
+            cache,
+            armature,
+            98,
+            reset=False,
+            extra_objects=[collider],
+            include_passive_collision=True,
+            return_details=True,
+        )
+        slot2, _contexts2, context2 = _spring_chain_context(world2)
+        chain2 = slot2.data["spec"].chains[0]
+        arrays2 = context2._collision_arrays(world2, armature, chain2)
+        center2 = mathutils.Vector(arrays2[2][0])
+        assert context2 is context1
+        assert arrays2 is not arrays1
+        assert (center2 - center1).length > 0.5
+        assert (center2 - collider.matrix_world.translation).length < 1.0e-5
     finally:
         _delete_object(collider)
         _delete_object(armature)
@@ -1463,6 +1754,96 @@ def test_spring_vrm_bone_collision_override_node_uses_capability_type_index():
         _delete_object(armature)
 
 
+def test_spring_vrm_bone_collider_override_reaches_native_arrays():
+    armature = _make_chain_armature("PW_SpringVRM_BoneColliderTarget")
+    collider_armature = _make_chain_armature("PW_SpringVRM_BoneColliderSource")
+    try:
+        collider_armature.location = (0.4, -0.2, 0.1)
+        legacy = collider_armature.data.bones["bone_1"].hotools_collision
+        legacy.collision_type = "NONE"
+
+        scene = bpy.context.scene
+        scene.frame_set(73)
+        scope = make_scope(
+            [armature, collider_armature],
+            include_passive_collision=False,
+            include_bone_collision=True,
+            include_mesh_collision=False,
+            include_rigid_body=False,
+            include_rigid_constraint=False,
+            include_hidden=True,
+        )
+        world, _frame, collider_count, _restart = physicsWorldBegin(
+            _OmniCache(), scene, scope,
+            enabled=True,
+            reset=True,
+            time_scale=1.0,
+            substeps=1,
+            debug_output=False,
+        )
+        assert collider_count == 0, "legacy NONE should not create a world snapshot collider"
+
+        properties = physicsSpringVRMChainProperties([_bone_value(armature, "root")])
+        world, object_count, _dirty_count, _version = physicsSpringVRMChainRegister(world, properties)
+        assert object_count == 1
+
+        override = make_bone_collision_override_properties(
+            _bone_value(collider_armature, "bone_1"),
+            collision_type="CAPSULE",
+            radius=0.18,
+            length=0.64,
+            offset=(0.07, -0.03, 0.11),
+            primary_collision_group=9,
+        )
+        register_bone_collision_override_objects(world, [override])
+        world, write_count, _step_ms = physicsSpringVRMSolver(world, substeps=1)
+        assert write_count == 2
+
+        slot, _native_context, chain_context = _spring_chain_context(world)
+        chain = slot.data["spec"].chains[0]
+        arrays1 = chain_context._collision_arrays(world, armature, chain)
+        types1, groups1, centers1, segment_a1, segment_b1, radii1 = arrays1
+        assert len(types1) == 1, arrays1
+        assert int(types1[0]) == int(COLLIDER_TYPE_CAPSULE)
+        assert int(groups1[0]) == 9
+        assert abs(float(radii1[0]) - 0.18) < 1.0e-5
+
+        pose_matrix = collider_armature.matrix_world @ collider_armature.pose.bones["bone_1"].matrix
+        offset = mathutils.Vector((0.07, -0.03, 0.11))
+        axis = mathutils.Vector((0.0, 1.0, 0.0))
+        expected_center = pose_matrix @ offset
+        expected_a = pose_matrix @ (offset - axis * 0.32)
+        expected_b = pose_matrix @ (offset + axis * 0.32)
+        assert (mathutils.Vector(centers1[0]) - expected_center).length < 1.0e-5
+        assert (mathutils.Vector(segment_a1[0]) - expected_a).length < 1.0e-5
+        assert (mathutils.Vector(segment_b1[0]) - expected_b).length < 1.0e-5
+
+        changed = make_bone_collision_override_properties(
+            _bone_value(collider_armature, "bone_1"),
+            collision_type="CAPSULE",
+            radius=0.18,
+            length=0.30,
+            offset=(-0.02, 0.06, 0.03),
+            primary_collision_group=4,
+        )
+        register_bone_collision_override_objects(world, [changed])
+        arrays2 = chain_context._collision_arrays(world, armature, chain)
+        assert arrays2 is not arrays1, "override version change must invalidate collider array cache"
+        assert int(arrays2[1][0]) == 4
+        assert abs((mathutils.Vector(arrays2[4][0]) - mathutils.Vector(arrays2[3][0])).length - 0.30) < 1.0e-5
+
+        disabled_shape = make_bone_collision_override_properties(
+            _bone_value(collider_armature, "bone_1"),
+            collision_type="NONE",
+        )
+        register_bone_collision_override_objects(world, [disabled_shape])
+        arrays3 = chain_context._collision_arrays(world, armature, chain)
+        assert len(arrays3[0]) == 0, "override NONE must remove the legacy-disabled bone collider"
+    finally:
+        _delete_object(collider_armature)
+        _delete_object(armature)
+
+
 def test_spring_vrm_cpp_debug_snapshot_uses_override_profile():
     armature = _make_chain_armature("PW_SpringVRM_DebugOverride")
     try:
@@ -1743,22 +2124,60 @@ def test_spring_vrm_debug_draw_collider_shapes_and_group_colors():
         _delete_object(armature)
 
 
+def test_spring_vrm_soak_reuses_native_resources():
+    frame_count = max(2, int(os.environ.get("SPRING_VRM_SOAK_FRAMES", "10000") or 10000))
+    armature = _make_chain_armature("PW_SpringVRM_Soak")
+    try:
+        cache, world, _stats, _results = _run_spring_frame(
+            _OmniCache(), armature, 1, reset=True, return_details=True,
+        )
+        slot, contexts, context = _spring_chain_context(world)
+        identities = (
+            id(slot), id(contexts), id(context), id(context._handle),
+            id(context._static), id(context._dynamic), id(context._result),
+        )
+        for frame in range(2, frame_count + 1):
+            cache, world, _stats, _results = _run_spring_frame(
+                cache, armature, frame, reset=False, return_details=True,
+            )
+
+        final_slot, final_contexts, final_context = _spring_chain_context(world)
+        final_identities = (
+            id(final_slot), id(final_contexts), id(final_context), id(final_context._handle),
+            id(final_context._static), id(final_context._dynamic), id(final_context._result),
+        )
+        assert final_identities == identities
+        assert len(world.solver_slots) == 1
+        assert len(final_contexts) == 1
+        assert len(world.implicit_objects) == 1
+        assert int(final_context.debug_dict().get("step_count", 0) or 0) == frame_count - 1
+    finally:
+        _delete_object(armature)
+
+
 _TESTS = (
     ("native 模块可用", test_native_available),
     ("隐式对象注册 + native step + PoseBone 写回闭环", test_spring_vrm_vertical_slice),
     ("SpringBone rest pose has no synthetic side force", test_spring_vrm_stiffness_rest_pose_has_no_side_force),
     ("SpringBone frame jump resets without stepping", test_spring_vrm_frame_jump_resets_without_step),
     ("SpringBone same-frame cached result semantics", test_spring_vrm_same_frame_republishes_cached_results),
+    ("SpringBone zero/negative time scale pauses", test_spring_vrm_zero_or_negative_time_scale_pauses),
     ("SpringBone runtime parameter changes reuse slot", test_spring_vrm_runtime_parameter_change_reuses_slot),
     ("SpringBone public parameter matrix reaches native context", test_spring_vrm_public_parameters_reach_native_context),
     ("SpringBone public parameter bounds clamp in solver spec", test_spring_vrm_spec_clamps_public_parameter_bounds),
     ("SpringBone multiple armatures create isolated slots", test_spring_vrm_multiple_armatures_create_isolated_slots),
+    ("SpringBone multiple chains share one armature slot", test_spring_vrm_multiple_chains_share_one_armature_slot),
+    ("SpringBone rejects duplicate roots and overlapping bones", test_spring_vrm_rejects_duplicate_roots_and_overlapping_bones),
+    ("SpringBone branch chain reaches native context", test_spring_vrm_branch_chain_reaches_native_context),
+    ("SpringBone topology change disposes old slot", test_spring_vrm_topology_change_disposes_old_slot),
     ("SpringBone override pin reaches native static state", test_spring_vrm_override_pin_reaches_native_static_state),
     ("SpringBone non-root pin keeps pose", test_spring_vrm_non_root_pin_keeps_pose),
     ("SpringBone native_context reuses chain buffers", test_spring_vrm_native_context_reuses_chain_buffers),
     ("SpringBone nonuniform scale uses bone-axis world length", test_spring_vrm_nonuniform_scale_uses_axis_world_length),
+    ("SpringBone mirrored scale and box remain finite", test_spring_vrm_mirrored_scale_and_box_are_finite),
     ("SpringBone debug capture is a next-frame state machine", test_spring_vrm_debug_capture_is_next_frame_state_machine),
     ("SpringBone collider arrays cache reuses snapshot", test_spring_vrm_collider_arrays_cache_reuses_snapshot),
+    ("SpringBone moving collider refreshes native arrays", test_spring_vrm_moving_collider_refreshes_native_arrays),
     ("SpringBone runtime cache delete + clear_all dispose", test_spring_vrm_runtime_cache_delete_and_clear_all_dispose),
     ("world collider snapshot 接入 SpringBone native", test_spring_vrm_collider_snapshot),
     ("SpringBone collider group mask filters snapshot", test_spring_vrm_collider_group_mask_filters_snapshot),
@@ -1769,9 +2188,13 @@ _TESTS = (
     ("SpringBone bone_collision capability audits legacy RNA", test_spring_vrm_bone_collision_capability_audits_legacy_rna),
     ("SpringBone bone_collision.override preempts legacy profile", test_spring_vrm_bone_collision_override_preempts_legacy),
     ("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index),
+    ("SpringBone bone collider override reaches native arrays", test_spring_vrm_bone_collider_override_reaches_native_arrays),
     ("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile),
     ("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors),
 )
+
+if int(os.environ.get("SPRING_VRM_SOAK_FRAMES", "0") or 0) > 0:
+    _TESTS += (("SpringBone soak reuses native resources", test_spring_vrm_soak_reuses_native_resources),)
 
 
 def main() -> None:

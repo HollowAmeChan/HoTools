@@ -69,8 +69,9 @@ SPRING_VRM_SOLVER_DECLARATION = {
         "topology": "rebuild_slot_on_armature_or_chain_topology_change",
         "params": "refresh_native_arrays_without_python_solver_backend",
         "bone_collision_profile": "resolve_capability_override_then_legacy_property_then_default",
-        "colliders": "lazy_cached_arrays_by_collider_snapshot_and_chain",
+        "colliders": "lazy_cached_arrays_by_collider_snapshot_chain_and_bone_override_version",
         "same_frame": "republish_last_pose_results_no_time_step",
+        "paused_time": "dt_le_zero_republish_last_pose_results_no_time_step",
     },
     "capabilities": {
         BONE_COLLISION_CAPABILITY_ID: BONE_COLLISION_CAPABILITY,
@@ -97,6 +98,8 @@ SPRING_VRM_SOLVER_DECLARATION = {
     "export": {
         "result_channels": [BONE_TRANSFORM_CHANNEL, SPRING_VRM_STATS_CHANNEL],
         "supports_bake": False,
+        "bake_owner": "future unified writeback keyframe node",
+        "solver_acceptance_blocker": False,
     },
     "legacy_policy": "rewrite_only_no_compatibility",
 }

@@ -8,12 +8,11 @@
 
 ## 验收结论
 
-当前结论：**不通过，允许继续作为迁移蓝本开发，但不能作为已验收 solver 宣布完成。**
+当前结论：**通过 Blender 4.5 / CPython 3.11 基线的 SpringBone solver 蓝本验收。**
 
-阻塞项：
+当前不再把 bake/export 计为 SpringBone solver 阻塞项。骨骼动画 bake 应由独立 K 帧节点消费统一 writeback result；属性动画也需要纳入同一套 writeback bake 设计，后续单独立项，不在 SpringBone 私有模块重复实现。
 
-1. 骨骼碰撞覆写的 `length / offset / primary_collision_group` 尚未进入实际 bone collider snapshot，只进入 resolver/debug；不能计为物理功能通过。
-2. bake/export 还没有可重复烘焙与导出闭环。
+非阻塞发布项：py313 扩展需要在当前 native 源码上重新构建后再跑全量 ABI；多骨架扩展曲线和 debug capture 成本属于后续性能画像，不影响本基线结论。
 
 ## 本轮代码审查
 
@@ -29,6 +28,7 @@
 | P2 | 每骨每帧构造完整 `BoneCollisionProfile` 并重复扫描 override registry | solver 热路径一次构建 override index，只解析 C++ 实际消费的 type/radius/mask；公共 resolver 保持完整语义 |
 | P1 | 新路径逐骨构造/复制 result dict，统一写回再逐骨解析 16-float matrix 和骨骼目标 | `slot.data.writeback_plan` 落地为跨帧复用的批次计划；result stream 每 slot 只发布一个 batch envelope，逐骨兼容结果按需展开；写回按 armature 通过一次 `foreach_set` 提交 |
 | P2 | 连续帧重复解析 PoseBone records、维护未传入 context ABI 的 Python current/prev tail 状态 | topology 由 slot id 保证时复用 records；current/prev tail 只在 reset/debug readback 更新，不再进入正常播放热路径 |
+| P0 | SpringBone slot 没有注册 `_dispose`，拓扑 prune/world dispose 只清 Python dict，不释放旧 C++ context handle | slot 安装统一 dispose owner，逐个释放 native context；拓扑热改与 10,000 帧资源身份回归通过 |
 
 ### 仍未解决
 
@@ -62,22 +62,25 @@
 
 因此删除、静音、改接注册节点或改变 stable id 后，只要成功重编译，旧 world、旧 implicit entry、solver slot 和 native context 会一起 dispose；其他根树不受影响。编译缓存命中不会清理，编译失败也保留旧 runtime 状态。框架回归 3/3 覆盖成功编译、缓存命中和编译失败边界，SpringBone 现有 cache dispose 回归覆盖 world 内部 registry/slot/native 清理。
 
-#### P1：骨骼碰撞字段只部分落地
+#### 已解除：骨骼碰撞字段只部分落地
 
-真实 C++ 消费：
+真实 C++ 消费现在分为两条语义：
 
 - `pin` -> context static `pinned`
-- `collision_type` -> 决定 hit sphere 是否启用
+- `collision_type` -> 决定自身 hit sphere 是否启用，并决定外部骨骼 sphere/capsule 类型
 - `radius` -> `hit_radii`
 - `collided_by_groups` -> 碰撞过滤 mask
+- `length` -> 外部胶囊 `segment_a/segment_b`
+- `offset` -> 外部骨骼碰撞体 `center/segment_a/segment_b`
+- `primary_collision_group` -> 外部碰撞体 `collider_groups`
 
-尚未进入物理快照：
+实现不扩展 C++ ABI：SpringBone 打包 collider arrays 时只对命中 `bone_collision.override` 的骨骼重算 resolved profile，未覆写的 legacy 条目直接复用 Begin 快照；override 可以从 legacy `NONE` 新增碰撞体，也可以改成 `NONE` 删除条目。cache key 包含 override stable id/version/signature，因此同帧改写也会失效。
 
-- `length`
-- `offset`
-- `primary_collision_group`
+Blender 回归直接读取 solver 即将传给 `spring_vrm_update_dynamic` 的 collider arrays，验证 CAPSULE type、radius、length、offset、primary group、同帧版本失效与 `NONE` 禁用。
 
-后三项当前可以改变 resolver/debug 图形，但不会改变 SpringBone 的实际外部 bone collider 行为。
+#### 范围决定：Bake / Export
+
+SpringBone 只负责发布 `bone_transform` result stream，不拥有 K 帧或属性动画写入。`R-04` 移交未来统一 writeback bake 设计：独立 K 帧节点消费通用结果，同时覆盖骨骼和属性动画；本 solver 声明保持 `supports_bake=False`，这不再阻塞 solver 验收。
 
 ## 性能对比
 
@@ -117,7 +120,7 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 
 ## 功能参数测试矩阵
 
-状态定义：`PASS` 已自动真实运行；`PARTIAL` 仅部分字段进入物理；`BLOCKED` 已知架构缺口；`NOT RUN` 尚无自动证据。
+状态定义：`PASS` 已自动真实运行；`PARTIAL` 仅部分字段进入物理；`DEFERRED` 已明确移交其他系统；`BLOCKED` 已知架构缺口；`NOT RUN` 尚无自动证据。
 
 | ID | 域 | 参数/场景 | 真实运行判据 | 状态 |
 |---|---|---|---|---|
@@ -129,26 +132,26 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 | P-06 | Spec | 参数上下界 | stiffness/gravity >= 0、drag 0-1、substeps 1-16 | PASS |
 | P-07 | Runtime | 热改刚度/阻尼/重力 | slot/context 不重建，下一帧实参更新 | PASS |
 | P-08 | Time | scene fps/fps_base -> dt | 默认 24 fps 实测 dt=1/24 | PASS |
-| P-09 | Time | time_scale=0 / 负值 | 不产生非有限值，暂停语义明确 | NOT RUN |
-| P-10 | Time | 倒放 | restart，不推进 Verlet | NOT RUN |
+| P-09 | Time | time_scale=0 / 负值 | 不产生非有限值，暂停并重发结果、不推进 native | PASS |
+| P-10 | Time | 倒放 | restart，不推进 Verlet | PASS |
 | T-01 | Topology | 单链 | root 排除，模拟 2 骨，发布 2 项 | PASS |
 | T-02 | Topology | 同 world 两骨架 | 2 个隔离 slot、4 个写回项 | PASS |
-| T-03 | Topology | 同骨架多链 | 无重叠时分别推进 | NOT RUN |
-| T-04 | Topology | 重复 root | 明确拒绝，不静默覆盖 | NOT RUN |
-| T-05 | Topology | 模拟骨重叠 | 明确拒绝，不双写 | NOT RUN |
-| T-06 | Topology | 分叉骨链 | parent index/use_connect 与预期一致 | NOT RUN |
-| T-07 | Topology | 运行中改拓扑 | 旧 context dispose，新 context 只建一次 | NOT RUN |
+| T-03 | Topology | 同骨架多链 | 无重叠时共享 armature slot、分别推进 | PASS |
+| T-04 | Topology | 重复 root | 明确拒绝，不静默覆盖 | PASS |
+| T-05 | Topology | 模拟骨重叠 | 明确拒绝，不双写 | PASS |
+| T-06 | Topology | 分叉骨链 | parent index/use_connect 与预期一致 | PASS |
+| T-07 | Topology | 运行中改拓扑 | 旧 context dispose，新 context 只建一次 | PASS |
 | T-08 | Transform | 非均匀 Object scale | 骨长按骨轴世界变换计算 | PASS |
-| T-09 | Transform | 负缩放/镜像 | 长度、旋转和 box handedness 稳定 | NOT RUN |
-| T-10 | Transform | 零长度骨 | 不崩溃、不发布 NaN | NOT RUN |
+| T-09 | Transform | 负缩放/镜像 | 长度、旋转和 box handedness 稳定 | PASS |
+| T-10 | Transform | 零长度骨 | native context 不崩溃、不发布 NaN | PASS |
 | C-01 | Bone profile | legacy pin | pinned 骨不发生 basis 偏转 | PASS |
 | C-02 | Bone profile | override pin | reset 后进入 C++ static `pinned` | PASS |
-| C-03 | Bone profile | collision_type | NONE 禁用 hit sphere，SPHERE/CAPSULE 启用 | PARTIAL |
+| C-03 | Bone profile | collision_type | NONE 禁用 hit/external collider，SPHERE/CAPSULE 启用 | PASS |
 | C-04 | Bone profile | radius | override 值进入 C++ `hit_radii` | PASS |
 | C-05 | Bone profile | collided_by_groups | override 值进入 C++ mask 并参与过滤 | PASS |
-| C-06 | Bone profile | length | 改变真实 bone capsule 长度 | BLOCKED |
-| C-07 | Bone profile | offset | 改变真实 bone collider 中心 | BLOCKED |
-| C-08 | Bone profile | primary_collision_group | 改变真实 bone collider group | BLOCKED |
+| C-06 | Bone profile | length | 改变真实 bone capsule 长度 | PASS |
+| C-07 | Bone profile | offset | 改变真实 bone collider 中心 | PASS |
+| C-08 | Bone profile | primary_collision_group | 改变真实 bone collider group | PASS |
 | C-09 | Bone profile | override disabled | 回退 legacy profile | PASS |
 | C-10 | Registry | 删除/改名注册链并重编译 | 旧 stable id 不再被 solver 消费 | PASS |
 | C-11 | Registry | 删除 override 注册节点并重编译 | 新图首次运行回退 legacy | PASS |
@@ -158,21 +161,21 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 | W-04 | World collider | box | snapshot -> C++，尾端推出 | PASS |
 | W-05 | World collider | group mismatch | 不发生碰撞响应 | PASS |
 | W-06 | World collider | self-chain filter | 自身骨 collider 不重复作为外部 collider | PASS |
-| W-07 | World collider | 运动 collider | 每帧 snapshot 失效并更新几何 | NOT RUN |
+| W-07 | World collider | 运动 collider | 每帧 snapshot 失效并更新几何 | PASS |
 | L-01 | Lifecycle | 首帧/reset | 发布当前 pose，不推进 | PASS |
 | L-02 | Lifecycle | 连续帧 | context/buffer/slot 复用 | PASS |
 | L-03 | Lifecycle | 跳帧 | reset 且该帧不推进 | PASS |
 | L-04 | Lifecycle | same frame | 不推进，重发缓存 result | PASS |
 | L-05 | Lifecycle | scope prune | stale slot dispose | PASS |
 | L-06 | Lifecycle | cache delete/clear_all | C++ capsule 与 bpy 引用释放 | PASS |
-| L-07 | Lifecycle | 10,000 帧 soak | handle/buffer/内存无增长 | NOT RUN |
+| L-07 | Lifecycle | 10,000 帧 soak | slot/context/handle/static/dynamic/result buffer 身份与数量不增长 | PASS |
 | D-01 | Debug | 无 Debug Node | 不调用 debug readback | PASS |
 | D-02 | Debug | 下一帧请求状态机 | request -> consume -> clear | PASS |
 | D-03 | Debug | 四类 collider 和组颜色 | C++ snapshot 与绘制一致 | PASS |
 | R-01 | Result | bone_transform schema | channel/source/slot/frame/generation 完整 | PASS |
 | R-02 | Writeback | PoseBone.matrix_basis | solver 不直写，统一节点写回 | PASS |
 | R-03 | Writeback | 批量 writeback_plan | 预分配并避免逐骨 dict/matrix 重解析 | PASS |
-| R-04 | Bake | bake/export | 可重复烘焙并导出 | BLOCKED |
+| R-04 | Unified writeback | 独立 K 帧/属性动画 bake | 由统一节点消费 result stream | DEFERRED |
 | A-01 | ABI | legacy/context 数值一致 | 4 组参数、碰撞、多帧误差 <= 2e-5 | PASS |
 | A-02 | ABI | 错误 dtype/shape/count | Python exception，不进入 C++ 越界 | PASS |
 | A-03 | ABI | Blender 5.x / py313 | 重新构建并运行同一矩阵 | NOT RUN |
@@ -183,14 +186,16 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 
 ## 已执行回归
 
-- Blender SpringBone 集成：27/27 通过。
+- Blender SpringBone 常规集成：35/35 通过。
+- Blender SpringBone 10,000 帧 soak 矩阵：36/36 通过。
 - OmniNode 编译/runtime cache 生命周期：3/3 通过；覆盖成功编译仅清当前根树、编译缓存命中保留运行态、编译失败保留运行态和旧编译结果。
 - Native 全套：17 个测试文件，0 skipped，0 failed。
 - SpringBone legacy/context 参数矩阵：4 组、每组 6 帧，误差阈值 `2e-5`。
 - Release py311 native 重新编译成功。
+- 新增零长度 native context 用例在当前 py311/py313 扩展上均通过；两套扩展的全量 ABI 拒绝测试与当前并行 native 源码存在版本不一致，A-03 保持 `NOT RUN`，等待统一重建后验证。
 
 ## 下一验收批次
 
-1. 决定 `length/offset/primary_collision_group` 是本期实现 bone collider snapshot，还是从当前节点 UI 暂时隐藏。
-2. 补同骨架多链、分叉、拓扑热改、运动 collider、soak 和 py313。
-3. 落地 bake/export，再做最终 solver 验收。
+1. 在当前 native 源码稳定后统一重建 py311/py313，跑全量 ABI 发布矩阵。
+2. 按需补 1/8/32 armature 扩展曲线和 debug capture off/one-shot/continuous 性能画像。
+3. 另立统一 writeback K 帧/属性动画 bake 设计，不回填 solver 私有 bake。

@@ -503,7 +503,7 @@ class SpringVRMNativeContext:
             if not item:
                 item = _debug_unsimulated_bone_item(armature, bone_name, self.root_bone)
             if armature is not None:
-                shape = _debug_bone_collider_shape(
+                shape = _resolved_bone_collider_shape(
                     armature,
                     bone_name,
                     world=world,
@@ -825,7 +825,7 @@ def _debug_unsimulated_bone_item(armature, bone_name: str, root_bone: str) -> di
     return item
 
 
-def _debug_bone_collider_shape(
+def _resolved_bone_collider_shape(
     armature,
     bone_name: str,
     world=None,
@@ -965,16 +965,130 @@ def _collider_arrays_cache_key(world, armature, chain) -> tuple:
         int(snapshot.get("frame", -1) if isinstance(snapshot, dict) else -1),
         int(snapshot.get("source_count", 0) if isinstance(snapshot, dict) else 0),
         len(colliders) if isinstance(colliders, list) else 0,
+        _bone_collision_override_revision(world),
         armature_ptr,
         chain_bones,
     )
 
 
+def _bone_collision_override_revision(world) -> tuple:
+    if world is None or not hasattr(world, "iter_implicit_objects"):
+        return ()
+    return tuple(
+        (
+            str(entry.get("stable_id") or ""),
+            int(entry.get("version", 0) or 0),
+            bool(entry.get("enabled", True)),
+            str(entry.get("signature") or ""),
+        )
+        for entry in world.iter_implicit_objects(
+            tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG,
+            enabled=None,
+        )
+        if isinstance(entry, dict)
+    )
+
+
+def _bone_collider_identity(armature, bone_name: str) -> tuple[int, int, str]:
+    return as_pointer(armature), data_pointer(armature), str(bone_name or "")
+
+
+def _scope_allows_bone_collider(world, armature) -> bool:
+    scope_key = getattr(world, "object_scope_key", None)
+    if not isinstance(scope_key, frozenset):
+        return False
+
+    if (as_pointer(armature), data_pointer(armature)) not in scope_key:
+        return False
+
+    include_hidden = False
+    include_bone_collision = False
+    for item in scope_key:
+        if not isinstance(item, tuple) or len(item) != 2 or item[0] != "flags":
+            continue
+        flags = item[1]
+        if isinstance(flags, tuple) and len(flags) >= 6:
+            include_bone_collision = bool(flags[1])
+            include_hidden = bool(flags[5])
+        break
+    if not include_bone_collision:
+        return False
+    if include_hidden:
+        return True
+    try:
+        return bool(armature.visible_get())
+    except Exception:
+        return True
+
+
+def _resolved_bone_collider_entry(world, armature, bone_name: str, source=None) -> dict | None:
+    shape = _resolved_bone_collider_shape(armature, bone_name, world=world)
+    if shape is None:
+        return None
+
+    key = f"bone:{as_pointer(armature)}:{data_pointer(armature)}:{str(bone_name or '')}"
+    entry = dict(shape)
+    entry.update({
+        "owner": armature,
+        "owner_type": "BONE",
+        "bone": str(bone_name or ""),
+        "key": str(source.get("key") or key) if isinstance(source, dict) else key,
+        "source_key": str(source.get("source_key") or key) if isinstance(source, dict) else key,
+    })
+    return entry
+
+
+def _effective_colliders(world, colliders) -> list[dict]:
+    result: list[dict] = []
+    seen_bones: set[tuple[int, int, str]] = set()
+    overrides: dict[tuple[int, int, str], dict] = {}
+
+    if world is not None and hasattr(world, "iter_implicit_objects"):
+        for entry in world.iter_implicit_objects(tag=BONE_COLLISION_OVERRIDE_OBJECT_TAG, enabled=True):
+            payload = entry.get("payload") if isinstance(entry, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            owner = payload.get("armature")
+            bone_name = str(payload.get("bone_name") or "")
+            if bone_name:
+                overrides[_bone_collider_identity(owner, bone_name)] = payload
+
+    for collider in colliders or ():
+        if not isinstance(collider, dict):
+            continue
+        if collider.get("owner_type") != "BONE":
+            result.append(collider)
+            continue
+
+        owner = collider.get("owner")
+        bone_name = str(collider.get("bone") or "")
+        identity = _bone_collider_identity(owner, bone_name)
+        seen_bones.add(identity)
+        if identity not in overrides:
+            result.append(collider)
+            continue
+        resolved = _resolved_bone_collider_entry(world, owner, bone_name, source=collider)
+        if resolved is not None:
+            result.append(resolved)
+
+    for identity, payload in overrides.items():
+        owner = payload.get("armature")
+        bone_name = str(payload.get("bone_name") or "")
+        if identity in seen_bones:
+            continue
+        seen_bones.add(identity)
+        if not _scope_allows_bone_collider(world, owner):
+            continue
+        resolved = _resolved_bone_collider_entry(world, owner, bone_name)
+        if resolved is not None:
+            result.append(resolved)
+    return result
+
+
 def _collision_arrays_from_world(world, armature, chain) -> tuple:
     snapshot = getattr(world, "collider_snapshot", None)
-    colliders = snapshot.get("colliders") if isinstance(snapshot, dict) else None
-    if not colliders:
-        return _empty_collision_arrays()
+    colliders = snapshot.get("colliders") if isinstance(snapshot, dict) else ()
+    colliders = _effective_colliders(world, colliders)
 
     chain_bones = set(str(n or "") for n in getattr(chain, "bones", ()) or ())
     types, groups, centers, seg_a, seg_b, radii = [], [], [], [], [], []
@@ -1049,7 +1163,8 @@ def _collision_arrays_from_world(world, armature, chain) -> tuple:
 def _is_self_chain_collider(c: dict, armature, chain_bones: set[str]) -> bool:
     if c.get("owner_type") != "BONE":
         return False
-    if c.get("owner") is not armature:
+    owner = c.get("owner")
+    if owner is not armature and _bone_collider_identity(owner, "")[:2] != _bone_collider_identity(armature, "")[:2]:
         return False
     return str(c.get("bone") or "") in chain_bones
 

@@ -23,6 +23,26 @@ from .debug import (
 from .native import step_spring_vrm_slot
 
 
+def _dispose_spring_vrm_slot(slot, reason: str) -> None:
+    contexts = slot.data.get("_native_ctxs")
+    if not isinstance(contexts, dict):
+        return
+    for context in list(contexts.values()):
+        dispose = getattr(context, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except Exception:
+                pass
+    contexts.clear()
+
+
+def _install_spring_vrm_slot_dispose(slot) -> None:
+    slot.data["_dispose"] = (
+        lambda reason, slot=slot: _dispose_spring_vrm_slot(slot, reason)
+    )
+
+
 def register_spring_vrm_from_chain_properties(
     world: PhysicsWorldCache,
     vrm_chain_properties,
@@ -64,6 +84,7 @@ def _register_slots_from_specs(
         slot.data.setdefault("frame_state", {})
         slot.data.setdefault("_native_ctxs", {})
         slot.data.setdefault("writeback_plan", {})
+        _install_spring_vrm_slot_dispose(slot)
         install_spring_vrm_slot_debug_snapshot(slot, spec)
 
         registered_ids.append(spec.slot_id)
@@ -134,12 +155,11 @@ def step_spring_vrm(
         restart = bool(getattr(fc, "restart_required", False))
         same_frame = bool(getattr(fc, "same_frame", False))
         dt = float(getattr(fc, "dt", 0.0) or 0.0)
-        if dt <= 0.0:
-            dt = 1.0 / 60.0
+        paused = dt <= 0.0
 
         published = 0
         step_ms = 0.0
-        if not same_frame:
+        if not same_frame and (not paused or restart):
             for slot_id in registered_ids:
                 slot = world.solver_slots.get(slot_id)
                 if slot is None:

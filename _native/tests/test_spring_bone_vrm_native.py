@@ -515,3 +515,24 @@ def test_context_api_capsule_collider():
     identity = np.eye(4, dtype=np.float32).ravel()
     assert not np.allclose(out_mat, identity, atol=1e-4), \
         f"sphere collider 应把 tail 推离 +Z 方向，但 target_matrix 仍接近 identity:\n{out_mat.reshape(4,4)}"
+
+
+def test_context_api_zero_length_stays_finite():
+    _skip_if_no_context_api()
+    args = _base_args(gravity_dir=(1.0, 0.0, 0.0), gravity_power=9.8)
+    args[9][0] = 0.0
+    args[4][0] = (0.0, 0.0, 0.0)
+    args[8][0] = (0.0, 0.0, 0.0)
+    args[0][0] = (0.0, 0.0, 0.0)
+    args[1][0] = (0.0, 0.0, 0.0)
+
+    ctx = _context_from_args(args)
+    _update_context_from_args(ctx, args)
+    hotools_native.spring_vrm_reset_state(ctx)
+    hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 9.8)
+    matrices, quaternions, tails, prev_tails = _read_context_state(ctx)
+
+    assert np.isfinite(matrices).all()
+    assert np.isfinite(quaternions).all()
+    assert np.isfinite(tails).all()
+    assert np.isfinite(prev_tails).all()

@@ -234,8 +234,9 @@ def physicsBoneCollisionOverrideRegister(
     4. 发布 world.result_streams["bone_transform"] 通用写回指令。
     5. 下游 物理写回 节点统一写 PoseBone.matrix_basis。
 
-    外部碰撞体已接入 world.collider_snapshot（SPHERE/CAPSULE/PLANE/BOX 四类），
-    骨骼自身 hit radius / collided_by_groups 经 bone_collision resolver 解析。
+    外部碰撞体已接入 world.collider_snapshot（SPHERE/CAPSULE/PLANE/BOX 四类）。
+    bone_collision resolver 同时驱动骨骼自身 hit radius / collided_by_groups，
+    以及骨骼作为外部 sphere/capsule 的 type/radius/length/offset/primary group。
     """,
     mute_passthrough={"_OUTPUT0": "world"},
 )
