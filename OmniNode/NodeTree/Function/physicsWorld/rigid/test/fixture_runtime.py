@@ -157,6 +157,7 @@ class NativeFixtureRuntime:
             six_dof_limit_min=constraint.six_dof_limit_min,
             six_dof_limit_max=constraint.six_dof_limit_max,
             six_dof_swing_type=constraint.six_dof_swing_type,
+            six_dof_max_friction=constraint.six_dof_max_friction,
             cone_half_angle=constraint.cone_half_angle,
             swing_type=constraint.swing_type,
             swing_normal_half_angle=constraint.swing_normal_half_angle,

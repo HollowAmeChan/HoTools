@@ -1,0 +1,61 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SIX_DOF-002",
+  "title": "SixDOF 每轴平移摩擦力与旋转摩擦力矩",
+  "source": "jolt_semantics:six_dof_axis_friction",
+  "tags": ["p0", "constraint", "six-dof", "friction"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "linear_friction_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [-2.0, 0.0, 0.0],
+      "mass": 2.0,
+      "linear_velocity": [3.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "angular_friction_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [2.0, 0.0, 0.0],
+      "mass": 2.0,
+      "angular_velocity": [0.0, 0.0, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "linear_friction",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "linear_friction_body",
+      "anchor_position": [-2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FREE", "FIXED", "FIXED", "FIXED", "FIXED", "FIXED"],
+      "six_dof_max_friction": [1.5, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "id": "angular_friction",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "angular_friction_body",
+      "anchor_position": [2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FIXED", "FIXED", "FIXED", "FIXED", "FIXED", "FREE"],
+      "six_dof_max_friction": [0.0, 0.0, 0.0, 0.0, 0.0, 0.5]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 20, 30, 40, 50, 60],
+  "assertions": [
+    {"kind": "linear_speed_trajectory", "body": "linear_friction_body", "axis": "X", "target_velocity": 0.0, "max_force": 1.5, "velocity_abs": 0.00004, "position_abs": 0.00004, "end_frame": 60},
+    {"kind": "angular_speed_trajectory", "body": "angular_friction_body", "axis": "Z", "target_velocity": 0.0, "max_torque": 0.5, "inertia": 0.3333333333333333, "velocity_abs": 0.00004, "end_frame": 60},
+    {"kind": "constraint_lambda_active", "constraint": "linear_friction", "field": "lambda_motor", "min_abs": 0.001, "start_frame": 1, "end_frame": 60},
+    {"kind": "constraint_lambda_active", "constraint": "angular_friction", "field": "lambda_motor", "min_abs": 0.001, "start_frame": 1, "end_frame": 60},
+    {"kind": "finite_all"}
+  ]
+}

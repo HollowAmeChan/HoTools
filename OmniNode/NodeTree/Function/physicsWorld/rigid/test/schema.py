@@ -335,6 +335,7 @@ class ConstraintSpec:
     six_dof_limit_min: tuple[float, float, float, float, float, float]
     six_dof_limit_max: tuple[float, float, float, float, float, float]
     six_dof_swing_type: str
+    six_dof_max_friction: tuple[float, float, float, float, float, float]
     cone_half_angle: float
     swing_type: str
     swing_normal_half_angle: float
@@ -365,6 +366,7 @@ class ConstraintSpec:
             "swing_twist_target_orientation_wxyz",
             "six_dof_axis_modes", "six_dof_limit_min", "six_dof_limit_max",
             "six_dof_swing_type",
+            "six_dof_max_friction",
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
             "disable_collisions", "distance_min", "distance_max",
@@ -503,6 +505,10 @@ class ConstraintSpec:
             six_dof_swing_type=_string(
                 data.get("six_dof_swing_type", "PYRAMID"), f"{path}.six_dof_swing_type",
             ).upper(),
+            six_dof_max_friction=_vec(
+                data.get("six_dof_max_friction", (0.0,) * 6),
+                6, f"{path}.six_dof_max_friction",
+            ),
             cone_half_angle=_number(
                 data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
             ),
@@ -565,6 +571,8 @@ class ConstraintSpec:
             raise FixtureError(
                 f"{path}.six_dof_swing_type is unsupported: {result.six_dof_swing_type}"
             )
+        if any(value < 0.0 for value in result.six_dof_max_friction):
+            raise FixtureError(f"{path}.six_dof_max_friction values must be >= 0")
         for index in range(3, 6):
             if not (-math.pi <= result.six_dof_limit_min[index] <= math.pi):
                 raise FixtureError(f"{path}.six_dof_limit_min[{index}] must be in [-pi, pi]")

@@ -75,7 +75,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 - `FIXED`：该轴固定到 A/B frame 的相对零位；
 - `LIMITED`：该轴限制在对应 min/max 范围内。
 
-显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。当前逐轴 spring/friction/motor 和逐轴 current-value result 尚未接入。
+显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。native S1 已验证逐轴 friction，公共 friction 属性以及逐轴 spring/motor/current-value result 尚未接入。
 
 ## 通用参数
 

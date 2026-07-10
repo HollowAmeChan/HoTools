@@ -929,6 +929,7 @@ public:
         const std::array<float,6>& six_dof_limit_min,
         const std::array<float,6>& six_dof_limit_max,
         const std::string&        six_dof_swing_type_str,
+        const std::array<float,6>& six_dof_max_friction,
         float                     cone_half_angle,
         const std::string&        swing_type_str,
         float                     swing_normal_half_angle,
@@ -1172,6 +1173,7 @@ public:
                 : ESwingType::Cone;
             for (int index = 0; index < SixDOFConstraintSettings::EAxis::Num; ++index) {
                 auto axis = static_cast<SixDOFConstraintSettings::EAxis>(index);
+                s.mMaxFriction[index] = (std::max)(0.0f, six_dof_max_friction[index]);
                 const std::string& mode = six_dof_axis_modes[index];
                 if (mode == "FREE") {
                     s.MakeFreeAxis(axis);
@@ -1693,6 +1695,7 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("six_dof_limit_min") = std::array<float,6>{-1.0f, -1.0f, -1.0f, -JPH_PI, -JPH_PI, -JPH_PI},
              nb::arg("six_dof_limit_max") = std::array<float,6>{1.0f, 1.0f, 1.0f, JPH_PI, JPH_PI, JPH_PI},
              nb::arg("six_dof_swing_type") = "PYRAMID",
+             nb::arg("six_dof_max_friction") = std::array<float,6>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("cone_half_angle") = 0.0f,
              nb::arg("swing_type") = "CONE",
              nb::arg("swing_normal_half_angle") = JPH_PI,
