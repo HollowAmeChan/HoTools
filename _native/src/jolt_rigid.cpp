@@ -930,6 +930,11 @@ public:
         const std::array<float,6>& six_dof_limit_max,
         const std::string&        six_dof_swing_type_str,
         const std::array<float,6>& six_dof_max_friction,
+        const std::array<std::string,6>& six_dof_motor_states,
+        const std::array<float,3>& six_dof_target_velocity,
+        const std::array<float,3>& six_dof_target_angular_velocity,
+        const std::array<float,3>& six_dof_target_position,
+        const std::array<float,4>& six_dof_target_orientation_wxyz,
         float                     cone_half_angle,
         const std::string&        swing_type_str,
         float                     swing_normal_half_angle,
@@ -1193,7 +1198,59 @@ public:
                     throw std::invalid_argument("不支持的 SixDOF 轴模式: " + mode);
                 }
             }
-            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+            for (int index = 0; index < SixDOFConstraintSettings::EAxis::Num; ++index) {
+                MotorSettings& motor = s.mMotorSettings[index];
+                motor.mSpringSettings = SpringSettings(
+                    ESpringMode::FrequencyAndDamping,
+                    (std::max)(0.0f, motor_frequency),
+                    (std::max)(0.0f, motor_damping)
+                );
+                if (index < SixDOFConstraintSettings::EAxis::NumTranslation) {
+                    if (motor_force_limit > 0.0f)
+                        motor.SetForceLimit(motor_force_limit);
+                } else if (motor_torque_limit > 0.0f) {
+                    motor.SetTorqueLimit(motor_torque_limit);
+                }
+            }
+            SixDOFConstraint* six_dof = static_cast<SixDOFConstraint*>(s.Create(body_a, body_b));
+            for (int index = 0; index < SixDOFConstraintSettings::EAxis::Num; ++index) {
+                const std::string& state = six_dof_motor_states[index];
+                EMotorState motor_state = EMotorState::Off;
+                if (state == "VELOCITY")
+                    motor_state = EMotorState::Velocity;
+                else if (state == "POSITION")
+                    motor_state = EMotorState::Position;
+                else if (state != "OFF")
+                    throw std::invalid_argument("不支持的 SixDOF motor 状态: " + state);
+                six_dof->SetMotorState(
+                    static_cast<SixDOFConstraintSettings::EAxis>(index), motor_state);
+            }
+            six_dof->SetTargetVelocityCS(Vec3(
+                six_dof_target_velocity[0], six_dof_target_velocity[1],
+                six_dof_target_velocity[2]));
+            six_dof->SetTargetAngularVelocityCS(Vec3(
+                six_dof_target_angular_velocity[0], six_dof_target_angular_velocity[1],
+                six_dof_target_angular_velocity[2]));
+            six_dof->SetTargetPositionCS(Vec3(
+                six_dof_target_position[0], six_dof_target_position[1],
+                six_dof_target_position[2]));
+            float six_target_length = std::sqrt(
+                six_dof_target_orientation_wxyz[0] * six_dof_target_orientation_wxyz[0]
+                + six_dof_target_orientation_wxyz[1] * six_dof_target_orientation_wxyz[1]
+                + six_dof_target_orientation_wxyz[2] * six_dof_target_orientation_wxyz[2]
+                + six_dof_target_orientation_wxyz[3] * six_dof_target_orientation_wxyz[3]);
+            Quat six_target_orientation = Quat::sIdentity();
+            if (six_target_length > 1.0e-8f) {
+                float inverse_length = 1.0f / six_target_length;
+                six_target_orientation = Quat(
+                    six_dof_target_orientation_wxyz[1] * inverse_length,
+                    six_dof_target_orientation_wxyz[2] * inverse_length,
+                    six_dof_target_orientation_wxyz[3] * inverse_length,
+                    six_dof_target_orientation_wxyz[0] * inverse_length
+                );
+            }
+            six_dof->SetTargetOrientationCS(six_target_orientation);
+            c = static_cast<TwoBodyConstraint*>(six_dof);
         } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
@@ -1696,6 +1753,11 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("six_dof_limit_max") = std::array<float,6>{1.0f, 1.0f, 1.0f, JPH_PI, JPH_PI, JPH_PI},
              nb::arg("six_dof_swing_type") = "PYRAMID",
              nb::arg("six_dof_max_friction") = std::array<float,6>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_motor_states") = std::array<std::string,6>{"OFF", "OFF", "OFF", "OFF", "OFF", "OFF"},
+             nb::arg("six_dof_target_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_target_angular_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_target_position") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_target_orientation_wxyz") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("cone_half_angle") = 0.0f,
              nb::arg("swing_type") = "CONE",
              nb::arg("swing_normal_half_angle") = JPH_PI,

@@ -336,6 +336,11 @@ class ConstraintSpec:
     six_dof_limit_max: tuple[float, float, float, float, float, float]
     six_dof_swing_type: str
     six_dof_max_friction: tuple[float, float, float, float, float, float]
+    six_dof_motor_states: tuple[str, str, str, str, str, str]
+    six_dof_target_velocity: tuple[float, float, float]
+    six_dof_target_angular_velocity: tuple[float, float, float]
+    six_dof_target_position: tuple[float, float, float]
+    six_dof_target_orientation_wxyz: tuple[float, float, float, float]
     cone_half_angle: float
     swing_type: str
     swing_normal_half_angle: float
@@ -367,6 +372,9 @@ class ConstraintSpec:
             "six_dof_axis_modes", "six_dof_limit_min", "six_dof_limit_max",
             "six_dof_swing_type",
             "six_dof_max_friction",
+            "six_dof_motor_states", "six_dof_target_velocity",
+            "six_dof_target_angular_velocity", "six_dof_target_position",
+            "six_dof_target_orientation_wxyz",
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
             "disable_collisions", "distance_min", "distance_max",
@@ -399,6 +407,13 @@ class ConstraintSpec:
         six_dof_axis_modes = tuple(
             _string(value, f"{path}.six_dof_axis_modes[{index}]").upper()
             for index, value in enumerate(raw_axis_modes)
+        )
+        raw_motor_states = data.get("six_dof_motor_states", ("OFF",) * 6)
+        if not isinstance(raw_motor_states, (list, tuple)) or len(raw_motor_states) != 6:
+            raise FixtureError(f"{path}.six_dof_motor_states must contain 6 values")
+        six_dof_motor_states = tuple(
+            _string(value, f"{path}.six_dof_motor_states[{index}]").upper()
+            for index, value in enumerate(raw_motor_states)
         )
         result = cls(
             id=_string(data.get("id"), f"{path}.id"),
@@ -509,6 +524,23 @@ class ConstraintSpec:
                 data.get("six_dof_max_friction", (0.0,) * 6),
                 6, f"{path}.six_dof_max_friction",
             ),
+            six_dof_motor_states=six_dof_motor_states,
+            six_dof_target_velocity=_vec(
+                data.get("six_dof_target_velocity", (0.0, 0.0, 0.0)),
+                3, f"{path}.six_dof_target_velocity",
+            ),
+            six_dof_target_angular_velocity=_vec(
+                data.get("six_dof_target_angular_velocity", (0.0, 0.0, 0.0)),
+                3, f"{path}.six_dof_target_angular_velocity",
+            ),
+            six_dof_target_position=_vec(
+                data.get("six_dof_target_position", (0.0, 0.0, 0.0)),
+                3, f"{path}.six_dof_target_position",
+            ),
+            six_dof_target_orientation_wxyz=_vec(
+                data.get("six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0)),
+                4, f"{path}.six_dof_target_orientation_wxyz",
+            ),
             cone_half_angle=_number(
                 data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
             ),
@@ -573,6 +605,11 @@ class ConstraintSpec:
             )
         if any(value < 0.0 for value in result.six_dof_max_friction):
             raise FixtureError(f"{path}.six_dof_max_friction values must be >= 0")
+        for index, state in enumerate(result.six_dof_motor_states):
+            if state not in {"OFF", "VELOCITY", "POSITION"}:
+                raise FixtureError(
+                    f"{path}.six_dof_motor_states[{index}] is unsupported: {state}"
+                )
         for index in range(3, 6):
             if not (-math.pi <= result.six_dof_limit_min[index] <= math.pi):
                 raise FixtureError(f"{path}.six_dof_limit_min[{index}] must be in [-pi, pi]")
@@ -587,6 +624,7 @@ class ConstraintSpec:
             ("anchor_rotation_wxyz_a", result.anchor_rotation_wxyz_a),
             ("anchor_rotation_wxyz_b", result.anchor_rotation_wxyz_b),
             ("swing_twist_target_orientation_wxyz", result.swing_twist_target_orientation_wxyz),
+            ("six_dof_target_orientation_wxyz", result.six_dof_target_orientation_wxyz),
         ):
             if sum(component * component for component in quat) <= 1.0e-20:
                 raise FixtureError(f"{path}.{name} cannot be zero")

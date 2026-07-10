@@ -1,0 +1,65 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SIX_DOF-003",
+  "title": "SixDOF 平移速度电机与旋转位置电机",
+  "source": "jolt_unit_test:PoweredSixDOFConstraintTest",
+  "tags": ["p0", "constraint", "six-dof", "motor"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "linear_motor_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [-2.0, 0.0, 0.0],
+      "mass": 2.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "angular_motor_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [2.0, 0.0, 0.0],
+      "mass": 2.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "linear_velocity_motor",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "linear_motor_body",
+      "anchor_position": [-2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FREE", "FIXED", "FIXED", "FIXED", "FIXED", "FIXED"],
+      "six_dof_motor_states": ["VELOCITY", "OFF", "OFF", "OFF", "OFF", "OFF"],
+      "six_dof_target_velocity": [2.0, 0.0, 0.0],
+      "motor_force_limit": 1.5
+    },
+    {
+      "id": "rotation_position_motor",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "angular_motor_body",
+      "anchor_position": [2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FIXED", "FIXED", "FIXED", "FIXED", "FIXED", "FREE"],
+      "six_dof_motor_states": ["OFF", "OFF", "OFF", "OFF", "OFF", "POSITION"],
+      "six_dof_target_orientation_wxyz": [0.9689124217106447, 0.0, 0.0, 0.24740395925452294],
+      "motor_frequency": 2.0,
+      "motor_damping": 1.0
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 20, 30, 60, 120],
+  "assertions": [
+    {"kind": "linear_speed_trajectory", "body": "linear_motor_body", "axis": "X", "target_velocity": 2.0, "max_force": 1.5, "velocity_abs": 0.00004, "position_abs": 0.00004, "end_frame": 120},
+    {"kind": "constraint_value_near", "constraint": "rotation_position_motor", "frame": 120, "expected": 0.5, "value_abs": 0.003, "current_value_kind": "six_dof"},
+    {"kind": "rotation_axis_only", "body": "angular_motor_body", "frame": 120, "axis": "Z", "off_axis_abs": 0.0003, "angle_min": 0.49},
+    {"kind": "constraint_lambda_active", "constraint": "linear_velocity_motor", "field": "lambda_motor", "min_abs": 0.001, "start_frame": 1, "end_frame": 30},
+    {"kind": "constraint_lambda_active", "constraint": "rotation_position_motor", "field": "lambda_motor", "min_abs": 0.0001, "start_frame": 1, "end_frame": 30},
+    {"kind": "finite_all"}
+  ]
+}

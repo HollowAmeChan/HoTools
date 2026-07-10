@@ -77,7 +77,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 每个平移轴的 friction 值是最大摩擦力 N，每个旋转轴的 friction 值是最大摩擦力矩 N·m；0 表示该轴无摩擦。
 
-显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。当前逐轴 spring/motor 和逐轴 current-value result 尚未接入。
+显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。native S1 已验证逐轴 velocity/position motor，公共 motor 属性、逐轴 spring 和逐轴 current-value result 尚未接入。
 
 ## 通用参数
 
