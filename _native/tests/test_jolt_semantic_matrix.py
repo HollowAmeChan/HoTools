@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
+import re
+import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +20,7 @@ if str(TEST_ROOT) not in sys.path:
 
 from canonical import traces_bitwise_equal  # noqa: E402
 from fixture_runtime import NativeFixtureRuntime, load_native_module  # noqa: E402
-from schema import discover_fixtures, load_fixture  # noqa: E402
+from schema import BodySpec, FixtureError, discover_fixtures, load_fixture  # noqa: E402
 
 
 def _native_dir() -> Path:
@@ -65,11 +69,39 @@ def test_jolt_semantic_fixture_catalog():
         "EVENT-001", "EVENT-002", "QUERY-001",
         "BODY-004", "BODY-005", "BODY-006", "COLL-001", "COLL-002",
         "FILTER-001",
+        "FRAME-002", "SHAPE-004",
+        "COLL-005",
+        "FILTER-002",
+        "FRAME-001",
+        "BODY-003", "BODY-007",
+        "SHAPE-001", "SHAPE-003",
+        "COLL-003",
+        "FILTER-003",
+        "SWING_TWIST-001",
     }.issubset(ids)
     for fixture in fixtures:
         assert "p0" in fixture.tags
         assert fixture.assertions
         assert fixture.sample_frames[0] == 0
+
+
+def test_jolt_fixture_rejects_degenerate_shapes():
+    """退化形状必须在进入 native 前由 fixture 协议明确拒绝。"""
+    invalid_shapes = [
+        {"type": "SPHERE", "radius": 0.0},
+        {"type": "BOX", "half_extents": [0.5, 0.0, 0.5]},
+        {"type": "CAPSULE", "half_height": -1.0, "radius": 0.5},
+        {"type": "BOX", "rotation_wxyz": [0.0, 0.0, 0.0, 0.0]},
+    ]
+    for index, shape in enumerate(invalid_shapes):
+        try:
+            BodySpec.from_data(
+                {"id": f"invalid_{index}", "type": "DYNAMIC", "shape": shape},
+                f"invalid_shapes[{index}]",
+            )
+        except FixtureError:
+            continue
+        raise AssertionError(f"degenerate shape {shape!r} was accepted")
 
 
 def test_jolt_p0_semantic_matrix():
@@ -121,3 +153,48 @@ def test_jolt_p0_contact_query_semantic_matrix():
         assert traces_bitwise_equal(first.trace, second.trace), (
             f"{fixture.id} trace is not bitwise deterministic"
         )
+
+
+def test_jolt_constraint_draw_size_is_non_physical():
+    """修改约束调试绘制尺寸不得改变任何物理 trace 字段。"""
+    native = load_native_module(_native_dir())
+    if not hasattr(native.JoltWorld, "get_constraint_state"):
+        raise RuntimeError("SKIP: 当前 Python ABI 的 hotools_jolt 缺少约束状态接口")
+    source = next(fixture for fixture in _fixtures() if fixture.id == "HINGE-001")
+    constraint = source.constraints[0]
+    small = replace(source, constraints=(replace(constraint, draw_size=0.0),))
+    large = replace(source, constraints=(replace(constraint, draw_size=100.0),))
+    small_result = NativeFixtureRuntime(native).run(small, 0)
+    large_result = NativeFixtureRuntime(native).run(large, 0)
+    assert small_result.physical_hash == large_result.physical_hash
+    assert traces_bitwise_equal(small_result.trace, large_result.trace)
+
+
+def test_jolt_cross_process_hash_stability():
+    """同一 fixture 在十个全新进程中的 physical hash 必须一致。"""
+    runner = TEST_ROOT / "run_native_semantics.py"
+    hashes: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="hotools-jolt-det-") as artifact_root:
+        for repeat_index in range(10):
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(runner),
+                    "--id", "FREE-001",
+                    "--repeat", "1",
+                    "--artifact-dir", str(Path(artifact_root) / str(repeat_index)),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            assert completed.returncode == 0, completed.stdout + completed.stderr
+            match = re.search(
+                r"\[PASS\] FREE-001 repeats=1 hash=([0-9a-f]+)", completed.stdout,
+            )
+            assert match is not None, completed.stdout
+            hashes.append(match.group(1))
+    assert len(set(hashes)) == 1, f"cross-process hashes differ: {hashes}"

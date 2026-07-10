@@ -1,0 +1,71 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SWING_TWIST-001",
+  "title": "SwingTwist 分别限制摆动与绕局部 Z 的扭转",
+  "source": "jolt_semantics:swing_twist_limits",
+  "tags": ["p0", "constraint", "swing-twist", "limit"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "swing_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [-3.0, 0.0, 0.0],
+      "angular_velocity": [4.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "twist_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [3.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 4.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "swing_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "swing_body",
+      "anchor_position": [-3.0, 0.0, 0.0],
+      "swing_type": "CONE",
+      "swing_normal_half_angle": 0.4,
+      "swing_plane_half_angle": 0.4,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793
+    },
+    {
+      "id": "twist_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "twist_body",
+      "anchor_position": [3.0, 0.0, 0.0],
+      "swing_type": "CONE",
+      "swing_normal_half_angle": 3.141592653589793,
+      "swing_plane_half_angle": 3.141592653589793,
+      "twist_min_angle": -0.3,
+      "twist_max_angle": 0.3
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "swing_limit", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "twist_limit", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_anchor_coincidence", "constraint": "swing_limit", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "constraint_anchor_coincidence", "constraint": "twist_limit", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "constraint_value_in_range", "constraint": "swing_limit", "minimum": 0.0, "maximum": 0.4, "value_abs": 0.025, "start_frame": 0},
+    {"kind": "constraint_value_in_range", "constraint": "twist_limit", "minimum": 0.0, "maximum": 0.3, "value_abs": 0.025, "start_frame": 0},
+    {"kind": "constraint_value_near", "constraint": "swing_limit", "frame": 120, "expected": 0.4, "value_abs": 0.003, "current_value_kind": "swing_twist"},
+    {"kind": "constraint_value_near", "constraint": "twist_limit", "frame": 120, "expected": 0.3, "value_abs": 0.003, "current_value_kind": "swing_twist"},
+    {"kind": "rotation_axis_only", "body": "swing_body", "frame": 120, "axis": "X", "off_axis_abs": 0.0003, "angle_min": 0.3},
+    {"kind": "rotation_axis_only", "body": "twist_body", "frame": 120, "axis": "Z", "off_axis_abs": 0.0003, "angle_min": 0.2},
+    {"kind": "finite_all"}
+  ]
+}

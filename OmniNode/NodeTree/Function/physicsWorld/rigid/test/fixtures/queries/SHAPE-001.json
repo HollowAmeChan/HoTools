@@ -1,0 +1,30 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SHAPE-001",
+  "title": "基础形状支撑高度及 Capsule/Cylinder 默认 Y 轴符合 Jolt 约定",
+  "source": "analytic:primitive_vertical_support",
+  "tags": ["p0", "shape", "query", "primitive"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 0},
+  "bodies": [
+    {"id": "sphere", "type": "STATIC", "shape": {"type": "SPHERE", "radius": 0.5}, "position": [-6.0, 0.0, 0.0]},
+    {"id": "box", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.75]}, "position": [-2.0, 0.0, 0.0]},
+    {"id": "capsule", "type": "STATIC", "shape": {"type": "CAPSULE", "half_height": 1.0, "radius": 0.25}, "position": [2.0, 0.0, 0.0]},
+    {"id": "cylinder", "type": "STATIC", "shape": {"type": "CYLINDER", "half_height": 1.0, "radius": 0.5, "convex_radius": 0.05}, "position": [6.0, 0.0, 0.0]}
+  ],
+  "constraints": [],
+  "timeline": [],
+  "queries": [
+    {"id": "sphere_top", "type": "RAY_CAST", "frame": 0, "origin": [-6.0, 0.0, 5.0], "direction": [0.0, 0.0, -10.0]},
+    {"id": "box_top", "type": "RAY_CAST", "frame": 0, "origin": [-2.0, 0.0, 5.0], "direction": [0.0, 0.0, -10.0]},
+    {"id": "capsule_top", "type": "RAY_CAST", "frame": 0, "origin": [2.0, 0.0, 5.0], "direction": [0.0, 0.0, -10.0]},
+    {"id": "cylinder_top", "type": "RAY_CAST", "frame": 0, "origin": [6.0, 0.0, 5.0], "direction": [0.0, 0.0, -10.0]}
+  ],
+  "sample_frames": [0],
+  "assertions": [
+    {"kind": "ray_query_near", "query": "sphere_top", "hit": true, "body": "sphere", "position": [-6.0, 0.0, 0.5], "normal": [0.0, 0.0, 1.0], "fraction": 0.45, "is_sensor": false, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "box_top", "hit": true, "body": "box", "position": [-2.0, 0.0, 0.75], "normal": [0.0, 0.0, 1.0], "fraction": 0.425, "is_sensor": false, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "capsule_top", "hit": true, "body": "capsule", "position": [2.0, 0.0, 0.25], "normal": [0.0, 0.0, 1.0], "fraction": 0.475, "is_sensor": false, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "cylinder_top", "hit": true, "body": "cylinder", "position": [6.0, 0.0, 0.5], "normal": [0.0, 0.0, 1.0], "fraction": 0.45, "is_sensor": false, "abs": 0.001},
+    {"kind": "finite_all"}
+  ]
+}

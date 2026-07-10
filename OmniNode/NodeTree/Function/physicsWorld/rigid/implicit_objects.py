@@ -138,7 +138,9 @@ def _midpoint_anchor(target_a, target_b) -> tuple[float, float, float]:
 
 def _normalize_constraint_type(value) -> str:
     constraint_type = str(value or "FIXED").strip().upper()
-    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"}:
+    if constraint_type not in {
+        "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
+    }:
         return "FIXED"
     return constraint_type
 
@@ -370,6 +372,11 @@ def make_rigid_generated_constraint_properties(
     linear_limit_min: float = -1.0,
     linear_limit_max: float = 1.0,
     cone_half_angle: float = 0.0,
+    swing_type: str = "CONE",
+    swing_normal_half_angle: float = _PI * 0.25,
+    swing_plane_half_angle: float = _PI * 0.25,
+    twist_min_angle: float = -_PI * 0.25,
+    twist_max_angle: float = _PI * 0.25,
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -409,6 +416,13 @@ def make_rigid_generated_constraint_properties(
     distance_min, distance_max = _ordered_pair(
         max(float(distance_min), 0.0),
         max(float(distance_max), 0.0),
+    )
+    normalized_swing_type = str(swing_type or "CONE").upper()
+    if normalized_swing_type not in {"CONE", "PYRAMID"}:
+        normalized_swing_type = "CONE"
+    twist_min_angle, twist_max_angle = _ordered_pair(
+        _clamp(float(twist_min_angle), -_PI, _PI),
+        _clamp(float(twist_max_angle), -_PI, _PI),
     )
 
     return [{
@@ -453,6 +467,11 @@ def make_rigid_generated_constraint_properties(
         "motor_target_velocity": 0.0,
         "motor_target_position": 0.0,
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
+        "swing_type": normalized_swing_type,
+        "swing_normal_half_angle": _clamp(float(swing_normal_half_angle), 0.0, _PI),
+        "swing_plane_half_angle": _clamp(float(swing_plane_half_angle), 0.0, _PI),
+        "twist_min_angle": twist_min_angle,
+        "twist_max_angle": twist_max_angle,
         "distance_min": distance_min,
         "distance_max": distance_max,
     }]
@@ -476,6 +495,13 @@ def _copy_generated_constraint_object(item: dict) -> dict:
     anchor_mode = str(item.get("anchor_mode", "SHARED_WORLD") or "SHARED_WORLD")
     if anchor_mode not in {"SHARED_WORLD", "SEPARATE_WORLD"}:
         anchor_mode = "SHARED_WORLD"
+    swing_type = str(item.get("swing_type", "CONE") or "CONE").upper()
+    if swing_type not in {"CONE", "PYRAMID"}:
+        swing_type = "CONE"
+    twist_min_angle, twist_max_angle = _ordered_pair(
+        _clamp(float(item.get("twist_min_angle", -_PI * 0.25)), -_PI, _PI),
+        _clamp(float(item.get("twist_max_angle", _PI * 0.25)), -_PI, _PI),
+    )
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
@@ -518,6 +544,11 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "motor_target_velocity": float(item.get("motor_target_velocity", 0.0) or 0.0),
         "motor_target_position": float(item.get("motor_target_position", 0.0) or 0.0),
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
+        "swing_type": swing_type,
+        "swing_normal_half_angle": _clamp(float(item.get("swing_normal_half_angle", _PI * 0.25)), 0.0, _PI),
+        "swing_plane_half_angle": _clamp(float(item.get("swing_plane_half_angle", _PI * 0.25)), 0.0, _PI),
+        "twist_min_angle": twist_min_angle,
+        "twist_max_angle": twist_max_angle,
         "distance_min": distance_min,
         "distance_max": distance_max,
     }
@@ -606,6 +637,11 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         f"{float(item.get('linear_limit_min', -1.0)):.8g}",
         f"{float(item.get('linear_limit_max', 1.0)):.8g}",
         f"{float(item.get('cone_half_angle', 0.0)):.8g}",
+        str(item.get("swing_type", "CONE") or "CONE"),
+        f"{float(item.get('swing_normal_half_angle', _PI * 0.25)):.8g}",
+        f"{float(item.get('swing_plane_half_angle', _PI * 0.25)):.8g}",
+        f"{float(item.get('twist_min_angle', -_PI * 0.25)):.8g}",
+        f"{float(item.get('twist_max_angle', _PI * 0.25)):.8g}",
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
@@ -719,6 +755,11 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         motor_target_velocity=float(item.get("motor_target_velocity", 0.0) or 0.0),
         motor_target_position=float(item.get("motor_target_position", 0.0) or 0.0),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
+        swing_type=str(item.get("swing_type", "CONE") or "CONE"),
+        swing_normal_half_angle=float(item.get("swing_normal_half_angle", _PI * 0.25)),
+        swing_plane_half_angle=float(item.get("swing_plane_half_angle", _PI * 0.25)),
+        twist_min_angle=float(item.get("twist_min_angle", -_PI * 0.25)),
+        twist_max_angle=float(item.get("twist_max_angle", _PI * 0.25)),
         distance_min=float(item.get("distance_min", 0.0) or 0.0),
         distance_max=float(item.get("distance_max", 1.0) or 0.0),
     )

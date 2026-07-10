@@ -412,23 +412,29 @@ def physicsRigidJoltWorldSettingsRegister(
         "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
         "优先级", "速度步数", "位置步数", "启用限制",
         "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
+        "摆动边界", "法向摆动半角", "平面摆动半角", "扭转最小", "扭转最大",
         "距离最小", "距离最大", "可断裂", "断裂冲量阈值", "锚点对象A", "锚点对象B",
     ],
     input_init={
         "constraint_type": {"default_value": "FIXED"},
+        "swing_type": {"default_value": "CONE"},
         "constraint_priority": {"min_value": 0, "max_value": 255},
         "solver_velocity_steps": {"min_value": 0, "max_value": 255},
         "solver_position_steps": {"min_value": 0, "max_value": 255},
         "angular_limit_min": {"min_value": -3.141592653589793, "max_value": 0.0},
         "angular_limit_max": {"min_value": 0.0, "max_value": 3.141592653589793},
         "cone_half_angle": {"min_value": 0.0, "max_value": 3.141592653589793},
+        "swing_normal_half_angle": {"min_value": 0.0, "max_value": 3.141592653589793},
+        "swing_plane_half_angle": {"min_value": 0.0, "max_value": 3.141592653589793},
+        "twist_min_angle": {"min_value": -3.141592653589793, "max_value": 3.141592653589793},
+        "twist_max_angle": {"min_value": -3.141592653589793, "max_value": 3.141592653589793},
     },
     _OUTPUT_NAME=["生成约束属性"],
     omni_description="""
     构造可注册到物理世界的刚体生成约束属性。
 
     本节点不创建 Empty、不写 solver slot、不访问 Jolt。约束类型使用
-    FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE。锚点对象为空时，锚点位置取
+    FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE / SWING_TWIST。锚点对象为空时，锚点位置取
     目标 A/B 的中点，旋转取目标 A 的 world rotation。锚点对象 A/B 可选，
     用于覆盖各自独立的世界 anchor frame。
     """,
@@ -449,6 +455,11 @@ def physicsRigidGeneratedConstraintProperties(
     linear_limit_min: float = -1.0,
     linear_limit_max: float = 1.0,
     cone_half_angle: float = 0.0,
+    swing_type: str = "CONE",
+    swing_normal_half_angle: float = 0.7853981633974483,
+    swing_plane_half_angle: float = 0.7853981633974483,
+    twist_min_angle: float = -0.7853981633974483,
+    twist_max_angle: float = 0.7853981633974483,
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -473,6 +484,11 @@ def physicsRigidGeneratedConstraintProperties(
         linear_limit_min=float(linear_limit_min),
         linear_limit_max=float(linear_limit_max),
         cone_half_angle=float(cone_half_angle),
+        swing_type=str(swing_type or "CONE"),
+        swing_normal_half_angle=float(swing_normal_half_angle),
+        swing_plane_half_angle=float(swing_plane_half_angle),
+        twist_min_angle=float(twist_min_angle),
+        twist_max_angle=float(twist_max_angle),
         distance_min=float(distance_min),
         distance_max=float(distance_max),
         breakable=bool(breakable),

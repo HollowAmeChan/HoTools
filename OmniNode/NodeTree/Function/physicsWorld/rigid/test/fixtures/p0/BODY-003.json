@@ -1,0 +1,39 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "BODY-003",
+  "title": "连续恒力与恒力矩产生解析线性加速度",
+  "source": "analytic:constant_force_and_torque",
+  "tags": ["p0", "body", "force", "torque"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 10},
+  "bodies": [
+    {
+      "id": "forced_sphere",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 2.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [
+    {"frame": 1, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 2, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 3, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 4, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 5, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 6, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 7, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 8, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 9, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]},
+    {"frame": 10, "phase": "pre_step", "op": "add_force", "body": "forced_sphere", "force": [2.0, 0.0, 0.0], "torque": [0.0, 0.0, 0.4]}
+  ],
+  "sample_frames": [0, 1, 2, 5, 10],
+  "assertions": [
+    {"kind": "body_state_near", "body": "forced_sphere", "frame": 1, "position": [0.0002777777777777778, 0.0, 0.0], "linear_velocity": [0.016666666666666666, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 0.03333333333333333], "abs": 0.00003, "rel": 0.000001},
+    {"kind": "body_state_near", "body": "forced_sphere", "frame": 10, "position": [0.015277777777777777, 0.0, 0.0], "linear_velocity": [0.16666666666666666, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 0.3333333333333333], "abs": 0.00003, "rel": 0.000001},
+    {"kind": "finite_all"}
+  ]
+}

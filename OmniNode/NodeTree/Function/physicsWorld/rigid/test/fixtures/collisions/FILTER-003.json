@@ -1,0 +1,26 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FILTER-003",
+  "title": "同一刚体对删除最后一个禁碰约束后才恢复接触",
+  "source": "hotools_contract:collision_pair_reference_count",
+  "tags": ["p0", "constraint", "collision", "contact", "filter", "timeline"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 5},
+  "bodies": [
+    {"id": "pair_a", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false},
+    {"id": "pair_b", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.75}, "position": [0.5, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "allow_sleeping": false}
+  ],
+  "constraints": [
+    {"id": "filter_1", "type": "POINT", "body_a": "pair_a", "body_b": "pair_b", "anchor_position": [0.25, 0.0, 0.0], "disable_collisions": true},
+    {"id": "filter_2", "type": "POINT", "body_a": "pair_a", "body_b": "pair_b", "anchor_position": [0.25, 0.0, 0.0], "disable_collisions": true}
+  ],
+  "timeline": [
+    {"frame": 2, "phase": "pre_step", "op": "remove_constraint", "constraint": "filter_1"},
+    {"frame": 3, "phase": "pre_step", "op": "remove_constraint", "constraint": "filter_2"}
+  ],
+  "sample_frames": [0, 1, 2, 3, 4, 5],
+  "assertions": [
+    {"kind": "contact_absent", "body_a": "pair_a", "body_b": "pair_b", "start_frame": 0, "end_frame": 2},
+    {"kind": "contact_state_sequence", "body_a": "pair_a", "body_b": "pair_b", "states": ["added", "persisted"], "is_sensor": false, "normal_abs": 0.002, "penetration_abs": 0.0002, "require_points": true},
+    {"kind": "finite_all"}
+  ]
+}

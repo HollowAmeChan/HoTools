@@ -485,7 +485,7 @@ def _assert_constraint_anchor_coincidence(
 ) -> None:
     constraint_id = _constraint_id(parameters)
     spec = fixture.constraints_by_id.get(constraint_id)
-    if spec is None or spec.type not in {"FIXED", "POINT", "HINGE", "CONE"}:
+    if spec is None or spec.type not in {"FIXED", "POINT", "HINGE", "CONE", "SWING_TWIST"}:
         raise FixtureError(
             f"anchor coincidence requires fixed-point constraint: {constraint_id}"
         )
@@ -1150,12 +1150,42 @@ def _assert_contact_absent(
     if not isinstance(body_a, str) or not isinstance(body_b, str):
         raise FixtureError("contact_absent requires body_a and body_b")
     pair = tuple(sorted((body_a, body_b)))
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 0.0))
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
     for frame in trace:
+        frame_number = int(frame["frame"])
+        if frame_number < start_frame or frame_number > end_frame:
+            continue
         for event in frame.get("contacts", []):
             if (event.get("body_a"), event.get("body_b")) == pair:
                 raise SemanticAssertionError(
                     f"{fixture.id} frame {frame['frame']} unexpected contact for {pair!r}"
                 )
+
+
+def _assert_body_axis_range(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证指定帧的刚体标量状态落在闭区间内。"""
+    body_id = _body_id(parameters)
+    frame_number = int(_number(parameters.get("frame"), "frame"))
+    field = str(parameters.get("field", "position"))
+    if field not in {"position", "linear_velocity", "angular_velocity"}:
+        raise FixtureError("body axis range field is unsupported")
+    axis = _axis_index(parameters.get("axis"))
+    minimum = _number(parameters.get("minimum"), "minimum")
+    maximum = _number(parameters.get("maximum"), "maximum")
+    frames = _frames_by_number(trace)
+    if frame_number not in frames:
+        raise FixtureError(f"body_axis_range needs sampled frame {frame_number}")
+    value = float(_body_at(frames[frame_number], body_id)[field][axis])
+    if value < minimum or value > maximum:
+        raise SemanticAssertionError(
+            f"{fixture.id} frame {frame_number} {body_id}.{field}[{axis}] "
+            f"{value:.12g} outside [{minimum:g}, {maximum:g}]"
+        )
 
 
 def evaluate_assertions(
@@ -1244,6 +1274,9 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "contact_absent": lambda spec: _assert_contact_absent(
+            fixture, trace, spec.parameters,
+        ),
+        "body_axis_range": lambda spec: _assert_body_axis_range(
             fixture, trace, spec.parameters,
         ),
     }

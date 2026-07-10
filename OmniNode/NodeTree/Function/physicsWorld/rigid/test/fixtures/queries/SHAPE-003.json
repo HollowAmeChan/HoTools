@@ -1,0 +1,27 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SHAPE-003",
+  "title": "旋转 Plane 的局部正 Z 法线映射到世界正 X",
+  "source": "analytic:rotated_plane_ray_intersection",
+  "tags": ["p0", "shape", "query", "plane", "rotation"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 0},
+  "bodies": [
+    {
+      "id": "rotated_plane",
+      "type": "STATIC",
+      "shape": {"type": "PLANE", "plane_half_extent": 10.0},
+      "position": [0.0, 0.0, 1.0],
+      "rotation_wxyz": [0.7071067811865476, 0.0, 0.7071067811865476, 0.0]
+    }
+  ],
+  "constraints": [],
+  "timeline": [],
+  "queries": [
+    {"id": "plane_front", "type": "RAY_CAST", "frame": 0, "origin": [5.0, 0.0, 1.0], "direction": [-10.0, 0.0, 0.0]}
+  ],
+  "sample_frames": [0],
+  "assertions": [
+    {"kind": "ray_query_near", "query": "plane_front", "hit": true, "body": "rotated_plane", "position": [0.0, 0.0, 1.0], "normal": [1.0, 0.0, 0.0], "fraction": 0.5, "is_sensor": false, "abs": 0.001},
+    {"kind": "finite_all"}
+  ]
+}

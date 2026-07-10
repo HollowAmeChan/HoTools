@@ -1,0 +1,47 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FILTER-002",
+  "title": "约束禁碰期间无接触且删除约束后恢复",
+  "source": "hotools_contract:constraint_collision_pair_lifecycle",
+  "tags": ["p0", "constraint", "collision", "contact", "filter", "timeline"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 4},
+  "bodies": [
+    {
+      "id": "filtered_a",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.75},
+      "position": [0.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "filtered_b",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.75},
+      "position": [0.5, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "temporary_filter",
+      "type": "POINT",
+      "body_a": "filtered_a",
+      "body_b": "filtered_b",
+      "anchor_position": [0.25, 0.0, 0.0],
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [
+    {"frame": 2, "phase": "pre_step", "op": "remove_constraint", "constraint": "temporary_filter"}
+  ],
+  "sample_frames": [0, 1, 2, 3, 4],
+  "assertions": [
+    {"kind": "contact_absent", "body_a": "filtered_a", "body_b": "filtered_b", "start_frame": 0, "end_frame": 1},
+    {"kind": "contact_state_sequence", "body_a": "filtered_a", "body_b": "filtered_b", "states": ["added", "persisted"], "is_sensor": false, "normal_abs": 0.002, "penetration_abs": 0.0002, "require_points": true},
+    {"kind": "finite_all"}
+  ]
+}

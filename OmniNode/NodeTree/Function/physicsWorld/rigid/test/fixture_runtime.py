@@ -150,6 +150,11 @@ class NativeFixtureRuntime:
             motor_target_velocity=constraint.motor_target_velocity,
             motor_target_position=constraint.motor_target_position,
             cone_half_angle=constraint.cone_half_angle,
+            swing_type=constraint.swing_type,
+            swing_normal_half_angle=constraint.swing_normal_half_angle,
+            swing_plane_half_angle=constraint.swing_plane_half_angle,
+            twist_min_angle=constraint.twist_min_angle,
+            twist_max_angle=constraint.twist_max_angle,
             disable_collisions=constraint.disable_collisions,
             distance_min=constraint.distance_min,
             distance_max=constraint.distance_max,
@@ -173,6 +178,15 @@ class NativeFixtureRuntime:
             if gravity is None:
                 raise FixtureError("set_world_gravity requires gravity")
             self.world.set_gravity(gravity)
+            return
+        if event.op == "remove_constraint":
+            try:
+                handle = self.constraint_handles.pop(event.constraint)
+            except KeyError as exc:
+                raise FixtureError(
+                    f"timeline references inactive constraint: {event.constraint}"
+                ) from exc
+            self.world.remove_constraint(handle)
             return
         handle = self._require_handle(event.body)
         if event.op == "set_velocity":
@@ -223,6 +237,7 @@ class NativeFixtureRuntime:
                 self.world.get_constraint_state(self.constraint_handles[constraint.id]),
             )
             for constraint in sorted(fixture.constraints, key=lambda item: item.id)
+            if constraint.id in self.constraint_handles
         ]
         handle_to_id = {handle: body_id for body_id, handle in self.handles.items()}
         contacts = []

@@ -1,0 +1,51 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FRAME-001",
+  "title": "不同 shape offset 的双动态体独立锚点仍保持重合",
+  "source": "metamorphic:separate_anchor_frames_ignore_shape_offset",
+  "tags": ["p0", "constraint", "frame", "shape-offset", "point"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "offset_a",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2], "offset": [0.0, 0.5, 0.0]},
+      "position": [-2.0, 0.0, 0.0],
+      "linear_velocity": [0.5, 1.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "offset_b",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2], "offset": [0.0, -0.5, 0.0]},
+      "position": [2.0, 0.0, 0.0],
+      "linear_velocity": [-0.5, -1.0, 0.0],
+      "angular_velocity": [0.0, 0.0, -2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "separate_point",
+      "type": "POINT",
+      "body_a": "offset_a",
+      "body_b": "offset_b",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [0.0, 0.0, 0.0],
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "point_anchor_coincidence", "constraint": "separate_point", "distance_abs": 0.0035, "start_frame": 1},
+    {"kind": "rotation_changed_min", "body": "offset_a", "frame": 60, "angle_min": 0.1},
+    {"kind": "finite_all"}
+  ]
+}

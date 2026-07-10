@@ -1,0 +1,25 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "COLL-005",
+  "title": "高速球体仅在 LINEAR_CAST 模式命中薄墙",
+  "source": "jolt_unit_test:MotionQualityLinearCast",
+  "tags": ["p0", "collision", "contact", "ccd", "motion-quality"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 2},
+  "bodies": [
+    {"id": "discrete_wall", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [0.05, 0.5, 0.5]}, "position": [0.0, -2.0, 0.0], "friction": 0.0, "restitution": 0.0},
+    {"id": "discrete_ball", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.1}, "position": [-2.0, -2.0, 0.0], "mass": 1.0, "friction": 0.0, "restitution": 0.0, "linear_velocity": [300.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "motion_quality": "DISCRETE", "max_linear_velocity": 500.0, "allow_sleeping": false},
+    {"id": "ccd_wall", "type": "STATIC", "shape": {"type": "BOX", "half_extents": [0.05, 0.5, 0.5]}, "position": [0.0, 2.0, 0.0], "friction": 0.0, "restitution": 0.0},
+    {"id": "ccd_ball", "type": "DYNAMIC", "shape": {"type": "SPHERE", "radius": 0.1}, "position": [-2.0, 2.0, 0.0], "mass": 1.0, "friction": 0.0, "restitution": 0.0, "linear_velocity": [300.0, 0.0, 0.0], "linear_damping": 0.0, "angular_damping": 0.0, "motion_quality": "LINEAR_CAST", "max_linear_velocity": 500.0, "allow_sleeping": false}
+  ],
+  "constraints": [],
+  "timeline": [],
+  "sample_frames": [0, 1, 2],
+  "assertions": [
+    {"kind": "body_axis_range", "body": "discrete_ball", "frame": 1, "field": "position", "axis": "X", "minimum": 2.9, "maximum": 3.1},
+    {"kind": "contact_absent", "body_a": "discrete_wall", "body_b": "discrete_ball"},
+    {"kind": "body_axis_range", "body": "ccd_ball", "frame": 1, "field": "position", "axis": "X", "minimum": -0.2, "maximum": -0.1},
+    {"kind": "body_axis_range", "body": "ccd_ball", "frame": 1, "field": "linear_velocity", "axis": "X", "minimum": -0.01, "maximum": 0.01},
+    {"kind": "contact_state_sequence", "body_a": "ccd_wall", "body_b": "ccd_ball", "states": ["added"], "is_sensor": false, "normal_abs": 0.002, "penetration_abs": 0.0002, "require_points": true},
+    {"kind": "finite_all"}
+  ]
+}

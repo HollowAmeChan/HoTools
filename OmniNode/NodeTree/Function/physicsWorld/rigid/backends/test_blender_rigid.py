@@ -694,6 +694,63 @@ def test_distance_constraint_spec_and_generated_properties():
     _del(anchor_a, anchor_b, c, a, b)
 
 
+def test_swing_twist_constraint_spec_and_generated_properties():
+    a = _make_obj("T3B_SwingBodyA", (-1, 0, 1), body_type="STATIC")
+    b = _make_obj("T3B_SwingBodyB", (1, 0, 1), body_type="DYNAMIC")
+    c = _make_constraint_empty("T3B_SwingConstraint", a, b, loc=(0, 0, 1))
+    props = c.hotools_rigid_constraint
+    props.constraint_type = "SWING_TWIST"
+    props.swing_type = "PYRAMID"
+    props.swing_normal_half_angle = 0.65
+    props.swing_plane_half_angle = 0.25
+    props.twist_min_angle = 0.4
+    props.twist_max_angle = -0.2
+    props.max_friction_torque = 1.5
+
+    spec = build_constraint_spec(c)
+    assert spec is not None
+    assert spec.constraint_type == "SWING_TWIST"
+    assert spec.swing_type == "PYRAMID"
+    assert abs(spec.swing_normal_half_angle - 0.65) < 1.0e-6
+    assert abs(spec.swing_plane_half_angle - 0.25) < 1.0e-6
+    assert abs(spec.twist_min_angle + 0.2) < 1.0e-6
+    assert abs(spec.twist_max_angle - 0.4) < 1.0e-6
+    assert abs(spec.max_friction_torque - 1.5) < 1.0e-6
+
+    adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
+    body_a = build_rigid_body_spec(a)
+    body_b = build_rigid_body_spec(b)
+    assert body_a is not None and body_b is not None
+    adapter.sync_body(body_a.slot_id, body_a)
+    adapter.sync_body(body_b.slot_id, body_b)
+    adapter.sync_constraint(spec.slot_id, spec)
+    adapter.step(1.0 / 60.0, 1)
+    state = adapter.get_constraint_state(spec.slot_id)
+    assert state is not None
+    assert state["constraint_type"] == "SWING_TWIST"
+    assert state["current_value_kind"] == "swing_twist"
+    assert len(state["lambda_rotation"]) == 3
+    adapter.dispose("test_swing_twist_constraint")
+
+    generated = make_rigid_generated_constraint_properties(
+        target_a=a,
+        target_b=b,
+        constraint_type="SWING_TWIST",
+        swing_type="invalid",
+        swing_normal_half_angle=0.7,
+        swing_plane_half_angle=0.3,
+        twist_min_angle=0.8,
+        twist_max_angle=-0.6,
+    )
+    assert generated[0]["swing_type"] == "CONE"
+    assert generated[0]["swing_normal_half_angle"] == 0.7
+    assert generated[0]["swing_plane_half_angle"] == 0.3
+    assert generated[0]["twist_min_angle"] == -0.6
+    assert generated[0]["twist_max_angle"] == 0.8
+
+    _del(c, a, b)
+
+
 def test_constraint_state_result_pipeline():
     scene = bpy.context.scene
     a = _make_obj("T3C_StateBodyA", (-0.5, 0, 2), body_type="STATIC")
@@ -1530,6 +1587,11 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "distance_min": 0.5,
         "distance_max": 2.0,
         "cone_half_angle": 0.6,
+        "swing_type": "PYRAMID",
+        "swing_normal_half_angle": 0.65,
+        "swing_plane_half_angle": 0.25,
+        "twist_min_angle": -0.4,
+        "twist_max_angle": 0.5,
         "motor_state": "POSITION",
         "motor_target_angle": 0.25,
         "motor_target_position": 1.25,
@@ -1538,13 +1600,16 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
         "SLIDER": {"current_value_kind": "position", "current_value": 0.4},
         "DISTANCE": {"current_value_kind": "distance", "current_value": 1.2},
+        "SWING_TWIST": {"current_value_kind": "swing_twist", "current_value": 0.3},
     }
-    for constraint_type in ("FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"):
+    for constraint_type in (
+        "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
+    ):
         spec = _types.SimpleNamespace(constraint_type=constraint_type, **common)
         groups = build_constraint_debug_lines(spec, states.get(constraint_type))
         assert groups["known_type"] is True
         assert groups["base"], f"{constraint_type} 应生成基础语义线段"
-        if constraint_type in {"DISTANCE", "HINGE", "SLIDER", "CONE"}:
+        if constraint_type in {"DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST"}:
             assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
         if constraint_type in {"HINGE", "SLIDER"}:
             assert groups["motor"], f"{constraint_type} 应显示 motor target"
@@ -1594,6 +1659,7 @@ if __name__ == "__main__":
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)
+    check("SWING_TWIST constraint spec + generated properties", test_swing_twist_constraint_spec_and_generated_properties)
     check("constraint state result pipeline", test_constraint_state_result_pipeline)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 

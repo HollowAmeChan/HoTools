@@ -1,0 +1,32 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SHAPE-004",
+  "title": "shape offset 与旋转共同决定查询几何且不移动刚体原点",
+  "source": "analytic:offset_rotated_box_ray_intersection",
+  "tags": ["p0", "shape", "query", "offset", "rotation"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 0},
+  "bodies": [
+    {
+      "id": "offset_rotated_box",
+      "type": "STATIC",
+      "shape": {
+        "type": "BOX",
+        "half_extents": [1.0, 0.25, 0.5],
+        "offset": [0.0, 0.0, 2.0],
+        "rotation_wxyz": [0.7071067811865476, 0.0, 0.7071067811865476, 0.0]
+      },
+      "position": [0.0, 0.0, 0.0]
+    }
+  ],
+  "constraints": [],
+  "timeline": [],
+  "queries": [
+    {"id": "rotated_box_top", "type": "RAY_CAST", "frame": 0, "origin": [0.0, 0.0, 5.0], "direction": [0.0, 0.0, -6.0], "include_sensors": true}
+  ],
+  "sample_frames": [0],
+  "assertions": [
+    {"kind": "body_state_near", "body": "offset_rotated_box", "frame": 0, "position": [0.0, 0.0, 0.0], "abs": 0.000001, "rel": 0.0},
+    {"kind": "ray_query_near", "query": "rotated_box_top", "hit": true, "body": "offset_rotated_box", "position": [0.0, 0.0, 3.0], "normal": [0.0, 0.0, 1.0], "fraction": 0.3333333333333333, "is_sensor": false, "abs": 0.001},
+    {"kind": "finite_all"}
+  ]
+}

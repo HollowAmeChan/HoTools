@@ -40,13 +40,24 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#ifdef Ellipse
+#  undef Ellipse
+#endif
 #include <Jolt/Geometry/Plane.h>
+#ifdef Ellipse
+#  undef Ellipse
+#endif
+#include <Jolt/Geometry/Ellipse.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Constraints/ConeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
+// Windows GDI 也声明了 Ellipse；仅在解析 SwingTwist 头时用 elaborated type 消除歧义。
+#define Ellipse class JPH::Ellipse
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+#undef Ellipse
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -910,6 +921,11 @@ public:
         float                     motor_target_velocity,
         float                     motor_target_position,
         float                     cone_half_angle,
+        const std::string&        swing_type_str,
+        float                     swing_normal_half_angle,
+        float                     swing_plane_half_angle,
+        float                     twist_min_angle,
+        float                     twist_max_angle,
         bool                      disable_collisions,
         float                     distance_min,
         float                     distance_max,
@@ -1069,6 +1085,31 @@ public:
             s.mTwistAxis2 = rot_b.RotateAxisZ();
             s.mHalfConeAngle = std::clamp(cone_half_angle, 0.0f, JPH_PI);
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+        } else if (constraint_type_str == "SWING_TWIST") {
+            if (swing_type_str != "CONE" && swing_type_str != "PYRAMID")
+                throw std::invalid_argument("不支持的 SwingTwist 摆动边界: " + swing_type_str);
+            SwingTwistConstraintSettings s;
+            apply_common(s);
+            s.mPosition1 = pos_a;
+            s.mPosition2 = pos_b;
+            // HoTools 统一以 frame Z 为主轴，frame X 定义摆动平面。
+            s.mTwistAxis1 = rot_a.RotateAxisZ();
+            s.mTwistAxis2 = rot_b.RotateAxisZ();
+            s.mPlaneAxis1 = rot_a.RotateAxisX();
+            s.mPlaneAxis2 = rot_b.RotateAxisX();
+            s.mSwingType = swing_type_str == "PYRAMID"
+                ? ESwingType::Pyramid
+                : ESwingType::Cone;
+            s.mNormalHalfConeAngle = std::clamp(swing_normal_half_angle, 0.0f, JPH_PI);
+            s.mPlaneHalfConeAngle = std::clamp(swing_plane_half_angle, 0.0f, JPH_PI);
+            float twist_min = std::clamp(twist_min_angle, -JPH_PI, JPH_PI);
+            float twist_max = std::clamp(twist_max_angle, -JPH_PI, JPH_PI);
+            if (twist_min > twist_max)
+                std::swap(twist_min, twist_max);
+            s.mTwistMinAngle = twist_min;
+            s.mTwistMaxAngle = twist_max;
+            s.mMaxFrictionTorque = (std::max)(0.0f, max_friction_torque);
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
@@ -1158,6 +1199,27 @@ public:
             Vec3 p = constraint->GetTotalLambdaPosition();
             lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
             lambda_rotation = {0.0f, 0.0f, constraint->GetTotalLambdaRotation()};
+        } else if (record.constraint_type == "SWING_TWIST") {
+            auto* constraint = static_cast<SwingTwistConstraint*>(base);
+            current_value_kind = "swing_twist";
+            Quat rotation = constraint->GetRotationInConstraintSpace();
+            current_value = 2.0f * std::acos(std::clamp(std::abs(rotation.GetW()), 0.0f, 1.0f));
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+            lambda_rotation = {
+                constraint->GetTotalLambdaSwingY(),
+                constraint->GetTotalLambdaSwingZ(),
+                constraint->GetTotalLambdaTwist(),
+            };
+            lambda_limit = (std::max)({
+                std::abs(lambda_rotation[0]),
+                std::abs(lambda_rotation[1]),
+                std::abs(lambda_rotation[2]),
+            });
+            Vec3 motor = constraint->GetTotalLambdaMotor();
+            lambda_motor = (std::max)({
+                std::abs(motor.GetX()), std::abs(motor.GetY()), std::abs(motor.GetZ()),
+            });
         } else if (record.constraint_type == "POINT") {
             auto* constraint = static_cast<PointConstraint*>(base);
             Vec3 p = constraint->GetTotalLambdaPosition();
@@ -1522,6 +1584,11 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("motor_target_velocity") = 0.0f,
              nb::arg("motor_target_position") = 0.0f,
              nb::arg("cone_half_angle") = 0.0f,
+             nb::arg("swing_type") = "CONE",
+             nb::arg("swing_normal_half_angle") = JPH_PI,
+             nb::arg("swing_plane_half_angle") = JPH_PI,
+             nb::arg("twist_min_angle") = -JPH_PI,
+             nb::arg("twist_max_angle") = JPH_PI,
              nb::arg("disable_collisions") = false,
              nb::arg("distance_min") = 0.0f,
              nb::arg("distance_max") = 1.0f,
@@ -1530,7 +1597,7 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("anchor_rot_wxyz_a") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("anchor_pos_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_b") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
-             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE），返回 handle。\n"
+             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
         .def("remove_constraint", &JoltWorld::remove_constraint,

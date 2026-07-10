@@ -8,7 +8,7 @@ viewport handler.
 
 from __future__ import annotations
 
-from . import cone, distance, fixed, hinge, point, slider
+from . import cone, distance, fixed, hinge, point, slider, swing_twist
 from .common import append_anchor_pair, append_frame_axes, make_context
 
 
@@ -19,6 +19,7 @@ CONSTRAINT_DEBUG_BUILDERS = {
     "HINGE": hinge.append_lines,
     "SLIDER": slider.append_lines,
     "CONE": cone.append_lines,
+    "SWING_TWIST": swing_twist.append_lines,
 }
 
 

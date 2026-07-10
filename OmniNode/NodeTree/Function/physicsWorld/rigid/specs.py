@@ -228,6 +228,11 @@ class ConstraintSpec:
         "motor_target_velocity",
         "motor_target_position",
         "cone_half_angle",
+        "swing_type",
+        "swing_normal_half_angle",
+        "swing_plane_half_angle",
+        "twist_min_angle",
+        "twist_max_angle",
         "distance_min",
         "distance_max",
     )
@@ -275,6 +280,11 @@ class ConstraintSpec:
         motor_target_velocity: float = 0.0,
         motor_target_position: float = 0.0,
         cone_half_angle: float = 0.0,
+        swing_type: str = "CONE",
+        swing_normal_half_angle: float = 3.141592653589793,
+        swing_plane_half_angle: float = 3.141592653589793,
+        twist_min_angle: float = -3.141592653589793,
+        twist_max_angle: float = 3.141592653589793,
         distance_min: float = 0.0,
         distance_max: float = 1.0,
     ) -> None:
@@ -319,6 +329,11 @@ class ConstraintSpec:
         self.motor_target_velocity: float = motor_target_velocity
         self.motor_target_position: float = motor_target_position
         self.cone_half_angle: float = cone_half_angle
+        self.swing_type: str = swing_type
+        self.swing_normal_half_angle: float = swing_normal_half_angle
+        self.swing_plane_half_angle: float = swing_plane_half_angle
+        self.twist_min_angle: float = twist_min_angle
+        self.twist_max_angle: float = twist_max_angle
         self.distance_min: float = distance_min
         self.distance_max: float = distance_max
 
@@ -363,6 +378,11 @@ class ConstraintSpec:
             "motor_target_velocity": self.motor_target_velocity,
             "motor_target_position": self.motor_target_position,
             "cone_half_angle": self.cone_half_angle,
+            "swing_type": self.swing_type,
+            "swing_normal_half_angle": self.swing_normal_half_angle,
+            "swing_plane_half_angle": self.swing_plane_half_angle,
+            "twist_min_angle": self.twist_min_angle,
+            "twist_max_angle": self.twist_max_angle,
             "distance_min": self.distance_min,
             "distance_max": self.distance_max,
         }
@@ -610,7 +630,9 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         return None
 
     constraint_type = str(getattr(props, "constraint_type", "FIXED"))
-    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"}:
+    if constraint_type not in {
+        "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
+    }:
         constraint_type = "FIXED"
     target_a = getattr(props, "target_a", None)
     target_b = getattr(props, "target_b", None)
@@ -666,6 +688,19 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     motor_target_velocity = float(getattr(props, "motor_target_velocity", 0.0))
     motor_target_position = float(getattr(props, "motor_target_position", 0.0))
     cone_half_angle = _clamp(float(getattr(props, "cone_half_angle", 0.0)), 0.0, _PI)
+    swing_type = str(getattr(props, "swing_type", "CONE") or "CONE").upper()
+    if swing_type not in {"CONE", "PYRAMID"}:
+        swing_type = "CONE"
+    swing_normal_half_angle = _clamp(
+        float(getattr(props, "swing_normal_half_angle", _PI)), 0.0, _PI,
+    )
+    swing_plane_half_angle = _clamp(
+        float(getattr(props, "swing_plane_half_angle", _PI)), 0.0, _PI,
+    )
+    twist_min_angle, twist_max_angle = _ordered_pair(
+        _clamp(float(getattr(props, "twist_min_angle", -_PI)), -_PI, _PI),
+        _clamp(float(getattr(props, "twist_max_angle", _PI)), -_PI, _PI),
+    )
     distance_min, distance_max = _ordered_pair(
         max(float(getattr(props, "distance_min", 0.0)), 0.0),
         max(float(getattr(props, "distance_max", 1.0)), 0.0),
@@ -712,6 +747,11 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         motor_target_velocity=motor_target_velocity,
         motor_target_position=motor_target_position,
         cone_half_angle=cone_half_angle,
+        swing_type=swing_type,
+        swing_normal_half_angle=swing_normal_half_angle,
+        swing_plane_half_angle=swing_plane_half_angle,
+        twist_min_angle=twist_min_angle,
+        twist_max_angle=twist_max_angle,
         distance_min=distance_min,
         distance_max=distance_max,
     )

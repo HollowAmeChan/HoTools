@@ -15,7 +15,7 @@
 它们不能系统证明：
 
 - 每个 HoTools 参数与 Jolt v5.2.0 的真实语义一致；
-- 六种约束真正移除/保留了文档声明的自由度；
+- 每种已接约束真正移除/保留了文档声明的自由度；
 - limit、spring、friction、motor、质量、阻尼、CCD、sleep 和过滤的数值行为正确；
 - 同一输入可稳定重放，Blender 枚举变化不会改变 Jolt 添加顺序；
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
@@ -25,22 +25,22 @@
 
 ### 2026-07-10 实现状态
 
-首个可执行切片 `physicsWorld/rigid/test/` 已落地：
+可执行切片 `physicsWorld/rigid/test/` 已落地：
 
 - `hotools_jolt_fixture_v1` 严格 JSON schema；
 - `native_binding_v1` runner，按 fixture body id 稳定创建刚体；
 - position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- `BODY-001`、`FREE-001`、`FREE-002`、`FREE-003` 四个刚体 P0 fixture；
-- 六种已接入约束共十个 P0 fixture，连同刚体切片共十四个；
+- 48 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询和约束；
+- 七种已接入约束均有 schema、state trace 和独立物理 oracle；
 - Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
 - Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
 - Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
-- py311/py313 独立运行，当前四个 physical hash 在两套 ABI 间完全一致；
+- py311/py313 各自 48/48 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前验收 body 积分/阻尼/速度上限/DOF、六种基础约束自由度、Distance/Hinge/Slider 数值行为、动态-动态反作用、碰撞恢复/摩擦/filter，以及 contact 状态机和 RayCast 几何语义。复杂 A/B frame 组合、CCD、adapter parity、Blender E2E 和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、七种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SwingTwist orientation motor、adapter parity、Blender E2E、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -179,16 +179,16 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | FREE-003 | gravity factor `0/0.5/1/2` | 加速度按比例缩放 | 解析/变形 | P0 | PASS (S1) |
 | BODY-001 | 线性冲量、质量 `1/2/10` | `delta_v = J/m` | 解析 | P0 | 部分：mass 2 PASS (S1) |
 | BODY-002 | angular impulse | 方向正确且符合 shape inertia 响应 | Jolt/解析 | P1 | 现有弱覆盖 |
-| BODY-003 | 恒力/torque | 单步和多步速度变化正确 | 解析/Jolt | P0 | 现有弱覆盖 |
+| BODY-003 | 恒力/torque | 单步和多步速度变化正确 | 解析/Jolt | P0 | 已实现 |
 | BODY-004 | linear/angular damping `0/0.1/1` | 逐帧符合 Jolt 阻尼公式 | Jolt/解析 | P0 | 已实现 |
 | BODY-005 | max linear/angular velocity | 超限输入按向量模长钳制并保持方向 | Jolt | P0 | 已实现 |
 | BODY-006 | allowed DOFs 六轴逐轴锁定 | 锁轴残差在容差内，未锁轴可动 | 不变量 | P0 | 已实现 |
-| BODY-007 | sleeping、唤醒、禁用 sleep | 状态转换和冲量/接触唤醒正确 | Jolt | P0 | 现有弱覆盖 |
-| SHAPE-001 | sphere/box/capsule/cylinder | RayCast 支撑点和落地高度符合几何 | 解析 | P0 | 现有弱覆盖 |
+| BODY-007 | sleeping、唤醒、禁用 sleep | 显式状态转换、冲量唤醒和禁用 sleep 正确 | Jolt | P0 | 已实现 |
+| SHAPE-001 | sphere/box/capsule/cylinder | 支撑高度及 Capsule/Cylinder 默认 Y 轴符合 Jolt | 解析/Jolt | P0 | 已实现 |
 | SHAPE-002 | tapered capsule/cylinder | 两端半径方向及旋转后命中正确 | 解析/Jolt | P1 | 仅创建 |
-| SHAPE-003 | plane local XY/+Z | 变换后法线、命中点和支撑高度正确 | 解析 | P0 | 现有弱覆盖 |
-| SHAPE-004 | shape offset + rotation | body 原点与 shape 几何分离正确 | 解析/差分 | P0 | 缺失 |
-| SHAPE-005 | 非法/退化尺寸 | 明确拒绝或规范化，不崩溃、不出 NaN | Contract | P0 | 缺失 |
+| SHAPE-003 | plane local XY/+Z | 旋转后世界法线与命中点正确 | 解析 | P0 | 已实现 |
+| SHAPE-004 | shape offset + rotation | body 原点与 RayCast 几何分离正确 | 解析/差分 | P0 | 已实现 |
+| SHAPE-005 | 非法/退化尺寸 | fixture 协议在进入 native 前明确拒绝 | Contract | P0 | 已实现 |
 
 ### 碰撞、材质、CCD、过滤与事件
 
@@ -196,17 +196,17 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 |---|---|---|---|---|---|
 | COLL-001 | 无摩擦正碰，restitution `0/0.5/1` | 法向速度符合质量/恢复系数关系 | 解析 | P0 | 已实现 |
 | COLL-002 | 平面摩擦 `0/0.5/1` | 锁定旋转后逐帧符合库仑摩擦解析轨迹 | 解析/Jolt | P0 | 已实现 |
-| COLL-003 | dynamic/static/kinematic 配对 | static 不动；kinematic 正确推动 dynamic | Jolt | P0 | 现有弱覆盖 |
+| COLL-003 | dynamic/static/kinematic 配对 | static 不动；kinematic 正确推动 dynamic | Jolt | P0 | 已实现 |
 | COLL-004 | sensor 穿越 | added/persisted/removed 完整且不阻挡轨迹 | Jolt SensorTests | P0 | 已实现 |
-| COLL-005 | DISCRETE vs LINEAR_CAST 高速薄墙 | 离散可穿透、CCD 命中并产生正确事件 | Jolt MotionQualityLinearCastTests | P0 | 缺失 |
+| COLL-005 | DISCRETE vs LINEAR_CAST 高速薄墙 | 离散可穿透、CCD 命中并产生正确事件 | Jolt MotionQualityLinearCastTests | P0 | 已实现 |
 | FILTER-001 | 第 1/16 组双向 mask 边界 | 只有双方 mask 均允许时碰撞 | HoTools/Jolt | P0 | 已实现 |
-| FILTER-002 | constraint disable collisions | 约束存在时无接触，删除/断裂后恢复 | HoTools | P0 | 仅生命周期 |
-| FILTER-003 | 多约束 pair-filter 引用计数 | 删除最后一个约束时才恢复碰撞 | HoTools | P0 | 现有弱覆盖 |
+| FILTER-002 | constraint disable collisions | 约束存在时无接触，删除后恢复 | HoTools | P0 | 已实现 |
+| FILTER-003 | 多约束 pair-filter 引用计数 | 删除最后一个约束时才恢复碰撞 | HoTools | P0 | 已实现 |
 | EVENT-001 | contact 状态机 | added -> persisted -> removed，字段有界 | Jolt | P0 | 已实现 |
 | EVENT-002 | sensor result channel | 状态机完整且不改变穿越轨迹 | HoTools/Jolt | P0 | 已实现 |
 | EVENT-003 | overflow | 计数准确、内存有界、后续帧恢复 | HoTools | P1 | 缺失 |
 
-### 六种约束
+### 七种约束
 
 每种约束至少覆盖 `body-body`、`body-world`、共享 world frame、独立 local A/B frame 和旋转 frame。不能只检查 `constraint_count == 1`。
 
@@ -231,14 +231,16 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SLIDER-006 | position motor | 位置弹簧轨迹与目标位置正确 | Jolt official | P0 | 已实现 |
 | CONE-001 | cone swing limit | anchor 重合，swing 不超 half angle | 不变量 | P0 | PASS (S1) |
 | CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | PASS (S1) |
+| SWING_TWIST-001 | 摆角与扭转限制 | anchor 重合；纯摆动与纯扭转分别收敛到声明边界，非目标轴残差有界 | 不变量/Jolt | P0 | PASS (S1) |
+| SWING_TWIST-002 | Pyramid 轴映射与摩擦 | 本地 X/Y 分别命中 normal/plane 半角；摩擦力矩按惯量解析衰减并产生 lambda | 解析/Jolt official | P0 | PASS (S1) |
 | PAIR-001 | 不同质量 Distance spring | 两端轨迹正确且总线动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-002 | 不同质量 Slider motor | 限力反作用与质量倒数成比例，总动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-003 | 不同转动惯量 Hinge motor | 限矩反作用正确，总角动量守恒 | 解析/Jolt | P0 | 已实现 |
-| FRAME-001 | 独立 A/B anchors | body 原点不同且 shape offset 时 anchor 仍正确 | 解析/差分 | P0 | 现有弱覆盖 |
-| FRAME-002 | frame 旋转/轴约定 | HoTools local Z 与 Jolt Hinge/Slider axis 映射正确 | 变形 | P0 | 缺失 |
+| FRAME-001 | 独立 A/B anchors | body 原点不同且 shape offset 时 anchor 仍正确 | 解析/差分 | P0 | 已实现 |
+| FRAME-002 | frame 旋转/轴约定 | HoTools local Z 与 Jolt Hinge/Slider axis 映射正确 | 变形 | P0 | 已实现 |
 | CONS-001 | solver step override | 低/高迭代残差排序正确，0 使用默认 | Jolt | P1 | 缺失 |
 | CONS-002 | priority | 冲突依赖链中改变顺序且结果可重复 | Jolt | P2 | 缺失 |
-| CONS-003 | draw size | 只改 debug geometry，不改 physical hash | 变形 | P0 | 缺失 |
+| CONS-003 | draw size | 只改 debug geometry，不改 physical hash | 变形 | P0 | 已实现 |
 | BREAK-001 | impulse threshold | 仅真实 step 后按 `lambda_max_abs` 断裂 | HoTools | P0 | 现有弱覆盖 |
 | BREAK-002 | dt 与 same-frame | 阈值不被误当力；same-frame 不重复判定 | HoTools | P0 | 现有弱覆盖 |
 
@@ -252,9 +254,9 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | LIFE-002 | transform/shape/constraint 热改 | 热更/重建边界正确，状态续接明确 | Contract/差分 | P0 | 链路已覆盖 |
 | LIFE-003 | prune/delete/dispose | native 数量回零，Blender delta 清理 | Contract | P0 | 已覆盖 |
 | DET-001 | 两个新 world 同步重放 | 每帧原始 float bitwise 相等 | Jolt determinism | P0 | 已实现 |
-| DET-002 | 同 fixture 跨进程运行 10 次 | canonical physical hash 一致 | Jolt determinism | P0 | 缺失 |
+| DET-002 | 同 fixture 跨进程运行 10 次 | canonical physical hash 一致 | Jolt determinism | P0 | 已实现 |
 | DET-003 | Blender scope 枚举随机打乱 | stable-id 排序后 API 调用序与 trace 不变 | HoTools | P0 | 缺失 |
-| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | 缺失 |
+| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | 两 ABI 各自 48/48；自动容差差分报告缺失 |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | 缺失 |
 | PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 缺失 |
 | PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 缺失 |
@@ -388,7 +390,7 @@ python OmniNode\NodeTree\Function\physicsWorld\rigid\test\run_native_semantics.p
 
 ### Phase 2：约束验收
 
-- 按 Fixed -> Point -> Distance -> Hinge -> Slider -> Cone 完成矩阵；
+- 按 Fixed -> Point -> Distance -> Hinge -> Slider -> Cone -> SwingTwist 完成矩阵；
 - 每种先做自由度残差，再 limit/spring/friction/motor，再 frame 和断裂交互；
 - 从 Jolt v5.2.0 unit tests 提炼 Hinge/Slider/Distance 数值 case。
 

@@ -1,0 +1,91 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SWING_TWIST-002",
+  "title": "SwingTwist 金字塔轴映射与摩擦力矩",
+  "source": "jolt_unit_test:SwingTwistConstraintFrictionTest",
+  "tags": ["p0", "constraint", "swing-twist", "pyramid", "friction"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "x_swing",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [-4.0, 0.0, 0.0],
+      "angular_velocity": [4.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "y_swing",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [0.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 4.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "friction_twist",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [4.0, 0.0, 0.0],
+      "mass": 2.0,
+      "angular_velocity": [0.0, 0.0, 2.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "x_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "x_swing",
+      "anchor_position": [-4.0, 0.0, 0.0],
+      "swing_type": "PYRAMID",
+      "swing_normal_half_angle": 0.65,
+      "swing_plane_half_angle": 0.25,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793
+    },
+    {
+      "id": "y_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "y_swing",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "swing_type": "PYRAMID",
+      "swing_normal_half_angle": 0.65,
+      "swing_plane_half_angle": 0.25,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793
+    },
+    {
+      "id": "friction",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "friction_twist",
+      "anchor_position": [4.0, 0.0, 0.0],
+      "swing_type": "CONE",
+      "swing_normal_half_angle": 3.141592653589793,
+      "swing_plane_half_angle": 3.141592653589793,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793,
+      "max_friction_torque": 0.5
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 20, 30, 40, 50, 60],
+  "assertions": [
+    {"kind": "constraint_value_near", "constraint": "x_limit", "frame": 60, "expected": 0.65, "value_abs": 0.004, "current_value_kind": "swing_twist"},
+    {"kind": "constraint_value_near", "constraint": "y_limit", "frame": 60, "expected": 0.25, "value_abs": 0.004, "current_value_kind": "swing_twist"},
+    {"kind": "rotation_axis_only", "body": "x_swing", "frame": 60, "axis": "X", "off_axis_abs": 0.0003, "angle_min": 0.5},
+    {"kind": "rotation_axis_only", "body": "y_swing", "frame": 60, "axis": "Y", "off_axis_abs": 0.0003, "angle_min": 0.2},
+    {"kind": "angular_speed_trajectory", "body": "friction_twist", "axis": "Z", "target_velocity": 0.0, "max_torque": 0.5, "inertia": 0.3333333333333333, "velocity_abs": 0.00004, "end_frame": 60},
+    {"kind": "constraint_lambda_active", "constraint": "friction", "field": "lambda_motor", "min_abs": 0.0001, "start_frame": 1, "end_frame": 60},
+    {"kind": "finite_all"}
+  ]
+}

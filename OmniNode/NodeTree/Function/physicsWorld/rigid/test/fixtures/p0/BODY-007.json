@@ -1,0 +1,42 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "BODY-007",
+  "title": "显式休眠、冲量唤醒与禁止休眠状态正确",
+  "source": "jolt_semantics:sleep_activation",
+  "tags": ["p0", "body", "sleep", "activation"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "sleepable",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [-2.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": true
+    },
+    {
+      "id": "never_sleep",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [2.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [
+    {"frame": 1, "phase": "post_step", "op": "activate", "body": "sleepable", "active": false},
+    {"frame": 2, "phase": "pre_step", "op": "add_impulse", "body": "sleepable", "impulse": [1.0, 0.0, 0.0]}
+  ],
+  "sample_frames": [0, 1, 2, 10, 60, 120],
+  "assertions": [
+    {"kind": "body_state_near", "body": "sleepable", "frame": 1, "active": false, "sleeping": true, "abs": 0.00003, "rel": 0.000001},
+    {"kind": "body_state_near", "body": "sleepable", "frame": 2, "linear_velocity": [1.0, 0.0, 0.0], "active": true, "sleeping": false, "abs": 0.00003, "rel": 0.000001},
+    {"kind": "body_state_near", "body": "never_sleep", "frame": 120, "active": true, "sleeping": false, "abs": 0.00003, "rel": 0.000001},
+    {"kind": "finite_all"}
+  ]
+}

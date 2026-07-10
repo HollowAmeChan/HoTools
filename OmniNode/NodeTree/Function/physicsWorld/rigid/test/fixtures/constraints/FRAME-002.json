@@ -1,0 +1,58 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "FRAME-002",
+  "title": "旋转 frame 将 Hinge 与 Slider 的局部 Z 映射到世界 X",
+  "source": "metamorphic:rotated_constraint_frame_axis",
+  "tags": ["p0", "constraint", "frame", "hinge", "slider"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "rotated_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [-3.0, 0.0, 0.0],
+      "angular_velocity": [4.0, 2.0, 1.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "rotated_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.3, 0.3]},
+      "position": [3.0, 0.0, 0.0],
+      "linear_velocity": [4.0, 2.0, 1.0],
+      "angular_velocity": [1.0, 2.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "hinge_world_x",
+      "type": "HINGE",
+      "body_a": "WORLD",
+      "body_b": "rotated_hinge",
+      "anchor_position": [-3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [0.7071067811865476, 0.0, 0.7071067811865476, 0.0]
+    },
+    {
+      "id": "slider_world_x",
+      "type": "SLIDER",
+      "body_a": "WORLD",
+      "body_b": "rotated_slider",
+      "anchor_position": [3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz": [0.7071067811865476, 0.0, 0.7071067811865476, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60],
+  "assertions": [
+    {"kind": "rotation_axis_only", "body": "rotated_hinge", "frame": 60, "axis": "X", "off_axis_abs": 0.0003, "angle_min": 0.5},
+    {"kind": "linear_axis_only", "body": "rotated_slider", "frame": 60, "axis": "X", "off_axis_abs": 0.0003, "displacement_min": 3.5, "rotation_abs": 0.0003},
+    {"kind": "constraint_state_schema", "constraint": "hinge_world_x", "type": "HINGE", "current_value_kind": "angle", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "slider_world_x", "type": "SLIDER", "current_value_kind": "position", "enabled": true},
+    {"kind": "finite_all"}
+  ]
+}

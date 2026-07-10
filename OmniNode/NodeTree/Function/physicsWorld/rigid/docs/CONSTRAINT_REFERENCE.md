@@ -10,6 +10,7 @@
 | `HINGE` | 绕本地 Z 单轴旋转 | 角度 limit、spring、friction torque、angular motor | 门轴、轮轴、机械关节 |
 | `SLIDER` | 沿本地 Z 单轴平移 | 线性 limit、spring、friction force、linear motor | 活塞、抽屉、滑轨 |
 | `CONE` | cone 范围内 swing，twist 自由 | half cone angle | 摆锤、简化球窝角限制 |
+| `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque | 肩关节、受限球窝、布偶关节 |
 
 ## 类型细节
 
@@ -19,7 +20,7 @@
 
 ### Point
 
-使两个 anchor point 重合，移除三个平移自由度，但不限制相对旋转。若你需要限制球窝关节的摆角或扭转范围，Point 不够，应等待/使用未来的 SwingTwist 或 SixDOF。
+使两个 anchor point 重合，移除三个平移自由度，但不限制相对旋转。若你需要限制球窝关节的摆角或扭转范围，应使用 SwingTwist；需要逐轴控制六个自由度时仍需等待 SixDOF。
 
 ### Distance
 
@@ -47,7 +48,19 @@
 
 ### Cone
 
-使两个 point 重合，并限制两侧 twist axis 之间的夹角不超过 half cone angle。它不限制绕 twist axis 的扭转，因此不能替代完整肩关节。需要 twist min/max 时应使用未来的 SwingTwist。
+使两个 point 重合，并限制两侧 twist axis 之间的夹角不超过 half cone angle。它不限制绕 twist axis 的扭转，因此不能替代完整肩关节。需要 twist min/max 时应使用 SwingTwist。
+
+### SwingTwist
+
+使两个 anchor point 重合，并分别限制摆动和扭转。HoTools frame 的本地 Z 是 twist axis，本地 X 是 plane axis；这两个轴会映射到 Jolt 的 twist/plane frame。当前支持：
+
+- `swing_type = CONE`：用 `swing_normal_half_angle` 与 `swing_plane_half_angle` 定义椭圆摆动锥；纯绕本地 X 的摆动受 normal 半角限制，纯绕本地 Y 的摆动受 plane 半角限制；
+- `swing_type = PYRAMID`：用相同的两个半角定义金字塔式摆动边界；
+- `twist_min_angle` / `twist_max_angle`：限制绕本地 Z 的扭转范围；
+- `max_friction_torque`：限制阻碍相对旋转的最大摩擦力矩；
+- 当前相对旋转值以及 position、swing、twist、limit、motor lambda 结果。
+
+当前版本尚未暴露 SwingTwist orientation motor。需要电机驱动时不能借用 Hinge 的单轴 motor 参数假装等价。
 
 ## 通用参数
 
@@ -61,7 +74,6 @@
 
 | Jolt 类型 | 能力 | 接入前置 |
 |---|---|---|
-| SwingTwist | 肩关节式 swing/twist limit、friction、motor | 扩展 spec、orientation motor 与专用 cone/twist debug |
 | SixDOF | 六轴分别 Free/Fixed/Limited、每轴 motor/friction | 轴数组 schema、per-axis result 与调试器 |
 | Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
 | Gear | 连接两个 hinge 的齿轮比 | constraint-to-constraint 引用拓扑 |

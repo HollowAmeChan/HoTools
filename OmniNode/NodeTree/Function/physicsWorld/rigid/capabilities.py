@@ -85,7 +85,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
     "fields": _schema_capability_fields("Object.hotools_rigid_constraint", RIGID_CONSTRAINT_RNA_FIELDS, _CONSTRAINT_UPDATE_POLICIES),
     "debug_visualization": {
         "renderer_registry": "rigid.constraint_debug:CONSTRAINT_DEBUG_BUILDERS",
-        "types": ["FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"],
+        "types": ["FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST"],
         "line_groups": ["base", "limits", "motor", "state", "problem"],
         "dynamic_state_channel": RIGID_CONSTRAINT_STATE_CHANNEL,
         "user_docs": "rigid/docs/README.md",

@@ -328,6 +328,11 @@ class ConstraintSpec:
     motor_target_velocity: float
     motor_target_position: float
     cone_half_angle: float
+    swing_type: str
+    swing_normal_half_angle: float
+    swing_plane_half_angle: float
+    twist_min_angle: float
+    twist_max_angle: float
     disable_collisions: bool
     distance_min: float
     distance_max: float
@@ -347,10 +352,14 @@ class ConstraintSpec:
             "motor_frequency", "motor_damping", "motor_force_limit",
             "motor_torque_limit", "motor_target_angular_velocity",
             "motor_target_angle", "motor_target_velocity", "motor_target_position",
-            "cone_half_angle", "disable_collisions", "distance_min", "distance_max",
+            "cone_half_angle", "swing_type", "swing_normal_half_angle",
+            "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
+            "disable_collisions", "distance_min", "distance_max",
         }, path)
         constraint_type = _string(data.get("type"), f"{path}.type").upper()
-        if constraint_type not in {"FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"}:
+        if constraint_type not in {
+            "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
+        }:
             raise FixtureError(f"{path}.type is unsupported: {constraint_type}")
         body_a = _string(data.get("body_a"), f"{path}.body_a")
         body_b = _string(data.get("body_b"), f"{path}.body_b")
@@ -450,6 +459,23 @@ class ConstraintSpec:
             cone_half_angle=_number(
                 data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
             ),
+            swing_type=_string(
+                data.get("swing_type", "CONE"), f"{path}.swing_type",
+            ).upper(),
+            swing_normal_half_angle=_number(
+                data.get("swing_normal_half_angle", math.pi),
+                f"{path}.swing_normal_half_angle",
+            ),
+            swing_plane_half_angle=_number(
+                data.get("swing_plane_half_angle", math.pi),
+                f"{path}.swing_plane_half_angle",
+            ),
+            twist_min_angle=_number(
+                data.get("twist_min_angle", -math.pi), f"{path}.twist_min_angle",
+            ),
+            twist_max_angle=_number(
+                data.get("twist_max_angle", math.pi), f"{path}.twist_max_angle",
+            ),
             disable_collisions=_bool(
                 data.get("disable_collisions", False), f"{path}.disable_collisions",
             ),
@@ -460,6 +486,7 @@ class ConstraintSpec:
             "limit_spring_frequency", "limit_spring_damping", "max_friction_torque",
             "max_friction_force", "motor_frequency", "motor_damping",
             "motor_force_limit", "motor_torque_limit", "cone_half_angle",
+            "swing_normal_half_angle", "swing_plane_half_angle",
             "distance_min", "distance_max",
         ):
             if getattr(result, name) < 0.0:
@@ -472,6 +499,8 @@ class ConstraintSpec:
             raise FixtureError(f"{path}.draw_size must be >= 0")
         if result.motor_state not in {"OFF", "VELOCITY", "POSITION"}:
             raise FixtureError(f"{path}.motor_state is unsupported: {result.motor_state}")
+        if result.swing_type not in {"CONE", "PYRAMID"}:
+            raise FixtureError(f"{path}.swing_type is unsupported: {result.swing_type}")
         if result.solver_velocity_steps > 255 or result.solver_position_steps > 255:
             raise FixtureError(f"{path} solver step overrides must be <= 255")
         for name, quat in (
@@ -490,13 +519,14 @@ class TimelineEvent:
     phase: str
     op: str
     body: str = ""
+    constraint: str = ""
     values: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_data(cls, value: Any, path: str) -> "TimelineEvent":
         data = _mapping(value, path)
         _reject_unknown(data, {
-            "frame", "phase", "op", "body", "linear_velocity", "angular_velocity",
+            "frame", "phase", "op", "body", "constraint", "linear_velocity", "angular_velocity",
             "impulse", "angular_impulse", "force", "torque", "gravity_factor",
             "active", "gravity",
         }, path)
@@ -507,13 +537,16 @@ class TimelineEvent:
         op = _string(data.get("op"), f"{path}.op")
         supported = {
             "set_velocity", "add_impulse", "add_force", "set_gravity_factor",
-            "activate", "set_world_gravity",
+            "activate", "set_world_gravity", "remove_constraint",
         }
         if op not in supported:
             raise FixtureError(f"{path}.op is unsupported: {op}")
         body = str(data.get("body", ""))
-        if op != "set_world_gravity" and not body:
+        constraint = str(data.get("constraint", ""))
+        if op not in {"set_world_gravity", "remove_constraint"} and not body:
             raise FixtureError(f"{path}.body is required for {op}")
+        if op == "remove_constraint" and not constraint:
+            raise FixtureError(f"{path}.constraint is required for {op}")
         values: dict[str, Any] = {}
         vector_fields = {
             "linear_velocity", "angular_velocity", "impulse", "angular_impulse",
@@ -526,7 +559,10 @@ class TimelineEvent:
             values["gravity_factor"] = _number(data["gravity_factor"], f"{path}.gravity_factor")
         if "active" in data:
             values["active"] = _bool(data["active"], f"{path}.active")
-        return cls(frame=frame, phase=phase, op=op, body=body, values=values)
+        return cls(
+            frame=frame, phase=phase, op=op, body=body,
+            constraint=constraint, values=values,
+        )
 
 
 @dataclass(frozen=True)
@@ -554,6 +590,7 @@ class AssertionSpec:
             "damping_trajectory", "pair_collision_1d",
             "coulomb_slide_trajectory",
             "contact_absent",
+            "body_axis_range",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -651,7 +688,10 @@ class AssertionSpec:
                 "body", "axis", "friction", "gravity_axis", "velocity_abs",
             },
             "contact_absent": {
-                "body_a", "body_b",
+                "body_a", "body_b", "start_frame", "end_frame",
+            },
+            "body_axis_range": {
+                "body", "frame", "field", "axis", "minimum", "maximum",
             },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
@@ -820,6 +860,11 @@ def load_fixture(path: str | Path) -> Fixture:
         if constraint.body_b not in known_body_refs:
             raise FixtureError(
                 f"constraint {constraint.id} references unknown body_b: {constraint.body_b}"
+            )
+    for event in timeline:
+        if event.constraint and event.constraint not in set(constraint_ids):
+            raise FixtureError(
+                f"timeline event references unknown constraint: {event.constraint}"
             )
     tags = tuple(
         _string(item, f"fixture.tags[{index}]")
