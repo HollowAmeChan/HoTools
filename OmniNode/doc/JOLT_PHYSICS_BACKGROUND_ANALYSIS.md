@@ -133,8 +133,8 @@ Jolt 支持的主要 two-body constraint：
 | 约束 | 原生能力 | 当前 HoTools binding |
 |---|---|---|
 | Fixed | 锁定相对位置和旋转；支持 world/local frame、auto detect point | 已接独立 A/B frame；未接 auto detect point |
-| Point | 锁定一个点，允许任意旋转 | 已接类型，但只传统一 anchor point |
-| Distance | 点到点距离范围，支持 min/max 和 spring | 未接 |
+| Point | 锁定一个点，允许任意旋转 | 已接，支持独立 A/B point frame |
+| Distance | 点到点距离范围，支持 min/max 和 spring | 已接，支持独立 A/B point、min/max 和 limit spring |
 | Hinge | 单轴旋转，支持角度 limit、limit spring、friction torque、motor | 已接类型，并已接基础 limit/friction/motor |
 | Slider | 单轴平移，支持线性 limit、limit spring、friction force、motor | 已接类型，并已接基础 limit/friction/motor |
 | Cone | 点约束 + swing cone angle | 已接类型，并已接 half cone angle |
@@ -354,7 +354,7 @@ HoTools 当前 constraint spec 覆盖：
 - anchor transform 来自 Empty。
 - `rigid.generated_constraint` 隐式对象生成的持久约束；它不创建 Empty，但会在 solver prepare 阶段转成同一类 `ConstraintSpec` slot。
 
-当前 adapter 直接用 `ConstraintSpec.anchor_position` / `anchor_rotation_wxyz` 同时填 body1/body2 的 frame。它能跑基础 demo，但不能表达两个 body 的不同 local anchor，也不能表达 limit/motor。
+当前 adapter 已优先使用 `ConstraintSpec.anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 填 body1/body2 frame；共享 frame 仍作为兼容模式。Hinge/Slider 的 limit、friction、spring 和 motor，以及 Cone half angle、Distance min/max/spring 均已进入 native binding。尚未接入的是 constraint 运行时命令流、auto detect point、SwingTwist/SixDOF 和 constraint-to-constraint 拓扑类型。
 
 ### Per-frame 输入
 
@@ -664,8 +664,8 @@ Native 侧当前特点：
 | Slider | limit enabled、limit min/max、friction force、motor state、target position、target velocity、motor force limits、spring | P0 |
 | Cone | half cone angle | P0 |
 | Distance | min distance、max distance、spring | 已接 |
-| Point | point1/point2 separate anchors | P1 |
-| Fixed | auto detect / separate frames | P1 |
+| Point | point1/point2 separate anchors | 已接 |
+| Fixed | separate frames 已接；auto detect 未接 | 部分已接 |
 | SixDOF | per-axis free/fixed/limited、limits、friction、motors | P1 |
 | SwingTwist | twist/swing limits、friction、motor | P2 |
 
@@ -701,6 +701,8 @@ Debug 建议：
 - draw contacts：normal、penetration、contact points。
 - draw error/lambda heatmap。
 - print body/constraint/contact counts and step timing。
+
+当前约束 overlay 已按类型拆到 `physicsWorld/rigid/constraint_debug/`：Fixed、Point、Distance、Hinge、Slider、Cone 各自持有语义绘制器；`rigid/debug_draw.py` 只负责快照采样、颜色分组和 viewport handler。绘制分为 base、limit、motor target、current state、problem 五类线段，动态值来自 `rigid_constraint_state`，约束 frame/limit 来自 solver 实际消费的 `ConstraintSpec`。用户文档位于 `physicsWorld/rigid/docs/`。
 
 由于 `JPH_DEBUG_RENDERER` 被禁用，debug primitives 应由我们自己导出：
 

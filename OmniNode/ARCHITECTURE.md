@@ -1074,3 +1074,11 @@ Blender ID 强引用，用于追加或链接工作流；它不创建独立运行
 硬约束：`writeback.solver_inline_writeback=False`，solver 内不直接写 Blender 数据。
 
 当前内置声明：`spring_vrm`、`rigid_jolt`。
+
+## 2026-07-10 追加：Rigid/Jolt 约束调试与用户文档
+
+`physicsWorld/rigid/debug_draw.py` 只维护 world 快照采样、颜色分组和 Blender viewport handler。不同约束的自由度、axis、limit、motor target 与 current value 由 `physicsWorld/rigid/constraint_debug/` 中的逐类型 renderer 持有；当前 registry 覆盖 Fixed、Point、Distance、Hinge、Slider、Cone。
+
+约束 renderer 的输入只能是 Jolt adapter 实际消费的 `ConstraintSpec` 和 `rigid_constraint_state` result，不读取 native handle，不从 live Blender transform 重新猜测 solver 状态。输出只能是纯 tuple 线段快照。未知类型必须退化为通用 anchor frame，并写入 `unknown_constraint_types` audit。
+
+Rigid/Jolt 面向用户的约束指南位于 `physicsWorld/rigid/docs/`。文档必须明确区分 Jolt 原生能力与 HoTools 已接入能力；新增约束类型时，spec/binding、动态 result、专用 renderer、文档和测试视为同一个交付单元。

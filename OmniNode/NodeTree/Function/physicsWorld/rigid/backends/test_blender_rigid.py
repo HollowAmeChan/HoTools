@@ -204,6 +204,7 @@ get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_resu
 iter_rigid_contact_event_results = _pw("rigid.results").iter_rigid_contact_event_results
 publish_rigid_contact_event_result = _pw("rigid.results").publish_rigid_contact_event_result
 build_rigid_debug_draw_snapshot = _pw("rigid.debug_draw").build_rigid_debug_draw_snapshot
+build_constraint_debug_lines = _pw("rigid.constraint_debug").build_constraint_debug_lines
 rigid_backend_debug_snapshot = _pw("rigid.debug").rigid_backend_debug_snapshot
 iter_rigid_query_results = _pw("rigid.queries").iter_rigid_query_results
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
@@ -1506,6 +1507,55 @@ def test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_rest
     _del(a, b, c, empty)
 
 
+def test_constraint_debug_renderer_registry_and_semantics():
+    common = {
+        "anchor_position": (0.0, 0.0, 0.0),
+        "anchor_rotation_wxyz": (1.0, 0.0, 0.0, 0.0),
+        "anchor_position_a": (0.0, 0.0, 0.0),
+        "anchor_rotation_wxyz_a": (1.0, 0.0, 0.0, 0.0),
+        "anchor_position_b": (0.0, 0.0, 1.0),
+        "anchor_rotation_wxyz_b": (1.0, 0.0, 0.0, 0.0),
+        "draw_constraint_size": 1.0,
+        "limit_enabled": True,
+        "angular_limit_min": -0.5,
+        "angular_limit_max": 0.75,
+        "linear_limit_min": -1.0,
+        "linear_limit_max": 2.0,
+        "distance_min": 0.5,
+        "distance_max": 2.0,
+        "cone_half_angle": 0.6,
+        "motor_state": "POSITION",
+        "motor_target_angle": 0.25,
+        "motor_target_position": 1.25,
+    }
+    states = {
+        "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
+        "SLIDER": {"current_value_kind": "position", "current_value": 0.4},
+        "DISTANCE": {"current_value_kind": "distance", "current_value": 1.2},
+    }
+    for constraint_type in ("FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"):
+        spec = _types.SimpleNamespace(constraint_type=constraint_type, **common)
+        groups = build_constraint_debug_lines(spec, states.get(constraint_type))
+        assert groups["known_type"] is True
+        assert groups["base"], f"{constraint_type} 应生成基础语义线段"
+        if constraint_type in {"DISTANCE", "HINGE", "SLIDER", "CONE"}:
+            assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
+        if constraint_type in {"HINGE", "SLIDER"}:
+            assert groups["motor"], f"{constraint_type} 应显示 motor target"
+            assert groups["state"], f"{constraint_type} 应显示当前求解值"
+        assert all(
+            isinstance(point, tuple) and len(point) == 3
+            for key in ("base", "limits", "motor", "state")
+            for point in groups[key]
+        ), "constraint debug snapshot 只能含纯 tuple 坐标"
+
+    unknown = build_constraint_debug_lines(
+        _types.SimpleNamespace(constraint_type="SIX_DOF", **common)
+    )
+    assert unknown["known_type"] is False
+    assert unknown["base"], "未注册类型仍应显示通用 anchor frame"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 主入口
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1534,6 +1584,7 @@ if __name__ == "__main__":
     check("kinematic transform dirty update", test_kinematic_transform_dirty_updates_jolt_body_without_resync_generation)
     check("shape parameter dirty resync", test_shape_parameter_dirty_resyncs_jolt_body_without_generation_restart)
     check("constraint target dirty resync", test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart)
+    check("constraint debug renderer semantics", test_constraint_debug_renderer_registry_and_semantics)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)

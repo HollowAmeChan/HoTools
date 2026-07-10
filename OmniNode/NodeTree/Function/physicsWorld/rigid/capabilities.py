@@ -10,6 +10,7 @@ from .names import (
     RIGID_BODY_COMMANDS_CHANNEL,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
     RIGID_JOLT_WORLD_SETTING_OBJECT_TAG,
+    RIGID_CONSTRAINT_STATE_CHANNEL,
     RIGID_QUERY_RESULT_CHANNEL,
 )
 
@@ -74,6 +75,13 @@ RIGID_CONSTRAINT_CAPABILITY = {
         {"name": "motor", "type": "constraint_motor", "update_policy": "规格签名"},
         {"name": "distance_range", "type": "float2", "default": (0.0, 1.0), "update_policy": "规格签名"},
     ],
+    "debug_visualization": {
+        "renderer_registry": "rigid.constraint_debug:CONSTRAINT_DEBUG_BUILDERS",
+        "types": ["FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE"],
+        "line_groups": ["base", "limits", "motor", "state", "problem"],
+        "dynamic_state_channel": RIGID_CONSTRAINT_STATE_CHANNEL,
+        "user_docs": "rigid/docs/README.md",
+    },
 }
 
 

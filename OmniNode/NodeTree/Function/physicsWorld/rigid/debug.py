@@ -15,11 +15,12 @@ RIGID_DEBUG_DRAW_MODES = {
     RIGID_DEBUG_DRAW_MODE: {
         "solver": RIGID_SOLVER_ID,
         "label": "Rigid/Jolt Debug",
-        "source": "solver_slot.debug_snapshot + rigid result streams",
+        "source": "ConstraintSpec + rigid result streams",
         "draw_item_contract": "physicsWorld.utils.debug_draw",
         "summary": (
-            "Rigid/Jolt debug draw consumes plain slot/result snapshots and "
-            "does not expose Jolt BodyID, ConstraintID, or native debug renderer state."
+            "Rigid/Jolt debug draw consumes plain spec/result snapshots. Constraint "
+            "meaning is dispatched through rigid.constraint_debug per-type renderers; "
+            "no Jolt BodyID, ConstraintID, or native debug renderer state is exposed."
         ),
     }
 }

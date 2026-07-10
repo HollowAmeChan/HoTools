@@ -838,6 +838,8 @@ C++ native context:
 - dispose 必须幂等（多次调用不崩溃）。
 - debug snapshot 只输出数量统计和状态摘要，不直接暴露 C++ 内部对象。
 - solver 自有 debug draw 必须使用 result stream 或 `read_{solver}_debug()` 读回的后端真实快照。不得在 Python 绘制层根据 Blender 当前对象、属性面板或 result matrix 重新推导一套可能与后端不一致的状态。
+- 当某个 domain 的调试语义因类型而显著不同（例如 Fixed/Hinge/Slider/Cone）时，应在 solver 子模块内拆分按类型 renderer registry。renderer 只把“后端实际消费的 spec 快照 + 后端发布的动态 state”转换成纯绘制 primitives；viewport handler 只聚合、着色和提交 GPU batch。未知类型必须显式降级并进入 debug audit，不能套用一个看似成功的通用图形。
+- solver 用户文档应与实现一起放在 solver 子模块的 `docs/` 中，并区分 backend 原生能力、当前 binding 能力和节点已暴露能力；新增约束类型的验收必须同时覆盖 spec/binding、result state、专用 renderer、用户文档和测试。
 
 ## Writeback Result Stream
 

@@ -6,6 +6,7 @@ import bpy
 import mathutils
 
 from .names import RIGID_BODY_SLOT_KIND, RIGID_CONSTRAINT_SLOT_KIND
+from .constraint_debug import build_constraint_debug_lines
 from ..types import PhysicsWorldCache
 from ..utils.debug_draw import (
     add_box_lines,
@@ -19,10 +20,13 @@ from ..utils.debug_draw import (
     float_value,
     half_extents,
     matrix_from_position_rotation,
-    object_location,
     vector3,
 )
-from .results import get_rigid_transform_result, iter_rigid_contact_event_results
+from .results import (
+    get_rigid_constraint_state_result,
+    get_rigid_transform_result,
+    iter_rigid_contact_event_results,
+)
 
 
 _COLOR_BODY_DYNAMIC = (0.20, 0.90, 0.20, 0.85)
@@ -30,6 +34,9 @@ _COLOR_BODY_STATIC = (0.60, 0.60, 0.65, 0.70)
 _COLOR_BODY_KINEMATIC = (0.40, 0.60, 1.00, 0.85)
 _COLOR_BODY_SLEEP = (0.35, 0.70, 0.35, 0.50)
 _COLOR_CONSTRAINT = (1.00, 0.75, 0.10, 0.90)
+_COLOR_CONSTRAINT_LIMIT = (1.00, 0.30, 0.05, 0.95)
+_COLOR_CONSTRAINT_MOTOR = (1.00, 0.15, 0.85, 0.95)
+_COLOR_CONSTRAINT_STATE = (0.10, 0.90, 1.00, 0.95)
 _COLOR_PROBLEM = (1.00, 0.10, 0.10, 0.95)
 _COLOR_CONTACT = (0.95, 0.95, 0.95, 0.95)
 _COLOR_SENSOR = (1.00, 0.20, 0.80, 0.90)
@@ -89,11 +96,16 @@ def build_rigid_debug_draw_snapshot(
     kinematic_lines: list[tuple[float, float, float]] = []
     sleeping_lines: list[tuple[float, float, float]] = []
     constraint_lines: list[tuple[float, float, float]] = []
+    constraint_limit_lines: list[tuple[float, float, float]] = []
+    constraint_motor_lines: list[tuple[float, float, float]] = []
+    constraint_state_lines: list[tuple[float, float, float]] = []
     problem_lines: list[tuple[float, float, float]] = []
     contact_lines: list[tuple[float, float, float]] = []
     sensor_lines: list[tuple[float, float, float]] = []
     removed_contact_lines: list[tuple[float, float, float]] = []
     removed_sensor_lines: list[tuple[float, float, float]] = []
+    constraint_type_counts: dict[str, int] = {}
+    unknown_constraint_types: list[str] = []
 
     for slot_id, slot in list(world.solver_slots.items()):
         spec = slot.data.get("spec")
@@ -119,11 +131,31 @@ def build_rigid_debug_draw_snapshot(
                 result,
             )
         elif slot.kind == RIGID_CONSTRAINT_SLOT_KIND and (show_constraints or show_problems):
-            _append_constraint_lines(
-                constraint_lines if show_constraints else None,
-                problem_lines if show_problems else None,
-                spec,
+            state = get_rigid_constraint_state_result(
+                world,
+                slot_id=slot_id,
+                frame=frame,
+                generation=generation,
             )
+            constraint_type = str(getattr(spec, "constraint_type", "FIXED") or "FIXED").upper()
+            constraint_type_counts[constraint_type] = constraint_type_counts.get(constraint_type, 0) + 1
+            if show_constraints:
+                semantic_lines = build_constraint_debug_lines(spec, state)
+                constraint_lines.extend(semantic_lines["base"])
+                constraint_limit_lines.extend(semantic_lines["limits"])
+                constraint_motor_lines.extend(semantic_lines["motor"])
+                constraint_state_lines.extend(semantic_lines["state"])
+                if not semantic_lines["known_type"]:
+                    unknown_constraint_types.append(constraint_type)
+            if show_problems and _constraint_has_problem(spec, state):
+                anchor = vector3(
+                    getattr(
+                        spec,
+                        "anchor_position_a",
+                        getattr(spec, "anchor_position", (0.0, 0.0, 0.0)),
+                    )
+                )
+                add_cross_lines(problem_lines, anchor, 0.25)
 
     contact_events = iter_rigid_contact_event_results(
         world,
@@ -156,6 +188,9 @@ def build_rigid_debug_draw_snapshot(
         "kinematic_lines": kinematic_lines,
         "sleeping_lines": sleeping_lines,
         "constraint_lines": constraint_lines,
+        "constraint_limit_lines": constraint_limit_lines,
+        "constraint_motor_lines": constraint_motor_lines,
+        "constraint_state_lines": constraint_state_lines,
         "problem_lines": problem_lines,
         "contact_lines": contact_lines,
         "sensor_lines": sensor_lines,
@@ -167,6 +202,10 @@ def build_rigid_debug_draw_snapshot(
             0,
             len(contact_events) - _MAX_DEBUG_CONTACT_EVENTS,
         ),
+        "constraint_type_counts": constraint_type_counts,
+        "unknown_constraint_types": sorted(set(unknown_constraint_types)),
+        "constraint_frame_source": "constraint_spec_backend_input",
+        "constraint_runtime_frame_readback": False,
     }
 
 
@@ -180,6 +219,9 @@ def _empty_rigid_debug_draw_snapshot(world=None) -> dict:
         "kinematic_lines": [],
         "sleeping_lines": [],
         "constraint_lines": [],
+        "constraint_limit_lines": [],
+        "constraint_motor_lines": [],
+        "constraint_state_lines": [],
         "problem_lines": [],
         "contact_lines": [],
         "sensor_lines": [],
@@ -188,6 +230,10 @@ def _empty_rigid_debug_draw_snapshot(world=None) -> dict:
         "contact_event_count": 0,
         "sensor_event_count": 0,
         "contact_event_truncated": 0,
+        "constraint_type_counts": {},
+        "unknown_constraint_types": [],
+        "constraint_frame_source": "constraint_spec_backend_input",
+        "constraint_runtime_frame_readback": False,
     }
 
 
@@ -249,6 +295,18 @@ def _draw_rigid_debug() -> None:
     )
     draw_line_batches(
         (data.get("constraint_lines"), _COLOR_CONSTRAINT, 1.5)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("constraint_limit_lines"), _COLOR_CONSTRAINT_LIMIT, 1.75)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("constraint_motor_lines"), _COLOR_CONSTRAINT_MOTOR, 2.0)
+        for data in list(_RIGID_DRAW_STORE.values())
+    )
+    draw_line_batches(
+        (data.get("constraint_state_lines"), _COLOR_CONSTRAINT_STATE, 2.0)
         for data in list(_RIGID_DRAW_STORE.values())
     )
     draw_line_batches(
@@ -345,10 +403,8 @@ def _append_body_shape_lines(lines: list, spec, result: dict | None) -> None:
         add_sphere_lines(lines, center, axis_x, axis_y, axis_z, radius)
 
 
-def _append_constraint_lines(constraint_lines: list | None, problem_lines: list | None, spec) -> None:
+def _constraint_has_problem(spec, state: dict | None) -> bool:
     empty_obj = getattr(spec, "empty_obj", None)
-    anchor_a = vector3(getattr(spec, "anchor_position_a", getattr(spec, "anchor_position", (0.0, 0.0, 0.0))))
-    anchor_b = vector3(getattr(spec, "anchor_position_b", getattr(spec, "anchor_position", (0.0, 0.0, 0.0))))
     targets = (getattr(spec, "target_a", None), getattr(spec, "target_b", None))
     has_problem = all(target is None for target in targets)
     for target in targets:
@@ -359,15 +415,7 @@ def _append_constraint_lines(constraint_lines: list | None, problem_lines: list 
                 has_problem = True
         except Exception:
             has_problem = True
-
-    if constraint_lines is not None:
-        size = max(float_value(getattr(spec, "draw_constraint_size", 1.0), 1.0), 0.05) * 0.15
-        add_cross_lines(constraint_lines, anchor_a, size)
-        if (anchor_b - anchor_a).length_squared > 1.0e-12:
-            add_cross_lines(constraint_lines, anchor_b, size)
-            add_line(constraint_lines, anchor_a, anchor_b)
-    if has_problem and problem_lines is not None:
-        add_cross_lines(problem_lines, anchor_a, 0.25)
+    return bool(has_problem or (state and state.get("broken", False)))
 
 
 def _shape_matrix(spec, result: dict | None) -> mathutils.Matrix | None:
