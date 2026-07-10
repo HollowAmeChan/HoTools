@@ -1,7 +1,7 @@
 """统一 Physics World 的 MC2 solver domain。
 
 MeshCloth、BoneCloth 和 BoneSpring 是同一个 MC2 solver 的三种 setup；
-Python/C++ 仅是 backend 选择，不形成独立 solver。
+新路径只面向一个共享 native context，不公开 backend 选择。
 """
 
 from __future__ import annotations
@@ -29,12 +29,7 @@ SOLVER_MODULE = {
 
 
 _EXPORTS = {
-    "MC2_BACKEND_AUTO": ".names",
-    "MC2_BACKEND_CPP": ".names",
-    "MC2_BACKEND_PYTHON": ".names",
-    "MC2_BONE_RESULT_CHANNEL": ".names",
     "MC2_DEBUG_DRAW_MODE": ".names",
-    "MC2_MESH_RESULT_CHANNEL": ".names",
     "MC2_SETUP_BONE_CLOTH": ".names",
     "MC2_SETUP_BONE_SPRING": ".names",
     "MC2_SETUP_MESH_CLOTH": ".names",
@@ -57,8 +52,14 @@ _EXPORTS = {
     "MC2TaskSpec": ".specs",
     "build_mc2_task_specs": ".specs",
     "make_mc2_task_spec": ".specs",
-    "normalize_mc2_backend": ".specs",
     "normalize_mc2_setup_type": ".specs",
+    "MC2SetupAdapterContract": ".setups.contracts",
+    "MC2_BONE_CLOTH_SETUP_ADAPTER": ".setups",
+    "MC2_BONE_SPRING_SETUP_ADAPTER": ".setups",
+    "MC2_MESH_CLOTH_SETUP_ADAPTER": ".setups",
+    "MC2_SETUP_ADAPTERS": ".setups",
+    "all_mc2_setup_adapters": ".setups",
+    "get_mc2_setup_adapter": ".setups",
     "MC2_FRAMEWORK_STATUS": ".solver",
     "step_mc2": ".solver",
     "iter_mc2_results": ".results",

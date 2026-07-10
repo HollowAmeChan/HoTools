@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -78,6 +79,9 @@ solver_registry = importlib.import_module(
 solver_declarations = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.declarations"
 )
+world_names = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.names"
+)
 mc2_names = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
 )
@@ -89,6 +93,12 @@ mc2_solver = importlib.import_module(
 )
 mc2_nodes = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+)
+mc2_results = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
+)
+mc2_setups = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups"
 )
 function_node_core = importlib.import_module(
     "HoTools.OmniNode.NodeTree.FunctionNodeCore"
@@ -313,14 +323,133 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     )
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
     assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
+    assert declaration["native_strategy"].endswith("single_native_context")
     assert declaration["update_policy"]["framework"] == "no_slot_no_result_no_legacy_solver_call"
+    assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
+    assert tuple(declaration["export"]["result_channels"]) == (
+        world_names.GN_ATTRIBUTE_CHANNEL,
+        world_names.BONE_TRANSFORM_CHANNEL,
+        mc2_names.MC2_STATS_CHANNEL,
+    )
+
+    task_nodes = (
+        mc2_nodes.physicsMC2MeshClothTask,
+        mc2_nodes.physicsMC2BoneClothTask,
+        mc2_nodes.physicsMC2BoneSpringTask,
+    )
+    for task_node in task_nodes:
+        assert "backend" not in inspect.signature(task_node).parameters
+        assert all("后端" not in name for name in task_node.__meta["_INPUT_NAME"])
+
+    class _FakeData:
+        def __init__(self, pointer):
+            self._pointer = pointer
+
+        def as_pointer(self):
+            return self._pointer
+
+    class _FakeSource:
+        def __init__(self, pointer, name, source_type):
+            self._pointer = pointer
+            self.name = name
+            self.name_full = name
+            self.type = source_type
+            self.data = _FakeData(pointer + 1000)
+
+        def as_pointer(self):
+            return self._pointer
+
+    mesh = _FakeSource(10, "Cloth", "MESH")
+    armature = _FakeSource(20, "Rig", "ARMATURE")
+    mesh_sources = [mesh]
+    cloth_sources = [{"armature": armature, "root_bone": "ClothRoot"}]
+    spring_sources = [{"armature": armature, "bones": ("SpringA", "SpringB")}]
 
     tasks = tuple(
-        mc2_specs.make_mc2_task_spec(setup_type, [object()])
-        for setup_type in declaration["setup_types"]
+        mc2_specs.make_mc2_task_spec(setup_type, sources)
+        for setup_type, sources in zip(
+            declaration["setup_types"],
+            (mesh_sources, cloth_sources, spring_sources),
+        )
     )
     assert tuple(task.setup_type for task in tasks) == tuple(declaration["setup_types"])
-    assert {task.backend for task in tasks} == {"auto"}
+    assert len({task.task_id for task in tasks}) == 3
+    assert all(task.task_id.startswith(f"mc2:{task.setup_type}:") for task in tasks)
+    assert all(len(task.source_signature) == 64 for task in tasks)
+    assert all(not hasattr(task, "backend") for task in tasks)
+    rebuilt = tuple(
+        mc2_specs.make_mc2_task_spec(setup_type, sources)
+        for setup_type, sources in zip(
+            declaration["setup_types"],
+            (mesh_sources, cloth_sources, spring_sources),
+        )
+    )
+    assert tuple(task.task_id for task in rebuilt) == tuple(task.task_id for task in tasks)
+    mesh_b = _FakeSource(11, "ClothB", "MESH")
+    ordered_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_MESH_CLOTH, [mesh, mesh_b]
+    )
+    reversed_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_MESH_CLOTH, [mesh_b, mesh]
+    )
+    assert ordered_task.task_id == reversed_task.task_id
+    assert ordered_task.source_signature == reversed_task.source_signature
+    assert mc2_specs.build_mc2_task_specs([tasks[0], [tasks[1], tasks[2]], tasks[0]]) == tasks
+
+    try:
+        mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("empty MC2 source list must fail")
+    try:
+        mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [mesh, mesh])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("duplicate MC2 sources must fail")
+    try:
+        mc2_specs.build_mc2_task_specs([tasks[0], object()])
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("invalid MC2 task list item must fail")
+    try:
+        mc2_specs.MC2TaskSpec(
+            task_id="mc2:mesh_cloth:forged",
+            source_signature=tasks[0].source_signature,
+            setup_type=tasks[0].setup_type,
+            sources=tasks[0].sources,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("forged MC2 task identity must fail")
+
+    adapters = mc2_setups.all_mc2_setup_adapters()
+    assert tuple(adapters) == tuple(declaration["setup_types"])
+    assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].source_kind == "mesh_object"
+    assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].writeback_channel == world_names.GN_ATTRIBUTE_CHANNEL
+    for setup_type in (mc2_names.MC2_SETUP_BONE_CLOTH, mc2_names.MC2_SETUP_BONE_SPRING):
+        assert adapters[setup_type].source_kind == "bone_chain"
+        assert adapters[setup_type].writeback_channel == world_names.BONE_TRANSFORM_CHANNEL
+
+    class _ResultWorld:
+        def __init__(self):
+            self.calls = []
+
+        def consume_results(self, channel, *, solver=None):
+            self.calls.append((channel, solver))
+            return [{"channel": channel, "solver": solver}]
+
+    result_world = _ResultWorld()
+    results = tuple(mc2_results.iter_mc2_results(result_world))
+    assert tuple(result["channel"] for result in results) == (
+        world_names.GN_ATTRIBUTE_CHANNEL,
+        world_names.BONE_TRANSFORM_CHANNEL,
+        mc2_names.MC2_STATS_CHANNEL,
+    )
+    assert all(solver == mc2_names.MC2_SOLVER_ID for _channel, solver in result_world.calls)
 
     world = {"sentinel": object(), "slots": [], "result_streams": {}}
     before = {

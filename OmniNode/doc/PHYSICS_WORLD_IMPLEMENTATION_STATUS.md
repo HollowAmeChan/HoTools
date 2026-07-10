@@ -37,8 +37,8 @@ physicsWorld/
   mc2/                       # 一个 MC2 solver，三种 setup
     setups/
       mesh_cloth/            # MeshCollision RNA、BasePose、mesh delta adapter
-      bone_cloth/            # 待迁入完整 adapter
-      bone_spring/           # 待实现
+      bone_cloth/            # 骨链输入与通用 bone_transform 写回契约
+      bone_spring/           # 骨链输入与通用 bone_transform 写回契约
   ui/                        # Scene UI state、panel、operator、preview
 ```
 
@@ -63,7 +63,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | 高级约束/shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | 统一框架已建立 | 唯一 solver id；MeshCloth/BoneCloth/BoneSpring 三种 setup；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
+| MC2 | 统一框架已建立 | 唯一 solver id；三种 setup adapter 契约；稳定 task id/source signature；统一 GN/bone writeback channel；MeshCloth Blender adapter 已归位 | 新 world-aware kernel/slot/result 尚未接入；完整后端迁移暂缓 |
 | 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
@@ -74,7 +74,7 @@ MC2 只有一个 solver identity：`mc2`。
 
 - `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
-- Python/C++ 是 backend 实现选择，不形成不同 solver id，也不应长期暴露双节点。
+- 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package 中的两套实现仅作为迁移与 parity 参考。
 - 当前新 MC2 step 是明确的 framework no-op：不创建 slot、不发布结果、不调用旧 MC2 package。
 - 在新路径完成 parity、same-frame、跳帧/reset、dispose 和写回验收前，旧 MeshCloth/BoneCloth package 继续承担当前运行实现。
 

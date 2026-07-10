@@ -6,11 +6,10 @@ from ..collision.capabilities import (
     BONE_COLLISION_CAPABILITY_ID,
     OBJECT_COLLISION_CAPABILITY_ID,
 )
+from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
 from .setups.mesh_cloth.capabilities import MESH_COLLISION_CAPABILITY_ID
 from .capabilities import MC2_CAPABILITIES, MC2_UPDATE_FREQUENCY_TABLE
 from .names import (
-    MC2_BONE_RESULT_CHANNEL,
-    MC2_MESH_RESULT_CHANNEL,
     MC2_SETUP_TYPES,
     MC2_SLOT_KIND,
     MC2_SOLVER_ID,
@@ -22,7 +21,7 @@ MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
     "stage": "framework_only_no_runtime_backend",
-    "native_strategy": "one_solver_three_setup_adapters_backend_is_not_solver_identity",
+    "native_strategy": "one_solver_three_setup_adapters_single_native_context",
     "implementation_status": "framework_only",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
@@ -39,8 +38,8 @@ MC2_SOLVER_DECLARATION = {
         "list[MC2TaskSpec] containing three setup types",
     ],
     "produces": [
-        f'planned:world.result_streams["{MC2_MESH_RESULT_CHANNEL}"]',
-        f'planned:world.result_streams["{MC2_BONE_RESULT_CHANNEL}"]',
+        f'planned:world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
+        f'planned:world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
         f'planned:world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
@@ -52,7 +51,8 @@ MC2_SOLVER_DECLARATION = {
         "planned:world.generation",
         "planned:task.setup_type",
         "planned:task.sources",
-        "planned:task.backend",
+        "planned:task.task_id",
+        "planned:task.source_signature",
         "planned:collider_snapshot.source_key",
     ],
     "same_frame_policy": "framework_noop",
@@ -60,7 +60,7 @@ MC2_SOLVER_DECLARATION = {
         "framework": "no_slot_no_result_no_legacy_solver_call",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
-        "backend_dispatch": "auto_python_cpp_inside_solver_not_separate_solver",
+        "native_backend": "single_native_context_no_python_fallback",
     },
     "capabilities": MC2_CAPABILITIES,
     "consumes_capabilities": [
@@ -85,8 +85,8 @@ MC2_SOLVER_DECLARATION = {
     },
     "export": {
         "result_channels": [
-            MC2_MESH_RESULT_CHANNEL,
-            MC2_BONE_RESULT_CHANNEL,
+            GN_ATTRIBUTE_CHANNEL,
+            BONE_TRANSFORM_CHANNEL,
             MC2_STATS_CHANNEL,
         ],
         "supports_bake": False,

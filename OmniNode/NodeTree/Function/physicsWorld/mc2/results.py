@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from .names import (
-    MC2_BONE_RESULT_CHANNEL,
-    MC2_MESH_RESULT_CHANNEL,
-    MC2_STATS_CHANNEL,
-)
+from ..names import BONE_TRANSFORM_CHANNEL, GN_ATTRIBUTE_CHANNEL
+from .names import MC2_SOLVER_ID, MC2_STATS_CHANNEL
 
 
 def iter_mc2_results(world, channel: str | None = None):
@@ -14,14 +11,14 @@ def iter_mc2_results(world, channel: str | None = None):
     channels = (
         (str(channel),)
         if channel
-        else (MC2_MESH_RESULT_CHANNEL, MC2_BONE_RESULT_CHANNEL, MC2_STATS_CHANNEL)
+        else (GN_ATTRIBUTE_CHANNEL, BONE_TRANSFORM_CHANNEL, MC2_STATS_CHANNEL)
     )
-    iterator = getattr(world, "iter_results", None)
-    if not callable(iterator):
+    consume = getattr(world, "consume_results", None)
+    if not callable(consume):
         return iter(())
 
     def _iter():
         for result_channel in channels:
-            yield from iterator(result_channel)
+            yield from consume(result_channel, solver=MC2_SOLVER_ID)
 
     return _iter()

@@ -24,15 +24,18 @@ MC2_SETUP_PROFILE_CAPABILITY = {
             "update_frequency": "frame",
         },
         {
-            "name": "backend",
-            "type": "enum",
-            "values": ("auto", "python", "cpp"),
-            "default": "auto",
+            "name": "task_id",
+            "type": "string",
+            "update_frequency": "topology",
+        },
+        {
+            "name": "source_signature",
+            "type": "sha256",
             "update_frequency": "topology",
         },
         {
             "name": "sources",
-            "type": "tuple[object]",
+            "type": "tuple[source]",
             "update_frequency": "topology",
         },
     ),
@@ -46,7 +49,8 @@ MC2_CAPABILITIES = {
 MC2_UPDATE_FREQUENCY_TABLE = {
     "setup_type": "topology",
     "sources": "topology",
-    "backend": "topology",
+    "task_id": "topology",
+    "source_signature": "topology",
     "enabled": "frame",
     "solver_parameters": "frame",
     "collider_snapshot": "lazy_by_source_key",
