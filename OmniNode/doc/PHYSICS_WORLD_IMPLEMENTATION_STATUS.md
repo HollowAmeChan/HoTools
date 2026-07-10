@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，功能扩展中 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | B3 framework scaffold，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；共享 GN 最终 offset/bone writeback planned channel | 已有 spec/静态数组仍需按固定 MC2 源码 commit 审计；尚无 native context、solver step 或 result publication |
+| MC2 | B3 framework scaffold + S2 N0 contract types，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；source-aligned proxy/baseline immutable contract 与 packer；共享 GN 最终 offset/bone writeback planned channel | N0 只有 validation/contract-shape Tier B fixture，尚无 source-aligned builder、Tier A parity、native context、solver step 或 result publication |
 | 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |

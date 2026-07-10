@@ -58,20 +58,36 @@ Host-only immutable data：profile 原始值、curve key/handle、selection/pin 
 
 ### N0 Proxy static
 
-第一版 native static upload 使用最终 proxy index space。所有数组共享 `vertex_count`，坐标空间和角色必须在字段名中显式：
+第一版 native static upload 使用最终 proxy index space。proxy geometry 与 baseline 是两个独立 spec/signature；所有逐顶点数组共享 `vertex_count`，坐标空间和角色必须在字段名中显式。
+
+Proxy geometry：
 
 | 字段 | 类型/shape | 来源 |
 |---|---|---|
-| `rest_local_positions` | `float32[N,3]` | final proxy local pose。 |
-| `rest_local_rotations` | `float32[N,4]` | baseline/proxy local pose，quaternion `xyzw`。 |
+| `local_positions` | `float32[N,3]` | final proxy local position。 |
+| `local_normals` / `local_tangents` | `float32[N,3]` | final proxy local orientation basis。 |
+| `uvs` | `float32[N,2]` | triangle tangent producer input。 |
 | `vertex_attributes` | `uint8[N]` | mapped final `VertexAttribute` bits。 |
 | `edges` | `int32[E,2]` | canonical final proxy edges。 |
 | `triangles` | `int32[T,3]` | final proxy triangle role/winding。 |
+
+Baseline derived data：
+
+| 字段 | 类型/shape | 来源 |
+|---|---|---|
 | `parent_indices` | `int32[N]` | baseline parent；无 parent 为 `-1`。 |
 | `child_ranges` / `child_data` | `int32[N,2]` / `int32[C]` | baseline child adjacency。 |
+| `baseline_flags` | `uint8[B]` | 是否包含非 triangle line vertex 等 source flag。 |
 | `baseline_ranges` / `baseline_data` | `int32[B,2]` / `int32[L]` | baseline traversal。 |
 | `root_indices` | `int32[N]` | Move vertex 的 fixed root；无 root 为 `-1`。 |
 | `depths` | `float32[N]` | 累计几何长度按全 proxy 最大值归一化。 |
+| `vertex_local_positions` | `float32[N,3]` | parent-local baseline position；无 parent 为 zero。 |
+| `vertex_local_rotations` | `float32[N,4]` | parent-local baseline rotation，quaternion `xyzw`；无 parent 为 identity。 |
+
+后续 pose/output static：
+
+| 字段 | 类型/shape | 来源 |
+|---|---|---|
 | `vertex_bind_pose_positions` | `float32[N,3]` | mapping/pose reconstruction。 |
 | `vertex_bind_pose_rotations` | `float32[N,4]` | center/output reconstruction。 |
 
@@ -83,6 +99,8 @@ Mesh v0 只接受“用户输入已经是 final proxy、无 reduction、identity
 | `normal_adjustment_rotations` | `float32[N,4]` | triangle normal/tangent output adjustment。 |
 | `vertex_to_triangle_ranges/data` | `int32[N,2]` / semantic records | triangle normal/tangent accumulation + flip flags。 |
 | `source_vertex_identity` | host mapping table | native index -> stable bone/mesh target；不由 kernel 解释。 |
+
+当前 `mc2/static_data.py` 只实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；它不生成这些数组、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 是 Tier B contract-shape case，明确不能证明 builder parity。
 
 ### N1 Constraint static
 
@@ -246,7 +264,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 
 ## Current B4 Disposition
 
-当前未提交 B4 保留在工作区作为审查材料。本表决定下一次代码处理方向，不在本文提交中修改它们。
+未提交 B4 已于 2026-07-11 按本表整体清理，工作区恢复到 B1-B3 已提交基线。本表保留为删除审计，防止后续重新引入同类近似结构。
 
 | 工作区改动 | 处理结论 | 原因 |
 |---|---|---|
@@ -261,7 +279,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | selection/topology change dispose/rebuild 测试 | 保留测试意图、重写断言 | lifecycle 有效；当前 count/近似数组断言不能作为 parity。 |
 | capability/declaration 升级为 selection/constraint framework | 不提交 | 在 source-aligned specs 和 oracle 之前公开为 capability 过早。 |
 
-建议处理顺序：先保存本表和必要 diff 参考，再把 B4 未提交改动从工作区移除，随后在独立提交中按 N0/N1 从纯静态 spec + Tier B fixture 重新开始。移除动作需要单独确认，本文不自动回滚用户工作区。
+清理后已从 N0 独立重新开始；`static_data.py` 与 contract-shape fixture 不复用 B4 selection/constraint 算法。
 
 ## Open Decisions
 
@@ -272,7 +290,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | C-03 | 第一条 constraint slice？ | Mesh/Bone Line 共用 Distance；Bending 后接。 |
 | C-04 | center v0 支持范围？ | component transform + fixed center；anchor/sync/negative scale/wind deferred。 |
 | C-05 | Bone connection mode 3 是否公开？ | 内部 enum/fixture 保留，节点 surface 等产品决定。 |
-| C-06 | 当前 B4 如何清理？ | 整体移除算法/spec 改动，只通过新测试重建可保留的 lifecycle intent。 |
+| C-06 | 当前 B4 如何清理？ | **已执行**：整体移除算法/spec 改动，只通过新测试重建可保留的 lifecycle intent。 |
 | C-07 | Tier A host？ | 独立最小 Unity 验证工程；明确排除废弃 HoClothUnity。 |
 
 ## S2 Exit Checklist
@@ -285,6 +303,6 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 - [ ] dirty/reset/rebuild matrix 与 Physics World frame context 对齐。
 - [ ] result item/writeback plan schema 通过公共架构审查。
 - [ ] deferred capability 不出现在已实现声明中。
-- [ ] B4 工作区按决策清理后，测试不再验证错误近似模型。
+- [x] B4 工作区按决策清理，现有测试不再验证错误近似模型。
 
 在 checklist 完成前，不创建 C++ MC2 context，也不扩展 solver 节点 surface。

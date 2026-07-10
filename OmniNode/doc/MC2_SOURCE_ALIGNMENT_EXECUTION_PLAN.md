@@ -217,4 +217,4 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-接下来先依据 W1-W7 做一次 S2 契约草案，只冻结第一版必须的数据域和 deferred capability；同时决定当前 B4 工作区改动是拆分重写还是整体移除。Tier A dump 入口应在独立的最小 Unity 验证工程中建设，不能复用或继续扩展已废弃的 HoClothUnity。没有 Tier A 前，只允许用明确标级的 Tier B 极小 fixture 关闭局部分支，不进入 source-parity 宣称。
+S2 契约草案已经建立，B4 未提交近似实现已整体移除。当前从 N0 重新开始：`mc2/static_data.py` 只冻结最终 proxy geometry 与 baseline derived data 的不可变表示、校验和 ABI dtype packer；Tier B `proxy_static_triangle_contract_001` 只关闭 contract shape，不证明 builder parity。下一步按 W1/W2 实现最窄的 source-aligned static builder，并逐数组接 Tier B，随后由独立最小 Unity 验证工程升级为 Tier A；不能复用或继续扩展已废弃的 HoClothUnity。

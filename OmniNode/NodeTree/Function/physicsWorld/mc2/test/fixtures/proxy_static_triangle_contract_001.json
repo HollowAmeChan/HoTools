@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "case_id": "proxy_static_triangle_contract_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "B",
+    "producer": [
+      "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ConvertProxyMesh",
+      "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateMeshBaseLine",
+      "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateBaseLinePose",
+      "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateVertexRootAndDepth"
+    ]
+  },
+  "scope": "Contract-shape fixture with hand-derived single-fixed triangle arrays; it does not prove builder parity.",
+  "comparison": {
+    "unordered_fields": [
+      "baseline.child_data siblings within one parent",
+      "baseline.baseline_data sibling traversal"
+    ]
+  },
+  "proxy": {
+    "task_id": "mc2:mesh_cloth:tier_b_triangle",
+    "setup_type": "mesh_cloth",
+    "vertex_identities": ["mesh:v0", "mesh:v1", "mesh:v2"],
+    "local_positions": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+    "local_normals": [[0, 0, 1], [0, 0, 1], [0, 0, 1]],
+    "local_tangents": [[1, 0, 0], [1, 0, 0], [1, 0, 0]],
+    "uvs": [[0, 0], [1, 0], [0, 1]],
+    "vertex_attributes": [129, 130, 130],
+    "edges": [[1, 0], [2, 1], [0, 2]],
+    "triangles": [[0, 1, 2]]
+  },
+  "baseline": {
+    "vertex_count": 3,
+    "parent_indices": [-1, 0, 0],
+    "child_ranges": [[0, 2], [2, 0], [2, 0]],
+    "child_data": [1, 2],
+    "baseline_flags": [0],
+    "baseline_ranges": [[0, 3]],
+    "baseline_data": [0, 1, 2],
+    "root_indices": [-1, 0, 0],
+    "depths": [0, 1, 1],
+    "vertex_local_positions": [[0, 0, 0], [1, 0, 0], [0, 1, 0]],
+    "vertex_local_rotations": [[0, 0, 0, 1], [0, 0, 0, 1], [0, 0, 0, 1]]
+  }
+}
