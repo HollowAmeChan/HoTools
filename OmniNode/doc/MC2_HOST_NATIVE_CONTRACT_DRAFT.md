@@ -20,7 +20,7 @@ Blender authoring/frame input
   -> external writeback
 ```
 
-第一版不承诺：MC2 reduction/render mapping、anchor、team synchronization、negative scale、wind zone、collider、self/inter collision、culling、bake/export 或完整 Unity manager/job 结构。未支持项必须返回明确 capability/error，不得使用 identity/zero 值静默伪装为 source parity。
+MC2 reduction/render mapping 永久不属于本 solver：用户输入 mesh 就是最终 proxy，用户自行制作低模代理。第一版暂不承诺 anchor、team synchronization、negative scale、wind zone、collider、self/inter collision、culling、bake/export 或完整 Unity manager/job 结构。未支持项必须返回明确 capability/error，不得使用 identity/zero 值静默伪装为 source parity。
 
 ## 固定边界
 
@@ -52,7 +52,7 @@ Blender pointer 只在当前 session 内作为 identity token。fixture 和 nati
 
 ### H1 Authoring snapshots
 
-Host-only immutable data：profile 原始值、curve key/handle、selection/pin 输入、setup options、bone hierarchy、evaluated mesh snapshot 和外部引用 identity。它们用于重建和诊断，不直接成为 native runtime representation。
+Host-only immutable data：profile 原始值、curve key/handle、selection/pin 输入、setup options、bone hierarchy、final-proxy 静态 Mesh snapshot 和外部引用 identity。它们用于重建和诊断，不直接成为 native runtime representation。逐帧 evaluated pose 属于 N3 frame input，不得混进 H1/N0 topology signature。
 
 当前 `MC2TaskSpec` 的 identity/signature 逻辑、`MC2ParticleProfileSpec` 和 `MC2SourceTopologySpec` 的 snapshot 思路可作为该层候选地基，但这些 class 不能原样冻结：现有 `MC2TaskSpec.sources` 仍保存 live Blender owner。slot 的长期数值契约只能保存纯 identity/snapshot；live `PropertyGroup`、Mesh、Object、PoseBone 必须由 frame resolver 临时持有。
 
@@ -64,8 +64,8 @@ Proxy geometry：
 
 | 字段 | 类型/shape | 来源 |
 |---|---|---|
-| `local_positions` | `float32[N,3]` | final proxy local position。 |
-| `local_normals` / `local_tangents` | `float32[N,3]` | final proxy local orientation basis。 |
+| `local_positions` | `float32[N,3]` | final proxy reference/rest local position，不是 Armature 求值后的当前帧位置。 |
+| `local_normals` / `local_tangents` | `float32[N,3]` | final proxy reference/rest local orientation basis。 |
 | `uvs` | `float32[N,2]` | triangle tangent producer input。 |
 | `vertex_attributes` | `uint8[N]` | mapped final `VertexAttribute` bits。 |
 | `edges` | `int32[E,2]` | canonical final proxy edges。 |
@@ -91,7 +91,9 @@ Baseline derived data：
 | `vertex_bind_pose_positions` | `float32[N,3]` | mapping/pose reconstruction。 |
 | `vertex_bind_pose_rotations` | `float32[N,4]` | center/output reconstruction。 |
 
-Mesh v0 只接受“用户输入已经是 final proxy、无 reduction、identity render mapping”的受限输入域。Bone static 还需要以下 setup-specific arrays；未验证前不得用普通 source-chain index 替代：
+Mesh 长期输入契约是“用户输入已经是 final proxy、无 reduction、identity mapping”。solver 不得执行 SelectionMesh、merge、reduction、optimization、重采样或任何改变 vertex count/order/topology 的预处理；pin/attribute 按输入 vertex index 直接映射，result 按同一 vertex identity 回写。Bone static 还需要以下 setup-specific arrays；未验证前不得用普通 source-chain index 替代：
+
+Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Armature、Shape Key 等修改顶点位置，但基础变形栈必须保持相同 vertex count/order/connectivity；任何会改变 topology/identity 的 modifier 都必须由 adapter 拒绝，不能把每帧 evaluated topology 偷换成新的 N0。
 
 | 字段 | 类型/shape | 用途 |
 |---|---|---|
@@ -160,14 +162,32 @@ MC2SchedulerSettingsV0     # dt/substeps/iterations/time scale
 
 | 字段 | 类型/shape | v0 要求 |
 |---|---|---|
-| `proxy_world_positions` | `float32[N,3]` | 必需；当前动画/evaluated pose。 |
-| `proxy_world_rotations` | `float32[N,4]` | 必需。 |
+| `animated_base_world_positions` | `float32[N,3]` | Mesh 必需；当前帧无物理反馈的 BasePose evaluated position。 |
+| `animated_base_world_normals` | `float32[N,3]` | Mesh 必需；与 positions 来自同一 evaluated snapshot。 |
+| `proxy_animation_world_rotations` | `float32[N,4]` | 必需；Mesh 可由本帧 positions/normals + N0 baseline local pose 转换，Bone 由 transform pose 输入。 |
 | `component_world_position/rotation/scale` | scalar arrays | 必需；Center frame input。 |
 | `frame_time/dt/continuous/restart_required` | scalar metadata | 必需。 |
 | `anchor pose` | dynamic reference | deferred；启用前需要 identity + pose + reset flag。 |
 | `colliders/wind zones/sync center` | frame snapshot | deferred。 |
 
 dynamic input 不参与 topology signature。shape 或 identity domain 改变不是普通 dynamic update，必须返回 rebuild/rebind 结果。
+
+### H2 Blender Mesh frame adapter（唯一支持路径）
+
+MeshCloth slot 为源对象持有一个生命周期受控的 BasePose read object：复制源对象及 Mesh data，保留 topology-preserving 基础变形，永久移除共享/旧 MC2 GN 物理 offset，并禁止自身启用 solver。每帧只从这个对象的 `evaluated_get(...).to_mesh()` 取得 positions/normals；禁止从已接受 physics writeback 的源对象 evaluated mesh 读取 N3，否则上一帧结果会反馈到下一帧动画输入。
+
+这是 Blender host 的固定性能架构。已实测排除 BlendShape/Shape Key 逐帧写回、单对象切换或移动 GN modifier、同一对象读取修改器栈前后两个 evaluated 阶段；前两者触发不可接受的回调/重算卡顿，后者无法稳定低成本取得两个阶段。实现不得保留这些替代分支或自动 fallback。
+
+frame snapshot cache key 至少包含 source identity、BasePose identity、frame 和 world generation，缓存值不可被 consumer 原地修改。same-frame 可复用；跳帧、倒放、BasePose identity 更换或 topology signature 不符触发 restart/rebuild/error。该 cache 只缓存动态 pose，不拥有 N0 topology。
+
+Mesh result adapter 使用同一帧的 `display_world` 和 `animated_base_world_positions`：
+
+```text
+world_delta = display_world - animated_base_world_positions
+object_local_offset = inverse_linear(source.matrix_world) * world_delta
+```
+
+最终只发布 `float32[N,3]` object-local offset 到 Physics World result stream；源对象上的共享 GN modifier 常驻，不逐帧 toggle/reorder。writer 按相同 vertex identity 只更新 POINT attribute，并保证 Set Position 位于 Armature/Shape Key 等基础变形之后；它不接收 world position，不读取 solver state，也不参与 BasePose snapshot。
 
 ### N4 Persistent state and scratch
 
@@ -257,7 +277,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | Center without anchor/sync/negative scale | planned restricted | reset + moving component fixture。 |
 | anchor/sync/negative scale/wind | deferred | W4 Tier A runtime fixtures。 |
 | collider/self/inter collision | deferred | dedicated worksheet + registration/step fixtures。 |
-| MC2 render mapping/reduction | unsupported v0 | product decision and mapping fixtures。 |
+| MC2 render mapping/reduction | intentionally out of scope | 用户负责 final proxy；不得添加对应 builder/capability。 |
 | result stream + external writeback | required | same-frame/restart/failure tests。 |
 
 `capabilities.py` 只能公开 `supported` 或已进入具体交付阶段的 `planned` 项。内部 worksheet 术语、近似数组或 self-consistency test 不构成 capability。
@@ -285,17 +305,20 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 
 | ID | 决策 | 草案建议 |
 |---|---|---|
-| C-01 | Mesh v0 是否固定 final-proxy/identity mapping？ | 是；把限制写进 node/capability，mapping/reduction deferred。 |
+| C-01 | Mesh 是否固定 final-proxy/identity mapping？ | **已决**：永久固定。用户负责低模代理，mapping/reduction 不进入实现范围。 |
 | C-02 | ABI 是否展开 Unity packed arrays？ | 是；显式 `int32` ranges，原始 packed dump只作 oracle。 |
 | C-03 | 第一条 constraint slice？ | Mesh/Bone Line 共用 Distance；Bending 后接。 |
 | C-04 | center v0 支持范围？ | component transform + fixed center；anchor/sync/negative scale/wind deferred。 |
 | C-05 | Bone connection mode 3 是否公开？ | 内部 enum/fixture 保留，节点 surface 等产品决定。 |
 | C-06 | 当前 B4 如何清理？ | **已执行**：整体移除算法/spec 改动，只通过新测试重建可保留的 lifecycle intent。 |
 | C-07 | Tier A host？ | 独立最小 Unity 验证工程；明确排除废弃 HoClothUnity。 |
+| C-08 | 骨架驱动 Mesh 的动态 pose/writeback 边界？ | **已决且唯一支持**：双对象常驻；N0 静态 topology + N3 无反馈 BasePose evaluated snapshot + 同帧 object-local final offset；源对象共享 GN 常驻且只更新 POINT attribute。 |
 
 ## S2 Exit Checklist
 
-- [ ] C-01 至 C-07 完成人工决策。
+- [x] C-01 final-proxy/identity mapping 已冻结。
+- [x] C-08 animated BasePose/GN writeback 边界已冻结。
+- [ ] C-02 至 C-05、C-07 完成人工决策。
 - [ ] N0/N1 每个字段有 W1-W7 producer/consumer 和最小 oracle。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。

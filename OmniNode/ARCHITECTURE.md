@@ -36,6 +36,30 @@ OmniNode 是一个基于 Blender `NodeTree` 的轻量函数图系统：
 
 **判定何时停手**：当 handler 已压到个位数毫秒、占 frame 比例已低（例如 < 30%），说明 addon 侧已榨干，瓶颈在引擎。此时任何声称能从 Python 层压低 engine/redraw 的改动都是盲改，给不出可验证收益；能做的只有建模/绑定层（代理网格、降面）或接受现状。优化重心应转移或收尾。
 
+### Mesh 物理动画输入与写回：双对象 + 常驻 GN 是固定架构
+
+骨架/Shape Key 驱动的 Mesh 物理解算必须同时获得“本帧基础变形后的顶点”和“叠加物理后的显示顶点”。Blender 侧没有一个可接受性能的单对象 API 能稳定读取这两个修改器阶段。项目实测已经排除以下方案：
+
+- BlendShape/Shape Key 逐帧写回：会产生不可接受的卡顿。
+- 在单对象上逐帧开关或移动 GN 修改器来读取前后阶段：会触发大范围 depsgraph/软件内部回调和重算，产生不可接受的卡顿。
+- 从同一源对象先后读取两个 evaluated 阶段：Blender 无法稳定、低成本地同时提供两个阶段的顶点快照，并且容易把物理结果反馈进下一帧输入。
+
+唯一支持的 host 路径是双对象 + 常驻 GN：
+
+```text
+BasePose read object
+  保留 Armature/Shape Key 等 topology-preserving 基础变形
+  永久移除物理 GN output
+  -> 每帧 evaluated positions/normals
+
+Source/write object
+  同一 final-proxy topology/vertex identity
+  物理 GN modifier 常驻修改器栈末端
+  -> 每帧只更新 POINT object-local offset attribute
+```
+
+BasePose 是只读求值源，不是第二个 solver mesh，也不是 MC2 reduction/render mapping。两对象必须共享等价的静态 topology signature；动画只允许移动既有顶点。任何 Mesh solver 迁入 Physics World 时都不得用 BlendShape、单对象 modifier toggle/reorder 或双阶段单对象读取替换这条路径，除非先有新的 Blender 版本证据和完整性能基准，并由架构决策明确推翻本约定。
+
 ## 核心边界
 
 ### 1. 函数生成是默认节点模型

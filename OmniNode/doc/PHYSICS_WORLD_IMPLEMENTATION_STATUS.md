@@ -81,6 +81,7 @@ MC2 只有一个 solver identity：`mc2`。
 - 当前新 MC2 step 只同步 framework slot、topology、initial state 和 particle buffer；不推进模拟、不发布结果、不调用旧 MC2 package。
 - no-op 阶段的 `mc2_stats`、`gn_attribute`、`bone_transform` 只登记为 planned channel，不虚报 active 输出。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
+- MeshCloth 的 Blender adapter 永久使用“双对象 + 常驻 GN”：BasePose 只读对象保留骨架/Shape Key 基础变形并移除物理 output，源对象末端 GN 只接收同 vertex identity 的 object-local offset。BlendShape 写回、单对象切换/移动 GN、同一对象读取前后两个 evaluated 阶段均已因 Blender 性能/求值限制排除。
 - 在新路径完成 parity、same-frame、跳帧/reset、dispose 和写回验收前，旧 MeshCloth/BoneCloth package 继续承担当前运行实现。
 
 ## 固定契约

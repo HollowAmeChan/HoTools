@@ -138,6 +138,8 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 
 目标：先证明 proxy/baseline/constraint data 与源码规则一致，再接解算。
 
+MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：vertex identity、参考姿态、edge、triangle 与 attribute。Armature、Shape Key 等拓扑保持型基础变形产生的逐帧位置不进入 N0，也不得改变 topology signature；它们由 S5 的 Blender frame adapter 进入 N3。
+
 最小 golden cases：
 
 - MeshCloth：单三角形、双三角形方片、无 Fixed、一个 Fixed、多个 Fixed、断开岛。
@@ -171,9 +173,9 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 
 目标：用旧 MeshCloth 作为数值 oracle，完成一条真实 Physics World 输出链。
 
-范围：单对象、用户提供低模 proxy、固定点、无 collider 的第一版；native result 发布对象局部 offset，统一 GN writeback 消费。随后按 tether/angle/bending/collider/self collision 的依赖顺序扩展。
+范围：单对象、用户提供低模 proxy、固定点、无 collider 的第一版；native result 发布对象局部 offset，统一 GN writeback 消费。Mesh frame adapter 复用已验证的 BasePose 语义：为源对象维护同拓扑只读副本，保留 Armature/Shape Key 等基础变形，移除物理 GN offset；每帧从该副本的 evaluated mesh 读取动画基底，禁止直接从已含物理写回的源对象读取。随后按 tether/angle/bending/collider/self collision 的依赖顺序扩展。
 
-退出门槛：首帧、连续帧、same-frame、参数热更新、topology/pin 重建、reset、dispose、写回失败回滚全部通过；代表场景与旧 solver 逐帧对拍。
+退出门槛：首帧、连续帧、same-frame、参数热更新、topology/pin 重建、reset、dispose、写回失败回滚全部通过；至少有一个 Armature 驱动 final-proxy 用例证明动画基底逐帧变化、物理 offset 位于修改器栈末端且不会反馈进下一帧输入；代表场景与旧 solver 逐帧对拍。
 
 ### S6 BoneCloth 与 BoneSpring
 
@@ -194,12 +196,13 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 | ID | 问题 | 当前状态 | 决策前禁止事项 |
 |---|---|---|---|
 | D-01 | 是否公开 MC2 的 SequentialNonLoopMesh(mode 3)？ | 未决。源码存在，当前 HoTools 仅 0..2。 | 不得把 0..2 称为完整 BoneConnectionMode。 |
-| D-02 | Blender vertex group 是否直接映射 proxy vertex，还是先形成独立 SelectionData 再做空间映射？ | 未决。低模同拓扑时直接映射更便宜，但属于 HoTools 偏差。 | 不得把直接索引映射称为 MC2 SelectionData 等价实现。 |
-| D-03 | 用户输入 mesh 是否永远视为最终 proxy？ | 倾向是。 | 不实现 MC2 reduction/render mapping；文档必须说明输入域。 |
+| D-02 | Blender vertex group 是否直接映射 proxy vertex，还是先形成独立 SelectionData 再做空间映射？ | **已决**：按输入 vertex index 直接映射 attribute。 | 这是 final-proxy 输入契约，不实现 MC2 SelectionData 空间重映射，也不将其称为通用 MC2 SelectionData 等价实现。 |
+| D-03 | 用户输入 mesh 是否永远视为最终 proxy？ | **已决**：是。用户负责制作低模代理，solver 对输入 mesh 原样计算。 | 禁止 SelectionMesh、merge、reduction、optimization 和 render mapping；vertex count/order/topology 不得被 solver 改写。 |
 | D-04 | Normal/Split 调度是否只迁移共同数学顺序？ | 倾向是。 | 不照搬 Unity Job/TeamManager 结构到 Python。 |
 | D-05 | 第一版 native context 的最小 constraint 集合是什么？ | 等 S1 后确定。 | 不先冻结 ABI 或 capability 字段。 |
 | D-06 | Tier A fixture host 放在哪里？ | HoClothUnity 已废弃并排除；应新建最小、可复现的 Unity 验证工程。 | 不修改 HoClothUnity，不把其输出或适配代码升级为 Tier A。 |
 | D-07 | Curve runtime representation 如何冻结？ | source 使用 16-float `float4x4` samples；HoTools 当前只保存 authoring curve payload。 | 不把当前 effective payload 直接作为 native ABI。 |
+| D-08 | 骨架驱动 MeshCloth 的逐帧输入和 GN 写回如何隔离？ | **已决且唯一支持**：双对象 + 常驻 GN。静态拓扑来自 final-proxy Mesh data；逐帧 pose 来自永久移除物理 GN output 的同拓扑 BasePose evaluated snapshot；同帧 display/base 差值转 object-local offset 后在源对象修改器栈末端应用。 | 禁止 BlendShape 写回、单对象切换/移动 GN、读取已含物理 offset 的源对象 evaluated mesh、把动画 pose 写入 N0，或接受会改变 vertex identity/count/order/topology 的基础修改器。 |
 
 ## 每阶段提交规则
 
@@ -217,4 +220,4 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-S2 契约草案已经建立，B4 未提交近似实现已整体移除。当前从 N0 重新开始：`mc2/static_data.py` 只冻结最终 proxy geometry 与 baseline derived data 的不可变表示、校验和 ABI dtype packer；Tier B `proxy_static_triangle_contract_001` 只关闭 contract shape，不证明 builder parity。下一步按 W1/W2 实现最窄的 source-aligned static builder，并逐数组接 Tier B，随后由独立最小 Unity 验证工程升级为 Tier A；不能复用或继续扩展已废弃的 HoClothUnity。
+S2 契约草案已经建立，B4 未提交近似实现已整体移除。当前从 N0 重新开始：`mc2/static_data.py` 只冻结最终 proxy geometry 与 baseline derived data 的不可变表示、校验和 ABI dtype packer；Tier B `proxy_static_triangle_contract_001` 只关闭 contract shape，不证明 builder parity。下一步按 W1/W2 实现最窄的 source-aligned static builder，且不把 Armature 驱动后的逐帧坐标混进 N0；随后独立实现并测试 D-08 的 N3 BasePose frame adapter，再接 native/result stream。Tier A 由独立最小 Unity 验证工程提供，不能复用或继续扩展已废弃的 HoClothUnity。
