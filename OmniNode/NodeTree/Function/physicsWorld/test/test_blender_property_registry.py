@@ -1,4 +1,5 @@
 
+
 # -*- coding: utf-8 -*-
 """Physics World domain property registry 与迁移契约测试。
 
@@ -55,6 +56,15 @@ rigid_schema = importlib.import_module(
 )
 rigid_capabilities = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.rigid.capabilities"
+)
+mesh_property = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.properties"
+)
+mesh_schema = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.schema"
+)
+mesh_capabilities = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.capabilities"
 )
 collision_groups = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.groups"
@@ -173,7 +183,7 @@ def test_persistent_property_contracts_are_frozen():
     classes = (
         collision_property.PG_Hotools_BoneCollision,
         collision_property.PG_Hotools_ObjectCollision,
-        physics_property.PG_Hotools_MeshCollision,
+        mesh_property.PG_Hotools_MeshCollision,
         rigid_property.PG_Hotools_RigidBody,
         rigid_property.PG_Hotools_RigidConstraint,
     )
@@ -192,6 +202,7 @@ def test_collision_component_owns_shared_capabilities():
     assert spring.get("capabilities") == {}
     assert spring.get("consumes_capabilities") == ["bone_collision"]
     assert physics_property.PG_Hotools_ObjectCollision is collision_property.PG_Hotools_ObjectCollision
+    assert physics_property.PG_Hotools_MeshCollision is mesh_property.PG_Hotools_MeshCollision
     assert physics_property.PG_Hotools_RigidBody is rigid_property.PG_Hotools_RigidBody
     assert physics_property.PG_Hotools_RigidConstraint is rigid_property.PG_Hotools_RigidConstraint
     assert rigid_property.PG_Hotools_RigidBody.__module__.endswith("physicsWorld.rigid.properties")
@@ -226,6 +237,19 @@ def test_rigid_rna_and_capabilities_share_one_schema():
             assert field["rna"] == declaration["kwargs"]
             assert field["default"] == declaration["kwargs"].get("default")
             assert field["explicit_property"] == f"{storage}.{declaration['name']}"
+
+
+def test_mesh_cloth_rna_and_capability_share_one_schema():
+    schema = mesh_schema.MESH_COLLISION_RNA_FIELDS
+    capability_fields = tuple(mesh_capabilities.MESH_COLLISION_CAPABILITY["fields"])
+    names = tuple(str(field["name"]) for field in schema)
+    assert len(schema) == 11
+    assert tuple(mesh_property.PG_Hotools_MeshCollision.__annotations__) == names
+    assert tuple(str(field["name"]) for field in capability_fields) == names
+    for declaration, field in zip(schema, capability_fields):
+        assert field["rna"] == declaration["kwargs"]
+        assert field["default"] == declaration["kwargs"].get("default")
+        assert field["explicit_property"] == f"Object.hotools_mesh_collision.{declaration['name']}"
 
 
 def test_domain_registry_dependencies_idempotency_and_rollback():
@@ -325,14 +349,14 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.unregister_solver_blender_properties()
 
     binding_count = solver_registry.register_physics_world_blender_properties()
-    assert binding_count == 4, {
+    assert binding_count == 5, {
         "binding_count": binding_count,
         "registry": blender_registry.blender_property_registry_snapshot(),
     }
     assert hasattr(bpy.types.Bone, "hotools_collision")
     assert hasattr(bpy.types.Object, "hotools_object_collision")
-    assert blender_registry.registered_blender_property_domains() == ("collision", "rigid")
-    assert solver_registry.register_physics_world_blender_properties() == 4
+    assert blender_registry.registered_blender_property_domains() == ("collision", "rigid", "mesh_cloth")
+    assert solver_registry.register_physics_world_blender_properties() == 5
 
     class PG_PhysicsWorldDynamicSolverTest(bpy.types.PropertyGroup):
         enabled: bpy.props.BoolProperty(default=False)  # type: ignore
@@ -353,7 +377,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     solver_registry.register_solver_module("test_dynamic_solver", descriptor)
     assert hasattr(bpy.types.Object, "hotools_test_dynamic_solver_temp")
     assert blender_registry.registered_blender_property_domains() == (
-        "collision", "rigid", "test_dynamic_solver",
+        "collision", "rigid", "mesh_cloth", "test_dynamic_solver",
     )
 
     solver_registry.unregister_solver_module("test_dynamic_solver")
@@ -366,7 +390,7 @@ def test_solver_registry_supports_dynamic_property_domain_lifecycle():
     assert not hasattr(bpy.types.Object, "hotools_object_collision")
     assert blender_registry.registered_blender_property_domains() == ()
 
-    assert solver_registry.register_physics_world_blender_properties() == 4
+    assert solver_registry.register_physics_world_blender_properties() == 5
     solver_registry.unregister_physics_world_blender_properties()
     assert blender_registry.registered_blender_property_domains() == ()
 
@@ -376,7 +400,7 @@ def _contract_property_declaration() -> dict:
         "classes": (
             collision_property.PG_Hotools_BoneCollision,
             collision_property.PG_Hotools_ObjectCollision,
-            physics_property.PG_Hotools_MeshCollision,
+            mesh_property.PG_Hotools_MeshCollision,
             rigid_property.PG_Hotools_RigidBody,
             rigid_property.PG_Hotools_RigidConstraint,
         ),
@@ -397,7 +421,7 @@ def _contract_property_declaration() -> dict:
                 "owner": bpy.types.Object,
                 "name": "hotools_mesh_collision",
                 "property": "pointer",
-                "type": physics_property.PG_Hotools_MeshCollision,
+                "type": mesh_property.PG_Hotools_MeshCollision,
             },
             {
                 "owner": bpy.types.Object,
@@ -537,7 +561,7 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             ),
             "PG_Hotools_MeshCollision": (
                 physical_obj.hotools_mesh_collision,
-                physics_property.PG_Hotools_MeshCollision,
+                mesh_property.PG_Hotools_MeshCollision,
                 {"mc2_base_pose_proxy": base_pose_obj},
             ),
             "PG_Hotools_RigidBody": (
@@ -577,7 +601,7 @@ def test_blend_roundtrip_preserves_all_persistent_property_fields():
             ),
             "PG_Hotools_MeshCollision": (
                 physical_obj.hotools_mesh_collision,
-                physics_property.PG_Hotools_MeshCollision,
+                mesh_property.PG_Hotools_MeshCollision,
             ),
             "PG_Hotools_RigidBody": (
                 physical_obj.hotools_rigid_body,
@@ -603,6 +627,7 @@ TESTS = (
     ("persistent PropertyGroup RNA contracts", test_persistent_property_contracts_are_frozen),
     ("collision component owns shared capabilities", test_collision_component_owns_shared_capabilities),
     ("rigid RNA/capabilities share one schema", test_rigid_rna_and_capabilities_share_one_schema),
+    ("mesh cloth RNA/capability share one schema", test_mesh_cloth_rna_and_capability_share_one_schema),
     ("domain dependencies/idempotency/rollback", test_domain_registry_dependencies_idempotency_and_rollback),
     ("dynamic solver property lifecycle", test_solver_registry_supports_dynamic_property_domain_lifecycle),
     (".blend roundtrip for all persistent fields", test_blend_roundtrip_preserves_all_persistent_property_fields),

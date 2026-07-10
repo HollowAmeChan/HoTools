@@ -2,7 +2,7 @@
 
 日期：2026-07-10
 
-状态：实施中；Phase 0/1/2/3 已完成，下一步为 Phase 4 MeshCloth 属性与 Blender I/O
+状态：实施中；Phase 0/1/2/3 已完成，Phase 4 已完成 MeshCollision 所有权迁移，Blender I/O 待续
 
 范围：顶层 `PhysicsTools` 持有的持久物理属性、注册生命周期、面板、操作器、碰撞预览和 MeshCloth Blender I/O；后续把 MC2/BoneCloth 包并入 `physicsWorld`。
 
@@ -369,3 +369,21 @@ Phase 3 第二刀已关闭：
 - 新增 schema/RNA/capability 三方逐字段一致性测试；原冻结 contract hash 无变化，证明生成式重构没有改变持久 RNA。
 
 Phase 3 已完成。下一步进入 Phase 4：建立 `physicsWorld.mesh_cloth` domain，迁移 `PG_Hotools_MeshCollision`、base-pose proxy 与 delta output；不在同一刀移动 MC2 整包。
+
+## 2026-07-10 Phase 4 第一刀实施记录
+
+已完成：
+
+- 新增 `physicsWorld.mesh_cloth` solver domain，声明对共享 collision component 的属性依赖。
+- `PG_Hotools_MeshCollision` 的 11 字段 schema、capability、PropertyGroup class 与 `Object.hotools_mesh_collision` binding 全部迁入该 domain。
+- `mc2_base_pose_proxy` 的 Object pointer 与 mesh-only poll 被纯 schema 标识并在 Blender 层还原；原 RNA contract hash 保持不变。
+- `PhysicsTools.physicsProperty` 已变为纯惰性 import adapter，不再定义任何 PropertyGroup；`PhysicsTools.register()` 不再直接注册任何物理持久 class/binding。
+- MC2 scene parity 夹具改从 canonical mesh_cloth owner 导入。
+
+验证：
+
+- property registry / schema ownership / RNA contract / `.blend` roundtrip：`7/7`
+- 完整注册顺序：`collision -> rigid -> mesh_cloth`，真实 PhysicsTools lifecycle 通过
+- MC2 Blender scene parity：collision mode 1/2 均通过
+
+Phase 4 尚未关闭：下一刀迁移 `meshClothBasePose.py` 与 `deltaOutput.py` 到 `physicsWorld.mesh_cloth`，旧 PhysicsTools 文件只保留短期 import adapter；随后统一 Physics.py、MC2 blender_io/runtime 和 UI operator/panel 的 canonical import。

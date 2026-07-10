@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import BoolProperty, EnumProperty, PointerProperty
+from bpy.props import BoolProperty, EnumProperty
 
 from .physicsOperators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
@@ -29,12 +29,10 @@ from .collisionPreview import (
     _remove_draw_handler,
     draw_collision_overlay_header,
 )
-from .physicsProperty import PG_Hotools_MeshCollision
 from .physicsUtils import _overlay_show_update
 
 
 cls = [
-    PG_Hotools_MeshCollision,
     OP_Hotools_BoneCollision_SetPrimaryGroup,
     OP_Hotools_BoneCollision_ToggleCollidedByGroup,
     OP_Hotools_ObjectCollision_SetPrimaryGroup,
@@ -59,8 +57,6 @@ cls = [
 
 
 def reg_props():
-    bpy.types.Object.hotools_mesh_collision = PointerProperty(type=PG_Hotools_MeshCollision)
-
     bpy.types.Scene.ho_collision_overlay_show = BoolProperty(
         name="HoTools碰撞预览",
         description="在3D视图中显示HoTools碰撞预览叠加层",
@@ -133,7 +129,6 @@ def ureg_props():
     del bpy.types.Scene.ho_collision_overlay_only_visible_bones
     del bpy.types.Scene.ho_collision_overlay_show_bone
     del bpy.types.Scene.ho_collision_overlay_show
-    del bpy.types.Object.hotools_mesh_collision
 
 
 def register():

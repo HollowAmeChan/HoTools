@@ -46,7 +46,7 @@ blender_registry = importlib.import_module(
 def main() -> None:
     physics_tools.register()
     try:
-        assert blender_registry.registered_blender_property_domains() == ("collision", "rigid")
+        assert blender_registry.registered_blender_property_domains() == ("collision", "rigid", "mesh_cloth")
         assert hasattr(bpy.types.Bone, "hotools_collision")
         assert hasattr(bpy.types.Object, "hotools_object_collision")
         assert hasattr(bpy.types.Object, "hotools_mesh_collision")
