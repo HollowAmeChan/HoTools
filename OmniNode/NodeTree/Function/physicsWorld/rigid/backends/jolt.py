@@ -436,6 +436,8 @@ class JoltAdapter:
             motor_target_velocity=float(getattr(spec, "motor_target_velocity", 0.0)),
             motor_target_position=float(getattr(spec, "motor_target_position", 0.0)),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
+            distance_min=float(getattr(spec, "distance_min", 0.0)),
+            distance_max=float(getattr(spec, "distance_max", 1.0)),
             disable_collisions=bool(getattr(spec, "disable_collisions", True)),
         )
         handle = self._jw.add_constraint(**kwargs)

@@ -657,7 +657,7 @@ Native 侧当前特点：
 | Hinge | limit enabled、limit min/max、friction torque、motor state、target angle、target angular velocity、motor torque limits、spring | P0 |
 | Slider | limit enabled、limit min/max、friction force、motor state、target position、target velocity、motor force limits、spring | P0 |
 | Cone | half cone angle | P0 |
-| Distance | min distance、max distance、spring | P1 |
+| Distance | min distance、max distance、spring | 已接 |
 | Point | point1/point2 separate anchors | P1 |
 | Fixed | auto detect / separate frames | P1 |
 | SixDOF | per-axis free/fixed/limited、limits、friction、motors | P1 |
@@ -737,7 +737,7 @@ HoTools overlay 的 draw store 也应保持同样规则：它由 Jolt 自有 deb
 目标：
 
 - 先补 hinge/slider/cone 的真实参数。
-- 新增 distance。
+- 已新增 distance，并贯通显式属性、生成约束、spec、adapter 与 native binding。
 - 新增 generic sixdof。
 - 导出 constraint lambda / current angle / current position。
 - 实现 breakable policy。
@@ -898,4 +898,12 @@ Rigid/Jolt 的 solver 子模块入口已从公共注册层收口到 `rigid.SOLVE
 
 `registry.py` 现在同时提供 capability/debug draw mode 汇总和基础冲突检查，覆盖 solver id、slot kind、result channel、implicit object tag 与 debug draw mode id。为兼容后台测试和未来部分装载器先注册空包的场景，registry 在发现 solver 包已存在但缺少 `SOLVER_MODULE` 时，会补载该包的 `__init__.py`，保证 rigid scope collector 仍能被 Begin 阶段发现。
 
-验收状态：`test_blender_rigid.py` 后台集成测试 19/19 通过，覆盖 Jolt adapter、world 生命周期、命令 exchange、world setting 隐式对象、完整 60 帧刚体链路、runtime cache dispose、same-frame/frame-jump/reset、scope prune、transform/shape/constraint dirty resync 和 generated constraint 隐式对象链路。
+验收状态：`test_blender_rigid.py` 后台集成测试 20/20 通过，覆盖 Jolt adapter、world 生命周期、命令 exchange、world setting 隐式对象、完整 60 帧刚体链路、runtime cache dispose、same-frame/frame-jump/reset、scope prune、transform/shape/constraint dirty resync、Distance 约束和 generated constraint 隐式对象链路。
+
+## 2026-07-10 追加：Distance 约束切片
+
+`DISTANCE` 已作为第六种刚体约束类型接入。持久化属性和生成约束节点都提供 `distance_min` / `distance_max`，范围会在进入 `ConstraintSpec` 前归一化为非负升序值；`limit_spring_frequency` / `limit_spring_damping` 直接映射到 Jolt `DistanceConstraintSettings.mLimitsSpringSettings`。
+
+链路覆盖 `PG_Hotools_RigidConstraint -> ConstraintSpec -> scope sync signature -> JoltAdapter -> hotools_jolt`，生成约束也把距离范围纳入 payload、signature 和 materialized slot。native 对未知 constraint type 现在显式报错，不再静默退化成 Point。
+
+验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 26/26 通过；Blender 刚体后台集成测试 20/20 通过。下一步约束侧优先级是分离的 body A/B anchor frame、constraint state/lambda 输出和 breakable policy，再考虑 SixDOF。

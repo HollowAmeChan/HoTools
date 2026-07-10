@@ -570,6 +570,52 @@ def test_constraint_spec_disable_collisions():
     _del(c, a, b)
 
 
+def test_distance_constraint_spec_and_generated_properties():
+    a = _make_obj("T3B_DistanceBodyA", (-1, 0, 1))
+    b = _make_obj("T3B_DistanceBodyB", (1, 0, 1))
+    c = _make_constraint_empty("T3B_DistanceConstraint", a, b, loc=(0, 0, 1))
+    props = c.hotools_rigid_constraint
+    props.constraint_type = "DISTANCE"
+    props.distance_min = 2.5
+    props.distance_max = 0.5
+    props.limit_spring_frequency = 3.0
+    props.limit_spring_damping = 0.75
+
+    spec = build_constraint_spec(c)
+    assert spec is not None
+    assert spec.constraint_type == "DISTANCE"
+    assert spec.distance_min == 0.5
+    assert spec.distance_max == 2.5
+    assert spec.limit_spring_frequency == 3.0
+    assert spec.limit_spring_damping == 0.75
+    assert spec.debug_dict()["distance_max"] == 2.5
+
+    adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
+    body_a = build_rigid_body_spec(a)
+    body_b = build_rigid_body_spec(b)
+    assert body_a is not None and body_b is not None
+    adapter.sync_body(body_a.slot_id, body_a)
+    adapter.sync_body(body_b.slot_id, body_b)
+    adapter.sync_constraint(spec.slot_id, spec)
+    assert adapter.constraint_count == 1
+    adapter.step(1.0 / 60.0, 1)
+    adapter.dispose("test_distance_constraint")
+
+    generated = make_rigid_generated_constraint_properties(
+        target_a=a,
+        target_b=b,
+        constraint_type="DISTANCE",
+        distance_min=4.0,
+        distance_max=1.0,
+    )
+    assert len(generated) == 1
+    assert generated[0]["constraint_type"] == "DISTANCE"
+    assert generated[0]["distance_min"] == 1.0
+    assert generated[0]["distance_max"] == 4.0
+
+    _del(c, a, b)
+
+
 def test_generated_constraint_implicit_object_pipeline():
     scene = bpy.context.scene
     a = _make_obj("T3D_GeneratedBodyA", (-0.5, 0, 2), body_type="DYNAMIC")
@@ -1140,6 +1186,7 @@ if __name__ == "__main__":
     check("constraint target dirty resync", test_constraint_target_dirty_resyncs_jolt_constraint_without_generation_restart)
 
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
+    check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 
     passed = sum(_results)

@@ -138,7 +138,7 @@ def _midpoint_anchor(target_a, target_b) -> tuple[float, float, float]:
 
 def _normalize_constraint_type(value) -> str:
     constraint_type = str(value or "FIXED").strip().upper()
-    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT"}:
+    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"}:
         return "FIXED"
     return constraint_type
 
@@ -370,6 +370,8 @@ def make_rigid_generated_constraint_properties(
     linear_limit_min: float = -1.0,
     linear_limit_max: float = 1.0,
     cone_half_angle: float = 0.0,
+    distance_min: float = 0.0,
+    distance_max: float = 1.0,
 ) -> list[dict]:
     """
     构造单个可注册的刚体生成约束属性。
@@ -390,6 +392,10 @@ def make_rigid_generated_constraint_properties(
             anchor_rotation_wxyz = (1.0, 0.0, 0.0, 0.0)
 
     linear_min, linear_max = _ordered_pair(float(linear_limit_min), float(linear_limit_max))
+    distance_min, distance_max = _ordered_pair(
+        max(float(distance_min), 0.0),
+        max(float(distance_max), 0.0),
+    )
 
     return [{
         "target_a": target_a if _is_object(target_a) else None,
@@ -424,6 +430,8 @@ def make_rigid_generated_constraint_properties(
         "motor_target_velocity": 0.0,
         "motor_target_position": 0.0,
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
+        "distance_min": distance_min,
+        "distance_max": distance_max,
     }]
 
 
@@ -432,6 +440,10 @@ def _copy_generated_constraint_object(item: dict) -> dict:
     linear_min, linear_max = _ordered_pair(
         float(item.get("linear_limit_min", -1.0)),
         float(item.get("linear_limit_max", 1.0)),
+    )
+    distance_min, distance_max = _ordered_pair(
+        max(float(item.get("distance_min", 0.0) or 0.0), 0.0),
+        max(float(item.get("distance_max", 1.0) or 0.0), 0.0),
     )
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
@@ -469,6 +481,8 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "motor_target_velocity": float(item.get("motor_target_velocity", 0.0) or 0.0),
         "motor_target_position": float(item.get("motor_target_position", 0.0) or 0.0),
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
+        "distance_min": distance_min,
+        "distance_max": distance_max,
     }
 
 
@@ -540,6 +554,8 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         f"{float(item.get('linear_limit_min', -1.0)):.8g}",
         f"{float(item.get('linear_limit_max', 1.0)):.8g}",
         f"{float(item.get('cone_half_angle', 0.0)):.8g}",
+        f"{float(item.get('distance_min', 0.0)):.8g}",
+        f"{float(item.get('distance_max', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
     ]
     return stable_short_hash(payload, 16)
@@ -644,6 +660,8 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         motor_target_velocity=float(item.get("motor_target_velocity", 0.0) or 0.0),
         motor_target_position=float(item.get("motor_target_position", 0.0) or 0.0),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
+        distance_min=float(item.get("distance_min", 0.0) or 0.0),
+        distance_max=float(item.get("distance_max", 1.0) or 0.0),
     )
     return spec, str(entry.get("signature") or rigid_generated_constraint_signature(item))
 

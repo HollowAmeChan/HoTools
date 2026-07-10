@@ -479,6 +479,34 @@ def test_add_point_constraint_to_world():
     jw.clear()
 
 
+def test_add_distance_constraint():
+    """DISTANCE 约束应限制锚点分离，并参与正常生命周期清理。"""
+    jw = _make_world()
+    jw.set_gravity((0.0, 0.0, 0.0))
+    h_a = _add_sphere(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
+    h_b = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 2.0))
+    ch = jw.add_constraint(
+        constraint_type="DISTANCE",
+        body_a_handle=h_a,
+        body_b_handle=h_b,
+        anchor_pos=(0.0, 0.0, 1.0),
+        anchor_rot_wxyz=(1.0, 0.0, 0.0, 0.0),
+        distance_min=0.25,
+        distance_max=0.5,
+    )
+    assert jw.constraint_count == 1
+
+    jw.set_body_velocity(h_b, (0.0, 0.0, 20.0))
+    for _ in range(30):
+        jw.step(1.0 / 60.0, 1)
+    pos, _ = jw.get_body_transform(h_b)
+    assert pos[2] < 3.0, f"DISTANCE 最大范围应限制刚体继续远离，z={pos[2]:.4f}"
+
+    jw.remove_constraint(ch)
+    assert jw.constraint_count == 0
+    jw.clear()
+
+
 # ---------------------------------------------------------------------------
 # 测试：clear() 完整清理
 # ---------------------------------------------------------------------------

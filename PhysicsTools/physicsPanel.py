@@ -417,6 +417,14 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
             layout.label(text="Cone", icon="EMPTY_SINGLE_ARROW")
             layout.prop(props, "cone_half_angle")
 
+        if ctype == "DISTANCE":
+            layout.separator()
+            layout.label(text="距离", icon="DRIVER_DISTANCE")
+            layout.prop(props, "distance_min")
+            layout.prop(props, "distance_max")
+            layout.prop(props, "limit_spring_frequency")
+            layout.prop(props, "limit_spring_damping")
+
 
 _BONE_PARENT = "BONE_PT_Hotools_PhysicsPanel"
 

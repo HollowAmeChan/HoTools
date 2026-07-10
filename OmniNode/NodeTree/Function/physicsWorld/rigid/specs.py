@@ -221,6 +221,8 @@ class ConstraintSpec:
         "motor_target_velocity",
         "motor_target_position",
         "cone_half_angle",
+        "distance_min",
+        "distance_max",
     )
 
     def __init__(
@@ -259,6 +261,8 @@ class ConstraintSpec:
         motor_target_velocity: float = 0.0,
         motor_target_position: float = 0.0,
         cone_half_angle: float = 0.0,
+        distance_min: float = 0.0,
+        distance_max: float = 1.0,
     ) -> None:
         self.empty_obj = empty_obj
         self.empty_ptr: int = empty_ptr
@@ -294,6 +298,8 @@ class ConstraintSpec:
         self.motor_target_velocity: float = motor_target_velocity
         self.motor_target_position: float = motor_target_position
         self.cone_half_angle: float = cone_half_angle
+        self.distance_min: float = distance_min
+        self.distance_max: float = distance_max
 
     def debug_dict(self) -> dict:
         return {
@@ -329,6 +335,8 @@ class ConstraintSpec:
             "motor_target_velocity": self.motor_target_velocity,
             "motor_target_position": self.motor_target_position,
             "cone_half_angle": self.cone_half_angle,
+            "distance_min": self.distance_min,
+            "distance_max": self.distance_max,
         }
 
 
@@ -550,7 +558,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         return None
 
     constraint_type = str(getattr(props, "constraint_type", "FIXED"))
-    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT"}:
+    if constraint_type not in {"FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"}:
         constraint_type = "FIXED"
     target_a = getattr(props, "target_a", None)
     target_b = getattr(props, "target_b", None)
@@ -588,6 +596,10 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     motor_target_velocity = float(getattr(props, "motor_target_velocity", 0.0))
     motor_target_position = float(getattr(props, "motor_target_position", 0.0))
     cone_half_angle = _clamp(float(getattr(props, "cone_half_angle", 0.0)), 0.0, _PI)
+    distance_min, distance_max = _ordered_pair(
+        max(float(getattr(props, "distance_min", 0.0)), 0.0),
+        max(float(getattr(props, "distance_max", 1.0)), 0.0),
+    )
 
     return ConstraintSpec(
         empty_obj=empty_obj,
@@ -623,4 +635,6 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         motor_target_velocity=motor_target_velocity,
         motor_target_position=motor_target_position,
         cone_half_angle=cone_half_angle,
+        distance_min=distance_min,
+        distance_max=distance_max,
     )

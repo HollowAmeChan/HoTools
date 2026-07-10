@@ -285,6 +285,7 @@ def physicsRigidJoltWorldSettingsRegister(
         "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
         "优先级", "速度步数", "位置步数", "启用限制",
         "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
+        "距离最小", "距离最大",
     ],
     input_init={
         "constraint_type": {"default_value": "FIXED"},
@@ -300,7 +301,7 @@ def physicsRigidJoltWorldSettingsRegister(
     构造可注册到物理世界的刚体生成约束属性。
 
     本节点不创建 Empty、不写 solver slot、不访问 Jolt。约束类型使用
-    FIXED / HINGE / SLIDER / CONE / POINT。锚点对象为空时，锚点位置取
+    FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE。锚点对象为空时，锚点位置取
     目标 A/B 的中点，旋转取目标 A 的 world rotation。
     """,
 )
@@ -320,6 +321,8 @@ def physicsRigidGeneratedConstraintProperties(
     linear_limit_min: float = -1.0,
     linear_limit_max: float = 1.0,
     cone_half_angle: float = 0.0,
+    distance_min: float = 0.0,
+    distance_max: float = 1.0,
 ) -> list[object]:
     return make_rigid_generated_constraint_properties(
         target_a=target_a,
@@ -338,6 +341,8 @@ def physicsRigidGeneratedConstraintProperties(
         linear_limit_min=float(linear_limit_min),
         linear_limit_max=float(linear_limit_max),
         cone_half_angle=float(cone_half_angle),
+        distance_min=float(distance_min),
+        distance_max=float(distance_max),
     )
 
 

@@ -39,6 +39,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Constraints/ConeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -603,7 +604,9 @@ public:
         float                     motor_target_velocity,
         float                     motor_target_position,
         float                     cone_half_angle,
-        bool                      disable_collisions
+        bool                      disable_collisions,
+        float                     distance_min,
+        float                     distance_max
     ) {
         RVec3 pos = to_vec3(anchor_pos);
         Quat  rot = to_quat(anchor_rot_wxyz);
@@ -740,11 +743,21 @@ public:
             s.mTwistAxis1 = s.mTwistAxis2 = rot.RotateAxisZ();
             s.mHalfConeAngle = std::clamp(cone_half_angle, 0.0f, JPH_PI);
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
-        } else { // POINT
+        } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
             s.mPoint1 = s.mPoint2 = pos;
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+        } else if (constraint_type_str == "DISTANCE") {
+            DistanceConstraintSettings s;
+            apply_common(s);
+            s.mPoint1 = s.mPoint2 = pos;
+            s.mMinDistance = (std::max)(0.0f, (std::min)(distance_min, distance_max));
+            s.mMaxDistance = (std::max)(s.mMinDistance, (std::max)(distance_min, distance_max));
+            apply_limit_spring(s.mLimitsSpringSettings);
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+        } else {
+            throw std::invalid_argument("不支持的约束类型: " + constraint_type_str);
         }
         // lock_a / lock_b 在此析构，释放读锁
 
@@ -1036,7 +1049,9 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("motor_target_position") = 0.0f,
              nb::arg("cone_half_angle") = 0.0f,
              nb::arg("disable_collisions") = false,
-             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT），返回 handle。\n"
+             nb::arg("distance_min") = 0.0f,
+             nb::arg("distance_max") = 1.0f,
+             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
         .def("remove_constraint", &JoltWorld::remove_constraint,

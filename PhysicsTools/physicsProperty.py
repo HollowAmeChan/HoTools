@@ -516,6 +516,7 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
             ("SLIDER",  "滑动",   "允许沿约束锚点 Z 轴平移，限制旋转"),
             ("CONE",    "锥形",   "允许在锥角范围内摆动，限制平移"),
             ("POINT",   "点约束", "仅锁定位置，允许任意旋转（球窝关节）"),
+            ("DISTANCE", "距离",  "限制两个锚点之间的最小和最大距离"),
         ],
         default="FIXED",
     )  # type: ignore
@@ -723,4 +724,22 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
         min=0.0,
         max=_PI,
         unit="ROTATION",
+    )  # type: ignore
+
+    # ── Distance 专用 ──────────────────────────────────────────────────────
+
+    distance_min: FloatProperty(
+        name="最小距离",
+        description="Distance约束允许两个锚点保持的最小距离",
+        default=0.0,
+        min=0.0,
+        unit="LENGTH",
+    )  # type: ignore
+
+    distance_max: FloatProperty(
+        name="最大距离",
+        description="Distance约束允许两个锚点保持的最大距离",
+        default=1.0,
+        min=0.0,
+        unit="LENGTH",
     )  # type: ignore

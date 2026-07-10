@@ -56,7 +56,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
     "implicit_object_tag": RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
     "fields": [
         {"name": "enabled", "type": "bool", "default": False, "update_policy": "每帧收集规格"},
-        {"name": "constraint_type", "type": "enum", "values": ["FIXED", "HINGE", "SLIDER", "CONE", "POINT"], "update_policy": "规格签名"},
+        {"name": "constraint_type", "type": "enum", "values": ["FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE"], "update_policy": "规格签名"},
         {"name": "target_a", "type": "Object", "update_policy": "规格签名"},
         {"name": "target_b", "type": "Object", "update_policy": "规格签名"},
         {"name": "disable_collisions", "type": "bool", "default": False, "update_policy": "规格签名"},
@@ -65,6 +65,7 @@ RIGID_CONSTRAINT_CAPABILITY = {
         {"name": "limit", "type": "constraint_limit", "update_policy": "规格签名"},
         {"name": "spring", "type": "constraint_spring", "update_policy": "规格签名"},
         {"name": "motor", "type": "constraint_motor", "update_policy": "规格签名"},
+        {"name": "distance_range", "type": "float2", "default": (0.0, 1.0), "update_policy": "规格签名"},
     ],
 }
 

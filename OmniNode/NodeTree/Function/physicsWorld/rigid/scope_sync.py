@@ -170,6 +170,8 @@ def _constraint_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "motor_target_velocity", 0.0)),
         _round_float(getattr(spec, "motor_target_position", 0.0)),
         _round_float(getattr(spec, "cone_half_angle", 0.0)),
+        _round_float(getattr(spec, "distance_min", 0.0)),
+        _round_float(getattr(spec, "distance_max", 1.0)),
     )
 
 
