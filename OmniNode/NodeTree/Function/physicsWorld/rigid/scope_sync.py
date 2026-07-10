@@ -1,7 +1,7 @@
 """刚体/Jolt 的对象作用域到解算器槽同步。
 
 物理世界 Begin 只负责帧和对象作用域生命周期。刚体领域负责决定
-PhysicsTools 刚体属性如何变成 RigidBodySpec / ConstraintSpec 槽，
+Physics World 刚体属性如何变成 RigidBodySpec / ConstraintSpec 槽，
 以及哪些变化需要触发 Jolt 重新同步。
 """
 

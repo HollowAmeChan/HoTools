@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""真实 PhysicsTools 根入口与 Physics World 属性生命周期测试。
+"""Physics World Blender 根入口、UI 与属性生命周期测试。
 
 用法：
     blender.exe --factory-startup --background --python test_blender_physics_tools_lifecycle.py
@@ -37,9 +37,9 @@ for package_name, package_path in (
     sys.modules[package_name] = module
 
 
-physics_tools = importlib.import_module("HoTools.PhysicsTools")
-legacy_delta_output = importlib.import_module("HoTools.PhysicsTools.deltaOutput")
-legacy_base_pose = importlib.import_module("HoTools.PhysicsTools.meshClothBasePose")
+physics_blender = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender"
+)
 delta_output = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.delta_output"
 )
@@ -52,16 +52,18 @@ blender_registry = importlib.import_module(
 
 
 def main() -> None:
-    physics_tools.register()
+    physics_blender.register()
     try:
-        assert blender_registry.registered_blender_property_domains() == ("collision", "rigid", "mesh_cloth")
+        assert physics_blender.is_registered()
+        assert blender_registry.registered_blender_property_domains() == (
+            "collision", "rigid", "mesh_cloth", "physics_ui",
+        )
         assert hasattr(bpy.types.Bone, "hotools_collision")
         assert hasattr(bpy.types.Object, "hotools_object_collision")
         assert hasattr(bpy.types.Object, "hotools_mesh_collision")
         assert hasattr(bpy.types.Object, "hotools_rigid_body")
         assert hasattr(bpy.types.Object, "hotools_rigid_constraint")
-        assert legacy_delta_output.PhysicsDeltaOutputSpec is delta_output.PhysicsDeltaOutputSpec
-        assert legacy_base_pose.MC2_DELTA_SPEC is base_pose.MC2_DELTA_SPEC
+        assert delta_output.PhysicsDeltaOutputSpec is type(base_pose.MC2_DELTA_SPEC)
 
         mesh = bpy.data.meshes.new("PW_MeshClothIOContractMesh")
         mesh.from_pydata(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), (), ((0, 1, 2),))
@@ -75,17 +77,22 @@ def main() -> None:
         assert base_pose.mesh_light_key(source) == base_pose.mesh_light_key(proxy)
         assert bool(proxy.get(base_pose.CACHE_OBJECT_FLAG, False))
 
-        physics_tools.unregister()
+        physics_blender.unregister()
+        assert not physics_blender.is_registered()
         assert blender_registry.registered_blender_property_domains() == ()
         assert not hasattr(bpy.types.Bone, "hotools_collision")
         assert not hasattr(bpy.types.Object, "hotools_object_collision")
         assert not hasattr(bpy.types.Object, "hotools_mesh_collision")
         assert not hasattr(bpy.types.Object, "hotools_rigid_body")
         assert not hasattr(bpy.types.Object, "hotools_rigid_constraint")
+        physics_blender.register()
+        assert physics_blender.is_registered()
+        physics_blender.unregister()
+        assert not physics_blender.is_registered()
     finally:
         if blender_registry.registered_blender_property_domains():
             blender_registry.unregister_all_blender_property_domains()
-    print("PhysicsTools register/unregister lifecycle: PASS")
+    print("Physics World Blender/UI register/unregister lifecycle: PASS")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import mathutils
 from bpy.types import Panel
 from gpu_extras.batch import batch_for_shader
 
-from .physicsUtils import (
+from .utils import (
     _COLLISION_GROUP_COUNT,
     _PIN_COLOR,
     _SHAPE_SEGMENTS,

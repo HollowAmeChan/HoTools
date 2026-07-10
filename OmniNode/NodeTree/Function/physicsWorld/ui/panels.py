@@ -14,13 +14,13 @@ physicsPanel.py — HoTools 统一物理属性面板
 
 from bpy.types import Panel
 
-from .physicsOperators import (
+from .operators import (
     OP_Hotools_BoneCollision_AddSelectedColliders,
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
-from ..OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.base_pose import mesh_light_key
-from .physicsUtils import (
+from ..mesh_cloth.base_pose import mesh_light_key
+from .utils import (
     _active_armature_object,
     _active_collision_props,
     _collision_group_bit,

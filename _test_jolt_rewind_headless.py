@@ -28,7 +28,9 @@ import bpy
 
 
 def _register_physics_props():
-    from PhysicsTools.physicsProperty import PG_Hotools_RigidBody
+    PG_Hotools_RigidBody = sys.modules[
+        f"{PKG_PREFIX}.rigid.properties"
+    ].PG_Hotools_RigidBody
 
     try:
         bpy.utils.register_class(PG_Hotools_RigidBody)
@@ -39,8 +41,6 @@ def _register_physics_props():
             type=PG_Hotools_RigidBody
         )
 
-
-_register_physics_props()
 
 PKG_PREFIX = "HoTools.OmniNode.NodeTree.Function.physicsWorld"
 
@@ -97,6 +97,9 @@ _load_pw("types", "types.py")
 _load_pw("scope", "scope.py")
 _load_pw("writeback", "writeback.py")
 _load_pw("world", "world.py")
+_load_pw("rigid.schema", "rigid/schema.py")
+_load_pw("rigid.properties", "rigid/properties.py")
+_register_physics_props()
 _load_pw("rigid.specs", "rigid/specs.py")
 _load_pw("rigid.results", "rigid/results.py")
 _load_pw("rigid.solver", "rigid/solver.py")
@@ -162,7 +165,7 @@ def _run():
         )
         step_rigid_bodies(world, enabled=True)
         slot = next((s for s in world.solver_slots.values() if s.kind == "rigid_body"), None)
-        result = get_rigid_transform_result(slot, frame=frame, generation=world.generation) if slot else None
+        result = get_rigid_transform_result(world, frame=frame, generation=world.generation) if slot else None
         if result is None:
             raise RuntimeError(f"rigid solver did not publish transform result on frame {frame}")
         apply_all_writebacks(world, restart=restart)
@@ -201,7 +204,7 @@ def _run():
         )
     rewound_slot = rewound_world.solver_slots.get(spec.slot_id)
     rewound_result = get_rigid_transform_result(
-        rewound_slot,
+        rewound_world,
         frame=scene.frame_current,
         generation=rewound_world.generation,
     )
@@ -247,7 +250,7 @@ def _run():
     if dirty_slot is None or dirty_slot.data.get("_jolt_generation") != dirty_world.generation:
         raise RuntimeError("same-frame spec edit did not resync Jolt slot")
     dirty_result = get_rigid_transform_result(
-        dirty_slot,
+        dirty_world,
         frame=scene.frame_current,
         generation=dirty_world.generation,
     )

@@ -1,10 +1,12 @@
-from .NodeTree import GraphNode, OmniNodeRegister
-
-from .NodeTree import OmniNodeTree
+_REGISTERED = False
 
 
 def register():
+    global _REGISTERED
+    if _REGISTERED:
+        return
     from .. import PropertyCurve  # NOQA: E402
+    from .NodeTree import OmniNodeRegister, OmniNodeTree  # NOQA: E402
     from .NodeTree import OmniNodeSocket  # NOQA: E402
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     from .NodeTree import OmniNodeDraw  # NOQA: E402
@@ -19,10 +21,15 @@ def register():
     OmniNodeRegister.register()
     OmniNodePanel.register()
     _tracy_report()
+    _REGISTERED = True
 
 
 def unregister():
+    global _REGISTERED
+    if not _REGISTERED:
+        return
     from .. import PropertyCurve  # NOQA: E402
+    from .NodeTree import OmniNodeRegister, OmniNodeTree  # NOQA: E402
     from .NodeTree import OmniNodeSocket  # NOQA: E402
     from .NodeTree import OmniNodeOperator  # NOQA: E402
     from .NodeTree import OmniNodeDraw  # NOQA: E402
@@ -43,3 +50,4 @@ def unregister():
     OmniNodeSocket.unregister()
     PropertyCurve.unregister()
     OmniNodeRegister.unregister()
+    _REGISTERED = False

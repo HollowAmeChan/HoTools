@@ -278,7 +278,7 @@ class _BonePhysics:
     def collider_from_matrix(cls, matrix, props, owner, owner_type: str, bone_name: str = ""):
         """
         旧蓝本碰撞快照消费类型：SPHERE、CAPSULE。
-        数据来源是 PhysicsTools 挂在 Object 上的 hotools_object_collision，以及 Armature Bone 上的 hotools_collision。
+        数据来源是 Physics World 挂在 Object 上的 hotools_object_collision，以及 Armature Bone 上的 hotools_collision。
         SPHERE 读取 collision_type、radius、offset、primary_collision_group；CAPSULE 额外读取 length，并沿局部 Y 轴生成世界线段。
         """
         collision_type = str(getattr(props, "collision_type", "NONE") or "NONE")

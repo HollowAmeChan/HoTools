@@ -44,7 +44,7 @@ def check(name, fn):
 # ── Step 0：选择性注册 PropertyGroup（跳过 GPU/面板） ─────────────────────────
 
 def _register_physics_props():
-    # 加 HoTools 子包路径，让 PhysicsTools 可直接 import
+    # 加 HoTools 子包路径，供手动包夹具加载 canonical property modules
     _ht = os.path.join(_HOTOOLS)
     if _ht not in sys.path:
         sys.path.insert(0, _ht)

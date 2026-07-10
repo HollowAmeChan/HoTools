@@ -23,10 +23,10 @@ physicsWorldCommit:
 # physicsWorldBegin 可以内置的内容边界（严格约束，禁止蔓延）
 # ──────────────────────────────────────────────────────────────────────────────
 #
-# physicsWorldBegin 的职责是"从 scope 对象读取 PhysicsTools 属性，构建公共上下文"。
+# physicsWorldBegin 的职责是"从 scope 对象读取 Physics World 属性，构建公共上下文"。
 # 这个职责允许内置的内容仅限于：
 #
-#   ✅ 允许（属于 scope 扫描 + PhysicsTools 属性解析的范畴）：
+#   ✅ 允许（属于 scope 扫描 + Physics World 属性解析的范畴）：
 #     - 从 Object.hotools_object_collision 构建 collider source
 #     - 从 Bone.hotools_collision 构建 bone collider source
 #     - 从 Object.hotools_rigid_body 构建 RigidBodySpec（slot 注册）
@@ -38,7 +38,7 @@ physicsWorldCommit:
 #     - SpringBone chain 设置（hotools_collision.spring_root 或任何 VRM 链设置）
 #     - MC2 mesh cloth 设置（hotools_mesh_collision 里的布料参数）
 #     - MC2 bone cloth 设置（MC2 骨骼链拓扑）
-#     - 任何 solver 的 spec build 逻辑（只要不是 "从 PhysicsTools 读物理属性"）
+#     - 任何 solver 的 spec build 逻辑（只要不是 "从 Physics World 读物理属性"）
 #     - 任何 solver 的 native context / handle 创建
 #     - 任何 solver 的 result stream 发布
 #
@@ -135,7 +135,7 @@ def _box_half_axes(
     matrix: mathutils.Matrix,
     size: mathutils.Vector,
 ) -> tuple[mathutils.Vector, mathutils.Vector, mathutils.Vector] | None:
-    """从 Object.matrix_world 和 PhysicsTools box_size 解析有向盒半轴。"""
+    """从 Object.matrix_world 和 Physics World box_size 解析有向盒半轴。"""
     try:
         basis = matrix.to_3x3()
         axis_x = basis @ mathutils.Vector((max(float(size.x), 0.0) * 0.5, 0.0, 0.0))

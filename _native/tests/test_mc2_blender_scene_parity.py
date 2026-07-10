@@ -27,7 +27,6 @@ def ensure_package(name, path):
 
 
 ensure_package("HoTools", ROOT)
-ensure_package("HoTools.PhysicsTools", ROOT / "PhysicsTools")
 ensure_package("HoTools.OmniNode", ROOT / "OmniNode")
 ensure_package("HoTools.OmniNode.NodeTree", ROOT / "OmniNode" / "NodeTree")
 ensure_package("HoTools.OmniNode.NodeTree.Function", ROOT / "OmniNode" / "NodeTree" / "Function")

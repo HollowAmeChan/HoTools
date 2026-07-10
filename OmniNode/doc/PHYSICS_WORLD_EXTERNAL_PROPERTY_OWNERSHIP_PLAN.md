@@ -2,7 +2,7 @@
 
 日期：2026-07-10
 
-状态：实施中；Phase 0/1/2/3/4 已完成，下一步为 Phase 5 UI 与根生命周期
+状态：实施中；Phase 0/1/2/3/4/5 已完成，下一步为 Phase 6 MC2/BoneCloth 目录归并
 
 范围：顶层 `PhysicsTools` 持有的持久物理属性、注册生命周期、面板、操作器、碰撞预览和 MeshCloth Blender I/O；后续把 MC2/BoneCloth 包并入 `physicsWorld`。
 
@@ -396,3 +396,22 @@ Phase 4 第二刀已关闭：
 - MC2 scene parity 两种碰撞模式保持通过。
 
 Phase 4 已完成。下一步进入 Phase 5：迁移 PhysicsTools panel/operator/collision preview 与 Scene UI state，建立 `physicsWorld.blender` 根注册入口并轻量化 `OmniNode.__init__`。
+
+## 2026-07-10 Phase 5 实施记录
+
+已完成：
+
+- panel、operator、collision preview、UI utils 与 10 个稳定 Scene RNA 全部迁入 `physicsWorld.ui`；UI binding 作为 `physics_ui` domain 依赖 collision/rigid/mesh_cloth。
+- 新增 `physicsWorld.blender` 唯一根生命周期；HoTools 根插件直接调用它，不再导入 PhysicsTools。
+- `OmniNode.__init__` 改为惰性加载 `OmniNodeRegister/OmniNodeTree` 并增加状态守卫；OmniNode 关闭时插件 enable/disable 不加载整套节点、Native 与节点 GPU 模块。
+- 删除只剩兼容适配的 `PhysicsTools` 目录；Python 运行时代码中的 `PhysicsTools` 引用为零。
+- 更新 rewind 夹具到 canonical Rigid property owner，并同步现行 world result API。
+
+验证：
+
+- property registry/schema/RNA/`.blend` roundtrip：`7/7`
+- Physics World Blender/UI 两轮 register/unregister：通过，domain 顺序 `collision -> rigid -> mesh_cloth -> physics_ui`
+- SpringBone `36/36`、Rigid/Jolt `24/24`、MC2 scene parity mode 1/2、rewind/same-frame/prune：全部通过
+- 隐藏的真实 Blender `addon_enable/addon_disable("HoTools")`：退出码 0；PhysicsTools 未加载，OmniNodeRegister 在功能关闭时未加载，所有 Object/Bone/Scene RNA 注销完整
+
+Phase 5 已完成。下一步进入 Phase 6：把 `physicsMC2MeshCloth` 与 `physicsMC2BoneCloth` 归并到 `physicsWorld/mesh_cloth/mc2` 和 `physicsWorld/bone_cloth/mc2`，按包逐个更新 descriptor、测试与 import，不保留长期包别名。

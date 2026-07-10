@@ -35,7 +35,6 @@ for package_name, package_path in (
     ("HoTools.OmniNode.NodeTree", NODETREE),
     ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
     ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PW_ROOT),
-    ("HoTools.PhysicsTools", os.path.join(HOTOOLS, "PhysicsTools")),
 ):
     module = types.ModuleType(package_name)
     module.__path__ = [package_path]
@@ -43,8 +42,9 @@ for package_name, package_path in (
     sys.modules[package_name] = module
 
 
-physics_property = importlib.import_module("HoTools.PhysicsTools.physicsProperty")
-physics_utils = importlib.import_module("HoTools.PhysicsTools.physicsUtils")
+physics_utils = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.ui.utils"
+)
 collision_property = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.collision.properties"
 )
@@ -201,10 +201,6 @@ def test_collision_component_owns_shared_capabilities():
     assert spring is not None
     assert spring.get("capabilities") == {}
     assert spring.get("consumes_capabilities") == ["bone_collision"]
-    assert physics_property.PG_Hotools_ObjectCollision is collision_property.PG_Hotools_ObjectCollision
-    assert physics_property.PG_Hotools_MeshCollision is mesh_property.PG_Hotools_MeshCollision
-    assert physics_property.PG_Hotools_RigidBody is rigid_property.PG_Hotools_RigidBody
-    assert physics_property.PG_Hotools_RigidConstraint is rigid_property.PG_Hotools_RigidConstraint
     assert rigid_property.PG_Hotools_RigidBody.__module__.endswith("physicsWorld.rigid.properties")
     assert rigid_property.PG_Hotools_RigidConstraint.__module__.endswith("physicsWorld.rigid.properties")
     assert physics_utils._COLLISION_GROUP_COUNT == collision_groups.COLLISION_GROUP_COUNT
