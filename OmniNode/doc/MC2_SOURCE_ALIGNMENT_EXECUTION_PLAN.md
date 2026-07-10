@@ -6,6 +6,8 @@
 
 源码基线：`D:\Unity_Fork\MagicaCloth2`，MagicaCloth2 2.18.1，commit `418f89ff31a45bb4b2336641ad5907a1110eabea`。
 
+S1 的逐字段 producer/consumer 记录见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
+
 本文回答“下一步先查什么、冻结什么契约、通过什么门槛后才能写代码”。物理世界长期架构由 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 定义，当前落地状态由 `PHYSICS_WORLD_IMPLEMENTATION_STATUS.md` 记录。`MC2_DESIGN_AND_WORKSHEET.md` 只保留旧 MeshCloth 迁移审计、公式参考和历史踩坑，不再决定新 `physicsWorld.mc2` 的实现顺序或数据结构。
 
 ## 核心结论
@@ -97,6 +99,8 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 ### S1 源码数据流审计
 
 目标：从 setup 输入一直追踪到 constraint data 和运行时 consumer，不先设计 HoTools class。
+
+当前进度：Bone connection、Selection/baseline、Distance/Bending 三张 worksheet 已完成第一轮审计；Inertia、particle registration/reset 和 output mapping 尚未完成。
 
 顺序：
 
@@ -203,10 +207,10 @@ S1 开始后，每个要迁移的数据块都按同一个 worksheet 记录：
 
 ## 下一步
 
-下一轮不继续写 B4 solver 代码。先完成 S1 的前三张 worksheet：
+不继续写 B4 solver 代码。S1 的前三张 worksheet 已记录在 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`：
 
 1. Bone connection mode 到最终 lines/triangles 的完整生成规则；
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-三张表审查通过后，再决定当前 B4 工作区改动是拆分重写还是整体移除。
+接下来为三张表定义可执行 golden fixture 格式，反审计已提交 B1-B3 的字段边界，并补齐 Inertia、particle registration/reset 和 output mapping worksheet。完成这些工作后，再决定当前 B4 工作区改动是拆分重写还是整体移除。
