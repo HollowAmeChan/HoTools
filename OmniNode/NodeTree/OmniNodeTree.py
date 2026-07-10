@@ -8,6 +8,7 @@ from .OmniExecutor import OmniExecutor
 from .OmniIR import SubtreeCall, BatchSubtreeCall
 from .OmniDebug import OmniDebug
 from . import OmniNodeDraw
+from . import OmniRuntimeState
 from .OmniNodeOperator import (
     HO_UL_GraphNodeIO,
     OP_IOItemAdd,
@@ -251,6 +252,9 @@ class OmniNodeTree(NodeTree):
         compiled = OmniCompiler.compile(self, debug=debug_enabled)
 
         _COMPILED_TREE_CACHE[cache_key] = compiled
+        # A successful recompile is the runtime-state boundary for this root tree.
+        # Cache hits and failed compiles leave the committed runtime state intact.
+        OmniRuntimeState.clear_root_tree(self)
 
         if debug_enabled:
             print("\n".join(OmniDebug.format_runtime_header(self.name)))

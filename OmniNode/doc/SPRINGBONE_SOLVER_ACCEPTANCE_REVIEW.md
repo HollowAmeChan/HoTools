@@ -2,7 +2,7 @@
 
 日期：2026-07-10
 
-基线：`main@4dc9c78` 加本轮审查修复
+基线：`main@b78d783` 加本轮审查修复
 
 环境：Blender 4.5.0 / CPython 3.11 / Windows / Release native backend
 
@@ -12,9 +12,8 @@
 
 阻塞项：
 
-1. `implicit_objects` 缺少注册源租约或集合替换语义；删除注册节点或更换 stable id 后，旧链/覆写可能继续留在 world。
-2. 骨骼碰撞覆写的 `length / offset / primary_collision_group` 尚未进入实际 bone collider snapshot，只进入 resolver/debug；不能计为物理功能通过。
-3. bake/export 还没有可重复烘焙与导出闭环。
+1. 骨骼碰撞覆写的 `length / offset / primary_collision_group` 尚未进入实际 bone collider snapshot，只进入 resolver/debug；不能计为物理功能通过。
+2. bake/export 还没有可重复烘焙与导出闭环。
 
 ## 本轮代码审查
 
@@ -57,11 +56,11 @@
 
 最终纯 envelope 实现下，128 骨总耗时中位数稳定在 `2.347-2.395 ms`，旧路径为 `2.158-2.180 ms`，三轮独立 Blender 进程倍率为 `1.079x-1.099x`，已通过 `<= 1.15x` 门槛。
 
-#### P1：隐式对象会残留
+#### 已解除：隐式对象残留
 
-`PhysicsWorldCache.append_implicit_object()` 只按 `tag + stable_id` 更新或追加；SpringBone chain/override 注册没有“本注册源本帧完整集合”的结束信号，也没有删除未再次声明的旧 stable id。当前 producer 又是域级常量，不能安全区分多个注册节点。
+采用 OmniNode 根树级生命周期取舍，不为注册节点增加 source lease。注册节点没有 `always_run`，输入未变时由懒求值跳过，当前编译图内的 registry 持续复用；一次真正的编译成功后，`OmniNodeTree.compile_cached()` 清空该根树全部 runtime cache，active 注册节点在新图首次运行时重新填充 registry。
 
-验收所需设计：每个注册节点提供稳定 `source_id`，一次执行提交完整 stable-id 集合；world 对该 source 做 mark-and-sweep。不能用全 tag 清理，否则多个注册节点会互相删除。
+因此删除、静音、改接注册节点或改变 stable id 后，只要成功重编译，旧 world、旧 implicit entry、solver slot 和 native context 会一起 dispose；其他根树不受影响。编译缓存命中不会清理，编译失败也保留旧 runtime 状态。框架回归 3/3 覆盖成功编译、缓存命中和编译失败边界，SpringBone 现有 cache dispose 回归覆盖 world 内部 registry/slot/native 清理。
 
 #### P1：骨骼碰撞字段只部分落地
 
@@ -151,8 +150,8 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 | C-07 | Bone profile | offset | 改变真实 bone collider 中心 | BLOCKED |
 | C-08 | Bone profile | primary_collision_group | 改变真实 bone collider group | BLOCKED |
 | C-09 | Bone profile | override disabled | 回退 legacy profile | PASS |
-| C-10 | Registry | 删除/改名注册链 | 旧 stable id 不再被 solver 消费 | BLOCKED |
-| C-11 | Registry | 删除 override 注册节点 | 下一帧回退 legacy | BLOCKED |
+| C-10 | Registry | 删除/改名注册链并重编译 | 旧 stable id 不再被 solver 消费 | PASS |
+| C-11 | Registry | 删除 override 注册节点并重编译 | 新图首次运行回退 legacy | PASS |
 | W-01 | World collider | sphere | snapshot -> C++，尾端推出 | PASS |
 | W-02 | World collider | capsule | snapshot -> C++，尾端推出 | PASS |
 | W-03 | World collider | plane | snapshot -> C++，尾端推出 | PASS |
@@ -185,13 +184,13 @@ $env:SPRING_BENCH_COLLIDERS='0' # 设为 32 可复现 collider 矩阵
 ## 已执行回归
 
 - Blender SpringBone 集成：27/27 通过。
+- OmniNode 编译/runtime cache 生命周期：3/3 通过；覆盖成功编译仅清当前根树、编译缓存命中保留运行态、编译失败保留运行态和旧编译结果。
 - Native 全套：17 个测试文件，0 skipped，0 failed。
 - SpringBone legacy/context 参数矩阵：4 组、每组 6 帧，误差阈值 `2e-5`。
 - Release py311 native 重新编译成功。
 
 ## 下一验收批次
 
-1. 为 implicit object 注册引入 node/source lease，并补 C-10/C-11。
-2. 决定 `length/offset/primary_collision_group` 是本期实现 bone collider snapshot，还是从当前节点 UI 暂时隐藏。
-3. 补同骨架多链、分叉、拓扑热改、运动 collider、soak 和 py313。
-4. 落地 bake/export，再做最终 solver 验收。
+1. 决定 `length/offset/primary_collision_group` 是本期实现 bone collider snapshot，还是从当前节点 UI 暂时隐藏。
+2. 补同骨架多链、分叉、拓扑热改、运动 collider、soak 和 py313。
+3. 落地 bake/export，再做最终 solver 验收。

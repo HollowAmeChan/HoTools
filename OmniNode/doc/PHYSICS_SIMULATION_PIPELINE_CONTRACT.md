@@ -302,7 +302,7 @@ debug_markers
 
 | 通道 | 用途 | 生命周期 | 允许谁写 | 允许谁读 |
 |---|---|---|---|---|
-| `implicit_objects` | 持久懒更新的隐式物理对象，例如 VRM 骨链对象、批量生成约束、solver 参数对象 | 跨帧，Begin 不清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
+| `implicit_objects` | 持久懒更新的隐式物理对象，例如 VRM 骨链对象、批量生成约束、solver 参数对象 | 当前已编译根树内跨帧；Begin 不清空，成功重编译时清空 | 属性/注册/生成节点 | 声明消费该 tag 的 solver |
 | `exchange` | 当前图执行内的命令、事件、临时共享数据，例如 force/impulse、临时碰撞代理 | frame / until_next_begin | solver 或命令节点 | 下游声明消费 channel 的 solver |
 | `result_streams` | solver 输出的本帧纯结果快照，例如 transform、pose matrix、contact event | 当前图执行 | solver | writeback、debug、export、下游 solver |
 | `solver_slots` | solver 私有状态和 native context | 跨帧，归属单个 solver | 所属 solver | 只能所属 solver 读写，debug 只读摘要 |
@@ -335,10 +335,11 @@ debug_markers
 - `stable_id` 是 registry 内部去重/替换用的稳定对象 ID，不作为用户 socket 暴露。相同 tag + stable_id 表示更新同一个隐式对象。
 - `signature` 必须覆盖影响 solver spec / topology / config / param 的输入。只有 `signature` 或 `enabled` 变化时递增 `version`。
 - `dirty=True` 只表示该 entry 相对上一轮写入发生了设置变化，不表示本帧必须 step。
-- `enabled=False` 是禁用该隐式对象，不是 no-op。删除注册节点不会自动清除旧 entry；需要关闭时应显式写 disabled entry，或执行 Cache Delete / clear runtime cache。
+- `enabled=False` 是禁用该隐式对象，不是 no-op。在当前已编译图持续运行期间，未被再次写入的旧 entry 仍然保留；需要不重编译就立即关闭时，应显式写 disabled entry，或执行 Cache Delete / clear runtime cache。删除、静音、改接或改名注册节点后，成功重编译会统一清空根树 runtime cache，旧 entry 不会进入新图，因此不再额外实现 source lease / mark-and-sweep。
 - `Physics World Begin` 不清空 `implicit_objects`。world owner 被 replace 时应浅拷贝对象；solver slot 和 native state 仍按 generation 冷启动。
 - 注册节点必须接收并返回同一个 `PhysicsWorldCache`，只调用 `world.append_implicit_object()`，不得直接创建 solver slot、不得写 `world.exchange`、不得写 Blender。
 - 注册节点默认不标记 `always_run=True`。即使因节点图依赖被执行，语义上也只是按 stable_id/signature 更新 registry；输入未变时不产生新的 solver 重建。
+- 成功重编译是统一物理世界的冷启动边界：框架清空根树 runtime cache，active 注册节点在新图第一次运行时重新填充 registry；编译缓存命中和编译失败都不清理。
 - solver 在 Prepare 阶段读取自己声明的 tag，按 `version/signature` 做懒重建或参数热更新。solver step 不应该再暴露大量同类对象 socket。
 - 如果多个 writer 写同一个 tag + stable_id，线性 world 链路中后写者覆盖前写者。多个对象天然 append 到同一个 tag 下，solver 直接 collect all。
 - `implicit_objects` 不用于表达一次性命令。force、impulse、activate、sensor event、contact event 等仍走 `exchange` 或 `result_streams`。
