@@ -1,0 +1,103 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SIX_DOF-001",
+  "title": "SixDOF 六轴独立自由、固定与限制",
+  "source": "jolt_unit_test:SixDOFConstraintTests",
+  "tags": ["p0", "constraint", "six-dof", "limit"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "translate_x",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.2, 0.15]},
+      "position": [-6.0, 0.0, 0.0],
+      "linear_velocity": [2.0, 3.0, 4.0],
+      "angular_velocity": [1.0, 2.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "rotate_z",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.2, 0.15]},
+      "position": [-2.0, 0.0, 0.0],
+      "angular_velocity": [1.0, 2.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "translate_limit_x",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.2, 0.15]},
+      "position": [2.0, 0.0, 0.0],
+      "linear_velocity": [2.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "rotate_limit_z",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.3, 0.2, 0.15]},
+      "position": [6.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 0.0, 3.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "free_translation_x",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "translate_x",
+      "anchor_position": [-6.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FREE", "FIXED", "FIXED", "FIXED", "FIXED", "FIXED"]
+    },
+    {
+      "id": "free_rotation_z",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "rotate_z",
+      "anchor_position": [-2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FIXED", "FIXED", "FIXED", "FIXED", "FIXED", "FREE"]
+    },
+    {
+      "id": "limited_translation_x",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "translate_limit_x",
+      "anchor_position": [2.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["LIMITED", "FIXED", "FIXED", "FIXED", "FIXED", "FIXED"],
+      "six_dof_limit_min": [-0.3, -1.0, -1.0, -3.141592653589793, -3.141592653589793, -3.141592653589793],
+      "six_dof_limit_max": [0.3, 1.0, 1.0, 3.141592653589793, 3.141592653589793, 3.141592653589793]
+    },
+    {
+      "id": "limited_rotation_z",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "rotate_limit_z",
+      "anchor_position": [6.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["FIXED", "FIXED", "FIXED", "FIXED", "FIXED", "LIMITED"],
+      "six_dof_limit_min": [-1.0, -1.0, -1.0, -3.141592653589793, -3.141592653589793, -0.4],
+      "six_dof_limit_max": [1.0, 1.0, 1.0, 3.141592653589793, 3.141592653589793, 0.4],
+      "six_dof_swing_type": "PYRAMID"
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "free_translation_x", "type": "SIX_DOF", "current_value_kind": "six_dof", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "free_rotation_z", "type": "SIX_DOF", "current_value_kind": "six_dof", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "limited_translation_x", "type": "SIX_DOF", "current_value_kind": "six_dof", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "limited_rotation_z", "type": "SIX_DOF", "current_value_kind": "six_dof", "enabled": true},
+    {"kind": "linear_axis_only", "body": "translate_x", "frame": 60, "axis": "X", "off_axis_abs": 0.0005, "displacement_min": 1.5, "rotation_abs": 0.0005},
+    {"kind": "rotation_axis_only", "body": "rotate_z", "frame": 60, "axis": "Z", "off_axis_abs": 0.0005, "angle_min": 2.5},
+    {"kind": "body_axis_range", "body": "translate_limit_x", "frame": 120, "field": "position", "axis": "X", "minimum": 2.295, "maximum": 2.305},
+    {"kind": "constraint_value_near", "constraint": "limited_rotation_z", "frame": 120, "expected": 0.4, "value_abs": 0.004, "current_value_kind": "six_dof"},
+    {"kind": "finite_all"}
+  ]
+}

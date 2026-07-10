@@ -485,7 +485,9 @@ def _assert_constraint_anchor_coincidence(
 ) -> None:
     constraint_id = _constraint_id(parameters)
     spec = fixture.constraints_by_id.get(constraint_id)
-    if spec is None or spec.type not in {"FIXED", "POINT", "HINGE", "CONE", "SWING_TWIST"}:
+    if spec is None or spec.type not in {
+        "FIXED", "POINT", "HINGE", "CONE", "SWING_TWIST", "SIX_DOF",
+    }:
         raise FixtureError(
             f"anchor coincidence requires fixed-point constraint: {constraint_id}"
         )

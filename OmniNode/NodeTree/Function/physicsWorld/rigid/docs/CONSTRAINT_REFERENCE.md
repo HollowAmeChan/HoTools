@@ -78,7 +78,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 | Jolt 类型 | 能力 | 接入前置 |
 |---|---|---|
-| SixDOF | 六轴分别 Free/Fixed/Limited、每轴 motor/friction | 轴数组 schema、per-axis result 与调试器 |
+| SixDOF | 六轴分别 Free/Fixed/Limited、每轴 motor/friction | native S1 已接六轴模式与范围；公共 spec、per-axis result、motor/friction 与调试器待接 |
 | Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
 | Gear | 连接两个 hinge 的齿轮比 | constraint-to-constraint 引用拓扑 |
 | RackAndPinion | hinge 与 slider 的线性/角度比例 | constraint-to-constraint 引用拓扑 |

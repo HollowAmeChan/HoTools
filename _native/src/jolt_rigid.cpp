@@ -58,6 +58,7 @@ JPH_SUPPRESS_WARNINGS
 #define Ellipse class JPH::Ellipse
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #undef Ellipse
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -924,6 +925,10 @@ public:
         const std::string&        twist_motor_state_str,
         const std::array<float,3>& swing_twist_target_angular_velocity,
         const std::array<float,4>& swing_twist_target_orientation_wxyz,
+        const std::array<std::string,6>& six_dof_axis_modes,
+        const std::array<float,6>& six_dof_limit_min,
+        const std::array<float,6>& six_dof_limit_max,
+        const std::string&        six_dof_swing_type_str,
         float                     cone_half_angle,
         const std::string&        swing_type_str,
         float                     swing_normal_half_angle,
@@ -1151,6 +1156,42 @@ public:
             }
             swing_twist->SetTargetOrientationCS(target_orientation);
             c = static_cast<TwoBodyConstraint*>(swing_twist);
+        } else if (constraint_type_str == "SIX_DOF") {
+            if (six_dof_swing_type_str != "CONE" && six_dof_swing_type_str != "PYRAMID")
+                throw std::invalid_argument("不支持的 SixDOF 摆动边界: " + six_dof_swing_type_str);
+            SixDOFConstraintSettings s;
+            apply_common(s);
+            s.mPosition1 = pos_a;
+            s.mPosition2 = pos_b;
+            s.mAxisX1 = rot_a.RotateAxisX();
+            s.mAxisX2 = rot_b.RotateAxisX();
+            s.mAxisY1 = rot_a.RotateAxisY();
+            s.mAxisY2 = rot_b.RotateAxisY();
+            s.mSwingType = six_dof_swing_type_str == "PYRAMID"
+                ? ESwingType::Pyramid
+                : ESwingType::Cone;
+            for (int index = 0; index < SixDOFConstraintSettings::EAxis::Num; ++index) {
+                auto axis = static_cast<SixDOFConstraintSettings::EAxis>(index);
+                const std::string& mode = six_dof_axis_modes[index];
+                if (mode == "FREE") {
+                    s.MakeFreeAxis(axis);
+                } else if (mode == "FIXED") {
+                    s.MakeFixedAxis(axis);
+                } else if (mode == "LIMITED") {
+                    float minimum = six_dof_limit_min[index];
+                    float maximum = six_dof_limit_max[index];
+                    if (index >= SixDOFConstraintSettings::EAxis::RotationX) {
+                        minimum = std::clamp(minimum, -JPH_PI, JPH_PI);
+                        maximum = std::clamp(maximum, -JPH_PI, JPH_PI);
+                    }
+                    if (minimum >= maximum)
+                        throw std::invalid_argument("SixDOF LIMITED 轴要求 min < max");
+                    s.SetLimitedAxis(axis, minimum, maximum);
+                } else {
+                    throw std::invalid_argument("不支持的 SixDOF 轴模式: " + mode);
+                }
+            }
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
@@ -1260,6 +1301,26 @@ public:
             Vec3 motor = constraint->GetTotalLambdaMotor();
             lambda_motor = (std::max)({
                 std::abs(motor.GetX()), std::abs(motor.GetY()), std::abs(motor.GetZ()),
+            });
+        } else if (record.constraint_type == "SIX_DOF") {
+            auto* constraint = static_cast<SixDOFConstraint*>(base);
+            current_value_kind = "six_dof";
+            Quat rotation = constraint->GetRotationInConstraintSpace();
+            current_value = 2.0f * std::acos(std::clamp(std::abs(rotation.GetW()), 0.0f, 1.0f));
+            Vec3 p = constraint->GetTotalLambdaPosition();
+            Vec3 r = constraint->GetTotalLambdaRotation();
+            lambda_position = {p.GetX(), p.GetY(), p.GetZ()};
+            lambda_rotation = {r.GetX(), r.GetY(), r.GetZ()};
+            lambda_limit = (std::max)({
+                std::abs(p.GetX()), std::abs(p.GetY()), std::abs(p.GetZ()),
+                std::abs(r.GetX()), std::abs(r.GetY()), std::abs(r.GetZ()),
+            });
+            Vec3 motor_translation = constraint->GetTotalLambdaMotorTranslation();
+            Vec3 motor_rotation = constraint->GetTotalLambdaMotorRotation();
+            lambda_motor = (std::max)({
+                std::abs(motor_translation.GetX()), std::abs(motor_translation.GetY()),
+                std::abs(motor_translation.GetZ()), std::abs(motor_rotation.GetX()),
+                std::abs(motor_rotation.GetY()), std::abs(motor_rotation.GetZ()),
             });
         } else if (record.constraint_type == "POINT") {
             auto* constraint = static_cast<PointConstraint*>(base);
@@ -1628,6 +1689,10 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("twist_motor_state") = "OFF",
              nb::arg("swing_twist_target_angular_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("swing_twist_target_orientation_wxyz") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_axis_modes") = std::array<std::string,6>{"FREE", "FREE", "FREE", "FREE", "FREE", "FREE"},
+             nb::arg("six_dof_limit_min") = std::array<float,6>{-1.0f, -1.0f, -1.0f, -JPH_PI, -JPH_PI, -JPH_PI},
+             nb::arg("six_dof_limit_max") = std::array<float,6>{1.0f, 1.0f, 1.0f, JPH_PI, JPH_PI, JPH_PI},
+             nb::arg("six_dof_swing_type") = "PYRAMID",
              nb::arg("cone_half_angle") = 0.0f,
              nb::arg("swing_type") = "CONE",
              nb::arg("swing_normal_half_angle") = JPH_PI,
@@ -1642,7 +1707,7 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("anchor_rot_wxyz_a") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("anchor_pos_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_b") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
-             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST），返回 handle。\n"
+             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST/SIX_DOF），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
         .def("remove_constraint", &JoltWorld::remove_constraint,

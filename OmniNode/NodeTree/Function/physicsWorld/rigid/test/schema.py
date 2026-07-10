@@ -331,6 +331,10 @@ class ConstraintSpec:
     twist_motor_state: str
     swing_twist_target_angular_velocity: tuple[float, float, float]
     swing_twist_target_orientation_wxyz: tuple[float, float, float, float]
+    six_dof_axis_modes: tuple[str, str, str, str, str, str]
+    six_dof_limit_min: tuple[float, float, float, float, float, float]
+    six_dof_limit_max: tuple[float, float, float, float, float, float]
+    six_dof_swing_type: str
     cone_half_angle: float
     swing_type: str
     swing_normal_half_angle: float
@@ -359,6 +363,8 @@ class ConstraintSpec:
             "swing_motor_state", "twist_motor_state",
             "swing_twist_target_angular_velocity",
             "swing_twist_target_orientation_wxyz",
+            "six_dof_axis_modes", "six_dof_limit_min", "six_dof_limit_max",
+            "six_dof_swing_type",
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
             "disable_collisions", "distance_min", "distance_max",
@@ -366,6 +372,7 @@ class ConstraintSpec:
         constraint_type = _string(data.get("type"), f"{path}.type").upper()
         if constraint_type not in {
             "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
+            "SIX_DOF",
         }:
             raise FixtureError(f"{path}.type is unsupported: {constraint_type}")
         body_a = _string(data.get("body_a"), f"{path}.body_a")
@@ -383,6 +390,13 @@ class ConstraintSpec:
         use_separate = _bool(
             data.get("use_separate_anchor_frames", False),
             f"{path}.use_separate_anchor_frames",
+        )
+        raw_axis_modes = data.get("six_dof_axis_modes", ("FREE",) * 6)
+        if not isinstance(raw_axis_modes, (list, tuple)) or len(raw_axis_modes) != 6:
+            raise FixtureError(f"{path}.six_dof_axis_modes must contain 6 values")
+        six_dof_axis_modes = tuple(
+            _string(value, f"{path}.six_dof_axis_modes[{index}]").upper()
+            for index, value in enumerate(raw_axis_modes)
         )
         result = cls(
             id=_string(data.get("id"), f"{path}.id"),
@@ -477,6 +491,18 @@ class ConstraintSpec:
                 data.get("swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0)),
                 4, f"{path}.swing_twist_target_orientation_wxyz",
             ),
+            six_dof_axis_modes=six_dof_axis_modes,
+            six_dof_limit_min=_vec(
+                data.get("six_dof_limit_min", (-1.0, -1.0, -1.0, -math.pi, -math.pi, -math.pi)),
+                6, f"{path}.six_dof_limit_min",
+            ),
+            six_dof_limit_max=_vec(
+                data.get("six_dof_limit_max", (1.0, 1.0, 1.0, math.pi, math.pi, math.pi)),
+                6, f"{path}.six_dof_limit_max",
+            ),
+            six_dof_swing_type=_string(
+                data.get("six_dof_swing_type", "PYRAMID"), f"{path}.six_dof_swing_type",
+            ).upper(),
             cone_half_angle=_number(
                 data.get("cone_half_angle", 0.0), f"{path}.cone_half_angle",
             ),
@@ -526,6 +552,24 @@ class ConstraintSpec:
         ):
             if state not in {"OFF", "VELOCITY", "POSITION"}:
                 raise FixtureError(f"{path}.{field_name} is unsupported: {state}")
+        for index, mode in enumerate(result.six_dof_axis_modes):
+            if mode not in {"FREE", "FIXED", "LIMITED"}:
+                raise FixtureError(
+                    f"{path}.six_dof_axis_modes[{index}] is unsupported: {mode}"
+                )
+            if mode == "LIMITED" and result.six_dof_limit_min[index] >= result.six_dof_limit_max[index]:
+                raise FixtureError(
+                    f"{path} SixDOF LIMITED axis {index} requires min < max"
+                )
+        if result.six_dof_swing_type not in {"CONE", "PYRAMID"}:
+            raise FixtureError(
+                f"{path}.six_dof_swing_type is unsupported: {result.six_dof_swing_type}"
+            )
+        for index in range(3, 6):
+            if not (-math.pi <= result.six_dof_limit_min[index] <= math.pi):
+                raise FixtureError(f"{path}.six_dof_limit_min[{index}] must be in [-pi, pi]")
+            if not (-math.pi <= result.six_dof_limit_max[index] <= math.pi):
+                raise FixtureError(f"{path}.six_dof_limit_max[{index}] must be in [-pi, pi]")
         if result.swing_type not in {"CONE", "PYRAMID"}:
             raise FixtureError(f"{path}.swing_type is unsupported: {result.swing_type}")
         if result.solver_velocity_steps > 255 or result.solver_position_steps > 255:
