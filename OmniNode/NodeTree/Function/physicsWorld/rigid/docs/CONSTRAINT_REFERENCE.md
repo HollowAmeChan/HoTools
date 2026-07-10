@@ -79,7 +79,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 每个轴都有独立的 `six_dof_*_motor_state`，可选择 `OFF / VELOCITY / POSITION`。三个平移轴分别读取 `six_dof_target_velocity` 或 `six_dof_target_position` 的 XYZ 分量；三个旋转轴分别读取 `six_dof_target_angular_velocity` 的 XYZ 分量，位置 Motor 共用 `six_dof_target_rotation` 目标姿态。六轴共用 `motor_frequency`、`motor_damping`，平移轴使用 `motor_force_limit`，旋转轴使用 `motor_torque_limit`。
 
-显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。逐轴 spring 和逐轴 current-value result 尚未接入。
+显式 Empty 属性、生成约束节点、`ConstraintSpec`、Jolt adapter、state/lambda、逐轴 friction、逐轴 motor 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。native S1 已按 Jolt 官方公式验收三个平移轴的 limit spring，但公共属性尚未接入；Jolt 原生不支持 SixDOF 旋转软限制。逐轴 current-value result 也尚未接入。
 
 ## 通用参数
 

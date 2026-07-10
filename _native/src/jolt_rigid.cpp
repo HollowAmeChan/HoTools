@@ -930,6 +930,8 @@ public:
         const std::array<float,6>& six_dof_limit_max,
         const std::string&        six_dof_swing_type_str,
         const std::array<float,6>& six_dof_max_friction,
+        const std::array<float,3>& six_dof_limit_spring_frequency,
+        const std::array<float,3>& six_dof_limit_spring_damping,
         const std::array<std::string,6>& six_dof_motor_states,
         const std::array<float,3>& six_dof_target_velocity,
         const std::array<float,3>& six_dof_target_angular_velocity,
@@ -1191,12 +1193,19 @@ public:
                         minimum = std::clamp(minimum, -JPH_PI, JPH_PI);
                         maximum = std::clamp(maximum, -JPH_PI, JPH_PI);
                     }
-                    if (minimum >= maximum)
-                        throw std::invalid_argument("SixDOF LIMITED 轴要求 min < max");
+                    if (minimum > maximum)
+                        throw std::invalid_argument("SixDOF LIMITED 轴要求 min <= max");
                     s.SetLimitedAxis(axis, minimum, maximum);
                 } else {
                     throw std::invalid_argument("不支持的 SixDOF 轴模式: " + mode);
                 }
+            }
+            for (int index = 0; index < SixDOFConstraintSettings::EAxis::NumTranslation; ++index) {
+                s.mLimitsSpringSettings[index] = SpringSettings(
+                    ESpringMode::FrequencyAndDamping,
+                    (std::max)(0.0f, six_dof_limit_spring_frequency[index]),
+                    (std::max)(0.0f, six_dof_limit_spring_damping[index])
+                );
             }
             for (int index = 0; index < SixDOFConstraintSettings::EAxis::Num; ++index) {
                 MotorSettings& motor = s.mMotorSettings[index];
@@ -1753,6 +1762,8 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("six_dof_limit_max") = std::array<float,6>{1.0f, 1.0f, 1.0f, JPH_PI, JPH_PI, JPH_PI},
              nb::arg("six_dof_swing_type") = "PYRAMID",
              nb::arg("six_dof_max_friction") = std::array<float,6>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_limit_spring_frequency") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("six_dof_limit_spring_damping") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("six_dof_motor_states") = std::array<std::string,6>{"OFF", "OFF", "OFF", "OFF", "OFF", "OFF"},
              nb::arg("six_dof_target_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("six_dof_target_angular_velocity") = std::array<float,3>{0.0f, 0.0f, 0.0f},

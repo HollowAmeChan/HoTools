@@ -796,6 +796,61 @@ def _assert_constraint_lambda_active(
         )
 
 
+def _assert_linear_implicit_spring_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """按 Jolt 隐式欧拉公式复算单个世界坐标轴上的线性弹簧轨迹。"""
+    body_id = _body_id(parameters)
+    body_spec = fixture.bodies_by_id.get(body_id)
+    if body_spec is None:
+        raise FixtureError(f"linear spring assertion references unknown body: {body_id}")
+    axis = _axis_index(parameters.get("axis"))
+    frames = _frames_by_number(trace)
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 0.0))
+    if start_frame not in frames:
+        raise FixtureError(
+            f"linear_implicit_spring_trajectory requires sampled start frame {start_frame}"
+        )
+    position = float(_body_at(frames[start_frame], body_id)["position"][axis])
+    target = _number(parameters.get("target"), "target", 0.0)
+    velocity = _number(
+        parameters.get("initial_velocity"), "initial_velocity",
+        float(body_spec.linear_velocity[axis]),
+    )
+    frequency = _number(parameters.get("frequency"), "frequency")
+    damping = _number(parameters.get("damping"), "damping")
+    tolerance = _number(parameters.get("position_abs"), "position_abs", 5.0e-5)
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    if frequency <= 0.0:
+        raise FixtureError("linear spring frequency must be > 0")
+    if damping < 0.0:
+        raise FixtureError("linear spring damping must be >= 0")
+
+    displacement = position - target
+    dt = fixture.world.dt
+    omega = 2.0 * math.pi * frequency
+    denominator = 1.0 + 2.0 * dt * damping * omega + dt * dt * omega * omega
+    sampled = {
+        number: frame for number, frame in frames.items()
+        if start_frame <= number <= end_frame
+    }
+    for frame_number in range(start_frame, end_frame + 1):
+        if frame_number in sampled:
+            actual = float(_body_at(sampled[frame_number], body_id)["position"][axis])
+            expected = target + displacement
+            if abs(actual - expected) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_id} linear spring position "
+                    f"{actual:.12g}, expected {expected:.12g} within {tolerance:g}"
+                )
+        if frame_number == end_frame:
+            break
+        velocity = (velocity - dt * omega * omega * displacement) / denominator
+        displacement += velocity * dt
+
+
 def _assert_angular_speed_trajectory(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
 ) -> None:
@@ -1246,6 +1301,9 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "linear_speed_trajectory": lambda spec: _assert_linear_speed_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "linear_implicit_spring_trajectory": lambda spec: _assert_linear_implicit_spring_trajectory(
             fixture, trace, spec.parameters,
         ),
         "constraint_lambda_active": lambda spec: _assert_constraint_lambda_active(

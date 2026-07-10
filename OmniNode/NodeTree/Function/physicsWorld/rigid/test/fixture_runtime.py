@@ -158,6 +158,8 @@ class NativeFixtureRuntime:
             six_dof_limit_max=constraint.six_dof_limit_max,
             six_dof_swing_type=constraint.six_dof_swing_type,
             six_dof_max_friction=constraint.six_dof_max_friction,
+            six_dof_limit_spring_frequency=constraint.six_dof_limit_spring_frequency,
+            six_dof_limit_spring_damping=constraint.six_dof_limit_spring_damping,
             six_dof_motor_states=constraint.six_dof_motor_states,
             six_dof_target_velocity=constraint.six_dof_target_velocity,
             six_dof_target_angular_velocity=constraint.six_dof_target_angular_velocity,

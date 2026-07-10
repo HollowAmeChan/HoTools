@@ -336,6 +336,8 @@ class ConstraintSpec:
     six_dof_limit_max: tuple[float, float, float, float, float, float]
     six_dof_swing_type: str
     six_dof_max_friction: tuple[float, float, float, float, float, float]
+    six_dof_limit_spring_frequency: tuple[float, float, float]
+    six_dof_limit_spring_damping: tuple[float, float, float]
     six_dof_motor_states: tuple[str, str, str, str, str, str]
     six_dof_target_velocity: tuple[float, float, float]
     six_dof_target_angular_velocity: tuple[float, float, float]
@@ -372,6 +374,7 @@ class ConstraintSpec:
             "six_dof_axis_modes", "six_dof_limit_min", "six_dof_limit_max",
             "six_dof_swing_type",
             "six_dof_max_friction",
+            "six_dof_limit_spring_frequency", "six_dof_limit_spring_damping",
             "six_dof_motor_states", "six_dof_target_velocity",
             "six_dof_target_angular_velocity", "six_dof_target_position",
             "six_dof_target_orientation_wxyz",
@@ -524,6 +527,14 @@ class ConstraintSpec:
                 data.get("six_dof_max_friction", (0.0,) * 6),
                 6, f"{path}.six_dof_max_friction",
             ),
+            six_dof_limit_spring_frequency=_vec(
+                data.get("six_dof_limit_spring_frequency", (0.0,) * 3),
+                3, f"{path}.six_dof_limit_spring_frequency",
+            ),
+            six_dof_limit_spring_damping=_vec(
+                data.get("six_dof_limit_spring_damping", (0.0,) * 3),
+                3, f"{path}.six_dof_limit_spring_damping",
+            ),
             six_dof_motor_states=six_dof_motor_states,
             six_dof_target_velocity=_vec(
                 data.get("six_dof_target_velocity", (0.0, 0.0, 0.0)),
@@ -595,9 +606,9 @@ class ConstraintSpec:
                 raise FixtureError(
                     f"{path}.six_dof_axis_modes[{index}] is unsupported: {mode}"
                 )
-            if mode == "LIMITED" and result.six_dof_limit_min[index] >= result.six_dof_limit_max[index]:
+            if mode == "LIMITED" and result.six_dof_limit_min[index] > result.six_dof_limit_max[index]:
                 raise FixtureError(
-                    f"{path} SixDOF LIMITED axis {index} requires min < max"
+                    f"{path} SixDOF LIMITED axis {index} requires min <= max"
                 )
         if result.six_dof_swing_type not in {"CONE", "PYRAMID"}:
             raise FixtureError(
@@ -605,6 +616,14 @@ class ConstraintSpec:
             )
         if any(value < 0.0 for value in result.six_dof_max_friction):
             raise FixtureError(f"{path}.six_dof_max_friction values must be >= 0")
+        if any(value < 0.0 for value in result.six_dof_limit_spring_frequency):
+            raise FixtureError(
+                f"{path}.six_dof_limit_spring_frequency values must be >= 0"
+            )
+        if any(value < 0.0 for value in result.six_dof_limit_spring_damping):
+            raise FixtureError(
+                f"{path}.six_dof_limit_spring_damping values must be >= 0"
+            )
         for index, state in enumerate(result.six_dof_motor_states):
             if state not in {"OFF", "VELOCITY", "POSITION"}:
                 raise FixtureError(
@@ -701,6 +720,7 @@ class AssertionSpec:
             "linear_axis_only", "cone_swing_limit",
             "constraint_value_in_range", "constraint_value_near",
             "implicit_spring_trajectory", "linear_speed_trajectory",
+            "linear_implicit_spring_trajectory",
             "constraint_lambda_active",
             "angular_speed_trajectory",
             "pair_axis_momentum_conserved", "pair_axis_speed_trajectory",
@@ -772,6 +792,10 @@ class AssertionSpec:
             "linear_speed_trajectory": {
                 "body", "axis", "target_velocity", "max_force", "velocity_abs",
                 "position_abs", "end_frame",
+            },
+            "linear_implicit_spring_trajectory": {
+                "body", "axis", "target", "initial_velocity", "frequency",
+                "damping", "position_abs", "start_frame", "end_frame",
             },
             "constraint_lambda_active": {
                 "constraint", "field", "min_abs", "start_frame", "end_frame",

@@ -1,0 +1,44 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SIX_DOF-004",
+  "title": "SixDOF 平移 X 软限制遵循 Jolt 隐式欧拉轨迹",
+  "source": "jolt_unit_test:TestSixDOFSpring",
+  "tags": ["p0", "constraint", "six-dof", "spring"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "spring_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [10.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "translation_x_spring",
+      "type": "SIX_DOF",
+      "body_a": "WORLD",
+      "body_b": "spring_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_position_b": [10.0, 0.0, 0.0],
+      "six_dof_axis_modes": ["LIMITED", "FREE", "FREE", "FREE", "FREE", "FREE"],
+      "six_dof_limit_min": [0.0, -1.0, -1.0, -3.141592653589793, -3.141592653589793, -3.141592653589793],
+      "six_dof_limit_max": [0.0, 1.0, 1.0, 3.141592653589793, 3.141592653589793, 3.141592653589793],
+      "six_dof_limit_spring_frequency": [2.0, 0.0, 0.0],
+      "six_dof_limit_spring_damping": [0.1, 0.0, 0.0]
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 3, 4, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "translation_x_spring", "type": "SIX_DOF", "current_value_kind": "six_dof", "enabled": true},
+    {"kind": "linear_implicit_spring_trajectory", "body": "spring_body", "axis": "X", "target": 0.0, "initial_velocity": 0.0, "frequency": 2.0, "damping": 0.1, "position_abs": 0.00003},
+    {"kind": "constraint_lambda_active", "constraint": "translation_x_spring", "field": "lambda_limit", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}
