@@ -4,7 +4,7 @@ physicsWorld.writeback — 物理写回算法
 包含所有物理写回类型的实现，与节点声明文件（nodes.py）分离。
 
 写回类型（对应三种偏移量语义，归零即复位）：
-  1. rigid_body_delta  → Object.delta_location / delta_rotation_euler
+  1. rigid_body_delta  → Object.delta_location / delta_rotation_euler|quaternion
   2. bone_transform    → PoseBone.matrix_basis
   3. gn_attribute      → 共享 mesh 顶点最终 offset
 
@@ -38,6 +38,7 @@ _TOUCHED_POSE_BONES_KEY  = "_writeback_touched_pose_bones"
 _TOUCHED_GN_OBJECTS_KEY  = "_writeback_touched_gn_objects"
 _CLEANUP_RESOURCE_KEY    = "_writeback_cleanup"
 _GN_DIAGNOSTICS_KEY      = "_writeback_gn_diagnostics"
+_EULER_ORDERS = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}
 
 
 class WritebackCleanupResource:
@@ -100,6 +101,7 @@ def _reset_rigid_objects(touched) -> None:
         try:
             obj.delta_location       = (0.0, 0.0, 0.0)
             obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+            obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
             obj.update_tag()
         except Exception:
             pass
@@ -180,6 +182,7 @@ def reset_rigid_body_deltas(world) -> None:
         try:
             obj.delta_location       = (0.0, 0.0, 0.0)
             obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+            obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
             updated.add(obj)
         except Exception as exc:
             slot.data["_writeback_error"] = f"reset delta: {exc}"
@@ -248,15 +251,30 @@ def writeback_rigid_body_deltas(world) -> int:
             jolt_pos = mathutils.Vector(pos_arr)
             obj.delta_location = jolt_pos - obj.location
 
-            # 旋转 delta：矩阵差值，精确支持所有欧拉序
+            # 旋转 delta：基础旋转可由 Euler / Quaternion / Axis-Angle 表达。
             q = mathutils.Quaternion((
                 float(rot_arr[0]), float(rot_arr[1]),
                 float(rot_arr[2]), float(rot_arr[3])
             ))
-            rest_rot  = obj.rotation_euler.to_matrix().to_4x4()
+            rotation_mode = str(getattr(obj, "rotation_mode", "XYZ") or "XYZ")
+            if rotation_mode == "QUATERNION":
+                rest_rot = obj.rotation_quaternion.to_matrix().to_4x4()
+            elif rotation_mode == "AXIS_ANGLE":
+                angle, axis_x, axis_y, axis_z = obj.rotation_axis_angle
+                axis = mathutils.Vector((axis_x, axis_y, axis_z))
+                if axis.length_squared <= 1.0e-20:
+                    axis = mathutils.Vector((0.0, 0.0, 1.0))
+                rest_rot = mathutils.Quaternion(axis, angle).to_matrix().to_4x4()
+            else:
+                rest_rot = obj.rotation_euler.to_matrix().to_4x4()
             jolt_rot  = q.to_matrix().to_4x4()
             delta_mat = rest_rot.inverted() @ jolt_rot
-            obj.delta_rotation_euler = delta_mat.to_euler(obj.rotation_mode)
+            if rotation_mode in {"QUATERNION", "AXIS_ANGLE"}:
+                obj.delta_rotation_euler = (0.0, 0.0, 0.0)
+                obj.delta_rotation_quaternion = delta_mat.to_quaternion()
+            else:
+                obj.delta_rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+                obj.delta_rotation_euler = delta_mat.to_euler(rotation_mode)
 
             touched.add(obj)    # 记录已写过 delta 的对象
             updated.add(obj)

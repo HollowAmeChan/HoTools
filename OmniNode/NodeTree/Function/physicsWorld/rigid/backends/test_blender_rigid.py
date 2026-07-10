@@ -5,8 +5,8 @@ test_blender_rigid.py — Jolt 刚体物理 Blender 无头集成测试
 import sys, os, importlib.util, types as _types
 
 # ── 路径根 ────────────────────────────────────────────────────────────────────
-_ADDONS   = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons"
-_HOTOOLS  = os.path.join(_ADDONS, "HoTools")
+_HOTOOLS  = os.path.abspath(os.path.join(os.path.dirname(__file__), *("..",) * 6))
+_ADDONS   = os.path.dirname(_HOTOOLS)
 _PY_LIB   = "py313" if sys.version_info >= (3, 13) else "py311"
 _JOLT_LIB = os.path.join(_HOTOOLS, "_Lib", _PY_LIB, "HotoolsPackage")
 _NT_DIR   = os.path.join(_HOTOOLS, "OmniNode", "NodeTree")

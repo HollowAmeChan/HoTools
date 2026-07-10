@@ -42,10 +42,17 @@
 - `compare_traces.py` 对 runner 间数值做结构化容差差分；
 - `_native/tests/test_jolt_semantic_matrix.py` 对全部 P0 执行 S1/S2 parity。
 
+当前切片（`blender_pipeline_v1`）：
+
+- 后台 Blender 从 `FREE-001` / `FRAME-002` 创建真实 RNA 对象和约束；
+- 跑 scope、world setting、solver result 和统一 writeback；
+- 验证 Quaternion 写回、same-frame、jump、reset 和 dispose；
+- 每次运行内置 S1/S3 tolerant parity，不以自身输出作为正确性 oracle。
+
 当前切片尚未实现：
 
 - Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
-- Blender 端到端 runner；
+- Blender 端到端 runner 的完整 P0 扩展；
 - 断裂语义、跨 ABI 报告和已批准 golden。
 
 ## 当前实施顺序
@@ -54,7 +61,7 @@
 
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
-3. 共用 fixture 的最小 Blender semantic runner；
+3. 共用 fixture 的最小 Blender semantic runner（2026-07-11 已完成，完整 P0 待扩展）；
 4. breakable、跨 ABI、overflow、soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
 
@@ -72,6 +79,13 @@
 ```powershell
 & 'D:\Blender\Blender 4.5\4.5\python\bin\python.exe' `
   run_adapter_semantics.py --tag p0 --repeat 2
+```
+
+运行最小后台 Blender semantic slice：
+
+```powershell
+& 'D:\Blender\Blender 4.5\blender.exe' --background --factory-startup --python `
+  run_blender_semantics.py -- --repeat 2
 ```
 
 使用 Blender 内置 Python 运行 py311 ABI：
