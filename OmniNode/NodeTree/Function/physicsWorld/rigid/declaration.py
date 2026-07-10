@@ -11,6 +11,7 @@ from .names import (
     RIGID_BODY_REGISTER_WRITER_ID,
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_REGISTER_WRITER_ID,
+    RIGID_CONTACT_EVENT_CHANNEL,
     RIGID_CONSTRAINT_STATE_CHANNEL,
     RIGID_CONSTRAINT_SLOT_KIND,
     RIGID_GENERATED_CONSTRAINT_OBJECT_TAG,
@@ -18,6 +19,7 @@ from .names import (
     RIGID_MATERIAL_PRESET_OBJECT_TAG,
     RIGID_RAGDOLL_PROXY_OBJECT_TAG,
     RIGID_SOLVER_ID,
+    RIGID_SENSOR_EVENT_CHANNEL,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,
 )
@@ -67,6 +69,8 @@ RIGID_SOLVER_DECLARATION = {
     "produces": [
         f'world.result_streams["{RIGID_TRANSFORM_CHANNEL}"]',
         f'world.result_streams["{RIGID_CONSTRAINT_STATE_CHANNEL}"]',
+        f'world.result_streams["{RIGID_CONTACT_EVENT_CHANNEL}"]',
+        f'world.result_streams["{RIGID_SENSOR_EVENT_CHANNEL}"]',
         f'world.result_streams["{RIGID_SOLVER_STATS_CHANNEL}"]',
     ],
     "persistent_state": [
@@ -90,6 +94,7 @@ RIGID_SOLVER_DECLARATION = {
         "body_spec": "generation 或签名变化时同步到 Jolt",
         "constraint_spec": "generation 或签名变化时同步到 Jolt",
         "breakable_constraint": "每次真实 Jolt step 后按 lambda_max_abs 与冲量阈值判定；same-frame 不重复判定",
+        "contact_events": "native callback 只缓存数值快照；每次真实 step 发布，same-frame 重发上一快照",
         "kinematic_pose": "同帧请求时只更新运动学姿态，不推进时间",
         "jolt_world_settings": "按隐式对象签名同步到 Jolt 适配器",
         "commands": "按代次/帧令牌单次消费",
@@ -122,6 +127,8 @@ RIGID_SOLVER_DECLARATION = {
         "result_channels": [
             RIGID_TRANSFORM_CHANNEL,
             RIGID_CONSTRAINT_STATE_CHANNEL,
+            RIGID_CONTACT_EVENT_CHANNEL,
+            RIGID_SENSOR_EVENT_CHANNEL,
             RIGID_SOLVER_STATS_CHANNEL,
         ],
         "supports_bake": False,
@@ -133,7 +140,7 @@ RIGID_SOLVER_DECLARATION = {
 RIGID_JOLT_CAPABILITY_BACKLOG = [
     {
         "capability": "接触监听",
-        "status": "计划中",
+        "status": "已接",
         "boundary": "原生事件快照写入 world.result_streams/exchange；回调内不访问 Blender",
     },
     {

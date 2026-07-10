@@ -126,4 +126,5 @@ RIGID_UPDATE_FREQUENCY_TABLE = [
     {"data": "刚体/约束句柄", "source": "解算器槽位私有状态", "policy": "持续到槽位被裁剪或签名变化"},
     {"data": "刚体变换结果", "source": "Jolt 适配器读回", "policy": "每次模拟步产生；同帧可重发缓存结果"},
     {"data": "约束状态结果", "source": "Jolt 适配器读回 current value / lambda", "policy": "每次模拟步产生；同帧重发当前快照"},
+    {"data": "接触 / Sensor 事件", "source": "Jolt ContactListener 轻量快照", "policy": "每次真实模拟步产生；同帧重发上一快照"},
 ]

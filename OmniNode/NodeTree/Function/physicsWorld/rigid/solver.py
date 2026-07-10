@@ -15,6 +15,7 @@ from .names import (
     RIGID_BODY_SLOT_KIND,
     RIGID_CONSTRAINT_REGISTER_WRITER_ID,
     RIGID_CONSTRAINT_SLOT_KIND,
+    RIGID_SENSOR_EVENT_CHANNEL,
 )
 from ..types import PhysicsWorldCache
 from .specs import (
@@ -30,8 +31,10 @@ from .implicit_objects import (
     sync_rigid_jolt_world_settings,
 )
 from .results import (
+    clear_rigid_contact_event_results,
     clear_rigid_constraint_state_results,
     clear_rigid_transform_results,
+    publish_rigid_contact_event_result,
     publish_rigid_constraint_state_result,
     publish_rigid_transform_result,
     publish_rigid_solver_stats_result,
@@ -393,6 +396,43 @@ def _publish_rigid_constraint_state_results(world: PhysicsWorldCache, adapter) -
     return published
 
 
+def _publish_rigid_contact_event_results(
+    world: PhysicsWorldCache,
+    adapter,
+) -> tuple[int, int]:
+    """发布 native 轻量 contact 快照；sensor 同时进入独立结果通道。"""
+    frame = int(getattr(world.frame_context, "frame", 0) or 0)
+    clear_rigid_contact_event_results(world)
+    contact_count = 0
+    sensor_count = 0
+    for event_index, event in enumerate(adapter.get_contact_events()):
+        result = publish_rigid_contact_event_result(
+            world,
+            event=event,
+            frame=frame,
+            generation=world.generation,
+            event_index=event_index,
+            backend=getattr(adapter, "BACKEND", "jolt"),
+        )
+        if result is None:
+            continue
+        contact_count += 1
+        if not bool(event.get("is_sensor", False)):
+            continue
+        sensor_result = publish_rigid_contact_event_result(
+            world,
+            event=event,
+            frame=frame,
+            generation=world.generation,
+            event_index=event_index,
+            channel=RIGID_SENSOR_EVENT_CHANNEL,
+            backend=getattr(adapter, "BACKEND", "jolt"),
+        )
+        if sensor_result is not None:
+            sensor_count += 1
+    return contact_count, sensor_count
+
+
 def _apply_breakable_constraint_policy(world: PhysicsWorldCache, adapter) -> int:
     """在 Jolt step 后按每步约束冲量禁用超过阈值的约束。"""
     broken_count = 0
@@ -443,6 +483,8 @@ def _publish_rigid_solver_stats(
     adapter,
     step_ms: float,
     transform_count: int,
+    contact_event_count: int = 0,
+    sensor_event_count: int = 0,
 ) -> dict | None:
     fc = world.frame_context
     sync_error_count, result_error_count = _rigid_slot_error_counts(world)
@@ -458,6 +500,11 @@ def _publish_rigid_solver_stats(
         same_frame=bool(getattr(fc, "same_frame", False)),
         restart_required=bool(getattr(fc, "restart_required", False)),
         transform_count=int(transform_count),
+        contact_event_count=int(contact_event_count),
+        sensor_event_count=int(sensor_event_count),
+        contact_event_overflow=int(
+            getattr(adapter, "last_contact_event_overflow", 0) or 0
+        ),
         command_count=int(getattr(adapter, "last_command_count", 0) or 0),
         command_failed=int(getattr(adapter, "last_command_failed", 0) or 0),
         command_errors=list(getattr(adapter, "last_command_errors", []) or []),
@@ -504,7 +551,9 @@ def step_rigid_bodies(
             adapter.last_command_errors = []
             transform_count = _publish_rigid_transform_results(world, adapter)
             _publish_rigid_constraint_state_results(world, adapter)
-            _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
+            contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
+            _publish_rigid_solver_stats(
+                world, adapter, 0.0, transform_count, contact_count, sensor_count)
         return body_count, 0.0
 
     from .backends.jolt import ensure_jolt_adapter
@@ -577,7 +626,9 @@ def step_rigid_bodies(
         if same_frame:
             transform_count = _publish_rigid_transform_results(world, adapter)
             _publish_rigid_constraint_state_results(world, adapter)
-            _publish_rigid_solver_stats(world, adapter, 0.0, transform_count)
+            contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
+            _publish_rigid_solver_stats(
+                world, adapter, 0.0, transform_count, contact_count, sensor_count)
             return adapter.body_count, 0.0
 
         # --- step ---
@@ -585,7 +636,9 @@ def step_rigid_bodies(
         _apply_breakable_constraint_policy(world, adapter)
         transform_count = _publish_rigid_transform_results(world, adapter)
         _publish_rigid_constraint_state_results(world, adapter)
-        _publish_rigid_solver_stats(world, adapter, step_ms, transform_count)
+        contact_count, sensor_count = _publish_rigid_contact_event_results(world, adapter)
+        _publish_rigid_solver_stats(
+            world, adapter, step_ms, transform_count, contact_count, sensor_count)
 
         # 注意：写回由下游 Physics Writeback 节点统一处理。
         # adapter.writeback_transforms 不在此处调用，以便写回节点能先捕获 frame=0 初始位置。

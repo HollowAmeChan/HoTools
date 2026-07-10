@@ -781,6 +781,8 @@ OmniNode object scope
   -> Jolt step
   -> world.result_streams["rigid_transform"]
   -> world.result_streams["rigid_constraint_state"]
+  -> world.result_streams["rigid_contact_event"]
+  -> world.result_streams["rigid_sensor_event"]
   -> world.result_streams["rigid_solver_stats"]
   -> Physics Writeback
   -> Object.delta_* / PoseBone / mesh delta writeback
@@ -1180,6 +1182,7 @@ physicsWorld/
 - `physicsWorld/` 根目录已建立 `registry.py`：当前负责内置 solver 子模块描述、runtime module 注册、solver declaration 装载、solver node module 装载、capability/debug draw mode 汇总、scope restart hook 和 scope collector 汇总运行，并提供 solver id、slot kind、result channel、implicit object tag、debug draw mode id 的基础冲突检查。`names.py`、`declarations.py` 与根级 `__init__.py` 对 rigid/Jolt 的兼容导出已改为惰性装载，公共导入路径不再主动拉起 rigid 私有实现。property registration 仍待接入；`sources.py` 仍缺，source 解析目前仍并入 `world.py` / `physicsWorldBegin`。
 - `spring_vrm/` 已接近目标原子化结构：`names.py`、`capabilities.py`、`declaration.py`、`implicit_objects.py`、`specs.py`、`solver.py`、`debug.py`、`debug_draw.py` 均已建；当前 `debug.py` 持有 debug snapshot 摘要、native context 统计和 debug draw mode 声明，`debug_draw.py` 持有骨链/尾端可视化采样与 draw store。
 - `rigid/` 已补齐 `names.py`、`capabilities.py`、`declaration.py`、`debug.py`、`debug_draw.py`、`implicit_objects.py`、`scope_sync.py`；刚体/Jolt 自有名称、能力表、声明、nodes、debug draw mode 和 Begin 阶段的 rigid spec/slot dirty policy 已回到子模块。`rigid/__init__.py` 通过 `SOLVER_MODULE` 声明 nodes、capabilities、debug_draw_modes、declaration、`scope_restart_handlers` 与 `scope_collectors`。
+- rigid/Jolt 的 native contact listener 已形成 `callback 数值快照 -> adapter handle/slot 消解 -> rigid_contact_event / rigid_sensor_event result stream` 闭环。callback 不接触 Blender/Python，公开结果不含 Jolt handle；same-frame 只重发上一真实 step 快照。
 
 刚体/Jolt 原子化验收关口：
 

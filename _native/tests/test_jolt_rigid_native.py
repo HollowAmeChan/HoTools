@@ -38,7 +38,8 @@ def _make_world(**kw) -> hotools_jolt.JoltWorld:
     )
 
 
-def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5):
+def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5,
+                is_sensor=False):
     return jw.add_body(
         body_type=body_type,
         mass=1.0,
@@ -48,10 +49,12 @@ def _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0), radius=0.5):
         rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
         shape_type="SPHERE",
         shape_radius=radius,
+        is_sensor=is_sensor,
     )
 
 
-def _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0), half_extents=(1.0, 1.0, 0.05)):
+def _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0),
+             half_extents=(1.0, 1.0, 0.05), is_sensor=False):
     return jw.add_body(
         body_type=body_type,
         mass=1.0,
@@ -61,6 +64,7 @@ def _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0), half_extents=(1.0, 1.0
         rotation_wxyz=(1.0, 0.0, 0.0, 0.0),
         shape_type="BOX",
         shape_half_extents=half_extents,
+        is_sensor=is_sensor,
     )
 
 
@@ -575,6 +579,46 @@ def test_constraint_state_output():
     missing = jw.get_constraint_state(0xFFFFFFFE)
     assert missing[0] == "" and missing[1] is False
     jw.clear()
+
+
+def test_contact_and_sensor_event_snapshots():
+    """ContactListener 只应暴露稳定 handle + 数值快照，并区分 sensor。"""
+    jw = _make_world()
+    ground = _add_box(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
+    ball = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 0.45))
+    jw.step(1.0 / 60.0, 1)
+    added = [event for event in jw.get_contact_events() if event[0] == "added"]
+    assert added, "首个接触步应产生 added 事件"
+    event = added[0]
+    assert len(event) == 12
+    assert {event[1], event[2]} == {ground, ball}
+    assert event[5] is False
+    assert len(event[6]) == 3
+    assert isinstance(event[7], float)
+    assert event[8] and event[9], "接触事件应包含两侧世界空间接触点"
+
+    jw.step(1.0 / 60.0, 1)
+    assert any(event[0] == "persisted" for event in jw.get_contact_events())
+    assert jw.contact_event_overflow_count == 0
+    jw.clear()
+
+    sensor_world = _make_world()
+    sensor = _add_box(
+        sensor_world,
+        body_type="STATIC",
+        pos=(0.0, 0.0, 0.0),
+        half_extents=(1.0, 1.0, 1.0),
+        is_sensor=True,
+    )
+    probe = _add_sphere(sensor_world, body_type="DYNAMIC", pos=(0.0, 0.0, 0.0))
+    sensor_world.set_gravity((0.0, 0.0, 0.0))
+    sensor_world.step(1.0 / 60.0, 1)
+    sensor_events = [event for event in sensor_world.get_contact_events() if event[5]]
+    assert sensor_events, "重叠 sensor 应产生 sensor contact 事件"
+    sensor_event = sensor_events[0]
+    assert {sensor_event[1], sensor_event[2]} == {sensor, probe}
+    assert sensor_event[3] or sensor_event[4]
+    sensor_world.clear()
 
 
 # ---------------------------------------------------------------------------

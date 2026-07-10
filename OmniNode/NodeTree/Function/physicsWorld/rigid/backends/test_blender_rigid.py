@@ -197,6 +197,7 @@ JoltAdapter           = _pw("rigid.backends.jolt").JoltAdapter
 get_rigid_transform_result = _pw("rigid.results").get_rigid_transform_result
 get_rigid_constraint_state_result = _pw("rigid.results").get_rigid_constraint_state_result
 get_rigid_solver_stats_result = _pw("rigid.results").get_rigid_solver_stats_result
+iter_rigid_contact_event_results = _pw("rigid.results").iter_rigid_contact_event_results
 make_rigid_generated_constraint_properties = _pw("rigid.implicit_objects").make_rigid_generated_constraint_properties
 register_rigid_generated_constraint_objects = _pw("rigid.implicit_objects").register_rigid_generated_constraint_objects
 active_generated_constraint_slot_ids = _pw("rigid.implicit_objects").active_generated_constraint_slot_ids
@@ -841,6 +842,60 @@ def test_full_rigid_pipeline():
     _del(ground, ball)
 
 
+def test_contact_and_sensor_event_result_pipeline():
+    scene = bpy.context.scene
+    sensor = _make_obj("T4B_Sensor", (0, 0, 0), body_type="STATIC")
+    sensor.hotools_rigid_body.is_sensor = True
+    sensor.hotools_object_collision.collision_type = "BOX"
+    sensor.hotools_object_collision.box_size = (2.0, 2.0, 2.0)
+    probe = _make_obj("T4B_Probe", (0, 0, 0), body_type="DYNAMIC")
+    scope = make_scope(
+        [sensor, probe],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+
+    world, cache_value, stats = _begin_step_commit(scene, None, scope, 1)
+    contacts = iter_rigid_contact_event_results(
+        world, frame=1, generation=world.generation)
+    sensors = iter_rigid_contact_event_results(
+        world, frame=1, generation=world.generation, sensor_only=True)
+    assert contacts and sensors, "重叠 sensor 应同时发布 contact 与 sensor 结果通道"
+    event = sensors[0]
+    expected_slots = {
+        build_rigid_body_spec(sensor).slot_id,
+        build_rigid_body_spec(probe).slot_id,
+    }
+    assert {event["body_a_slot_id"], event["body_b_slot_id"]} == expected_slots
+    assert event["is_sensor"] is True and event["sensor_slot_ids"]
+    assert "body_a_handle" not in event and "body_b_handle" not in event
+    assert stats["contact_event_count"] == len(contacts)
+    assert stats["sensor_event_count"] == len(sensors)
+    assert stats["contact_event_overflow"] == 0
+
+    world2, _cache_value2, stats2 = _begin_step_commit(scene, cache_value, scope, 1)
+    sensors2 = iter_rigid_contact_event_results(
+        world2, frame=1, generation=world2.generation, sensor_only=True)
+    assert world2 is world and world2.frame_context.same_frame is True
+    assert sensors2 == sensors, "same-frame 应重发上一真实模拟步的 sensor 快照"
+    assert stats2["sensor_event_count"] == len(sensors2)
+
+    probe.hotools_rigid_body.shape_radius = 0.7
+    world3, _cache_value3, stats3 = _begin_step_commit(scene, cache_value, scope, 1)
+    sensors3 = iter_rigid_contact_event_results(
+        world3, frame=1, generation=world3.generation, sensor_only=True)
+    assert world3 is world and world3.frame_context.same_frame is True
+    assert not sensors3, "same-frame 结构重建后不得重发重建前的 contact 快照"
+    assert stats3["contact_event_count"] == 0
+    assert stats3["sensor_event_count"] == 0
+
+    world3.omni_cache_dispose("test_contact_sensor_events")
+    _del(sensor, probe)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 测试 5：dispose 路径 + 重建
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1292,6 +1347,7 @@ if __name__ == "__main__":
     check("rigid body command nodes", test_rigid_body_command_nodes)
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
+    check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
     check("runtime cache delete + clear_all dispose", test_runtime_cache_delete_and_clear_all_dispose)
     check("same-frame cached result semantics", test_same_frame_repeats_publish_cached_results_without_step)

@@ -189,8 +189,11 @@ class JoltAdapter:
             max_contact_constraints,
         )
         self._body_handles: dict[str, int] = {}
+        self._body_slots_by_handle: dict[int, str] = {}
         self._constraint_handles: dict[str, int] = {}
         self.last_step_ms: float = 0.0
+        self.last_contact_events: list[dict] = []
+        self.last_contact_event_overflow: int = 0
         self.last_command_count: int = 0
         self.last_command_failed: int = 0
         self.last_command_errors: list[str] = []
@@ -211,6 +214,12 @@ class JoltAdapter:
             pass
         self._constraint_handles.clear()
         self._body_handles.clear()
+        self._body_slots_by_handle.clear()
+        self._clear_contact_events()
+
+    def _clear_contact_events(self) -> None:
+        self.last_contact_events = []
+        self.last_contact_event_overflow = 0
 
     # ---- Body 管理 --------------------------------------------------------
 
@@ -219,6 +228,7 @@ class JoltAdapter:
         注册或更新刚体。generation 变化时先 remove 再 add。
         返回 body handle。
         """
+        self._clear_contact_events()
         # 移除旧 handle（如果存在）
         if slot_id in self._body_handles:
             self._jw.remove_body(self._body_handles.pop(slot_id))
@@ -261,9 +271,11 @@ class JoltAdapter:
         )
         handle = self._jw.add_body(**kwargs)
         self._body_handles[slot_id] = handle
+        self._body_slots_by_handle[int(handle)] = str(slot_id)
         return handle
 
     def remove_body(self, slot_id: str) -> None:
+        self._clear_contact_events()
         handle = self._body_handles.pop(slot_id, None)
         if handle is not None:
             self._jw.remove_body(handle)
@@ -390,6 +402,7 @@ class JoltAdapter:
 
     def sync_constraint(self, slot_id: str, spec: "ConstraintSpec") -> int:
         """注册或更新约束，返回 constraint handle。"""
+        self._clear_contact_events()
         if slot_id in self._constraint_handles:
             self._jw.remove_constraint(self._constraint_handles.pop(slot_id))
 
@@ -456,6 +469,7 @@ class JoltAdapter:
         return handle
 
     def remove_constraint(self, slot_id: str) -> None:
+        self._clear_contact_events()
         handle = self._constraint_handles.pop(slot_id, None)
         if handle is not None:
             self._jw.remove_constraint(handle)
@@ -507,7 +521,60 @@ class JoltAdapter:
     def step(self, dt: float, substeps: int = 1) -> float:
         """执行模拟步，返回耗时（ms）。"""
         self.last_step_ms = self._jw.step(dt, substeps)
+        self._refresh_contact_events()
         return self.last_step_ms
+
+    def _refresh_contact_events(self) -> None:
+        """把 native handle 事件映射成不泄露后端句柄的 slot 快照。"""
+        if not hasattr(self._jw, "get_contact_events"):
+            self.last_contact_events = []
+            self.last_contact_event_overflow = 0
+            return
+
+        events = []
+        for raw in self._jw.get_contact_events():
+            if not isinstance(raw, (tuple, list)) or len(raw) != 12:
+                continue
+            (
+                state,
+                body_a_handle,
+                body_b_handle,
+                body_a_sensor,
+                body_b_sensor,
+                is_sensor,
+                normal,
+                penetration_depth,
+                points_on_a,
+                points_on_b,
+                sub_shape_a,
+                sub_shape_b,
+            ) = raw
+            slot_a = self._body_slots_by_handle.get(int(body_a_handle), "")
+            slot_b = self._body_slots_by_handle.get(int(body_b_handle), "")
+            if not slot_a or not slot_b:
+                continue
+            events.append({
+                "state": str(state),
+                "body_a_slot_id": slot_a,
+                "body_b_slot_id": slot_b,
+                "body_a_sensor": bool(body_a_sensor),
+                "body_b_sensor": bool(body_b_sensor),
+                "is_sensor": bool(is_sensor),
+                "normal": _vec3_tuple(normal),
+                "penetration_depth": float(penetration_depth),
+                "points_on_a": tuple(_vec3_tuple(point) for point in points_on_a),
+                "points_on_b": tuple(_vec3_tuple(point) for point in points_on_b),
+                "sub_shape_a": int(sub_shape_a),
+                "sub_shape_b": int(sub_shape_b),
+            })
+        self.last_contact_events = events
+        self.last_contact_event_overflow = int(
+            getattr(self._jw, "contact_event_overflow_count", 0) or 0
+        )
+
+    def get_contact_events(self) -> list[dict]:
+        """返回上一真实模拟步的 HoTools 接触事件快照。"""
+        return [dict(event) for event in self.last_contact_events]
 
     # ---- Writeback -------------------------------------------------------
 
@@ -558,6 +625,8 @@ class JoltAdapter:
             pass
         self._constraint_handles.clear()
         self._body_handles.clear()
+        self._body_slots_by_handle.clear()
+        self._clear_contact_events()
         self._jw = None       # 允许 GC 回收 JoltWorld Python 对象
 
     def omni_cache_dispose(self, reason: str) -> None:

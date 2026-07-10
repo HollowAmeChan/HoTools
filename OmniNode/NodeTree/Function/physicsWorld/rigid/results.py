@@ -9,7 +9,9 @@ these results instead of reaching into backend-private Jolt handles.
 from __future__ import annotations
 
 from .names import (
+    RIGID_CONTACT_EVENT_CHANNEL,
     RIGID_CONSTRAINT_STATE_CHANNEL,
+    RIGID_SENSOR_EVENT_CHANNEL,
     RIGID_SOLVER_ID,
     RIGID_SOLVER_STATS_CHANNEL,
     RIGID_TRANSFORM_CHANNEL,
@@ -235,6 +237,93 @@ def clear_rigid_constraint_state_results(world) -> None:
     world.clear_results(RIGID_CONSTRAINT_STATE_CHANNEL, solver=RIGID_SOLVER_ID)
 
 
+def make_rigid_contact_event_result(
+    event: dict,
+    frame: int,
+    generation: int,
+    event_index: int,
+    channel: str = RIGID_CONTACT_EVENT_CHANNEL,
+    backend: str = "jolt",
+) -> dict:
+    if channel not in {RIGID_CONTACT_EVENT_CHANNEL, RIGID_SENSOR_EVENT_CHANNEL}:
+        raise ValueError(f"unsupported rigid contact event channel: {channel!r}")
+    body_a_slot_id = str(event.get("body_a_slot_id", "") or "")
+    body_b_slot_id = str(event.get("body_b_slot_id", "") or "")
+    body_a_sensor = bool(event.get("body_a_sensor", False))
+    body_b_sensor = bool(event.get("body_b_sensor", False))
+    return {
+        "channel": channel,
+        "solver": RIGID_SOLVER_ID,
+        "backend": str(backend),
+        "frame": int(frame),
+        "generation": int(generation),
+        "event_index": int(event_index),
+        "state": str(event.get("state", "") or ""),
+        "body_a_slot_id": body_a_slot_id,
+        "body_b_slot_id": body_b_slot_id,
+        "body_a_sensor": body_a_sensor,
+        "body_b_sensor": body_b_sensor,
+        "is_sensor": bool(event.get("is_sensor", False)),
+        "sensor_slot_ids": tuple(
+            slot_id for slot_id, is_sensor in (
+                (body_a_slot_id, body_a_sensor),
+                (body_b_slot_id, body_b_sensor),
+            )
+            if slot_id and is_sensor
+        ),
+        "normal": _float3(event.get("normal", (0.0, 0.0, 0.0))),
+        "penetration_depth": float(event.get("penetration_depth", 0.0) or 0.0),
+        "points_on_a": tuple(_float3(point) for point in event.get("points_on_a", ())),
+        "points_on_b": tuple(_float3(point) for point in event.get("points_on_b", ())),
+        "sub_shape_a": int(event.get("sub_shape_a", 0) or 0),
+        "sub_shape_b": int(event.get("sub_shape_b", 0) or 0),
+    }
+
+
+def publish_rigid_contact_event_result(
+    world,
+    event: dict,
+    frame: int,
+    generation: int,
+    event_index: int,
+    channel: str = RIGID_CONTACT_EVENT_CHANNEL,
+    backend: str = "jolt",
+) -> dict | None:
+    result = make_rigid_contact_event_result(
+        event=event,
+        frame=frame,
+        generation=generation,
+        event_index=event_index,
+        channel=channel,
+        backend=backend,
+    )
+    return world.publish_result(result, channel=channel, solver=RIGID_SOLVER_ID)
+
+
+def iter_rigid_contact_event_results(
+    world,
+    frame: int | None = None,
+    generation: int | None = None,
+    sensor_only: bool = False,
+) -> list[dict]:
+    channel = RIGID_SENSOR_EVENT_CHANNEL if sensor_only else RIGID_CONTACT_EVENT_CHANNEL
+    items = world.consume_results(
+        channel,
+        solver=RIGID_SOLVER_ID,
+        frame=frame,
+        generation=generation,
+    )
+    return [
+        item for item in items
+        if isinstance(item, dict) and item.get("channel") == channel
+    ]
+
+
+def clear_rigid_contact_event_results(world) -> None:
+    world.clear_results(RIGID_CONTACT_EVENT_CHANNEL, solver=RIGID_SOLVER_ID)
+    world.clear_results(RIGID_SENSOR_EVENT_CHANNEL, solver=RIGID_SOLVER_ID)
+
+
 def make_rigid_solver_stats_result(
     frame: int,
     generation: int,
@@ -246,6 +335,9 @@ def make_rigid_solver_stats_result(
     same_frame: bool,
     restart_required: bool,
     transform_count: int,
+    contact_event_count: int = 0,
+    sensor_event_count: int = 0,
+    contact_event_overflow: int = 0,
     command_count: int = 0,
     command_failed: int = 0,
     command_errors: list[str] | None = None,
@@ -267,6 +359,9 @@ def make_rigid_solver_stats_result(
         "same_frame": bool(same_frame),
         "restart_required": bool(restart_required),
         "transform_count": int(transform_count),
+        "contact_event_count": int(contact_event_count),
+        "sensor_event_count": int(sensor_event_count),
+        "contact_event_overflow": int(contact_event_overflow),
         "command_count": int(command_count),
         "command_failed": int(command_failed),
         "command_errors": list(command_errors or ()),
@@ -287,6 +382,9 @@ def publish_rigid_solver_stats_result(
     same_frame: bool,
     restart_required: bool,
     transform_count: int,
+    contact_event_count: int = 0,
+    sensor_event_count: int = 0,
+    contact_event_overflow: int = 0,
     command_count: int = 0,
     command_failed: int = 0,
     command_errors: list[str] | None = None,
@@ -306,6 +404,9 @@ def publish_rigid_solver_stats_result(
         same_frame=same_frame,
         restart_required=restart_required,
         transform_count=transform_count,
+        contact_event_count=contact_event_count,
+        sensor_event_count=sensor_event_count,
+        contact_event_overflow=contact_event_overflow,
         command_count=command_count,
         command_failed=command_failed,
         command_errors=command_errors,

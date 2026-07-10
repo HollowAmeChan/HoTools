@@ -18,6 +18,7 @@ JPH_SUPPRESS_WARNINGS
 
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Core/Mutex.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Physics/PhysicsSettings.h>
@@ -33,6 +34,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -45,6 +47,7 @@ JPH_SUPPRESS_WARNINGS
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/vector.h>
 #include <nanobind/stl/unordered_map.h>
 
 #include <array>
@@ -245,6 +248,223 @@ struct ConstraintRecord {
     std::string constraint_type;
 };
 
+struct ContactKey {
+    uint32_t body_a;
+    uint32_t sub_shape_a;
+    uint32_t body_b;
+    uint32_t sub_shape_b;
+
+    bool operator==(const ContactKey& other) const {
+        return body_a == other.body_a && sub_shape_a == other.sub_shape_a
+            && body_b == other.body_b && sub_shape_b == other.sub_shape_b;
+    }
+};
+
+struct ContactKeyHash {
+    size_t operator()(const ContactKey& key) const {
+        size_t seed = static_cast<size_t>(key.body_a);
+        seed ^= static_cast<size_t>(key.sub_shape_a) + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        seed ^= static_cast<size_t>(key.body_b) + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        seed ^= static_cast<size_t>(key.sub_shape_b) + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        return seed;
+    }
+};
+
+struct ContactEventRecord {
+    std::string state;
+    uint32_t body_a_handle = 0;
+    uint32_t body_b_handle = 0;
+    bool body_a_sensor = false;
+    bool body_b_sensor = false;
+    bool is_sensor = false;
+    std::array<float,3> normal = {0.0f, 0.0f, 0.0f};
+    float penetration_depth = 0.0f;
+    std::vector<std::array<float,3>> points_on_a;
+    std::vector<std::array<float,3>> points_on_b;
+    uint32_t sub_shape_a = 0;
+    uint32_t sub_shape_b = 0;
+};
+
+using ContactEventTuple = std::tuple<
+    std::string,
+    uint32_t,
+    uint32_t,
+    bool,
+    bool,
+    bool,
+    std::array<float,3>,
+    float,
+    std::vector<std::array<float,3>>,
+    std::vector<std::array<float,3>>,
+    uint32_t,
+    uint32_t>;
+
+class HoContactListener final : public ContactListener {
+public:
+    static constexpr size_t MAX_EVENTS_PER_STEP = 8192;
+
+    void RegisterBody(BodyID id, uint32_t handle) {
+        lock_guard lock(mMutex);
+        mBodyHandles[id.GetIndexAndSequenceNumber()] = handle;
+    }
+
+    void UnregisterBody(BodyID id) {
+        lock_guard lock(mMutex);
+        mBodyHandles.erase(id.GetIndexAndSequenceNumber());
+    }
+
+    void BeginStep() {
+        lock_guard lock(mMutex);
+        mStepEvents = std::move(mPendingEvents);
+        mPendingEvents.clear();
+        mDroppedEventCount = mPendingDroppedEventCount;
+        mPendingDroppedEventCount = 0;
+        mRecordingStep = true;
+    }
+
+    void EndStep() {
+        lock_guard lock(mMutex);
+        mRecordingStep = false;
+    }
+
+    void Clear() {
+        lock_guard lock(mMutex);
+        mStepEvents.clear();
+        mPendingEvents.clear();
+        mActiveContacts.clear();
+        mBodyHandles.clear();
+        mDroppedEventCount = 0;
+        mPendingDroppedEventCount = 0;
+        mRecordingStep = false;
+    }
+
+    std::vector<ContactEventRecord> GetEvents() {
+        lock_guard lock(mMutex);
+        return mStepEvents;
+    }
+
+    uint32_t GetDroppedEventCount() {
+        lock_guard lock(mMutex);
+        return mDroppedEventCount;
+    }
+
+    void OnContactAdded(
+        const Body& body_a,
+        const Body& body_b,
+        const ContactManifold& manifold,
+        ContactSettings& settings
+    ) override {
+        RecordContact("added", body_a, body_b, manifold, settings);
+    }
+
+    void OnContactPersisted(
+        const Body& body_a,
+        const Body& body_b,
+        const ContactManifold& manifold,
+        ContactSettings& settings
+    ) override {
+        RecordContact("persisted", body_a, body_b, manifold, settings);
+    }
+
+    void OnContactRemoved(const SubShapeIDPair& pair) override {
+        lock_guard lock(mMutex);
+        ContactKey key = MakeKey(pair);
+        auto it = mActiveContacts.find(key);
+        ContactEventRecord event;
+        if (it != mActiveContacts.end()) {
+            event = it->second;
+            mActiveContacts.erase(it);
+        } else {
+            event.body_a_handle = LookupHandle(pair.GetBody1ID());
+            event.body_b_handle = LookupHandle(pair.GetBody2ID());
+            event.sub_shape_a = pair.GetSubShapeID1().GetValue();
+            event.sub_shape_b = pair.GetSubShapeID2().GetValue();
+        }
+        event.state = "removed";
+        AppendEvent(std::move(event));
+    }
+
+private:
+    static ContactKey MakeKey(const SubShapeIDPair& pair) {
+        return {
+            pair.GetBody1ID().GetIndexAndSequenceNumber(),
+            pair.GetSubShapeID1().GetValue(),
+            pair.GetBody2ID().GetIndexAndSequenceNumber(),
+            pair.GetSubShapeID2().GetValue(),
+        };
+    }
+
+    static ContactKey MakeKey(
+        const Body& body_a,
+        const Body& body_b,
+        const ContactManifold& manifold
+    ) {
+        return {
+            body_a.GetID().GetIndexAndSequenceNumber(),
+            manifold.mSubShapeID1.GetValue(),
+            body_b.GetID().GetIndexAndSequenceNumber(),
+            manifold.mSubShapeID2.GetValue(),
+        };
+    }
+
+    uint32_t LookupHandle(BodyID id) const {
+        auto it = mBodyHandles.find(id.GetIndexAndSequenceNumber());
+        return it == mBodyHandles.end() ? 0u : it->second;
+    }
+
+    void RecordContact(
+        const char* state,
+        const Body& body_a,
+        const Body& body_b,
+        const ContactManifold& manifold,
+        const ContactSettings& settings
+    ) {
+        ContactEventRecord event;
+        event.state = state;
+        event.body_a_sensor = body_a.IsSensor();
+        event.body_b_sensor = body_b.IsSensor();
+        event.is_sensor = settings.mIsSensor || event.body_a_sensor || event.body_b_sensor;
+        event.normal = {
+            manifold.mWorldSpaceNormal.GetX(),
+            manifold.mWorldSpaceNormal.GetY(),
+            manifold.mWorldSpaceNormal.GetZ(),
+        };
+        event.penetration_depth = manifold.mPenetrationDepth;
+        event.sub_shape_a = manifold.mSubShapeID1.GetValue();
+        event.sub_shape_b = manifold.mSubShapeID2.GetValue();
+        event.points_on_a.reserve(manifold.mRelativeContactPointsOn1.size());
+        event.points_on_b.reserve(manifold.mRelativeContactPointsOn2.size());
+        for (uint i = 0; i < manifold.mRelativeContactPointsOn1.size(); ++i)
+            event.points_on_a.push_back(from_vec3(manifold.GetWorldSpaceContactPointOn1(i)));
+        for (uint i = 0; i < manifold.mRelativeContactPointsOn2.size(); ++i)
+            event.points_on_b.push_back(from_vec3(manifold.GetWorldSpaceContactPointOn2(i)));
+
+        lock_guard lock(mMutex);
+        event.body_a_handle = LookupHandle(body_a.GetID());
+        event.body_b_handle = LookupHandle(body_b.GetID());
+        mActiveContacts[MakeKey(body_a, body_b, manifold)] = event;
+        AppendEvent(std::move(event));
+    }
+
+    void AppendEvent(ContactEventRecord event) {
+        std::vector<ContactEventRecord>& target = mRecordingStep ? mStepEvents : mPendingEvents;
+        uint32_t& dropped = mRecordingStep ? mDroppedEventCount : mPendingDroppedEventCount;
+        if (target.size() < MAX_EVENTS_PER_STEP)
+            target.push_back(std::move(event));
+        else
+            ++dropped;
+    }
+
+    Mutex mMutex;
+    std::unordered_map<uint32_t, uint32_t> mBodyHandles;
+    std::unordered_map<ContactKey, ContactEventRecord, ContactKeyHash> mActiveContacts;
+    std::vector<ContactEventRecord> mStepEvents;
+    std::vector<ContactEventRecord> mPendingEvents;
+    uint32_t mDroppedEventCount = 0;
+    uint32_t mPendingDroppedEventCount = 0;
+    bool mRecordingStep = false;
+};
+
 class JoltWorld {
 public:
     explicit JoltWorld(uint32_t max_bodies = 2048,
@@ -265,6 +485,7 @@ public:
             mObjVsBPFilter,
             mObjLayerFilter
         );
+        mPhysicsSystem->SetContactListener(&mContactListener);
         // Blender 使用 Z-up 坐标系，重力沿 -Z 轴
         mPhysicsSystem->SetGravity(Vec3(0.f, 0.f, -9.81f));
     }
@@ -416,6 +637,7 @@ public:
 
         uint32_t handle = mNextHandle++;
         mBodies[handle] = {body->GetID(), motion, filter_id};
+        mContactListener.RegisterBody(body->GetID(), handle);
         return handle;
     }
 
@@ -426,6 +648,7 @@ public:
         BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
         bi.RemoveBody(it->second.id);
         bi.DestroyBody(it->second.id);
+        mContactListener.UnregisterBody(it->second.id);
         mBodies.erase(it);
     }
 
@@ -913,7 +1136,9 @@ public:
 
     float step(float dt, int substeps) {
         auto t0 = std::chrono::high_resolution_clock::now();
+        mContactListener.BeginStep();
         mPhysicsSystem->Update(dt, substeps, mTempAllocator.get(), mJobSystem.get());
+        mContactListener.EndStep();
         auto t1 = std::chrono::high_resolution_clock::now();
         return std::chrono::duration<float, std::milli>(t1 - t0).count();
     }
@@ -922,6 +1147,33 @@ public:
 
     uint32_t body_count()       const { return static_cast<uint32_t>(mBodies.size()); }
     uint32_t constraint_count() const { return static_cast<uint32_t>(mConstraints.size()); }
+
+    std::vector<ContactEventTuple> get_contact_events() {
+        std::vector<ContactEventTuple> result;
+        std::vector<ContactEventRecord> events = mContactListener.GetEvents();
+        result.reserve(events.size());
+        for (const ContactEventRecord& event : events) {
+            result.emplace_back(
+                event.state,
+                event.body_a_handle,
+                event.body_b_handle,
+                event.body_a_sensor,
+                event.body_b_sensor,
+                event.is_sensor,
+                event.normal,
+                event.penetration_depth,
+                event.points_on_a,
+                event.points_on_b,
+                event.sub_shape_a,
+                event.sub_shape_b
+            );
+        }
+        return result;
+    }
+
+    uint32_t contact_event_overflow_count() {
+        return mContactListener.GetDroppedEventCount();
+    }
 
     void set_gravity(const std::array<float,3>& g) {
         mPhysicsSystem->SetGravity(Vec3(g[0], g[1], g[2]));
@@ -941,6 +1193,7 @@ public:
             bi.DestroyBody(r.id);
         }
         mBodies.clear();
+        mContactListener.Clear();
     }
 
 private:
@@ -1016,6 +1269,7 @@ private:
     HoObjVsBPFilter     mObjVsBPFilter;
     HoObjLayerFilter    mObjLayerFilter;
     Ref<HoCollisionGroupFilter> mGroupFilter;
+    HoContactListener mContactListener;
 
     std::unique_ptr<TempAllocatorImpl>        mTempAllocator;
     std::unique_ptr<JobSystemSingleThreaded>  mJobSystem;
@@ -1209,9 +1463,13 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("substeps") = 1,
              "执行一帧物理模拟，返回耗时（毫秒，float）。")
 
+        .def("get_contact_events", &JoltWorld::get_contact_events,
+             "读取上一真实模拟步的接触事件数值快照。")
+
         // info
         .def_prop_ro("body_count",       &JoltWorld::body_count)
         .def_prop_ro("constraint_count", &JoltWorld::constraint_count)
+        .def_prop_ro("contact_event_overflow_count", &JoltWorld::contact_event_overflow_count)
         .def("set_gravity",              &JoltWorld::set_gravity,
              nb::arg("gravity"),
              "设置重力向量，默认 (0, 0, -9.81)（Blender Z-up）。")

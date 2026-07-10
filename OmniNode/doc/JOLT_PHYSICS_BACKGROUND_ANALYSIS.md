@@ -240,7 +240,7 @@ Contact manifold 可提供：
 
 注意：`OnContactAdded` 发生在 contact solver 前，真实 collision impulse 当时未知。若要做撞击音效/强度，需要估算或在 solver 后读其他累计数据。Constraint 的 lambda 可以在 update 后读取，适合做断裂阈值和 debug 强度。
 
-当前 HoTools binding 已能在 Jolt update 后读取约束 current value 和 lambda；contact listener、sensor event 与 query API 仍未接入。
+当前 HoTools binding 已能在 Jolt update 后读取约束 current value 和 lambda；contact listener 与 sensor event 已接入轻量结果快照，query API 仍未接入。
 
 ### 软体、角色、车辆、Ragdoll
 
@@ -421,17 +421,18 @@ Physics World Begin
 - `physicsRigidSolver()` 只 step，不直接写 Blender。
 - solver 每帧把 body state 纯快照发布到 `world.result_streams["rigid_transform"]`。
 - solver 每帧把 constraint state 纯快照发布到 `world.result_streams["rigid_constraint_state"]`；lambda 是上一物理步求解冲量，不是力或扭矩，断裂阈值必须按该单位定义。
+- solver 把 native contact callback 的数值快照发布到 `world.result_streams["rigid_contact_event"]`；sensor contact 同时发布到 `world.result_streams["rigid_sensor_event"]`。
 - solver 每次调用把统计快照发布到 `world.result_streams["rigid_solver_stats"]`，包括 body/constraint 数量、step 时间、dt/substeps、same-frame/restart 状态、transform 输出数量、命令消费数量和错误计数。
 - 下游 `Physics Writeback` 统一写 `Object.delta_location / delta_rotation_euler`。
 - `Jolt刚体可视化调试` 优先消费 `rigid_transform` result，因此可以显示求解后刚体位置，而不依赖 Blender 增量写回是否已经执行。
 - `physicsRigidReadState` 直接从 `rigid_transform` result 向节点图输出位置、旋转、速度、active 和 sleeping 状态。
 - `physicsRigidConstraintReadState` 从 `rigid_constraint_state` 输出 Hinge 当前角度、Slider 当前位置、Distance 当前锚点距离，以及各类 lambda。
-- `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_constraint_state` / `rigid_solver_stats` 等 channel；后续 contact 和 query 也应按同一模式输出。
+- `physicsWorldResultStream` 可直接观察 `rigid_transform` / `rigid_constraint_state` / `rigid_contact_event` / `rigid_sensor_event` / `rigid_solver_stats` 等 channel；后续 query 也应按同一模式输出。
 - `JoltAdapter.writeback_transforms()` 只保留为 deprecated no-op，不能重新引入直接写 `Object.location` 的路径。
 
 ### 迁移其它 solver 前的 Jolt 状态判断
 
-Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：它证明了 scope/spec/backend/result/writeback/debug/cache owner 这条链路能跑通。继续补 contact listener、query、breakable policy 和 advanced shape 会提升刚体能力，但不是 SpringBone/MC2/BoneCloth 迁移的前置条件。
+Jolt 现在已经足够作为“统一物理世界 vertical slice”的样板：它证明了 scope/spec/backend/result/writeback/debug/cache owner 这条链路能跑通。继续补 query、advanced debug snapshot 和 advanced shape 会提升刚体能力，但不是 SpringBone/MC2/BoneCloth 迁移的前置条件。
 
 其它 solver 迁移前还缺的是工程验收，而不是 Jolt feature：
 
@@ -536,7 +537,7 @@ Native 侧当前特点：
 - static-static 不碰。
 - 支持固定到 world：`WORLD_HANDLE = 0xFFFFFFFF`。
 - 约束当前创建 fixed/hinge/slider/cone/point，并已接 Hinge/Slider 基础 limit/friction/motor、Cone half angle、通用 solver overrides。
-- 没有 contact listener。
+- 已接轻量 contact listener；callback 只缓存 handle、sensor 标记、法线、穿透深度、sub-shape id 和世界空间接触点，不访问 Blender/Python。
 - 没有 debug draw API。
 - 已有 body state getter 和 body 控制 API：set velocity、add force/torque、add impulse/angular impulse、gravity factor、friction/restitution、motion quality、activate/deactivate。
 - HoTools collision group / mask 已接入 Jolt `CollisionGroup` / 自定义 `GroupFilter`。
@@ -745,14 +746,14 @@ HoTools overlay 的 draw store 也应保持同样规则：它由 Jolt 自有 deb
 - 已导出 constraint lambda / current angle / current position。
 - 已实现 breakable policy。
 
-### 阶段 4：debug 与事件
+### 阶段 4：debug 与事件（部分完成）
 
 目标：
 
-- 实现 native contact listener，但只缓存轻量 event，不在 callback 里碰 Blender。
+- 已实现 native contact listener，只缓存轻量 event，不在 callback 里碰 Blender。
 - 每帧输出 debug snapshot。
 - HoTools overlay 消费 debug primitives。
-- 增加 sensor event channel。
+- 已增加 `rigid_sensor_event` channel；普通接触统一进入 `rigid_contact_event`。
 
 ### 阶段 5：高级 shape 和生成器
 
@@ -893,7 +894,7 @@ get_debug_snapshot() -> bodies, constraints, contacts, stats
 
 `rigid.material_preset`、`rigid.ragdoll_proxy` 仍是 planned implicit object tag，当前只占位，不被 solver 消费。
 
-后续重点：完善刚体属性/约束 spec、runtime cache 生命周期 smoke，以及 contact/query/advanced shape 能力。
+后续重点：完善刚体属性/约束 spec、query、完整 debug snapshot 和 advanced shape 能力。
 
 ## 2026-07-10 追加：Rigid/Jolt 原子化收口
 
@@ -939,4 +940,12 @@ generated constraint 保留原 `anchor_object` 共享 frame，并追加可选 `a
 
 native 已对 Fixed 的 X/Y axes、Hinge 的 hinge/normal axes、Slider 的 slider/normal axes、Cone 的 twist axes，以及 Point/Distance 的两个 point 分别赋值。rigid debug draw 改为直接绘制 spec 中的后端输入快照，因此显式和 generated constraint 都能显示独立锚点及二者连线，不再从 live Empty 位置重算。
 
-验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 28/28、legacy binding 12/12、Blender 刚体后台集成测试 21/21 通过。约束侧下一优先级可进入 SixDOF；contact listener 与 query API 也可作为独立纵向切片推进。
+验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 28/28、legacy binding 12/12、Blender 刚体后台集成测试 21/21 通过。约束侧下一优先级可进入 SixDOF；query API 可作为独立纵向切片推进。
+
+## 2026-07-10 追加：Contact / Sensor 事件结果流
+
+native `HoContactListener` 已挂到每个 `JoltWorld` 实例。callback 只复制普通数值：稳定 body handle、sensor 标记、世界法线、穿透深度、sub-shape id 和两侧世界空间接触点；不调用 Python、不读取 Blender。listener 维护 active contact 快照，因此 `removed` 事件仍能保留最近一次 manifold 数据。每个真实 step 最多保留 8192 条事件，超出数量进入 `contact_event_overflow_count`，不会无界增长。
+
+`JoltAdapter` 在 step 后把 native handle 消解成 rigid body `slot_id`，随后 solver 发布 `rigid_contact_event`；其中 sensor contact 同时发布到 `rigid_sensor_event`。公开结果和统计都不暴露 handle，same-frame 只重发上一真实 step 快照，不再次调用 Jolt；如果 same-frame 内发生 body/constraint 结构重建，旧事件缓存会先失效，避免发布重建前的接触关系。solver stats 追加 `contact_event_count`、`sensor_event_count` 和 `contact_event_overflow`。
+
+验收状态：`hotools_jolt` Release 构建通过；native 测试 29/29、Blender 刚体后台集成测试 22/22 通过。Phase 4 仍缺完整 body/constraint/contact debug snapshot 与 overlay 消费；query API 仍未接入。
