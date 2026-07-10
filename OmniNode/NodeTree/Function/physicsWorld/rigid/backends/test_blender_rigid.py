@@ -8,7 +8,10 @@ import sys, os, importlib.util, types as _types
 _HOTOOLS  = os.path.abspath(os.path.join(os.path.dirname(__file__), *("..",) * 6))
 _ADDONS   = os.path.dirname(_HOTOOLS)
 _PY_LIB   = "py313" if sys.version_info >= (3, 13) else "py311"
-_JOLT_LIB = os.path.join(_HOTOOLS, "_Lib", _PY_LIB, "HotoolsPackage")
+_JOLT_LIB = os.environ.get(
+    "HOTOOLS_NATIVE_TEST_DIR",
+    os.path.join(_HOTOOLS, "_Lib", _PY_LIB, "HotoolsPackage"),
+)
 _NT_DIR   = os.path.join(_HOTOOLS, "OmniNode", "NodeTree")
 _PW_ROOT  = os.path.join(_NT_DIR, "Function", "physicsWorld")
 
@@ -599,6 +602,74 @@ def test_rigid_jolt_world_settings_implicit_object_pipeline():
 
     world2.omni_cache_dispose("test_world_settings")
     _del(ball)
+
+
+def test_rigid_body_capacity_overflow_isolated_and_reported():
+    scene = bpy.context.scene
+    body_a = _make_obj("TCAP_Accepted", (-1.0, 0.0, 3.0), body_type="DYNAMIC")
+    body_b = _make_obj("TCAP_Rejected", (1.0, 0.0, 3.0), body_type="DYNAMIC")
+    scope = make_scope(
+        [body_b, body_a],
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True
+    )
+    props = make_rigid_jolt_world_setting_properties(
+        max_bodies=1,
+        max_body_pairs=4,
+        max_contact_constraints=4,
+        enabled=True,
+        source_id="test_capacity_overflow",
+        priority=10,
+    )
+    register_rigid_jolt_world_setting_objects(world, props, enabled=True)
+
+    specs = sorted(
+        (build_rigid_body_spec(body_a), build_rigid_body_spec(body_b)),
+        key=lambda item: item.simulation_order_key,
+    )
+    accepted, rejected = specs
+    body_count, _step_ms = step_rigid_bodies(world, enabled=True)
+    assert body_count == 1, "超过 max_bodies 时只应接纳稳定排序后的首个刚体"
+
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation
+    )
+    assert stats is not None
+    assert stats["body_count"] == 1
+    assert stats["transform_count"] == 1
+    assert stats["sync_error_count"] == 1, "容量失败必须进入 solver diagnostics"
+
+    accepted_result = get_rigid_transform_result(
+        world,
+        slot_id=accepted.slot_id,
+        frame=scene.frame_current,
+        generation=world.generation,
+    )
+    rejected_result = get_rigid_transform_result(
+        world,
+        slot_id=rejected.slot_id,
+        frame=scene.frame_current,
+        generation=world.generation,
+    )
+    assert accepted_result is not None, "已接纳刚体仍应发布本帧结果"
+    assert accepted_result["position"][2] < 3.0, "已接纳刚体仍应正常推进"
+    assert rejected_result is None, "创建失败的刚体不得伪造 transform result"
+    rejected_slot = world.solver_slots[rejected.slot_id]
+    assert "max_bodies" in rejected_slot.data.get("_jolt_error", "")
+
+    adapter = world.backend_resources["rigid_solver"]
+    assert adapter.jolt_max_bodies == 1
+    assert adapter.body_count == 1
+    world.omni_cache_dispose("test_capacity_overflow")
+    _del(body_b, body_a)
 
 
 def test_constraint_spec_disable_collisions():
@@ -2193,6 +2264,7 @@ if __name__ == "__main__":
     check("rigid body commands exchange", test_rigid_body_commands_exchange)
     check("rigid body command nodes", test_rigid_body_command_nodes)
     check("rigid jolt world settings implicit object pipeline", test_rigid_jolt_world_settings_implicit_object_pipeline)
+    check("刚体容量溢出隔离与诊断", test_rigid_body_capacity_overflow_isolated_and_reported)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
     check("rigid RayCast query pipeline", test_rigid_ray_cast_query_pipeline)

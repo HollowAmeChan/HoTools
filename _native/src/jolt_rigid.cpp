@@ -672,8 +672,12 @@ public:
 
         BodyInterface& bi = mPhysicsSystem->GetBodyInterface();
         Body* body = bi.CreateBody(settings);
-        if (!body)
-            throw std::runtime_error("Jolt CreateBody failed（超出 max_bodies？）");
+        if (!body) {
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                "Jolt CreateBody failed: max_bodies capacity exceeded");
+            throw nb::python_error();
+        }
 
         bi.AddBody(body->GetID(), EActivation::Activate);
 

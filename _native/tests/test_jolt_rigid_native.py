@@ -258,6 +258,32 @@ def test_multiple_bodies():
     jw.clear()
 
 
+def test_body_capacity_overflow_is_atomic_and_recoverable():
+    """刚体容量溢出不得破坏已接纳刚体，释放容量后必须可以恢复创建。"""
+    jw = _make_world(max_bodies=1, max_body_pairs=4, max_contact_constraints=4)
+    first = _add_sphere(jw, pos=(0.0, 0.0, 2.0))
+    assert jw.body_count == 1, "第一个刚体应占用唯一容量"
+
+    try:
+        _add_sphere(jw, pos=(1.0, 0.0, 2.0))
+    except RuntimeError as exc:
+        assert "max_bodies" in str(exc), "容量错误应指出 max_bodies"
+    else:
+        raise AssertionError("超过 max_bodies 时必须明确失败")
+
+    assert jw.body_count == 1, "失败的创建不得污染原生刚体计数"
+    assert jw.get_body_state(first) is not None, "容量溢出不得破坏已接纳刚体"
+    jw.step(1.0 / 60.0, 1)
+    assert jw.get_body_state(first)[0][2] < 2.0, "已接纳刚体应继续正常推进"
+
+    jw.remove_body(first)
+    assert jw.body_count == 0, "移除刚体后应释放容量"
+    replacement = _add_sphere(jw, pos=(0.0, 0.0, 3.0))
+    assert jw.body_count == 1
+    assert jw.get_body_state(replacement) is not None, "释放容量后应能重新创建刚体"
+    jw.clear()
+
+
 # ---------------------------------------------------------------------------
 # 测试：remove_body
 # ---------------------------------------------------------------------------
