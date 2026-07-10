@@ -1,10 +1,13 @@
 # OmniNode MC2 真实现状与规划
 
-更新日期：2026-06-20
+更新日期：2026-07-10
 
 本文只维护 MC2 当前真实实现状态、后续规划和踩坑记录，删除过程性记录。
-MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`  
-HoTools 实现根目录：`OmniNode/NodeTree/Function/physicsMC2MeshClothMeshCloth`，native 后端在 `_native`
+MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`（2.18.1，`418f89ff31a45bb4b2336641ad5907a1110eabea`）
+
+新 Physics World 框架：`OmniNode/NodeTree/Function/physicsWorld/mc2`
+
+旧 MeshCloth 公式参考：`OmniNode/NodeTree/Function/physicsMC2MeshCloth`，native 后端在 `_native`
 
 ## 判断口径
 
@@ -17,9 +20,28 @@ HoTools 实现根目录：`OmniNode/NodeTree/Function/physicsMC2MeshClothMeshClo
 | 缓做 | 有价值，但不是当前 MeshCloth/C++ parity 的阻塞项。 |
 | 不做 | 与当前 Blender/OmniNode 目标冲突，或成本大于收益。 |
 
-当前优先级：先稳定 `meshClothMC2` Python reference，再让 `meshClothMC2Cpp` 严格对齐 Python，最后逐项提高与 MC2 源码的等价度。
+当前优先级：在 `physicsWorld.mc2` 内先冻结统一参数、setup 和签名契约，再接共享状态与 native 运算核心。旧 Python/C++ MeshCloth 保留为公式与 parity 参考，不再作为新 solver 的节点中控、cache 或写回架构蓝本。
 
-## 当前架构边界
+## 新 Physics World MC2 边界
+
+1. `MeshCloth`、`BoneCloth`、`BoneSpring` 是一个 MC2 solver 的三种 setup，不是三个 solver。三者共用一套粒子和约束模型。
+2. 节点产生不可变的 `MC2ParticleProfileSpec`、`MC2SolverSettingsSpec`、`MC2SetupOptionsSpec`；task 只持有 source 身份、setup、规格和分层签名。
+3. solver 入口以 Unity `ClothSerializeData.GetClothParameters()` 为语义边界，先生成 `MC2EffectiveParametersSpec`，之后的计算核心不再读取 Blender RNA、节点 socket 或旧 runtime dict。
+4. setup adapter 只负责输入拓扑和输出通道：MeshCloth 使用 mesh source/GN offset，BoneCloth 和 BoneSpring 使用 bone chain/bone transform。BasePose、exchange、GN 与骨骼写回都不属于 MC2 运算核心。
+5. B1 仍是安全空模拟步：不创建 slot、不调用旧 MC2 backend、不发布结果。参数契约稳定后再接共享粒子状态和 native context。
+
+### Unity 源码映射
+
+| 新规格 | Unity 权威来源 | 说明 |
+| --- | --- | --- |
+| `MC2ParticleProfileSpec` | `Runtime/Cloth/ClothSerializeData.cs` 与各 `Constraints/*Constraint.cs::SerializeData` | 每个 task 独立持有的完整计算参数，包括重力、惯性、粒子与约束配置。 |
+| `MC2SolverSettingsSpec` | HoTools 显式 step 调度 | 只保留 substeps、iterations、time scale，不持有布料物理属性。 |
+| `MC2SetupOptionsSpec` | `RenderSetupData.BoneConnectionMode`、`rotationalInterpolation`、`rootRotation` | 只描述 topology/骨骼写回差异；BoneSpring 强制 Line。 |
+| `MC2EffectiveParametersSpec` | `ClothSerializeDataFunction.cs::GetClothParameters()` | 复刻 20% 系数与 BoneSpring 的强制覆盖规则。 |
+
+BoneSpring 的有效参数不是另一份 preset：它由同一 profile 规范化得到。Unity 会把重力设为 0，固定 tether compression 为 0.8、distance stiffness 为 0.5，关闭 MaxDistance/Backstop/self collision，把 collider 固定为 Point 与 0.5 摩擦，并只在 BoneSpring 启用 Spring constraint。正因为共用同一粒子模型，预设也应挂在共享 profile 节点，而不是复制到三个 setup 节点。
+
+## 旧 MeshCloth 实现参考边界
 
 1. 当前只做 MeshCloth。输入 mesh 就是用户准备好的低模代理，不做 MC2 的减面、代理生成、高低模 render mapping 生命周期。
 2. Solver 内部用 world-space particle state 推进；节点边界负责 object local/world 转换、Blender cache、BasePose 读取、collider 快照和 GN delta 写回。

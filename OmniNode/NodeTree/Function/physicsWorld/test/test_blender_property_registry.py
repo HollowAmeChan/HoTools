@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import types
+from dataclasses import replace
 
 import bpy
 
@@ -87,6 +88,9 @@ mc2_names = importlib.import_module(
 )
 mc2_specs = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+)
+mc2_parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
 mc2_solver = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
@@ -293,12 +297,16 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert tuple(
         node.__meta["bl_label"]
         for node in (
+            mc2_nodes.physicsMC2ParticleProfile,
+            mc2_nodes.physicsMC2SolverSettings,
             mc2_nodes.physicsMC2MeshClothTask,
             mc2_nodes.physicsMC2BoneClothTask,
             mc2_nodes.physicsMC2BoneSpringTask,
             mc2_nodes.physicsMC2Step,
         )
     ) == (
+        "MC2粒子配置",
+        "MC2模拟设置",
         "MC2 MeshCloth任务（框架）",
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
@@ -309,6 +317,8 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
         "MC2 MeshCloth任务（框架）",
+        "MC2粒子配置",
+        "MC2模拟设置",
         "MC2模拟步（框架）",
     )
 
@@ -380,6 +390,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert len({task.task_id for task in tasks}) == 3
     assert all(task.task_id.startswith(f"mc2:{task.setup_type}:") for task in tasks)
     assert all(len(task.source_signature) == 64 for task in tasks)
+    assert all(len(task.topology_signature) == 64 for task in tasks)
+    assert all(len(task.config_signature) == 64 for task in tasks)
+    assert all(len(task.parameter_signature) == 64 for task in tasks)
+    assert all(task.implementation_version == 2 for task in tasks)
     assert all(not hasattr(task, "backend") for task in tasks)
     rebuilt = tuple(
         mc2_specs.make_mc2_task_spec(setup_type, sources)
@@ -398,7 +412,62 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     )
     assert ordered_task.task_id == reversed_task.task_id
     assert ordered_task.source_signature == reversed_task.source_signature
+    assert ordered_task.topology_signature != reversed_task.topology_signature
     assert mc2_specs.build_mc2_task_specs([tasks[0], [tasks[1], tasks[2]], tasks[0]]) == tasks
+
+    soft_profile = mc2_parameters.make_mc2_particle_profile(damping=0.2)
+    soft_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_MESH_CLOTH,
+        [mesh],
+        profile=soft_profile,
+    )
+    assert soft_task.task_id == tasks[0].task_id
+    assert soft_task.topology_signature == tasks[0].topology_signature
+    assert soft_task.parameter_signature != tasks[0].parameter_signature
+    source_curve = {
+        "kind": "float_curve",
+        "mode": "curve",
+        "value": 1.0,
+        "points": [
+            {"x": 0.0, "y": 1.0, "handle_right": [0.25, 1.0]},
+            {"x": 1.0, "y": 0.5, "handle_left": [0.75, 0.5]},
+        ],
+    }
+    curved_profile = mc2_parameters.make_mc2_particle_profile(
+        damping=0.2, damping_curve=source_curve
+    )
+    frozen_curve_signature = curved_profile.damping.signature
+    source_curve["points"][0]["handle_right"][1] = 0.25
+    assert curved_profile.damping.signature == frozen_curve_signature
+    changed_curve = mc2_parameters.make_mc2_particle_profile(
+        damping=0.2, damping_curve=source_curve
+    )
+    assert changed_curve.damping.signature != frozen_curve_signature
+    try:
+        mc2_specs.build_mc2_task_specs([tasks[0], soft_task])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("same MC2 task identity with different parameters must fail")
+
+    line_options = mc2_parameters.make_mc2_setup_options(
+        mc2_names.MC2_SETUP_BONE_CLOTH, connection_mode=0
+    )
+    loop_options = mc2_parameters.make_mc2_setup_options(
+        mc2_names.MC2_SETUP_BONE_CLOTH, connection_mode=2
+    )
+    line_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_BONE_CLOTH, cloth_sources, setup_options=line_options
+    )
+    loop_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_BONE_CLOTH, cloth_sources, setup_options=loop_options
+    )
+    assert line_task.task_id == loop_task.task_id
+    assert line_task.topology_signature != loop_task.topology_signature
+    spring_options = mc2_parameters.make_mc2_setup_options(
+        mc2_names.MC2_SETUP_BONE_SPRING, connection_mode=2
+    )
+    assert spring_options.connection_mode == 0
 
     try:
         mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [])
@@ -419,12 +488,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     else:
         raise AssertionError("invalid MC2 task list item must fail")
     try:
-        mc2_specs.MC2TaskSpec(
-            task_id="mc2:mesh_cloth:forged",
-            source_signature=tasks[0].source_signature,
-            setup_type=tasks[0].setup_type,
-            sources=tasks[0].sources,
-        )
+        replace(tasks[0], task_id="mc2:mesh_cloth:forged")
     except ValueError:
         pass
     else:
@@ -466,6 +530,39 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert ready is False
     assert "有效任务 3" in status
     assert world == before
+    source_profile = mc2_parameters.make_mc2_particle_profile(
+        gravity=9.8,
+        max_distance_enabled=True,
+        backstop_enabled=True,
+        self_collision_mode=2,
+        collision_mode=2,
+        collision_friction=0.1,
+        spring_enabled=True,
+        spring_power=0.07,
+    )
+    settings = mc2_parameters.make_mc2_solver_settings(substeps=2, iterations=6)
+    mesh_effective = mc2_parameters.make_mc2_effective_parameters(
+        source_profile,
+        settings,
+        mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_MESH_CLOTH),
+    ).debug_dict()
+    spring_effective = mc2_parameters.make_mc2_effective_parameters(
+        source_profile,
+        settings,
+        mc2_parameters.make_mc2_setup_options(mc2_names.MC2_SETUP_BONE_SPRING),
+    ).debug_dict()
+    assert mesh_effective["gravity"] == 9.8
+    assert mesh_effective["damping"]["value"] == source_profile.damping.value * 0.2
+    assert mesh_effective["angle"]["restoration_stiffness"]["value"] == source_profile.angle_restoration_stiffness.value * 0.2
+    assert spring_effective["gravity"] == 0.0
+    assert spring_effective["tether"]["compression_limit"] == 0.8
+    assert spring_effective["distance"]["stiffness"]["value"] == 0.5
+    assert spring_effective["motion"]["max_distance_enabled"] is False
+    assert spring_effective["motion"]["backstop_enabled"] is False
+    assert spring_effective["self_collision"]["mode"] == 0
+    assert spring_effective["collision"]["mode"] == 1
+    assert spring_effective["collision"]["dynamic_friction"] == 0.5
+    assert spring_effective["spring"]["power"] == 0.07
     assert not any(name in sys.modules for name in legacy_modules)
 
 

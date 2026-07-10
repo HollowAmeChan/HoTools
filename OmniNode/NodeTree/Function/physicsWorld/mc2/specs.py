@@ -7,6 +7,14 @@ import hashlib
 import json
 
 from .names import MC2_SETUP_TYPES
+from .parameters import (
+    MC2ParticleProfileSpec,
+    MC2SetupOptionsSpec,
+    make_mc2_effective_parameters,
+    make_mc2_particle_profile,
+    make_mc2_setup_options,
+    make_mc2_solver_settings,
+)
 
 
 def normalize_mc2_setup_type(value: object) -> str:
@@ -104,6 +112,13 @@ def _source_identity(sources: tuple[object, ...]) -> str:
     return signature
 
 
+def _ordered_source_identity(sources: tuple[object, ...]) -> str:
+    """拓扑签名保留输入顺序；BoneCloth 的顺序/成环连接依赖 root list 顺序。"""
+    tokens = [_source_token(source) for source in sources]
+    canonical = json.dumps(tokens, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class MC2TaskSpec:
     """MC2 step 的统一输入；setup adapter 只负责生成本规格。"""
@@ -112,8 +127,13 @@ class MC2TaskSpec:
     source_signature: str
     setup_type: str
     sources: tuple[object, ...]
+    profile: MC2ParticleProfileSpec
+    setup_options: MC2SetupOptionsSpec
+    topology_signature: str
+    config_signature: str
+    parameter_signature: str
     enabled: bool = True
-    implementation_version: int = 1
+    implementation_version: int = 2
 
     def __post_init__(self) -> None:
         setup_type = normalize_mc2_setup_type(self.setup_type)
@@ -129,7 +149,33 @@ class MC2TaskSpec:
             raise ValueError(f"MC2TaskSpec.task_id 应为 {expected_task_id!r}")
         if type(self.enabled) is not bool:
             raise TypeError("MC2TaskSpec.enabled 必须是 bool")
-        if self.implementation_version != 1:
+        if not isinstance(self.profile, MC2ParticleProfileSpec):
+            raise TypeError("MC2TaskSpec.profile 必须是 MC2ParticleProfileSpec")
+        if not isinstance(self.setup_options, MC2SetupOptionsSpec):
+            raise TypeError("MC2TaskSpec.setup_options 必须是 MC2SetupOptionsSpec")
+        if self.setup_options.setup_type != setup_type:
+            raise ValueError("MC2TaskSpec.setup_options 与 setup_type 不一致")
+        expected_topology = _spec_signature({
+            "setup_type": setup_type,
+            "source_signature": signature,
+            "ordered_source_signature": _ordered_source_identity(self.sources),
+            "connection_mode": self.setup_options.connection_mode,
+        })
+        expected_config = _spec_signature(self.setup_options.debug_dict())
+        # settings 在 MC2 Step 才绑定；这里冻结 profile + setup 分支形成任务参数签名。
+        default_settings = make_mc2_solver_settings()
+        expected_parameter = make_mc2_effective_parameters(
+            self.profile,
+            default_settings,
+            self.setup_options,
+        ).parameter_signature
+        if self.topology_signature != expected_topology:
+            raise ValueError("MC2TaskSpec.topology_signature 与拓扑不一致")
+        if self.config_signature != expected_config:
+            raise ValueError("MC2TaskSpec.config_signature 与 setup options 不一致")
+        if self.parameter_signature != expected_parameter:
+            raise ValueError("MC2TaskSpec.parameter_signature 与 profile 不一致")
+        if self.implementation_version != 2:
             raise ValueError("不支持的 MC2TaskSpec implementation_version")
 
     def debug_dict(self) -> dict:
@@ -138,25 +184,64 @@ class MC2TaskSpec:
             "source_signature": self.source_signature,
             "setup_type": self.setup_type,
             "source_count": len(self.sources),
+            "profile_signature": self.profile.signature,
+            "setup_options": self.setup_options.debug_dict(),
+            "topology_signature": self.topology_signature,
+            "config_signature": self.config_signature,
+            "parameter_signature": self.parameter_signature,
             "enabled": self.enabled,
             "implementation_version": self.implementation_version,
         }
+
+
+def _spec_signature(payload: object) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def make_mc2_task_spec(
     setup_type: object,
     sources,
     *,
+    profile: MC2ParticleProfileSpec | None = None,
+    setup_options: MC2SetupOptionsSpec | None = None,
     enabled: bool = True,
 ) -> MC2TaskSpec:
     normalized_setup = normalize_mc2_setup_type(setup_type)
     normalized_sources = _normalize_sources(sources)
     source_signature = _source_identity(normalized_sources)
+    if profile is None:
+        profile = make_mc2_particle_profile()
+    if not isinstance(profile, MC2ParticleProfileSpec):
+        raise TypeError("profile 必须是 MC2ParticleProfileSpec")
+    if setup_options is None:
+        setup_options = make_mc2_setup_options(normalized_setup)
+    if not isinstance(setup_options, MC2SetupOptionsSpec):
+        raise TypeError("setup_options 必须是 MC2SetupOptionsSpec")
+    if setup_options.setup_type != normalized_setup:
+        raise ValueError("setup_options.setup_type 与 task setup_type 不一致")
+    topology_signature = _spec_signature({
+        "setup_type": normalized_setup,
+        "source_signature": source_signature,
+        "ordered_source_signature": _ordered_source_identity(normalized_sources),
+        "connection_mode": setup_options.connection_mode,
+    })
+    config_signature = _spec_signature(setup_options.debug_dict())
+    parameter_signature = make_mc2_effective_parameters(
+        profile,
+        make_mc2_solver_settings(),
+        setup_options,
+    ).parameter_signature
     return MC2TaskSpec(
         task_id=f"mc2:{normalized_setup}:{source_signature[:24]}",
         source_signature=source_signature,
         setup_type=normalized_setup,
         sources=normalized_sources,
+        profile=profile,
+        setup_options=setup_options,
+        topology_signature=topology_signature,
+        config_signature=config_signature,
+        parameter_signature=parameter_signature,
         enabled=bool(enabled),
     )
 
@@ -179,10 +264,6 @@ def build_mc2_task_specs(values) -> tuple[MC2TaskSpec, ...]:
             by_id[value.task_id] = value
             ordered.append(value)
             continue
-        if (
-            previous.setup_type != value.setup_type
-            or previous.source_signature != value.source_signature
-            or previous.enabled != value.enabled
-        ):
+        if previous != value:
             raise ValueError(f"MC2 task_id 冲突: {value.task_id}")
     return tuple(ordered)

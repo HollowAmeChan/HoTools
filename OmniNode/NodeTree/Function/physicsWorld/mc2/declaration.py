@@ -25,6 +25,8 @@ MC2_SOLVER_DECLARATION = {
     "implementation_status": "framework_only",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
+        "MC2粒子配置",
+        "MC2模拟设置",
         "MC2 MeshCloth任务（框架）",
         "MC2 BoneCloth任务（框架）",
         "MC2 BoneSpring任务（框架）",
@@ -36,6 +38,7 @@ MC2_SOLVER_DECLARATION = {
         "PhysicsWorldCache.frame_context",
         "PhysicsWorldCache.collider_snapshot",
         "list[MC2TaskSpec] containing three setup types",
+        "MC2SolverSettingsSpec",
     ],
     "produces": [
         f'planned:world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
@@ -53,6 +56,10 @@ MC2_SOLVER_DECLARATION = {
         "planned:task.sources",
         "planned:task.task_id",
         "planned:task.source_signature",
+        "task.topology_signature",
+        "task.config_signature",
+        "task.parameter_signature",
+        "step.settings.signature",
         "planned:collider_snapshot.source_key",
     ],
     "same_frame_policy": "framework_noop",

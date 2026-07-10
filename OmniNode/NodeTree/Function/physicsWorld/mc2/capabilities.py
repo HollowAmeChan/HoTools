@@ -1,4 +1,4 @@
-"""统一 MC2 solver 的 setup profile capability。"""
+"""统一 MC2 solver 的参数与 setup capability。"""
 
 from .names import MC2_SETUP_TYPES
 
@@ -9,7 +9,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
     "capability_id": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "identifier": MC2_SETUP_PROFILE_CAPABILITY_ID,
     "owner": "physicsWorld.mc2",
-    "storage": "normalized MC2TaskSpec",
+    "storage": "immutable MC2TaskSpec + MC2ParticleProfileSpec",
     "fields": (
         {
             "name": "setup_type",
@@ -38,8 +38,28 @@ MC2_SETUP_PROFILE_CAPABILITY = {
             "type": "tuple[source]",
             "update_frequency": "topology",
         },
+        {
+            "name": "profile",
+            "type": "MC2ParticleProfileSpec",
+            "update_frequency": "parameter",
+        },
+        {
+            "name": "setup_options",
+            "type": "MC2SetupOptionsSpec",
+            "update_frequency": "topology_or_parameter",
+        },
+        {
+            "name": "topology_signature",
+            "type": "sha256",
+            "update_frequency": "topology",
+        },
+        {
+            "name": "parameter_signature",
+            "type": "sha256",
+            "update_frequency": "parameter",
+        },
     ),
-    "implementation_status": "framework_only",
+    "implementation_status": "parameter_contract_only",
 }
 
 MC2_CAPABILITIES = {
@@ -52,6 +72,8 @@ MC2_UPDATE_FREQUENCY_TABLE = {
     "task_id": "topology",
     "source_signature": "topology",
     "enabled": "frame",
-    "solver_parameters": "frame",
+    "profile": "parameter_signature",
+    "setup_options": "topology_or_parameter_signature",
+    "solver_parameters": "step_settings_signature",
     "collider_snapshot": "lazy_by_source_key",
 }
