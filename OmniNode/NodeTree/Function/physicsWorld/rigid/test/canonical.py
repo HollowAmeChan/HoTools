@@ -108,6 +108,84 @@ def canonical_constraint_state(constraint_id: str, state: Sequence[Any]) -> dict
     }
 
 
+def canonical_contact_event(
+    event: Sequence[Any], handle_to_id: Mapping[int, str],
+) -> dict[str, Any]:
+    """将 native contact tuple 转为按稳定刚体 id 排序的事件。"""
+    if len(event) != 12:
+        raise NonFiniteTraceError(f"contact event expected 12 fields, got {len(event)}")
+    try:
+        body_a = handle_to_id[int(event[1])]
+        body_b = handle_to_id[int(event[2])]
+    except KeyError as exc:
+        raise NonFiniteTraceError(f"contact references unknown body handle: {exc}") from exc
+    sensor_a = bool(event[3])
+    sensor_b = bool(event[4])
+    normal = vector(event[6], 3, "contact.normal")
+    points_a = [vector(point, 3, "contact.points_a") for point in event[8]]
+    points_b = [vector(point, 3, "contact.points_b") for point in event[9]]
+    sub_shape_a = int(event[10])
+    sub_shape_b = int(event[11])
+    if body_b < body_a:
+        body_a, body_b = body_b, body_a
+        sensor_a, sensor_b = sensor_b, sensor_a
+        points_a, points_b = points_b, points_a
+        sub_shape_a, sub_shape_b = sub_shape_b, sub_shape_a
+        normal = [-value for value in normal]
+    numeric = normal + [
+        finite_float(event[7], "contact.penetration_depth"),
+        *[value for point in points_a for value in point],
+        *[value for point in points_b for value in point],
+    ]
+    return {
+        "state": str(event[0]),
+        "body_a": body_a,
+        "body_b": body_b,
+        "body_a_sensor": sensor_a,
+        "body_b_sensor": sensor_b,
+        "is_sensor": bool(event[5]),
+        "normal": normal,
+        "penetration_depth": numeric[3],
+        "points_on_a": points_a,
+        "points_on_b": points_b,
+        "sub_shape_a": sub_shape_a,
+        "sub_shape_b": sub_shape_b,
+        "raw_f32_hex": f32_hex(numeric),
+    }
+
+
+def canonical_ray_result(
+    query_id: str, result: Sequence[Any], handle_to_id: Mapping[int, str],
+) -> dict[str, Any]:
+    """将 native RayCast 七字段结果转换为稳定 query trace。"""
+    if len(result) != 7:
+        raise NonFiniteTraceError(f"ray result expected 7 fields, got {len(result)}")
+    hit = bool(result[0])
+    handle = int(result[1])
+    body_id = ""
+    if hit:
+        try:
+            body_id = handle_to_id[handle]
+        except KeyError as exc:
+            raise NonFiniteTraceError(f"ray hit unknown body handle: {handle}") from exc
+    position = vector(result[2], 3, f"queries.{query_id}.position")
+    normal = vector(result[3], 3, f"queries.{query_id}.normal")
+    fraction = finite_float(result[4], f"queries.{query_id}.fraction")
+    numeric = position + normal + [fraction]
+    return {
+        "id": query_id,
+        "type": "RAY_CAST",
+        "hit": hit,
+        "body_id": body_id,
+        "position": position,
+        "normal": normal,
+        "fraction": fraction,
+        "sub_shape": int(result[5]),
+        "is_sensor": bool(result[6]),
+        "raw_f32_hex": f32_hex(numeric),
+    }
+
+
 def canonical_value(value: Any, path: str = "value") -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value

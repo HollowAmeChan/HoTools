@@ -1,0 +1,41 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "QUERY-001",
+  "title": "RayCast 最近命中、传感器过滤、忽略刚体和未命中语义",
+  "source": "analytic:ray_sphere_intersection_and_filters",
+  "tags": ["p0", "query", "ray-cast"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 0},
+  "bodies": [
+    {
+      "id": "sensor_sphere",
+      "type": "STATIC",
+      "shape": {"type": "SPHERE", "radius": 0.25},
+      "position": [0.0, 0.0, 1.5],
+      "is_sensor": true
+    },
+    {
+      "id": "solid_sphere",
+      "type": "STATIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [0.0, 0.0, 0.0]
+    }
+  ],
+  "constraints": [],
+  "timeline": [],
+  "queries": [
+    {"id": "include_sensor", "type": "RAY_CAST", "frame": 0, "origin": [0.0, 0.0, 3.0], "direction": [0.0, 0.0, -6.0], "include_sensors": true},
+    {"id": "exclude_sensor", "type": "RAY_CAST", "frame": 0, "origin": [0.0, 0.0, 3.0], "direction": [0.0, 0.0, -6.0], "include_sensors": false},
+    {"id": "ignore_sensor", "type": "RAY_CAST", "frame": 0, "origin": [0.0, 0.0, 3.0], "direction": [0.0, 0.0, -6.0], "include_sensors": true, "ignore_body": "sensor_sphere"},
+    {"id": "miss", "type": "RAY_CAST", "frame": 0, "origin": [10.0, 0.0, 3.0], "direction": [0.0, 0.0, -6.0], "include_sensors": true},
+    {"id": "zero_direction", "type": "RAY_CAST", "frame": 0, "origin": [0.0, 0.0, 3.0], "direction": [0.0, 0.0, 0.0], "include_sensors": true}
+  ],
+  "sample_frames": [0],
+  "assertions": [
+    {"kind": "ray_query_near", "query": "include_sensor", "hit": true, "body": "sensor_sphere", "position": [0.0, 0.0, 1.75], "normal": [0.0, 0.0, 1.0], "fraction": 0.20833333333333334, "is_sensor": true, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "exclude_sensor", "hit": true, "body": "solid_sphere", "position": [0.0, 0.0, 0.5], "normal": [0.0, 0.0, 1.0], "fraction": 0.4166666666666667, "is_sensor": false, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "ignore_sensor", "hit": true, "body": "solid_sphere", "position": [0.0, 0.0, 0.5], "normal": [0.0, 0.0, 1.0], "fraction": 0.4166666666666667, "is_sensor": false, "abs": 0.001},
+    {"kind": "ray_query_near", "query": "miss", "hit": false, "body": "", "position": [10.0, 0.0, -3.0], "normal": [0.0, 0.0, 0.0], "fraction": 1.0, "is_sensor": false, "abs": 0.000001},
+    {"kind": "ray_query_near", "query": "zero_direction", "hit": false, "body": "", "position": [0.0, 0.0, 3.0], "normal": [0.0, 0.0, 0.0], "fraction": 1.0, "is_sensor": false, "abs": 0.000001},
+    {"kind": "finite_all"}
+  ]
+}

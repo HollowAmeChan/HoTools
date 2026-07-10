@@ -1,0 +1,54 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "PAIR-001",
+  "title": "不同质量双动态体距离弹簧保持总动量",
+  "source": "analytic:two_body_distance_spring_reaction",
+  "tags": ["p0", "constraint", "pair", "distance", "spring", "momentum"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "light_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [-5.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "heavy_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [5.0, 0.0, 0.0],
+      "mass": 3.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "pair_distance_spring",
+      "type": "DISTANCE",
+      "body_a": "light_body",
+      "body_b": "heavy_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [-5.0, 0.0, 0.0],
+      "anchor_position_b": [5.0, 0.0, 0.0],
+      "distance_min": 0.0,
+      "distance_max": 0.0,
+      "limit_spring_frequency": 2.0,
+      "limit_spring_damping": 0.1,
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "implicit_spring_trajectory", "constraint": "pair_distance_spring", "target": 0.0, "initial_velocity": 0.0, "frequency": 2.0, "damping": 0.1, "absolute_value": true, "value_abs": 0.00003},
+    {"kind": "pair_axis_momentum_conserved", "body_a": "light_body", "body_b": "heavy_body", "field": "linear_velocity", "axis": "X", "momentum_abs": 0.00005},
+    {"kind": "constraint_lambda_active", "constraint": "pair_distance_spring", "field": "lambda_max_abs", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

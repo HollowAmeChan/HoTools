@@ -1,0 +1,39 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "EVENT-001",
+  "title": "实体接触依次产生 added、persisted 和 removed",
+  "source": "jolt_semantics:contact_state_machine",
+  "tags": ["p0", "contact", "event", "state-machine"],
+  "world": {"gravity": [0.0, 0.0, -9.81], "dt": 0.016666666666666666, "substeps": 1, "frames": 30},
+  "bodies": [
+    {
+      "id": "ground",
+      "type": "STATIC",
+      "shape": {"type": "BOX", "half_extents": [2.0, 2.0, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "friction": 0.0,
+      "restitution": 0.0
+    },
+    {
+      "id": "ball",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.5},
+      "position": [0.0, 0.0, 0.9],
+      "mass": 1.0,
+      "friction": 0.0,
+      "restitution": 0.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [],
+  "timeline": [
+    {"frame": 3, "phase": "pre_step", "op": "add_impulse", "body": "ball", "impulse": [0.0, 0.0, 5.0]}
+  ],
+  "sample_frames": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+  "assertions": [
+    {"kind": "contact_state_sequence", "body_a": "ground", "body_b": "ball", "states": ["added", "persisted", "removed"], "is_sensor": false, "normal_abs": 0.002, "penetration_abs": 0.0002, "require_points": true},
+    {"kind": "finite_all"}
+  ]
+}

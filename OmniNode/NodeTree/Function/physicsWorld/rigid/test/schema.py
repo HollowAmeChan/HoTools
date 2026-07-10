@@ -549,6 +549,8 @@ class AssertionSpec:
             "implicit_spring_trajectory", "linear_speed_trajectory",
             "constraint_lambda_active",
             "angular_speed_trajectory",
+            "pair_axis_momentum_conserved", "pair_axis_speed_trajectory",
+            "contact_state_sequence", "ray_query_near",
         }
         if kind not in supported:
             raise FixtureError(f"{path}.kind is unsupported: {kind}")
@@ -620,9 +622,64 @@ class AssertionSpec:
                 "body", "axis", "target_velocity", "max_torque", "inertia",
                 "velocity_abs", "end_frame",
             },
+            "pair_axis_momentum_conserved": {
+                "body_a", "body_b", "field", "axis", "inertia_a", "inertia_b",
+                "momentum_abs",
+            },
+            "pair_axis_speed_trajectory": {
+                "body_a", "body_b", "field", "axis", "inertia_a", "inertia_b",
+                "target_relative_velocity", "max_effort", "velocity_abs", "end_frame",
+            },
+            "contact_state_sequence": {
+                "body_a", "body_b", "states", "is_sensor", "normal_abs",
+                "penetration_abs", "require_points",
+            },
+            "ray_query_near": {
+                "query", "hit", "body", "position", "normal", "fraction",
+                "is_sensor", "abs",
+            },
         }
         _reject_unknown(data, allowed_parameters[kind], path)
         return cls(kind=kind, parameters=data)
+
+
+@dataclass(frozen=True)
+class QuerySpec:
+    id: str
+    type: str
+    frame: int
+    origin: tuple[float, float, float]
+    direction: tuple[float, float, float]
+    include_sensors: bool
+    ignore_body: str
+
+    @classmethod
+    def from_data(cls, value: Any, path: str) -> "QuerySpec":
+        data = _mapping(value, path)
+        _reject_unknown(data, {
+            "id", "type", "frame", "origin", "direction", "include_sensors",
+            "ignore_body",
+        }, path)
+        query_id = _string(data.get("id"), f"{path}.id")
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", query_id) is None:
+            raise FixtureError(f"{path}.id contains unsupported characters")
+        query_type = _string(data.get("type", "RAY_CAST"), f"{path}.type").upper()
+        if query_type != "RAY_CAST":
+            raise FixtureError(f"{path}.type is unsupported: {query_type}")
+        ignore_body = data.get("ignore_body", "")
+        if not isinstance(ignore_body, str):
+            raise FixtureError(f"{path}.ignore_body must be a string")
+        return cls(
+            id=query_id,
+            type=query_type,
+            frame=_integer(data.get("frame", 0), f"{path}.frame", minimum=0),
+            origin=_vec(data.get("origin"), 3, f"{path}.origin"),
+            direction=_vec(data.get("direction"), 3, f"{path}.direction"),
+            include_sensors=_bool(
+                data.get("include_sensors", True), f"{path}.include_sensors",
+            ),
+            ignore_body=ignore_body,
+        )
 
 
 @dataclass(frozen=True)
@@ -636,6 +693,7 @@ class Fixture:
     bodies: tuple[BodySpec, ...]
     constraints: tuple[ConstraintSpec, ...]
     timeline: tuple[TimelineEvent, ...]
+    queries: tuple[QuerySpec, ...]
     sample_frames: tuple[int, ...]
     assertions: tuple[AssertionSpec, ...]
     path: Path
@@ -660,7 +718,7 @@ def load_fixture(path: str | Path) -> Fixture:
     data = _mapping(value, "fixture")
     _reject_unknown(data, {
         "schema", "id", "title", "source", "tags", "world", "bodies",
-        "constraints", "timeline", "sample_frames", "assertions",
+        "constraints", "timeline", "queries", "sample_frames", "assertions",
     }, "fixture")
     schema = _string(data.get("schema"), "fixture.schema")
     if schema != "hotools_jolt_fixture_v1":
@@ -705,6 +763,22 @@ def load_fixture(path: str | Path) -> Fixture:
         raise FixtureError("fixture.sample_frames must include frame 0")
     if sample_frames[-1] > world.frames:
         raise FixtureError("fixture.sample_frames exceeds world.frames")
+    queries = tuple(
+        QuerySpec.from_data(item, f"fixture.queries[{index}]")
+        for index, item in enumerate(_sequence(data.get("queries", []), "fixture.queries"))
+    )
+    query_ids = [query.id for query in queries]
+    if len(query_ids) != len(set(query_ids)):
+        raise FixtureError("fixture.queries contains duplicate ids")
+    for query in queries:
+        if query.frame not in set(sample_frames):
+            raise FixtureError(
+                f"query {query.id} frame {query.frame} must be present in sample_frames"
+            )
+        if query.ignore_body and query.ignore_body not in set(body_ids):
+            raise FixtureError(
+                f"query {query.id} ignores unknown body: {query.ignore_body}"
+            )
     assertions = tuple(
         AssertionSpec.from_data(item, f"fixture.assertions[{index}]")
         for index, item in enumerate(
@@ -746,6 +820,7 @@ def load_fixture(path: str | Path) -> Fixture:
         bodies=bodies,
         constraints=constraints,
         timeline=timeline,
+        queries=queries,
         sample_frames=sample_frames,
         assertions=assertions,
         path=fixture_path,

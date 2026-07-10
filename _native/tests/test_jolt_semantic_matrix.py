@@ -36,11 +36,18 @@ def _fixtures():
 
 
 def _body_fixtures():
-    return [fixture for fixture in _fixtures() if not fixture.constraints]
+    return [
+        fixture for fixture in _fixtures()
+        if not fixture.constraints and not ({"contact", "query"} & set(fixture.tags))
+    ]
 
 
 def _constraint_fixtures():
     return [fixture for fixture in _fixtures() if fixture.constraints]
+
+
+def _contact_query_fixtures():
+    return [fixture for fixture in _fixtures() if {"contact", "query"} & set(fixture.tags)]
 
 
 def test_jolt_semantic_fixture_catalog():
@@ -54,6 +61,8 @@ def test_jolt_semantic_fixture_catalog():
         "HINGE-002", "SLIDER-001", "SLIDER-002", "CONE-001", "CONE-002",
         "DIST-003", "HINGE-003", "HINGE-004", "HINGE-005", "HINGE-006",
         "SLIDER-003", "SLIDER-004", "SLIDER-005", "SLIDER-006",
+        "PAIR-001", "PAIR-002", "PAIR-003",
+        "EVENT-001", "EVENT-002", "QUERY-001",
     }.issubset(ids)
     for fixture in fixtures:
         assert "p0" in fixture.tags
@@ -81,6 +90,25 @@ def test_jolt_p0_constraint_semantic_matrix():
     if not hasattr(native.JoltWorld, "get_constraint_state"):
         raise RuntimeError("SKIP: 当前 Python ABI 的 hotools_jolt 缺少约束状态接口")
     for fixture in _constraint_fixtures():
+        first = NativeFixtureRuntime(native).run(fixture, 0)
+        second = NativeFixtureRuntime(native).run(fixture, 1)
+        failures = [item for item in first.assertions + second.assertions if not item["passed"]]
+        assert not failures, f"{fixture.id} semantic assertions failed: {failures}"
+        assert first.physical_hash == second.physical_hash, (
+            f"{fixture.id} physical hash changed across fresh worlds"
+        )
+        assert traces_bitwise_equal(first.trace, second.trace), (
+            f"{fixture.id} trace is not bitwise deterministic"
+        )
+
+
+def test_jolt_p0_contact_query_semantic_matrix():
+    native = load_native_module(_native_dir())
+    if not hasattr(native.JoltWorld, "get_contact_events") or not hasattr(
+        native.JoltWorld, "cast_ray",
+    ):
+        raise RuntimeError("SKIP: 当前 Python ABI 的 hotools_jolt 缺少 contact/query 接口")
+    for fixture in _contact_query_fixtures():
         first = NativeFixtureRuntime(native).run(fixture, 0)
         second = NativeFixtureRuntime(native).run(fixture, 1)
         failures = [item for item in first.assertions + second.assertions if not item["passed"]]

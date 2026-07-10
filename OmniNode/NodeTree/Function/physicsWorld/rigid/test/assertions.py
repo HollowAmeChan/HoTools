@@ -833,6 +833,209 @@ def _assert_angular_speed_trajectory(
         velocity += max(-velocity_step, min(velocity_step, delta))
 
 
+def _pair_axis_parameters(
+    fixture: Fixture, parameters: Mapping[str, Any],
+) -> tuple[str, str, str, int, float, float]:
+    body_a_id = parameters.get("body_a")
+    body_b_id = parameters.get("body_b")
+    if not isinstance(body_a_id, str) or not isinstance(body_b_id, str):
+        raise FixtureError("pair assertion requires body_a and body_b")
+    body_a = fixture.bodies_by_id.get(body_a_id)
+    body_b = fixture.bodies_by_id.get(body_b_id)
+    if body_a is None or body_b is None:
+        raise FixtureError("pair assertion references unknown body")
+    field = str(parameters.get("field", "linear_velocity"))
+    if field == "linear_velocity":
+        weight_a = body_a.mass
+        weight_b = body_b.mass
+    elif field == "angular_velocity":
+        weight_a = _number(parameters.get("inertia_a"), "inertia_a")
+        weight_b = _number(parameters.get("inertia_b"), "inertia_b")
+        if weight_a <= 0.0 or weight_b <= 0.0:
+            raise FixtureError("pair angular inertia must be > 0")
+    else:
+        raise FixtureError("pair assertion field must be linear_velocity or angular_velocity")
+    return body_a_id, body_b_id, field, _axis_index(parameters.get("axis")), weight_a, weight_b
+
+
+def _assert_pair_axis_momentum_conserved(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证双动态体约束只交换内部冲量，不改变指定轴总动量。"""
+    body_a_id, body_b_id, field, axis, weight_a, weight_b = _pair_axis_parameters(
+        fixture, parameters,
+    )
+    tolerance = _number(parameters.get("momentum_abs"), "momentum_abs", 5.0e-5)
+    initial_a = float(_body_at(trace[0], body_a_id)[field][axis])
+    initial_b = float(_body_at(trace[0], body_b_id)[field][axis])
+    expected = weight_a * initial_a + weight_b * initial_b
+    for frame in trace:
+        velocity_a = float(_body_at(frame, body_a_id)[field][axis])
+        velocity_b = float(_body_at(frame, body_b_id)[field][axis])
+        momentum = weight_a * velocity_a + weight_b * velocity_b
+        if abs(momentum - expected) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} frame {frame['frame']} pair axis momentum {momentum:.12g}, "
+                f"expected {expected:.12g} within {tolerance:g}"
+            )
+
+
+def _assert_pair_axis_speed_trajectory(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """复算双动态体在限幅内力作用下的相对速度和两端反作用。"""
+    body_a_id, body_b_id, field, axis, weight_a, weight_b = _pair_axis_parameters(
+        fixture, parameters,
+    )
+    target = _number(parameters.get("target_relative_velocity"), "target_relative_velocity")
+    max_effort = _number(parameters.get("max_effort"), "max_effort")
+    tolerance = _number(parameters.get("velocity_abs"), "velocity_abs", 5.0e-5)
+    end_frame = int(_number(
+        parameters.get("end_frame"), "end_frame", float(fixture.world.frames),
+    ))
+    if max_effort < 0.0:
+        raise FixtureError("pair speed max_effort must be >= 0")
+    frames = _frames_by_number(trace)
+    if 0 not in frames:
+        raise FixtureError("pair_axis_speed_trajectory requires sample frame 0")
+    velocity_a = float(_body_at(frames[0], body_a_id)[field][axis])
+    velocity_b = float(_body_at(frames[0], body_b_id)[field][axis])
+    inverse_sum = 1.0 / weight_a + 1.0 / weight_b
+    maximum_impulse = max_effort * fixture.world.dt
+    sampled = {number: frame for number, frame in frames.items() if number <= end_frame}
+    for frame_number in range(0, end_frame + 1):
+        if frame_number in sampled:
+            actual_a = float(_body_at(sampled[frame_number], body_a_id)[field][axis])
+            actual_b = float(_body_at(sampled[frame_number], body_b_id)[field][axis])
+            if abs(actual_a - velocity_a) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_a_id} axis velocity "
+                    f"{actual_a:.12g}, expected {velocity_a:.12g} within {tolerance:g}"
+                )
+            if abs(actual_b - velocity_b) > tolerance:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} {body_b_id} axis velocity "
+                    f"{actual_b:.12g}, expected {velocity_b:.12g} within {tolerance:g}"
+                )
+        if frame_number == end_frame:
+            break
+        relative_velocity = velocity_b - velocity_a
+        required_impulse = (target - relative_velocity) / inverse_sum
+        impulse = max(-maximum_impulse, min(maximum_impulse, required_impulse))
+        velocity_a -= impulse / weight_a
+        velocity_b += impulse / weight_b
+
+
+def _assert_contact_state_sequence(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证指定刚体对的 contact 状态机和事件几何字段。"""
+    body_a = parameters.get("body_a")
+    body_b = parameters.get("body_b")
+    if not isinstance(body_a, str) or not isinstance(body_b, str):
+        raise FixtureError("contact assertion requires body_a and body_b")
+    pair = tuple(sorted((body_a, body_b)))
+    expected_states = parameters.get("states")
+    if not isinstance(expected_states, Sequence) or isinstance(expected_states, (str, bytes)):
+        raise FixtureError("contact states must be an array")
+    expected_states = [str(state) for state in expected_states]
+    expected_sensor = parameters.get("is_sensor")
+    normal_abs = _number(parameters.get("normal_abs"), "normal_abs", 2.0e-3)
+    penetration_abs = _number(
+        parameters.get("penetration_abs"), "penetration_abs", 2.0e-4,
+    )
+    require_points = bool(parameters.get("require_points", True))
+    events: list[tuple[int, Mapping[str, Any]]] = []
+    for frame in trace:
+        for event in frame.get("contacts", []):
+            if (event.get("body_a"), event.get("body_b")) == pair:
+                events.append((int(frame["frame"]), event))
+    cursor = 0
+    for frame_number, event in events:
+        if cursor < len(expected_states) and event["state"] == expected_states[cursor]:
+            cursor += 1
+        if expected_sensor is not None and event["is_sensor"] is not expected_sensor:
+            raise SemanticAssertionError(
+                f"{fixture.id} frame {frame_number} contact sensor flag expected "
+                f"{expected_sensor!r}, got {event['is_sensor']!r}"
+            )
+        if event["state"] in {"added", "persisted"}:
+            normal_length = _length(event["normal"])
+            if abs(normal_length - 1.0) > normal_abs:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} contact normal length "
+                    f"{normal_length:.12g} differs from 1 by more than {normal_abs:g}"
+                )
+            if float(event["penetration_depth"]) < -penetration_abs:
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} contact penetration "
+                    f"{event['penetration_depth']:.12g} is below {-penetration_abs:g}"
+                )
+            if require_points and (
+                not event.get("points_on_a") or not event.get("points_on_b")
+            ):
+                raise SemanticAssertionError(
+                    f"{fixture.id} frame {frame_number} contact has no manifold points"
+                )
+    if cursor != len(expected_states):
+        actual_states = [event["state"] for _, event in events]
+        raise SemanticAssertionError(
+            f"{fixture.id} contact states {actual_states!r} do not contain ordered "
+            f"sequence {expected_states!r}"
+        )
+
+
+def _assert_ray_query_near(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """验证 RayCast 最近命中、过滤结果和解析几何位置。"""
+    query_id = parameters.get("query")
+    if not isinstance(query_id, str) or not query_id:
+        raise FixtureError("ray assertion query must be a non-empty string")
+    matches = [
+        (frame, query)
+        for frame in trace
+        for query in frame.get("queries", [])
+        if query.get("id") == query_id
+    ]
+    if len(matches) != 1:
+        raise FixtureError(f"ray query {query_id} must appear exactly once in trace")
+    frame, query = matches[0]
+    expected_hit = parameters.get("hit")
+    if not isinstance(expected_hit, bool):
+        raise FixtureError("ray assertion hit must be boolean")
+    if query["hit"] is not expected_hit:
+        raise SemanticAssertionError(
+            f"{fixture.id} query {query_id} hit expected {expected_hit}, got {query['hit']}"
+        )
+    expected_body = str(parameters.get("body", ""))
+    if query["body_id"] != expected_body:
+        raise SemanticAssertionError(
+            f"{fixture.id} query {query_id} body expected {expected_body!r}, "
+            f"got {query['body_id']!r}"
+        )
+    tolerance = _number(parameters.get("abs"), "abs", 1.0e-3)
+    for key, size in (("position", 3), ("normal", 3)):
+        if key in parameters:
+            _assert_vector_near(
+                query[key], _vec(parameters[key], size, key),
+                abs_tol=tolerance, rel_tol=0.0,
+                label=f"{fixture.id} frame {frame['frame']} query {query_id}.{key}",
+            )
+    if "fraction" in parameters:
+        expected_fraction = _number(parameters.get("fraction"), "fraction")
+        if abs(float(query["fraction"]) - expected_fraction) > tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} query {query_id} fraction {query['fraction']:.12g}, "
+                f"expected {expected_fraction:.12g} within {tolerance:g}"
+            )
+    if "is_sensor" in parameters and query["is_sensor"] is not parameters["is_sensor"]:
+        raise SemanticAssertionError(
+            f"{fixture.id} query {query_id} sensor flag expected "
+            f"{parameters['is_sensor']!r}, got {query['is_sensor']!r}"
+        )
+
+
 def evaluate_assertions(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -895,6 +1098,18 @@ def evaluate_assertions(
             fixture, trace, spec.parameters,
         ),
         "angular_speed_trajectory": lambda spec: _assert_angular_speed_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "pair_axis_momentum_conserved": lambda spec: _assert_pair_axis_momentum_conserved(
+            fixture, trace, spec.parameters,
+        ),
+        "pair_axis_speed_trajectory": lambda spec: _assert_pair_axis_speed_trajectory(
+            fixture, trace, spec.parameters,
+        ),
+        "contact_state_sequence": lambda spec: _assert_contact_state_sequence(
+            fixture, trace, spec.parameters,
+        ),
+        "ray_query_near": lambda spec: _assert_ray_query_near(
             fixture, trace, spec.parameters,
         ),
     }

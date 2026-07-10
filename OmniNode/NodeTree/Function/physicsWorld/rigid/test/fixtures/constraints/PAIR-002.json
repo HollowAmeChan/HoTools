@@ -1,0 +1,51 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "PAIR-002",
+  "title": "不同质量双动态体滑块电机产生等量反向冲量",
+  "source": "analytic:two_body_slider_motor_reaction",
+  "tags": ["p0", "constraint", "pair", "slider", "motor", "momentum"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "light_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "heavy_slider",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 3.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "pair_slider_motor",
+      "type": "SLIDER",
+      "body_a": "light_slider",
+      "body_b": "heavy_slider",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "motor_state": "VELOCITY",
+      "motor_force_limit": 2.0,
+      "motor_target_velocity": 3.0,
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60, 68, 90, 120],
+  "assertions": [
+    {"kind": "pair_axis_speed_trajectory", "body_a": "light_slider", "body_b": "heavy_slider", "field": "linear_velocity", "axis": "Z", "target_relative_velocity": 3.0, "max_effort": 2.0, "velocity_abs": 0.00005},
+    {"kind": "pair_axis_momentum_conserved", "body_a": "light_slider", "body_b": "heavy_slider", "field": "linear_velocity", "axis": "Z", "momentum_abs": 0.00005},
+    {"kind": "constraint_lambda_active", "constraint": "pair_slider_motor", "field": "lambda_motor", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

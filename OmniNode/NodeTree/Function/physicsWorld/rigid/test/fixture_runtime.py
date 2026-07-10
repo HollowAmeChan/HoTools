@@ -12,8 +12,9 @@ try:
     from .assertions import evaluate_assertions
     from .canonical import (
         canonical_body_state,
+        canonical_contact_event,
         canonical_constraint_state,
-        canonical_value,
+        canonical_ray_result,
         physical_trace_hash,
     )
     from .schema import BodySpec, ConstraintSpec, Fixture, FixtureError, TimelineEvent
@@ -21,8 +22,9 @@ except ImportError:  # 支持脚本直接执行。
     from assertions import evaluate_assertions
     from canonical import (
         canonical_body_state,
+        canonical_contact_event,
         canonical_constraint_state,
-        canonical_value,
+        canonical_ray_result,
         physical_trace_hash,
     )
     from schema import BodySpec, ConstraintSpec, Fixture, FixtureError, TimelineEvent
@@ -222,11 +224,26 @@ class NativeFixtureRuntime:
             )
             for constraint in sorted(fixture.constraints, key=lambda item: item.id)
         ]
+        handle_to_id = {handle: body_id for body_id, handle in self.handles.items()}
         contacts = []
         if hasattr(self.world, "get_contact_events"):
-            contacts = canonical_value(
-                list(self.world.get_contact_events()), f"frame[{frame}].contacts",
+            contacts = [
+                canonical_contact_event(event, handle_to_id)
+                for event in self.world.get_contact_events()
+            ]
+            contacts.sort(key=lambda item: (
+                item["body_a"], item["body_b"], item["state"],
+                item["sub_shape_a"], item["sub_shape_b"],
+            ))
+        queries = []
+        for query in sorted(fixture.queries, key=lambda item: item.id):
+            if query.frame != frame:
+                continue
+            ignore_handle = self.handles.get(query.ignore_body, 0)
+            result = self.world.cast_ray(
+                query.origin, query.direction, query.include_sensors, ignore_handle,
             )
+            queries.append(canonical_ray_result(query.id, result, handle_to_id))
         overflow = int(getattr(self.world, "contact_event_overflow_count", 0))
         return {
             "fixture_id": fixture.id,
@@ -237,7 +254,7 @@ class NativeFixtureRuntime:
             "bodies": bodies,
             "constraints": constraints,
             "contacts": contacts,
-            "queries": [],
+            "queries": queries,
             "stats": {
                 "body_count": int(self.world.body_count),
                 "constraint_count": int(self.world.constraint_count),
@@ -251,6 +268,10 @@ class NativeFixtureRuntime:
         if fixture.constraints and not hasattr(self.native.JoltWorld, "get_constraint_state"):
             raise RuntimeError(
                 f"{fixture.id}: 当前 hotools_jolt 二进制缺少约束状态 ABI，请先重建对应 Python ABI"
+            )
+        if fixture.queries and not hasattr(self.native.JoltWorld, "cast_ray"):
+            raise RuntimeError(
+                f"{fixture.id}: 当前 hotools_jolt 二进制缺少 RayCast ABI，请先重建对应 Python ABI"
             )
         settings = fixture.world
         self.world = self.native.JoltWorld(

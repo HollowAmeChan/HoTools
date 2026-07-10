@@ -1,0 +1,51 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "PAIR-003",
+  "title": "不同转动惯量双动态体铰链电机保持角动量",
+  "source": "analytic:two_body_hinge_motor_reaction",
+  "tags": ["p0", "constraint", "pair", "hinge", "motor", "momentum"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 120},
+  "bodies": [
+    {
+      "id": "light_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "heavy_hinge",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.5, 0.5, 0.5]},
+      "position": [0.0, 0.0, 0.0],
+      "mass": 3.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "pair_hinge_motor",
+      "type": "HINGE",
+      "body_a": "light_hinge",
+      "body_b": "heavy_hinge",
+      "anchor_position": [0.0, 0.0, 0.0],
+      "motor_state": "VELOCITY",
+      "motor_torque_limit": 0.1,
+      "motor_target_angular_velocity": 2.0,
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 10, 30, 60, 90, 120],
+  "assertions": [
+    {"kind": "pair_axis_speed_trajectory", "body_a": "light_hinge", "body_b": "heavy_hinge", "field": "angular_velocity", "axis": "Z", "inertia_a": 0.16666666666666666, "inertia_b": 0.5, "target_relative_velocity": 2.0, "max_effort": 0.1, "velocity_abs": 0.00005},
+    {"kind": "pair_axis_momentum_conserved", "body_a": "light_hinge", "body_b": "heavy_hinge", "field": "angular_velocity", "axis": "Z", "inertia_a": 0.16666666666666666, "inertia_b": 0.5, "momentum_abs": 0.00005},
+    {"kind": "constraint_lambda_active", "constraint": "pair_hinge_motor", "field": "lambda_motor", "min_abs": 0.000001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}
