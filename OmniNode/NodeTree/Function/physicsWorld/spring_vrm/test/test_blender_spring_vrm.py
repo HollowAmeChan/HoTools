@@ -1755,6 +1755,59 @@ def test_spring_vrm_bone_collision_override_node_uses_capability_type_index():
         _delete_object(armature)
 
 
+def test_spring_vrm_node_presets_preserve_profiles_and_value_domain():
+    chain_meta = getattr(physicsSpringVRMChainProperties, "__meta", {})
+    chain_presets = list(chain_meta.get("omni_presets") or ())
+    assert [item.get("name") for item in chain_presets] == [
+        "极软拖尾", "柔软头发", "布条裙摆", "硬质挂件", "强回弹测试",
+    ]
+    assert [item.get("values") for item in chain_presets] == [
+        {
+            "stiffness_force": 1.0,
+            "drag_force": 0.15,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.0,
+        },
+        {
+            "stiffness_force": 8.0,
+            "drag_force": 0.28,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.08,
+        },
+        {
+            "stiffness_force": 18.0,
+            "drag_force": 0.38,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.35,
+        },
+        {
+            "stiffness_force": 55.0,
+            "drag_force": 0.55,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.15,
+        },
+        {
+            "stiffness_force": 100.0,
+            "drag_force": 0.18,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.0,
+        },
+    ]
+
+    solver_meta = getattr(physicsSpringVRMSolver, "__meta", {})
+    assert list(solver_meta.get("omni_presets") or ()) == [
+        {"name": "标准", "values": {"substeps": 1}},
+        {"name": "高稳定", "values": {"substeps": 4}},
+    ]
+
+    override_meta = getattr(physicsBoneCollisionOverrideProperties, "__meta", {})
+    override_init = dict(override_meta.get("input_init") or {})
+    for field_name in ("radius", "length"):
+        settings = dict(override_init.get(field_name) or {})
+        assert settings.get("min_value") == 0.0, settings
+        assert "max_value" not in settings, settings
+
+
 def test_spring_vrm_bone_collider_override_reaches_native_arrays():
     armature = _make_chain_armature("PW_SpringVRM_BoneColliderTarget")
     collider_armature = _make_chain_armature("PW_SpringVRM_BoneColliderSource")
@@ -2189,6 +2242,7 @@ _TESTS = (
     ("SpringBone capability owns explicit RNA", test_spring_vrm_bone_collision_capability_owns_explicit_rna),
     ("SpringBone bone_collision.override preempts explicit profile", test_spring_vrm_bone_collision_override_preempts_explicit),
     ("SpringBone bone_collision.override node consumes capability type index", test_spring_vrm_bone_collision_override_node_uses_capability_type_index),
+    ("SpringBone node presets preserve profiles and capability value domain", test_spring_vrm_node_presets_preserve_profiles_and_value_domain),
     ("SpringBone bone collider override reaches native arrays", test_spring_vrm_bone_collider_override_reaches_native_arrays),
     ("SpringBone C++ debug snapshot consumes bone_collision.override", test_spring_vrm_cpp_debug_snapshot_uses_override_profile),
     ("SpringBone debug draw 碰撞体形状与碰撞组颜色", test_spring_vrm_debug_draw_collider_shapes_and_group_colors),

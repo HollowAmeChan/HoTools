@@ -39,19 +39,27 @@ VRM骨链属性 / 骨骼碰撞覆写属性
 
 复审对象：`610bdce refactor(spring-vrm): remove legacy solver paths`。该提交跨越旧 Python 节点/runtime、Native ABI、PhysicsTools RNA、Physics World registry、MC2 BoneCloth/MeshCloth 和通用写回/烘焙工作流，因此本节覆盖并修正本报告此前的“最终通过”结论。
 
-复审结论：**条件通过旧路删除，不通过“SpringBone 已成为可复制的 solver 原子蓝本”这一更高门槛。** 没有发现仍可执行的旧 SpringBone Python/C++ 入口，也没有发现 `.blend` 显式属性数据丢失；但存在 4 个 P1 收口阻断项和 3 个 P2 治理/覆盖缺口。修复 P1 并重新跑通跨系统矩阵前，不应继续推进以 SpringBone 当前实现为模板的其它 solver 原子化。
+复审结论：**条件通过旧路删除，不通过“SpringBone 已成为可复制的 solver 原子蓝本”这一更高门槛。** 没有发现仍可执行的旧 SpringBone Python/C++ 入口，也没有发现 `.blend` 显式属性数据丢失。补充修复后 R-01 已关闭、R-05 已按产品决策接受；当前仍有 R-02/R-03/R-04 三个 P1 架构或覆盖任务，以及 R-06/R-07 两个 P2 验证缺口。
 
 ### 阻断项与缺口
 
 | ID | 严重度 | 发现 | 影响与必须动作 |
 |---|---|---|---|
-| R-01 | P1 | `spring_vrm/nodes.py` 把 capability RNA 的 `soft_max` 直接写成节点 Float socket 的 `max_value`：radius 从旧节点允许的 `10.0` 收紧为 `1.0`，length 从 `10.0` 收紧为 `2.0`；`FunctionNodeCore.py` 会直接 `setattr(sock, "max_value", value)`。 | Blender socket 的 `max_value` 是硬限值，导致隐式覆写无法表达显式 `Bone.hotools_collision` 仍可保存的合法大值，破坏“显式/隐式同一参数定义”。应区分 RNA soft range 与节点 hard range（或保留旧 hard max），并增加 radius > 1、length > 2 的显隐式等价回归。 |
+| R-01 | P1 已关闭 | `spring_vrm/nodes.py` 曾把 capability RNA 的 `soft_max` 直接写成节点 Float socket 的 `max_value`：radius 被硬截断为 `1.0`，length 被硬截断为 `2.0`。 | 已移除 radius/length socket 的错误 `max_value`，保留 capability 的 RNA `soft_max` 作为 UI 建议范围，不再把它解释成隐式对象硬上限；节点元数据回归锁定两字段只有非负下限。 |
 | R-02 | P1 | `physicsWorld.registry` 使用全局 `_REGISTERED_PROPERTY_CLASSES/_BINDINGS` 和一次性 early-return；`register_solver_module()`/`unregister_solver_module()` 只改 descriptor 字典，不会随单个 domain 注册/注销 RNA。实际调用入口仍在 `PhysicsTools.register()/unregister()`。 | 当前实现只支持“启动时全部注册、退出时全部注销”，不支持 solver 自持声明后的原子加载/卸载，也把 Physics World 生命周期继续耦合在旧 PhysicsTools 上。应改为按 domain 记录类/binding、引用计数或依赖图，并让 module register/unregister 真正驱动各自属性生命周期。 |
 | R-03 | P1 | `Bone.hotools_collision` 被声明为 `spring_vrm` 私有所有权，但 PhysicsTools 面板/工具、Physics World scope、MC2 BoneCloth、MC2 MeshCloth 等旧系统仍直接消费同一属性，没有声明对 SpringBone domain 的依赖。 | 一旦真正实现按 solver 卸载，关闭 SpringBone 会破坏其它物理系统；这也说明该 capability 不是 SpringBone 私有事实源。应将骨骼碰撞 schema 提升为 Physics World 共享 capability，或显式声明多消费者依赖并采用共享所有权/引用计数。 |
 | R-04 | P1 | context-only Native 回归由删除前 17 项缩为 10 项；当前名为 `test_context_api_capsule_collider` 的测试实际传入 `SPHERE=0`。py311/py313 直接 ABI 矩阵不再独立覆盖 PLANE、BOX、真实 CAPSULE、碰撞组/mask，`create_and_free` 也没有显式 free/GC。 | “双 ABI 完整 context-only 矩阵”这一验收表述不成立。应恢复全部 collider 类型与 group/mask 的 context 测试、修正误导性命名，并增加 context 析构/重复释放的直接生命周期回归。 |
-| R-05 | P2 | 旧 SpringBone 节点类整体删除后，已有节点树会成为 missing node；`springBoneBase` 的骨骼输出到 `keyframePoseBones` 的旧烘焙路径也一并消失，而保留节点的说明仍写着“SpringBone 的‘骨骼’输出接到本节点”。插件版本仍为 `3.0.0`，没有迁移器或破坏性升级标记。 | 这可以是有意的 breaking change，但不能被描述为透明兼容。需要更新节点说明和发布/迁移说明，明确旧图不可直接运行，并决定统一 writeback bake 节点落地前的烘焙能力状态。 |
+| R-05 | 已接受 | 旧 SpringBone 节点类整体删除后，已有节点树会成为 missing node；旧私有 cache/reset 与骨骼输出链路不再保留。 | 当前基本没有需要自动迁移的旧资产，产品决策为用户手动重建，不提供迁移器或兼容节点。已清理 `keyframePoseBones` 的失效 SpringBone 接线说明；预设迁移作为唯一必须补回的用户能力单独完成。 |
 | R-06 | P2 | 属性注册失败会使 `PhysicsTools.register()` 整体失败；registry 只在运行期检查 owner/name 冲突，`validate_solver_registry()` 没有预检 RNA 冲突，也只支持 pointer binding。 | 任一 solver 声明错误会扩大为旧 PhysicsTools 全模块不可用。应把 RNA 冲突纳入声明验证，并把跨 solver 失败隔离到 domain。 |
-| R-07 | P2 | 全插件 background enable 仍会先被既有 VertexGroupTools GPU shader 初始化阻断；MC2 Blender scene parity runner 当前又因 `solve_meshcloth()` 调用签名陈旧（缺少 25 个参数）失败。两者没有证据表明由 `610bdce` 引入，但使跨旧系统的端到端矩阵仍为红色。 | 不能用 SpringBone 自身 35/35 替代跨系统验收。应修复/更新 MC2 runner 后重新跑通；完整 addon register/unregister 需在可创建 GPU context 的 Blender 会话中补验。 |
+| R-07 | P2 | 全插件 background enable 仍会先被既有 VertexGroupTools GPU shader 初始化阻断；MC2 Blender scene parity runner 当前又因 `solve_meshcloth()` 调用签名陈旧（缺少 25 个参数）失败。两者没有证据表明由 `610bdce` 引入，但使跨旧系统的端到端矩阵仍为红色。 | 不能用 SpringBone 自身 36/36 替代跨系统验收。应修复/更新 MC2 runner 后重新跑通；完整 addon register/unregister 需在可创建 GPU context 的 Blender 会话中补验。 |
+
+### 产品边界确认与预设处置
+
+- PhysicsTools 的参数、面板和注册生命周期将在短期内整体迁入 Physics World；MC2 也迁入 Physics World 目录。R-02/R-03 不再要求为当前外部目录增加临时兼容层，而是直接作为下一阶段目录/所有权迁移的验收条件。
+- 旧 SpringBone 节点 missing node 已明确接受，由用户手动迁移；不增加旧节点别名、图迁移器或版本兼容分支。
+- 新 `VRM骨链属性` 节点恢复旧链设置的 5 个物理预设：`极软拖尾`、`柔软头发`、`布条裙摆`、`硬质挂件`、`强回弹测试`，参数值保持不变。
+- 新 `SpringBone VRM模拟步` 节点恢复 `标准`（1 substep）与 `高稳定`（4 substeps）。旧 `重置缓存` 预设依赖已删除的 solver 私有 cache/reset 输入，新 Physics World 通过帧跳变、拓扑变化和 world/cache 生命周期统一重置，因此不迁移这个失效预设。
+- SpringBone Blender 回归新增预设名称/值、solver 预设和碰撞覆写值域检查；另以实际生成的 OmniNode 节点执行生产预设写值逻辑，确认 `柔软头发`、`高稳定` 能落到 socket，radius `3.25`、length `4.5` 不再被 soft range 截断。
 
 ### 已确认通过的边界
 
@@ -59,17 +67,15 @@ VRM骨链属性 / 骨骼碰撞覆写属性
 |---|---|
 | 旧入口删除 | runtime 引用审计只在“已移除接口”声明、测试断言和历史文档中找到旧符号；生成节点模块中旧 SpringBone 节点不存在，保留的 Mesh XPBD/CPP 与 `keyframePoseBones` 节点仍可生成。 |
 | Native 唯一入口 | py311、py313 二进制只暴露 context API；现有 Native suite 两个 ABI 均为 10/10。该结果证明现有用例通过，不抵消 R-04 的覆盖缺口。 |
-| SpringBone 主回归 | Blender SpringBone suite 35/35，通过 world slot、writeback、碰撞覆写、debug、cache dispose 等当前用例。 |
+| SpringBone 主回归 | Blender SpringBone suite 36/36，通过 world slot、writeback、碰撞覆写、预设、debug、cache dispose 等当前用例。 |
 | PhysicsTools 注册生命周期 | 使用真实 `PhysicsTools.register()/unregister()` 定向验证：solver PropertyGroup 与 `Bone.hotools_collision` 能被注册和移除，保留物理节点可加载。该结果只证明当前全局启动顺序可用，不证明 R-02 所要求的 per-domain 原子生命周期。 |
 | `.blend` 数据兼容 | 用旧等价 PropertyGroup 写入并保存 `.blend`，卸载旧类、注册新 `spring_vrm.properties` 后重开；`pin/collision_type/radius/length/offset/primary_collision_group/collided_by_groups` 七个字段全部保留。数据路径兼容通过，节点图兼容不在此结论内。 |
 
 ### 继续推进前的门槛
 
-1. 修复 R-01，证明显式 RNA 与隐式节点对 capability 全值域等价。
-2. 完成 R-02/R-03：property class、binding 和共享 capability 具备按 domain 可追踪的所有权与生命周期；加载/卸载一个 solver 不影响无关 solver 和 PhysicsTools。
-3. 完成 R-04：py311/py313 context-only collider、mask、错误输入和析构矩阵恢复为绿色。
-4. 更新并跑通 MC2 scene parity，补一次真实 UI/GPU 上下文下的全插件 register/unregister。
-5. 对 R-05 作明确产品决策：旧节点图正式不兼容并发布迁移说明，或提供一次性迁移；同步清理失效的烘焙说明。
+1. 完成 R-02/R-03：随 PhysicsTools/MC2 迁入 Physics World，property class、binding 和共享 capability 具备可追踪的所有权与生命周期；加载/卸载一个 solver 不影响无关 solver。
+2. 完成 R-04：py311/py313 context-only collider、mask、错误输入和析构矩阵恢复为绿色。
+3. 更新并跑通 MC2 scene parity，补一次真实 UI/GPU 上下文下的全插件 register/unregister。
 
 ## 本轮代码审查
 
@@ -279,6 +285,6 @@ $env:SPRING_MATRIX_FRAMES='300'
 - SpringBone 删除前 legacy/context 参数矩阵：4 组、每组 6 帧，误差阈值 `2e-5`；该结果作为删除门槛留档，不再要求发布包携带 legacy ABI。
 - SpringBone `hotools_native` 的 Release py311 / py313 扩展统一重建成功。
 - SpringBone native context-only 矩阵：py311 `10/10`，py313 `10/10`；包含旧符号缺失、错误 buffer 拒绝和零长度 context。
-- Blender SpringBone 常规集成：本轮重新执行 `35/35`；其中 capability-owned RNA、显式/隐式 resolver 和 native collider 数组均通过。
+- Blender SpringBone 常规集成：本轮重新执行 `36/36`；其中 capability-owned RNA、显式/隐式 resolver、节点预设/值域和 native collider 数组均通过。
 - physicsWorld solver RNA 注册/注销 smoke：`1/1`，验证 `Bone.hotools_collision` 生命周期由 registry 接管。
 - 多骨架与 Debug capture 性能矩阵：3 个独立 Blender 进程，每个 case 40 帧 warmup + 300 帧测量；资源数量断言全部通过。

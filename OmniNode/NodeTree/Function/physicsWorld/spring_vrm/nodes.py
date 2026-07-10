@@ -17,6 +17,61 @@ from .implicit_objects import (
 from .solver import step_spring_vrm
 
 
+_SPRING_VRM_CHAIN_PRESETS = [
+    {
+        "name": "极软拖尾",
+        "values": {
+            "stiffness_force": 1.0,
+            "drag_force": 0.15,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.0,
+        },
+    },
+    {
+        "name": "柔软头发",
+        "values": {
+            "stiffness_force": 8.0,
+            "drag_force": 0.28,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.08,
+        },
+    },
+    {
+        "name": "布条裙摆",
+        "values": {
+            "stiffness_force": 18.0,
+            "drag_force": 0.38,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.35,
+        },
+    },
+    {
+        "name": "硬质挂件",
+        "values": {
+            "stiffness_force": 55.0,
+            "drag_force": 0.55,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.15,
+        },
+    },
+    {
+        "name": "强回弹测试",
+        "values": {
+            "stiffness_force": 100.0,
+            "drag_force": 0.18,
+            "gravity_dir": (0.0, 0.0, -1.0),
+            "gravity_power": 0.0,
+        },
+    },
+]
+
+
+_SPRING_VRM_SOLVER_PRESETS = [
+    {"name": "标准", "values": {"substeps": 1}},
+    {"name": "高稳定", "values": {"substeps": 4}},
+]
+
+
 def _bone_collision_field(name: str) -> dict:
     for field in BONE_COLLISION_CAPABILITY.get("fields", ()):
         if str(field.get("name") or "") == str(name):
@@ -71,6 +126,7 @@ def _bone_collision_type_from_socket(value) -> str:
         "drag_force": {"min_value": 0.0, "max_value": 1.0},
         "gravity_power": {"min_value": 0.0, "max_value": 200.0},
     },
+    omni_presets=_SPRING_VRM_CHAIN_PRESETS,
     _OUTPUT_NAME=["骨链属性"],
     omni_description="""
     从 Bone socket 列表生成 VRM SpringBone 骨链属性。
@@ -151,11 +207,9 @@ def physicsSpringVRMChainRegister(
         },
         "radius": {
             "min_value": _bone_collision_rna("radius").get("min", 0.0),
-            "max_value": _bone_collision_rna("radius").get("soft_max", 1.0),
         },
         "length": {
             "min_value": _bone_collision_rna("length").get("min", 0.0),
-            "max_value": _bone_collision_rna("length").get("soft_max", 2.0),
         },
         "primary_collision_group": {
             "min_value": _bone_collision_rna("primary_collision_group").get("min", 1),
@@ -248,6 +302,7 @@ def physicsBoneCollisionOverrideRegister(
     input_init={
         "substeps": {"min_value": 1, "max_value": 16},
     },
+    omni_presets=_SPRING_VRM_SOLVER_PRESETS,
     _OUTPUT_NAME=["物理世界", "写回项数量", "耗时ms"],
     omni_description="""
     新物理世界版 VRM SpringBone 模拟步。
