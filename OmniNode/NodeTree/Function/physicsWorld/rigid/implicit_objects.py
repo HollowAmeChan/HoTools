@@ -420,6 +420,7 @@ def make_rigid_generated_constraint_properties(
     twist_motor_state: str = "OFF",
     motor_frequency: float = 2.0,
     motor_damping: float = 1.0,
+    motor_force_limit: float = 0.0,
     motor_torque_limit: float = 0.0,
     swing_twist_target_angular_velocity=(0.0, 0.0, 0.0),
     swing_twist_target_rotation=(0.0, 0.0, 0.0),
@@ -428,6 +429,11 @@ def make_rigid_generated_constraint_properties(
     six_dof_limit_max=(1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
     six_dof_swing_type: str = "PYRAMID",
     six_dof_max_friction=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    six_dof_motor_states=("OFF", "OFF", "OFF", "OFF", "OFF", "OFF"),
+    six_dof_target_velocity=(0.0, 0.0, 0.0),
+    six_dof_target_angular_velocity=(0.0, 0.0, 0.0),
+    six_dof_target_position=(0.0, 0.0, 0.0),
+    six_dof_target_rotation=(0.0, 0.0, 0.0),
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -490,6 +496,16 @@ def make_rigid_generated_constraint_properties(
     six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
         six_dof_max_friction, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     ))
+    normalized_six_dof_motor_states = []
+    for state in tuple(six_dof_motor_states or ())[:6]:
+        normalized_state = str(state or "OFF").upper()
+        if normalized_state not in {"OFF", "VELOCITY", "POSITION"}:
+            normalized_state = "OFF"
+        normalized_six_dof_motor_states.append(normalized_state)
+    normalized_six_dof_motor_states.extend(
+        ["OFF"] * (6 - len(normalized_six_dof_motor_states))
+    )
+    normalized_six_dof_motor_states = tuple(normalized_six_dof_motor_states)
 
     return [{
         "target_a": target_a if _is_object(target_a) else None,
@@ -526,7 +542,7 @@ def make_rigid_generated_constraint_properties(
         "motor_state": "OFF",
         "motor_frequency": max(float(motor_frequency), 0.0),
         "motor_damping": max(float(motor_damping), 0.0),
-        "motor_force_limit": 0.0,
+        "motor_force_limit": max(float(motor_force_limit), 0.0),
         "motor_torque_limit": max(float(motor_torque_limit), 0.0),
         "motor_target_angular_velocity": 0.0,
         "motor_target_angle": 0.0,
@@ -543,6 +559,13 @@ def make_rigid_generated_constraint_properties(
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": normalized_six_dof_swing_type,
         "six_dof_max_friction": six_dof_max_friction,
+        "six_dof_motor_states": normalized_six_dof_motor_states,
+        "six_dof_target_velocity": _float3(six_dof_target_velocity),
+        "six_dof_target_angular_velocity": _float3(six_dof_target_angular_velocity),
+        "six_dof_target_position": _float3(six_dof_target_position),
+        "six_dof_target_orientation_wxyz": _rotation_wxyz_from_euler(
+            six_dof_target_rotation
+        ),
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
         "swing_type": normalized_swing_type,
         "swing_normal_half_angle": _clamp(float(swing_normal_half_angle), 0.0, _PI),
@@ -596,6 +619,14 @@ def _copy_generated_constraint_object(item: dict) -> dict:
     six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
         item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
     ))
+    six_dof_motor_states = []
+    for state in tuple(item.get("six_dof_motor_states", ("OFF",) * 6) or ())[:6]:
+        normalized_state = str(state or "OFF").upper()
+        if normalized_state not in {"OFF", "VELOCITY", "POSITION"}:
+            normalized_state = "OFF"
+        six_dof_motor_states.append(normalized_state)
+    six_dof_motor_states.extend(["OFF"] * (6 - len(six_dof_motor_states)))
+    six_dof_motor_states = tuple(six_dof_motor_states)
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
@@ -650,6 +681,19 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": six_dof_swing_type,
         "six_dof_max_friction": six_dof_max_friction,
+        "six_dof_motor_states": six_dof_motor_states,
+        "six_dof_target_velocity": _float3(
+            item.get("six_dof_target_velocity", (0.0, 0.0, 0.0))
+        ),
+        "six_dof_target_angular_velocity": _float3(
+            item.get("six_dof_target_angular_velocity", (0.0, 0.0, 0.0))
+        ),
+        "six_dof_target_position": _float3(
+            item.get("six_dof_target_position", (0.0, 0.0, 0.0))
+        ),
+        "six_dof_target_orientation_wxyz": _float4(
+            item.get("six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+        ),
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
         "swing_type": swing_type,
         "swing_normal_half_angle": _clamp(float(item.get("swing_normal_half_angle", _PI * 0.25)), 0.0, _PI),
@@ -753,6 +797,7 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         str(item.get("twist_motor_state", "OFF") or "OFF"),
         f"{float(item.get('motor_frequency', 2.0)):.8g}",
         f"{float(item.get('motor_damping', 1.0)):.8g}",
+        f"{float(item.get('motor_force_limit', 0.0)):.8g}",
         f"{float(item.get('motor_torque_limit', 0.0)):.8g}",
         ",".join(f"{value:.8g}" for value in _float3(
             item.get("swing_twist_target_angular_velocity", (0.0, 0.0, 0.0))
@@ -772,6 +817,19 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         ",".join(f"{value:.8g}" for value in _float6(
             item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        )),
+        ",".join(str(value) for value in item.get("six_dof_motor_states", ("OFF",) * 6)),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("six_dof_target_velocity", (0.0, 0.0, 0.0))
+        )),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("six_dof_target_angular_velocity", (0.0, 0.0, 0.0))
+        )),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("six_dof_target_position", (0.0, 0.0, 0.0))
+        )),
+        ",".join(f"{value:.8g}" for value in _float4(
+            item.get("six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
         )),
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
@@ -905,6 +963,19 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         six_dof_swing_type=str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
         six_dof_max_friction=_float6(
             item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        ),
+        six_dof_motor_states=tuple(item.get("six_dof_motor_states", ("OFF",) * 6)),
+        six_dof_target_velocity=_float3(
+            item.get("six_dof_target_velocity", (0.0, 0.0, 0.0))
+        ),
+        six_dof_target_angular_velocity=_float3(
+            item.get("six_dof_target_angular_velocity", (0.0, 0.0, 0.0))
+        ),
+        six_dof_target_position=_float3(
+            item.get("six_dof_target_position", (0.0, 0.0, 0.0))
+        ),
+        six_dof_target_orientation_wxyz=_float4(
+            item.get("six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
         ),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
         swing_type=str(item.get("swing_type", "CONE") or "CONE"),

@@ -596,6 +596,21 @@ class JoltAdapter:
             six_dof_max_friction=tuple(getattr(
                 spec, "six_dof_max_friction", (0.0,) * 6,
             )),
+            six_dof_motor_states=tuple(getattr(
+                spec, "six_dof_motor_states", ("OFF",) * 6,
+            )),
+            six_dof_target_velocity=tuple(getattr(
+                spec, "six_dof_target_velocity", (0.0, 0.0, 0.0),
+            )),
+            six_dof_target_angular_velocity=tuple(getattr(
+                spec, "six_dof_target_angular_velocity", (0.0, 0.0, 0.0),
+            )),
+            six_dof_target_position=tuple(getattr(
+                spec, "six_dof_target_position", (0.0, 0.0, 0.0),
+            )),
+            six_dof_target_orientation_wxyz=tuple(getattr(
+                spec, "six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0),
+            )),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
             swing_type=str(getattr(spec, "swing_type", "CONE")),
             swing_normal_half_angle=float(

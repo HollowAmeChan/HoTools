@@ -236,6 +236,11 @@ class ConstraintSpec:
         "six_dof_limit_max",
         "six_dof_swing_type",
         "six_dof_max_friction",
+        "six_dof_motor_states",
+        "six_dof_target_velocity",
+        "six_dof_target_angular_velocity",
+        "six_dof_target_position",
+        "six_dof_target_orientation_wxyz",
         "cone_half_angle",
         "swing_type",
         "swing_normal_half_angle",
@@ -305,6 +310,15 @@ class ConstraintSpec:
         six_dof_max_friction: tuple[float, float, float, float, float, float] = (
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         ),
+        six_dof_motor_states: tuple[str, str, str, str, str, str] = (
+            "OFF", "OFF", "OFF", "OFF", "OFF", "OFF",
+        ),
+        six_dof_target_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        six_dof_target_angular_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        six_dof_target_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        six_dof_target_orientation_wxyz: tuple[float, float, float, float] = (
+            1.0, 0.0, 0.0, 0.0,
+        ),
         cone_half_angle: float = 0.0,
         swing_type: str = "CONE",
         swing_normal_half_angle: float = 3.141592653589793,
@@ -363,6 +377,11 @@ class ConstraintSpec:
         self.six_dof_limit_max: tuple[float, float, float, float, float, float] = six_dof_limit_max
         self.six_dof_swing_type: str = six_dof_swing_type
         self.six_dof_max_friction: tuple[float, float, float, float, float, float] = six_dof_max_friction
+        self.six_dof_motor_states: tuple[str, str, str, str, str, str] = six_dof_motor_states
+        self.six_dof_target_velocity: tuple[float, float, float] = six_dof_target_velocity
+        self.six_dof_target_angular_velocity: tuple[float, float, float] = six_dof_target_angular_velocity
+        self.six_dof_target_position: tuple[float, float, float] = six_dof_target_position
+        self.six_dof_target_orientation_wxyz: tuple[float, float, float, float] = six_dof_target_orientation_wxyz
         self.cone_half_angle: float = cone_half_angle
         self.swing_type: str = swing_type
         self.swing_normal_half_angle: float = swing_normal_half_angle
@@ -421,6 +440,11 @@ class ConstraintSpec:
             "six_dof_limit_max": self.six_dof_limit_max,
             "six_dof_swing_type": self.six_dof_swing_type,
             "six_dof_max_friction": self.six_dof_max_friction,
+            "six_dof_motor_states": self.six_dof_motor_states,
+            "six_dof_target_velocity": self.six_dof_target_velocity,
+            "six_dof_target_angular_velocity": self.six_dof_target_angular_velocity,
+            "six_dof_target_position": self.six_dof_target_position,
+            "six_dof_target_orientation_wxyz": self.six_dof_target_orientation_wxyz,
             "cone_half_angle": self.cone_half_angle,
             "swing_type": self.swing_type,
             "swing_normal_half_angle": self.swing_normal_half_angle,
@@ -752,6 +776,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     six_dof_limit_min = []
     six_dof_limit_max = []
     six_dof_max_friction = []
+    six_dof_motor_states = []
     for index, axis_name in enumerate(six_dof_axis_names):
         mode = str(getattr(props, f"six_dof_{axis_name}_mode", "FIXED") or "FIXED").upper()
         if mode not in {"FREE", "FIXED", "LIMITED"}:
@@ -773,11 +798,29 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         six_dof_max_friction.append(max(float(getattr(
             props, f"six_dof_{axis_name}_friction", 0.0,
         )), 0.0))
+        axis_motor_state = str(getattr(
+            props, f"six_dof_{axis_name}_motor_state", "OFF",
+        ) or "OFF").upper()
+        if axis_motor_state not in {"OFF", "VELOCITY", "POSITION"}:
+            axis_motor_state = "OFF"
+        six_dof_motor_states.append(axis_motor_state)
     six_dof_swing_type = str(
         getattr(props, "six_dof_swing_type", "PYRAMID") or "PYRAMID"
     ).upper()
     if six_dof_swing_type not in {"CONE", "PYRAMID"}:
         six_dof_swing_type = "PYRAMID"
+    six_dof_target_velocity = _float3(
+        getattr(props, "six_dof_target_velocity", (0.0, 0.0, 0.0))
+    )
+    six_dof_target_angular_velocity = _float3(
+        getattr(props, "six_dof_target_angular_velocity", (0.0, 0.0, 0.0))
+    )
+    six_dof_target_position = _float3(
+        getattr(props, "six_dof_target_position", (0.0, 0.0, 0.0))
+    )
+    six_dof_target_orientation_wxyz = _rotation_wxyz_from_euler(
+        getattr(props, "six_dof_target_rotation", (0.0, 0.0, 0.0))
+    )
     cone_half_angle = _clamp(float(getattr(props, "cone_half_angle", 0.0)), 0.0, _PI)
     swing_type = str(getattr(props, "swing_type", "CONE") or "CONE").upper()
     if swing_type not in {"CONE", "PYRAMID"}:
@@ -846,6 +889,11 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         six_dof_limit_max=tuple(six_dof_limit_max),
         six_dof_swing_type=six_dof_swing_type,
         six_dof_max_friction=tuple(six_dof_max_friction),
+        six_dof_motor_states=tuple(six_dof_motor_states),
+        six_dof_target_velocity=six_dof_target_velocity,
+        six_dof_target_angular_velocity=six_dof_target_angular_velocity,
+        six_dof_target_position=six_dof_target_position,
+        six_dof_target_orientation_wxyz=six_dof_target_orientation_wxyz,
         cone_half_angle=cone_half_angle,
         swing_type=swing_type,
         swing_normal_half_angle=swing_normal_half_angle,

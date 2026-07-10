@@ -16,7 +16,7 @@
 - 验证 SwingTwist 的 Pyramid 轴映射、摩擦力矩和独立 swing/twist motor；
 - 验证 SixDOF 六轴 Free/Fixed/Limited、平移/旋转限位及公共 spec/adapter 映射；
 - 解析验证 SixDOF 平移轴摩擦力和旋转轴摩擦力矩；
-- 验证 SixDOF 平移速度 motor、旋转位置 motor、力限幅和 motor lambda；
+- 验证 SixDOF 平移速度 motor、旋转位置 motor、力限幅和 motor lambda，并覆盖公共 spec、生成约束与调试绘制映射；
 - 按 Jolt `FrequencyAndDamping` 隐式欧拉公式复算 Distance/Hinge/Slider 弹簧；
 - 解析验证 Hinge/Slider 摩擦，以及速度/位置电机的限幅和收敛轨迹；
 - 验证不同质量或转动惯量的双动态体反作用与总动量守恒；

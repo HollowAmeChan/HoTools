@@ -195,6 +195,19 @@ def _constraint_sync_signature(spec) -> tuple:
         tuple(_round_float(value) for value in getattr(
             spec, "six_dof_max_friction", (0.0,) * 6,
         )),
+        tuple(str(value) for value in getattr(spec, "six_dof_motor_states", ("OFF",) * 6)),
+        tuple(_round_float(value) for value in getattr(
+            spec, "six_dof_target_velocity", (0.0, 0.0, 0.0),
+        )),
+        tuple(_round_float(value) for value in getattr(
+            spec, "six_dof_target_angular_velocity", (0.0, 0.0, 0.0),
+        )),
+        tuple(_round_float(value) for value in getattr(
+            spec, "six_dof_target_position", (0.0, 0.0, 0.0),
+        )),
+        tuple(_round_float(value) for value in getattr(
+            spec, "six_dof_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0),
+        )),
         _round_float(getattr(spec, "cone_half_angle", 0.0)),
         _round_float(getattr(spec, "distance_min", 0.0)),
         _round_float(getattr(spec, "distance_max", 1.0)),

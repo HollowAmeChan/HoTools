@@ -804,6 +804,16 @@ def test_six_dof_constraint_spec_and_adapter():
     props.six_dof_swing_type = "PYRAMID"
     props.six_dof_translation_x_friction = 2.5
     props.six_dof_rotation_z_friction = 1.25
+    props.six_dof_translation_x_motor_state = "VELOCITY"
+    props.six_dof_rotation_z_motor_state = "POSITION"
+    props.six_dof_target_velocity = (3.0, 0.0, 0.0)
+    props.six_dof_target_angular_velocity = (0.0, 0.0, -2.0)
+    props.six_dof_target_position = (0.25, 0.0, 0.0)
+    props.six_dof_target_rotation = (0.0, 0.0, 0.3)
+    props.motor_frequency = 4.0
+    props.motor_damping = 0.75
+    props.motor_force_limit = 12.0
+    props.motor_torque_limit = 8.0
 
     spec = build_constraint_spec(c)
     assert spec is not None
@@ -817,6 +827,18 @@ def test_six_dof_constraint_spec_and_adapter():
     assert abs(spec.six_dof_limit_max[5] - 0.4) < 1.0e-6
     assert spec.six_dof_swing_type == "PYRAMID"
     assert spec.six_dof_max_friction == (2.5, 0.0, 0.0, 0.0, 0.0, 1.25)
+    assert spec.six_dof_motor_states == (
+        "VELOCITY", "OFF", "OFF", "OFF", "OFF", "POSITION",
+    )
+    assert spec.six_dof_target_velocity == (3.0, 0.0, 0.0)
+    assert spec.six_dof_target_angular_velocity == (0.0, 0.0, -2.0)
+    assert spec.six_dof_target_position == (0.25, 0.0, 0.0)
+    assert abs(spec.six_dof_target_orientation_wxyz[0] - 0.988771) < 1.0e-5
+    assert abs(spec.six_dof_target_orientation_wxyz[3] - 0.149438) < 1.0e-5
+    assert spec.motor_frequency == 4.0
+    assert spec.motor_damping == 0.75
+    assert spec.motor_force_limit == 12.0
+    assert spec.motor_torque_limit == 8.0
 
     adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
     body_a = build_rigid_body_spec(a)
@@ -845,6 +867,17 @@ def test_six_dof_constraint_spec_and_adapter():
         six_dof_limit_max=(-0.5, 2.0, 3.0, -0.2, 0.3, -0.4),
         six_dof_swing_type="invalid",
         six_dof_max_friction=(2.0, -1.0, 3.0, 4.0, -2.0, 6.0),
+        six_dof_motor_states=(
+            "VELOCITY", "invalid", "OFF", "POSITION", "OFF", "VELOCITY",
+        ),
+        six_dof_target_velocity=(1.0, 2.0, 3.0),
+        six_dof_target_angular_velocity=(4.0, 5.0, 6.0),
+        six_dof_target_position=(0.1, 0.2, 0.3),
+        six_dof_target_rotation=(0.0, 0.0, 0.5),
+        motor_frequency=5.0,
+        motor_damping=0.5,
+        motor_force_limit=20.0,
+        motor_torque_limit=10.0,
     )
     assert generated[0]["constraint_type"] == "SIX_DOF"
     assert generated[0]["six_dof_axis_modes"] == (
@@ -854,11 +887,27 @@ def test_six_dof_constraint_spec_and_adapter():
     assert generated[0]["six_dof_limit_max"] == (0.5, 2.0, 3.0, 0.2, 0.3, 0.6)
     assert generated[0]["six_dof_swing_type"] == "PYRAMID"
     assert generated[0]["six_dof_max_friction"] == (2.0, 0.0, 3.0, 4.0, 0.0, 6.0)
+    assert generated[0]["six_dof_motor_states"] == (
+        "VELOCITY", "OFF", "OFF", "POSITION", "OFF", "VELOCITY",
+    )
+    assert generated[0]["six_dof_target_velocity"] == (1.0, 2.0, 3.0)
+    assert generated[0]["six_dof_target_angular_velocity"] == (4.0, 5.0, 6.0)
+    assert generated[0]["six_dof_target_position"] == (0.1, 0.2, 0.3)
+    assert abs(generated[0]["six_dof_target_orientation_wxyz"][0] - 0.968912) < 1.0e-5
+    assert abs(generated[0]["six_dof_target_orientation_wxyz"][3] - 0.247404) < 1.0e-5
+    assert generated[0]["motor_force_limit"] == 20.0
+    assert generated[0]["motor_torque_limit"] == 10.0
     signature = rigid_generated_constraint_signature(generated[0])
     changed = dict(generated[0])
     changed["six_dof_axis_modes"] = (
         "FREE", "FREE", "FIXED", "FIXED", "FIXED", "LIMITED",
     )
+    assert rigid_generated_constraint_signature(changed) != signature
+    changed = dict(generated[0])
+    changed["six_dof_motor_states"] = ("OFF",) * 6
+    assert rigid_generated_constraint_signature(changed) != signature
+    changed = dict(generated[0])
+    changed["six_dof_target_position"] = (0.4, 0.2, 0.3)
     assert rigid_generated_constraint_signature(changed) != signature
     _del(c, a, b)
 
@@ -1717,6 +1766,13 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "six_dof_limit_min": (-1.0, -1.0, -1.0, -0.4, -0.4, -0.5),
         "six_dof_limit_max": (1.0, 1.0, 1.0, 0.4, 0.4, 0.5),
         "six_dof_swing_type": "PYRAMID",
+        "six_dof_motor_states": (
+            "POSITION", "OFF", "OFF", "OFF", "OFF", "VELOCITY",
+        ),
+        "six_dof_target_velocity": (1.0, 0.0, 0.0),
+        "six_dof_target_angular_velocity": (0.0, 0.0, 1.0),
+        "six_dof_target_position": (0.5, 0.0, 0.0),
+        "six_dof_target_orientation_wxyz": (0.9689124, 0.0, 0.0, 0.2474040),
     }
     states = {
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
@@ -1736,7 +1792,7 @@ def test_constraint_debug_renderer_registry_and_semantics():
             "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST", "SIX_DOF",
         }:
             assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
-        if constraint_type in {"HINGE", "SLIDER", "SWING_TWIST"}:
+        if constraint_type in {"HINGE", "SLIDER", "SWING_TWIST", "SIX_DOF"}:
             assert groups["motor"], f"{constraint_type} 应显示 motor target"
         if constraint_type in {"HINGE", "SLIDER"}:
             assert groups["state"], f"{constraint_type} 应显示当前求解值"
