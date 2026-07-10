@@ -59,6 +59,7 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #undef Ellipse
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
+#include <Jolt/Physics/Constraints/PulleyConstraint.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -946,6 +947,11 @@ public:
         bool                      disable_collisions,
         float                     distance_min,
         float                     distance_max,
+        const std::array<float,3>& pulley_fixed_point_a,
+        const std::array<float,3>& pulley_fixed_point_b,
+        float                     pulley_ratio,
+        float                     pulley_min_length,
+        float                     pulley_max_length,
         bool                      use_separate_anchor_frames,
         const std::array<float,3>& anchor_pos_a,
         const std::array<float,4>& anchor_rot_wxyz_a,
@@ -1275,6 +1281,22 @@ public:
             s.mMaxDistance = (std::max)(s.mMinDistance, (std::max)(distance_min, distance_max));
             apply_limit_spring(s.mLimitsSpringSettings);
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
+        } else if (constraint_type_str == "PULLEY") {
+            if (pulley_ratio <= 0.0f)
+                throw std::invalid_argument("Pulley ratio 必须大于 0");
+            PulleyConstraintSettings s;
+            apply_common(s);
+            s.mBodyPoint1 = pos_a;
+            s.mBodyPoint2 = pos_b;
+            s.mFixedPoint1 = to_vec3(pulley_fixed_point_a);
+            s.mFixedPoint2 = to_vec3(pulley_fixed_point_b);
+            s.mRatio = pulley_ratio;
+            s.mMinLength = pulley_min_length;
+            s.mMaxLength = pulley_max_length;
+            if (s.mMinLength >= 0.0f && s.mMaxLength >= 0.0f
+                && s.mMinLength > s.mMaxLength)
+                std::swap(s.mMinLength, s.mMaxLength);
+            c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else {
             throw std::invalid_argument("不支持的约束类型: " + constraint_type_str);
         }
@@ -1424,6 +1446,11 @@ public:
             RVec3 point2 = constraint->GetBody2()->GetCenterOfMassTransform()
                 * constraint->GetConstraintToBody2Matrix().GetTranslation();
             current_value = static_cast<float>((point2 - point1).Length());
+            lambda_position = {constraint->GetTotalLambdaPosition(), 0.0f, 0.0f};
+        } else if (record.constraint_type == "PULLEY") {
+            auto* constraint = static_cast<PulleyConstraint*>(base);
+            current_value_kind = "pulley_length";
+            current_value = constraint->GetCurrentLength();
             lambda_position = {constraint->GetTotalLambdaPosition(), 0.0f, 0.0f};
         }
 
@@ -1802,12 +1829,17 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("disable_collisions") = false,
              nb::arg("distance_min") = 0.0f,
              nb::arg("distance_max") = 1.0f,
+             nb::arg("pulley_fixed_point_a") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("pulley_fixed_point_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("pulley_ratio") = 1.0f,
+             nb::arg("pulley_min_length") = 0.0f,
+             nb::arg("pulley_max_length") = -1.0f,
              nb::arg("use_separate_anchor_frames") = false,
              nb::arg("anchor_pos_a") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_a") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              nb::arg("anchor_pos_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
              nb::arg("anchor_rot_wxyz_b") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
-             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST/SIX_DOF），返回 handle。\n"
+             "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE/SWING_TWIST/SIX_DOF/PULLEY），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
         .def("remove_constraint", &JoltWorld::remove_constraint,

@@ -1,0 +1,58 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "PULLEY-001",
+  "title": "滑轮倍率保持加权绳长并投影两体速度",
+  "source": "jolt_sample:PulleyConstraintTest ratio variation",
+  "tags": ["p0", "constraint", "pulley", "ratio"],
+  "world": {"gravity": [0.0, 0.0, 0.0], "dt": 0.016666666666666666, "substeps": 1, "frames": 60},
+  "bodies": [
+    {
+      "id": "body_a",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.25, 0.25, 0.25]},
+      "position": [-2.0, 0.0, 0.0],
+      "linear_velocity": [0.0, -2.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "body_b",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.25, 0.25, 0.25]},
+      "position": [2.0, 0.0, 0.0],
+      "mass": 1.0,
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "ratio_two",
+      "type": "PULLEY",
+      "body_a": "body_a",
+      "body_b": "body_b",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [-2.0, 0.0, 0.0],
+      "anchor_position_b": [2.0, 0.0, 0.0],
+      "pulley_fixed_point_a": [-2.0, 5.0, 0.0],
+      "pulley_fixed_point_b": [2.0, 5.0, 0.0],
+      "pulley_ratio": 2.0,
+      "pulley_min_length": -1.0,
+      "pulley_max_length": -1.0,
+      "disable_collisions": true
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "ratio_two", "type": "PULLEY", "current_value_kind": "pulley_length", "enabled": true},
+    {"kind": "constraint_value_near", "constraint": "ratio_two", "frame": 60, "expected": 15.0, "value_abs": 0.0001, "current_value_kind": "pulley_length"},
+    {"kind": "body_state_near", "body": "body_a", "frame": 60, "position": [-2.0, -1.6, 0.0], "linear_velocity": [0.0, -1.6, 0.0], "abs": 0.0002},
+    {"kind": "body_state_near", "body": "body_b", "frame": 60, "position": [2.0, 0.8, 0.0], "linear_velocity": [0.0, 0.8, 0.0], "abs": 0.0002},
+    {"kind": "constraint_lambda_active", "constraint": "ratio_two", "field": "lambda_max_abs", "min_abs": 0.0001, "start_frame": 1},
+    {"kind": "finite_all"}
+  ]
+}

@@ -352,6 +352,11 @@ class ConstraintSpec:
     disable_collisions: bool
     distance_min: float
     distance_max: float
+    pulley_fixed_point_a: tuple[float, float, float]
+    pulley_fixed_point_b: tuple[float, float, float]
+    pulley_ratio: float
+    pulley_min_length: float
+    pulley_max_length: float
 
     @classmethod
     def from_data(cls, value: Any, path: str) -> "ConstraintSpec":
@@ -381,11 +386,13 @@ class ConstraintSpec:
             "cone_half_angle", "swing_type", "swing_normal_half_angle",
             "swing_plane_half_angle", "twist_min_angle", "twist_max_angle",
             "disable_collisions", "distance_min", "distance_max",
+            "pulley_fixed_point_a", "pulley_fixed_point_b", "pulley_ratio",
+            "pulley_min_length", "pulley_max_length",
         }, path)
         constraint_type = _string(data.get("type"), f"{path}.type").upper()
         if constraint_type not in {
             "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
-            "SIX_DOF",
+            "SIX_DOF", "PULLEY",
         }:
             raise FixtureError(f"{path}.type is unsupported: {constraint_type}")
         body_a = _string(data.get("body_a"), f"{path}.body_a")
@@ -577,6 +584,21 @@ class ConstraintSpec:
             ),
             distance_min=_number(data.get("distance_min", 0.0), f"{path}.distance_min"),
             distance_max=_number(data.get("distance_max", 1.0), f"{path}.distance_max"),
+            pulley_fixed_point_a=_vec(
+                data.get("pulley_fixed_point_a", (0.0, 0.0, 0.0)),
+                3, f"{path}.pulley_fixed_point_a",
+            ),
+            pulley_fixed_point_b=_vec(
+                data.get("pulley_fixed_point_b", (0.0, 0.0, 0.0)),
+                3, f"{path}.pulley_fixed_point_b",
+            ),
+            pulley_ratio=_number(data.get("pulley_ratio", 1.0), f"{path}.pulley_ratio"),
+            pulley_min_length=_number(
+                data.get("pulley_min_length", 0.0), f"{path}.pulley_min_length",
+            ),
+            pulley_max_length=_number(
+                data.get("pulley_max_length", -1.0), f"{path}.pulley_max_length",
+            ),
         )
         for name in (
             "limit_spring_frequency", "limit_spring_damping", "max_friction_torque",
@@ -638,6 +660,10 @@ class ConstraintSpec:
             raise FixtureError(f"{path}.swing_type is unsupported: {result.swing_type}")
         if result.solver_velocity_steps > 255 or result.solver_position_steps > 255:
             raise FixtureError(f"{path} solver step overrides must be <= 255")
+        if result.pulley_ratio <= 0.0:
+            raise FixtureError(f"{path}.pulley_ratio must be > 0")
+        if result.pulley_min_length < -1.0 or result.pulley_max_length < -1.0:
+            raise FixtureError(f"{path} pulley lengths must be -1 or >= 0")
         for name, quat in (
             ("anchor_rotation_wxyz", result.anchor_rotation_wxyz),
             ("anchor_rotation_wxyz_a", result.anchor_rotation_wxyz_a),

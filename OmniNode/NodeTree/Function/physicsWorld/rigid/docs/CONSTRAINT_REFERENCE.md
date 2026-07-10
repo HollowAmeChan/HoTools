@@ -98,7 +98,7 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 | Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
 | Gear | 连接两个 hinge 的齿轮比 | constraint-to-constraint 引用拓扑 |
 | RackAndPinion | hinge 与 slider 的线性/角度比例 | constraint-to-constraint 引用拓扑 |
-| Pulley | 两固定点、绳长与 ratio | world fixed points 与绳路调试 |
+| Pulley | 两固定点、绳长与 ratio | native S1 已通过；公共 world fixed points 与绳路调试待接 |
 | Vehicle | 虚拟轮/履带车辆系统 | 独立 vehicle domain，不并入通用约束面板 |
 
 来源：[Jolt 官方约束总览](https://jrouwe.github.io/JoltPhysics/index.html#constraints)。
