@@ -198,8 +198,13 @@ class ConstraintSpec:
         "disable_collisions",
         "breakable",
         "breaking_threshold",
+        "anchor_mode",
         "anchor_position",
         "anchor_rotation_wxyz",
+        "anchor_position_a",
+        "anchor_rotation_wxyz_a",
+        "anchor_position_b",
+        "anchor_rotation_wxyz_b",
         "constraint_priority",
         "solver_velocity_steps",
         "solver_position_steps",
@@ -240,8 +245,13 @@ class ConstraintSpec:
         disable_collisions: bool = True,
         breakable: bool = False,
         breaking_threshold: float = 1000.0,
+        anchor_mode: str = "SHARED_WORLD",
         anchor_position: tuple[float, float, float] = (0.0, 0.0, 0.0),
         anchor_rotation_wxyz: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0),
+        anchor_position_a: tuple[float, float, float] | None = None,
+        anchor_rotation_wxyz_a: tuple[float, float, float, float] | None = None,
+        anchor_position_b: tuple[float, float, float] | None = None,
+        anchor_rotation_wxyz_b: tuple[float, float, float, float] | None = None,
         constraint_priority: int = 0,
         solver_velocity_steps: int = 0,
         solver_position_steps: int = 0,
@@ -279,8 +289,13 @@ class ConstraintSpec:
         self.disable_collisions: bool = bool(disable_collisions)
         self.breakable: bool = bool(breakable)
         self.breaking_threshold: float = max(float(breaking_threshold), 0.0)
+        self.anchor_mode: str = str(anchor_mode or "SHARED_WORLD")
         self.anchor_position: tuple[float, float, float] = anchor_position
         self.anchor_rotation_wxyz: tuple[float, float, float, float] = anchor_rotation_wxyz
+        self.anchor_position_a: tuple[float, float, float] = anchor_position if anchor_position_a is None else anchor_position_a
+        self.anchor_rotation_wxyz_a: tuple[float, float, float, float] = anchor_rotation_wxyz if anchor_rotation_wxyz_a is None else anchor_rotation_wxyz_a
+        self.anchor_position_b: tuple[float, float, float] = anchor_position if anchor_position_b is None else anchor_position_b
+        self.anchor_rotation_wxyz_b: tuple[float, float, float, float] = anchor_rotation_wxyz if anchor_rotation_wxyz_b is None else anchor_rotation_wxyz_b
         self.constraint_priority: int = constraint_priority
         self.solver_velocity_steps: int = solver_velocity_steps
         self.solver_position_steps: int = solver_position_steps
@@ -318,8 +333,13 @@ class ConstraintSpec:
             "disable_collisions": self.disable_collisions,
             "breakable": self.breakable,
             "breaking_threshold": self.breaking_threshold,
+            "anchor_mode": self.anchor_mode,
             "anchor_position": self.anchor_position,
             "anchor_rotation_wxyz": self.anchor_rotation_wxyz,
+            "anchor_position_a": self.anchor_position_a,
+            "anchor_rotation_wxyz_a": self.anchor_rotation_wxyz_a,
+            "anchor_position_b": self.anchor_position_b,
+            "anchor_rotation_wxyz_b": self.anchor_rotation_wxyz_b,
             "constraint_priority": self.constraint_priority,
             "solver_velocity_steps": self.solver_velocity_steps,
             "solver_position_steps": self.solver_position_steps,
@@ -419,6 +439,30 @@ def _rotation_wxyz_from_euler(value) -> tuple[float, float, float, float]:
         return (float(q.w), float(q.x), float(q.y), float(q.z))
     except Exception:
         return (1.0, 0.0, 0.0, 0.0)
+
+
+def _local_anchor_frame_to_world(
+    target,
+    local_point,
+    local_rotation,
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """把 Object 局部 anchor frame 冻结成 Jolt 可消费的世界空间快照。"""
+    point = _float3(local_point)
+    try:
+        import mathutils
+        local_quat = mathutils.Euler(_float3(local_rotation), "XYZ").to_quaternion()
+        if target is None:
+            return point, (float(local_quat.w), float(local_quat.x), float(local_quat.y), float(local_quat.z))
+        matrix = target.matrix_world
+        world_point = matrix @ mathutils.Vector(point)
+        _location, target_quat, _scale = matrix.decompose()
+        world_quat = target_quat @ local_quat
+        return (
+            (float(world_point.x), float(world_point.y), float(world_point.z)),
+            (float(world_quat.w), float(world_quat.x), float(world_quat.y), float(world_quat.z)),
+        )
+    except Exception:
+        return point, _rotation_wxyz_from_euler(local_rotation)
 
 
 def _allowed_dofs_from_props(props) -> int:
@@ -576,6 +620,22 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     breakable = bool(getattr(props, "breakable", False))
     breaking_threshold = max(float(getattr(props, "breaking_threshold", 1000.0)), 0.0)
     anchor_position, anchor_rotation_wxyz = _world_transform_wxyz(empty_obj)
+    anchor_mode = str(getattr(props, "anchor_mode", "SHARED_WORLD") or "SHARED_WORLD")
+    if anchor_mode == "LOCAL_FRAMES":
+        anchor_position_a, anchor_rotation_wxyz_a = _local_anchor_frame_to_world(
+            target_a,
+            getattr(props, "local_point_a", (0.0, 0.0, 0.0)),
+            getattr(props, "local_rotation_a", (0.0, 0.0, 0.0)),
+        )
+        anchor_position_b, anchor_rotation_wxyz_b = _local_anchor_frame_to_world(
+            target_b,
+            getattr(props, "local_point_b", (0.0, 0.0, 0.0)),
+            getattr(props, "local_rotation_b", (0.0, 0.0, 0.0)),
+        )
+    else:
+        anchor_mode = "SHARED_WORLD"
+        anchor_position_a = anchor_position_b = anchor_position
+        anchor_rotation_wxyz_a = anchor_rotation_wxyz_b = anchor_rotation_wxyz
 
     constraint_priority = max(0, int(getattr(props, "constraint_priority", 0)))
     solver_velocity_steps = _clamp(int(getattr(props, "solver_velocity_steps", 0)), 0, 255)
@@ -622,8 +682,13 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         disable_collisions=disable_collisions,
         breakable=breakable,
         breaking_threshold=breaking_threshold,
+        anchor_mode=anchor_mode,
         anchor_position=anchor_position,
         anchor_rotation_wxyz=anchor_rotation_wxyz,
+        anchor_position_a=anchor_position_a,
+        anchor_rotation_wxyz_a=anchor_rotation_wxyz_a,
+        anchor_position_b=anchor_position_b,
+        anchor_rotation_wxyz_b=anchor_rotation_wxyz_b,
         constraint_priority=constraint_priority,
         solver_velocity_steps=solver_velocity_steps,
         solver_position_steps=solver_position_steps,

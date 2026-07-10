@@ -584,6 +584,12 @@ def test_distance_constraint_spec_and_generated_properties():
     props.limit_spring_damping = 0.75
     props.breakable = True
     props.breaking_threshold = 12.5
+    props.anchor_mode = "LOCAL_FRAMES"
+    props.local_point_a = (0.25, 0.0, 0.0)
+    props.local_rotation_a = (0.0, 0.0, 0.2)
+    props.local_point_b = (-0.25, 0.0, 0.0)
+    props.local_rotation_b = (0.0, 0.0, -0.3)
+    bpy.context.view_layer.update()
 
     spec = build_constraint_spec(c)
     assert spec is not None
@@ -594,6 +600,10 @@ def test_distance_constraint_spec_and_generated_properties():
     assert spec.limit_spring_damping == 0.75
     assert spec.breakable is True
     assert spec.breaking_threshold == 12.5
+    assert spec.anchor_mode == "LOCAL_FRAMES"
+    assert spec.anchor_position_a == (-0.75, 0.0, 1.0)
+    assert spec.anchor_position_b == (0.75, 0.0, 1.0)
+    assert spec.anchor_rotation_wxyz_a != spec.anchor_rotation_wxyz_b
     assert spec.debug_dict()["distance_max"] == 2.5
 
     adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
@@ -609,10 +619,18 @@ def test_distance_constraint_spec_and_generated_properties():
     assert state is not None
     assert state["constraint_type"] == "DISTANCE"
     assert state["current_value_kind"] == "distance"
+    assert abs(state["current_value"] - 1.5) < 1.0e-4
     assert state["enabled"] is True
     assert state["lambda_max_abs"] >= 0.0
     adapter.dispose("test_distance_constraint")
 
+    anchor_a = bpy.data.objects.new("T3B_GeneratedAnchorA", None)
+    anchor_b = bpy.data.objects.new("T3B_GeneratedAnchorB", None)
+    bpy.context.scene.collection.objects.link(anchor_a)
+    bpy.context.scene.collection.objects.link(anchor_b)
+    anchor_a.location = (-0.5, 0.0, 1.5)
+    anchor_b.location = (0.5, 0.0, 1.5)
+    bpy.context.view_layer.update()
     generated = make_rigid_generated_constraint_properties(
         target_a=a,
         target_b=b,
@@ -621,6 +639,8 @@ def test_distance_constraint_spec_and_generated_properties():
         distance_max=1.0,
         breakable=True,
         breaking_threshold=7.5,
+        anchor_object_a=anchor_a,
+        anchor_object_b=anchor_b,
     )
     assert len(generated) == 1
     assert generated[0]["constraint_type"] == "DISTANCE"
@@ -628,8 +648,11 @@ def test_distance_constraint_spec_and_generated_properties():
     assert generated[0]["distance_max"] == 4.0
     assert generated[0]["breakable"] is True
     assert generated[0]["breaking_threshold"] == 7.5
+    assert generated[0]["anchor_mode"] == "SEPARATE_WORLD"
+    assert generated[0]["anchor_position_a"] == (-0.5, 0.0, 1.5)
+    assert generated[0]["anchor_position_b"] == (0.5, 0.0, 1.5)
 
-    _del(c, a, b)
+    _del(anchor_a, anchor_b, c, a, b)
 
 
 def test_constraint_state_result_pipeline():

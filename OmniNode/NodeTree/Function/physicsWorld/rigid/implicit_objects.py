@@ -374,6 +374,8 @@ def make_rigid_generated_constraint_properties(
     distance_max: float = 1.0,
     breakable: bool = False,
     breaking_threshold: float = 1000.0,
+    anchor_object_a: bpy.types.Object = None,
+    anchor_object_b: bpy.types.Object = None,
 ) -> list[dict]:
     """
     构造单个可注册的刚体生成约束属性。
@@ -393,6 +395,16 @@ def make_rigid_generated_constraint_properties(
         else:
             anchor_rotation_wxyz = (1.0, 0.0, 0.0, 0.0)
 
+    anchor_mode = "SHARED_WORLD"
+    anchor_position_a = anchor_position_b = anchor_position
+    anchor_rotation_wxyz_a = anchor_rotation_wxyz_b = anchor_rotation_wxyz
+    if _is_object(anchor_object_a):
+        anchor_position_a, anchor_rotation_wxyz_a = _world_transform_wxyz(anchor_object_a)
+        anchor_mode = "SEPARATE_WORLD"
+    if _is_object(anchor_object_b):
+        anchor_position_b, anchor_rotation_wxyz_b = _world_transform_wxyz(anchor_object_b)
+        anchor_mode = "SEPARATE_WORLD"
+
     linear_min, linear_max = _ordered_pair(float(linear_limit_min), float(linear_limit_max))
     distance_min, distance_max = _ordered_pair(
         max(float(distance_min), 0.0),
@@ -403,6 +415,8 @@ def make_rigid_generated_constraint_properties(
         "target_a": target_a if _is_object(target_a) else None,
         "target_b": target_b if _is_object(target_b) else None,
         "anchor_object": anchor_object if _is_object(anchor_object) else None,
+        "anchor_object_a": anchor_object_a if _is_object(anchor_object_a) else None,
+        "anchor_object_b": anchor_object_b if _is_object(anchor_object_b) else None,
         "constraint_type": _normalize_constraint_type(constraint_type),
         "enabled": bool(enabled),
         "disable_collisions": bool(disable_collisions),
@@ -411,6 +425,11 @@ def make_rigid_generated_constraint_properties(
         "source_id": str(source_id or ""),
         "anchor_position": anchor_position,
         "anchor_rotation_wxyz": anchor_rotation_wxyz,
+        "anchor_mode": anchor_mode,
+        "anchor_position_a": anchor_position_a,
+        "anchor_rotation_wxyz_a": anchor_rotation_wxyz_a,
+        "anchor_position_b": anchor_position_b,
+        "anchor_rotation_wxyz_b": anchor_rotation_wxyz_b,
         "constraint_priority": max(0, int(constraint_priority)),
         "solver_velocity_steps": _clamp(int(solver_velocity_steps), 0, 255),
         "solver_position_steps": _clamp(int(solver_position_steps), 0, 255),
@@ -449,21 +468,33 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         max(float(item.get("distance_min", 0.0) or 0.0), 0.0),
         max(float(item.get("distance_max", 1.0) or 0.0), 0.0),
     )
+    shared_position = _float3(item.get("anchor_position", (0.0, 0.0, 0.0)))
+    shared_rotation = _float4(item.get(
+        "anchor_rotation_wxyz",
+        _rotation_wxyz_from_euler(item.get("anchor_rotation", (0.0, 0.0, 0.0))),
+    ))
+    anchor_mode = str(item.get("anchor_mode", "SHARED_WORLD") or "SHARED_WORLD")
+    if anchor_mode not in {"SHARED_WORLD", "SEPARATE_WORLD"}:
+        anchor_mode = "SHARED_WORLD"
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
         "anchor_object": item.get("anchor_object") if _is_object(item.get("anchor_object")) else None,
+        "anchor_object_a": item.get("anchor_object_a") if _is_object(item.get("anchor_object_a")) else None,
+        "anchor_object_b": item.get("anchor_object_b") if _is_object(item.get("anchor_object_b")) else None,
         "constraint_type": constraint_type,
         "enabled": bool(item.get("enabled", True)),
         "disable_collisions": bool(item.get("disable_collisions", True)),
         "breakable": bool(item.get("breakable", False)),
         "breaking_threshold": max(float(item.get("breaking_threshold", 1000.0) or 0.0), 0.0),
         "source_id": str(item.get("source_id", "") or ""),
-        "anchor_position": _float3(item.get("anchor_position", (0.0, 0.0, 0.0))),
-        "anchor_rotation_wxyz": _float4(item.get(
-            "anchor_rotation_wxyz",
-            _rotation_wxyz_from_euler(item.get("anchor_rotation", (0.0, 0.0, 0.0))),
-        )),
+        "anchor_position": shared_position,
+        "anchor_rotation_wxyz": shared_rotation,
+        "anchor_mode": anchor_mode,
+        "anchor_position_a": _float3(item.get("anchor_position_a", shared_position)),
+        "anchor_rotation_wxyz_a": _float4(item.get("anchor_rotation_wxyz_a", shared_rotation)),
+        "anchor_position_b": _float3(item.get("anchor_position_b", shared_position)),
+        "anchor_rotation_wxyz_b": _float4(item.get("anchor_rotation_wxyz_b", shared_rotation)),
         "constraint_priority": max(0, int(item.get("constraint_priority", 0) or 0)),
         "solver_velocity_steps": _clamp(int(item.get("solver_velocity_steps", 0) or 0), 0, 255),
         "solver_position_steps": _clamp(int(item.get("solver_position_steps", 0) or 0), 0, 255),
@@ -536,9 +567,13 @@ def rigid_generated_constraint_signature(item: dict) -> str:
     target_a = item.get("target_a")
     target_b = item.get("target_b")
     anchor_object = item.get("anchor_object")
+    anchor_object_a = item.get("anchor_object_a")
+    anchor_object_b = item.get("anchor_object_b")
     a_ptr, a_data_ptr = _target_parts(target_a)
     b_ptr, b_data_ptr = _target_parts(target_b)
     anchor_ptr, anchor_data_ptr = _target_parts(anchor_object)
+    anchor_a_ptr, anchor_a_data_ptr = _target_parts(anchor_object_a)
+    anchor_b_ptr, anchor_b_data_ptr = _target_parts(anchor_object_b)
     payload = [
         a_ptr,
         a_data_ptr,
@@ -546,6 +581,10 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         b_data_ptr,
         anchor_ptr,
         anchor_data_ptr,
+        anchor_a_ptr,
+        anchor_a_data_ptr,
+        anchor_b_ptr,
+        anchor_b_data_ptr,
         str(item.get("constraint_type", "FIXED") or "FIXED"),
         "1" if bool(item.get("enabled", True)) else "0",
         "1" if bool(item.get("disable_collisions", True)) else "0",
@@ -553,6 +592,11 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         f"{float(item.get('breaking_threshold', 1000.0)):.8g}",
         ",".join(f"{v:.8g}" for v in _float3(item.get("anchor_position", (0.0, 0.0, 0.0)))),
         ",".join(f"{float(v):.8g}" for v in _float4(item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))),
+        str(item.get("anchor_mode", "SHARED_WORLD") or "SHARED_WORLD"),
+        ",".join(f"{v:.8g}" for v in _float3(item.get("anchor_position_a", (0.0, 0.0, 0.0)))),
+        ",".join(f"{float(v):.8g}" for v in _float4(item.get("anchor_rotation_wxyz_a", (1.0, 0.0, 0.0, 0.0)))),
+        ",".join(f"{v:.8g}" for v in _float3(item.get("anchor_position_b", (0.0, 0.0, 0.0)))),
+        ",".join(f"{float(v):.8g}" for v in _float4(item.get("anchor_rotation_wxyz_b", (1.0, 0.0, 0.0, 0.0)))),
         int(item.get("constraint_priority", 0) or 0),
         int(item.get("solver_velocity_steps", 0) or 0),
         int(item.get("solver_position_steps", 0) or 0),
@@ -645,8 +689,13 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         disable_collisions=bool(item.get("disable_collisions", True)),
         breakable=bool(item.get("breakable", False)),
         breaking_threshold=float(item.get("breaking_threshold", 1000.0) or 0.0),
+        anchor_mode=str(item.get("anchor_mode", "SHARED_WORLD") or "SHARED_WORLD"),
         anchor_position=_float3(item.get("anchor_position", (0.0, 0.0, 0.0))),
         anchor_rotation_wxyz=_float4(item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0))),
+        anchor_position_a=_float3(item.get("anchor_position_a", item.get("anchor_position", (0.0, 0.0, 0.0)))),
+        anchor_rotation_wxyz_a=_float4(item.get("anchor_rotation_wxyz_a", item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))),
+        anchor_position_b=_float3(item.get("anchor_position_b", item.get("anchor_position", (0.0, 0.0, 0.0)))),
+        anchor_rotation_wxyz_b=_float4(item.get("anchor_rotation_wxyz_b", item.get("anchor_rotation_wxyz", (1.0, 0.0, 0.0, 0.0)))),
         constraint_priority=int(item.get("constraint_priority", 0) or 0),
         solver_velocity_steps=int(item.get("solver_velocity_steps", 0) or 0),
         solver_position_steps=int(item.get("solver_position_steps", 0) or 0),

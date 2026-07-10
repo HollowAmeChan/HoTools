@@ -357,7 +357,7 @@ def physicsRigidJoltWorldSettingsRegister(
         "目标A", "目标B", "锚点对象", "约束类型", "禁用连接碰撞", "来源ID",
         "优先级", "速度步数", "位置步数", "启用限制",
         "角度最小", "角度最大", "线性最小", "线性最大", "锥角",
-        "距离最小", "距离最大", "可断裂", "断裂冲量阈值",
+        "距离最小", "距离最大", "可断裂", "断裂冲量阈值", "锚点对象A", "锚点对象B",
     ],
     input_init={
         "constraint_type": {"default_value": "FIXED"},
@@ -374,7 +374,8 @@ def physicsRigidJoltWorldSettingsRegister(
 
     本节点不创建 Empty、不写 solver slot、不访问 Jolt。约束类型使用
     FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE。锚点对象为空时，锚点位置取
-    目标 A/B 的中点，旋转取目标 A 的 world rotation。
+    目标 A/B 的中点，旋转取目标 A 的 world rotation。锚点对象 A/B 可选，
+    用于覆盖各自独立的世界 anchor frame。
     """,
 )
 def physicsRigidGeneratedConstraintProperties(
@@ -397,6 +398,8 @@ def physicsRigidGeneratedConstraintProperties(
     distance_max: float = 1.0,
     breakable: bool = False,
     breaking_threshold: float = 1000.0,
+    anchor_object_a: bpy.types.Object = None,
+    anchor_object_b: bpy.types.Object = None,
 ) -> list[object]:
     return make_rigid_generated_constraint_properties(
         target_a=target_a,
@@ -419,6 +422,8 @@ def physicsRigidGeneratedConstraintProperties(
         distance_max=float(distance_max),
         breakable=bool(breakable),
         breaking_threshold=float(breaking_threshold),
+        anchor_object_a=anchor_object_a,
+        anchor_object_b=anchor_object_b,
     )
 
 

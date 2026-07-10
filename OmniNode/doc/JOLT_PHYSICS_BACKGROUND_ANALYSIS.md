@@ -132,7 +132,7 @@ Jolt 支持的主要 two-body constraint：
 
 | 约束 | 原生能力 | 当前 HoTools binding |
 |---|---|---|
-| Fixed | 锁定相对位置和旋转；支持 world/local frame、auto detect point | 已接类型，但只传统一 anchor frame |
+| Fixed | 锁定相对位置和旋转；支持 world/local frame、auto detect point | 已接独立 A/B frame；未接 auto detect point |
 | Point | 锁定一个点，允许任意旋转 | 已接类型，但只传统一 anchor point |
 | Distance | 点到点距离范围，支持 min/max 和 spring | 未接 |
 | Hinge | 单轴旋转，支持角度 limit、limit spring、friction torque、motor | 已接类型，并已接基础 limit/friction/motor |
@@ -656,7 +656,7 @@ Native 侧当前特点：
 | 类型 | 应补属性 | 优先级 |
 |---|---|---|
 | 通用 | enabled、priority、solver step override、breakable、break threshold、disable connected collision | P0 |
-| 通用 anchor | use_world_space、auto_detect_point、point1/point2、axis/normal per body | P0 |
+| 通用 anchor | 独立 point1/point2 与 axis/normal per body 已接；auto_detect_point 未接 | 部分已接 |
 | Hinge | limit enabled、limit min/max、friction torque、motor state、target angle、target angular velocity、motor torque limits、spring | P0 |
 | Slider | limit enabled、limit min/max、friction force、motor state、target position、target velocity、motor force limits、spring | P0 |
 | Cone | half cone angle | P0 |
@@ -929,4 +929,14 @@ lambda 是 Jolt 上一物理步为满足约束施加的冲量。后续 `breaking
 
 断裂时如果约束配置了 `disable_collisions`，native 会同步撤销这条约束持有的 pair-filter 引用，使两个已分离刚体恢复碰撞；重新启用约束会重新应用过滤。配置状态和当前 pair-filter 应用状态分开保存，保证多约束引用计数、重复 disable/re-enable 与 remove 生命周期一致。
 
-当前约束侧下一优先级是分离的 body A/B anchor frame，再考虑 SixDOF。contact listener 与 query API 可独立并行推进。
+## 2026-07-10 追加：独立 A/B anchor frame
+
+显式 Empty 约束新增 `anchor_mode`。默认 `SHARED_WORLD` 继续使用 Empty 的 world transform，同时作为 A/B frame，旧 blend 文件语义不变；`LOCAL_FRAMES` 提供 `local_point_a/b` 与 `local_rotation_a/b`，分别相对 target A/B 的 Blender Object 局部空间表达。
+
+`ConstraintSpec` 收集时把两个局部 frame 冻结成 `anchor_position_a/b` 与 `anchor_rotation_wxyz_a/b` 世界快照。这里没有直接使用 Jolt 的 local constraint space，因为 Jolt local point 相对 body center of mass，而 HoTools 属性相对 Blender Object 原点；shape offset、compound 或未来 COM override 会让二者不等价。世界快照映射避免公开属性隐式依赖 Jolt COM 规则。
+
+generated constraint 保留原 `anchor_object` 共享 frame，并追加可选 `anchor_object_a/b`。payload、signature、materialized `ConstraintSpec`、adapter 和 native ABI 均携带两个 frame；新 ABI 参数追加在旧签名尾部，由 `use_separate_anchor_frames` 开启，旧位置参数调用保持兼容。
+
+native 已对 Fixed 的 X/Y axes、Hinge 的 hinge/normal axes、Slider 的 slider/normal axes、Cone 的 twist axes，以及 Point/Distance 的两个 point 分别赋值。rigid debug draw 改为直接绘制 spec 中的后端输入快照，因此显式和 generated constraint 都能显示独立锚点及二者连线，不再从 live Empty 位置重算。
+
+验收状态：`hotools_jolt` Release 单目标构建通过；native 测试 28/28、legacy binding 12/12、Blender 刚体后台集成测试 21/21 通过。约束侧下一优先级可进入 SixDOF；contact listener 与 query API 也可作为独立纵向切片推进。

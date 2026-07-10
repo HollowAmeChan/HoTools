@@ -1324,7 +1324,7 @@ Jolt adapter 的 `dispose` 实现必须确保：先销毁所有 bodies 和 const
 **不是 Phase 5 退出阻塞项，可放到 Jolt 后续能力阶段：**
 
 - contact listener / sensor event / query API。
-- 分离的 body A/B anchor frame。
+- SixDOF 与更高阶约束类型。
 - advanced shape、compound、mesh static collider、convex hull。
 - Jolt material、inertia override、COM offset、shape cook cache。
 - cloth 直接读取 rigid body contact 或 rigid broadphase。
@@ -1567,7 +1567,7 @@ BONE 上下文（Bone Properties，Pose 模式）
 
 硬约束：`writeback.solver_inline_writeback` 必须为 `False`；隐式对象不能伪装成 Blender owner 写回。
 
-Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖，35 参数兼容桥已从新路径删除；Jolt constraint state/lambda 与 breakable policy 已接入。剩余重点是补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/独立 anchor frame 能力边界。
+Phase 5 的声明样板缺口、runtime cache 生命周期 smoke、帧语义验收矩阵，以及 PoseBone 类非 Object 写回测试已关闭。SpringBone native context 双调用模型已有 C++ handle 路径与 native / Blender 测试覆盖，35 参数兼容桥已从新路径删除；Jolt constraint state/lambda、breakable policy 与独立 A/B anchor frame 已接入。剩余重点是补 timing 验收基线、MC2 / BoneCloth 的 Mesh/PoseBone 写回样板，以及后续 Jolt contact/query/SixDOF 能力边界。
 
 ## 2026-07-09 追加：Solver 子模块原子化方向
 

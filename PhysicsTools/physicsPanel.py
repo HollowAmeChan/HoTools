@@ -361,6 +361,13 @@ class PT_Hotools_Physics_RigidConstraint(Panel):
         layout.prop(props, "constraint_type")
         layout.prop(props, "target_a")
         layout.prop(props, "target_b")
+        layout.prop(props, "anchor_mode")
+        if props.anchor_mode == "LOCAL_FRAMES":
+            frame_col = layout.column(align=True)
+            frame_col.prop(props, "local_point_a")
+            frame_col.prop(props, "local_rotation_a")
+            frame_col.prop(props, "local_point_b")
+            frame_col.prop(props, "local_rotation_b")
         layout.prop(props, "disable_collisions")
         layout.prop(props, "breakable")
         break_col = layout.column(align=True)

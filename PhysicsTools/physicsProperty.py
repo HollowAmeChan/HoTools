@@ -533,6 +533,52 @@ class PG_Hotools_RigidConstraint(PropertyGroup):
         description="约束的第二个刚体目标；留空表示约束到世界原点",
     )  # type: ignore
 
+    anchor_mode: EnumProperty(
+        name="锚点模式",
+        description="使用Empty共享世界锚点，或分别使用刚体A/B局部空间中的锚点frame",
+        items=[
+            ("SHARED_WORLD", "共享世界锚点", "两个刚体使用当前Empty的世界位置和旋转"),
+            ("LOCAL_FRAMES", "独立局部Frame", "分别从刚体A/B局部点和局部旋转构造世界锚点frame"),
+        ],
+        default="SHARED_WORLD",
+    )  # type: ignore
+
+    local_point_a: FloatVectorProperty(
+        name="A局部锚点",
+        description="锚点相对刚体A Object局部空间的位置；A为空时按世界坐标解释",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="LENGTH",
+        subtype="XYZ",
+    )  # type: ignore
+
+    local_rotation_a: FloatVectorProperty(
+        name="A局部旋转",
+        description="锚点frame相对刚体A Object局部空间的欧拉旋转",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="ROTATION",
+        subtype="EULER",
+    )  # type: ignore
+
+    local_point_b: FloatVectorProperty(
+        name="B局部锚点",
+        description="锚点相对刚体B Object局部空间的位置；B为空时按世界坐标解释",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="LENGTH",
+        subtype="XYZ",
+    )  # type: ignore
+
+    local_rotation_b: FloatVectorProperty(
+        name="B局部旋转",
+        description="锚点frame相对刚体B Object局部空间的欧拉旋转",
+        default=(0.0, 0.0, 0.0),
+        size=3,
+        unit="ROTATION",
+        subtype="EULER",
+    )  # type: ignore
+
     # ── Jolt 通用 ConstraintSettings ───────────────────────────────────────
 
     disable_collisions: BoolProperty(

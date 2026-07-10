@@ -91,13 +91,19 @@ def _transform_from_body_spec(spec: "RigidBodySpec") -> tuple[tuple, tuple]:
         raise ValueError(f"RigidBodySpec {slot_id} has invalid world transform snapshot") from exc
 
 
-def _transform_from_constraint_spec(spec: "ConstraintSpec") -> tuple[tuple, tuple]:
-    pos = getattr(spec, "anchor_position", None)
-    rot = getattr(spec, "anchor_rotation_wxyz", None)
+def _constraint_frames_from_spec(spec: "ConstraintSpec") -> tuple[tuple, tuple, tuple, tuple]:
+    shared_pos = getattr(spec, "anchor_position", None)
+    shared_rot = getattr(spec, "anchor_rotation_wxyz", None)
+    pos_a = getattr(spec, "anchor_position_a", shared_pos)
+    rot_a = getattr(spec, "anchor_rotation_wxyz_a", shared_rot)
+    pos_b = getattr(spec, "anchor_position_b", shared_pos)
+    rot_b = getattr(spec, "anchor_rotation_wxyz_b", shared_rot)
     try:
         return (
-            (float(pos[0]), float(pos[1]), float(pos[2])),
-            (float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])),
+            (float(pos_a[0]), float(pos_a[1]), float(pos_a[2])),
+            (float(rot_a[0]), float(rot_a[1]), float(rot_a[2]), float(rot_a[3])),
+            (float(pos_b[0]), float(pos_b[1]), float(pos_b[2])),
+            (float(rot_b[0]), float(rot_b[1]), float(rot_b[2]), float(rot_b[3])),
         )
     except Exception as exc:
         slot_id = getattr(spec, "slot_id", "<unknown>")
@@ -405,14 +411,19 @@ class JoltAdapter:
         a_handle = _get_handle(int(getattr(spec, "target_a_ptr", 0) or 0))
         b_handle = _get_handle(int(getattr(spec, "target_b_ptr", 0) or 0))
 
-        pos, rot = _transform_from_constraint_spec(spec)
+        pos_a, rot_a, pos_b, rot_b = _constraint_frames_from_spec(spec)
 
         kwargs = dict(
             constraint_type=spec.constraint_type,
             body_a_handle=a_handle,
             body_b_handle=b_handle,
-            anchor_pos=pos,
-            anchor_rot_wxyz=rot,
+            anchor_pos=pos_a,
+            anchor_rot_wxyz=rot_a,
+            use_separate_anchor_frames=True,
+            anchor_pos_a=pos_a,
+            anchor_rot_wxyz_a=rot_a,
+            anchor_pos_b=pos_b,
+            anchor_rot_wxyz_b=rot_b,
             constraint_priority=int(getattr(spec, "constraint_priority", 0)),
             solver_velocity_steps=int(getattr(spec, "solver_velocity_steps", 0)),
             solver_position_steps=int(getattr(spec, "solver_position_steps", 0)),

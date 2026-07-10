@@ -212,30 +212,27 @@ def _append_body_shape_lines(lines: list, spec, result: dict | None) -> None:
 
 def _append_constraint_lines(constraint_lines: list | None, problem_lines: list | None, spec) -> None:
     empty_obj = getattr(spec, "empty_obj", None)
-    if empty_obj is None:
-        return
-    anchor = object_location(empty_obj)
-    targets = []
-    has_problem = False
-    for target in (getattr(spec, "target_a", None), getattr(spec, "target_b", None)):
-        if target is None:
-            has_problem = True
+    anchor_a = vector3(getattr(spec, "anchor_position_a", getattr(spec, "anchor_position", (0.0, 0.0, 0.0))))
+    anchor_b = vector3(getattr(spec, "anchor_position_b", getattr(spec, "anchor_position", (0.0, 0.0, 0.0))))
+    targets = (getattr(spec, "target_a", None), getattr(spec, "target_b", None))
+    has_problem = all(target is None for target in targets)
+    for target in targets:
+        if target is None or empty_obj is None:
             continue
         try:
             if target.as_pointer() == empty_obj.as_pointer():
                 has_problem = True
-                continue
-            targets.append(object_location(target))
         except Exception:
             has_problem = True
 
     if constraint_lines is not None:
         size = max(float_value(getattr(spec, "draw_constraint_size", 1.0), 1.0), 0.05) * 0.15
-        add_cross_lines(constraint_lines, anchor, size)
-        for target_pos in targets:
-            add_line(constraint_lines, anchor, target_pos)
+        add_cross_lines(constraint_lines, anchor_a, size)
+        if (anchor_b - anchor_a).length_squared > 1.0e-12:
+            add_cross_lines(constraint_lines, anchor_b, size)
+            add_line(constraint_lines, anchor_a, anchor_b)
     if has_problem and problem_lines is not None:
-        add_cross_lines(problem_lines, anchor, 0.25)
+        add_cross_lines(problem_lines, anchor_a, 0.25)
 
 
 def _shape_matrix(spec, result: dict | None) -> mathutils.Matrix | None:

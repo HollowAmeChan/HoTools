@@ -514,6 +514,35 @@ def test_add_distance_constraint():
     jw.clear()
 
 
+def test_separate_anchor_frames():
+    """独立 A/B 世界 frame 应真实进入 DistanceConstraintSettings。"""
+    jw = _make_world()
+    jw.set_gravity((0.0, 0.0, 0.0))
+    h_a = _add_sphere(jw, body_type="STATIC", pos=(0.0, 0.0, 0.0))
+    h_b = _add_sphere(jw, body_type="DYNAMIC", pos=(0.0, 0.0, 3.0))
+    ch = jw.add_constraint(
+        constraint_type="DISTANCE",
+        body_a_handle=h_a,
+        body_b_handle=h_b,
+        anchor_pos=(0.0, 0.0, 0.0),
+        anchor_rot_wxyz=(1.0, 0.0, 0.0, 0.0),
+        disable_collisions=True,
+        distance_min=1.0,
+        distance_max=1.0,
+        use_separate_anchor_frames=True,
+        anchor_pos_a=(0.0, 0.0, 0.0),
+        anchor_rot_wxyz_a=(1.0, 0.0, 0.0, 0.0),
+        anchor_pos_b=(0.0, 0.0, 3.0),
+        anchor_rot_wxyz_b=(1.0, 0.0, 0.0, 0.0),
+    )
+    for _ in range(30):
+        jw.step(1.0 / 60.0, 2)
+    state = jw.get_constraint_state(ch)
+    assert state[2] == "distance"
+    assert abs(state[3] - 1.0) < 0.05, f"独立锚点距离应收敛到1m，得 {state[3]}"
+    jw.clear()
+
+
 def test_constraint_state_output():
     """约束状态 ABI 应稳定输出 type/current value/lambda 字段。"""
     jw = _make_world()

@@ -609,10 +609,19 @@ public:
         float                     cone_half_angle,
         bool                      disable_collisions,
         float                     distance_min,
-        float                     distance_max
+        float                     distance_max,
+        bool                      use_separate_anchor_frames,
+        const std::array<float,3>& anchor_pos_a,
+        const std::array<float,4>& anchor_rot_wxyz_a,
+        const std::array<float,3>& anchor_pos_b,
+        const std::array<float,4>& anchor_rot_wxyz_b
     ) {
         RVec3 pos = to_vec3(anchor_pos);
         Quat  rot = to_quat(anchor_rot_wxyz);
+        RVec3 pos_a = use_separate_anchor_frames ? to_vec3(anchor_pos_a) : pos;
+        Quat rot_a = use_separate_anchor_frames ? to_quat(anchor_rot_wxyz_a) : rot;
+        RVec3 pos_b = use_separate_anchor_frames ? to_vec3(anchor_pos_b) : pos;
+        Quat rot_b = use_separate_anchor_frames ? to_quat(anchor_rot_wxyz_b) : rot;
 
         // 持锁直到约束创建完成，防止 Body 引用在 Create() 前失效。
         // sFixedToWorld 是静态哨兵体，不通过 PhysicsSystem lock 管理。
@@ -676,16 +685,22 @@ public:
             FixedConstraintSettings s;
             apply_common(s);
             s.mAutoDetectPoint = false;
-            s.mPoint1 = s.mPoint2 = pos;
-            s.mAxisX1 = s.mAxisX2 = rot.RotateAxisX();
-            s.mAxisY1 = s.mAxisY2 = rot.RotateAxisY();
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
+            s.mAxisX1 = rot_a.RotateAxisX();
+            s.mAxisX2 = rot_b.RotateAxisX();
+            s.mAxisY1 = rot_a.RotateAxisY();
+            s.mAxisY2 = rot_b.RotateAxisY();
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "HINGE") {
             HingeConstraintSettings s;
             apply_common(s);
-            s.mPoint1 = s.mPoint2 = pos;
-            s.mHingeAxis1 = s.mHingeAxis2 = rot.RotateAxisZ();
-            s.mNormalAxis1 = s.mNormalAxis2 = rot.RotateAxisX();
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
+            s.mHingeAxis1 = rot_a.RotateAxisZ();
+            s.mHingeAxis2 = rot_b.RotateAxisZ();
+            s.mNormalAxis1 = rot_a.RotateAxisX();
+            s.mNormalAxis2 = rot_b.RotateAxisX();
             if (limit_enabled) {
                 float min_angle = std::clamp(angular_limit_min, -JPH_PI, 0.0f);
                 float max_angle = std::clamp(angular_limit_max, 0.0f, JPH_PI);
@@ -713,9 +728,12 @@ public:
             SliderConstraintSettings s;
             apply_common(s);
             s.mAutoDetectPoint = false;
-            s.mPoint1 = s.mPoint2 = pos;
-            s.mSliderAxis1 = s.mSliderAxis2 = rot.RotateAxisZ();
-            s.mNormalAxis1 = s.mNormalAxis2 = rot.RotateAxisX();
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
+            s.mSliderAxis1 = rot_a.RotateAxisZ();
+            s.mSliderAxis2 = rot_b.RotateAxisZ();
+            s.mNormalAxis1 = rot_a.RotateAxisX();
+            s.mNormalAxis2 = rot_b.RotateAxisX();
             if (limit_enabled) {
                 float min_pos = linear_limit_min;
                 float max_pos = linear_limit_max;
@@ -742,19 +760,23 @@ public:
         } else if (constraint_type_str == "CONE") {
             ConeConstraintSettings s;
             apply_common(s);
-            s.mPoint1 = s.mPoint2 = pos;
-            s.mTwistAxis1 = s.mTwistAxis2 = rot.RotateAxisZ();
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
+            s.mTwistAxis1 = rot_a.RotateAxisZ();
+            s.mTwistAxis2 = rot_b.RotateAxisZ();
             s.mHalfConeAngle = std::clamp(cone_half_angle, 0.0f, JPH_PI);
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "POINT") {
             PointConstraintSettings s;
             apply_common(s);
-            s.mPoint1 = s.mPoint2 = pos;
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
             c = static_cast<TwoBodyConstraint*>(s.Create(body_a, body_b));
         } else if (constraint_type_str == "DISTANCE") {
             DistanceConstraintSettings s;
             apply_common(s);
-            s.mPoint1 = s.mPoint2 = pos;
+            s.mPoint1 = pos_a;
+            s.mPoint2 = pos_b;
             s.mMinDistance = (std::max)(0.0f, (std::min)(distance_min, distance_max));
             s.mMaxDistance = (std::max)(s.mMinDistance, (std::max)(distance_min, distance_max));
             apply_limit_spring(s.mLimitsSpringSettings);
@@ -1160,6 +1182,11 @@ NB_MODULE(hotools_jolt, m) {
              nb::arg("disable_collisions") = false,
              nb::arg("distance_min") = 0.0f,
              nb::arg("distance_max") = 1.0f,
+             nb::arg("use_separate_anchor_frames") = false,
+             nb::arg("anchor_pos_a") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("anchor_rot_wxyz_a") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
+             nb::arg("anchor_pos_b") = std::array<float,3>{0.0f, 0.0f, 0.0f},
+             nb::arg("anchor_rot_wxyz_b") = std::array<float,4>{1.0f, 0.0f, 0.0f, 0.0f},
              "注册约束（FIXED/HINGE/SLIDER/CONE/POINT/DISTANCE），返回 handle。\n"
              "body_a_handle 或 body_b_handle 传 0xFFFFFFFF 表示固定到世界。")
 
