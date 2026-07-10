@@ -3,10 +3,10 @@ from ..OmniNodeSocketMapping import (
     _OmniCache,
 )
 from ..OmniRuntimeState import OmniCacheOwnerDict, cache_visible_value
-from ....PhysicsTools.deltaOutput import PhysicsDeltaOutputSpec
-from ....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
-from ....PhysicsTools.deltaOutput import ensure_delta_output as _ensure_delta_output
-from ....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
+from .physicsWorld.mesh_cloth.delta_output import PhysicsDeltaOutputSpec
+from .physicsWorld.mesh_cloth.delta_output import clear_delta_attribute as _clear_delta_attribute
+from .physicsWorld.mesh_cloth.delta_output import ensure_delta_output as _ensure_delta_output
+from .physicsWorld.mesh_cloth.delta_output import write_world_delta_attribute as _write_world_delta_attribute
 from ..OmniDebug import OmniDebug
 from ..FunctionNodeCore import omni
 from . import _Color

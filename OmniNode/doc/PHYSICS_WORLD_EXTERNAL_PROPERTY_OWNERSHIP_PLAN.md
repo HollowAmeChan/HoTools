@@ -2,7 +2,7 @@
 
 日期：2026-07-10
 
-状态：实施中；Phase 0/1/2/3 已完成，Phase 4 已完成 MeshCollision 所有权迁移，Blender I/O 待续
+状态：实施中；Phase 0/1/2/3/4 已完成，下一步为 Phase 5 UI 与根生命周期
 
 范围：顶层 `PhysicsTools` 持有的持久物理属性、注册生命周期、面板、操作器、碰撞预览和 MeshCloth Blender I/O；后续把 MC2/BoneCloth 包并入 `physicsWorld`。
 
@@ -387,3 +387,12 @@ Phase 3 已完成。下一步进入 Phase 4：建立 `physicsWorld.mesh_cloth` d
 - MC2 Blender scene parity：collision mode 1/2 均通过
 
 Phase 4 尚未关闭：下一刀迁移 `meshClothBasePose.py` 与 `deltaOutput.py` 到 `physicsWorld.mesh_cloth`，旧 PhysicsTools 文件只保留短期 import adapter；随后统一 Physics.py、MC2 blender_io/runtime 和 UI operator/panel 的 canonical import。
+
+Phase 4 第二刀已关闭：
+
+- `deltaOutput.py` 与 `meshClothBasePose.py` 的唯一实现迁入 `physicsWorld.mesh_cloth.delta_output/base_pose`。
+- Physics.py、MC2 blender_io/runtime、PhysicsTools operator/panel 全部改用 canonical import；旧 PhysicsTools 两文件只保留惰性属性适配。
+- 生命周期测试真实创建 Mesh、delta point attribute、GN 后置修改器与 BasePose 只读代理，并验证旧/新 import identity、拓扑一致性、缓存标志和 RNA pointer 写回。
+- MC2 scene parity 两种碰撞模式保持通过。
+
+Phase 4 已完成。下一步进入 Phase 5：迁移 PhysicsTools panel/operator/collision preview 与 Scene UI state，建立 `physicsWorld.blender` 根注册入口并轻量化 `OmniNode.__init__`。

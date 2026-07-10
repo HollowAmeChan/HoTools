@@ -3,9 +3,9 @@
 import bpy
 import numpy as np
 
-from .....PhysicsTools.meshClothBasePose import MC2_DELTA_SPEC, validate_base_pose_proxy
-from .....PhysicsTools.deltaOutput import clear_delta_attribute as _clear_delta_attribute
-from .....PhysicsTools.deltaOutput import write_world_delta_attribute as _write_world_delta_attribute
+from ..physicsWorld.mesh_cloth.base_pose import MC2_DELTA_SPEC, validate_base_pose_proxy
+from ..physicsWorld.mesh_cloth.delta_output import clear_delta_attribute as _clear_delta_attribute
+from ..physicsWorld.mesh_cloth.delta_output import write_world_delta_attribute as _write_world_delta_attribute
 from . import math_utils
 
 _BASE_POSE_CACHE_PREFIX = "mc2_base_pose_world_pose"

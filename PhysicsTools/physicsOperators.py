@@ -20,7 +20,7 @@ from .physicsUtils import (
     _set_collision_group_bit,
     _tag_view3d_redraw,
 )
-from .meshClothBasePose import ensure_base_pose_proxy
+from ..OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.base_pose import ensure_base_pose_proxy
 
 
 class OP_Hotools_BoneCollision_SetPrimaryGroup(Operator):

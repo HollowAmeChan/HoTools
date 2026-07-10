@@ -19,7 +19,7 @@ from .physicsOperators import (
     OP_Hotools_BoneCollision_GradientRadius,
     OP_Hotools_MeshCollision_CreateBasePoseProxy,
 )
-from .meshClothBasePose import mesh_light_key
+from ..OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.base_pose import mesh_light_key
 from .physicsUtils import (
     _active_armature_object,
     _active_collision_props,

@@ -38,6 +38,14 @@ for package_name, package_path in (
 
 
 physics_tools = importlib.import_module("HoTools.PhysicsTools")
+legacy_delta_output = importlib.import_module("HoTools.PhysicsTools.deltaOutput")
+legacy_base_pose = importlib.import_module("HoTools.PhysicsTools.meshClothBasePose")
+delta_output = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.delta_output"
+)
+base_pose = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mesh_cloth.base_pose"
+)
 blender_registry = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.blender_registry"
 )
@@ -52,6 +60,21 @@ def main() -> None:
         assert hasattr(bpy.types.Object, "hotools_mesh_collision")
         assert hasattr(bpy.types.Object, "hotools_rigid_body")
         assert hasattr(bpy.types.Object, "hotools_rigid_constraint")
+        assert legacy_delta_output.PhysicsDeltaOutputSpec is delta_output.PhysicsDeltaOutputSpec
+        assert legacy_base_pose.MC2_DELTA_SPEC is base_pose.MC2_DELTA_SPEC
+
+        mesh = bpy.data.meshes.new("PW_MeshClothIOContractMesh")
+        mesh.from_pydata(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)), (), ((0, 1, 2),))
+        source = bpy.data.objects.new("PW_MeshClothIOContract", mesh)
+        bpy.context.scene.collection.objects.link(source)
+        base_pose.ensure_delta_output(source)
+        assert source.data.attributes.get(base_pose.DELTA_ATTRIBUTE_NAME) is not None
+        assert source.modifiers.get(base_pose.DELTA_MODIFIER_NAME) is not None
+        proxy = base_pose.ensure_base_pose_proxy(source)
+        assert source.hotools_mesh_collision.mc2_base_pose_proxy == proxy
+        assert base_pose.mesh_light_key(source) == base_pose.mesh_light_key(proxy)
+        assert bool(proxy.get(base_pose.CACHE_OBJECT_FLAG, False))
+
         physics_tools.unregister()
         assert blender_registry.registered_blender_property_domains() == ()
         assert not hasattr(bpy.types.Bone, "hotools_collision")
