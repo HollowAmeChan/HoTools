@@ -112,6 +112,12 @@ def _mesh_payload(source) -> dict:
     edges = tuple(getattr(data, "edges", ()) or ())
     polygons = tuple(getattr(data, "polygons", ()) or ())
     positions = tuple(_vector3(getattr(vertex, "co", None)) for vertex in vertices)
+    normals = tuple(
+        _vector3(getattr(vertex, "normal", None))
+        if getattr(vertex, "normal", None) is not None
+        else (0.0, 1.0, 0.0)
+        for vertex in vertices
+    )
     edge_indices = tuple(
         tuple(int(index) for index in tuple(getattr(edge, "vertices", ()) or ())[:2])
         for edge in edges
@@ -133,6 +139,7 @@ def _mesh_payload(source) -> dict:
         "resolved": data is not None,
         "name": str(getattr(source, "name_full", getattr(source, "name", "")) or ""),
         "positions": positions,
+        "normals": normals,
         "edges": edge_indices,
         "triangles": tuple(triangles),
         "polygon_count": len(polygon_indices),

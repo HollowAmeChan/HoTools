@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "topology_slot_framework_no_runtime_backend",
+    "stage": "particle_buffer_framework_no_runtime_backend",
     "native_strategy": "one_solver_three_setup_adapters_single_native_context",
-    "implementation_status": "topology_slot_framework",
+    "implementation_status": "particle_buffer_framework",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",
@@ -47,6 +47,8 @@ MC2_SOLVER_DECLARATION = {
     ],
     "persistent_state": [
         "slot.data.topology",
+        "slot.data.initial_state",
+        "slot.data.particle_buffer",
         "slot.data.effective_parameters",
         "slot.data.runtime_state",
         "slot.data.writeback_plan",
@@ -66,7 +68,7 @@ MC2_SOLVER_DECLARATION = {
     ],
     "same_frame_policy": "reuse_synced_slot_no_backend_step",
     "update_policy": {
-        "framework": "sync_topology_slot_no_result_no_legacy_solver_call",
+        "framework": "sync_topology_particle_buffer_no_result_no_legacy_solver_call",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
         "native_backend": "single_native_context_no_python_fallback",
@@ -83,7 +85,7 @@ MC2_SOLVER_DECLARATION = {
         "planned": ["mc2.mesh_cloth", "mc2.bone_cloth", "mc2.bone_spring"],
         "producer_nodes": [],
         "planned_producer_nodes": [],
-        "update_policy": "topology_slot_only",
+        "update_policy": "topology_and_particle_buffer_only",
         "conflict_policy": "future stable_id last writer wins",
     },
     "writeback": {

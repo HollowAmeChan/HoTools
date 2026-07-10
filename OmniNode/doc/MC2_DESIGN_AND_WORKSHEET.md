@@ -39,6 +39,14 @@ MC2 源码对照根目录：`D:\Unity_Fork\MagicaCloth2`（2.18.1，`418f89ff31a
 5. step 禁用时不改 slot；task 从输入中移除或禁用时 prune 对应 MC2 slot。B2 的 `ready` 仍为 false，因为尚无 particle buffer、backend 或 result publication。
 6. 同一 step 的 topology 与有效参数先全部只读构建，再获取 world 写锁；任一 task 校验失败时不得部分更新已有 slot。
 
+### B3 Initial State/Particle Buffer 契约
+
+1. setup adapter 从 `MC2TopologySpec` 生成统一 `MC2InitialStateSpec`。MeshCloth 把对象局部 rest positions 与 vertex normals 转到世界空间；BoneCloth/BoneSpring 把 armature rest bone matrix 转成粒子位置、旋转、父索引、root fixed mask 和归一化链深度。
+2. `MC2ParticleBuffer` 对齐 Unity particle reset job：`next/old/base/previous/velocity-position/display` 初始化为 rest position，rotation 数组初始化为 rest rotation，velocity/real-velocity/friction/static-friction/collision-normal 清零。
+3. buffer 只在 slot 新建、真实 topology 改变或 world generation 改变时分配；profile、setup 非拓扑参数和 step settings 更新必须复用同一 buffer。
+4. slot dispose 同时 dispose particle buffer。未来 native context 只能借用或接管这些数组，不能绕过 slot 生命周期另存动态状态。
+5. MeshCloth 的 fixed mask/depth 当前分别为全 false/0。它们必须由后续 selection/paint capability 显式提供，不能由 solver 猜测顶点组；在该 capability 接入前 B3 仍不允许启动 backend。
+
 ### Unity 源码映射
 
 | 新规格 | Unity 权威来源 | 说明 |

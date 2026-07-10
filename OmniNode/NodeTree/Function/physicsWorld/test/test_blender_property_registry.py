@@ -20,6 +20,7 @@ import types
 from dataclasses import replace
 
 import bpy
+import numpy as np
 
 
 HOTOOLS = r"C:\Users\hhh12\AppData\Roaming\Blender Foundation\Blender\4.5\scripts\addons\HoTools"
@@ -106,6 +107,9 @@ mc2_setups = importlib.import_module(
 )
 mc2_state = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state"
+)
+mc2_initial_state = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.initial_state"
 )
 mc2_topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
@@ -334,7 +338,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
     assert solver_declarations.validate_solver_declaration(declaration) == []
-    assert declaration["implementation_status"] == "topology_slot_framework"
+    assert declaration["implementation_status"] == "particle_buffer_framework"
     assert tuple(declaration["setup_types"]) == (
         mc2_names.MC2_SETUP_MESH_CLOTH,
         mc2_names.MC2_SETUP_BONE_CLOTH,
@@ -343,7 +347,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
     assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
     assert declaration["native_strategy"].endswith("single_native_context")
-    assert declaration["update_policy"]["framework"] == "sync_topology_slot_no_result_no_legacy_solver_call"
+    assert declaration["update_policy"]["framework"] == "sync_topology_particle_buffer_no_result_no_legacy_solver_call"
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == []
     assert declaration["export"]["shared_result_channels"] == []
@@ -497,6 +501,26 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         assert mesh_topology.particle_count == 3
         assert mesh_topology.sources[0].resolved is True
         mesh_signature = mesh_topology.topology_signature
+        mesh_initial = mc2_initial_state.build_mc2_initial_state(
+            mesh_task, mesh_topology
+        )
+        assert mesh_initial.particle_count == 3
+        assert mesh_initial.parent_indices == (-1, -1, -1)
+        assert mesh_initial.fixed_mask == (False, False, False)
+        assert mesh_initial.rest_positions[1] == (1.0, 0.0, 0.0)
+        mesh_buffer = mc2_state.MC2ParticleBuffer.from_initial_state(mesh_initial)
+        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.old_positions)
+        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.base_positions)
+        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.previous_positions)
+        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.velocity_positions)
+        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.display_positions)
+        assert not np.any(mesh_buffer.velocities)
+        assert not np.any(mesh_buffer.real_velocities)
+        assert not np.any(mesh_buffer.friction)
+        assert not np.any(mesh_buffer.static_friction)
+        assert not np.any(mesh_buffer.collision_normals)
+        mesh_buffer.dispose()
+        assert mesh_buffer.disposed and mesh_buffer.particle_count == 0
         real_mesh.vertices[1].co.x = 2.0
         real_mesh.update()
         changed_topology = mc2_topology.build_mc2_topology_spec(mesh_task)
@@ -526,6 +550,20 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         bone_payload = bone_topology.sources[0].debug_dict(include_payload=True)["payload"]
         assert [record["name"] for record in bone_payload["bones"]] == ["Root", "Child"]
         assert [record["parent_index"] for record in bone_payload["bones"]] == [-1, 0]
+        bone_initial = mc2_initial_state.build_mc2_initial_state(
+            bone_task, bone_topology
+        )
+        assert bone_initial.parent_indices == (-1, 0)
+        assert bone_initial.depths == (0.0, 1.0)
+        assert bone_initial.fixed_mask == (True, False)
+        assert bone_initial.rest_positions == (
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0),
+        )
+        assert all(
+            abs(sum(component * component for component in rotation) - 1.0) < 1.0e-5
+            for rotation in bone_initial.rest_rotations
+        )
         overlapping_task = mc2_specs.make_mc2_task_spec(
             mc2_names.MC2_SETUP_BONE_CLOTH,
             [
@@ -578,10 +616,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].source_kind == "mesh_object"
     assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].writeback_channel == world_names.GN_ATTRIBUTE_CHANNEL
     assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].debug_dict()["topology_builder"] == "build_mc2_mesh_source_topology"
+    assert adapters[mc2_names.MC2_SETUP_MESH_CLOTH].debug_dict()["initial_state_builder"] == "build_mc2_mesh_initial_state"
     for setup_type in (mc2_names.MC2_SETUP_BONE_CLOTH, mc2_names.MC2_SETUP_BONE_SPRING):
         assert adapters[setup_type].source_kind == "bone_chain"
         assert adapters[setup_type].writeback_channel == world_names.BONE_TRANSFORM_CHANNEL
         assert adapters[setup_type].debug_dict()["topology_builder"] == "build_mc2_bone_source_topology"
+        assert adapters[setup_type].debug_dict()["initial_state_builder"] == "build_mc2_bone_initial_state"
 
     class _ResultWorld:
         def __init__(self):
@@ -627,7 +667,10 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         assert slot.kind == mc2_names.MC2_SLOT_KIND
         assert isinstance(slot.data["topology"], mc2_topology.MC2TopologySpec)
         assert isinstance(slot.data["runtime_state"], mc2_state.MC2SlotRuntimeState)
-        assert slot.data["runtime_state"].initialized is False
+        assert isinstance(slot.data["initial_state"], mc2_initial_state.MC2InitialStateSpec)
+        assert isinstance(slot.data["particle_buffer"], mc2_state.MC2ParticleBuffer)
+        assert slot.data["runtime_state"].initialized is True
+        assert slot.data["particle_buffer"].particle_count == slot.data["topology"].particle_count
         assert slot.data["writeback_plan"] == {}
         assert slot.debug_snapshot()["has_backend"] is False
 
@@ -642,6 +685,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     _, _, status = mc2_solver.step_mc2(physics_world, updated_tasks)
     assert "更新 1" in status and "复用 2" in status
     mesh_state = physics_world.solver_slots[soft_task.task_id].data["runtime_state"]
+    mesh_particle_buffer = physics_world.solver_slots[soft_task.task_id].data["particle_buffer"]
     assert mesh_state is first_states[soft_task.task_id]
     assert mesh_state.parameter_revision == 1
 
@@ -670,6 +714,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         raise AssertionError("invalid MC2 topology batch must fail")
     assert mesh_state.parameter_revision == revision_before_failed_step
     assert physics_world.solver_slots[soft_task.task_id].data["spec"] is soft_task
+    assert physics_world.solver_slots[soft_task.task_id].data["particle_buffer"] is mesh_particle_buffer
 
     stepped_settings = mc2_parameters.make_mc2_solver_settings(substeps=2)
     _, _, status = mc2_solver.step_mc2(
@@ -684,19 +729,23 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     _, _, status = mc2_solver.step_mc2(physics_world, [ordered_task])
     assert "新建 1" in status and "清理 3" in status
     ordered_state = physics_world.solver_slots[ordered_task.task_id].data["runtime_state"]
+    ordered_buffer = physics_world.solver_slots[ordered_task.task_id].data["particle_buffer"]
     _, _, status = mc2_solver.step_mc2(physics_world, [reversed_task])
     assert "重建 1" in status
     reversed_state = physics_world.solver_slots[reversed_task.task_id].data["runtime_state"]
     assert reversed_state is not ordered_state
     assert ordered_state.disposed is True
     assert ordered_state.dispose_reason == "topology_changed"
+    assert ordered_buffer.disposed is True
 
     physics_world.generation += 1
     generation_state = reversed_state
+    generation_buffer = physics_world.solver_slots[reversed_task.task_id].data["particle_buffer"]
     _, _, status = mc2_solver.step_mc2(physics_world, [reversed_task])
     assert "重建 1" in status
     assert generation_state.disposed is True
     assert generation_state.dispose_reason == "world_generation_changed"
+    assert generation_buffer.disposed is True
 
     slot_count = len(physics_world.solver_slots)
     _, _, status = mc2_solver.step_mc2(
@@ -704,9 +753,11 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     )
     assert "已禁用" in status
     assert len(physics_world.solver_slots) == slot_count
+    pruned_buffer = physics_world.solver_slots[reversed_task.task_id].data["particle_buffer"]
     _, _, status = mc2_solver.step_mc2(physics_world, [])
     assert "清理 1" in status
     assert physics_world.solver_slots == {}
+    assert pruned_buffer.disposed is True
     source_profile = mc2_parameters.make_mc2_particle_profile(
         gravity=9.8,
         max_distance_enabled=True,

@@ -59,7 +59,7 @@ MC2_SETUP_PROFILE_CAPABILITY = {
             "update_frequency": "parameter",
         },
     ),
-    "implementation_status": "topology_slot_framework",
+    "implementation_status": "particle_buffer_framework",
 }
 
 MC2_CAPABILITIES = {

@@ -10,17 +10,21 @@ from .parameters import (
     make_mc2_effective_parameters,
     make_mc2_solver_settings,
 )
+from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
-from .state import MC2SlotRuntimeState
+from .state import MC2ParticleBuffer, MC2SlotRuntimeState
 from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
-    "MC2 topology/slot 框架已就绪；MeshCloth、BoneCloth、BoneSpring 后端尚未接入"
+    "MC2 topology/particle-buffer 框架已就绪；MeshCloth、BoneCloth、BoneSpring 后端尚未接入"
 )
 
 
 def _dispose_mc2_slot(slot, reason: str) -> None:
+    particle_buffer = slot.data.get("particle_buffer")
+    if isinstance(particle_buffer, MC2ParticleBuffer):
+        particle_buffer.dispose()
     state = slot.data.get("runtime_state")
     if isinstance(state, MC2SlotRuntimeState):
         state.dispose(reason)
@@ -29,6 +33,7 @@ def _dispose_mc2_slot(slot, reason: str) -> None:
 def _slot_debug_snapshot(slot) -> dict:
     topology = slot.data.get("topology")
     state = slot.data.get("runtime_state")
+    particle_buffer = slot.data.get("particle_buffer")
     spec = slot.data.get("spec")
     return {
         "slot_id": slot.slot_id,
@@ -37,6 +42,11 @@ def _slot_debug_snapshot(slot) -> dict:
         "task": spec.debug_dict() if hasattr(spec, "debug_dict") else None,
         "topology": topology.debug_dict() if hasattr(topology, "debug_dict") else None,
         "runtime_state": state.debug_dict() if hasattr(state, "debug_dict") else None,
+        "particle_buffer": (
+            particle_buffer.debug_dict()
+            if hasattr(particle_buffer, "debug_dict")
+            else None
+        ),
         "has_backend": False,
         "has_writeback_plan": bool(slot.data.get("writeback_plan")),
     }
@@ -50,6 +60,7 @@ def _install_mc2_slot(
     topology,
     effective_parameters,
     settings: MC2SolverSettingsSpec,
+    initial_state: MC2InitialStateSpec,
     reset_reason: str,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
@@ -60,7 +71,9 @@ def _install_mc2_slot(
         world_generation=int(world.generation),
         particle_count=int(topology.particle_count),
         last_reset_reason=str(reset_reason),
+        initialized=True,
     )
+    particle_buffer = MC2ParticleBuffer.from_initial_state(initial_state)
     slot.kind = MC2_SLOT_KIND
     slot.world_generation = int(world.generation)
     slot.data.update(
@@ -69,6 +82,8 @@ def _install_mc2_slot(
             "topology": topology,
             "effective_parameters": effective_parameters,
             "settings": settings,
+            "initial_state": initial_state,
+            "particle_buffer": particle_buffer,
             "runtime_state": state,
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
@@ -80,27 +95,41 @@ def _install_mc2_slot(
     return state
 
 
+def _mc2_slot_rebuild_reason(world: PhysicsWorldCache, spec, topology) -> str:
+    slot = world.solver_slots.get(spec.task_id)
+    if slot is None:
+        return "created"
+    state = slot.data.get("runtime_state")
+    if not isinstance(state, MC2SlotRuntimeState):
+        return "runtime_state_missing"
+    if not isinstance(slot.data.get("particle_buffer"), MC2ParticleBuffer):
+        return "particle_buffer_missing"
+    if not isinstance(slot.data.get("initial_state"), MC2InitialStateSpec):
+        return "initial_state_missing"
+    if slot.kind != MC2_SLOT_KIND:
+        return "slot_kind_changed"
+    if slot.world_generation != world.generation:
+        return "world_generation_changed"
+    if state.topology_signature != topology.topology_signature:
+        return "topology_changed"
+    return ""
+
+
 def _sync_mc2_slot(
     world: PhysicsWorldCache,
     spec,
     settings: MC2SolverSettingsSpec,
     topology,
     effective,
+    initial_state,
 ) -> tuple[str, object]:
-    existing = world.solver_slots.get(spec.task_id)
+    rebuild_reason = _mc2_slot_rebuild_reason(world, spec, topology)
     slot = world.ensure_solver_slot(spec.task_id, MC2_SLOT_KIND)
     previous_state = slot.data.get("runtime_state")
-    rebuild_reason = ""
-    if existing is None or not isinstance(previous_state, MC2SlotRuntimeState):
-        rebuild_reason = "created"
-    elif slot.kind != MC2_SLOT_KIND:
-        rebuild_reason = "slot_kind_changed"
-    elif slot.world_generation != world.generation:
-        rebuild_reason = "world_generation_changed"
-    elif previous_state.topology_signature != topology.topology_signature:
-        rebuild_reason = "topology_changed"
 
     if rebuild_reason:
+        if not isinstance(initial_state, MC2InitialStateSpec):
+            raise RuntimeError("MC2 slot 重建缺少 MC2InitialStateSpec")
         if slot.data:
             slot.dispose(rebuild_reason)
         _install_mc2_slot(
@@ -110,6 +139,7 @@ def _sync_mc2_slot(
             topology=topology,
             effective_parameters=effective,
             settings=settings,
+            initial_state=initial_state,
             reset_reason=rebuild_reason,
         )
         return "created" if rebuild_reason == "created" else "rebuilt", slot
@@ -166,29 +196,34 @@ def step_mc2(
 
     active_specs = tuple(spec for spec in specs if spec.enabled and spec.sources)
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
-    prepared = tuple(
-        (
-            spec,
-            build_mc2_topology_spec(spec),
-            make_mc2_effective_parameters(
-                spec.profile,
-                settings,
-                spec.setup_options,
-            ),
+    prepared_items = []
+    for spec in active_specs:
+        topology = build_mc2_topology_spec(spec)
+        effective = make_mc2_effective_parameters(
+            spec.profile,
+            settings,
+            spec.setup_options,
         )
-        for spec in active_specs
-    )
+        rebuild_reason = _mc2_slot_rebuild_reason(world, spec, topology)
+        initial_state = (
+            build_mc2_initial_state(spec, topology)
+            if rebuild_reason
+            else None
+        )
+        prepared_items.append((spec, topology, effective, initial_state))
+    prepared = tuple(prepared_items)
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     world.acquire_write(MC2_SOLVER_ID)
     try:
-        for spec, topology, effective in prepared:
+        for spec, topology, effective, initial_state in prepared:
             action, slot = _sync_mc2_slot(
                 world,
                 spec,
                 settings,
                 topology,
                 effective,
+                initial_state,
             )
             counts[action] += 1
             active_slot_ids.append(slot.slot_id)
