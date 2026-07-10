@@ -40,15 +40,16 @@
 - py311/py313 各自 56/56 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 - 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
+- `adapter_binding_v1` 已复用全部 56 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2 已覆盖同一套 P0 fixture。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ### 2026-07-11 实施决定
 
 在三层 fixture 闭环成立前，暂停新增 Path、ShapeCast、overlap、compound shape 和其它高级能力。下一批工作固定为：
 
 1. 先写失败的 `DET-003`，再为 body、constraint 和有序 command 引入独立 `simulation_order_key`；pointer-based `slot_id` 只负责当前进程的生命周期和去重。
-2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。
+2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现最小 `blender_pipeline_v1` runner，先覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，再扩展全部 P0。
 4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。
 5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。

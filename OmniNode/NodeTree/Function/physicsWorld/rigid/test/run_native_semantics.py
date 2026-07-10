@@ -100,7 +100,13 @@ def _run_id() -> str:
     return f"{stamp}-pid{os.getpid()}"
 
 
-def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+def run(
+    args: argparse.Namespace,
+    *,
+    runtime_factory=None,
+    summary_schema: str = "hotools_jolt_native_run_v1",
+    runner_id: str = NativeFixtureRuntime.RUNNER_ID,
+) -> tuple[int, dict[str, Any]]:
     if args.repeat < 1:
         raise FixtureError("--repeat must be >= 1")
     fixtures = _load_selected(args)
@@ -111,6 +117,8 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
     native_dir = (args.native_dir or default_native_dir(REPO_ROOT)).resolve()
     native = load_native_module(native_dir)
+    if runtime_factory is None:
+        runtime_factory = NativeFixtureRuntime
     run_root = args.artifact_dir.resolve() / _run_id()
     started = datetime.now(timezone.utc)
     fixture_results: list[dict[str, Any]] = []
@@ -122,7 +130,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         fixture_error = ""
         for repeat_index in range(args.repeat):
             try:
-                result = NativeFixtureRuntime(native).run(fixture, repeat_index)
+                result = runtime_factory(native).run(fixture, repeat_index)
                 repeat_dir = run_root / _safe_name(fixture.id)
                 _write_jsonl(repeat_dir / f"repeat-{repeat_index:02d}.jsonl", result.trace)
                 _write_json(repeat_dir / f"assertions-{repeat_index:02d}.json", result.assertions)
@@ -182,8 +190,8 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     finished = datetime.now(timezone.utc)
     passed_count = sum(1 for item in fixture_results if item["passed"])
     summary = {
-        "schema": "hotools_jolt_native_run_v1",
-        "runner": NativeFixtureRuntime.RUNNER_ID,
+        "schema": str(summary_schema),
+        "runner": str(runner_id),
         "started_utc": started.isoformat(),
         "finished_utc": finished.isoformat(),
         "duration_seconds": (finished - started).total_seconds(),

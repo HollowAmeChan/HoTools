@@ -34,10 +34,17 @@
 - 输出 JSONL trace、断言报告和机器可读 manifest；
 - 使用匹配的 native 模块在 CPython 3.11 和 3.13 下运行。
 
+当前切片（`adapter_binding_v1`）：
+
+- 同一份 fixture 映射为生产 `RigidBodySpec` / `ConstraintSpec`；
+- 经生产 `JoltAdapter` 调用 native ABI；
+- 复用 S1 canonical trace 和 assertions；
+- `compare_traces.py` 对 runner 间数值做结构化容差差分；
+- `_native/tests/test_jolt_semantic_matrix.py` 对全部 P0 执行 S1/S2 parity。
+
 当前切片尚未实现：
 
 - Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
-- adapter parity runner；
 - Blender 端到端 runner；
 - 断裂语义、跨 ABI 报告和已批准 golden。
 
@@ -46,7 +53,7 @@
 2026-07-11 起暂停新增 Jolt feature surface，按以下门禁推进：
 
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
-2. 共用 fixture 的 adapter parity runner 与 trace comparator；
+2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
 3. 共用 fixture 的最小 Blender semantic runner；
 4. breakable、跨 ABI、overflow、soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
@@ -58,6 +65,13 @@
 ```powershell
 & 'C:\Users\hhh12\AppData\Local\Programs\Python\Python313\python.exe' `
   run_native_semantics.py --tag p0 --repeat 2
+```
+
+经生产 spec/adapter 路径运行全部 P0 fixture：
+
+```powershell
+& 'D:\Blender\Blender 4.5\4.5\python\bin\python.exe' `
+  run_adapter_semantics.py --tag p0 --repeat 2
 ```
 
 使用 Blender 内置 Python 运行 py311 ABI：

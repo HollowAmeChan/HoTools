@@ -19,6 +19,8 @@ if str(TEST_ROOT) not in sys.path:
     sys.path.insert(0, str(TEST_ROOT))
 
 from canonical import traces_bitwise_equal  # noqa: E402
+from adapter_fixture_runtime import AdapterFixtureRuntime  # noqa: E402
+from compare_traces import compare_traces  # noqa: E402
 from fixture_runtime import NativeFixtureRuntime, load_native_module  # noqa: E402
 from schema import BodySpec, FixtureError, discover_fixtures, load_fixture  # noqa: E402
 
@@ -155,6 +157,22 @@ def test_jolt_p0_contact_query_semantic_matrix():
         )
         assert traces_bitwise_equal(first.trace, second.trace), (
             f"{fixture.id} trace is not bitwise deterministic"
+        )
+
+
+def test_jolt_p0_adapter_parity_matrix():
+    """S2 must preserve every P0 fixture's S1 semantics and canonical trace."""
+    native = load_native_module(_native_dir())
+    rigid_root = TEST_ROOT.parent
+    for fixture in _fixtures():
+        native_result = NativeFixtureRuntime(native).run(fixture, 0)
+        adapter_result = AdapterFixtureRuntime(native, rigid_root).run(fixture, 0)
+        failures = [item for item in adapter_result.assertions if not item["passed"]]
+        assert not failures, f"{fixture.id} adapter assertions failed: {failures}"
+        comparison = compare_traces(native_result.trace, adapter_result.trace)
+        assert comparison.passed, (
+            f"{fixture.id} adapter parity failed; max_abs={comparison.max_abs_error}: "
+            f"{comparison.differences}"
         )
 
 
