@@ -802,6 +802,8 @@ def test_six_dof_constraint_spec_and_adapter():
     props.six_dof_rotation_z_min = 0.4
     props.six_dof_rotation_z_max = -0.2
     props.six_dof_swing_type = "PYRAMID"
+    props.six_dof_translation_x_friction = 2.5
+    props.six_dof_rotation_z_friction = 1.25
 
     spec = build_constraint_spec(c)
     assert spec is not None
@@ -814,6 +816,7 @@ def test_six_dof_constraint_spec_and_adapter():
     assert abs(spec.six_dof_limit_min[5] + 0.2) < 1.0e-6
     assert abs(spec.six_dof_limit_max[5] - 0.4) < 1.0e-6
     assert spec.six_dof_swing_type == "PYRAMID"
+    assert spec.six_dof_max_friction == (2.5, 0.0, 0.0, 0.0, 0.0, 1.25)
 
     adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
     body_a = build_rigid_body_spec(a)
@@ -841,6 +844,7 @@ def test_six_dof_constraint_spec_and_adapter():
         six_dof_limit_min=(0.5, -2.0, -3.0, 0.2, -0.3, 0.6),
         six_dof_limit_max=(-0.5, 2.0, 3.0, -0.2, 0.3, -0.4),
         six_dof_swing_type="invalid",
+        six_dof_max_friction=(2.0, -1.0, 3.0, 4.0, -2.0, 6.0),
     )
     assert generated[0]["constraint_type"] == "SIX_DOF"
     assert generated[0]["six_dof_axis_modes"] == (
@@ -849,6 +853,7 @@ def test_six_dof_constraint_spec_and_adapter():
     assert generated[0]["six_dof_limit_min"] == (-0.5, -2.0, -3.0, -0.2, -0.3, -0.4)
     assert generated[0]["six_dof_limit_max"] == (0.5, 2.0, 3.0, 0.2, 0.3, 0.6)
     assert generated[0]["six_dof_swing_type"] == "PYRAMID"
+    assert generated[0]["six_dof_max_friction"] == (2.0, 0.0, 3.0, 4.0, 0.0, 6.0)
     signature = rigid_generated_constraint_signature(generated[0])
     changed = dict(generated[0])
     changed["six_dof_axis_modes"] = (

@@ -216,6 +216,18 @@ def _six_dof_axis_rna_fields() -> tuple[dict, ...]:
                 "property": "float",
                 "kwargs": kwargs,
             })
+        friction_kind = "摩擦力" if axis_name.startswith("translation") else "摩擦力矩"
+        fields.append({
+            "name": f"six_dof_{axis_name}_friction",
+            "property": "float",
+            "kwargs": {
+                "name": f"{label}{friction_kind}",
+                "description": f"SixDOF {label}轴的最大{friction_kind}；0表示无摩擦",
+                "default": 0.0,
+                "min": 0.0,
+                "soft_max": 1000.0,
+            },
+        })
     return tuple(fields)
 
 

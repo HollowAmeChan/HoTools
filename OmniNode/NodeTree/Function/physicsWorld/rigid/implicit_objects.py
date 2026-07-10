@@ -427,6 +427,7 @@ def make_rigid_generated_constraint_properties(
     six_dof_limit_min=(-1.0, -1.0, -1.0, -_PI * 0.25, -_PI * 0.25, -_PI * 0.25),
     six_dof_limit_max=(1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
     six_dof_swing_type: str = "PYRAMID",
+    six_dof_max_friction=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     distance_min: float = 0.0,
     distance_max: float = 1.0,
     breakable: bool = False,
@@ -486,6 +487,9 @@ def make_rigid_generated_constraint_properties(
     normalized_six_dof_swing_type = str(six_dof_swing_type or "PYRAMID").upper()
     if normalized_six_dof_swing_type not in {"CONE", "PYRAMID"}:
         normalized_six_dof_swing_type = "PYRAMID"
+    six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
+        six_dof_max_friction, (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    ))
 
     return [{
         "target_a": target_a if _is_object(target_a) else None,
@@ -538,6 +542,7 @@ def make_rigid_generated_constraint_properties(
         "six_dof_limit_min": six_dof_limit_min,
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": normalized_six_dof_swing_type,
+        "six_dof_max_friction": six_dof_max_friction,
         "cone_half_angle": _clamp(float(cone_half_angle), 0.0, _PI),
         "swing_type": normalized_swing_type,
         "swing_normal_half_angle": _clamp(float(swing_normal_half_angle), 0.0, _PI),
@@ -588,6 +593,9 @@ def _copy_generated_constraint_object(item: dict) -> dict:
     six_dof_swing_type = str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID").upper()
     if six_dof_swing_type not in {"CONE", "PYRAMID"}:
         six_dof_swing_type = "PYRAMID"
+    six_dof_max_friction = tuple(max(value, 0.0) for value in _float6(
+        item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+    ))
     return {
         "target_a": item.get("target_a") if _is_object(item.get("target_a")) else None,
         "target_b": item.get("target_b") if _is_object(item.get("target_b")) else None,
@@ -641,6 +649,7 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "six_dof_limit_min": six_dof_limit_min,
         "six_dof_limit_max": six_dof_limit_max,
         "six_dof_swing_type": six_dof_swing_type,
+        "six_dof_max_friction": six_dof_max_friction,
         "cone_half_angle": _clamp(float(item.get("cone_half_angle", 0.0) or 0.0), 0.0, _PI),
         "swing_type": swing_type,
         "swing_normal_half_angle": _clamp(float(item.get("swing_normal_half_angle", _PI * 0.25)), 0.0, _PI),
@@ -761,6 +770,9 @@ def rigid_generated_constraint_signature(item: dict) -> str:
             (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
         )),
         str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
+        ",".join(f"{value:.8g}" for value in _float6(
+            item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        )),
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
         str(item.get("source_id", "") or ""),
@@ -891,6 +903,9 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
             (1.0, 1.0, 1.0, _PI * 0.25, _PI * 0.25, _PI * 0.25),
         ),
         six_dof_swing_type=str(item.get("six_dof_swing_type", "PYRAMID") or "PYRAMID"),
+        six_dof_max_friction=_float6(
+            item.get("six_dof_max_friction", (0.0,) * 6), (0.0,) * 6,
+        ),
         cone_half_angle=float(item.get("cone_half_angle", 0.0) or 0.0),
         swing_type=str(item.get("swing_type", "CONE") or "CONE"),
         swing_normal_half_angle=float(item.get("swing_normal_half_angle", _PI * 0.25)),

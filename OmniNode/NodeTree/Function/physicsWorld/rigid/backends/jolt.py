@@ -593,6 +593,9 @@ class JoltAdapter:
                 spec, "six_dof_limit_max", (1.0, 1.0, 1.0, 3.141592653589793, 3.141592653589793, 3.141592653589793),
             )),
             six_dof_swing_type=str(getattr(spec, "six_dof_swing_type", "PYRAMID")),
+            six_dof_max_friction=tuple(getattr(
+                spec, "six_dof_max_friction", (0.0,) * 6,
+            )),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
             swing_type=str(getattr(spec, "swing_type", "CONE")),
             swing_normal_half_angle=float(

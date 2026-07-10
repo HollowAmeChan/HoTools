@@ -235,6 +235,7 @@ class ConstraintSpec:
         "six_dof_limit_min",
         "six_dof_limit_max",
         "six_dof_swing_type",
+        "six_dof_max_friction",
         "cone_half_angle",
         "swing_type",
         "swing_normal_half_angle",
@@ -301,6 +302,9 @@ class ConstraintSpec:
             1.0, 1.0, 1.0, 0.7853981633974483, 0.7853981633974483, 0.7853981633974483,
         ),
         six_dof_swing_type: str = "PYRAMID",
+        six_dof_max_friction: tuple[float, float, float, float, float, float] = (
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ),
         cone_half_angle: float = 0.0,
         swing_type: str = "CONE",
         swing_normal_half_angle: float = 3.141592653589793,
@@ -358,6 +362,7 @@ class ConstraintSpec:
         self.six_dof_limit_min: tuple[float, float, float, float, float, float] = six_dof_limit_min
         self.six_dof_limit_max: tuple[float, float, float, float, float, float] = six_dof_limit_max
         self.six_dof_swing_type: str = six_dof_swing_type
+        self.six_dof_max_friction: tuple[float, float, float, float, float, float] = six_dof_max_friction
         self.cone_half_angle: float = cone_half_angle
         self.swing_type: str = swing_type
         self.swing_normal_half_angle: float = swing_normal_half_angle
@@ -415,6 +420,7 @@ class ConstraintSpec:
             "six_dof_limit_min": self.six_dof_limit_min,
             "six_dof_limit_max": self.six_dof_limit_max,
             "six_dof_swing_type": self.six_dof_swing_type,
+            "six_dof_max_friction": self.six_dof_max_friction,
             "cone_half_angle": self.cone_half_angle,
             "swing_type": self.swing_type,
             "swing_normal_half_angle": self.swing_normal_half_angle,
@@ -745,6 +751,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     six_dof_axis_modes = []
     six_dof_limit_min = []
     six_dof_limit_max = []
+    six_dof_max_friction = []
     for index, axis_name in enumerate(six_dof_axis_names):
         mode = str(getattr(props, f"six_dof_{axis_name}_mode", "FIXED") or "FIXED").upper()
         if mode not in {"FREE", "FIXED", "LIMITED"}:
@@ -763,6 +770,9 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         six_dof_axis_modes.append(mode)
         six_dof_limit_min.append(minimum)
         six_dof_limit_max.append(maximum)
+        six_dof_max_friction.append(max(float(getattr(
+            props, f"six_dof_{axis_name}_friction", 0.0,
+        )), 0.0))
     six_dof_swing_type = str(
         getattr(props, "six_dof_swing_type", "PYRAMID") or "PYRAMID"
     ).upper()
@@ -835,6 +845,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         six_dof_limit_min=tuple(six_dof_limit_min),
         six_dof_limit_max=tuple(six_dof_limit_max),
         six_dof_swing_type=six_dof_swing_type,
+        six_dof_max_friction=tuple(six_dof_max_friction),
         cone_half_angle=cone_half_angle,
         swing_type=swing_type,
         swing_normal_half_angle=swing_normal_half_angle,

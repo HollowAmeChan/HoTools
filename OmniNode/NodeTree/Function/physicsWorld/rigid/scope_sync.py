@@ -192,6 +192,9 @@ def _constraint_sync_signature(spec) -> tuple:
             spec, "six_dof_limit_max", (1.0, 1.0, 1.0, 0.7853981634, 0.7853981634, 0.7853981634),
         )),
         str(getattr(spec, "six_dof_swing_type", "PYRAMID") or "PYRAMID"),
+        tuple(_round_float(value) for value in getattr(
+            spec, "six_dof_max_friction", (0.0,) * 6,
+        )),
         _round_float(getattr(spec, "cone_half_angle", 0.0)),
         _round_float(getattr(spec, "distance_min", 0.0)),
         _round_float(getattr(spec, "distance_max", 1.0)),
