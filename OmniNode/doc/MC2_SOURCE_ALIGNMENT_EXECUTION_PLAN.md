@@ -220,4 +220,4 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-S2 契约草案已经建立，B4 未提交近似实现已整体移除。当前从 N0 重新开始：`mc2/static_data.py` 只冻结最终 proxy geometry 与 baseline derived data 的不可变表示、校验和 ABI dtype packer；Tier B `proxy_static_triangle_contract_001` 只关闭 contract shape，不证明 builder parity。下一步按 W1/W2 实现最窄的 source-aligned static builder，且不把 Armature 驱动后的逐帧坐标混进 N0；随后独立实现并测试 D-08 的 N3 BasePose frame adapter，再接 native/result stream。Tier A 由独立最小 Unity 验证工程提供，不能复用或继续扩展已废弃的 HoClothUnity。
+S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。当前证据仍是源码手推 Tier B，`proxy_static_triangle_contract_001` 仍只关闭 contract shape。下一步先用独立最小 Unity 工程为 Mesh baseline 数组补 Tier A dump并校验 equal-cost intentional tie boundary，再实现 D-08 的 Blender N0/N3 双对象 adapter；不能复用或继续扩展已废弃的 HoClothUnity。

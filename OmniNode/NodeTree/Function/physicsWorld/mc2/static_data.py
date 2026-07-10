@@ -60,12 +60,18 @@ def _vectors(values, width: int, name: str, *, count: int | None = None) -> tupl
     return tuple(result)
 
 
-def _quaternions(values, name: str, *, count: int) -> tuple:
+def _baseline_quaternions(values, name: str, *, count: int, active_indices) -> tuple:
     result = _vectors(values, 4, name, count=count)
+    active = set(active_indices)
     for index, value in enumerate(result):
         length_squared = sum(component * component for component in value)
-        if abs(length_squared - 1.0) > 1.0e-4:
-            raise ValueError(f"{name}[{index}] must be a unit xyzw quaternion")
+        if index in active:
+            if abs(length_squared - 1.0) > 1.0e-4:
+                raise ValueError(f"{name}[{index}] must be a unit xyzw quaternion")
+        elif length_squared > 1.0e-12:
+            raise ValueError(
+                f"{name}[{index}] must be zero outside baseline_data"
+            )
     return result
 
 
@@ -420,6 +426,8 @@ def _validate_baseline_contract(spec: MC2BaselineStaticSpec) -> None:
 
     line_data = _integers(spec.baseline_data, "baseline_data")
     _validate_vertex_indices((line_data,), count, "baseline_data")
+    if len(set(line_data)) != len(line_data):
+        raise ValueError("baseline_data must contain unique vertex indices")
     line_ranges = _normalize_ranges(
         spec.baseline_ranges,
         "baseline_ranges",
@@ -447,10 +455,11 @@ def _validate_baseline_contract(spec: MC2BaselineStaticSpec) -> None:
         "vertex_local_positions",
         count=count,
     )
-    local_rotations = _quaternions(
+    local_rotations = _baseline_quaternions(
         spec.vertex_local_rotations,
         "vertex_local_rotations",
         count=count,
+        active_indices=line_data,
     )
     if spec.vertex_local_positions != local_positions:
         raise TypeError("vertex local position records must be immutable tuples")
@@ -495,6 +504,8 @@ def make_mc2_baseline_static_spec(
 
     line_data = _integers(baseline_data, "baseline_data")
     _validate_vertex_indices((line_data,), count, "baseline_data")
+    if len(set(line_data)) != len(line_data):
+        raise ValueError("baseline_data must contain unique vertex indices")
     line_ranges = _normalize_ranges(baseline_ranges, "baseline_ranges", len(line_data))
     flags = _integers(baseline_flags, "baseline_flags", count=len(line_ranges))
     if any(not 0 <= value <= 0xFF for value in flags):
@@ -520,7 +531,12 @@ def make_mc2_baseline_static_spec(
         "root_indices": roots,
         "depths": depth_values,
         "vertex_local_positions": _vectors(vertex_local_positions, 3, "vertex_local_positions", count=count),
-        "vertex_local_rotations": _quaternions(vertex_local_rotations, "vertex_local_rotations", count=count),
+        "vertex_local_rotations": _baseline_quaternions(
+            vertex_local_rotations,
+            "vertex_local_rotations",
+            count=count,
+            active_indices=line_data,
+        ),
     }
     if not payload["proxy_signature"]:
         raise ValueError("proxy_signature cannot be empty")

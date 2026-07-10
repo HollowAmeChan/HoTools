@@ -67,7 +67,7 @@ Proxy geometry：
 | `local_positions` | `float32[N,3]` | final proxy reference/rest local position，不是 Armature 求值后的当前帧位置。 |
 | `local_normals` / `local_tangents` | `float32[N,3]` | final proxy reference/rest local orientation basis。 |
 | `uvs` | `float32[N,2]` | triangle tangent producer input。 |
-| `vertex_attributes` | `uint8[N]` | mapped final `VertexAttribute` bits。 |
+| `vertex_attributes` | `uint8[N]` | mapped `VertexAttribute` bits；baseline local pose build 还会 finalise `ZeroDistance(0x20)`。 |
 | `edges` | `int32[E,2]` | canonical final proxy edges。 |
 | `triangles` | `int32[T,3]` | final proxy triangle role/winding。 |
 
@@ -81,8 +81,8 @@ Baseline derived data：
 | `baseline_ranges` / `baseline_data` | `int32[B,2]` / `int32[L]` | baseline traversal。 |
 | `root_indices` | `int32[N]` | Move vertex 的 fixed root；无 root 为 `-1`。 |
 | `depths` | `float32[N]` | 累计几何长度按全 proxy 最大值归一化。 |
-| `vertex_local_positions` | `float32[N,3]` | parent-local baseline position；无 parent 为 zero。 |
-| `vertex_local_rotations` | `float32[N,4]` | parent-local baseline rotation，quaternion `xyzw`；无 parent 为 identity。 |
+| `vertex_local_positions` | `float32[N,3]` | `inverse(parent orientation) * (child - parent)`；非 baseline vertex 为 zero。 |
+| `vertex_local_rotations` | `float32[N,4]` | parent-local baseline rotation，quaternion `xyzw`；baseline root 为 identity，非 baseline vertex 保留 zero quaternion。 |
 
 后续 pose/output static：
 
@@ -102,7 +102,7 @@ Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Arma
 | `vertex_to_triangle_ranges/data` | `int32[N,2]` / semantic records | triangle normal/tangent accumulation + flip flags。 |
 | `source_vertex_identity` | host mapping table | native index -> stable bone/mesh target；不由 kernel 解释。 |
 
-当前 `mc2/static_data.py` 只实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；它不生成这些数组、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 是 Tier B contract-shape case，明确不能证明 builder parity。
+`mc2/static_data.py` 实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；`mc2/mesh_baseline.py` 已按固定 source entry 实现纯 Mesh baseline builder，返回可能因 ZeroDistance 更新 signature 的 final proxy 与 baseline。它不读 Blender/N3 pose、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 仍只是 Tier B contract-shape case，不能证明 builder parity；当前 builder tests 是源码手推 Tier B 规则覆盖，仍需 Tier A dump。
 
 ### N1 Constraint static
 
