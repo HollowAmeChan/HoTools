@@ -3,7 +3,7 @@
 SpringBone VRM 新物理世界链路的 Blender 后台集成测试。
 
 用法：
-    blender.exe --background --python test_blender_spring_vrm.py
+    blender.exe --background --python spring_vrm/test/test_blender_spring_vrm.py
 """
 
 from __future__ import annotations

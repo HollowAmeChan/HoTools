@@ -1,7 +1,7 @@
 """Reproducible old-vs-world SpringBone benchmark for Blender background mode.
 
 Usage:
-    blender.exe --background --factory-startup --python benchmark_blender_spring_vrm.py
+    blender.exe --background --factory-startup --python spring_vrm/test/benchmark_blender_spring_vrm.py
 
 Environment:
     SPRING_BENCH_SIZES=8,32,128
@@ -29,7 +29,7 @@ import bpy
 
 
 HERE = Path(__file__).resolve().parent
-HOTOOLS = HERE.parents[4]
+HOTOOLS = HERE.parents[5]
 HARNESS_PATH = HERE / "test_blender_spring_vrm.py"
 
 

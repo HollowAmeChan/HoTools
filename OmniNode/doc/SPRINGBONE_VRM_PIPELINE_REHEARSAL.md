@@ -1116,7 +1116,7 @@ SpringBone Step
 - 同一 armature、同一链内的骨骼碰撞体会从被动 collider arrays 中排除，避免 SpringBone 自己撞自己。
 - `SpringBone VRM模拟步` 的 stats result 已报告真实 `collider_count`。
 - `PLANE` 用 `collider_segment_a` 传法线，`BOX` 用 `collider_segment_a/b` 传 X/Y 半轴、`collider_radii` 传带符号 Z 半轴长度；这只是 SpringBone native ABI 的打包约定，world snapshot 仍保留语义字段。
-- `physicsWorld/spring_vrm/test_blender_spring_vrm.py` 已覆盖：隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box world collider snapshot 对 SpringBone tail 投影的影响和 group mask 过滤。
+- `physicsWorld/spring_vrm/test/test_blender_spring_vrm.py` 已覆盖：隐式对象注册、native step、PoseBone 写回、连续帧状态保留、same-frame 结果复发、spec 变化后的 stale slot prune、Cache Delete / `clear_all` 释放与 PoseBone 复位，以及 sphere / capsule / plane / box world collider snapshot 对 SpringBone tail 投影的影响和 group mask 过滤。
 - `_native/tests/test_spring_bone_vrm_native.py` 已覆盖 3.13 native 直连：基础重力步进、capsule / plane / box collider 投影、group mask 过滤和 binding 参数 shape 校验。
 
 验收：
@@ -1290,3 +1290,5 @@ Blender 4.5 / Release py311 实测：
 性能阻塞已解除。后续收口中，根树成功重编译统一清 runtime cache 已替代 implicit object source lease；`length/offset/primary_collision_group` 已进入真实 SpringBone native collider arrays。Bake 不归 SpringBone 私有实现：骨骼 K 帧与属性动画应由后续统一 writeback bake 节点共同处理，不再作为本 solver 阻塞项。
 
 同轮补齐同骨架多链、重复 root/模拟骨重叠拒绝、分叉 parent index/use_connect、拓扑热改 context dispose、暂停/倒放、镜像缩放、运动 collider 和零长度 native context。SpringBone slot 原先缺失 `_dispose` 回调的问题已修复；10,000 帧 soak 中 slot、context、C++ handle 及 static/dynamic/result buffers 身份与数量保持稳定。Blender 常规矩阵 `35/35`，带 soak 矩阵 `36/36`。
+
+最终性能补充使用 `spring_vrm/test/benchmark_blender_spring_vrm_scale_debug.py` 跑 3 个独立 Blender 进程，每个 case 40 帧 warmup + 300 帧测量。1/8/32 armature（每骨架 8 骨）P50 分别为 `0.353-0.359 / 1.710-1.808 / 5.497-5.607 ms`，32 armature 仅放大 `15.348x-15.872x`；128 骨 continuous debug capture 相对 off 为 `1.420x-1.461x`，one-shot 整体 P50 为 `0.996x-1.006x`。所有 case 的 slot/context/C++ handle/buffer 计数严格符合预期，F-03/F-04 完成。
