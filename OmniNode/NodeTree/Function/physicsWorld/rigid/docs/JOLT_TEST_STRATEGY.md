@@ -33,14 +33,14 @@
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
 - 54 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询和约束；
-- 八种已接入约束均有 schema、state trace 和独立物理 oracle；
+- 九种已接入约束均有 schema、state trace 和独立物理 oracle；
 - Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
 - Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
 - Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
 - py311/py313 各自 54/54 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、八种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴 Free/Fixed/Limited、逐轴 friction、逐轴 motor 与三平移轴 limit spring、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、九种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -206,7 +206,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | EVENT-002 | sensor result channel | 状态机完整且不改变穿越轨迹 | HoTools/Jolt | P0 | 已实现 |
 | EVENT-003 | overflow | 计数准确、内存有界、后续帧恢复 | HoTools | P1 | 缺失 |
 
-### 七种约束
+### 九种约束
 
 每种约束至少覆盖 `body-body`、`body-world`、共享 world frame、独立 local A/B frame 和旋转 frame。不能只检查 `constraint_count == 1`。
 
@@ -238,7 +238,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SIX_DOF-002 | 每轴 friction | 平移 X 按最大摩擦力/质量衰减；旋转 Z 按最大摩擦力矩/惯量衰减；lambda 活跃 | 解析/Jolt | P0 | PASS (S1)，公共 spec/生成约束已接 |
 | SIX_DOF-003 | 每轴 motor | 平移 X 速度 motor 按力上限加速；旋转 Z 位置 motor 收敛到目标姿态；lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束/debug 已接 |
 | SIX_DOF-004 | 平移 limit spring | 平移 X 软限制逐帧符合 Jolt FrequencyAndDamping 隐式欧拉轨迹；limit lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束已接 |
-| PULLEY-001 | 固定绳长与 ratio | ratio=2 时保持 `Length1 + 2 * Length2`，两体速度按有效质量解析投影，lambda 活跃 | Jolt sample/解析 | P0 | PASS (S1 native-only)，公共 spec/调试待接 |
+| PULLEY-001 | 固定绳长与 ratio | ratio=2 时保持 `Length1 + 2 * Length2`，两体速度按有效质量解析投影，lambda 活跃 | Jolt sample/解析 | P0 | PASS (S1)，公共 spec/生成约束/result/debug 已接 |
 | PAIR-001 | 不同质量 Distance spring | 两端轨迹正确且总线动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-002 | 不同质量 Slider motor | 限力反作用与质量倒数成比例，总动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-003 | 不同转动惯量 Hinge motor | 限矩反作用正确，总角动量守恒 | 解析/Jolt | P0 | 已实现 |

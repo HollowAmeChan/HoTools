@@ -251,6 +251,11 @@ class ConstraintSpec:
         "twist_max_angle",
         "distance_min",
         "distance_max",
+        "pulley_fixed_point_a",
+        "pulley_fixed_point_b",
+        "pulley_ratio",
+        "pulley_min_length",
+        "pulley_max_length",
     )
 
     def __init__(
@@ -331,6 +336,11 @@ class ConstraintSpec:
         twist_max_angle: float = 3.141592653589793,
         distance_min: float = 0.0,
         distance_max: float = 1.0,
+        pulley_fixed_point_a: tuple[float, float, float] = (-1.0, 2.0, 0.0),
+        pulley_fixed_point_b: tuple[float, float, float] = (1.0, 2.0, 0.0),
+        pulley_ratio: float = 1.0,
+        pulley_min_length: float = 0.0,
+        pulley_max_length: float = -1.0,
     ) -> None:
         self.empty_obj = empty_obj
         self.empty_ptr: int = empty_ptr
@@ -396,6 +406,11 @@ class ConstraintSpec:
         self.twist_max_angle: float = twist_max_angle
         self.distance_min: float = distance_min
         self.distance_max: float = distance_max
+        self.pulley_fixed_point_a: tuple[float, float, float] = pulley_fixed_point_a
+        self.pulley_fixed_point_b: tuple[float, float, float] = pulley_fixed_point_b
+        self.pulley_ratio: float = pulley_ratio
+        self.pulley_min_length: float = pulley_min_length
+        self.pulley_max_length: float = pulley_max_length
 
     def debug_dict(self) -> dict:
         return {
@@ -461,6 +476,11 @@ class ConstraintSpec:
             "twist_max_angle": self.twist_max_angle,
             "distance_min": self.distance_min,
             "distance_max": self.distance_max,
+            "pulley_fixed_point_a": self.pulley_fixed_point_a,
+            "pulley_fixed_point_b": self.pulley_fixed_point_b,
+            "pulley_ratio": self.pulley_ratio,
+            "pulley_min_length": self.pulley_min_length,
+            "pulley_max_length": self.pulley_max_length,
         }
 
 
@@ -708,7 +728,7 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
     constraint_type = str(getattr(props, "constraint_type", "FIXED"))
     if constraint_type not in {
         "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
-        "SIX_DOF",
+        "SIX_DOF", "PULLEY",
     }:
         constraint_type = "FIXED"
     target_a = getattr(props, "target_a", None)
@@ -851,6 +871,19 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         max(float(getattr(props, "distance_min", 0.0)), 0.0),
         max(float(getattr(props, "distance_max", 1.0)), 0.0),
     )
+    pulley_fixed_point_a = _float3(getattr(
+        props, "pulley_fixed_point_a", (-1.0, 2.0, 0.0),
+    ))
+    pulley_fixed_point_b = _float3(getattr(
+        props, "pulley_fixed_point_b", (1.0, 2.0, 0.0),
+    ))
+    pulley_ratio = max(float(getattr(props, "pulley_ratio", 1.0)), 1.0e-4)
+    pulley_min_length = max(float(getattr(props, "pulley_min_length", 0.0)), -1.0)
+    pulley_max_length = max(float(getattr(props, "pulley_max_length", -1.0)), -1.0)
+    if pulley_min_length >= 0.0 and pulley_max_length >= 0.0:
+        pulley_min_length, pulley_max_length = _ordered_pair(
+            pulley_min_length, pulley_max_length,
+        )
 
     return ConstraintSpec(
         empty_obj=empty_obj,
@@ -916,4 +949,9 @@ def build_constraint_spec(empty_obj) -> ConstraintSpec | None:
         twist_max_angle=twist_max_angle,
         distance_min=distance_min,
         distance_max=distance_max,
+        pulley_fixed_point_a=pulley_fixed_point_a,
+        pulley_fixed_point_b=pulley_fixed_point_b,
+        pulley_ratio=pulley_ratio,
+        pulley_min_length=pulley_min_length,
+        pulley_max_length=pulley_max_length,
     )

@@ -143,7 +143,7 @@ Jolt 支持的主要 two-body constraint：
 | SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 已接六轴模式、friction、逐轴 motor、三平移轴 limit spring 和调试 |
 | Gear | 两个 hinge 角速度/角度关系 | 未接 |
 | RackAndPinion | slider 与 hinge 的线性/旋转关系 | 未接 |
-| Pulley | 两个点通过绳长比例约束 | native binding 与 ratio=2 解析 S1 已接；公共 spec/属性/debug 待接 |
+| Pulley | 两个点通过绳长比例约束 | native、公共 spec/属性/生成约束/result/debug 与 ratio=2 解析 S1 已接 |
 | Path | 沿平滑路径约束，支持 path fraction 和 motor | 未接 |
 | Vehicle | 车辆专用约束系统 | 未接，不建议近期混入通用刚体面板 |
 

@@ -430,7 +430,8 @@ def physicsRigidJoltWorldSettingsRegister(
         "旋转Y模式", "旋转Y最小", "旋转Y最大", "旋转Y摩擦力矩", "旋转Y Motor",
         "旋转Z模式", "旋转Z最小", "旋转Z最大", "旋转Z摩擦力矩", "旋转Z Motor",
         "SixDOF目标线速度", "SixDOF目标角速度", "SixDOF目标位置", "SixDOF目标姿态",
-        "距离最小", "距离最大", "可断裂", "断裂冲量阈值", "锚点对象A", "锚点对象B",
+        "距离最小", "距离最大", "滑轮固定点A", "滑轮固定点B", "滑轮倍率",
+        "滑轮最小绳长", "滑轮最大绳长", "可断裂", "断裂冲量阈值", "锚点对象A", "锚点对象B",
     ],
     input_init={
         "constraint_type": {"default_value": "FIXED"},
@@ -482,13 +483,16 @@ def physicsRigidJoltWorldSettingsRegister(
         "six_dof_rotation_x_motor_state": {"default_value": "OFF"},
         "six_dof_rotation_y_motor_state": {"default_value": "OFF"},
         "six_dof_rotation_z_motor_state": {"default_value": "OFF"},
+        "pulley_ratio": {"min_value": 0.0001},
+        "pulley_min_length": {"min_value": -1.0},
+        "pulley_max_length": {"min_value": -1.0},
     },
     _OUTPUT_NAME=["生成约束属性"],
     omni_description="""
     构造可注册到物理世界的刚体生成约束属性。
 
     本节点不创建 Empty、不写 solver slot、不访问 Jolt。约束类型使用
-    FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE / SWING_TWIST / SIX_DOF。锚点对象为空时，锚点位置取
+    FIXED / HINGE / SLIDER / CONE / POINT / DISTANCE / SWING_TWIST / SIX_DOF / PULLEY。锚点对象为空时，锚点位置取
     目标 A/B 的中点，旋转取目标 A 的 world rotation。锚点对象 A/B 可选，
     用于覆盖各自独立的世界 anchor frame。
     """,
@@ -565,6 +569,11 @@ def physicsRigidGeneratedConstraintProperties(
     six_dof_target_rotation=(0.0, 0.0, 0.0),
     distance_min: float = 0.0,
     distance_max: float = 1.0,
+    pulley_fixed_point_a=(-1.0, 2.0, 0.0),
+    pulley_fixed_point_b=(1.0, 2.0, 0.0),
+    pulley_ratio: float = 1.0,
+    pulley_min_length: float = 0.0,
+    pulley_max_length: float = -1.0,
     breakable: bool = False,
     breaking_threshold: float = 1000.0,
     anchor_object_a: bpy.types.Object = None,
@@ -648,6 +657,11 @@ def physicsRigidGeneratedConstraintProperties(
         six_dof_target_rotation=six_dof_target_rotation,
         distance_min=float(distance_min),
         distance_max=float(distance_max),
+        pulley_fixed_point_a=pulley_fixed_point_a,
+        pulley_fixed_point_b=pulley_fixed_point_b,
+        pulley_ratio=float(pulley_ratio),
+        pulley_min_length=float(pulley_min_length),
+        pulley_max_length=float(pulley_max_length),
         breakable=bool(breakable),
         breaking_threshold=float(breaking_threshold),
         anchor_object_a=anchor_object_a,

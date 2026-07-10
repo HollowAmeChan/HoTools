@@ -173,7 +173,7 @@ def _normalize_constraint_type(value) -> str:
     constraint_type = str(value or "FIXED").strip().upper()
     if constraint_type not in {
         "FIXED", "HINGE", "SLIDER", "CONE", "POINT", "DISTANCE", "SWING_TWIST",
-        "SIX_DOF",
+        "SIX_DOF", "PULLEY",
     }:
         return "FIXED"
     return constraint_type
@@ -433,6 +433,11 @@ def make_rigid_generated_constraint_properties(
     six_dof_target_rotation=(0.0, 0.0, 0.0),
     distance_min: float = 0.0,
     distance_max: float = 1.0,
+    pulley_fixed_point_a=(-1.0, 2.0, 0.0),
+    pulley_fixed_point_b=(1.0, 2.0, 0.0),
+    pulley_ratio: float = 1.0,
+    pulley_min_length: float = 0.0,
+    pulley_max_length: float = -1.0,
     breakable: bool = False,
     breaking_threshold: float = 1000.0,
     anchor_object_a: bpy.types.Object = None,
@@ -471,6 +476,12 @@ def make_rigid_generated_constraint_properties(
         max(float(distance_min), 0.0),
         max(float(distance_max), 0.0),
     )
+    pulley_min_length = max(float(pulley_min_length), -1.0)
+    pulley_max_length = max(float(pulley_max_length), -1.0)
+    if pulley_min_length >= 0.0 and pulley_max_length >= 0.0:
+        pulley_min_length, pulley_max_length = _ordered_pair(
+            pulley_min_length, pulley_max_length,
+        )
     normalized_swing_type = str(swing_type or "CONE").upper()
     if normalized_swing_type not in {"CONE", "PYRAMID"}:
         normalized_swing_type = "CONE"
@@ -579,6 +590,11 @@ def make_rigid_generated_constraint_properties(
         "twist_max_angle": twist_max_angle,
         "distance_min": distance_min,
         "distance_max": distance_max,
+        "pulley_fixed_point_a": _float3(pulley_fixed_point_a),
+        "pulley_fixed_point_b": _float3(pulley_fixed_point_b),
+        "pulley_ratio": max(float(pulley_ratio), 1.0e-4),
+        "pulley_min_length": pulley_min_length,
+        "pulley_max_length": pulley_max_length,
     }]
 
 
@@ -592,6 +608,12 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         max(float(item.get("distance_min", 0.0) or 0.0), 0.0),
         max(float(item.get("distance_max", 1.0) or 0.0), 0.0),
     )
+    pulley_min_length = max(float(item.get("pulley_min_length", 0.0) or 0.0), -1.0)
+    pulley_max_length = max(float(item.get("pulley_max_length", -1.0)), -1.0)
+    if pulley_min_length >= 0.0 and pulley_max_length >= 0.0:
+        pulley_min_length, pulley_max_length = _ordered_pair(
+            pulley_min_length, pulley_max_length,
+        )
     shared_position = _float3(item.get("anchor_position", (0.0, 0.0, 0.0)))
     shared_rotation = _float4(item.get(
         "anchor_rotation_wxyz",
@@ -715,6 +737,15 @@ def _copy_generated_constraint_object(item: dict) -> dict:
         "twist_max_angle": twist_max_angle,
         "distance_min": distance_min,
         "distance_max": distance_max,
+        "pulley_fixed_point_a": _float3(item.get(
+            "pulley_fixed_point_a", (-1.0, 2.0, 0.0),
+        )),
+        "pulley_fixed_point_b": _float3(item.get(
+            "pulley_fixed_point_b", (1.0, 2.0, 0.0),
+        )),
+        "pulley_ratio": max(float(item.get("pulley_ratio", 1.0) or 1.0), 1.0e-4),
+        "pulley_min_length": pulley_min_length,
+        "pulley_max_length": pulley_max_length,
     }
 
 
@@ -852,6 +883,15 @@ def rigid_generated_constraint_signature(item: dict) -> str:
         )),
         f"{float(item.get('distance_min', 0.0)):.8g}",
         f"{float(item.get('distance_max', 1.0)):.8g}",
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("pulley_fixed_point_a", (-1.0, 2.0, 0.0))
+        )),
+        ",".join(f"{value:.8g}" for value in _float3(
+            item.get("pulley_fixed_point_b", (1.0, 2.0, 0.0))
+        )),
+        f"{float(item.get('pulley_ratio', 1.0)):.8g}",
+        f"{float(item.get('pulley_min_length', 0.0)):.8g}",
+        f"{float(item.get('pulley_max_length', -1.0)):.8g}",
         str(item.get("source_id", "") or ""),
     ]
     return stable_short_hash(payload, 16)
@@ -1010,6 +1050,15 @@ def _spec_from_entry(entry: dict) -> tuple[ConstraintSpec | None, str]:
         twist_max_angle=float(item.get("twist_max_angle", _PI * 0.25)),
         distance_min=float(item.get("distance_min", 0.0) or 0.0),
         distance_max=float(item.get("distance_max", 1.0) or 0.0),
+        pulley_fixed_point_a=_float3(item.get(
+            "pulley_fixed_point_a", (-1.0, 2.0, 0.0),
+        )),
+        pulley_fixed_point_b=_float3(item.get(
+            "pulley_fixed_point_b", (1.0, 2.0, 0.0),
+        )),
+        pulley_ratio=float(item.get("pulley_ratio", 1.0) or 1.0),
+        pulley_min_length=float(item.get("pulley_min_length", 0.0)),
+        pulley_max_length=float(item.get("pulley_max_length", -1.0)),
     )
     return spec, str(entry.get("signature") or rigid_generated_constraint_signature(item))
 

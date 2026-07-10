@@ -217,6 +217,15 @@ def _constraint_sync_signature(spec) -> tuple:
         _round_float(getattr(spec, "cone_half_angle", 0.0)),
         _round_float(getattr(spec, "distance_min", 0.0)),
         _round_float(getattr(spec, "distance_max", 1.0)),
+        tuple(_round_float(value) for value in getattr(
+            spec, "pulley_fixed_point_a", (-1.0, 2.0, 0.0),
+        )),
+        tuple(_round_float(value) for value in getattr(
+            spec, "pulley_fixed_point_b", (1.0, 2.0, 0.0),
+        )),
+        _round_float(getattr(spec, "pulley_ratio", 1.0)),
+        _round_float(getattr(spec, "pulley_min_length", 0.0)),
+        _round_float(getattr(spec, "pulley_max_length", -1.0)),
     )
 
 

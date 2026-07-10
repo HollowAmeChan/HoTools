@@ -1012,6 +1012,66 @@ def test_constraint_state_result_pipeline():
     _del(c, a, b)
 
 
+def test_pulley_constraint_spec_and_adapter():
+    a = _make_obj("T3C_PulleyBodyA", (-1, 0, 1), body_type="DYNAMIC")
+    b = _make_obj("T3C_PulleyBodyB", (1, 0, 1), body_type="DYNAMIC")
+    c = _make_constraint_empty("T3C_PulleyConstraint", a, b, loc=(0, 0, 1))
+    props = c.hotools_rigid_constraint
+    props.constraint_type = "PULLEY"
+    props.anchor_mode = "LOCAL_FRAMES"
+    props.local_point_a = (0.0, 0.0, 0.0)
+    props.local_point_b = (0.0, 0.0, 0.0)
+    props.pulley_fixed_point_a = (-1.0, 3.0, 1.0)
+    props.pulley_fixed_point_b = (1.0, 3.0, 1.0)
+    props.pulley_ratio = 2.0
+    props.pulley_min_length = -1.0
+    props.pulley_max_length = -1.0
+
+    spec = build_constraint_spec(c)
+    assert spec is not None and spec.constraint_type == "PULLEY"
+    assert spec.pulley_fixed_point_a == (-1.0, 3.0, 1.0)
+    assert spec.pulley_fixed_point_b == (1.0, 3.0, 1.0)
+    assert spec.pulley_ratio == 2.0
+    assert spec.pulley_min_length == -1.0
+    assert spec.pulley_max_length == -1.0
+
+    adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
+    for obj in (a, b):
+        body_spec = build_rigid_body_spec(obj)
+        assert body_spec is not None
+        adapter.sync_body(body_spec.slot_id, body_spec)
+    adapter.sync_constraint(spec.slot_id, spec)
+    adapter.step(1.0 / 60.0, 1)
+    state = adapter.get_constraint_state(spec.slot_id)
+    assert state is not None
+    assert state["constraint_type"] == "PULLEY"
+    assert state["current_value_kind"] == "pulley_length"
+    assert state["current_value"] > 0.0
+    assert state["lambda_max_abs"] > 0.0
+    adapter.dispose("test_pulley_constraint")
+
+    generated = make_rigid_generated_constraint_properties(
+        target_a=a,
+        target_b=b,
+        constraint_type="PULLEY",
+        pulley_fixed_point_a=(-1.0, 3.0, 1.0),
+        pulley_fixed_point_b=(1.0, 3.0, 1.0),
+        pulley_ratio=2.0,
+        pulley_min_length=8.0,
+        pulley_max_length=4.0,
+    )
+    item = generated[0]
+    assert item["constraint_type"] == "PULLEY"
+    assert item["pulley_ratio"] == 2.0
+    assert item["pulley_min_length"] == 4.0
+    assert item["pulley_max_length"] == 8.0
+    signature = rigid_generated_constraint_signature(item)
+    changed = dict(item)
+    changed["pulley_ratio"] = 3.0
+    assert rigid_generated_constraint_signature(changed) != signature
+    _del(c, a, b)
+
+
 def test_generated_constraint_implicit_object_pipeline():
     scene = bpy.context.scene
     a = _make_obj("T3D_GeneratedBodyA", (-0.5, 0, 2), body_type="DYNAMIC")
@@ -1794,6 +1854,11 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "six_dof_target_angular_velocity": (0.0, 0.0, 1.0),
         "six_dof_target_position": (0.5, 0.0, 0.0),
         "six_dof_target_orientation_wxyz": (0.9689124, 0.0, 0.0, 0.2474040),
+        "pulley_fixed_point_a": (-1.0, 3.0, 0.0),
+        "pulley_fixed_point_b": (1.0, 3.0, 0.0),
+        "pulley_ratio": 2.0,
+        "pulley_min_length": 0.0,
+        "pulley_max_length": -1.0,
     }
     states = {
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
@@ -1809,7 +1874,7 @@ def test_constraint_debug_renderer_registry_and_semantics():
     }
     for constraint_type in (
         "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
-        "SIX_DOF",
+        "SIX_DOF", "PULLEY",
     ):
         spec = _types.SimpleNamespace(constraint_type=constraint_type, **common)
         groups = build_constraint_debug_lines(spec, states.get(constraint_type))
@@ -1870,6 +1935,7 @@ if __name__ == "__main__":
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)
     check("SWING_TWIST constraint spec + generated properties", test_swing_twist_constraint_spec_and_generated_properties)
     check("SIX_DOF constraint spec + adapter", test_six_dof_constraint_spec_and_adapter)
+    check("PULLEY constraint spec + adapter", test_pulley_constraint_spec_and_adapter)
     check("constraint state result pipeline", test_constraint_state_result_pipeline)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 

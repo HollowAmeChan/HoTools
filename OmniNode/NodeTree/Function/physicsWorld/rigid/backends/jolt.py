@@ -629,6 +629,15 @@ class JoltAdapter:
             twist_max_angle=float(getattr(spec, "twist_max_angle", 3.141592653589793)),
             distance_min=float(getattr(spec, "distance_min", 0.0)),
             distance_max=float(getattr(spec, "distance_max", 1.0)),
+            pulley_fixed_point_a=tuple(getattr(
+                spec, "pulley_fixed_point_a", (-1.0, 2.0, 0.0),
+            )),
+            pulley_fixed_point_b=tuple(getattr(
+                spec, "pulley_fixed_point_b", (1.0, 2.0, 0.0),
+            )),
+            pulley_ratio=float(getattr(spec, "pulley_ratio", 1.0)),
+            pulley_min_length=float(getattr(spec, "pulley_min_length", 0.0)),
+            pulley_max_length=float(getattr(spec, "pulley_max_length", -1.0)),
             disable_collisions=bool(getattr(spec, "disable_collisions", True)),
         )
         handle = self._jw.add_constraint(**kwargs)
