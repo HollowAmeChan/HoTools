@@ -11,6 +11,7 @@
 | `SLIDER` | 沿本地 Z 单轴平移 | 线性 limit、spring、friction force、linear motor | 活塞、抽屉、滑轨 |
 | `CONE` | cone 范围内 swing，twist 自由 | half cone angle | 摆锤、简化球窝角限制 |
 | `SWING_TWIST` | 椭圆锥或金字塔范围内 swing，有限或自由 twist | swing type、两个 swing half angle、twist min/max、friction torque、双 motor | 肩关节、受限球窝、布偶关节 |
+| `SIX_DOF` | 六个轴分别 Free、Fixed 或 Limited | 六轴模式、六轴 min/max、旋转 swing type | 复合机械关节、自定义平移旋转边界 |
 
 ## 类型细节
 
@@ -66,6 +67,16 @@
 
 Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。binding 会把 HoTools 局部 XYZ 显式映射为 Jolt `(Z, -Y, X)`；用户不需要手工重排或翻转目标分量。
 
+### SixDOF
+
+以约束 frame 的本地 XYZ 作为三个平移轴和三个旋转轴。每个轴可设为：
+
+- `FREE`：该轴不施加约束；
+- `FIXED`：该轴固定到 A/B frame 的相对零位；
+- `LIMITED`：该轴限制在对应 min/max 范围内。
+
+显式 Empty 属性、`ConstraintSpec`、Jolt adapter、state/lambda 和专用调试绘制已接入。旋转 Y/Z 同时受限时，`six_dof_swing_type` 控制椭圆锥或金字塔边界。当前生成约束节点、逐轴 spring/friction/motor 和逐轴 current-value result 尚未接入。
+
 ## 通用参数
 
 - `constraint_priority`：同一 island 中更高优先级的约束先求解；只在确有依赖次序时使用。
@@ -78,7 +89,6 @@ Jolt 内部 constraint space 的轴序为 `Twist / (Plane×Twist) / Plane`。bin
 
 | Jolt 类型 | 能力 | 接入前置 |
 |---|---|---|
-| SixDOF | 六轴分别 Free/Fixed/Limited、每轴 motor/friction | native S1 已接六轴模式与范围；公共 spec、per-axis result、motor/friction 与调试器待接 |
 | Path | Hermite spline path、path fraction、motor | 路径资源生命周期与曲线调试 |
 | Gear | 连接两个 hinge 的齿轮比 | constraint-to-constraint 引用拓扑 |
 | RackAndPinion | hinge 与 slider 的线性/角度比例 | constraint-to-constraint 引用拓扑 |

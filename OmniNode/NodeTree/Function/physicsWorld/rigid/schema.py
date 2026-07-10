@@ -174,6 +174,51 @@ RIGID_BODY_RNA_FIELDS = ({'name': 'enabled', 'property': 'bool', 'kwargs': {'nam
  {'name': 'lock_angular_z', 'property': 'bool', 'kwargs': {'name': '锁定角度Z', 'default': False}})
 
 
+def _six_dof_axis_rna_fields() -> tuple[dict, ...]:
+    """生成 SixDOF 六轴模式和范围属性，保持字段命名与 native 轴序一致。"""
+    definitions = (
+        ("translation_x", "平移X", "LENGTH", -1.0, 1.0),
+        ("translation_y", "平移Y", "LENGTH", -1.0, 1.0),
+        ("translation_z", "平移Z", "LENGTH", -1.0, 1.0),
+        ("rotation_x", "旋转X", "ROTATION", -0.7853981633974483, 0.7853981633974483),
+        ("rotation_y", "旋转Y", "ROTATION", -0.7853981633974483, 0.7853981633974483),
+        ("rotation_z", "旋转Z", "ROTATION", -0.7853981633974483, 0.7853981633974483),
+    )
+    fields = []
+    for axis_name, label, unit, default_min, default_max in definitions:
+        fields.append({
+            "name": f"six_dof_{axis_name}_mode",
+            "property": "enum",
+            "kwargs": {
+                "name": f"{label}模式",
+                "description": f"SixDOF {label}轴是自由、固定到零位还是限制在范围内",
+                "items": [
+                    ("FREE", "自由", "该轴不施加约束"),
+                    ("FIXED", "固定", "该轴固定在约束frame零位"),
+                    ("LIMITED", "限制", "该轴限制在最小值和最大值之间"),
+                ],
+                "default": "FIXED",
+            },
+        })
+        for suffix, suffix_label, default in (
+            ("min", "最小", default_min), ("max", "最大", default_max),
+        ):
+            kwargs = {
+                "name": f"{label}{suffix_label}",
+                "description": f"SixDOF {label}轴限制的{suffix_label}值",
+                "default": default,
+                "unit": unit,
+            }
+            if unit == "ROTATION":
+                kwargs.update({"min": -3.141592653589793, "max": 3.141592653589793})
+            fields.append({
+                "name": f"six_dof_{axis_name}_{suffix}",
+                "property": "float",
+                "kwargs": kwargs,
+            })
+    return tuple(fields)
+
+
 RIGID_CONSTRAINT_RNA_FIELDS = ({'name': 'enabled',
   'property': 'bool',
   'kwargs': {'name': '启用', 'description': '将此 Empty 对象识别为刚体约束点', 'default': False}},
@@ -186,6 +231,7 @@ RIGID_CONSTRAINT_RNA_FIELDS = ({'name': 'enabled',
                        ('SLIDER', '滑动', '允许沿约束锚点 Z 轴平移，限制旋转'),
                        ('CONE', '锥形', '允许在锥角范围内摆动，限制平移'),
                        ('SWING_TWIST', '摆动扭转', '肩关节式限制摆动锥和绕局部Z轴的扭转范围'),
+                       ('SIX_DOF', '六自由度', '分别配置三个平移轴和三个旋转轴为自由、固定或受限'),
                        ('POINT', '点约束', '仅锁定位置，允许任意旋转（球窝关节）'),
                        ('DISTANCE', '距离', '限制两个锚点之间的最小和最大距离')],
              'default': 'FIXED'}},
@@ -381,6 +427,14 @@ RIGID_CONSTRAINT_RNA_FIELDS = ({'name': 'enabled',
              'size': 3,
              'unit': 'ROTATION',
              'subtype': 'EULER'}},
+ {'name': 'six_dof_swing_type',
+  'property': 'enum',
+  'kwargs': {'name': 'SixDOF摆动边界',
+             'description': '旋转Y/Z同时受限时使用椭圆锥或金字塔边界',
+             'items': [('CONE', '椭圆锥', '旋转Y/Z组成对称椭圆锥'),
+                       ('PYRAMID', '角锥', '旋转Y/Z分别使用独立范围')],
+             'default': 'PYRAMID'}},
+ *_six_dof_axis_rna_fields(),
  {'name': 'cone_half_angle',
   'property': 'float',
   'kwargs': {'name': '半锥角',

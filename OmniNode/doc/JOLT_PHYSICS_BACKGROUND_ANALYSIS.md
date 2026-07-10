@@ -140,7 +140,7 @@ Jolt 支持的主要 two-body constraint：
 | Slider | 单轴平移，支持线性 limit、limit spring、friction force、motor | 已接类型，并已接基础 limit/friction/motor |
 | Cone | 点约束 + swing cone angle | 已接类型，并已接 half cone angle |
 | SwingTwist | 肩关节/球窝角限制，支持 normal/twist/plane half cone angle、twist min/max、friction、motor | 已接 CONE/PYRAMID 摆角、twist min/max、friction、独立 swing/twist motor |
-| SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | native S1 已接六轴 Free/Fixed/Limited；公共 spec、motor/friction 和调试待接 |
+| SixDOF | 每个平移/旋转轴自由、固定或限制；每轴摩擦、translation spring、每轴 motor | 已接显式属性/spec/adapter、六轴 Free/Fixed/Limited 和调试；生成约束、motor/friction 待接 |
 | Gear | 两个 hinge 角速度/角度关系 | 未接 |
 | RackAndPinion | slider 与 hinge 的线性/旋转关系 | 未接 |
 | Pulley | 两个点通过绳长比例约束 | 未接 |

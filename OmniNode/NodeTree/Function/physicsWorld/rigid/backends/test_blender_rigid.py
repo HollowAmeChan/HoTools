@@ -788,6 +788,51 @@ def test_swing_twist_constraint_spec_and_generated_properties():
     _del(c, a, b)
 
 
+def test_six_dof_constraint_spec_and_adapter():
+    a = _make_obj("T3B_SixDofBodyA", (-1, 0, 1), body_type="STATIC")
+    b = _make_obj("T3B_SixDofBodyB", (1, 0, 1), body_type="DYNAMIC")
+    c = _make_constraint_empty("T3B_SixDofConstraint", a, b, loc=(0, 0, 1))
+    props = c.hotools_rigid_constraint
+    props.constraint_type = "SIX_DOF"
+    props.six_dof_translation_x_mode = "LIMITED"
+    props.six_dof_translation_x_min = 0.5
+    props.six_dof_translation_x_max = -0.5
+    props.six_dof_translation_y_mode = "FREE"
+    props.six_dof_rotation_z_mode = "LIMITED"
+    props.six_dof_rotation_z_min = 0.4
+    props.six_dof_rotation_z_max = -0.2
+    props.six_dof_swing_type = "PYRAMID"
+
+    spec = build_constraint_spec(c)
+    assert spec is not None
+    assert spec.constraint_type == "SIX_DOF"
+    assert spec.six_dof_axis_modes == (
+        "LIMITED", "FREE", "FIXED", "FIXED", "FIXED", "LIMITED",
+    )
+    assert spec.six_dof_limit_min[0] == -0.5
+    assert spec.six_dof_limit_max[0] == 0.5
+    assert abs(spec.six_dof_limit_min[5] + 0.2) < 1.0e-6
+    assert abs(spec.six_dof_limit_max[5] - 0.4) < 1.0e-6
+    assert spec.six_dof_swing_type == "PYRAMID"
+
+    adapter = JoltAdapter(max_bodies=16, max_body_pairs=32, max_contact_constraints=16)
+    body_a = build_rigid_body_spec(a)
+    body_b = build_rigid_body_spec(b)
+    assert body_a is not None and body_b is not None
+    adapter.sync_body(body_a.slot_id, body_a)
+    adapter.sync_body(body_b.slot_id, body_b)
+    adapter.sync_constraint(spec.slot_id, spec)
+    adapter.step(1.0 / 60.0, 1)
+    state = adapter.get_constraint_state(spec.slot_id)
+    assert state is not None
+    assert state["constraint_type"] == "SIX_DOF"
+    assert state["current_value_kind"] == "six_dof"
+    assert len(state["lambda_position"]) == 3
+    assert len(state["lambda_rotation"]) == 3
+    adapter.dispose("test_six_dof_constraint")
+    _del(c, a, b)
+
+
 def test_constraint_state_result_pipeline():
     scene = bpy.context.scene
     a = _make_obj("T3C_StateBodyA", (-0.5, 0, 2), body_type="STATIC")
@@ -1636,6 +1681,12 @@ def test_constraint_debug_renderer_registry_and_semantics():
         "twist_motor_state": "OFF",
         "swing_twist_target_angular_velocity": (0.0, 0.0, 1.0),
         "swing_twist_target_orientation_wxyz": (0.9689124, 0.2474040, 0.0, 0.0),
+        "six_dof_axis_modes": (
+            "LIMITED", "FIXED", "FREE", "LIMITED", "FIXED", "LIMITED",
+        ),
+        "six_dof_limit_min": (-1.0, -1.0, -1.0, -0.4, -0.4, -0.5),
+        "six_dof_limit_max": (1.0, 1.0, 1.0, 0.4, 0.4, 0.5),
+        "six_dof_swing_type": "PYRAMID",
     }
     states = {
         "HINGE": {"current_value_kind": "angle", "current_value": 0.1},
@@ -1645,12 +1696,15 @@ def test_constraint_debug_renderer_registry_and_semantics():
     }
     for constraint_type in (
         "FIXED", "POINT", "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST",
+        "SIX_DOF",
     ):
         spec = _types.SimpleNamespace(constraint_type=constraint_type, **common)
         groups = build_constraint_debug_lines(spec, states.get(constraint_type))
         assert groups["known_type"] is True
         assert groups["base"], f"{constraint_type} 应生成基础语义线段"
-        if constraint_type in {"DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST"}:
+        if constraint_type in {
+            "DISTANCE", "HINGE", "SLIDER", "CONE", "SWING_TWIST", "SIX_DOF",
+        }:
             assert groups["limits"], f"{constraint_type} 应显示真实 limit 几何"
         if constraint_type in {"HINGE", "SLIDER", "SWING_TWIST"}:
             assert groups["motor"], f"{constraint_type} 应显示 motor target"
@@ -1663,7 +1717,7 @@ def test_constraint_debug_renderer_registry_and_semantics():
         ), "constraint debug snapshot 只能含纯 tuple 坐标"
 
     unknown = build_constraint_debug_lines(
-        _types.SimpleNamespace(constraint_type="SIX_DOF", **common)
+        _types.SimpleNamespace(constraint_type="PATH", **common)
     )
     assert unknown["known_type"] is False
     assert unknown["base"], "未注册类型仍应显示通用 anchor frame"
@@ -1702,6 +1756,7 @@ if __name__ == "__main__":
     check("ConstraintSpec disable collisions", test_constraint_spec_disable_collisions)
     check("DISTANCE constraint spec + generated properties", test_distance_constraint_spec_and_generated_properties)
     check("SWING_TWIST constraint spec + generated properties", test_swing_twist_constraint_spec_and_generated_properties)
+    check("SIX_DOF constraint spec + adapter", test_six_dof_constraint_spec_and_adapter)
     check("constraint state result pipeline", test_constraint_state_result_pipeline)
     check("generated constraint implicit object pipeline", test_generated_constraint_implicit_object_pipeline)
 

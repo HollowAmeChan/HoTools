@@ -161,12 +161,12 @@ RIGID_JOLT_CAPABILITY_BACKLOG = [
     },
     {
         "capability": "约束语义调试绘制",
-        "status": "已接七种类型；运行时 frame readback 待接",
+        "status": "已接八种显式类型；运行时 frame readback 待接",
         "boundary": "当前 frame/limit 使用 adapter 实际消费的 ConstraintSpec，current value/lambda 使用 result stream；后续 native readback 当前 A/B world frame",
     },
     {
         "capability": "高级约束类型",
-        "status": "SwingTwist 已接限制、摩擦与双 motor；SixDOF/Path/Gear/RackAndPinion/Pulley 计划中",
+        "status": "SwingTwist 已接限制、摩擦与双 motor；SixDOF 已接基础六轴模式，逐轴 motor/friction 待接；Path/Gear/RackAndPinion/Pulley 计划中",
         "boundary": "每种类型同时补 spec、binding、result、专用 renderer、用户文档和测试",
     },
     {

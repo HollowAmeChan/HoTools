@@ -40,7 +40,7 @@
 - py311/py313 各自 50/50 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、七种公共约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF native 六轴 Free/Fixed/Limited 首切片、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SixDOF 公共 spec/adapter/debug、Blender E2E、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、八种显式约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴 Free/Fixed/Limited 首切片、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义。复杂 Cone/SwingTwist A/B frame 组合、SixDOF 生成约束与逐轴 motor/friction、Blender semantic runner、跨 ABI 报告和 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
 ## 验收边界
 
@@ -234,7 +234,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SWING_TWIST-001 | 摆角与扭转限制 | anchor 重合；纯摆动与纯扭转分别收敛到声明边界，非目标轴残差有界 | 不变量/Jolt | P0 | PASS (S1) |
 | SWING_TWIST-002 | Pyramid 轴映射与摩擦 | 本地 X/Y 分别命中 normal/plane 半角；摩擦力矩按惯量解析衰减并产生 lambda | 解析/Jolt official | P0 | PASS (S1) |
 | SWING_TWIST-003 | 独立双 motor | swing 位置 motor 收敛到局部 X 目标姿态；twist 速度 motor 达到局部 Z 目标角速度；motor lambda 活跃 | Jolt official/变形 | P0 | PASS (S1) |
-| SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式 | Jolt official/不变量 | P0 | PASS (S1 native-only) |
+| SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式 | Jolt official/不变量 | P0 | PASS (S1)，公共 spec/adapter/debug 已接 |
 | PAIR-001 | 不同质量 Distance spring | 两端轨迹正确且总线动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-002 | 不同质量 Slider motor | 限力反作用与质量倒数成比例，总动量守恒 | 解析/Jolt | P0 | 已实现 |
 | PAIR-003 | 不同转动惯量 Hinge motor | 限矩反作用正确，总角动量守恒 | 解析/Jolt | P0 | 已实现 |

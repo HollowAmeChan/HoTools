@@ -583,6 +583,16 @@ class JoltAdapter:
             swing_twist_target_orientation_wxyz=tuple(
                 getattr(spec, "swing_twist_target_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
             ),
+            six_dof_axis_modes=tuple(getattr(
+                spec, "six_dof_axis_modes", ("FREE",) * 6,
+            )),
+            six_dof_limit_min=tuple(getattr(
+                spec, "six_dof_limit_min", (-1.0, -1.0, -1.0, -3.141592653589793, -3.141592653589793, -3.141592653589793),
+            )),
+            six_dof_limit_max=tuple(getattr(
+                spec, "six_dof_limit_max", (1.0, 1.0, 1.0, 3.141592653589793, 3.141592653589793, 3.141592653589793),
+            )),
+            six_dof_swing_type=str(getattr(spec, "six_dof_swing_type", "PYRAMID")),
             cone_half_angle=float(getattr(spec, "cone_half_angle", 0.0)),
             swing_type=str(getattr(spec, "swing_type", "CONE")),
             swing_normal_half_angle=float(

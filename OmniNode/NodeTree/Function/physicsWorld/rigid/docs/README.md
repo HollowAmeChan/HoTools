@@ -16,7 +16,7 @@
 
 ## 当前边界
 
-HoTools 当前支持 `FIXED / POINT / DISTANCE / HINGE / SLIDER / CONE / SWING_TWIST`。其中 SwingTwist 已接摆动/扭转限制、摩擦力矩、独立 swing/twist motor 和专用调试绘制。Jolt 原生还提供 SixDOF、Path、Gear、RackAndPinion、Pulley 和 Vehicle；这些类型尚未进入 HoTools 的公共 spec、binding 和调试绘制器。
+HoTools 当前显式约束支持 `FIXED / POINT / DISTANCE / HINGE / SLIDER / CONE / SWING_TWIST / SIX_DOF`。其中 SixDOF 已接六轴 Free/Fixed/Limited、范围和专用调试绘制，生成约束与逐轴 motor/friction 仍待接。Jolt 原生还提供 Path、Gear、RackAndPinion、Pulley 和 Vehicle；这些类型尚未进入 HoTools 的公共 spec、binding 和调试绘制器。
 
 运行时约束结果位于 `rigid_constraint_state` result stream。用户和其它 solver 不应读取 Jolt constraint handle。
 
