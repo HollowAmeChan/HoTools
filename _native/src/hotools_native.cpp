@@ -18,6 +18,7 @@
 #include <vector>
 
 PyObject* spring_vrm_create_context(PyObject*, PyObject*);
+PyObject* free_spring_vrm_context(PyObject*, PyObject*);
 PyObject* spring_vrm_reset_state(PyObject*, PyObject*);
 PyObject* spring_vrm_update_dynamic(PyObject*, PyObject*);
 PyObject* spring_vrm_step(PyObject*, PyObject*);
@@ -697,6 +698,9 @@ NB_MODULE(hotools_native, m) {
     m.def("spring_vrm_create_context",
         [](nb::args a) { return steal_or_throw(spring_vrm_create_context(nullptr, a.ptr())); },
         "Create a VRM SpringBone context (dual-call API).");
+    m.def("free_spring_vrm_context",
+        [](nb::args a) { call_legacy(free_spring_vrm_context, a); },
+        "Release a VRM SpringBone context. Repeated calls are safe.");
     m.def("spring_vrm_reset_state",
         [](nb::args a) { call_legacy(spring_vrm_reset_state, a); },
         "Reset tail state to current pose tails (restart 时调用).");

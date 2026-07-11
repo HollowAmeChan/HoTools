@@ -72,6 +72,7 @@ def is_available() -> bool:
         return False
     required = (
         "spring_vrm_create_context",
+        "free_spring_vrm_context",
         "spring_vrm_update_dynamic",
         "spring_vrm_reset_state",
         "spring_vrm_step",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
 from pathlib import Path
@@ -202,10 +203,34 @@ def _read_context_state(ctx, bone_count=1, collider_count=0):
 
 def test_context_api_create_and_free():
     _skip_if_no_context_api()
-    """create_context 返回有效 capsule，多次 free 不崩溃。"""
+    assert hasattr(hotools_native, "free_spring_vrm_context")
     ctx = _context_from_base()
     assert ctx is not None
-    # capsule 本身没有 Python 释放 API（析构器自动调用），测通过意味着不崩溃
+    hotools_native.free_spring_vrm_context(ctx)
+    hotools_native.free_spring_vrm_context(ctx)
+    try:
+        hotools_native.spring_vrm_reset_state(ctx)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("freed context must reject subsequent API calls")
+
+
+def test_context_api_gc_destructor_and_recreate():
+    _skip_if_no_context_api()
+    for _ in range(128):
+        ctx = _context_from_base()
+        assert ctx is not None
+        ctx = None
+    gc.collect()
+
+    ctx = _context_from_base()
+    try:
+        _update_dynamic_from_base(ctx)
+        hotools_native.spring_vrm_reset_state(ctx)
+        hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 0.0)
+    finally:
+        hotools_native.free_spring_vrm_context(ctx)
 
 
 def test_context_api_rejects_bad_static_buffer_length():
@@ -245,6 +270,44 @@ def test_context_api_rejects_bad_dynamic_buffer_length():
         assert "current_heads" in str(exc)
     else:
         raise AssertionError("short context dynamic buffer should raise ValueError")
+
+
+def test_context_api_rejects_bad_collision_mask_dtype():
+    _skip_if_no_context_api()
+    ctx = _context_from_base()
+    args = _base_args()
+    args[23] = np.asarray((1.0,), dtype=np.float32)
+    try:
+        try:
+            _update_context_from_args(ctx, args)
+        except (TypeError, ValueError) as exc:
+            assert "collided_by_groups" in str(exc)
+        else:
+            raise AssertionError("float32 collision mask should raise ValueError")
+    finally:
+        hotools_native.free_spring_vrm_context(ctx)
+
+
+def test_context_api_rejects_mismatched_collider_arrays():
+    _skip_if_no_context_api()
+    ctx = _context_from_base()
+    args = _base_args(
+        collider_types=(0,),
+        collider_groups=(),
+        collider_centers=((0.0, 0.0, 0.0),),
+        collider_segment_a=((0.0, 0.0, 0.0),),
+        collider_segment_b=((0.0, 0.0, 0.0),),
+        collider_radii=(1.0,),
+    )
+    try:
+        try:
+            _update_context_from_args(ctx, args)
+        except ValueError as exc:
+            assert "collider_groups" in str(exc)
+        else:
+            raise AssertionError("mismatched collider arrays should raise ValueError")
+    finally:
+        hotools_native.free_spring_vrm_context(ctx)
 
 
 def test_context_api_rejects_bad_result_buffer_length():
@@ -327,53 +390,119 @@ def test_context_api_preserves_full_current_head_vector():
         f"context update_dynamic 应保留完整 head XYZ，实际 translation={translation}"
 
 
+def _run_context_collider(
+    collider_type,
+    *,
+    center,
+    segment_a,
+    segment_b,
+    radius,
+    collider_group=1,
+    collided_by_groups=1,
+):
+    args = _base_args(
+        gravity_dir=(0.0, 0.0, 0.0),
+        hit_radius=0.01,
+        collided_by_groups=collided_by_groups,
+        collider_types=(collider_type,),
+        collider_groups=(collider_group,),
+        collider_centers=(center,),
+        collider_segment_a=(segment_a,),
+        collider_segment_b=(segment_b,),
+        collider_radii=(radius,),
+        gravity_power=0.0,
+    )
+    ctx = _context_from_args(args)
+    try:
+        _update_context_from_args(ctx, args)
+        hotools_native.spring_vrm_reset_state(ctx)
+        hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 0.0)
+        matrices, _, tails, _ = _read_context_state(ctx, collider_count=1)
+        return matrices.reshape((-1, 4, 4))[0], tails.reshape((-1, 3))[0]
+    finally:
+        hotools_native.free_spring_vrm_context(ctx)
+
+
+def _assert_collider_deflects(matrix, tail, label):
+    assert np.isfinite(matrix).all(), f"{label} matrix contains non-finite values"
+    assert np.isfinite(tail).all(), f"{label} tail contains non-finite values"
+    assert not np.allclose(matrix, np.eye(4, dtype=np.float32), atol=1.0e-4), (
+        f"{label} should deflect the SpringBone tail"
+    )
+
+
+def test_context_api_sphere_collider():
+    _skip_if_no_context_api()
+    matrix, tail = _run_context_collider(
+        0,
+        center=(0.5, 0.0, 0.8),
+        segment_a=(0.5, 0.0, 0.8),
+        segment_b=(0.5, 0.0, 0.8),
+        radius=0.8,
+    )
+    _assert_collider_deflects(matrix, tail, "SPHERE")
+
+
 def test_context_api_capsule_collider():
     _skip_if_no_context_api()
-    """sphere collider 位于骨骼轴线旁侧，应把 tail 推离初始方向。
-
-    设计：
-      - 骨骼 head=(0,0,0)，pose tail=(0,0,1)，长度=1，朝 +Z
-      - sphere 圆心=(0.5, 0, 0.8)，半径=0.8
-      - tail 到圆心距离 ≈ 0.539 < (0.8 + hit_radius 0.01 = 0.81) → 碰撞
-      - push 方向 = (tail - center)/‖...‖ = (-0.93, 0, +0.37) → 明确向 -X 推
-      - 不在 capsule 轴线上，push 方向不会退化为 fallback 轴
-    先 reset_state，确保内部 current/prev tails 从 pose tail (0,0,1) 出发。
-    """
-    ctx = _context_from_base()
-
-    # sphere collider：中心偏轴，确保碰撞法线不退化
-    sphere_c = np.asarray([[0.5, 0., 0.8]], dtype=np.float32)
-    a = _base_args()
-    zero3   = np.zeros(3, dtype=np.float32)
-    ident   = _identity_matrix()
-    id_quat = np.asarray((0., 0., 0., 1.), dtype=np.float32)
-
-    hotools_native.spring_vrm_update_dynamic(
-        ctx,
-        a[4].ravel(), a[5].ravel(), a[6].ravel(), a[7].ravel(), a[8].ravel(),
-        ident, ident, id_quat, zero3,
-        zero3,                                       # gravity_dir = 0
-        np.asarray((0.01,), dtype=np.float32),       # hit_radii
-        np.asarray((1,),    dtype=np.int32),          # collided_by_groups（组1）
-        np.asarray([0],  dtype=np.int32),             # collider_types: SPHERE=0
-        np.asarray([1],  dtype=np.int32),             # collider_groups: 组1
-        sphere_c.ravel(),                            # centers
-        sphere_c.ravel(),                            # segment_a（sphere 不用，传中心占位）
-        sphere_c.ravel(),                            # segment_b
-        np.asarray([0.8], dtype=np.float32),         # collider_radii
+    matrix, tail = _run_context_collider(
+        1,
+        center=(0.5, 0.0, 0.8),
+        segment_a=(0.5, 0.0, 0.4),
+        segment_b=(0.5, 0.0, 1.2),
+        radius=0.6,
     )
-    # 把内部 current/prev tails 初始化到 pose tail (0,0,1)
-    hotools_native.spring_vrm_reset_state(ctx)
-    # gravity=stiffness=drag=0，唯一外力是碰撞体
-    hotools_native.spring_vrm_step(ctx, 1.0 / 60.0, 1, 0.0, 0.0, 0.0)
+    _assert_collider_deflects(matrix, tail, "CAPSULE")
 
-    out_mat  = np.zeros(16, dtype=np.float32)
-    out_quat = np.zeros(4,  dtype=np.float32)
-    hotools_native.spring_vrm_read_results(ctx, out_mat, out_quat)
 
-    identity = np.eye(4, dtype=np.float32).ravel()
-    assert not np.allclose(out_mat, identity, atol=1e-4), \
-        f"sphere collider 应把 tail 推离 +Z 方向，但 target_matrix 仍接近 identity:\n{out_mat.reshape(4,4)}"
+def test_context_api_plane_collider():
+    _skip_if_no_context_api()
+    matrix, tail = _run_context_collider(
+        2,
+        center=(0.2, 0.0, 0.0),
+        segment_a=(1.0, 0.0, 0.0),
+        segment_b=(0.0, 0.0, 0.0),
+        radius=0.0,
+    )
+    _assert_collider_deflects(matrix, tail, "PLANE")
+
+
+def test_context_api_box_collider():
+    _skip_if_no_context_api()
+    matrix, tail = _run_context_collider(
+        3,
+        center=(0.2, 0.0, 1.0),
+        segment_a=(0.4, 0.0, 0.0),
+        segment_b=(0.0, 0.4, 0.0),
+        radius=0.4,
+    )
+    _assert_collider_deflects(matrix, tail, "BOX")
+
+
+def test_context_api_collision_group_mask():
+    _skip_if_no_context_api()
+    blocked_matrix, blocked_tail = _run_context_collider(
+        1,
+        center=(0.5, 0.0, 0.8),
+        segment_a=(0.5, 0.0, 0.4),
+        segment_b=(0.5, 0.0, 1.2),
+        radius=0.6,
+        collider_group=2,
+        collided_by_groups=1,
+    )
+    allowed_matrix, allowed_tail = _run_context_collider(
+        1,
+        center=(0.5, 0.0, 0.8),
+        segment_a=(0.5, 0.0, 0.4),
+        segment_b=(0.5, 0.0, 1.2),
+        radius=0.6,
+        collider_group=2,
+        collided_by_groups=2,
+    )
+
+    assert np.allclose(blocked_matrix, np.eye(4, dtype=np.float32), atol=1.0e-6)
+    assert np.allclose(blocked_tail, (0.0, 0.0, 1.0), atol=1.0e-6)
+    _assert_collider_deflects(allowed_matrix, allowed_tail, "group-2 CAPSULE")
 
 
 def test_context_api_zero_length_stays_finite():

@@ -1199,6 +1199,8 @@ rigid.jolt_step
 
 ## 文档落地要求
 
+已完成迁移的 solver 应提供面向当前实现的稳定蓝本，不再让迁移预演或验收流水承担维护入口。SpringBone 的参考实现见 `SPRINGBONE_VRM_BLUEPRINT.md`。
+
 后续每个 solver 迁移或新增时，至少补充：
 
 1. Solver 声明表。

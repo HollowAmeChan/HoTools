@@ -68,6 +68,43 @@ static void spring_vrm_context_capsule_destructor(PyObject* capsule) {
     hotools::spring_vrm_context_free(ctx);
 }
 
+// free_spring_vrm_context(capsule) -> None
+//
+// Slot owners release contexts deterministically instead of waiting for GC.
+// Renaming the capsule makes repeated release idempotent and prevents every
+// other context API from using the freed pointer.
+PyObject* free_spring_vrm_context(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 1) {
+        PyErr_SetString(PyExc_TypeError, "free_spring_vrm_context expects 1 argument");
+        return nullptr;
+    }
+
+    PyObject* capsule = PyTuple_GET_ITEM(args, 0);
+    if (PyCapsule_IsValid(capsule, "spring_vrm_context.freed")) {
+        Py_RETURN_NONE;
+    }
+    if (!PyCapsule_IsValid(capsule, "spring_vrm_context")) {
+        PyErr_SetString(PyExc_ValueError, "invalid SpringBone context capsule");
+        return nullptr;
+    }
+
+    auto* ctx = static_cast<hotools::SpringVrmContext*>(
+        PyCapsule_GetPointer(capsule, "spring_vrm_context"));
+    if (!ctx) {
+        return nullptr;
+    }
+    if (PyCapsule_SetDestructor(capsule, nullptr) != 0) {
+        return nullptr;
+    }
+    if (PyCapsule_SetName(capsule, "spring_vrm_context.freed") != 0) {
+        PyCapsule_SetDestructor(capsule, spring_vrm_context_capsule_destructor);
+        return nullptr;
+    }
+
+    hotools::spring_vrm_context_free(ctx);
+    Py_RETURN_NONE;
+}
+
 // spring_vrm_create_context(schema, bone_count,
 //     lengths, init_axis_local, init_axis_parent, init_rotations, init_scales,
 //     parent_indices, pinned, use_connect) -> capsule
