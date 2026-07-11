@@ -39,6 +39,18 @@ base_pose = importlib.import_module(
 final_proxy = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.final_proxy"
 )
+mc2_names = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.names"
+)
+mc2_solver = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
+)
+mc2_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+)
+world_types = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+)
 
 
 def _assign_identity_uvs(mesh) -> None:
@@ -145,10 +157,31 @@ def test_shared_vertex_with_multiple_loop_uvs_is_rejected() -> None:
         _remove_object(obj)
 
 
+def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
+    obj = _make_object("MC2_FinalProxySlot", ((0, 1, 2, 3),))
+    try:
+        world = world_types.PhysicsWorldCache()
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+
+        returned, ready, _status = mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        mesh_static = slot.data.get("mesh_static")
+
+        assert returned is world
+        assert ready is False
+        assert mesh_static is not None
+        assert mesh_static.final_proxy.vertex_count == 4
+        assert len(mesh_static.final_proxy.triangles) == 2
+        assert slot.debug_snapshot()["mesh_static"]["vertex_count"] == 4
+    finally:
+        _remove_object(obj)
+
+
 TESTS = (
     ("n-gon final proxy keeps original vertices", test_ngon_proxy_keeps_original_vertices),
     ("vertex group pin uses same indices", test_vertex_group_pin_uses_same_vertex_indices),
     ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
+    ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
 )
 
 

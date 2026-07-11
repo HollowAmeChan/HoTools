@@ -19,6 +19,7 @@ MC2_MESH_CLOTH_SETUP_ADAPTER = MC2SetupAdapterContract(
 
 
 _EXPORTS = {
+    "MC2MeshClothStaticBuildResult": ".static_build",
     "MC2MeshFinalProxyBuildResult": ".final_proxy",
     "MESH_COLLISION_CAPABILITY": ".capabilities",
     "MESH_COLLISION_CAPABILITY_ID": ".capabilities",
@@ -27,6 +28,8 @@ _EXPORTS = {
     "MESH_CLOTH_BLENDER_PROPERTIES": ".properties",
     "PG_Hotools_MeshCollision": ".properties",
     "build_blender_mesh_final_proxy": ".final_proxy",
+    "build_mc2_mesh_cloth_static": ".static_build",
+    "build_mc2_mesh_cloth_static_for_task": ".static_build",
     "build_mc2_mesh_final_proxy": ".final_proxy",
 }
 
