@@ -54,7 +54,7 @@
 2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
 4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（断裂与跨 ABI 门禁已于 2026-07-11 完成）
-5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（刚体容量 overflow 已于 2026-07-11 完成；接触事件 overflow、soak 和性能仍待完成）
+5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（刚体容量与接触事件 overflow 已于 2026-07-11 完成；soak 和性能仍待完成）
 
 每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
 
@@ -220,7 +220,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | FILTER-003 | 多约束 pair-filter 引用计数 | 删除最后一个约束时才恢复碰撞 | HoTools | P0 | 已实现 |
 | EVENT-001 | contact 状态机 | added -> persisted -> removed，字段有界 | Jolt | P0 | 已实现 |
 | EVENT-002 | sensor result channel | 状态机完整且不改变穿越轨迹 | HoTools/Jolt | P0 | 已实现 |
-| EVENT-003 | overflow | 计数准确、内存有界、后续帧恢复 | HoTools | P1 | 缺失 |
+| EVENT-003 | overflow | 计数准确、内存有界、后续帧恢复 | HoTools | P1 | PASS：8385 pair 保留 8192、丢弃 193；clear 后恢复 |
 
 ### 十一种约束
 

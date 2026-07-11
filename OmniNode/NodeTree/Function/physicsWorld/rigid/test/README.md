@@ -61,7 +61,7 @@
 当前切片尚未实现：
 
 - Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
-- 已批准 golden，以及接触事件 overflow、soak 和性能门禁。
+- 已批准 golden，以及 soak 和性能门禁。
 
 ## 当前实施顺序
 
@@ -70,7 +70,7 @@
 1. `DET-003` 与生产路径 `simulation_order_key`（2026-07-11 已完成）；
 2. 共用 fixture 的 adapter parity runner 与 trace comparator（2026-07-11 已完成）；
 3. 共用 fixture 的完整 P0 Blender semantic runner（2026-07-11 已完成）；
-4. 跨 ABI 与刚体容量 overflow 门禁（2026-07-11 已完成），继续接触事件 overflow、soak 和性能门禁；
+4. 跨 ABI、刚体容量与接触事件 overflow 门禁（2026-07-11 已完成），继续 soak 和性能门禁；
 5. 恢复 Path、高级 shape/query 等能力扩展。
 
 旧式 `backends/test_blender_rigid.py` 仍是有效链路回归；即使全部通过，也不能记作 `blender_pipeline_v1` semantic pass。
@@ -80,6 +80,12 @@
 Python `RuntimeError`，失败创建保持原子性，已接纳刚体继续推进，释放容量后可以
 再次创建；生产 solver 只拒绝稳定排序后的超额 slot，并在 `rigid_solver_stats` 中
 发布准确的 `sync_error_count`。
+
+接触事件 overflow 门禁使用 130 个重叠动态 sensor 产生 8385 个 pair，验证固定
+缓存只保留 8192 条、`contact_event_overflow` 准确记录 193 条，并由 Blender
+生产链确认 adapter、contact/sensor result channel 和 solver stats 一致。`clear()`
+后的首个低负载 step 不得重发旧世界的 removed 回调，下一轮事件输出和 overflow
+计数必须恢复正常。
 
 使用两个全新世界运行全部 P0 fixture：
 
