@@ -537,6 +537,49 @@ def _assert_rotation_axis_only(
         )
 
 
+def _assert_rotation_world_axis_only(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    body_id = _body_id(parameters)
+    frame_number = int(_number(parameters.get("frame"), "frame"))
+    world_axis = _vec(parameters.get("axis"), 3, "axis")
+    axis_abs = _number(parameters.get("axis_abs"), "axis_abs", 2.0e-4)
+    angle_min = _number(parameters.get("angle_min"), "angle_min", 0.1)
+    frames = _frames_by_number(trace)
+    if 0 not in frames or frame_number not in frames:
+        raise FixtureError(
+            "rotation_world_axis_only 需要采样 frame 0 和目标 frame"
+        )
+    axis_length = _length(world_axis)
+    if axis_length <= 1.0e-20:
+        raise FixtureError("rotation_world_axis_only.axis 不能为零向量")
+    initial = _body_at(frames[0], body_id)["rotation_wxyz"]
+    current = _body_at(frames[frame_number], body_id)["rotation_wxyz"]
+    relative = _quat_multiply(_quat_conjugate(initial), current)
+    rotation_vector = relative[1:]
+    vector_length = _length(rotation_vector)
+    angle = _quat_angle(initial, current)
+    if angle < angle_min:
+        raise SemanticAssertionError(
+            f"{fixture.id} frame {frame_number} {body_id} 旋转角 {angle:.12g} "
+            f"小于 {angle_min:g}"
+        )
+    if vector_length <= 1.0e-20:
+        raise SemanticAssertionError(
+            f"{fixture.id} frame {frame_number} {body_id} 缺少可测量的旋转轴"
+        )
+    expected_local = _quat_rotate(_quat_conjugate(initial), world_axis)
+    actual = tuple(value / vector_length for value in rotation_vector)
+    expected = tuple(value / axis_length for value in expected_local)
+    dot = sum(a * b for a, b in zip(actual, expected))
+    residual = math.sqrt(max(0.0, 1.0 - min(1.0, dot * dot)))
+    if residual > axis_abs:
+        raise SemanticAssertionError(
+            f"{fixture.id} frame {frame_number} {body_id} 世界旋转轴残差 "
+            f"{residual:.12g} 超过 {axis_abs:g}"
+        )
+
+
 def _assert_linear_axis_only(
     fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
 ) -> None:
@@ -610,6 +653,69 @@ def _assert_cone_swing_limit(
     if max_swing < swing_min:
         raise SemanticAssertionError(
             f"{fixture.id} maximum cone swing {max_swing:.12g} is below {swing_min:g}"
+        )
+
+
+def _assert_frame_swing_limit(
+    fixture: Fixture, trace: Sequence[Mapping[str, Any]], parameters: Mapping[str, Any],
+) -> None:
+    """从两侧 live frame 重算 swing，不依赖约束 state readback。"""
+    constraint_id = _constraint_id(parameters)
+    spec = fixture.constraints_by_id.get(constraint_id)
+    if spec is None or spec.type not in {"CONE", "SWING_TWIST"}:
+        raise FixtureError(
+            f"frame_swing_limit 需要 CONE 或 SWING_TWIST 约束: {constraint_id}"
+        )
+    if not spec.use_separate_anchor_frames:
+        raise FixtureError(f"frame_swing_limit 要求独立 A/B frame: {constraint_id}")
+    if spec.type == "CONE":
+        limit = spec.cone_half_angle
+    else:
+        if spec.swing_type != "CONE":
+            raise FixtureError(
+                f"frame_swing_limit 当前只支持圆锥 SwingTwist: {constraint_id}"
+            )
+        if abs(spec.swing_normal_half_angle - spec.swing_plane_half_angle) > 1.0e-9:
+            raise FixtureError(
+                f"frame_swing_limit 要求 SwingTwist 两个 swing 半角相等: {constraint_id}"
+            )
+        limit = spec.swing_normal_half_angle
+
+    tolerance = _number(parameters.get("angle_abs"), "angle_abs", 2.0e-3)
+    swing_min = _number(parameters.get("swing_min"), "swing_min", 0.0)
+    start_frame = int(_number(parameters.get("start_frame"), "start_frame", 1.0))
+    axis_a_initial = _quat_rotate(spec.anchor_rotation_wxyz_a, (0.0, 0.0, 1.0))
+    axis_b_initial = _quat_rotate(spec.anchor_rotation_wxyz_b, (0.0, 0.0, 1.0))
+    initial = trace[0]
+    max_swing = 0.0
+    checked = 0
+    for frame in trace:
+        if int(frame["frame"]) < start_frame:
+            continue
+        axis_a = _live_axis(initial, frame, spec.body_a, axis_a_initial)
+        axis_b = _live_axis(initial, frame, spec.body_b, axis_b_initial)
+        denominator = _length(axis_a) * _length(axis_b)
+        if denominator <= 1.0e-20:
+            raise SemanticAssertionError(
+                f"{fixture.id} frame {frame['frame']} {constraint_id} frame 轴长度为零"
+            )
+        cosine = sum(a * b for a, b in zip(axis_a, axis_b)) / denominator
+        swing = math.acos(max(-1.0, min(1.0, cosine)))
+        max_swing = max(max_swing, swing)
+        checked += 1
+        if swing > limit + tolerance:
+            raise SemanticAssertionError(
+                f"{fixture.id} frame {frame['frame']} {constraint_id} live frame swing "
+                f"{swing:.12g} 超过 {limit:g} + {tolerance:g}"
+            )
+    if checked == 0:
+        raise FixtureError(
+            f"frame_swing_limit 在 start_frame={start_frame} 后没有采样: {constraint_id}"
+        )
+    if max_swing < swing_min:
+        raise SemanticAssertionError(
+            f"{fixture.id} {constraint_id} 最大 live frame swing {max_swing:.12g} "
+            f"小于 {swing_min:g}"
         )
 
 
@@ -1455,10 +1561,16 @@ def evaluate_assertions(
         "rotation_axis_only": lambda spec: _assert_rotation_axis_only(
             fixture, trace, spec.parameters,
         ),
+        "rotation_world_axis_only": lambda spec: _assert_rotation_world_axis_only(
+            fixture, trace, spec.parameters,
+        ),
         "linear_axis_only": lambda spec: _assert_linear_axis_only(
             fixture, trace, spec.parameters,
         ),
         "cone_swing_limit": lambda spec: _assert_cone_swing_limit(
+            fixture, trace, spec.parameters,
+        ),
+        "frame_swing_limit": lambda spec: _assert_frame_swing_limit(
             fixture, trace, spec.parameters,
         ),
         "constraint_value_in_range": lambda spec: _assert_constraint_value_in_range(

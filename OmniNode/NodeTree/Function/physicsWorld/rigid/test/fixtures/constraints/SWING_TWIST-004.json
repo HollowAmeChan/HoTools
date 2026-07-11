@@ -1,0 +1,82 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "SWING_TWIST-004",
+  "title": "SwingTwist 非奇异旋转轴与独立 A/B frame 组合",
+  "source": "metamorphic:swing_twist_rotated_separate_frames",
+  "tags": ["p0", "constraint", "swing-twist", "frame", "separate-frames"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 120
+  },
+  "bodies": [
+    {
+      "id": "world_x_twist_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "SPHERE", "radius": 0.4},
+      "position": [-3.0, 0.0, 0.0],
+      "angular_velocity": [1.7320508075688772, 0.0, 1.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    },
+    {
+      "id": "misaligned_swing_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "BOX", "half_extents": [0.4, 0.3, 0.2]},
+      "position": [3.0, 0.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "world_x_twist_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "world_x_twist_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [-3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_a": [0.8660254037844387, 0.0, 0.49999999999999994, 0.0],
+      "anchor_position_b": [-3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_b": [0.8660254037844387, 0.0, 0.49999999999999994, 0.0],
+      "swing_type": "CONE",
+      "swing_normal_half_angle": 3.141592653589793,
+      "swing_plane_half_angle": 3.141592653589793,
+      "twist_min_angle": -0.3,
+      "twist_max_angle": 0.3
+    },
+    {
+      "id": "misaligned_swing_limit",
+      "type": "SWING_TWIST",
+      "body_a": "WORLD",
+      "body_b": "misaligned_swing_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_a": [0.8660254037844387, 0.0, 0.49999999999999994, 0.0],
+      "anchor_position_b": [3.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_b": [1.0, 0.0, 0.0, 0.0],
+      "swing_type": "CONE",
+      "swing_normal_half_angle": 0.35,
+      "swing_plane_half_angle": 0.35,
+      "twist_min_angle": -3.141592653589793,
+      "twist_max_angle": 3.141592653589793
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 20, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "world_x_twist_limit", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_state_schema", "constraint": "misaligned_swing_limit", "type": "SWING_TWIST", "current_value_kind": "swing_twist", "enabled": true},
+    {"kind": "constraint_anchor_coincidence", "constraint": "world_x_twist_limit", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "constraint_anchor_coincidence", "constraint": "misaligned_swing_limit", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "constraint_value_near", "constraint": "world_x_twist_limit", "frame": 120, "expected": 0.3, "value_abs": 0.003, "current_value_kind": "swing_twist"},
+    {"kind": "rotation_world_axis_only", "body": "world_x_twist_body", "frame": 120, "axis": [0.8660254037844386, 0.0, 0.5], "axis_abs": 0.0004, "angle_min": 0.25},
+    {"kind": "frame_swing_limit", "constraint": "misaligned_swing_limit", "angle_abs": 0.004, "swing_min": 0.30, "start_frame": 30},
+    {"kind": "constraint_value_near", "constraint": "misaligned_swing_limit", "frame": 120, "expected": 0.35, "value_abs": 0.004, "current_value_kind": "swing_twist"},
+    {"kind": "rotation_axis_only", "body": "misaligned_swing_body", "frame": 120, "axis": "Y", "off_axis_abs": 0.0005, "angle_min": 0.5},
+    {"kind": "finite_all"}
+  ]
+}

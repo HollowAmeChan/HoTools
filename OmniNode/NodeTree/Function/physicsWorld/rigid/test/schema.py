@@ -794,7 +794,8 @@ class AssertionSpec:
             "fixed_relative_transform", "point_anchor_coincidence", "distance_range",
             "distance_converges_to_range", "rotation_changed_min",
             "constraint_anchor_coincidence", "rotation_axis_only",
-            "linear_axis_only", "cone_swing_limit",
+            "rotation_world_axis_only",
+            "linear_axis_only", "cone_swing_limit", "frame_swing_limit",
             "constraint_value_in_range", "constraint_value_near",
             "constraint_vector_near",
             "implicit_spring_trajectory", "linear_speed_trajectory",
@@ -851,11 +852,17 @@ class AssertionSpec:
             "rotation_axis_only": {
                 "body", "frame", "axis", "off_axis_abs", "angle_min",
             },
+            "rotation_world_axis_only": {
+                "body", "frame", "axis", "axis_abs", "angle_min",
+            },
             "linear_axis_only": {
                 "body", "frame", "axis", "off_axis_abs", "displacement_min",
                 "rotation_abs",
             },
             "cone_swing_limit": {
+                "constraint", "angle_abs", "swing_min", "start_frame",
+            },
+            "frame_swing_limit": {
                 "constraint", "angle_abs", "swing_min", "start_frame",
             },
             "constraint_value_in_range": {

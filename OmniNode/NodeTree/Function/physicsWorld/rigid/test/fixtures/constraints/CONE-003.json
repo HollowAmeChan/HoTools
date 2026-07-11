@@ -1,0 +1,48 @@
+{
+  "schema": "hotools_jolt_fixture_v1",
+  "id": "CONE-003",
+  "title": "非奇异旋转与独立 A/B frame 的 Cone 摆动限位",
+  "source": "metamorphic:cone_rotated_separate_frames",
+  "tags": ["p0", "constraint", "cone", "frame", "separate-frames"],
+  "world": {
+    "gravity": [0.0, 0.0, 0.0],
+    "dt": 0.016666666666666666,
+    "substeps": 1,
+    "frames": 120
+  },
+  "bodies": [
+    {
+      "id": "rotated_swing_body",
+      "type": "DYNAMIC",
+      "shape": {"type": "CAPSULE", "radius": 0.2, "half_height": 0.5},
+      "position": [0.0, 0.0, 0.0],
+      "angular_velocity": [0.0, 2.0, 0.0],
+      "linear_damping": 0.0,
+      "angular_damping": 0.0,
+      "allow_sleeping": false
+    }
+  ],
+  "constraints": [
+    {
+      "id": "rotated_separate_cone",
+      "type": "CONE",
+      "body_a": "WORLD",
+      "body_b": "rotated_swing_body",
+      "use_separate_anchor_frames": true,
+      "anchor_position_a": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_a": [0.8660254037844387, 0.0, 0.49999999999999994, 0.0],
+      "anchor_position_b": [0.0, 0.0, 0.0],
+      "anchor_rotation_wxyz_b": [0.8001031451912656, 0.19134171618254486, 0.4619397662556433, 0.3314135740355918],
+      "cone_half_angle": 0.3
+    }
+  ],
+  "timeline": [],
+  "sample_frames": [0, 1, 2, 5, 10, 30, 60, 120],
+  "assertions": [
+    {"kind": "constraint_state_schema", "constraint": "rotated_separate_cone", "type": "CONE", "current_value_kind": "none", "enabled": true},
+    {"kind": "constraint_anchor_coincidence", "constraint": "rotated_separate_cone", "distance_abs": 0.0003, "start_frame": 1},
+    {"kind": "frame_swing_limit", "constraint": "rotated_separate_cone", "angle_abs": 0.003, "swing_min": 0.25, "start_frame": 30},
+    {"kind": "rotation_axis_only", "body": "rotated_swing_body", "frame": 120, "axis": "Y", "off_axis_abs": 0.0003, "angle_min": 0.25},
+    {"kind": "finite_all"}
+  ]
+}
