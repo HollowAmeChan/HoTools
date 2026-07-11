@@ -9,6 +9,7 @@ using System.Text;
 using MagicaCloth2;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEditor;
 using UnityEngine;
@@ -132,6 +133,28 @@ namespace HoTools.MC2Oracle.Editor
             public int2[] WriteRanges;
         }
 
+        private sealed class BendingRuntimeCase
+        {
+            public string Id;
+            public int4[] OrderedQuads;
+            public float[] RestAngleOrVolume;
+            public sbyte[] SignOrVolume;
+            public float3[] NextPositions;
+            public byte[] Attributes;
+            public float ScaleRatio = 1.0f;
+            public float NegativeScaleSign = 1.0f;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BendingRuntimeDump
+        {
+            public int[] CountBeforeSum;
+            public int[] VectorComponentsBeforeSum;
+            public float3[] NextPositionsAfterSum;
+            public int[] CountAfterSum;
+            public float3[] VectorAfterSum;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -199,11 +222,23 @@ namespace HoTools.MC2Oracle.Editor
                 bendingWritten++;
             }
 
+            int bendingRuntimeWritten = 0;
+            foreach (BendingRuntimeCase runtimeCase in BendingRuntimeCases())
+            {
+                BendingRuntimeDump dump = RunBendingRuntimeCase(runtimeCase);
+                string json = BuildBendingRuntimeJson(runtimeCase, dump);
+                string path = Path.Combine(outputDirectory, runtimeCase.Id + ".json");
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                bendingRuntimeWritten++;
+            }
+
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
                 + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures, "
                 + $"{distanceRuntimeWritten} distance runtime fixtures, "
-                + $"{bendingWritten} bending fixtures"
+                + $"{bendingWritten} bending fixtures, "
+                + $"{bendingRuntimeWritten} bending runtime fixtures"
             );
         }
 
@@ -553,6 +588,151 @@ namespace HoTools.MC2Oracle.Editor
                     RawWriteIndices = writeIndices,
                     WriteRanges = writeRanges,
                 };
+            }
+        }
+
+        private static BendingRuntimeDump RunBendingRuntimeCase(
+            BendingRuntimeCase runtimeCase
+        )
+        {
+            MethodInfo solver = typeof(TriangleBendingConstraint).GetMethod(
+                "SolverConstraint",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo sum = typeof(TriangleBendingConstraint).GetMethod(
+                "SumConstraint",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (solver == null || sum == null)
+            {
+                throw new MissingMethodException(
+                    typeof(TriangleBendingConstraint).FullName,
+                    solver == null ? "SolverConstraint" : "SumConstraint"
+                );
+            }
+            int vertexCount = runtimeCase.NextPositions.Length;
+            int recordCount = runtimeCase.OrderedQuads.Length;
+            if (
+                runtimeCase.Attributes.Length != vertexCount
+                || runtimeCase.RestAngleOrVolume.Length != recordCount
+                || runtimeCase.SignOrVolume.Length != recordCount
+            )
+            {
+                throw new InvalidDataException($"Invalid bending runtime case shape: {runtimeCase.Id}");
+            }
+            var team = new TeamManager.TeamData
+            {
+                scaleRatio = runtimeCase.ScaleRatio,
+                negativeScaleSign = runtimeCase.NegativeScaleSign,
+                proxyCommonChunk = new DataChunk(0, vertexCount),
+                particleChunk = new DataChunk(0, vertexCount),
+                bendingPairChunk = new DataChunk(0, recordCount),
+            };
+            var parameters = new ClothParameters();
+            parameters.triangleBendingConstraint.Convert(
+                new TriangleBendingConstraint.SerializeData { stiffness = 1.0f }
+            );
+            var attributes = new NativeArray<VertexAttribute>(
+                runtimeCase.Attributes.Select(value => new VertexAttribute(value)).ToArray(),
+                Allocator.Persistent
+            );
+            var depths = new NativeArray<float>(
+                Enumerable.Repeat(0.5f, vertexCount).ToArray(),
+                Allocator.Persistent
+            );
+            var nextPositions = new NativeArray<float3>(
+                runtimeCase.NextPositions,
+                Allocator.Persistent
+            );
+            var friction = new NativeArray<float>(
+                new float[vertexCount],
+                Allocator.Persistent
+            );
+            var quads = new NativeArray<ulong>(
+                runtimeCase.OrderedQuads.Select(value => DataUtility.Pack64(value)).ToArray(),
+                Allocator.Persistent
+            );
+            var rests = new NativeArray<float>(
+                runtimeCase.RestAngleOrVolume,
+                Allocator.Persistent
+            );
+            var markers = new NativeArray<sbyte>(
+                runtimeCase.SignOrVolume,
+                Allocator.Persistent
+            );
+            var vectors = new NativeArray<float3>(vertexCount, Allocator.Persistent);
+            var counts = new NativeArray<int>(vertexCount, Allocator.Persistent);
+            try
+            {
+                InvokeStatic(
+                    solver,
+                    new object[]
+                    {
+                        new DataChunk(0, recordCount),
+                        new float4(0.0f, 1.0f, 0.0f, 0.0f),
+                        team,
+                        parameters,
+                        attributes,
+                        depths,
+                        nextPositions,
+                        friction,
+                        quads,
+                        rests,
+                        markers,
+                        vectors,
+                        counts,
+                    }
+                );
+                int[] countBefore = counts.ToArray();
+                int[] vectorBefore = vectors
+                    .Reinterpret<int>(UnsafeUtility.SizeOf<float3>())
+                    .ToArray();
+                InvokeStatic(
+                    sum,
+                    new object[]
+                    {
+                        new DataChunk(0, vertexCount),
+                        team,
+                        parameters,
+                        attributes,
+                        nextPositions,
+                        vectors,
+                        counts,
+                    }
+                );
+                return new BendingRuntimeDump
+                {
+                    CountBeforeSum = countBefore,
+                    VectorComponentsBeforeSum = vectorBefore,
+                    NextPositionsAfterSum = nextPositions.ToArray(),
+                    CountAfterSum = counts.ToArray(),
+                    VectorAfterSum = vectors.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose();
+                depths.Dispose();
+                nextPositions.Dispose();
+                friction.Dispose();
+                quads.Dispose();
+                rests.Dispose();
+                markers.Dispose();
+                vectors.Dispose();
+                counts.Dispose();
+            }
+        }
+
+        private static void InvokeStatic(MethodInfo method, object[] arguments)
+        {
+            try
+            {
+                method.Invoke(null, arguments);
+            }
+            catch (TargetInvocationException exception) when (exception.InnerException != null)
+            {
+                ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+                throw;
             }
         }
 
@@ -1146,6 +1326,51 @@ namespace HoTools.MC2Oracle.Editor
             };
         }
 
+        private static IEnumerable<BendingRuntimeCase> BendingRuntimeCases()
+        {
+            yield return new BendingRuntimeCase
+            {
+                Id = "bending_runtime_single_fixed_sum_001",
+                OrderedQuads = new[] { new int4(1, 0, 2, 3) },
+                RestAngleOrVolume = new[] { 0.0f },
+                SignOrVolume = new sbyte[] { 1 },
+                NextPositions = FoldedPair(30.0f),
+                Attributes = new byte[] { 0x01, 0x02, 0x02, 0x02 },
+                Note = "One directional dihedral contributes to all scratch slots; Sum keeps Fixed vertex 0 unchanged and clears every slot.",
+            };
+            yield return new BendingRuntimeCase
+            {
+                Id = "bending_runtime_double_positive_scale_001",
+                OrderedQuads = new[]
+                {
+                    new int4(1, 0, 2, 3),
+                    new int4(1, 0, 2, 3),
+                },
+                RestAngleOrVolume = new[] { 1.74532926f, 164.134628f },
+                SignOrVolume = new sbyte[] { -1, 100 },
+                NextPositions = FoldedPair(70.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                ScaleRatio = 1.25f,
+                Note = "Bending and volume both contribute; Sum averages two fixed-point scratch records per vertex.",
+            };
+            yield return new BendingRuntimeCase
+            {
+                Id = "bending_runtime_double_negative_scale_001",
+                OrderedQuads = new[]
+                {
+                    new int4(1, 0, 2, 3),
+                    new int4(1, 0, 2, 3),
+                },
+                RestAngleOrVolume = new[] { 1.74532926f, 164.134628f },
+                SignOrVolume = new sbyte[] { -1, 100 },
+                NextPositions = FoldedPair(70.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                ScaleRatio = 1.25f,
+                NegativeScaleSign = -1.0f,
+                Note = "The same records consume negativeScaleSign in both directional dihedral and volume paths.",
+            };
+        }
+
         private static float3[] FoldedPair(float degrees)
         {
             float radians = math.radians(degrees);
@@ -1311,6 +1536,32 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BuildBendingRuntimeJson(
+            BendingRuntimeCase runtimeCase,
+            BendingRuntimeDump dump
+        )
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(runtimeCase.Id));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SolverConstraint",
+                    "Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SumConstraint"
+                )
+            );
+            Property(text, 2, "scope", Quote(runtimeCase.Note));
+            Property(text, 2, "comparison", BendingRuntimeComparisonJson());
+            Property(text, 2, "input", BendingRuntimeInputJson(runtimeCase));
+            Property(text, 2, "expected", BendingRuntimeExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
         private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
@@ -1422,6 +1673,17 @@ namespace HoTools.MC2Oracle.Editor
                 Quote("diagnostic only; never sorts output quads"),
                 false
             );
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string BendingRuntimeComparisonJson()
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "float_abs_tolerance", "2e-5");
+            Property(text, 4, "float_rel_tolerance", "1e-6");
+            Property(text, 4, "fixed_point_scratch", Quote("raw int components before Sum"), false);
             text.Append("  }");
             return text.ToString();
         }
@@ -1567,6 +1829,41 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BendingRuntimeInputJson(BendingRuntimeCase runtimeCase)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "setup_type", Quote("mesh_cloth"));
+            Property(text, 4, "ordered_quads", ArrayJson(runtimeCase.OrderedQuads, Int4Json));
+            Property(
+                text,
+                4,
+                "rest_angle_or_volume",
+                ArrayJson(runtimeCase.RestAngleOrVolume, FloatJson)
+            );
+            Property(
+                text,
+                4,
+                "sign_or_volume",
+                NumberArray(runtimeCase.SignOrVolume.Select(value => (int)value))
+            );
+            Property(text, 4, "next_positions", ArrayJson(runtimeCase.NextPositions, Vector3Json));
+            Property(
+                text,
+                4,
+                "vertex_attributes",
+                NumberArray(runtimeCase.Attributes.Select(value => (int)value))
+            );
+            Property(text, 4, "depths", ArrayJson(Enumerable.Repeat(0.5f, runtimeCase.NextPositions.Length), FloatJson));
+            Property(text, 4, "friction", ArrayJson(new float[runtimeCase.NextPositions.Length], FloatJson));
+            Property(text, 4, "stiffness", "1");
+            Property(text, 4, "simulation_power_y", "1");
+            Property(text, 4, "scale_ratio", FloatJson(runtimeCase.ScaleRatio));
+            Property(text, 4, "negative_scale_sign", FloatJson(runtimeCase.NegativeScaleSign), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string ExpectedJson(OracleDump dump)
         {
             var text = new StringBuilder();
@@ -1697,6 +1994,35 @@ namespace HoTools.MC2Oracle.Editor
             );
             Property(text, 4, "sign_or_volume", NumberArray(dump.SignOrVolume));
             Property(text, 4, "diagnostic_write", BendingWriteJson(dump), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string BendingRuntimeExpectedJson(BendingRuntimeDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "count_before_sum", NumberArray(dump.CountBeforeSum));
+            Property(
+                text,
+                4,
+                "vector_components_before_sum",
+                NumberArray(dump.VectorComponentsBeforeSum)
+            );
+            Property(
+                text,
+                4,
+                "next_positions_after_sum",
+                ArrayJson(dump.NextPositionsAfterSum, Vector3Json)
+            );
+            Property(text, 4, "count_after_sum", NumberArray(dump.CountAfterSum));
+            Property(
+                text,
+                4,
+                "vector_after_sum",
+                ArrayJson(dump.VectorAfterSum, Vector3Json),
+                false
+            );
             text.Append("  }");
             return text.ToString();
         }

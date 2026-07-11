@@ -18,7 +18,11 @@ EXPECTED_PRODUCERS = [
 
 
 def _fixtures():
-    paths = sorted(glob.glob(os.path.join(FIXTURE_DIRECTORY, "bending_*.json")))
+    paths = sorted(
+        path
+        for path in glob.glob(os.path.join(FIXTURE_DIRECTORY, "bending_*.json"))
+        if not os.path.basename(path).startswith("bending_runtime_")
+    )
     assert len(paths) == 13, paths
     result = {}
     for path in paths:
@@ -30,6 +34,26 @@ def _fixtures():
         assert source["commit"] == EXPECTED_COMMIT
         assert source["unity_editor"] == EXPECTED_UNITY
         assert source["producer"] == EXPECTED_PRODUCERS
+        result[fixture["case_id"]] = fixture
+    return result
+
+
+def _runtime_fixtures():
+    paths = sorted(glob.glob(os.path.join(FIXTURE_DIRECTORY, "bending_runtime_*.json")))
+    assert len(paths) == 3, paths
+    result = {}
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as handle:
+            fixture = json.load(handle)
+        source = fixture["source"]
+        assert source["oracle_tier"] == "A"
+        assert source["version"] == "2.18.1"
+        assert source["commit"] == EXPECTED_COMMIT
+        assert source["unity_editor"] == EXPECTED_UNITY
+        assert source["producer"] == [
+            "Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SolverConstraint",
+            "Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SumConstraint",
+        ]
         result[fixture["case_id"]] = fixture
     return result
 
@@ -143,11 +167,39 @@ def test_bending_volume_dedup_keeps_first_raw_role() -> None:
     assert len({tuple(sorted(quad)) for quad in expected["ordered_quads"]}) == 1
 
 
+def test_bending_runtime_fixed_point_sum_and_clear() -> None:
+    fixture = _runtime_fixtures()["bending_runtime_single_fixed_sum_001"]
+    expected = fixture["expected"]
+    assert expected["count_before_sum"] == [1, 1, 1, 1]
+    assert any(value != 0 for value in expected["vector_components_before_sum"])
+    assert expected["next_positions_after_sum"][0] == fixture["input"]["next_positions"][0]
+    assert expected["next_positions_after_sum"][1] != fixture["input"]["next_positions"][1]
+    assert expected["count_after_sum"] == [0, 0, 0, 0]
+    assert expected["vector_after_sum"] == [[0, 0, 0]] * 4
+
+
+def test_bending_runtime_scale_and_negative_sign_are_consumed() -> None:
+    fixtures = _runtime_fixtures()
+    positive = fixtures["bending_runtime_double_positive_scale_001"]
+    negative = fixtures["bending_runtime_double_negative_scale_001"]
+    assert positive["input"]["ordered_quads"] == negative["input"]["ordered_quads"]
+    assert positive["input"]["rest_angle_or_volume"] == negative["input"]["rest_angle_or_volume"]
+    assert positive["input"]["scale_ratio"] == negative["input"]["scale_ratio"] == 1.25
+    assert positive["input"]["negative_scale_sign"] == 1
+    assert negative["input"]["negative_scale_sign"] == -1
+    assert positive["expected"]["count_before_sum"] == [2, 2, 2, 2]
+    assert negative["expected"]["count_before_sum"] == [2, 2, 2, 2]
+    assert positive["expected"]["next_positions_after_sum"] != negative["expected"]["next_positions_after_sum"]
+    assert positive["expected"]["count_after_sum"] == negative["expected"]["count_after_sum"] == [0, 0, 0, 0]
+
+
 TESTS = (
     ("Tier A Bending fixture contract", test_bending_fixture_contract_and_pack64),
     ("Tier A Bending source build facts", test_bending_fixtures_lock_source_build_facts),
     ("Bending initial world transform", test_bending_volume_uses_initial_world_transform),
     ("Bending volume first-wins role", test_bending_volume_dedup_keeps_first_raw_role),
+    ("Bending fixed-point sum and clear", test_bending_runtime_fixed_point_sum_and_clear),
+    ("Bending scale and negative sign", test_bending_runtime_scale_and_negative_sign_are_consumed),
 )
 
 

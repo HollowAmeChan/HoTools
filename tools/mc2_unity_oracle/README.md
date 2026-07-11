@@ -17,7 +17,7 @@ Pinned inputs:
 - Source checkout default: `D:\Unity_Fork\MagicaCloth2`
 
 Run `run.ps1`. The script rejects a different MC2 commit before launching
-Unity. The exporter writes five fixture groups into the HoTools MC2 fixture
+Unity. The exporter writes six fixture groups into the HoTools MC2 fixture
 directory:
 
 - `mesh_baseline_*.json`: final-proxy-stage `VirtualMesh` inputs followed by
@@ -39,6 +39,10 @@ directory:
   source-generated write arrays remain diagnostic fields; the latter are not
   promoted into the host/native contract because the fixed runtime never
   registers or consumes them.
+- `bending_runtime_*.json`: direct reflective calls to fixed source
+  `SolverConstraint()` and `SumConstraint()`, recording fixed-point scratch
+  counts/components, averaged positions, unconditional scratch clear, Fixed
+  particle behavior, and negative-scale consumption.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

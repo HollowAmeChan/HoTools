@@ -292,7 +292,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
 | Distance | supported host static slice | `MC2DistanceStaticV0` immutable spec/signature/packer + 保序纯 host builder；7 个 `CreateData()` static fixture、2 个 `SolverConstraint()` ordered runtime fixture和 Blender slot bundle 回归。仍无 native consumer/solver capability。 |
-| Bending | static oracle landed, runtime oracle/builder pending | `MC2BendingStaticV0` 三数组契约 + 13 个 `CreateData()` Tier A fixture；仍需 Solver/Sum scratch oracle与保序 host builder，不迁移 write arrays。 |
+| Bending | build/runtime oracle landed, host builder pending | `MC2BendingStaticV0` 三数组契约 + 13 个 `CreateData()` static fixture + 3 个 Solver/Sum fixed-point runtime fixture；不迁移 write arrays。 |
 | Center without anchor/sync/negative scale | planned restricted | reset + moving component fixture。 |
 | anchor/sync/negative scale/wind | deferred | W4 Tier A runtime fixtures。 |
 | collider/self/inter collision | deferred | dedicated worksheet + registration/step fixtures。 |
@@ -343,7 +343,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 - [x] C-07 独立 Tier A host 已落地并关闭 Mesh baseline slice。
 - [x] Mesh N0 final proxy/baseline 字段有 producer/consumer、Tier A oracle 和 slot static cache。
 - [x] N1 Distance 字段、producer/consumer、7 个 build oracle、2 个 runtime order oracle、保序 host builder/packer 与 slot static bundle 已关闭。
-- [ ] N1 Bending static 字段和 13 个 build oracle 已冻结；仍需 runtime scratch oracle与 host builder。Inertia 尚未冻结。
+- [ ] N1 Bending static 字段、13 个 build oracle 与 3 个 runtime scratch oracle 已冻结；仍需保序 host builder/packer 和 initial-transform dirty binding。Inertia 尚未冻结。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。
 - [ ] create/update/dynamic/reset/step/read/free 错误语义冻结。

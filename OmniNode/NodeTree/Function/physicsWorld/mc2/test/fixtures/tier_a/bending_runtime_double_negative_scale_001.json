@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "case_id": "bending_runtime_double_negative_scale_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SolverConstraint","Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::SumConstraint"]
+  },
+  "scope": "The same records consume negativeScaleSign in both directional dihedral and volume paths.",
+  "comparison": {
+    "float_abs_tolerance": 2e-5,
+    "float_rel_tolerance": 1e-6,
+    "fixed_point_scratch": "raw int components before Sum"
+  },
+  "input": {
+    "setup_type": "mesh_cloth",
+    "ordered_quads": [[1,0,2,3],[1,0,2,3]],
+    "rest_angle_or_volume": [1.74532926,164.134628],
+    "sign_or_volume": [-1,100],
+    "next_positions": [[0,1,0],[0,-0.342020154,-0.9396926],[0,0,0],[1,0,0]],
+    "vertex_attributes": [2,2,2,2],
+    "depths": [0.5,0.5,0.5,0.5],
+    "friction": [0,0,0,0],
+    "stiffness": 1,
+    "simulation_power_y": 1,
+    "scale_ratio": 1.25,
+    "negative_scale_sign": -1
+  },
+  "expected": {
+    "count_before_sum": [2,2,2,2],
+    "vector_components_before_sum": [0,-52707,652623,0,-595239,272738,52707,647946,-925362,-52707,0,0],
+    "next_positions_after_sum": [[0,0.9736465,0.3263115],[0,-0.6396396,-0.8033236],[0.0263535,0.323973,-0.462681],[0.9736465,0,0]],
+    "count_after_sum": [0,0,0,0],
+    "vector_after_sum": [[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
+  }
+}
