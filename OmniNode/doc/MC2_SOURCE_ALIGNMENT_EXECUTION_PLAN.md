@@ -37,9 +37,9 @@
 | particle owner | scaffold | `MC2ParticleBuffer` 与 slot dispose 已存在，但当前从 build-time rest pose 初始化，不等于源码参考“Center、Particle Reset 与 Array Lifetime”中的 current-frame world-pose reset；不能作为 native reset 完成度。 |
 | Mesh N0 final proxy | landed | `final_proxy.py` 已实现 triangle/edge union、方向统一、vertex adjacency、vertex-to-triangle flip、normal/tangent、UV seam gate 和同 index Pin attribute，并由 Tier A fixture 覆盖。 |
 | Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation。 |
-| Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline 与 Distance；UV/Pin mask 进入独立 static input signature。尚不包含 Bending。 |
+| Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。 |
 | Distance N1 | landed | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。尚无新 native consumer。 |
-| TriangleBending N1 | verified contract | 三数组 schema、13 个 static fixture 和 3 个 runtime scratch fixture已冻结；生产 host builder/packer、initial-transform dirty key 和 slot bundle 尚未实现。 |
+| TriangleBending N1 | landed | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。initial local-to-world columns与完整 record order进入 constraint signature；尚无新 native consumer。 |
 | Inertia/Center static | verified source notes | producer/consumer 与状态分层已审计；尚无生产 spec、builder 或 oracle 闭环。 |
 | Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot。尚未派生 N3 per-vertex world rotations，也未接新 native step。 |
 | Runtime parameters N2 | scaffold | authoring profile/effective parameter 分层存在；source 要求的 16-sample runtime arrays、完整 BoneSpring override、外部引用与 scheduler 分层尚未冻结。 |
@@ -135,28 +135,19 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **TriangleBending N1 host static**，不是 native step：
+下一交付是 **N2 Runtime Parameters**，仍然不是 native step：
 
-1. 实现 `MC2BendingStaticV0` immutable spec、完整 record-order signature 和 `int32/float32/int8` 只读 packer。
-2. builder 使用确定性的 edge/triangle-pair traversal，保留 `(opposite0, opposite1, edge.x, edge.y)` role，不排序 ABI quad。
-3. 同一 pair 的 bending-then-volume 双 record、volume first-wins、120/90/179 阈值、Invalid/all-Fixed/null/empty 区别必须与现有 Tier A fixture逐数组对拍。
-4. initial local-to-world transform 是 volume rest 的静态 producer，必须进入 Bending input/dirty key；它不是 N3 animated pose。
-5. 把 Bending 加入 `MC2MeshClothStaticBuildResult` 与 slot static bundle，但仍不创建 native context。
+1. 将 `CurveSerializeData` 转为确定性的 `float32[16]` runtime samples；authoring curve不能直接进入 ABI。
+2. 分离 `MC2RuntimeParametersV0`、team dynamic options与 HoTools scheduler settings，分别签名和声明 dirty policy。
+3. 冻结 scalar/bool/enum、checked limit的 `-1` 语义、BoneSpring override以及坐标/单位转换。
+4. anchor、collider、sync partner、wind zone使用独立稳定 identity/snapshot，不塞进纯 value profile。
+5. 先扩展 Tier A parameter exporter/fixture，再实现 host spec/packer；不从旧 runtime parameter dict反推 expected。
 
-退出条件：完整 arrays/signature/packer 测试、fixture parity、Blender slot rebuild 测试全部通过；capability 只能写 host static，不能写 solver supported。
+退出条件：同一 profile在三个 setup下的完整 Tier A parameter dump、非线性曲线、disabled limit、BoneSpring override和 packer/layout测试通过。
 
 ## 后续交付顺序
 
-### 1. N2 Runtime Parameters
-
-- 将 `CurveSerializeData` 转为确定性的 `float32[16]` runtime samples；authoring curve 不能直接进 ABI。
-- 分离 `MC2RuntimeParametersV0`、team dynamic options 与 HoTools scheduler settings。
-- 冻结 scalar/bool/enum、BoneSpring override、checked limit 的 `-1` 语义和坐标/单位转换。
-- anchor、collider、sync partner、wind zone 使用独立稳定 identity/snapshot，不塞进纯 value profile。
-
-退出条件：同一 profile 在三个 setup 下的 Tier A parameter dump、非线性曲线、disabled limit 和 binding layout 测试通过。
-
-### 2. N3 Frame Input 与 Reset
+### 1. N3 Frame Input 与 Reset
 
 - 从 BasePose 同一 snapshot 生成 world positions、normals 和 per-vertex rotations。
 - 明确 `create/register` 只分配 owner，首次有效 current-frame world pose 才执行 reset。
@@ -165,7 +156,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 退出条件：allocation-before-reset、首次 reset、连续帧、same-frame、time discontinuity、参数热更新保留 history 的数组级测试通过。
 
-### 3. Native Context 最小闭环
+### 2. Native Context 最小闭环
 
 首条 API 只允许：`create -> inspect -> update_parameters -> update_dynamic -> reset -> step(no collision) -> read -> free`。
 
@@ -177,7 +168,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 退出条件：双 ABI、连续帧、same-frame、reset、异常回滚、idempotent free 和 leak/soak 测试通过。
 
-### 4. MeshCloth Vertical Slice
+### 3. MeshCloth Vertical Slice
 
 第一版范围：单 final-proxy Mesh、Pin、无 collider。输出为同 vertex identity 的 object-local offset，经公共 GN writeback 应用。
 
@@ -185,11 +176,11 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 扩展顺序：Distance -> Bending -> Tether/Angle/Motion -> Center/Inertia -> collider -> self collision。每项仍遵循 worksheet -> contract -> oracle -> host/native -> integration。
 
-### 5. Bone Setup
+### 4. Bone Setup
 
 顺序：Bone Line -> BoneSpring override -> BoneCloth Automatic/Sequential。Bone connection 必须先有“Bone Connection 与代理拓扑”对应 Tier A fixture；不能复用旧逐链 zip 近似。输出只发布稳定 bone identity 的 local transform，由公共 writeback 写 PoseBone。
 
-### 6. 旧路径删除
+### 5. 旧路径删除
 
 新路径达到对应能力后，直接删除旧节点、Python reference、native full-core/context、兼容 cache 与 shadow pipeline。允许迁移的只有经过新契约和 oracle 重新证明的数值规则；不保留旧资产 adapter 或运行时 fallback。
 

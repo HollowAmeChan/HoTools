@@ -1,9 +1,8 @@
 """MeshCloth static data assembly for the MC2 slot.
 
-This is still pre-solver work: it builds the source-aligned final proxy and
-baseline static contracts, then keeps them available for later native ABI and
-debug work. It does not allocate backend resources or publish simulation
-results.
+This is still pre-solver work: it builds the source-aligned final proxy,
+baseline, Distance, and TriangleBending static contracts for later native ABI
+and debug work. It does not allocate backend resources or publish results.
 """
 
 from __future__ import annotations
@@ -12,6 +11,8 @@ from dataclasses import dataclass
 import hashlib
 import json
 
+from ...bending_static import MC2BendingStaticSpec
+from ...bending_static import build_mc2_bending_static
 from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
@@ -29,6 +30,7 @@ class MC2MeshClothStaticBuildResult:
     finalizer: MC2MeshFinalProxyBuildResult
     baseline: MC2MeshBaselineBuildResult
     distance: MC2DistanceStaticSpec
+    bending: MC2BendingStaticSpec | None
 
     @property
     def final_proxy(self):
@@ -41,6 +43,11 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("baseline must be MC2MeshBaselineBuildResult")
         if not isinstance(self.distance, MC2DistanceStaticSpec):
             raise TypeError("distance must be MC2DistanceStaticSpec")
+        if self.bending is not None and not isinstance(
+            self.bending,
+            MC2BendingStaticSpec,
+        ):
+            raise TypeError("bending must be MC2BendingStaticSpec or None")
         if self.finalizer.proxy.task_id != self.baseline.final_proxy.task_id:
             raise ValueError("finalizer and baseline task_id must match")
         if self.finalizer.proxy.vertex_identities != self.baseline.final_proxy.vertex_identities:
@@ -49,6 +56,11 @@ class MC2MeshClothStaticBuildResult:
             raise ValueError("distance and final proxy signatures must match")
         if self.distance.baseline_signature != self.baseline.baseline.baseline_signature:
             raise ValueError("distance and baseline signatures must match")
+        if (
+            self.bending is not None
+            and self.bending.proxy_signature != self.baseline.final_proxy.proxy_signature
+        ):
+            raise ValueError("bending and final proxy signatures must match")
 
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
@@ -61,6 +73,9 @@ class MC2MeshClothStaticBuildResult:
                 1 for value in self.final_proxy.vertex_attributes if value & 0x01
             ),
             "distance_record_count": len(self.distance.distance_targets),
+            "bending_record_count": (
+                self.bending.record_count if self.bending is not None else 0
+            ),
         }
         if include_signatures:
             result.update(
@@ -68,9 +83,29 @@ class MC2MeshClothStaticBuildResult:
                     "proxy_signature": self.final_proxy.proxy_signature,
                     "baseline_signature": self.baseline.baseline.baseline_signature,
                     "distance_signature": self.distance.distance_signature,
+                    "bending_signature": (
+                        self.bending.bending_signature
+                        if self.bending is not None
+                        else None
+                    ),
                 }
             )
         return result
+
+
+def _matrix_world_columns(obj) -> tuple[tuple[float, float, float, float], ...]:
+    matrix = getattr(obj, "matrix_world", None)
+    if matrix is None:
+        return (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+    return tuple(
+        tuple(float(matrix[row][column]) for row in range(4))
+        for column in range(4)
+    )
 
 
 def _resolve_mesh_object(source):
@@ -169,10 +204,15 @@ def build_mc2_mesh_cloth_static(
         vertex_to_vertex_ranges=finalizer.vertex_to_vertex_ranges,
         vertex_to_vertex_data=finalizer.vertex_to_vertex_data,
     )
+    bending = build_mc2_bending_static(
+        baseline.final_proxy,
+        initial_local_to_world_columns=_matrix_world_columns(obj),
+    )
     return MC2MeshClothStaticBuildResult(
         finalizer=finalizer,
         baseline=baseline,
         distance=distance,
+        bending=bending,
     )
 
 

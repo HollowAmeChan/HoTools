@@ -195,12 +195,17 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert len(mesh_static.final_proxy.triangles) == 2
         assert mesh_static.distance.vertex_count == 4
         assert len(mesh_static.distance.distance_targets) > 0
+        assert mesh_static.bending is not None
+        assert mesh_static.bending.vertex_count == 4
+        assert mesh_static.bending.record_count > 0
         snapshot = slot.debug_snapshot()["mesh_static"]
         assert snapshot["vertex_count"] == 4
         assert snapshot["distance_record_count"] == len(
             mesh_static.distance.distance_targets
         )
         assert snapshot["distance_signature"] == mesh_static.distance.distance_signature
+        assert snapshot["bending_record_count"] == mesh_static.bending.record_count
+        assert snapshot["bending_signature"] == mesh_static.bending.bending_signature
     finally:
         _remove_object(obj)
 
@@ -234,6 +239,9 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
         assert second_input_signature != first_input_signature
         assert second_static.distance.distance_signature != first_static.distance.distance_signature
+        assert second_static.bending is not None
+        assert first_static.bending is not None
+        assert second_static.bending.bending_signature != first_static.bending.bending_signature
         assert sum(
             bool(value & 0x01) for value in second_static.final_proxy.vertex_attributes
         ) == 2
@@ -246,6 +254,7 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert "重建 1" in status
         assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
         assert slot.data["static_input_signature"] != second_input_signature
+        assert slot.data["mesh_static"].bending.bending_signature != second_static.bending.bending_signature
     finally:
         _remove_object(obj)
         cleanup_properties()

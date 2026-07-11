@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | framework scaffold + Mesh N0/Distance N1 host static slice，尚无解算 | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance immutable contract、packer与纯 Mesh builder；独立 Unity Tier A host；ConvertProxyMesh、9 个 baseline case、Distance 7 static + 2 runtime-order case、Bending 13 static + 3 runtime-scratch case；UV/Pin static key整包重建；双对象 BasePose、topology token和不可写 Armature frame snapshot；GN/bone result channel仅 planned。当前 particle owner仍是 scaffold，不等于 current-frame reset完成 | Bending host builder、Inertia static、N2 parameter ABI、N3 rotation/reset/frame bridge、per-slot native context、solver step与 result publication；Bone Line/Automatic/Sequential setup均未实现 |
+| MC2 | framework scaffold + Mesh N0/Distance+Bending N1 host static slice，尚无解算 | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance/Bending immutable contract、签名、只读 packer与纯 Mesh builder；独立 Unity Tier A host；ConvertProxyMesh、9 个 baseline case、Distance 7 static + 2 runtime-order case、Bending 13 static + 3 runtime-scratch case；initial transform与 Bending role order进入 constraint signature；UV/Pin static key整包重建；双对象 BasePose、topology token和不可写 Armature frame snapshot；GN/bone result channel仅 planned。当前 particle owner仍是 scaffold，不等于 current-frame reset完成 | Inertia static、N2 parameter ABI、N3 rotation/reset/frame bridge、per-slot native context、solver step与 result publication；Bone Line/Automatic/Sequential setup均未实现 |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 ## 统一 MC2 决策
@@ -115,7 +115,7 @@ MC2 只有一个 solver identity：`mc2`。
 ## 当前优先级
 
 1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 先完成 Bending host static，再收口 N2 参数和 N3 reset/frame input，之后进入最窄 native context；禁止按旧 solver 或未验证近似扩展 spec。
+2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 先收口 N2 参数和 N3 reset/frame input，之后进入最窄 native context；禁止按旧 solver 或未验证近似扩展 spec。
 3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
 4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
 

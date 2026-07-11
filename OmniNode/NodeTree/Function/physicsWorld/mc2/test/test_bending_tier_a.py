@@ -3,9 +3,42 @@
 from __future__ import annotations
 
 import glob
+import importlib
 import json
 import math
 import os
+import sys
+import types
+
+import numpy as np
+
+
+MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
+FUNCTION = os.path.dirname(PHYSICS_WORLD)
+NODETREE = os.path.dirname(FUNCTION)
+OMNINODE = os.path.dirname(NODETREE)
+HOTOOLS = os.path.dirname(OMNINODE)
+
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2", MC2_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+static_data = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.static_data"
+)
+bending_static = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.bending_static"
+)
 
 
 FIXTURE_DIRECTORY = os.path.join(os.path.dirname(__file__), "fixtures", "tier_a")
@@ -65,6 +98,27 @@ def _decode_pack64(value):
         (int(value) >> 16) & 0xFFFF,
         int(value) & 0xFFFF,
     ]
+
+
+def _build(fixture):
+    payload = fixture["input"]
+    count = len(payload["local_positions"])
+    proxy = static_data.make_mc2_proxy_static_spec(
+        task_id="mc2:mesh_cloth:" + fixture["case_id"],
+        setup_type=payload["setup_type"],
+        vertex_identities=[f"mesh:v{index}" for index in range(count)],
+        local_positions=payload["local_positions"],
+        local_normals=[[0, 0, 1] for _ in range(count)],
+        local_tangents=[[1, 0, 0] for _ in range(count)],
+        uvs=[[0, 0] for _ in range(count)],
+        vertex_attributes=payload["vertex_attributes"],
+        edges=payload["edges"],
+        triangles=payload["triangles"],
+    )
+    return bending_static.build_mc2_bending_static(
+        proxy,
+        initial_local_to_world_columns=payload["init_local_to_world_columns"],
+    )
 
 
 def test_bending_fixture_contract_and_pack64() -> None:
@@ -167,6 +221,118 @@ def test_bending_volume_dedup_keeps_first_raw_role() -> None:
     assert len({tuple(sorted(quad)) for quad in expected["ordered_quads"]}) == 1
 
 
+def test_bending_tier_a_fixtures_match_ordered_host_builder() -> None:
+    for fixture in _fixtures().values():
+        actual = _build(fixture)
+        expected = fixture["expected"]
+        if expected["create_returned_null"]:
+            assert actual is None, fixture["case_id"]
+            continue
+        assert actual is not None, fixture["case_id"]
+        assert actual.bending_quads == tuple(
+            map(tuple, expected["ordered_quads"])
+        ), fixture["case_id"]
+        assert actual.bending_sign_or_volume == tuple(
+            expected["sign_or_volume"]
+        ), fixture["case_id"]
+        assert len(actual.bending_rest_angle_or_volume) == len(
+            expected["rest_angle_or_volume"]
+        )
+        tolerance = fixture["comparison"]
+        for index, (value, wanted) in enumerate(
+            zip(
+                actual.bending_rest_angle_or_volume,
+                expected["rest_angle_or_volume"],
+            )
+        ):
+            assert math.isclose(
+                value,
+                float(wanted),
+                abs_tol=float(tolerance["float_abs_tolerance"]),
+                rel_tol=float(tolerance["float_rel_tolerance"]),
+            ), f"{fixture['case_id']} rest[{index}]: {value} != {wanted}"
+
+        buffers = bending_static.pack_mc2_bending_static(actual)
+        assert buffers["bending_quads"].dtype == np.int32
+        assert buffers["bending_quads"].shape == (actual.record_count, 4)
+        assert buffers["bending_rest_angle_or_volume"].dtype == np.float32
+        assert buffers["bending_sign_or_volume"].dtype == np.int8
+        assert all(not value.flags.writeable for value in buffers.values())
+
+
+def test_bending_signature_preserves_role_order_and_initial_transform() -> None:
+    common = {
+        "proxy_signature": "proxy",
+        "vertex_count": 4,
+        "bending_rest_angle_or_volume": (1.0,),
+        "bending_sign_or_volume": (1,),
+    }
+    first = bending_static.make_mc2_bending_static_spec(
+        **common,
+        bending_quads=((0, 1, 2, 3),),
+    )
+    reordered = bending_static.make_mc2_bending_static_spec(
+        **common,
+        bending_quads=((1, 0, 2, 3),),
+    )
+    scaled = bending_static.make_mc2_bending_static_spec(
+        **common,
+        bending_quads=((0, 1, 2, 3),),
+        initial_local_to_world_columns=(
+            (2, 0, 0, 0),
+            (0, 2, 0, 0),
+            (0, 0, 2, 0),
+            (0, 0, 0, 1),
+        ),
+    )
+    assert first.bending_signature != reordered.bending_signature
+    assert first.bending_signature != scaled.bending_signature
+
+
+def test_bending_spec_quantizes_and_rejects_invalid_records() -> None:
+    first = bending_static.make_mc2_bending_static_spec(
+        proxy_signature="proxy",
+        vertex_count=4,
+        bending_quads=((0, 1, 2, 3),),
+        bending_rest_angle_or_volume=(1.00000001,),
+        bending_sign_or_volume=(1,),
+    )
+    second = bending_static.make_mc2_bending_static_spec(
+        proxy_signature="proxy",
+        vertex_count=4,
+        bending_quads=((0, 1, 2, 3),),
+        bending_rest_angle_or_volume=(1.00000002,),
+        bending_sign_or_volume=(1,),
+    )
+    assert first.bending_rest_angle_or_volume == second.bending_rest_angle_or_volume == (1.0,)
+    assert first.bending_signature == second.bending_signature
+
+    invalid_cases = (
+        {"bending_quads": ((0, 1, 2, 4),), "bending_sign_or_volume": (1,)},
+        {"bending_quads": ((0, 1, 2, 3),), "bending_sign_or_volume": (0,)},
+        {
+            "bending_quads": ((0, 1, 2, 3),),
+            "bending_sign_or_volume": (1,),
+            "bending_rest_angle_or_volume": (float("nan"),),
+        },
+    )
+    for overrides in invalid_cases:
+        values = {
+            "proxy_signature": "proxy",
+            "vertex_count": 4,
+            "bending_quads": ((0, 1, 2, 3),),
+            "bending_rest_angle_or_volume": (1.0,),
+            "bending_sign_or_volume": (1,),
+        }
+        values.update(overrides)
+        try:
+            bending_static.make_mc2_bending_static_spec(**values)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError(f"invalid Bending spec was accepted: {overrides}")
+
+
 def test_bending_runtime_fixed_point_sum_and_clear() -> None:
     fixture = _runtime_fixtures()["bending_runtime_single_fixed_sum_001"]
     expected = fixture["expected"]
@@ -198,6 +364,9 @@ TESTS = (
     ("Tier A Bending source build facts", test_bending_fixtures_lock_source_build_facts),
     ("Bending initial world transform", test_bending_volume_uses_initial_world_transform),
     ("Bending volume first-wins role", test_bending_volume_dedup_keeps_first_raw_role),
+    ("Tier A ordered Bending host parity", test_bending_tier_a_fixtures_match_ordered_host_builder),
+    ("Bending signature preserves role and transform", test_bending_signature_preserves_role_order_and_initial_transform),
+    ("Bending spec validation", test_bending_spec_quantizes_and_rejects_invalid_records),
     ("Bending fixed-point sum and clear", test_bending_runtime_fixed_point_sum_and_clear),
     ("Bending scale and negative sign", test_bending_runtime_scale_and_negative_sign_are_consumed),
 )
