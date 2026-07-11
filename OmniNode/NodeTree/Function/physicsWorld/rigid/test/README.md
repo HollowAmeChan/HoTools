@@ -44,7 +44,7 @@
 
 当前切片（`blender_pipeline_v1`）：
 
-- 后台 Blender 为全部 58 个 P0 fixture 创建真实 RNA 对象和约束；
+- 后台 Blender 为全部 60 个 P0 fixture 创建真实 RNA 对象和约束；
 - 跑 scope、world setting、命令、contact/query、solver result 和统一 writeback；
 - 覆盖十一种约束、Quaternion 写回、same-frame、jump、reset 和 dispose；
 - `BREAK-001/002` 分层验证原生 lambda 基线、HoTools 冲量阈值、断裂后释放和同帧重放；
@@ -60,9 +60,13 @@
 
 当前切片尚未实现：
 
-- Cone/SwingTwist 旋转 frame 与独立 A/B frame 组合；
 - 已批准 golden；
 - 性能阈值冻结，目前只有首轮基线。
+
+`CONE-003` 与 `SWING_TWIST-004` 使用非 Euler 奇异的 60 度旋转验证独立
+A/B frame。`frame_swing_limit` 从每帧 body 姿态重建两侧 live twist 轴，
+`rotation_world_axis_only` 验证任意世界轴旋转；两者都不依赖约束
+`current_value` 作为自身 oracle。
 
 ## 当前实施顺序
 

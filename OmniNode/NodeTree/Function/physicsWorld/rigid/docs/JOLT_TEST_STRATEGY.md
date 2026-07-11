@@ -21,7 +21,7 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `58/58`、S3 `58/58 × repeat 2`、py311/py313 跨 ABI `58/58 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、性能矩阵 `7/7`；旧式集成仍只记作链路 smoke，性能结果目前只作为基线观测。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `60/60`、S3 `60/60 × repeat 2`、py311/py313 跨 ABI `60/60 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、性能矩阵 `7/7`；旧式集成仍只记作链路 smoke，性能结果目前只作为基线观测。
 
 ### 2026-07-10 实现状态
 
@@ -32,20 +32,20 @@
 - position/rotation/velocity/active/sleeping 的 canonical JSONL trace 与原始 float32 bit pattern；
 - 每个 fixture 使用两个全新 `JoltWorld` 做 bitwise trace 重放；
 - `finite_all`、半隐式自由落体、零重力恒速、冲量质量关系与显式 body state oracle；
-- 58 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询、约束和断裂策略；
+- 60 个 P0 fixture，覆盖刚体参数、形状、碰撞、过滤、事件、查询、约束和断裂策略；
 - 十一种已接入约束均有 schema、state trace 和独立物理 oracle；
 - Fixed 相对变换、Point 锚点重合/自由旋转、Distance 区间残差收敛 oracle；
 - Hinge 局部 Z 单轴旋转、Slider 局部 Z 单轴平移、Cone swing/twist oracle；
 - Hinge 正负角度 limit、Slider 正负线性 limit 的双向撞限 oracle；
-- py311/py313 各自 58/58 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
-- `run_cross_abi_semantics.py` 自动发现 CPython 3.11/3.13，固定加载匹配的 `_Lib/py311` / `_Lib/py313` 模块，并输出机器可读差分报告；3.11.9 与 3.13.9 全矩阵 `58/58 × repeat 2` 的最大绝对误差为 `2.220446049250313e-16`，通过 `abs=2e-5`、`rel=1e-6` 门限；
+- py311/py313 各自 60/60 S1 通过，并在各 ABI 内完成同进程双世界逐位重放；py311 已完成十个新进程 physical hash 稳定检查；
+- `run_cross_abi_semantics.py` 自动发现 CPython 3.11/3.13，固定加载匹配的 `_Lib/py311` / `_Lib/py313` 模块，并输出机器可读差分报告；3.11.9 与 3.13.9 全矩阵 `60/60 × repeat 2` 的最大绝对误差为 `2.220446049250313e-16`，通过 `abs=2e-5`、`rel=1e-6` 门限；
 - `_native/tests/test_jolt_semantic_matrix.py` 已接入现有 native test discovery。
 - 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
-- `adapter_binding_v1` 已复用全部 58 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
-- `blender_pipeline_v1` 已复用全部 58 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
+- `adapter_binding_v1` 已复用全部 60 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
+- `blender_pipeline_v1` 已复用全部 60 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、旋转及独立 A/B frame、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
 - `benchmark_blender_rigid.py` 已覆盖 1/128/1024 body、32/256 constraint 和 32/256 contact，分别采集 native step、Blender pipeline、writeback 的 P50/P95、接触事件数和工作集高水位；报告 schema 为 `hotools_jolt_blender_benchmark_v1`，首轮阈值未冻结。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 58 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 58 个 fixture。复杂 Cone/SwingTwist A/B frame 组合和已批准 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、Cone/SwingTwist 旋转及独立 A/B frame、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 60 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 60 个 fixture。已批准 golden 尚未实现，性能阈值也尚未冻结，不能据此宣称 release 门禁全部完成。
 
 ### 2026-07-11 实施决定
 
@@ -248,9 +248,11 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | SLIDER-006 | position motor | 位置弹簧轨迹与目标位置正确 | Jolt official | P0 | 已实现 |
 | CONE-001 | cone swing limit | anchor 重合，swing 不超 half angle | 不变量 | P0 | PASS (S1) |
 | CONE-002 | twist 自由 | 绕 twist axis 不被错误锁死 | 不变量 | P0 | PASS (S1) |
+| CONE-003 | 非奇异旋转 + 独立 A/B frame | 两侧 quaternion 不同但 twist 轴等价；live frame swing 命中声明边界 | 变形/独立姿态 oracle | P0 | PASS（S1/S2/S3） |
 | SWING_TWIST-001 | 摆角与扭转限制 | anchor 重合；纯摆动与纯扭转分别收敛到声明边界，非目标轴残差有界 | 不变量/Jolt | P0 | PASS (S1) |
 | SWING_TWIST-002 | Pyramid 轴映射与摩擦 | 本地 X/Y 分别命中 normal/plane 半角；摩擦力矩按惯量解析衰减并产生 lambda | 解析/Jolt official | P0 | PASS (S1) |
 | SWING_TWIST-003 | 独立双 motor | swing 位置 motor 收敛到局部 X 目标姿态；twist 速度 motor 达到局部 Z 目标角速度；motor lambda 活跃 | Jolt official/变形 | P0 | PASS (S1) |
+| SWING_TWIST-004 | 非奇异旋转 + 独立 A/B frame | 任意世界 twist 轴限位；初始不对齐的两侧 frame 收敛到 swing 边界 | 变形/独立姿态 oracle | P0 | PASS（S1/S2/S3） |
 | SIX_DOF-001 | 六轴 Free/Fixed/Limited | 仅平移 X、仅旋转 Z、平移 X 限位和旋转 Z 限位分别符合声明轴模式；六轴 current-value readback 与真实状态一致 | Jolt official/不变量 | P0 | PASS (S1)，公共 spec/adapter/result/debug 已接 |
 | SIX_DOF-002 | 每轴 friction | 平移 X 按最大摩擦力/质量衰减；旋转 Z 按最大摩擦力矩/惯量衰减；lambda 活跃 | 解析/Jolt | P0 | PASS (S1)，公共 spec/生成约束已接 |
 | SIX_DOF-003 | 每轴 motor | 平移 X 速度 motor 按力上限加速；旋转 Z 位置 motor 收敛到目标姿态；lambda 活跃 | Jolt official/解析 | P0 | PASS (S1)，公共 spec/生成约束/debug 已接 |
@@ -281,7 +283,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | DET-001 | 两个新 world 同步重放 | 每帧原始 float bitwise 相等 | Jolt determinism | P0 | 已实现 |
 | DET-002 | 同 fixture 跨进程运行 10 次 | canonical physical hash 一致 | Jolt determinism | P0 | 已实现 |
 | DET-003 | Blender scope 枚举随机打乱 | `simulation_order_key` 排序后 API 调用序与 trace 不变；冲突拒绝 | HoTools | P0 | PASS（生产路径） |
-| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | PASS：58/58 × repeat 2；最大绝对误差 `2.220446049250313e-16` |
+| DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | PASS：60/60 × repeat 2；最大绝对误差 `2.220446049250313e-16` |
 | CAP-001 | `max_bodies` 容量溢出 | 失败创建不污染计数；已接纳刚体继续 step；释放后可恢复；S3 稳定拒绝超额 slot 并发布诊断 | Jolt/HoTools | P0 | PASS（native + S3） |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | PASS（py311/py313）：每 ABI 两场景各 10,000 帧；链最大残差 `0.00234770775` |
 | PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 首轮基线 PASS；1024 body P95=`0.1054/55.91/271.3 ms`，阈值未冻结 |
