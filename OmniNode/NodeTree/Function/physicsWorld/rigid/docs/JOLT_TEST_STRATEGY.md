@@ -2,13 +2,13 @@
 
 日期：2026-07-11
 
-状态：设计基线。实现完成前，不得把现有回归通过解释为“Rigid/Jolt 物理语义已验收”。
+状态：可执行验收基线。P0 三层语义、确定性、容量/事件溢出和双 ABI soak 已闭环；性能已完成首轮采样但阈值尚未冻结。
 
 适用版本：HoTools `rigid_jolt`、Jolt Physics `v5.2.0`、Blender 4.5。当前 native backend 使用 `JobSystemSingleThreaded`。
 
 ## 结论
 
-当前 Jolt 测试覆盖了不少功能，但还没有形成独立、可复用的**物理语义验收体系**。
+当前 Jolt 已形成独立、可复用的**物理语义验收体系**，并有机器可读 trace、差分、soak 和性能报告。
 
 现有 native 与 Blender 测试可以证明：模块能创建、推进和销毁世界；spec、adapter、result stream、writeback 和生命周期基本贯通；自由落体、落地、约束、contact、sensor、RayCast、断裂和独立 A/B frame 的功能链路可运行。
 
@@ -21,7 +21,7 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `58/58`、S3 `58/58 × repeat 2`、py311/py313 跨 ABI `58/58 × repeat 2`、旧式 Blender 后台集成 `31/31`；后者仍只记作链路 smoke，fixture 化 S3 由独立 runner 给出结论。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `58/58`、S3 `58/58 × repeat 2`、py311/py313 跨 ABI `58/58 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、性能矩阵 `7/7`；旧式集成仍只记作链路 smoke，性能结果目前只作为基线观测。
 
 ### 2026-07-10 实现状态
 
@@ -43,6 +43,7 @@
 - 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
 - `adapter_binding_v1` 已复用全部 58 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
 - `blender_pipeline_v1` 已复用全部 58 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
+- `benchmark_blender_rigid.py` 已覆盖 1/128/1024 body、32/256 constraint 和 32/256 contact，分别采集 native step、Blender pipeline、writeback 的 P50/P95、接触事件数和工作集高水位；报告 schema 为 `hotools_jolt_blender_benchmark_v1`，首轮阈值未冻结。
 
 当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 58 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 58 个 fixture。复杂 Cone/SwingTwist A/B frame 组合和已批准 golden 尚未实现，不能据此宣称完整 Jolt 语义通过。
 
@@ -54,7 +55,7 @@
 2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
 4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（断裂与跨 ABI 门禁已于 2026-07-11 完成）
-5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（overflow 与 soak 已于 2026-07-11 完成；性能仍待完成）
+5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（三项均已于 2026-07-11 完成；性能阈值需重复采样后另行冻结）
 
 每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
 
@@ -283,8 +284,8 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | PASS：58/58 × repeat 2；最大绝对误差 `2.220446049250313e-16` |
 | CAP-001 | `max_bodies` 容量溢出 | 失败创建不污染计数；已接纳刚体继续 step；释放后可恢复；S3 稳定拒绝超额 slot 并发布诊断 | Jolt/HoTools | P0 | PASS（native + S3） |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | PASS（py311/py313）：每 ABI 两场景各 10,000 帧；链最大残差 `0.00234770775` |
-| PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 缺失 |
-| PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 缺失 |
+| PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 首轮基线 PASS；1024 body P95=`0.1054/55.91/271.3 ms`，阈值未冻结 |
+| PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 首轮基线 PASS；256 constraint native P95=`0.1895 ms`，256 contact native/pipeline P95=`0.8672/22.5 ms`，阈值未冻结 |
 
 ## 组合矩阵
 
