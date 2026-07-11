@@ -128,16 +128,21 @@ MC2 的 hash container 不提供跨版本/平台顺序保证，因此 HoTools bu
 
 `distance_key` 由 `schema_version + distance_ranges + distance_targets + distance_rest_signed` 完整签名。N0 positions/attributes/edges/triangles 或 baseline parent 变化时重建 Distance；`distance_key` 变化触发整个 context rebuild + reset。`CreateData()` 当前不读取 parameters；stiffness curve、depth、friction、scale、`animationPoseRatio` 和 dynamic base pose 都是 runtime 输入，不属于 N1。`horizontalStiffness=0.5` 与 `velocityAttenuation=0.3` 是固定 kernel/N2 常量，参数热更新同样不得重建 Distance static。
 
-TriangleBending 保留 ordered quad role：
+TriangleBending v0 保留 source ordered quad role，冻结为 `MC2BendingStaticV0`：
 
 | 字段 | 类型/shape |
 |---|---|
-| `bending_quads` | `int32[K,4]`，顺序为 source `(v0,v1,v2,v3)` role。 |
+| `bending_quads` | `int32[K,4]`，顺序为 source `(opposite0,opposite1,edge.x,edge.y)` role。 |
 | `bending_rest_angle_or_volume` | `float32[K]`。 |
 | `bending_sign_or_volume` | `int8[K]`。 |
-| `bending_write_ranges/data` | `int32[N,2]` / source-equivalent write records。 |
 
-同一 triangle pair 可以生成 dihedral 和 volume 两条 record；不得按 unordered quad 去重。
+三数组严格同长、finite、index 在 vertex/source ushort 域，marker 只允许 -1/+1/100。完整 record order 进入 signature 和 ABI。MC2 raw `ulong` 只在 Tier A fixture 保留，host create 显式拒绝任何 Pack64 会静默截断的 index。
+
+同一 triangle pair 可以按 bending-then-volume 生成两条相同 role quad record。只有 volume 使用 sorted four-vertex key全局去重，且保留 traversal 中首个未排序 role quad；不得把 quad 排序后写入 ABI，也不得对 bending 做 unordered 去重。source edge/multi-hash 顺序没有跨版本保证，HoTools 必须定义确定性 edge/triangle-pair traversal，并同时用 raw fixture 与 canonical membership检查固定基线。
+
+`writeBufferCount/writeDataArray/writeIndexArray` 不进入 v0：固定 source 的 Register、Normal 和 Split runtime 都不消费它们。runtime scratch count/vector同样不进入 static spec。
+
+volume rest 的 producer 依赖 proxy `initLocalToWorld` 后的 initial world positions；因此 Bending builder input/dirty key 必须包含明确的 initial local-to-world transform或等价初始 scale/sign producer。它不是 N3 每帧 animated pose。静态 rest 写入后，runtime 另消费 `scaleRatio` 和 `negativeScaleSign`。
 
 Inertia static：
 
@@ -287,7 +292,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
 | Distance | supported host static slice | `MC2DistanceStaticV0` immutable spec/signature/packer + 保序纯 host builder；7 个 `CreateData()` static fixture、2 个 `SolverConstraint()` ordered runtime fixture和 Blender slot bundle 回归。仍无 native consumer/solver capability。 |
-| Bending | planned after Distance | quad/rest/sign/write mapping fixture。 |
+| Bending | contract under source review | ordered quad/rest/marker、volume first-wins role、initial transform 与 runtime scratch fixture；不迁移 write arrays。 |
 | Center without anchor/sync/negative scale | planned restricted | reset + moving component fixture。 |
 | anchor/sync/negative scale/wind | deferred | W4 Tier A runtime fixtures。 |
 | collider/self/inter collision | deferred | dedicated worksheet + registration/step fixtures。 |

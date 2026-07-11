@@ -343,40 +343,44 @@ static signature 覆盖展开后的完整数组及 schema version。N0 positions
 
 ### TriangleBending CreateData
 
+`CreateData(proxyMesh, parameters)` 当前不读取 `parameters`。只要 final proxy 同时有 triangle 和 edge，就始终尝试生成 static data；bending stiffness/method 为 None 不会阻止 build。无 triangle 或无 edge 时直接返回 `null`；有 topology 但没有合格 record 时返回 success `ConstraintData`，主数组为 null 且 `IsValid=false`。
+
 输出主数组：
 
 | Array | 类型 | 语义 |
 |---|---|---|
-| `trianglePairArray` | `ulong[M]` | 四个 ushort：v0/v1 为对角点，v2/v3 为共享边。 |
+| `trianglePairArray` | `ulong[M]` | 四个 ushort：v0/v1 为 ordered opposite vertex，v2/v3 为当前 edge.x/edge.y。Pack64 静默截断。 |
 | `restAngleOrVolumeArray` | `float[M]` | dihedral rest angle 或放大 1000 倍的 rest volume。 |
-| `signOrVolumeArray` | `sbyte[M]` | dihedral 方向为 -1/+1；`100` 表示 volume record。 |
+| `signOrVolumeArray` | `sbyte[M]` | dihedral 方向为 -1/+1；`dir==0` 也写 +1；`100` 表示 volume record。 |
 
 生成步骤：
 
-1. 遍历每条 proxy edge 的全部相邻 triangle pair。
-2. 提取两个 opposite vertex，形成 `(opposite0, opposite1, edge0, edge1)`。
+1. 按 `proxyMesh.edges` 原始顺序遍历 edge；每个 edge 的 triangle list 来自 multi-hash 枚举，再按 list index 的 `i<j` 遍历全部 pair。两层 hash 顺序均不是跨 Unity/Collections 版本保证。
+2. `opposite0` 来自 triangle list 的第一个 triangle，`opposite1` 来自第二个，形成未排序 role quad `(opposite0, opposite1, edge.x, edge.y)`。role 直接进入 Pack64/runtime，不能按 vertex index canonicalize。
 3. 四点都不 Move 时排除；任一点 Invalid 时排除。
-4. 计算有方向 dihedral rest angle 和 sign。
-5. `abs(angle) < 120°` 时加入 bending record。
-6. `90° <= abs(angle) <= 179°` 时另加入 volume record；按四点排序后的 key 去重。
-7. volume 用 world-space initial positions 计算并乘 `1000`；运行时再考虑 scale ratio 和 negative scale sign。
+4. dihedral 使用 local positions：`n1=normalize(cross(p2-p0,p3-p0))`、`n2=normalize(cross(p3-p1,p2-p1))`、`rest=acos(clamp(dot(n1,n2)))`。方向由 `dot(cross(n1,n2), p3-p2)` 决定，小于 0 写 -1，否则写 +1。
+5. `degrees(abs(rest)) < 120` 时加入 bending record；120 是严格排除边界。
+6. `90 <= degrees(abs(rest)) <= 179` 时紧接着尝试 volume record。volume dedup 只把四个 vertex 排序成全局 HashSet key；真正写入的仍是当前未排序 role quad。同一 unordered 四点集合只保留 traversal 中首个 volume，bending 不参与该去重。
+7. volume 用 `initLocalToWorld` 转换后的 initial world positions计算 signed tetra volume并乘 `1000`，marker 固定为 100。运行时 rest 再乘 `scaleRatio` 和 `negativeScaleSign`。
 
-同一个 triangle pair 可能同时产生 bending 与 volume 两条 record，因此“一个邻接 pair 对应一个 bending constraint”不成立。
+同一个 triangle pair 可能按“bending 在前、volume 在后”连续产生两条 record，因此“一个邻接 pair 对应一个 bending constraint”不成立。edge/triangle hash traversal 还决定整体 record 顺序与 duplicate volume 的 first-wins role；fixture 必须保存 raw order，canonical membership 只能用于辅助诊断。
 
-`ConstraintData` 还生成 `writeBufferCount/writeDataArray/writeIndexArray`，但固定 commit 的 `Register()` 和 Normal/Split runtime 搜索中没有消费它们。它们属于 source-generated but runtime-unused 数据；第一版 HoTools ABI 不应仅为字段同名而迁移，除非后续发现 prebuild/export consumer。
+`ConstraintData` 还生成 `writeBufferCount/writeDataArray/writeIndexArray`，但固定 commit 的 `Register()` 和 Normal/Split runtime 完全不消费它们。它们属于 source-generated but runtime-unused 遗留数据；第一版 HoTools ABI 明确排除，不能设计 `bending_write_ranges/data`。
 
 ### Bending consumers and lifetime
 
-`Register()` 只注册 triangle pair、rest、sign 三个同长数组，并在 TeamData 保存 `bendingPairChunk`。solver 按 record 解包四点，按 attribute/depth/friction 计算四点 correction，累加到 per-particle scratch；`SumConstraint()` 再对 Move particle 平均并清空 scratch。
+`Register()` 只注册 triangle pair、rest、marker 三个同长数组，并在 TeamData 保存同一个 `bendingPairChunk`。runtime method=None 或 stiffness `<1e-6` 时全部 record（包括 volume）不执行；有效 stiffness 为 `saturate(stiffness*simulationPower.y)`。solver 按 record 解包四点，Fixed/DontMove 仍使用 `invMass=0.01`，Move 按 friction/depth 计算 inverse mass。
+
+volume rest 在 runtime 乘 `scaleRatio*negativeScaleSign`；direction dihedral rest 先乘静态 sign，再乘 `negativeScaleSign`。每条成功 correction 通过固定点原子加法进入 per-particle scratch；`SumConstraint()` 只给 Move particle 按 contribution count 平均写回 `nextPos`，随后无条件清零所有粒子的 count/vector scratch。因此 scratch、write count 和 per-particle ranges 都不属于 N1 static ABI。
 
 因此 host static data 与 runtime scratch 必须分离。scratch count/vector 不属于 constraint topology spec，也不能跨帧持久化。
 
 ### HoTools contract conclusion
 
-候选静态结构至少包含：
+冻结静态结构：
 
 - Distance: `vertex_ranges`, `target_indices`, `signed_rest_distances`；
-- Bending: `vertex_quads`, `rest_angle_or_volume`, `sign_or_volume`；
+- Bending: `ordered_quads:int32[K,4]`、`rest_angle_or_volume:float32[K]`、`sign_or_volume:int8[K]`；三数组严格同长并保留完整 raw order；
 - shared source identity: proxy/baseline/attribute signatures；
 - debug-only canonical records，不能反过来替代 runtime layout。
 
@@ -389,10 +393,12 @@ static signature 覆盖展开后的完整数组及 schema version。N0 positions
 3. vertical/horizontal zero-distance 都导出 `+0.0`，并验证 zero special case 不使用 stiffness/mass/animation ratio。
 4. 双三角方片满足 shear 条件，以及分别被法线阈值、长度比阈值、degenerate shared edge 和既有 `connectSet` 排除。
 5. 12/20 pack round-trip、ushort target 与 count/start 越界拒绝；raw hash sibling order仅诊断，canonical per-source view 只用于 static membership parity。
-6. 单 edge 两 triangle 的普通 dihedral record。
-7. 120 度排除、90..179 度 volume、同一 pair 双 record。
-8. negative scale 与 world-space volume rest 的运行时消费。
-9. per-vertex Distance average、zero 覆盖已有累计值、mixed zero/nonzero 顺序敏感性、average 分母和 per-particle Bending sum scratch 的数值 oracle。
+6. 单 edge 两 triangle 的普通 dihedral record、ordered opposite/shared-edge role 和 `dir==0 -> +1`。
+7. 120 度严格排除、90/179 闭区间、同一 pair 的 bending-then-volume 双 record、179 以上排除。
+8. 同一 unordered 四点经不同 role/edge 重复出现时，首个 volume role获胜且 bending 不去重。
+9. `initLocalToWorld` 对 signed volume rest 的影响，以及 runtime `scaleRatio/negativeScaleSign` 消费。
+10. Pack64 ushort 截断由 host create 显式拒绝；无 triangle/edge 的 null 与有 topology/K=0 的 success-empty 区分。
+11. per-vertex Distance average、zero 覆盖已有累计值、mixed zero/nonzero 顺序敏感性、average 分母和 per-particle Bending fixed-point sum/average/clear 数值 oracle。
 
 当前已落盘 7 个 Distance Tier A build fixture：parent/horizontal signed encoding、square shear、normal reject、ratio reject、Invalid ordinary-edge 过滤与 Invalid+Move shear 边界、all-Fixed 空数组、zero kind loss。fixture 同时保存 source raw packed arrays 与展开 ranges；`test_distance_tier_a.py` 校验 packed round-trip、连续 range 和上述 source facts。
 
