@@ -3,9 +3,42 @@
 from __future__ import annotations
 
 import glob
+import importlib
 import json
 import math
 import os
+import sys
+import types
+
+import numpy as np
+
+
+MC2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PHYSICS_WORLD = os.path.dirname(MC2_ROOT)
+FUNCTION = os.path.dirname(PHYSICS_WORLD)
+NODETREE = os.path.dirname(FUNCTION)
+OMNINODE = os.path.dirname(NODETREE)
+HOTOOLS = os.path.dirname(OMNINODE)
+
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2", MC2_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [package_path]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+static_data = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.static_data"
+)
+distance_static = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.distance_static"
+)
 
 
 FIXTURE_DIRECTORY = os.path.join(os.path.dirname(__file__), "fixtures", "tier_a")
@@ -77,6 +110,59 @@ def _has_record(records, target, rest):
         item_target == target
         and math.isclose(item_rest, rest, abs_tol=1.0e-6, rel_tol=1.0e-6)
         for item_target, item_rest in records
+    )
+
+
+def _build(fixture):
+    payload = fixture["input"]
+    count = len(payload["local_positions"])
+    proxy = static_data.make_mc2_proxy_static_spec(
+        task_id="mc2:mesh_cloth:" + fixture["case_id"],
+        setup_type=payload["setup_type"],
+        vertex_identities=[f"mesh:v{index}" for index in range(count)],
+        local_positions=payload["local_positions"],
+        local_normals=[[0, 0, 1] for _ in range(count)],
+        local_tangents=[[1, 0, 0] for _ in range(count)],
+        uvs=[[0, 0] for _ in range(count)],
+        vertex_attributes=payload["vertex_attributes"],
+        edges=payload["edges"],
+        triangles=payload["triangles"],
+    )
+    adjacency = payload["vertex_to_vertex"]
+    ranges = []
+    data = []
+    for values in adjacency:
+        ranges.append((len(data), len(values)))
+        data.extend(values)
+    parents = tuple(payload["parent_indices"])
+    children = [[] for _ in range(count)]
+    for child, parent in enumerate(parents):
+        if parent >= 0:
+            children[parent].append(child)
+    child_ranges = []
+    child_data = []
+    for values in children:
+        child_ranges.append((len(child_data), len(values)))
+        child_data.extend(values)
+    baseline = static_data.make_mc2_baseline_static_spec(
+        proxy_signature=proxy.proxy_signature,
+        vertex_count=count,
+        parent_indices=parents,
+        child_ranges=child_ranges,
+        child_data=child_data,
+        baseline_flags=(),
+        baseline_ranges=(),
+        baseline_data=(),
+        root_indices=(-1,) * count,
+        depths=(0.0,) * count,
+        vertex_local_positions=((0.0, 0.0, 0.0),) * count,
+        vertex_local_rotations=((0.0, 0.0, 0.0, 0.0),) * count,
+    )
+    return distance_static.build_mc2_distance_static(
+        proxy,
+        baseline,
+        vertex_to_vertex_ranges=ranges,
+        vertex_to_vertex_data=data,
     )
 
 
@@ -182,10 +268,95 @@ def test_distance_runtime_fixtures_prove_order_is_semantic() -> None:
     assert not math.isclose(first_next, second_next, abs_tol=1.0e-6)
 
 
+def test_distance_tier_a_fixtures_match_ordered_host_builder() -> None:
+    for fixture in _fixtures().values():
+        actual = _build(fixture)
+        expected = fixture["expected"]
+        wanted_ranges = expected["distance_ranges"]
+        if not wanted_ranges:
+            wanted_ranges = [[0, 0] for _ in fixture["input"]["local_positions"]]
+        assert actual.distance_ranges == tuple(map(tuple, wanted_ranges)), fixture["case_id"]
+        assert actual.distance_targets == tuple(expected["distance_targets"]), fixture["case_id"]
+        assert len(actual.distance_rest_signed) == len(expected["distance_rest_signed"])
+        for index, (value, wanted) in enumerate(
+            zip(actual.distance_rest_signed, expected["distance_rest_signed"])
+        ):
+            assert math.isclose(
+                value,
+                float(wanted),
+                abs_tol=1.0e-6,
+                rel_tol=1.0e-6,
+            ), f"{fixture['case_id']} rest[{index}]: {value} != {wanted}"
+        buffers = distance_static.pack_mc2_distance_static(actual)
+        assert buffers["distance_ranges"].dtype == np.int32
+        assert buffers["distance_ranges"].shape == (actual.vertex_count, 2)
+        assert buffers["distance_targets"].dtype == np.int32
+        assert buffers["distance_rest_signed"].dtype == np.float32
+        assert all(not value.flags.writeable for value in buffers.values())
+
+
+def test_distance_signature_preserves_record_order() -> None:
+    fixture = _runtime_fixtures()["distance_runtime_nonzero_then_zero_001"]
+    first = distance_static.make_mc2_distance_static_spec(
+        proxy_signature="p",
+        baseline_signature="b",
+        vertex_count=3,
+        distance_ranges=((0, 2), (2, 0), (2, 0)),
+        distance_targets=fixture["input"]["distance_targets"],
+        distance_rest_signed=fixture["input"]["distance_rest_signed"],
+    )
+    second = distance_static.make_mc2_distance_static_spec(
+        proxy_signature="p",
+        baseline_signature="b",
+        vertex_count=3,
+        distance_ranges=((0, 2), (2, 0), (2, 0)),
+        distance_targets=tuple(reversed(first.distance_targets)),
+        distance_rest_signed=tuple(reversed(first.distance_rest_signed)),
+    )
+    assert first.distance_signature != second.distance_signature
+
+
+def test_distance_spec_quantizes_float32_before_signature() -> None:
+    first = distance_static.make_mc2_distance_static_spec(
+        proxy_signature="p",
+        baseline_signature="b",
+        vertex_count=2,
+        distance_ranges=((0, 1), (1, 0)),
+        distance_targets=(1,),
+        distance_rest_signed=(1.00000001,),
+    )
+    second = distance_static.make_mc2_distance_static_spec(
+        proxy_signature="p",
+        baseline_signature="b",
+        vertex_count=2,
+        distance_ranges=((0, 1), (1, 0)),
+        distance_targets=(1,),
+        distance_rest_signed=(1.00000002,),
+    )
+    assert first.distance_rest_signed == second.distance_rest_signed == (1.0,)
+    assert first.distance_signature == second.distance_signature
+    try:
+        distance_static.make_mc2_distance_static_spec(
+            proxy_signature="p",
+            baseline_signature="b",
+            vertex_count=2,
+            distance_ranges=((0, 1), (1, 0)),
+            distance_targets=(1,),
+            distance_rest_signed=(1.0e300,),
+        )
+    except ValueError as exc:
+        assert "float32" in str(exc)
+    else:
+        raise AssertionError("Distance rest overflow must be rejected before packing")
+
+
 TESTS = (
     ("Tier A Distance fixture contract", test_distance_fixture_contract_and_packed_ranges),
     ("Tier A Distance source build facts", test_distance_fixtures_lock_source_build_facts),
     ("Tier A Distance runtime order semantics", test_distance_runtime_fixtures_prove_order_is_semantic),
+    ("Tier A ordered Distance host parity", test_distance_tier_a_fixtures_match_ordered_host_builder),
+    ("Distance signature preserves order", test_distance_signature_preserves_record_order),
+    ("Distance signature uses float32 values", test_distance_spec_quantizes_float32_before_signature),
 )
 
 

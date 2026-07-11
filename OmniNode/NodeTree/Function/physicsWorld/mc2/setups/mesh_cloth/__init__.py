@@ -30,6 +30,8 @@ _EXPORTS = {
     "build_blender_mesh_final_proxy": ".final_proxy",
     "build_mc2_mesh_cloth_static": ".static_build",
     "build_mc2_mesh_cloth_static_for_task": ".static_build",
+    "mesh_cloth_static_input_signature": ".static_build",
+    "mesh_cloth_static_input_signature_for_task": ".static_build",
     "build_mc2_mesh_final_proxy": ".final_proxy",
 }
 

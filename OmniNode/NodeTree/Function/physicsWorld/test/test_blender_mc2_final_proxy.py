@@ -53,6 +53,27 @@ world_types = importlib.import_module(
 )
 
 
+def _register_mesh_collision_properties():
+    properties = importlib.import_module(
+        "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.properties"
+    )
+    cls = properties.PG_Hotools_MeshCollision
+    registered_class = not hasattr(bpy.types, cls.__name__)
+    if registered_class:
+        bpy.utils.register_class(cls)
+    registered_binding = not hasattr(bpy.types.Object, "hotools_mesh_collision")
+    if registered_binding:
+        bpy.types.Object.hotools_mesh_collision = bpy.props.PointerProperty(type=cls)
+
+    def cleanup():
+        if registered_binding and hasattr(bpy.types.Object, "hotools_mesh_collision"):
+            del bpy.types.Object.hotools_mesh_collision
+        if registered_class and hasattr(bpy.types, cls.__name__):
+            bpy.utils.unregister_class(cls)
+
+    return cleanup
+
+
 def _assign_identity_uvs(mesh) -> None:
     uv_layer = mesh.uv_layers.new(name="MC2_UV")
     coords = {
@@ -172,9 +193,62 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
         assert mesh_static is not None
         assert mesh_static.final_proxy.vertex_count == 4
         assert len(mesh_static.final_proxy.triangles) == 2
-        assert slot.debug_snapshot()["mesh_static"]["vertex_count"] == 4
+        assert mesh_static.distance.vertex_count == 4
+        assert len(mesh_static.distance.distance_targets) > 0
+        snapshot = slot.debug_snapshot()["mesh_static"]
+        assert snapshot["vertex_count"] == 4
+        assert snapshot["distance_record_count"] == len(
+            mesh_static.distance.distance_targets
+        )
+        assert snapshot["distance_signature"] == mesh_static.distance.distance_signature
     finally:
         _remove_object(obj)
+
+
+def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
+    cleanup_properties = _register_mesh_collision_properties()
+    obj = _make_object("MC2_FinalProxyStaticDirty", ((0, 1, 2, 3),))
+    try:
+        group = obj.vertex_groups.new(name="Pin")
+        group.add((0,), 1.0, "REPLACE")
+        properties = obj.hotools_mesh_collision
+        properties.pin_enabled = True
+        properties.pin_vertex_group = "Pin"
+
+        world = world_types.PhysicsWorldCache()
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+        mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        first_static = slot.data["mesh_static"]
+        first_input_signature = slot.data["static_input_signature"]
+        assert sum(
+            bool(value & 0x01) for value in first_static.final_proxy.vertex_attributes
+        ) == 1
+
+        group.add((2,), 1.0, "REPLACE")
+        _world, _ready, status = mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        second_static = slot.data["mesh_static"]
+        second_input_signature = slot.data["static_input_signature"]
+        assert "重建 1" in status
+        assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
+        assert second_input_signature != first_input_signature
+        assert second_static.distance.distance_signature != first_static.distance.distance_signature
+        assert sum(
+            bool(value & 0x01) for value in second_static.final_proxy.vertex_attributes
+        ) == 2
+
+        uv_layer = obj.data.uv_layers.active
+        for item in uv_layer.data:
+            item.uv.x += 0.125
+        _world, _ready, status = mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        assert "重建 1" in status
+        assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
+        assert slot.data["static_input_signature"] != second_input_signature
+    finally:
+        _remove_object(obj)
+        cleanup_properties()
 
 
 TESTS = (
@@ -182,6 +256,7 @@ TESTS = (
     ("vertex group pin uses same indices", test_vertex_group_pin_uses_same_vertex_indices),
     ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
     ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
+    ("MC2 slot rebuilds for Pin/UV static changes", test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes),
 )
 
 

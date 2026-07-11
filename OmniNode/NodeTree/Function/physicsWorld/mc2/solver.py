@@ -47,6 +47,7 @@ def _slot_debug_snapshot(slot) -> dict:
             if hasattr(mesh_static, "debug_dict")
             else None
         ),
+        "static_input_signature": slot.data.get("static_input_signature", ""),
         "runtime_state": state.debug_dict() if hasattr(state, "debug_dict") else None,
         "particle_buffer": (
             particle_buffer.debug_dict()
@@ -69,6 +70,7 @@ def _install_mc2_slot(
     initial_state: MC2InitialStateSpec,
     reset_reason: str,
     mesh_static=None,
+    static_input_signature: str | None = None,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
         topology_signature=topology.topology_signature,
@@ -91,6 +93,7 @@ def _install_mc2_slot(
             "settings": settings,
             "initial_state": initial_state,
             "mesh_static": mesh_static,
+            "static_input_signature": static_input_signature,
             "particle_buffer": particle_buffer,
             "runtime_state": state,
             "declaration": MC2_SOLVER_DECLARATION,
@@ -103,7 +106,12 @@ def _install_mc2_slot(
     return state
 
 
-def _mc2_slot_rebuild_reason(world: PhysicsWorldCache, spec, topology) -> str:
+def _mc2_slot_rebuild_reason(
+    world: PhysicsWorldCache,
+    spec,
+    topology,
+    static_input_signature: str | None = None,
+) -> str:
     slot = world.solver_slots.get(spec.task_id)
     if slot is None:
         return "created"
@@ -120,6 +128,8 @@ def _mc2_slot_rebuild_reason(world: PhysicsWorldCache, spec, topology) -> str:
         return "world_generation_changed"
     if state.topology_signature != topology.topology_signature:
         return "topology_changed"
+    if slot.data.get("static_input_signature") != static_input_signature:
+        return "static_input_changed"
     return ""
 
 
@@ -131,8 +141,14 @@ def _sync_mc2_slot(
     effective,
     initial_state,
     mesh_static,
+    static_input_signature,
 ) -> tuple[str, object]:
-    rebuild_reason = _mc2_slot_rebuild_reason(world, spec, topology)
+    rebuild_reason = _mc2_slot_rebuild_reason(
+        world,
+        spec,
+        topology,
+        static_input_signature,
+    )
     slot = world.ensure_solver_slot(spec.task_id, MC2_SLOT_KIND)
     previous_state = slot.data.get("runtime_state")
 
@@ -150,6 +166,7 @@ def _sync_mc2_slot(
             settings=settings,
             initial_state=initial_state,
             mesh_static=mesh_static,
+            static_input_signature=static_input_signature,
             reset_reason=rebuild_reason,
         )
         return "created" if rebuild_reason == "created" else "rebuilt", slot
@@ -214,7 +231,22 @@ def step_mc2(
             settings,
             spec.setup_options,
         )
-        rebuild_reason = _mc2_slot_rebuild_reason(world, spec, topology)
+        static_input_signature = None
+        if spec.setup_type == "mesh_cloth":
+            from .setups.mesh_cloth.static_build import (
+                mesh_cloth_static_input_signature_for_task,
+            )
+
+            static_input_signature = mesh_cloth_static_input_signature_for_task(
+                spec,
+                topology,
+            )
+        rebuild_reason = _mc2_slot_rebuild_reason(
+            world,
+            spec,
+            topology,
+            static_input_signature,
+        )
         initial_state = (
             build_mc2_initial_state(spec, topology)
             if rebuild_reason
@@ -227,13 +259,29 @@ def step_mc2(
             )
 
             mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
-        prepared_items.append((spec, topology, effective, initial_state, mesh_static))
+        prepared_items.append(
+            (
+                spec,
+                topology,
+                effective,
+                initial_state,
+                mesh_static,
+                static_input_signature,
+            )
+        )
     prepared = tuple(prepared_items)
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
     world.acquire_write(MC2_SOLVER_ID)
     try:
-        for spec, topology, effective, initial_state, mesh_static in prepared:
+        for (
+            spec,
+            topology,
+            effective,
+            initial_state,
+            mesh_static,
+            static_input_signature,
+        ) in prepared:
             action, slot = _sync_mc2_slot(
                 world,
                 spec,
@@ -242,6 +290,7 @@ def step_mc2(
                 effective,
                 initial_state,
                 mesh_static,
+                static_input_signature,
             )
             counts[action] += 1
             active_slot_ids.append(slot.slot_id)

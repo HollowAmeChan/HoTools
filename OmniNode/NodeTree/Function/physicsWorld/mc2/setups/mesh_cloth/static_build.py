@@ -9,13 +9,18 @@ results.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 
+from ...distance_static import MC2DistanceStaticSpec
+from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
 from ...mesh_baseline import build_mc2_mesh_baseline
 from ...names import MC2_SETUP_MESH_CLOTH
 from ...specs import MC2TaskSpec
 from ...topology import MC2TopologySpec
 from .final_proxy import MC2MeshFinalProxyBuildResult
+from .final_proxy import _mesh_triangles, _mesh_uvs, _vertex_group_weights
 from .final_proxy import build_blender_mesh_final_proxy
 
 
@@ -23,6 +28,7 @@ from .final_proxy import build_blender_mesh_final_proxy
 class MC2MeshClothStaticBuildResult:
     finalizer: MC2MeshFinalProxyBuildResult
     baseline: MC2MeshBaselineBuildResult
+    distance: MC2DistanceStaticSpec
 
     @property
     def final_proxy(self):
@@ -33,10 +39,16 @@ class MC2MeshClothStaticBuildResult:
             raise TypeError("finalizer must be MC2MeshFinalProxyBuildResult")
         if not isinstance(self.baseline, MC2MeshBaselineBuildResult):
             raise TypeError("baseline must be MC2MeshBaselineBuildResult")
+        if not isinstance(self.distance, MC2DistanceStaticSpec):
+            raise TypeError("distance must be MC2DistanceStaticSpec")
         if self.finalizer.proxy.task_id != self.baseline.final_proxy.task_id:
             raise ValueError("finalizer and baseline task_id must match")
         if self.finalizer.proxy.vertex_identities != self.baseline.final_proxy.vertex_identities:
             raise ValueError("finalizer and baseline vertex identities must match")
+        if self.distance.proxy_signature != self.baseline.final_proxy.proxy_signature:
+            raise ValueError("distance and final proxy signatures must match")
+        if self.distance.baseline_signature != self.baseline.baseline.baseline_signature:
+            raise ValueError("distance and baseline signatures must match")
 
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
@@ -48,12 +60,14 @@ class MC2MeshClothStaticBuildResult:
             "fixed_count": sum(
                 1 for value in self.final_proxy.vertex_attributes if value & 0x01
             ),
+            "distance_record_count": len(self.distance.distance_targets),
         }
         if include_signatures:
             result.update(
                 {
                     "proxy_signature": self.final_proxy.proxy_signature,
                     "baseline_signature": self.baseline.baseline.baseline_signature,
+                    "distance_signature": self.distance.distance_signature,
                 }
             )
         return result
@@ -80,6 +94,60 @@ def _mesh_cloth_pin_settings(obj) -> tuple[bool, str]:
     )
 
 
+def mesh_cloth_static_input_signature(obj, *, topology_signature: str) -> str:
+    obj = _resolve_mesh_object(obj)
+    if obj is None:
+        raise ValueError("MeshCloth static input signature requires one Mesh object")
+    mesh = obj.data
+    mesh.update()
+    triangles = _mesh_triangles(mesh)
+    uvs = _mesh_uvs(mesh, triangles, uv_layer_name=None)
+    pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
+    vertex_count = len(mesh.vertices)
+    if not pin_enabled:
+        attributes = (0x02,) * vertex_count
+    elif not pin_vertex_group:
+        attributes = (0x01,) * vertex_count
+    else:
+        weights = _vertex_group_weights(obj, pin_vertex_group, vertex_count)
+        attributes = tuple(0x01 if weight > 0.0 else 0x02 for weight in weights)
+    payload = {
+        "schema_version": 1,
+        "topology_signature": str(topology_signature or ""),
+        "pin_enabled": pin_enabled,
+        "pin_vertex_group": pin_vertex_group,
+        "vertex_attributes": attributes,
+        "uvs": uvs,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def mesh_cloth_static_input_signature_for_task(
+    task: MC2TaskSpec,
+    topology: MC2TopologySpec,
+) -> str | None:
+    if not isinstance(task, MC2TaskSpec):
+        raise TypeError("task must be MC2TaskSpec")
+    if not isinstance(topology, MC2TopologySpec):
+        raise TypeError("topology must be MC2TopologySpec")
+    if task.setup_type != MC2_SETUP_MESH_CLOTH:
+        return None
+    resolved = tuple(_resolve_mesh_object(source) for source in task.sources)
+    mesh_sources = tuple(source for source in resolved if source is not None)
+    if len(task.sources) != 1 or len(mesh_sources) != 1:
+        raise ValueError("MeshCloth static input expects exactly one proxy mesh source")
+    return mesh_cloth_static_input_signature(
+        mesh_sources[0],
+        topology_signature=topology.topology_signature,
+    )
+
+
 def build_mc2_mesh_cloth_static(
     obj,
     *,
@@ -95,7 +163,17 @@ def build_mc2_mesh_cloth_static(
         expected_mesh_topology_signature=topology_signature,
     )
     baseline = build_mc2_mesh_baseline(finalizer.proxy)
-    return MC2MeshClothStaticBuildResult(finalizer=finalizer, baseline=baseline)
+    distance = build_mc2_distance_static(
+        baseline.final_proxy,
+        baseline.baseline,
+        vertex_to_vertex_ranges=finalizer.vertex_to_vertex_ranges,
+        vertex_to_vertex_data=finalizer.vertex_to_vertex_data,
+    )
+    return MC2MeshClothStaticBuildResult(
+        finalizer=finalizer,
+        baseline=baseline,
+        distance=distance,
+    )
 
 
 def build_mc2_mesh_cloth_static_for_task(
@@ -126,4 +204,6 @@ __all__ = [
     "MC2MeshClothStaticBuildResult",
     "build_mc2_mesh_cloth_static",
     "build_mc2_mesh_cloth_static_for_task",
+    "mesh_cloth_static_input_signature",
+    "mesh_cloth_static_input_signature_for_task",
 ]

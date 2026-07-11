@@ -396,7 +396,9 @@ static signature 覆盖展开后的完整数组及 schema version。N0 positions
 
 当前已落盘 7 个 Distance Tier A build fixture：parent/horizontal signed encoding、square shear、normal reject、ratio reject、Invalid ordinary-edge 过滤与 Invalid+Move shear 边界、all-Fixed 空数组、zero kind loss。fixture 同时保存 source raw packed arrays 与展开 ranges；`test_distance_tier_a.py` 校验 packed round-trip、连续 range 和上述 source facts。
 
-另有 2 个直接 reflection 调用 `SolverConstraint()` 的 Tier A runtime fixture。它们使用同一组 nonzero+zero records，仅交换 range 内顺序，分别得到 source vertex `next.x=1.0` 与 `1.47846889`，证明 raw order 不能被 canonical comparison替代。后续 host builder 必须消费 finalizer 已产生的 ordered vertex adjacency，并保留自己生成的完整 record order；按 target排序属于行为变更。
+另有 2 个直接 reflection 调用 `SolverConstraint()` 的 Tier A runtime fixture。它们使用同一组 nonzero+zero records，仅交换 range 内顺序，分别得到 source vertex `next.x=1.0` 与 `1.47846889`，证明 raw order 不能被 canonical comparison 替代。
+
+`distance_static.py` 已实现保序 host builder：消费 finalizer 已产生的 `vertex_to_vertex_ranges/data` 和绑定的 `MC2BaselineStaticSpec`，vertical 保留原 adjacency 相对顺序，horizontal 保留 MC2 的 shear-before-ordinary 构建顺序，完整 records 进入 signature 和只读 `int32/float32` packer。rest 在签名前量化为 finite float32。7 个 Tier A build fixture 按完整 ranges/targets/rest arrays 对拍；all-Fixed source null arrays 明确规范化为 N 个 zero ranges。Mesh static rebuild bundle 同时持有 finalizer、baseline 和 Distance spec；topology token之外的 UV/Pin mask 由独立 static input signature 触发整包重建，但尚无 native consumer。
 
 ## W4 Inertia Static Data 与 Center Runtime State
 

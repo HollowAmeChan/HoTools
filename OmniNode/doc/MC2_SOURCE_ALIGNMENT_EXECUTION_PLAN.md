@@ -229,8 +229,8 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 不继续写 B4 solver 代码，不接旧物理、不接废弃 HoClothUnity、不提交 MC2 商业源码。当前 Mesh N0 final proxy、baseline 和 slot static cache 已完成，下一步优先整理并冻结后续文档契约：
 
-1. N1 DistanceConstraint static：字段、生成规则、zero-distance、shear Invalid 边界、ordered range、signature/dirty policy 已冻结为 `MC2DistanceStaticV0`；独立 Unity oracle 已落地 7 个 raw packed/expanded build fixture 和 2 个 ordered runtime fixture。下一步实现保序纯 host builder：输入必须包含 finalizer 的 `vertex_to_vertex_ranges/data`，禁止从 unordered edge set 重建后按 target 排序；all-Fixed source null arrays 在 host 规范化为 N 个 zero ranges。不得使用旧 solver 对拍。
-2. N1 TriangleBending static：整理 ordered quad role、dihedral/volume 分类、rest value/sign/write mapping，不把当前简化 adjacency pair 当 ABI。
+1. N1 DistanceConstraint static：已完成。`MC2DistanceStaticV0`、保序纯 host builder、显式 dtype packer、7 个 raw packed/expanded build fixture、2 个 ordered runtime fixture及 Blender slot bundle 回归均已落地；all-Fixed source null arrays 在 host 规范化为 N 个 zero ranges。仍不代表 native solver capability。
+2. N1 TriangleBending static：下一步整理 ordered quad role、dihedral/volume 分类、rest value/sign/write mapping，先扩展独立 Unity oracle，不把当前简化 adjacency pair 当 ABI。
 3. N2 runtime parameter ABI：把 `ClothParameters`、BoneSpring override、16-sample curve representation 和 HoTools scheduler settings 拆成明确 schema，先写字段表和 dirty policy，不写 C++ binding。
 4. N3 Mesh dynamic adapter：在既有 BasePose evaluated snapshot 基础上，按 W2 local-pose 规则派生 `proxy_animation_world_rotations`，并明确 frame cache、restart 和 topology mismatch 行为。
 5. Native context 前的最后门槛：更新 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md` 的 S2 checklist，让每个即将进入 ABI 的字段都有 producer、consumer、shape、坐标空间、dirty/rebuild 和 oracle。
