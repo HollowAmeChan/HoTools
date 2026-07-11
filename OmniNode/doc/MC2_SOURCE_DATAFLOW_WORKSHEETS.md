@@ -264,6 +264,27 @@ attribute 确定后，源码依次生成：
 
 MC2 的 selection sample 空间映射保留为 source fact，但按 D-02/D-03 不进入 HoTools implementation oracle：HoTools 只对 final-proxy 输入做同 index attribute 映射。
 
+### Blender final-proxy N0 extraction（2026-07-11 补充审计）
+
+固定源码的 Mesh import 与 proxy finalization 之间仍有一层不能跳过：
+
+1. `VirtualMeshInputOutput.cs::ImportMeshType()` 从 Unity `MeshData` 按 vertex index 读取 positions、normals、可选 tangents 和一个 UV channel；triangle index 依 submesh 顺序追加。Unity 输入在这一阶段已经是逐顶点 normal/tangent/UV，不存在 Blender loop-domain 表示。
+2. 缺 tangent 时 `Import_GenerateTangentJob` 只用逐顶点 normal 确定性生成姿态 tangent；它不是 Blender/MikkTSpace 渲染 tangent。
+3. `VirtualMeshProxy.cs::ConvertProxyMesh()` 从 triangle+line 生成 adjacency/canonical edges，按 `SameSurfaceAngle=80°` 对相邻 triangle 分层并尽量统一方向，再从 final triangle positions/UV 计算 triangle normal/tangent。
+4. 每个 vertex 最多登记 7 个相邻 triangle；`Proxy_OrganizeVertexToTrianglsJob` OR `Triangle(0x80)` 并记录 normal/tangent flip flag，随后 `Proxy_CalcVertexNormalTangentFromTriangleJob` 覆盖 triangle vertex 的 local normal/tangent。baseline local pose 消费的是这个 final orientation，不是未经 finalization 的 Blender vertex normal。
+5. `MathUtility.TriangleTangent()` 在 UV area 为 0 时继续计算，但可能得到 zero tangent；`Proxy_CalcTriangleTangentJob` 对结果有非零断言。因此“没有 UV 就任意补零”不能作为可靠 triangle input 契约。
+
+Blender host 映射据此冻结：
+
+- 不拆点、不合点、不复制、不重排顶点；vertex identity 永远是输入 Mesh vertex index。
+- triangle 来自 reference Mesh 的 `loop_triangles`；n-gon triangulation 不增加顶点。solver edges 是显式 Mesh edges 与所有 triangle 边的 canonical union，对应 MC2 triangle+line adjacency，不等于只读取 `mesh.edges`。
+- 无 Pin 时所有顶点为 Move；Pin 开启且组名为空时全部 Fixed；指定组时 weight `> 0` 的同 index 顶点为 Fixed，其余 Move。`Triangle` bit 只能在 proxy finalization 由 triangle membership OR，不能由 vertex group 伪造。
+- line-only Mesh 不需要 UV，可使用 zero UV，并对 normal 缺省路径做 source-equivalent tangent fallback。
+- 含 triangle 的 Mesh 必须有可用 UV，且同一 vertex 的所有 Blender loops 必须在冻结容差内具有同一 UV。UV seam 若仍共享一个 Blender vertex，adapter 显式报错；不会偷偷选择首 loop、平均 UV 或拆点。用户应在输入代理中自行 split seam vertex，这与“输入什么顶点就计算什么顶点”的产品约束一致。
+- Blender extraction 先产生 host authoring snapshot；source-equivalent proxy finalization 再产生 `MC2ProxyStaticSpec`，之后才允许调用 `build_mc2_mesh_baseline()`。这三者不得继续塞回旧 `topology.py::_mesh_payload()` 计数壳。
+
+该 slice 的 Tier A oracle 必须直接导出 `ConvertProxyMesh()` 后的 triangles、edges、attributes、local normals/tangents 和 vertex-to-triangle flip records，至少覆盖：一致 winding、相邻反向 winding、80° layer boundary、UV tangent、UV zero-area、超过 7 个相邻 triangle、triangle+loose line、Pin/Move attribute OR。Blender host 测试另覆盖 UV seam 拒绝、n-gon 不增点和 vertex group 同 index 映射。
+
 ## W3 Proxy Topology 到 Distance/Bending Data
 
 ### Source entries

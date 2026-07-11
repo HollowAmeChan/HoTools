@@ -203,6 +203,7 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 | D-06 | Tier A fixture host 放在哪里？ | **已决并落地**：`tools/mc2_unity_oracle`，Unity `6000.3.15f1`；只以外部 local package 引用固定 MC2 checkout。HoClothUnity 已废弃并排除。 | 不修改/运行 HoClothUnity 作为 oracle，不把其输出升级为 Tier A；MC2 商业源码永久忽略且不得提交。 |
 | D-07 | Curve runtime representation 如何冻结？ | source 使用 16-float `float4x4` samples；HoTools 当前只保存 authoring curve payload。 | 不把当前 effective payload 直接作为 native ABI。 |
 | D-08 | 骨架驱动 MeshCloth 的逐帧输入和 GN 写回如何隔离？ | **已决且唯一支持**：双对象 + 常驻 GN。静态拓扑来自 final-proxy Mesh data；逐帧 pose 来自永久移除物理 GN output 的同拓扑 BasePose evaluated snapshot；同帧 display/base 差值转 object-local offset 后在源对象修改器栈末端应用。 | 禁止 BlendShape 写回、单对象切换/移动 GN、读取已含物理 offset 的源对象 evaluated mesh、把动画 pose 写入 N0，或接受会改变 vertex identity/count/order/topology 的基础修改器。 |
+| D-09 | Blender loop-domain UV 如何进入 MC2 逐顶点 UV？ | **已决**：不做拓扑转换。含 triangle 的 Mesh 要求同一 vertex 的所有 loop UV 在冻结容差内一致；不一致时报错，用户自行 split 代理顶点。line-only Mesh 可使用 zero UV。 | 禁止选择首 loop、平均 UV、自动拆点、改变 vertex count/order，或跳过 triangle normal/tangent finalization。 |
 
 ## 每阶段提交规则
 
@@ -222,4 +223,6 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、same-frontier parent、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。`tools/mc2_unity_oracle` 已在 Unity `6000.3.15f1`、MC2 `2.18.1@418f89f`、Burst `1.8.29`、Collections `2.6.5`、Mathematics `1.3.3` 下导出 9 个 Tier A case：8 个完整语义数组与 HoTools 对拍通过，另 1 个 high-first case 证明 equal-cost 是 source first-enumerated，而 HoTools 固定 lowest-index 是已登记 intentional deviation。
 
-D-08 的 Blender 双对象 adapter 基础层已实现并通过真实 Armature + 常驻 GN 无反馈回归：BasePose 永久移除共享 Physics World output，创建时冻结 Mesh topology identity token，N3 positions/normals 以 source/data/BasePose/frame/generation/token 为 key 缓存为不可写 snapshot。该 token 不等于包含全部 reference/static payload 的 `final_proxy.proxy_signature`。下一步建立 Blender N0 extraction/slot binding，让一次静态构建同时持有两个 token 并驱动 rebuild，再按 W2 local-pose 规则派生 N3 `proxy_animation_world_rotations`；完成此前不进入 native solver step。不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。
+D-08 的 Blender 双对象 adapter 基础层已实现并通过真实 Armature + 常驻 GN 无反馈回归：BasePose 永久移除共享 Physics World output，创建时冻结 Mesh topology identity token，N3 positions/normals 以 source/data/BasePose/frame/generation/token 为 key 缓存为不可写 snapshot。该 token 不等于包含全部 reference/static payload 的 `final_proxy.proxy_signature`。不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。
+
+进一步对照固定 MC2 source 后，Mesh N0 还缺一层强制的 proxy finalization gate。下一步先扩展 Unity Tier A oracle，直接导出 `ConvertProxyMesh()` 后的 triangle direction、final normals/tangents、Triangle bit、vertex-to-triangle flip records 和 explicit+triangle edge union；再实现 Blender host snapshot 按 D-09 校验 UV，生成 final proxy 后进入 baseline static bundle，并把 Mesh topology token 与 `final_proxy.proxy_signature` 同时绑定到 slot/rebuild。之后才按 W2 local-pose 规则派生 N3 `proxy_animation_world_rotations`；完成此前不进入 native solver step。

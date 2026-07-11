@@ -93,6 +93,8 @@ Baseline derived data：
 
 Mesh 长期输入契约是“用户输入已经是 final proxy、无 reduction、identity mapping”。solver 不得执行 SelectionMesh、merge、reduction、optimization、重采样或任何改变 vertex count/order/topology 的预处理；pin/attribute 按输入 vertex index 直接映射，result 按同一 vertex identity 回写。Bone static 还需要以下 setup-specific arrays；未验证前不得用普通 source-chain index 替代：
 
+Blender Mesh 的“final proxy”契约不是把当前 `mesh.vertices/edges/loop_triangles` 直接别名成 baseline 输入。adapter 仍必须保持 vertex identity 不变，但要先按固定 MC2 source 的 proxy finalization 规则生成 source-equivalent final proxy：triangle 来自 reference Mesh `loop_triangles`，edge 集合是显式 Mesh edges 与所有 triangle edges 的 canonical union；含 triangle 的 Mesh 必须存在逐顶点唯一 UV，若同一 Blender vertex 的多个 loop UV 不一致则报错并要求用户拆分代理顶点；line-only Mesh 可使用 zero UV。finalization 完成后才能产生 `MC2ProxyStaticSpec` 并进入 `build_mc2_mesh_baseline()`。现有 `topology.py::_mesh_payload()` 只是 B3 scaffold/count shell，不得接入 native N0。
+
 Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Armature、Shape Key 等修改顶点位置，但基础变形栈必须保持相同 vertex count/order/connectivity；任何会改变 topology/identity 的 modifier 都必须由 adapter 拒绝，不能把每帧 evaluated topology 偷换成新的 N0。
 
 | 字段 | 类型/shape | 用途 |
