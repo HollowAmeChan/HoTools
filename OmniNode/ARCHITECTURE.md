@@ -323,7 +323,7 @@ cache[cache_key] = result
 return result
 ```
 
-**顶点组权重的设计约束（有意的性能权衡）**：pin 顶点组和碰撞半径顶点组的权重 hash 只在拓扑数量变化时失效，权重值重绘**不会**自动触发 cache 重建。这是运行期不允许热修改权重的显式约定——需要改权重时，用户必须停止运行、修改、reset 或清缓存后重新运行。此约束写在 `physicsMC2/mesh_build.py` 的 `cached_vertex_group_weights_hash` 文档里。
+**MC2 Pin 权重的当前边界**：新 `physicsWorld.mc2` 在 Mesh static input signature 中包含最终 Fixed/Move mask、UV 与 topology token；Pin 权重变化会触发 slot static bundle 重建，而不是热修改 native particle state。其它 solver 若对权重采用不同失效策略，必须在自己的 capability/dirty key 中明确声明，不能复用旧 `physicsMC2` 的缓存假设。
 
 ### 7.3 配置真值来源必须唯一
 
@@ -383,14 +383,13 @@ Python 侧职责：
 - 管理 runtime cache。
 - 决定是否重建 cache、是否跳帧保护、是否调用 native。
 
-MC2 节点的 Python 侧分层约定：
+统一 MC2 的 Python 侧分层约定：
 
-- `physicsMC2/__init__.py` 只声明 OmniNode API：`@omni` metadata、socket 默认值、Python/CPP 平行节点 wrapper。
-- `physicsMC2/runtime/controller.py` 是运行中控，负责 cache、BasePose、collider、跳帧冷启动、backend 调用和 GN delta 写回。
-- `physicsMC2/runtime/restart.py` 只处理首帧、reset、非正向连续帧的冷启动状态，不写节点 metadata。
-- `physicsMC2/runtime/timing.py` 只处理节点级 debug timing。
-- `physicsMC2/backends/selector.py` 只做 backend 标签归一化和 solver 函数分派。
-- `physicsMC2/solver.py` 只维护 Python reference / C++ full-core 的解算实现和 ABI 打包，不再承载节点入口或 cache 中控。
+- `physicsWorld/mc2/` 只有一个 solver identity；MeshCloth、BoneCloth、BoneSpring 位于 `setups/`，不建立 Python/C++ 平行节点或 backend selector。
+- setup adapter 负责 Blender authoring/frame snapshot、静态 builder 输入和结果目标映射；它不拥有 solver 时间或第二套粒子状态。
+- `physicsWorld/mc2/solver.py` 负责 slot/context 生命周期、frame policy、native 调用和 result publication，不直接写 Blender。
+- native context 由对应 MC2 slot 唯一持有，所有持久资源随 slot dispose；旧 `physicsMC2` full-core/context 只作待删除的历史参考。
+- 详细状态、数据层和实施门槛见 `doc/MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`。
 
 C++ 侧职责：
 
@@ -398,7 +397,7 @@ C++ 侧职责：
 - 原地更新数值 buffer。
 - 不直接访问 `bpy`。
 - 不保存 Blender 对象指针。
-- 不保存跨帧 solver 全局状态。
+- 不保存隐藏的跨帧全局状态；需要持久化的数值状态只能存在于 slot-owned native context。
 
 ### 为什么不把编译器/执行器整体迁到 C++
 

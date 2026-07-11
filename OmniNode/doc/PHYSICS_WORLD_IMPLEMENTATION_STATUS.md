@@ -4,7 +4,7 @@
 
 架构判断以 `PHYSICS_SIMULATION_PIPELINE_CONTRACT.md` 为唯一权威；OmniNode 编译、执行、缓存和懒求值机制见 `../ARCHITECTURE.md`。solver 自己的功能矩阵、backend 能力和测试说明应放在各 domain 的 `docs/` 或测试目录中。
 
-MC2 的当前源码对照与实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`，逐字段审计见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`，S2 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`；`MC2_DESIGN_AND_WORKSHEET.md` 已降级为旧 MeshCloth 迁移审计与公式参考。
+MC2 的当前状态、Host/Native 契约和实施顺序见 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md`；固定源码中的顺序敏感行为、数值陷阱和 oracle 规则见 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`。
 
 ## 当前系统边界
 
@@ -66,8 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | B3 framework scaffold + Mesh N0/Distance N1 host static slice，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；source-aligned proxy/baseline/Distance immutable contract、float32 packer 与纯 Mesh builder；独立 Unity 6000.3 Tier A host，ConvertProxyMesh Tier A、8 个 Mesh baseline parity + 1 个 tie-boundary case、Distance 7 static + 2 runtime case、TriangleBending 13 static + 3 runtime case；Blender final proxy extraction、n-gon 不增点、pin 同 index、UV seam gate；topology + UV/Pin static input key 驱动 slot 整包重建并缓存 finalizer/baseline/Distance；BasePose 物理 output 隔离、Mesh topology token、不可写 Armature evaluated frame snapshot/cache；共享 GN 最终 offset/bone writeback planned channel | Bending host builder、Inertia N1 static、N2 parameter ABI、N3 rotation/dynamic frame bridge、native context、solver step 与 result publication尚未完成 |
-| MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
+| MC2 | framework scaffold + Mesh N0/Distance N1 host static slice，尚无解算 | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance immutable contract、packer与纯 Mesh builder；独立 Unity Tier A host；ConvertProxyMesh、9 个 baseline case、Distance 7 static + 2 runtime-order case、Bending 13 static + 3 runtime-scratch case；UV/Pin static key整包重建；双对象 BasePose、topology token和不可写 Armature frame snapshot；GN/bone result channel仅 planned。当前 particle owner仍是 scaffold，不等于 current-frame reset完成 | Bending host builder、Inertia static、N2 parameter ABI、N3 rotation/reset/frame bridge、per-slot native context、solver step与 result publication；Bone Line/Automatic/Sequential setup均未实现 |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 ## 统一 MC2 决策
@@ -76,7 +75,7 @@ MC2 只有一个 solver identity：`mc2`。
 
 - `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
-- 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package、旧资产和旧 solver parity 不属于实现或验收范围。
+- 新路径只提供一套 native context schema/implementation，每个 active slot持有自己的 context；不公开 Python/C++ backend选择，旧 package、旧资产和旧 solver parity不属于实现或验收范围。
 - 当前新 MC2 step 只同步 framework slot、topology、initial state 和 particle buffer；不推进模拟、不发布结果、不调用旧 MC2 package。
 - no-op 阶段的 `mc2_stats`、`gn_attribute`、`bone_transform` 只登记为 planned channel，不虚报 active 输出。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
@@ -116,7 +115,7 @@ MC2 只有一个 solver identity：`mc2`。
 ## 当前优先级
 
 1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 先按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 完成源码数据流 worksheet、契约审查和静态 oracle，再开始最窄 native vertical slice；禁止继续按未验证的近似算法扩展 spec。
+2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 先完成 Bending host static，再收口 N2 参数和 N3 reset/frame input，之后进入最窄 native context；禁止按旧 solver 或未验证近似扩展 spec。
 3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
 4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
 
