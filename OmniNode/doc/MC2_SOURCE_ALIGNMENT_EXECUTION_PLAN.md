@@ -20,6 +20,18 @@ S2 的 host/native 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`。其中 
 4. 新运行时只保留 C++ 解算实现。Python 负责 Blender 输入冻结、slot 生命周期、native buffer 打包、result stream、writeback plan 和 debug；旧 Python/C++ MeshCloth 不属于兼容目标、验收 oracle 或运行依赖。
 5. 任何“源码对齐”声明都必须同时带源码位置、输入域、已知偏差和测试 oracle。只有形状测试、self-consistency 测试或 Blender smoke test 不能证明对齐。
 
+## 2026-07-11 实施检查点
+
+当前 Python/host 侧已经关闭 MeshCloth N0 静态构建的第一条可信链路：
+
+- `tools/mc2_unity_oracle` 已用固定 MC2 checkout 导出 `VirtualMeshProxy.cs::ConvertProxyMesh()` Tier A fixtures；商业 MC2 源码仍只作为外部只读对照，不进入仓库。
+- `physicsWorld/mc2/setups/mesh_cloth/final_proxy.py` 已实现 final-proxy finalization：triangle direction、edge union、vertex-to-vertex 顺序、vertex-to-triangle flip records、final normal/tangent、bind pose、UV seam gate 和 pin attribute 直接 index 映射。
+- `physicsWorld/mc2/mesh_baseline.py` 已消费 final proxy 并生成 baseline parent/child、baseline ranges/data、root/depth、local pose 和 `ZeroDistance` attribute 补写。
+- `physicsWorld/mc2/setups/mesh_cloth/static_build.py` 已把 Blender Mesh final proxy -> `MC2ProxyStaticSpec` -> `MC2BaselineStaticSpec` 组合为 slot static bundle；`step_mc2()` 在真实 Mesh task rebuild 时缓存 `slot.data["mesh_static"]`，但仍不创建 native context、不 step、不发布 result。
+- Blender Mesh adapter 已验证 n-gon triangulation 不新增 vertex、vertex group pin 使用同一 vertex index、loop-domain UV seam 必须由用户拆 proxy vertex、Armature/BasePose 双对象 + 常驻 GN 路径不反馈物理 offset。
+
+这意味着“是否能从 Blender Mesh 得到可信 N0 static bundle”已经落地；尚未落地的是 N1 constraint static、N2 runtime parameter ABI、N3 dynamic rotation/frame adapter、native context 生命周期和 result/writeback 闭环。后续不应再回头扩展旧 B4 selection/constraint 近似模型。
+
 ## 文档与事实优先级
 
 发生冲突时按以下顺序判断：
@@ -215,14 +227,12 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 ## 下一步
 
-不继续写 B4 solver 代码。S1 的前三张 worksheet 已记录在 `MC2_SOURCE_DATAFLOW_WORKSHEETS.md`：
+不继续写 B4 solver 代码，不接旧物理、不接废弃 HoClothUnity、不提交 MC2 商业源码。当前 Mesh N0 final proxy、baseline 和 slot static cache 已完成，下一步优先整理并冻结后续文档契约：
 
-1. Bone connection mode 到最终 lines/triangles 的完整生成规则；
-2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
-3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
+1. N1 DistanceConstraint static：从固定 MC2 source 和现有 W3 worksheet 整理 per-vertex signed layout、vertical/horizontal/shear 生成规则、过滤规则和最小 Tier A fixture 清单。
+2. N1 TriangleBending static：整理 ordered quad role、dihedral/volume 分类、rest value/sign/write mapping，不把当前简化 adjacency pair 当 ABI。
+3. N2 runtime parameter ABI：把 `ClothParameters`、BoneSpring override、16-sample curve representation 和 HoTools scheduler settings 拆成明确 schema，先写字段表和 dirty policy，不写 C++ binding。
+4. N3 Mesh dynamic adapter：在既有 BasePose evaluated snapshot 基础上，按 W2 local-pose 规则派生 `proxy_animation_world_rotations`，并明确 frame cache、restart 和 topology mismatch 行为。
+5. Native context 前的最后门槛：更新 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md` 的 S2 checklist，让每个即将进入 ABI 的字段都有 producer、consumer、shape、坐标空间、dirty/rebuild 和 oracle。
 
-S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、same-frontier parent、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。`tools/mc2_unity_oracle` 已在 Unity `6000.3.15f1`、MC2 `2.18.1@418f89f`、Burst `1.8.29`、Collections `2.6.5`、Mathematics `1.3.3` 下导出 9 个 Tier A case：8 个完整语义数组与 HoTools 对拍通过，另 1 个 high-first case 证明 equal-cost 是 source first-enumerated，而 HoTools 固定 lowest-index 是已登记 intentional deviation。
-
-D-08 的 Blender 双对象 adapter 基础层已实现并通过真实 Armature + 常驻 GN 无反馈回归：BasePose 永久移除共享 Physics World output，创建时冻结 Mesh topology identity token，N3 positions/normals 以 source/data/BasePose/frame/generation/token 为 key 缓存为不可写 snapshot。该 token 不等于包含全部 reference/static payload 的 `final_proxy.proxy_signature`。不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。
-
-进一步对照固定 MC2 source 后，Mesh N0 还缺一层强制的 proxy finalization gate。下一步先扩展 Unity Tier A oracle，直接导出 `ConvertProxyMesh()` 后的 triangle direction、final normals/tangents、Triangle bit、vertex-to-triangle flip records 和 explicit+triangle edge union；再实现 Blender host snapshot 按 D-09 校验 UV，生成 final proxy 后进入 baseline static bundle，并把 Mesh topology token 与 `final_proxy.proxy_signature` 同时绑定到 slot/rebuild。之后才按 W2 local-pose 规则派生 N3 `proxy_animation_world_rotations`；完成此前不进入 native solver step。
+只有上述 N1/N2/N3 文档契约收口后，才进入 S4 native context 最小闭环；S4 的第一步也只允许 create/inspect/reset/read debug，不直接做完整 solver step。

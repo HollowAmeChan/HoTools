@@ -104,7 +104,7 @@ Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Arma
 | `vertex_to_triangle_ranges/data` | `int32[N,2]` / semantic records | triangle normal/tangent accumulation + flip flags。 |
 | `source_vertex_identity` | host mapping table | native index -> stable bone/mesh target；不由 kernel 解释。 |
 
-`mc2/static_data.py` 实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；`mc2/mesh_baseline.py` 已按固定 source entry 实现纯 Mesh baseline builder，返回可能因 ZeroDistance 更新 signature 的 final proxy 与 baseline。它不读 Blender/N3 pose、不接 slot/native，也不构成 capability。fixture `proxy_static_triangle_contract_001` 仍只是 Tier B contract-shape case；另有 9 个 Unity `6000.3.15f1` Tier A Mesh baseline fixtures，其中 8 个完整语义数组 parity 通过、1 个关闭 equal-cost intentional tie boundary。该证据只关闭 builder slice，不代表 Blender adapter/native solver capability。
+`mc2/static_data.py` 实现 Proxy geometry 与 Baseline derived data 的 immutable tuple contract、signature、validation 和显式 NumPy dtype packer；`mc2/mesh_baseline.py` 已按固定 source entry 实现纯 Mesh baseline builder，返回可能因 ZeroDistance 更新 signature 的 final proxy 与 baseline。`mc2/setups/mesh_cloth/final_proxy.py` 已按 `ConvertProxyMesh()` Tier A oracle 实现 Mesh finalization；`mc2/setups/mesh_cloth/static_build.py` 已把 Blender Mesh final proxy -> baseline 组合成 slot static bundle，并由 `step_mc2()` 在真实 Mesh task rebuild 时缓存到 `slot.data["mesh_static"]`。这些代码仍不读 N3 pose、不创建 native context、不 step、不发布 result。fixture 证据包括 8 个 ConvertProxyMesh Tier A case、8 个 Mesh baseline Tier A full-array parity case、1 个 equal-cost intentional tie boundary，以及 Blender adapter 的 n-gon/pin/UV seam/slot cache 回归。该证据关闭 Mesh N0 host static slice；不代表 N1 constraint、N2 parameter ABI、N3 dynamic rotation 或 native solver capability。
 
 ### N1 Constraint static
 
@@ -273,7 +273,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | 能力 | v0 状态 | 验收条件 |
 |---|---|---|
 | one solver / three setup identities | supported contract | registry/declaration test。 |
-| final-proxy MeshCloth baseline build | builder verified, integration planned | 8 个 Tier A full-array parity case + 1 个 equal-cost boundary case；尚未接 Blender adapter/slot/native。 |
+| final-proxy MeshCloth static build | supported host slice | ConvertProxyMesh Tier A、Mesh baseline Tier A、Blender n-gon/pin/UV seam 和 slot `mesh_static` cache 回归通过；仍不含 native context/solver step。 |
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
 | Distance | planned | per-vertex signed layout fixture。 |
@@ -324,7 +324,8 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 - [x] C-08 animated BasePose/GN writeback 边界已冻结。
 - [ ] C-02 至 C-05 完成人工决策。
 - [x] C-07 独立 Tier A host 已落地并关闭 Mesh baseline slice。
-- [ ] N0/N1 每个字段有 W1-W7 producer/consumer 和最小 oracle。
+- [x] Mesh N0 final proxy/baseline 字段有 producer/consumer、Tier A oracle 和 slot static cache。
+- [ ] N1 constraint static 每个字段有 W1-W7 producer/consumer 和最小 oracle。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。
 - [ ] create/update/dynamic/reset/step/read/free 错误语义冻结。
