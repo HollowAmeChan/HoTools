@@ -46,7 +46,7 @@ def _int_list(value: str) -> list[int]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--warmup", type=int, default=10, help="每个 case 的预热帧数，默认 10。")
-    parser.add_argument("--samples", type=int, default=30, help="每个 case 的采样帧数，默认 30。")
+    parser.add_argument("--samples", type=int, default=60, help="每个 case 的采样帧数，默认 60。")
     parser.add_argument("--body-counts", type=_int_list, default=_int_list("1,128,1024"))
     parser.add_argument("--constraint-counts", type=_int_list, default=_int_list("32,256"))
     parser.add_argument("--contact-counts", type=_int_list, default=_int_list("32,256"))
@@ -55,6 +55,17 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(r"C:\tmp\hotools_jolt_benchmark"),
         help="报告产物父目录。",
+    )
+    parser.add_argument(
+        "--threshold-file",
+        type=Path,
+        default=HERE / "performance_thresholds.json",
+        help="冻结性能阈值 JSON；默认使用测试目录中的版本化阈值。",
+    )
+    parser.add_argument(
+        "--no-threshold-check",
+        action="store_true",
+        help="只采样不执行冻结阈值，供自定义数量或探索性测量使用。",
     )
     return parser
 
@@ -70,6 +81,13 @@ def _write_json(path: Path, value: Any) -> None:
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"性能阈值必须是 JSON object: {path}")
+    return value
 
 
 def _percentile(values: Sequence[float], fraction: float) -> float:
@@ -380,10 +398,120 @@ def _contact_case(harness, count: int, args) -> dict[str, Any]:
     )
 
 
+def _evaluate_thresholds(
+    cases: Sequence[dict[str, Any]],
+    thresholds: dict[str, Any],
+    *,
+    warmup: int,
+    samples: int,
+    blender_version: Sequence[int],
+) -> dict[str, Any]:
+    if thresholds.get("schema") != "hotools_jolt_blender_performance_thresholds_v1":
+        raise ValueError("不支持的 Jolt 性能阈值 schema")
+
+    requirements = thresholds.get("requirements")
+    case_thresholds = thresholds.get("cases")
+    if not isinstance(requirements, dict) or not isinstance(case_thresholds, dict):
+        raise ValueError("性能阈值缺少 requirements/cases")
+
+    errors: list[str] = []
+    required_blender = tuple(int(item) for item in requirements.get("blender_version", ()))
+    actual_blender = tuple(int(item) for item in blender_version[:len(required_blender)])
+    if required_blender and actual_blender != required_blender:
+        errors.append(
+            f"Blender version {actual_blender} != required {required_blender}"
+        )
+    required_system = str(requirements.get("platform_system") or "")
+    if required_system and platform.system() != required_system:
+        errors.append(
+            f"platform.system {platform.system()!r} != required {required_system!r}"
+        )
+    required_machine = str(requirements.get("platform_machine") or "")
+    if required_machine and platform.machine() != required_machine:
+        errors.append(
+            f"platform.machine {platform.machine()!r} != required {required_machine!r}"
+        )
+    min_warmup = int(requirements.get("min_warmup", 0) or 0)
+    min_samples = int(requirements.get("min_samples", 1) or 1)
+    if warmup < min_warmup:
+        errors.append(f"warmup {warmup} < required {min_warmup}")
+    if samples < min_samples:
+        errors.append(f"samples {samples} < required {min_samples}")
+
+    results = []
+    for case in cases:
+        if not isinstance(case, dict):
+            errors.append(f"benchmark case 不是 object: {case!r}")
+            continue
+        case_id = str(case.get("id") or "")
+        expected = case_thresholds.get(case_id)
+        differences: list[str] = []
+        observed: dict[str, float] = {}
+        if not isinstance(expected, dict):
+            differences.append(f"没有冻结阈值: {case_id}")
+        else:
+            metric_limits = expected.get("metrics_ms")
+            if not isinstance(metric_limits, dict):
+                differences.append("阈值缺少 metrics_ms")
+            else:
+                actual_metrics = case.get("metrics_ms") or {}
+                for metric_name, percentiles in metric_limits.items():
+                    actual_metric = actual_metrics.get(metric_name)
+                    if not isinstance(actual_metric, dict) or not isinstance(percentiles, dict):
+                        differences.append(f"缺少 metric: {metric_name}")
+                        continue
+                    for percentile, limit_value in percentiles.items():
+                        actual_value = float(actual_metric.get(percentile, math.inf))
+                        limit = float(limit_value)
+                        key = f"{metric_name}.{percentile}"
+                        observed[key] = actual_value
+                        if not math.isfinite(actual_value) or actual_value > limit:
+                            differences.append(
+                                f"{key} {actual_value:.6g} ms > {limit:.6g} ms"
+                            )
+            memory_limit = int(expected.get("working_set_high_water_max_bytes", 0) or 0)
+            memory_value = int((case.get("memory") or {}).get("working_set_high_water", 0) or 0)
+            observed["working_set_high_water_bytes"] = float(memory_value)
+            if memory_limit > 0 and memory_value > memory_limit:
+                differences.append(
+                    f"working_set_high_water {memory_value} > {memory_limit} bytes"
+                )
+        results.append({
+            "id": case_id,
+            "passed": not differences,
+            "observed": observed,
+            "differences": differences,
+        })
+
+    return {
+        "schema": "hotools_jolt_blender_performance_gate_v1",
+        "threshold_id": str(thresholds.get("id") or ""),
+        "passed": not errors and all(item["passed"] for item in results),
+        "errors": errors,
+        "cases": results,
+    }
+
+
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     if args.warmup < 0 or args.samples < 1:
         raise ValueError("--warmup 必须非负且 --samples 必须大于等于 1")
     harness = _load_harness()
+    threshold_source = None
+    threshold_config = None
+    if not args.no_threshold_check:
+        threshold_source = args.threshold_file.resolve()
+        threshold_config = _read_json(threshold_source)
+        preflight = _evaluate_thresholds(
+            (),
+            threshold_config,
+            warmup=args.warmup,
+            samples=args.samples,
+            blender_version=harness.bpy.app.version,
+        )
+        if preflight["errors"]:
+            raise RuntimeError(
+                "性能阈值环境预检失败: " + "; ".join(preflight["errors"])
+            )
     cases = []
     for count in args.body_counts:
         cases.append(_body_case(harness, count, args))
@@ -391,10 +519,23 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         cases.append(_constraint_case(harness, count, args))
     for count in args.contact_counts:
         cases.append(_contact_case(harness, count, args))
+    threshold_gate = None
+    if threshold_config is not None:
+        threshold_gate = _evaluate_thresholds(
+            cases,
+            threshold_config,
+            warmup=args.warmup,
+            samples=args.samples,
+            blender_version=harness.bpy.app.version,
+        )
+    cases_passed = all(case["passed"] for case in cases)
+    thresholds_passed = threshold_gate is None or bool(threshold_gate["passed"])
     report = {
         "schema": "hotools_jolt_blender_benchmark_v1",
-        "passed": all(case["passed"] for case in cases),
-        "thresholds_frozen": False,
+        "passed": cases_passed and thresholds_passed,
+        "thresholds_frozen": threshold_gate is not None,
+        "threshold_source": str(threshold_source) if threshold_source is not None else "",
+        "threshold_gate": threshold_gate,
         "warmup": args.warmup,
         "samples": args.samples,
         "python": sys.version,
@@ -427,7 +568,22 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         )
         for error in case["errors"]:
             print(f"  {error}")
-    print(f"汇总：{'通过' if report['passed'] else '失败'}；阈值未冻结；报告：{report_path}")
+    if threshold_gate is not None:
+        for error in threshold_gate["errors"]:
+            print(f"[阈值环境失败] {error}")
+        for item in threshold_gate["cases"]:
+            state = "通过" if item["passed"] else "失败"
+            print(f"[阈值{state}] {item['id']}")
+            for difference in item["differences"]:
+                print(f"  {difference}")
+    threshold_state = (
+        "未检查" if threshold_gate is None
+        else ("通过" if threshold_gate["passed"] else "失败")
+    )
+    print(
+        f"汇总：{'通过' if report['passed'] else '失败'}；"
+        f"冻结阈值={threshold_state}；报告：{report_path}"
+    )
     return (0 if report["passed"] else 1), report
 
 

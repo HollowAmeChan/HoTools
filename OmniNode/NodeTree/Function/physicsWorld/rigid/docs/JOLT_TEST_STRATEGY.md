@@ -2,13 +2,13 @@
 
 日期：2026-07-11
 
-状态：可执行验收基线。P0 三层语义、确定性、容量/事件溢出和双 ABI soak 已闭环；性能已完成首轮采样但阈值尚未冻结。
+状态：可执行验收基线。P0 三层语义、确定性、容量/事件溢出、双 ABI soak、Blender 性能门禁和首版 approved golden 已闭环。
 
 适用版本：HoTools `rigid_jolt`、Jolt Physics `v5.2.0`、Blender 4.5。当前 native backend 使用 `JobSystemSingleThreaded`。
 
 ## 结论
 
-当前 Jolt 已形成独立、可复用的**物理语义验收体系**，并有机器可读 trace、差分、soak 和性能报告。
+当前 Jolt 已形成独立、可复用的**物理语义验收体系**，并有机器可读 trace、差分、soak、性能报告和版本化 golden。
 
 现有 native 与 Blender 测试可以证明：模块能创建、推进和销毁世界；spec、adapter、result stream、writeback 和生命周期基本贯通；自由落体、落地、约束、contact、sensor、RayCast、断裂和独立 A/B frame 的功能链路可运行。
 
@@ -21,7 +21,7 @@
 - Jolt、binding、adapter、Blender 写回中哪一层导致轨迹偏差；
 - 升级 Jolt、编译器或 ABI 后，哪些变化合理、哪些是回归。
 
-所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `60/60`、S3 `60/60 × repeat 2`、py311/py313 跨 ABI `60/60 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、性能矩阵 `7/7`；旧式集成仍只记作链路 smoke，性能结果目前只作为基线观测。
+所以 native API 测试和 Blender 后台链路测试继续作为 API/链路回归；物理验收必须由本文定义的 semantic matrix 单独给出结论。2026-07-11 实跑结果为 py311 S1/S2 `60/60`、S3 `60/60 × repeat 2`、py311/py313 跨 ABI `60/60 × repeat 2`、双 ABI 两场景各 10,000 帧 soak、旧式 Blender 后台集成 `33/33`、冻结性能矩阵 `7/7`；旧式集成仍只记作链路 smoke。
 
 ### 2026-07-10 实现状态
 
@@ -43,9 +43,9 @@
 - 生产 spec 已分离 pointer-based `slot_id` 与语义 `simulation_order_key`；`DET-003` 覆盖 scope 枚举打乱后的 Jolt 添加顺序和 trace，相同 key 冲突会明确拒绝并进入 slot diagnostics。
 - `adapter_binding_v1` 已复用全部 60 个 P0 fixture、canonical trace 和 assertions；py311 当前构建的 S1/S2 全矩阵差分最大绝对误差为 `0.0`，并已接入 native test discovery。
 - `blender_pipeline_v1` 已复用全部 60 个 P0 fixture，覆盖 RNA、scope、world setting、timeline command、contact/query、十一种约束、breakable policy、旋转及独立 A/B frame、result、Quaternion writeback、same-frame、jump、reset 和 dispose；`BREAK-001/002` 只在断裂前公共区间与 S1 差分，策略结果由独立 S3 oracle 验收。
-- `benchmark_blender_rigid.py` 已覆盖 1/128/1024 body、32/256 constraint 和 32/256 contact，分别采集 native step、Blender pipeline、writeback 的 P50/P95、接触事件数和工作集高水位；报告 schema 为 `hotools_jolt_blender_benchmark_v1`，首轮阈值未冻结。
+- `benchmark_blender_rigid.py` 已覆盖 1/128/1024 body、32/256 constraint 和 32/256 contact，分别采集 native step、Blender pipeline、writeback 的 P50/P95、接触事件数和工作集高水位；`performance_thresholds.json` 固定 Blender 4.5 / Windows Release 门禁，默认报告执行 P50/P95/工作集阈值。
 
-当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、Cone/SwingTwist 旋转及独立 A/B frame、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 60 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 60 个 fixture。已批准 golden 尚未实现，性能阈值也尚未冻结，不能据此宣称 release 门禁全部完成。
+当前 S1 已验收 body 积分/阻尼/速度上限/DOF、shape offset/rotation、十一种约束的基础语义、Distance/Hinge/Slider 数值行为、SwingTwist 摆角/扭转限制/摩擦/双 motor、SixDOF 六轴模式/friction/motor/平移 spring、Pulley 加权绳长与 ratio、Gear 角速度比、RackAndPinion 旋转/平移比、Cone/SwingTwist 旋转及独立 A/B frame、动态-动态反作用、碰撞恢复/摩擦/filter/CCD，以及 contact 状态机和 RayCast 几何语义；S2、S3 已覆盖同一套 60 个 P0 fixture，S3 另验收 breakable 强语义，跨 ABI 自动容差差分也已覆盖全部 60 个 fixture。性能阈值和首版 60-fixture golden 已冻结并通过双 ABI 比较，当前 P0 release 门禁全部闭环。
 
 ### 2026-07-11 实施决定
 
@@ -55,7 +55,7 @@
 2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
 4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（断裂与跨 ABI 门禁已于 2026-07-11 完成）
-5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（三项均已于 2026-07-11 完成；性能阈值需重复采样后另行冻结）
+5. 完成 overflow、soak、冻结性能门禁和首版 golden 审批。（均已于 2026-07-11 完成）
 
 每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
 
@@ -286,8 +286,8 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | PASS：60/60 × repeat 2；最大绝对误差 `2.220446049250313e-16` |
 | CAP-001 | `max_bodies` 容量溢出 | 失败创建不污染计数；已接纳刚体继续 step；释放后可恢复；S3 稳定拒绝超额 slot 并发布诊断 | Jolt/HoTools | P0 | PASS（native + S3） |
 | SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | PASS（py311/py313）：每 ABI 两场景各 10,000 帧；链最大残差 `0.00234770775` |
-| PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 首轮基线 PASS；1024 body P95=`0.1054/55.91/271.3 ms`，阈值未冻结 |
-| PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 首轮基线 PASS；256 constraint native P95=`0.1895 ms`，256 contact native/pipeline P95=`0.8672/22.5 ms`，阈值未冻结 |
+| PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | PASS：3 进程校准后冻结；门禁复跑 `7/7`，1024 body native/pipeline/writeback P95=`0.1177/48.31/242.6 ms` |
+| PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | PASS：256 constraint native P95=`0.1579 ms`；256 contact native/pipeline/writeback P95=`0.9918/24.36/25.34 ms`；工作集高水位 `< 384 MiB` |
 
 ## 组合矩阵
 
@@ -341,13 +341,15 @@ Blender 显式对象的首版 order key 可由 library path、object `name_full`
 ```text
 rigid/test/goldens/
   jolt-5.2.0_windows-x64_release/
-    <fixture-id>.json.zst
+    <fixture-id>.json.gz
     manifest.json
 ```
 
 manifest 记录 Jolt version/commit、native build id、编译器与关键 build flags、adapter/spec schema、fixture hash、runner version、批准 commit/reviewer/reason。
 
 普通测试命令绝不更新 golden。独立 `--approve-golden` 命令必须产出旧/新关键帧、最大误差、RMS、事件差异和 hash 摘要。Jolt 升级新建目录，不能覆盖旧基线。
+
+当前 `manage_goldens.py` 使用标准库 gzip 保存去除计时元数据后的 canonical physical trace。manifest 记录 fixture/native/spec/adapter SHA256、Jolt/runner 版本、Release 构建标志、批准 commit/reviewer/reason。只读比较会校验 fixture hash、压缩文件 hash、manifest physical hash 和容差 trace；普通 discovery 通过 `test_jolt_golden_semantics.py` 对 py311/py313 执行同一套 60 fixture。
 
 ## Runner 目录与接口
 
@@ -362,6 +364,8 @@ physicsWorld/rigid/test/
   run_blender_semantics.py
   compare_traces.py
   benchmark_blender_rigid.py
+  manage_goldens.py
+  performance_thresholds.json
   goldens/
 ```
 
@@ -386,6 +390,19 @@ python OmniNode\NodeTree\Function\physicsWorld\rigid\test\run_native_semantics.p
   --tag p0 --artifact-dir C:\tmp\hotools_jolt_test
 ```
 
+只读比较首版 approved golden：
+
+```powershell
+& 'D:\Blender\Blender 4.5\4.5\python\bin\python.exe' manage_goldens.py
+```
+
+只有经过人工审查时才允许更新完整 60-fixture 基线：
+
+```powershell
+& 'D:\Blender\Blender 4.5\4.5\python\bin\python.exe' manage_goldens.py `
+  --approve-golden --reviewer '<name>' --reason '<reviewed change>'
+```
+
 ## 门禁
 
 | Lane | 内容 | 目标时间 | 失败处理 |
@@ -396,7 +413,7 @@ python OmniNode\NodeTree\Function\physicsWorld\rigid\test\run_native_semantics.p
 | Release | py311 + py313、10,000 帧 soak、性能门槛、golden 审核 | 发布前 | 阻断发布 |
 | Jolt-upgrade | 旧/新版本 trace 差分、官方语义 case、人工批准 | 升级专用 | 禁止静默 rebaseline |
 
-性能门槛在首轮稳定测量后冻结。冻结前只采集数据；冻结后分别约束 native step P50/P95、完整 Blender pipeline P50/P95 和资源高水位。
+性能门槛已冻结在 `performance_thresholds.json`。默认 benchmark 要求 Blender 4.5 / Windows AMD64、warmup >= 10、samples >= 60，并分别约束 native step、完整 Blender pipeline、writeback 的 P50/P95 和工作集高水位；未知自定义 case 必须使用 `--no-threshold-check` 明确进入探索模式。
 
 ## 落地顺序
 
@@ -429,7 +446,7 @@ python OmniNode\NodeTree\Function\physicsWorld\rigid\test\run_native_semantics.p
 - pairwise/high-risk 组合；
 - 10,000 帧 soak、堆叠、约束链、overflow；
 - body/constraint/contact 性能矩阵；
-- 冻结 release 门槛和首版 golden。
+- 维护冻结 release 性能门槛并完成首版 golden。
 
 完成标准：正式报告分别给出语义、确定性、稳定性、性能结论，不用一个通过数掩盖不同维度。
 

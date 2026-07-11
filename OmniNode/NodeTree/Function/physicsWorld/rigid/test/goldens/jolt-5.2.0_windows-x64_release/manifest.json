@@ -1,0 +1,957 @@
+{
+  "abs_tolerance": 2e-05,
+  "approval": {
+    "approved_commit": "f183a3eb6df3647b5461e3e1889661734fac0744",
+    "approved_utc": "2026-07-11T04:51:53.885648+00:00",
+    "reason": "Finalize initial 60-fixture baseline with build and production contract hashes after full semantic, cross-ABI, soak, and performance validation",
+    "reviewer": "Codex"
+  },
+  "build": {
+    "avx": false,
+    "avx2": false,
+    "compiler_toolchain": "MSVC / MSBuild 17.14",
+    "configuration": "Release",
+    "cross_platform_deterministic": false,
+    "generator": "Visual Studio 17 2022",
+    "job_system": "JobSystemSingleThreaded",
+    "jolt_debug_renderer": false,
+    "jolt_profiler": false,
+    "msvc_runtime": "dynamic"
+  },
+  "contract_sha256": {
+    "rigid/backends/jolt.py": "0786931a1e352360dd68e08b9f0ec68749c589f2df787eed53dd15252e0a1e0f",
+    "rigid/specs.py": "5121aca9d67d363d4111b3c0f8baefba6579d786e450b88d5b5cbc80ccf8fccf"
+  },
+  "fixture_count": 60,
+  "fixture_schema": "hotools_jolt_fixture_v1",
+  "fixtures": {
+    "BODY-001": {
+      "compressed_bytes": 328,
+      "compressed_sha256": "f5a9d3b8f53394a1cbfcd17c6820b066886d462c0939ffcd45e7ee68eac7fb9b",
+      "fixture_hash": "c6a7d834e2ea7ebc4d7fafb728d95694ad8283150b0463f2aa3224cac52bacd2",
+      "physical_hash": "f03533261da55085845fc1a8bea2c244a44f9a48cf60765cc51439d50ef59be5",
+      "source": "analytic",
+      "tags": [
+        "p0",
+        "body",
+        "impulse",
+        "analytic"
+      ],
+      "trace_file": "BODY-001.json.gz",
+      "trace_frames": 2
+    },
+    "BODY-003": {
+      "compressed_bytes": 584,
+      "compressed_sha256": "c473a43d6c70dbb7fb0c9273327260172563203392263d599d82190e751abb87",
+      "fixture_hash": "b4d54d8499fade313febcb767fa353f63a7e281b1ca5420bdba6acddea1ec324",
+      "physical_hash": "c222c8bafb0fe4a325c5f5df47b7759b8fc3cf2620018a71aa4d0b7c98f0b2e0",
+      "source": "analytic:constant_force_and_torque",
+      "tags": [
+        "p0",
+        "body",
+        "force",
+        "torque"
+      ],
+      "trace_file": "BODY-003.json.gz",
+      "trace_frames": 5
+    },
+    "BODY-004": {
+      "compressed_bytes": 3807,
+      "compressed_sha256": "f4d2ff1c06992fcfb6b860e9b9f66b079a4003bba01fde7318be0733e9e56fb6",
+      "fixture_hash": "cd3f23051467f8d5680ccfa635fdc984e88cc2eb3aa317f0930f2e883724e944",
+      "physical_hash": "2d666531f38245285b9918def4b47e1b14f252a630fe953224458441a9f367a7",
+      "source": "jolt_semantics:per_step_damping",
+      "tags": [
+        "p0",
+        "body",
+        "damping"
+      ],
+      "trace_file": "BODY-004.json.gz",
+      "trace_frames": 8
+    },
+    "BODY-005": {
+      "compressed_bytes": 627,
+      "compressed_sha256": "3c47602f70507249728e5f5674358a7ff6f0a35424e35552cc32ea6c43f2b6f0",
+      "fixture_hash": "22a9f38f4c125dfb7f449d7be425f5f58c2293bff94713c065bd7a0fa2461a54",
+      "physical_hash": "860cac7f49c2db1d708ecf2c14cb5ec4ee0635767a5b2efabcdf9c5766e0f7f9",
+      "source": "jolt_semantics:max_velocity_clamp",
+      "tags": [
+        "p0",
+        "body",
+        "velocity-limit"
+      ],
+      "trace_file": "BODY-005.json.gz",
+      "trace_frames": 5
+    },
+    "BODY-006": {
+      "compressed_bytes": 1296,
+      "compressed_sha256": "28e48199da8d6393121980899068f24fd0a9a416dec041eab86f724602c285ff",
+      "fixture_hash": "4aa9953549427832fea44a82439385d0c9853f9877496aa0da71ca119e957e0c",
+      "physical_hash": "8c6257db25fc7b7eaa7c4ca0b8fdbf246dc2236c093b018ac0f7f5dc11d34c56",
+      "source": "jolt_semantics:allowed_dofs_bitmask",
+      "tags": [
+        "p0",
+        "body",
+        "allowed-dofs"
+      ],
+      "trace_file": "BODY-006.json.gz",
+      "trace_frames": 6
+    },
+    "BODY-007": {
+      "compressed_bytes": 427,
+      "compressed_sha256": "4a90e5757d5eb6ee634f716de0922125ebdfddc5d166a3c95e3b2aa5c51cd9d2",
+      "fixture_hash": "44f9ef6755f08236cfdda98949be596b421d5b821b200c0ad71479df46834f47",
+      "physical_hash": "0f64c818f3d29394c7f20990034cb66f3a5e26d1bbacec4120706b610885bf25",
+      "source": "jolt_semantics:sleep_activation",
+      "tags": [
+        "p0",
+        "body",
+        "sleep",
+        "activation"
+      ],
+      "trace_file": "BODY-007.json.gz",
+      "trace_frames": 6
+    },
+    "BREAK-001": {
+      "compressed_bytes": 556,
+      "compressed_sha256": "f332a974e6528509af4b89c98657bd8b1d8e48401951fa05b350164fa472a03b",
+      "fixture_hash": "25f457a3693c3faff62f063fb939f8c390ba2c335e10e3f8bbfced4a0a94ad7b",
+      "physical_hash": "8b96e663e2049ace567ffa6e54ea9d7b353fc98876cff948d02d2ade167bd125",
+      "source": "hotools_policy:breakable_constraint_impulse_threshold",
+      "tags": [
+        "p0",
+        "constraint",
+        "breakable",
+        "policy-layer"
+      ],
+      "trace_file": "BREAK-001.json.gz",
+      "trace_frames": 4
+    },
+    "BREAK-002": {
+      "compressed_bytes": 460,
+      "compressed_sha256": "00545c40d49415a714cd1eac4d99bec09c015b6448a399110a44d1ce6727f146",
+      "fixture_hash": "1285e5f815b7dd011061b04977f34e9334cc93c4588f7e59fb08269531d88936",
+      "physical_hash": "4c87db8eced90c3c19bb4bdcad3ad95d82ddbc3b499f5ff86f709f71d8880861",
+      "source": "hotools_policy:breakable_constraint_same_frame",
+      "tags": [
+        "p0",
+        "constraint",
+        "breakable",
+        "policy-layer",
+        "same-frame-policy"
+      ],
+      "trace_file": "BREAK-002.json.gz",
+      "trace_frames": 3
+    },
+    "COLL-001": {
+      "compressed_bytes": 1247,
+      "compressed_sha256": "aa58256a8d757724a6fa981b0e886640ae7ea0939fbe212f3ed68a407acf4d85",
+      "fixture_hash": "410dc4d676b555389054a5f510fa697aa8bab290ad78e8da78ee1c59cc466f25",
+      "physical_hash": "d0ab793ce055118e4244d733a4a188d14e351d8e3ef72be6a34ed303c8715fe9",
+      "source": "analytic:one_dimensional_collision",
+      "tags": [
+        "p0",
+        "collision",
+        "restitution",
+        "momentum"
+      ],
+      "trace_file": "COLL-001.json.gz",
+      "trace_frames": 8
+    },
+    "COLL-002": {
+      "compressed_bytes": 2694,
+      "compressed_sha256": "f07f55aedaf1cec7849c5e9c04627319539aa1e1347b1f66f214b7d06dd7da98",
+      "fixture_hash": "c615ba5279e99d3ed93831ebc6efb9d1f239f3b76e22b3ad40d966fdc2c1a7af",
+      "physical_hash": "4459131ab0fc589aaa01f0a7ab84b3f791960a4f176ac025a96199e386aab620",
+      "source": "analytic:coulomb_friction_on_plane",
+      "tags": [
+        "p0",
+        "collision",
+        "friction"
+      ],
+      "trace_file": "COLL-002.json.gz",
+      "trace_frames": 9
+    },
+    "COLL-003": {
+      "compressed_bytes": 899,
+      "compressed_sha256": "3e47bc89ad73449978a64553574f4168632a60e392e9ae0b6482567012d6a4e2",
+      "fixture_hash": "dce981fc76c83d27e47688f33193c88f5b2eb5557257582e25444fc28d6e4547",
+      "physical_hash": "cf8de75a5455a53a5db2d373dbf7b796efc761fcf264043001f4cde0521cd0e9",
+      "source": "jolt_semantics:motion_type_collision_pairs",
+      "tags": [
+        "p0",
+        "collision",
+        "motion-type",
+        "kinematic"
+      ],
+      "trace_file": "COLL-003.json.gz",
+      "trace_frames": 7
+    },
+    "COLL-005": {
+      "compressed_bytes": 625,
+      "compressed_sha256": "5dfb0ab6ed22b6e62a3cdb08fe51c50f80377435c1828220a8f449738348f3ef",
+      "fixture_hash": "7c0a754a7b770397292a8b53be52283396888f77ccd2e75162308ff309fa6154",
+      "physical_hash": "5e60bff30557260472548db08734ef0afa707b38a2b7874e71d3810f9eae9388",
+      "source": "jolt_unit_test:MotionQualityLinearCast",
+      "tags": [
+        "p0",
+        "collision",
+        "contact",
+        "ccd",
+        "motion-quality"
+      ],
+      "trace_file": "COLL-005.json.gz",
+      "trace_frames": 3
+    },
+    "CONE-001": {
+      "compressed_bytes": 676,
+      "compressed_sha256": "7e0a86e67a6af47d7a13001658476576a7a68580b07d85b0a229564bb6bfd8c7",
+      "fixture_hash": "b8e7529fcf1d4bccb158283af1feefc4f09211676746a8b8b9679578096e7447",
+      "physical_hash": "ee0598a9c2069bfe02984f68c0ca74bd57915db1c996381b073580ede01634cb",
+      "source": "metamorphic:cone_swing_limit",
+      "tags": [
+        "p0",
+        "constraint",
+        "cone",
+        "invariant"
+      ],
+      "trace_file": "CONE-001.json.gz",
+      "trace_frames": 8
+    },
+    "CONE-002": {
+      "compressed_bytes": 671,
+      "compressed_sha256": "1a565c814ad3fb564c371a0318e4d9ddff08400e95cc8e839e7beb7da332157e",
+      "fixture_hash": "e1f899f71873e413ae1825d76c290797e484768660ebdb71d663f88863f0dcfd",
+      "physical_hash": "d25a73b35b9a857ca670bd6e264081d82e8131d393bce24e9297591597b73ac9",
+      "source": "metamorphic:cone_twist_free",
+      "tags": [
+        "p0",
+        "constraint",
+        "cone",
+        "invariant"
+      ],
+      "trace_file": "CONE-002.json.gz",
+      "trace_frames": 6
+    },
+    "CONE-003": {
+      "compressed_bytes": 730,
+      "compressed_sha256": "888fabe5e26f5fa5ed9073d91f111d025f67dda94a05a727c90488b37a6a1baa",
+      "fixture_hash": "cfa4705ec944aa41faa1d42fa5cc7035bdd3e1f3df5df9759bae91f1c0e06551",
+      "physical_hash": "7281dec46c5965c51db96c14987eac81f83548f30d2c7bc863c0928ccb4eadc5",
+      "source": "metamorphic:cone_rotated_separate_frames",
+      "tags": [
+        "p0",
+        "constraint",
+        "cone",
+        "frame",
+        "separate-frames"
+      ],
+      "trace_file": "CONE-003.json.gz",
+      "trace_frames": 8
+    },
+    "DIST-001": {
+      "compressed_bytes": 609,
+      "compressed_sha256": "b05fac19a421dbaf2b8b8725b20f34d16d1eb3ef7c39c7fb8f4ab9127e038abf",
+      "fixture_hash": "49369b6b8f0f1315fd17a35e1df17ae5fb00c257c99dc2c6d70d7d12cafb5b2c",
+      "physical_hash": "95545a1c20c8b04230236ac30876c98e5d20bc3b248ba23dde3a56c05dbf63e4",
+      "source": "jolt_unit_test:DistanceConstraint",
+      "tags": [
+        "p0",
+        "constraint",
+        "distance",
+        "invariant"
+      ],
+      "trace_file": "DIST-001.json.gz",
+      "trace_frames": 5
+    },
+    "DIST-002": {
+      "compressed_bytes": 841,
+      "compressed_sha256": "7718304f67563b0bf4dcc150ff29c92372d2cb884d64e9e14daff6db6b4fbbc9",
+      "fixture_hash": "e4bebea1a266c97541c40d22a426f5f448c8a2663affd1b3ee5fd30d4f7c50ca",
+      "physical_hash": "ee0e201a8e2e960b3e0f2dd0b41c387e8b5a5a4d690c3aa95e65ea60b0706a4f",
+      "source": "metamorphic:distance_interval",
+      "tags": [
+        "p0",
+        "constraint",
+        "distance",
+        "invariant"
+      ],
+      "trace_file": "DIST-002.json.gz",
+      "trace_frames": 5
+    },
+    "DIST-003": {
+      "compressed_bytes": 1008,
+      "compressed_sha256": "b80f34512f7b7622bc34eab98d5d7ca93a5a855535ff6a84648a093a51f965ab",
+      "fixture_hash": "94d035666d025ea90081b13ad6d5509938cdb894ccea5b9d48c171aafdc5b971",
+      "physical_hash": "a91dd9d1d5faed2999908fe85a4c99426342637aff73b6b6191140844783c5ba",
+      "source": "jolt_unit_test:DistanceConstraintSpring",
+      "tags": [
+        "p0",
+        "constraint",
+        "distance",
+        "spring"
+      ],
+      "trace_file": "DIST-003.json.gz",
+      "trace_frames": 8
+    },
+    "EVENT-001": {
+      "compressed_bytes": 1803,
+      "compressed_sha256": "9a7f011f924882712c0bafcd3a0016f619e4ddda2b5a2a49acc61e55dff184e6",
+      "fixture_hash": "46560303bf93668cb106835d82a9ea54da5da2939d30275a16b1e7a9d513c765",
+      "physical_hash": "12da559f67b96684029c349995ea513005075d416fb1472ff95beb1f5b3492b0",
+      "source": "jolt_semantics:contact_state_machine",
+      "tags": [
+        "p0",
+        "contact",
+        "event",
+        "state-machine"
+      ],
+      "trace_file": "EVENT-001.json.gz",
+      "trace_frames": 31
+    },
+    "EVENT-002": {
+      "compressed_bytes": 3964,
+      "compressed_sha256": "9bb38eff3419077857583f634aa08ba447976a3c5f5e04310162a91a7df268df",
+      "fixture_hash": "e19162dab39a811ea488e0935e164285a7fd8a0524ddd1f3e386bfe552dbf3ca",
+      "physical_hash": "5b74b3d97b0a3cc6a87e247ef577d476fabbbce0c0f8ac79f44929a866bd2518",
+      "source": "jolt_semantics:sensor_contact_state_machine",
+      "tags": [
+        "p0",
+        "contact",
+        "event",
+        "sensor"
+      ],
+      "trace_file": "EVENT-002.json.gz",
+      "trace_frames": 46
+    },
+    "FILTER-001": {
+      "compressed_bytes": 793,
+      "compressed_sha256": "4e123820b98ef426ea836e524ba4893ea8545d09a945f63d772d8e873c96930d",
+      "fixture_hash": "575d168818802a1124e44c21709436efe7625fc00368ce9ae8bad5971156c4e1",
+      "physical_hash": "70bdbc250d6e8638b913ac8d29a78fcbf87a61b2a232beeee5c03d1eba6977fc",
+      "source": "hotools_contract:bidirectional_collision_masks",
+      "tags": [
+        "p0",
+        "collision",
+        "filter",
+        "contact"
+      ],
+      "trace_file": "FILTER-001.json.gz",
+      "trace_frames": 4
+    },
+    "FILTER-002": {
+      "compressed_bytes": 821,
+      "compressed_sha256": "9cc47ed83d2ffa603ecbeaadda63381b39d38e01bfebef8af9afe8a6b296c26a",
+      "fixture_hash": "bffe57865758ff533d0d31474ff1f79dff7e6933c72af36bc0bb0f2d88a93374",
+      "physical_hash": "006cf3f11bed5aace3d43ebb793540c47e7fe3b357d57c35d6a1afa38e537675",
+      "source": "hotools_contract:constraint_collision_pair_lifecycle",
+      "tags": [
+        "p0",
+        "constraint",
+        "collision",
+        "contact",
+        "filter",
+        "timeline"
+      ],
+      "trace_file": "FILTER-002.json.gz",
+      "trace_frames": 5
+    },
+    "FILTER-003": {
+      "compressed_bytes": 851,
+      "compressed_sha256": "01025abe2dcfbd40f6194c23ad1bcc27b2139765667d53cacc518d88f64957a9",
+      "fixture_hash": "541aa99be6ac4c265a00ef61c53e94216fcc9134f0cbc3fa4aab4b2c3f58c6e2",
+      "physical_hash": "79cdd00c9dd1d2f3d0464913fb21f3b16272bd1e3dc113fc4cd782bc7ac3a6ec",
+      "source": "hotools_contract:collision_pair_reference_count",
+      "tags": [
+        "p0",
+        "constraint",
+        "collision",
+        "contact",
+        "filter",
+        "timeline"
+      ],
+      "trace_file": "FILTER-003.json.gz",
+      "trace_frames": 6
+    },
+    "FIXED-001": {
+      "compressed_bytes": 737,
+      "compressed_sha256": "2871ed27dce9fa50a21636d1f91cc49a756b09588451cc59246b27ae9e48b0f6",
+      "fixture_hash": "0800a87ab781b66d6f46539a5f7df016f6d78cf422405af3c94602d23fd7d63e",
+      "physical_hash": "01d1dcb15c03c4151fc350aa4eb7e4e2a258df7061b8bb4f9c72b029f1b6495e",
+      "source": "metamorphic:fixed_relative_transform",
+      "tags": [
+        "p0",
+        "constraint",
+        "fixed",
+        "invariant"
+      ],
+      "trace_file": "FIXED-001.json.gz",
+      "trace_frames": 6
+    },
+    "FRAME-001": {
+      "compressed_bytes": 3435,
+      "compressed_sha256": "fb4e31c08b08889599202f91b43b6a66f2a38d13d306ce9e59744fbde6888cea",
+      "fixture_hash": "57177953405650186a56e92f073768912066a34f49e2f967b4a881a58b8195ff",
+      "physical_hash": "24b5420c95843702ee937cc4121dbbd01496f1d4e09695349ec8c8d81d9652fd",
+      "source": "metamorphic:separate_anchor_frames_ignore_shape_offset",
+      "tags": [
+        "p0",
+        "constraint",
+        "frame",
+        "shape-offset",
+        "point"
+      ],
+      "trace_file": "FRAME-001.json.gz",
+      "trace_frames": 7
+    },
+    "FRAME-002": {
+      "compressed_bytes": 1642,
+      "compressed_sha256": "dd5af6efb5db56836a143f01be9471f12a26f00b4dba9c928ffa58a8d1f4f06d",
+      "fixture_hash": "e51f389a8b8ec982f7ad1b02b111512139416b2f208e8f8a5ffdc8e4a0901b9d",
+      "physical_hash": "a1db7cd8c6878e70ffd9986eac7bdc0a710cb9262cda4a7331a279fe17456d89",
+      "source": "metamorphic:rotated_constraint_frame_axis",
+      "tags": [
+        "p0",
+        "constraint",
+        "frame",
+        "hinge",
+        "slider"
+      ],
+      "trace_file": "FRAME-002.json.gz",
+      "trace_frames": 6
+    },
+    "FREE-001": {
+      "compressed_bytes": 485,
+      "compressed_sha256": "1f407bfed6ca93f7191a7fbb25b0b496bc2d7213416c5f3564ee4e6f56575d74",
+      "fixture_hash": "4e173dd94d703ca0154d3c98650b5f19dac5048c1afd8721052f47b2efc8199e",
+      "physical_hash": "bf1297557f9ccab92b5d788e9bb582eb827d742e0a5e70053384d998b3b3bb54",
+      "source": "analytic",
+      "tags": [
+        "p0",
+        "body",
+        "gravity",
+        "analytic"
+      ],
+      "trace_file": "FREE-001.json.gz",
+      "trace_frames": 6
+    },
+    "FREE-002": {
+      "compressed_bytes": 562,
+      "compressed_sha256": "c79888b012f96284718adeaaea5a7f44d27e3bee5b7726c299136c0f068babf4",
+      "fixture_hash": "eaf4201561276f8f9488453ad4991779fada4d6f17ef309c54f4a4aea1539fcb",
+      "physical_hash": "7d7bf6c64c17f1ccd7c7ff179f85d026df019a368e715e61171b02478a2b25de",
+      "source": "analytic",
+      "tags": [
+        "p0",
+        "body",
+        "velocity",
+        "analytic"
+      ],
+      "trace_file": "FREE-002.json.gz",
+      "trace_frames": 6
+    },
+    "FREE-003": {
+      "compressed_bytes": 799,
+      "compressed_sha256": "1eded990aea2a70a8731606d5b2eaba60688dccc258f65f7d990a1ba7631bcff",
+      "fixture_hash": "d3e1135d419ce31d7003bbeacd0bfb79ea10bce72cf155a4c4faad6f644792e1",
+      "physical_hash": "b5d3867875dbbe45498d9128795b124bb16dea5494b3a90a3184d005741d2f7c",
+      "source": "analytic",
+      "tags": [
+        "p0",
+        "body",
+        "gravity_factor",
+        "analytic"
+      ],
+      "trace_file": "FREE-003.json.gz",
+      "trace_frames": 5
+    },
+    "GEAR-001": {
+      "compressed_bytes": 2769,
+      "compressed_sha256": "e9c4410614433317dccbea34f0e233e8d0a6c5d6536a14d2b1b78c668b257da0",
+      "fixture_hash": "a1e802a24bf2ee78f3d4d6eb276eac296d839a87724201e8baba637017f2443b",
+      "physical_hash": "50feff98b7fe448b076a7d8e74d6815637a99e404ebd6d7f066005ab62f5a040",
+      "source": "jolt_sample:GearConstraintTest",
+      "tags": [
+        "p0",
+        "constraint",
+        "gear",
+        "constraint-reference"
+      ],
+      "trace_file": "GEAR-001.json.gz",
+      "trace_frames": 7
+    },
+    "HINGE-001": {
+      "compressed_bytes": 920,
+      "compressed_sha256": "965cf8704b70f55119ec6498a7e34343c2e0eb1fd0ff6417ecf4c298aa61da03",
+      "fixture_hash": "a6b0ff4e210dbe31928eaad308a85c921cc06bfe0aebf5da5c89d48f409f4428",
+      "physical_hash": "551dc0909110b8a04944d2b8d533468ca952317d29d4e7adf5ea8ed49901c925",
+      "source": "metamorphic:hinge_degrees_of_freedom",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "invariant"
+      ],
+      "trace_file": "HINGE-001.json.gz",
+      "trace_frames": 6
+    },
+    "HINGE-002": {
+      "compressed_bytes": 1267,
+      "compressed_sha256": "5feceff451c18d4e3f073e291251f044a5d9e83337de87561372162f5a54d5d4",
+      "fixture_hash": "a838c301374f901b4eb0027232ace9239e1e95e4958106d29a95e8def256feba",
+      "physical_hash": "af3a599214ee81e2404abc933ce2cc128a348e910df0a7b53b5dfa02fc32fb95",
+      "source": "jolt_unit_test:HingeConstraintLimits",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "limit"
+      ],
+      "trace_file": "HINGE-002.json.gz",
+      "trace_frames": 8
+    },
+    "HINGE-003": {
+      "compressed_bytes": 1242,
+      "compressed_sha256": "48ec34fc021b97297950239d21a5168ddab093b4dffd5d548f65595046258e22",
+      "fixture_hash": "e6b886930c471f8af81d77e73747b4d38bbe2083bf70d9a923695f83d347dd4b",
+      "physical_hash": "baa29cb0a514c12cc5e971518a49774120525a5cd1d5c07caeefc4e0df29941b",
+      "source": "jolt_unit_test:HingeConstraintSpring",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "spring"
+      ],
+      "trace_file": "HINGE-003.json.gz",
+      "trace_frames": 9
+    },
+    "HINGE-004": {
+      "compressed_bytes": 777,
+      "compressed_sha256": "1e3272239faa7e012d8b373f5b0c1882bdadcafbb26b41fcfd0c39a82a4acbf5",
+      "fixture_hash": "20271199da1a8e6e0bdc2480d6b9bdfe05406d1d71a1c6199714e8c99906d218",
+      "physical_hash": "a45dc6c0232f12f72addd7205f1bc6ef0e278b4b03d3796111fbc3b264ba8423",
+      "source": "jolt_unit_test:HingeConstraintVelocityMotor",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "motor",
+        "velocity"
+      ],
+      "trace_file": "HINGE-004.json.gz",
+      "trace_frames": 6
+    },
+    "HINGE-005": {
+      "compressed_bytes": 1184,
+      "compressed_sha256": "f082c807a882fa9c027db3501ad22d85bdf2a9cbca6084700b328553561ca9a3",
+      "fixture_hash": "fb12c07f9c2a432d81c77c19af305b0a2d24b9834c51f5f0f24c4819b8d0ee2b",
+      "physical_hash": "4cdd9b86d9c0ea01023b20f036d4cd203a26723ab057d678c8bfccae8a7cf979",
+      "source": "jolt_unit_test:HingeConstraintPositionMotor",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "motor",
+        "position"
+      ],
+      "trace_file": "HINGE-005.json.gz",
+      "trace_frames": 8
+    },
+    "HINGE-006": {
+      "compressed_bytes": 941,
+      "compressed_sha256": "5055dda190bd4bda37941ff84b8e6fa8b92a6a0018954245e41d18fdc3fc7dc4",
+      "fixture_hash": "1a12ccf0047bfb3b43032e0e8405866be861b1374d4bf76b89dc82a1285293fc",
+      "physical_hash": "d6b1687cc49d62952619a8f1903a257576d7e5afd425e515881f5da1ba807910",
+      "source": "jolt_unit_test:HingeConstraintFriction",
+      "tags": [
+        "p0",
+        "constraint",
+        "hinge",
+        "friction"
+      ],
+      "trace_file": "HINGE-006.json.gz",
+      "trace_frames": 7
+    },
+    "PAIR-001": {
+      "compressed_bytes": 1407,
+      "compressed_sha256": "a304f5a482c3a8ae005f487765f053cddf09c5ec894813bb8c3f027d63137cd2",
+      "fixture_hash": "2dcb9ee3638562dccfa1d977869429b4b6e3183df58ee80aa7afc97dae7c82b0",
+      "physical_hash": "6460cb4a12b6b9429827415d0c569faf35b38015b695759ff75b71dc59d7938a",
+      "source": "analytic:two_body_distance_spring_reaction",
+      "tags": [
+        "p0",
+        "constraint",
+        "pair",
+        "distance",
+        "spring",
+        "momentum"
+      ],
+      "trace_file": "PAIR-001.json.gz",
+      "trace_frames": 8
+    },
+    "PAIR-002": {
+      "compressed_bytes": 1249,
+      "compressed_sha256": "2f3d0bf0c1c1ed0e2980c4e08cd1c8449bfcd7bdef240100c10952f64ae54f33",
+      "fixture_hash": "9b056be3c4797e3d4c561693977d917fe31a2c39f5541e360d9ddc21fbca1751",
+      "physical_hash": "ebe89e9447a8a5e1afbd616c880f3dc9f23e46c6a58b36e21a8e30d411313937",
+      "source": "analytic:two_body_slider_motor_reaction",
+      "tags": [
+        "p0",
+        "constraint",
+        "pair",
+        "slider",
+        "motor",
+        "momentum"
+      ],
+      "trace_file": "PAIR-002.json.gz",
+      "trace_frames": 9
+    },
+    "PAIR-003": {
+      "compressed_bytes": 1374,
+      "compressed_sha256": "b736398d01ca7aa172bd7f55e80c2513eb8a82299580086635de43f31791d3db",
+      "fixture_hash": "61ee9330d190036a5fc1e34a079a6c4f1a367accbc9ad7fdb7360570e37460c7",
+      "physical_hash": "4aef7ab28be5ff2fc100c18f8fd3b046325565a829985140dfb90fdd8c9b6041",
+      "source": "analytic:two_body_hinge_motor_reaction",
+      "tags": [
+        "p0",
+        "constraint",
+        "pair",
+        "hinge",
+        "motor",
+        "momentum"
+      ],
+      "trace_file": "PAIR-003.json.gz",
+      "trace_frames": 8
+    },
+    "POINT-001": {
+      "compressed_bytes": 718,
+      "compressed_sha256": "90f7d3e11eb0d34657852b54df59f260fa20b6941c6309a6f2e00a9a57b010a7",
+      "fixture_hash": "d23a7057db210732f74a52f59e2684ffd7990903be84ae4985739e508f588a3b",
+      "physical_hash": "b973d3df86b09f08ab2445e8ab021cab276f68556ed98a097d6669b153a362e9",
+      "source": "metamorphic:point_anchor_and_free_rotation",
+      "tags": [
+        "p0",
+        "constraint",
+        "point",
+        "invariant"
+      ],
+      "trace_file": "POINT-001.json.gz",
+      "trace_frames": 6
+    },
+    "PULLEY-001": {
+      "compressed_bytes": 802,
+      "compressed_sha256": "27a926c048cf8b7b9f84a789aa6188e73a54b58ccc998dd64a68d33b5c86aba4",
+      "fixture_hash": "5000b5e6bf61b434bff5730cbfaf109d01e3218b2b6d5bc0ac4c635a7475c4c6",
+      "physical_hash": "4812bcef1565e899c923d7a30e220f8746a1846eb073d3d4f53b8f4668a76b79",
+      "source": "jolt_sample:PulleyConstraintTest ratio variation",
+      "tags": [
+        "p0",
+        "constraint",
+        "pulley",
+        "ratio"
+      ],
+      "trace_file": "PULLEY-001.json.gz",
+      "trace_frames": 7
+    },
+    "QUERY-001": {
+      "compressed_bytes": 502,
+      "compressed_sha256": "188ff2d7d103321e0fdc02711102e0dc8947c6cb9e5e76a5810c62ae29b54c5b",
+      "fixture_hash": "0d32b0605a927aa00014a09b9c0694af01f0973304a89668722302a409b94f14",
+      "physical_hash": "415b188e06a5964b75bc2d55aff0adb7258d1688fa0c946e27fab389b35da1fd",
+      "source": "analytic:ray_sphere_intersection_and_filters",
+      "tags": [
+        "p0",
+        "query",
+        "ray-cast"
+      ],
+      "trace_file": "QUERY-001.json.gz",
+      "trace_frames": 1
+    },
+    "RACK_AND_PINION-001": {
+      "compressed_bytes": 1367,
+      "compressed_sha256": "97a3f3b859fb36b8b9351d1d6e791d40adb30ebc2628acb8a679c628bc71fe14",
+      "fixture_hash": "4bfda0ea8111205d0d00406ddc403e29ae1de3a4b4ce6e5a993df7df38188fa2",
+      "physical_hash": "8826a8695614feeaaa052be96464f41daa1f6b54ff616971555c95315f5b5ba1",
+      "source": "jolt_sample:RackAndPinionConstraintTest",
+      "tags": [
+        "p0",
+        "constraint",
+        "rack-and-pinion",
+        "constraint-reference"
+      ],
+      "trace_file": "RACK_AND_PINION-001.json.gz",
+      "trace_frames": 7
+    },
+    "SHAPE-001": {
+      "compressed_bytes": 500,
+      "compressed_sha256": "5b213f60a06db54b69333b4b100f8b80e3f8844ffa58ee7e1266d77c6676b812",
+      "fixture_hash": "9370539ed4bb83b90ae1d015419cb459e7ed7eed7b1218feef360da0a3fdafd9",
+      "physical_hash": "9d6d0d0aabf8091057f0dfbd3e25a316574f9516643abcd5972d99ebb713ca73",
+      "source": "analytic:primitive_vertical_support",
+      "tags": [
+        "p0",
+        "shape",
+        "query",
+        "primitive"
+      ],
+      "trace_file": "SHAPE-001.json.gz",
+      "trace_frames": 1
+    },
+    "SHAPE-003": {
+      "compressed_bytes": 381,
+      "compressed_sha256": "95c145c9b498c3fa1a58c601576f7680e4a5dd226568773acd088433606dca6d",
+      "fixture_hash": "e87f557c89bd26662de787cc94ca5a866c98058deaaaa6e8b9666e8d1b0520b8",
+      "physical_hash": "4ad72a9dd3322fc67b8d79475436f505a6c1d9f4fbb77699372bab6fb52cc66e",
+      "source": "analytic:rotated_plane_ray_intersection",
+      "tags": [
+        "p0",
+        "shape",
+        "query",
+        "plane",
+        "rotation"
+      ],
+      "trace_file": "SHAPE-003.json.gz",
+      "trace_frames": 1
+    },
+    "SHAPE-004": {
+      "compressed_bytes": 380,
+      "compressed_sha256": "e63f19a0d890b765721c97ebdb9558b6280b50c0fca7f7dc3eb61ac1f8b96cf3",
+      "fixture_hash": "02dc12bfa4f019069c75374ab16b65620c0073b0778afed79403e9df4ec44a82",
+      "physical_hash": "f887e241933ff41c7134656de79936396c976a1ae02c061e02f0360aabafe8b2",
+      "source": "analytic:offset_rotated_box_ray_intersection",
+      "tags": [
+        "p0",
+        "shape",
+        "query",
+        "offset",
+        "rotation"
+      ],
+      "trace_file": "SHAPE-004.json.gz",
+      "trace_frames": 1
+    },
+    "SIX_DOF-001": {
+      "compressed_bytes": 4510,
+      "compressed_sha256": "10d3f1f6a886cd15c7a273824583b140699f1ac8dd722d70f02beaa4bee3e1e5",
+      "fixture_hash": "10998767bd463bd5a958e80b3c03dc84ab18223c84f66a5d411e4b0f75648c51",
+      "physical_hash": "1ce98f82cff66b33890709c9358d2235662547381c7190e58f51a3d3f27b066c",
+      "source": "jolt_unit_test:SixDOFConstraintTests",
+      "tags": [
+        "p0",
+        "constraint",
+        "six-dof",
+        "limit"
+      ],
+      "trace_file": "SIX_DOF-001.json.gz",
+      "trace_frames": 8
+    },
+    "SIX_DOF-002": {
+      "compressed_bytes": 1979,
+      "compressed_sha256": "4304e441d0bd8047148c663738e6a54edf9099f20f8cd8d4045662e9f95d1f6b",
+      "fixture_hash": "7e90f9d4a811160a29b198d4ed0409160afec36879d69bad283428c0f4751cc4",
+      "physical_hash": "6b081646c298f7aee0d339b854e6a8e8b44eb6cb34ed53f2ec5b0d5e22626d73",
+      "source": "jolt_semantics:six_dof_axis_friction",
+      "tags": [
+        "p0",
+        "constraint",
+        "six-dof",
+        "friction"
+      ],
+      "trace_file": "SIX_DOF-002.json.gz",
+      "trace_frames": 10
+    },
+    "SIX_DOF-003": {
+      "compressed_bytes": 1999,
+      "compressed_sha256": "29c40b06bf81a035de05258900306878ef5acb4391a06db4cd97085ed8de56ab",
+      "fixture_hash": "8d9c5bc1981f3984099017611e812f605354c390ae675e49ab11bc91fd717a36",
+      "physical_hash": "a1431272c0cd0ebe63b5312e9965a543ab181b7006563b5ec33dd43eb73203d2",
+      "source": "jolt_unit_test:PoweredSixDOFConstraintTest",
+      "tags": [
+        "p0",
+        "constraint",
+        "six-dof",
+        "motor"
+      ],
+      "trace_file": "SIX_DOF-003.json.gz",
+      "trace_frames": 9
+    },
+    "SIX_DOF-004": {
+      "compressed_bytes": 1262,
+      "compressed_sha256": "194af15e54b8a74df16638c18e927caff9494f96ba068bddc2de7ca8a2372cf4",
+      "fixture_hash": "6399a17509f0a5e3c7abaec3fe8e5f49021af8e44c08597423a7aa8ac87c5fb8",
+      "physical_hash": "c9ef9033b1f13bed729a61b3ae3a187fe97ff0f5052e1d17626e55a83a613852",
+      "source": "jolt_unit_test:TestSixDOFSpring",
+      "tags": [
+        "p0",
+        "constraint",
+        "six-dof",
+        "spring"
+      ],
+      "trace_file": "SIX_DOF-004.json.gz",
+      "trace_frames": 10
+    },
+    "SLIDER-001": {
+      "compressed_bytes": 709,
+      "compressed_sha256": "759cf617130bb8d81801f93e1239d00dfc7f3e6d0b3995ead0e56313c4685cbd",
+      "fixture_hash": "ad88ad7b32368a34b236b191a38a2ac9aa4a00dab4f04788f882013915c27511",
+      "physical_hash": "860e8abeb42986e40b51da7d566603f2b40119f075c44ee8f041eb8770c61acd",
+      "source": "metamorphic:slider_degrees_of_freedom",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "invariant"
+      ],
+      "trace_file": "SLIDER-001.json.gz",
+      "trace_frames": 6
+    },
+    "SLIDER-002": {
+      "compressed_bytes": 821,
+      "compressed_sha256": "8892410b18cbb6370bb6f95459ea09a9e97ab3603334dbc7e5b309b6f9de9587",
+      "fixture_hash": "73096643995b4f75b71689904109b8454f0587d10a39650ca7caefda442ef05a",
+      "physical_hash": "922b10fcb6ce84d8b6f8d8c4779fff7af2be82d69dfc01cad27618bf9a60832e",
+      "source": "jolt_unit_test:SliderConstraintLimits",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "limit"
+      ],
+      "trace_file": "SLIDER-002.json.gz",
+      "trace_frames": 8
+    },
+    "SLIDER-003": {
+      "compressed_bytes": 981,
+      "compressed_sha256": "0f1f251bbec955fe74872b0792fbc71426703ce4aeae0bb43fd025458ce3ab4b",
+      "fixture_hash": "61f5a7d19090d6c7bbfac65816994979aa7330805f0ae4ff5bb3f5ddf8a32de2",
+      "physical_hash": "d8a41c39862e9a5e018c8e83c25b624e5fd2bc85afa41c1c50b014214c42d119",
+      "source": "jolt_unit_test:SliderConstraintSpring",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "spring"
+      ],
+      "trace_file": "SLIDER-003.json.gz",
+      "trace_frames": 9
+    },
+    "SLIDER-004": {
+      "compressed_bytes": 784,
+      "compressed_sha256": "25c7166961527e09af95c7a225e7ad64746c5d332fd31925712b03cca0f7f7c3",
+      "fixture_hash": "f3d517cff14f096d08d9b50b6c1a4979acff75c9c8f14c5f938b0cb0247d4604",
+      "physical_hash": "648cbf6af5cfb222674cf125e99c6f0b192690b6ce22b8d0b57792c8eed5f0bc",
+      "source": "jolt_unit_test:SliderConstraintFriction",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "friction"
+      ],
+      "trace_file": "SLIDER-004.json.gz",
+      "trace_frames": 7
+    },
+    "SLIDER-005": {
+      "compressed_bytes": 834,
+      "compressed_sha256": "2fb3549f58d5f0e53b2d6ef819c5a06ec0a6b3071a13e301e3ae02b4871feee8",
+      "fixture_hash": "3e8b4387e9fc9ffcc68ceab0c2f5d9a4a3f900277154752361b22b75f3aeb1b2",
+      "physical_hash": "70fc8ca956e79aaefa0e9d5872f160cfdca8a82eb780694fe7f791abe8c1fe3a",
+      "source": "jolt_unit_test:SliderConstraintVelocityMotor",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "motor",
+        "velocity"
+      ],
+      "trace_file": "SLIDER-005.json.gz",
+      "trace_frames": 8
+    },
+    "SLIDER-006": {
+      "compressed_bytes": 1008,
+      "compressed_sha256": "57170b6bab3ae48ddf76e68fab87edc66775a7bfd49e96a2fcdcd4f6f9b85ac0",
+      "fixture_hash": "a1a40e6d793519130114387eec1d3dad72201b0b8757756c31688a9f017734bd",
+      "physical_hash": "62e2be11b1455afc556e2379980282ddae9975276403e90a9ca1ce59bd8fc063",
+      "source": "jolt_unit_test:SliderConstraintPositionMotor",
+      "tags": [
+        "p0",
+        "constraint",
+        "slider",
+        "motor",
+        "position"
+      ],
+      "trace_file": "SLIDER-006.json.gz",
+      "trace_frames": 8
+    },
+    "SWING_TWIST-001": {
+      "compressed_bytes": 1501,
+      "compressed_sha256": "708e5d77f3384dd44ae2d6859e0f737c1da2d8a758754b5531cafe77f3100ca8",
+      "fixture_hash": "b367ec24aa2b005fb46c6f77b66c4a7dd5bcda9bc7269f9758a33c021ca322be",
+      "physical_hash": "f5961a705e8fb0ef4fa2e3571f811bf24ed0c55db33f3422eaa8ca65e2dd0bb6",
+      "source": "jolt_semantics:swing_twist_limits",
+      "tags": [
+        "p0",
+        "constraint",
+        "swing-twist",
+        "limit"
+      ],
+      "trace_file": "SWING_TWIST-001.json.gz",
+      "trace_frames": 8
+    },
+    "SWING_TWIST-002": {
+      "compressed_bytes": 2847,
+      "compressed_sha256": "adb7ef735c93a5f4c57e944c1b669ad02247062e5363c65a5ea50b54766e7cb6",
+      "fixture_hash": "c9115f7f28885659cea565eed4054ab446ca702e680dfd1bfab916ca90060211",
+      "physical_hash": "f197bd4b10f260b9c21125831633361de6819bf10e80fad77e0d2900fbd79f22",
+      "source": "jolt_unit_test:SwingTwistConstraintFrictionTest",
+      "tags": [
+        "p0",
+        "constraint",
+        "swing-twist",
+        "pyramid",
+        "friction"
+      ],
+      "trace_file": "SWING_TWIST-002.json.gz",
+      "trace_frames": 10
+    },
+    "SWING_TWIST-003": {
+      "compressed_bytes": 2984,
+      "compressed_sha256": "34c5ba8cbb2eedf8945e8e45eb77abc2dd6042645e5c49fd0b695000b7b7a1f7",
+      "fixture_hash": "66711053aa6d13bab0bbbf09cd36474c55178c07d8cc89ecb776941f7ad641c4",
+      "physical_hash": "4b9178b52705abafb04c5738fab0f716eea17ca78b94e097a2f777252a3defbd",
+      "source": "jolt_unit_test:PoweredSwingTwistConstraintTest",
+      "tags": [
+        "p0",
+        "constraint",
+        "swing-twist",
+        "motor"
+      ],
+      "trace_file": "SWING_TWIST-003.json.gz",
+      "trace_frames": 9
+    },
+    "SWING_TWIST-004": {
+      "compressed_bytes": 1545,
+      "compressed_sha256": "40d705ec735e0f54a06ae6dec901d7637127759968039897aca3e5ff31ab5304",
+      "fixture_hash": "3ac5df69f3baeac788a0d125ca2d2a2ea00a6db9611cd3ccbbe6f066c1e11d05",
+      "physical_hash": "a06ba002f52a43bfc9f346b0bb64bf7328344b0f6d17be305dd38c945fbaff17",
+      "source": "metamorphic:swing_twist_rotated_separate_frames",
+      "tags": [
+        "p0",
+        "constraint",
+        "swing-twist",
+        "frame",
+        "separate-frames"
+      ],
+      "trace_file": "SWING_TWIST-004.json.gz",
+      "trace_frames": 9
+    }
+  },
+  "id": "jolt-5.2.0_windows-x64_release",
+  "jolt_version": "5.2.0",
+  "native_module": "hotools_jolt.cp311-win_amd64.pyd",
+  "native_module_sha256": "b7c2b758e1b92821401e17fe74608a81d45ad0c053a73ecc5054f9ab0d3091ad",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.11 (main, May 31 2025, 09:35:27) [MSC v.1929 64 bit (AMD64)]",
+  "rel_tolerance": 1e-06,
+  "runner": "native_binding_v1",
+  "runner_version": 1,
+  "schema": "hotools_jolt_golden_manifest_v1"
+}

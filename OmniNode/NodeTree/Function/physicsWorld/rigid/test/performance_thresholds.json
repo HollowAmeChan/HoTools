@@ -1,0 +1,70 @@
+{
+  "schema": "hotools_jolt_blender_performance_thresholds_v1",
+  "id": "windows-blender-4.5-release-2026-07-11",
+  "description": "Blender 4.5 Release 后台模式；3 个独立进程，每 case warmup=10、samples=60 后冻结。",
+  "requirements": {
+    "blender_version": [4, 5],
+    "platform_system": "Windows",
+    "platform_machine": "AMD64",
+    "min_warmup": 10,
+    "min_samples": 60
+  },
+  "cases": {
+    "PERF-BODY-1": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.02, "p95": 0.05},
+        "pipeline_without_writeback_ms": {"p50": 0.6, "p95": 1.0},
+        "writeback_ms": {"p50": 0.1, "p95": 0.25}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-BODY-128": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.05, "p95": 0.06},
+        "pipeline_without_writeback_ms": {"p50": 8.0, "p95": 9.0},
+        "writeback_ms": {"p50": 7.0, "p95": 8.0}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-BODY-1024": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.15, "p95": 0.2},
+        "pipeline_without_writeback_ms": {"p50": 65.0, "p95": 75.0},
+        "writeback_ms": {"p50": 320.0, "p95": 350.0}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-CONSTRAINT-32": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.05, "p95": 0.07},
+        "pipeline_without_writeback_ms": {"p50": 6.0, "p95": 7.0},
+        "writeback_ms": {"p50": 0.8, "p95": 1.0}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-CONSTRAINT-256": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.25, "p95": 0.3},
+        "pipeline_without_writeback_ms": {"p50": 48.0, "p95": 55.0},
+        "writeback_ms": {"p50": 26.0, "p95": 32.0}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-CONTACT-32": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 0.12, "p95": 0.15},
+        "pipeline_without_writeback_ms": {"p50": 3.5, "p95": 4.0},
+        "writeback_ms": {"p50": 0.9, "p95": 1.2}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    },
+    "PERF-CONTACT-256": {
+      "metrics_ms": {
+        "native_step_ms": {"p50": 1.0, "p95": 1.2},
+        "pipeline_without_writeback_ms": {"p50": 25.0, "p95": 35.0},
+        "writeback_ms": {"p50": 25.0, "p95": 28.0}
+      },
+      "working_set_high_water_max_bytes": 402653184
+    }
+  }
+}
