@@ -76,10 +76,19 @@ if ($ProxyFixtureCount -ne 8) {
 
 $DistanceFixtureCount = @(
     Get-ChildItem -LiteralPath $OutputDirectory -Filter "distance_*.json" -File |
+        Where-Object { $_.Name -notlike "distance_runtime_*" } |
         Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
 ).Count
 if ($DistanceFixtureCount -ne 7) {
     throw "Unity oracle produced $DistanceFixtureCount distance fixtures instead of 7. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance)"
+$DistanceRuntimeFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "distance_runtime_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($DistanceRuntimeFixtureCount -ne 2) {
+    throw "Unity oracle produced $DistanceRuntimeFixtureCount distance runtime fixtures instead of 2. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime)"

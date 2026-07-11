@@ -18,7 +18,11 @@ EXPECTED_PRODUCERS = [
 
 
 def _fixtures():
-    paths = sorted(glob.glob(os.path.join(FIXTURE_DIRECTORY, "distance_*.json")))
+    paths = sorted(
+        path
+        for path in glob.glob(os.path.join(FIXTURE_DIRECTORY, "distance_*.json"))
+        if not os.path.basename(path).startswith("distance_runtime_")
+    )
     assert len(paths) == 7, paths
     result = {}
     for path in paths:
@@ -30,6 +34,25 @@ def _fixtures():
         assert source["commit"] == EXPECTED_COMMIT
         assert source["unity_editor"] == EXPECTED_UNITY
         assert source["producer"] == EXPECTED_PRODUCERS
+        result[fixture["case_id"]] = fixture
+    return result
+
+
+def _runtime_fixtures():
+    paths = sorted(glob.glob(os.path.join(FIXTURE_DIRECTORY, "distance_runtime_*.json")))
+    assert len(paths) == 2, paths
+    result = {}
+    for path in paths:
+        with open(path, "r", encoding="utf-8") as handle:
+            fixture = json.load(handle)
+        source = fixture["source"]
+        assert source["oracle_tier"] == "A"
+        assert source["version"] == "2.18.1"
+        assert source["commit"] == EXPECTED_COMMIT
+        assert source["unity_editor"] == EXPECTED_UNITY
+        assert source["producer"] == [
+            "Runtime/Cloth/Constraints/DistanceConstraint.cs::SolverConstraint"
+        ]
         result[fixture["case_id"]] = fixture
     return result
 
@@ -134,9 +157,35 @@ def test_distance_fixtures_lock_source_build_facts() -> None:
     )
 
 
+def test_distance_runtime_fixtures_prove_order_is_semantic() -> None:
+    fixtures = _runtime_fixtures()
+    nonzero_then_zero = fixtures["distance_runtime_nonzero_then_zero_001"]
+    zero_then_nonzero = fixtures["distance_runtime_zero_then_nonzero_001"]
+
+    assert nonzero_then_zero["input"]["distance_targets"] == [1, 2]
+    assert nonzero_then_zero["input"]["distance_rest_signed"] == [1, 0]
+    assert zero_then_nonzero["input"]["distance_targets"] == [2, 1]
+    assert zero_then_nonzero["input"]["distance_rest_signed"] == [0, 1]
+
+    first_next = float(nonzero_then_zero["expected"]["next_positions"][0][0])
+    second_next = float(zero_then_nonzero["expected"]["next_positions"][0][0])
+    first_velocity = float(
+        nonzero_then_zero["expected"]["velocity_positions"][0][0]
+    )
+    second_velocity = float(
+        zero_then_nonzero["expected"]["velocity_positions"][0][0]
+    )
+    assert math.isclose(first_next, 1.0, abs_tol=1.0e-6)
+    assert math.isclose(first_velocity, 0.3, abs_tol=1.0e-6)
+    assert math.isclose(second_next, 1.47846889, abs_tol=1.0e-6)
+    assert math.isclose(second_velocity, 0.4435407, abs_tol=1.0e-6)
+    assert not math.isclose(first_next, second_next, abs_tol=1.0e-6)
+
+
 TESTS = (
     ("Tier A Distance fixture contract", test_distance_fixture_contract_and_packed_ranges),
     ("Tier A Distance source build facts", test_distance_fixtures_lock_source_build_facts),
+    ("Tier A Distance runtime order semantics", test_distance_runtime_fixtures_prove_order_is_semantic),
 )
 
 

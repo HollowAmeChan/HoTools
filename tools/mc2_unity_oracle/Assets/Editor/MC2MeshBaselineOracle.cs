@@ -94,6 +94,20 @@ namespace HoTools.MC2Oracle.Editor
             public float[] RestSigned;
         }
 
+        private sealed class DistanceRuntimeCase
+        {
+            public string Id;
+            public int[] Targets;
+            public float[] RestSigned;
+            public string Note = string.Empty;
+        }
+
+        private sealed class DistanceRuntimeDump
+        {
+            public float3[] NextPositions;
+            public float3[] VelocityPositions;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -139,9 +153,21 @@ namespace HoTools.MC2Oracle.Editor
                 distanceWritten++;
             }
 
+            int distanceRuntimeWritten = 0;
+            foreach (DistanceRuntimeCase runtimeCase in DistanceRuntimeCases())
+            {
+                DistanceRuntimeDump dump = RunDistanceRuntimeCase(runtimeCase);
+                string json = BuildDistanceRuntimeJson(runtimeCase, dump);
+                string path = Path.Combine(outputDirectory, runtimeCase.Id + ".json");
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                distanceRuntimeWritten++;
+            }
+
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
-                + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures"
+                + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures, "
+                + $"{distanceRuntimeWritten} distance runtime fixtures"
             );
         }
 
@@ -319,6 +345,125 @@ namespace HoTools.MC2Oracle.Editor
         private static int2 SortedEdge(int x, int y)
         {
             return x <= y ? new int2(x, y) : new int2(y, x);
+        }
+
+        private static DistanceRuntimeDump RunDistanceRuntimeCase(
+            DistanceRuntimeCase runtimeCase
+        )
+        {
+            MethodInfo method = typeof(DistanceConstraint).GetMethod(
+                "SolverConstraint",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(DistanceConstraint).FullName,
+                    "SolverConstraint"
+                );
+            }
+
+            var team = new TeamManager.TeamData
+            {
+                initScale = new float3(1.0f),
+                scaleRatio = 1.0f,
+                animationPoseRatio = 0.0f,
+                proxyCommonChunk = new DataChunk(0, 3),
+                particleChunk = new DataChunk(0, 3),
+                distanceStartChunk = new DataChunk(0, 3),
+                distanceDataChunk = new DataChunk(0, runtimeCase.Targets.Length),
+            };
+            var parameters = new ClothParameters();
+            parameters.distanceConstraint.Convert(
+                new DistanceConstraint.SerializeData(),
+                ClothProcess.ClothType.MeshCloth
+            );
+
+            var attributes = new NativeArray<VertexAttribute>(
+                new[]
+                {
+                    VertexAttribute.Move,
+                    VertexAttribute.Fixed,
+                    VertexAttribute.Fixed,
+                },
+                Allocator.Persistent
+            );
+            var depths = new NativeArray<float>(
+                new[] { 0.5f, 0.0f, 0.0f },
+                Allocator.Persistent
+            );
+            var nextPositions = new NativeArray<float3>(
+                P((0, 0, 0), (2, 0, 0), (4, 0, 0)),
+                Allocator.Persistent
+            );
+            var basePositions = new NativeArray<float3>(
+                P((0, 0, 0), (1, 0, 0), (0, 0, 0)),
+                Allocator.Persistent
+            );
+            var velocityPositions = new NativeArray<float3>(
+                new float3[3],
+                Allocator.Persistent
+            );
+            var friction = new NativeArray<float>(new float[3], Allocator.Persistent);
+            var indices = new NativeArray<uint>(
+                new[]
+                {
+                    DataUtility.Pack12_20(runtimeCase.Targets.Length, 0),
+                    DataUtility.Pack12_20(0, runtimeCase.Targets.Length),
+                    DataUtility.Pack12_20(0, runtimeCase.Targets.Length),
+                },
+                Allocator.Persistent
+            );
+            var targets = new NativeArray<ushort>(
+                runtimeCase.Targets.Select(value => checked((ushort)value)).ToArray(),
+                Allocator.Persistent
+            );
+            var rests = new NativeArray<float>(runtimeCase.RestSigned, Allocator.Persistent);
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, 3),
+                    new float4(0.0f, 1.0f, 0.0f, 0.0f),
+                    team,
+                    parameters,
+                    attributes,
+                    depths,
+                    nextPositions,
+                    basePositions,
+                    velocityPositions,
+                    friction,
+                    indices,
+                    targets,
+                    rests,
+                };
+                try
+                {
+                    method.Invoke(null, arguments);
+                }
+                catch (TargetInvocationException exception) when (exception.InnerException != null)
+                {
+                    ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+                    throw;
+                }
+                return new DistanceRuntimeDump
+                {
+                    NextPositions = nextPositions.ToArray(),
+                    VelocityPositions = velocityPositions.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose();
+                depths.Dispose();
+                nextPositions.Dispose();
+                basePositions.Dispose();
+                velocityPositions.Dispose();
+                friction.Dispose();
+                indices.Dispose();
+                targets.Dispose();
+                rests.Dispose();
+            }
         }
 
         private static void BuildAdjacency(
@@ -771,6 +916,24 @@ namespace HoTools.MC2Oracle.Editor
             };
         }
 
+        private static IEnumerable<DistanceRuntimeCase> DistanceRuntimeCases()
+        {
+            yield return new DistanceRuntimeCase
+            {
+                Id = "distance_runtime_nonzero_then_zero_001",
+                Targets = new[] { 1, 2 },
+                RestSigned = new[] { 1.0f, 0.0f },
+                Note = "A trailing zero-distance record overwrites the earlier nonzero correction before averaging.",
+            };
+            yield return new DistanceRuntimeCase
+            {
+                Id = "distance_runtime_zero_then_nonzero_001",
+                Targets = new[] { 2, 1 },
+                RestSigned = new[] { 0.0f, 1.0f },
+                Note = "The same records in reverse order preserve the zero correction and then add nonzero correction.",
+            };
+        }
+
         private static float3[] P(params (float x, float y, float z)[] values)
         {
             return values.Select(value => new float3(value.x, value.y, value.z)).ToArray();
@@ -879,6 +1042,29 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BuildDistanceRuntimeJson(
+            DistanceRuntimeCase runtimeCase,
+            DistanceRuntimeDump dump
+        )
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(runtimeCase.Id));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Cloth/Constraints/DistanceConstraint.cs::SolverConstraint")
+            );
+            Property(text, 2, "scope", Quote(runtimeCase.Note));
+            Property(text, 2, "comparison", DistanceRuntimeComparisonJson());
+            Property(text, 2, "input", DistanceRuntimeInputJson(runtimeCase));
+            Property(text, 2, "expected", DistanceRuntimeExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
         private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
@@ -961,6 +1147,17 @@ namespace HoTools.MC2Oracle.Editor
                 Quote("per source vertex: (rest-sign-class,target,rest), zero is a separate class"),
                 false
             );
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string DistanceRuntimeComparisonJson()
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "float_abs_tolerance", "1e-6");
+            Property(text, 4, "float_rel_tolerance", "1e-6");
+            Property(text, 4, "record_order", Quote("ordered and numerically significant"), false);
             text.Append("  }");
             return text.ToString();
         }
@@ -1061,6 +1258,26 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string DistanceRuntimeInputJson(DistanceRuntimeCase runtimeCase)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "setup_type", Quote("mesh_cloth"));
+            Property(text, 4, "source_vertex", "0");
+            Property(text, 4, "distance_targets", NumberArray(runtimeCase.Targets));
+            Property(text, 4, "distance_rest_signed", ArrayJson(runtimeCase.RestSigned, FloatJson));
+            Property(text, 4, "next_positions", ArrayJson(P((0, 0, 0), (2, 0, 0), (4, 0, 0)), Vector3Json));
+            Property(text, 4, "base_positions", ArrayJson(P((0, 0, 0), (1, 0, 0), (0, 0, 0)), Vector3Json));
+            Property(text, 4, "depths", ArrayJson(new[] { 0.5f, 0.0f, 0.0f }, FloatJson));
+            Property(text, 4, "friction", ArrayJson(new[] { 0.0f, 0.0f, 0.0f }, FloatJson));
+            Property(text, 4, "animation_pose_ratio", "0");
+            Property(text, 4, "init_scale", "1");
+            Property(text, 4, "scale_ratio", "1");
+            Property(text, 4, "simulation_power_y", "1", false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string ExpectedJson(OracleDump dump)
         {
             var text = new StringBuilder();
@@ -1154,6 +1371,22 @@ namespace HoTools.MC2Oracle.Editor
                 4,
                 "distance_rest_signed",
                 ArrayJson(dump.RestSigned, FloatJson),
+                false
+            );
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string DistanceRuntimeExpectedJson(DistanceRuntimeDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(
+                text,
+                4,
+                "velocity_positions",
+                ArrayJson(dump.VelocityPositions, Vector3Json),
                 false
             );
             text.Append("  }");
