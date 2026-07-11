@@ -1487,6 +1487,73 @@ def test_contact_and_sensor_event_result_pipeline():
     _del(sensor, probe)
 
 
+def test_contact_event_overflow_result_pipeline():
+    scene = bpy.context.scene
+    bodies = [
+        _make_obj(f"TEVENT_Overflow_{index:03d}", (0.0, 0.0, 0.0))
+        for index in range(130)
+    ]
+    for body in bodies:
+        body.hotools_rigid_body.is_sensor = True
+        body.hotools_rigid_body.allow_sleeping = False
+
+    scope = make_scope(
+        list(reversed(bodies)),
+        include_rigid_body=True,
+        include_rigid_constraint=False,
+        include_passive_collision=False,
+        include_bone_collision=False,
+        include_mesh_collision=False,
+    )
+    scene.frame_set(1)
+    world, _, _, _ = physicsWorldBegin(
+        cache_state=None, scene=scene, object_scope=scope, enabled=True
+    )
+    props = make_rigid_jolt_world_setting_properties(
+        gravity=(0.0, 0.0, 0.0),
+        max_bodies=160,
+        max_body_pairs=30000,
+        max_contact_constraints=64,
+        enabled=True,
+        source_id="test_contact_event_overflow",
+        priority=10,
+    )
+    register_rigid_jolt_world_setting_objects(world, props, enabled=True)
+    body_count, _step_ms = step_rigid_bodies(world, enabled=True)
+    assert body_count == 130
+
+    stats = get_rigid_solver_stats_result(
+        world, frame=scene.frame_current, generation=world.generation
+    )
+    assert stats is not None
+    assert stats["contact_event_count"] == 8192
+    assert stats["sensor_event_count"] == 8192
+    assert stats["contact_event_overflow"] == 193
+    assert stats["sync_error_count"] == 0
+
+    contacts = iter_rigid_contact_event_results(
+        world, frame=scene.frame_current, generation=world.generation)
+    sensors = iter_rigid_contact_event_results(
+        world,
+        frame=scene.frame_current,
+        generation=world.generation,
+        sensor_only=True,
+    )
+    assert len(contacts) == 8192
+    assert len(sensors) == 8192
+    assert all(event["is_sensor"] for event in contacts)
+    assert all(
+        "body_a_handle" not in event and "body_b_handle" not in event
+        for event in contacts
+    ), "公开 overflow 快照不得泄露 native handle"
+
+    adapter = world.backend_resources["rigid_solver"]
+    assert len(adapter.last_contact_events) == 8192
+    assert adapter.last_contact_event_overflow == 193
+    world.omni_cache_dispose("test_contact_event_overflow")
+    _del(*bodies)
+
+
 def test_rigid_ray_cast_query_pipeline():
     scene = bpy.context.scene
     sensor = _make_obj("T4C_QuerySensor", (0, 0, 2), body_type="STATIC")
@@ -2267,6 +2334,7 @@ if __name__ == "__main__":
     check("刚体容量溢出隔离与诊断", test_rigid_body_capacity_overflow_isolated_and_reported)
     check("完整刚体链路（60帧）",         test_full_rigid_pipeline)
     check("contact + sensor event result pipeline", test_contact_and_sensor_event_result_pipeline)
+    check("接触事件溢出有界与统计", test_contact_event_overflow_result_pipeline)
     check("rigid RayCast query pipeline", test_rigid_ray_cast_query_pipeline)
     check("dispose + 重建",             test_dispose_and_rebuild)
     check("runtime cache delete + clear_all dispose", test_runtime_cache_delete_and_clear_all_dispose)

@@ -648,6 +648,45 @@ def test_contact_and_sensor_event_snapshots():
     sensor_world.clear()
 
 
+def test_contact_event_overflow_is_bounded_and_recovers():
+    """接触事件超过固定容量时应准确计数，并在清空后的下一轮恢复。"""
+    jw = _make_world(
+        max_bodies=160,
+        max_body_pairs=30000,
+        max_contact_constraints=64,
+    )
+    for _index in range(130):
+        _add_sphere(
+            jw,
+            body_type="DYNAMIC",
+            pos=(0.0, 0.0, 0.0),
+            is_sensor=True,
+        )
+    jw.set_gravity((0.0, 0.0, 0.0))
+    jw.step(1.0 / 60.0, 1)
+
+    pair_count = 130 * 129 // 2
+    events = jw.get_contact_events()
+    assert pair_count == 8385
+    assert len(events) == 8192, "事件快照必须受固定容量约束"
+    assert jw.contact_event_overflow_count == pair_count - len(events)
+    assert all(event[5] for event in events), "本场景的保留事件应全部为 sensor"
+
+    jw.clear()
+    assert jw.body_count == 0
+    assert jw.get_contact_events() == []
+    assert jw.contact_event_overflow_count == 0, "clear 后必须清空 overflow 计数"
+
+    first = _add_sphere(jw, pos=(0.0, 0.0, 0.0), is_sensor=True)
+    second = _add_sphere(jw, pos=(0.0, 0.0, 0.0), is_sensor=True)
+    jw.step(1.0 / 60.0, 1)
+    recovered = jw.get_contact_events()
+    assert len(recovered) == 1, "下一轮低负载 step 应恢复正常事件输出"
+    assert {recovered[0][1], recovered[0][2]} == {first, second}
+    assert jw.contact_event_overflow_count == 0
+    jw.clear()
+
+
 def test_closest_ray_cast_query():
     """RayCast 应返回最近命中，并支持 sensor 过滤和忽略 body。"""
     jw = _make_world()

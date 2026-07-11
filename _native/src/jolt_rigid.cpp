@@ -401,6 +401,8 @@ public:
         } else {
             event.body_a_handle = LookupHandle(pair.GetBody1ID());
             event.body_b_handle = LookupHandle(pair.GetBody2ID());
+            if (event.body_a_handle == 0u && event.body_b_handle == 0u)
+                return;
             event.sub_shape_a = pair.GetSubShapeID1().GetValue();
             event.sub_shape_b = pair.GetSubShapeID2().GetValue();
         }
