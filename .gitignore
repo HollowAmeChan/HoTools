@@ -2,6 +2,19 @@ __pycache__/
 *.pyc
 *.pyo
 *.blend*
+*~
+
+# Local test, coverage, and static-analysis outputs. Test sources stay tracked.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
 
 # MagicaCloth2 is commercial source. Oracle tools may reference an external
 # checkout, but no vendored/embedded MC2 package may enter this repository.

@@ -1,0 +1,46 @@
+# Repository and local development metadata.
+/.git/
+/.github/
+/.agents/
+/.claude/
+/.codex/
+/.venv/
+/.vscode/
+/.idea/
+/.vs/
+/.gitignore
+/.gitattributes
+/.releaseignore
+
+# Test suites, fixtures, runners, and generated reports at any depth.
+test/
+tests/
+test_*.py
+_test_*.py
+*_test.py
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit*.xml
+*.pyc
+*.pyo
+
+# Development-only native sources and oracle projects.
+/_native/
+/tools/
+
+# Local packaging, build, and backup outputs.
+_bin/
+_build/
+_dist/
+build/
+cmake-build-*/
+*.blend[0-9]*
+*~

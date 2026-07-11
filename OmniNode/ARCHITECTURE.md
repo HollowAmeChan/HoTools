@@ -866,7 +866,7 @@ native smoke test：
 - release zip 由 GitHub Actions 生成。
 - `_native` 源码目录不进用户安装包。
 - `_Lib/*/HotoolsPackage` 里的最终 native runtime 产物必须进入用户安装包。
-- `.gitignore` 只管本地误提交，release workflow 的 exclude 才决定安装包内容。
+- `.gitignore` 只管本地误提交；`.releaseignore` 决定安装包内容，release workflow 在压缩前校验测试文件没有混入。
 
 ## 文件职责
 
