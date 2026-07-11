@@ -174,11 +174,13 @@ dynamic input 不参与 topology signature。shape 或 identity domain 改变不
 
 ### H2 Blender Mesh frame adapter（唯一支持路径）
 
-MeshCloth slot 为源对象持有一个生命周期受控的 BasePose read object：复制源对象及 Mesh data，保留 topology-preserving 基础变形，永久移除共享/旧 MC2 GN 物理 offset，并禁止自身启用 solver。每帧只从这个对象的 `evaluated_get(...).to_mesh()` 取得 positions/normals；禁止从已接受 physics writeback 的源对象 evaluated mesh 读取 N3，否则上一帧结果会反馈到下一帧动画输入。
+MeshCloth slot 为源对象持有一个生命周期受控的 BasePose read object：复制源对象及 Mesh data，保留 topology-preserving 基础变形，永久移除共享 Physics World GN offset，并禁止自身启用 solver。每帧只从这个对象的 `evaluated_get(...).to_mesh()` 取得 positions/normals；禁止从已接受 physics writeback 的源对象 evaluated mesh 读取 N3，否则上一帧结果会反馈到下一帧动画输入。旧物理资产、旧私有 output 和旧 solver parity 不属于该契约的支持或验收范围。
 
 这是 Blender host 的固定性能架构。已实测排除 BlendShape/Shape Key 逐帧写回、单对象切换或移动 GN modifier、同一对象读取修改器栈前后两个 evaluated 阶段；前两者触发不可接受的回调/重算卡顿，后者无法稳定低成本取得两个阶段。实现不得保留这些替代分支或自动 fallback。
 
 frame snapshot cache key 至少包含 source identity、BasePose identity、frame 和 world generation，缓存值不可被 consumer 原地修改。same-frame 可复用；跳帧、倒放、BasePose identity 更换或 topology signature 不符触发 restart/rebuild/error。该 cache 只缓存动态 pose，不拥有 N0 topology。
+
+当前 Blender adapter 基础层已实现 BasePose 的共享物理 output 清除、创建时 Mesh topology identity 哈希、不可写 evaluated world position/normal snapshot，以及包含 source object/data、BasePose、frame、generation、Mesh topology token 的 same-frame cache；真实 Armature + 常驻源对象 GN 回归已证明无反馈。这里的 Mesh topology token 只覆盖 vertex identity/connectivity，不能替代包含 reference pose、UV 和 attribute 的 `final_proxy.proxy_signature`。MC2 slot 接线必须让同一次 N0 提取同时持有并校验两个 token；这部分以及 N3 rotation 派生仍未完成。
 
 Mesh result adapter 使用同一帧的 `display_world` 和 `animated_base_world_positions`：
 

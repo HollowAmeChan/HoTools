@@ -66,8 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 语义门禁收口中 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 58 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak | 性能、golden；Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | B3 framework scaffold + S2 N0 contract/Mesh baseline builder，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；source-aligned proxy/baseline immutable contract、packer 与纯 Mesh parent/root/depth/local-pose builder；独立 Unity 6000.3 Tier A host，8 个 Mesh baseline parity + 1 个 tie-boundary case；共享 GN 最终 offset/bone writeback planned channel | 尚无 Blender N0/N3 双对象 adapter、其余 static/constraint Tier A slices、native context、solver step 或 result publication |
-| 旧 MC2 MeshCloth/BoneCloth | 当前仍可运行 | 现有数值核心与 scene parity 作为迁移依据 | 迁入统一 MC2 后删除旧 package，不做长期桥接 |
+| MC2 | B3 framework scaffold + S2 N0 contract/Mesh baseline builder + Blender 双对象 adapter 基础层，尚无解算 | 唯一 solver id；三种 setup adapter；参数/effective parameter 预备契约；topology/slot 生命周期；initial state/particle buffer owner；source-aligned proxy/baseline immutable contract、packer 与纯 Mesh parent/root/depth/local-pose builder；独立 Unity 6000.3 Tier A host，8 个 Mesh baseline parity + 1 个 tie-boundary case；BasePose 物理 output 隔离、Mesh topology token、不可写 Armature evaluated frame snapshot/cache；共享 GN 最终 offset/bone writeback planned channel | Blender N0 extraction/slot binding、N3 rotation、其余 static/constraint Tier A slices、native context、solver step 与 result publication尚未完成 |
 | MC2 BoneSpring | 未实现 | setup identity 和任务框架已声明 | topology adapter、参数 spec、native step、PoseBone result/writeback |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
@@ -77,12 +76,12 @@ MC2 只有一个 solver identity：`mc2`。
 
 - `MeshCloth`、`BoneCloth`、`BoneSpring` 是三种 setup，不是三个 solver。
 - setup adapter 负责 Blender 输入、拓扑构建和结果目标差异；step、cache、backend resource、碰撞快照和结果生命周期由 MC2 solver 共享。
-- 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package 中的两套实现仅作为迁移与 parity 参考。
+- 新路径只提供一个共享 native context，不公开 Python/C++ backend 选择；旧 package、旧资产和旧 solver parity 不属于实现或验收范围。
 - 当前新 MC2 step 只同步 framework slot、topology、initial state 和 particle buffer；不推进模拟、不发布结果、不调用旧 MC2 package。
 - no-op 阶段的 `mc2_stats`、`gn_attribute`、`bone_transform` 只登记为 planned channel，不虚报 active 输出。
 - MeshCloth 最终只发布对象局部顶点 offset；多阶段或多 solver 分量先在 `world.exchange` 归并，不创建 solver 私有 GN 属性。
 - MeshCloth 的 Blender adapter 永久使用“双对象 + 常驻 GN”：BasePose 只读对象保留骨架/Shape Key 基础变形并移除物理 output，源对象末端 GN 只接收同 vertex identity 的 object-local offset。BlendShape 写回、单对象切换/移动 GN、同一对象读取前后两个 evaluated 阶段均已因 Blender 性能/求值限制排除。
-- 在新路径完成 parity、same-frame、跳帧/reset、dispose 和写回验收前，旧 MeshCloth/BoneCloth package 继续承担当前运行实现。
+- 新路径只验证新 schema、slot、native context、result stream 与共享 writeback；旧路径可以独立清理，不设置迁移/兼容门槛。
 
 ## 固定契约
 
@@ -131,6 +130,6 @@ MC2 只有一个 solver identity：`mc2`。
 - solver 不直接写 bpy；result 可被统一 writeback、preview 或 export 消费。
 - schema/RNA/capability 同源，`.blend` 非默认值往返不漂移。
 - backend 能力、Python binding、节点 surface、debug 和 fixture 同步落地。
-- 新路径通过验收后删除旧路径，不保留永久 adapter 或 shadow solver。
+- 不为旧路径保留资产 adapter、兼容层或 shadow solver。
 
 当前状态以代码中的 solver/component descriptor、declaration registry 和自动化测试为准；本文只在边界或未完成项发生变化时更新。

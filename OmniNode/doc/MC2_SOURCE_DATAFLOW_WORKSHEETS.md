@@ -538,19 +538,21 @@ HoTools 已按 D-03 把用户 mesh 永久定义为“最终 proxy 且 identity m
 
 ### Blender 动画基底与无反馈写回边界
 
-这部分是 HoTools host adapter 契约，不是 MC2 reduction/render mapping。旧 MeshCloth 路径已经形成一条可工作的语义链：
+这部分是 HoTools 新 Physics World host adapter 契约，不是 MC2 reduction/render mapping，也不承担旧资产兼容。实现链为：
 
-1. `physicsWorld/mc2/setups/mesh_cloth/base_pose.py::create_base_pose_proxy()` 复制源对象和 Mesh data，保留 Armature、Shape Key 等原有基础变形栈，但从副本移除 MC2/GN 物理 delta output，并把副本作为 `HoPhysicsCache` 中的只读 BasePose 对象管理。
-2. `physicsMC2MeshCloth/blender_io.py::read_evaluated_mesh_world_pose()` 对 BasePose 调用 `evaluated_get(depsgraph).to_mesh()`，读取当前帧位置/法线快照并立即 `to_mesh_clear()`；不直接持有 evaluated data。
-3. `read_cached_base_pose_world_pose()` 用 `(source object pointer, BasePose pointer, frame)` 缓存一帧快照并返回副本。同一帧重复求值不会重复读取，也不会因本帧 writeback 改变 solver input。
-4. `state.py::sync_state_to_base_pose_proxy()` 在 BasePose identity/frame 已同步时复用状态，否则把本帧 world positions/normals 更新为 `base_positions/base_normals`，再重建 base rotation/step basic pose。跳帧、倒放或 identity 变化由 runtime lifecycle 走 restart/rebuild，而不是把旧 pose 当新输入。
-5. `delta_output.py::write_world_delta_attribute()` 计算 `display_world - base_world`，仅用源对象 `matrix_world` 逆线性部分转成 object-local vector；GN Set Position 修改器始终位于 Armature/基础变形之后。共享 `physicsWorld.gn_offset` 延续同一个“最终 object-local offset”语义。
+1. `physicsWorld/mc2/setups/mesh_cloth/base_pose.py::create_base_pose_proxy()` 复制源对象和 Mesh data，保留 Armature、Shape Key 等基础变形栈，从副本移除共享 Physics World GN output，并把副本作为 `HoPhysicsCache` 中的只读 BasePose 对象管理。
+2. `physicsWorld/mc2/setups/mesh_cloth/frame_input.py::read_base_pose_frame_snapshot()` 对 BasePose 调用 `evaluated_get(depsgraph).to_mesh()`，读取当前帧位置/法线后立即 `to_mesh_clear()`，以新 slot 的 generation/identity 缓存不可写 snapshot。
+3. 新 result adapter 将 `display_world - animated_base_world_positions` 仅用源对象 `matrix_world` 逆线性部分转成 object-local vector；共享 `physicsWorld.gn_offset` 常驻源对象修改器栈末端并只更新 POINT attribute。该接线尚未完成，不从旧 solver 复用 runtime state。
 
 因此这里存在两个不同的 cache/static 概念：N0 的 topology/vertex identity 是静态注册数据；BasePose cache 是逐帧 animated pose snapshot。骨架会移动顶点，但不应更换 vertex identity 或 N0 signature。直接读取源对象 evaluated mesh 会包含底部物理 GN offset，形成结果反馈，永久禁止。
 
 双对象 + 常驻 GN 是唯一支持的 Blender host 路径，不是首版临时实现。既有性能测试已排除 BlendShape/Shape Key 逐帧写回（卡顿）、单对象切换或移动 GN 修改器（触发大面积 depsgraph/软件内部回调和重算），以及在同一 evaluated object 上读取物理前后两个阶段（Blender 无法稳定低成本同时提供）。因此新路径必须复用专用只读副本语义，不得把这些已失败方案作为“后续优化”重新引入。
 
-相比旧路径只校验 vertex/loop/polygon count，新 adapter 还必须在创建/刷新时校验完整 N0 topology signature，并在每帧拒绝 evaluated vertex count 不一致。Armature、Shape Key 等拓扑保持型变形允许；会新增、删除、重排或重新连接顶点的修改器不属于 final-proxy identity 输入域。
+新 adapter 基础层已落地：`base_pose.py` 在创建/刷新时计算包含 vertex index、canonical edge、polygon winding 和 loop triangle 的 Mesh topology identity signature，并把 token 存在 BasePose；`frame_input.py` 用 `(source object/data identity, BasePose identity, frame, world generation, Mesh topology token)` 缓存不可写 `float32[N,3]` world positions/normals，并在每次 evaluated snapshot 拒绝 vertex count 变化。完整哈希只在静态创建/刷新时计算，逐帧保持 token/轻量计数校验，不把 O(topology) 扫描放入 frame hot path。
+
+该 Mesh topology token 只证明 Blender 双对象仍共享相同 vertex identity/connectivity，不等于 `MC2ProxyStaticSpec.proxy_signature`；后者还包含 reference positions/normals/tangents/UV/attributes。N0 adapter 接线时必须由同一次静态提取同时持有两者，任一变化都走 rebuild。当前基础层尚未接入 MC2 slot，也尚未生成 N3 `proxy_animation_world_rotations`，不得称为动态输入闭环。
+
+真实 Blender Armature 回归已覆盖：BasePose 保留骨架修改器且不含任一物理 output；骨骼逐帧移动会改变 BasePose snapshot；源对象常驻 GN offset 改变 display，但不会改变 same-frame 或下一 generation 的 BasePose 输入；缓存数组不可写，错误 topology token 被拒绝。Armature、Shape Key 等拓扑保持型变形允许；会新增、删除、重排或重新连接顶点的修改器不属于 final-proxy identity 输入域。
 
 ### Output contract conclusion
 
@@ -568,7 +570,7 @@ HoTools 已按 D-03 把用户 mesh 永久定义为“最终 proxy 且 identity m
 4. Bone world -> local transform，含 parent scale 与 fixed/root skip。
 5. Mesh result 的 vertex identity/count/order 与输入 final proxy 完全一致，不产生 mapping mesh。
 6. Armature 驱动 Mesh：BasePose evaluated positions 每帧变化；写回后再次读取同帧 BasePose 数值不变；下一帧输入只包含新动画基底，不包含上一帧物理 offset。
-7. BasePose modifier stack 改变 topology 时显式失败；same-frame cache 返回独立只读/复制 snapshot，不允许 consumer 原地污染缓存。
+7. BasePose modifier stack 改变 vertex count 时显式失败；静态 Mesh identity token 不一致时拒绝复用；same-frame cache 返回同一不可写 snapshot，不允许 consumer 原地污染缓存。
 
 ## W7 ClothSerializeData 到 Runtime Parameters
 

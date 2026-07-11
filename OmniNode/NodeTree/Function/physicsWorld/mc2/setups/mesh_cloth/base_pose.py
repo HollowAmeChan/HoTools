@@ -4,15 +4,19 @@ MC2 MeshCloth BasePose 只读对象的集中管理模块。
 这个文件只处理物理缓存对象的生命周期和轻量校验：
 1. 创建/刷新当前物理 Mesh 对应的 BasePose 只读对象。
 2. 将自动生成的对象统一归档到场景集合 HoPhysicsCache。
-3. 移除复制体上的物理解算后置 delta 输出，避免只读输入混入写回结果。
-4. 检查当前物理对象与 BasePose 对象的顶点数、Loop 数、面数是否一致。
+3. 移除复制体上的共享 Physics World GN 输出，避免新生态写回反馈。
+4. 创建时冻结 Mesh 顶点身份/拓扑签名；逐帧只做常数时间 token 与轻量计数校验。
 
-它不负责读取 evaluated mesh、构建 solver state 或执行物理解算；这些仍由
-OmniNode/physicsMC2MeshCloth 后端处理。
+它不负责读取 evaluated mesh、构建 solver state 或执行物理解算；N3 读取由同目录
+frame_input.py 负责，其余步骤由新 physicsWorld.mc2 slot/native 路径负责。
 """
+
+import hashlib
+import json
 
 import bpy
 
+from ....gn_offset import remove_gn_offset_output
 from .delta_output import PhysicsDeltaOutputSpec
 from .delta_output import ensure_delta_attribute as _ensure_delta_attribute
 from .delta_output import ensure_delta_modifier as _ensure_delta_modifier
@@ -23,6 +27,7 @@ from .delta_output import remove_delta_output as _remove_delta_output_by_spec
 CACHE_COLLECTION_NAME = "HoPhysicsCache"
 CACHE_OBJECT_FLAG = "hotools_base_pose_cache"
 CACHE_SOURCE_KEY = "hotools_base_pose_source"
+CACHE_TOPOLOGY_SIGNATURE_KEY = "hotools_base_pose_topology_signature"
 DELTA_ATTRIBUTE_NAME = "mc2_delta"
 DELTA_MODIFIER_NAME = "MC2 后置位移"
 DELTA_NODE_GROUP_NAME = "HoTools_MC2_ApplyDelta"
@@ -71,7 +76,42 @@ def mesh_light_key(obj: bpy.types.Object) -> tuple[int, int, int]:
     return (len(mesh.vertices), len(mesh.loops), len(mesh.polygons))
 
 
-def validate_base_pose_proxy(source_obj: bpy.types.Object, base_obj: bpy.types.Object) -> None:
+def mesh_topology_signature(obj: bpy.types.Object) -> str:
+    if not _is_live_mesh_object(obj):
+        raise ValueError("拓扑签名目标必须是Mesh")
+    mesh = obj.data
+    edges = []
+    for edge in mesh.edges:
+        first, second = (int(value) for value in edge.vertices)
+        edges.append((first, second) if first < second else (second, first))
+    edges.sort()
+    polygons = tuple(
+        tuple(int(value) for value in polygon.vertices)
+        for polygon in mesh.polygons
+    )
+    try:
+        mesh.calc_loop_triangles()
+    except Exception:
+        pass
+    triangles = tuple(
+        tuple(int(value) for value in triangle.vertices)
+        for triangle in mesh.loop_triangles
+    )
+    payload = {
+        "vertex_count": len(mesh.vertices),
+        "edges": edges,
+        "polygons": polygons,
+        "triangles": triangles,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("ascii")).hexdigest()
+
+
+def validate_base_pose_proxy(
+    source_obj: bpy.types.Object,
+    base_obj: bpy.types.Object,
+    expected_mesh_topology_signature: str | None = None,
+) -> None:
     if not _is_live_mesh_object(source_obj):
         raise ValueError("当前物理对象必须是Mesh")
     if not _is_live_mesh_object(base_obj):
@@ -86,6 +126,11 @@ def validate_base_pose_proxy(source_obj: bpy.types.Object, base_obj: bpy.types.O
             f"当前={source_key[0]}顶点/{source_key[1]}Loop/{source_key[2]}面，"
             f"BasePose={base_key[0]}顶点/{base_key[1]}Loop/{base_key[2]}面"
         )
+    expected = str(expected_mesh_topology_signature or "")
+    if expected:
+        stored = str(base_obj.get(CACHE_TOPOLOGY_SIGNATURE_KEY, "") or "")
+        if stored != expected:
+            raise ValueError("BasePose只读对象的Mesh拓扑签名与预期不一致")
 
 
 def ensure_cache_collection(scene: bpy.types.Scene = None) -> bpy.types.Collection:
@@ -130,6 +175,7 @@ def ensure_delta_output(obj: bpy.types.Object) -> None:
 
 def _remove_delta_output(obj: bpy.types.Object) -> None:
     _remove_delta_output_by_spec(obj, MC2_DELTA_SPEC)
+    remove_gn_offset_output(obj)
 
 
 def _disable_runtime_flags(obj: bpy.types.Object) -> None:
@@ -143,9 +189,15 @@ def _disable_runtime_flags(obj: bpy.types.Object) -> None:
 def create_base_pose_proxy(
     source_obj: bpy.types.Object,
     scene: bpy.types.Scene = None,
+    expected_mesh_topology_signature: str | None = None,
 ) -> bpy.types.Object:
     if not _is_live_mesh_object(source_obj):
         raise ValueError("当前物理对象必须是Mesh")
+
+    source_topology_signature = mesh_topology_signature(source_obj)
+    expected = str(expected_mesh_topology_signature or "")
+    if expected and source_topology_signature != expected:
+        raise ValueError("当前Mesh拓扑签名与预期不一致")
 
     base_obj = source_obj.copy()
     base_obj.data = source_obj.data.copy()
@@ -161,7 +213,11 @@ def create_base_pose_proxy(
         base_obj[CACHE_OBJECT_FLAG] = True
         # Blender IDProperty 的整数不是 64 位安全的，不能直接保存 as_pointer()。
         base_obj[CACHE_SOURCE_KEY] = f"{source_obj.name_full}:{int(source_obj.as_pointer())}"
-        validate_base_pose_proxy(source_obj, base_obj)
+        base_topology_signature = mesh_topology_signature(base_obj)
+        if base_topology_signature != source_topology_signature:
+            raise ValueError("BasePose只读对象复制后拓扑签名发生变化")
+        base_obj[CACHE_TOPOLOGY_SIGNATURE_KEY] = source_topology_signature
+        validate_base_pose_proxy(source_obj, base_obj, expected or source_topology_signature)
     except Exception:
         old_mesh = base_obj.data
         bpy.data.objects.remove(base_obj, do_unlink=True)
@@ -174,6 +230,7 @@ def refresh_base_pose_proxy(
     source_obj: bpy.types.Object,
     base_obj: bpy.types.Object,
     scene: bpy.types.Scene = None,
+    expected_mesh_topology_signature: str | None = None,
 ) -> bpy.types.Object:
     base_obj_live = _is_live_mesh_object(base_obj)
     same_object = False
@@ -190,13 +247,14 @@ def refresh_base_pose_proxy(
         if old_mesh is not None and old_mesh.users == 0:
             bpy.data.meshes.remove(old_mesh)
 
-    return create_base_pose_proxy(source_obj, scene)
+    return create_base_pose_proxy(source_obj, scene, expected_mesh_topology_signature)
 
 
 def ensure_base_pose_proxy(
     source_obj: bpy.types.Object,
     scene: bpy.types.Scene = None,
     refresh: bool = False,
+    expected_mesh_topology_signature: str | None = None,
 ) -> bpy.types.Object:
     props = getattr(source_obj, "hotools_mesh_collision", None)
     if props is None:
@@ -207,19 +265,34 @@ def ensure_base_pose_proxy(
     except ReferenceError:
         base_obj = None
     if refresh or base_obj is None:
-        base_obj = refresh_base_pose_proxy(source_obj, base_obj, scene)
+        base_obj = refresh_base_pose_proxy(
+            source_obj,
+            base_obj,
+            scene,
+            expected_mesh_topology_signature,
+        )
         props.mc2_base_pose_proxy = base_obj
         return base_obj
 
     try:
-        validate_base_pose_proxy(source_obj, base_obj)
+        validate_base_pose_proxy(source_obj, base_obj, expected_mesh_topology_signature)
     except ReferenceError:
-        base_obj = refresh_base_pose_proxy(source_obj, None, scene)
+        base_obj = refresh_base_pose_proxy(
+            source_obj,
+            None,
+            scene,
+            expected_mesh_topology_signature,
+        )
         props.mc2_base_pose_proxy = base_obj
         return base_obj
     except ValueError:
         if _is_generated_cache_object(base_obj):
-            base_obj = refresh_base_pose_proxy(source_obj, base_obj, scene)
+            base_obj = refresh_base_pose_proxy(
+                source_obj,
+                base_obj,
+                scene,
+                expected_mesh_topology_signature,
+            )
             props.mc2_base_pose_proxy = base_obj
             return base_obj
         raise

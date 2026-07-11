@@ -17,7 +17,7 @@ S2 的 host/native 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`。其中 
 1. 新 MC2 不能继续按“先设计一个看起来合理的 spec，再补源码解释”的顺序推进。每个静态数组、运行时数组和重建条件都必须先定位 MC2 的生产者、消费者和生命周期。
 2. `SelectionData`、`VertexAttribute`、baseline、depth、distance constraint 和 bending constraint 是不同阶段的数据。不能因为最终都表现为逐顶点或逐约束数组，就提前合并进一个 `SelectionSpec` 或简化的 topology spec。
 3. `MeshCloth`、`BoneCloth`、`BoneSpring` 仍是一个 solver 的三种 setup；共享的是运行时粒子与约束求解模型，不代表三种 setup 的代理网格生成过程相同。
-4. 新运行时只保留 C++ 解算实现。Python 负责 Blender 输入冻结、slot 生命周期、native buffer 打包、result stream、writeback plan 和 debug；旧 Python/C++ MeshCloth 只能作为对拍材料。
+4. 新运行时只保留 C++ 解算实现。Python 负责 Blender 输入冻结、slot 生命周期、native buffer 打包、result stream、writeback plan 和 debug；旧 Python/C++ MeshCloth 不属于兼容目标、验收 oracle 或运行依赖。
 5. 任何“源码对齐”声明都必须同时带源码位置、输入域、已知偏差和测试 oracle。只有形状测试、self-consistency 测试或 Blender smoke test 不能证明对齐。
 
 ## 文档与事实优先级
@@ -63,7 +63,7 @@ S2 的 host/native 边界草案见 `MC2_HOST_NATIVE_CONTRACT_DRAFT.md`。其中 
 | Distance 数据 | `Runtime/Cloth/Constraints/DistanceConstraint.cs::CreateData()` | parent edge 为 vertical，其余邻接为 horizontal；过滤 invalid/全 fixed；相邻三角形还可能生成 shear；horizontal rest distance 用负号编码。 | B4 只有 pair/kind/rest length 简化表。 |
 | Bending 数据 | `TriangleBendingConstraint.cs::CreateData()` | 邻接三角形先形成四点，再按属性与角度分类为 dihedral/volume，并存 rest value、sign 和 write mapping。 | B4 只有 triangle adjacency pair。 |
 | 其它静态数据 | `InertiaConstraint.cs::CreateData()`、proxy mesh 的 baseline/local pose/root arrays | center/fixed、local pose、root 等数据参与后续 inertia、angle、tether 和 display。 | 尚未形成完整新契约。 |
-| 帧调度 | `SimulationManagerNormal.cs`、`SimulationManagerSplit.cs` | 每 step 的 team/collider/predict、baseline、tether、distance、angle、bending、collision、distance、motion、post 顺序明确。 | 旧 solver 有参考实现；新 solver 尚无 native context/step。 |
+| 帧调度 | `SimulationManagerNormal.cs`、`SimulationManagerSplit.cs` | 每 step 的 team/collider/predict、baseline、tether、distance、angle、bending、collision、distance、motion、post 顺序明确。 | 新 solver 尚无 native context/step；只以固定 MC2 source 与独立 fixture 为 oracle。 |
 | 输出 | `VirtualMeshManager.SimulationPostProxyMeshUpdate*()` | line/triangle/world/local transform 输出路径不同。 | 新 solver 尚不发布 result。 |
 
 ## 对照记录格式
@@ -171,11 +171,11 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 ### S5 MeshCloth vertical slice
 
-目标：用旧 MeshCloth 作为数值 oracle，完成一条真实 Physics World 输出链。
+目标：以固定 MC2 source、独立 Tier A fixture 和新 Physics World 生命周期测试完成一条真实输出链。
 
 范围：单对象、用户提供低模 proxy、固定点、无 collider 的第一版；native result 发布对象局部 offset，统一 GN writeback 消费。Mesh frame adapter 复用已验证的 BasePose 语义：为源对象维护同拓扑只读副本，保留 Armature/Shape Key 等基础变形，移除物理 GN offset；每帧从该副本的 evaluated mesh 读取动画基底，禁止直接从已含物理写回的源对象读取。随后按 tether/angle/bending/collider/self collision 的依赖顺序扩展。
 
-退出门槛：首帧、连续帧、same-frame、参数热更新、topology/pin 重建、reset、dispose、写回失败回滚全部通过；至少有一个 Armature 驱动 final-proxy 用例证明动画基底逐帧变化、物理 offset 位于修改器栈末端且不会反馈进下一帧输入；代表场景与旧 solver 逐帧对拍。
+退出门槛：首帧、连续帧、same-frame、参数热更新、topology/pin 重建、reset、dispose、写回失败回滚全部通过；至少有一个 Armature 驱动 final-proxy 用例证明动画基底逐帧变化、物理 offset 位于修改器栈末端且不会反馈进下一帧输入；数值行为由固定 MC2 source 的 Tier A fixture/最小场景验证，不要求与旧 solver 对拍。
 
 ### S6 BoneCloth 与 BoneSpring
 
@@ -185,11 +185,11 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 退出门槛：同一 context schema 覆盖三 setup；PoseBone writeback 只消费 result stream；BoneSpring 没有第二 solver identity 或第二套粒子状态。
 
-### S7 完整能力与旧路径删除
+### S7 完整能力与旧路径清理
 
 范围：collider、self/inter collision、多对象/多 center、wind/inertia 完整语义、性能、debug、bake/export。每项仍按源码 worksheet -> 契约 -> oracle -> native -> integration 的顺序推进。
 
-旧 solver 只有在新路径通过等价场景、生命周期、性能和写回验收后才能删除；不保留长期 shadow pipeline。
+旧 solver/旧资产兼容不作为新路径交付门槛；可独立删除，不保留 adapter、资产迁移层或 shadow pipeline。新路径只检查新 schema、新 slot、新 native context 和统一 writeback 形成的生态。
 
 ## 未决决策
 
@@ -220,4 +220,6 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 2. SelectionData -> proxy attributes -> baseline parent/root/depth 的阶段边界；
 3. proxy topology -> DistanceConstraint/TriangleBendingConstraint 数据数组。
 
-S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、same-frontier parent、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。`tools/mc2_unity_oracle` 已在 Unity `6000.3.15f1`、MC2 `2.18.1@418f89f`、Burst `1.8.29`、Collections `2.6.5`、Mathematics `1.3.3` 下导出 9 个 Tier A case：8 个完整语义数组与 HoTools 对拍通过，另 1 个 high-first case证明 equal-cost 是 source first-enumerated，而 HoTools 固定 lowest-index 是已登记 intentional deviation。下一步实现 D-08 的 Blender N0/N3 双对象 adapter；不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。
+S2 契约草案已经建立，B4 未提交近似实现已整体移除。N0 已有最终 proxy/baseline immutable contract、显式 packer，以及独立的纯 Mesh baseline builder；builder 覆盖无/单/多 Fixed、断开岛、fixed distance、move angle、same-frontier parent、ZeroDistance 和 source local-pose 规则，不把 Armature 驱动后的逐帧坐标混进 N0。`tools/mc2_unity_oracle` 已在 Unity `6000.3.15f1`、MC2 `2.18.1@418f89f`、Burst `1.8.29`、Collections `2.6.5`、Mathematics `1.3.3` 下导出 9 个 Tier A case：8 个完整语义数组与 HoTools 对拍通过，另 1 个 high-first case 证明 equal-cost 是 source first-enumerated，而 HoTools 固定 lowest-index 是已登记 intentional deviation。
+
+D-08 的 Blender 双对象 adapter 基础层已实现并通过真实 Armature + 常驻 GN 无反馈回归：BasePose 永久移除共享 Physics World output，创建时冻结 Mesh topology identity token，N3 positions/normals 以 source/data/BasePose/frame/generation/token 为 key 缓存为不可写 snapshot。该 token 不等于包含全部 reference/static payload 的 `final_proxy.proxy_signature`。下一步建立 Blender N0 extraction/slot binding，让一次静态构建同时持有两个 token 并驱动 rebuild，再按 W2 local-pose 规则派生 N3 `proxy_animation_world_rotations`；完成此前不进入 native solver step。不能复用或继续扩展已废弃的 HoClothUnity，不能提交 MC2 商业源码。

@@ -171,6 +171,27 @@ def clear_gn_local_offsets(obj) -> bool:
     return True
 
 
+def remove_gn_offset_output(obj) -> bool:
+    """Remove the reserved shared offset modifier and attribute from one object."""
+    try:
+        _require_mesh_object(obj)
+    except ValueError:
+        return False
+    removed = False
+    modifier = obj.modifiers.get(GN_OFFSET_MODIFIER_NAME)
+    if modifier is not None:
+        obj.modifiers.remove(modifier)
+        removed = True
+    attribute = obj.data.attributes.get(GN_OFFSET_ATTRIBUTE_NAME)
+    if attribute is not None:
+        obj.data.attributes.remove(attribute)
+        removed = True
+    if removed:
+        obj.data.update()
+        obj.update_tag()
+    return removed
+
+
 __all__ = [
     "clear_gn_local_offsets",
     "ensure_gn_offset_attribute",
@@ -178,5 +199,6 @@ __all__ = [
     "ensure_gn_offset_node_group",
     "ensure_gn_offset_output",
     "normalize_local_offsets",
+    "remove_gn_offset_output",
     "write_gn_local_offsets",
 ]
