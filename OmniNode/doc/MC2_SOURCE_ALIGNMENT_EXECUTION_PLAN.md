@@ -229,7 +229,7 @@ MeshCloth 的 N0 builder 只消费用户 final-proxy 的静态 Mesh data：verte
 
 不继续写 B4 solver 代码，不接旧物理、不接废弃 HoClothUnity、不提交 MC2 商业源码。当前 Mesh N0 final proxy、baseline 和 slot static cache 已完成，下一步优先整理并冻结后续文档契约：
 
-1. N1 DistanceConstraint static：从固定 MC2 source 和现有 W3 worksheet 整理 per-vertex signed layout、vertical/horizontal/shear 生成规则、过滤规则和最小 Tier A fixture 清单。
+1. N1 DistanceConstraint static：字段、生成规则、zero-distance、shear Invalid 边界、ordering 风险、signature/dirty policy 已冻结为 `MC2DistanceStaticV0`；下一步扩展独立 Unity oracle，导出 raw packed build arrays 和最小 runtime 数值 case，先关闭 mixed zero/nonzero 的顺序语义，再实现纯 host builder。不得使用旧 solver 对拍。
 2. N1 TriangleBending static：整理 ordered quad role、dihedral/volume 分类、rest value/sign/write mapping，不把当前简化 adjacency pair 当 ABI。
 3. N2 runtime parameter ABI：把 `ClothParameters`、BoneSpring override、16-sample curve representation 和 HoTools scheduler settings 拆成明确 schema，先写字段表和 dirty policy，不写 C++ binding。
 4. N3 Mesh dynamic adapter：在既有 BasePose evaluated snapshot 基础上，按 W2 local-pose 规则派生 `proxy_animation_world_rotations`，并明确 frame cache、restart 和 topology mismatch 行为。

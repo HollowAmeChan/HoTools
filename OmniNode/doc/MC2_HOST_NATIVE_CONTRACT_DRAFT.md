@@ -108,15 +108,25 @@ Mesh N0 topology signature 在注册时冻结。源对象后续可以通过 Arma
 
 ### N1 Constraint static
 
-Distance 使用 source 语义的 per-vertex adjacency，不使用无向 pair table：
+Distance v0 使用 source 语义的 per-vertex adjacency，不使用无向 pair table。冻结的 host/native static group 名为 `MC2DistanceStaticV0`：
 
 | 字段 | 类型/shape | 规则 |
 |---|---|---|
-| `distance_ranges` | `int32[N,2]` | 每个 source vertex 的 target range。 |
+| `distance_ranges` | `int32[N,2]` | 每个 source vertex 的 `(start,count)`；按 source vertex index 排列，所有 range 连续覆盖 data arrays。 |
 | `distance_targets` | `int32[D]` | target proxy index。 |
-| `distance_rest_signed` | `float32[D]` | vertical 为正、horizontal 为负；zero distance 的类型另有显式 flag/record。 |
+| `distance_rest_signed` | `float32[D]` | vertical 为正、horizontal 为负；`abs(rest)<1e-8` 按 source 写 `+0.0` 并进入 zero special case。 |
 
-若 native kernel 需要显式 kind，可增加 `distance_kinds:uint8[D]`，但 fixture 仍须证明与 source signed encoding 等价。shear 记录进入同一 per-vertex layout。
+每个 range 内先 vertical，后 horizontal；shear 记录与普通 horizontal 共用同一段和负号编码。原始 MC2 `uint[N] indexArray + ushort[D] dataArray` 只在 Tier A fixture 中保留，host 展开为 `int32` 后上传。create 必须拒绝非连续/重叠 range、负数或越界 target、非 finite rest、shape 不一致，以及 source 12-bit count、20-bit start 或 16-bit target 会截断的输入。
+
+v0 kernel 不接收 `distance_kinds`。原因是 source 对 horizontal zero-distance 同样写 `+0.0`，运行时明确按 zero special case 而非 horizontal 分支处理；增加可消费 kind 会改变行为。builder 可以生成 host-only provenance/debug record，区分 `vertical`、`horizontal_edge` 和 `horizontal_shear`，但它不进入 ABI、constraint signature 或 source parity expected。
+
+Distance builder 的 source 边界冻结如下：普通 final-proxy adjacency 过滤 all-non-Move 和任一 Invalid，按 baseline parent relation 分类；普通 adjacency 本身不由 `connectSet` 去重。shear 遍历每条 edge 的全部 triangle pair 组合，使用 `abs(normalDot)>=0.9396926`、对角线长度比误差 `<=0.3` 和全局 undirected `connectSet` 去重。shear 源码只过滤 opposite 两端都不 Move，没有重复 Invalid 过滤；v0 必须先由 Tier A fixture 复现该边界，不能在 builder 中静默修正。
+
+同一类型内的 MC2 raw target 顺序来自 native hash map 枚举，不冻结为跨运行 ABI；horizontal bucket 内也不能假设普通 edge 位于 shear 前。HoTools 倾向使用按 target index 升序的确定性 builder，但该决定尚未通过 runtime parity：source zero-distance 分支会覆盖此前累计 correction，而非累加，混合 zero/nonzero 时顺序可能改变结果。在 Tier A 数值 case 关闭此问题前，deterministic ordering 只是 host 候选策略，不得标记为 source-equivalent capability。
+
+Tier A fixture 同时保存 source raw packed dump 与按每个 source vertex 的 `(rest-sign-class,target,rest)` canonicalize comparison view；zero 单独成类，不声称能从 raw dump 恢复阈值化前的 vertical/horizontal provenance。canonical view 只关闭 static membership，raw order与 runtime output关闭顺序语义；任何差异都必须升级为 blocker，不能用 canonicalization 掩盖。
+
+`distance_key` 由 `schema_version + distance_ranges + distance_targets + distance_rest_signed` 完整签名。N0 positions/attributes/edges/triangles 或 baseline parent 变化时重建 Distance；`distance_key` 变化触发整个 context rebuild + reset。`CreateData()` 当前不读取 parameters；stiffness curve、depth、friction、scale、`animationPoseRatio` 和 dynamic base pose 都是 runtime 输入，不属于 N1。`horizontalStiffness=0.5` 与 `velocityAttenuation=0.3` 是固定 kernel/N2 常量，参数热更新同样不得重建 Distance static。
 
 TriangleBending 保留 ordered quad role：
 
@@ -276,7 +286,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | final-proxy MeshCloth static build | supported host slice | ConvertProxyMesh Tier A、Mesh baseline Tier A、Blender n-gon/pin/UV seam 和 slot `mesh_static` cache 回归通过；仍不含 native context/solver step。 |
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
-| Distance | planned | per-vertex signed layout fixture。 |
+| Distance | contract frozen, oracle pending | `MC2DistanceStaticV0` per-vertex signed layout + build/runtime Tier A fixture。 |
 | Bending | planned after Distance | quad/rest/sign/write mapping fixture。 |
 | Center without anchor/sync/negative scale | planned restricted | reset + moving component fixture。 |
 | anchor/sync/negative scale/wind | deferred | W4 Tier A runtime fixtures。 |
@@ -311,7 +321,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 |---|---|---|
 | C-01 | Mesh 是否固定 final-proxy/identity mapping？ | **已决**：永久固定。用户负责低模代理，mapping/reduction 不进入实现范围。 |
 | C-02 | ABI 是否展开 Unity packed arrays？ | 是；显式 `int32` ranges，原始 packed dump只作 oracle。 |
-| C-03 | 第一条 constraint slice？ | Mesh/Bone Line 共用 Distance；Bending 后接。 |
+| C-03 | 第一条 constraint slice？ | **已决**：Mesh/Bone Line 共用 `MC2DistanceStaticV0`；Bending 后接。 |
 | C-04 | center v0 支持范围？ | component transform + fixed center；anchor/sync/negative scale/wind deferred。 |
 | C-05 | Bone connection mode 3 是否公开？ | 内部 enum/fixture 保留，节点 surface 等产品决定。 |
 | C-06 | 当前 B4 如何清理？ | **已执行**：整体移除算法/spec 改动，只通过新测试重建可保留的 lifecycle intent。 |
@@ -322,10 +332,12 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 
 - [x] C-01 final-proxy/identity mapping 已冻结。
 - [x] C-08 animated BasePose/GN writeback 边界已冻结。
-- [ ] C-02 至 C-05 完成人工决策。
+- [x] C-02 packed arrays 在 ABI 展开为显式 ranges；raw packed dump 只作 oracle。
+- [x] C-03 第一条 constraint slice 冻结为 Distance，Bending 后接。
+- [ ] C-04 至 C-05 完成人工决策。
 - [x] C-07 独立 Tier A host 已落地并关闭 Mesh baseline slice。
 - [x] Mesh N0 final proxy/baseline 字段有 producer/consumer、Tier A oracle 和 slot static cache。
-- [ ] N1 constraint static 每个字段有 W1-W7 producer/consumer 和最小 oracle。
+- [ ] N1 Distance 字段与 producer/consumer 已冻结；仍需 Tier A build/runtime oracle。Bending/Inertia 尚未冻结。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。
 - [ ] create/update/dynamic/reset/step/read/free 错误语义冻结。
