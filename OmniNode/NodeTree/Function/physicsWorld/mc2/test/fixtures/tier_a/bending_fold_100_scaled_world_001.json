@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "case_id": "bending_fold_100_scaled_world_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::CreateData","Runtime/Utility/Data/DataUtility.cs::Pack64"]
+  },
+  "scope": "Uniform initial world scale leaves angle unchanged and scales signed volume by eight.",
+  "comparison": {
+    "float_abs_tolerance": 1e-5,
+    "float_rel_tolerance": 1e-6,
+    "raw_order": "ordered and role-sensitive",
+    "canonical_membership": "diagnostic only; never sorts output quads"
+  },
+  "input": {
+    "setup_type": "mesh_cloth",
+    "local_positions": [[0,1,0],[0,0.1736482,-0.9848077],[0,0,0],[1,0,0]],
+    "vertex_attributes": [2,2,2,2],
+    "edges": [[0,2],[0,3],[1,2],[1,3],[2,3]],
+    "triangles": [[0,2,3],[1,3,2]],
+    "init_local_to_world_columns": [[2,0,0,0],[0,2,0,0],[0,0,2,0],[0,0,0,1]]
+  },
+  "expected": {
+    "create_returned_null": false,
+    "raw_packed_quads": [281474976841731,281474976841731],
+    "ordered_quads": [[1,0,2,3],[1,0,2,3]],
+    "rest_angle_or_volume": [1.74532926,1313.077],
+    "sign_or_volume": [-1,100],
+    "diagnostic_write": {
+      "runtime_consumed": false,
+      "write_buffer_count": 8,
+      "raw_write_data": [0,16843009],
+      "raw_write_indices": [2097152,2097154,2097156,2097158],
+      "write_ranges": [[0,2],[2,2],[4,2],[6,2]]
+    }
+  }
+}

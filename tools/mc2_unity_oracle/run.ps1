@@ -91,4 +91,12 @@ if ($DistanceRuntimeFixtureCount -ne 2) {
     throw "Unity oracle produced $DistanceRuntimeFixtureCount distance runtime fixtures instead of 2. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime)"
+$BendingFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "bending_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($BendingFixtureCount -ne 13) {
+    throw "Unity oracle produced $BendingFixtureCount bending fixtures instead of 13. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static)"

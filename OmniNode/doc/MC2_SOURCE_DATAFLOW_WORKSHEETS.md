@@ -400,6 +400,8 @@ volume rest 在 runtime 乘 `scaleRatio*negativeScaleSign`；direction dihedral 
 10. Pack64 ushort 截断由 host create 显式拒绝；无 triangle/edge 的 null 与有 topology/K=0 的 success-empty 区分。
 11. per-vertex Distance average、zero 覆盖已有累计值、mixed zero/nonzero 顺序敏感性、average 分母和 per-particle Bending fixed-point sum/average/clear 数值 oracle。
 
+当前已落盘 13 个 TriangleBending Tier A static fixture：flat dihedral、89.9/100/119.9/120.1/130/178.9/179.5° 阈值分支、bending+volume 双 record、all-Fixed/Invalid 过滤、uniform initial world scale 对 volume 的 8 倍影响、tetra 多 role 的 volume first-wins，以及无 triangle 的 null 返回。fixture 保存 raw Pack64、ordered quads、rest、marker，并把 write arrays 明确标为 diagnostic/runtime-unconsumed；`test_bending_tier_a.py` 校验完整 source facts。尚未关闭的是 SolverConstraint/SumConstraint 的 fixed-point scratch 数值 oracle。
+
 当前已落盘 7 个 Distance Tier A build fixture：parent/horizontal signed encoding、square shear、normal reject、ratio reject、Invalid ordinary-edge 过滤与 Invalid+Move shear 边界、all-Fixed 空数组、zero kind loss。fixture 同时保存 source raw packed arrays 与展开 ranges；`test_distance_tier_a.py` 校验 packed round-trip、连续 range 和上述 source facts。
 
 另有 2 个直接 reflection 调用 `SolverConstraint()` 的 Tier A runtime fixture。它们使用同一组 nonzero+zero records，仅交换 range 内顺序，分别得到 source vertex `next.x=1.0` 与 `1.47846889`，证明 raw order 不能被 canonical comparison 替代。

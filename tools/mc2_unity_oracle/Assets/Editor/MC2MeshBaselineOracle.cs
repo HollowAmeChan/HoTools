@@ -108,6 +108,30 @@ namespace HoTools.MC2Oracle.Editor
             public float3[] VelocityPositions;
         }
 
+        private sealed class BendingCase
+        {
+            public string Id;
+            public float3[] Positions;
+            public byte[] Attributes;
+            public int2[] Edges;
+            public int3[] Triangles;
+            public float4x4 InitLocalToWorld = float4x4.identity;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BendingDump
+        {
+            public bool CreateReturnedNull;
+            public ulong[] RawPackedQuads;
+            public int4[] OrderedQuads;
+            public float[] RestAngleOrVolume;
+            public int[] SignOrVolume;
+            public int WriteBufferCount;
+            public uint[] RawWriteData;
+            public uint[] RawWriteIndices;
+            public int2[] WriteRanges;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -164,10 +188,22 @@ namespace HoTools.MC2Oracle.Editor
                 distanceRuntimeWritten++;
             }
 
+            int bendingWritten = 0;
+            foreach (BendingCase bendingCase in BendingCases())
+            {
+                BendingDump dump = RunBendingCase(bendingCase);
+                string json = BuildBendingJson(bendingCase, dump);
+                string path = Path.Combine(outputDirectory, bendingCase.Id + ".json");
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                bendingWritten++;
+            }
+
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
                 + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures, "
-                + $"{distanceRuntimeWritten} distance runtime fixtures"
+                + $"{distanceRuntimeWritten} distance runtime fixtures, "
+                + $"{bendingWritten} bending fixtures"
             );
         }
 
@@ -463,6 +499,60 @@ namespace HoTools.MC2Oracle.Editor
                 indices.Dispose();
                 targets.Dispose();
                 rests.Dispose();
+            }
+        }
+
+        private static BendingDump RunBendingCase(BendingCase bendingCase)
+        {
+            using (var mesh = new VirtualMesh(bendingCase.Id))
+            {
+                mesh.localPositions = new ExSimpleNativeArray<float3>(bendingCase.Positions);
+                mesh.attributes = new ExSimpleNativeArray<VertexAttribute>(
+                    bendingCase.Attributes.Select(value => new VertexAttribute(value)).ToArray()
+                );
+                mesh.edges = new NativeArray<int2>(bendingCase.Edges, Allocator.Persistent);
+                mesh.triangles = new ExSimpleNativeArray<int3>(bendingCase.Triangles);
+                mesh.edgeToTriangles = BuildEdgeToTriangles(bendingCase.Triangles);
+                mesh.initLocalToWorld = bendingCase.InitLocalToWorld;
+
+                TriangleBendingConstraint.ConstraintData data =
+                    TriangleBendingConstraint.CreateData(mesh, new ClothParameters());
+                if (data == null)
+                {
+                    return new BendingDump
+                    {
+                        CreateReturnedNull = true,
+                        RawPackedQuads = Array.Empty<ulong>(),
+                        OrderedQuads = Array.Empty<int4>(),
+                        RestAngleOrVolume = Array.Empty<float>(),
+                        SignOrVolume = Array.Empty<int>(),
+                        RawWriteData = Array.Empty<uint>(),
+                        RawWriteIndices = Array.Empty<uint>(),
+                        WriteRanges = Array.Empty<int2>(),
+                    };
+                }
+                ulong[] packed = data.trianglePairArray ?? Array.Empty<ulong>();
+                uint[] writeIndices = data.writeIndexArray ?? Array.Empty<uint>();
+                var writeRanges = new int2[writeIndices.Length];
+                for (int index = 0; index < writeIndices.Length; index++)
+                {
+                    DataUtility.Unpack12_20(writeIndices[index], out int count, out int start);
+                    writeRanges[index] = new int2(start, count);
+                }
+                return new BendingDump
+                {
+                    CreateReturnedNull = false,
+                    RawPackedQuads = packed,
+                    OrderedQuads = packed.Select(value => DataUtility.Unpack64(value)).ToArray(),
+                    RestAngleOrVolume = data.restAngleOrVolumeArray ?? Array.Empty<float>(),
+                    SignOrVolume = (data.signOrVolumeArray ?? Array.Empty<sbyte>())
+                        .Select(value => (int)value)
+                        .ToArray(),
+                    WriteBufferCount = data.writeBufferCount,
+                    RawWriteData = data.writeDataArray ?? Array.Empty<uint>(),
+                    RawWriteIndices = writeIndices,
+                    WriteRanges = writeRanges,
+                };
             }
         }
 
@@ -934,6 +1024,139 @@ namespace HoTools.MC2Oracle.Editor
             };
         }
 
+        private static IEnumerable<BendingCase> BendingCases()
+        {
+            yield return new BendingCase
+            {
+                Id = "bending_flat_dihedral_001",
+                Positions = FoldedPair(0.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "Flat pair emits one directional dihedral record and dir==0 maps to sign +1.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_100_double_001",
+                Positions = FoldedPair(100.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A 100 degree pair emits bending first and volume second for the same ordered quad.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_89_9_bending_only_001",
+                Positions = FoldedPair(89.9f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A pair below 90 degrees emits bending but not volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_119_9_double_001",
+                Positions = FoldedPair(119.9f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A pair below the strict 120 degree cutoff still emits bending and volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_120_1_volume_only_001",
+                Positions = FoldedPair(120.1f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A pair above the strict 120 degree cutoff emits only volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_130_volume_only_001",
+                Positions = FoldedPair(130.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A 130 degree pair is excluded from bending but retained as volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_178_9_volume_only_001",
+                Positions = FoldedPair(178.9f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A pair below the 179 degree inclusive maximum still emits volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_above_179_empty_001",
+                Positions = FoldedPair(179.5f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "An angle above 179 degrees is excluded from both bending and volume.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_all_fixed_empty_001",
+                Positions = FoldedPair(0.0f),
+                Attributes = new byte[] { 0x01, 0x01, 0x01, 0x01 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "A four-Fixed pair returns success with empty main arrays.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_invalid_empty_001",
+                Positions = FoldedPair(0.0f),
+                Attributes = new byte[] { 0x00, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                Note = "Any Invalid vertex filters the complete quad.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_fold_100_scaled_world_001",
+                Positions = FoldedPair(100.0f),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 3), (1, 3, 2)),
+                InitLocalToWorld = float4x4.Scale(new float3(2.0f)),
+                Note = "Uniform initial world scale leaves angle unchanged and scales signed volume by eight.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_tetra_volume_first_wins_001",
+                Positions = P((1, 1, 1), (-1, -1, 1), (-1, 1, -1), (1, -1, -1)),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Edges = E((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)),
+                Note = "Multiple edge roles share one unordered four-vertex volume key; only the first volume survives.",
+            };
+            yield return new BendingCase
+            {
+                Id = "bending_no_triangles_null_001",
+                Positions = P((0, 0, 0), (1, 0, 0)),
+                Attributes = new byte[] { 0x02, 0x02 },
+                Edges = E((0, 1)),
+                Triangles = Array.Empty<int3>(),
+                Note = "TriangleCount zero returns null rather than a success-empty ConstraintData.",
+            };
+        }
+
+        private static float3[] FoldedPair(float degrees)
+        {
+            float radians = math.radians(degrees);
+            return P(
+                (0, 1, 0),
+                (0, -math.cos(radians), -math.sin(radians)),
+                (0, 0, 0),
+                (1, 0, 0)
+            );
+        }
+
         private static float3[] P(params (float x, float y, float z)[] values)
         {
             return values.Select(value => new float3(value.x, value.y, value.z)).ToArray();
@@ -1065,6 +1288,29 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BuildBendingJson(BendingCase bendingCase, BendingDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(bendingCase.Id));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Cloth/Constraints/TriangleBendingConstraint.cs::CreateData",
+                    "Runtime/Utility/Data/DataUtility.cs::Pack64"
+                )
+            );
+            Property(text, 2, "scope", Quote(bendingCase.Note));
+            Property(text, 2, "comparison", BendingComparisonJson());
+            Property(text, 2, "input", BendingInputJson(bendingCase));
+            Property(text, 2, "expected", BendingExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
         private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
@@ -1158,6 +1404,24 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "float_abs_tolerance", "1e-6");
             Property(text, 4, "float_rel_tolerance", "1e-6");
             Property(text, 4, "record_order", Quote("ordered and numerically significant"), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string BendingComparisonJson()
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "float_abs_tolerance", "1e-5");
+            Property(text, 4, "float_rel_tolerance", "1e-6");
+            Property(text, 4, "raw_order", Quote("ordered and role-sensitive"));
+            Property(
+                text,
+                4,
+                "canonical_membership",
+                Quote("diagnostic only; never sorts output quads"),
+                false
+            );
             text.Append("  }");
             return text.ToString();
         }
@@ -1278,6 +1542,31 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BendingInputJson(BendingCase bendingCase)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "setup_type", Quote("mesh_cloth"));
+            Property(text, 4, "local_positions", ArrayJson(bendingCase.Positions, Vector3Json));
+            Property(
+                text,
+                4,
+                "vertex_attributes",
+                NumberArray(bendingCase.Attributes.Select(value => (int)value))
+            );
+            Property(text, 4, "edges", ArrayJson(bendingCase.Edges, Int2Json));
+            Property(text, 4, "triangles", ArrayJson(bendingCase.Triangles, Int3Json));
+            Property(
+                text,
+                4,
+                "init_local_to_world_columns",
+                Matrix4x4ColumnsJson(bendingCase.InitLocalToWorld),
+                false
+            );
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string ExpectedJson(OracleDump dump)
         {
             var text = new StringBuilder();
@@ -1393,6 +1682,38 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BendingExpectedJson(BendingDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "create_returned_null", dump.CreateReturnedNull ? "true" : "false");
+            Property(text, 4, "raw_packed_quads", ULongArray(dump.RawPackedQuads));
+            Property(text, 4, "ordered_quads", ArrayJson(dump.OrderedQuads, Int4Json));
+            Property(
+                text,
+                4,
+                "rest_angle_or_volume",
+                ArrayJson(dump.RestAngleOrVolume, FloatJson)
+            );
+            Property(text, 4, "sign_or_volume", NumberArray(dump.SignOrVolume));
+            Property(text, 4, "diagnostic_write", BendingWriteJson(dump), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string BendingWriteJson(BendingDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 6, "runtime_consumed", "false");
+            Property(text, 6, "write_buffer_count", dump.WriteBufferCount.ToString(CultureInfo.InvariantCulture));
+            Property(text, 6, "raw_write_data", UIntArray(dump.RawWriteData));
+            Property(text, 6, "raw_write_indices", UIntArray(dump.RawWriteIndices));
+            Property(text, 6, "write_ranges", ArrayJson(dump.WriteRanges, Int2Json), false);
+            text.Append("    }");
+            return text.ToString();
+        }
+
         private static string PackageVersion(Assembly assembly)
         {
             UnityEditor.PackageManager.PackageInfo info =
@@ -1466,6 +1787,11 @@ namespace HoTools.MC2Oracle.Editor
             return "[" + string.Join(",", values.Select(value => value.ToString(CultureInfo.InvariantCulture))) + "]";
         }
 
+        private static string ULongArray(IEnumerable<ulong> values)
+        {
+            return "[" + string.Join(",", values.Select(value => value.ToString(CultureInfo.InvariantCulture))) + "]";
+        }
+
         private static string ArrayJson<T>(IEnumerable<T> values, Func<T, string> convert)
         {
             return "[" + string.Join(",", values.Select(convert)) + "]";
@@ -1495,6 +1821,11 @@ namespace HoTools.MC2Oracle.Editor
             return $"[{FloatJson(value.x)},{FloatJson(value.y)},{FloatJson(value.z)},{FloatJson(value.w)}]";
         }
 
+        private static string Matrix4x4ColumnsJson(float4x4 value)
+        {
+            return ArrayJson(new[] { value.c0, value.c1, value.c2, value.c3 }, Vector4Json);
+        }
+
         private static string Int2Json(int2 value)
         {
             return $"[{value.x},{value.y}]";
@@ -1503,6 +1834,11 @@ namespace HoTools.MC2Oracle.Editor
         private static string Int3Json(int3 value)
         {
             return $"[{value.x},{value.y},{value.z}]";
+        }
+
+        private static string Int4Json(int4 value)
+        {
+            return $"[{value.x},{value.y},{value.z},{value.w}]";
         }
     }
 }
