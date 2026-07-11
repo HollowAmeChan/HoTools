@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $MC2Path)) {
     throw "MC2 checkout not found: $MC2Path"
 }
 
-$ActualCommit = (& git -C $MC2Path rev-parse HEAD).Trim()
+$ActualCommit = (& git -c "safe.directory=$MC2Path" -C $MC2Path rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $ActualCommit -ne $ExpectedCommit) {
     throw "MC2 commit mismatch. Expected $ExpectedCommit, got $ActualCommit"
 }
@@ -66,4 +66,12 @@ if ($FixtureCount -ne 9) {
     throw "Unity oracle produced $FixtureCount fixtures instead of 9. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount files)"
+$ProxyFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "mesh_proxy_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($ProxyFixtureCount -ne 8) {
+    throw "Unity oracle produced $ProxyFixtureCount proxy fixtures instead of 8. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy)"

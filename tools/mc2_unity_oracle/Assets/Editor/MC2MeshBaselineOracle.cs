@@ -47,6 +47,33 @@ namespace HoTools.MC2Oracle.Editor
             public float4[] LocalRotations;
         }
 
+        private sealed class ProxyCase
+        {
+            public string Id;
+            public float3[] Positions;
+            public float3[] Normals;
+            public float3[] Tangents;
+            public float2[] Uvs;
+            public byte[] Attributes;
+            public int2[] Lines = Array.Empty<int2>();
+            public int3[] Triangles = Array.Empty<int3>();
+            public string Note = string.Empty;
+        }
+
+        private sealed class ProxyDump
+        {
+            public byte[] FinalAttributes;
+            public int3[] Triangles;
+            public int2[] Edges;
+            public int2[] VertexToVertexRanges;
+            public int[] VertexToVertexData;
+            public int2[][] VertexToTriangleRecords;
+            public float3[] LocalNormals;
+            public float3[] LocalTangents;
+            public float3[] VertexBindPosePositions;
+            public float4[] VertexBindPoseRotations;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -70,7 +97,20 @@ namespace HoTools.MC2Oracle.Editor
                 written++;
             }
 
-            Debug.Log($"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures");
+            int proxyWritten = 0;
+            foreach (ProxyCase proxyCase in ProxyCases())
+            {
+                ProxyDump dump = RunProxyCase(proxyCase);
+                string json = BuildProxyJson(proxyCase, dump);
+                string path = Path.Combine(outputDirectory, proxyCase.Id + ".json");
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                proxyWritten++;
+            }
+
+            Debug.Log(
+                $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, {proxyWritten} proxy fixtures"
+            );
         }
 
         private static OracleDump RunCase(OracleCase oracleCase)
@@ -100,6 +140,69 @@ namespace HoTools.MC2Oracle.Editor
                 InvokePrivate(mesh, "CreateVertexRootAndDepth");
 
                 return ReadDump(mesh);
+            }
+        }
+
+        private static ProxyDump RunProxyCase(ProxyCase proxyCase)
+        {
+            using (var mesh = new VirtualMesh(proxyCase.Id))
+            {
+                int count = proxyCase.Positions.Length;
+                mesh.isBoneCloth = false;
+                mesh.meshType = VirtualMesh.MeshType.NormalMesh;
+                mesh.localPositions = new ExSimpleNativeArray<float3>(proxyCase.Positions);
+                mesh.localNormals = new ExSimpleNativeArray<float3>(proxyCase.Normals);
+                mesh.localTangents = new ExSimpleNativeArray<float3>(proxyCase.Tangents);
+                mesh.uv = new ExSimpleNativeArray<float2>(proxyCase.Uvs);
+                mesh.attributes = new ExSimpleNativeArray<VertexAttribute>(
+                    proxyCase.Attributes.Select(value => new VertexAttribute(value)).ToArray()
+                );
+                mesh.referenceIndices = new ExSimpleNativeArray<int>(
+                    Enumerable.Range(0, count).ToArray()
+                );
+                mesh.boneWeights = new ExSimpleNativeArray<VirtualMeshBoneWeight>(
+                    Enumerable
+                        .Repeat(
+                            new VirtualMeshBoneWeight(
+                                new int4(0, 0, 0, 0),
+                                new float4(1.0f, 0.0f, 0.0f, 0.0f)
+                            ),
+                            count
+                        )
+                        .ToArray()
+                );
+                mesh.triangles = new ExSimpleNativeArray<int3>(proxyCase.Triangles);
+                mesh.lines = new ExSimpleNativeArray<int2>(proxyCase.Lines);
+                mesh.initLocalToWorld = float4x4.identity;
+                mesh.initWorldToLocal = float4x4.identity;
+                mesh.initRotation = quaternion.identity;
+                mesh.initInverseRotation = quaternion.identity;
+                mesh.initScale = new float3(1.0f, 1.0f, 1.0f);
+                mesh.boundingBox = new NativeReference<AABB>(Allocator.Persistent);
+
+                var sdata = new ClothSerializeData();
+                var recordObject = new GameObject(proxyCase.Id + "_record");
+                try
+                {
+                    var record = new TransformRecord(recordObject.transform, true);
+                    mesh.ConvertProxyMesh(
+                        sdata,
+                        record,
+                        new List<TransformRecord>(),
+                        record
+                    );
+                    if (mesh.result.IsError())
+                    {
+                        throw new InvalidOperationException(
+                            $"ConvertProxyMesh failed for {proxyCase.Id}: {mesh.result.Result}"
+                        );
+                    }
+                    return ReadProxyDump(mesh);
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(recordObject);
+                }
             }
         }
 
@@ -182,6 +285,51 @@ namespace HoTools.MC2Oracle.Editor
                 Depths = NativeArrayOrEmpty(mesh.vertexDepths),
                 LocalPositions = NativeArrayOrEmpty(mesh.vertexLocalPositions),
                 LocalRotations = localRotations.Select(value => value.value).ToArray(),
+            };
+        }
+
+        private static ProxyDump ReadProxyDump(VirtualMesh mesh)
+        {
+            uint[] vertexToVertexIndices = NativeArrayOrEmpty(mesh.vertexToVertexIndexArray);
+            ushort[] vertexToVertexData = NativeArrayOrEmpty(mesh.vertexToVertexDataArray);
+            var vertexToVertexRanges = new int2[vertexToVertexIndices.Length];
+            for (int index = 0; index < vertexToVertexIndices.Length; index++)
+            {
+                DataUtility.Unpack12_20(vertexToVertexIndices[index], out int count, out int start);
+                vertexToVertexRanges[index] = new int2(start, count);
+            }
+
+            FixedList32Bytes<uint>[] rawVertexToTriangles =
+                NativeArrayOrEmpty(mesh.vertexToTriangles);
+            var vertexToTriangleRecords = new int2[rawVertexToTriangles.Length][];
+            for (int vertex = 0; vertex < rawVertexToTriangles.Length; vertex++)
+            {
+                FixedList32Bytes<uint> records = rawVertexToTriangles[vertex];
+                var decoded = new int2[records.Length];
+                for (int index = 0; index < records.Length; index++)
+                {
+                    uint packed = records[index];
+                    decoded[index] = new int2(
+                        DataUtility.Unpack12_20Hi(packed),
+                        DataUtility.Unpack12_20Low(packed)
+                    );
+                }
+                vertexToTriangleRecords[vertex] = decoded;
+            }
+
+            quaternion[] bindPoseRotations = NativeArrayOrEmpty(mesh.vertexBindPoseRotations);
+            return new ProxyDump
+            {
+                FinalAttributes = mesh.attributes.ToArray().Select(value => value.Value).ToArray(),
+                Triangles = mesh.triangles.ToArray(),
+                Edges = CanonicalEdges(NativeArrayOrEmpty(mesh.edges)),
+                VertexToVertexRanges = vertexToVertexRanges,
+                VertexToVertexData = vertexToVertexData.Select(value => (int)value).ToArray(),
+                VertexToTriangleRecords = vertexToTriangleRecords,
+                LocalNormals = mesh.localNormals.ToArray(),
+                LocalTangents = mesh.localTangents.ToArray(),
+                VertexBindPosePositions = NativeArrayOrEmpty(mesh.vertexBindPosePositions),
+                VertexBindPoseRotations = bindPoseRotations.Select(value => value.value).ToArray(),
             };
         }
 
@@ -285,9 +433,141 @@ namespace HoTools.MC2Oracle.Editor
             };
         }
 
+        private static IEnumerable<ProxyCase> ProxyCases()
+        {
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_consistent_winding_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                Normals = Fill3(3, (0, 0, 1)),
+                Tangents = Fill3(3, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 0), (0, 1)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02 },
+                Triangles = T((0, 1, 2)),
+                Note = "Single triangle keeps winding and ORs Triangle bit into Fixed/Move attributes.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_reversed_neighbor_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)),
+                Normals = Fill3(4, (0, 0, 1)),
+                Tangents = Fill3(4, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 0), (0, 1), (1, 1)),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Triangles = T((0, 1, 2), (1, 2, 3)),
+                Note = "Neighbor triangle starts reversed across a shared edge and is normalized by OptimizeTriangleDirection.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_layer_boundary_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 1, 1)),
+                Normals = Fill3(4, (0, 0, 1)),
+                Tangents = Fill3(4, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 0), (0, 1), (1, 1)),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02 },
+                Triangles = T((0, 1, 2), (1, 2, 3)),
+                Note = "Shared-edge triangles above SameSurfaceAngle remain separate direction layers.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_uv_tangent_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                Normals = Fill3(3, (0, 0, 1)),
+                Tangents = Fill3(3, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 1), (0, 1)),
+                Attributes = new byte[] { 0x02, 0x02, 0x02 },
+                Triangles = T((0, 1, 2)),
+                Note = "Triangle tangent is generated from final positions and per-vertex UVs.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_uv_zero_area_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                Normals = Fill3(3, (0, 0, 1)),
+                Tangents = Fill3(3, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 1), (2, 2)),
+                Attributes = new byte[] { 0x02, 0x02, 0x02 },
+                Triangles = T((0, 1, 2)),
+                Note = "Zero UV area follows MathUtility.TriangleTangent area fallback without topology changes.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_vertex_triangle_cap_001",
+                Positions = P(
+                    (0, 0, 0),
+                    (1, 0, 0),
+                    (0.7071068f, 0.7071068f, 0),
+                    (0, 1, 0),
+                    (-0.7071068f, 0.7071068f, 0),
+                    (-1, 0, 0),
+                    (-0.7071068f, -0.7071068f, 0),
+                    (0, -1, 0),
+                    (0.7071068f, -0.7071068f, 0)
+                ),
+                Normals = Fill3(9, (0, 0, 1)),
+                Tangents = Fill3(9, (1, 0, 0)),
+                Uvs = UV(
+                    (0, 0),
+                    (1, 0),
+                    (0.7071068f, 0.7071068f),
+                    (0, 1),
+                    (-0.7071068f, 0.7071068f),
+                    (-1, 0),
+                    (-0.7071068f, -0.7071068f),
+                    (0, -1),
+                    (0.7071068f, -0.7071068f)
+                ),
+                Attributes = new byte[] { 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02 },
+                Triangles = T(
+                    (0, 1, 2),
+                    (0, 2, 3),
+                    (0, 3, 4),
+                    (0, 4, 5),
+                    (0, 5, 6),
+                    (0, 6, 7),
+                    (0, 7, 8),
+                    (0, 8, 1)
+                ),
+                Note = "A vertex touched by eight triangles keeps only seven vertexToTriangles records.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_triangle_loose_line_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (2, 0, 0), (3, 0, 0)),
+                Normals = Fill3(5, (0, 0, 1)),
+                Tangents = Fill3(5, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 0), (0, 1), (2, 0), (3, 0)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02, 0x02, 0x02 },
+                Lines = E((3, 4)),
+                Triangles = T((0, 1, 2)),
+                Note = "Explicit line edge is unioned with triangle edges while line-only vertices keep no Triangle bit.",
+            };
+            yield return new ProxyCase
+            {
+                Id = "mesh_proxy_attribute_or_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                Normals = Fill3(3, (0, 0, 1)),
+                Tangents = Fill3(3, (1, 0, 0)),
+                Uvs = UV((0, 0), (1, 0), (0, 1)),
+                Attributes = new byte[] { 0x11, 0x12, 0x02 },
+                Triangles = T((0, 1, 2)),
+                Note = "Triangle membership OR preserves Fixed/Move and DisableCollision bits.",
+            };
+        }
+
         private static float3[] P(params (float x, float y, float z)[] values)
         {
             return values.Select(value => new float3(value.x, value.y, value.z)).ToArray();
+        }
+
+        private static float3[] Fill3(int count, (float x, float y, float z) value)
+        {
+            return Enumerable.Repeat(new float3(value.x, value.y, value.z), count).ToArray();
+        }
+
+        private static float2[] UV(params (float x, float y)[] values)
+        {
+            return values.Select(value => new float2(value.x, value.y)).ToArray();
         }
 
         private static int2[] E(params (int x, int y)[] values)
@@ -305,13 +585,33 @@ namespace HoTools.MC2Oracle.Editor
             return values;
         }
 
+        private static int2[] CanonicalEdges(IEnumerable<int2> values)
+        {
+            return values
+                .Select(value => value.x <= value.y ? value : new int2(value.y, value.x))
+                .GroupBy(value => value.x.ToString(CultureInfo.InvariantCulture) + ":" + value.y.ToString(CultureInfo.InvariantCulture))
+                .Select(group => group.First())
+                .OrderBy(value => value.x)
+                .ThenBy(value => value.y)
+                .ToArray();
+        }
+
         private static string BuildJson(OracleCase oracleCase, OracleDump dump)
         {
             var text = new StringBuilder();
             text.AppendLine("{");
             Property(text, 2, "schema_version", "1");
             Property(text, 2, "case_id", Quote(oracleCase.Id));
-            Property(text, 2, "source", SourceJson());
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateMeshBaseLine",
+                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateBaseLinePose",
+                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateVertexRootAndDepth"
+                )
+            );
             Property(text, 2, "scope", Quote(oracleCase.Note));
             Property(text, 2, "comparison", ComparisonJson(oracleCase));
             Property(text, 2, "input", InputJson(oracleCase));
@@ -320,7 +620,27 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
-        private static string SourceJson()
+        private static string BuildProxyJson(ProxyCase proxyCase, ProxyDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(proxyCase.Id));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ConvertProxyMesh")
+            );
+            Property(text, 2, "scope", Quote(proxyCase.Note));
+            Property(text, 2, "comparison", ProxyComparisonJson());
+            Property(text, 2, "input", ProxyInputJson(proxyCase));
+            Property(text, 2, "expected", ProxyOnlyExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
+        private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
             text.AppendLine("{");
@@ -336,11 +656,7 @@ namespace HoTools.MC2Oracle.Editor
                 text,
                 4,
                 "producer",
-                StringArray(
-                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateMeshBaseLine",
-                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateBaseLinePose",
-                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateVertexRootAndDepth"
-                ),
+                StringArray(producers),
                 false
             );
             text.Append("  }");
@@ -365,6 +681,24 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "source_equal_cost_policy", Quote("first_enumerated"));
             Property(text, 4, "hotools_equal_cost_policy", Quote("lowest_vertex_index"));
             Property(text, 4, "compare_to_hotools", oracleCase.CompareToHoTools ? "true" : "false", false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string ProxyComparisonJson()
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "float_abs_tolerance", "1e-6");
+            Property(text, 4, "float_rel_tolerance", "1e-6");
+            Property(text, 4, "unordered_fields", StringArray("proxy.edges"));
+            Property(
+                text,
+                4,
+                "vertex_to_triangle_record",
+                Quote("[flip_flag, triangle_index], DataUtility.Pack12_20 decoded"),
+                false
+            );
             text.Append("  }");
             return text.ToString();
         }
@@ -415,12 +749,45 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string ProxyInputJson(ProxyCase proxyCase)
+        {
+            int count = proxyCase.Positions.Length;
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "task_id", Quote("mc2:mesh_cloth:" + proxyCase.Id));
+            Property(text, 4, "setup_type", Quote("mesh_cloth"));
+            Property(
+                text,
+                4,
+                "vertex_identities",
+                StringArray(Enumerable.Range(0, count).Select(index => "mesh:v" + index).ToArray())
+            );
+            Property(text, 4, "local_positions", ArrayJson(proxyCase.Positions, Vector3Json));
+            Property(text, 4, "local_normals", ArrayJson(proxyCase.Normals, Vector3Json));
+            Property(text, 4, "local_tangents", ArrayJson(proxyCase.Tangents, Vector3Json));
+            Property(text, 4, "uvs", ArrayJson(proxyCase.Uvs, Vector2Json));
+            Property(text, 4, "vertex_attributes", NumberArray(proxyCase.Attributes.Select(value => (int)value)));
+            Property(text, 4, "lines", ArrayJson(proxyCase.Lines, Int2Json));
+            Property(text, 4, "triangles", ArrayJson(proxyCase.Triangles, Int3Json), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string ExpectedJson(OracleDump dump)
         {
             var text = new StringBuilder();
             text.AppendLine("{");
             Property(text, 4, "proxy", ProxyExpectedJson(dump));
             Property(text, 4, "baseline", BaselineExpectedJson(dump), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string ProxyOnlyExpectedJson(ProxyDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "proxy", ProxyFinalJson(dump), false);
             text.Append("  }");
             return text.ToString();
         }
@@ -434,6 +801,35 @@ namespace HoTools.MC2Oracle.Editor
                 6,
                 "vertex_attributes",
                 NumberArray(dump.FinalAttributes.Select(value => (int)value)),
+                false
+            );
+            text.Append("    }");
+            return text.ToString();
+        }
+
+        private static string ProxyFinalJson(ProxyDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 6, "vertex_attributes", NumberArray(dump.FinalAttributes.Select(value => (int)value)));
+            Property(text, 6, "triangles", ArrayJson(dump.Triangles, Int3Json));
+            Property(text, 6, "edges", ArrayJson(dump.Edges, Int2Json));
+            Property(text, 6, "vertex_to_vertex_ranges", ArrayJson(dump.VertexToVertexRanges, Int2Json));
+            Property(text, 6, "vertex_to_vertex_data", NumberArray(dump.VertexToVertexData));
+            Property(
+                text,
+                6,
+                "vertex_to_triangle_records",
+                ArrayJson(dump.VertexToTriangleRecords, records => ArrayJson(records, Int2Json))
+            );
+            Property(text, 6, "local_normals", ArrayJson(dump.LocalNormals, Vector3Json));
+            Property(text, 6, "local_tangents", ArrayJson(dump.LocalTangents, Vector3Json));
+            Property(text, 6, "vertex_bind_pose_positions", ArrayJson(dump.VertexBindPosePositions, Vector3Json));
+            Property(
+                text,
+                6,
+                "vertex_bind_pose_rotations",
+                ArrayJson(dump.VertexBindPoseRotations, Vector4Json),
                 false
             );
             text.Append("    }");

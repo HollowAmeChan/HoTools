@@ -17,9 +17,14 @@ Pinned inputs:
 - Source checkout default: `D:\Unity_Fork\MagicaCloth2`
 
 Run `run.ps1`. The script rejects a different MC2 commit before launching
-Unity. The exporter constructs final-proxy-stage `VirtualMesh` inputs, invokes
-the original private baseline methods by reflection, and writes complete JSON
-array dumps into the HoTools MC2 fixture directory.
+Unity. The exporter writes two fixture groups into the HoTools MC2 fixture
+directory:
+
+- `mesh_baseline_*.json`: final-proxy-stage `VirtualMesh` inputs followed by
+  the original private baseline methods invoked by reflection.
+- `mesh_proxy_*.json`: direct `ConvertProxyMesh()` source output for final
+  triangle winding, edge union, attributes, normals/tangents, bind poses, and
+  decoded vertex-to-triangle flip records.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the
