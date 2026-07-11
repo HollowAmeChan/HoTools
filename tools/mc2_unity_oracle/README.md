@@ -17,7 +17,7 @@ Pinned inputs:
 - Source checkout default: `D:\Unity_Fork\MagicaCloth2`
 
 Run `run.ps1`. The script rejects a different MC2 commit before launching
-Unity. The exporter writes two fixture groups into the HoTools MC2 fixture
+Unity. The exporter writes three fixture groups into the HoTools MC2 fixture
 directory:
 
 - `mesh_baseline_*.json`: final-proxy-stage `VirtualMesh` inputs followed by
@@ -25,6 +25,11 @@ directory:
 - `mesh_proxy_*.json`: direct `ConvertProxyMesh()` source output for final
   triangle winding, edge union, attributes, normals/tangents, bind poses, and
   decoded vertex-to-triangle flip records.
+- `distance_*.json`: direct `DistanceConstraint.CreateData()` raw packed
+  indices, expanded per-vertex ranges, targets, and signed rest distances.
+  These fixtures preserve raw hash-map order for diagnostics and define a
+  separate canonical static-membership comparison; they do not use the old
+  HoTools solver as an oracle.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

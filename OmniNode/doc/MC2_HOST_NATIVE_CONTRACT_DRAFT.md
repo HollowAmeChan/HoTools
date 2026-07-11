@@ -286,7 +286,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 | final-proxy MeshCloth static build | supported host slice | ConvertProxyMesh Tier A、Mesh baseline Tier A、Blender n-gon/pin/UV seam 和 slot `mesh_static` cache 回归通过；仍不含 native context/solver step。 |
 | Bone Line | planned first bone slice | hierarchy/baseline/output fixture。 |
 | Bone Automatic/Sequential | blocked by oracle | Tier A connection fixtures。 |
-| Distance | contract frozen, oracle pending | `MC2DistanceStaticV0` per-vertex signed layout + build/runtime Tier A fixture。 |
+| Distance | static oracle landed, builder/runtime oracle pending | `MC2DistanceStaticV0` contract + 7 个 `CreateData()` Tier A build fixture；仍需 mixed zero/nonzero runtime ordering oracle 和纯 host builder。 |
 | Bending | planned after Distance | quad/rest/sign/write mapping fixture。 |
 | Center without anchor/sync/negative scale | planned restricted | reset + moving component fixture。 |
 | anchor/sync/negative scale/wind | deferred | W4 Tier A runtime fixtures。 |
@@ -337,7 +337,7 @@ writeback plan 由 host prepare；apply 阶段解析 target identity 并写 Blen
 - [ ] C-04 至 C-05 完成人工决策。
 - [x] C-07 独立 Tier A host 已落地并关闭 Mesh baseline slice。
 - [x] Mesh N0 final proxy/baseline 字段有 producer/consumer、Tier A oracle 和 slot static cache。
-- [ ] N1 Distance 字段与 producer/consumer 已冻结；仍需 Tier A build/runtime oracle。Bending/Inertia 尚未冻结。
+- [ ] N1 Distance 字段、producer/consumer 与 7 个 Tier A build oracle 已冻结；仍需 runtime ordering oracle 和纯 host builder。Bending/Inertia 尚未冻结。
 - [ ] Runtime parameter 16-sample schema 有 fixture。
 - [ ] Coordinate/quaternion/unit convention 有 binding test。
 - [ ] create/update/dynamic/reset/step/read/free 错误语义冻结。

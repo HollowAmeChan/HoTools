@@ -394,6 +394,8 @@ static signature 覆盖展开后的完整数组及 schema version。N0 positions
 8. negative scale 与 world-space volume rest 的运行时消费。
 9. per-vertex Distance average、zero 覆盖已有累计值、mixed zero/nonzero 顺序敏感性、average 分母和 per-particle Bending sum scratch 的数值 oracle。
 
+当前已落盘 7 个 Distance Tier A build fixture：parent/horizontal signed encoding、square shear、normal reject、ratio reject、Invalid ordinary-edge 过滤与 Invalid+Move shear 边界、all-Fixed 空数组、zero kind loss。fixture 同时保存 source raw packed arrays 与展开 ranges；`test_distance_tier_a.py` 校验 packed round-trip、连续 range 和上述 source facts。它们只关闭 `CreateData()` static build，不关闭 solver runtime ordering。
+
 ## W4 Inertia Static Data 与 Center Runtime State
 
 ### Source entries

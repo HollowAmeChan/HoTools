@@ -74,6 +74,26 @@ namespace HoTools.MC2Oracle.Editor
             public float4[] VertexBindPoseRotations;
         }
 
+        private sealed class DistanceCase
+        {
+            public string Id;
+            public float3[] Positions;
+            public byte[] Attributes;
+            public int[] Parents;
+            public int2[] Edges;
+            public int3[] Triangles;
+            public int[][] Adjacency;
+            public string Note = string.Empty;
+        }
+
+        private sealed class DistanceDump
+        {
+            public uint[] PackedIndices;
+            public int2[] Ranges;
+            public int[] Targets;
+            public float[] RestSigned;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -108,8 +128,20 @@ namespace HoTools.MC2Oracle.Editor
                 proxyWritten++;
             }
 
+            int distanceWritten = 0;
+            foreach (DistanceCase distanceCase in DistanceCases())
+            {
+                DistanceDump dump = RunDistanceCase(distanceCase);
+                string json = BuildDistanceJson(distanceCase, dump);
+                string path = Path.Combine(outputDirectory, distanceCase.Id + ".json");
+                File.WriteAllText(path, json, new UTF8Encoding(false));
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                distanceWritten++;
+            }
+
             Debug.Log(
-                $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, {proxyWritten} proxy fixtures"
+                $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
+                + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures"
             );
         }
 
@@ -204,6 +236,89 @@ namespace HoTools.MC2Oracle.Editor
                     UnityEngine.Object.DestroyImmediate(recordObject);
                 }
             }
+        }
+
+        private static DistanceDump RunDistanceCase(DistanceCase distanceCase)
+        {
+            using (var mesh = new VirtualMesh(distanceCase.Id))
+            {
+                mesh.isBoneCloth = false;
+                mesh.localPositions = new ExSimpleNativeArray<float3>(distanceCase.Positions);
+                mesh.attributes = new ExSimpleNativeArray<VertexAttribute>(
+                    distanceCase.Attributes.Select(value => new VertexAttribute(value)).ToArray()
+                );
+                mesh.vertexParentIndices = new NativeArray<int>(
+                    distanceCase.Parents,
+                    Allocator.Persistent
+                );
+                mesh.edges = new NativeArray<int2>(distanceCase.Edges, Allocator.Persistent);
+                mesh.triangles = new ExSimpleNativeArray<int3>(distanceCase.Triangles);
+
+                BuildAdjacency(
+                    distanceCase.Adjacency,
+                    out uint[] vertexToVertexIndices,
+                    out ushort[] vertexToVertexData
+                );
+                mesh.vertexToVertexIndexArray = new NativeArray<uint>(
+                    vertexToVertexIndices,
+                    Allocator.Persistent
+                );
+                mesh.vertexToVertexDataArray = new NativeArray<ushort>(
+                    vertexToVertexData,
+                    Allocator.Persistent
+                );
+                mesh.edgeToTriangles = BuildEdgeToTriangles(distanceCase.Triangles);
+
+                DistanceConstraint.ConstraintData data = DistanceConstraint.CreateData(
+                    mesh,
+                    new ClothParameters()
+                );
+                uint[] packed = data.indexArray ?? Array.Empty<uint>();
+                var ranges = new int2[packed.Length];
+                for (int index = 0; index < packed.Length; index++)
+                {
+                    DataUtility.Unpack12_20(packed[index], out int count, out int start);
+                    ranges[index] = new int2(start, count);
+                }
+                return new DistanceDump
+                {
+                    PackedIndices = packed,
+                    Ranges = ranges,
+                    Targets = (data.dataArray ?? Array.Empty<ushort>())
+                        .Select(value => (int)value)
+                        .ToArray(),
+                    RestSigned = data.distanceArray ?? Array.Empty<float>(),
+                };
+            }
+        }
+
+        private static NativeParallelMultiHashMap<int2, ushort> BuildEdgeToTriangles(
+            int3[] triangles
+        )
+        {
+            var map = new NativeParallelMultiHashMap<int2, ushort>(
+                Math.Max(1, triangles.Length * 3),
+                Allocator.Persistent
+            );
+            for (int triangleIndex = 0; triangleIndex < triangles.Length; triangleIndex++)
+            {
+                int3 triangle = triangles[triangleIndex];
+                foreach (int2 edge in new[]
+                {
+                    SortedEdge(triangle.x, triangle.y),
+                    SortedEdge(triangle.y, triangle.z),
+                    SortedEdge(triangle.z, triangle.x),
+                })
+                {
+                    map.Add(edge, checked((ushort)triangleIndex));
+                }
+            }
+            return map;
+        }
+
+        private static int2 SortedEdge(int x, int y)
+        {
+            return x <= y ? new int2(x, y) : new int2(y, x);
         }
 
         private static void BuildAdjacency(
@@ -555,6 +670,107 @@ namespace HoTools.MC2Oracle.Editor
             };
         }
 
+        private static IEnumerable<DistanceCase> DistanceCases()
+        {
+            yield return new DistanceCase
+            {
+                Id = "distance_parent_horizontal_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02 },
+                Parents = new[] { -1, 0, 0 },
+                Edges = E((0, 1), (0, 2), (1, 2)),
+                Triangles = Array.Empty<int3>(),
+                Adjacency = A(new[] { 1, 2 }, new[] { 0, 2 }, new[] { 0, 1 }),
+                Note = "Parent edges are vertical positive rest; the sibling edge is horizontal negative rest.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_square_shear_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02, 0x02 },
+                Parents = new[] { -1, 0, 0, 1 },
+                Edges = E((0, 1), (0, 2), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 1, 2), (1, 3, 2)),
+                Adjacency = A(
+                    new[] { 1, 2 },
+                    new[] { 0, 2, 3 },
+                    new[] { 0, 1, 3 },
+                    new[] { 1, 2 }
+                ),
+                Note = "Coplanar square adds the missing opposite diagonal 0-3 as bidirectional horizontal shear.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_shear_normal_reject_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 0, 1)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02, 0x02 },
+                Parents = new[] { -1, 0, 0, 1 },
+                Edges = E((0, 1), (0, 2), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 1, 2), (1, 3, 2)),
+                Adjacency = A(
+                    new[] { 1, 2 },
+                    new[] { 0, 2, 3 },
+                    new[] { 0, 1, 3 },
+                    new[] { 1, 2 }
+                ),
+                Note = "A folded triangle pair fails the abs(normal dot) shear threshold.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_shear_ratio_reject_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (3, 3, 0)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02, 0x02 },
+                Parents = new[] { -1, 0, 0, 1 },
+                Edges = E((0, 1), (0, 2), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 1, 2), (1, 3, 2)),
+                Adjacency = A(
+                    new[] { 1, 2 },
+                    new[] { 0, 2, 3 },
+                    new[] { 0, 1, 3 },
+                    new[] { 1, 2 }
+                ),
+                Note = "A coplanar pair with mismatched diagonals fails the 0.3 length-ratio threshold.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_invalid_filters_001",
+                Positions = P((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0)),
+                Attributes = new byte[] { 0x00, 0x02, 0x02, 0x02 },
+                Parents = new[] { -1, -1, -1, -1 },
+                Edges = E((0, 1), (0, 2), (1, 2), (1, 3), (2, 3)),
+                Triangles = T((0, 1, 2), (1, 3, 2)),
+                Adjacency = A(
+                    new[] { 1, 2 },
+                    new[] { 0, 2, 3 },
+                    new[] { 0, 1, 3 },
+                    new[] { 1, 2 }
+                ),
+                Note = "Ordinary edges touching Invalid vertex 0 are filtered, but shear 0-3 is still emitted.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_all_fixed_empty_001",
+                Positions = P((0, 0, 0), (1, 0, 0)),
+                Attributes = new byte[] { 0x01, 0x01 },
+                Parents = new[] { -1, -1 },
+                Edges = E((0, 1)),
+                Triangles = Array.Empty<int3>(),
+                Adjacency = A(new[] { 1 }, new[] { 0 }),
+                Note = "An all-Fixed ordinary edge produces no Distance arrays.",
+            };
+            yield return new DistanceCase
+            {
+                Id = "distance_zero_kind_loss_001",
+                Positions = P((0, 0, 0), (0, 0, 0), (0, 0, 0)),
+                Attributes = new byte[] { 0x01, 0x02, 0x02 },
+                Parents = new[] { -1, 0, 0 },
+                Edges = E((0, 1), (0, 2), (1, 2)),
+                Triangles = Array.Empty<int3>(),
+                Adjacency = A(new[] { 1, 2 }, new[] { 0, 2 }, new[] { 0, 1 }),
+                Note = "Vertical and horizontal distances below 1e-8 both serialize as positive zero.",
+            };
+        }
+
         private static float3[] P(params (float x, float y, float z)[] values)
         {
             return values.Select(value => new float3(value.x, value.y, value.z)).ToArray();
@@ -640,6 +856,29 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BuildDistanceJson(DistanceCase distanceCase, DistanceDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(distanceCase.Id));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Cloth/Constraints/DistanceConstraint.cs::CreateData",
+                    "Runtime/Utility/Data/DataUtility.cs::Pack12_20"
+                )
+            );
+            Property(text, 2, "scope", Quote(distanceCase.Note));
+            Property(text, 2, "comparison", DistanceComparisonJson());
+            Property(text, 2, "input", DistanceInputJson(distanceCase));
+            Property(text, 2, "expected", DistanceExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
         private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
@@ -697,6 +936,29 @@ namespace HoTools.MC2Oracle.Editor
                 4,
                 "vertex_to_triangle_record",
                 Quote("[flip_flag, triangle_index], DataUtility.Pack12_20 decoded"),
+                false
+            );
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string DistanceComparisonJson()
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "float_abs_tolerance", "1e-6");
+            Property(text, 4, "float_rel_tolerance", "1e-6");
+            Property(
+                text,
+                4,
+                "raw_order",
+                Quote("diagnostic: NativeParallelMultiHashMap sibling order")
+            );
+            Property(
+                text,
+                4,
+                "canonical_static_membership",
+                Quote("per source vertex: (rest-sign-class,target,rest), zero is a separate class"),
                 false
             );
             text.Append("  }");
@@ -769,6 +1031,32 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "vertex_attributes", NumberArray(proxyCase.Attributes.Select(value => (int)value)));
             Property(text, 4, "lines", ArrayJson(proxyCase.Lines, Int2Json));
             Property(text, 4, "triangles", ArrayJson(proxyCase.Triangles, Int3Json), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string DistanceInputJson(DistanceCase distanceCase)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "setup_type", Quote("mesh_cloth"));
+            Property(text, 4, "local_positions", ArrayJson(distanceCase.Positions, Vector3Json));
+            Property(
+                text,
+                4,
+                "vertex_attributes",
+                NumberArray(distanceCase.Attributes.Select(value => (int)value))
+            );
+            Property(text, 4, "parent_indices", NumberArray(distanceCase.Parents));
+            Property(text, 4, "edges", ArrayJson(distanceCase.Edges, Int2Json));
+            Property(text, 4, "triangles", ArrayJson(distanceCase.Triangles, Int3Json));
+            Property(
+                text,
+                4,
+                "vertex_to_vertex",
+                ArrayJson(distanceCase.Adjacency, values => NumberArray(values)),
+                false
+            );
             text.Append("  }");
             return text.ToString();
         }
@@ -854,6 +1142,24 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string DistanceExpectedJson(DistanceDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "raw_packed_indices", UIntArray(dump.PackedIndices));
+            Property(text, 4, "distance_ranges", ArrayJson(dump.Ranges, Int2Json));
+            Property(text, 4, "distance_targets", NumberArray(dump.Targets));
+            Property(
+                text,
+                4,
+                "distance_rest_signed",
+                ArrayJson(dump.RestSigned, FloatJson),
+                false
+            );
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string PackageVersion(Assembly assembly)
         {
             UnityEditor.PackageManager.PackageInfo info =
@@ -918,6 +1224,11 @@ namespace HoTools.MC2Oracle.Editor
         }
 
         private static string NumberArray(IEnumerable<int> values)
+        {
+            return "[" + string.Join(",", values.Select(value => value.ToString(CultureInfo.InvariantCulture))) + "]";
+        }
+
+        private static string UIntArray(IEnumerable<uint> values)
         {
             return "[" + string.Join(",", values.Select(value => value.ToString(CultureInfo.InvariantCulture))) + "]";
         }

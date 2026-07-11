@@ -74,4 +74,12 @@ if ($ProxyFixtureCount -ne 8) {
     throw "Unity oracle produced $ProxyFixtureCount proxy fixtures instead of 8. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy)"
+$DistanceFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "distance_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($DistanceFixtureCount -ne 7) {
+    throw "Unity oracle produced $DistanceFixtureCount distance fixtures instead of 7. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance)"
