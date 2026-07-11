@@ -54,7 +54,7 @@
 2. 实现 `adapter_binding_v1` runner 和 trace comparator，让现有 P0 fixture 经 `RigidBodySpec` / `ConstraintSpec` / `JoltAdapter` 运行并与 S1 对拍。（2026-07-11 已完成）
 3. 实现 `blender_pipeline_v1` runner，覆盖自由落体、旋转 frame 约束和 same-frame/jump/reset/dispose，并扩展全部 P0。（2026-07-11 已完成）
 4. 补齐 `BREAK-001/002`、跨 ABI 容差差分和当前只部分覆盖的参数矩阵。（断裂与跨 ABI 门禁已于 2026-07-11 完成）
-5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（刚体容量与接触事件 overflow 已于 2026-07-11 完成；soak 和性能仍待完成）
+5. 完成 overflow、soak 和首轮性能采样后，才恢复新的 Jolt 能力扩展。（overflow 与 soak 已于 2026-07-11 完成；性能仍待完成）
 
 每一步都必须复用本目录的 schema、canonical trace 和 assertions。旧式手工后台测试继续保留为链路 smoke，不替代 S3。
 
@@ -282,7 +282,7 @@ stats = body_count, constraint_count, contact counts, overflow, step_ms
 | DET-003 | Blender scope 枚举随机打乱 | `simulation_order_key` 排序后 API 调用序与 trace 不变；冲突拒绝 | HoTools | P0 | PASS（生产路径） |
 | DET-004 | py311/py313 | schema 完全一致，trace 在容差内一致 | 差分 | P0 | PASS：58/58 × repeat 2；最大绝对误差 `2.220446049250313e-16` |
 | CAP-001 | `max_bodies` 容量溢出 | 失败创建不污染计数；已接纳刚体继续 step；释放后可恢复；S3 稳定拒绝超额 slot 并发布诊断 | Jolt/HoTools | P0 | PASS（native + S3） |
-| SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | 缺失 |
+| SOAK-001 | 10,000 帧堆叠/约束链 | 无 NaN、资源不增长、残差不失控 | 不变量 | P0 release | PASS（py311/py313）：每 ABI 两场景各 10,000 帧；链最大残差 `0.00234770775` |
 | PERF-001 | 1/128/1024 bodies | step、pipeline、writeback 的 P50/P95 | benchmark | P1 | 缺失 |
 | PERF-002 | 32/256 constraints + contacts | P50/P95、接触数、内存高水位 | benchmark | P1 | 缺失 |
 
