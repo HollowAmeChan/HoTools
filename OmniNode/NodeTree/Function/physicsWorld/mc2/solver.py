@@ -319,6 +319,8 @@ def step_mc2(
 
                 staged_native_context = MC2NativeContextV0(topology.particle_count)
                 try:
+                    if mesh_static is not None:
+                        staged_native_context.update_mesh_static(mesh_static)
                     staged_native_context.update_parameters(effective)
                     if frame_input is not None:
                         staged_native_context.update_dynamic(frame_input)

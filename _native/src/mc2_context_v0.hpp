@@ -6,6 +6,8 @@ namespace hotools {
 
 PyObject* mc2_context_v0_create(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_inspect(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_reset(PyObject*, PyObject* args);

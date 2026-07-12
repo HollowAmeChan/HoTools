@@ -193,6 +193,15 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         particle_buffer = slot.data["particle_buffer"]
         native_owner = slot.data["native_context"]
         native_info = native_owner.inspect()
+        assert native_info["proxy_static_ready"] is True
+        assert native_info["baseline_static_ready"] is True
+        assert native_info["proxy_static_revision"] == 1
+        assert native_info["baseline_static_revision"] == 1
+        assert native_info["edge_count"] == 3
+        assert native_info["triangle_count"] == 1
+        assert native_info["baseline_count"] == len(
+            static.baseline.baseline.baseline_ranges
+        )
         assert native_info["parameter_revision"] == 1
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1

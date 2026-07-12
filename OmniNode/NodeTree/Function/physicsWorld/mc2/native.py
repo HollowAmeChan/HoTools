@@ -14,6 +14,7 @@ from .runtime_parameters import (
     MC2RuntimeParametersV0,
     pack_mc2_runtime_parameters,
 )
+from .static_data import pack_mc2_baseline_static, pack_mc2_proxy_static
 
 
 MC2_NATIVE_CONTEXT_SCHEMA_VERSION = 0
@@ -21,6 +22,8 @@ _NATIVE_MODULE = None
 _REQUIRED_SYMBOLS = (
     "mc2_context_v0_create",
     "mc2_context_v0_inspect",
+    "mc2_context_v0_update_proxy_static",
+    "mc2_context_v0_update_baseline_static",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
@@ -78,6 +81,8 @@ class MC2NativeContextV0:
             raise RuntimeError("mc2_context_v0_create returned None")
         self.vertex_count = vertex_count
         self.parameter_signature = ""
+        self.proxy_signature = ""
+        self.baseline_signature = ""
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
@@ -105,6 +110,42 @@ class MC2NativeContextV0:
             packed["curve_values"],
         )
         self.parameter_signature = spec.parameter_signature
+
+    def update_mesh_static(self, static) -> None:
+        from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
+
+        if not isinstance(static, MC2MeshClothStaticBuildResult):
+            raise TypeError("static must be MC2MeshClothStaticBuildResult")
+        if static.final_proxy.vertex_count != self.vertex_count:
+            raise ValueError("MC2 native static vertex count mismatch")
+        self._ensure_live()
+        proxy = pack_mc2_proxy_static(static.final_proxy)
+        baseline = pack_mc2_baseline_static(static.baseline.baseline)
+        self._module.mc2_context_v0_update_proxy_static(
+            self._handle,
+            proxy["local_positions"],
+            proxy["local_normals"],
+            proxy["local_tangents"],
+            proxy["uvs"],
+            proxy["vertex_attributes"],
+            proxy["edges"],
+            proxy["triangles"],
+        )
+        self._module.mc2_context_v0_update_baseline_static(
+            self._handle,
+            baseline["parent_indices"],
+            baseline["child_ranges"],
+            baseline["child_data"],
+            baseline["baseline_flags"],
+            baseline["baseline_ranges"],
+            baseline["baseline_data"],
+            baseline["root_indices"],
+            baseline["depths"],
+            baseline["vertex_local_positions"],
+            baseline["vertex_local_rotations"],
+        )
+        self.proxy_signature = static.final_proxy.proxy_signature
+        self.baseline_signature = static.baseline.baseline.baseline_signature
 
     def update_dynamic(self, frame_input: MC2FrameInputSpec) -> None:
         if not isinstance(frame_input, MC2FrameInputSpec):
@@ -155,6 +196,8 @@ class MC2NativeContextV0:
             finally:
                 self._handle = None
         self.parameter_signature = ""
+        self.proxy_signature = ""
+        self.baseline_signature = ""
         self.last_frame = None
         self._out_positions = np.empty((0, 3), dtype=np.float32)
         self._out_rotations = np.empty((0, 4), dtype=np.float32)

@@ -77,6 +77,8 @@ MC2 通用路径会做 selection crop、merge/reduction/optimization和空间最
 - 参与 baseline且无 parent的 root quaternion为 identity；不在 baseline中的 vertex保持 zero quaternion。
 - local length小于 `1e-8` 时 OR `ZeroDistance` 回 final attribute，因此 baseline build会改变最终 proxy signature。
 
+当前生产路径在 slot rebuild 的 staged context 中上传 N0 proxy 的 7 组数组与 Mesh baseline 的 10 组数组。native 重新检查 dtype、shape、finite、index 与 dense range 后才原子替换对应数组；任一上传失败不得安装新 context。Distance/Bending 仍属于下一阶段 N1 consumer，不得因同处 `static_build` bundle就声称已被 kernel消费。
+
 ### Bone Baseline 与 Depth
 
 Bone baseline起点不总是登记 root。源码会沿不移动子树寻找“自身不移动且至少一个直接 child为 Move”的 vertex，再只遍历 Move child。连续多个 Fixed是合法输入。

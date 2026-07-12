@@ -28,6 +28,36 @@ def frame(count, offset=0.0):
     return positions, rotations
 
 
+def static_arrays(count):
+    positions = np.zeros((count, 3), dtype=np.float32)
+    normals = np.zeros((count, 3), dtype=np.float32)
+    normals[:, 2] = 1.0
+    tangents = np.zeros((count, 3), dtype=np.float32)
+    tangents[:, 0] = 1.0
+    uvs = np.zeros((count, 2), dtype=np.float32)
+    attributes = np.full(count, 2, dtype=np.uint8)
+    edges = np.array([[index, index + 1] for index in range(count - 1)], dtype=np.int32).reshape(-1, 2)
+    triangles = np.empty((0, 3), dtype=np.int32)
+    parents = np.arange(-1, count - 1, dtype=np.int32)
+    child_ranges = np.array(
+        [[index, 1 if index + 1 < count else 0] for index in range(count)],
+        dtype=np.int32,
+    )
+    child_data = np.arange(1, count, dtype=np.int32)
+    flags = np.array([0], dtype=np.uint8)
+    ranges = np.array([[0, count]], dtype=np.int32)
+    data = np.arange(count, dtype=np.int32)
+    roots = np.zeros(count, dtype=np.int32)
+    depths = np.linspace(0.0, 1.0, count, dtype=np.float32)
+    local_positions = np.zeros((count, 3), dtype=np.float32)
+    local_rotations = np.zeros((count, 4), dtype=np.float32)
+    local_rotations[:, 3] = 1.0
+    return (
+        (positions, normals, tangents, uvs, attributes, edges, triangles),
+        (parents, child_ranges, child_data, flags, ranges, data, roots, depths, local_positions, local_rotations),
+    )
+
+
 def expect_error(exception, callback, text):
     try:
         callback()
@@ -55,6 +85,37 @@ def test_lifecycle_and_transactional_validation():
         assert info["schema"] == "mc2_context_v0"
         assert info["vertex_count"] == 2
         assert not info["initialized"]
+
+        proxy, baseline_static = static_arrays(2)
+        hotools_native.mc2_context_v0_update_proxy_static(first, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(first, *baseline_static)
+        info = hotools_native.mc2_context_v0_inspect(first)
+        assert info["proxy_static_ready"] is True
+        assert info["baseline_static_ready"] is True
+        assert info["proxy_static_revision"] == 1
+        assert info["baseline_static_revision"] == 1
+        assert info["edge_count"] == 1
+        assert info["triangle_count"] == 0
+        assert info["baseline_count"] == 1
+        assert info["fixed_count"] == 0
+
+        bad_proxy = list(proxy)
+        bad_proxy[5] = np.array([[0, 2]], dtype=np.int32)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_proxy_static(first, *bad_proxy),
+            "out-of-range",
+        )
+        assert hotools_native.mc2_context_v0_inspect(first)["proxy_static_revision"] == 1
+
+        bad_baseline = list(baseline_static)
+        bad_baseline[1] = np.array([[0, 0], [0, 0]], dtype=np.int32)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_baseline_static(first, *bad_baseline),
+            "does not cover",
+        )
+        assert hotools_native.mc2_context_v0_inspect(first)["baseline_static_revision"] == 1
 
         floats, ints, curves = parameters()
         hotools_native.mc2_context_v0_update_parameters(first, floats, ints, curves)

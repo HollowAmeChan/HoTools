@@ -35,16 +35,16 @@
 |---|---|---|
 | solver/task scaffold | landed foundation | `specs.py`、`topology.py`、`solver.py` 已有统一 task、slot reuse/rebuild/prune 和先 prepare 后写锁的事务边界；slot 已接入 native context 的 staged create/replace、热更新、reset/step/read 与 dispose。当前 step 仍是无数值求解的 no-op。 |
 | particle owner | landed foundation | `MC2ParticleBuffer.allocate()` 只分配并保持未初始化；`reset_from_frame()` 按源码同时覆盖 position/rotation history并清零 velocity/friction/collision。slot 唯一持有 native context V0，allocation reason与真实 reset reason保持分离；粒子数组尚未上传 native。 |
-| Mesh N0 final proxy | landed | `final_proxy.py` 已实现 triangle/edge union、方向统一、vertex adjacency、vertex-to-triangle flip、normal/tangent、UV seam gate 和同 index Pin attribute，并由 Tier A fixture 覆盖。 |
-| Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation。 |
-| Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。 |
+| Mesh N0 final proxy | landed | `final_proxy.py` 已实现 triangle/edge union、方向统一、vertex adjacency、vertex-to-triangle flip、normal/tangent、UV seam gate 和同 index Pin attribute，并由 Tier A fixture 覆盖；7 组冻结数组已由 staged native context 校验并持有。 |
+| Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation；10 组冻结数组已接入 native context。 |
+| Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。N0 proxy/baseline 上传失败会释放 staged context并保留旧 slot。 |
 | Distance N1 | landed | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。尚无新 native consumer。 |
 | TriangleBending N1 | landed | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。initial local-to-world columns与完整 record order进入 constraint signature；尚无新 native consumer。 |
 | Inertia/Center static | verified contract | `center_state.py` 已冻结 center fixed list/local center、initial local gravity、component/anchor frame pose与 persistent reset分层；最小 fixed+isolated case由 Tier A oracle覆盖。尚未实现完整 frame-derived inertia/negative scale。 |
 | Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。rotation/reset数组已有 Tier A oracle；当前首版仍要求每个 vertex属于 triangle。 |
 | Runtime parameters N2 | landed foundation | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；native context V0 已校验并保存该块，但数值 kernel 尚未消费。 |
 | Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；Mesh/Bone setup可显式生成并消费 frame spec。frame sync 先 plan、native 成功后再提交 host 状态；native context V0 已接 update/reset/no-op step/read。Bone connection-aware rotation与真实 substep scratch仍未实现。 |
-| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update_parameters -> update_dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。它只建立生命周期和事务边界，尚未上传 N0/N1，也不执行数值求解或发布 result。旧 `_native` full-core 不计入此项。 |
+| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/parameters/dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。N0 proxy/baseline已上传；N1与数值求解/result尚未接入。旧 `_native` full-core 不计入此项。 |
 | result/writeback | planned only | `GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仅登记为计划通道；当前不得发布伪结果或标 ready。 |
 
 ## Host/Native 契约
@@ -135,9 +135,9 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **MeshCloth Vertical Slice 的静态上传与真实无碰撞 step**：
+下一交付是 **Distance/Bending N1 上传与真实无碰撞 step**：
 
-1. 为 native context 上传 N0 final proxy、baseline 与 Pin，随后接入 Distance/Bending N1；沿用已冻结的只读 packer，不复制 Python debug dict。
+1. N0 final proxy、baseline 与 Pin已完成；继续上传 Distance/Bending N1，沿用已冻结的保序只读 packer，不复制 Python debug dict。
 2. reset 从当前帧 N3 world pose 初始化 native 粒子状态；连续帧执行真实无碰撞 step，same-frame 不重复推进。
 3. readback 返回同 vertex identity 的 world display pose；host 转为 object-local offset，但在完整结果事务接通前不得标 ready。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；参数热更新继续保留粒子 history。
