@@ -202,6 +202,14 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["baseline_count"] == len(
             static.baseline.baseline.baseline_ranges
         )
+        assert native_info["distance_static_ready"] is True
+        assert native_info["bending_static_ready"] is True
+        assert native_info["distance_record_count"] == len(
+            static.distance.distance_targets
+        )
+        assert native_info["bending_record_count"] == (
+            static.bending.record_count if static.bending is not None else 0
+        )
         assert native_info["parameter_revision"] == 1
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1

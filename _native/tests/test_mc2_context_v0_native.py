@@ -71,7 +71,8 @@ def test_lifecycle_and_transactional_validation():
     baseline = hotools_native.mc2_context_v0_stats().copy()
     first = hotools_native.mc2_context_v0_create(0, 2)
     second = hotools_native.mc2_context_v0_create(0, 3)
-    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 2
+    third = hotools_native.mc2_context_v0_create(0, 4)
+    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 3
     try:
         second_positions, second_rotations = frame(3)
         expect_error(
@@ -116,6 +117,51 @@ def test_lifecycle_and_transactional_validation():
             "does not cover",
         )
         assert hotools_native.mc2_context_v0_inspect(first)["baseline_static_revision"] == 1
+
+        distance_ranges = np.array([[0, 1], [1, 1]], dtype=np.int32)
+        distance_targets = np.array([1, 0], dtype=np.int32)
+        distance_rests = np.array([-1.0, -1.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_distance_static(
+            first, distance_ranges, distance_targets, distance_rests
+        )
+        empty_quads = np.empty((0, 4), dtype=np.int32)
+        empty_rests = np.empty((0,), dtype=np.float32)
+        empty_markers = np.empty((0,), dtype=np.int8)
+        hotools_native.mc2_context_v0_update_bending_static(
+            first, empty_quads, empty_rests, empty_markers
+        )
+        info = hotools_native.mc2_context_v0_inspect(first)
+        assert info["distance_static_ready"] is True
+        assert info["bending_static_ready"] is True
+        assert info["distance_record_count"] == 2
+        assert info["bending_record_count"] == 0
+
+        bad_distance_rests = np.array([-0.0, -1.0], dtype=np.float32)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_distance_static(
+                first, distance_ranges, distance_targets, bad_distance_rests
+            ),
+            "+0.0",
+        )
+        assert hotools_native.mc2_context_v0_inspect(first)["distance_static_revision"] == 1
+
+        quads = np.array([[0, 1, 2, 3]], dtype=np.int32)
+        bend_rests = np.array([0.5], dtype=np.float32)
+        markers = np.array([1], dtype=np.int8)
+        third_proxy, _third_baseline = static_arrays(4)
+        hotools_native.mc2_context_v0_update_proxy_static(third, *third_proxy)
+        hotools_native.mc2_context_v0_update_bending_static(third, quads, bend_rests, markers)
+        assert hotools_native.mc2_context_v0_inspect(third)["bending_record_count"] == 1
+        bad_markers = np.array([7], dtype=np.int8)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_bending_static(
+                third, quads, bend_rests, bad_markers
+            ),
+            "marker",
+        )
+        assert hotools_native.mc2_context_v0_inspect(third)["bending_static_revision"] == 1
 
         floats, ints, curves = parameters()
         hotools_native.mc2_context_v0_update_parameters(first, floats, ints, curves)
@@ -169,6 +215,7 @@ def test_lifecycle_and_transactional_validation():
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(second)
+        hotools_native.mc2_context_v0_free(third)
     assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"]
     assert hotools_native.mc2_context_v0_inspect(first)["released"] is True
     expect_error(RuntimeError, lambda: hotools_native.mc2_context_v0_reset(first), "released")

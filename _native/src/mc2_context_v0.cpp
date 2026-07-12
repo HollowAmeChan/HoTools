@@ -30,6 +30,8 @@ struct Mc2ContextV0 {
     std::int64_t parameter_revision = 0;
     std::int64_t proxy_static_revision = 0;
     std::int64_t baseline_static_revision = 0;
+    std::int64_t distance_static_revision = 0;
+    std::int64_t bending_static_revision = 0;
     std::int64_t dynamic_revision = 0;
     std::int64_t reset_count = 0;
     std::int64_t step_count = 0;
@@ -38,6 +40,8 @@ struct Mc2ContextV0 {
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
+    bool distance_static_ready = false;
+    bool bending_static_ready = false;
     bool dynamic_ready = false;
     bool initialized = false;
     bool released = false;
@@ -65,6 +69,12 @@ struct Mc2ContextV0 {
     std::vector<float> baseline_depths;
     std::vector<float> baseline_local_positions;
     std::vector<float> baseline_local_rotations;
+    std::vector<std::int32_t> distance_ranges;
+    std::vector<std::int32_t> distance_targets;
+    std::vector<float> distance_rest_signed;
+    std::vector<std::int32_t> bending_quads;
+    std::vector<float> bending_rest_angle_or_volume;
+    std::vector<std::int8_t> bending_sign_or_volume;
 };
 
 Mc2ContextV0* context_from(PyObject* object) {
@@ -99,9 +109,17 @@ void release_resources(Mc2ContextV0& context) {
     context.baseline_depths.clear();
     context.baseline_local_positions.clear();
     context.baseline_local_rotations.clear();
+    context.distance_ranges.clear();
+    context.distance_targets.clear();
+    context.distance_rest_signed.clear();
+    context.bending_quads.clear();
+    context.bending_rest_angle_or_volume.clear();
+    context.bending_sign_or_volume.clear();
     context.parameters_ready = false;
     context.proxy_static_ready = false;
     context.baseline_static_ready = false;
+    context.distance_static_ready = false;
+    context.bending_static_ready = false;
     context.dynamic_ready = false;
     context.initialized = false;
     context.released = true;
@@ -274,6 +292,19 @@ bool validate_dense_ranges(const Buffer& ranges,
     return true;
 }
 
+bool expect_int8_scalar_array(const Buffer& buffer, const char* name) {
+    if (buffer.view.itemsize != 1 ||
+        (buffer.view.format != nullptr && buffer.view.format[0] != 'b')) {
+        PyErr_Format(PyExc_TypeError, "%s must use int8 elements", name);
+        return false;
+    }
+    if (buffer.view.ndim != 1 || buffer.view.shape == nullptr) {
+        PyErr_Format(PyExc_ValueError, "%s must be a 1D array", name);
+        return false;
+    }
+    return true;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -286,10 +317,14 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "vertex_count", context.vertex_count) ||
         !dict_i64(result, "proxy_static_revision", context.proxy_static_revision) ||
         !dict_i64(result, "baseline_static_revision", context.baseline_static_revision) ||
+        !dict_i64(result, "distance_static_revision", context.distance_static_revision) ||
+        !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "edge_count", static_cast<std::int64_t>(context.proxy_edges.size() / 2)) ||
         !dict_i64(result, "triangle_count", static_cast<std::int64_t>(context.proxy_triangles.size() / 3)) ||
         !dict_i64(result, "baseline_count", static_cast<std::int64_t>(context.baseline_ranges.size() / 2)) ||
         !dict_i64(result, "fixed_count", fixed_count) ||
+        !dict_i64(result, "distance_record_count", static_cast<std::int64_t>(context.distance_targets.size())) ||
+        !dict_i64(result, "bending_record_count", static_cast<std::int64_t>(context.bending_rest_angle_or_volume.size())) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
         !dict_i64(result, "reset_count", context.reset_count) ||
@@ -299,6 +334,8 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
         !dict_bool(result, "proxy_static_ready", context.proxy_static_ready) ||
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
+        !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
+        !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "dynamic_ready", context.dynamic_ready) ||
         !dict_bool(result, "initialized", context.initialized) ||
         !dict_bool(result, "released", context.released)) {
@@ -504,6 +541,114 @@ PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args) {
     context->baseline_local_rotations.swap(next_local_rotations);
     context->baseline_static_ready = true;
     ++context->baseline_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_distance_static expects 4 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready || !context->baseline_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "Distance static requires proxy and baseline static");
+        return nullptr;
+    }
+    Buffer ranges, targets, rests;
+    if (!ranges.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "distance_ranges") ||
+        !targets.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "distance_targets") ||
+        !rests.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "distance_rest_signed")) {
+        return nullptr;
+    }
+    const auto count = static_cast<Py_ssize_t>(context->vertex_count);
+    Py_ssize_t range_count = 0;
+    if (!expect_int32_pair_array(ranges, "distance_ranges", &range_count) ||
+        range_count != count ||
+        !expect_int32_scalar_array(targets, "distance_targets") ||
+        !expect_float32(rests, "distance_rest_signed") ||
+        !expect_1d_array(rests, "distance_rest_signed", targets.view.shape[0]) ||
+        !validate_dense_ranges(ranges, targets.view.shape[0], "distance_ranges") ||
+        !validate_indices(targets, context->vertex_count, "distance_targets") ||
+        !finite_floats(rests, "distance_rest_signed")) {
+        if (!PyErr_Occurred()) PyErr_SetString(PyExc_ValueError, "distance static shape mismatch");
+        return nullptr;
+    }
+    const auto* range_values = static_cast<const std::int32_t*>(ranges.view.buf);
+    for (Py_ssize_t row = 0; row < count; ++row) {
+        if (range_values[row * 2] > 1048575 || range_values[row * 2 + 1] > 4095) {
+            PyErr_SetString(PyExc_ValueError, "distance range exceeds MC2 packed source limits");
+            return nullptr;
+        }
+    }
+    const auto* rest_values = static_cast<const float*>(rests.view.buf);
+    for (Py_ssize_t index = 0; index < rests.view.shape[0]; ++index) {
+        if (rest_values[index] == 0.0f && std::signbit(rest_values[index])) {
+            PyErr_SetString(PyExc_ValueError, "distance zero rest must use +0.0");
+            return nullptr;
+        }
+    }
+    auto next_ranges = copy_values<std::int32_t>(ranges);
+    auto next_targets = copy_values<std::int32_t>(targets);
+    auto next_rests = copy_values<float>(rests);
+    context->distance_ranges.swap(next_ranges);
+    context->distance_targets.swap(next_targets);
+    context->distance_rest_signed.swap(next_rests);
+    context->distance_static_ready = true;
+    ++context->distance_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_bending_static expects 4 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "Bending static requires proxy static");
+        return nullptr;
+    }
+    Buffer quads, rests, markers;
+    if (!quads.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "bending_quads") ||
+        !rests.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "bending_rest_angle_or_volume") ||
+        !markers.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "bending_sign_or_volume")) {
+        return nullptr;
+    }
+    Py_ssize_t record_count = 0;
+    if (!expect_int32_quad_array(quads, "bending_quads", &record_count) ||
+        !expect_float32(rests, "bending_rest_angle_or_volume") ||
+        !expect_1d_array(rests, "bending_rest_angle_or_volume", record_count) ||
+        !expect_int8_scalar_array(markers, "bending_sign_or_volume") ||
+        markers.view.shape[0] != record_count ||
+        !validate_indices(quads, context->vertex_count, "bending_quads") ||
+        !finite_floats(rests, "bending_rest_angle_or_volume")) {
+        if (!PyErr_Occurred()) PyErr_SetString(PyExc_ValueError, "bending static shape mismatch");
+        return nullptr;
+    }
+    const auto* quad_values = static_cast<const std::int32_t*>(quads.view.buf);
+    const auto* marker_values = static_cast<const std::int8_t*>(markers.view.buf);
+    for (Py_ssize_t row = 0; row < record_count; ++row) {
+        const auto* value = quad_values + row * 4;
+        if (value[0] == value[1] || value[0] == value[2] || value[0] == value[3] ||
+            value[1] == value[2] || value[1] == value[3] || value[2] == value[3]) {
+            PyErr_SetString(PyExc_ValueError, "bending quad must contain four distinct roles");
+            return nullptr;
+        }
+        if (marker_values[row] != -1 && marker_values[row] != 1 && marker_values[row] != 100) {
+            PyErr_SetString(PyExc_ValueError, "bending marker must be -1, 1, or 100");
+            return nullptr;
+        }
+    }
+    auto next_quads = copy_values<std::int32_t>(quads);
+    auto next_rests = copy_values<float>(rests);
+    auto next_markers = copy_values<std::int8_t>(markers);
+    context->bending_quads.swap(next_quads);
+    context->bending_rest_angle_or_volume.swap(next_rests);
+    context->bending_sign_or_volume.swap(next_markers);
+    context->bending_static_ready = true;
+    ++context->bending_static_revision;
     Py_RETURN_NONE;
 }
 

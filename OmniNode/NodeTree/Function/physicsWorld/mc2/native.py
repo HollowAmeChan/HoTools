@@ -9,6 +9,8 @@ import sys
 
 import numpy as np
 
+from .bending_static import pack_mc2_bending_static
+from .distance_static import pack_mc2_distance_static
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
     MC2RuntimeParametersV0,
@@ -24,6 +26,8 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_inspect",
     "mc2_context_v0_update_proxy_static",
     "mc2_context_v0_update_baseline_static",
+    "mc2_context_v0_update_distance_static",
+    "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
@@ -83,6 +87,8 @@ class MC2NativeContextV0:
         self.parameter_signature = ""
         self.proxy_signature = ""
         self.baseline_signature = ""
+        self.distance_signature = ""
+        self.bending_signature = ""
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
@@ -144,8 +150,33 @@ class MC2NativeContextV0:
             baseline["vertex_local_positions"],
             baseline["vertex_local_rotations"],
         )
+        distance = pack_mc2_distance_static(static.distance)
+        self._module.mc2_context_v0_update_distance_static(
+            self._handle,
+            distance["distance_ranges"],
+            distance["distance_targets"],
+            distance["distance_rest_signed"],
+        )
+        if static.bending is None:
+            bending = {
+                "bending_quads": np.empty((0, 4), dtype=np.int32),
+                "bending_rest_angle_or_volume": np.empty((0,), dtype=np.float32),
+                "bending_sign_or_volume": np.empty((0,), dtype=np.int8),
+            }
+        else:
+            bending = pack_mc2_bending_static(static.bending)
+        self._module.mc2_context_v0_update_bending_static(
+            self._handle,
+            bending["bending_quads"],
+            bending["bending_rest_angle_or_volume"],
+            bending["bending_sign_or_volume"],
+        )
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline.baseline_signature
+        self.distance_signature = static.distance.distance_signature
+        self.bending_signature = (
+            static.bending.bending_signature if static.bending is not None else "empty"
+        )
 
     def update_dynamic(self, frame_input: MC2FrameInputSpec) -> None:
         if not isinstance(frame_input, MC2FrameInputSpec):
@@ -198,6 +229,8 @@ class MC2NativeContextV0:
         self.parameter_signature = ""
         self.proxy_signature = ""
         self.baseline_signature = ""
+        self.distance_signature = ""
+        self.bending_signature = ""
         self.last_frame = None
         self._out_positions = np.empty((0, 3), dtype=np.float32)
         self._out_rotations = np.empty((0, 4), dtype=np.float32)
