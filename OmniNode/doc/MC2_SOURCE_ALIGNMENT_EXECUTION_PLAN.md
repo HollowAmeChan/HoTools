@@ -34,7 +34,7 @@
 | 层 | 当前状态 | 事实边界 |
 |---|---|---|
 | solver/task scaffold | landed foundation | `specs.py`、`topology.py`、`solver.py` 已有统一 task、slot reuse/rebuild/prune 和先 prepare 后写锁的事务边界；slot 已接入 native context 的 staged create/replace、热更新、reset/step/read 与 dispose。连续帧已执行 Pin 跟随与单次 ordered Distance projection。 |
-| particle owner | landed foundation | `MC2ParticleBuffer.allocate()` 只分配并保持未初始化；`reset_from_frame()` 按源码同时覆盖 position/rotation history并清零 velocity/friction/collision。slot 唯一持有 native context V0，native reset/state position与rotation已落地；persistent velocity/friction/collision仍只有 host contract。 |
+| particle owner | landed foundation | `MC2ParticleBuffer.allocate()` 只分配并保持未初始化；`reset_from_frame()` 按源码同时覆盖 position/rotation history并清零 velocity/friction/collision。slot 唯一持有 native context V0，native reset/state position与rotation已落地。`SimulationStepUpdateParticles` 的 velocityWeight→damping→gravity→predict、Fixed pose与scratch clear已有 Tier A fixture；persistent velocity尚未接入 native。 |
 | Mesh N0 final proxy | landed | `final_proxy.py` 已实现 triangle/edge union、方向统一、vertex adjacency、vertex-to-triangle flip、normal/tangent、UV seam gate 和同 index Pin attribute，并由 Tier A fixture 覆盖；7 组冻结数组已由 staged native context 校验并持有。 |
 | Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation；10 组冻结数组已接入 native context。 |
 | Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。N0 proxy/baseline 上传失败会释放 staged context并保留旧 slot。 |
@@ -137,7 +137,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 下一交付是 **粒子积分与 Bending 数值闭环**：
 
-1. N0/N1上传、Pin 跟随与单次 Distance projection 已完成；继续建立 persistent velocity、gravity/damping 与 substep working state。
+1. N0/N1上传、Pin 跟随与单次 Distance projection 已完成；particle prediction最小 Tier A oracle已冻结，下一步按该 producer建立 persistent velocity、gravity/damping 与 substep working state。
 2. Bending 按 ordered role quad 写入 per-particle count/vector scratch，再按 Move/Fixed 规则平均并无条件清空 scratch。
 3. readback 返回同 vertex identity 的 world display pose；host 转为 object-local offset，但在完整结果事务接通前不得标 ready。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；参数热更新继续保留粒子 history。

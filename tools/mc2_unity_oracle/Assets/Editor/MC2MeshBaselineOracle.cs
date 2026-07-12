@@ -155,6 +155,17 @@ namespace HoTools.MC2Oracle.Editor
             public float3[] VectorAfterSum;
         }
 
+        private sealed class ParticleStepDump
+        {
+            public float3[] BasePositions;
+            public float3[] NextPositions;
+            public float3[] VelocityPositions;
+            public float3[] TempVectorA;
+            public float3[] TempVectorB;
+            public int[] TempCounts;
+            public float[] TempFloats;
+        }
+
         [Serializable]
         private sealed class ParameterRuntimeDump
         {
@@ -318,6 +329,7 @@ namespace HoTools.MC2Oracle.Editor
             int parameterWritten = WriteParameterFixtures(outputDirectory);
             int frameWritten = WriteFrameFixtures(outputDirectory);
             int centerWritten = WriteCenterFixtures(outputDirectory);
+            int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
 
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
@@ -327,8 +339,18 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{bendingRuntimeWritten} bending runtime fixtures, "
                 + $"{parameterWritten} runtime parameter fixtures, "
                 + $"{frameWritten} frame/reset fixtures, "
-                + $"{centerWritten} center fixtures"
+                + $"{centerWritten} center fixtures, "
+                + $"{particleStepWritten} particle-step fixtures"
             );
+        }
+
+        private static int WriteParticleStepFixtures(string outputDirectory)
+        {
+            ParticleStepDump dump = RunParticleStepOracle();
+            string path = Path.Combine(outputDirectory, "particle_step_gravity_damping_001.json");
+            File.WriteAllText(path, BuildParticleStepJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
         }
 
         private static int WriteCenterFixtures(string outputDirectory)
@@ -964,6 +986,154 @@ namespace HoTools.MC2Oracle.Editor
                 indices.Dispose();
                 targets.Dispose();
                 rests.Dispose();
+            }
+        }
+
+        private static ParticleStepDump RunParticleStepOracle()
+        {
+            MethodInfo method = typeof(SimulationManager).GetMethod(
+                "SimulationStepUpdateParticles",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(SimulationManager).FullName,
+                    "SimulationStepUpdateParticles"
+                );
+            }
+
+            var team = new TeamManager.TeamData
+            {
+                proxyCommonChunk = new DataChunk(0, 2),
+                particleChunk = new DataChunk(0, 2),
+                frameInterpolation = 1.0f,
+                gravityRatio = 0.75f,
+                initScale = new float3(1.0f),
+                scaleRatio = 1.5f,
+                velocityWeight = 0.8f,
+                forceMode = ClothForceMode.None,
+            };
+            var center = new InertiaConstraint.CenterData
+            {
+                oldWorldPosition = float3.zero,
+                stepVector = float3.zero,
+                stepRotation = quaternion.identity,
+                inertiaVector = float3.zero,
+                inertiaRotation = quaternion.identity,
+            };
+            var parameters = new ClothParameters
+            {
+                gravity = 9.0f,
+                worldGravityDirection = new float3(0.0f, -1.0f, 0.0f),
+                dampingCurveData = new float4x4(
+                    new float4(0.2f), new float4(0.2f),
+                    new float4(0.2f), new float4(0.2f)
+                ),
+            };
+            var teamWind = new TeamWindData();
+            var windData = new NativeArray<WindManager.WindData>(0, Allocator.Persistent);
+            var attributes = new NativeArray<VertexAttribute>(
+                new[] { VertexAttribute.Move, VertexAttribute.Fixed },
+                Allocator.Persistent
+            );
+            var depths = new NativeArray<float>(new[] { 0.5f, 0.0f }, Allocator.Persistent);
+            var positions = new NativeArray<float3>(
+                P((0, 0, 0), (10, 0, 0)), Allocator.Persistent
+            );
+            var rotations = new NativeArray<quaternion>(
+                new[] { quaternion.identity, quaternion.identity }, Allocator.Persistent
+            );
+            var roots = new NativeArray<int>(new[] { 0, 0 }, Allocator.Persistent);
+            var next = new NativeArray<float3>(2, Allocator.Persistent);
+            var old = new NativeArray<float3>(
+                P((1, 2, 3), (4, 5, 6)), Allocator.Persistent
+            );
+            var basePositions = new NativeArray<float3>(2, Allocator.Persistent);
+            var baseRotations = new NativeArray<quaternion>(2, Allocator.Persistent);
+            var oldAnimatedPositions = new NativeArray<float3>(
+                P((-1, -1, -1), (-2, -2, -2)), Allocator.Persistent
+            );
+            var oldAnimatedRotations = new NativeArray<quaternion>(
+                new[] { quaternion.identity, quaternion.identity }, Allocator.Persistent
+            );
+            var velocityPositions = new NativeArray<float3>(2, Allocator.Persistent);
+            var velocities = new NativeArray<float3>(
+                P((2, -1, 0.5f), (9, 9, 9)), Allocator.Persistent
+            );
+            var friction = new NativeArray<float>(new float[2], Allocator.Persistent);
+            var stepBasicPositions = new NativeArray<float3>(2, Allocator.Persistent);
+            var stepBasicRotations = new NativeArray<quaternion>(2, Allocator.Persistent);
+            var tempVectorA = new NativeArray<float3>(
+                P((7, 7, 7), (7, 7, 7)), Allocator.Persistent
+            );
+            var tempVectorB = new NativeArray<float3>(
+                P((8, 8, 8), (8, 8, 8)), Allocator.Persistent
+            );
+            var tempCounts = new NativeArray<int>(new[] { 7, 8 }, Allocator.Persistent);
+            var tempFloats = new NativeArray<float>(new[] { 7.0f, 8.0f }, Allocator.Persistent);
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, 2),
+                    new float4(1.0f, 1.0f, 0.5f, 1.0f),
+                    0.1f,
+                    0,
+                    team,
+                    center,
+                    parameters,
+                    teamWind,
+                    windData,
+                    attributes,
+                    depths,
+                    positions,
+                    rotations,
+                    roots,
+                    next,
+                    old,
+                    basePositions,
+                    baseRotations,
+                    oldAnimatedPositions,
+                    oldAnimatedRotations,
+                    velocityPositions,
+                    velocities,
+                    friction,
+                    stepBasicPositions,
+                    stepBasicRotations,
+                    tempVectorA,
+                    tempVectorB,
+                    tempCounts,
+                    tempFloats,
+                };
+                try
+                {
+                    method.Invoke(null, arguments);
+                }
+                catch (TargetInvocationException exception) when (exception.InnerException != null)
+                {
+                    ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+                    throw;
+                }
+                return new ParticleStepDump
+                {
+                    BasePositions = basePositions.ToArray(),
+                    NextPositions = next.ToArray(),
+                    VelocityPositions = velocityPositions.ToArray(),
+                    TempVectorA = tempVectorA.ToArray(),
+                    TempVectorB = tempVectorB.ToArray(),
+                    TempCounts = tempCounts.ToArray(),
+                    TempFloats = tempFloats.ToArray(),
+                };
+            }
+            finally
+            {
+                windData.Dispose(); attributes.Dispose(); depths.Dispose(); positions.Dispose();
+                rotations.Dispose(); roots.Dispose(); next.Dispose(); old.Dispose();
+                basePositions.Dispose(); baseRotations.Dispose(); oldAnimatedPositions.Dispose();
+                oldAnimatedRotations.Dispose(); velocityPositions.Dispose(); velocities.Dispose();
+                friction.Dispose(); stepBasicPositions.Dispose(); stepBasicRotations.Dispose();
+                tempVectorA.Dispose(); tempVectorB.Dispose(); tempCounts.Dispose(); tempFloats.Dispose();
             }
         }
 
@@ -1989,6 +2159,53 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 2, "input", BendingRuntimeInputJson(runtimeCase));
             Property(text, 2, "expected", BendingRuntimeExpectedJson(dump), false);
             text.AppendLine("}");
+            return text.ToString();
+        }
+
+        private static string BuildParticleStepJson(ParticleStepDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote("particle_step_gravity_damping_001"));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationStepUpdateParticles")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Zero-inertia/wind/collision particle prediction locks velocityWeight, damping, gravity, fixed pose, and scratch clear order.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_power", "[1,1,0.5,1]");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_interpolation", "1");
+            Property(text, 4, "velocity_weight", "0.8");
+            Property(text, 4, "gravity_ratio", "0.75");
+            Property(text, 4, "scale_ratio", "1.5");
+            Property(text, 4, "gravity", "9");
+            Property(text, 4, "gravity_direction", "[0,-1,0]");
+            Property(text, 4, "damping_samples", "[0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2,0.2]");
+            Property(text, 4, "depths", "[0.5,0]");
+            Property(text, 4, "attributes", "[2,1]");
+            Property(text, 4, "animated_positions", "[[0,0,0],[10,0,0]]");
+            Property(text, 4, "old_positions", "[[1,2,3],[4,5,6]]");
+            Property(text, 4, "velocities", "[[2,-1,0.5],[9,9,9]]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "base_positions", ArrayJson(dump.BasePositions, Vector3Json));
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json));
+            Property(text, 4, "temp_vector_a", ArrayJson(dump.TempVectorA, Vector3Json));
+            Property(text, 4, "temp_vector_b", ArrayJson(dump.TempVectorB, Vector3Json));
+            Property(text, 4, "temp_counts", NumberArray(dump.TempCounts));
+            Property(text, 4, "temp_floats", ArrayJson(dump.TempFloats, FloatJson), false);
+            text.AppendLine("  }");
+            text.Append("}");
             return text.ToString();
         }
 

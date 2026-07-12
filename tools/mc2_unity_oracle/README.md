@@ -17,7 +17,7 @@ Pinned inputs:
 - Source checkout default: `D:\Unity_Fork\MagicaCloth2`
 
 Run `run.ps1`. The script rejects a different MC2 commit before launching
-Unity. The exporter writes six fixture groups into the HoTools MC2 fixture
+Unity. The exporter writes the following fixture groups into the HoTools MC2 fixture
 directory:
 
 - `mesh_baseline_*.json`: final-proxy-stage `VirtualMesh` inputs followed by
@@ -43,6 +43,10 @@ directory:
   `SolverConstraint()` and `SumConstraint()`, recording fixed-point scratch
   counts/components, averaged positions, unconditional scratch clear, Fixed
   particle behavior, and negative-scale consumption.
+- `particle_step_*.json`: direct reflective calls to
+  `SimulationStepUpdateParticles()`. The minimal case disables inertia, wind,
+  collision, and external force while locking velocity stabilization, damping,
+  gravity, fixed-particle pose tracking, and scratch clearing order.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

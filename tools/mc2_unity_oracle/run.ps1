@@ -133,4 +133,12 @@ if ($CenterFixtureCount -ne 1) {
     throw "Unity oracle produced $CenterFixtureCount center fixtures instead of 1. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center)"
+$ParticleStepFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "particle_step_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($ParticleStepFixtureCount -ne 1) {
+    throw "Unity oracle produced $ParticleStepFixtureCount particle-step fixtures instead of 1. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center, $ParticleStepFixtureCount particle step)"
