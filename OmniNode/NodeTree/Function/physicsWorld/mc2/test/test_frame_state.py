@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import types
@@ -33,6 +34,13 @@ for package_name, package_path in (
 frame_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state")
 initial_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.initial_state")
 state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state")
+final_proxy = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.final_proxy"
+)
+
+FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a", "frame_reset_pose_001.json"
+)
 
 
 def _initial(count=2):
@@ -132,6 +140,56 @@ def test_discontinuities_and_user_request_have_stable_reset_reasons() -> None:
         )
         assert result.action == "reset" and result.reset_reason == reason
         assert runtime.last_reset_reason == reason
+
+
+def test_tier_a_world_rotation_and_reset_arrays_match_mc2() -> None:
+    with open(FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    assert fixture["oracle_tier"] == "A"
+    expected = fixture["expected"]
+    inv_sqrt2 = np.float32(1.0 / np.sqrt(2.0)).item()
+    rotations = np.asarray(
+        (
+            final_proxy.mc2_world_rotation_xyzw((0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+            final_proxy.mc2_world_rotation_xyzw(
+                (inv_sqrt2, inv_sqrt2, 0.0), (0.0, 0.0, 1.0)
+            ),
+        ),
+        dtype=np.float32,
+    )
+    expected_rotations = np.asarray(expected["world_rotations_xyzw"], dtype=np.float32)
+    np.testing.assert_allclose(rotations, expected_rotations, rtol=1.0e-6, atol=1.0e-7)
+
+    frame = frame_state.make_mc2_frame_input(
+        task_id="mc2:mesh:test",
+        topology_signature="topology",
+        frame=1,
+        generation=7,
+        world_positions=expected["world_positions"],
+        world_rotations_xyzw=rotations,
+    )
+    buffer = state.MC2ParticleBuffer.allocate(_initial())
+    runtime = _runtime()
+    frame_state.sync_mc2_frame_input(runtime, buffer, frame)
+    mappings = {
+        "next_positions": "next_positions",
+        "old_positions": "old_positions",
+        "base_positions": "base_positions",
+        "old_frame_positions": "animation_old_positions",
+        "velocity_positions": "velocity_reference_positions",
+        "display_positions": "display_positions",
+        "velocities": "velocities",
+        "real_velocities": "real_velocities",
+        "friction": "friction",
+        "static_friction": "static_friction",
+        "collision_normals": "collision_normals",
+    }
+    for field, expected_field in mappings.items():
+        np.testing.assert_array_equal(
+            getattr(buffer, field), np.asarray(expected[expected_field], dtype=np.float32)
+        )
+    for field in ("old_rotations", "base_rotations", "old_frame_rotations"):
+        np.testing.assert_array_equal(getattr(buffer, field), frame.world_rotations_xyzw)
 
 
 if __name__ == "__main__":

@@ -405,6 +405,15 @@ def _orientation_xyzw(normal: np.ndarray, tangent: np.ndarray) -> np.ndarray:
     return _matrix_to_quaternion_xyzw(np.column_stack((right, corrected_up, forward)))
 
 
+def mc2_world_rotation_xyzw(normal, tangent) -> tuple[float, float, float, float]:
+    """MC2 ``MathUtility.ToRotation(normal, tangent)`` in xyzw layout."""
+    value = _orientation_xyzw(
+        np.asarray(normal, dtype=np.float64),
+        np.asarray(tangent, dtype=np.float64),
+    )
+    return tuple(float(component) for component in value)
+
+
 def _quaternion_inverse_xyzw(quaternion: np.ndarray) -> np.ndarray:
     return np.asarray(
         (-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3]),
@@ -633,4 +642,5 @@ __all__ = [
     "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
     "build_mc2_mesh_final_proxy",
+    "mc2_world_rotation_xyzw",
 ]

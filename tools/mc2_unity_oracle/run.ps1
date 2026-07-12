@@ -117,4 +117,20 @@ if ($RuntimeParameterFixtureCount -ne 2) {
     throw "Unity oracle produced $RuntimeParameterFixtureCount runtime parameter fixtures instead of 2. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters)"
+$FrameResetFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "frame_reset_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($FrameResetFixtureCount -ne 1) {
+    throw "Unity oracle produced $FrameResetFixtureCount frame/reset fixtures instead of 1. See $LogPath"
+}
+
+$CenterFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "center_static_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($CenterFixtureCount -ne 1) {
+    throw "Unity oracle produced $CenterFixtureCount center fixtures instead of 1. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center)"

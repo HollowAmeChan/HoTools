@@ -11,9 +11,9 @@ from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from .base_pose import validate_base_pose_proxy
 from .final_proxy import (
     _apply_vertex_triangle_normals,
-    _orientation_xyzw,
     _triangle_normal,
     _triangle_tangent,
+    mc2_world_rotation_xyzw,
 )
 
 
@@ -208,7 +208,7 @@ def build_mc2_mesh_frame_input(
         records,
     )
     rotations = np.asarray(
-        [_orientation_xyzw(normal, binormal) for normal, binormal in zip(normals, binormals)],
+        [mc2_world_rotation_xyzw(normal, binormal) for normal, binormal in zip(normals, binormals)],
         dtype=np.float32,
     )
     return make_mc2_frame_input(

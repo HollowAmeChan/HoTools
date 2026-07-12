@@ -40,10 +40,10 @@
 | Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。 |
 | Distance N1 | landed | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。尚无新 native consumer。 |
 | TriangleBending N1 | landed | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。initial local-to-world columns与完整 record order进入 constraint signature；尚无新 native consumer。 |
-| Inertia/Center static | verified source notes | producer/consumer 与状态分层已审计；尚无生产 spec、builder 或 oracle 闭环。 |
-| Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。当前首版要求每个 vertex属于 triangle；尚缺 loose-line/Bone frame与 Tier A frame rotation oracle。 |
+| Inertia/Center static | verified contract | `center_state.py` 已冻结 center fixed list/local center、initial local gravity、component/anchor frame pose与 persistent reset分层；最小 fixed+isolated case由 Tier A oracle覆盖。尚未实现完整 frame-derived inertia/negative scale。 |
+| Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。rotation/reset数组已有 Tier A oracle；当前首版仍要求每个 vertex属于 triangle。 |
 | Runtime parameters N2 | verified contract | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；尚无 native consumer。 |
-| Dynamic/reset N3/N4 | scaffold | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；Mesh slot可显式消费 frame spec。Center persistent state、Bone frame、native dynamic sync与 substep scratch尚未实现。 |
+| Dynamic/reset N3/N4 | verified host contract | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；Mesh/Bone setup可显式生成并消费 frame spec。Bone adapter使用 stable bone identity，但 connection-aware rotation仍缺 Tier A；native dynamic sync与 substep scratch尚未实现。 |
 | 新 native context/step | not implemented | `physicsWorld.mc2.step_mc2()` 明确不创建 context、不推进模拟、不发布 result。旧 `_native` context/full-core 不计入此项。 |
 | result/writeback | planned only | `GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仅登记为计划通道；当前不得发布伪结果或标 ready。 |
 
@@ -135,14 +135,14 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **N3 Frame Input 与 Reset**，仍然不是完整 native step：
+下一交付是 **Native Context 最小闭环**：
 
-1. 为 Mesh world rotation与 reset数组补固定 MC2 Tier A frame oracle；当前 Blender回归只证明 adapter/lifecycle自洽。
-2. 补 BoneCloth/BoneSpring stable bone identity 的 world pose frame spec。
-3. 分离 team dynamic options和外部 anchor/collider identity，不塞入 N2 value ABI。
-4. 冻结 Center static/persistent/frame-derived最小状态，为 native create/reset准备输入。
+1. 只接 `create -> inspect -> update_parameters -> update_dynamic -> reset -> step(no collision) -> read -> free`。
+2. slot唯一持有 opaque context；所有输入先验证再 mutation，create失败不破坏旧 slot。
+3. static/parameter/frame/center使用已经冻结的 packer，不把 Python debug dict当 ABI。
+4. 首个 step只允许单 Mesh、Pin、Distance/Bending关闭或明确 no-op，不发布伪 ready/result。
 
-退出条件：allocation-before-reset、首次 reset、连续帧、same-frame、time discontinuity、参数热更新保留 history 的数组级测试通过。
+退出条件：双 context、update/reset/read、异常回滚、idempotent free与 leak/soak测试通过。
 
 ## 后续交付顺序
 

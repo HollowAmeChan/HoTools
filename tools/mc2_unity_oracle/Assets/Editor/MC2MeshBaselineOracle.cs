@@ -210,6 +210,33 @@ namespace HoTools.MC2Oracle.Editor
             public ParameterRuntimeDump expected;
         }
 
+        private sealed class FrameResetDump
+        {
+            public float3[] WorldPositions;
+            public quaternion[] WorldRotations;
+            public float3[] NextPositions;
+            public float3[] OldPositions;
+            public quaternion[] OldRotations;
+            public float3[] BasePositions;
+            public quaternion[] BaseRotations;
+            public float3[] AnimationOldPositions;
+            public quaternion[] AnimationOldRotations;
+            public float3[] VelocityReferencePositions;
+            public float3[] DisplayPositions;
+            public float3[] Velocities;
+            public float3[] RealVelocities;
+            public float[] Friction;
+            public float[] StaticFriction;
+            public float3[] CollisionNormals;
+        }
+
+        private sealed class CenterStaticDump
+        {
+            public int[] FixedIndices;
+            public float3 LocalCenterPosition;
+            public float3 InitialLocalGravityDirection;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -289,6 +316,8 @@ namespace HoTools.MC2Oracle.Editor
             }
 
             int parameterWritten = WriteParameterFixtures(outputDirectory);
+            int frameWritten = WriteFrameFixtures(outputDirectory);
+            int centerWritten = WriteCenterFixtures(outputDirectory);
 
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
@@ -296,8 +325,203 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{distanceRuntimeWritten} distance runtime fixtures, "
                 + $"{bendingWritten} bending fixtures, "
                 + $"{bendingRuntimeWritten} bending runtime fixtures, "
-                + $"{parameterWritten} runtime parameter fixtures"
+                + $"{parameterWritten} runtime parameter fixtures, "
+                + $"{frameWritten} frame/reset fixtures, "
+                + $"{centerWritten} center fixtures"
             );
+        }
+
+        private static int WriteCenterFixtures(string outputDirectory)
+        {
+            CenterStaticDump dump = RunCenterStaticOracle();
+            string path = Path.Combine(outputDirectory, "center_static_fixed_001.json");
+            File.WriteAllText(path, BuildCenterStaticJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
+        }
+
+        private static CenterStaticDump RunCenterStaticOracle()
+        {
+            float3[] positions =
+            {
+                new float3(0, 0, 0), new float3(2, 0, 0),
+                new float3(0, 2, 0), new float3(0, 0, 3),
+            };
+            using (var mesh = new VirtualMesh("center_static_fixed_001"))
+            {
+                int count = positions.Length;
+                mesh.isBoneCloth = false;
+                mesh.meshType = VirtualMesh.MeshType.NormalMesh;
+                mesh.localPositions = new ExSimpleNativeArray<float3>(positions);
+                mesh.localNormals = new ExSimpleNativeArray<float3>(
+                    Enumerable.Repeat(new float3(0, 0, 1), count).ToArray()
+                );
+                mesh.localTangents = new ExSimpleNativeArray<float3>(
+                    Enumerable.Repeat(new float3(1, 0, 0), count).ToArray()
+                );
+                mesh.uv = new ExSimpleNativeArray<float2>(
+                    new[] { new float2(0, 0), new float2(1, 0), new float2(0, 1), new float2(0, 0) }
+                );
+                mesh.attributes = new ExSimpleNativeArray<VertexAttribute>(
+                    new[]
+                    {
+                        new VertexAttribute(1), new VertexAttribute(2),
+                        new VertexAttribute(1), new VertexAttribute(1),
+                    }
+                );
+                mesh.referenceIndices = new ExSimpleNativeArray<int>(Enumerable.Range(0, count).ToArray());
+                mesh.boneWeights = new ExSimpleNativeArray<VirtualMeshBoneWeight>(
+                    Enumerable.Repeat(
+                        new VirtualMeshBoneWeight(new int4(0), new float4(1, 0, 0, 0)), count
+                    ).ToArray()
+                );
+                mesh.triangles = new ExSimpleNativeArray<int3>(new[] { new int3(0, 1, 2) });
+                mesh.lines = new ExSimpleNativeArray<int2>(Array.Empty<int2>());
+                mesh.initLocalToWorld = float4x4.identity;
+                mesh.initWorldToLocal = float4x4.identity;
+                mesh.initRotation = quaternion.identity;
+                mesh.initInverseRotation = quaternion.identity;
+                mesh.initScale = 1;
+                mesh.boundingBox = new NativeReference<AABB>(Allocator.Persistent);
+
+                var recordObject = new GameObject("center_static_fixed_001_record");
+                try
+                {
+                    var record = new TransformRecord(recordObject.transform, true);
+                    mesh.ConvertProxyMesh(new ClothSerializeData(), record, new List<TransformRecord>(), record);
+                    if (mesh.result.IsError())
+                    {
+                        throw new InvalidOperationException($"Center proxy conversion failed: {mesh.result.Result}");
+                    }
+                    var parameters = new ClothParameters
+                    {
+                        worldGravityDirection = math.normalize(new float3(1.0f, -2.0f, 0.5f)),
+                    };
+                    InertiaConstraint.ConstraintData inertia = InertiaConstraint.CreateData(mesh, parameters);
+                    return new CenterStaticDump
+                    {
+                        FixedIndices = (mesh.centerFixedList ?? Array.Empty<ushort>())
+                            .Select(value => (int)value).ToArray(),
+                        LocalCenterPosition = mesh.localCenterPosition.Value,
+                        InitialLocalGravityDirection = inertia.initLocalGravityDirection,
+                    };
+                }
+                finally
+                {
+                    UnityEngine.Object.DestroyImmediate(recordObject);
+                }
+            }
+        }
+
+        private static int WriteFrameFixtures(string outputDirectory)
+        {
+            FrameResetDump dump = RunFrameResetOracle();
+            string path = Path.Combine(outputDirectory, "frame_reset_pose_001.json");
+            File.WriteAllText(path, BuildFrameResetJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
+        }
+
+        private static FrameResetDump RunFrameResetOracle()
+        {
+            int count = 2;
+            var positions = new NativeArray<float3>(count, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var depths = new NativeArray<float>(count, Allocator.TempJob);
+            var next = new NativeArray<float3>(count, Allocator.TempJob);
+            var old = new NativeArray<float3>(count, Allocator.TempJob);
+            var oldRot = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var basePos = new NativeArray<float3>(count, Allocator.TempJob);
+            var baseRot = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var animationOld = new NativeArray<float3>(count, Allocator.TempJob);
+            var animationOldRot = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var velocityReference = new NativeArray<float3>(count, Allocator.TempJob);
+            var display = new NativeArray<float3>(count, Allocator.TempJob);
+            var velocity = new NativeArray<float3>(count, Allocator.TempJob);
+            var realVelocity = new NativeArray<float3>(count, Allocator.TempJob);
+            var friction = new NativeArray<float>(count, Allocator.TempJob);
+            var staticFriction = new NativeArray<float>(count, Allocator.TempJob);
+            var collisionNormal = new NativeArray<float3>(count, Allocator.TempJob);
+            try
+            {
+                positions[0] = new float3(1.25f, -2.0f, 3.5f);
+                positions[1] = new float3(-4.0f, 5.5f, 0.75f);
+                rotations[0] = MathUtility.ToRotation(new float3(0, 1, 0), new float3(0, 0, 1));
+                float invSqrt2 = math.rsqrt(2.0f);
+                rotations[1] = MathUtility.ToRotation(
+                    new float3(invSqrt2, invSqrt2, 0),
+                    new float3(0, 0, 1)
+                );
+                for (int index = 0; index < count; index++)
+                {
+                    float marker = 10.0f + index;
+                    next[index] = marker;
+                    old[index] = marker;
+                    oldRot[index] = new quaternion(marker, marker, marker, marker);
+                    basePos[index] = marker;
+                    baseRot[index] = new quaternion(marker, marker, marker, marker);
+                    animationOld[index] = marker;
+                    animationOldRot[index] = new quaternion(marker, marker, marker, marker);
+                    velocityReference[index] = marker;
+                    display[index] = marker;
+                    velocity[index] = marker;
+                    realVelocity[index] = marker;
+                    friction[index] = marker;
+                    staticFriction[index] = marker;
+                    collisionNormal[index] = marker;
+                }
+
+                var team = new TeamManager.TeamData
+                {
+                    particleChunk = new DataChunk(0, count),
+                    proxyCommonChunk = new DataChunk(0, count),
+                };
+                team.flag.SetBits(TeamManager.Flag_Reset, true);
+                MethodInfo method = typeof(SimulationManager).GetMethod(
+                    "SimulationPreTeamUpdate",
+                    BindingFlags.NonPublic | BindingFlags.Static
+                );
+                if (method == null)
+                {
+                    throw new MissingMethodException("SimulationPreTeamUpdate");
+                }
+                object[] arguments =
+                {
+                    new DataChunk(0, count), team, new ClothParameters(),
+                    new InertiaConstraint.CenterData(), positions, rotations, depths,
+                    next, old, oldRot, basePos, baseRot, animationOld, animationOldRot,
+                    velocityReference, display, velocity, realVelocity, friction,
+                    staticFriction, collisionNormal,
+                };
+                InvokeStatic(method, arguments);
+                return new FrameResetDump
+                {
+                    WorldPositions = positions.ToArray(),
+                    WorldRotations = rotations.ToArray(),
+                    NextPositions = next.ToArray(),
+                    OldPositions = old.ToArray(),
+                    OldRotations = oldRot.ToArray(),
+                    BasePositions = basePos.ToArray(),
+                    BaseRotations = baseRot.ToArray(),
+                    AnimationOldPositions = animationOld.ToArray(),
+                    AnimationOldRotations = animationOldRot.ToArray(),
+                    VelocityReferencePositions = velocityReference.ToArray(),
+                    DisplayPositions = display.ToArray(),
+                    Velocities = velocity.ToArray(),
+                    RealVelocities = realVelocity.ToArray(),
+                    Friction = friction.ToArray(),
+                    StaticFriction = staticFriction.ToArray(),
+                    CollisionNormals = collisionNormal.ToArray(),
+                };
+            }
+            finally
+            {
+                positions.Dispose(); rotations.Dispose(); depths.Dispose();
+                next.Dispose(); old.Dispose(); oldRot.Dispose(); basePos.Dispose(); baseRot.Dispose();
+                animationOld.Dispose(); animationOldRot.Dispose(); velocityReference.Dispose();
+                display.Dispose(); velocity.Dispose(); realVelocity.Dispose(); friction.Dispose();
+                staticFriction.Dispose(); collisionNormal.Dispose();
+            }
         }
 
         private static int WriteParameterFixtures(string outputDirectory)
@@ -1768,6 +1992,84 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
+        private static string BuildFrameResetJson(FrameResetDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("frame_reset_pose_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Utility/Math/MathUtility.cs::ToRotation",
+                    "Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationPreTeamUpdate"
+                )
+            );
+            Property(text, 2, "expected", FrameResetExpectedJson(dump), false);
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterStaticJson(CenterStaticDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_static_fixed_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ProxyCreateFixedListAndAABB",
+                    "Runtime/Cloth/Constraints/InertiaConstraint.cs::CreateData"
+                )
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "positions", "[[0,0,0],[2,0,0],[0,2,0],[0,0,3]]");
+            Property(text, 4, "attributes", "[1,2,1,1]");
+            Property(text, 4, "triangles", "[[0,1,2]]");
+            Property(text, 4, "world_gravity_direction", Vector3Json(math.normalize(new float3(1, -2, 0.5f))), false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "fixed_indices", NumberArray(dump.FixedIndices));
+            Property(text, 4, "local_center_position", Vector3Json(dump.LocalCenterPosition));
+            Property(text, 4, "initial_local_gravity_direction", Vector3Json(dump.InitialLocalGravityDirection), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string FrameResetExpectedJson(FrameResetDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "world_positions", ArrayJson(dump.WorldPositions, Vector3Json));
+            Property(text, 4, "world_rotations_xyzw", ArrayJson(dump.WorldRotations, QuaternionJson));
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(text, 4, "old_positions", ArrayJson(dump.OldPositions, Vector3Json));
+            Property(text, 4, "old_rotations_xyzw", ArrayJson(dump.OldRotations, QuaternionJson));
+            Property(text, 4, "base_positions", ArrayJson(dump.BasePositions, Vector3Json));
+            Property(text, 4, "base_rotations_xyzw", ArrayJson(dump.BaseRotations, QuaternionJson));
+            Property(text, 4, "animation_old_positions", ArrayJson(dump.AnimationOldPositions, Vector3Json));
+            Property(text, 4, "animation_old_rotations_xyzw", ArrayJson(dump.AnimationOldRotations, QuaternionJson));
+            Property(text, 4, "velocity_reference_positions", ArrayJson(dump.VelocityReferencePositions, Vector3Json));
+            Property(text, 4, "display_positions", ArrayJson(dump.DisplayPositions, Vector3Json));
+            Property(text, 4, "velocities", ArrayJson(dump.Velocities, Vector3Json));
+            Property(text, 4, "real_velocities", ArrayJson(dump.RealVelocities, Vector3Json));
+            Property(text, 4, "friction", ArrayJson(dump.Friction, FloatJson));
+            Property(text, 4, "static_friction", ArrayJson(dump.StaticFriction, FloatJson));
+            Property(text, 4, "collision_normals", ArrayJson(dump.CollisionNormals, Vector3Json), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
         private static string SourceJson(params string[] producers)
         {
             var text = new StringBuilder();
@@ -2351,6 +2653,11 @@ namespace HoTools.MC2Oracle.Editor
         private static string Vector4Json(float4 value)
         {
             return $"[{FloatJson(value.x)},{FloatJson(value.y)},{FloatJson(value.z)},{FloatJson(value.w)}]";
+        }
+
+        private static string QuaternionJson(quaternion value)
+        {
+            return Vector4Json(value.value);
         }
 
         private static string Matrix4x4ColumnsJson(float4x4 value)
