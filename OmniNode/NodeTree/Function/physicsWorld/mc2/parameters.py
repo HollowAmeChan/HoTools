@@ -161,6 +161,9 @@ class MC2ParticleProfileSpec:
     stabilization_time_after_reset: float = 0.1
     normal_axis: int = 1
     animation_pose_ratio: float = 0.0
+    distance_culling_enabled: bool = False
+    distance_culling_length: float = 30.0
+    distance_culling_fade_ratio: float = 0.2
     anchor_inertia: float = 0.0
     world_inertia: float = 1.0
     movement_inertia_smoothing: float = 0.4
@@ -197,6 +200,7 @@ class MC2ParticleProfileSpec:
     collision_friction: float = 0.05
     collision_limit_distance: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.05))
     self_collision_mode: int = 0
+    self_collision_sync_mode: int = 0
     self_collision_thickness: MC2CurveSpec = field(default_factory=lambda: _default_curve(0.005))
     cloth_mass: float = 0.0
     spring_enabled: bool = True
@@ -225,6 +229,8 @@ class MC2ParticleProfileSpec:
             raise ValueError("collision_mode 必须是 0、1 或 2")
         if self.self_collision_mode not in (0, 2):
             raise ValueError("self_collision_mode 必须是 0 或 2")
+        if self.self_collision_sync_mode not in (0, 2):
+            raise ValueError("self_collision_sync_mode 必须是 0 或 2")
         if self.normal_axis not in range(6):
             raise ValueError("normal_axis 必须位于 0..5")
         if self.teleport_mode not in (0, 1, 2):
@@ -250,6 +256,9 @@ def make_mc2_particle_profile(
     stabilization_time_after_reset=0.1,
     normal_axis=1,
     animation_pose_ratio=0.0,
+    distance_culling_enabled=False,
+    distance_culling_length=30.0,
+    distance_culling_fade_ratio=0.2,
     anchor_inertia=0.0,
     world_inertia=1.0,
     movement_inertia_smoothing=0.4,
@@ -294,6 +303,7 @@ def make_mc2_particle_profile(
     collision_limit_distance=0.05,
     collision_limit_curve=None,
     self_collision_mode=0,
+    self_collision_sync_mode=0,
     self_collision_thickness=0.005,
     self_collision_curve=None,
     cloth_mass=0.0,
@@ -322,6 +332,9 @@ def make_mc2_particle_profile(
     self_collision_mode = int(self_collision_mode)
     if self_collision_mode not in (0, 2):
         raise ValueError("self_collision_mode 必须是 0(None) 或 2(FullMesh)")
+    self_collision_sync_mode = int(self_collision_sync_mode)
+    if self_collision_sync_mode not in (0, 2):
+        raise ValueError("self_collision_sync_mode 必须是 0(None) 或 2(FullMesh)")
     return MC2ParticleProfileSpec(
         blend_weight=_clamp(blend_weight, "blend_weight", 0.0, 1.0),
         gravity=_clamp(gravity, "gravity", 0.0, 20.0),
@@ -330,6 +343,9 @@ def make_mc2_particle_profile(
         stabilization_time_after_reset=_clamp(stabilization_time_after_reset, "stabilization_time_after_reset", 0.0, 1.0),
         normal_axis=normal_axis,
         animation_pose_ratio=_clamp(animation_pose_ratio, "animation_pose_ratio", 0.0, 1.0),
+        distance_culling_enabled=bool(distance_culling_enabled),
+        distance_culling_length=_non_negative(distance_culling_length, "distance_culling_length"),
+        distance_culling_fade_ratio=_clamp(distance_culling_fade_ratio, "distance_culling_fade_ratio", 0.0, 1.0),
         anchor_inertia=_clamp(anchor_inertia, "anchor_inertia", 0.0, 1.0),
         world_inertia=_clamp(world_inertia, "world_inertia", 0.0, 1.0),
         movement_inertia_smoothing=_clamp(movement_inertia_smoothing, "movement_inertia_smoothing", 0.0, 1.0),
@@ -366,6 +382,7 @@ def make_mc2_particle_profile(
         collision_friction=_clamp(collision_friction, "collision_friction", 0.0, 0.5),
         collision_limit_distance=make_mc2_curve_spec(collision_limit_distance, collision_limit_curve, minimum=0.0, maximum=1.0, name="collision_limit_distance"),
         self_collision_mode=self_collision_mode,
+        self_collision_sync_mode=self_collision_sync_mode,
         self_collision_thickness=make_mc2_curve_spec(self_collision_thickness, self_collision_curve, minimum=0.001, maximum=0.05, name="self_collision_thickness"),
         cloth_mass=_clamp(cloth_mass, "cloth_mass", 0.0, 1.0),
         spring_enabled=bool(spring_enabled),
@@ -519,6 +536,11 @@ def make_mc2_effective_parameters(
         "gravity_falloff": profile.gravity_falloff,
         "stabilization_time_after_reset": profile.stabilization_time_after_reset,
         "blend_weight": profile.blend_weight,
+        "culling": {
+            "enabled": profile.distance_culling_enabled,
+            "length": profile.distance_culling_length,
+            "fade_ratio": profile.distance_culling_fade_ratio,
+        },
         # Unity GetClothParameters(): damping and angle restoration power use 20%.
         "damping": curve(profile.damping, 0.2),
         "radius": curve(profile.radius),
@@ -576,6 +598,7 @@ def make_mc2_effective_parameters(
         },
         "self_collision": {
             "mode": 0 if is_spring else profile.self_collision_mode,
+            "sync_mode": 0 if is_spring else profile.self_collision_sync_mode,
             "thickness": curve(profile.self_collision_thickness),
             "cloth_mass": profile.cloth_mass,
         },

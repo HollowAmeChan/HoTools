@@ -41,6 +41,7 @@ $StartedAtUtc = [DateTime]::UtcNow
 $UnityArguments = @(
     "-batchmode",
     "-nographics",
+    "--burst-disable-compilation",
     "-quit",
     "-projectPath", "`"$ProjectPath`"",
     "-logFile", "`"$LogPath`"",
@@ -108,4 +109,12 @@ if ($BendingRuntimeFixtureCount -ne 3) {
     throw "Unity oracle produced $BendingRuntimeFixtureCount bending runtime fixtures instead of 3. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime)"
+$RuntimeParameterFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "runtime_parameters_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($RuntimeParameterFixtureCount -ne 2) {
+    throw "Unity oracle produced $RuntimeParameterFixtureCount runtime parameter fixtures instead of 2. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters)"

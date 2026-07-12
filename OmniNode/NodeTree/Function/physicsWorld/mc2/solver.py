@@ -7,9 +7,9 @@ from .declaration import MC2_SOLVER_DECLARATION
 from .names import MC2_SLOT_KIND, MC2_SOLVER_ID
 from .parameters import (
     MC2SolverSettingsSpec,
-    make_mc2_effective_parameters,
     make_mc2_solver_settings,
 )
+from .runtime_parameters import make_mc2_runtime_parameters
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
@@ -226,11 +226,7 @@ def step_mc2(
     prepared_items = []
     for spec in active_specs:
         topology = build_mc2_topology_spec(spec)
-        effective = make_mc2_effective_parameters(
-            spec.profile,
-            settings,
-            spec.setup_options,
-        )
+        effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
         static_input_signature = None
         if spec.setup_type == "mesh_cloth":
             from .setups.mesh_cloth.static_build import (

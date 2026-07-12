@@ -10,11 +10,10 @@ from .names import MC2_SETUP_TYPES
 from .parameters import (
     MC2ParticleProfileSpec,
     MC2SetupOptionsSpec,
-    make_mc2_effective_parameters,
     make_mc2_particle_profile,
     make_mc2_setup_options,
-    make_mc2_solver_settings,
 )
+from .runtime_parameters import make_mc2_runtime_parameters
 
 
 def normalize_mc2_setup_type(value: object) -> str:
@@ -162,12 +161,9 @@ class MC2TaskSpec:
             "connection_mode": self.setup_options.connection_mode,
         })
         expected_config = _spec_signature(self.setup_options.debug_dict())
-        # settings 在 MC2 Step 才绑定；这里冻结 profile + setup 分支形成任务参数签名。
-        default_settings = make_mc2_solver_settings()
-        expected_parameter = make_mc2_effective_parameters(
-            self.profile,
-            default_settings,
-            self.setup_options,
+        # Scheduler settings在 step绑定，不属于 ClothParameters ABI。
+        expected_parameter = make_mc2_runtime_parameters(
+            self.profile, self.setup_options
         ).parameter_signature
         if self.topology_signature != expected_topology:
             raise ValueError("MC2TaskSpec.topology_signature 与拓扑不一致")
@@ -227,10 +223,8 @@ def make_mc2_task_spec(
         "connection_mode": setup_options.connection_mode,
     })
     config_signature = _spec_signature(setup_options.debug_dict())
-    parameter_signature = make_mc2_effective_parameters(
-        profile,
-        make_mc2_solver_settings(),
-        setup_options,
+    parameter_signature = make_mc2_runtime_parameters(
+        profile, setup_options
     ).parameter_signature
     return MC2TaskSpec(
         task_id=f"mc2:{normalized_setup}:{source_signature[:24]}",

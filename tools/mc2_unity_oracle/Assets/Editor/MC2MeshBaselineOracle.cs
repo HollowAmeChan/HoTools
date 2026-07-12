@@ -155,6 +155,61 @@ namespace HoTools.MC2Oracle.Editor
             public float3[] VectorAfterSum;
         }
 
+        [Serializable]
+        private sealed class ParameterRuntimeDump
+        {
+            public int abi_version = 0;
+            public string[] float_fields =
+            {
+                "gravity",
+                "gravity_direction_x", "gravity_direction_y", "gravity_direction_z",
+                "gravity_falloff", "stabilization_time_after_reset", "blend_weight",
+                "rotational_interpolation", "root_rotation",
+                "distance_culling_length", "distance_culling_fade_ratio",
+                "anchor_inertia", "world_inertia", "movement_inertia_smoothing",
+                "movement_speed_limit", "rotation_speed_limit", "local_inertia",
+                "local_movement_speed_limit", "local_rotation_speed_limit", "depth_inertia",
+                "centrifugal_acceleration", "particle_speed_limit",
+                "teleport_distance", "teleport_rotation",
+                "tether_compression_limit", "tether_stretch_limit",
+                "distance_velocity_attenuation", "bending_stiffness",
+                "angle_restoration_velocity_attenuation", "angle_restoration_gravity_falloff",
+                "angle_limit_stiffness", "backstop_radius", "motion_stiffness",
+                "collision_dynamic_friction", "collision_static_friction", "cloth_mass",
+                "wind_influence", "wind_frequency", "wind_turbulence", "wind_blend",
+                "wind_synchronization", "wind_depth_weight", "moving_wind",
+                "spring_power", "spring_limit_distance", "spring_normal_limit_ratio", "spring_noise",
+            };
+            public string[] int_fields =
+            {
+                "normal_axis", "use_distance_culling", "teleport_mode", "bending_method",
+                "use_angle_restoration", "use_angle_limit", "use_max_distance", "use_backstop",
+                "collision_mode", "self_collision_mode", "self_collision_sync_mode",
+            };
+            public string[] curve_fields =
+            {
+                "damping", "radius", "distance_stiffness", "angle_restoration_stiffness",
+                "angle_limit", "max_distance", "backstop_distance", "collision_limit_distance",
+                "self_collision_thickness",
+            };
+            public float[] float_values;
+            public int[] int_values;
+            public float[] curve_values;
+            public int[] curve_shape = { 9, 16 };
+        }
+
+        [Serializable]
+        private sealed class ParameterOracleOutput
+        {
+            public string case_id;
+            public string oracle_tier = "A";
+            public string mc2_version = MC2Version;
+            public string mc2_commit = MC2Commit;
+            public string source = "Runtime/Cloth/ClothSerializeDataFunction.cs::GetClothParameters";
+            public string note;
+            public ParameterRuntimeDump expected;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -233,13 +288,164 @@ namespace HoTools.MC2Oracle.Editor
                 bendingRuntimeWritten++;
             }
 
+            int parameterWritten = WriteParameterFixtures(outputDirectory);
+
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
                 + $"{proxyWritten} proxy fixtures, {distanceWritten} distance fixtures, "
                 + $"{distanceRuntimeWritten} distance runtime fixtures, "
                 + $"{bendingWritten} bending fixtures, "
-                + $"{bendingRuntimeWritten} bending runtime fixtures"
+                + $"{bendingRuntimeWritten} bending runtime fixtures, "
+                + $"{parameterWritten} runtime parameter fixtures"
             );
+        }
+
+        private static int WriteParameterFixtures(string outputDirectory)
+        {
+            var mesh = new ClothSerializeData();
+            SetHostProfileCurveDefaults(mesh);
+            mesh.clothType = ClothProcess.ClothType.MeshCloth;
+            mesh.gravityDirection = new float3(0.0f, 0.0f, -1.0f);
+            mesh.damping = new CurveSerializeData(
+                0.5f,
+                new AnimationCurve(
+                    new Keyframe(0.0f, 0.0f, 0.0f, 0.0f),
+                    new Keyframe(0.5f, 1.0f, 0.0f, 0.0f),
+                    new Keyframe(1.0f, 0.25f, 0.0f, 0.0f)
+                )
+            );
+            WriteParameterFixture(
+                outputDirectory,
+                "runtime_parameters_mesh_curve_001",
+                "MeshCloth curve sampling at i/15 plus ordinary conversion rules.",
+                PackRuntimeParameters(mesh.GetClothParameters())
+            );
+
+            var spring = new ClothSerializeData();
+            SetHostProfileCurveDefaults(spring);
+            spring.clothType = ClothProcess.ClothType.BoneSpring;
+            spring.gravity = 9.0f;
+            spring.tetherConstraint.distanceCompression = 0.25f;
+            spring.distanceConstraint.stiffness.SetValue(0.9f);
+            spring.motionConstraint.useMaxDistance = true;
+            spring.motionConstraint.useBackstop = true;
+            spring.colliderCollisionConstraint.mode = ColliderCollisionConstraint.Mode.Edge;
+            spring.colliderCollisionConstraint.friction = 0.1f;
+            spring.colliderCollisionConstraint.limitDistance.SetValue(0.125f);
+            spring.selfCollisionConstraint.selfMode = SelfCollisionConstraint.SelfCollisionMode.FullMesh;
+            spring.selfCollisionConstraint.syncMode = SelfCollisionConstraint.SelfCollisionMode.FullMesh;
+            spring.springConstraint.useSpring = true;
+            spring.springConstraint.springPower = 0.3f;
+            WriteParameterFixture(
+                outputDirectory,
+                "runtime_parameters_bone_spring_001",
+                "BoneSpring fixed overrides from GetClothParameters().",
+                PackRuntimeParameters(spring.GetClothParameters())
+            );
+            return 2;
+        }
+
+        private static void SetHostProfileCurveDefaults(ClothSerializeData value)
+        {
+            value.damping.SetValue(0.05f);
+            value.radius.SetValue(0.02f);
+            value.distanceConstraint.stiffness.SetValue(1.0f);
+            value.angleRestorationConstraint.stiffness.SetValue(0.2f);
+            value.angleLimitConstraint.limitAngle.SetValue(60.0f);
+            value.motionConstraint.maxDistance.SetValue(0.3f);
+            value.motionConstraint.backstopDistance.SetValue(0.0f);
+            value.colliderCollisionConstraint.limitDistance.SetValue(0.05f);
+            value.selfCollisionConstraint.surfaceThickness.SetValue(0.005f);
+        }
+
+        private static void WriteParameterFixture(
+            string outputDirectory,
+            string caseId,
+            string note,
+            ParameterRuntimeDump expected
+        )
+        {
+            var output = new ParameterOracleOutput
+            {
+                case_id = caseId,
+                note = note,
+                expected = expected,
+            };
+            string path = Path.Combine(outputDirectory, caseId + ".json");
+            File.WriteAllText(path, JsonUtility.ToJson(output, true), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+        }
+
+        private static ParameterRuntimeDump PackRuntimeParameters(ClothParameters value)
+        {
+            var inertia = value.inertiaConstraint;
+            var tether = value.tetherConstraint;
+            var distance = value.distanceConstraint;
+            var bending = value.triangleBendingConstraint;
+            var angle = value.angleConstraint;
+            var motion = value.motionConstraint;
+            var collision = value.colliderCollisionConstraint;
+            var selfCollision = value.selfCollisionConstraint;
+            var wind = value.wind;
+            var spring = value.springConstraint;
+            return new ParameterRuntimeDump
+            {
+                float_values = new[]
+                {
+                    value.gravity,
+                    value.worldGravityDirection.x, value.worldGravityDirection.y, value.worldGravityDirection.z,
+                    value.gravityFalloff, value.stablizationTimeAfterReset, value.blendWeight,
+                    value.rotationalInterpolation, value.rootRotation,
+                    value.culling.distanceCullingLength, value.culling.distanceCullingFadeRatio,
+                    inertia.anchorInertia, inertia.worldInertia, inertia.movementInertiaSmoothing,
+                    inertia.movementSpeedLimit, inertia.rotationSpeedLimit, inertia.localInertia,
+                    inertia.localMovementSpeedLimit, inertia.localRotationSpeedLimit, inertia.depthInertia,
+                    inertia.centrifualAcceleration, inertia.particleSpeedLimit,
+                    inertia.teleportDistance, inertia.teleportRotation,
+                    tether.compressionLimit, tether.stretchLimit,
+                    distance.velocityAttenuation, bending.stiffness,
+                    angle.restorationVelocityAttenuation, angle.restorationGravityFalloff,
+                    angle.limitstiffness, motion.backstopRadius, motion.stiffness,
+                    collision.dynamicFriction, collision.staticFriction, selfCollision.clothMass,
+                    wind.influence, wind.frequency, wind.turbulence, wind.blend,
+                    wind.synchronization, wind.depthWeight, wind.movingWind,
+                    spring.springPower, spring.limitDistance, spring.normalLimitRatio, spring.springNoise,
+                },
+                int_values = new[]
+                {
+                    (int)value.normalAxis,
+                    value.culling.useDistanceCulling ? 1 : 0,
+                    (int)inertia.teleportMode,
+                    (int)bending.method,
+                    angle.useAngleRestoration ? 1 : 0,
+                    angle.useAngleLimit ? 1 : 0,
+                    motion.useMaxDistance ? 1 : 0,
+                    motion.useBackstop ? 1 : 0,
+                    (int)collision.mode,
+                    (int)selfCollision.selfMode,
+                    (int)selfCollision.syncMode,
+                },
+                curve_values = new[]
+                {
+                    value.dampingCurveData,
+                    value.radiusCurveData,
+                    distance.restorationStiffness,
+                    angle.restorationStiffness,
+                    angle.limitCurveData,
+                    motion.maxDistanceCurveData,
+                    motion.backstopDistanceCurveData,
+                    collision.limitDistance,
+                    selfCollision.surfaceThicknessCurveData,
+                }.SelectMany(MatrixValues).ToArray(),
+            };
+        }
+
+        private static IEnumerable<float> MatrixValues(float4x4 value)
+        {
+            yield return value.c0.x; yield return value.c0.y; yield return value.c0.z; yield return value.c0.w;
+            yield return value.c1.x; yield return value.c1.y; yield return value.c1.z; yield return value.c1.w;
+            yield return value.c2.x; yield return value.c2.y; yield return value.c2.z; yield return value.c2.w;
+            yield return value.c3.x; yield return value.c3.y; yield return value.c3.z; yield return value.c3.w;
         }
 
         private static OracleDump RunCase(OracleCase oracleCase)

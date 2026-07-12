@@ -1,6 +1,6 @@
 # MC2 当前状态与执行计划
 
-更新日期：2026-07-11
+更新日期：2026-07-12
 
 文档状态：**新 `physicsWorld.mc2` 的唯一实施计划与状态入口**。
 
@@ -42,7 +42,7 @@
 | TriangleBending N1 | landed | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。initial local-to-world columns与完整 record order进入 constraint signature；尚无新 native consumer。 |
 | Inertia/Center static | verified source notes | producer/consumer 与状态分层已审计；尚无生产 spec、builder 或 oracle 闭环。 |
 | Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot。尚未派生 N3 per-vertex world rotations，也未接新 native step。 |
-| Runtime parameters N2 | scaffold | authoring profile/effective parameter 分层存在；source 要求的 16-sample runtime arrays、完整 BoneSpring override、外部引用与 scheduler 分层尚未冻结。 |
+| Runtime parameters N2 | verified contract | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；尚无 native consumer。 |
 | Dynamic/reset N3/N4 | not implemented | 没有新 context 的 dynamic sync、current-frame reset、Center persistent state 或 substep scratch 生命周期。 |
 | 新 native context/step | not implemented | `physicsWorld.mc2.step_mc2()` 明确不创建 context、不推进模拟、不发布 result。旧 `_native` context/full-core 不计入此项。 |
 | result/writeback | planned only | `GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仅登记为计划通道；当前不得发布伪结果或标 ready。 |
@@ -135,15 +135,14 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **N2 Runtime Parameters**，仍然不是 native step：
+下一交付是 **N3 Frame Input 与 Reset**，仍然不是完整 native step：
 
-1. 将 `CurveSerializeData` 转为确定性的 `float32[16]` runtime samples；authoring curve不能直接进入 ABI。
-2. 分离 `MC2RuntimeParametersV0`、team dynamic options与 HoTools scheduler settings，分别签名和声明 dirty policy。
-3. 冻结 scalar/bool/enum、checked limit的 `-1` 语义、BoneSpring override以及坐标/单位转换。
-4. anchor、collider、sync partner、wind zone使用独立稳定 identity/snapshot，不塞进纯 value profile。
-5. 先扩展 Tier A parameter exporter/fixture，再实现 host spec/packer；不从旧 runtime parameter dict反推 expected。
+1. 从 BasePose 的同一不可写 snapshot 派生 world positions、normals 与 per-vertex rotations。
+2. 分离 frame identity/continuity、team dynamic options和外部 anchor/collider identity，不塞入 N2 value ABI。
+3. 冻结首次有效 pose reset、连续帧、same-frame、倒放/跳帧与用户 reset reason。
+4. allocation只建立容量；未取得当前帧完整 pose前不得把 build-time rest pose伪装成已初始化 runtime state。
 
-退出条件：同一 profile在三个 setup下的完整 Tier A parameter dump、非线性曲线、disabled limit、BoneSpring override和 packer/layout测试通过。
+退出条件：allocation-before-reset、首次 reset、连续帧、same-frame、time discontinuity、参数热更新保留 history 的数组级测试通过。
 
 ## 后续交付顺序
 
