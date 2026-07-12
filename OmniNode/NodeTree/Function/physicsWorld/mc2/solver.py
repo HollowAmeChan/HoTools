@@ -20,7 +20,7 @@ from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
-    "MC2 context V0生命周期已接入；数值step与结果发布尚未接入"
+    "MC2 context V0已接入Pin/Distance数值step；粒子积分与结果发布尚未接入"
 )
 
 
@@ -243,7 +243,7 @@ def step_mc2(
     dt: float = 0.0,
     enabled: bool = True,
 ) -> tuple[object, bool, str]:
-    """同步 topology/slot/context；V0 step是受检no-op且不发布solver result。"""
+    """同步 topology/slot/context；V0连续帧执行Pin/Distance且不发布solver result。"""
     specs = build_mc2_task_specs(tasks)
     if settings is None:
         settings = make_mc2_solver_settings()

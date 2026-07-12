@@ -2,6 +2,7 @@
 
 #include "python_buffer_utils.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +21,10 @@ constexpr Py_ssize_t kFloatCount = 47;
 constexpr Py_ssize_t kIntCount = 11;
 constexpr Py_ssize_t kCurveRows = 9;
 constexpr Py_ssize_t kCurveColumns = 16;
+constexpr float kMc2Epsilon = 0.00000001f;
+constexpr float kDistanceHorizontalStiffness = 0.5f;
+constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
+constexpr Py_ssize_t kDistanceStiffnessCurve = 2;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -35,6 +40,7 @@ struct Mc2ContextV0 {
     std::int64_t dynamic_revision = 0;
     std::int64_t reset_count = 0;
     std::int64_t step_count = 0;
+    std::int64_t distance_solve_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     bool parameters_ready = false;
@@ -305,6 +311,116 @@ bool expect_int8_scalar_array(const Buffer& buffer, const char* name) {
     return true;
 }
 
+float sample_curve16(const std::vector<float>& curves, Py_ssize_t row, float depth) {
+    if (curves.size() != static_cast<std::size_t>(kCurveRows * kCurveColumns)) return 0.0f;
+    depth = std::max(0.0f, std::min(1.0f, depth));
+    const float scaled = depth * static_cast<float>(kCurveColumns - 1);
+    const auto lower = static_cast<Py_ssize_t>(std::floor(scaled));
+    const auto upper = std::min(lower + 1, kCurveColumns - 1);
+    const float ratio = scaled - static_cast<float>(lower);
+    const auto offset = row * kCurveColumns;
+    return curves[offset + lower] * (1.0f - ratio) + curves[offset + upper] * ratio;
+}
+
+bool is_move(std::uint8_t attribute) {
+    return (attribute & 0x02u) != 0u;
+}
+
+void solve_distance_once(Mc2ContextV0& context) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.state_positions.size() != count * 3 ||
+        context.dynamic_positions.size() != count * 3 ||
+        context.proxy_attributes.size() != count) {
+        return;
+    }
+
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (!is_move(context.proxy_attributes[vertex])) {
+            const auto offset = vertex * 3;
+            context.state_positions[offset + 0] = context.dynamic_positions[offset + 0];
+            context.state_positions[offset + 1] = context.dynamic_positions[offset + 1];
+            context.state_positions[offset + 2] = context.dynamic_positions[offset + 2];
+            if (context.state_rotations.size() == count * 4 &&
+                context.dynamic_rotations.size() == count * 4) {
+                const auto rotation_offset = vertex * 4;
+                for (std::size_t component = 0; component < 4; ++component) {
+                    context.state_rotations[rotation_offset + component] =
+                        context.dynamic_rotations[rotation_offset + component];
+                }
+            }
+        }
+    }
+
+    if (!context.distance_static_ready || context.distance_targets.empty()) return;
+    if (context.baseline_depths.size() != count ||
+        context.distance_ranges.size() != count * 2 ||
+        context.distance_targets.size() != context.distance_rest_signed.size()) {
+        return;
+    }
+
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        if (!is_move(context.proxy_attributes[vertex])) continue;
+        const float stiffness = std::max(
+            0.0f,
+            std::min(1.0f, sample_curve16(
+                context.curve_values,
+                kDistanceStiffnessCurve,
+                context.baseline_depths[vertex]
+            ))
+        );
+        if (stiffness <= kMc2Epsilon) continue;
+        const auto start = context.distance_ranges[vertex * 2];
+        const auto record_count = context.distance_ranges[vertex * 2 + 1];
+        const auto offset = vertex * 3;
+        const float current_x = context.state_positions[offset + 0];
+        const float current_y = context.state_positions[offset + 1];
+        const float current_z = context.state_positions[offset + 2];
+        float add_x = 0.0f;
+        float add_y = 0.0f;
+        float add_z = 0.0f;
+        std::int32_t add_count = 0;
+        for (std::int32_t local = 0; local < record_count; ++local) {
+            const auto record = static_cast<std::size_t>(start + local);
+            const auto target = static_cast<std::size_t>(context.distance_targets[record]);
+            const auto target_offset = target * 3;
+            const float dx = context.state_positions[target_offset + 0] - current_x;
+            const float dy = context.state_positions[target_offset + 1] - current_y;
+            const float dz = context.state_positions[target_offset + 2] - current_z;
+            const float rest_signed = context.distance_rest_signed[record];
+            const float rest = std::fabs(rest_signed);
+            if (rest <= kMc2Epsilon) {
+                add_x = dx * 0.5f;
+                add_y = dy * 0.5f;
+                add_z = dz * 0.5f;
+                ++add_count;
+                continue;
+            }
+            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance <= kMc2Epsilon) continue;
+            const float target_inverse_mass = is_move(context.proxy_attributes[target])
+                ? 1.0f
+                : kDistanceFixedInverseMass;
+            const float local_stiffness = rest_signed < 0.0f
+                ? stiffness * kDistanceHorizontalStiffness
+                : stiffness;
+            const float correction =
+                ((distance - rest) * local_stiffness / (1.0f + target_inverse_mass)) /
+                distance;
+            add_x += dx * correction;
+            add_y += dy * correction;
+            add_z += dz * correction;
+            ++add_count;
+        }
+        if (add_count > 0) {
+            const float inverse_count = 1.0f / static_cast<float>(add_count);
+            context.state_positions[offset + 0] = current_x + add_x * inverse_count;
+            context.state_positions[offset + 1] = current_y + add_y * inverse_count;
+            context.state_positions[offset + 2] = current_z + add_z * inverse_count;
+        }
+    }
+    ++context.distance_solve_count;
+}
+
 PyObject* inspect_context(const Mc2ContextV0& context) {
     std::int64_t fixed_count = 0;
     for (const auto attribute : context.proxy_attributes) {
@@ -329,6 +445,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
         !dict_i64(result, "reset_count", context.reset_count) ||
         !dict_i64(result, "step_count", context.step_count) ||
+        !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -762,6 +879,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 context is not ready to step");
         return nullptr;
     }
+    solve_distance_once(*context);
     ++context->step_count;
     Py_RETURN_NONE;
 }

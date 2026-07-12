@@ -120,7 +120,7 @@ def test_lifecycle_and_transactional_validation():
 
         distance_ranges = np.array([[0, 1], [1, 1]], dtype=np.int32)
         distance_targets = np.array([1, 0], dtype=np.int32)
-        distance_rests = np.array([-1.0, -1.0], dtype=np.float32)
+        distance_rests = np.array([1.0, 1.0], dtype=np.float32)
         hotools_native.mc2_context_v0_update_distance_static(
             first, distance_ranges, distance_targets, distance_rests
         )
@@ -164,6 +164,7 @@ def test_lifecycle_and_transactional_validation():
         assert hotools_native.mc2_context_v0_inspect(third)["bending_static_revision"] == 1
 
         floats, ints, curves = parameters()
+        curves[2, :] = 1.0
         hotools_native.mc2_context_v0_update_parameters(first, floats, ints, curves)
         assert hotools_native.mc2_context_v0_inspect(first)["parameter_revision"] == 1
 
@@ -186,6 +187,7 @@ def test_lifecycle_and_transactional_validation():
         assert hotools_native.mc2_context_v0_inspect(first)["parameter_revision"] == 1
 
         positions, rotations = frame(2, 1.5)
+        positions[1, 0] = 3.5
         hotools_native.mc2_context_v0_update_dynamic(first, 12, 7, positions, rotations)
         bad_rotations = rotations.copy()
         bad_rotations[0] = 0.0
@@ -207,10 +209,90 @@ def test_lifecycle_and_transactional_validation():
         out_positions = np.empty_like(positions)
         out_rotations = np.empty_like(rotations)
         hotools_native.mc2_context_v0_read(first, out_positions, out_rotations)
-        np.testing.assert_array_equal(out_positions, positions)
+        np.testing.assert_allclose(
+            out_positions,
+            np.array([[2.0, 0.0, 0.0], [3.25, 0.0, 0.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
         np.testing.assert_array_equal(out_rotations, rotations)
         info = hotools_native.mc2_context_v0_inspect(first)
         assert info["reset_count"] == 1 and info["step_count"] == 1
+        assert info["distance_solve_count"] == 1
+
+        tier_a_proxy, tier_a_baseline = static_arrays(3)
+        hotools_native.mc2_context_v0_update_proxy_static(second, *tier_a_proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(second, *tier_a_baseline)
+        tier_a_ranges = np.array([[0, 2], [2, 0], [2, 0]], dtype=np.int32)
+        tier_a_targets = np.array([1, 2], dtype=np.int32)
+        tier_a_rests = np.array([1.0, 0.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_distance_static(
+            second, tier_a_ranges, tier_a_targets, tier_a_rests
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            second, empty_quads, empty_rests, empty_markers
+        )
+        pin_floats, pin_ints, pin_curves = parameters()
+        pin_curves[2, :] = 1.0
+        hotools_native.mc2_context_v0_update_parameters(
+            second, pin_floats, pin_ints, pin_curves
+        )
+        tier_a_positions, pin_rotations = frame(3)
+        tier_a_positions[:, 0] = np.array([0.0, 2.0, 4.0], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_dynamic(
+            second, 1, 0, tier_a_positions, pin_rotations
+        )
+        hotools_native.mc2_context_v0_reset(second)
+        hotools_native.mc2_context_v0_step(second, 1.0 / 60.0)
+        tier_a_out = np.empty_like(tier_a_positions)
+        tier_a_out_rotations = np.empty_like(pin_rotations)
+        hotools_native.mc2_context_v0_read(
+            second, tier_a_out, tier_a_out_rotations
+        )
+        np.testing.assert_allclose(
+            tier_a_out,
+            np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+
+        pin_proxy = list(tier_a_proxy)
+        pin_proxy[4] = np.array([1, 2, 2], dtype=np.uint8)
+        hotools_native.mc2_context_v0_update_proxy_static(second, *pin_proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(second, *tier_a_baseline)
+        empty_distance_ranges = np.zeros((3, 2), dtype=np.int32)
+        empty_distance_targets = np.empty((0,), dtype=np.int32)
+        empty_distance_rests = np.empty((0,), dtype=np.float32)
+        hotools_native.mc2_context_v0_update_distance_static(
+            second,
+            empty_distance_ranges,
+            empty_distance_targets,
+            empty_distance_rests,
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            second, empty_quads, empty_rests, empty_markers
+        )
+        pin_positions, pin_rotations = frame(3)
+        hotools_native.mc2_context_v0_update_dynamic(
+            second, 1, 0, pin_positions, pin_rotations
+        )
+        hotools_native.mc2_context_v0_reset(second)
+        moved_pin_positions = pin_positions.copy()
+        moved_pin_positions[0, 0] = 5.0
+        hotools_native.mc2_context_v0_update_dynamic(
+            second, 2, 0, moved_pin_positions, pin_rotations
+        )
+        hotools_native.mc2_context_v0_step(second, 1.0 / 60.0)
+        pin_out_positions = np.empty_like(pin_positions)
+        pin_out_rotations = np.empty_like(pin_rotations)
+        hotools_native.mc2_context_v0_read(
+            second, pin_out_positions, pin_out_rotations
+        )
+        np.testing.assert_array_equal(
+            pin_out_positions,
+            np.array([[5.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
+        )
+        assert hotools_native.mc2_context_v0_inspect(second)["distance_solve_count"] == 1
     finally:
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(first)

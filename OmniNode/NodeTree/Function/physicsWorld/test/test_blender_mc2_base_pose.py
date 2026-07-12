@@ -340,6 +340,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 3
         assert native_info["reset_count"] == 2
         assert native_info["step_count"] == 1
+        assert native_info["distance_solve_count"] == 1
 
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
