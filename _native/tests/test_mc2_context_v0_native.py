@@ -38,11 +38,14 @@ def update_dynamic(context, frame_index, generation, positions, rotations, **sca
         scalars.get("velocity_weight", 1.0),
         scalars.get("gravity_ratio", 1.0),
         scalars.get("scale_ratio", 1.0),
+        scalars.get("negative_scale_sign", 1.0),
     )
 
 
-def step(context, dt, simulation_power_z=1.0):
-    hotools_native.mc2_context_v0_step(context, dt, simulation_power_z)
+def step(context, dt, simulation_power_y=1.0, simulation_power_z=1.0):
+    hotools_native.mc2_context_v0_step(
+        context, dt, simulation_power_y, simulation_power_z
+    )
 
 
 def static_arrays(count):
@@ -90,7 +93,8 @@ def test_lifecycle_and_transactional_validation():
     second = hotools_native.mc2_context_v0_create(0, 3)
     third = hotools_native.mc2_context_v0_create(0, 4)
     fourth = hotools_native.mc2_context_v0_create(0, 2)
-    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 4
+    fifth = hotools_native.mc2_context_v0_create(0, 4)
+    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 5
     try:
         second_positions, second_rotations = frame(3)
         expect_error(
@@ -178,6 +182,54 @@ def test_lifecycle_and_transactional_validation():
             "marker",
         )
         assert hotools_native.mc2_context_v0_inspect(third)["bending_static_revision"] == 1
+
+        bending_proxy, bending_baseline = static_arrays(4)
+        bending_proxy = list(bending_proxy)
+        bending_proxy[4] = np.array([1, 2, 2, 2], dtype=np.uint8)
+        bending_baseline = list(bending_baseline)
+        bending_baseline[7] = np.full(4, 0.5, dtype=np.float32)
+        hotools_native.mc2_context_v0_update_proxy_static(third, *bending_proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(third, *bending_baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            third,
+            np.zeros((4, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            third,
+            np.array([[1, 0, 2, 3]], dtype=np.int32),
+            np.array([0.0], dtype=np.float32),
+            np.array([1], dtype=np.int8),
+        )
+        bending_floats, bending_ints, bending_curves = parameters()
+        bending_floats[27] = 1.0
+        bending_ints[3] = 2
+        hotools_native.mc2_context_v0_update_parameters(
+            third, bending_floats, bending_ints, bending_curves
+        )
+        bending_positions = np.array(
+            [[0, 1, 0], [0, -0.8660254, -0.5], [0, 0, 0], [1, 0, 0]],
+            dtype=np.float32,
+        )
+        bending_rotations = np.zeros((4, 4), dtype=np.float32)
+        bending_rotations[:, 3] = 1.0
+        update_dynamic(third, 1, 0, bending_positions, bending_rotations)
+        hotools_native.mc2_context_v0_reset(third)
+        step(third, 1.0 / 90.0, simulation_power_y=1.0, simulation_power_z=1.0)
+        bending_out = np.empty_like(bending_positions)
+        bending_out_rotations = np.empty_like(bending_rotations)
+        hotools_native.mc2_context_v0_read(third, bending_out, bending_out_rotations)
+        np.testing.assert_allclose(
+            bending_out,
+            np.array(
+                [[0, 1, 0], [0, -0.9210874, -0.404629], [0, 0.055062, -0.205497], [1, 0, 0]],
+                dtype=np.float32,
+            ),
+            rtol=1.0e-6,
+            atol=2.0e-5,
+        )
+        assert hotools_native.mc2_context_v0_inspect(third)["bending_solve_count"] == 1
 
         floats, ints, curves = parameters()
         curves[2, :] = 1.0
@@ -369,12 +421,73 @@ def test_lifecycle_and_transactional_validation():
             atol=1.0e-5,
         )
         assert hotools_native.mc2_context_v0_inspect(fourth)["particle_prediction_count"] == 2
+
+        volume_proxy, volume_baseline = static_arrays(4)
+        volume_baseline = list(volume_baseline)
+        volume_baseline[7] = np.full(4, 0.5, dtype=np.float32)
+        hotools_native.mc2_context_v0_update_proxy_static(fifth, *volume_proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(fifth, *volume_baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            fifth,
+            np.zeros((4, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            fifth,
+            np.array([[1, 0, 2, 3], [1, 0, 2, 3]], dtype=np.int32),
+            np.array([1.74532926, 164.134628], dtype=np.float32),
+            np.array([-1, 100], dtype=np.int8),
+        )
+        volume_floats, volume_ints, volume_curves = parameters()
+        volume_floats[27] = 1.0
+        volume_ints[3] = 2
+        hotools_native.mc2_context_v0_update_parameters(
+            fifth, volume_floats, volume_ints, volume_curves
+        )
+        volume_positions = np.array(
+            [[0, 1, 0], [0, -0.342020154, -0.9396926], [0, 0, 0], [1, 0, 0]],
+            dtype=np.float32,
+        )
+        volume_rotations = np.zeros((4, 4), dtype=np.float32)
+        volume_rotations[:, 3] = 1.0
+        expected_by_sign = {
+            1.0: np.array(
+                [[0, 1.00353646, -0.0571785], [0, -0.289499164, -0.9625721],
+                 [-0.0035365, -0.0560575, 0.0800585], [1.00353646, 0, 0]],
+                dtype=np.float32,
+            ),
+            -1.0: np.array(
+                [[0, 0.9736465, 0.3263115], [0, -0.6396396, -0.8033236],
+                 [0.0263535, 0.323973, -0.462681], [0.9736465, 0, 0]],
+                dtype=np.float32,
+            ),
+        }
+        for frame_index, sign in enumerate((1.0, -1.0), start=1):
+            update_dynamic(
+                fifth,
+                frame_index,
+                frame_index,
+                volume_positions,
+                volume_rotations,
+                scale_ratio=1.25,
+                negative_scale_sign=sign,
+            )
+            hotools_native.mc2_context_v0_reset(fifth)
+            step(fifth, 1.0 / 90.0, simulation_power_y=1.0, simulation_power_z=1.0)
+            volume_out = np.empty_like(volume_positions)
+            volume_out_rotations = np.empty_like(volume_rotations)
+            hotools_native.mc2_context_v0_read(fifth, volume_out, volume_out_rotations)
+            np.testing.assert_allclose(
+                volume_out, expected_by_sign[sign], rtol=1.0e-6, atol=2.0e-5
+            )
     finally:
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(second)
         hotools_native.mc2_context_v0_free(third)
         hotools_native.mc2_context_v0_free(fourth)
+        hotools_native.mc2_context_v0_free(fifth)
     assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"]
     assert hotools_native.mc2_context_v0_inspect(first)["released"] is True
     expect_error(RuntimeError, lambda: hotools_native.mc2_context_v0_reset(first), "released")

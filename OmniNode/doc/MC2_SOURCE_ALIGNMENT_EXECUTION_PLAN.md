@@ -39,12 +39,12 @@
 | Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation；10 组冻结数组已接入 native context。 |
 | Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。N0 proxy/baseline 上传失败会释放 staged context并保留旧 slot。 |
 | Distance N1 | landed foundation | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。`ranges/targets/rest_signed` 已由 native context 校验并持有，数值 kernel 尚未消费。 |
-| TriangleBending N1 | landed foundation | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。ordered role quad/rest/marker 已上传 native；数值 kernel 与 scratch 尚未接入。 |
+| TriangleBending N1 | landed foundation | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；ordered role quad/rest/marker 已上传 native。directional dihedral、volume、negative scale、fixed-point accumulate、Move-only average与scratch clear已由3个 Tier A runtime case逐数组验证。 |
 | Inertia/Center static | verified contract | `center_state.py` 已冻结 center fixed list/local center、initial local gravity、component/anchor frame pose与 persistent reset分层；最小 fixed+isolated case由 Tier A oracle覆盖。尚未实现完整 frame-derived inertia/negative scale。 |
 | Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。rotation/reset数组已有 Tier A oracle；当前首版仍要求每个 vertex属于 triangle。 |
 | Runtime parameters N2 | landed foundation | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；particle prediction已消费 gravity/direction与 damping curve，Distance消费 stiffness/velocity attenuation，其余值仍只保存未消费。 |
-| Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；N3现携带受检 `velocity_weight/gravity_ratio/scale_ratio`。frame sync 先 plan、native 成功后再提交 host 状态；native context V0 已接 update/reset/prediction+Pin+Distance/post/read。Bone connection-aware rotation、inertia与 Bending scratch仍未实现。 |
-| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 particle gravity/damping prediction、非 Move pose跟随、source-order Distance与 persistent velocity commit；尚无 inertia/wind/collision/Bending/result。旧 `_native` full-core 不计入此项。 |
+| Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；N3现携带受检 `velocity_weight/gravity_ratio/scale_ratio/negative_scale_sign`。native context V0 已接 prediction、Pin、Distance、Bending、post与read。Bone connection-aware rotation、frame interpolation与inertia仍未实现。 |
+| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 gravity/damping prediction、Pin、Distance、Bending fixed-point scratch与 persistent velocity commit；尚无 inertia/wind/collision/result。旧 `_native` full-core 不计入此项。 |
 | result/writeback | planned only | `GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仅登记为计划通道；当前不得发布伪结果或标 ready。 |
 
 ## Host/Native 契约
@@ -135,10 +135,10 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **粒子积分与 Bending 数值闭环**：
+下一交付是 **Frame interpolation/Inertia 与内部 readback 闭环**：
 
-1. N0/N1上传、Pin、Distance、persistent velocity与gravity/damping prediction已完成；下一步补齐 frame interpolation/inertia与明确的 substep working state。
-2. Bending 按 ordered role quad 写入 per-particle count/vector scratch，再按 Move/Fixed 规则平均并无条件清空 scratch。
+1. N0/N1、prediction、Pin、Distance、Bending与persistent velocity已完成；下一步补齐 animated old/current pose interpolation、Center inertia vector/rotation与step-basic pose。
+2. 将 native world display pose读入内部 result candidate，保持 `ready=False`，先验证 frame/generation/revision与失败回滚，再接公共结果流。
 3. readback 返回同 vertex identity 的 world display pose；host 转为 object-local offset，但在完整结果事务接通前不得标 ready。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；参数热更新继续保留粒子 history。
 

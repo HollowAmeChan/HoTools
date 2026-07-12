@@ -29,6 +29,7 @@ constexpr Py_ssize_t kDampingCurve = 0;
 constexpr Py_ssize_t kGravity = 0;
 constexpr Py_ssize_t kGravityDirection = 1;
 constexpr Py_ssize_t kDistanceVelocityAttenuation = 26;
+constexpr Py_ssize_t kBendingStiffness = 27;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -46,11 +47,13 @@ struct Mc2ContextV0 {
     std::int64_t step_count = 0;
     std::int64_t distance_solve_count = 0;
     std::int64_t particle_prediction_count = 0;
+    std::int64_t bending_solve_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
     float gravity_ratio = 1.0f;
     float scale_ratio = 1.0f;
+    float negative_scale_sign = 1.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
@@ -409,6 +412,156 @@ void commit_particle_velocities(Mc2ContextV0& context, float dt) {
     }
 }
 
+struct Vec3 {
+    float x = 0.0f, y = 0.0f, z = 0.0f;
+};
+
+Vec3 add(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+Vec3 sub(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+Vec3 mul(Vec3 a, float value) { return {a.x * value, a.y * value, a.z * value}; }
+float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+Vec3 cross(Vec3 a, Vec3 b) {
+    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+}
+float length_squared(Vec3 value) { return dot(value, value); }
+float length(Vec3 value) { return std::sqrt(length_squared(value)); }
+Vec3 normalize(Vec3 value) {
+    const float size = length(value);
+    return size > kMc2Epsilon ? mul(value, 1.0f / size) : Vec3{};
+}
+
+float bending_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
+    if (!is_move(context.proxy_attributes[vertex])) return 0.01f;
+    const float depth_offset = 1.0f - context.baseline_depths[vertex];
+    return 1.0f / (1.0f + depth_offset * depth_offset * 5.0f);
+}
+
+bool calc_bending_volume(
+    const Vec3 p[4], const float inv_mass[4], float rest, float stiffness, Vec3 out[4]
+) {
+    float volume = dot(cross(sub(p[1], p[0]), sub(p[2], p[0])), sub(p[3], p[0])) /
+        6.0f * 1000.0f;
+    Vec3 grad[4] = {
+        cross(sub(p[1], p[2]), sub(p[3], p[2])),
+        cross(sub(p[2], p[0]), sub(p[3], p[0])),
+        cross(sub(p[0], p[1]), sub(p[3], p[1])),
+        cross(sub(p[1], p[0]), sub(p[2], p[0])),
+    };
+    float lambda = 0.0f;
+    for (int i = 0; i < 4; ++i) lambda += inv_mass[i] * length_squared(grad[i]);
+    lambda *= 1000.0f;
+    if (std::fabs(lambda) < 1.0e-6f) return false;
+    lambda = stiffness * (rest - volume) / lambda;
+    for (int i = 0; i < 4; ++i) out[i] = mul(grad[i], lambda * inv_mass[i]);
+    return true;
+}
+
+bool calc_bending_dihedral(
+    const Vec3 p[4], const float inv_mass[4], float rest, float stiffness, Vec3 out[4]
+) {
+    const Vec3 edge = sub(p[3], p[2]);
+    const float edge_length = length(edge);
+    if (edge_length < kMc2Epsilon) return false;
+    const float inverse_edge_length = 1.0f / edge_length;
+    Vec3 n1 = cross(sub(p[2], p[0]), sub(p[3], p[0]));
+    Vec3 n2 = cross(sub(p[3], p[1]), sub(p[2], p[1]));
+    const float n1_length_squared = length_squared(n1);
+    const float n2_length_squared = length_squared(n2);
+    if (n1_length_squared == 0.0f || n2_length_squared == 0.0f) return false;
+    n1 = mul(n1, 1.0f / n1_length_squared);
+    n2 = mul(n2, 1.0f / n2_length_squared);
+    Vec3 derivative[4] = {
+        mul(n1, edge_length),
+        mul(n2, edge_length),
+        add(
+            mul(n1, dot(sub(p[0], p[3]), edge) * inverse_edge_length),
+            mul(n2, dot(sub(p[1], p[3]), edge) * inverse_edge_length)
+        ),
+        add(
+            mul(n1, dot(sub(p[2], p[0]), edge) * inverse_edge_length),
+            mul(n2, dot(sub(p[2], p[1]), edge) * inverse_edge_length)
+        ),
+    };
+    n1 = normalize(n1);
+    n2 = normalize(n2);
+    float phi = std::acos(std::max(-1.0f, std::min(1.0f, dot(n1, n2))));
+    float denominator = 0.0f;
+    for (int i = 0; i < 4; ++i) denominator += inv_mass[i] * length_squared(derivative[i]);
+    if (denominator == 0.0f) return false;
+    const float direction_value = dot(cross(n1, n2), edge);
+    const float direction = direction_value < 0.0f ? -1.0f : (direction_value > 0.0f ? 1.0f : 0.0f);
+    phi *= direction;
+    const float lambda = (rest - phi) / denominator * stiffness;
+    for (int i = 0; i < 4; ++i) out[i] = mul(derivative[i], -inv_mass[i] * lambda);
+    return true;
+}
+
+void solve_bending_once(Mc2ContextV0& context, float simulation_power_y) {
+    const auto record_count = context.bending_rest_angle_or_volume.size();
+    const auto vertex_count = static_cast<std::size_t>(context.vertex_count);
+    if (!context.bending_static_ready || record_count == 0 ||
+        context.int_values.size() != static_cast<std::size_t>(kIntCount) ||
+        context.int_values[3] == 0 ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount)) return;
+    const float stiffness = std::max(
+        0.0f,
+        std::min(1.0f, context.float_values[kBendingStiffness] * simulation_power_y)
+    );
+    if (stiffness < 1.0e-6f) return;
+    std::vector<std::int32_t> sums(vertex_count * 3, 0);
+    std::vector<std::int32_t> counts(vertex_count, 0);
+    for (std::size_t record = 0; record < record_count; ++record) {
+        Vec3 positions[4];
+        float inv_mass[4];
+        std::size_t vertices[4];
+        for (int role = 0; role < 4; ++role) {
+            vertices[role] = static_cast<std::size_t>(context.bending_quads[record * 4 + role]);
+            const auto offset = vertices[role] * 3;
+            positions[role] = {
+                context.state_positions[offset + 0],
+                context.state_positions[offset + 1],
+                context.state_positions[offset + 2],
+            };
+            inv_mass[role] = bending_inverse_mass(context, vertices[role]);
+        }
+        Vec3 correction[4];
+        const auto marker = context.bending_sign_or_volume[record];
+        const float raw_rest = context.bending_rest_angle_or_volume[record];
+        const bool solved = marker == 100
+            ? calc_bending_volume(
+                positions,
+                inv_mass,
+                raw_rest * context.scale_ratio * context.negative_scale_sign,
+                stiffness,
+                correction
+            )
+            : calc_bending_dihedral(
+                positions,
+                inv_mass,
+                raw_rest * (marker < 0 ? -1.0f : 1.0f) * context.negative_scale_sign,
+                stiffness,
+                correction
+            );
+        if (!solved) continue;
+        for (int role = 0; role < 4; ++role) {
+            const auto vertex = vertices[role];
+            sums[vertex * 3 + 0] += static_cast<std::int32_t>(correction[role].x * 1000000.0f);
+            sums[vertex * 3 + 1] += static_cast<std::int32_t>(correction[role].y * 1000000.0f);
+            sums[vertex * 3 + 2] += static_cast<std::int32_t>(correction[role].z * 1000000.0f);
+            ++counts[vertex];
+        }
+    }
+    for (std::size_t vertex = 0; vertex < vertex_count; ++vertex) {
+        if (!is_move(context.proxy_attributes[vertex]) || counts[vertex] <= 0) continue;
+        const auto offset = vertex * 3;
+        const float scale = 0.000001f / static_cast<float>(counts[vertex]);
+        context.state_positions[offset + 0] += static_cast<float>(sums[offset + 0]) * scale;
+        context.state_positions[offset + 1] += static_cast<float>(sums[offset + 1]) * scale;
+        context.state_positions[offset + 2] += static_cast<float>(sums[offset + 2]) * scale;
+    }
+    ++context.bending_solve_count;
+}
+
 void solve_distance_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
@@ -539,6 +692,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "step_count", context.step_count) ||
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
         !dict_i64(result, "particle_prediction_count", context.particle_prediction_count) ||
+        !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -898,8 +1052,8 @@ PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 8) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 8 arguments");
+    if (PyTuple_GET_SIZE(args) != 9) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 9 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -913,10 +1067,14 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     const double velocity_weight = as_double(PyTuple_GET_ITEM(args, 5), "velocity_weight");
     const double gravity_ratio = as_double(PyTuple_GET_ITEM(args, 6), "gravity_ratio");
     const double scale_ratio = as_double(PyTuple_GET_ITEM(args, 7), "scale_ratio");
+    const double negative_scale_sign = as_double(
+        PyTuple_GET_ITEM(args, 8), "negative_scale_sign"
+    );
     if (PyErr_Occurred()) return nullptr;
     if (!std::isfinite(velocity_weight) || velocity_weight < 0.0 || velocity_weight > 1.0 ||
         !std::isfinite(gravity_ratio) || gravity_ratio < 0.0 || gravity_ratio > 1.0 ||
-        !std::isfinite(scale_ratio) || scale_ratio <= 0.0) {
+        !std::isfinite(scale_ratio) || scale_ratio <= 0.0 ||
+        (negative_scale_sign != -1.0 && negative_scale_sign != 1.0)) {
         PyErr_SetString(PyExc_ValueError, "MC2 dynamic scalar is out of range");
         return nullptr;
     }
@@ -944,6 +1102,7 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->velocity_weight = static_cast<float>(velocity_weight);
     context->gravity_ratio = static_cast<float>(gravity_ratio);
     context->scale_ratio = static_cast<float>(scale_ratio);
+    context->negative_scale_sign = static_cast<float>(negative_scale_sign);
     context->dynamic_ready = true;
     ++context->dynamic_revision;
     Py_RETURN_NONE;
@@ -973,21 +1132,26 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 3) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 3 arguments");
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 4 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
     const double dt = as_double(PyTuple_GET_ITEM(args, 1), "dt");
-    const double simulation_power_z = as_double(
+    const double simulation_power_y = as_double(
         PyTuple_GET_ITEM(args, 2),
+        "simulation_power_y"
+    );
+    const double simulation_power_z = as_double(
+        PyTuple_GET_ITEM(args, 3),
         "simulation_power_z"
     );
     if (PyErr_Occurred()) return nullptr;
     if (!std::isfinite(dt) || dt < 0.0 ||
+        !std::isfinite(simulation_power_y) || simulation_power_y < 0.0 ||
         !std::isfinite(simulation_power_z) || simulation_power_z < 0.0) {
-        PyErr_SetString(PyExc_ValueError, "dt and simulation_power_z must be finite and non-negative");
+        PyErr_SetString(PyExc_ValueError, "dt and simulation powers must be finite and non-negative");
         return nullptr;
     }
     if (!context->parameters_ready || !context->dynamic_ready || !context->initialized) {
@@ -1004,6 +1168,7 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
             return nullptr;
         }
         solve_distance_once(*context);
+        solve_bending_once(*context, static_cast<float>(simulation_power_y));
         commit_particle_velocities(*context, static_cast<float>(dt));
     }
     ++context->step_count;

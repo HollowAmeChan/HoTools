@@ -194,6 +194,7 @@ class MC2NativeContextV0:
             frame_input.velocity_weight,
             frame_input.gravity_ratio,
             frame_input.scale_ratio,
+            frame_input.negative_scale_sign,
         )
         self.last_frame = (frame_input.frame, frame_input.generation)
 
@@ -210,9 +211,15 @@ class MC2NativeContextV0:
             if frequency_ratio > 1.0
             else frequency_ratio
         )
+        simulation_power_y = (
+            math.sqrt(frequency_ratio)
+            if frequency_ratio > 1.0
+            else frequency_ratio
+        )
         self._module.mc2_context_v0_step(
             self._handle,
             dt,
+            simulation_power_y,
             simulation_power_z,
         )
 

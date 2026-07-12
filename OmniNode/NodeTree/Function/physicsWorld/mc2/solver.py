@@ -20,7 +20,7 @@ from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
-    "MC2 context V0已接入gravity/Pin/Distance数值step；Bending与结果发布尚未接入"
+    "MC2 context V0已接入gravity/Pin/Distance/Bending数值step；inertia与结果发布尚未接入"
 )
 
 
