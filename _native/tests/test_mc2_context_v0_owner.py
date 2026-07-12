@@ -41,7 +41,7 @@ native = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorl
 def test_owner_lifecycle_and_readback() -> None:
     module = native.native_module()
     baseline = module.mc2_context_v0_stats()["live"]
-    profile = parameters.make_mc2_particle_profile()
+    profile = parameters.make_mc2_particle_profile(gravity=0.0)
     options = parameters.make_mc2_setup_options(names.MC2_SETUP_MESH_CLOTH)
     runtime_spec = runtime.make_mc2_runtime_parameters(profile, options)
     frame = frames.make_mc2_frame_input(

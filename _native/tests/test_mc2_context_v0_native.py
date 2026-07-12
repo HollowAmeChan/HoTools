@@ -28,6 +28,23 @@ def frame(count, offset=0.0):
     return positions, rotations
 
 
+def update_dynamic(context, frame_index, generation, positions, rotations, **scalars):
+    hotools_native.mc2_context_v0_update_dynamic(
+        context,
+        frame_index,
+        generation,
+        positions,
+        rotations,
+        scalars.get("velocity_weight", 1.0),
+        scalars.get("gravity_ratio", 1.0),
+        scalars.get("scale_ratio", 1.0),
+    )
+
+
+def step(context, dt, simulation_power_z=1.0):
+    hotools_native.mc2_context_v0_step(context, dt, simulation_power_z)
+
+
 def static_arrays(count):
     positions = np.zeros((count, 3), dtype=np.float32)
     normals = np.zeros((count, 3), dtype=np.float32)
@@ -72,14 +89,13 @@ def test_lifecycle_and_transactional_validation():
     first = hotools_native.mc2_context_v0_create(0, 2)
     second = hotools_native.mc2_context_v0_create(0, 3)
     third = hotools_native.mc2_context_v0_create(0, 4)
-    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 3
+    fourth = hotools_native.mc2_context_v0_create(0, 2)
+    assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"] + 4
     try:
         second_positions, second_rotations = frame(3)
         expect_error(
             RuntimeError,
-            lambda: hotools_native.mc2_context_v0_update_dynamic(
-                second, 0, 0, second_positions, second_rotations
-            ),
+            lambda: update_dynamic(second, 0, 0, second_positions, second_rotations),
             "parameters have not been uploaded",
         )
         info = hotools_native.mc2_context_v0_inspect(first)
@@ -188,12 +204,20 @@ def test_lifecycle_and_transactional_validation():
 
         positions, rotations = frame(2, 1.5)
         positions[1, 0] = 3.5
-        hotools_native.mc2_context_v0_update_dynamic(first, 12, 7, positions, rotations)
+        expect_error(
+            ValueError,
+            lambda: update_dynamic(
+                first, 12, 7, positions, rotations, velocity_weight=2.0
+            ),
+            "out of range",
+        )
+        assert hotools_native.mc2_context_v0_inspect(first)["dynamic_revision"] == 0
+        update_dynamic(first, 12, 7, positions, rotations)
         bad_rotations = rotations.copy()
         bad_rotations[0] = 0.0
         expect_error(
             ValueError,
-            lambda: hotools_native.mc2_context_v0_update_dynamic(first, 13, 7, positions, bad_rotations),
+            lambda: update_dynamic(first, 13, 7, positions, bad_rotations),
             "unit quaternions",
         )
         info = hotools_native.mc2_context_v0_inspect(first)
@@ -201,11 +225,11 @@ def test_lifecycle_and_transactional_validation():
 
         expect_error(
             RuntimeError,
-            lambda: hotools_native.mc2_context_v0_step(first, 1.0 / 60.0),
+            lambda: step(first, 1.0 / 60.0),
             "not ready",
         )
         hotools_native.mc2_context_v0_reset(first)
-        hotools_native.mc2_context_v0_step(first, 1.0 / 60.0)
+        step(first, 1.0 / 60.0)
         out_positions = np.empty_like(positions)
         out_rotations = np.empty_like(rotations)
         hotools_native.mc2_context_v0_read(first, out_positions, out_rotations)
@@ -239,11 +263,11 @@ def test_lifecycle_and_transactional_validation():
         )
         tier_a_positions, pin_rotations = frame(3)
         tier_a_positions[:, 0] = np.array([0.0, 2.0, 4.0], dtype=np.float32)
-        hotools_native.mc2_context_v0_update_dynamic(
+        update_dynamic(
             second, 1, 0, tier_a_positions, pin_rotations
         )
         hotools_native.mc2_context_v0_reset(second)
-        hotools_native.mc2_context_v0_step(second, 1.0 / 60.0)
+        step(second, 1.0 / 60.0)
         tier_a_out = np.empty_like(tier_a_positions)
         tier_a_out_rotations = np.empty_like(pin_rotations)
         hotools_native.mc2_context_v0_read(
@@ -273,16 +297,16 @@ def test_lifecycle_and_transactional_validation():
             second, empty_quads, empty_rests, empty_markers
         )
         pin_positions, pin_rotations = frame(3)
-        hotools_native.mc2_context_v0_update_dynamic(
+        update_dynamic(
             second, 1, 0, pin_positions, pin_rotations
         )
         hotools_native.mc2_context_v0_reset(second)
         moved_pin_positions = pin_positions.copy()
         moved_pin_positions[0, 0] = 5.0
-        hotools_native.mc2_context_v0_update_dynamic(
+        update_dynamic(
             second, 2, 0, moved_pin_positions, pin_rotations
         )
-        hotools_native.mc2_context_v0_step(second, 1.0 / 60.0)
+        step(second, 1.0 / 60.0)
         pin_out_positions = np.empty_like(pin_positions)
         pin_out_rotations = np.empty_like(pin_rotations)
         hotools_native.mc2_context_v0_read(
@@ -293,11 +317,64 @@ def test_lifecycle_and_transactional_validation():
             np.array([[5.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
         )
         assert hotools_native.mc2_context_v0_inspect(second)["distance_solve_count"] == 1
+
+        integration_proxy, integration_baseline = static_arrays(2)
+        integration_proxy = list(integration_proxy)
+        integration_proxy[4] = np.array([2, 1], dtype=np.uint8)
+        hotools_native.mc2_context_v0_update_proxy_static(fourth, *integration_proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(fourth, *integration_baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            fourth,
+            np.zeros((2, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            fourth, empty_quads, empty_rests, empty_markers
+        )
+        integration_floats, integration_ints, integration_curves = parameters()
+        integration_floats[0] = 9.0
+        integration_floats[2] = -1.0
+        integration_curves[0, :] = 0.2
+        hotools_native.mc2_context_v0_update_parameters(
+            fourth, integration_floats, integration_ints, integration_curves
+        )
+        integration_positions = np.array(
+            [[1.0, 2.0, 3.0], [10.0, 0.0, 0.0]], dtype=np.float32
+        )
+        integration_rotations = np.zeros((2, 4), dtype=np.float32)
+        integration_rotations[:, 3] = 1.0
+        update_dynamic(
+            fourth,
+            1,
+            0,
+            integration_positions,
+            integration_rotations,
+            velocity_weight=0.8,
+            gravity_ratio=0.75,
+            scale_ratio=1.5,
+        )
+        hotools_native.mc2_context_v0_reset(fourth)
+        step(fourth, 0.1, simulation_power_z=0.5)
+        step(fourth, 0.1, simulation_power_z=0.5)
+        integration_out = np.empty_like(integration_positions)
+        integration_out_rotations = np.empty_like(integration_rotations)
+        hotools_native.mc2_context_v0_read(
+            fourth, integration_out, integration_out_rotations
+        )
+        np.testing.assert_allclose(
+            integration_out,
+            np.array([[1.0, 1.73918, 3.0], [10.0, 0.0, 0.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-5,
+        )
+        assert hotools_native.mc2_context_v0_inspect(fourth)["particle_prediction_count"] == 2
     finally:
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(first)
         hotools_native.mc2_context_v0_free(second)
         hotools_native.mc2_context_v0_free(third)
+        hotools_native.mc2_context_v0_free(fourth)
     assert hotools_native.mc2_context_v0_stats()["live"] == baseline["live"]
     assert hotools_native.mc2_context_v0_inspect(first)["released"] is True
     expect_error(RuntimeError, lambda: hotools_native.mc2_context_v0_reset(first), "released")

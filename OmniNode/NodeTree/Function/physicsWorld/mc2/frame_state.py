@@ -26,6 +26,9 @@ class MC2FrameInputSpec:
     generation: int
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
+    velocity_weight: float = 1.0
+    gravity_ratio: float = 1.0
+    scale_ratio: float = 1.0
     schema_version: int = MC2_FRAME_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -43,6 +46,12 @@ class MC2FrameInputSpec:
             raise ValueError("MC2 frame arrays must be read-only")
         if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
             raise ValueError("MC2 frame input cannot contain NaN/Inf")
+        if not 0.0 <= float(self.velocity_weight) <= 1.0:
+            raise ValueError("velocity_weight must be in 0..1")
+        if not 0.0 <= float(self.gravity_ratio) <= 1.0:
+            raise ValueError("gravity_ratio must be in 0..1")
+        if not np.isfinite(self.scale_ratio) or float(self.scale_ratio) <= 0.0:
+            raise ValueError("scale_ratio must be finite and positive")
         lengths = np.linalg.norm(rotations, axis=1)
         if len(lengths) and not np.allclose(lengths, 1.0, rtol=1.0e-5, atol=1.0e-6):
             raise ValueError("world_rotations_xyzw must contain unit quaternions")
@@ -62,6 +71,9 @@ def make_mc2_frame_input(
     generation: object,
     world_positions,
     world_rotations_xyzw,
+    velocity_weight: object = 1.0,
+    gravity_ratio: object = 1.0,
+    scale_ratio: object = 1.0,
 ) -> MC2FrameInputSpec:
     return MC2FrameInputSpec(
         task_id=str(task_id or ""),
@@ -70,6 +82,9 @@ def make_mc2_frame_input(
         generation=int(generation),
         world_positions=_readonly(world_positions, 3, "world_positions"),
         world_rotations_xyzw=_readonly(world_rotations_xyzw, 4, "world_rotations_xyzw"),
+        velocity_weight=float(velocity_weight),
+        gravity_ratio=float(gravity_ratio),
+        scale_ratio=float(scale_ratio),
     )
 
 

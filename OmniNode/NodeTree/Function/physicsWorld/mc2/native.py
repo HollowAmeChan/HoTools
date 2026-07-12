@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import os
 from pathlib import Path
 import sys
@@ -190,6 +191,9 @@ class MC2NativeContextV0:
             frame_input.generation,
             frame_input.world_positions,
             frame_input.world_rotations_xyzw,
+            frame_input.velocity_weight,
+            frame_input.gravity_ratio,
+            frame_input.scale_ratio,
         )
         self.last_frame = (frame_input.frame, frame_input.generation)
 
@@ -199,7 +203,18 @@ class MC2NativeContextV0:
 
     def step_no_collision(self, dt: float) -> None:
         self._ensure_live()
-        self._module.mc2_context_v0_step(self._handle, float(dt))
+        dt = float(dt)
+        frequency_ratio = 90.0 * dt
+        simulation_power_z = (
+            math.pow(frequency_ratio, 0.3)
+            if frequency_ratio > 1.0
+            else frequency_ratio
+        )
+        self._module.mc2_context_v0_step(
+            self._handle,
+            dt,
+            simulation_power_z,
+        )
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
         self._ensure_live()

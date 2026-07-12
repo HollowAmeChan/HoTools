@@ -25,6 +25,10 @@ constexpr float kMc2Epsilon = 0.00000001f;
 constexpr float kDistanceHorizontalStiffness = 0.5f;
 constexpr float kDistanceFixedInverseMass = 1.0f / 50.0f;
 constexpr Py_ssize_t kDistanceStiffnessCurve = 2;
+constexpr Py_ssize_t kDampingCurve = 0;
+constexpr Py_ssize_t kGravity = 0;
+constexpr Py_ssize_t kGravityDirection = 1;
+constexpr Py_ssize_t kDistanceVelocityAttenuation = 26;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -41,8 +45,12 @@ struct Mc2ContextV0 {
     std::int64_t reset_count = 0;
     std::int64_t step_count = 0;
     std::int64_t distance_solve_count = 0;
+    std::int64_t particle_prediction_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
+    float velocity_weight = 1.0f;
+    float gravity_ratio = 1.0f;
+    float scale_ratio = 1.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
@@ -58,6 +66,8 @@ struct Mc2ContextV0 {
     std::vector<float> dynamic_rotations;
     std::vector<float> state_positions;
     std::vector<float> state_rotations;
+    std::vector<float> state_velocities;
+    std::vector<float> velocity_reference_positions;
     std::vector<float> proxy_local_positions;
     std::vector<float> proxy_local_normals;
     std::vector<float> proxy_local_tangents;
@@ -98,6 +108,8 @@ void release_resources(Mc2ContextV0& context) {
     context.dynamic_rotations.clear();
     context.state_positions.clear();
     context.state_rotations.clear();
+    context.state_velocities.clear();
+    context.velocity_reference_positions.clear();
     context.proxy_local_positions.clear();
     context.proxy_local_normals.clear();
     context.proxy_local_tangents.clear();
@@ -326,6 +338,77 @@ bool is_move(std::uint8_t attribute) {
     return (attribute & 0x02u) != 0u;
 }
 
+bool predict_particles(Mc2ContextV0& context, float dt, float simulation_power_z) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.state_positions.size() != count * 3 ||
+        context.state_velocities.size() != count * 3 ||
+        context.dynamic_positions.size() != count * 3 ||
+        context.proxy_attributes.size() != count ||
+        context.baseline_depths.size() != count ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount)) {
+        return false;
+    }
+    context.velocity_reference_positions = context.state_positions;
+    const float gravity_scale =
+        context.float_values[kGravity] * context.gravity_ratio * context.scale_ratio;
+    const float gravity_x = context.float_values[kGravityDirection + 0] * gravity_scale;
+    const float gravity_y = context.float_values[kGravityDirection + 1] * gravity_scale;
+    const float gravity_z = context.float_values[kGravityDirection + 2] * gravity_scale;
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto offset = vertex * 3;
+        if (!is_move(context.proxy_attributes[vertex])) {
+            context.state_positions[offset + 0] = context.dynamic_positions[offset + 0];
+            context.state_positions[offset + 1] = context.dynamic_positions[offset + 1];
+            context.state_positions[offset + 2] = context.dynamic_positions[offset + 2];
+            context.velocity_reference_positions[offset + 0] = context.dynamic_positions[offset + 0];
+            context.velocity_reference_positions[offset + 1] = context.dynamic_positions[offset + 1];
+            context.velocity_reference_positions[offset + 2] = context.dynamic_positions[offset + 2];
+            context.state_velocities[offset + 0] = 0.0f;
+            context.state_velocities[offset + 1] = 0.0f;
+            context.state_velocities[offset + 2] = 0.0f;
+            continue;
+        }
+        const float damping = sample_curve16(
+            context.curve_values,
+            kDampingCurve,
+            context.baseline_depths[vertex]
+        );
+        const float damping_factor = std::max(
+            0.0f,
+            std::min(1.0f, 1.0f - damping * simulation_power_z)
+        );
+        context.state_velocities[offset + 0] *= context.velocity_weight * damping_factor;
+        context.state_velocities[offset + 1] *= context.velocity_weight * damping_factor;
+        context.state_velocities[offset + 2] *= context.velocity_weight * damping_factor;
+        context.state_velocities[offset + 0] += gravity_x * dt;
+        context.state_velocities[offset + 1] += gravity_y * dt;
+        context.state_velocities[offset + 2] += gravity_z * dt;
+        context.state_positions[offset + 0] += context.state_velocities[offset + 0] * dt;
+        context.state_positions[offset + 1] += context.state_velocities[offset + 1] * dt;
+        context.state_positions[offset + 2] += context.state_velocities[offset + 2] * dt;
+    }
+    ++context.particle_prediction_count;
+    return true;
+}
+
+void commit_particle_velocities(Mc2ContextV0& context, float dt) {
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (dt <= kMc2Epsilon || context.velocity_reference_positions.size() != count * 3) return;
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto offset = vertex * 3;
+        if (!is_move(context.proxy_attributes[vertex])) continue;
+        context.state_velocities[offset + 0] =
+            (context.state_positions[offset + 0] - context.velocity_reference_positions[offset + 0]) /
+            dt * context.velocity_weight;
+        context.state_velocities[offset + 1] =
+            (context.state_positions[offset + 1] - context.velocity_reference_positions[offset + 1]) /
+            dt * context.velocity_weight;
+        context.state_velocities[offset + 2] =
+            (context.state_positions[offset + 2] - context.velocity_reference_positions[offset + 2]) /
+            dt * context.velocity_weight;
+    }
+}
+
 void solve_distance_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
@@ -413,9 +496,18 @@ void solve_distance_once(Mc2ContextV0& context) {
         }
         if (add_count > 0) {
             const float inverse_count = 1.0f / static_cast<float>(add_count);
-            context.state_positions[offset + 0] = current_x + add_x * inverse_count;
-            context.state_positions[offset + 1] = current_y + add_y * inverse_count;
-            context.state_positions[offset + 2] = current_z + add_z * inverse_count;
+            const float correction_x = add_x * inverse_count;
+            const float correction_y = add_y * inverse_count;
+            const float correction_z = add_z * inverse_count;
+            context.state_positions[offset + 0] = current_x + correction_x;
+            context.state_positions[offset + 1] = current_y + correction_y;
+            context.state_positions[offset + 2] = current_z + correction_z;
+            if (context.velocity_reference_positions.size() == count * 3) {
+                const float attenuation = context.float_values[kDistanceVelocityAttenuation];
+                context.velocity_reference_positions[offset + 0] += correction_x * attenuation;
+                context.velocity_reference_positions[offset + 1] += correction_y * attenuation;
+                context.velocity_reference_positions[offset + 2] += correction_z * attenuation;
+            }
         }
     }
     ++context.distance_solve_count;
@@ -446,6 +538,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "reset_count", context.reset_count) ||
         !dict_i64(result, "step_count", context.step_count) ||
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
+        !dict_i64(result, "particle_prediction_count", context.particle_prediction_count) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -805,8 +898,8 @@ PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 5) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 5 arguments");
+    if (PyTuple_GET_SIZE(args) != 8) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 8 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -817,7 +910,16 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     }
     const long frame = as_long(PyTuple_GET_ITEM(args, 1), "frame");
     const long generation = as_long(PyTuple_GET_ITEM(args, 2), "generation");
+    const double velocity_weight = as_double(PyTuple_GET_ITEM(args, 5), "velocity_weight");
+    const double gravity_ratio = as_double(PyTuple_GET_ITEM(args, 6), "gravity_ratio");
+    const double scale_ratio = as_double(PyTuple_GET_ITEM(args, 7), "scale_ratio");
     if (PyErr_Occurred()) return nullptr;
+    if (!std::isfinite(velocity_weight) || velocity_weight < 0.0 || velocity_weight > 1.0 ||
+        !std::isfinite(gravity_ratio) || gravity_ratio < 0.0 || gravity_ratio > 1.0 ||
+        !std::isfinite(scale_ratio) || scale_ratio <= 0.0) {
+        PyErr_SetString(PyExc_ValueError, "MC2 dynamic scalar is out of range");
+        return nullptr;
+    }
     Buffer positions, rotations;
     if (!positions.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "world_positions") ||
         !rotations.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "world_rotations_xyzw")) {
@@ -839,6 +941,9 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->dynamic_rotations.swap(next_rotations);
     context->frame = frame;
     context->generation = generation;
+    context->velocity_weight = static_cast<float>(velocity_weight);
+    context->gravity_ratio = static_cast<float>(gravity_ratio);
+    context->scale_ratio = static_cast<float>(scale_ratio);
     context->dynamic_ready = true;
     ++context->dynamic_revision;
     Py_RETURN_NONE;
@@ -857,29 +962,50 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     }
     context->state_positions = context->dynamic_positions;
     context->state_rotations = context->dynamic_rotations;
+    context->state_velocities.assign(
+        static_cast<std::size_t>(context->vertex_count) * 3,
+        0.0f
+    );
+    context->velocity_reference_positions = context->dynamic_positions;
     context->initialized = true;
     ++context->reset_count;
     Py_RETURN_NONE;
 }
 
 PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 2) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 2 arguments");
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_step expects 3 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
     if (!ensure_live(context)) return nullptr;
     const double dt = as_double(PyTuple_GET_ITEM(args, 1), "dt");
+    const double simulation_power_z = as_double(
+        PyTuple_GET_ITEM(args, 2),
+        "simulation_power_z"
+    );
     if (PyErr_Occurred()) return nullptr;
-    if (!std::isfinite(dt) || dt < 0.0) {
-        PyErr_SetString(PyExc_ValueError, "dt must be finite and non-negative");
+    if (!std::isfinite(dt) || dt < 0.0 ||
+        !std::isfinite(simulation_power_z) || simulation_power_z < 0.0) {
+        PyErr_SetString(PyExc_ValueError, "dt and simulation_power_z must be finite and non-negative");
         return nullptr;
     }
     if (!context->parameters_ready || !context->dynamic_ready || !context->initialized) {
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 context is not ready to step");
         return nullptr;
     }
-    solve_distance_once(*context);
+    if (dt <= kMc2Epsilon) Py_RETURN_NONE;
+    if (context->proxy_static_ready) {
+        if (!predict_particles(
+                *context,
+                static_cast<float>(dt),
+                static_cast<float>(simulation_power_z))) {
+            PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
+            return nullptr;
+        }
+        solve_distance_once(*context);
+        commit_particle_velocities(*context, static_cast<float>(dt));
+    }
     ++context->step_count;
     Py_RETURN_NONE;
 }
