@@ -691,6 +691,11 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         slot_id: slot.data["runtime_state"]
         for slot_id, slot in physics_world.solver_slots.items()
     }
+    first_native_contexts = {
+        slot_id: slot.data["native_context"]
+        for slot_id, slot in physics_world.solver_slots.items()
+        if slot.data["native_context"] is not None
+    }
     for slot in physics_world.solver_slots.values():
         assert slot.kind == mc2_names.MC2_SLOT_KIND
         assert isinstance(slot.data["topology"], mc2_topology.MC2TopologySpec)
@@ -701,7 +706,12 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["particle_buffer"].particle_count == slot.data["topology"].particle_count
         assert slot.data["writeback_plan"] == {}
-        assert slot.debug_snapshot()["has_backend"] is False
+        snapshot = slot.debug_snapshot()
+        expected_backend = slot.data["topology"].particle_count > 0
+        assert snapshot["has_backend"] is expected_backend
+        if expected_backend:
+            assert snapshot["native_context"]["parameters_ready"] is True
+            assert snapshot["native_context"]["initialized"] is False
 
     _, _, status = mc2_solver.step_mc2(physics_world, tasks)
     assert "复用 3" in status
@@ -787,6 +797,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert "清理 1" in status
     assert physics_world.solver_slots == {}
     assert pruned_buffer.disposed is True
+    assert all(context.disposed for context in first_native_contexts.values())
     source_profile = mc2_parameters.make_mc2_particle_profile(
         gravity=9.8,
         max_distance_enabled=True,

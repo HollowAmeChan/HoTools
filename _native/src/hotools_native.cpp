@@ -7,6 +7,7 @@
 #include "hotools_mc2_bonecloth_io.hpp"
 #include "hotools_property_curve.hpp"
 #include "mc2_context.hpp"
+#include "mc2_context_v0.hpp"
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
@@ -754,6 +755,25 @@ NB_MODULE(hotools_native, m) {
             if (!r) throw nb::python_error();
             Py_DECREF(r);
         }, nb::arg("handle"), "Release MC2 MeshCloth native context resources.");
+    // ---- New Physics World MC2 context V0 (isolated from the legacy full-core context) ----
+    m.def("mc2_context_v0_create",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_create(nullptr, a.ptr())); });
+    m.def("mc2_context_v0_inspect",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_inspect(nullptr, a.ptr())); });
+    m.def("mc2_context_v0_update_parameters",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
+    m.def("mc2_context_v0_update_dynamic",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_dynamic, a); });
+    m.def("mc2_context_v0_reset",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_reset, a); });
+    m.def("mc2_context_v0_step",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_step, a); });
+    m.def("mc2_context_v0_read",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read, a); });
+    m.def("mc2_context_v0_free",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_free, a); });
+    m.def("mc2_context_v0_stats",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_stats(nullptr, a.ptr())); });
     // ---- MC2 单步约束求解器（ndarray 直传，GIL 在纯 C++ 计算段释放）----
     m.def("project_neighbor_constraints_mc2",
         [](f32_2d pos, cf32_1d inv, ci32_1d starts, ci32_1d counts,

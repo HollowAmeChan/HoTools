@@ -130,6 +130,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     armature_obj = None
     source = None
     base_obj = None
+    world = None
+    native_owner = None
+    recovered_native_owner = None
     try:
         armature_obj = _make_armature()
         source = _make_source(armature_obj)
@@ -188,6 +191,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         slot = world.solver_slots[task.task_id]
         runtime_state = slot.data["runtime_state"]
         particle_buffer = slot.data["particle_buffer"]
+        native_owner = slot.data["native_context"]
+        native_info = native_owner.inspect()
+        assert native_info["parameter_revision"] == 1
+        assert native_info["dynamic_revision"] == 1
+        assert native_info["reset_count"] == 1
+        assert native_info["step_count"] == 0
         assert runtime_state.initialized is True
         assert runtime_state.last_reset_reason == "first_valid_pose"
         assert runtime_state.reset_count == particle_buffer.reset_count == 1
@@ -202,6 +211,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         assert runtime_state.frame_revision == 1
         assert runtime_state.reset_count == 1
+        assert native_owner.inspect()["dynamic_revision"] == 1
 
         history_before_parameter_update = particle_buffer.next_positions.copy()
         soft_task = mc2_specs.make_mc2_task_spec(
@@ -217,6 +227,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert slot.data["runtime_state"] is runtime_state
         assert runtime_state.parameter_revision == 1
         assert runtime_state.reset_count == 1
+        native_info = native_owner.inspect()
+        assert native_info["parameter_revision"] == 2
+        assert native_info["dynamic_revision"] == 1
+        assert native_info["reset_count"] == 1
         np.testing.assert_array_equal(
             particle_buffer.next_positions,
             history_before_parameter_update,
@@ -283,10 +297,47 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         assert runtime_state.last_reset_reason == "frame_generation_changed"
         assert runtime_state.reset_count == particle_buffer.reset_count == 2
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 2
+        assert native_info["reset_count"] == 2
+        assert native_info["step_count"] == 0
         np.testing.assert_array_equal(
             particle_buffer.next_positions,
             second.animated_base_world_positions,
         )
+        third_input = frame_input.make_mc2_frame_input(
+            task_id=second_input.task_id,
+            topology_signature=second_input.topology_signature,
+            frame=3,
+            generation=second_input.generation,
+            world_positions=second_input.world_positions,
+            world_rotations_xyzw=second_input.world_rotations_xyzw,
+        )
+        mc2_solver.step_mc2(
+            world,
+            [soft_task],
+            frame_inputs={soft_task.task_id: third_input},
+            dt=1.0 / 60.0,
+        )
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 3
+        assert native_info["reset_count"] == 2
+        assert native_info["step_count"] == 1
+
+        native_owner.dispose()
+        _, _, status = mc2_solver.step_mc2(
+            world,
+            [soft_task],
+            frame_inputs={soft_task.task_id: third_input},
+            dt=1.0 / 60.0,
+        )
+        assert "重建 1" in status
+        recovered_native_owner = world.solver_slots[soft_task.task_id].data["native_context"]
+        assert recovered_native_owner is not native_owner
+        recovered_info = recovered_native_owner.inspect()
+        assert recovered_info["dynamic_revision"] == 1
+        assert recovered_info["reset_count"] == 1
+        assert recovered_info["step_count"] == 0
 
         try:
             frame_input.read_base_pose_frame_snapshot(
@@ -302,6 +353,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         else:
             raise AssertionError("mismatched Mesh topology signature must be rejected")
     finally:
+        if world is not None:
+            world.omni_cache_dispose("test_complete")
+        if native_owner is not None:
+            assert native_owner.inspect()["released"] is True
+        if recovered_native_owner is not None:
+            assert recovered_native_owner.inspect()["released"] is True
         if base_obj is not None:
             base_mesh = base_obj.data
             bpy.data.objects.remove(base_obj, do_unlink=True)

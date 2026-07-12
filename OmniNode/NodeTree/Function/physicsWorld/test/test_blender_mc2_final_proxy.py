@@ -213,6 +213,8 @@ def test_mc2_slot_rebuild_caches_mesh_static_data() -> None:
 def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
     cleanup_properties = _register_mesh_collision_properties()
     obj = _make_object("MC2_FinalProxyStaticDirty", ((0, 1, 2, 3),))
+    world = None
+    latest_native = None
     try:
         group = obj.vertex_groups.new(name="Pin")
         group.add((0,), 1.0, "REPLACE")
@@ -225,6 +227,7 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         mc2_solver.step_mc2(world, [task])
         slot = world.solver_slots[task.task_id]
         first_static = slot.data["mesh_static"]
+        first_native = slot.data["native_context"]
         first_input_signature = slot.data["static_input_signature"]
         assert sum(
             bool(value & 0x01) for value in first_static.final_proxy.vertex_attributes
@@ -234,8 +237,11 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         _world, _ready, status = mc2_solver.step_mc2(world, [task])
         slot = world.solver_slots[task.task_id]
         second_static = slot.data["mesh_static"]
+        second_native = slot.data["native_context"]
         second_input_signature = slot.data["static_input_signature"]
         assert "重建 1" in status
+        assert second_native is not first_native
+        assert first_native.inspect()["released"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert second_input_signature != first_input_signature
@@ -252,12 +258,19 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
             item.uv.x += 0.125
         _world, _ready, status = mc2_solver.step_mc2(world, [task])
         slot = world.solver_slots[task.task_id]
+        latest_native = slot.data["native_context"]
         assert "重建 1" in status
+        assert latest_native is not second_native
+        assert second_native.inspect()["released"] is True
         assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["static_input_signature"] != second_input_signature
         assert slot.data["mesh_static"].bending.bending_signature != second_static.bending.bending_signature
     finally:
+        if world is not None:
+            world.omni_cache_dispose("test_complete")
+        if latest_native is not None:
+            assert latest_native.inspect()["released"] is True
         _remove_object(obj)
         cleanup_properties()
 

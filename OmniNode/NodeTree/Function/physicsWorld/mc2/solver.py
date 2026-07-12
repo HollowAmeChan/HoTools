@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from ..types import PhysicsWorldCache
 from .declaration import MC2_SOLVER_DECLARATION
 from .names import MC2_SLOT_KIND, MC2_SOLVER_ID
@@ -10,7 +12,7 @@ from .parameters import (
     make_mc2_solver_settings,
 )
 from .runtime_parameters import make_mc2_runtime_parameters
-from .frame_state import MC2FrameInputSpec, sync_mc2_frame_input
+from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
@@ -18,11 +20,14 @@ from .topology import build_mc2_topology_spec
 
 
 MC2_FRAMEWORK_STATUS = (
-    "MC2 topology/particle-buffer 框架已就绪；MeshCloth、BoneCloth、BoneSpring 后端尚未接入"
+    "MC2 context V0生命周期已接入；数值step与结果发布尚未接入"
 )
 
 
 def _dispose_mc2_slot(slot, reason: str) -> None:
+    native_context = slot.data.get("native_context")
+    if native_context is not None and hasattr(native_context, "dispose"):
+        native_context.dispose()
     particle_buffer = slot.data.get("particle_buffer")
     if isinstance(particle_buffer, MC2ParticleBuffer):
         particle_buffer.dispose()
@@ -37,6 +42,7 @@ def _slot_debug_snapshot(slot) -> dict:
     particle_buffer = slot.data.get("particle_buffer")
     spec = slot.data.get("spec")
     mesh_static = slot.data.get("mesh_static")
+    native_context = slot.data.get("native_context")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -55,7 +61,12 @@ def _slot_debug_snapshot(slot) -> dict:
             if hasattr(particle_buffer, "debug_dict")
             else None
         ),
-        "has_backend": False,
+        "native_context": (
+            native_context.inspect()
+            if native_context is not None and hasattr(native_context, "inspect")
+            else None
+        ),
+        "has_backend": native_context is not None,
         "has_writeback_plan": bool(slot.data.get("writeback_plan")),
     }
 
@@ -72,6 +83,7 @@ def _install_mc2_slot(
     reset_reason: str,
     mesh_static=None,
     static_input_signature: str | None = None,
+    native_context=None,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
         task_id=spec.task_id,
@@ -98,6 +110,7 @@ def _install_mc2_slot(
             "mesh_static": mesh_static,
             "static_input_signature": static_input_signature,
             "particle_buffer": particle_buffer,
+            "native_context": native_context,
             "runtime_state": state,
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
@@ -125,6 +138,11 @@ def _mc2_slot_rebuild_reason(
         return "particle_buffer_missing"
     if not isinstance(slot.data.get("initial_state"), MC2InitialStateSpec):
         return "initial_state_missing"
+    native_context = slot.data.get("native_context")
+    if topology.particle_count > 0 and (
+        native_context is None or bool(getattr(native_context, "disposed", True))
+    ):
+        return "native_context_missing"
     if slot.kind != MC2_SLOT_KIND:
         return "slot_kind_changed"
     if slot.world_generation != world.generation:
@@ -145,6 +163,7 @@ def _sync_mc2_slot(
     initial_state,
     mesh_static,
     static_input_signature,
+    staged_native_context,
 ) -> tuple[str, object]:
     rebuild_reason = _mc2_slot_rebuild_reason(
         world,
@@ -171,9 +190,17 @@ def _sync_mc2_slot(
             mesh_static=mesh_static,
             static_input_signature=static_input_signature,
             reset_reason=rebuild_reason,
+            native_context=staged_native_context,
         )
         return "created" if rebuild_reason == "created" else "rebuilt", slot
 
+    parameter_will_change = (
+        previous_state.config_signature != spec.config_signature
+        or previous_state.parameter_signature != effective.parameter_signature
+    )
+    native_context = slot.data.get("native_context")
+    if parameter_will_change and native_context is not None:
+        native_context.update_parameters(effective)
     parameter_changed, settings_changed = previous_state.update_contracts(
         config_signature=spec.config_signature,
         parameter_signature=effective.parameter_signature,
@@ -213,9 +240,10 @@ def step_mc2(
     settings: MC2SolverSettingsSpec | None = None,
     frame_inputs: dict[str, MC2FrameInputSpec] | None = None,
     user_reset: bool = False,
+    dt: float = 0.0,
     enabled: bool = True,
 ) -> tuple[object, bool, str]:
-    """同步 topology/slot；不调用 backend，也不发布 solver result。"""
+    """同步 topology/slot/context；V0 step是受检no-op且不发布solver result。"""
     specs = build_mc2_task_specs(tasks)
     if settings is None:
         settings = make_mc2_solver_settings()
@@ -225,6 +253,9 @@ def step_mc2(
         return world, False, "MC2 模拟步已禁用"
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 模拟步需要 PhysicsWorldCache"
+    dt = float(dt)
+    if not math.isfinite(dt) or dt < 0.0:
+        raise ValueError("MC2 dt必须是有限非负数")
 
     active_specs = tuple(spec for spec in specs if spec.enabled and spec.sources)
     frame_inputs = dict(frame_inputs or {})
@@ -235,60 +266,85 @@ def step_mc2(
         raise TypeError("frame_inputs values must be MC2FrameInputSpec")
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
-    for spec in active_specs:
-        topology = build_mc2_topology_spec(spec)
-        effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
-        frame_input = frame_inputs.get(spec.task_id)
-        if frame_input is not None:
-            if frame_input.task_id != spec.task_id:
-                raise ValueError("MC2 frame input task identity mismatch")
-            if frame_input.topology_signature != topology.topology_signature:
-                raise ValueError("MC2 frame input topology identity mismatch")
-            if frame_input.particle_count != topology.particle_count:
-                raise ValueError("MC2 frame input particle count mismatch")
-        static_input_signature = None
-        mesh_static_supported = (
-            spec.setup_type == "mesh_cloth"
-            and all(source.resolved for source in topology.sources)
-            and topology.particle_count > 0
-        )
-        if mesh_static_supported:
-            from .setups.mesh_cloth.static_build import (
-                mesh_cloth_static_input_signature_for_task,
+    staged_native_contexts = []
+    try:
+        for spec in active_specs:
+            topology = build_mc2_topology_spec(spec)
+            effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
+            frame_input = frame_inputs.get(spec.task_id)
+            if frame_input is not None:
+                if frame_input.task_id != spec.task_id:
+                    raise ValueError("MC2 frame input task identity mismatch")
+                if frame_input.topology_signature != topology.topology_signature:
+                    raise ValueError("MC2 frame input topology identity mismatch")
+                if frame_input.particle_count != topology.particle_count:
+                    raise ValueError("MC2 frame input particle count mismatch")
+            static_input_signature = None
+            mesh_static_supported = (
+                spec.setup_type == "mesh_cloth"
+                and all(source.resolved for source in topology.sources)
+                and topology.particle_count > 0
             )
+            if mesh_static_supported:
+                from .setups.mesh_cloth.static_build import (
+                    mesh_cloth_static_input_signature_for_task,
+                )
 
-            static_input_signature = mesh_cloth_static_input_signature_for_task(
+                static_input_signature = mesh_cloth_static_input_signature_for_task(
+                    spec,
+                    topology,
+                )
+            rebuild_reason = _mc2_slot_rebuild_reason(
+                world,
                 spec,
                 topology,
-            )
-        rebuild_reason = _mc2_slot_rebuild_reason(
-            world,
-            spec,
-            topology,
-            static_input_signature,
-        )
-        initial_state = (
-            build_mc2_initial_state(spec, topology)
-            if rebuild_reason
-            else None
-        )
-        mesh_static = None
-        if rebuild_reason and mesh_static_supported:
-            from .setups.mesh_cloth.static_build import (
-                build_mc2_mesh_cloth_static_for_task,
-            )
-
-            mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
-        prepared_items.append(
-            (
-                spec,
-                topology,
-                effective,
-                initial_state,
-                mesh_static,
                 static_input_signature,
             )
-        )
+            initial_state = (
+                build_mc2_initial_state(spec, topology)
+                if rebuild_reason
+                else None
+            )
+            mesh_static = None
+            if rebuild_reason and mesh_static_supported:
+                from .setups.mesh_cloth.static_build import (
+                    build_mc2_mesh_cloth_static_for_task,
+                )
+
+                mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
+            staged_native_context = None
+            staged_native_frame_applied = False
+            if rebuild_reason and topology.particle_count > 0:
+                from .native import MC2NativeContextV0
+
+                staged_native_context = MC2NativeContextV0(topology.particle_count)
+                try:
+                    staged_native_context.update_parameters(effective)
+                    if frame_input is not None:
+                        staged_native_context.update_dynamic(frame_input)
+                        staged_native_context.reset()
+                        staged_native_context.read()
+                        staged_native_frame_applied = True
+                except Exception:
+                    staged_native_context.dispose()
+                    raise
+                staged_native_contexts.append(staged_native_context)
+            prepared_items.append(
+                (
+                    spec,
+                    topology,
+                    effective,
+                    initial_state,
+                    mesh_static,
+                    static_input_signature,
+                    staged_native_context,
+                    staged_native_frame_applied,
+                )
+            )
+    except Exception:
+        for context in staged_native_contexts:
+            context.dispose()
+        raise
     prepared = tuple(prepared_items)
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
@@ -301,6 +357,8 @@ def step_mc2(
             initial_state,
             mesh_static,
             static_input_signature,
+            staged_native_context,
+            staged_native_frame_applied,
         ) in prepared:
             action, slot = _sync_mc2_slot(
                 world,
@@ -311,20 +369,45 @@ def step_mc2(
                 initial_state,
                 mesh_static,
                 static_input_signature,
+                staged_native_context,
             )
+            if staged_native_context in staged_native_contexts:
+                staged_native_contexts.remove(staged_native_context)
             counts[action] += 1
             active_slot_ids.append(slot.slot_id)
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
-                sync_mc2_frame_input(
-                    slot.data["runtime_state"],
+                runtime_state = slot.data["runtime_state"]
+                native_context = slot.data.get("native_context")
+                frame_plan = plan_mc2_frame_sync(
+                    runtime_state,
+                    frame_input,
+                    user_reset=bool(user_reset),
+                )
+                if (
+                    native_context is not None
+                    and frame_plan.action != "same_frame"
+                    and not staged_native_frame_applied
+                ):
+                    native_context.update_dynamic(frame_input)
+                    if frame_plan.action == "reset":
+                        native_context.reset()
+                    else:
+                        native_context.step_no_collision(dt)
+                    native_context.read()
+                frame_result = sync_mc2_frame_input(
+                    runtime_state,
                     slot.data["particle_buffer"],
                     frame_input,
                     user_reset=bool(user_reset),
                 )
+                if frame_result != frame_plan:
+                    raise RuntimeError("MC2 frame plan changed during commit")
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
     finally:
         world.release_write(MC2_SOLVER_ID)
+        for context in staged_native_contexts:
+            context.dispose()
 
     status = (
         f"{MC2_FRAMEWORK_STATUS}（任务 {len(active_specs)}，"

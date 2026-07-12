@@ -81,23 +81,21 @@ class MC2FrameSyncResult:
     generation: int
 
 
-def sync_mc2_frame_input(runtime_state, particle_buffer, frame_input, *, user_reset=False):
-    """Apply frame identity rules without performing a solver step."""
-    from .state import MC2ParticleBuffer, MC2SlotRuntimeState
+def plan_mc2_frame_sync(runtime_state, frame_input, *, user_reset=False):
+    """Classify a frame transition without mutating host or native state."""
+    from .state import MC2SlotRuntimeState
 
     if not isinstance(runtime_state, MC2SlotRuntimeState):
         raise TypeError("runtime_state must be MC2SlotRuntimeState")
-    if not isinstance(particle_buffer, MC2ParticleBuffer):
-        raise TypeError("particle_buffer must be MC2ParticleBuffer")
     if not isinstance(frame_input, MC2FrameInputSpec):
         raise TypeError("frame_input must be MC2FrameInputSpec")
-    if runtime_state.disposed or particle_buffer.disposed:
+    if runtime_state.disposed:
         raise RuntimeError("cannot sync a disposed MC2 slot")
     if frame_input.task_id != runtime_state.task_id:
         raise ValueError("frame input task identity mismatch")
     if frame_input.topology_signature != runtime_state.topology_signature:
         raise ValueError("frame input topology identity mismatch")
-    if frame_input.particle_count != particle_buffer.particle_count:
+    if frame_input.particle_count != runtime_state.particle_count:
         raise ValueError("frame input particle count mismatch")
 
     same_identity = (
@@ -119,15 +117,28 @@ def sync_mc2_frame_input(runtime_state, particle_buffer, frame_input, *, user_re
     elif frame_input.frame > runtime_state.last_frame + 1:
         reset_reason = "time_discontinuity"
 
-    if reset_reason:
+    action = "reset" if reset_reason else "updated"
+    return MC2FrameSyncResult(action, reset_reason, frame_input.frame, frame_input.generation)
+
+
+def sync_mc2_frame_input(runtime_state, particle_buffer, frame_input, *, user_reset=False):
+    """Commit a previously valid frame transition to host particle state."""
+    from .state import MC2ParticleBuffer
+
+    if not isinstance(particle_buffer, MC2ParticleBuffer):
+        raise TypeError("particle_buffer must be MC2ParticleBuffer")
+    if particle_buffer.disposed:
+        raise RuntimeError("cannot sync a disposed MC2 slot")
+    result = plan_mc2_frame_sync(runtime_state, frame_input, user_reset=user_reset)
+    if result.action == "same_frame":
+        return result
+    if result.action == "reset":
         particle_buffer.reset_from_frame(frame_input)
-        runtime_state.mark_frame_reset(frame_input, reset_reason)
-        action = "reset"
+        runtime_state.mark_frame_reset(frame_input, result.reset_reason)
     else:
         particle_buffer.update_base_pose(frame_input)
         runtime_state.mark_frame_update(frame_input)
-        action = "updated"
-    return MC2FrameSyncResult(action, reset_reason, frame_input.frame, frame_input.generation)
+    return result
 
 
 __all__ = [
@@ -135,5 +146,6 @@ __all__ = [
     "MC2FrameInputSpec",
     "MC2FrameSyncResult",
     "make_mc2_frame_input",
+    "plan_mc2_frame_sync",
     "sync_mc2_frame_input",
 ]
