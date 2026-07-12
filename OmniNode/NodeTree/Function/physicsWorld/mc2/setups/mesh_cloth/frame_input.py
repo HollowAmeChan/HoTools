@@ -7,7 +7,14 @@ from dataclasses import dataclass
 import bpy
 import numpy as np
 
+from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from .base_pose import validate_base_pose_proxy
+from .final_proxy import (
+    _apply_vertex_triangle_normals,
+    _orientation_xyzw,
+    _triangle_normal,
+    _triangle_tangent,
+)
 
 
 _FRAME_CACHE_PREFIX = "mc2_mesh_base_pose_frame"
@@ -166,7 +173,56 @@ def read_base_pose_frame_snapshot(
     return snapshot
 
 
+def build_mc2_mesh_frame_input(
+    snapshot: MC2MeshFrameSnapshot,
+    mesh_static,
+    *,
+    topology_signature: str,
+) -> MC2FrameInputSpec:
+    """Build MC2 world pose using the frozen N0 triangle/UV orientation records."""
+    if not isinstance(snapshot, MC2MeshFrameSnapshot):
+        raise TypeError("snapshot must be MC2MeshFrameSnapshot")
+    final_proxy = getattr(mesh_static, "final_proxy", None)
+    finalizer = getattr(mesh_static, "finalizer", None)
+    if final_proxy is None or finalizer is None:
+        raise TypeError("mesh_static must be MC2MeshClothStaticBuildResult")
+    if final_proxy.vertex_count != snapshot.vertex_count:
+        raise ValueError("Mesh frame snapshot and static proxy vertex counts differ")
+    topology_signature = str(topology_signature or "")
+    if not topology_signature:
+        raise ValueError("Mesh frame input requires the task topology signature")
+    records = tuple(finalizer.vertex_to_triangle_records)
+    if len(records) != snapshot.vertex_count or any(not value for value in records):
+        raise ValueError("N3 Mesh frame orientation currently requires every vertex to belong to a triangle")
+
+    positions = np.asarray(snapshot.animated_base_world_positions, dtype=np.float64)
+    triangles = tuple(tuple(int(value) for value in triangle) for triangle in final_proxy.triangles)
+    uvs = np.asarray(final_proxy.uvs, dtype=np.float64)
+    triangle_normals = [_triangle_normal(positions, triangle) for triangle in triangles]
+    triangle_tangents = [_triangle_tangent(positions, uvs, triangle) for triangle in triangles]
+    normals, binormals = _apply_vertex_triangle_normals(
+        snapshot.animated_base_world_normals,
+        final_proxy.local_tangents,
+        triangle_normals,
+        triangle_tangents,
+        records,
+    )
+    rotations = np.asarray(
+        [_orientation_xyzw(normal, binormal) for normal, binormal in zip(normals, binormals)],
+        dtype=np.float32,
+    )
+    return make_mc2_frame_input(
+        task_id=final_proxy.task_id,
+        topology_signature=topology_signature,
+        frame=snapshot.frame,
+        generation=snapshot.generation,
+        world_positions=snapshot.animated_base_world_positions,
+        world_rotations_xyzw=rotations,
+    )
+
+
 __all__ = [
     "MC2MeshFrameSnapshot",
+    "build_mc2_mesh_frame_input",
     "read_base_pose_frame_snapshot",
 ]

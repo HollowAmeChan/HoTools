@@ -10,6 +10,7 @@ from .parameters import (
     make_mc2_solver_settings,
 )
 from .runtime_parameters import make_mc2_runtime_parameters
+from .frame_state import MC2FrameInputSpec, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
@@ -73,16 +74,18 @@ def _install_mc2_slot(
     static_input_signature: str | None = None,
 ) -> MC2SlotRuntimeState:
     state = MC2SlotRuntimeState(
+        task_id=spec.task_id,
         topology_signature=topology.topology_signature,
         config_signature=spec.config_signature,
         parameter_signature=effective_parameters.parameter_signature,
         settings_signature=settings.signature,
         world_generation=int(world.generation),
         particle_count=int(topology.particle_count),
-        last_reset_reason=str(reset_reason),
-        initialized=True,
+        allocation_reason=str(reset_reason),
+        last_reset_reason="allocation_pending",
+        initialized=False,
     )
-    particle_buffer = MC2ParticleBuffer.from_initial_state(initial_state)
+    particle_buffer = MC2ParticleBuffer.allocate(initial_state)
     slot.kind = MC2_SLOT_KIND
     slot.world_generation = int(world.generation)
     slot.data.update(
@@ -208,6 +211,8 @@ def step_mc2(
     tasks=None,
     *,
     settings: MC2SolverSettingsSpec | None = None,
+    frame_inputs: dict[str, MC2FrameInputSpec] | None = None,
+    user_reset: bool = False,
     enabled: bool = True,
 ) -> tuple[object, bool, str]:
     """同步 topology/slot；不调用 backend，也不发布 solver result。"""
@@ -222,13 +227,32 @@ def step_mc2(
         return world, False, "MC2 模拟步需要 PhysicsWorldCache"
 
     active_specs = tuple(spec for spec in specs if spec.enabled and spec.sources)
+    frame_inputs = dict(frame_inputs or {})
+    unknown_frame_ids = set(frame_inputs) - {spec.task_id for spec in active_specs}
+    if unknown_frame_ids:
+        raise ValueError(f"MC2 frame inputs contain unknown task ids: {sorted(unknown_frame_ids)!r}")
+    if any(not isinstance(value, MC2FrameInputSpec) for value in frame_inputs.values()):
+        raise TypeError("frame_inputs values must be MC2FrameInputSpec")
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
     for spec in active_specs:
         topology = build_mc2_topology_spec(spec)
         effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
+        frame_input = frame_inputs.get(spec.task_id)
+        if frame_input is not None:
+            if frame_input.task_id != spec.task_id:
+                raise ValueError("MC2 frame input task identity mismatch")
+            if frame_input.topology_signature != topology.topology_signature:
+                raise ValueError("MC2 frame input topology identity mismatch")
+            if frame_input.particle_count != topology.particle_count:
+                raise ValueError("MC2 frame input particle count mismatch")
         static_input_signature = None
-        if spec.setup_type == "mesh_cloth":
+        mesh_static_supported = (
+            spec.setup_type == "mesh_cloth"
+            and all(source.resolved for source in topology.sources)
+            and topology.particle_count > 0
+        )
+        if mesh_static_supported:
             from .setups.mesh_cloth.static_build import (
                 mesh_cloth_static_input_signature_for_task,
             )
@@ -249,7 +273,7 @@ def step_mc2(
             else None
         )
         mesh_static = None
-        if rebuild_reason and spec.setup_type == "mesh_cloth":
+        if rebuild_reason and mesh_static_supported:
             from .setups.mesh_cloth.static_build import (
                 build_mc2_mesh_cloth_static_for_task,
             )
@@ -290,6 +314,14 @@ def step_mc2(
             )
             counts[action] += 1
             active_slot_ids.append(slot.slot_id)
+            frame_input = frame_inputs.get(spec.task_id)
+            if frame_input is not None:
+                sync_mc2_frame_input(
+                    slot.data["runtime_state"],
+                    slot.data["particle_buffer"],
+                    frame_input,
+                    user_reset=bool(user_reset),
+                )
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
     finally:
         world.release_write(MC2_SOLVER_ID)

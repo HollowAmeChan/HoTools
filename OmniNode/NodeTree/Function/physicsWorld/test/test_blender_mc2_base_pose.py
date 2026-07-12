@@ -49,6 +49,24 @@ base_pose = importlib.import_module(
 frame_input = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.frame_input"
 )
+mc2_specs = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.specs"
+)
+mc2_parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
+)
+mc2_topology = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
+)
+mc2_static = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.static_build"
+)
+mc2_solver = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
+)
+world_types = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
+)
 
 
 def _make_armature():
@@ -73,6 +91,10 @@ def _make_source(armature_obj):
         (),
         ((0, 1, 2),),
     )
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    uv_by_vertex = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+    for loop in mesh.loops:
+        uv_layer.data[loop.index].uv = uv_by_vertex[loop.vertex_index]
     source = bpy.data.objects.new("MC2_BasePoseSource", mesh)
     bpy.context.scene.collection.objects.link(source)
     group = source.vertex_groups.new(name="BasePoseBone")
@@ -142,6 +164,64 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert first.animated_base_world_normals.flags.writeable is False
         assert np.allclose(first.animated_base_world_positions[:, 0], (0.5, 1.5, 0.5))
 
+        task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
+        topology = mc2_topology.build_mc2_topology_spec(task)
+        static = mc2_static.build_mc2_mesh_cloth_static_for_task(task, topology)
+        first_input = frame_input.build_mc2_mesh_frame_input(
+            first,
+            static,
+            topology_signature=topology.topology_signature,
+        )
+        assert first_input.world_rotations_xyzw.shape == (3, 4)
+        assert first_input.world_rotations_xyzw.flags.writeable is False
+        assert np.allclose(
+            np.linalg.norm(first_input.world_rotations_xyzw, axis=1),
+            1.0,
+        )
+
+        world = world_types.PhysicsWorldCache()
+        mc2_solver.step_mc2(
+            world,
+            [task],
+            frame_inputs={task.task_id: first_input},
+        )
+        slot = world.solver_slots[task.task_id]
+        runtime_state = slot.data["runtime_state"]
+        particle_buffer = slot.data["particle_buffer"]
+        assert runtime_state.initialized is True
+        assert runtime_state.last_reset_reason == "first_valid_pose"
+        assert runtime_state.reset_count == particle_buffer.reset_count == 1
+        np.testing.assert_array_equal(
+            particle_buffer.next_positions,
+            first.animated_base_world_positions,
+        )
+        mc2_solver.step_mc2(
+            world,
+            [task],
+            frame_inputs={task.task_id: first_input},
+        )
+        assert runtime_state.frame_revision == 1
+        assert runtime_state.reset_count == 1
+
+        history_before_parameter_update = particle_buffer.next_positions.copy()
+        soft_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(damping=0.2),
+        )
+        mc2_solver.step_mc2(
+            world,
+            [soft_task],
+            frame_inputs={soft_task.task_id: first_input},
+        )
+        assert slot.data["runtime_state"] is runtime_state
+        assert runtime_state.parameter_revision == 1
+        assert runtime_state.reset_count == 1
+        np.testing.assert_array_equal(
+            particle_buffer.next_positions,
+            history_before_parameter_update,
+        )
+
         offsets = np.full((3, 3), (0.0, 0.0, 0.25), dtype=np.float32)
         gn_offset.write_gn_local_offsets(source, offsets)
         depsgraph = _update_depsgraph()
@@ -190,6 +270,22 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert np.allclose(
             second.animated_base_world_positions - fresh_same_pose.animated_base_world_positions,
             (0.5, 0.0, 0.0),
+        )
+        second_input = frame_input.build_mc2_mesh_frame_input(
+            second,
+            static,
+            topology_signature=topology.topology_signature,
+        )
+        mc2_solver.step_mc2(
+            world,
+            [soft_task],
+            frame_inputs={soft_task.task_id: second_input},
+        )
+        assert runtime_state.last_reset_reason == "frame_generation_changed"
+        assert runtime_state.reset_count == particle_buffer.reset_count == 2
+        np.testing.assert_array_equal(
+            particle_buffer.next_positions,
+            second.animated_base_world_positions,
         )
 
         try:

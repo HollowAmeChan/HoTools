@@ -236,7 +236,8 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         second_static = slot.data["mesh_static"]
         second_input_signature = slot.data["static_input_signature"]
         assert "重建 1" in status
-        assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
+        assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
+        assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert second_input_signature != first_input_signature
         assert second_static.distance.distance_signature != first_static.distance.distance_signature
         assert second_static.bending is not None
@@ -252,7 +253,8 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         _world, _ready, status = mc2_solver.step_mc2(world, [task])
         slot = world.solver_slots[task.task_id]
         assert "重建 1" in status
-        assert slot.data["runtime_state"].last_reset_reason == "static_input_changed"
+        assert slot.data["runtime_state"].allocation_reason == "static_input_changed"
+        assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["static_input_signature"] != second_input_signature
         assert slot.data["mesh_static"].bending.bending_signature != second_static.bending.bending_signature
     finally:

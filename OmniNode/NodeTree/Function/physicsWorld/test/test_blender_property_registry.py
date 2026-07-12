@@ -537,12 +537,11 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         assert mesh_initial.parent_indices == (-1, -1, -1)
         assert mesh_initial.fixed_mask == (False, False, False)
         assert mesh_initial.rest_positions[1] == (1.0, 0.0, 0.0)
-        mesh_buffer = mc2_state.MC2ParticleBuffer.from_initial_state(mesh_initial)
-        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.old_positions)
-        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.base_positions)
-        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.previous_positions)
-        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.velocity_positions)
-        np.testing.assert_array_equal(mesh_buffer.next_positions, mesh_buffer.display_positions)
+        mesh_buffer = mc2_state.MC2ParticleBuffer.allocate(mesh_initial)
+        assert mesh_buffer.reset_count == 0
+        assert not np.any(mesh_buffer.next_positions)
+        assert not np.any(mesh_buffer.old_frame_positions)
+        assert not np.any(mesh_buffer.old_frame_rotations)
         assert not np.any(mesh_buffer.velocities)
         assert not np.any(mesh_buffer.real_velocities)
         assert not np.any(mesh_buffer.friction)
@@ -698,7 +697,8 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         assert isinstance(slot.data["runtime_state"], mc2_state.MC2SlotRuntimeState)
         assert isinstance(slot.data["initial_state"], mc2_initial_state.MC2InitialStateSpec)
         assert isinstance(slot.data["particle_buffer"], mc2_state.MC2ParticleBuffer)
-        assert slot.data["runtime_state"].initialized is True
+        assert slot.data["runtime_state"].initialized is False
+        assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["particle_buffer"].particle_count == slot.data["topology"].particle_count
         assert slot.data["writeback_plan"] == {}
         assert slot.debug_snapshot()["has_backend"] is False

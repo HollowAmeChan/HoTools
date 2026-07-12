@@ -34,16 +34,16 @@
 | 层 | 当前状态 | 事实边界 |
 |---|---|---|
 | solver/task scaffold | scaffold | `specs.py`、`topology.py`、`solver.py` 已有统一 task、slot reuse/rebuild/prune 和先 prepare 后写锁的事务边界。这里仍不调用 backend。 |
-| particle owner | scaffold | `MC2ParticleBuffer` 与 slot dispose 已存在，但当前从 build-time rest pose 初始化，不等于源码参考“Center、Particle Reset 与 Array Lifetime”中的 current-frame world-pose reset；不能作为 native reset 完成度。 |
+| particle owner | verified contract | `MC2ParticleBuffer.allocate()` 只分配并保持未初始化；`reset_from_frame()` 按源码同时覆盖 position/rotation history并清零 velocity/friction/collision。allocation reason与真实 reset reason已分离；尚无 native owner。 |
 | Mesh N0 final proxy | landed | `final_proxy.py` 已实现 triangle/edge union、方向统一、vertex adjacency、vertex-to-triangle flip、normal/tangent、UV seam gate 和同 index Pin attribute，并由 Tier A fixture 覆盖。 |
 | Mesh N0 baseline | landed | `mesh_baseline.py` 已实现 parent/child、baseline ranges/data、root/depth、local pose 和 ZeroDistance attribute finalization；equal-cost 使用 HoTools 确定性 index 规则并登记为 intentional deviation。 |
 | Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance 与 Bending；UV/Pin mask 进入独立 static input signature。 |
 | Distance N1 | landed | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。尚无新 native consumer。 |
 | TriangleBending N1 | landed | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；13 个 static fixture、3 个 runtime scratch fixture和 Blender slot bundle回归通过。initial local-to-world columns与完整 record order进入 constraint signature；尚无新 native consumer。 |
 | Inertia/Center static | verified source notes | producer/consumer 与状态分层已审计；尚无生产 spec、builder 或 oracle 闭环。 |
-| Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot。尚未派生 N3 per-vertex world rotations，也未接新 native step。 |
+| Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。当前首版要求每个 vertex属于 triangle；尚缺 loose-line/Bone frame与 Tier A frame rotation oracle。 |
 | Runtime parameters N2 | verified contract | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；尚无 native consumer。 |
-| Dynamic/reset N3/N4 | not implemented | 没有新 context 的 dynamic sync、current-frame reset、Center persistent state 或 substep scratch 生命周期。 |
+| Dynamic/reset N3/N4 | scaffold | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；Mesh slot可显式消费 frame spec。Center persistent state、Bone frame、native dynamic sync与 substep scratch尚未实现。 |
 | 新 native context/step | not implemented | `physicsWorld.mc2.step_mc2()` 明确不创建 context、不推进模拟、不发布 result。旧 `_native` context/full-core 不计入此项。 |
 | result/writeback | planned only | `GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仅登记为计划通道；当前不得发布伪结果或标 ready。 |
 
@@ -137,10 +137,10 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 下一交付是 **N3 Frame Input 与 Reset**，仍然不是完整 native step：
 
-1. 从 BasePose 的同一不可写 snapshot 派生 world positions、normals 与 per-vertex rotations。
-2. 分离 frame identity/continuity、team dynamic options和外部 anchor/collider identity，不塞入 N2 value ABI。
-3. 冻结首次有效 pose reset、连续帧、same-frame、倒放/跳帧与用户 reset reason。
-4. allocation只建立容量；未取得当前帧完整 pose前不得把 build-time rest pose伪装成已初始化 runtime state。
+1. 为 Mesh world rotation与 reset数组补固定 MC2 Tier A frame oracle；当前 Blender回归只证明 adapter/lifecycle自洽。
+2. 补 BoneCloth/BoneSpring stable bone identity 的 world pose frame spec。
+3. 分离 team dynamic options和外部 anchor/collider identity，不塞入 N2 value ABI。
+4. 冻结 Center static/persistent/frame-derived最小状态，为 native create/reset准备输入。
 
 退出条件：allocation-before-reset、首次 reset、连续帧、same-frame、time discontinuity、参数热更新保留 history 的数组级测试通过。
 

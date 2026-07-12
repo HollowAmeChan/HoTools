@@ -9,14 +9,6 @@ import numpy as np
 from .initial_state import MC2InitialStateSpec
 
 
-def _positions(values) -> np.ndarray:
-    return np.ascontiguousarray(values, dtype=np.float32).reshape((-1, 3))
-
-
-def _rotations(values) -> np.ndarray:
-    return np.ascontiguousarray(values, dtype=np.float32).reshape((-1, 4))
-
-
 @dataclass
 class MC2ParticleBuffer:
     """与 Unity particle reset job 对齐的共享动态数组。"""
@@ -27,8 +19,8 @@ class MC2ParticleBuffer:
     old_rotations: np.ndarray
     base_positions: np.ndarray
     base_rotations: np.ndarray
-    previous_positions: np.ndarray
-    previous_rotations: np.ndarray
+    old_frame_positions: np.ndarray
+    old_frame_rotations: np.ndarray
     velocity_positions: np.ndarray
     display_positions: np.ndarray
     velocities: np.ndarray
@@ -43,35 +35,34 @@ class MC2ParticleBuffer:
     fixed_mask: np.ndarray
     source_indices: np.ndarray
     source_local_indices: np.ndarray
-    reset_count: int = 1
+    reset_count: int = 0
     disposed: bool = False
 
     @classmethod
-    def from_initial_state(cls, initial: MC2InitialStateSpec) -> "MC2ParticleBuffer":
+    def allocate(cls, initial: MC2InitialStateSpec) -> "MC2ParticleBuffer":
         if not isinstance(initial, MC2InitialStateSpec):
             raise TypeError("initial 必须是 MC2InitialStateSpec")
-        positions = _positions(initial.rest_positions)
-        rotations = _rotations(initial.rest_rotations)
         count = int(initial.particle_count)
         zeros3 = np.zeros((count, 3), dtype=np.float32)
+        zeros4 = np.zeros((count, 4), dtype=np.float32)
         return cls(
             particle_count=count,
-            next_positions=positions.copy(),
-            old_positions=positions.copy(),
-            old_rotations=rotations.copy(),
-            base_positions=positions.copy(),
-            base_rotations=rotations.copy(),
-            previous_positions=positions.copy(),
-            previous_rotations=rotations.copy(),
-            velocity_positions=positions.copy(),
-            display_positions=positions.copy(),
+            next_positions=zeros3.copy(),
+            old_positions=zeros3.copy(),
+            old_rotations=zeros4.copy(),
+            base_positions=zeros3.copy(),
+            base_rotations=zeros4.copy(),
+            old_frame_positions=zeros3.copy(),
+            old_frame_rotations=zeros4.copy(),
+            velocity_positions=zeros3.copy(),
+            display_positions=zeros3.copy(),
             velocities=zeros3.copy(),
             real_velocities=zeros3.copy(),
             friction=np.zeros(count, dtype=np.float32),
             static_friction=np.zeros(count, dtype=np.float32),
             collision_normals=zeros3.copy(),
-            step_basic_positions=positions.copy(),
-            step_basic_rotations=rotations.copy(),
+            step_basic_positions=zeros3.copy(),
+            step_basic_rotations=zeros4.copy(),
             parent_indices=np.ascontiguousarray(initial.parent_indices, dtype=np.int32),
             depths=np.ascontiguousarray(initial.depths, dtype=np.float32),
             fixed_mask=np.ascontiguousarray(initial.fixed_mask, dtype=np.bool_),
@@ -79,22 +70,50 @@ class MC2ParticleBuffer:
             source_local_indices=np.ascontiguousarray(initial.source_local_indices, dtype=np.int32),
         )
 
-    def reset(self, initial: MC2InitialStateSpec) -> None:
-        replacement = type(self).from_initial_state(initial)
-        reset_count = self.reset_count + 1
-        self.__dict__.update(replacement.__dict__)
-        self.reset_count = reset_count
+    def reset_from_frame(self, frame_input) -> None:
+        if self.disposed:
+            raise RuntimeError("cannot reset a disposed MC2 particle buffer")
+        if frame_input.particle_count != self.particle_count:
+            raise ValueError("frame input particle count mismatch")
+        positions = np.ascontiguousarray(frame_input.world_positions, dtype=np.float32)
+        rotations = np.ascontiguousarray(frame_input.world_rotations_xyzw, dtype=np.float32)
+        for name in (
+            "next_positions", "old_positions", "base_positions", "old_frame_positions",
+            "velocity_positions", "display_positions",
+            "step_basic_positions",
+        ):
+            getattr(self, name)[:] = positions
+        for name in (
+            "old_rotations", "base_rotations", "old_frame_rotations", "step_basic_rotations",
+        ):
+            getattr(self, name)[:] = rotations
+        self.velocities.fill(0.0)
+        self.real_velocities.fill(0.0)
+        self.friction.fill(0.0)
+        self.static_friction.fill(0.0)
+        self.collision_normals.fill(0.0)
+        self.reset_count += 1
+
+    def update_base_pose(self, frame_input) -> None:
+        if self.disposed:
+            raise RuntimeError("cannot update a disposed MC2 particle buffer")
+        if frame_input.particle_count != self.particle_count:
+            raise ValueError("frame input particle count mismatch")
+        self.base_positions[:] = frame_input.world_positions
+        self.base_rotations[:] = frame_input.world_rotations_xyzw
+        self.step_basic_positions[:] = frame_input.world_positions
+        self.step_basic_rotations[:] = frame_input.world_rotations_xyzw
 
     def dispose(self) -> None:
         self.disposed = True
         self.particle_count = 0
         for name in (
-            "next_positions", "old_positions", "base_positions", "previous_positions",
+            "next_positions", "old_positions", "base_positions", "old_frame_positions",
             "velocity_positions", "display_positions", "velocities", "real_velocities",
             "collision_normals", "step_basic_positions",
         ):
             setattr(self, name, np.zeros((0, 3), dtype=np.float32))
-        for name in ("old_rotations", "base_rotations", "previous_rotations", "step_basic_rotations"):
+        for name in ("old_rotations", "base_rotations", "old_frame_rotations", "step_basic_rotations"):
             setattr(self, name, np.zeros((0, 4), dtype=np.float32))
         for name in ("friction", "static_friction", "depths"):
             setattr(self, name, np.zeros(0, dtype=np.float32))
@@ -121,16 +140,21 @@ class MC2ParticleBuffer:
 
 @dataclass
 class MC2SlotRuntimeState:
+    task_id: str
     topology_signature: str
     config_signature: str
     parameter_signature: str
     settings_signature: str
     world_generation: int
     particle_count: int
+    allocation_reason: str = "created"
     parameter_revision: int = 0
     settings_revision: int = 0
-    reset_count: int = 1
-    last_reset_reason: str = "created"
+    reset_count: int = 0
+    last_reset_reason: str = "allocation_pending"
+    last_frame: int | None = None
+    last_frame_generation: int | None = None
+    frame_revision: int = 0
     initialized: bool = False
     disposed: bool = False
     dispose_reason: str = ""
@@ -161,18 +185,36 @@ class MC2SlotRuntimeState:
         self.dispose_reason = str(reason or "dispose")
         self.initialized = False
 
+    def mark_frame_reset(self, frame_input, reason: str) -> None:
+        self.last_frame = int(frame_input.frame)
+        self.last_frame_generation = int(frame_input.generation)
+        self.frame_revision += 1
+        self.reset_count += 1
+        self.last_reset_reason = str(reason)
+        self.initialized = True
+
+    def mark_frame_update(self, frame_input) -> None:
+        self.last_frame = int(frame_input.frame)
+        self.last_frame_generation = int(frame_input.generation)
+        self.frame_revision += 1
+
     def debug_dict(self) -> dict:
         return {
+            "task_id": self.task_id,
             "topology_signature": self.topology_signature,
             "config_signature": self.config_signature,
             "parameter_signature": self.parameter_signature,
             "settings_signature": self.settings_signature,
             "world_generation": self.world_generation,
             "particle_count": self.particle_count,
+            "allocation_reason": self.allocation_reason,
             "parameter_revision": self.parameter_revision,
             "settings_revision": self.settings_revision,
             "reset_count": self.reset_count,
             "last_reset_reason": self.last_reset_reason,
+            "last_frame": self.last_frame,
+            "last_frame_generation": self.last_frame_generation,
+            "frame_revision": self.frame_revision,
             "initialized": self.initialized,
             "disposed": self.disposed,
             "dispose_reason": self.dispose_reason,
