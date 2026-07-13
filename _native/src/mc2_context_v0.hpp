@@ -10,6 +10,7 @@ PyObject* mc2_context_v0_update_proxy_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_baseline_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_distance_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args);
+PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args);
 PyObject* mc2_context_v0_reset(PyObject*, PyObject* args);

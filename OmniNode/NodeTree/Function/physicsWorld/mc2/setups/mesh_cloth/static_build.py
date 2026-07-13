@@ -13,6 +13,8 @@ import json
 
 from ...bending_static import MC2BendingStaticSpec
 from ...bending_static import build_mc2_bending_static
+from ...center_state import MC2CenterStaticSpec
+from ...center_state import build_mc2_center_static
 from ...distance_static import MC2DistanceStaticSpec
 from ...distance_static import build_mc2_distance_static
 from ...mesh_baseline import MC2MeshBaselineBuildResult
@@ -31,6 +33,7 @@ class MC2MeshClothStaticBuildResult:
     baseline: MC2MeshBaselineBuildResult
     distance: MC2DistanceStaticSpec
     bending: MC2BendingStaticSpec | None
+    center: MC2CenterStaticSpec
 
     @property
     def final_proxy(self):
@@ -48,6 +51,8 @@ class MC2MeshClothStaticBuildResult:
             MC2BendingStaticSpec,
         ):
             raise TypeError("bending must be MC2BendingStaticSpec or None")
+        if not isinstance(self.center, MC2CenterStaticSpec):
+            raise TypeError("center must be MC2CenterStaticSpec")
         if self.finalizer.proxy.task_id != self.baseline.final_proxy.task_id:
             raise ValueError("finalizer and baseline task_id must match")
         if self.finalizer.proxy.vertex_identities != self.baseline.final_proxy.vertex_identities:
@@ -61,6 +66,8 @@ class MC2MeshClothStaticBuildResult:
             and self.bending.proxy_signature != self.baseline.final_proxy.proxy_signature
         ):
             raise ValueError("bending and final proxy signatures must match")
+        if self.center.proxy_signature != self.baseline.final_proxy.proxy_signature:
+            raise ValueError("center and final proxy signatures must match")
 
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
@@ -76,6 +83,7 @@ class MC2MeshClothStaticBuildResult:
             "bending_record_count": (
                 self.bending.record_count if self.bending is not None else 0
             ),
+            "center_fixed_count": len(self.center.fixed_indices),
         }
         if include_signatures:
             result.update(
@@ -88,6 +96,7 @@ class MC2MeshClothStaticBuildResult:
                         if self.bending is not None
                         else None
                     ),
+                    "center_static_signature": self.center.center_static_signature,
                 }
             )
         return result
@@ -129,7 +138,12 @@ def _mesh_cloth_pin_settings(obj) -> tuple[bool, str]:
     )
 
 
-def mesh_cloth_static_input_signature(obj, *, topology_signature: str) -> str:
+def mesh_cloth_static_input_signature(
+    obj,
+    *,
+    topology_signature: str,
+    world_gravity_direction=(0.0, -1.0, 0.0),
+) -> str:
     obj = _resolve_mesh_object(obj)
     if obj is None:
         raise ValueError("MeshCloth static input signature requires one Mesh object")
@@ -147,12 +161,13 @@ def mesh_cloth_static_input_signature(obj, *, topology_signature: str) -> str:
         weights = _vertex_group_weights(obj, pin_vertex_group, vertex_count)
         attributes = tuple(0x01 if weight > 0.0 else 0x02 for weight in weights)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "topology_signature": str(topology_signature or ""),
         "pin_enabled": pin_enabled,
         "pin_vertex_group": pin_vertex_group,
         "vertex_attributes": attributes,
         "uvs": uvs,
+        "world_gravity_direction": tuple(float(value) for value in world_gravity_direction),
     }
     encoded = json.dumps(
         payload,
@@ -180,6 +195,7 @@ def mesh_cloth_static_input_signature_for_task(
     return mesh_cloth_static_input_signature(
         mesh_sources[0],
         topology_signature=topology.topology_signature,
+        world_gravity_direction=task.profile.gravity_direction,
     )
 
 
@@ -188,6 +204,7 @@ def build_mc2_mesh_cloth_static(
     *,
     task_id: str,
     topology_signature: str | None = None,
+    world_gravity_direction=(0.0, -1.0, 0.0),
 ) -> MC2MeshClothStaticBuildResult:
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
     finalizer = build_blender_mesh_final_proxy(
@@ -208,11 +225,17 @@ def build_mc2_mesh_cloth_static(
         baseline.final_proxy,
         initial_local_to_world_columns=_matrix_world_columns(obj),
     )
+    center = build_mc2_center_static(
+        baseline.final_proxy,
+        vertex_bind_pose_rotations=finalizer.vertex_bind_pose_rotations,
+        world_gravity_direction=world_gravity_direction,
+    )
     return MC2MeshClothStaticBuildResult(
         finalizer=finalizer,
         baseline=baseline,
         distance=distance,
         bending=bending,
+        center=center,
     )
 
 
@@ -237,6 +260,7 @@ def build_mc2_mesh_cloth_static_for_task(
         obj,
         task_id=task.task_id,
         topology_signature=None,
+        world_gravity_direction=task.profile.gravity_direction,
     )
 
 

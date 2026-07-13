@@ -121,6 +121,17 @@ def test_lifecycle_and_transactional_validation():
         assert info["baseline_count"] == 1
         assert info["fixed_count"] == 0
 
+        hotools_native.mc2_context_v0_update_center_static(
+            first,
+            np.empty((0,), dtype=np.int32),
+            np.zeros(3, dtype=np.float32),
+            np.array([0.0, -1.0, 0.0], dtype=np.float32),
+        )
+        info = hotools_native.mc2_context_v0_inspect(first)
+        assert info["center_static_ready"] is True
+        assert info["center_static_revision"] == 1
+        assert info["center_fixed_count"] == 0
+
         bad_proxy = list(proxy)
         bad_proxy[5] = np.array([[0, 2]], dtype=np.int32)
         expect_error(
@@ -336,6 +347,53 @@ def test_lifecycle_and_transactional_validation():
         pin_proxy = list(tier_a_proxy)
         pin_proxy[4] = np.array([1, 2, 2], dtype=np.uint8)
         hotools_native.mc2_context_v0_update_proxy_static(second, *pin_proxy)
+        hotools_native.mc2_context_v0_update_center_static(
+            second,
+            np.array([0], dtype=np.int32),
+            np.zeros(3, dtype=np.float32),
+            np.array([0.0, -1.0, 0.0], dtype=np.float32),
+        )
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_center_static(
+                second,
+                np.array([0, 0], dtype=np.int32),
+                np.zeros(3, dtype=np.float32),
+                np.array([0.0, -1.0, 0.0], dtype=np.float32),
+            ),
+            "unique",
+        )
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_center_static(
+                second,
+                np.array([1], dtype=np.int32),
+                np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                np.array([0.0, -1.0, 0.0], dtype=np.float32),
+            ),
+            "Move vertices",
+        )
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_center_static(
+                second,
+                np.array([0], dtype=np.int32),
+                np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                np.array([0.0, -1.0, 0.0], dtype=np.float32),
+            ),
+            "fixed vertex average",
+        )
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_center_static(
+                second,
+                np.array([0], dtype=np.int32),
+                np.zeros(3, dtype=np.float32),
+                np.array([0.0, -2.0, 0.0], dtype=np.float32),
+            ),
+            "unit length",
+        )
+        assert hotools_native.mc2_context_v0_inspect(second)["center_static_revision"] == 1
         hotools_native.mc2_context_v0_update_baseline_static(second, *tier_a_baseline)
         empty_distance_ranges = np.zeros((3, 2), dtype=np.int32)
         empty_distance_targets = np.empty((0,), dtype=np.int32)

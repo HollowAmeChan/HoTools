@@ -42,6 +42,7 @@ struct Mc2ContextV0 {
     std::int64_t baseline_static_revision = 0;
     std::int64_t distance_static_revision = 0;
     std::int64_t bending_static_revision = 0;
+    std::int64_t center_static_revision = 0;
     std::int64_t dynamic_revision = 0;
     std::int64_t reset_count = 0;
     std::int64_t step_count = 0;
@@ -60,6 +61,7 @@ struct Mc2ContextV0 {
     bool baseline_static_ready = false;
     bool distance_static_ready = false;
     bool bending_static_ready = false;
+    bool center_static_ready = false;
     bool dynamic_ready = false;
     bool initialized = false;
     bool released = false;
@@ -97,6 +99,9 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> bending_quads;
     std::vector<float> bending_rest_angle_or_volume;
     std::vector<std::int8_t> bending_sign_or_volume;
+    std::vector<std::int32_t> center_fixed_indices;
+    std::vector<float> center_local_position;
+    std::vector<float> center_initial_local_gravity_direction;
 };
 
 Mc2ContextV0* context_from(PyObject* object) {
@@ -141,11 +146,15 @@ void release_resources(Mc2ContextV0& context) {
     context.bending_quads.clear();
     context.bending_rest_angle_or_volume.clear();
     context.bending_sign_or_volume.clear();
+    context.center_fixed_indices.clear();
+    context.center_local_position.clear();
+    context.center_initial_local_gravity_direction.clear();
     context.parameters_ready = false;
     context.proxy_static_ready = false;
     context.baseline_static_ready = false;
     context.distance_static_ready = false;
     context.bending_static_ready = false;
+    context.center_static_ready = false;
     context.dynamic_ready = false;
     context.initialized = false;
     context.released = true;
@@ -707,12 +716,14 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "baseline_static_revision", context.baseline_static_revision) ||
         !dict_i64(result, "distance_static_revision", context.distance_static_revision) ||
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
+        !dict_i64(result, "center_static_revision", context.center_static_revision) ||
         !dict_i64(result, "edge_count", static_cast<std::int64_t>(context.proxy_edges.size() / 2)) ||
         !dict_i64(result, "triangle_count", static_cast<std::int64_t>(context.proxy_triangles.size() / 3)) ||
         !dict_i64(result, "baseline_count", static_cast<std::int64_t>(context.baseline_ranges.size() / 2)) ||
         !dict_i64(result, "fixed_count", fixed_count) ||
         !dict_i64(result, "distance_record_count", static_cast<std::int64_t>(context.distance_targets.size())) ||
         !dict_i64(result, "bending_record_count", static_cast<std::int64_t>(context.bending_rest_angle_or_volume.size())) ||
+        !dict_i64(result, "center_fixed_count", static_cast<std::int64_t>(context.center_fixed_indices.size())) ||
         !dict_i64(result, "parameter_revision", context.parameter_revision) ||
         !dict_i64(result, "dynamic_revision", context.dynamic_revision) ||
         !dict_i64(result, "reset_count", context.reset_count) ||
@@ -727,6 +738,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "baseline_static_ready", context.baseline_static_ready) ||
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
+        !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "dynamic_ready", context.dynamic_ready) ||
         !dict_bool(result, "initialized", context.initialized) ||
         !dict_bool(result, "released", context.released)) {
@@ -1040,6 +1052,82 @@ PyObject* mc2_context_v0_update_bending_static(PyObject*, PyObject* args) {
     context->bending_sign_or_volume.swap(next_markers);
     context->bending_static_ready = true;
     ++context->bending_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_center_static expects 4 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->proxy_static_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "Center static requires proxy static");
+        return nullptr;
+    }
+    Buffer fixed_indices, local_center, local_gravity;
+    if (!fixed_indices.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "center_fixed_indices") ||
+        !local_center.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "center_local_position") ||
+        !local_gravity.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "center_initial_local_gravity_direction")) {
+        return nullptr;
+    }
+    if (!expect_int32_scalar_array(fixed_indices, "center_fixed_indices") ||
+        !expect_float32(local_center, "center_local_position") ||
+        !expect_1d_array(local_center, "center_local_position", 3) ||
+        !expect_float32(local_gravity, "center_initial_local_gravity_direction") ||
+        !expect_1d_array(local_gravity, "center_initial_local_gravity_direction", 3) ||
+        !validate_indices(fixed_indices, context->vertex_count, "center_fixed_indices") ||
+        !finite_floats(local_center, "center_local_position") ||
+        !finite_floats(local_gravity, "center_initial_local_gravity_direction")) {
+        return nullptr;
+    }
+    const auto fixed_count = fixed_indices.view.shape[0];
+    const auto* fixed_values = static_cast<const std::int32_t*>(fixed_indices.view.buf);
+    std::vector<bool> seen(static_cast<std::size_t>(context->vertex_count), false);
+    float expected_center[3] = {0.0f, 0.0f, 0.0f};
+    for (Py_ssize_t index = 0; index < fixed_count; ++index) {
+        const auto vertex = static_cast<std::size_t>(fixed_values[index]);
+        if (seen[vertex]) {
+            PyErr_SetString(PyExc_ValueError, "center_fixed_indices must be unique");
+            return nullptr;
+        }
+        if (is_move(context->proxy_attributes[vertex])) {
+            PyErr_SetString(PyExc_ValueError, "center_fixed_indices cannot contain Move vertices");
+            return nullptr;
+        }
+        seen[vertex] = true;
+        for (std::size_t component = 0; component < 3; ++component) {
+            expected_center[component] += context->proxy_local_positions[vertex * 3 + component];
+        }
+    }
+    const auto* center_values = static_cast<const float*>(local_center.view.buf);
+    if (fixed_count > 0) {
+        for (float& value : expected_center) value /= static_cast<float>(fixed_count);
+    }
+    for (std::size_t component = 0; component < 3; ++component) {
+        if (std::fabs(center_values[component] - expected_center[component]) > 1.0e-5f) {
+            PyErr_SetString(PyExc_ValueError, "center_local_position does not match fixed vertex average");
+            return nullptr;
+        }
+    }
+    const auto* gravity_values = static_cast<const float*>(local_gravity.view.buf);
+    const float gravity_length_squared =
+        gravity_values[0] * gravity_values[0] +
+        gravity_values[1] * gravity_values[1] +
+        gravity_values[2] * gravity_values[2];
+    if (std::fabs(gravity_length_squared - 1.0f) > 2.0e-5f) {
+        PyErr_SetString(PyExc_ValueError, "center_initial_local_gravity_direction must be unit length");
+        return nullptr;
+    }
+    auto next_fixed = copy_values<std::int32_t>(fixed_indices);
+    auto next_center = copy_values<float>(local_center);
+    auto next_gravity = copy_values<float>(local_gravity);
+    context->center_fixed_indices.swap(next_fixed);
+    context->center_local_position.swap(next_center);
+    context->center_initial_local_gravity_direction.swap(next_gravity);
+    context->center_static_ready = true;
+    ++context->center_static_revision;
     Py_RETURN_NONE;
 }
 

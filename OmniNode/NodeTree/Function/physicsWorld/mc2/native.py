@@ -11,6 +11,7 @@ import sys
 import numpy as np
 
 from .bending_static import pack_mc2_bending_static
+from .center_state import pack_mc2_center_static
 from .distance_static import pack_mc2_distance_static
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
@@ -29,6 +30,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_baseline_static",
     "mc2_context_v0_update_distance_static",
     "mc2_context_v0_update_bending_static",
+    "mc2_context_v0_update_center_static",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
@@ -90,6 +92,7 @@ class MC2NativeContextV0:
         self.baseline_signature = ""
         self.distance_signature = ""
         self.bending_signature = ""
+        self.center_signature = ""
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
@@ -172,12 +175,20 @@ class MC2NativeContextV0:
             bending["bending_rest_angle_or_volume"],
             bending["bending_sign_or_volume"],
         )
+        center = pack_mc2_center_static(static.center)
+        self._module.mc2_context_v0_update_center_static(
+            self._handle,
+            center["fixed_indices"],
+            center["local_center_position"],
+            center["initial_local_gravity_direction"],
+        )
         self.proxy_signature = static.final_proxy.proxy_signature
         self.baseline_signature = static.baseline.baseline.baseline_signature
         self.distance_signature = static.distance.distance_signature
         self.bending_signature = (
             static.bending.bending_signature if static.bending is not None else "empty"
         )
+        self.center_signature = static.center.center_static_signature
 
     def update_dynamic(self, frame_input: MC2FrameInputSpec) -> None:
         if not isinstance(frame_input, MC2FrameInputSpec):
@@ -254,6 +265,7 @@ class MC2NativeContextV0:
         self.baseline_signature = ""
         self.distance_signature = ""
         self.bending_signature = ""
+        self.center_signature = ""
         self.last_frame = None
         self._out_positions = np.empty((0, 3), dtype=np.float32)
         self._out_rotations = np.empty((0, 4), dtype=np.float32)
