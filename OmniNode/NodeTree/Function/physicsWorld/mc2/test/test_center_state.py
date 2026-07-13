@@ -32,12 +32,19 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
+parameters = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters")
+runtime_parameters = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.runtime_parameters"
+)
 final_proxy = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.final_proxy"
 )
 
 FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a", "center_static_fixed_001.json"
+)
+CENTER_STEP_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a", "center_step_inertia_001.json"
 )
 
 
@@ -108,6 +115,59 @@ def test_center_persistent_reset_uses_frame_component_and_derived_center_pose() 
     assert persistent.old_component_world_position == frame.component_world_position
     assert persistent.old_frame_world_position == persistent.old_world_position == (2.0, 3.0, 4.0)
     assert persistent.smoothing_velocity == (0.0, 0.0, 0.0)
+
+
+def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
+    with open(CENTER_STEP_FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    values = fixture["input"]
+    expected = fixture["expected"]
+    half_angle = np.float32(np.radians(values["frame_world_rotation_axis_angle"]["degrees"]) * 0.5)
+    frame_rotation = (0.0, float(np.sin(half_angle)), 0.0, float(np.cos(half_angle)))
+    frame_interpolation = np.float32(
+        (np.float32(values["now_update_time_before_step"])
+         + np.float32(values["simulation_delta_time"])
+         - np.float32(values["frame_old_time"]))
+        / (np.float32(values["time"]) - np.float32(values["frame_old_time"]))
+    )
+    step = center.MC2CenterStepInputSpec(
+        simulation_delta_time=values["simulation_delta_time"],
+        frame_interpolation=float(frame_interpolation),
+        old_frame_world_position=values["old_frame_world_position"],
+        frame_world_position=values["frame_world_position"],
+        old_frame_world_rotation_xyzw=values["old_frame_world_rotation_xyzw"],
+        frame_world_rotation_xyzw=frame_rotation,
+        old_frame_world_scale=values["old_frame_world_scale"],
+        frame_world_scale=values["frame_world_scale"],
+        old_world_position=values["old_frame_world_position"],
+        old_world_rotation_xyzw=values["old_frame_world_rotation_xyzw"],
+        initial_scale=values["init_scale"],
+        negative_scale_direction=values["negative_scale_direction"],
+        velocity_weight=values["velocity_weight_before_step"],
+        distance_weight=values["distance_weight"],
+    )
+    profile = parameters.make_mc2_particle_profile(
+        gravity=values["gravity"],
+        gravity_direction=values["world_gravity_direction"],
+        gravity_falloff=values["gravity_falloff"],
+        stabilization_time_after_reset=values["stabilization_time_after_reset"],
+        blend_weight=values["parameter_blend_weight"],
+        local_inertia=values["local_inertia"],
+        local_movement_speed_limit=values["local_movement_speed_limit"],
+        local_rotation_speed_limit=values["local_rotation_speed_limit"],
+    )
+    runtime = runtime_parameters.make_mc2_runtime_parameters(
+        profile, parameters.make_mc2_setup_options("mesh_cloth")
+    )
+    result = center.evaluate_mc2_center_step(
+        step,
+        runtime,
+        initial_local_gravity_direction=values["initial_local_gravity_direction"],
+    )
+    for field, expected_value in expected.items():
+        np.testing.assert_allclose(
+            getattr(result, field), expected_value, rtol=1.0e-6, atol=1.0e-6
+        )
 
 
 if __name__ == "__main__":
