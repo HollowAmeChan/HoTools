@@ -731,6 +731,106 @@ def test_center_step_matches_tier_a_fixture():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_particle_inertia_matches_tier_a_fixture():
+    fixture_path = (
+        ROOT
+        / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
+        / "test" / "fixtures" / "tier_a" / "particle_step_inertia_001.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    values = fixture["input"]
+    expected = fixture["expected"]
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        proxy, baseline = static_arrays(1)
+        baseline = list(baseline)
+        baseline[7] = np.array([values["depth"]], dtype=np.float32)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_distance_static(
+            context,
+            np.zeros((1, 2), dtype=np.int32),
+            np.empty((0,), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+        )
+        hotools_native.mc2_context_v0_update_bending_static(
+            context,
+            np.empty((0, 4), dtype=np.int32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int8),
+        )
+        hotools_native.mc2_context_v0_update_center_static(
+            context,
+            np.empty((0,), dtype=np.int32),
+            np.zeros(3, dtype=np.float32),
+            np.array([0.0, -1.0, 0.0], dtype=np.float32),
+        )
+
+        floats, ints, curves = parameters()
+        floats[0] = 10.0
+        floats[1:4] = (1.0, 0.0, 0.0)
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        pre_positions = np.array([[2.9, 2.0, 1.0]], dtype=np.float32)
+        rotations = np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
+        update_dynamic(context, 1, 0, pre_positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        step(context, values["simulation_delta_time"], simulation_power_z=0.0)
+
+        floats[0] = 0.0
+        floats[5] = 1.0
+        floats[16] = 0.75
+        floats[17] = -1.0
+        floats[18] = 600.0
+        floats[19] = values["depth_inertia"]
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+        animated_positions = np.asarray([values["animated_position"]], dtype=np.float32)
+        update_dynamic(
+            context,
+            2,
+            0,
+            animated_positions,
+            rotations,
+            velocity_weight=values["velocity_weight"],
+        )
+        step_half_angle = np.float32(
+            np.radians(values["step_rotation_axis_angle"]["degrees"]) * 0.5
+        )
+        frame_rotation = np.array(
+            [0.0, 0.0, np.sin(step_half_angle), np.cos(step_half_angle)],
+            dtype=np.float32,
+        )
+        hotools_native.mc2_context_v0_update_center_dynamic(
+            context,
+            np.asarray(values["old_world_position"], dtype=np.float32),
+            np.asarray(values["old_world_position"], dtype=np.float32)
+                + np.asarray(values["step_vector"], dtype=np.float32),
+            np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            frame_rotation,
+            np.ones(3, dtype=np.float32),
+            np.ones(3, dtype=np.float32),
+            np.asarray(values["old_world_position"], dtype=np.float32),
+            np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            np.ones(3, dtype=np.float32),
+            np.ones(3, dtype=np.float32),
+            1.0,
+            1.0,
+            values["velocity_weight"] - values["simulation_delta_time"],
+        )
+        step(context, values["simulation_delta_time"], simulation_power_z=0.0)
+        out_positions = np.empty((1, 3), dtype=np.float32)
+        out_rotations = np.empty((1, 4), dtype=np.float32)
+        hotools_native.mc2_context_v0_read(context, out_positions, out_rotations)
+        np.testing.assert_allclose(
+            out_positions, expected["next_positions"], rtol=0.0, atol=1.0e-6
+        )
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["particle_inertia_count"] == 1
+        assert info["particle_prediction_count"] == 2
+        assert info["step_basic_ready"] is True
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
@@ -738,3 +838,5 @@ if __name__ == "__main__":
     print("PASS create/free soak")
     test_center_step_matches_tier_a_fixture()
     print("PASS Center step Tier A fixture")
+    test_particle_inertia_matches_tier_a_fixture()
+    print("PASS particle inertia Tier A fixture")

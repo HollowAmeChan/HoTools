@@ -37,6 +37,7 @@ constexpr Py_ssize_t kBlendWeight = 6;
 constexpr Py_ssize_t kLocalInertia = 16;
 constexpr Py_ssize_t kLocalMovementSpeedLimit = 17;
 constexpr Py_ssize_t kLocalRotationSpeedLimit = 18;
+constexpr Py_ssize_t kDepthInertia = 19;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -55,6 +56,7 @@ struct Mc2ContextV0 {
     std::int64_t step_count = 0;
     std::int64_t distance_solve_count = 0;
     std::int64_t particle_prediction_count = 0;
+    std::int64_t particle_inertia_count = 0;
     std::int64_t bending_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t center_step_count = 0;
@@ -87,6 +89,8 @@ struct Mc2ContextV0 {
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;
     std::vector<float> velocity_reference_positions;
+    std::vector<float> step_basic_positions;
+    std::vector<float> step_basic_rotations;
     std::vector<float> proxy_local_positions;
     std::vector<float> proxy_local_normals;
     std::vector<float> proxy_local_tangents;
@@ -157,6 +161,8 @@ void release_resources(Mc2ContextV0& context) {
     context.state_rotations.clear();
     context.state_velocities.clear();
     context.velocity_reference_positions.clear();
+    context.step_basic_positions.clear();
+    context.step_basic_rotations.clear();
     context.proxy_local_positions.clear();
     context.proxy_local_normals.clear();
     context.proxy_local_tangents.clear();
@@ -426,18 +432,43 @@ void slerp_xyzw(const float* first, const float* second, float ratio, float* out
     for (int component = 0; component < 4; ++component) output[component] *= inverse_length;
 }
 
-bool predict_particles(Mc2ContextV0& context, float dt, float simulation_power_z) {
+void rotate_vector_xyzw(const float* rotation, const float* value, float* output) {
+    const float cross_x = rotation[1] * value[2] - rotation[2] * value[1];
+    const float cross_y = rotation[2] * value[0] - rotation[0] * value[2];
+    const float cross_z = rotation[0] * value[1] - rotation[1] * value[0];
+    const float twice_cross_x = 2.0f * cross_x;
+    const float twice_cross_y = 2.0f * cross_y;
+    const float twice_cross_z = 2.0f * cross_z;
+    output[0] = value[0] + rotation[3] * twice_cross_x +
+        (rotation[1] * twice_cross_z - rotation[2] * twice_cross_y);
+    output[1] = value[1] + rotation[3] * twice_cross_y +
+        (rotation[2] * twice_cross_x - rotation[0] * twice_cross_z);
+    output[2] = value[2] + rotation[3] * twice_cross_z +
+        (rotation[0] * twice_cross_y - rotation[1] * twice_cross_x);
+}
+
+bool predict_particles(
+    Mc2ContextV0& context,
+    float dt,
+    float simulation_power_z,
+    bool apply_center_inertia
+) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
+        context.state_rotations.size() != count * 4 ||
         context.state_velocities.size() != count * 3 ||
         context.dynamic_positions.size() != count * 3 ||
         context.old_dynamic_positions.size() != count * 3 ||
+        context.dynamic_rotations.size() != count * 4 ||
+        context.old_dynamic_rotations.size() != count * 4 ||
         context.proxy_attributes.size() != count ||
         context.baseline_depths.size() != count ||
         context.float_values.size() != static_cast<std::size_t>(kFloatCount)) {
         return false;
     }
     context.velocity_reference_positions = context.state_positions;
+    context.step_basic_positions.resize(count * 3);
+    context.step_basic_rotations.resize(count * 4);
     const float gravity_scale =
         context.float_values[kGravity] * context.gravity_ratio * context.scale_ratio;
     const float gravity_x = context.float_values[kGravityDirection + 0] * gravity_scale;
@@ -445,29 +476,76 @@ bool predict_particles(Mc2ContextV0& context, float dt, float simulation_power_z
     const float gravity_z = context.float_values[kGravityDirection + 2] * gravity_scale;
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         const auto offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        for (std::size_t component = 0; component < 3; ++component) {
+            context.step_basic_positions[offset + component] =
+                context.old_dynamic_positions[offset + component] *
+                    (1.0f - context.frame_interpolation) +
+                context.dynamic_positions[offset + component] * context.frame_interpolation;
+        }
+        slerp_xyzw(
+            context.old_dynamic_rotations.data() + rotation_offset,
+            context.dynamic_rotations.data() + rotation_offset,
+            context.frame_interpolation,
+            context.step_basic_rotations.data() + rotation_offset
+        );
         if (!is_move(context.proxy_attributes[vertex])) {
             for (std::size_t component = 0; component < 3; ++component) {
-                const float base = context.old_dynamic_positions[offset + component] *
-                    (1.0f - context.frame_interpolation) +
-                    context.dynamic_positions[offset + component] * context.frame_interpolation;
+                const float base = context.step_basic_positions[offset + component];
                 context.state_positions[offset + component] = base;
                 context.velocity_reference_positions[offset + component] = base;
             }
-            if (context.state_rotations.size() == count * 4 &&
-                context.old_dynamic_rotations.size() == count * 4 &&
-                context.dynamic_rotations.size() == count * 4) {
-                const auto rotation_offset = vertex * 4;
-                slerp_xyzw(
-                    context.old_dynamic_rotations.data() + rotation_offset,
-                    context.dynamic_rotations.data() + rotation_offset,
-                    context.frame_interpolation,
-                    context.state_rotations.data() + rotation_offset
-                );
-            }
+            std::copy_n(
+                context.step_basic_rotations.data() + rotation_offset,
+                4,
+                context.state_rotations.data() + rotation_offset
+            );
             context.state_velocities[offset + 0] = 0.0f;
             context.state_velocities[offset + 1] = 0.0f;
             context.state_velocities[offset + 2] = 0.0f;
             continue;
+        }
+        if (apply_center_inertia) {
+            const float depth = context.baseline_depths[vertex];
+            const float inertia_depth = context.float_values[kDepthInertia] *
+                (1.0f - depth * depth);
+            float inertia_rotation[4] {};
+            slerp_xyzw(
+                context.center_inertia_rotation.data(),
+                context.center_step_rotation.data(),
+                inertia_depth,
+                inertia_rotation
+            );
+            const float old_position[3] = {
+                context.state_positions[offset + 0],
+                context.state_positions[offset + 1],
+                context.state_positions[offset + 2],
+            };
+            const float local_position[3] = {
+                old_position[0] - context.center_old_world_position[0],
+                old_position[1] - context.center_old_world_position[1],
+                old_position[2] - context.center_old_world_position[2],
+            };
+            float rotated_position[3] {};
+            rotate_vector_xyzw(inertia_rotation, local_position, rotated_position);
+            for (std::size_t component = 0; component < 3; ++component) {
+                const float inertia_vector =
+                    context.center_inertia_vector[component] * (1.0f - inertia_depth) +
+                    context.center_step_vector[component] * inertia_depth;
+                const float world_position = context.center_old_world_position[component] +
+                    rotated_position[component] + inertia_vector;
+                const float inertia_offset = world_position - old_position[component];
+                context.state_positions[offset + component] = world_position;
+                context.velocity_reference_positions[offset + component] += inertia_offset;
+            }
+            float rotated_velocity[3] {};
+            rotate_vector_xyzw(
+                inertia_rotation,
+                context.state_velocities.data() + offset,
+                rotated_velocity
+            );
+            std::copy_n(rotated_velocity, 3, context.state_velocities.data() + offset);
+            ++context.particle_inertia_count;
         }
         const float damping = sample_curve16(
             context.curve_values,
@@ -705,8 +783,6 @@ bool evaluate_center_step(Mc2ContextV0& context, float dt) {
         context.velocity_weight * context.float_values[kBlendWeight] *
         context.center_distance_weight
     );
-    context.center_old_world_position = context.center_now_world_position;
-    context.center_old_world_rotation = context.center_now_world_rotation;
     context.center_dynamic_ready = false;
     context.center_result_ready = true;
     ++context.center_step_count;
@@ -960,6 +1036,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "step_count", context.step_count) ||
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
         !dict_i64(result, "particle_prediction_count", context.particle_prediction_count) ||
+        !dict_i64(result, "particle_inertia_count", context.particle_inertia_count) ||
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "frame", context.frame) ||
@@ -972,6 +1049,14 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
         !dict_bool(result, "center_result_ready", context.center_result_ready) ||
+        !dict_bool(
+            result,
+            "step_basic_ready",
+            context.step_basic_positions.size() ==
+                    static_cast<std::size_t>(context.vertex_count) * 3 &&
+                context.step_basic_rotations.size() ==
+                    static_cast<std::size_t>(context.vertex_count) * 4
+        ) ||
         !dict_bool(result, "dynamic_ready", context.dynamic_ready) ||
         !dict_bool(result, "initialized", context.initialized) ||
         !dict_bool(result, "released", context.released)) {
@@ -1608,6 +1693,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
         0.0f
     );
     context->velocity_reference_positions = context->dynamic_positions;
+    context->step_basic_positions = context->dynamic_positions;
+    context->step_basic_rotations = context->dynamic_rotations;
     context->center_dynamic_ready = false;
     context->center_result_ready = false;
     context->initialized = true;
@@ -1643,7 +1730,8 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         return nullptr;
     }
     if (dt <= kMc2Epsilon) Py_RETURN_NONE;
-    if (context->center_dynamic_ready && !evaluate_center_step(*context, static_cast<float>(dt))) {
+    const bool center_step_active = context->center_dynamic_ready;
+    if (center_step_active && !evaluate_center_step(*context, static_cast<float>(dt))) {
         PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
         return nullptr;
     }
@@ -1651,13 +1739,18 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         if (!predict_particles(
                 *context,
                 static_cast<float>(dt),
-                static_cast<float>(simulation_power_z))) {
+                static_cast<float>(simulation_power_z),
+                center_step_active)) {
             PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
             return nullptr;
         }
         solve_distance_once(*context);
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
         commit_particle_velocities(*context, static_cast<float>(dt));
+    }
+    if (center_step_active) {
+        context->center_old_world_position = context->center_now_world_position;
+        context->center_old_world_rotation = context->center_now_world_rotation;
     }
     ++context->step_count;
     Py_RETURN_NONE;
