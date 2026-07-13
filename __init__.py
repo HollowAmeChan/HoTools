@@ -23,7 +23,7 @@ if py_lib_dir:
     sys.path.insert(0, os.path.join(py_lib_dir, "HotoolsPackage"))
 
 
-from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf
+from . import VertexColorTools, ShapekeyTools, FastOperators, BoneTools, AnimationTools, exIcon, VertexGroupTools,Exporter,NameMapping,UvTools,MeshTools,Checker,Rbf,ModTools
 from . import OmniNode
 from bpy.props import BoolProperty, FloatProperty
 
@@ -171,6 +171,7 @@ def register():
     MeshTools.register()
     Checker.register()
     Rbf.register()
+    ModTools.register()
 
     prefs = bpy.context.preferences.addons[__name__].preferences
     if prefs.hoTools_OmniNodeFeatures_enable:
@@ -197,5 +198,5 @@ def unregister():
     Checker.unregister()
     Rbf.unregister()
     OmniNode.unregister()
-
+    ModTools.unregister()
     
