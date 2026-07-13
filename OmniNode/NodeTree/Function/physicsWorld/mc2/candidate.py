@@ -25,6 +25,7 @@ class MC2ResultCandidateV0:
     native_dynamic_revision: int
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
+    mesh_object_local_offsets: np.ndarray | None = None
     ready: bool = False
     schema_version: int = MC2_RESULT_CANDIDATE_SCHEMA_VERSION
 
@@ -43,6 +44,7 @@ class MC2ResultCandidateV0:
             raise ValueError("MC2 result candidate native revision is invalid")
         positions = self.world_positions
         rotations = self.world_rotations_xyzw
+        local_offsets = self.mesh_object_local_offsets
         if positions.dtype != np.float32 or positions.ndim != 2 or positions.shape[1] != 3:
             raise TypeError("candidate world_positions must be float32[N,3]")
         if rotations.dtype != np.float32 or rotations.shape != (len(positions), 4):
@@ -51,6 +53,17 @@ class MC2ResultCandidateV0:
             raise ValueError("MC2 result candidate arrays must be read-only")
         if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
             raise ValueError("MC2 result candidate arrays cannot contain NaN/Inf")
+        if self.setup_type == "mesh_cloth":
+            if (
+                local_offsets is None
+                or local_offsets.dtype != np.float32
+                or local_offsets.shape != positions.shape
+            ):
+                raise TypeError("Mesh candidate local offsets must be float32[N,3]")
+            if local_offsets.flags.writeable or not np.isfinite(local_offsets).all():
+                raise ValueError("Mesh candidate local offsets must be finite and read-only")
+        elif local_offsets is not None:
+            raise ValueError("non-Mesh candidate cannot contain Mesh local offsets")
 
     @property
     def particle_count(self) -> int:
@@ -68,6 +81,7 @@ class MC2ResultCandidateV0:
             "revision": self.revision,
             "ready": self.ready,
             "particle_count": self.particle_count,
+            "has_mesh_object_local_offsets": self.mesh_object_local_offsets is not None,
             "native_reset_count": self.native_reset_count,
             "native_step_count": self.native_step_count,
             "native_dynamic_revision": self.native_dynamic_revision,
@@ -99,6 +113,15 @@ def make_mc2_result_candidate(
         or int(native_info.get("generation", -1)) != frame_input.generation
     ):
         raise ValueError("MC2 result candidate native frame identity mismatch")
+    local_offsets = None
+    if spec.setup_type == "mesh_cloth":
+        linear = frame_input.source_world_linear
+        if linear is None:
+            raise ValueError("Mesh result candidate requires source world linear snapshot")
+        inverse_linear = np.linalg.inv(linear.astype(np.float64))
+        world_delta = positions.astype(np.float64) - frame_input.world_positions.astype(np.float64)
+        local_offsets = np.asarray(world_delta @ inverse_linear.T, dtype=np.float32, order="C")
+        local_offsets.flags.writeable = False
     positions.flags.writeable = False
     rotations.flags.writeable = False
     return MC2ResultCandidateV0(
@@ -115,6 +138,7 @@ def make_mc2_result_candidate(
         native_dynamic_revision=int(native_info["dynamic_revision"]),
         world_positions=positions,
         world_rotations_xyzw=rotations,
+        mesh_object_local_offsets=local_offsets,
     )
 
 

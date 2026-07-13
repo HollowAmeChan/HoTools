@@ -45,7 +45,7 @@
 | Runtime parameters N2 | landed foundation | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；particle prediction已消费 gravity/direction与 damping curve，Distance消费 stiffness/velocity attenuation，其余值仍只保存未消费。 |
 | Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；N3携带受检 `velocity_weight/gravity_ratio/scale_ratio/negative_scale_sign/frame_interpolation`。native context V0 已接 old/current animated pose、Fixed position/rotation interpolation、prediction、Pin、Distance、Bending、post与read。Bone connection-aware rotation、Move step-basic pose与inertia仍未实现。 |
 | 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 frame interpolation、gravity/damping prediction、Pin、Distance、Bending fixed-point scratch与 persistent velocity commit；尚无 inertia/wind/collision/public result。旧 `_native` full-core 不计入此项。 |
-| result/writeback | internal candidate | Mesh native readback已复制为带 frame/generation/world generation/revision/native revision 的只读内部 candidate；same-frame复用且 context rebuild重置 revision，始终 `ready=False`，不进入 result stream。`GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仍仅为计划通道。 |
+| result/writeback | internal candidate | Mesh native readback已复制为带 frame/generation/world generation/revision/native revision 的只读内部 candidate；同帧 N3 snapshot固定 source world linear，并将 `display_world - animated_base_world` 转为同 vertex identity 的 object-local offset。same-frame复用且 context rebuild重置 revision，始终 `ready=False`，不进入 result stream。`GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仍仅为计划通道。 |
 
 ## Host/Native 契约
 
@@ -135,10 +135,10 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **Center frame-derived inertia 与 Mesh host offset 转换**：
+下一交付是 **Center frame-derived inertia 与公共结果事务**：
 
-1. animated old/current pose interpolation、Center static native ownership与内部 readback candidate已完成；下一步接入 component frame pose、Center inertia vector/rotation与 Move step-basic pose。
-2. readback 已返回同 vertex identity 的 world pose并保持 `ready=False`；下一步由 host 计算相对 animated BasePose 的 world delta和 object-local offset，但仍不发布公共结果。
+1. animated old/current pose interpolation、Center static native ownership、内部 readback candidate与 Mesh object-local offset转换已完成；下一步接入 component frame pose、Center inertia vector/rotation与 Move step-basic pose。
+2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；下一步设计完整 world result transaction、失败回滚与统一 GN writeback交接。
 3. candidate 必须继续验证 frame/generation/world generation/revision；same-frame不得重复 read/step/revision。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；除 initial gravity direction等明确 N1 producer外，参数热更新继续保留粒子 history。
 

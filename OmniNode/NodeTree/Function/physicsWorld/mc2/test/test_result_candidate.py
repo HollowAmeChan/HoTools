@@ -49,6 +49,7 @@ def _inputs():
         generation=3,
         world_positions=((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
         world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),) * 2,
+        source_world_linear=((2.0, 0.0, 0.0), (0.0, 4.0, 0.0), (0.0, 0.0, 5.0)),
     )
     native_info = {
         "schema": "mc2_context_v0",
@@ -67,6 +68,7 @@ def _inputs():
 def test_candidate_copies_readback_and_stays_private() -> None:
     spec, slot, frame, native_info = _inputs()
     positions = frame.world_positions.copy()
+    positions += np.asarray(((2.0, 4.0, 5.0), (2.0, 4.0, 5.0)), dtype=np.float32)
     rotations = frame.world_rotations_xyzw.copy()
     candidate = candidate_module.make_mc2_result_candidate(
         spec=spec,
@@ -79,11 +81,20 @@ def test_candidate_copies_readback_and_stays_private() -> None:
     )
     positions.fill(99.0)
     rotations.fill(0.0)
-    np.testing.assert_array_equal(candidate.world_positions, frame.world_positions)
+    np.testing.assert_array_equal(
+        candidate.world_positions,
+        frame.world_positions + np.asarray(((2.0, 4.0, 5.0),) * 2, dtype=np.float32),
+    )
     np.testing.assert_array_equal(candidate.world_rotations_xyzw, frame.world_rotations_xyzw)
     assert candidate.world_positions.flags.writeable is False
     assert candidate.world_rotations_xyzw.flags.writeable is False
     assert candidate.ready is False
+    np.testing.assert_array_equal(
+        candidate.mesh_object_local_offsets,
+        np.ones((2, 3), dtype=np.float32),
+    )
+    assert candidate.mesh_object_local_offsets.flags.writeable is False
+    assert candidate.debug_dict()["has_mesh_object_local_offsets"] is True
     assert candidate.debug_dict()["native_dynamic_revision"] == 3
 
 
@@ -129,6 +140,29 @@ def test_candidate_rejects_mismatched_native_identity() -> None:
         assert "host task identity" in str(exc)
     else:
         raise AssertionError("mismatched host task identity was accepted")
+
+    missing_linear_frame = frame_module.make_mc2_frame_input(
+        task_id=frame.task_id,
+        topology_signature=frame.topology_signature,
+        frame=frame.frame,
+        generation=frame.generation,
+        world_positions=frame.world_positions,
+        world_rotations_xyzw=frame.world_rotations_xyzw,
+    )
+    try:
+        candidate_module.make_mc2_result_candidate(
+            spec=spec,
+            slot=slot,
+            frame_input=missing_linear_frame,
+            revision=1,
+            native_info=native_info,
+            world_positions=frame.world_positions,
+            world_rotations_xyzw=frame.world_rotations_xyzw,
+        )
+    except ValueError as exc:
+        assert "world linear snapshot" in str(exc)
+    else:
+        raise AssertionError("Mesh candidate accepted a missing source transform snapshot")
 
 
 if __name__ == "__main__":

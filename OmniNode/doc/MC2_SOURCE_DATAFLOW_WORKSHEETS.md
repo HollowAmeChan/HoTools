@@ -189,6 +189,8 @@ world_delta = display_world - animated_base_world_positions
 object_local_offset = inverse_linear(source.matrix_world) * world_delta
 ```
 
+当前 private candidate 已用同帧只读 source world linear完成该空间转换，但尚未进入公共 result/writeback transaction。
+
 危险边界：
 
 - N0 reference Mesh与N3 evaluated BasePose是两个数据域；骨架可移动顶点，但不能改变 vertex identity/connectivity。

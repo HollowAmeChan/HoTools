@@ -26,6 +26,7 @@ class MC2FrameInputSpec:
     generation: int
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
+    source_world_linear: np.ndarray | None = None
     velocity_weight: float = 1.0
     gravity_ratio: float = 1.0
     scale_ratio: float = 1.0
@@ -48,6 +49,14 @@ class MC2FrameInputSpec:
             raise ValueError("MC2 frame arrays must be read-only")
         if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
             raise ValueError("MC2 frame input cannot contain NaN/Inf")
+        linear = self.source_world_linear
+        if linear is not None:
+            if linear.dtype != np.float32 or linear.shape != (3, 3):
+                raise TypeError("source_world_linear must be float32[3,3]")
+            if linear.flags.writeable or not np.isfinite(linear).all():
+                raise ValueError("source_world_linear must be finite and read-only")
+            if abs(float(np.linalg.det(linear.astype(np.float64)))) <= 1.0e-12:
+                raise ValueError("source_world_linear must be invertible")
         if not 0.0 <= float(self.velocity_weight) <= 1.0:
             raise ValueError("velocity_weight must be in 0..1")
         if not 0.0 <= float(self.gravity_ratio) <= 1.0:
@@ -77,6 +86,7 @@ def make_mc2_frame_input(
     generation: object,
     world_positions,
     world_rotations_xyzw,
+    source_world_linear=None,
     velocity_weight: object = 1.0,
     gravity_ratio: object = 1.0,
     scale_ratio: object = 1.0,
@@ -90,6 +100,11 @@ def make_mc2_frame_input(
         generation=int(generation),
         world_positions=_readonly(world_positions, 3, "world_positions"),
         world_rotations_xyzw=_readonly(world_rotations_xyzw, 4, "world_rotations_xyzw"),
+        source_world_linear=(
+            _readonly(source_world_linear, 3, "source_world_linear")
+            if source_world_linear is not None
+            else None
+        ),
         velocity_weight=float(velocity_weight),
         gravity_ratio=float(gravity_ratio),
         scale_ratio=float(scale_ratio),

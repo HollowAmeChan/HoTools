@@ -42,6 +42,7 @@ class MC2MeshFrameSnapshot:
     frame: int
     generation: int
     mesh_topology_signature: str
+    source_world_linear: np.ndarray
     animated_base_world_positions: np.ndarray
     animated_base_world_normals: np.ndarray
 
@@ -58,12 +59,17 @@ class MC2MeshFrameSnapshot:
             raise ValueError("Mesh frame snapshot需要Mesh topology identity signature")
         positions = self.animated_base_world_positions
         normals = self.animated_base_world_normals
+        linear = self.source_world_linear
         if positions.dtype != np.float32 or normals.dtype != np.float32:
             raise TypeError("Mesh frame snapshot数组必须是float32")
         if positions.ndim != 2 or positions.shape[1] != 3 or normals.shape != positions.shape:
             raise ValueError("Mesh frame snapshot必须是匹配的float32[N,3] positions/normals")
         if positions.flags.writeable or normals.flags.writeable:
             raise ValueError("Mesh frame snapshot数组必须只读")
+        if linear.dtype != np.float32 or linear.shape != (3, 3) or linear.flags.writeable:
+            raise ValueError("Mesh frame snapshot source_world_linear必须是只读float32[3,3]")
+        if not np.isfinite(linear).all() or abs(float(np.linalg.det(linear))) <= 1.0e-12:
+            raise ValueError("Mesh frame snapshot source_world_linear必须有限且可逆")
         if not np.isfinite(positions).all() or not np.isfinite(normals).all():
             raise ValueError("Mesh frame snapshot不能包含NaN/Inf")
 
@@ -164,6 +170,9 @@ def read_base_pose_frame_snapshot(
         frame=int(frame),
         generation=int(generation),
         mesh_topology_signature=signature,
+        source_world_linear=_readonly_float3(
+            _matrix_to_numpy(source_obj.matrix_world)[:3, :3]
+        ),
         animated_base_world_positions=positions,
         animated_base_world_normals=normals,
     )
@@ -218,6 +227,7 @@ def build_mc2_mesh_frame_input(
         generation=snapshot.generation,
         world_positions=snapshot.animated_base_world_positions,
         world_rotations_xyzw=rotations,
+        source_world_linear=snapshot.source_world_linear,
     )
 
 

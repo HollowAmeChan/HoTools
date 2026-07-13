@@ -165,6 +165,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert first.vertex_count == 3
         assert first.animated_base_world_positions.flags.writeable is False
         assert first.animated_base_world_normals.flags.writeable is False
+        assert first.source_world_linear.flags.writeable is False
         assert np.allclose(first.animated_base_world_positions[:, 0], (0.5, 1.5, 0.5))
 
         task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
@@ -238,6 +239,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert candidate.world_generation == world.generation
         assert candidate.world_positions.flags.writeable is False
         assert candidate.world_rotations_xyzw.flags.writeable is False
+        np.testing.assert_allclose(candidate.mesh_object_local_offsets, 0.0, atol=1.0e-6)
         assert world.result_streams == {}
         snapshot = slot.debug_snapshot()
         assert snapshot["result_candidate"]["revision"] == 1
@@ -364,6 +366,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             generation=second_input.generation,
             world_positions=second_input.world_positions,
             world_rotations_xyzw=second_input.world_rotations_xyzw,
+            source_world_linear=second_input.source_world_linear,
         )
         mc2_solver.step_mc2(
             world,
