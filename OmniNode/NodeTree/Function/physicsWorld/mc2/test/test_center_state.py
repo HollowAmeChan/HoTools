@@ -117,6 +117,99 @@ def test_center_persistent_reset_uses_frame_component_and_derived_center_pose() 
     assert persistent.smoothing_velocity == (0.0, 0.0, 0.0)
 
 
+def _adapter_static(fixed_indices) -> center.MC2CenterStaticSpec:
+    return center.MC2CenterStaticSpec(
+        task_id="mc2:mesh:center-adapter",
+        proxy_signature="proxy",
+        fixed_indices=tuple(fixed_indices),
+        local_center_position=(0.0, 0.0, 0.0),
+        initial_local_gravity_direction=(0.0, -1.0, 0.0),
+        center_static_signature="center-static",
+    )
+
+
+def _adapter_frame(frame=1, position=(4.0, 5.0, 6.0)) -> center.MC2CenterFramePoseSpec:
+    return center.MC2CenterFramePoseSpec(
+        frame=frame,
+        generation=3,
+        component_identity="object:41",
+        component_world_position=position,
+        component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        component_world_scale=(2.0, 3.0, 4.0),
+    )
+
+
+def test_center_frame_adapter_uses_component_pose_without_fixed_points() -> None:
+    frame = _adapter_frame()
+    result = center.derive_mc2_center_world_pose(
+        _adapter_static(()),
+        frame,
+        world_positions=((10.0, 0.0, 0.0),),
+        world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),),
+        vertex_bind_pose_rotations=((0.0, 0.0, 0.0, 1.0),),
+    )
+    assert result.position == frame.component_world_position
+    assert result.rotation_xyzw == frame.component_world_rotation_xyzw
+    assert result.scale == frame.component_world_scale
+    assert result.negative_scale_direction == (1.0, 1.0, 1.0)
+
+
+def test_center_frame_adapter_uses_fixed_particle_pose_and_bind_rotation() -> None:
+    result = center.derive_mc2_center_world_pose(
+        _adapter_static((0, 2)),
+        _adapter_frame(),
+        world_positions=((1.0, 2.0, 3.0), (9.0, 9.0, 9.0), (5.0, 6.0, 7.0)),
+        world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),) * 3,
+        vertex_bind_pose_rotations=((0.0, 0.0, 0.0, 1.0),) * 3,
+    )
+    np.testing.assert_allclose(result.position, (3.0, 4.0, 5.0), atol=1.0e-7)
+    np.testing.assert_allclose(result.rotation_xyzw, (0.0, 0.0, 0.0, 1.0), atol=1.0e-7)
+
+
+def test_center_persistent_state_builds_and_commits_continuous_step() -> None:
+    static = _adapter_static(())
+    first_frame = _adapter_frame()
+    first_pose = center.derive_mc2_center_world_pose(
+        static,
+        first_frame,
+        world_positions=((0.0, 0.0, 0.0),),
+        world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),),
+        vertex_bind_pose_rotations=((0.0, 0.0, 0.0, 1.0),),
+    )
+    persistent = center.MC2CenterPersistentState(static.center_static_signature)
+    persistent.reset(first_frame, first_pose.position, first_pose.rotation_xyzw)
+    second_frame = _adapter_frame(frame=2, position=(5.0, 5.0, 6.0))
+    second_pose = center.derive_mc2_center_world_pose(
+        static,
+        second_frame,
+        world_positions=((0.0, 0.0, 0.0),),
+        world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),),
+        vertex_bind_pose_rotations=((0.0, 0.0, 0.0, 1.0),),
+    )
+    step = persistent.make_step_input(
+        second_frame,
+        second_pose,
+        simulation_delta_time=1.0 / 60.0,
+        frame_interpolation=0.5,
+    )
+    assert step.old_frame_world_position == first_pose.position
+    assert step.frame_world_position == second_pose.position
+    profile = parameters.make_mc2_particle_profile()
+    runtime = runtime_parameters.make_mc2_runtime_parameters(
+        profile, parameters.make_mc2_setup_options("mesh_cloth")
+    )
+    result = center.evaluate_mc2_center_step(
+        step,
+        runtime,
+        initial_local_gravity_direction=static.initial_local_gravity_direction,
+    )
+    persistent.commit_step(second_frame, second_pose, result)
+    assert persistent.last_frame == 2
+    assert persistent.old_frame_world_position == second_pose.position
+    assert persistent.old_world_position == result.now_world_position
+    assert persistent.velocity_weight == result.velocity_weight
+
+
 def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
     with open(CENTER_STEP_FIXTURE_PATH, "r", encoding="utf-8") as handle:
         fixture = json.load(handle)

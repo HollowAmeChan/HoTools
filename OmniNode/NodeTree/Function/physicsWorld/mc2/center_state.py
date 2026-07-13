@@ -217,9 +217,108 @@ class MC2CenterFramePoseSpec:
         _require_unit_quaternion(self.anchor_world_rotation_xyzw, "anchor_world_rotation_xyzw")
 
 
+@dataclass(frozen=True)
+class MC2CenterWorldPoseSpec:
+    position: tuple[float, float, float]
+    rotation_xyzw: tuple[float, float, float, float]
+    scale: tuple[float, float, float]
+    negative_scale_direction: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        _vector(self.position, 3, "Center world position")
+        _require_unit_quaternion(self.rotation_xyzw, "Center world rotation")
+        scale = _vector(self.scale, 3, "Center world scale")
+        if any(abs(value) <= 1.0e-8 for value in scale):
+            raise ValueError("Center world scale cannot contain zero")
+        if any(float(value) not in (-1.0, 1.0) for value in self.negative_scale_direction):
+            raise ValueError("negative_scale_direction must contain only -1 or 1")
+
+
+def derive_mc2_center_world_pose(
+    center_static: MC2CenterStaticSpec,
+    frame_pose: MC2CenterFramePoseSpec,
+    *,
+    world_positions,
+    world_rotations_xyzw,
+    vertex_bind_pose_rotations,
+) -> MC2CenterWorldPoseSpec:
+    """Reproduce TeamManager's fixed-point/component Center frame pose producer."""
+    if not isinstance(center_static, MC2CenterStaticSpec):
+        raise TypeError("center_static must be MC2CenterStaticSpec")
+    if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+        raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+    positions = np.asarray(world_positions, dtype=np.float32)
+    rotations = np.asarray(world_rotations_xyzw, dtype=np.float32)
+    bind_rotations = tuple(
+        _require_unit_quaternion(value, f"vertex_bind_pose_rotations[{index}]")
+        for index, value in enumerate(vertex_bind_pose_rotations)
+    )
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError("world_positions must have shape [N,3]")
+    if rotations.shape != (len(positions), 4):
+        raise ValueError("world_rotations_xyzw must have shape [N,4]")
+    if len(bind_rotations) != len(positions):
+        raise ValueError("Center bind rotation count mismatch")
+    if not np.isfinite(positions).all() or not np.isfinite(rotations).all():
+        raise ValueError("Center frame arrays cannot contain NaN/Inf")
+    for index, rotation in enumerate(rotations):
+        _require_unit_quaternion(rotation, f"world_rotations_xyzw[{index}]")
+
+    scale = tuple(float(value) for value in frame_pose.component_world_scale)
+    negative_direction = tuple(-1.0 if value < 0.0 else 1.0 for value in scale)
+    fixed = center_static.fixed_indices
+    if not fixed:
+        return MC2CenterWorldPoseSpec(
+            position=tuple(frame_pose.component_world_position),
+            rotation_xyzw=tuple(frame_pose.component_world_rotation_xyzw),
+            scale=scale,
+            negative_scale_direction=negative_direction,
+        )
+    if min(fixed) < 0 or max(fixed) >= len(positions):
+        raise ValueError("Center fixed index is outside the frame particle range")
+
+    center_position = tuple(
+        float(np.mean(positions[np.asarray(fixed, dtype=np.intp), axis], dtype=np.float32))
+        for axis in range(3)
+    )
+    normal_sum = np.zeros(3, dtype=np.float32)
+    tangent_sum = np.zeros(3, dtype=np.float32)
+    has_negative_scale = any(value < 0.0 for value in scale)
+    for index in fixed:
+        rotation = tuple(float(value) for value in rotations[index])
+        if has_negative_scale:
+            normal = _rotate(rotation, (0.0, 1.0, 0.0))
+            tangent = _rotate(rotation, (0.0, 0.0, 1.0))
+            rotation = mc2_world_rotation_xyzw(
+                tuple(-value for value in normal),
+                tuple(-value for value in tangent),
+            )
+        corrected = _unit_quaternion(
+            _quaternion_multiply(rotation, bind_rotations[index]),
+            "corrected Center frame rotation",
+        )
+        normal_sum += np.asarray(_rotate(corrected, (0.0, 1.0, 0.0)), dtype=np.float32)
+        tangent_sum += np.asarray(_rotate(corrected, (0.0, 0.0, 1.0)), dtype=np.float32)
+    if negative_direction[0] < 0.0 or negative_direction[2] < 0.0:
+        normal_sum *= np.float32(-1.0)
+    if negative_direction[0] < 0.0 or negative_direction[1] < 0.0:
+        tangent_sum *= np.float32(-1.0)
+    center_rotation = mc2_world_rotation_xyzw(
+        _normalize3(normal_sum, "Center frame normal"),
+        _normalize3(tangent_sum, "Center frame tangent"),
+    )
+    return MC2CenterWorldPoseSpec(
+        position=center_position,
+        rotation_xyzw=tuple(center_rotation),
+        scale=scale,
+        negative_scale_direction=negative_direction,
+    )
+
+
 @dataclass
 class MC2CenterPersistentState:
     center_static_signature: str
+    component_identity: str = ""
     initialized: bool = False
     reset_count: int = 0
     old_component_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -227,15 +326,30 @@ class MC2CenterPersistentState:
     old_component_world_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     old_frame_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     old_frame_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
+    old_frame_world_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
     old_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     old_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
+    initial_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    velocity_weight: float = 1.0
+    last_frame: int | None = None
+    last_generation: int | None = None
     smoothing_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    def reset(self, frame_pose: MC2CenterFramePoseSpec, center_position, center_rotation_xyzw) -> None:
+    def reset(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        center_position,
+        center_rotation_xyzw,
+        *,
+        velocity_weight: float = 0.0,
+    ) -> None:
         if not isinstance(frame_pose, MC2CenterFramePoseSpec):
             raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
         center_position = _vector(center_position, 3, "center_position")
         center_rotation = _unit_quaternion(center_rotation_xyzw, "center_rotation_xyzw")
+        if not 0.0 <= float(velocity_weight) <= 1.0:
+            raise ValueError("velocity_weight must be in 0..1")
+        self.component_identity = frame_pose.component_identity
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = _unit_quaternion(
             frame_pose.component_world_rotation_xyzw, "component_world_rotation_xyzw"
@@ -243,11 +357,90 @@ class MC2CenterPersistentState:
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
         self.old_frame_world_position = center_position
         self.old_frame_world_rotation_xyzw = center_rotation
+        self.old_frame_world_scale = tuple(frame_pose.component_world_scale)
         self.old_world_position = center_position
         self.old_world_rotation_xyzw = center_rotation
+        if not self.initialized:
+            self.initial_scale = tuple(frame_pose.component_world_scale)
+        self.velocity_weight = float(velocity_weight)
+        self.last_frame = int(frame_pose.frame)
+        self.last_generation = int(frame_pose.generation)
         self.smoothing_velocity = (0.0, 0.0, 0.0)
         self.reset_count += 1
         self.initialized = True
+
+    def make_step_input(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        center_pose: MC2CenterWorldPoseSpec,
+        *,
+        simulation_delta_time: float,
+        frame_interpolation: float,
+        distance_weight: float = 1.0,
+    ) -> MC2CenterStepInputSpec:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before stepping")
+        if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+            raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+        if not isinstance(center_pose, MC2CenterWorldPoseSpec):
+            raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
+        if frame_pose.component_identity != self.component_identity:
+            raise ValueError("Center component identity changed without reset")
+        return MC2CenterStepInputSpec(
+            simulation_delta_time=float(simulation_delta_time),
+            frame_interpolation=float(frame_interpolation),
+            old_frame_world_position=self.old_frame_world_position,
+            frame_world_position=center_pose.position,
+            old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
+            frame_world_rotation_xyzw=center_pose.rotation_xyzw,
+            old_frame_world_scale=self.old_frame_world_scale,
+            frame_world_scale=center_pose.scale,
+            old_world_position=self.old_world_position,
+            old_world_rotation_xyzw=self.old_world_rotation_xyzw,
+            initial_scale=self.initial_scale,
+            negative_scale_direction=center_pose.negative_scale_direction,
+            velocity_weight=self.velocity_weight,
+            distance_weight=float(distance_weight),
+        )
+
+    def commit_step(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        center_pose: MC2CenterWorldPoseSpec,
+        result: MC2CenterStepResult,
+    ) -> None:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before commit")
+        if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+            raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+        if not isinstance(center_pose, MC2CenterWorldPoseSpec):
+            raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
+        if not isinstance(result, MC2CenterStepResult):
+            raise TypeError("result must be MC2CenterStepResult")
+        self.old_component_world_position = tuple(frame_pose.component_world_position)
+        self.old_component_world_rotation_xyzw = tuple(frame_pose.component_world_rotation_xyzw)
+        self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self.old_frame_world_position = tuple(center_pose.position)
+        self.old_frame_world_rotation_xyzw = tuple(center_pose.rotation_xyzw)
+        self.old_frame_world_scale = tuple(center_pose.scale)
+        self.old_world_position = tuple(result.now_world_position)
+        self.old_world_rotation_xyzw = tuple(result.now_world_rotation_xyzw)
+        self.velocity_weight = float(result.velocity_weight)
+        self.last_frame = int(frame_pose.frame)
+        self.last_generation = int(frame_pose.generation)
+
+    def debug_dict(self) -> dict:
+        return {
+            "center_static_signature": self.center_static_signature,
+            "component_identity": self.component_identity,
+            "initialized": self.initialized,
+            "reset_count": self.reset_count,
+            "last_frame": self.last_frame,
+            "last_generation": self.last_generation,
+            "velocity_weight": self.velocity_weight,
+            "old_frame_world_position": self.old_frame_world_position,
+            "old_world_position": self.old_world_position,
+        }
 
 
 @dataclass(frozen=True)
@@ -492,7 +685,9 @@ __all__ = [
     "MC2CenterStepInputSpec",
     "MC2CenterStepResult",
     "MC2CenterStaticSpec",
+    "MC2CenterWorldPoseSpec",
     "build_mc2_center_static",
+    "derive_mc2_center_world_pose",
     "evaluate_mc2_center_step",
     "pack_mc2_center_static",
 ]

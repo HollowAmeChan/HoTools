@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh native no-collision foundation，尚未发布结果 | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance/Bending/Center immutable contract、签名与只读 packer；N2 value ABI；N3 reset/continuity、old/current frame interpolation与 source world linear snapshot；per-slot staged native context；Tier A Center substep derived state；gravity/damping prediction、Pin、ordered Distance、Bending fixed-point scratch、persistent velocity；只读内部 candidate含 world pose/object-local offset且 `ready=False`；双 ABI/soak与 Blender BasePose集成。GN/bone result channel仍仅 planned | Center frame adapter与Move inertia/step-basic pose、public result/writeback transaction、Bone connection/topology/output、collision/self-collision |
+| MC2 | Mesh native no-collision foundation，尚未发布结果 | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance/Bending/Center immutable contract、签名与只读 packer；N2 value ABI；N3 reset/continuity、old/current frame interpolation、source world linear与 evaluated component pose snapshot；per-slot staged native context；Center fixed/component frame adapter、persistent reset/step history与 Tier A substep derived state；gravity/damping prediction、Pin、ordered Distance、Bending fixed-point scratch、persistent velocity；只读内部 candidate含 world pose/object-local offset且 `ready=False`；双 ABI/soak与 Blender BasePose集成。GN/bone result channel仍仅 planned | Move inertia/step-basic pose、Center world-inertia/negative-scale teleport、public result/writeback transaction、Bone connection/topology/output、collision/self-collision |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 ## 统一 MC2 决策
@@ -115,7 +115,7 @@ MC2 只有一个 solver identity：`mc2`。
 ## 当前优先级
 
 1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 继续收口 Center frame-derived inertia与 Mesh host offset/public result；禁止按旧 solver 或未验证近似扩展 spec。
+2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 继续把 Center frame-derived inertia接入 Move particle，并收口 Mesh host offset/public result；禁止按旧 solver 或未验证近似扩展 spec。
 3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
 4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
 

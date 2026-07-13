@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .center_state import MC2CenterFramePoseSpec
 
 
 MC2_FRAME_SCHEMA_VERSION = 0
@@ -27,6 +31,7 @@ class MC2FrameInputSpec:
     world_positions: np.ndarray
     world_rotations_xyzw: np.ndarray
     source_world_linear: np.ndarray | None = None
+    center_frame_pose: MC2CenterFramePoseSpec | None = None
     velocity_weight: float = 1.0
     gravity_ratio: float = 1.0
     scale_ratio: float = 1.0
@@ -57,6 +62,14 @@ class MC2FrameInputSpec:
                 raise ValueError("source_world_linear must be finite and read-only")
             if abs(float(np.linalg.det(linear.astype(np.float64)))) <= 1.0e-12:
                 raise ValueError("source_world_linear must be invertible")
+        center_pose = self.center_frame_pose
+        if center_pose is not None:
+            from .center_state import MC2CenterFramePoseSpec
+
+            if not isinstance(center_pose, MC2CenterFramePoseSpec):
+                raise TypeError("center_frame_pose must be MC2CenterFramePoseSpec")
+            if center_pose.frame != self.frame or center_pose.generation != self.generation:
+                raise ValueError("center_frame_pose frame identity must match MC2 frame input")
         if not 0.0 <= float(self.velocity_weight) <= 1.0:
             raise ValueError("velocity_weight must be in 0..1")
         if not 0.0 <= float(self.gravity_ratio) <= 1.0:
@@ -87,6 +100,7 @@ def make_mc2_frame_input(
     world_positions,
     world_rotations_xyzw,
     source_world_linear=None,
+    center_frame_pose=None,
     velocity_weight: object = 1.0,
     gravity_ratio: object = 1.0,
     scale_ratio: object = 1.0,
@@ -105,6 +119,7 @@ def make_mc2_frame_input(
             if source_world_linear is not None
             else None
         ),
+        center_frame_pose=center_frame_pose,
         velocity_weight=float(velocity_weight),
         gravity_ratio=float(gravity_ratio),
         scale_ratio=float(scale_ratio),

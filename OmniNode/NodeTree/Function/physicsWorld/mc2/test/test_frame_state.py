@@ -32,6 +32,7 @@ for package_name, package_path in (
     sys.modules.setdefault(package_name, module)
 
 frame_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state")
+center_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
 initial_state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.initial_state")
 state = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.state")
 final_proxy = importlib.import_module(
@@ -124,6 +125,31 @@ def test_frame_interpolation_is_checked_at_the_host_boundary() -> None:
         assert "invertible" in str(exc)
     else:
         raise AssertionError("singular source world linear was accepted")
+
+
+def test_center_frame_pose_identity_must_match_particle_frame_identity() -> None:
+    center_pose = center_state.MC2CenterFramePoseSpec(
+        frame=2,
+        generation=7,
+        component_identity="object:7",
+        component_world_position=(0.0, 0.0, 0.0),
+        component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        component_world_scale=(1.0, 1.0, 1.0),
+    )
+    try:
+        frame_state.make_mc2_frame_input(
+            task_id="mc2:mesh:test",
+            topology_signature="topology",
+            frame=1,
+            generation=7,
+            world_positions=((0.0, 0.0, 0.0),),
+            world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),),
+            center_frame_pose=center_pose,
+        )
+    except ValueError as exc:
+        assert "frame identity" in str(exc)
+    else:
+        raise AssertionError("mismatched Center frame identity was accepted")
 
 
 def test_first_pose_resets_all_history_and_clears_contact_state() -> None:

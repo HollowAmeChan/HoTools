@@ -166,6 +166,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert first.animated_base_world_positions.flags.writeable is False
         assert first.animated_base_world_normals.flags.writeable is False
         assert first.source_world_linear.flags.writeable is False
+        assert np.allclose(first.component_world_position, source.matrix_world.translation)
+        assert np.allclose(first.component_world_scale, (1.0, 1.0, 1.0))
         assert np.allclose(first.animated_base_world_positions[:, 0], (0.5, 1.5, 0.5))
 
         task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
@@ -191,6 +193,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         assert first_input.world_rotations_xyzw.shape == (3, 4)
         assert first_input.world_rotations_xyzw.flags.writeable is False
+        assert first_input.center_frame_pose is not None
+        assert first_input.center_frame_pose.frame == first_input.frame
+        assert first_input.center_frame_pose.component_identity == f"object:{source.as_pointer()}"
         assert np.allclose(
             np.linalg.norm(first_input.world_rotations_xyzw, axis=1),
             1.0,
@@ -205,6 +210,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         slot = world.solver_slots[task.task_id]
         runtime_state = slot.data["runtime_state"]
         particle_buffer = slot.data["particle_buffer"]
+        center_runtime = slot.data["center_state"]
         native_owner = slot.data["native_context"]
         native_info = native_owner.inspect()
         assert native_info["proxy_static_ready"] is True
@@ -231,6 +237,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1
         assert native_info["step_count"] == 0
+        assert center_runtime.initialized is True
+        assert center_runtime.reset_count == 1
+        assert center_runtime.last_frame == first_input.frame
+        assert slot.data["center_step_result"] is None
         candidate = slot.data["result_candidate"]
         assert candidate.ready is False
         assert candidate.revision == 1
@@ -351,6 +361,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 2
         assert native_info["reset_count"] == 2
         assert native_info["step_count"] == 0
+        assert center_runtime.reset_count == 2
+        assert center_runtime.last_frame == second_input.frame
         second_candidate = slot.data["result_candidate"]
         assert second_candidate.revision == 2
         assert second_candidate.frame == second_input.frame
@@ -367,6 +379,20 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             world_positions=second_input.world_positions,
             world_rotations_xyzw=second_input.world_rotations_xyzw,
             source_world_linear=second_input.source_world_linear,
+            center_frame_pose=type(second_input.center_frame_pose)(
+                frame=3,
+                generation=second_input.generation,
+                component_identity=second_input.center_frame_pose.component_identity,
+                component_world_position=(
+                    second_input.center_frame_pose.component_world_position[0] + 0.25,
+                    second_input.center_frame_pose.component_world_position[1],
+                    second_input.center_frame_pose.component_world_position[2],
+                ),
+                component_world_rotation_xyzw=(
+                    second_input.center_frame_pose.component_world_rotation_xyzw
+                ),
+                component_world_scale=second_input.center_frame_pose.component_world_scale,
+            ),
         )
         mc2_solver.step_mc2(
             world,
@@ -378,7 +404,15 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 3
         assert native_info["reset_count"] == 2
         assert native_info["step_count"] == 1
+        assert native_info["center_dynamic_revision"] == 1
+        assert native_info["center_step_count"] == 1
         assert native_info["distance_solve_count"] == 1
+        center_result = slot.data["center_step_result"]
+        assert center_result is not None
+        np.testing.assert_allclose(center_result.step_vector, (0.25, 0.0, 0.0), atol=1.0e-6)
+        assert center_runtime.last_frame == third_input.frame
+        assert center_runtime.old_world_position == center_result.now_world_position
+        assert slot.debug_snapshot()["center_step_result"] is not None
         third_candidate = slot.data["result_candidate"]
         assert third_candidate.revision == 3
         assert third_candidate.frame == third_input.frame

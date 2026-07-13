@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import bpy
 import numpy as np
 
+from ...center_state import MC2CenterFramePoseSpec
 from ...frame_state import MC2FrameInputSpec, make_mc2_frame_input
 from .base_pose import validate_base_pose_proxy
 from .final_proxy import (
@@ -43,6 +44,9 @@ class MC2MeshFrameSnapshot:
     generation: int
     mesh_topology_signature: str
     source_world_linear: np.ndarray
+    component_world_position: tuple[float, float, float]
+    component_world_rotation_xyzw: tuple[float, float, float, float]
+    component_world_scale: tuple[float, float, float]
     animated_base_world_positions: np.ndarray
     animated_base_world_normals: np.ndarray
 
@@ -72,6 +76,21 @@ class MC2MeshFrameSnapshot:
             raise ValueError("Mesh frame snapshot source_world_linear必须有限且可逆")
         if not np.isfinite(positions).all() or not np.isfinite(normals).all():
             raise ValueError("Mesh frame snapshot不能包含NaN/Inf")
+        if len(self.component_world_position) != 3 or not np.isfinite(
+            self.component_world_position
+        ).all():
+            raise ValueError("Mesh frame snapshot component position must be finite float3")
+        if len(self.component_world_scale) != 3 or not np.isfinite(
+            self.component_world_scale
+        ).all():
+            raise ValueError("Mesh frame snapshot component scale must be finite float3")
+        if any(abs(value) <= _NORMAL_EPSILON for value in self.component_world_scale):
+            raise ValueError("Mesh frame snapshot component scale cannot contain zero")
+        rotation = np.asarray(self.component_world_rotation_xyzw, dtype=np.float64)
+        if rotation.shape != (4,) or not np.isfinite(rotation).all() or not np.isclose(
+            np.linalg.norm(rotation), 1.0, rtol=1.0e-5, atol=1.0e-6
+        ):
+            raise ValueError("Mesh frame snapshot component rotation must be a unit quaternion")
 
 
 def _cache_key(
@@ -163,6 +182,10 @@ def read_base_pose_frame_snapshot(
         depsgraph,
         len(source_obj.data.vertices),
     )
+    evaluated_source = source_obj.evaluated_get(depsgraph)
+    source_matrix = evaluated_source.matrix_world.copy()
+    component_position, component_rotation, component_scale = source_matrix.decompose()
+    component_rotation.normalize()
     snapshot = MC2MeshFrameSnapshot(
         source_object_ptr=int(source_obj.as_pointer()),
         source_data_ptr=int(source_obj.data.as_pointer()),
@@ -171,8 +194,16 @@ def read_base_pose_frame_snapshot(
         generation=int(generation),
         mesh_topology_signature=signature,
         source_world_linear=_readonly_float3(
-            _matrix_to_numpy(source_obj.matrix_world)[:3, :3]
+            _matrix_to_numpy(source_matrix)[:3, :3]
         ),
+        component_world_position=tuple(float(value) for value in component_position),
+        component_world_rotation_xyzw=(
+            float(component_rotation.x),
+            float(component_rotation.y),
+            float(component_rotation.z),
+            float(component_rotation.w),
+        ),
+        component_world_scale=tuple(float(value) for value in component_scale),
         animated_base_world_positions=positions,
         animated_base_world_normals=normals,
     )
@@ -228,6 +259,14 @@ def build_mc2_mesh_frame_input(
         world_positions=snapshot.animated_base_world_positions,
         world_rotations_xyzw=rotations,
         source_world_linear=snapshot.source_world_linear,
+        center_frame_pose=MC2CenterFramePoseSpec(
+            frame=snapshot.frame,
+            generation=snapshot.generation,
+            component_identity=f"object:{snapshot.source_object_ptr}",
+            component_world_position=snapshot.component_world_position,
+            component_world_rotation_xyzw=snapshot.component_world_rotation_xyzw,
+            component_world_scale=snapshot.component_world_scale,
+        ),
     )
 
 

@@ -13,6 +13,7 @@ from .parameters import (
 )
 from .runtime_parameters import make_mc2_runtime_parameters
 from .candidate import make_mc2_result_candidate
+from .center_state import MC2CenterPersistentState, derive_mc2_center_world_pose
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
@@ -45,6 +46,8 @@ def _slot_debug_snapshot(slot) -> dict:
     mesh_static = slot.data.get("mesh_static")
     native_context = slot.data.get("native_context")
     result_candidate = slot.data.get("result_candidate")
+    center_state = slot.data.get("center_state")
+    center_step_result = slot.data.get("center_step_result")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -69,6 +72,22 @@ def _slot_debug_snapshot(slot) -> dict:
             else None
         ),
         "has_backend": native_context is not None,
+        "center_state": (
+            center_state.debug_dict()
+            if isinstance(center_state, MC2CenterPersistentState)
+            else None
+        ),
+        "center_step_result": (
+            {
+                "frame_interpolation": center_step_result.frame_interpolation,
+                "now_world_position": center_step_result.now_world_position,
+                "inertia_vector": center_step_result.inertia_vector,
+                "velocity_weight": center_step_result.velocity_weight,
+                "blend_weight": center_step_result.blend_weight,
+            }
+            if center_step_result is not None
+            else None
+        ),
         "result_candidate": (
             result_candidate.debug_dict()
             if hasattr(result_candidate, "debug_dict")
@@ -105,6 +124,11 @@ def _install_mc2_slot(
         initialized=False,
     )
     particle_buffer = MC2ParticleBuffer.allocate(initial_state)
+    center_state = (
+        MC2CenterPersistentState(mesh_static.center.center_static_signature)
+        if mesh_static is not None
+        else None
+    )
     slot.kind = MC2_SLOT_KIND
     slot.world_generation = int(world.generation)
     slot.data.update(
@@ -119,6 +143,8 @@ def _install_mc2_slot(
             "particle_buffer": particle_buffer,
             "native_context": native_context,
             "runtime_state": state,
+            "center_state": center_state,
+            "center_step_result": None,
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
             "writeback_plan": {},
@@ -129,6 +155,25 @@ def _install_mc2_slot(
         }
     )
     return state
+
+
+def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
+    mesh_static = slot.data.get("mesh_static")
+    frame_pose = frame_input.center_frame_pose
+    center_state = slot.data.get("center_state")
+    if mesh_static is None or frame_pose is None:
+        return None
+    if not isinstance(center_state, MC2CenterPersistentState):
+        raise RuntimeError("Mesh MC2 slot is missing Center persistent state")
+    if center_state.center_static_signature != mesh_static.center.center_static_signature:
+        raise RuntimeError("Mesh MC2 Center static identity changed without slot rebuild")
+    return derive_mc2_center_world_pose(
+        mesh_static.center,
+        frame_pose,
+        world_positions=frame_input.world_positions,
+        world_rotations_xyzw=frame_input.world_rotations_xyzw,
+        vertex_bind_pose_rotations=mesh_static.finalizer.vertex_bind_pose_rotations,
+    )
 
 
 def _mc2_slot_rebuild_reason(
@@ -395,6 +440,26 @@ def step_mc2(
                     frame_input,
                     user_reset=bool(user_reset),
                 )
+                center_state = slot.data.get("center_state")
+                center_pose = _derive_slot_center_pose(slot, frame_input)
+                center_action = None
+                center_step_input = None
+                center_step_result = None
+                if center_pose is not None and frame_plan.action != "same_frame":
+                    if frame_plan.action == "reset" or not center_state.initialized:
+                        center_action = "reset"
+                    else:
+                        if dt <= 0.0:
+                            raise ValueError(
+                                "MC2 continuous Center frame requires a positive dt"
+                            )
+                        center_action = "step"
+                        center_step_input = center_state.make_step_input(
+                            frame_input.center_frame_pose,
+                            center_pose,
+                            simulation_delta_time=dt,
+                            frame_interpolation=frame_input.frame_interpolation,
+                        )
                 if (
                     native_context is not None
                     and frame_plan.action != "same_frame"
@@ -404,7 +469,13 @@ def step_mc2(
                     if frame_plan.action == "reset":
                         native_context.reset()
                     else:
+                        if center_step_input is not None:
+                            native_context.update_center_dynamic(center_step_input)
                         native_context.step_no_collision(dt)
+                        if center_step_input is not None:
+                            center_step_result = native_context.read_center_step()
+                elif center_step_input is not None:
+                    raise RuntimeError("MC2 Center step requires a live native context")
                 candidate = None
                 if native_context is not None and frame_plan.action != "same_frame":
                     native_positions, native_rotations = native_context.read()
@@ -421,6 +492,24 @@ def step_mc2(
                             world_positions=native_positions,
                             world_rotations_xyzw=native_rotations,
                         )
+                if center_action == "reset":
+                    stabilization = float(spec.profile.stabilization_time_after_reset)
+                    center_state.reset(
+                        frame_input.center_frame_pose,
+                        center_pose.position,
+                        center_pose.rotation_xyzw,
+                        velocity_weight=0.0 if stabilization > 1.0e-6 else 1.0,
+                    )
+                    slot.data["center_step_result"] = None
+                elif center_action == "step":
+                    if center_step_result is None:
+                        raise RuntimeError("MC2 native Center step did not produce a result")
+                    center_state.commit_step(
+                        frame_input.center_frame_pose,
+                        center_pose,
+                        center_step_result,
+                    )
+                    slot.data["center_step_result"] = center_step_result
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
                     slot.data["particle_buffer"],
