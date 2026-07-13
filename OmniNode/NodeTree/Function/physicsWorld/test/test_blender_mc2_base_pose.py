@@ -214,6 +214,18 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1
         assert native_info["step_count"] == 0
+        candidate = slot.data["result_candidate"]
+        assert candidate.ready is False
+        assert candidate.revision == 1
+        assert candidate.frame == first_input.frame
+        assert candidate.generation == first_input.generation
+        assert candidate.world_generation == world.generation
+        assert candidate.world_positions.flags.writeable is False
+        assert candidate.world_rotations_xyzw.flags.writeable is False
+        assert world.result_streams == {}
+        snapshot = slot.debug_snapshot()
+        assert snapshot["result_candidate"]["revision"] == 1
+        assert snapshot["result_candidate"]["ready"] is False
         assert runtime_state.initialized is True
         assert runtime_state.last_reset_reason == "first_valid_pose"
         assert runtime_state.reset_count == particle_buffer.reset_count == 1
@@ -229,6 +241,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert runtime_state.frame_revision == 1
         assert runtime_state.reset_count == 1
         assert native_owner.inspect()["dynamic_revision"] == 1
+        assert slot.data["result_candidate"] is candidate
+        assert slot.data["result_candidate_revision"] == 1
 
         history_before_parameter_update = particle_buffer.next_positions.copy()
         soft_task = mc2_specs.make_mc2_task_spec(
@@ -252,6 +266,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             particle_buffer.next_positions,
             history_before_parameter_update,
         )
+        assert slot.data["result_candidate"] is candidate
 
         offsets = np.full((3, 3), (0.0, 0.0, 0.25), dtype=np.float32)
         gn_offset.write_gn_local_offsets(source, offsets)
@@ -318,6 +333,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["dynamic_revision"] == 2
         assert native_info["reset_count"] == 2
         assert native_info["step_count"] == 0
+        second_candidate = slot.data["result_candidate"]
+        assert second_candidate.revision == 2
+        assert second_candidate.frame == second_input.frame
+        assert second_candidate is not candidate
         np.testing.assert_array_equal(
             particle_buffer.next_positions,
             second.animated_base_world_positions,
@@ -341,6 +360,11 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["reset_count"] == 2
         assert native_info["step_count"] == 1
         assert native_info["distance_solve_count"] == 1
+        third_candidate = slot.data["result_candidate"]
+        assert third_candidate.revision == 3
+        assert third_candidate.frame == third_input.frame
+        assert third_candidate.native_step_count == 1
+        assert world.result_streams == {}
 
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
@@ -356,6 +380,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert recovered_info["dynamic_revision"] == 1
         assert recovered_info["reset_count"] == 1
         assert recovered_info["step_count"] == 0
+        recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
+        assert recovered_candidate.revision == 1
+        assert recovered_candidate.frame == third_input.frame
 
         try:
             frame_input.read_base_pose_frame_snapshot(

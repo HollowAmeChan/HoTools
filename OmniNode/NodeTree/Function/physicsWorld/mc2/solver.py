@@ -12,6 +12,7 @@ from .parameters import (
     make_mc2_solver_settings,
 )
 from .runtime_parameters import make_mc2_runtime_parameters
+from .candidate import make_mc2_result_candidate
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .specs import build_mc2_task_specs
@@ -43,6 +44,7 @@ def _slot_debug_snapshot(slot) -> dict:
     spec = slot.data.get("spec")
     mesh_static = slot.data.get("mesh_static")
     native_context = slot.data.get("native_context")
+    result_candidate = slot.data.get("result_candidate")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -67,6 +69,11 @@ def _slot_debug_snapshot(slot) -> dict:
             else None
         ),
         "has_backend": native_context is not None,
+        "result_candidate": (
+            result_candidate.debug_dict()
+            if hasattr(result_candidate, "debug_dict")
+            else None
+        ),
         "has_writeback_plan": bool(slot.data.get("writeback_plan")),
     }
 
@@ -115,6 +122,8 @@ def _install_mc2_slot(
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
             "writeback_plan": {},
+            "result_candidate": None,
+            "result_candidate_revision": 0,
             "_dispose": lambda reason, slot=slot: _dispose_mc2_slot(slot, reason),
             "_debug_snapshot": lambda slot=slot: _slot_debug_snapshot(slot),
         }
@@ -396,7 +405,22 @@ def step_mc2(
                         native_context.reset()
                     else:
                         native_context.step_no_collision(dt)
-                    native_context.read()
+                candidate = None
+                if native_context is not None and frame_plan.action != "same_frame":
+                    native_positions, native_rotations = native_context.read()
+                    if slot.data.get("mesh_static") is not None:
+                        candidate_revision = int(
+                            slot.data.get("result_candidate_revision", 0)
+                        ) + 1
+                        candidate = make_mc2_result_candidate(
+                            spec=spec,
+                            slot=slot,
+                            frame_input=frame_input,
+                            revision=candidate_revision,
+                            native_info=native_context.inspect(),
+                            world_positions=native_positions,
+                            world_rotations_xyzw=native_rotations,
+                        )
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
                     slot.data["particle_buffer"],
@@ -405,6 +429,9 @@ def step_mc2(
                 )
                 if frame_result != frame_plan:
                     raise RuntimeError("MC2 frame plan changed during commit")
+                if candidate is not None:
+                    slot.data["result_candidate"] = candidate
+                    slot.data["result_candidate_revision"] = candidate.revision
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
     finally:
         world.release_write(MC2_SOLVER_ID)
