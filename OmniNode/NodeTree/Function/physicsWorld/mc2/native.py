@@ -12,6 +12,7 @@ import numpy as np
 
 from .bending_static import pack_mc2_bending_static
 from .center_state import pack_mc2_center_static
+from .center_state import MC2CenterStepInputSpec, MC2CenterStepResult
 from .distance_static import pack_mc2_distance_static
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
@@ -31,11 +32,13 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_distance_static",
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
+    "mc2_context_v0_update_center_dynamic",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
     "mc2_context_v0_read",
+    "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
     "mc2_context_v0_stats",
 )
@@ -96,6 +99,14 @@ class MC2NativeContextV0:
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
+        self._center_step_dt: float | None = None
+        self._center_now_position = np.empty(3, dtype=np.float32)
+        self._center_now_rotation = np.empty(4, dtype=np.float32)
+        self._center_step_vector = np.empty(3, dtype=np.float32)
+        self._center_step_rotation = np.empty(4, dtype=np.float32)
+        self._center_inertia_vector = np.empty(3, dtype=np.float32)
+        self._center_inertia_rotation = np.empty(4, dtype=np.float32)
+        self._center_rotation_axis = np.empty(3, dtype=np.float32)
 
     @property
     def disposed(self) -> bool:
@@ -210,13 +221,41 @@ class MC2NativeContextV0:
         )
         self.last_frame = (frame_input.frame, frame_input.generation)
 
+    def update_center_dynamic(self, step: MC2CenterStepInputSpec) -> None:
+        if not isinstance(step, MC2CenterStepInputSpec):
+            raise TypeError("step must be MC2CenterStepInputSpec")
+        self._ensure_live()
+        array = lambda values: np.ascontiguousarray(values, dtype=np.float32)
+        self._module.mc2_context_v0_update_center_dynamic(
+            self._handle,
+            array(step.old_frame_world_position),
+            array(step.frame_world_position),
+            array(step.old_frame_world_rotation_xyzw),
+            array(step.frame_world_rotation_xyzw),
+            array(step.old_frame_world_scale),
+            array(step.frame_world_scale),
+            array(step.old_world_position),
+            array(step.old_world_rotation_xyzw),
+            array(step.initial_scale),
+            array(step.negative_scale_direction),
+            step.distance_weight,
+            step.frame_interpolation,
+            step.velocity_weight,
+        )
+        self._center_step_dt = float(step.simulation_delta_time)
+
     def reset(self) -> None:
         self._ensure_live()
         self._module.mc2_context_v0_reset(self._handle)
+        self._center_step_dt = None
 
     def step_no_collision(self, dt: float) -> None:
         self._ensure_live()
         dt = float(dt)
+        if self._center_step_dt is not None and not math.isclose(
+            dt, self._center_step_dt, rel_tol=0.0, abs_tol=1.0e-9
+        ):
+            raise ValueError("Center step simulation_delta_time does not match native step dt")
         frequency_ratio = 90.0 * dt
         simulation_power_z = (
             math.pow(frequency_ratio, 0.3)
@@ -234,6 +273,7 @@ class MC2NativeContextV0:
             simulation_power_y,
             simulation_power_z,
         )
+        self._center_step_dt = None
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
         self._ensure_live()
@@ -243,6 +283,38 @@ class MC2NativeContextV0:
             self._out_rotations,
         )
         return self._out_positions, self._out_rotations
+
+    def read_center_step(self) -> MC2CenterStepResult:
+        self._ensure_live()
+        scalar = self._module.mc2_context_v0_read_center_step(
+            self._handle,
+            self._center_now_position,
+            self._center_now_rotation,
+            self._center_step_vector,
+            self._center_step_rotation,
+            self._center_inertia_vector,
+            self._center_inertia_rotation,
+            self._center_rotation_axis,
+        )
+        vector = lambda values: tuple(float(value) for value in values)
+        return MC2CenterStepResult(
+            frame_interpolation=float(scalar["frame_interpolation"]),
+            now_world_position=vector(self._center_now_position),
+            now_world_rotation_xyzw=vector(self._center_now_rotation),
+            step_vector=vector(self._center_step_vector),
+            step_rotation_xyzw=vector(self._center_step_rotation),
+            step_move_inertia_ratio=float(scalar["step_move_inertia_ratio"]),
+            step_rotation_inertia_ratio=float(scalar["step_rotation_inertia_ratio"]),
+            inertia_vector=vector(self._center_inertia_vector),
+            inertia_rotation_xyzw=vector(self._center_inertia_rotation),
+            angular_velocity=float(scalar["angular_velocity"]),
+            rotation_axis=vector(self._center_rotation_axis),
+            scale_ratio=float(scalar["scale_ratio"]),
+            gravity_dot=float(scalar["gravity_dot"]),
+            gravity_ratio=float(scalar["gravity_ratio"]),
+            velocity_weight=float(scalar["velocity_weight"]),
+            blend_weight=float(scalar["blend_weight"]),
+        )
 
     def inspect(self) -> dict:
         if self._handle is None:
@@ -269,6 +341,14 @@ class MC2NativeContextV0:
         self.last_frame = None
         self._out_positions = np.empty((0, 3), dtype=np.float32)
         self._out_rotations = np.empty((0, 4), dtype=np.float32)
+        self._center_step_dt = None
+        self._center_now_position = np.empty(0, dtype=np.float32)
+        self._center_now_rotation = np.empty(0, dtype=np.float32)
+        self._center_step_vector = np.empty(0, dtype=np.float32)
+        self._center_step_rotation = np.empty(0, dtype=np.float32)
+        self._center_inertia_vector = np.empty(0, dtype=np.float32)
+        self._center_inertia_rotation = np.empty(0, dtype=np.float32)
+        self._center_rotation_axis = np.empty(0, dtype=np.float32)
 
     def _ensure_live(self) -> None:
         if self._handle is None:

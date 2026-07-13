@@ -770,6 +770,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_bending_static, a); });
     m.def("mc2_context_v0_update_center_static",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
+    m.def("mc2_context_v0_update_center_dynamic",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_dynamic, a); });
     m.def("mc2_context_v0_update_parameters",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",
@@ -780,6 +782,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_step, a); });
     m.def("mc2_context_v0_read",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_read, a); });
+    m.def("mc2_context_v0_read_center_step",
+        [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_free, a); });
     m.def("mc2_context_v0_stats",

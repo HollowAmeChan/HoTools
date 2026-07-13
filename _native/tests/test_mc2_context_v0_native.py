@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -608,8 +609,132 @@ def test_create_free_soak_has_no_live_growth():
     assert hotools_native.mc2_context_v0_stats()["live"] == baseline
 
 
+def test_center_step_matches_tier_a_fixture():
+    fixture_path = (
+        ROOT
+        / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
+        / "test" / "fixtures" / "tier_a" / "center_step_inertia_001.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    values = fixture["input"]
+    expected = fixture["expected"]
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        proxy, baseline = static_arrays(1)
+        proxy = list(proxy)
+        proxy[4] = np.array([1], dtype=np.uint8)
+        hotools_native.mc2_context_v0_update_proxy_static(context, *proxy)
+        hotools_native.mc2_context_v0_update_baseline_static(context, *baseline)
+        hotools_native.mc2_context_v0_update_center_static(
+            context,
+            np.array([0], dtype=np.int32),
+            np.zeros(3, dtype=np.float32),
+            np.asarray(values["initial_local_gravity_direction"], dtype=np.float32),
+        )
+        floats, ints, curves = parameters()
+        floats[0] = values["gravity"]
+        floats[1:4] = values["world_gravity_direction"]
+        floats[4] = values["gravity_falloff"]
+        floats[5] = values["stabilization_time_after_reset"]
+        floats[6] = values["parameter_blend_weight"]
+        floats[16] = values["local_inertia"]
+        floats[17] = values["local_movement_speed_limit"]
+        floats[18] = values["local_rotation_speed_limit"]
+        hotools_native.mc2_context_v0_update_parameters(context, floats, ints, curves)
+
+        frame_positions, frame_rotations = frame(1)
+        update_dynamic(
+            context,
+            1,
+            0,
+            frame_positions,
+            frame_rotations,
+            velocity_weight=values["velocity_weight_before_step"],
+            frame_interpolation=expected["frame_interpolation"],
+        )
+        hotools_native.mc2_context_v0_reset(context)
+        half_angle = np.float32(
+            np.radians(values["frame_world_rotation_axis_angle"]["degrees"]) * 0.5
+        )
+        frame_rotation = np.asarray(
+            [0.0, np.sin(half_angle), 0.0, np.cos(half_angle)], dtype=np.float32
+        )
+        center_args = (
+            np.asarray(values["old_frame_world_position"], dtype=np.float32),
+            np.asarray(values["frame_world_position"], dtype=np.float32),
+            np.asarray(values["old_frame_world_rotation_xyzw"], dtype=np.float32),
+            frame_rotation,
+            np.asarray(values["old_frame_world_scale"], dtype=np.float32),
+            np.asarray(values["frame_world_scale"], dtype=np.float32),
+            np.asarray(values["old_frame_world_position"], dtype=np.float32),
+            np.asarray(values["old_frame_world_rotation_xyzw"], dtype=np.float32),
+            np.asarray(values["init_scale"], dtype=np.float32),
+            np.asarray(values["negative_scale_direction"], dtype=np.float32),
+            values["distance_weight"],
+            expected["frame_interpolation"],
+            values["velocity_weight_before_step"],
+        )
+        hotools_native.mc2_context_v0_update_center_dynamic(context, *center_args)
+        before_invalid = hotools_native.mc2_context_v0_inspect(context)
+        bad_args = list(center_args)
+        bad_args[3] = np.zeros(4, dtype=np.float32)
+        expect_error(
+            ValueError,
+            lambda: hotools_native.mc2_context_v0_update_center_dynamic(context, *bad_args),
+            "unit quaternion",
+        )
+        after_invalid = hotools_native.mc2_context_v0_inspect(context)
+        assert after_invalid["center_dynamic_revision"] == before_invalid["center_dynamic_revision"]
+
+        outputs = (
+            np.empty(3, dtype=np.float32), np.empty(4, dtype=np.float32),
+            np.empty(3, dtype=np.float32), np.empty(4, dtype=np.float32),
+            np.empty(3, dtype=np.float32), np.empty(4, dtype=np.float32),
+            np.empty(3, dtype=np.float32),
+        )
+        expect_error(
+            RuntimeError,
+            lambda: hotools_native.mc2_context_v0_read_center_step(context, *outputs),
+            "not ready",
+        )
+        step(context, values["simulation_delta_time"])
+        scalars = hotools_native.mc2_context_v0_read_center_step(context, *outputs)
+        actual = {
+            "frame_interpolation": scalars["frame_interpolation"],
+            "now_world_position": outputs[0],
+            "now_world_rotation_xyzw": outputs[1],
+            "step_vector": outputs[2],
+            "step_rotation_xyzw": outputs[3],
+            "step_move_inertia_ratio": scalars["step_move_inertia_ratio"],
+            "step_rotation_inertia_ratio": scalars["step_rotation_inertia_ratio"],
+            "inertia_vector": outputs[4],
+            "inertia_rotation_xyzw": outputs[5],
+            "angular_velocity": scalars["angular_velocity"],
+            "rotation_axis": outputs[6],
+            "scale_ratio": scalars["scale_ratio"],
+            "gravity_dot": scalars["gravity_dot"],
+            "gravity_ratio": scalars["gravity_ratio"],
+            "velocity_weight": scalars["velocity_weight"],
+            "blend_weight": scalars["blend_weight"],
+        }
+        for field, expected_value in expected.items():
+            np.testing.assert_allclose(actual[field], expected_value, rtol=1.0e-6, atol=1.0e-6)
+        info = hotools_native.mc2_context_v0_inspect(context)
+        assert info["center_step_count"] == 1
+        assert info["center_result_ready"] is True
+        assert info["center_dynamic_ready"] is False
+        hotools_native.mc2_context_v0_reset(context)
+        reset_info = hotools_native.mc2_context_v0_inspect(context)
+        assert reset_info["center_result_ready"] is False
+        assert reset_info["center_dynamic_ready"] is False
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_lifecycle_and_transactional_validation()
     print("PASS lifecycle and transactional validation")
     test_create_free_soak_has_no_live_growth()
     print("PASS create/free soak")
+    test_center_step_matches_tier_a_fixture()
+    print("PASS Center step Tier A fixture")

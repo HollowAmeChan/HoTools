@@ -3,6 +3,7 @@
 #include "python_buffer_utils.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -30,6 +31,12 @@ constexpr Py_ssize_t kGravity = 0;
 constexpr Py_ssize_t kGravityDirection = 1;
 constexpr Py_ssize_t kDistanceVelocityAttenuation = 26;
 constexpr Py_ssize_t kBendingStiffness = 27;
+constexpr Py_ssize_t kGravityFalloff = 4;
+constexpr Py_ssize_t kStabilizationTime = 5;
+constexpr Py_ssize_t kBlendWeight = 6;
+constexpr Py_ssize_t kLocalInertia = 16;
+constexpr Py_ssize_t kLocalMovementSpeedLimit = 17;
+constexpr Py_ssize_t kLocalRotationSpeedLimit = 18;
 
 std::atomic<std::int64_t> g_created {0};
 std::atomic<std::int64_t> g_released {0};
@@ -49,6 +56,8 @@ struct Mc2ContextV0 {
     std::int64_t distance_solve_count = 0;
     std::int64_t particle_prediction_count = 0;
     std::int64_t bending_solve_count = 0;
+    std::int64_t center_dynamic_revision = 0;
+    std::int64_t center_step_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -62,6 +71,8 @@ struct Mc2ContextV0 {
     bool distance_static_ready = false;
     bool bending_static_ready = false;
     bool center_static_ready = false;
+    bool center_dynamic_ready = false;
+    bool center_result_ready = false;
     bool dynamic_ready = false;
     bool initialized = false;
     bool released = false;
@@ -102,6 +113,29 @@ struct Mc2ContextV0 {
     std::vector<std::int32_t> center_fixed_indices;
     std::vector<float> center_local_position;
     std::vector<float> center_initial_local_gravity_direction;
+    std::array<float, 3> center_old_frame_world_position {};
+    std::array<float, 3> center_frame_world_position {};
+    std::array<float, 4> center_old_frame_world_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 4> center_frame_world_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> center_old_frame_world_scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> center_frame_world_scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> center_old_world_position {};
+    std::array<float, 4> center_old_world_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> center_initial_scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 3> center_negative_scale_direction {1.0f, 1.0f, 1.0f};
+    float center_distance_weight = 1.0f;
+    std::array<float, 3> center_now_world_position {};
+    std::array<float, 4> center_now_world_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> center_step_vector {};
+    std::array<float, 4> center_step_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> center_inertia_vector {};
+    std::array<float, 4> center_inertia_rotation {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 3> center_rotation_axis {};
+    float center_step_move_inertia_ratio = 1.0f;
+    float center_step_rotation_inertia_ratio = 1.0f;
+    float center_angular_velocity = 0.0f;
+    float center_gravity_dot = 1.0f;
+    float center_blend_weight = 1.0f;
 };
 
 Mc2ContextV0* context_from(PyObject* object) {
@@ -155,6 +189,8 @@ void release_resources(Mc2ContextV0& context) {
     context.distance_static_ready = false;
     context.bending_static_ready = false;
     context.center_static_ready = false;
+    context.center_dynamic_ready = false;
+    context.center_result_ready = false;
     context.dynamic_ready = false;
     context.initialized = false;
     context.released = true;
@@ -193,6 +229,14 @@ bool dict_i64(PyObject* dict, const char* key, std::int64_t value) {
 
 bool dict_bool(PyObject* dict, const char* key, bool value) {
     PyObject* item = PyBool_FromLong(value ? 1 : 0);
+    if (item == nullptr) return false;
+    const int result = PyDict_SetItemString(dict, key, item);
+    Py_DECREF(item);
+    return result == 0;
+}
+
+bool dict_float(PyObject* dict, const char* key, float value) {
+    PyObject* item = PyFloat_FromDouble(static_cast<double>(value));
     if (item == nullptr) return false;
     const int result = PyDict_SetItemString(dict, key, item);
     Py_DECREF(item);
@@ -484,6 +528,191 @@ Vec3 normalize(Vec3 value) {
     return size > kMc2Epsilon ? mul(value, 1.0f / size) : Vec3{};
 }
 
+float saturate(float value) {
+    return std::max(0.0f, std::min(1.0f, value));
+}
+
+std::array<float, 4> quaternion_multiply(
+    const std::array<float, 4>& left,
+    const std::array<float, 4>& right
+) {
+    const float lx = left[0], ly = left[1], lz = left[2], lw = left[3];
+    const float rx = right[0], ry = right[1], rz = right[2], rw = right[3];
+    return {
+        lw * rx + lx * rw + ly * rz - lz * ry,
+        lw * ry - lx * rz + ly * rw + lz * rx,
+        lw * rz + lx * ry - ly * rx + lz * rw,
+        lw * rw - lx * rx - ly * ry - lz * rz,
+    };
+}
+
+void normalize_quaternion(std::array<float, 4>& value) {
+    float length_squared = 0.0f;
+    for (const float component : value) length_squared += component * component;
+    if (length_squared <= kMc2Epsilon) {
+        value = {0.0f, 0.0f, 0.0f, 1.0f};
+        return;
+    }
+    const float inverse_length = 1.0f / std::sqrt(length_squared);
+    for (float& component : value) component *= inverse_length;
+}
+
+Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value) {
+    const Vec3 xyz {rotation[0], rotation[1], rotation[2]};
+    const Vec3 twice_cross = mul(cross(xyz, value), 2.0f);
+    return add(add(value, mul(twice_cross, rotation[3])), cross(xyz, twice_cross));
+}
+
+bool evaluate_center_step(Mc2ContextV0& context, float dt) {
+    if (!context.center_static_ready || !context.center_dynamic_ready ||
+        context.center_initial_local_gravity_direction.size() != 3 ||
+        context.float_values.size() != static_cast<std::size_t>(kFloatCount) ||
+        dt <= kMc2Epsilon) {
+        return false;
+    }
+    const float ratio = context.frame_interpolation;
+    for (std::size_t component = 0; component < 3; ++component) {
+        context.center_now_world_position[component] =
+            context.center_old_frame_world_position[component] * (1.0f - ratio) +
+            context.center_frame_world_position[component] * ratio;
+        context.center_step_vector[component] =
+            context.center_now_world_position[component] -
+            context.center_old_world_position[component];
+    }
+    slerp_xyzw(
+        context.center_old_frame_world_rotation.data(),
+        context.center_frame_world_rotation.data(),
+        ratio,
+        context.center_now_world_rotation.data()
+    );
+    const std::array<float, 4> inverse_old {
+        -context.center_old_world_rotation[0],
+        -context.center_old_world_rotation[1],
+        -context.center_old_world_rotation[2],
+        context.center_old_world_rotation[3],
+    };
+    context.center_step_rotation = quaternion_multiply(
+        context.center_now_world_rotation,
+        inverse_old
+    );
+    normalize_quaternion(context.center_step_rotation);
+    float rotation_cosine = 0.0f;
+    for (std::size_t component = 0; component < 4; ++component) {
+        rotation_cosine += context.center_old_world_rotation[component] *
+            context.center_now_world_rotation[component];
+    }
+    const float step_angle = 2.0f * std::acos(
+        std::max(0.0f, std::min(1.0f, std::fabs(rotation_cosine)))
+    );
+
+    float move_inertia = 1.0f - context.float_values[kLocalInertia];
+    const Vec3 step_vector {
+        context.center_step_vector[0],
+        context.center_step_vector[1],
+        context.center_step_vector[2],
+    };
+    const float local_speed = length(mul(step_vector, 1.0f - move_inertia)) / dt;
+    const float movement_limit = context.float_values[kLocalMovementSpeedLimit];
+    if (local_speed > movement_limit && movement_limit >= 0.0f) {
+        const float limit_ratio = movement_limit / local_speed;
+        move_inertia = 1.0f + (move_inertia - 1.0f) * limit_ratio;
+    }
+    float rotation_inertia = 1.0f - context.float_values[kLocalInertia];
+    const float local_angle_speed =
+        step_angle * (1.0f - rotation_inertia) / dt * 57.29577951308232f;
+    const float rotation_limit = context.float_values[kLocalRotationSpeedLimit];
+    if (local_angle_speed > rotation_limit && rotation_limit >= 0.0f) {
+        const float limit_ratio = rotation_limit / local_angle_speed;
+        rotation_inertia = 1.0f + (rotation_inertia - 1.0f) * limit_ratio;
+    }
+    context.center_step_move_inertia_ratio = move_inertia;
+    context.center_step_rotation_inertia_ratio = rotation_inertia;
+    for (std::size_t component = 0; component < 3; ++component) {
+        context.center_inertia_vector[component] =
+            context.center_step_vector[component] * move_inertia;
+    }
+    const std::array<float, 4> identity {0.0f, 0.0f, 0.0f, 1.0f};
+    slerp_xyzw(
+        identity.data(),
+        context.center_step_rotation.data(),
+        rotation_inertia,
+        context.center_inertia_rotation.data()
+    );
+    context.center_angular_velocity = step_angle / dt;
+    const float axis_length = std::sqrt(
+        context.center_step_rotation[0] * context.center_step_rotation[0] +
+        context.center_step_rotation[1] * context.center_step_rotation[1] +
+        context.center_step_rotation[2] * context.center_step_rotation[2]
+    );
+    for (std::size_t component = 0; component < 3; ++component) {
+        context.center_rotation_axis[component] =
+            context.center_angular_velocity > kMc2Epsilon && axis_length > kMc2Epsilon
+            ? context.center_step_rotation[component] / axis_length
+            : 0.0f;
+    }
+
+    std::array<float, 3> world_scale {};
+    for (std::size_t component = 0; component < 3; ++component) {
+        world_scale[component] =
+            context.center_old_frame_world_scale[component] * (1.0f - ratio) +
+            context.center_frame_world_scale[component] * ratio;
+    }
+    const float world_scale_length = std::sqrt(
+        world_scale[0] * world_scale[0] +
+        world_scale[1] * world_scale[1] +
+        world_scale[2] * world_scale[2]
+    );
+    const float initial_scale_length = std::sqrt(
+        context.center_initial_scale[0] * context.center_initial_scale[0] +
+        context.center_initial_scale[1] * context.center_initial_scale[1] +
+        context.center_initial_scale[2] * context.center_initial_scale[2]
+    );
+    context.scale_ratio = std::max(world_scale_length / initial_scale_length, 1.0e-6f);
+
+    Vec3 initial_gravity {
+        context.center_initial_local_gravity_direction[0],
+        context.center_initial_local_gravity_direction[1] *
+            context.center_negative_scale_direction[1],
+        context.center_initial_local_gravity_direction[2],
+    };
+    const Vec3 world_gravity {
+        context.float_values[kGravityDirection + 0],
+        context.float_values[kGravityDirection + 1],
+        context.float_values[kGravityDirection + 2],
+    };
+    float gravity_dot = 1.0f;
+    if (length_squared(world_gravity) > kMc2Epsilon) {
+        gravity_dot = saturate(
+            dot(rotate_vector(context.center_now_world_rotation, initial_gravity), world_gravity) *
+            0.5f + 0.5f
+        );
+    }
+    context.center_gravity_dot = gravity_dot;
+    context.gravity_ratio = 1.0f;
+    const float gravity_falloff = context.float_values[kGravityFalloff];
+    if (context.float_values[kGravity] > 1.0e-6f && gravity_falloff > 1.0e-6f) {
+        context.gravity_ratio =
+            saturate(1.0f - gravity_falloff) +
+            (1.0f - saturate(1.0f - gravity_falloff)) *
+            saturate(1.0f - gravity_dot);
+    }
+    if (context.velocity_weight < 1.0f) {
+        const float stabilization = context.float_values[kStabilizationTime];
+        const float added = stabilization > 1.0e-6f ? dt / stabilization : 1.0f;
+        context.velocity_weight = saturate(context.velocity_weight + added);
+    }
+    context.center_blend_weight = saturate(
+        context.velocity_weight * context.float_values[kBlendWeight] *
+        context.center_distance_weight
+    );
+    context.center_old_world_position = context.center_now_world_position;
+    context.center_old_world_rotation = context.center_now_world_rotation;
+    context.center_dynamic_ready = false;
+    context.center_result_ready = true;
+    ++context.center_step_count;
+    return true;
+}
+
 float bending_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
     if (!is_move(context.proxy_attributes[vertex])) return 0.01f;
     const float depth_offset = 1.0f - context.baseline_depths[vertex];
@@ -717,6 +946,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "distance_static_revision", context.distance_static_revision) ||
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
+        !dict_i64(result, "center_dynamic_revision", context.center_dynamic_revision) ||
         !dict_i64(result, "edge_count", static_cast<std::int64_t>(context.proxy_edges.size() / 2)) ||
         !dict_i64(result, "triangle_count", static_cast<std::int64_t>(context.proxy_triangles.size() / 3)) ||
         !dict_i64(result, "baseline_count", static_cast<std::int64_t>(context.baseline_ranges.size() / 2)) ||
@@ -731,6 +961,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "distance_solve_count", context.distance_solve_count) ||
         !dict_i64(result, "particle_prediction_count", context.particle_prediction_count) ||
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
+        !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -739,6 +970,8 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "distance_static_ready", context.distance_static_ready) ||
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
+        !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
+        !dict_bool(result, "center_result_ready", context.center_result_ready) ||
         !dict_bool(result, "dynamic_ready", context.dynamic_ready) ||
         !dict_bool(result, "initialized", context.initialized) ||
         !dict_bool(result, "released", context.released)) {
@@ -1127,7 +1360,126 @@ PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args) {
     context->center_local_position.swap(next_center);
     context->center_initial_local_gravity_direction.swap(next_gravity);
     context->center_static_ready = true;
+    context->center_dynamic_ready = false;
+    context->center_result_ready = false;
     ++context->center_static_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 14) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_center_dynamic expects 14 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->center_static_ready || !context->parameters_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "Center dynamic requires Center static and parameters");
+        return nullptr;
+    }
+    Buffer old_frame_position, frame_position, old_frame_rotation, frame_rotation;
+    Buffer old_frame_scale, frame_scale, old_world_position, old_world_rotation;
+    Buffer initial_scale, negative_scale_direction;
+    if (!old_frame_position.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "center_old_frame_world_position") ||
+        !frame_position.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "center_frame_world_position") ||
+        !old_frame_rotation.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "center_old_frame_world_rotation") ||
+        !frame_rotation.get(PyTuple_GET_ITEM(args, 4), PyBUF_FORMAT | PyBUF_ND, "center_frame_world_rotation") ||
+        !old_frame_scale.get(PyTuple_GET_ITEM(args, 5), PyBUF_FORMAT | PyBUF_ND, "center_old_frame_world_scale") ||
+        !frame_scale.get(PyTuple_GET_ITEM(args, 6), PyBUF_FORMAT | PyBUF_ND, "center_frame_world_scale") ||
+        !old_world_position.get(PyTuple_GET_ITEM(args, 7), PyBUF_FORMAT | PyBUF_ND, "center_old_world_position") ||
+        !old_world_rotation.get(PyTuple_GET_ITEM(args, 8), PyBUF_FORMAT | PyBUF_ND, "center_old_world_rotation") ||
+        !initial_scale.get(PyTuple_GET_ITEM(args, 9), PyBUF_FORMAT | PyBUF_ND, "center_initial_scale") ||
+        !negative_scale_direction.get(PyTuple_GET_ITEM(args, 10), PyBUF_FORMAT | PyBUF_ND, "center_negative_scale_direction")) {
+        return nullptr;
+    }
+    Buffer* vectors3[] = {
+        &old_frame_position, &frame_position, &old_frame_scale, &frame_scale,
+        &old_world_position, &initial_scale, &negative_scale_direction,
+    };
+    const char* vector3_names[] = {
+        "center_old_frame_world_position", "center_frame_world_position",
+        "center_old_frame_world_scale", "center_frame_world_scale",
+        "center_old_world_position", "center_initial_scale",
+        "center_negative_scale_direction",
+    };
+    for (std::size_t index = 0; index < 7; ++index) {
+        if (!expect_float32(*vectors3[index], vector3_names[index]) ||
+            !expect_1d_array(*vectors3[index], vector3_names[index], 3) ||
+            !finite_floats(*vectors3[index], vector3_names[index])) {
+            return nullptr;
+        }
+    }
+    Buffer* quaternions[] = {&old_frame_rotation, &frame_rotation, &old_world_rotation};
+    const char* quaternion_names[] = {
+        "center_old_frame_world_rotation", "center_frame_world_rotation",
+        "center_old_world_rotation",
+    };
+    for (std::size_t index = 0; index < 3; ++index) {
+        if (!expect_float32(*quaternions[index], quaternion_names[index]) ||
+            !expect_1d_array(*quaternions[index], quaternion_names[index], 4) ||
+            !finite_floats(*quaternions[index], quaternion_names[index])) {
+            return nullptr;
+        }
+        const auto* values = static_cast<const float*>(quaternions[index]->view.buf);
+        float length_squared = 0.0f;
+        for (std::size_t component = 0; component < 4; ++component) {
+            length_squared += values[component] * values[component];
+        }
+        if (std::fabs(length_squared - 1.0f) > 2.0e-5f) {
+            PyErr_Format(PyExc_ValueError, "%s must contain a unit quaternion", quaternion_names[index]);
+            return nullptr;
+        }
+    }
+    const double distance_weight = as_double(PyTuple_GET_ITEM(args, 11), "center_distance_weight");
+    const double frame_interpolation = as_double(
+        PyTuple_GET_ITEM(args, 12), "center_frame_interpolation"
+    );
+    const double velocity_weight = as_double(
+        PyTuple_GET_ITEM(args, 13), "center_velocity_weight"
+    );
+    if (PyErr_Occurred()) return nullptr;
+    if (!std::isfinite(distance_weight) || distance_weight < 0.0 || distance_weight > 1.0 ||
+        !std::isfinite(frame_interpolation) || frame_interpolation < 0.0 || frame_interpolation > 1.0 ||
+        !std::isfinite(velocity_weight) || velocity_weight < 0.0 || velocity_weight > 1.0) {
+        PyErr_SetString(PyExc_ValueError, "Center dynamic weights must be in 0..1");
+        return nullptr;
+    }
+    const auto* initial_scale_values = static_cast<const float*>(initial_scale.view.buf);
+    const auto* negative_values = static_cast<const float*>(negative_scale_direction.view.buf);
+    for (std::size_t component = 0; component < 3; ++component) {
+        if (std::fabs(initial_scale_values[component]) <= kMc2Epsilon) {
+            PyErr_SetString(PyExc_ValueError, "center_initial_scale cannot contain zero");
+            return nullptr;
+        }
+        if (negative_values[component] != -1.0f && negative_values[component] != 1.0f) {
+            PyErr_SetString(PyExc_ValueError, "center_negative_scale_direction must contain only -1 or 1");
+            return nullptr;
+        }
+    }
+    auto copy3 = [](const Buffer& source, std::array<float, 3>& target) {
+        const auto* values = static_cast<const float*>(source.view.buf);
+        std::copy(values, values + 3, target.begin());
+    };
+    auto copy4 = [](const Buffer& source, std::array<float, 4>& target) {
+        const auto* values = static_cast<const float*>(source.view.buf);
+        std::copy(values, values + 4, target.begin());
+    };
+    copy3(old_frame_position, context->center_old_frame_world_position);
+    copy3(frame_position, context->center_frame_world_position);
+    copy4(old_frame_rotation, context->center_old_frame_world_rotation);
+    copy4(frame_rotation, context->center_frame_world_rotation);
+    copy3(old_frame_scale, context->center_old_frame_world_scale);
+    copy3(frame_scale, context->center_frame_world_scale);
+    copy3(old_world_position, context->center_old_world_position);
+    copy4(old_world_rotation, context->center_old_world_rotation);
+    copy3(initial_scale, context->center_initial_scale);
+    copy3(negative_scale_direction, context->center_negative_scale_direction);
+    context->center_distance_weight = static_cast<float>(distance_weight);
+    context->frame_interpolation = static_cast<float>(frame_interpolation);
+    context->velocity_weight = static_cast<float>(velocity_weight);
+    context->center_dynamic_ready = true;
+    context->center_result_ready = false;
+    ++context->center_dynamic_revision;
     Py_RETURN_NONE;
 }
 
@@ -1256,6 +1608,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
         0.0f
     );
     context->velocity_reference_positions = context->dynamic_positions;
+    context->center_dynamic_ready = false;
+    context->center_result_ready = false;
     context->initialized = true;
     ++context->reset_count;
     Py_RETURN_NONE;
@@ -1289,6 +1643,10 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
         return nullptr;
     }
     if (dt <= kMc2Epsilon) Py_RETURN_NONE;
+    if (context->center_dynamic_ready && !evaluate_center_step(*context, static_cast<float>(dt))) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center state is incomplete");
+        return nullptr;
+    }
     if (context->proxy_static_ready) {
         if (!predict_particles(
                 *context,
@@ -1335,6 +1693,73 @@ PyObject* mc2_context_v0_read(PyObject*, PyObject* args) {
                 context->state_rotations.data(),
                 context->state_rotations.size() * sizeof(float));
     Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_center_step(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 8) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_center_step expects 8 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->center_result_ready) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 Center step result is not ready");
+        return nullptr;
+    }
+    Buffer now_position, now_rotation, step_vector, step_rotation;
+    Buffer inertia_vector, inertia_rotation, rotation_axis;
+    Buffer* outputs[] = {
+        &now_position, &now_rotation, &step_vector, &step_rotation,
+        &inertia_vector, &inertia_rotation, &rotation_axis,
+    };
+    const char* names[] = {
+        "out_center_now_world_position", "out_center_now_world_rotation",
+        "out_center_step_vector", "out_center_step_rotation",
+        "out_center_inertia_vector", "out_center_inertia_rotation",
+        "out_center_rotation_axis",
+    };
+    const Py_ssize_t widths[] = {3, 4, 3, 4, 3, 4, 3};
+    for (std::size_t index = 0; index < 7; ++index) {
+        if (!outputs[index]->get(
+                PyTuple_GET_ITEM(args, static_cast<Py_ssize_t>(index + 1)),
+                PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+                names[index]) ||
+            !expect_float32(*outputs[index], names[index]) ||
+            !expect_1d_array(*outputs[index], names[index], widths[index])) {
+            return nullptr;
+        }
+    }
+    const float* values[] = {
+        context->center_now_world_position.data(),
+        context->center_now_world_rotation.data(),
+        context->center_step_vector.data(),
+        context->center_step_rotation.data(),
+        context->center_inertia_vector.data(),
+        context->center_inertia_rotation.data(),
+        context->center_rotation_axis.data(),
+    };
+    for (std::size_t index = 0; index < 7; ++index) {
+        std::memcpy(
+            outputs[index]->view.buf,
+            values[index],
+            static_cast<std::size_t>(widths[index]) * sizeof(float)
+        );
+    }
+    PyObject* result = PyDict_New();
+    if (result == nullptr) return nullptr;
+    if (!dict_float(result, "frame_interpolation", context->frame_interpolation) ||
+        !dict_float(result, "step_move_inertia_ratio", context->center_step_move_inertia_ratio) ||
+        !dict_float(result, "step_rotation_inertia_ratio", context->center_step_rotation_inertia_ratio) ||
+        !dict_float(result, "angular_velocity", context->center_angular_velocity) ||
+        !dict_float(result, "scale_ratio", context->scale_ratio) ||
+        !dict_float(result, "gravity_dot", context->center_gravity_dot) ||
+        !dict_float(result, "gravity_ratio", context->gravity_ratio) ||
+        !dict_float(result, "velocity_weight", context->velocity_weight) ||
+        !dict_float(result, "blend_weight", context->center_blend_weight)) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    return result;
 }
 
 PyObject* mc2_context_v0_free(PyObject*, PyObject* args) {

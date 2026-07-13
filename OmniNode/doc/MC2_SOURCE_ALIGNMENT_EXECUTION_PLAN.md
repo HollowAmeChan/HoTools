@@ -40,11 +40,11 @@
 | Mesh static slot bundle | landed | `static_build.py` 在 rebuild 时组合 finalizer、baseline、Distance、Bending 与 Center；UV/Pin mask及 Center initial gravity direction进入独立 static input signature。任一 N0/N1 上传失败会释放 staged context并保留旧 slot。 |
 | Distance N1 | landed foundation | `distance_static.py` 已提供保序 host builder、immutable spec/signature 与显式 packer；7 个 build fixture、2 个顺序敏感 runtime fixture通过。`ranges/targets/rest_signed` 已由 native context 校验并持有，数值 kernel 尚未消费。 |
 | TriangleBending N1 | landed foundation | `bending_static.py` 已提供 role-preserving host builder、immutable spec/signature 与 `int32/float32/int8` 只读 packer；ordered role quad/rest/marker 已上传 native。directional dihedral、volume、negative scale、fixed-point accumulate、Move-only average与scratch clear已由3个 Tier A runtime case逐数组验证。 |
-| Inertia/Center | landed static + verified step contract | `center_state.py` 已冻结 center fixed list/local center、initial local gravity、component/anchor frame pose与 persistent reset分层；Center 三组只读数组已进入 Mesh static bundle并由 native 校验/持有。Tier A 现覆盖 fixed+isolated static及 frame interpolation、local inertia限速、inertia vector/rotation、scale、gravity falloff和velocity stabilization；frame-derived step尚未接生产 native。 |
+| Inertia/Center | landed foundation | `center_state.py` 已冻结 center fixed list/local center、initial local gravity、component/anchor frame pose、persistent reset与 substep derived分层；Center static和 `center_step_inertia_001` 均由 Tier A oracle覆盖。native 已消费显式 Center dynamic，按源码顺序计算 interpolation、local inertia limits、inertia vector/rotation、scale、gravity falloff、velocity stabilization与blend；尚未接 solver frame adapter、Move particle inertia和完整 negative-scale matrix。 |
 | Mesh BasePose adapter | landed foundation | `base_pose.py`/`frame_input.py` 已验证双对象、无反馈、topology token、不可写 same-frame snapshot，并从 N0 triangles/UV/flip records派生 `float32[N,4] xyzw` world rotations。rotation/reset数组已有 Tier A oracle；当前首版仍要求每个 vertex属于 triangle。 |
 | Runtime parameters N2 | landed foundation | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；particle prediction已消费 gravity/direction与 damping curve，Distance消费 stiffness/velocity attenuation，其余值仍只保存未消费。 |
 | Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；N3携带受检 `velocity_weight/gravity_ratio/scale_ratio/negative_scale_sign/frame_interpolation`。native context V0 已接 old/current animated pose、Fixed position/rotation interpolation、prediction、Pin、Distance、Bending、post与read。Bone connection-aware rotation、Move step-basic pose与inertia仍未实现。 |
-| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 frame interpolation、gravity/damping prediction、Pin、Distance、Bending fixed-point scratch与 persistent velocity commit；尚无 inertia/wind/collision/public result。旧 `_native` full-core 不计入此项。 |
+| 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic/center dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 Center derived state、frame interpolation、gravity/damping prediction、Pin、Distance、Bending fixed-point scratch与 persistent velocity commit；Center 尚未作用于 Move particle，且无 wind/collision/public result。旧 `_native` full-core 不计入此项。 |
 | result/writeback | internal candidate | Mesh native readback已复制为带 frame/generation/world generation/revision/native revision 的只读内部 candidate；同帧 N3 snapshot固定 source world linear，并将 `display_world - animated_base_world` 转为同 vertex identity 的 object-local offset。same-frame复用且 context rebuild重置 revision，始终 `ready=False`，不进入 result stream。`GN_ATTRIBUTE_CHANNEL`、`BONE_TRANSFORM_CHANNEL`、`mc2_stats` 仍仅为计划通道。 |
 
 ## Host/Native 契约
@@ -135,9 +135,9 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 ## 当前切入点
 
-下一交付是 **Center frame-derived inertia 与公共结果事务**：
+下一交付是 **Center solver frame adapter、Move inertia 与公共结果事务**：
 
-1. animated old/current pose interpolation、Center static native ownership、内部 readback candidate与 Mesh object-local offset转换已完成；下一步接入 component frame pose、Center inertia vector/rotation与 Move step-basic pose。
+1. Center substep contract与native derived state已完成；下一步从 Blender component/BasePose frame snapshot构建 Center dynamic，并把 inertia vector/rotation接入 Move particle与step-basic pose。
 2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；下一步设计完整 world result transaction、失败回滚与统一 GN writeback交接。
 3. candidate 必须继续验证 frame/generation/world generation/revision；same-frame不得重复 read/step/revision。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；除 initial gravity direction等明确 N1 producer外，参数热更新继续保留粒子 history。
