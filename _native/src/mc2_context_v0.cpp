@@ -54,6 +54,7 @@ struct Mc2ContextV0 {
     float gravity_ratio = 1.0f;
     float scale_ratio = 1.0f;
     float negative_scale_sign = 1.0f;
+    float frame_interpolation = 1.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
@@ -67,6 +68,8 @@ struct Mc2ContextV0 {
     std::vector<float> curve_values;
     std::vector<float> dynamic_positions;
     std::vector<float> dynamic_rotations;
+    std::vector<float> old_dynamic_positions;
+    std::vector<float> old_dynamic_rotations;
     std::vector<float> state_positions;
     std::vector<float> state_rotations;
     std::vector<float> state_velocities;
@@ -109,6 +112,8 @@ void release_resources(Mc2ContextV0& context) {
     context.curve_values.clear();
     context.dynamic_positions.clear();
     context.dynamic_rotations.clear();
+    context.old_dynamic_positions.clear();
+    context.old_dynamic_rotations.clear();
     context.state_positions.clear();
     context.state_rotations.clear();
     context.state_velocities.clear();
@@ -341,11 +346,39 @@ bool is_move(std::uint8_t attribute) {
     return (attribute & 0x02u) != 0u;
 }
 
+void slerp_xyzw(const float* first, const float* second, float ratio, float* output) {
+    float target[4] = {second[0], second[1], second[2], second[3]};
+    float cosine = first[0] * target[0] + first[1] * target[1] +
+        first[2] * target[2] + first[3] * target[3];
+    if (cosine < 0.0f) {
+        cosine = -cosine;
+        for (float& value : target) value = -value;
+    }
+    float first_weight = 1.0f - ratio;
+    float second_weight = ratio;
+    if (cosine < 0.9995f) {
+        const float angle = std::acos(std::max(-1.0f, std::min(1.0f, cosine)));
+        const float sine = std::sin(angle);
+        first_weight = std::sin((1.0f - ratio) * angle) / sine;
+        second_weight = std::sin(ratio * angle) / sine;
+    }
+    float length_squared = 0.0f;
+    for (int component = 0; component < 4; ++component) {
+        output[component] = first[component] * first_weight + target[component] * second_weight;
+        length_squared += output[component] * output[component];
+    }
+    const float inverse_length = length_squared > kMc2Epsilon
+        ? 1.0f / std::sqrt(length_squared)
+        : 1.0f;
+    for (int component = 0; component < 4; ++component) output[component] *= inverse_length;
+}
+
 bool predict_particles(Mc2ContextV0& context, float dt, float simulation_power_z) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
         context.state_velocities.size() != count * 3 ||
         context.dynamic_positions.size() != count * 3 ||
+        context.old_dynamic_positions.size() != count * 3 ||
         context.proxy_attributes.size() != count ||
         context.baseline_depths.size() != count ||
         context.float_values.size() != static_cast<std::size_t>(kFloatCount)) {
@@ -360,12 +393,24 @@ bool predict_particles(Mc2ContextV0& context, float dt, float simulation_power_z
     for (std::size_t vertex = 0; vertex < count; ++vertex) {
         const auto offset = vertex * 3;
         if (!is_move(context.proxy_attributes[vertex])) {
-            context.state_positions[offset + 0] = context.dynamic_positions[offset + 0];
-            context.state_positions[offset + 1] = context.dynamic_positions[offset + 1];
-            context.state_positions[offset + 2] = context.dynamic_positions[offset + 2];
-            context.velocity_reference_positions[offset + 0] = context.dynamic_positions[offset + 0];
-            context.velocity_reference_positions[offset + 1] = context.dynamic_positions[offset + 1];
-            context.velocity_reference_positions[offset + 2] = context.dynamic_positions[offset + 2];
+            for (std::size_t component = 0; component < 3; ++component) {
+                const float base = context.old_dynamic_positions[offset + component] *
+                    (1.0f - context.frame_interpolation) +
+                    context.dynamic_positions[offset + component] * context.frame_interpolation;
+                context.state_positions[offset + component] = base;
+                context.velocity_reference_positions[offset + component] = base;
+            }
+            if (context.state_rotations.size() == count * 4 &&
+                context.old_dynamic_rotations.size() == count * 4 &&
+                context.dynamic_rotations.size() == count * 4) {
+                const auto rotation_offset = vertex * 4;
+                slerp_xyzw(
+                    context.old_dynamic_rotations.data() + rotation_offset,
+                    context.dynamic_rotations.data() + rotation_offset,
+                    context.frame_interpolation,
+                    context.state_rotations.data() + rotation_offset
+                );
+            }
             context.state_velocities[offset + 0] = 0.0f;
             context.state_velocities[offset + 1] = 0.0f;
             context.state_velocities[offset + 2] = 0.0f;
@@ -565,26 +610,8 @@ void solve_bending_once(Mc2ContextV0& context, float simulation_power_y) {
 void solve_distance_once(Mc2ContextV0& context) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
-        context.dynamic_positions.size() != count * 3 ||
         context.proxy_attributes.size() != count) {
         return;
-    }
-
-    for (std::size_t vertex = 0; vertex < count; ++vertex) {
-        if (!is_move(context.proxy_attributes[vertex])) {
-            const auto offset = vertex * 3;
-            context.state_positions[offset + 0] = context.dynamic_positions[offset + 0];
-            context.state_positions[offset + 1] = context.dynamic_positions[offset + 1];
-            context.state_positions[offset + 2] = context.dynamic_positions[offset + 2];
-            if (context.state_rotations.size() == count * 4 &&
-                context.dynamic_rotations.size() == count * 4) {
-                const auto rotation_offset = vertex * 4;
-                for (std::size_t component = 0; component < 4; ++component) {
-                    context.state_rotations[rotation_offset + component] =
-                        context.dynamic_rotations[rotation_offset + component];
-                }
-            }
-        }
     }
 
     if (!context.distance_static_ready || context.distance_targets.empty()) return;
@@ -1052,8 +1079,8 @@ PyObject* mc2_context_v0_update_parameters(PyObject*, PyObject* args) {
 }
 
 PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
-    if (PyTuple_GET_SIZE(args) != 9) {
-        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 9 arguments");
+    if (PyTuple_GET_SIZE(args) != 10) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_dynamic expects 10 arguments");
         return nullptr;
     }
     auto* context = context_from(PyTuple_GET_ITEM(args, 0));
@@ -1070,11 +1097,16 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     const double negative_scale_sign = as_double(
         PyTuple_GET_ITEM(args, 8), "negative_scale_sign"
     );
+    const double frame_interpolation = as_double(
+        PyTuple_GET_ITEM(args, 9), "frame_interpolation"
+    );
     if (PyErr_Occurred()) return nullptr;
     if (!std::isfinite(velocity_weight) || velocity_weight < 0.0 || velocity_weight > 1.0 ||
         !std::isfinite(gravity_ratio) || gravity_ratio < 0.0 || gravity_ratio > 1.0 ||
         !std::isfinite(scale_ratio) || scale_ratio <= 0.0 ||
-        (negative_scale_sign != -1.0 && negative_scale_sign != 1.0)) {
+        (negative_scale_sign != -1.0 && negative_scale_sign != 1.0) ||
+        !std::isfinite(frame_interpolation) ||
+        frame_interpolation < 0.0 || frame_interpolation > 1.0) {
         PyErr_SetString(PyExc_ValueError, "MC2 dynamic scalar is out of range");
         return nullptr;
     }
@@ -1095,6 +1127,13 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     }
     auto next_positions = copy_values<float>(positions);
     auto next_rotations = copy_values<float>(rotations);
+    if (context->dynamic_ready) {
+        context->old_dynamic_positions = context->dynamic_positions;
+        context->old_dynamic_rotations = context->dynamic_rotations;
+    } else {
+        context->old_dynamic_positions = next_positions;
+        context->old_dynamic_rotations = next_rotations;
+    }
     context->dynamic_positions.swap(next_positions);
     context->dynamic_rotations.swap(next_rotations);
     context->frame = frame;
@@ -1103,6 +1142,7 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->gravity_ratio = static_cast<float>(gravity_ratio);
     context->scale_ratio = static_cast<float>(scale_ratio);
     context->negative_scale_sign = static_cast<float>(negative_scale_sign);
+    context->frame_interpolation = static_cast<float>(frame_interpolation);
     context->dynamic_ready = true;
     ++context->dynamic_revision;
     Py_RETURN_NONE;
@@ -1121,6 +1161,8 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     }
     context->state_positions = context->dynamic_positions;
     context->state_rotations = context->dynamic_rotations;
+    context->old_dynamic_positions = context->dynamic_positions;
+    context->old_dynamic_rotations = context->dynamic_rotations;
     context->state_velocities.assign(
         static_cast<std::size_t>(context->vertex_count) * 3,
         0.0f

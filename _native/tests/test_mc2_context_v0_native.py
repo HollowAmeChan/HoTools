@@ -39,6 +39,7 @@ def update_dynamic(context, frame_index, generation, positions, rotations, **sca
         scalars.get("gravity_ratio", 1.0),
         scalars.get("scale_ratio", 1.0),
         scalars.get("negative_scale_sign", 1.0),
+        scalars.get("frame_interpolation", 1.0),
     )
 
 
@@ -369,6 +370,54 @@ def test_lifecycle_and_transactional_validation():
             np.array([[5.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
         )
         assert hotools_native.mc2_context_v0_inspect(second)["distance_solve_count"] == 1
+
+        interpolated_positions = pin_positions.copy()
+        interpolated_positions[0, 0] = 9.0
+        interpolated_rotations = pin_rotations.copy()
+        interpolated_rotations[0] = np.array(
+            [0.0, 0.0, 1.0, 0.0], dtype=np.float32
+        )
+        update_dynamic(
+            second,
+            3,
+            0,
+            interpolated_positions,
+            interpolated_rotations,
+            frame_interpolation=0.25,
+        )
+        step(second, 1.0 / 60.0)
+        hotools_native.mc2_context_v0_read(
+            second, pin_out_positions, pin_out_rotations
+        )
+        np.testing.assert_allclose(
+            pin_out_positions[0],
+            np.array([6.0, 0.0, 0.0], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            pin_out_rotations[0],
+            np.array([0.0, 0.0, 0.38268343, 0.9238795], dtype=np.float32),
+            rtol=0.0,
+            atol=1.0e-6,
+        )
+
+        before_bad_interpolation = hotools_native.mc2_context_v0_inspect(second)
+        expect_error(
+            ValueError,
+            lambda: update_dynamic(
+                second,
+                4,
+                0,
+                interpolated_positions,
+                interpolated_rotations,
+                frame_interpolation=1.5,
+            ),
+            "out of range",
+        )
+        after_bad_interpolation = hotools_native.mc2_context_v0_inspect(second)
+        assert after_bad_interpolation["dynamic_revision"] == before_bad_interpolation["dynamic_revision"]
+        assert after_bad_interpolation["frame"] == before_bad_interpolation["frame"]
 
         integration_proxy, integration_baseline = static_arrays(2)
         integration_proxy = list(integration_proxy)

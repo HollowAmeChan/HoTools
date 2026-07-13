@@ -92,6 +92,25 @@ def test_allocation_does_not_pretend_rest_pose_was_reset() -> None:
     assert not np.any(buffer.next_positions)
 
 
+def test_frame_interpolation_is_checked_at_the_host_boundary() -> None:
+    assert _frame(1).frame_interpolation == 1.0
+    for value in (-0.01, 1.01, float("nan")):
+        try:
+            frame_state.make_mc2_frame_input(
+                task_id="mc2:mesh:test",
+                topology_signature="topology",
+                frame=1,
+                generation=7,
+                world_positions=((0.0, 0.0, 0.0),),
+                world_rotations_xyzw=((0.0, 0.0, 0.0, 1.0),),
+                frame_interpolation=value,
+            )
+        except ValueError as exc:
+            assert "frame_interpolation" in str(exc)
+        else:
+            raise AssertionError("out-of-range frame interpolation was accepted")
+
+
 def test_first_pose_resets_all_history_and_clears_contact_state() -> None:
     buffer = state.MC2ParticleBuffer.allocate(_initial())
     runtime = _runtime()

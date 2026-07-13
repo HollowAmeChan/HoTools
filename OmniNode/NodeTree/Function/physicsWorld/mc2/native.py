@@ -195,6 +195,7 @@ class MC2NativeContextV0:
             frame_input.gravity_ratio,
             frame_input.scale_ratio,
             frame_input.negative_scale_sign,
+            frame_input.frame_interpolation,
         )
         self.last_frame = (frame_input.frame, frame_input.generation)
 
