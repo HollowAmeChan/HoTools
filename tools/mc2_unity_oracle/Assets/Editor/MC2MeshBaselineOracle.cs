@@ -166,6 +166,16 @@ namespace HoTools.MC2Oracle.Editor
             public float[] TempFloats;
         }
 
+        private sealed class ParticleInertiaStepDump
+        {
+            public float3[] BasePositions;
+            public quaternion[] BaseRotations;
+            public float3[] StepBasicPositions;
+            public quaternion[] StepBasicRotations;
+            public float3[] NextPositions;
+            public float3[] VelocityPositions;
+        }
+
         [Serializable]
         private sealed class ParameterRuntimeDump
         {
@@ -372,7 +382,11 @@ namespace HoTools.MC2Oracle.Editor
             string path = Path.Combine(outputDirectory, "particle_step_gravity_damping_001.json");
             File.WriteAllText(path, BuildParticleStepJson(dump), new UTF8Encoding(false));
             Debug.Log($"[MC2 Oracle] wrote {path}");
-            return 1;
+            ParticleInertiaStepDump inertiaDump = RunParticleInertiaStepOracle();
+            path = Path.Combine(outputDirectory, "particle_step_inertia_001.json");
+            File.WriteAllText(path, BuildParticleInertiaStepJson(inertiaDump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 2;
         }
 
         private static int WriteCenterFixtures(string outputDirectory)
@@ -1234,6 +1248,143 @@ namespace HoTools.MC2Oracle.Editor
                     TempVectorB = tempVectorB.ToArray(),
                     TempCounts = tempCounts.ToArray(),
                     TempFloats = tempFloats.ToArray(),
+                };
+            }
+            finally
+            {
+                windData.Dispose(); attributes.Dispose(); depths.Dispose(); positions.Dispose();
+                rotations.Dispose(); roots.Dispose(); next.Dispose(); old.Dispose();
+                basePositions.Dispose(); baseRotations.Dispose(); oldAnimatedPositions.Dispose();
+                oldAnimatedRotations.Dispose(); velocityPositions.Dispose(); velocities.Dispose();
+                friction.Dispose(); stepBasicPositions.Dispose(); stepBasicRotations.Dispose();
+                tempVectorA.Dispose(); tempVectorB.Dispose(); tempCounts.Dispose(); tempFloats.Dispose();
+            }
+        }
+
+        private static ParticleInertiaStepDump RunParticleInertiaStepOracle()
+        {
+            MethodInfo method = typeof(SimulationManager).GetMethod(
+                "SimulationStepUpdateParticles",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(SimulationManager).FullName,
+                    "SimulationStepUpdateParticles"
+                );
+            }
+
+            quaternion stepRotation = quaternion.AxisAngle(math.forward(), math.radians(90.0f));
+            quaternion inertiaRotation = quaternion.AxisAngle(math.forward(), math.radians(30.0f));
+            var team = new TeamManager.TeamData
+            {
+                proxyCommonChunk = new DataChunk(0, 1),
+                particleChunk = new DataChunk(0, 1),
+                frameInterpolation = 1.0f,
+                gravityRatio = 1.0f,
+                initScale = new float3(1.0f),
+                scaleRatio = 1.0f,
+                velocityWeight = 0.75f,
+                forceMode = ClothForceMode.None,
+            };
+            var center = new InertiaConstraint.CenterData
+            {
+                oldWorldPosition = new float3(1.0f, 1.0f, 1.0f),
+                stepVector = new float3(2.0f, 0.0f, 0.0f),
+                stepRotation = stepRotation,
+                inertiaVector = new float3(0.5f, 0.0f, 0.0f),
+                inertiaRotation = inertiaRotation,
+            };
+            var parameters = new ClothParameters
+            {
+                gravity = 0.0f,
+                worldGravityDirection = new float3(0.0f, -1.0f, 0.0f),
+                dampingCurveData = new float4x4(0.0f),
+                inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
+                {
+                    depthInertia = 0.8f,
+                },
+            };
+            var teamWind = new TeamWindData();
+            var windData = new NativeArray<WindManager.WindData>(0, Allocator.Persistent);
+            var attributes = new NativeArray<VertexAttribute>(
+                new[] { VertexAttribute.Move }, Allocator.Persistent
+            );
+            var depths = new NativeArray<float>(new[] { 0.5f }, Allocator.Persistent);
+            var positions = new NativeArray<float3>(P((9, 9, 9)), Allocator.Persistent);
+            var rotations = new NativeArray<quaternion>(
+                new[] { quaternion.identity }, Allocator.Persistent
+            );
+            var roots = new NativeArray<int>(new[] { 0 }, Allocator.Persistent);
+            var next = new NativeArray<float3>(1, Allocator.Persistent);
+            var old = new NativeArray<float3>(P((3, 2, 1)), Allocator.Persistent);
+            var basePositions = new NativeArray<float3>(1, Allocator.Persistent);
+            var baseRotations = new NativeArray<quaternion>(1, Allocator.Persistent);
+            var oldAnimatedPositions = new NativeArray<float3>(P((8, 8, 8)), Allocator.Persistent);
+            var oldAnimatedRotations = new NativeArray<quaternion>(
+                new[] { quaternion.identity }, Allocator.Persistent
+            );
+            var velocityPositions = new NativeArray<float3>(1, Allocator.Persistent);
+            var velocities = new NativeArray<float3>(P((1, 0, 0)), Allocator.Persistent);
+            var friction = new NativeArray<float>(1, Allocator.Persistent);
+            var stepBasicPositions = new NativeArray<float3>(1, Allocator.Persistent);
+            var stepBasicRotations = new NativeArray<quaternion>(1, Allocator.Persistent);
+            var tempVectorA = new NativeArray<float3>(1, Allocator.Persistent);
+            var tempVectorB = new NativeArray<float3>(1, Allocator.Persistent);
+            var tempCounts = new NativeArray<int>(1, Allocator.Persistent);
+            var tempFloats = new NativeArray<float>(1, Allocator.Persistent);
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, 1),
+                    new float4(1.0f, 1.0f, 0.0f, 1.0f),
+                    0.1f,
+                    0,
+                    team,
+                    center,
+                    parameters,
+                    teamWind,
+                    windData,
+                    attributes,
+                    depths,
+                    positions,
+                    rotations,
+                    roots,
+                    next,
+                    old,
+                    basePositions,
+                    baseRotations,
+                    oldAnimatedPositions,
+                    oldAnimatedRotations,
+                    velocityPositions,
+                    velocities,
+                    friction,
+                    stepBasicPositions,
+                    stepBasicRotations,
+                    tempVectorA,
+                    tempVectorB,
+                    tempCounts,
+                    tempFloats,
+                };
+                try
+                {
+                    method.Invoke(null, arguments);
+                }
+                catch (TargetInvocationException exception) when (exception.InnerException != null)
+                {
+                    ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+                    throw;
+                }
+                return new ParticleInertiaStepDump
+                {
+                    BasePositions = basePositions.ToArray(),
+                    BaseRotations = baseRotations.ToArray(),
+                    StepBasicPositions = stepBasicPositions.ToArray(),
+                    StepBasicRotations = stepBasicRotations.ToArray(),
+                    NextPositions = next.ToArray(),
+                    VelocityPositions = velocityPositions.ToArray(),
                 };
             }
             finally
@@ -2314,6 +2465,57 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "temp_vector_b", ArrayJson(dump.TempVectorB, Vector3Json));
             Property(text, 4, "temp_counts", NumberArray(dump.TempCounts));
             Property(text, 4, "temp_floats", ArrayJson(dump.TempFloats, FloatJson), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildParticleInertiaStepJson(ParticleInertiaStepDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote("particle_step_inertia_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationStepUpdateParticles")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates depth-weighted Center inertia translation/rotation, velocity-reference shift, velocity rotation, and step-basic animated pose before forces and constraints.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_power", "[1,1,0,1]");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_interpolation", "1");
+            Property(text, 4, "velocity_weight", "0.75");
+            Property(text, 4, "depth", "0.5");
+            Property(text, 4, "depth_inertia", "0.8");
+            Property(text, 4, "old_world_position", "[1,1,1]");
+            Property(text, 4, "step_vector", "[2,0,0]");
+            Property(text, 4, "step_rotation_axis_angle", "{\"axis\":[0,0,1],\"degrees\":90}");
+            Property(text, 4, "inertia_vector", "[0.5,0,0]");
+            Property(text, 4, "inertia_rotation_axis_angle", "{\"axis\":[0,0,1],\"degrees\":30}");
+            Property(text, 4, "animated_position", "[9,9,9]");
+            Property(text, 4, "animated_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_animated_position", "[8,8,8]");
+            Property(text, 4, "old_position", "[3,2,1]");
+            Property(text, 4, "velocity", "[1,0,0]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "base_positions", ArrayJson(dump.BasePositions, Vector3Json));
+            Property(text, 4, "base_rotations_xyzw", ArrayJson(dump.BaseRotations, QuaternionJson));
+            Property(text, 4, "step_basic_positions", ArrayJson(dump.StepBasicPositions, Vector3Json));
+            Property(text, 4, "step_basic_rotations_xyzw", ArrayJson(dump.StepBasicRotations, QuaternionJson));
+            Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
+            Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

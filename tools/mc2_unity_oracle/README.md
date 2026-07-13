@@ -44,9 +44,11 @@ directory:
   counts/components, averaged positions, unconditional scratch clear, Fixed
   particle behavior, and negative-scale consumption.
 - `particle_step_*.json`: direct reflective calls to
-  `SimulationStepUpdateParticles()`. The minimal case disables inertia, wind,
+  `SimulationStepUpdateParticles()`. One case disables inertia, wind,
   collision, and external force while locking velocity stabilization, damping,
-  gravity, fixed-particle pose tracking, and scratch clearing order.
+  gravity, fixed-particle pose tracking, and scratch clearing order. The
+  Center-inertia case disables all forces and freezes depth interpolation,
+  position/velocity-reference shift, velocity rotation, and step-basic pose.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular

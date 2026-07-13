@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "case_id": "particle_step_inertia_001",
+  "oracle_tier": "A",
+  "mc2_version": "2.18.1",
+  "mc2_commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationStepUpdateParticles"]
+  },
+  "scope": "Isolates depth-weighted Center inertia translation/rotation, velocity-reference shift, velocity rotation, and step-basic animated pose before forces and constraints.",
+  "input": {
+    "simulation_power": [1,1,0,1],
+    "simulation_delta_time": 0.1,
+    "frame_interpolation": 1,
+    "velocity_weight": 0.75,
+    "depth": 0.5,
+    "depth_inertia": 0.8,
+    "old_world_position": [1,1,1],
+    "step_vector": [2,0,0],
+    "step_rotation_axis_angle": {"axis":[0,0,1],"degrees":90},
+    "inertia_vector": [0.5,0,0],
+    "inertia_rotation_axis_angle": {"axis":[0,0,1],"degrees":30},
+    "animated_position": [9,9,9],
+    "animated_rotation_xyzw": [0,0,0,1],
+    "old_animated_position": [8,8,8],
+    "old_position": [3,2,1],
+    "velocity": [1,0,0]
+  },
+  "expected": {
+    "base_positions": [[9,9,9]],
+    "base_rotations_xyzw": [[0,0,0,1]],
+    "step_basic_positions": [[9,9,9]],
+    "step_basic_rotations_xyzw": [[0,0,0,1]],
+    "next_positions": [[2.330433,3.30234385,1]],
+    "velocity_positions": [[2.29992771,3.23382783,1]]
+  }
+}
