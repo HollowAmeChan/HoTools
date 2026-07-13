@@ -47,6 +47,11 @@ directory:
   `SimulationStepUpdateParticles()`. The minimal case disables inertia, wind,
   collision, and external force while locking velocity stabilization, damping,
   gravity, fixed-particle pose tracking, and scratch clearing order.
+- `center_step_*.json`: direct reflective calls to
+  `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
+  local movement/rotation inertia limits, inertia vector/rotation, angular
+  velocity, scale ratio, gravity falloff, velocity stabilization, and blend
+  weight with wind disabled.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

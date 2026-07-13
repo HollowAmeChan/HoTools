@@ -248,6 +248,26 @@ namespace HoTools.MC2Oracle.Editor
             public float3 InitialLocalGravityDirection;
         }
 
+        private sealed class CenterStepDump
+        {
+            public float FrameInterpolation;
+            public float3 NowWorldPosition;
+            public quaternion NowWorldRotation;
+            public float3 StepVector;
+            public quaternion StepRotation;
+            public float StepMoveInertiaRatio;
+            public float StepRotationInertiaRatio;
+            public float3 InertiaVector;
+            public quaternion InertiaRotation;
+            public float AngularVelocity;
+            public float3 RotationAxis;
+            public float ScaleRatio;
+            public float GravityDot;
+            public float GravityRatio;
+            public float VelocityWeight;
+            public float BlendWeight;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -329,6 +349,7 @@ namespace HoTools.MC2Oracle.Editor
             int parameterWritten = WriteParameterFixtures(outputDirectory);
             int frameWritten = WriteFrameFixtures(outputDirectory);
             int centerWritten = WriteCenterFixtures(outputDirectory);
+            int centerStepWritten = WriteCenterStepFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
 
             Debug.Log(
@@ -340,6 +361,7 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{parameterWritten} runtime parameter fixtures, "
                 + $"{frameWritten} frame/reset fixtures, "
                 + $"{centerWritten} center fixtures, "
+                + $"{centerStepWritten} center-step fixtures, "
                 + $"{particleStepWritten} particle-step fixtures"
             );
         }
@@ -360,6 +382,94 @@ namespace HoTools.MC2Oracle.Editor
             File.WriteAllText(path, BuildCenterStaticJson(dump), new UTF8Encoding(false));
             Debug.Log($"[MC2 Oracle] wrote {path}");
             return 1;
+        }
+
+        private static int WriteCenterStepFixtures(string outputDirectory)
+        {
+            CenterStepDump dump = RunCenterStepOracle();
+            string path = Path.Combine(outputDirectory, "center_step_inertia_001.json");
+            File.WriteAllText(path, BuildCenterStepJson(dump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 1;
+        }
+
+        private static CenterStepDump RunCenterStepOracle()
+        {
+            MethodInfo method = typeof(TeamManager).GetMethod(
+                "SimulationStepTeamUpdate",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(TeamManager).FullName,
+                    "SimulationStepTeamUpdate"
+                );
+            }
+
+            var team = new TeamManager.TeamData
+            {
+                time = 1.4f,
+                frameOldTime = 1.0f,
+                nowUpdateTime = 1.1f,
+                updateCount = 1,
+                initScale = new float3(1.0f),
+                negativeScaleDirection = new float3(1.0f, -1.0f, 1.0f),
+                velocityWeight = 0.2f,
+                distanceWeight = 0.8f,
+            };
+            var parameters = new ClothParameters
+            {
+                gravity = 9.0f,
+                worldGravityDirection = new float3(1.0f, 0.0f, 0.0f),
+                gravityFalloff = 0.6f,
+                stablizationTimeAfterReset = 0.5f,
+                blendWeight = 0.7f,
+                inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
+                {
+                    localInertia = 0.75f,
+                    localMovementSpeedLimit = 5.0f,
+                    localRotationSpeedLimit = 90.0f,
+                },
+            };
+            var center = new InertiaConstraint.CenterData
+            {
+                oldFrameWorldPosition = new float3(0.0f),
+                frameWorldPosition = new float3(4.0f, 2.0f, -2.0f),
+                oldFrameWorldRotation = quaternion.identity,
+                frameWorldRotation = quaternion.AxisAngle(math.up(), math.radians(90.0f)),
+                oldFrameWorldScale = new float3(1.0f),
+                frameWorldScale = new float3(2.0f, 1.0f, 1.0f),
+                nowWorldPosition = new float3(0.0f),
+                nowWorldRotation = quaternion.identity,
+                oldWorldPosition = new float3(0.0f),
+                oldWorldRotation = quaternion.identity,
+                initLocalGravityDirection = new float3(1.0f, 0.0f, 0.0f),
+            };
+            var wind = new TeamWindData();
+            object[] arguments = { 0, 0.1f, 1, team, parameters, center, wind };
+            InvokeStatic(method, arguments);
+            team = (TeamManager.TeamData)arguments[3];
+            center = (InertiaConstraint.CenterData)arguments[5];
+            return new CenterStepDump
+            {
+                FrameInterpolation = team.frameInterpolation,
+                NowWorldPosition = center.nowWorldPosition,
+                NowWorldRotation = center.nowWorldRotation,
+                StepVector = center.stepVector,
+                StepRotation = center.stepRotation,
+                StepMoveInertiaRatio = center.stepMoveInertiaRatio,
+                StepRotationInertiaRatio = center.stepRotationInertiaRatio,
+                InertiaVector = center.inertiaVector,
+                InertiaRotation = center.inertiaRotation,
+                AngularVelocity = center.angularVelocity,
+                RotationAxis = center.rotationAxis,
+                ScaleRatio = team.scaleRatio,
+                GravityDot = team.gravityDot,
+                GravityRatio = team.gravityRatio,
+                VelocityWeight = team.velocityWeight,
+                BlendWeight = team.blendWeight,
+            };
         }
 
         private static CenterStaticDump RunCenterStaticOracle()
@@ -2258,6 +2368,75 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "fixed_indices", NumberArray(dump.FixedIndices));
             Property(text, 4, "local_center_position", Vector3Json(dump.LocalCenterPosition));
             Property(text, 4, "initial_local_gravity_direction", Vector3Json(dump.InitialLocalGravityDirection), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterStepJson(CenterStepDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_step_inertia_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationStepTeamUpdate")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates frame interpolation, local inertia limits, scale ratio, gravity falloff, velocity stabilization, and blend weight with wind disabled.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "update_index", "0");
+            Property(text, 4, "update_count", "1");
+            Property(text, 4, "time", "1.4");
+            Property(text, 4, "frame_old_time", "1");
+            Property(text, 4, "now_update_time_before_step", "1.1");
+            Property(text, 4, "old_frame_world_position", "[0,0,0]");
+            Property(text, 4, "frame_world_position", "[4,2,-2]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "frame_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "old_frame_world_scale", "[1,1,1]");
+            Property(text, 4, "frame_world_scale", "[2,1,1]");
+            Property(text, 4, "init_scale", "[1,1,1]");
+            Property(text, 4, "negative_scale_direction", "[1,-1,1]");
+            Property(text, 4, "initial_local_gravity_direction", "[1,0,0]");
+            Property(text, 4, "world_gravity_direction", "[1,0,0]");
+            Property(text, 4, "gravity", "9");
+            Property(text, 4, "gravity_falloff", "0.6");
+            Property(text, 4, "local_inertia", "0.75");
+            Property(text, 4, "local_movement_speed_limit", "5");
+            Property(text, 4, "local_rotation_speed_limit", "90");
+            Property(text, 4, "velocity_weight_before_step", "0.2");
+            Property(text, 4, "stabilization_time_after_reset", "0.5");
+            Property(text, 4, "distance_weight", "0.8");
+            Property(text, 4, "parameter_blend_weight", "0.7", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "frame_interpolation", FloatJson(dump.FrameInterpolation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "step_vector", Vector3Json(dump.StepVector));
+            Property(text, 4, "step_rotation_xyzw", QuaternionJson(dump.StepRotation));
+            Property(text, 4, "step_move_inertia_ratio", FloatJson(dump.StepMoveInertiaRatio));
+            Property(text, 4, "step_rotation_inertia_ratio", FloatJson(dump.StepRotationInertiaRatio));
+            Property(text, 4, "inertia_vector", Vector3Json(dump.InertiaVector));
+            Property(text, 4, "inertia_rotation_xyzw", QuaternionJson(dump.InertiaRotation));
+            Property(text, 4, "angular_velocity", FloatJson(dump.AngularVelocity));
+            Property(text, 4, "rotation_axis", Vector3Json(dump.RotationAxis));
+            Property(text, 4, "scale_ratio", FloatJson(dump.ScaleRatio));
+            Property(text, 4, "gravity_dot", FloatJson(dump.GravityDot));
+            Property(text, 4, "gravity_ratio", FloatJson(dump.GravityRatio));
+            Property(text, 4, "velocity_weight", FloatJson(dump.VelocityWeight));
+            Property(text, 4, "blend_weight", FloatJson(dump.BlendWeight), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();
