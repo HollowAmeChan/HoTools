@@ -270,8 +270,58 @@ def build_mc2_mesh_frame_input(
     )
 
 
+def build_mc2_mesh_frame_input_for_task(
+    world,
+    task,
+    topology,
+    mesh_static,
+    *,
+    depsgraph=None,
+) -> MC2FrameInputSpec:
+    """Read the configured BasePose and build the active World's N3 snapshot."""
+    sources = tuple(getattr(task, "sources", ()) or ())
+    if getattr(task, "setup_type", None) != "mesh_cloth" or len(sources) != 1:
+        raise ValueError("automatic MC2 Mesh frame input requires one mesh_cloth source")
+    source_obj = sources[0]
+    if getattr(source_obj, "type", None) != "MESH" or getattr(source_obj, "data", None) is None:
+        raise ValueError("automatic MC2 Mesh frame input source is not a Mesh object")
+    properties = getattr(source_obj, "hotools_mesh_collision", None)
+    base_obj = getattr(properties, "mc2_base_pose_proxy", None) if properties is not None else None
+    if base_obj is None:
+        raise ValueError(
+            "MC2 Mesh source has no BasePose proxy; create or assign mc2_base_pose_proxy first"
+        )
+    frame_context = getattr(world, "frame_context", None)
+    frame = int(getattr(frame_context, "frame", 0) or 0)
+    generation = int(
+        getattr(frame_context, "generation", 0)
+        or getattr(world, "generation", 0)
+        or 0
+    )
+    if generation <= 0:
+        raise ValueError("automatic MC2 Mesh frame input requires an active Physics World")
+    expected_topology = str(getattr(mesh_static, "mesh_topology_signature", "") or "")
+    if not expected_topology:
+        raise ValueError("MC2 Mesh static bundle has no topology identity token")
+    snapshot = read_base_pose_frame_snapshot(
+        source_obj,
+        base_obj,
+        mesh_topology_signature=expected_topology,
+        frame=frame,
+        generation=generation,
+        depsgraph=depsgraph,
+        cache=getattr(world, "runtime_caches", None),
+    )
+    return build_mc2_mesh_frame_input(
+        snapshot,
+        mesh_static,
+        topology_signature=str(getattr(topology, "topology_signature", "") or ""),
+    )
+
+
 __all__ = [
     "MC2MeshFrameSnapshot",
     "build_mc2_mesh_frame_input",
+    "build_mc2_mesh_frame_input_for_task",
     "read_base_pose_frame_snapshot",
 ]

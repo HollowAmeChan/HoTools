@@ -39,6 +39,7 @@ MC2_SOLVER_DECLARATION = {
         "PhysicsWorldCache.collider_snapshot",
         "list[MC2TaskSpec] containing three setup types",
         "MC2SolverSettingsSpec",
+        "configured Mesh mc2_base_pose_proxy frame snapshot",
     ],
     "produces": [
         f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
@@ -69,7 +70,7 @@ MC2_SOLVER_DECLARATION = {
     ],
     "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
-        "framework": "sync_topology_native_context_and_public_mesh_result",
+        "framework": "sync_topology_auto_mesh_frame_native_context_and_public_result",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
         "native_backend": "single_native_context_no_python_fallback",

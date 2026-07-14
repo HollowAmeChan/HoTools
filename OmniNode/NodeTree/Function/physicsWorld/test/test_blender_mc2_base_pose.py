@@ -67,6 +67,9 @@ mc2_static = importlib.import_module(
 mc2_solver = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.solver"
 )
+mc2_nodes = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.nodes"
+)
 world_types = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.types"
 )
@@ -134,6 +137,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     source = None
     base_obj = None
     world = None
+    auto_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -485,6 +489,47 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert len(recovered_results) == 1
         assert recovered_results[0]["revision"] == 1
 
+        auto_world = world_types.PhysicsWorldCache()
+        auto_world.generation = 9
+        auto_world.frame_context.frame = 10
+        auto_world.frame_context.generation = 9
+        auto_world.frame_context.dt = 1.0 / 60.0
+        _, auto_ready, _ = mc2_nodes.physicsMC2Step(auto_world, [task])
+        assert auto_ready is True
+        auto_slot = auto_world.solver_slots[task.task_id]
+        auto_native = auto_slot.data["native_context"]
+        auto_candidate = auto_slot.data["result_candidate"]
+        assert auto_candidate.frame == 10
+        assert auto_candidate.generation == 9
+        assert auto_candidate.world_generation == 9
+        assert auto_candidate.revision == 1
+        assert auto_native.inspect()["reset_count"] == 1
+        assert auto_world.runtime_caches
+
+        mc2_nodes.physicsMC2Step(auto_world, [task])
+        assert auto_slot.data["result_candidate"] is auto_candidate
+        assert auto_native.inspect()["dynamic_revision"] == 1
+        assert auto_native.inspect()["step_count"] == 0
+
+        armature_obj.pose.bones["BasePoseBone"].location.x += 0.25
+        _update_depsgraph()
+        auto_world.frame_context.frame = 11
+        _, auto_ready, _ = mc2_nodes.physicsMC2Step(auto_world, [task])
+        assert auto_ready is True
+        auto_next_candidate = auto_slot.data["result_candidate"]
+        assert auto_next_candidate.revision == 2
+        assert auto_next_candidate.frame == 11
+        assert auto_native.inspect()["dynamic_revision"] == 2
+        assert auto_native.inspect()["step_count"] == 1
+        auto_results = auto_world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+            frame=11,
+            generation=9,
+        )
+        assert len(auto_results) == 1
+        assert auto_results[0]["revision"] == 2
+
         try:
             frame_input.read_base_pose_frame_snapshot(
                 source,
@@ -501,6 +546,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
+        if auto_world is not None:
+            auto_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:

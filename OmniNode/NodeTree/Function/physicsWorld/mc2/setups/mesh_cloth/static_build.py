@@ -29,6 +29,7 @@ from .final_proxy import build_blender_mesh_final_proxy
 
 @dataclass(frozen=True)
 class MC2MeshClothStaticBuildResult:
+    mesh_topology_signature: str
     finalizer: MC2MeshFinalProxyBuildResult
     baseline: MC2MeshBaselineBuildResult
     distance: MC2DistanceStaticSpec
@@ -40,6 +41,8 @@ class MC2MeshClothStaticBuildResult:
         return self.baseline.final_proxy
 
     def __post_init__(self) -> None:
+        if not self.mesh_topology_signature:
+            raise ValueError("mesh_topology_signature cannot be empty")
         if not isinstance(self.finalizer, MC2MeshFinalProxyBuildResult):
             raise TypeError("finalizer must be MC2MeshFinalProxyBuildResult")
         if not isinstance(self.baseline, MC2MeshBaselineBuildResult):
@@ -72,6 +75,7 @@ class MC2MeshClothStaticBuildResult:
     def debug_dict(self, *, include_signatures: bool = True) -> dict:
         result = {
             "setup_type": MC2_SETUP_MESH_CLOTH,
+            "mesh_topology_signature": self.mesh_topology_signature,
             "vertex_count": self.final_proxy.vertex_count,
             "edge_count": len(self.final_proxy.edges),
             "triangle_count": len(self.final_proxy.triangles),
@@ -150,6 +154,10 @@ def mesh_cloth_static_input_signature(
     mesh = obj.data
     mesh.update()
     triangles = _mesh_triangles(mesh)
+    edges = tuple(sorted(
+        tuple(sorted(int(value) for value in edge.vertices))
+        for edge in mesh.edges
+    ))
     uvs = _mesh_uvs(mesh, triangles, uv_layer_name=None)
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
     vertex_count = len(mesh.vertices)
@@ -161,8 +169,10 @@ def mesh_cloth_static_input_signature(
         weights = _vertex_group_weights(obj, pin_vertex_group, vertex_count)
         attributes = tuple(0x01 if weight > 0.0 else 0x02 for weight in weights)
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "topology_signature": str(topology_signature or ""),
+        "mesh_edges": edges,
+        "mesh_triangles": triangles,
         "pin_enabled": pin_enabled,
         "pin_vertex_group": pin_vertex_group,
         "vertex_attributes": attributes,
@@ -206,13 +216,22 @@ def build_mc2_mesh_cloth_static(
     topology_signature: str | None = None,
     world_gravity_direction=(0.0, -1.0, 0.0),
 ) -> MC2MeshClothStaticBuildResult:
+    from .base_pose import mesh_topology_signature
+
+    actual_mesh_topology_signature = mesh_topology_signature(obj)
+    expected_mesh_topology_signature = str(topology_signature or "")
+    if (
+        expected_mesh_topology_signature
+        and expected_mesh_topology_signature != actual_mesh_topology_signature
+    ):
+        raise ValueError("MeshCloth static build topology token changed before build")
     pin_enabled, pin_vertex_group = _mesh_cloth_pin_settings(obj)
     finalizer = build_blender_mesh_final_proxy(
         obj,
         task_id=task_id,
         pin_enabled=pin_enabled,
         pin_vertex_group=pin_vertex_group,
-        expected_mesh_topology_signature=topology_signature,
+        expected_mesh_topology_signature=actual_mesh_topology_signature,
     )
     baseline = build_mc2_mesh_baseline(finalizer.proxy)
     distance = build_mc2_distance_static(
@@ -231,6 +250,7 @@ def build_mc2_mesh_cloth_static(
         world_gravity_direction=world_gravity_direction,
     )
     return MC2MeshClothStaticBuildResult(
+        mesh_topology_signature=actual_mesh_topology_signature,
         finalizer=finalizer,
         baseline=baseline,
         distance=distance,

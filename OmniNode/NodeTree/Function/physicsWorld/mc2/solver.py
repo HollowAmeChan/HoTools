@@ -289,6 +289,15 @@ def _prune_stale_mc2_slots(world: PhysicsWorldCache, active_slot_ids) -> int:
     return len(stale_ids)
 
 
+def _validate_mc2_frame_input(spec, topology, frame_input: MC2FrameInputSpec) -> None:
+    if frame_input.task_id != spec.task_id:
+        raise ValueError("MC2 frame input task identity mismatch")
+    if frame_input.topology_signature != topology.topology_signature:
+        raise ValueError("MC2 frame input topology identity mismatch")
+    if frame_input.particle_count != topology.particle_count:
+        raise ValueError("MC2 frame input particle count mismatch")
+
+
 def step_mc2(
     world,
     tasks=None,
@@ -299,7 +308,7 @@ def step_mc2(
     dt: float = 0.0,
     enabled: bool = True,
 ) -> tuple[object, bool, str]:
-    """同步 topology/slot/context；V0连续帧执行Pin/Distance且不发布solver result。"""
+    """Sync MC2 slots, run the no-collision Mesh slice, and publish results."""
     specs = build_mc2_task_specs(tasks)
     if settings is None:
         settings = make_mc2_solver_settings()
@@ -309,7 +318,10 @@ def step_mc2(
         return world, False, "MC2 模拟步已禁用"
     if not isinstance(world, PhysicsWorldCache):
         return world, False, "MC2 模拟步需要 PhysicsWorldCache"
+    automatic_frame_inputs = frame_inputs is None and int(world.generation) > 0
     dt = float(dt)
+    if automatic_frame_inputs and dt == 0.0:
+        dt = float(getattr(world.frame_context, "dt", 0.0) or 0.0) * settings.time_scale
     if not math.isfinite(dt) or dt < 0.0:
         raise ValueError("MC2 dt必须是有限非负数")
 
@@ -341,12 +353,7 @@ def step_mc2(
             effective = make_mc2_runtime_parameters(spec.profile, spec.setup_options)
             frame_input = frame_inputs.get(spec.task_id)
             if frame_input is not None:
-                if frame_input.task_id != spec.task_id:
-                    raise ValueError("MC2 frame input task identity mismatch")
-                if frame_input.topology_signature != topology.topology_signature:
-                    raise ValueError("MC2 frame input topology identity mismatch")
-                if frame_input.particle_count != topology.particle_count:
-                    raise ValueError("MC2 frame input particle count mismatch")
+                _validate_mc2_frame_input(spec, topology, frame_input)
             static_input_signature = None
             mesh_static_supported = (
                 spec.setup_type == "mesh_cloth"
@@ -380,6 +387,26 @@ def step_mc2(
                 )
 
                 mesh_static = build_mc2_mesh_cloth_static_for_task(spec, topology)
+            if frame_input is None and automatic_frame_inputs and mesh_static_supported:
+                active_mesh_static = mesh_static
+                if active_mesh_static is None:
+                    existing_slot = world.solver_slots.get(spec.task_id)
+                    if existing_slot is not None:
+                        active_mesh_static = existing_slot.data.get("mesh_static")
+                if active_mesh_static is None:
+                    raise RuntimeError("automatic MC2 Mesh frame input has no static bundle")
+                from .setups.mesh_cloth.frame_input import (
+                    build_mc2_mesh_frame_input_for_task,
+                )
+
+                frame_input = build_mc2_mesh_frame_input_for_task(
+                    world,
+                    spec,
+                    topology,
+                    active_mesh_static,
+                )
+                _validate_mc2_frame_input(spec, topology, frame_input)
+                frame_inputs[spec.task_id] = frame_input
             staged_native_context = None
             staged_native_frame_applied = False
             if rebuild_reason and topology.particle_count > 0:

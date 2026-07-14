@@ -376,7 +376,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
     assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
     assert declaration["native_strategy"].endswith("single_native_context")
-    assert declaration["update_policy"]["framework"] == "sync_topology_native_context_and_public_mesh_result"
+    assert declaration["update_policy"]["framework"] == "sync_topology_auto_mesh_frame_native_context_and_public_result"
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == []
     assert declaration["export"]["shared_result_channels"] == [

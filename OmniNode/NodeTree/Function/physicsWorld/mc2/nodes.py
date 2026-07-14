@@ -1,4 +1,4 @@
-"""统一 MC2 solver 的参数、三种 setup task 和安全空模拟步节点。"""
+"""Unified MC2 parameters, setup tasks, and simulation-step nodes."""
 
 import typing
 

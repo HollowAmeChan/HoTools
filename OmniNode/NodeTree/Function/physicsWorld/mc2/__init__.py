@@ -73,6 +73,7 @@ _EXPORTS = {
     "plan_mc2_frame_sync": ".frame_state",
     "sync_mc2_frame_input": ".frame_state",
     "build_mc2_bone_frame_input": ".setups.bone_frame_input",
+    "build_mc2_mesh_frame_input_for_task": ".setups.mesh_cloth.frame_input",
     "MC2CenterFramePoseSpec": ".center_state",
     "MC2CenterPersistentState": ".center_state",
     "MC2CenterStaticSpec": ".center_state",

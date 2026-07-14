@@ -60,7 +60,10 @@ def _register_mesh_collision_properties():
     cls = properties.PG_Hotools_MeshCollision
     registered_class = not hasattr(bpy.types, cls.__name__)
     if registered_class:
-        bpy.utils.register_class(cls)
+        try:
+            bpy.utils.register_class(cls)
+        except ValueError:
+            registered_class = False
     registered_binding = not hasattr(bpy.types.Object, "hotools_mesh_collision")
     if registered_binding:
         bpy.types.Object.hotools_mesh_collision = bpy.props.PointerProperty(type=cls)
@@ -266,11 +269,63 @@ def test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes() -> None:
         assert slot.data["runtime_state"].last_reset_reason == "allocation_pending"
         assert slot.data["static_input_signature"] != second_input_signature
         assert slot.data["mesh_static"].bending.bending_signature != second_static.bending.bending_signature
+
+        topology_token = slot.data["mesh_static"].mesh_topology_signature
+        previous_signature = slot.data["static_input_signature"]
+        previous_native = latest_native
+        mesh = obj.data
+        mesh.clear_geometry()
+        mesh.from_pydata(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+            ),
+            (),
+            ((0, 1, 3), (1, 2, 3)),
+        )
+        mesh.update()
+        while mesh.uv_layers:
+            mesh.uv_layers.remove(mesh.uv_layers[0])
+        _assign_identity_uvs(mesh)
+        group = obj.vertex_groups.get("Pin") or obj.vertex_groups.new(name="Pin")
+        group.add((0, 2), 1.0, "REPLACE")
+        _world, _ready, status = mc2_solver.step_mc2(world, [task])
+        slot = world.solver_slots[task.task_id]
+        latest_native = slot.data["native_context"]
+        assert "重建 1" in status
+        assert previous_native.inspect()["released"] is True
+        assert slot.data["static_input_signature"] != previous_signature
+        assert slot.data["mesh_static"].mesh_topology_signature != topology_token
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
         if latest_native is not None:
             assert latest_native.inspect()["released"] is True
+        _remove_object(obj)
+        cleanup_properties()
+
+
+def test_active_world_mesh_step_requires_configured_base_pose() -> None:
+    cleanup_properties = _register_mesh_collision_properties()
+    obj = _make_object("MC2_MissingBasePose", ((0, 1, 2, 3),))
+    world = world_types.PhysicsWorldCache()
+    try:
+        world.generation = 1
+        world.frame_context.frame = 1
+        world.frame_context.generation = 1
+        task = mc2_specs.make_mc2_task_spec(mc2_names.MC2_SETUP_MESH_CLOTH, [obj])
+        try:
+            mc2_solver.step_mc2(world, [task])
+        except ValueError as exc:
+            assert "BasePose proxy" in str(exc)
+        else:
+            raise AssertionError("active MC2 Mesh step accepted a missing BasePose proxy")
+        assert world.solver_slots == {}
+        assert world.result_streams == {}
+    finally:
+        world.omni_cache_dispose("test_complete")
         _remove_object(obj)
         cleanup_properties()
 
@@ -281,6 +336,7 @@ TESTS = (
     ("shared vertex UV seam is rejected", test_shared_vertex_with_multiple_loop_uvs_is_rejected),
     ("MC2 slot caches mesh static data", test_mc2_slot_rebuild_caches_mesh_static_data),
     ("MC2 slot rebuilds for Pin/UV static changes", test_mc2_slot_rebuilds_when_pin_or_uv_static_input_changes),
+    ("active MC2 Mesh step requires BasePose", test_active_world_mesh_step_requires_configured_base_pose),
 )
 
 
