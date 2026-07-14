@@ -338,6 +338,7 @@ class MC2CenterPersistentState:
     last_frame: int | None = None
     last_generation: int | None = None
     smoothing_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    negative_scale_direction: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
     def reset(
         self,
@@ -371,8 +372,57 @@ class MC2CenterPersistentState:
         self.last_frame = int(frame_pose.frame)
         self.last_generation = int(frame_pose.generation)
         self.smoothing_velocity = (0.0, 0.0, 0.0)
+        self.negative_scale_direction = tuple(
+            -1.0 if value < 0.0 else 1.0
+            for value in frame_pose.component_world_scale
+        )
         self.reset_count += 1
         self.initialized = True
+
+    def make_negative_scale_transition(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        center_pose: MC2CenterWorldPoseSpec,
+    ) -> MC2NegativeScaleTransitionResult:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before scale transition")
+        if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+            raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+        if not isinstance(center_pose, MC2CenterWorldPoseSpec):
+            raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
+        return evaluate_mc2_negative_scale_transition(
+            MC2NegativeScaleTransitionInputSpec(
+                old_negative_scale_direction=self.negative_scale_direction,
+                old_component_world_position=self.old_component_world_position,
+                old_component_world_rotation_xyzw=self.old_component_world_rotation_xyzw,
+                old_component_world_scale=self.old_component_world_scale,
+                component_world_position=frame_pose.component_world_position,
+                component_world_rotation_xyzw=frame_pose.component_world_rotation_xyzw,
+                component_world_scale=frame_pose.component_world_scale,
+                old_frame_world_position=self.old_frame_world_position,
+                old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
+                old_frame_world_scale=self.old_frame_world_scale,
+                frame_world_position=center_pose.position,
+                frame_world_rotation_xyzw=center_pose.rotation_xyzw,
+                frame_world_scale=center_pose.scale,
+                old_anchor_world_position=self.old_anchor_world_position,
+                smoothing_velocity=self.smoothing_velocity,
+            )
+        )
+
+    def apply_negative_scale_transition(
+        self,
+        result: MC2NegativeScaleTransitionResult,
+    ) -> None:
+        if not isinstance(result, MC2NegativeScaleTransitionResult):
+            raise TypeError("result must be MC2NegativeScaleTransitionResult")
+        self.negative_scale_direction = tuple(result.negative_scale_direction)
+        if not result.active:
+            return
+        self.old_component_world_position = tuple(result.old_component_world_position)
+        self.old_component_world_scale = tuple(result.old_component_world_scale)
+        self.old_anchor_world_position = tuple(result.old_anchor_world_position)
+        self.smoothing_velocity = tuple(result.smoothing_velocity)
 
     def make_step_input(
         self,
@@ -442,6 +492,7 @@ class MC2CenterPersistentState:
         is_running: bool = True,
         now_time_scale: float = 1.0,
         skip_count: int = 0,
+        negative_scale_transition: MC2NegativeScaleTransitionResult | None = None,
     ) -> MC2CenterFrameShiftInputSpec:
         if not self.initialized:
             raise RuntimeError("Center persistent state must be reset before frame shift")
@@ -451,6 +502,17 @@ class MC2CenterPersistentState:
             raise ValueError("Center component identity changed without reset")
         if center_pose is not None and not isinstance(center_pose, MC2CenterWorldPoseSpec):
             raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
+        if negative_scale_transition is not None and not isinstance(
+            negative_scale_transition, MC2NegativeScaleTransitionResult
+        ):
+            raise TypeError(
+                "negative_scale_transition must be MC2NegativeScaleTransitionResult"
+            )
+        transition = (
+            negative_scale_transition
+            if negative_scale_transition is not None and negative_scale_transition.active
+            else None
+        )
         return MC2CenterFrameShiftInputSpec(
             simulation_delta_time=float(simulation_delta_time),
             frame_delta_time=float(frame_delta_time),
@@ -460,7 +522,11 @@ class MC2CenterPersistentState:
             world_inertia=float(world_inertia),
             movement_speed_limit=float(movement_speed_limit),
             rotation_speed_limit=float(rotation_speed_limit),
-            old_component_world_position=self.old_component_world_position,
+            old_component_world_position=(
+                transition.old_component_world_position
+                if transition is not None
+                else self.old_component_world_position
+            ),
             old_component_world_rotation_xyzw=self.old_component_world_rotation_xyzw,
             component_world_position=frame_pose.component_world_position,
             component_world_rotation_xyzw=frame_pose.component_world_rotation_xyzw,
@@ -473,13 +539,21 @@ class MC2CenterPersistentState:
                 and self.anchor_identity == frame_pose.anchor_identity
             ),
             anchor_inertia=float(anchor_inertia),
-            old_anchor_world_position=self.old_anchor_world_position,
+            old_anchor_world_position=(
+                transition.old_anchor_world_position
+                if transition is not None
+                else self.old_anchor_world_position
+            ),
             old_anchor_world_rotation_xyzw=self.old_anchor_world_rotation_xyzw,
             anchor_world_position=frame_pose.anchor_world_position,
             anchor_world_rotation_xyzw=frame_pose.anchor_world_rotation_xyzw,
             anchor_component_local_position=self.anchor_component_local_position,
             movement_inertia_smoothing=float(movement_inertia_smoothing),
-            smoothing_velocity=self.smoothing_velocity,
+            smoothing_velocity=(
+                transition.smoothing_velocity
+                if transition is not None
+                else self.smoothing_velocity
+            ),
             is_running=is_running,
             frame_world_position=(center_pose.position if center_pose is not None else None),
             frame_world_rotation_xyzw=(
@@ -512,6 +586,10 @@ class MC2CenterPersistentState:
             frame_pose.component_world_rotation_xyzw
         )
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self.negative_scale_direction = tuple(
+            -1.0 if value < 0.0 else 1.0
+            for value in frame_pose.component_world_scale
+        )
         self._commit_anchor_pose(frame_pose)
         self.smoothing_velocity = tuple(result.smoothing_velocity)
         self.old_frame_world_position = tuple(result.old_frame_world_position)
@@ -558,6 +636,7 @@ class MC2CenterPersistentState:
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = tuple(frame_pose.component_world_rotation_xyzw)
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self.negative_scale_direction = tuple(center_pose.negative_scale_direction)
         self._commit_anchor_pose(frame_pose)
         self.old_frame_world_position = tuple(center_pose.position)
         self.old_frame_world_rotation_xyzw = tuple(center_pose.rotation_xyzw)
@@ -582,6 +661,7 @@ class MC2CenterPersistentState:
             "last_generation": self.last_generation,
             "velocity_weight": self.velocity_weight,
             "smoothing_velocity": self.smoothing_velocity,
+            "negative_scale_direction": self.negative_scale_direction,
             "old_frame_world_position": self.old_frame_world_position,
             "old_world_position": self.old_world_position,
         }
@@ -591,9 +671,9 @@ class MC2CenterPersistentState:
 class MC2CenterFrameShiftInputSpec:
     """Source-aligned world-inertia inputs before Center substep derivation.
 
-    V0 covers component or fixed-derived Center frames at unit positive scale,
-    with optional anchor and movement smoothing, and excludes teleport,
-    synchronization, and culling.
+    V0 covers component or fixed-derived Center frames after any verified
+    negative-scale transition, with optional anchor and movement smoothing,
+    and excludes configured teleport, synchronization, and culling.
     """
 
     simulation_delta_time: float
@@ -695,6 +775,67 @@ class MC2CenterFrameShiftResult:
     frame_world_rotation_xyzw: tuple[float, float, float, float]
     frame_moving_direction: tuple[float, float, float]
     frame_moving_speed: float
+    smoothing_velocity: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class MC2NegativeScaleTransitionInputSpec:
+    old_negative_scale_direction: tuple[float, float, float]
+    old_component_world_position: tuple[float, float, float]
+    old_component_world_rotation_xyzw: tuple[float, float, float, float]
+    old_component_world_scale: tuple[float, float, float]
+    component_world_position: tuple[float, float, float]
+    component_world_rotation_xyzw: tuple[float, float, float, float]
+    component_world_scale: tuple[float, float, float]
+    old_frame_world_position: tuple[float, float, float]
+    old_frame_world_rotation_xyzw: tuple[float, float, float, float]
+    old_frame_world_scale: tuple[float, float, float]
+    frame_world_position: tuple[float, float, float]
+    frame_world_rotation_xyzw: tuple[float, float, float, float]
+    frame_world_scale: tuple[float, float, float]
+    old_anchor_world_position: tuple[float, float, float]
+    smoothing_velocity: tuple[float, float, float]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "old_negative_scale_direction",
+            "old_component_world_position", "old_component_world_scale",
+            "component_world_position", "component_world_scale",
+            "old_frame_world_position", "old_frame_world_scale",
+            "frame_world_position", "frame_world_scale",
+            "old_anchor_world_position", "smoothing_velocity",
+        ):
+            _vector(getattr(self, name), 3, name)
+        for name in (
+            "old_component_world_rotation_xyzw",
+            "component_world_rotation_xyzw",
+            "old_frame_world_rotation_xyzw",
+            "frame_world_rotation_xyzw",
+        ):
+            _require_unit_quaternion(getattr(self, name), name)
+        if any(value not in (-1.0, 1.0) for value in self.old_negative_scale_direction):
+            raise ValueError("old_negative_scale_direction must contain only -1 or 1")
+        for name in (
+            "old_component_world_scale", "component_world_scale",
+            "old_frame_world_scale", "frame_world_scale",
+        ):
+            if any(abs(value) <= 1.0e-8 for value in getattr(self, name)):
+                raise ValueError(f"{name} cannot contain zero")
+
+
+@dataclass(frozen=True)
+class MC2NegativeScaleTransitionResult:
+    active: bool
+    negative_scale_sign: float
+    negative_scale_direction: tuple[float, float, float]
+    negative_scale_change: tuple[float, float, float]
+    negative_scale_triangle_sign: tuple[float, float]
+    negative_scale_quaternion_value: tuple[float, float, float, float]
+    component_negative_matrix: tuple[tuple[float, float, float, float], ...]
+    center_negative_matrix: tuple[tuple[float, float, float, float], ...]
+    old_component_world_position: tuple[float, float, float]
+    old_component_world_scale: tuple[float, float, float]
+    old_anchor_world_position: tuple[float, float, float]
     smoothing_velocity: tuple[float, float, float]
 
 
@@ -825,6 +966,155 @@ def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.nd
     origin = _f32_vector(origin, 3, "origin")
     rotation = _f32_vector(rotation, 4, "rotation")
     return _rotate_f32(_inverse_quaternion_f32(rotation), position - origin)
+
+
+def _quaternion_matrix_f32(rotation) -> np.ndarray:
+    x, y, z, w = _f32_vector(rotation, 4, "rotation")
+    two = _f32(2.0)
+    return np.asarray(
+        (
+            (1.0 - two * (y * y + z * z), two * (x * y - z * w), two * (x * z + y * w)),
+            (two * (x * y + z * w), 1.0 - two * (x * x + z * z), two * (y * z - x * w)),
+            (two * (x * z - y * w), two * (y * z + x * w), 1.0 - two * (x * x + y * y)),
+        ),
+        dtype=np.float32,
+    )
+
+
+def _trs_matrix_f32(position, rotation, scale) -> np.ndarray:
+    result = np.eye(4, dtype=np.float32)
+    result[:3, :3] = _quaternion_matrix_f32(rotation) * _f32_vector(
+        scale, 3, "scale"
+    )[np.newaxis, :]
+    result[:3, 3] = _f32_vector(position, 3, "position")
+    return result
+
+
+def _transform_point_matrix_f32(position, matrix: np.ndarray) -> np.ndarray:
+    value = np.empty(4, dtype=np.float32)
+    value[:3] = _f32_vector(position, 3, "position")
+    value[3] = _f32(1.0)
+    return np.asarray(matrix @ value, dtype=np.float32)[:3]
+
+
+def _transform_vector_matrix_f32(vector, matrix: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        matrix[:3, :3] @ _f32_vector(vector, 3, "vector"),
+        dtype=np.float32,
+    )
+
+
+def _matrix_tuple(matrix: np.ndarray) -> tuple[tuple[float, float, float, float], ...]:
+    return tuple(tuple(float(value) for value in row) for row in matrix)
+
+
+def evaluate_mc2_negative_scale_transition(
+    transition: MC2NegativeScaleTransitionInputSpec,
+) -> MC2NegativeScaleTransitionResult:
+    """Build MC2's component/Center matrices for a scale-sign transition."""
+    if not isinstance(transition, MC2NegativeScaleTransitionInputSpec):
+        raise TypeError("transition must be MC2NegativeScaleTransitionInputSpec")
+    old_direction = _f32_vector(
+        transition.old_negative_scale_direction, 3, "old_negative_scale_direction"
+    )
+    scale = _f32_vector(
+        transition.component_world_scale, 3, "component_world_scale"
+    )
+    direction = np.where(scale < _f32(0.0), _f32(-1.0), _f32(1.0)).astype(
+        np.float32
+    )
+    change = np.asarray(old_direction * direction, dtype=np.float32)
+    active = not np.array_equal(old_direction, direction)
+    negative = bool(np.any(scale < _f32(0.0)))
+    negative_sign = -1.0 if negative else 1.0
+    triangle_sign = (
+        -1.0 if scale[0] < 0.0 or scale[2] < 0.0 else 1.0,
+        -1.0 if scale[0] < 0.0 else 1.0,
+    ) if negative else (1.0, 1.0)
+    quaternion_value = tuple(
+        float(value)
+        for value in (
+            np.concatenate((-direction, np.asarray((1.0,), dtype=np.float32)))
+            if negative
+            else np.ones(4, dtype=np.float32)
+        )
+    )
+    identity = np.eye(4, dtype=np.float32)
+    if not active:
+        return MC2NegativeScaleTransitionResult(
+            active=False,
+            negative_scale_sign=negative_sign,
+            negative_scale_direction=tuple(float(value) for value in direction),
+            negative_scale_change=tuple(float(value) for value in change),
+            negative_scale_triangle_sign=triangle_sign,
+            negative_scale_quaternion_value=quaternion_value,
+            component_negative_matrix=_matrix_tuple(identity),
+            center_negative_matrix=_matrix_tuple(identity),
+            old_component_world_position=tuple(transition.old_component_world_position),
+            old_component_world_scale=tuple(transition.old_component_world_scale),
+            old_anchor_world_position=tuple(transition.old_anchor_world_position),
+            smoothing_velocity=tuple(transition.smoothing_velocity),
+        )
+
+    component_matrix = np.asarray(
+        _trs_matrix_f32(
+            transition.component_world_position,
+            transition.component_world_rotation_xyzw,
+            transition.component_world_scale,
+        )
+        @ np.linalg.inv(
+            _trs_matrix_f32(
+                transition.old_component_world_position,
+                transition.old_component_world_rotation_xyzw,
+                transition.old_component_world_scale,
+            )
+        ).astype(np.float32),
+        dtype=np.float32,
+    )
+    center_matrix = np.asarray(
+        _trs_matrix_f32(
+            transition.frame_world_position,
+            transition.frame_world_rotation_xyzw,
+            transition.frame_world_scale,
+        )
+        @ np.linalg.inv(
+            _trs_matrix_f32(
+                transition.old_frame_world_position,
+                transition.old_frame_world_rotation_xyzw,
+                transition.old_frame_world_scale,
+            )
+        ).astype(np.float32),
+        dtype=np.float32,
+    )
+    return MC2NegativeScaleTransitionResult(
+        active=True,
+        negative_scale_sign=negative_sign,
+        negative_scale_direction=tuple(float(value) for value in direction),
+        negative_scale_change=tuple(float(value) for value in change),
+        negative_scale_triangle_sign=triangle_sign,
+        negative_scale_quaternion_value=quaternion_value,
+        component_negative_matrix=_matrix_tuple(component_matrix),
+        center_negative_matrix=_matrix_tuple(center_matrix),
+        old_component_world_position=tuple(
+            float(value)
+            for value in _transform_point_matrix_f32(
+                transition.old_component_world_position, component_matrix
+            )
+        ),
+        old_component_world_scale=tuple(float(value) for value in scale),
+        old_anchor_world_position=tuple(
+            float(value)
+            for value in _transform_point_matrix_f32(
+                transition.old_anchor_world_position, component_matrix
+            )
+        ),
+        smoothing_velocity=tuple(
+            float(value)
+            for value in _transform_vector_matrix_f32(
+                transition.smoothing_velocity, component_matrix
+            )
+        ),
+    )
 
 
 def evaluate_mc2_center_frame_shift(

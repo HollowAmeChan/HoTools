@@ -61,6 +61,7 @@ struct Mc2ContextV0 {
     std::int64_t center_dynamic_revision = 0;
     std::int64_t center_step_count = 0;
     std::int64_t center_frame_shift_count = 0;
+    std::int64_t center_negative_scale_teleport_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -636,6 +637,59 @@ void normalize_quaternion(std::array<float, 4>& value) {
     for (float& component : value) component *= inverse_length;
 }
 
+Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value);
+
+std::array<float, 4> quaternion_from_forward_up(Vec3 forward, Vec3 up) {
+    const Vec3 z = normalize(forward);
+    const Vec3 x = normalize(cross(up, z));
+    const Vec3 y = cross(z, x);
+    const float m00 = x.x, m01 = y.x, m02 = z.x;
+    const float m10 = x.y, m11 = y.y, m12 = z.y;
+    const float m20 = x.z, m21 = y.z, m22 = z.z;
+    std::array<float, 4> result {};
+    const float trace = m00 + m11 + m22;
+    if (trace > 0.0f) {
+        const float s = std::sqrt(trace + 1.0f) * 2.0f;
+        result = {(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25f * s};
+    } else if (m00 > m11 && m00 > m22) {
+        const float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
+        result = {0.25f * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s};
+    } else if (m11 > m22) {
+        const float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
+        result = {(m01 + m10) / s, 0.25f * s, (m12 + m21) / s, (m02 - m20) / s};
+    } else {
+        const float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
+        result = {(m02 + m20) / s, (m12 + m21) / s, 0.25f * s, (m10 - m01) / s};
+    }
+    normalize_quaternion(result);
+    return result;
+}
+
+Vec3 transform_vector_matrix(const float* matrix, Vec3 value) {
+    return {
+        matrix[0] * value.x + matrix[1] * value.y + matrix[2] * value.z,
+        matrix[4] * value.x + matrix[5] * value.y + matrix[6] * value.z,
+        matrix[8] * value.x + matrix[9] * value.y + matrix[10] * value.z,
+    };
+}
+
+Vec3 transform_point_matrix(const float* matrix, Vec3 value) {
+    Vec3 result = transform_vector_matrix(matrix, value);
+    result.x += matrix[3];
+    result.y += matrix[7];
+    result.z += matrix[11];
+    return result;
+}
+
+std::array<float, 4> transform_rotation_matrix(
+    const float* matrix,
+    const std::array<float, 4>& rotation
+) {
+    const Vec3 up = transform_vector_matrix(matrix, rotate_vector(rotation, {0.0f, 1.0f, 0.0f}));
+    const Vec3 forward = transform_vector_matrix(matrix, rotate_vector(rotation, {0.0f, 0.0f, 1.0f}));
+    return quaternion_from_forward_up(forward, up);
+}
+
 Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value) {
     const Vec3 xyz {rotation[0], rotation[1], rotation[2]};
     const Vec3 twice_cross = mul(cross(xyz, value), 2.0f);
@@ -1041,6 +1095,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
         !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
+        !dict_i64(
+            result,
+            "center_negative_scale_teleport_count",
+            context.center_negative_scale_teleport_count
+        ) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -1662,6 +1721,88 @@ PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args) {
         );
     }
     ++context->center_frame_shift_count;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_apply_center_negative_scale_teleport(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_apply_center_negative_scale_teleport expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->initialized || context->state_positions.size() != count * 3 ||
+        context->state_rotations.size() != count * 4 ||
+        context->state_velocities.size() != count * 3 ||
+        context->velocity_reference_positions.size() != count * 3) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "MC2 V0 particle state is not initialized for negative-scale teleport"
+        );
+        return nullptr;
+    }
+    Buffer matrix;
+    if (!matrix.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND,
+            "center_negative_scale_matrix"
+        ) ||
+        !expect_float32(matrix, "center_negative_scale_matrix") ||
+        !expect_2d(matrix, "center_negative_scale_matrix", 4, 4) ||
+        !finite_floats(matrix, "center_negative_scale_matrix")) {
+        return nullptr;
+    }
+    const auto* values = static_cast<const float*>(matrix.view.buf);
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        const Vec3 position {
+            context->state_positions[offset + 0],
+            context->state_positions[offset + 1],
+            context->state_positions[offset + 2],
+        };
+        const Vec3 reference {
+            context->velocity_reference_positions[offset + 0],
+            context->velocity_reference_positions[offset + 1],
+            context->velocity_reference_positions[offset + 2],
+        };
+        const Vec3 velocity {
+            context->state_velocities[offset + 0],
+            context->state_velocities[offset + 1],
+            context->state_velocities[offset + 2],
+        };
+        const Vec3 transformed_position = transform_point_matrix(values, position);
+        const Vec3 transformed_reference = transform_point_matrix(values, reference);
+        const Vec3 transformed_velocity = transform_vector_matrix(values, velocity);
+        const std::array<float, 4> rotation {
+            context->state_rotations[rotation_offset + 0],
+            context->state_rotations[rotation_offset + 1],
+            context->state_rotations[rotation_offset + 2],
+            context->state_rotations[rotation_offset + 3],
+        };
+        const auto transformed_rotation = transform_rotation_matrix(values, rotation);
+        const Vec3 vectors[] = {
+            transformed_position, transformed_reference, transformed_velocity
+        };
+        float* outputs[] = {
+            context->state_positions.data() + offset,
+            context->velocity_reference_positions.data() + offset,
+            context->state_velocities.data() + offset,
+        };
+        for (std::size_t index = 0; index < 3; ++index) {
+            outputs[index][0] = vectors[index].x;
+            outputs[index][1] = vectors[index].y;
+            outputs[index][2] = vectors[index].z;
+        }
+        std::copy(
+            transformed_rotation.begin(), transformed_rotation.end(),
+            context->state_rotations.begin() + static_cast<std::ptrdiff_t>(rotation_offset)
+        );
+    }
+    ++context->center_negative_scale_teleport_count;
     Py_RETURN_NONE;
 }
 

@@ -181,6 +181,30 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert np.allclose(first.component_world_scale, (1.0, 1.0, 1.0))
         assert np.allclose(first.animated_base_world_positions[:, 0], (0.5, 1.5, 0.5))
 
+        source.scale = (-1.0, 1.0, 1.0)
+        negative_depsgraph = _update_depsgraph()
+        negative_snapshot = frame_input.read_base_pose_frame_snapshot(
+            source,
+            base_obj,
+            mesh_topology_signature=topology_signature,
+            frame=12,
+            generation=3,
+            depsgraph=negative_depsgraph,
+            cache={},
+        )
+        np.testing.assert_allclose(
+            negative_snapshot.component_world_scale,
+            (-1.0, 1.0, 1.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            negative_snapshot.component_world_rotation_xyzw,
+            (0.0, 0.0, 0.0, 1.0),
+            atol=1.0e-6,
+        )
+        source.scale = (1.0, 1.0, 1.0)
+        depsgraph = _update_depsgraph()
+
         task = mc2_specs.make_mc2_task_spec("mesh_cloth", [source])
         topology = mc2_topology.build_mc2_topology_spec(task)
         static_signature = mc2_static.mesh_cloth_static_input_signature_for_task(
@@ -905,12 +929,73 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert eighth_candidate.revision == 8
         assert eighth_candidate.frame == eighth_input.frame
 
+        negative_scale_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        negative_scale_input = frame_input.make_mc2_frame_input(
+            task_id=eighth_input.task_id,
+            topology_signature=eighth_input.topology_signature,
+            frame=9,
+            generation=eighth_input.generation,
+            world_positions=eighth_input.world_positions,
+            world_rotations_xyzw=eighth_input.world_rotations_xyzw,
+            source_world_linear=np.diag((-1.0, 1.0, 1.0)).astype(np.float32),
+            center_frame_pose=type(eighth_input.center_frame_pose)(
+                frame=9,
+                generation=eighth_input.generation,
+                component_identity=eighth_input.center_frame_pose.component_identity,
+                component_world_position=(3.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, -1.0),
+                component_world_scale=(-1.0, 1.0, 1.0),
+            ),
+        )
+        world.frame_context.frame = 9
+        world.frame_context.raw_dt = 1.0 / 60.0
+        world.frame_context.dt = 1.0 / 60.0
+        world.frame_context.time_scale = 1.0
+        mc2_solver.step_mc2(
+            world,
+            [negative_scale_task],
+            frame_inputs={negative_scale_task.task_id: negative_scale_input},
+            dt=1.0 / 60.0,
+        )
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 9
+        assert native_info["step_count"] == 6
+        assert native_info["center_dynamic_revision"] == 6
+        assert native_info["center_step_count"] == 6
+        assert native_info["center_frame_shift_count"] == 5
+        assert native_info["center_negative_scale_teleport_count"] == 1
+        negative_scale_result = slot.data["center_negative_scale_result"]
+        assert negative_scale_result is not None
+        assert negative_scale_result.active is True
+        assert negative_scale_result.negative_scale_direction == (-1.0, 1.0, 1.0)
+        assert np.linalg.det(
+            np.asarray(negative_scale_result.center_negative_matrix, dtype=np.float32)
+        ) < 0.0
+        assert slot.data["center_frame_shift_result"] is None
+        assert slot.data["center_step_result"] is not None
+        assert center_runtime.negative_scale_direction == (-1.0, 1.0, 1.0)
+        negative_candidate = slot.data["result_candidate"]
+        assert negative_candidate.revision == 9
+        assert negative_candidate.frame == negative_scale_input.frame
+
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
             world,
-            [zero_time_task],
-            frame_inputs={zero_time_task.task_id: eighth_input},
-            dt=0.0,
+            [negative_scale_task],
+            frame_inputs={negative_scale_task.task_id: negative_scale_input},
+            dt=1.0 / 60.0,
         )
         assert "重建 1" in status
         recovered_native_owner = world.solver_slots[soft_task.task_id].data["native_context"]
@@ -921,7 +1006,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert recovered_info["step_count"] == 0
         recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
         assert recovered_candidate.revision == 1
-        assert recovered_candidate.frame == eighth_input.frame
+        assert recovered_candidate.frame == negative_scale_input.frame
         recovered_results = world.consume_results(
             world_names.GN_ATTRIBUTE_CHANNEL,
             solver="mc2",
@@ -970,6 +1055,25 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert len(auto_results) == 1
         assert auto_results[0]["revision"] == 2
         assert world_writeback.writeback_gn_attributes(auto_world) == 1
+
+        source.scale = (-1.0, 1.0, 1.0)
+        _update_depsgraph()
+        auto_world.frame_context.frame = 12
+        _, auto_ready, _ = mc2_nodes.physicsMC2Step(auto_world, [task])
+        assert auto_ready is True
+        auto_negative_candidate = auto_slot.data["result_candidate"]
+        assert auto_negative_candidate.revision == 3
+        assert auto_negative_candidate.frame == 12
+        auto_negative_info = auto_native.inspect()
+        assert auto_negative_info["dynamic_revision"] == 3
+        assert auto_negative_info["step_count"] == 2
+        assert auto_negative_info["center_negative_scale_teleport_count"] == 1
+        auto_negative_result = auto_slot.data["center_negative_scale_result"]
+        assert auto_negative_result.active is True
+        assert auto_negative_result.negative_scale_direction == (-1.0, 1.0, 1.0)
+        source.scale = (1.0, 1.0, 1.0)
+        _update_depsgraph()
+        auto_world.frame_context.frame = 11
 
         valid_result = auto_results[0]
         invalid_result = dict(valid_result)

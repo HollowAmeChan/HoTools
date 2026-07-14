@@ -96,6 +96,7 @@ Cache Read
 
 - 校验或创建 `PhysicsWorldCache`。
 - 更新 `PhysicsFrameContext`：frame、previous_frame、continuous、same_frame、restart_required、raw_dt、dt、time_scale、substeps、generation。`raw_dt` 是未缩放场景帧时长，`dt = raw_dt * time_scale`；需要在暂停帧移动坐标历史的 solver 不得从零 `dt` 反推帧时长。
+- MC2 component scale符号发生变化时，顺序固定为：构建component/Center TRS delta matrix，变换Center persistent与native粒子history/velocity，再应用world-inertia frame shift，最后执行substep。普通quaternion shift不能替代含非均匀缩放的negative-scale matrix；当前Mesh生产域仅允许无parent/shear的component scale-sign transition。
 - 计算 object scope key，检测 scope 变化。
 - 构建公共 source / collider snapshot。
 - 清理上一帧异常残留的 write lock。

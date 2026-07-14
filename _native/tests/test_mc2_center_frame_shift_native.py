@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 from pathlib import Path
 
@@ -65,6 +66,15 @@ def _read(context):
     rotations = np.empty((1, 4), dtype=np.float32)
     hotools_native.mc2_context_v0_read(context, positions, rotations)
     return positions, rotations
+
+
+def _axis_angle(value):
+    axis = np.asarray(value["axis"], dtype=np.float32)
+    half_angle = np.float32(np.radians(value["degrees"]) * 0.5)
+    return np.concatenate((
+        axis * np.sin(half_angle),
+        np.asarray((np.cos(half_angle),), dtype=np.float32),
+    )).astype(np.float32)
 
 
 def test_center_frame_shift_transforms_particle_history_and_velocity():
@@ -137,6 +147,81 @@ def test_center_frame_shift_transforms_particle_history_and_velocity():
         hotools_native.mc2_context_v0_free(context)
 
 
+def test_negative_scale_teleport_matches_center_oracle():
+    fixture_path = (
+        ROOT
+        / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
+        / "test" / "fixtures" / "tier_a"
+        / "center_frame_shift_negative_scale_x_001.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    values = fixture["input"]
+    expected = fixture["expected"]
+    matrix = np.asarray(
+        expected["negative_scale_matrix_columns"], dtype=np.float32
+    ).T.copy()
+    initial_position = np.asarray(values["old_position"], dtype=np.float32)
+    initial_velocity = np.asarray(values["velocity"], dtype=np.float32)
+    initial_rotation = _axis_angle(values["old_rotation_axis_angle"])
+
+    context = hotools_native.mc2_context_v0_create(0, 1)
+    try:
+        hotools_native.mc2_context_v0_update_proxy_static(context, *_proxy_static())
+        hotools_native.mc2_context_v0_update_baseline_static(context, *_baseline_static())
+        floats = np.zeros(47, dtype=np.float32)
+        floats[0] = 1.0
+        floats[1:4] = initial_velocity
+        curves = np.zeros((9, 16), dtype=np.float32)
+        hotools_native.mc2_context_v0_update_parameters(
+            context, floats, np.zeros(11, dtype=np.int32), curves
+        )
+        positions = np.asarray(
+            [initial_position - initial_velocity], dtype=np.float32
+        )
+        rotations = np.asarray([initial_rotation], dtype=np.float32)
+        _update_dynamic(context, 1, positions, rotations)
+        hotools_native.mc2_context_v0_reset(context)
+        hotools_native.mc2_context_v0_step(context, 1.0, 1.0, 1.0)
+        np.testing.assert_allclose(_read(context)[0], [initial_position], atol=1.0e-6)
+
+        hotools_native.mc2_context_v0_apply_center_negative_scale_teleport(
+            context, matrix
+        )
+        teleported_position, teleported_rotation = _read(context)
+        np.testing.assert_allclose(
+            teleported_position, [expected["old_position"]], rtol=1.0e-6, atol=1.0e-6
+        )
+        expected_rotation = np.asarray(expected["old_rotation_xyzw"], dtype=np.float32)
+        if np.dot(teleported_rotation[0], expected_rotation) < 0.0:
+            teleported_rotation[0] *= -1.0
+        np.testing.assert_allclose(
+            teleported_rotation, [expected_rotation], rtol=1.0e-6, atol=1.0e-6
+        )
+        assert hotools_native.mc2_context_v0_inspect(context)[
+            "center_negative_scale_teleport_count"
+        ] == 1
+
+        floats[0:4] = 0.0
+        hotools_native.mc2_context_v0_update_parameters(
+            context, floats, np.zeros(11, dtype=np.int32), curves
+        )
+        _update_dynamic(context, 2, positions, rotations)
+        hotools_native.mc2_context_v0_step(context, 1.0, 1.0, 1.0)
+        final_position, _ = _read(context)
+        np.testing.assert_allclose(
+            final_position,
+            [
+                np.asarray(expected["old_position"], dtype=np.float32)
+                + np.asarray(expected["velocity"], dtype=np.float32)
+            ],
+            rtol=1.0e-6,
+            atol=2.0e-6,
+        )
+    finally:
+        hotools_native.mc2_context_v0_free(context)
+
+
 if __name__ == "__main__":
     test_center_frame_shift_transforms_particle_history_and_velocity()
+    test_negative_scale_teleport_matches_center_oracle()
     print("PASS MC2 native Center frame shift")

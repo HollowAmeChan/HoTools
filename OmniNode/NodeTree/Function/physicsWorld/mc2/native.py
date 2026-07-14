@@ -13,6 +13,7 @@ import numpy as np
 from .bending_static import pack_mc2_bending_static
 from .center_state import (
     MC2CenterFrameShiftResult,
+    MC2NegativeScaleTransitionResult,
     MC2CenterStepInputSpec,
     MC2CenterStepResult,
     pack_mc2_center_static,
@@ -38,6 +39,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_center_static",
     "mc2_context_v0_update_center_dynamic",
     "mc2_context_v0_apply_center_frame_shift",
+    "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
@@ -263,6 +265,24 @@ class MC2NativeContextV0:
             array(pivot),
             array(result.frame_component_shift_vector),
             array(result.frame_component_shift_rotation_xyzw),
+        )
+
+    def apply_center_negative_scale_teleport(
+        self,
+        result: MC2NegativeScaleTransitionResult,
+    ) -> None:
+        if not isinstance(result, MC2NegativeScaleTransitionResult):
+            raise TypeError("result must be MC2NegativeScaleTransitionResult")
+        if not result.active:
+            return
+        self._ensure_live()
+        matrix = np.ascontiguousarray(
+            result.center_negative_matrix,
+            dtype=np.float32,
+        )
+        self._module.mc2_context_v0_apply_center_negative_scale_teleport(
+            self._handle,
+            matrix,
         )
 
     def reset(self) -> None:

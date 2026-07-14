@@ -67,7 +67,9 @@ directory:
   moving-speed normalization caused by a positive time scale below one. The
   seventh keeps component inertia while deriving the current Center frame from
   a Fixed particle pose. The eighth freezes zero-time-scale full cancellation
-  and zero moving speed without a simulation step.
+  and zero moving speed without a simulation step. The ninth freezes an X-axis
+  component scale-sign transition, both negative-scale TRS delta matrices, and
+  the resulting Center and particle-history transforms before inertia shift.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

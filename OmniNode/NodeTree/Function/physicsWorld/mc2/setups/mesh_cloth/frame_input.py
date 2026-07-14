@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import bpy
+from mathutils import Matrix
 import numpy as np
 
 from ...center_state import MC2CenterFramePoseSpec
@@ -33,6 +34,41 @@ def _matrix_to_numpy(matrix) -> np.ndarray:
         [[float(matrix[row][column]) for column in range(4)] for row in range(4)],
         dtype=np.float32,
     )
+
+
+def _decompose_component_transform(evaluated_source, source_matrix):
+    position, rotation, decomposed_scale = source_matrix.decompose()
+    local_scale = tuple(float(value) for value in evaluated_source.scale)
+    if not any(value < 0.0 for value in local_scale):
+        rotation.normalize()
+        return position, rotation, decomposed_scale
+    if evaluated_source.parent is not None:
+        raise ValueError(
+            "MC2 negative-scale Mesh source currently requires an unparented object"
+        )
+    signed_scale = np.asarray(
+        [
+            (-1.0 if local < 0.0 else 1.0) * abs(float(world))
+            for local, world in zip(local_scale, decomposed_scale)
+        ],
+        dtype=np.float64,
+    )
+    if np.any(np.abs(signed_scale) <= _NORMAL_EPSILON):
+        raise ValueError("MC2 component scale cannot contain zero")
+    linear = _matrix_to_numpy(source_matrix)[:3, :3].astype(np.float64)
+    rotation_matrix = linear / signed_scale[np.newaxis, :]
+    if not np.allclose(
+        rotation_matrix.T @ rotation_matrix,
+        np.eye(3),
+        rtol=1.0e-5,
+        atol=1.0e-6,
+    ) or np.linalg.det(rotation_matrix) <= 0.0:
+        raise ValueError(
+            "MC2 negative-scale Mesh source cannot contain parent scale or shear"
+        )
+    rotation = Matrix(rotation_matrix.tolist()).to_quaternion()
+    rotation.normalize()
+    return position, rotation, tuple(float(value) for value in signed_scale)
 
 
 @dataclass(frozen=True)
@@ -184,8 +220,9 @@ def read_base_pose_frame_snapshot(
     )
     evaluated_source = source_obj.evaluated_get(depsgraph)
     source_matrix = evaluated_source.matrix_world.copy()
-    component_position, component_rotation, component_scale = source_matrix.decompose()
-    component_rotation.normalize()
+    component_position, component_rotation, component_scale = (
+        _decompose_component_transform(evaluated_source, source_matrix)
+    )
     snapshot = MC2MeshFrameSnapshot(
         source_object_ptr=int(source_obj.as_pointer()),
         source_data_ptr=int(source_obj.data.as_pointer()),

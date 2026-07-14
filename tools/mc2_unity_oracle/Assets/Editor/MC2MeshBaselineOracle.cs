@@ -293,6 +293,27 @@ namespace HoTools.MC2Oracle.Editor
             public float3 SmoothingVelocity;
         }
 
+        private sealed class NegativeScaleTeleportDump
+        {
+            public float NegativeScaleSign;
+            public float3 NegativeScaleDirection;
+            public float3 NegativeScaleChange;
+            public float2 NegativeScaleTriangleSign;
+            public float4 NegativeScaleQuaternionValue;
+            public float4x4 NegativeScaleMatrix;
+            public float3 OldComponentWorldPosition;
+            public float3 OldComponentWorldScale;
+            public float3 OldAnchorPosition;
+            public float3 SmoothingVelocity;
+            public float3 OldPosition;
+            public quaternion OldRotation;
+            public float3 AnimationOldPosition;
+            public quaternion AnimationOldRotation;
+            public float3 DisplayPosition;
+            public float3 Velocity;
+            public float3 RealVelocity;
+        }
+
         public static void RunBatch()
         {
             string outputDirectory = CommandLineValue("-mc2OracleOutput");
@@ -623,7 +644,162 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {zeroTimeScalePath}");
-            return 8;
+
+            NegativeScaleTeleportDump negativeScale = RunNegativeScaleTeleportOracle();
+            string negativeScalePath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_negative_scale_x_001.json"
+            );
+            File.WriteAllText(
+                negativeScalePath,
+                BuildNegativeScaleTeleportJson(negativeScale),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {negativeScalePath}");
+            return 9;
+        }
+
+        private static NegativeScaleTeleportDump RunNegativeScaleTeleportOracle()
+        {
+            MethodInfo centerMethod = typeof(TeamManager).GetMethod(
+                "SimulationCalcCenterAndInertiaAndWind",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo particleMethod = typeof(SimulationManager).GetMethod(
+                "SimulationPreTeamUpdate",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (centerMethod == null || particleMethod == null)
+            {
+                throw new MissingMethodException("MC2 negative-scale oracle producer is unavailable");
+            }
+
+            var team = new TeamManager.TeamData
+            {
+                frameDeltaTime = 0.1f,
+                nowTimeScale = 1.0f,
+                updateCount = 1,
+                particleChunk = new DataChunk(0, 1),
+                proxyCommonChunk = new DataChunk(0, 1),
+                initScale = new float3(1.0f),
+                negativeScaleSign = 1.0f,
+                negativeScaleDirection = new float3(1.0f),
+                negativeScaleChange = new float3(1.0f),
+                negativeScaleTriangleSign = new float2(1.0f),
+                negativeScaleQuaternionValue = new float4(1.0f),
+                velocityWeight = 1.0f,
+            };
+            var parameters = new ClothParameters
+            {
+                inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
+                {
+                    worldInertia = 1.0f,
+                    movementInertiaSmoothing = 0.0f,
+                    movementSpeedLimit = -1.0f,
+                    rotationSpeedLimit = -1.0f,
+                    teleportMode = InertiaConstraint.TeleportMode.None,
+                },
+            };
+            var center = new InertiaConstraint.CenterData
+            {
+                centerTransformIndex = 0,
+                oldComponentWorldPosition = new float3(1.0f, 2.0f, 3.0f),
+                oldComponentWorldRotation = quaternion.AxisAngle(math.up(), math.radians(20.0f)),
+                oldComponentWorldScale = new float3(1.0f, 2.0f, 0.5f),
+                oldFrameWorldPosition = new float3(-2.0f, 1.0f, 4.0f),
+                oldFrameWorldRotation = quaternion.AxisAngle(math.up(), math.radians(-30.0f)),
+                oldFrameWorldScale = new float3(1.0f, 2.0f, 0.5f),
+                nowWorldPosition = new float3(0.5f, -1.0f, 2.0f),
+                nowWorldRotation = quaternion.AxisAngle(math.right(), math.radians(15.0f)),
+                oldWorldPosition = new float3(0.5f, -1.0f, 2.0f),
+                oldWorldRotation = quaternion.AxisAngle(math.right(), math.radians(15.0f)),
+                oldAnchorPosition = new float3(2.0f, -3.0f, 1.0f),
+                smoothingVelocity = new float3(1.0f, 2.0f, -1.0f),
+            };
+            var wind = new TeamWindData();
+            var positions = new NativeArray<float3>(new[] { new float3(8.0f, 1.0f, -2.0f) }, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(new[] { quaternion.identity }, Allocator.TempJob);
+            var bindRotations = new NativeArray<quaternion>(new[] { quaternion.identity }, Allocator.TempJob);
+            var fixedIndices = new NativeArray<ushort>(0, Allocator.TempJob);
+            var transformPositions = new NativeArray<float3>(new[] { new float3(4.0f, -2.0f, 5.0f) }, Allocator.TempJob);
+            var transformRotations = new NativeArray<quaternion>(
+                new[] { quaternion.AxisAngle(math.up(), math.radians(65.0f)) },
+                Allocator.TempJob
+            );
+            var transformScales = new NativeArray<float3>(new[] { new float3(-2.0f, 1.5f, 0.75f) }, Allocator.TempJob);
+            var windData = new NativeArray<WindManager.WindData>(0, Allocator.TempJob);
+            var depths = new NativeArray<float>(new[] { 0.5f }, Allocator.TempJob);
+            var next = new NativeArray<float3>(new[] { new float3(100.0f) }, Allocator.TempJob);
+            var old = new NativeArray<float3>(new[] { new float3(2.0f, 3.0f, 4.0f) }, Allocator.TempJob);
+            var oldRot = new NativeArray<quaternion>(
+                new[] { quaternion.AxisAngle(math.up(), math.radians(30.0f)) },
+                Allocator.TempJob
+            );
+            var basePos = new NativeArray<float3>(new[] { new float3(101.0f) }, Allocator.TempJob);
+            var baseRot = new NativeArray<quaternion>(new[] { quaternion.identity }, Allocator.TempJob);
+            var animationOld = new NativeArray<float3>(new[] { new float3(5.0f, -1.0f, 2.0f) }, Allocator.TempJob);
+            var animationOldRot = new NativeArray<quaternion>(
+                new[] { quaternion.AxisAngle(math.right(), math.radians(45.0f)) },
+                Allocator.TempJob
+            );
+            var velocityReference = new NativeArray<float3>(new[] { new float3(102.0f) }, Allocator.TempJob);
+            var display = new NativeArray<float3>(new[] { new float3(-2.0f, 1.0f, 3.0f) }, Allocator.TempJob);
+            var velocity = new NativeArray<float3>(new[] { new float3(1.0f, 2.0f, -1.0f) }, Allocator.TempJob);
+            var realVelocity = new NativeArray<float3>(new[] { new float3(-1.0f, 0.5f, 2.0f) }, Allocator.TempJob);
+            var friction = new NativeArray<float>(1, Allocator.TempJob);
+            var staticFriction = new NativeArray<float>(1, Allocator.TempJob);
+            var collisionNormal = new NativeArray<float3>(1, Allocator.TempJob);
+            try
+            {
+                object[] centerArguments =
+                {
+                    0.1f, 0, team, center, wind, parameters,
+                    positions, rotations, bindRotations, fixedIndices,
+                    transformPositions, transformRotations, transformScales,
+                    0, windData,
+                };
+                InvokeStatic(centerMethod, centerArguments);
+                team = (TeamManager.TeamData)centerArguments[2];
+                center = (InertiaConstraint.CenterData)centerArguments[3];
+
+                object[] particleArguments =
+                {
+                    new DataChunk(0, 1), team, parameters, center,
+                    positions, rotations, depths,
+                    next, old, oldRot, basePos, baseRot,
+                    animationOld, animationOldRot, velocityReference, display,
+                    velocity, realVelocity, friction, staticFriction, collisionNormal,
+                };
+                InvokeStatic(particleMethod, particleArguments);
+                return new NegativeScaleTeleportDump
+                {
+                    NegativeScaleSign = team.negativeScaleSign,
+                    NegativeScaleDirection = team.negativeScaleDirection,
+                    NegativeScaleChange = team.negativeScaleChange,
+                    NegativeScaleTriangleSign = team.negativeScaleTriangleSign,
+                    NegativeScaleQuaternionValue = team.negativeScaleQuaternionValue,
+                    NegativeScaleMatrix = center.negativeScaleMatrix,
+                    OldComponentWorldPosition = center.oldComponentWorldPosition,
+                    OldComponentWorldScale = center.oldComponentWorldScale,
+                    OldAnchorPosition = center.oldAnchorPosition,
+                    SmoothingVelocity = center.smoothingVelocity,
+                    OldPosition = old[0],
+                    OldRotation = oldRot[0],
+                    AnimationOldPosition = animationOld[0],
+                    AnimationOldRotation = animationOldRot[0],
+                    DisplayPosition = display[0],
+                    Velocity = velocity[0],
+                    RealVelocity = realVelocity[0],
+                };
+            }
+            finally
+            {
+                positions.Dispose(); rotations.Dispose(); bindRotations.Dispose(); fixedIndices.Dispose();
+                transformPositions.Dispose(); transformRotations.Dispose(); transformScales.Dispose(); windData.Dispose();
+                depths.Dispose(); next.Dispose(); old.Dispose(); oldRot.Dispose(); basePos.Dispose(); baseRot.Dispose();
+                animationOld.Dispose(); animationOldRot.Dispose(); velocityReference.Dispose(); display.Dispose();
+                velocity.Dispose(); realVelocity.Dispose(); friction.Dispose(); staticFriction.Dispose(); collisionNormal.Dispose();
+            }
         }
 
         private static CenterFrameShiftDump RunCenterFrameShiftOracle(
@@ -3505,6 +3681,72 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "gravity_ratio", FloatJson(dump.GravityRatio));
             Property(text, 4, "velocity_weight", FloatJson(dump.VelocityWeight));
             Property(text, 4, "blend_weight", FloatJson(dump.BlendWeight), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildNegativeScaleTeleportJson(NegativeScaleTeleportDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_negative_scale_x_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind",
+                    "Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationPreTeamUpdate"
+                )
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates an X-axis component scale-sign transition, Center-space teleport matrix construction, and particle-history transformation before inertia shift.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "old_component_world_position", "[1,2,3]");
+            Property(text, 4, "old_component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":20}");
+            Property(text, 4, "old_component_world_scale", "[1,2,0.5]");
+            Property(text, 4, "component_world_position", "[4,-2,5]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":65}");
+            Property(text, 4, "component_world_scale", "[-2,1.5,0.75]");
+            Property(text, 4, "old_frame_world_position", "[-2,1,4]");
+            Property(text, 4, "old_frame_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":-30}");
+            Property(text, 4, "old_frame_world_scale", "[1,2,0.5]");
+            Property(text, 4, "old_anchor_position", "[2,-3,1]");
+            Property(text, 4, "smoothing_velocity", "[1,2,-1]");
+            Property(text, 4, "old_position", "[2,3,4]");
+            Property(text, 4, "old_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":30}");
+            Property(text, 4, "animation_old_position", "[5,-1,2]");
+            Property(text, 4, "animation_old_rotation_axis_angle", "{\"axis\":[1,0,0],\"degrees\":45}");
+            Property(text, 4, "display_position", "[-2,1,3]");
+            Property(text, 4, "velocity", "[1,2,-1]");
+            Property(text, 4, "real_velocity", "[-1,0.5,2]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "negative_scale_sign", FloatJson(dump.NegativeScaleSign));
+            Property(text, 4, "negative_scale_direction", Vector3Json(dump.NegativeScaleDirection));
+            Property(text, 4, "negative_scale_change", Vector3Json(dump.NegativeScaleChange));
+            Property(text, 4, "negative_scale_triangle_sign", Vector2Json(dump.NegativeScaleTriangleSign));
+            Property(text, 4, "negative_scale_quaternion_value", Vector4Json(dump.NegativeScaleQuaternionValue));
+            Property(text, 4, "negative_scale_matrix_columns", Matrix4x4ColumnsJson(dump.NegativeScaleMatrix));
+            Property(text, 4, "old_component_world_position", Vector3Json(dump.OldComponentWorldPosition));
+            Property(text, 4, "old_component_world_scale", Vector3Json(dump.OldComponentWorldScale));
+            Property(text, 4, "old_anchor_position", Vector3Json(dump.OldAnchorPosition));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity));
+            Property(text, 4, "old_position", Vector3Json(dump.OldPosition));
+            Property(text, 4, "old_rotation_xyzw", QuaternionJson(dump.OldRotation));
+            Property(text, 4, "animation_old_position", Vector3Json(dump.AnimationOldPosition));
+            Property(text, 4, "animation_old_rotation_xyzw", QuaternionJson(dump.AnimationOldRotation));
+            Property(text, 4, "display_position", Vector3Json(dump.DisplayPosition));
+            Property(text, 4, "velocity", Vector3Json(dump.Velocity));
+            Property(text, 4, "real_velocity", Vector3Json(dump.RealVelocity), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

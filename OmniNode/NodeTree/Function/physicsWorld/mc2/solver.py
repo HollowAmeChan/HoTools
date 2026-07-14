@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 from ..types import PhysicsWorldCache
@@ -203,6 +204,7 @@ def _make_slot_center_frame_shift(
     frame_dt: float,
     time_scale: float,
     substeps: int,
+    negative_scale_transition=None,
 ):
     mesh_static = slot.data.get("mesh_static")
     center_state = slot.data.get("center_state")
@@ -257,6 +259,7 @@ def _make_slot_center_frame_shift(
         rotation_speed_limit=profile.rotation_speed_limit,
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
+        negative_scale_transition=negative_scale_transition,
     )
     return evaluate_mc2_center_frame_shift(shift_input)
 
@@ -568,7 +571,27 @@ def step_mc2(
                 )
                 center_state = slot.data.get("center_state")
                 center_pose = _derive_slot_center_pose(slot, frame_input)
+                if center_pose is not None and isinstance(
+                    center_state, MC2CenterPersistentState
+                ):
+                    initial_scale = (
+                        center_state.initial_scale
+                        if center_state.initialized
+                        else center_pose.scale
+                    )
+                    frame_input = replace(
+                        frame_input,
+                        scale_ratio=max(
+                            math.sqrt(sum(value * value for value in center_pose.scale))
+                            / math.sqrt(sum(value * value for value in initial_scale)),
+                            1.0e-6,
+                        ),
+                        negative_scale_sign=(
+                            -1.0 if any(value < 0.0 for value in center_pose.scale) else 1.0
+                        ),
+                    )
                 center_action = None
+                center_negative_scale_result = None
                 center_frame_shift_result = None
                 center_step_input = None
                 center_step_result = None
@@ -596,6 +619,12 @@ def step_mc2(
                         center_action = (
                             "step" if effective_time_scale > 0.0 else "pause"
                         )
+                        center_negative_scale_result = (
+                            center_state.make_negative_scale_transition(
+                                frame_input.center_frame_pose,
+                                center_pose,
+                            )
+                        )
                         center_frame_shift_result = _make_slot_center_frame_shift(
                             slot,
                             frame_input,
@@ -607,6 +636,7 @@ def step_mc2(
                                 int(world.frame_context.substeps),
                                 int(settings.substeps),
                             ),
+                            negative_scale_transition=center_negative_scale_result,
                         )
                         if center_action == "step":
                             center_step_input = center_state.make_step_input(
@@ -627,6 +657,13 @@ def step_mc2(
                     else:
                         if center_step_input is not None:
                             native_context.update_center_dynamic(center_step_input)
+                        if (
+                            center_negative_scale_result is not None
+                            and center_negative_scale_result.active
+                        ):
+                            native_context.apply_center_negative_scale_teleport(
+                                center_negative_scale_result
+                            )
                         if center_frame_shift_result is not None:
                             native_context.apply_center_frame_shift(
                                 center_state.old_component_world_position,
@@ -668,9 +705,13 @@ def step_mc2(
                     )
                     slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = None
+                    slot.data["center_negative_scale_result"] = None
                 elif center_action == "step":
                     if center_step_result is None:
                         raise RuntimeError("MC2 native Center step did not produce a result")
+                    center_state.apply_negative_scale_transition(
+                        center_negative_scale_result
+                    )
                     center_state.commit_frame_shift(center_frame_shift_result)
                     center_state.commit_step(
                         frame_input.center_frame_pose,
@@ -679,15 +720,20 @@ def step_mc2(
                     )
                     slot.data["center_step_result"] = center_step_result
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
+                    slot.data["center_negative_scale_result"] = center_negative_scale_result
                 elif center_action == "pause":
                     if center_frame_shift_result is None:
                         raise RuntimeError("MC2 paused Center frame requires a frame shift")
+                    center_state.apply_negative_scale_transition(
+                        center_negative_scale_result
+                    )
                     center_state.commit_paused_frame(
                         frame_input.center_frame_pose,
                         center_frame_shift_result,
                     )
                     slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
+                    slot.data["center_negative_scale_result"] = center_negative_scale_result
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
                     slot.data["particle_buffer"],

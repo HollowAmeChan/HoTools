@@ -46,6 +46,19 @@ FIXTURE_PATH = os.path.join(
 CENTER_STEP_FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "fixtures", "tier_a", "center_step_inertia_001.json"
 )
+NEGATIVE_SCALE_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures", "tier_a", "center_frame_shift_negative_scale_x_001.json",
+)
+
+
+def _axis_angle(value):
+    axis = np.asarray(value["axis"], dtype=np.float32)
+    half_angle = np.float32(np.radians(value["degrees"]) * 0.5)
+    return tuple(float(component) for component in np.concatenate((
+        axis * np.sin(half_angle),
+        np.asarray((np.cos(half_angle),), dtype=np.float32),
+    )))
 
 
 def _fixture_and_spec():
@@ -532,6 +545,66 @@ def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
     for field, expected_value in expected.items():
         np.testing.assert_allclose(
             getattr(result, field), expected_value, rtol=1.0e-6, atol=1.0e-6
+        )
+
+
+def test_center_negative_scale_transition_matches_fixed_mc2_oracle() -> None:
+    with open(NEGATIVE_SCALE_FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    values = fixture["input"]
+    expected = fixture["expected"]
+    result = center.evaluate_mc2_negative_scale_transition(
+        center.MC2NegativeScaleTransitionInputSpec(
+            old_negative_scale_direction=(1.0, 1.0, 1.0),
+            old_component_world_position=values["old_component_world_position"],
+            old_component_world_rotation_xyzw=_axis_angle(
+                values["old_component_world_rotation_axis_angle"]
+            ),
+            old_component_world_scale=values["old_component_world_scale"],
+            component_world_position=values["component_world_position"],
+            component_world_rotation_xyzw=_axis_angle(
+                values["component_world_rotation_axis_angle"]
+            ),
+            component_world_scale=values["component_world_scale"],
+            old_frame_world_position=values["old_frame_world_position"],
+            old_frame_world_rotation_xyzw=_axis_angle(
+                values["old_frame_world_rotation_axis_angle"]
+            ),
+            old_frame_world_scale=values["old_frame_world_scale"],
+            frame_world_position=values["component_world_position"],
+            frame_world_rotation_xyzw=_axis_angle(
+                values["component_world_rotation_axis_angle"]
+            ),
+            frame_world_scale=values["component_world_scale"],
+            old_anchor_world_position=values["old_anchor_position"],
+            smoothing_velocity=values["smoothing_velocity"],
+        )
+    )
+    assert result.active
+    assert result.negative_scale_sign == expected["negative_scale_sign"]
+    assert result.negative_scale_direction == tuple(expected["negative_scale_direction"])
+    assert result.negative_scale_change == tuple(expected["negative_scale_change"])
+    assert result.negative_scale_triangle_sign == tuple(
+        expected["negative_scale_triangle_sign"]
+    )
+    assert result.negative_scale_quaternion_value == tuple(
+        expected["negative_scale_quaternion_value"]
+    )
+    np.testing.assert_allclose(
+        np.asarray(result.center_negative_matrix, dtype=np.float32).T,
+        expected["negative_scale_matrix_columns"],
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+    for field in (
+        "old_component_world_position",
+        "old_component_world_scale",
+        "old_anchor_world_position",
+        "smoothing_velocity",
+    ):
+        fixture_field = "old_anchor_position" if field == "old_anchor_world_position" else field
+        np.testing.assert_allclose(
+            getattr(result, field), expected[fixture_field], rtol=1.0e-6, atol=1.0e-6
         )
 
 
