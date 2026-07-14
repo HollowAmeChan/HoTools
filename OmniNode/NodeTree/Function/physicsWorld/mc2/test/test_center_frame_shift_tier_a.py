@@ -41,6 +41,7 @@ FIXTURES = tuple(
         "center_frame_shift_speed_limit_001.json",
         "center_frame_shift_anchor_world_limit_001.json",
         "center_frame_shift_smoothing_001.json",
+        "center_frame_shift_time_scale_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -146,7 +147,7 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             frame_delta_time=values["frame_delta_time"],
             now_time_scale=values["now_time_scale"],
             velocity_weight=values["velocity_weight"],
-            skip_count=0,
+            skip_count=values.get("skip_count", 0),
             world_inertia=values["world_inertia"],
             movement_speed_limit=values["movement_speed_limit"],
             rotation_speed_limit=values["rotation_speed_limit"],
@@ -284,6 +285,42 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             work_old_rotation,
             component_rotation,
             limit_ratio,
+        )
+    other_shift_ratio = _f32(0.0)
+    skip_count = int(values.get("skip_count", 0))
+    if skip_count > 0:
+        skip_ratio = np.clip(
+            (_f32(skip_count) * _f32(values["simulation_delta_time"]))
+            / (
+                _f32(values["frame_delta_time"])
+                * _f32(values["now_time_scale"])
+            ),
+            _f32(0.0),
+            _f32(1.0),
+        )
+        other_shift_ratio += (
+            _f32(1.0) - other_shift_ratio
+        ) * skip_ratio
+    velocity_weight = _f32(values["velocity_weight"])
+    if velocity_weight < _f32(1.0):
+        ratio = _f32(1.0) - velocity_weight
+        other_shift_ratio += (_f32(1.0) - other_shift_ratio) * ratio
+    now_time_scale = _f32(values["now_time_scale"])
+    if now_time_scale < _f32(1.0):
+        ratio = _f32(1.0) - now_time_scale
+        other_shift_ratio += (_f32(1.0) - other_shift_ratio) * ratio
+    if other_shift_ratio > _f32(0.0):
+        shift_ratio += (_f32(1.0) - shift_ratio) * other_shift_ratio
+        rotation_shift_ratio += (
+            _f32(1.0) - rotation_shift_ratio
+        ) * other_shift_ratio
+        work_old_component += (
+            component - work_old_component
+        ) * other_shift_ratio
+        work_old_rotation = _slerp(
+            work_old_rotation,
+            component_rotation,
+            other_shift_ratio,
         )
     frame_shift_vector = (
         anchor_shift_vector

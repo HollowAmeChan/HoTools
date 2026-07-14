@@ -199,6 +199,7 @@ def _make_slot_center_frame_shift(
     frame_input: MC2FrameInputSpec,
     dt: float,
     *,
+    frame_dt: float,
     time_scale: float,
     substeps: int,
 ):
@@ -224,7 +225,7 @@ def _make_slot_center_frame_shift(
     in_verified_domain = (
         not mesh_static.center.fixed_indices
         and (world_shift_active or anchor_shift_active or smoothing_active)
-        and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
+        and 0.0 < float(time_scale) <= 1.0
         and int(substeps) == 1
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
@@ -241,7 +242,7 @@ def _make_slot_center_frame_shift(
     shift_input = center_state.make_frame_shift_input(
         frame_pose,
         simulation_delta_time=dt,
-        frame_delta_time=dt,
+        frame_delta_time=frame_dt,
         world_inertia=profile.world_inertia,
         anchor_inertia=profile.anchor_inertia,
         movement_inertia_smoothing=profile.movement_inertia_smoothing,
@@ -572,12 +573,25 @@ def step_mc2(
                                 "MC2 continuous Center frame requires a positive dt"
                             )
                         center_action = "step"
+                        effective_time_scale = (
+                            float(world.frame_context.time_scale)
+                            * float(settings.time_scale)
+                        )
+                        frame_dt = (
+                            dt / effective_time_scale
+                            if effective_time_scale > 0.0
+                            else 0.0
+                        )
                         center_frame_shift_result = _make_slot_center_frame_shift(
                             slot,
                             frame_input,
                             dt,
-                            time_scale=world.frame_context.time_scale,
-                            substeps=world.frame_context.substeps,
+                            frame_dt=frame_dt,
+                            time_scale=effective_time_scale,
+                            substeps=max(
+                                int(world.frame_context.substeps),
+                                int(settings.substeps),
+                            ),
                         )
                         center_step_input = center_state.make_step_input(
                             frame_input.center_frame_pose,

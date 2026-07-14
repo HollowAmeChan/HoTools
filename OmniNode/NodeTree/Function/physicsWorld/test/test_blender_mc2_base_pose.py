@@ -742,12 +742,104 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert sixth_candidate.revision == 6
         assert sixth_candidate.frame == sixth_input.frame
 
+        time_scale_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=0.75,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        seventh_input = frame_input.make_mc2_frame_input(
+            task_id=sixth_input.task_id,
+            topology_signature=sixth_input.topology_signature,
+            frame=7,
+            generation=sixth_input.generation,
+            world_positions=sixth_input.world_positions,
+            world_rotations_xyzw=sixth_input.world_rotations_xyzw,
+            source_world_linear=sixth_input.source_world_linear,
+            center_frame_pose=type(sixth_input.center_frame_pose)(
+                frame=7,
+                generation=sixth_input.generation,
+                component_identity=sixth_input.center_frame_pose.component_identity,
+                component_world_position=(2.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(
+                    0.0,
+                    float(np.sin(np.radians(135.0))),
+                    0.0,
+                    float(np.cos(np.radians(135.0))),
+                ),
+                component_world_scale=sixth_input.center_frame_pose.component_world_scale,
+            ),
+        )
+        world.frame_context.frame = 7
+        world.frame_context.time_scale = 0.5
+        mc2_solver.step_mc2(
+            world,
+            [time_scale_task],
+            frame_inputs={time_scale_task.task_id: seventh_input},
+            dt=1.0 / 120.0,
+        )
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 7
+        assert native_info["step_count"] == 5
+        assert native_info["center_dynamic_revision"] == 5
+        assert native_info["center_step_count"] == 5
+        assert native_info["center_frame_shift_count"] == 4
+        frame_shift_result = slot.data["center_frame_shift_result"]
+        assert frame_shift_result is not None
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_vector,
+            (0.625, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(28.125))),
+                0.0,
+                float(np.cos(np.radians(28.125))),
+            ),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_moving_speed,
+            45.0,
+            atol=1.0e-6,
+        )
+        center_result = slot.data["center_step_result"]
+        assert center_result is not None
+        np.testing.assert_allclose(
+            center_result.step_vector,
+            (0.375, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            center_result.step_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(16.875))),
+                0.0,
+                float(np.cos(np.radians(16.875))),
+            ),
+            atol=1.0e-6,
+        )
+        seventh_candidate = slot.data["result_candidate"]
+        assert seventh_candidate.revision == 7
+        assert seventh_candidate.frame == seventh_input.frame
+
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
             world,
-            [smoothing_task],
-            frame_inputs={smoothing_task.task_id: sixth_input},
-            dt=1.0 / 60.0,
+            [time_scale_task],
+            frame_inputs={time_scale_task.task_id: seventh_input},
+            dt=1.0 / 120.0,
         )
         assert "重建 1" in status
         recovered_native_owner = world.solver_slots[soft_task.task_id].data["native_context"]
@@ -758,7 +850,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert recovered_info["step_count"] == 0
         recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
         assert recovered_candidate.revision == 1
-        assert recovered_candidate.frame == sixth_input.frame
+        assert recovered_candidate.frame == seventh_input.frame
         recovered_results = world.consume_results(
             world_names.GN_ATTRIBUTE_CHANNEL,
             solver="mc2",
