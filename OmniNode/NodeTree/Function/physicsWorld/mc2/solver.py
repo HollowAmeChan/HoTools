@@ -22,6 +22,7 @@ from .center_state import (
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .results import make_mc2_mesh_result, publish_mc2_result_transaction
+from .scheduler import MC2TimeSchedulerState
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
 from .topology import build_mc2_topology_spec
@@ -54,6 +55,7 @@ def _slot_debug_snapshot(slot) -> dict:
     native_context = slot.data.get("native_context")
     result_candidate = slot.data.get("result_candidate")
     center_state = slot.data.get("center_state")
+    time_scheduler = slot.data.get("time_scheduler")
     center_step_result = slot.data.get("center_step_result")
     center_frame_shift_result = slot.data.get("center_frame_shift_result")
     return {
@@ -83,6 +85,11 @@ def _slot_debug_snapshot(slot) -> dict:
         "center_state": (
             center_state.debug_dict()
             if isinstance(center_state, MC2CenterPersistentState)
+            else None
+        ),
+        "time_scheduler": (
+            time_scheduler.debug_dict()
+            if isinstance(time_scheduler, MC2TimeSchedulerState)
             else None
         ),
         "center_step_result": (
@@ -162,6 +169,7 @@ def _install_mc2_slot(
             "native_context": native_context,
             "runtime_state": state,
             "center_state": center_state,
+            "time_scheduler": MC2TimeSchedulerState(),
             "center_step_result": None,
             "center_frame_shift_result": None,
             "declaration": MC2_SOLVER_DECLARATION,
@@ -280,6 +288,8 @@ def _mc2_slot_rebuild_reason(
         return "particle_buffer_missing"
     if not isinstance(slot.data.get("initial_state"), MC2InitialStateSpec):
         return "initial_state_missing"
+    if not isinstance(slot.data.get("time_scheduler"), MC2TimeSchedulerState):
+        return "time_scheduler_missing"
     native_context = slot.data.get("native_context")
     if topology.particle_count > 0 and (
         native_context is None or bool(getattr(native_context, "disposed", True))
@@ -710,6 +720,9 @@ def step_mc2(
                             world_rotations_xyzw=native_rotations,
                         )
                 if center_action == "reset":
+                    time_scheduler = slot.data.get("time_scheduler")
+                    if isinstance(time_scheduler, MC2TimeSchedulerState):
+                        time_scheduler.reset()
                     stabilization = float(spec.profile.stabilization_time_after_reset)
                     center_state.reset(
                         frame_input.center_frame_pose,

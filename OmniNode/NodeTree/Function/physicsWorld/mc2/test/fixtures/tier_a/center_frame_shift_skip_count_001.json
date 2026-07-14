@@ -12,12 +12,13 @@
     "burst": "1.8.29",
     "collections": "2.6.5",
     "mathematics": "1.3.3",
-    "producer": ["Runtime/Manager/Team/TeamManager.cs::SimulationUpdate","Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind"]
+    "producer": ["Runtime/Manager/Team/TeamManager.cs::AlwaysTeamUpdatePostJob.Execute","Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind"]
   },
   "scope": "Isolates positive-scale update-skip cancellation with world inertia, stabilization, time-scale reduction, fixed list, anchor, smoothing, limits, teleport, synchronization, and culling disabled.",
   "input": {
     "simulation_delta_time": 0.02,
     "frame_delta_time": 0.1,
+    "max_simulation_count_per_frame": 3,
     "now_time_scale": 1,
     "velocity_weight": 1,
     "skip_count": 2,
@@ -37,6 +38,15 @@
     "now_world_rotation_xyzw": [0,0,0,1]
   },
   "expected": {
+    "update_count": 3,
+    "skip_count": 2,
+    "time": 0.0600000024,
+    "old_time": 0,
+    "now_update_time": 0,
+    "old_update_time": 0,
+    "frame_update_time": 0.0600000024,
+    "frame_old_time": 0,
+    "step_frame_interpolations": [0.3333333,0.6666666,0.99999994],
     "frame_component_shift_vector": [3.99999976,0,0],
     "frame_component_shift_rotation_xyzw": [0,0.309016973,0,0.9510566],
     "old_frame_world_position": [4.8090167,0,-0.587785244],

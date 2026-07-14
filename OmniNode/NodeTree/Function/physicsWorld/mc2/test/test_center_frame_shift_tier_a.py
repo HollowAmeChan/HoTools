@@ -122,7 +122,7 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
     ]
     if fixture["case_id"] == "center_frame_shift_skip_count_001":
         expected_producers = [
-            "Runtime/Manager/Team/TeamManager.cs::SimulationUpdate",
+            "Runtime/Manager/Team/TeamManager.cs::AlwaysTeamUpdatePostJob.Execute",
             "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind",
         ]
     assert source["producer"] == expected_producers
@@ -209,7 +209,20 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             ),
         )
     )
+    scheduler_fields = {
+        "update_count",
+        "skip_count",
+        "time",
+        "old_time",
+        "now_update_time",
+        "old_update_time",
+        "frame_update_time",
+        "frame_old_time",
+        "step_frame_interpolations",
+    }
     for field, expected_value in expected.items():
+        if field in scheduler_fields:
+            continue
         np.testing.assert_allclose(
             getattr(result, field), expected_value, rtol=1.0e-6, atol=1.0e-6
         )

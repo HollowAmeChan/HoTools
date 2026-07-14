@@ -286,6 +286,15 @@ namespace HoTools.MC2Oracle.Editor
 
         private sealed class CenterFrameShiftDump
         {
+            public int UpdateCount;
+            public int SkipCount;
+            public float Time;
+            public float OldTime;
+            public float NowUpdateTime;
+            public float OldUpdateTime;
+            public float FrameUpdateTime;
+            public float FrameOldTime;
+            public float[] StepFrameInterpolations;
             public float3 FrameComponentShiftVector;
             public quaternion FrameComponentShiftRotation;
             public float3 OldFrameWorldPosition;
@@ -964,27 +973,35 @@ namespace HoTools.MC2Oracle.Editor
                 );
             }
 
-            var team = new TeamManager.TeamData
-            {
-                frameDeltaTime = frameDeltaTime,
-                nowTimeScale = nowTimeScale,
-                updateCount = 1,
-                skipCount = skipCount,
-                proxyCommonChunk = useFixedCenter
-                    ? new DataChunk(0, 1)
-                    : default,
-                fixedDataChunk = useFixedCenter
-                    ? new DataChunk(0, 1)
-                    : default,
-                initScale = new float3(1.0f),
-                negativeScaleSign = 1.0f,
-                negativeScaleDirection = new float3(1.0f),
-                negativeScaleChange = new float3(1.0f),
-                negativeScaleTriangleSign = new float2(1.0f),
-                negativeScaleQuaternionValue = new float4(1.0f),
-                velocityWeight = 1.0f,
-            };
-            team.flag.SetBits(TeamManager.Flag_Running, isRunning);
+            var team = skipCount > 0
+                ? RunTeamScheduleOracle(
+                    frameDeltaTime,
+                    nowTimeScale,
+                    simulationDeltaTime,
+                    3
+                )
+                : new TeamManager.TeamData
+                {
+                    frameDeltaTime = frameDeltaTime,
+                    nowTimeScale = nowTimeScale,
+                    updateCount = 1,
+                    skipCount = 0,
+                };
+            team.proxyCommonChunk = useFixedCenter
+                ? new DataChunk(0, 1)
+                : default;
+            team.fixedDataChunk = useFixedCenter
+                ? new DataChunk(0, 1)
+                : default;
+            team.initScale = new float3(1.0f);
+            team.negativeScaleSign = 1.0f;
+            team.negativeScaleDirection = new float3(1.0f);
+            team.negativeScaleChange = new float3(1.0f);
+            team.negativeScaleTriangleSign = new float2(1.0f);
+            team.negativeScaleQuaternionValue = new float4(1.0f);
+            team.velocityWeight = 1.0f;
+            if (isRunning)
+                team.flag.SetBits(TeamManager.Flag_Running, true);
             var parameters = new ClothParameters
             {
                 inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
@@ -1057,9 +1074,51 @@ namespace HoTools.MC2Oracle.Editor
                     windData,
                 };
                 InvokeStatic(method, arguments);
+                team = (TeamManager.TeamData)arguments[2];
                 center = (InertiaConstraint.CenterData)arguments[3];
+                float[] stepFrameInterpolations = Array.Empty<float>();
+                if (skipCount > 0)
+                {
+                    MethodInfo stepMethod = typeof(TeamManager).GetMethod(
+                        "SimulationStepTeamUpdate",
+                        BindingFlags.Static | BindingFlags.NonPublic
+                    );
+                    if (stepMethod == null)
+                        throw new MissingMethodException(
+                            typeof(TeamManager).FullName,
+                            "SimulationStepTeamUpdate"
+                        );
+                    var stepTeam = team;
+                    var stepParameters = parameters;
+                    var stepCenter = center;
+                    var stepWind = new TeamWindData();
+                    stepFrameInterpolations = new float[team.updateCount];
+                    for (int updateIndex = 0; updateIndex < team.updateCount; updateIndex++)
+                    {
+                        object[] stepArguments =
+                        {
+                            updateIndex, simulationDeltaTime, 0,
+                            stepTeam, stepParameters, stepCenter, stepWind,
+                        };
+                        InvokeStatic(stepMethod, stepArguments);
+                        stepTeam = (TeamManager.TeamData)stepArguments[3];
+                        stepParameters = (ClothParameters)stepArguments[4];
+                        stepCenter = (InertiaConstraint.CenterData)stepArguments[5];
+                        stepWind = (TeamWindData)stepArguments[6];
+                        stepFrameInterpolations[updateIndex] = stepTeam.frameInterpolation;
+                    }
+                }
                 return new CenterFrameShiftDump
                 {
+                    UpdateCount = team.updateCount,
+                    SkipCount = team.skipCount,
+                    Time = team.time,
+                    OldTime = team.oldTime,
+                    NowUpdateTime = team.nowUpdateTime,
+                    OldUpdateTime = team.oldUpdateTime,
+                    FrameUpdateTime = team.frameUpdateTime,
+                    FrameOldTime = team.frameOldTime,
+                    StepFrameInterpolations = stepFrameInterpolations,
                     FrameComponentShiftVector = center.frameComponentShiftVector,
                     FrameComponentShiftRotation = center.frameComponentShiftRotation,
                     OldFrameWorldPosition = center.oldFrameWorldPosition,
@@ -1083,6 +1142,115 @@ namespace HoTools.MC2Oracle.Editor
                 transformRotations.Dispose();
                 transformScales.Dispose();
                 windData.Dispose();
+            }
+        }
+
+        private static TeamManager.TeamData RunTeamScheduleOracle(
+            float frameDeltaTime,
+            float globalTimeScale,
+            float simulationDeltaTime,
+            int maxSimulationCountPerFrame
+        )
+        {
+            Type jobType = typeof(TeamManager).GetNestedType(
+                "AlwaysTeamUpdatePostJob",
+                BindingFlags.NonPublic
+            );
+            if (jobType == null)
+                throw new MissingMemberException("MC2 scheduler job is unavailable");
+            object job = Activator.CreateInstance(jobType);
+            void Set(string name, object value)
+            {
+                FieldInfo field = jobType.GetField(
+                    name,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                );
+                if (field == null)
+                    throw new MissingFieldException(jobType.FullName, name);
+                field.SetValue(job, value);
+            }
+
+            var teamStatus = new NativeReference<int4>(Allocator.TempJob);
+            var teams = new NativeArray<TeamManager.TeamData>(2, Allocator.TempJob);
+            var parameters = new NativeArray<ClothParameters>(2, Allocator.TempJob);
+            var centers = new NativeArray<InertiaConstraint.CenterData>(2, Allocator.TempJob);
+            var componentPositions = new NativeArray<float3>(1, Allocator.TempJob);
+            var componentMinScales = new NativeArray<float>(1, Allocator.TempJob);
+            var syncTeams = new NativeParallelHashMap<MagicaObjectId, int>(1, Allocator.TempJob);
+            var syncTops = new NativeParallelHashMap<MagicaObjectId, MagicaObjectId>(1, Allocator.TempJob);
+            var animatorModes = new NativeParallelHashMap<MagicaObjectId, int>(1, Allocator.TempJob);
+            var anchorIndices = new NativeArray<MagicaObjectId>(2, Allocator.TempJob);
+            var distanceIndices = new NativeArray<MagicaObjectId>(2, Allocator.TempJob);
+            var transformPositions = new NativeParallelHashMap<MagicaObjectId, float3>(1, Allocator.TempJob);
+            var transformRotations = new NativeParallelHashMap<MagicaObjectId, quaternion>(1, Allocator.TempJob);
+            var cullingDirty = new NativeList<int>(Allocator.TempJob);
+            var normalTeams = new NativeList<int>(Allocator.TempJob);
+            var splitTeams = new NativeList<int>(Allocator.TempJob);
+            try
+            {
+                var team = new TeamManager.TeamData
+                {
+                    originalUpdateMode = ClothUpdateMode.Normal,
+                    updateMode = ClothUpdateMode.Normal,
+                    timeScale = 1.0f,
+                    componentTransformIndex = 0,
+                    initScale = new float3(1.0f),
+                    negativeScaleSign = 1.0f,
+                    negativeScaleDirection = new float3(1.0f),
+                    negativeScaleChange = new float3(1.0f),
+                    negativeScaleTriangleSign = new float2(1.0f),
+                    negativeScaleQuaternionValue = new float4(1.0f),
+                    velocityWeight = 1.0f,
+                    distanceWeight = 1.0f,
+                };
+                team.flag.SetBits(TeamManager.Flag_Valid, true);
+                team.flag.SetBits(TeamManager.Flag_Enable, true);
+                team.flag.SetBits(TeamManager.Flag_TimeReset, true);
+                teams[1] = team;
+                componentMinScales[0] = 1.0f;
+
+                Set("teamCount", 2);
+                Set("unityFrameDeltaTime", frameDeltaTime);
+                Set("unityFrameFixedDeltaTime", frameDeltaTime);
+                Set("unityFrameUnscaledDeltaTime", frameDeltaTime);
+                Set("globalTimeScale", globalTimeScale);
+                Set("simulationDeltaTime", simulationDeltaTime);
+                Set("maxSimmulationCountPerFrame", maxSimulationCountPerFrame);
+                Set("splitProxyMeshVertexCount", 1);
+                Set("teamStatus", teamStatus);
+                Set("teamDataArray", teams);
+                Set("parameterArray", parameters);
+                Set("centerDataArray", centers);
+                Set("componentPositionArray", componentPositions);
+                Set("componentMinScaleArray", componentMinScales);
+                Set("hasMainCamera", true);
+                Set("comp2TeamIdMap", syncTeams);
+                Set("comp2SyncTopCompMap", syncTops);
+                Set("animatorUpdateModeMap", animatorModes);
+                Set("teamAnchorTransformIndexArray", anchorIndices);
+                Set("teamDistanceTransformIndexArray", distanceIndices);
+                Set("transformPositionMap", transformPositions);
+                Set("transformRotationMap", transformRotations);
+                Set("cullingDirtyList", cullingDirty);
+                Set("batchNormalClothTeamList", normalTeams);
+                Set("batchSplitClothTeamList", splitTeams);
+
+                MethodInfo execute = jobType.GetMethod(
+                    "Execute",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                );
+                if (execute == null)
+                    throw new MissingMethodException(jobType.FullName, "Execute");
+                execute.Invoke(job, null);
+                return teams[1];
+            }
+            finally
+            {
+                teamStatus.Dispose(); teams.Dispose(); parameters.Dispose(); centers.Dispose();
+                componentPositions.Dispose(); componentMinScales.Dispose(); syncTeams.Dispose();
+                syncTops.Dispose(); animatorModes.Dispose(); anchorIndices.Dispose(); distanceIndices.Dispose();
+                transformPositions.Dispose(); transformRotations.Dispose(); cullingDirty.Dispose();
+                normalTeams.Dispose(); splitTeams.Dispose();
             }
         }
 
@@ -3689,7 +3857,7 @@ namespace HoTools.MC2Oracle.Editor
                 2,
                 "source",
                 SourceJson(
-                    "Runtime/Manager/Team/TeamManager.cs::SimulationUpdate",
+                    "Runtime/Manager/Team/TeamManager.cs::AlwaysTeamUpdatePostJob.Execute",
                     "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind"
                 )
             );
@@ -3702,6 +3870,7 @@ namespace HoTools.MC2Oracle.Editor
             text.AppendLine("  \"input\": {");
             Property(text, 4, "simulation_delta_time", "0.02");
             Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "max_simulation_count_per_frame", "3");
             Property(text, 4, "now_time_scale", "1");
             Property(text, 4, "velocity_weight", "1");
             Property(text, 4, "skip_count", "2");
@@ -3721,6 +3890,18 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
             text.AppendLine("  },");
             text.AppendLine("  \"expected\": {");
+            Property(text, 4, "update_count", dump.UpdateCount.ToString(CultureInfo.InvariantCulture));
+            Property(text, 4, "skip_count", dump.SkipCount.ToString(CultureInfo.InvariantCulture));
+            Property(text, 4, "time", FloatJson(dump.Time));
+            Property(text, 4, "old_time", FloatJson(dump.OldTime));
+            Property(text, 4, "now_update_time", FloatJson(dump.NowUpdateTime));
+            Property(text, 4, "old_update_time", FloatJson(dump.OldUpdateTime));
+            Property(text, 4, "frame_update_time", FloatJson(dump.FrameUpdateTime));
+            Property(text, 4, "frame_old_time", FloatJson(dump.FrameOldTime));
+            Property(
+                text, 4, "step_frame_interpolations",
+                ArrayJson(dump.StepFrameInterpolations, FloatJson)
+            );
             Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
             Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
             Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
