@@ -312,6 +312,10 @@ namespace HoTools.MC2Oracle.Editor
 
         private sealed class NegativeScaleTeleportDump
         {
+            public bool KeepTeleport;
+            public bool Reset;
+            public bool InertiaShift;
+            public bool NegativeScaleTeleport;
             public float NegativeScaleSign;
             public float3 NegativeScaleDirection;
             public float3 NegativeScaleChange;
@@ -329,6 +333,21 @@ namespace HoTools.MC2Oracle.Editor
             public float3 DisplayPosition;
             public float3 Velocity;
             public float3 RealVelocity;
+            public float3 FrameComponentShiftVector;
+            public quaternion FrameComponentShiftRotation;
+            public float3 OldFrameWorldPosition;
+            public quaternion OldFrameWorldRotation;
+            public float3 NowWorldPosition;
+            public quaternion NowWorldRotation;
+            public float3 FrameWorldPosition;
+            public quaternion FrameWorldRotation;
+            public float3 NextPosition;
+            public float3 BasePosition;
+            public quaternion BaseRotation;
+            public float3 VelocityReferencePosition;
+            public float Friction;
+            public float StaticFriction;
+            public float3 CollisionNormal;
         }
 
         public static void RunBatch()
@@ -846,6 +865,19 @@ namespace HoTools.MC2Oracle.Editor
             );
             Debug.Log($"[MC2 Oracle] wrote {resetTeleportPath}");
 
+            NegativeScaleTeleportDump resetNegativeScale =
+                RunNegativeScaleTeleportOracle(InertiaConstraint.TeleportMode.Reset);
+            string resetNegativeScalePath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_reset_negative_scale_x_001.json"
+            );
+            File.WriteAllText(
+                resetNegativeScalePath,
+                BuildResetNegativeScaleTeleportJson(resetNegativeScale),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {resetNegativeScalePath}");
+
             NegativeScaleTeleportDump negativeScale = RunNegativeScaleTeleportOracle();
             string negativeScalePath = Path.Combine(
                 outputDirectory,
@@ -857,10 +889,12 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {negativeScalePath}");
-            return 12;
+            return 13;
         }
 
-        private static NegativeScaleTeleportDump RunNegativeScaleTeleportOracle()
+        private static NegativeScaleTeleportDump RunNegativeScaleTeleportOracle(
+            InertiaConstraint.TeleportMode teleportMode = InertiaConstraint.TeleportMode.None
+        )
         {
             MethodInfo centerMethod = typeof(TeamManager).GetMethod(
                 "SimulationCalcCenterAndInertiaAndWind",
@@ -898,7 +932,9 @@ namespace HoTools.MC2Oracle.Editor
                     movementInertiaSmoothing = 0.0f,
                     movementSpeedLimit = -1.0f,
                     rotationSpeedLimit = -1.0f,
-                    teleportMode = InertiaConstraint.TeleportMode.None,
+                    teleportMode = teleportMode,
+                    teleportDistance = 1000.0f,
+                    teleportRotation = 30.0f,
                 },
             };
             var center = new InertiaConstraint.CenterData
@@ -974,6 +1010,10 @@ namespace HoTools.MC2Oracle.Editor
                 InvokeStatic(particleMethod, particleArguments);
                 return new NegativeScaleTeleportDump
                 {
+                    KeepTeleport = team.IsKeepReset,
+                    Reset = team.IsReset,
+                    InertiaShift = team.IsInertiaShift,
+                    NegativeScaleTeleport = team.IsNegativeScaleTeleport,
                     NegativeScaleSign = team.negativeScaleSign,
                     NegativeScaleDirection = team.negativeScaleDirection,
                     NegativeScaleChange = team.negativeScaleChange,
@@ -991,6 +1031,21 @@ namespace HoTools.MC2Oracle.Editor
                     DisplayPosition = display[0],
                     Velocity = velocity[0],
                     RealVelocity = realVelocity[0],
+                    FrameComponentShiftVector = center.frameComponentShiftVector,
+                    FrameComponentShiftRotation = center.frameComponentShiftRotation,
+                    OldFrameWorldPosition = center.oldFrameWorldPosition,
+                    OldFrameWorldRotation = center.oldFrameWorldRotation,
+                    NowWorldPosition = center.nowWorldPosition,
+                    NowWorldRotation = center.nowWorldRotation,
+                    FrameWorldPosition = center.frameWorldPosition,
+                    FrameWorldRotation = center.frameWorldRotation,
+                    NextPosition = next[0],
+                    BasePosition = basePos[0],
+                    BaseRotation = baseRot[0],
+                    VelocityReferencePosition = velocityReference[0],
+                    Friction = friction[0],
+                    StaticFriction = staticFriction[0],
+                    CollisionNormal = collisionNormal[0],
                 };
             }
             finally
@@ -4358,6 +4413,92 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "display_position", Vector3Json(dump.DisplayPosition));
             Property(text, 4, "velocity", Vector3Json(dump.Velocity));
             Property(text, 4, "real_velocity", Vector3Json(dump.RealVelocity), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildResetNegativeScaleTeleportJson(
+            NegativeScaleTeleportDump dump
+        )
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_reset_negative_scale_x_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson(
+                    "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind",
+                    "Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationPreTeamUpdate"
+                )
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates configured Reset teleport after an X-axis scale-sign transition and proves particle reset takes precedence over the negative-scale matrix.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "teleport_mode", "1");
+            Property(text, 4, "teleport_distance", "1000");
+            Property(text, 4, "teleport_rotation", "30");
+            Property(text, 4, "initial_scale", "[1,1,1]");
+            Property(text, 4, "old_negative_scale_direction", "[1,1,1]");
+            Property(text, 4, "old_component_world_position", "[1,2,3]");
+            Property(text, 4, "old_component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":20}");
+            Property(text, 4, "old_component_world_scale", "[1,2,0.5]");
+            Property(text, 4, "component_world_position", "[4,-2,5]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":65}");
+            Property(text, 4, "component_world_scale", "[-2,1.5,0.75]");
+            Property(text, 4, "old_frame_world_position", "[-2,1,4]");
+            Property(text, 4, "old_frame_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":-30}");
+            Property(text, 4, "old_frame_world_scale", "[1,2,0.5]");
+            Property(text, 4, "old_anchor_position", "[2,-3,1]");
+            Property(text, 4, "smoothing_velocity", "[1,2,-1]");
+            Property(text, 4, "animated_position", "[8,1,-2]");
+            Property(text, 4, "animated_rotation_xyzw", "[0,0,0,1]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "keep_teleport", dump.KeepTeleport ? "true" : "false");
+            Property(text, 4, "reset_teleport", dump.Reset ? "true" : "false");
+            Property(text, 4, "inertia_shift", dump.InertiaShift ? "true" : "false");
+            Property(text, 4, "negative_scale_teleport", dump.NegativeScaleTeleport ? "true" : "false");
+            Property(text, 4, "negative_scale_sign", FloatJson(dump.NegativeScaleSign));
+            Property(text, 4, "negative_scale_direction", Vector3Json(dump.NegativeScaleDirection));
+            Property(text, 4, "negative_scale_change", Vector3Json(dump.NegativeScaleChange));
+            Property(text, 4, "negative_scale_triangle_sign", Vector2Json(dump.NegativeScaleTriangleSign));
+            Property(text, 4, "negative_scale_quaternion_value", Vector4Json(dump.NegativeScaleQuaternionValue));
+            Property(text, 4, "negative_scale_matrix_columns", Matrix4x4ColumnsJson(dump.NegativeScaleMatrix));
+            Property(text, 4, "old_component_world_position", Vector3Json(dump.OldComponentWorldPosition));
+            Property(text, 4, "old_component_world_scale", Vector3Json(dump.OldComponentWorldScale));
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity));
+            Property(text, 4, "next_position", Vector3Json(dump.NextPosition));
+            Property(text, 4, "old_position", Vector3Json(dump.OldPosition));
+            Property(text, 4, "old_rotation_xyzw", QuaternionJson(dump.OldRotation));
+            Property(text, 4, "base_position", Vector3Json(dump.BasePosition));
+            Property(text, 4, "base_rotation_xyzw", QuaternionJson(dump.BaseRotation));
+            Property(text, 4, "animation_old_position", Vector3Json(dump.AnimationOldPosition));
+            Property(text, 4, "animation_old_rotation_xyzw", QuaternionJson(dump.AnimationOldRotation));
+            Property(text, 4, "velocity_reference_position", Vector3Json(dump.VelocityReferencePosition));
+            Property(text, 4, "display_position", Vector3Json(dump.DisplayPosition));
+            Property(text, 4, "velocity", Vector3Json(dump.Velocity));
+            Property(text, 4, "real_velocity", Vector3Json(dump.RealVelocity));
+            Property(text, 4, "friction", FloatJson(dump.Friction));
+            Property(text, 4, "static_friction", FloatJson(dump.StaticFriction));
+            Property(text, 4, "collision_normal", Vector3Json(dump.CollisionNormal), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

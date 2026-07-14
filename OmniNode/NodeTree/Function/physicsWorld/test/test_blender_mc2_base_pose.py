@@ -145,6 +145,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     scheduler_world = None
     keep_world = None
     reset_world = None
+    reset_negative_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -1743,6 +1744,140 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             atol=1.0e-5,
         )
         assert reset_candidate.native_step_count == 3
+
+        reset_negative_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity=0.0,
+                damping=0.0,
+                animation_pose_ratio=0.0,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.5,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                teleport_mode=1,
+                teleport_distance=1000.0,
+                teleport_rotation=30.0,
+            ),
+        )
+        reset_negative_topology = mc2_topology.build_mc2_topology_spec(
+            reset_negative_task
+        )
+        reset_negative_half_angle = np.float32(np.radians(45.0) * 0.5)
+        reset_negative_rotation = np.asarray(
+            (
+                0.0,
+                float(np.sin(reset_negative_half_angle)),
+                0.0,
+                float(np.cos(reset_negative_half_angle)),
+            ),
+            dtype=np.float32,
+        )
+        reset_negative_rotation_matrix = np.asarray(
+            (
+                (float(np.cos(np.radians(45.0))), 0.0, float(np.sin(np.radians(45.0)))),
+                (0.0, 1.0, 0.0),
+                (-float(np.sin(np.radians(45.0))), 0.0, float(np.cos(np.radians(45.0)))),
+            ),
+            dtype=np.float32,
+        )
+        reset_negative_linear = np.asarray(
+            reset_negative_rotation_matrix @ np.diag((-1.0, 1.0, 1.0)),
+            dtype=np.float32,
+        )
+        reset_negative_second_positions = np.asarray(
+            keep_first_positions @ reset_negative_linear.T,
+            dtype=np.float32,
+        )
+        reset_negative_second_rotations = np.tile(
+            reset_negative_rotation,
+            (reset_negative_topology.particle_count, 1),
+        )
+        reset_negative_first_input = frame_input.make_mc2_frame_input(
+            task_id=reset_negative_task.task_id,
+            topology_signature=reset_negative_topology.topology_signature,
+            frame=60,
+            generation=18,
+            world_positions=keep_first_positions,
+            world_rotations_xyzw=keep_first_rotations,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=60,
+                generation=18,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        reset_negative_second_input = frame_input.make_mc2_frame_input(
+            task_id=reset_negative_task.task_id,
+            topology_signature=reset_negative_topology.topology_signature,
+            frame=61,
+            generation=18,
+            world_positions=reset_negative_second_positions,
+            world_rotations_xyzw=reset_negative_second_rotations,
+            source_world_linear=reset_negative_linear,
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=61,
+                generation=18,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(
+                    float(value) for value in reset_negative_rotation
+                ),
+                component_world_scale=(-1.0, 1.0, 1.0),
+            ),
+        )
+        reset_negative_world = world_types.PhysicsWorldCache()
+        reset_negative_world.generation = 18
+        reset_negative_world.frame_context.frame = 60
+        reset_negative_world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(0.1), np.float32(np.inf))
+        )
+        mc2_solver.step_mc2(
+            reset_negative_world,
+            [reset_negative_task],
+            settings=fixed_settings,
+            frame_inputs={reset_negative_task.task_id: reset_negative_first_input},
+        )
+        reset_negative_slot = reset_negative_world.solver_slots[
+            reset_negative_task.task_id
+        ]
+        reset_negative_slot.data["center_state"].smoothing_velocity = (2.0, 0.0, 0.0)
+        reset_negative_world.frame_context.frame = 61
+        mc2_solver.step_mc2(
+            reset_negative_world,
+            [reset_negative_task],
+            settings=fixed_settings,
+            frame_inputs={reset_negative_task.task_id: reset_negative_second_input},
+            dt=0.1,
+        )
+        reset_negative_info = reset_negative_slot.data["native_context"].inspect()
+        assert reset_negative_info["reset_count"] == 2
+        assert reset_negative_info["step_count"] == 3
+        assert reset_negative_info["center_step_count"] == 3
+        assert reset_negative_info["center_frame_shift_count"] == 0
+        assert reset_negative_info["center_negative_scale_teleport_count"] == 0
+        reset_negative_shift = reset_negative_slot.data["center_frame_shift_result"]
+        assert reset_negative_shift.reset_teleport is True
+        assert reset_negative_slot.data["center_negative_scale_result"] is None
+        reset_negative_center = reset_negative_slot.data["center_state"]
+        assert reset_negative_center.reset_count == 2
+        assert reset_negative_center.negative_scale_direction == (-1.0, 1.0, 1.0)
+        assert reset_negative_center.smoothing_velocity == (0.0, 0.0, 0.0)
+        reset_negative_runtime = reset_negative_slot.data["runtime_state"]
+        assert reset_negative_runtime.last_reset_reason == "configured_teleport"
+        reset_negative_candidate = reset_negative_slot.data["result_candidate"]
+        np.testing.assert_allclose(
+            reset_negative_candidate.world_positions,
+            reset_negative_second_positions,
+            atol=1.0e-5,
+        )
+        assert reset_negative_candidate.native_step_count == 3
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -1756,6 +1891,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             keep_world.omni_cache_dispose("test_complete")
         if reset_world is not None:
             reset_world.omni_cache_dispose("test_complete")
+        if reset_negative_world is not None:
+            reset_negative_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:

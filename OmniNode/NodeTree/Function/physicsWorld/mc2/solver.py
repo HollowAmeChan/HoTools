@@ -246,6 +246,19 @@ def _make_slot_center_frame_shift(
     skip_shift_active = int(skip_count) > 0
     teleport_mode = int(profile.teleport_mode)
     configured_teleport_active = teleport_mode in (1, 2)
+    unit_positive_scale_domain = all(
+        math.isclose(float(value), expected, abs_tol=1.0e-8)
+        for values in (
+            center_state.old_component_world_scale,
+            frame_pose.component_world_scale,
+        )
+        for value, expected in zip(values, unit_scale)
+    )
+    reset_negative_transition_domain = bool(
+        teleport_mode == 1
+        and negative_scale_transition is not None
+        and negative_scale_transition.active
+    )
     in_verified_domain = (
         (
             world_shift_active
@@ -257,13 +270,9 @@ def _make_slot_center_frame_shift(
         )
         and 0.0 <= float(time_scale) <= 1.0
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
-        and all(
-            math.isclose(float(value), expected, abs_tol=1.0e-8)
-            for values in (
-                center_state.old_component_world_scale,
-                frame_pose.component_world_scale,
-            )
-            for value, expected in zip(values, unit_scale)
+        and (
+            unit_positive_scale_domain
+            or reset_negative_transition_domain
         )
     )
     if not in_verified_domain:
