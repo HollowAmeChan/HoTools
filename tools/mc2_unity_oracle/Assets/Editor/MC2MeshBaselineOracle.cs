@@ -462,12 +462,29 @@ namespace HoTools.MC2Oracle.Editor
             Debug.Log($"[MC2 Oracle] wrote {path}");
             BaselineStepPoseDump baselineDump = RunBaselineStepPoseOracle();
             path = Path.Combine(outputDirectory, "particle_step_baseline_pose_001.json");
-            File.WriteAllText(path, BuildBaselineStepPoseJson(baselineDump), new UTF8Encoding(false));
+            File.WriteAllText(
+                path,
+                BuildBaselineStepPoseJson(baselineDump, false),
+                new UTF8Encoding(false)
+            );
             Debug.Log($"[MC2 Oracle] wrote {path}");
-            return 3;
+            BaselineStepPoseDump negativeBaselineDump = RunBaselineStepPoseOracle(true);
+            path = Path.Combine(
+                outputDirectory,
+                "particle_step_baseline_pose_negative_scale_x_001.json"
+            );
+            File.WriteAllText(
+                path,
+                BuildBaselineStepPoseJson(negativeBaselineDump, true),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 4;
         }
 
-        private static BaselineStepPoseDump RunBaselineStepPoseOracle()
+        private static BaselineStepPoseDump RunBaselineStepPoseOracle(
+            bool negativeScaleX = false
+        )
         {
             MethodInfo method = typeof(SimulationManager).GetMethod(
                 "SimulationStepUpdateBaseLinePose",
@@ -488,8 +505,12 @@ namespace HoTools.MC2Oracle.Editor
                 baseLineDataChunk = new DataChunk(0, 3),
                 initScale = new float3(2.0f, 1.0f, 0.5f),
                 scaleRatio = 1.5f,
-                negativeScaleDirection = new float3(1.0f),
-                negativeScaleQuaternionValue = new float4(1.0f),
+                negativeScaleDirection = negativeScaleX
+                    ? new float3(-1.0f, 1.0f, 1.0f)
+                    : new float3(1.0f),
+                negativeScaleQuaternionValue = negativeScaleX
+                    ? new float4(1.0f, -1.0f, -1.0f, 1.0f)
+                    : new float4(1.0f),
                 animationPoseRatio = 0.25f,
             };
             var attributes = new NativeArray<VertexAttribute>(
@@ -3639,11 +3660,23 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
-        private static string BuildBaselineStepPoseJson(BaselineStepPoseDump dump)
+        private static string BuildBaselineStepPoseJson(
+            BaselineStepPoseDump dump,
+            bool negativeScaleX
+        )
         {
             var text = new StringBuilder();
             text.AppendLine("{");
-            Property(text, 2, "case_id", Quote("particle_step_baseline_pose_001"));
+            Property(
+                text,
+                2,
+                "case_id",
+                Quote(
+                    negativeScaleX
+                        ? "particle_step_baseline_pose_negative_scale_x_001"
+                        : "particle_step_baseline_pose_001"
+                )
+            );
             Property(text, 2, "oracle_tier", Quote("A"));
             Property(text, 2, "mc2_version", Quote(MC2Version));
             Property(text, 2, "mc2_commit", Quote(MC2Commit));
@@ -3655,7 +3688,11 @@ namespace HoTools.MC2Oracle.Editor
             );
             Property(
                 text, 2, "scope",
-                Quote("Isolates parent-first baseline step-basic reconstruction, nonuniform team scale, animation-pose blending, and an uncovered Move island at positive scale.")
+                Quote(
+                    negativeScaleX
+                        ? "Isolates parent-first baseline step-basic reconstruction under an X-axis negative scale, including root reflection rotation, child local pose signs, nonuniform scale, animation-pose blending, and an uncovered Move island."
+                        : "Isolates parent-first baseline step-basic reconstruction, nonuniform team scale, animation-pose blending, and an uncovered Move island at positive scale."
+                )
             );
             text.AppendLine("  \"input\": {");
             Property(text, 4, "attributes", "[1,2,2,2]");
@@ -3668,8 +3705,18 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "base_rotation_axis_angles", "[{\"axis\":[0,1,0],\"degrees\":10},{\"axis\":[0,1,0],\"degrees\":80},{\"axis\":[0,0,1],\"degrees\":-25},{\"axis\":[1,0,0],\"degrees\":15}]");
             Property(text, 4, "initial_scale", "[2,1,0.5]");
             Property(text, 4, "scale_ratio", "1.5");
-            Property(text, 4, "negative_scale_direction", "[1,1,1]");
-            Property(text, 4, "negative_scale_quaternion_value", "[1,1,1,1]");
+            Property(
+                text,
+                4,
+                "negative_scale_direction",
+                negativeScaleX ? "[-1,1,1]" : "[1,1,1]"
+            );
+            Property(
+                text,
+                4,
+                "negative_scale_quaternion_value",
+                negativeScaleX ? "[1,-1,-1,1]" : "[1,1,1,1]"
+            );
             Property(text, 4, "animation_pose_ratio", "0.25", false);
             text.AppendLine("  },");
             text.AppendLine("  \"expected\": {");

@@ -6,7 +6,13 @@ import numpy as np
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_gravity_damping_001.json"
 INERTIA_FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_inertia_001.json"
-BASELINE_FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_baseline_pose_001.json"
+BASELINE_FIXTURES = tuple(
+    Path(__file__).parent / "fixtures" / "tier_a" / name
+    for name in (
+        "particle_step_baseline_pose_001.json",
+        "particle_step_baseline_pose_negative_scale_x_001.json",
+    )
+)
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
 
 
@@ -156,8 +162,8 @@ def test_particle_center_inertia_matches_fixed_mc2_oracle() -> None:
     np.testing.assert_array_equal(expected["step_basic_rotations_xyzw"][0], (0, 0, 0, 1))
 
 
-def test_baseline_step_pose_matches_fixed_mc2_oracle() -> None:
-    fixture = json.loads(BASELINE_FIXTURE.read_text(encoding="utf-8"))
+def _assert_baseline_step_pose_fixture(path: Path) -> None:
+    fixture = json.loads(path.read_text(encoding="utf-8"))
     source = fixture["source"]
     assert fixture["oracle_tier"] == source["oracle_tier"] == "A"
     assert fixture["mc2_commit"] == source["commit"] == EXPECTED_COMMIT
@@ -219,6 +225,11 @@ def test_baseline_step_pose_matches_fixed_mc2_oracle() -> None:
     np.testing.assert_allclose(
         step_rotations, expected_rotations, rtol=1.0e-6, atol=1.0e-6
     )
+
+
+def test_baseline_step_pose_matches_fixed_mc2_oracle() -> None:
+    for path in BASELINE_FIXTURES:
+        _assert_baseline_step_pose_fixture(path)
 
 
 if __name__ == "__main__":

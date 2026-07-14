@@ -49,6 +49,8 @@ directory:
   gravity, fixed-particle pose tracking, and scratch clearing order. The
   Center-inertia case disables all forces and freezes depth interpolation,
   position/velocity-reference shift, velocity rotation, and step-basic pose.
+  Two baseline cases freeze parent-first step-basic reconstruction under
+  positive scale and an X-axis negative-scale transition.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular

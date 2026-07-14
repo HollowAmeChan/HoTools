@@ -800,19 +800,21 @@ bool rebuild_baseline_step_pose(Mc2ContextV0& context) {
                         static_cast<std::ptrdiff_t>(rotation_offset)
                 );
             } else if (has_negative) {
-                const float negative_matrix[16] = {
-                    context.center_negative_scale_direction[0], 0.0f, 0.0f, 0.0f,
-                    0.0f, context.center_negative_scale_direction[1], 0.0f, 0.0f,
-                    0.0f, 0.0f, context.center_negative_scale_direction[2], 0.0f,
-                    0.0f, 0.0f, 0.0f, 1.0f,
-                };
                 const std::array<float, 4> rotation {
                     context.step_basic_rotations[rotation_offset + 0],
                     context.step_basic_rotations[rotation_offset + 1],
                     context.step_basic_rotations[rotation_offset + 2],
                     context.step_basic_rotations[rotation_offset + 3],
                 };
-                const auto transformed = transform_rotation_matrix(negative_matrix, rotation);
+                const Vec3 up = rotate_vector(
+                    rotation,
+                    {0.0f, context.center_negative_scale_direction[1], 0.0f}
+                );
+                const Vec3 forward = rotate_vector(
+                    rotation,
+                    {0.0f, 0.0f, context.center_negative_scale_direction[2]}
+                );
+                const auto transformed = quaternion_from_forward_up(forward, up);
                 std::copy(
                     transformed.begin(), transformed.end(),
                     context.step_basic_rotations.begin() +

@@ -19,9 +19,13 @@ sys.path.insert(
 import hotools_native  # noqa: E402
 
 
-FIXTURE = (
+FIXTURES = tuple(
     ROOT / "OmniNode" / "NodeTree" / "Function" / "physicsWorld" / "mc2"
-    / "test" / "fixtures" / "tier_a" / "particle_step_baseline_pose_001.json"
+    / "test" / "fixtures" / "tier_a" / name
+    for name in (
+        "particle_step_baseline_pose_001.json",
+        "particle_step_baseline_pose_negative_scale_x_001.json",
+    )
 )
 
 
@@ -58,10 +62,15 @@ def _update_center(context, values, *, frame_interpolation=1.0):
     )
 
 
-def test_baseline_step_pose_matches_fixed_oracle():
-    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+def _assert_baseline_step_pose_fixture(fixture_path):
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     values = fixture["input"]
     expected = fixture["expected"]
+    negative_scale_sign = (
+        -1.0
+        if any(float(value) < 0.0 for value in values["negative_scale_direction"])
+        else 1.0
+    )
     count = len(values["attributes"])
     context = hotools_native.mc2_context_v0_create(0, count)
     try:
@@ -138,7 +147,7 @@ def test_baseline_step_pose_matches_fixed_oracle():
             1.0,
             1.0,
             values["scale_ratio"],
-            1.0,
+            negative_scale_sign,
             1.0,
         )
         hotools_native.mc2_context_v0_reset(context)
@@ -174,7 +183,7 @@ def test_baseline_step_pose_matches_fixed_oracle():
         )
         hotools_native.mc2_context_v0_update_dynamic(
             context, 2, 0, shifted_positions, base_rotations, 1.0, 0.25,
-            values["scale_ratio"], 1.0, 1.0
+            values["scale_ratio"], negative_scale_sign, 1.0
         )
         _update_center(context, values, frame_interpolation=0.25)
         hotools_native.mc2_context_v0_step(context, 1.0 / 60.0, 1.0, 1.0)
@@ -193,7 +202,7 @@ def test_baseline_step_pose_matches_fixed_oracle():
         hotools_native.mc2_context_v0_update_team_options(context, 1.0)
         hotools_native.mc2_context_v0_update_dynamic(
             context, 3, 0, shifted_positions, base_rotations, 1.0, 1.0,
-            values["scale_ratio"], 1.0, 1.0
+            values["scale_ratio"], negative_scale_sign, 1.0
         )
         _update_center(context, values)
         hotools_native.mc2_context_v0_step(context, 1.0 / 60.0, 1.0, 1.0)
@@ -210,6 +219,11 @@ def test_baseline_step_pose_matches_fixed_oracle():
         assert info["team_options_revision"] == 2
     finally:
         hotools_native.mc2_context_v0_free(context)
+
+
+def test_baseline_step_pose_matches_fixed_oracle():
+    for fixture_path in FIXTURES:
+        _assert_baseline_step_pose_fixture(fixture_path)
 
 
 if __name__ == "__main__":

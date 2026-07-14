@@ -147,6 +147,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     reset_world = None
     reset_negative_world = None
     keep_negative_world = None
+    baseline_negative_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -2007,6 +2008,114 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             ),
             atol=1.0e-6,
         )
+
+        source.hotools_mesh_collision.pin_enabled = True
+        baseline_negative_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity=0.0,
+                damping=0.0,
+                animation_pose_ratio=0.25,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        baseline_negative_topology = mc2_topology.build_mc2_topology_spec(
+            baseline_negative_task
+        )
+        baseline_negative_first_input = frame_input.make_mc2_frame_input(
+            task_id=baseline_negative_task.task_id,
+            topology_signature=baseline_negative_topology.topology_signature,
+            frame=80,
+            generation=22,
+            world_positions=keep_first_positions,
+            world_rotations_xyzw=keep_first_rotations,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=80,
+                generation=22,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        baseline_negative_second_input = frame_input.make_mc2_frame_input(
+            task_id=baseline_negative_task.task_id,
+            topology_signature=baseline_negative_topology.topology_signature,
+            frame=81,
+            generation=22,
+            world_positions=reset_negative_second_positions,
+            world_rotations_xyzw=reset_negative_second_rotations,
+            source_world_linear=reset_negative_linear,
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=81,
+                generation=22,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(
+                    float(value) for value in reset_negative_rotation
+                ),
+                component_world_scale=(-1.0, 1.0, 1.0),
+            ),
+        )
+        baseline_negative_world = world_types.PhysicsWorldCache()
+        baseline_negative_world.generation = 22
+        baseline_negative_world.frame_context.frame = 80
+        baseline_negative_world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(0.1), np.float32(np.inf))
+        )
+        mc2_solver.step_mc2(
+            baseline_negative_world,
+            [baseline_negative_task],
+            settings=fixed_settings,
+            frame_inputs={
+                baseline_negative_task.task_id: baseline_negative_first_input
+            },
+        )
+        baseline_negative_slot = baseline_negative_world.solver_slots[
+            baseline_negative_task.task_id
+        ]
+        baseline_negative_world.frame_context.frame = 81
+        mc2_solver.step_mc2(
+            baseline_negative_world,
+            [baseline_negative_task],
+            settings=fixed_settings,
+            frame_inputs={
+                baseline_negative_task.task_id: baseline_negative_second_input
+            },
+            dt=0.1,
+        )
+        baseline_negative_info = baseline_negative_slot.data[
+            "native_context"
+        ].inspect()
+        assert baseline_negative_info["center_fixed_count"] == 1
+        assert baseline_negative_info["baseline_count"] > 0
+        assert baseline_negative_info["step_count"] == 3
+        assert baseline_negative_info["center_step_count"] == 3
+        assert baseline_negative_info["center_negative_scale_teleport_count"] == 1
+        assert baseline_negative_info["baseline_pose_rebuild_count"] == 3
+        assert baseline_negative_info["animation_pose_ratio"] == 0.25
+        baseline_negative_center = baseline_negative_slot.data["center_state"]
+        assert baseline_negative_center.negative_scale_direction == (-1.0, 1.0, 1.0)
+        baseline_negative_step_positions, baseline_negative_step_rotations = (
+            baseline_negative_slot.data["native_context"].read_step_basic()
+        )
+        assert np.all(np.isfinite(baseline_negative_step_positions))
+        assert np.all(np.isfinite(baseline_negative_step_rotations))
+        assert not np.allclose(
+            baseline_negative_step_positions[1:],
+            baseline_negative_second_input.world_positions[1:],
+            atol=1.0e-6,
+        )
+        baseline_negative_candidate = baseline_negative_slot.data["result_candidate"]
+        assert np.all(np.isfinite(baseline_negative_candidate.world_positions))
+        assert baseline_negative_candidate.native_step_count == 3
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -2024,6 +2133,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             reset_negative_world.omni_cache_dispose("test_complete")
         if keep_negative_world is not None:
             keep_negative_world.omni_cache_dispose("test_complete")
+        if baseline_negative_world is not None:
+            baseline_negative_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:
