@@ -444,6 +444,77 @@ class MC2CenterPersistentState:
 
 
 @dataclass(frozen=True)
+class MC2CenterFrameShiftInputSpec:
+    """Source-aligned world-inertia inputs before Center substep derivation.
+
+    V0 deliberately covers no fixed list and unit positive scale, and excludes
+    anchor, smoothing, teleport, synchronization, culling, and stabilization.
+    """
+
+    simulation_delta_time: float
+    frame_delta_time: float
+    now_time_scale: float
+    velocity_weight: float
+    skip_count: int
+    world_inertia: float
+    movement_speed_limit: float
+    rotation_speed_limit: float
+    old_component_world_position: tuple[float, float, float]
+    old_component_world_rotation_xyzw: tuple[float, float, float, float]
+    component_world_position: tuple[float, float, float]
+    component_world_rotation_xyzw: tuple[float, float, float, float]
+    old_frame_world_position: tuple[float, float, float]
+    old_frame_world_rotation_xyzw: tuple[float, float, float, float]
+    now_world_position: tuple[float, float, float]
+    now_world_rotation_xyzw: tuple[float, float, float, float]
+
+    def __post_init__(self) -> None:
+        for name in ("simulation_delta_time", "frame_delta_time", "now_time_scale"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
+        if not 0.0 <= float(self.velocity_weight) <= 1.0:
+            raise ValueError("velocity_weight must be in 0..1")
+        if isinstance(self.skip_count, bool) or int(self.skip_count) != self.skip_count:
+            raise ValueError("skip_count must be an integer")
+        if self.skip_count < 0:
+            raise ValueError("skip_count cannot be negative")
+        if not 0.0 <= float(self.world_inertia) <= 1.0:
+            raise ValueError("world_inertia must be in 0..1")
+        for name in ("movement_speed_limit", "rotation_speed_limit"):
+            if not math.isfinite(float(getattr(self, name))):
+                raise ValueError(f"{name} must be finite")
+        for name in (
+            "old_component_world_position",
+            "component_world_position",
+            "old_frame_world_position",
+            "now_world_position",
+        ):
+            _vector(getattr(self, name), 3, name)
+        for name in (
+            "old_component_world_rotation_xyzw",
+            "component_world_rotation_xyzw",
+            "old_frame_world_rotation_xyzw",
+            "now_world_rotation_xyzw",
+        ):
+            _require_unit_quaternion(getattr(self, name), name)
+
+
+@dataclass(frozen=True)
+class MC2CenterFrameShiftResult:
+    frame_component_shift_vector: tuple[float, float, float]
+    frame_component_shift_rotation_xyzw: tuple[float, float, float, float]
+    old_frame_world_position: tuple[float, float, float]
+    old_frame_world_rotation_xyzw: tuple[float, float, float, float]
+    now_world_position: tuple[float, float, float]
+    now_world_rotation_xyzw: tuple[float, float, float, float]
+    frame_world_position: tuple[float, float, float]
+    frame_world_rotation_xyzw: tuple[float, float, float, float]
+    frame_moving_direction: tuple[float, float, float]
+    frame_moving_speed: float
+
+
+@dataclass(frozen=True)
 class MC2CenterStepInputSpec:
     simulation_delta_time: float
     frame_interpolation: float
@@ -548,6 +619,186 @@ def _rotate_f32(rotation: np.ndarray, vector: np.ndarray) -> np.ndarray:
     return np.asarray(
         vector + rotation[3] * twice_cross + np.cross(xyz, twice_cross),
         dtype=np.float32,
+    )
+
+
+def _inverse_quaternion_f32(rotation: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        (-rotation[0], -rotation[1], -rotation[2], rotation[3]),
+        dtype=np.float32,
+    )
+
+
+def _shift_position_f32(position, pivot, shift_vector, shift_rotation) -> np.ndarray:
+    return np.asarray(
+        pivot + _rotate_f32(shift_rotation, position - pivot) + shift_vector,
+        dtype=np.float32,
+    )
+
+
+def evaluate_mc2_center_frame_shift(
+    frame: MC2CenterFrameShiftInputSpec,
+) -> MC2CenterFrameShiftResult:
+    """Evaluate the verified no-fixed-list, unit-positive-scale shift domain."""
+    if not isinstance(frame, MC2CenterFrameShiftInputSpec):
+        raise TypeError("frame must be MC2CenterFrameShiftInputSpec")
+    simulation_dt = _f32(frame.simulation_delta_time)
+    frame_dt = _f32(frame.frame_delta_time)
+    time_scale = _f32(frame.now_time_scale)
+    old_component = _f32_vector(
+        frame.old_component_world_position, 3, "old_component_world_position"
+    )
+    component = _f32_vector(
+        frame.component_world_position, 3, "component_world_position"
+    )
+    old_component_rotation = _f32_vector(
+        frame.old_component_world_rotation_xyzw,
+        4,
+        "old_component_world_rotation_xyzw",
+    )
+    component_rotation = _f32_vector(
+        frame.component_world_rotation_xyzw, 4, "component_world_rotation_xyzw"
+    )
+    full_shift_vector = np.asarray(component - old_component, dtype=np.float32)
+    full_shift_rotation = _normalize_quaternion_f32(
+        _quaternion_multiply_f32(
+            component_rotation,
+            _inverse_quaternion_f32(old_component_rotation),
+        )
+    )
+    move_shift_ratio = _f32(1.0) - _f32(frame.world_inertia)
+    rotation_shift_ratio = move_shift_ratio
+    work_old_component = np.asarray(
+        old_component + full_shift_vector * move_shift_ratio,
+        dtype=np.float32,
+    )
+    work_old_rotation = _quaternion_slerp_f32(
+        old_component_rotation,
+        component_rotation,
+        rotation_shift_ratio,
+    )
+
+    delta_vector = np.asarray(component - work_old_component, dtype=np.float32)
+    frame_speed = _f32(np.linalg.norm(delta_vector)) / frame_dt
+    movement_limit = _f32(frame.movement_speed_limit)
+    if frame_speed > movement_limit and movement_limit >= 0.0:
+        limit_ratio = np.clip(
+            (frame_speed - movement_limit) / frame_speed,
+            _f32(0.0),
+            _f32(1.0),
+        )
+        move_shift_ratio += (_f32(1.0) - move_shift_ratio) * limit_ratio
+        work_old_component += (component - work_old_component) * limit_ratio
+
+    rotation_cosine = np.clip(
+        abs(_f32(np.dot(work_old_rotation, component_rotation))),
+        _f32(0.0),
+        _f32(1.0),
+    )
+    delta_angle = _f32(2.0) * _f32(np.arccos(rotation_cosine))
+    rotation_speed = _f32(np.degrees(delta_angle)) / frame_dt
+    rotation_limit = _f32(frame.rotation_speed_limit)
+    if rotation_speed > rotation_limit and rotation_limit >= 0.0:
+        limit_ratio = np.clip(
+            (rotation_speed - rotation_limit) / rotation_speed,
+            _f32(0.0),
+            _f32(1.0),
+        )
+        rotation_shift_ratio += (
+            _f32(1.0) - rotation_shift_ratio
+        ) * limit_ratio
+        work_old_rotation = _quaternion_slerp_f32(
+            work_old_rotation,
+            component_rotation,
+            limit_ratio,
+        )
+
+    other_shift_ratio = _f32(0.0)
+    if frame.skip_count > 0:
+        skip_ratio = np.clip(
+            (_f32(frame.skip_count) * simulation_dt) / (frame_dt * time_scale),
+            _f32(0.0),
+            _f32(1.0),
+        )
+        other_shift_ratio += (_f32(1.0) - other_shift_ratio) * skip_ratio
+    velocity_weight = _f32(frame.velocity_weight)
+    if velocity_weight < _f32(1.0):
+        ratio = _f32(1.0) - velocity_weight
+        other_shift_ratio += (_f32(1.0) - other_shift_ratio) * ratio
+    if time_scale < _f32(1.0):
+        ratio = _f32(1.0) - time_scale
+        other_shift_ratio += (_f32(1.0) - other_shift_ratio) * ratio
+    if other_shift_ratio > _f32(0.0):
+        move_shift_ratio += (
+            _f32(1.0) - move_shift_ratio
+        ) * other_shift_ratio
+        rotation_shift_ratio += (
+            _f32(1.0) - rotation_shift_ratio
+        ) * other_shift_ratio
+        work_old_component += (
+            component - work_old_component
+        ) * other_shift_ratio
+        work_old_rotation = _quaternion_slerp_f32(
+            work_old_rotation,
+            component_rotation,
+            other_shift_ratio,
+        )
+
+    shift_vector = np.asarray(full_shift_vector * move_shift_ratio, dtype=np.float32)
+    identity = np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
+    shift_rotation = _quaternion_slerp_f32(
+        identity,
+        full_shift_rotation,
+        rotation_shift_ratio,
+    )
+    old_frame_position = _f32_vector(
+        frame.old_frame_world_position, 3, "old_frame_world_position"
+    )
+    now_position = _f32_vector(frame.now_world_position, 3, "now_world_position")
+    old_frame_rotation = _f32_vector(
+        frame.old_frame_world_rotation_xyzw, 4, "old_frame_world_rotation_xyzw"
+    )
+    now_rotation = _f32_vector(
+        frame.now_world_rotation_xyzw, 4, "now_world_rotation_xyzw"
+    )
+    shifted_old_frame = _shift_position_f32(
+        old_frame_position,
+        old_component,
+        shift_vector,
+        shift_rotation,
+    )
+    shifted_now = _shift_position_f32(
+        now_position,
+        old_component,
+        shift_vector,
+        shift_rotation,
+    )
+    shifted_old_rotation = _normalize_quaternion_f32(
+        _quaternion_multiply_f32(shift_rotation, old_frame_rotation)
+    )
+    shifted_now_rotation = _normalize_quaternion_f32(
+        _quaternion_multiply_f32(shift_rotation, now_rotation)
+    )
+    moving_vector = np.asarray(component - work_old_component, dtype=np.float32)
+    moving_length = _f32(np.linalg.norm(moving_vector))
+    moving_direction = (
+        np.asarray(moving_vector / moving_length, dtype=np.float32)
+        if moving_length > _f32(1.0e-6)
+        else np.zeros(3, dtype=np.float32)
+    )
+    moving_speed = moving_length / frame_dt
+    moving_speed *= _f32(1.0) / time_scale
+    return MC2CenterFrameShiftResult(
+        frame_component_shift_vector=tuple(float(value) for value in shift_vector),
+        frame_component_shift_rotation_xyzw=tuple(float(value) for value in shift_rotation),
+        old_frame_world_position=tuple(float(value) for value in shifted_old_frame),
+        old_frame_world_rotation_xyzw=tuple(float(value) for value in shifted_old_rotation),
+        now_world_position=tuple(float(value) for value in shifted_now),
+        now_world_rotation_xyzw=tuple(float(value) for value in shifted_now_rotation),
+        frame_world_position=tuple(float(value) for value in component),
+        frame_world_rotation_xyzw=tuple(float(value) for value in component_rotation),
+        frame_moving_direction=tuple(float(value) for value in moving_direction),
+        frame_moving_speed=float(moving_speed),
     )
 
 
