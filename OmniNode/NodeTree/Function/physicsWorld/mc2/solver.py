@@ -13,7 +13,11 @@ from .parameters import (
 )
 from .runtime_parameters import make_mc2_runtime_parameters
 from .candidate import make_mc2_result_candidate
-from .center_state import MC2CenterPersistentState, derive_mc2_center_world_pose
+from .center_state import (
+    MC2CenterPersistentState,
+    derive_mc2_center_world_pose,
+    evaluate_mc2_center_frame_shift,
+)
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
 from .results import make_mc2_mesh_result, publish_mc2_result_transaction
@@ -50,6 +54,7 @@ def _slot_debug_snapshot(slot) -> dict:
     result_candidate = slot.data.get("result_candidate")
     center_state = slot.data.get("center_state")
     center_step_result = slot.data.get("center_step_result")
+    center_frame_shift_result = slot.data.get("center_frame_shift_result")
     return {
         "slot_id": slot.slot_id,
         "kind": slot.kind,
@@ -88,6 +93,15 @@ def _slot_debug_snapshot(slot) -> dict:
                 "blend_weight": center_step_result.blend_weight,
             }
             if center_step_result is not None
+            else None
+        ),
+        "center_frame_shift_result": (
+            {
+                "shift_vector": center_frame_shift_result.frame_component_shift_vector,
+                "shift_rotation": center_frame_shift_result.frame_component_shift_rotation_xyzw,
+                "moving_speed": center_frame_shift_result.frame_moving_speed,
+            }
+            if center_frame_shift_result is not None
             else None
         ),
         "result_candidate": (
@@ -147,6 +161,7 @@ def _install_mc2_slot(
             "runtime_state": state,
             "center_state": center_state,
             "center_step_result": None,
+            "center_frame_shift_result": None,
             "declaration": MC2_SOLVER_DECLARATION,
             "frame_state": {},
             "writeback_plan": {},
@@ -176,6 +191,58 @@ def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
         world_rotations_xyzw=frame_input.world_rotations_xyzw,
         vertex_bind_pose_rotations=mesh_static.finalizer.vertex_bind_pose_rotations,
     )
+
+
+def _make_slot_center_frame_shift(
+    slot,
+    frame_input: MC2FrameInputSpec,
+    dt: float,
+    *,
+    time_scale: float,
+    substeps: int,
+):
+    mesh_static = slot.data.get("mesh_static")
+    center_state = slot.data.get("center_state")
+    spec = slot.data.get("spec")
+    frame_pose = frame_input.center_frame_pose
+    if mesh_static is None or frame_pose is None or spec is None:
+        return None
+    if not isinstance(center_state, MC2CenterPersistentState) or not center_state.initialized:
+        return None
+    profile = spec.profile
+    unit_scale = (1.0, 1.0, 1.0)
+    in_verified_domain = (
+        not mesh_static.center.fixed_indices
+        and not center_state.anchor_identity
+        and not frame_pose.anchor_identity
+        and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
+        and int(substeps) == 1
+        and math.isclose(float(profile.movement_inertia_smoothing), 0.0, abs_tol=1.0e-8)
+        and float(profile.movement_speed_limit) < 0.0
+        and float(profile.rotation_speed_limit) < 0.0
+        and float(profile.world_inertia) < 1.0 - 1.0e-8
+        and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
+        and all(
+            math.isclose(float(value), expected, abs_tol=1.0e-8)
+            for values in (
+                center_state.old_component_world_scale,
+                frame_pose.component_world_scale,
+            )
+            for value, expected in zip(values, unit_scale)
+        )
+    )
+    if not in_verified_domain:
+        return None
+    shift_input = center_state.make_frame_shift_input(
+        frame_pose,
+        simulation_delta_time=dt,
+        frame_delta_time=dt,
+        world_inertia=profile.world_inertia,
+        movement_speed_limit=profile.movement_speed_limit,
+        rotation_speed_limit=profile.rotation_speed_limit,
+        now_time_scale=time_scale,
+    )
+    return evaluate_mc2_center_frame_shift(shift_input)
 
 
 def _mc2_slot_rebuild_reason(
@@ -486,6 +553,7 @@ def step_mc2(
                 center_state = slot.data.get("center_state")
                 center_pose = _derive_slot_center_pose(slot, frame_input)
                 center_action = None
+                center_frame_shift_result = None
                 center_step_input = None
                 center_step_result = None
                 if center_pose is not None and frame_plan.action != "same_frame":
@@ -497,11 +565,19 @@ def step_mc2(
                                 "MC2 continuous Center frame requires a positive dt"
                             )
                         center_action = "step"
+                        center_frame_shift_result = _make_slot_center_frame_shift(
+                            slot,
+                            frame_input,
+                            dt,
+                            time_scale=world.frame_context.time_scale,
+                            substeps=world.frame_context.substeps,
+                        )
                         center_step_input = center_state.make_step_input(
                             frame_input.center_frame_pose,
                             center_pose,
                             simulation_delta_time=dt,
                             frame_interpolation=frame_input.frame_interpolation,
+                            frame_shift=center_frame_shift_result,
                         )
                 if (
                     native_context is not None
@@ -514,6 +590,11 @@ def step_mc2(
                     else:
                         if center_step_input is not None:
                             native_context.update_center_dynamic(center_step_input)
+                            if center_frame_shift_result is not None:
+                                native_context.apply_center_frame_shift(
+                                    center_state.old_component_world_position,
+                                    center_frame_shift_result,
+                                )
                         native_context.step_no_collision(dt)
                         if center_step_input is not None:
                             center_step_result = native_context.read_center_step()
@@ -548,6 +629,7 @@ def step_mc2(
                         velocity_weight=0.0 if stabilization > 1.0e-6 else 1.0,
                     )
                     slot.data["center_step_result"] = None
+                    slot.data["center_frame_shift_result"] = None
                 elif center_action == "step":
                     if center_step_result is None:
                         raise RuntimeError("MC2 native Center step did not produce a result")
@@ -557,6 +639,7 @@ def step_mc2(
                         center_step_result,
                     )
                     slot.data["center_step_result"] = center_step_result
+                    slot.data["center_frame_shift_result"] = center_frame_shift_result
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
                     slot.data["particle_buffer"],

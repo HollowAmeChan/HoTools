@@ -1150,8 +1150,8 @@ VRM SpringBone:
   新迁移只保留 C++ / native 计算路径，Python 只做 spec、slot、buffer、result、writeback glue。
 
 统一 MC2:
-  `physicsWorld.mc2` 已有 slot/host static/BasePose 地基，但尚无新 native context 和 result 闭环。
-  旧 full-core/context 只能提供风险与生命周期经验，不能作为 source parity oracle 或运行 fallback。
+  `physicsWorld.mc2` 已有 slot/host static/BasePose、新 native context、Mesh result/writeback 闭环。
+  source parity按 worksheet/oracle逐能力推进；旧 full-core/context不能作为运行 fallback。
 
 Rigid Jolt:
   适合验证 backend world resource、dispose 和 object transform writeback。

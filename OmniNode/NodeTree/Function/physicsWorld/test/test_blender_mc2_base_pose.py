@@ -307,7 +307,14 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         soft_task = mc2_specs.make_mc2_task_spec(
             "mesh_cloth",
             [source],
-            profile=mc2_parameters.make_mc2_particle_profile(damping=0.2),
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                world_inertia=0.25,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
         )
         mc2_solver.step_mc2(
             world,
@@ -446,13 +453,22 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["step_count"] == 1
         assert native_info["center_dynamic_revision"] == 1
         assert native_info["center_step_count"] == 1
+        assert native_info["center_frame_shift_count"] == 1
         assert native_info["distance_solve_count"] == 1
         center_result = slot.data["center_step_result"]
         assert center_result is not None
-        np.testing.assert_allclose(center_result.step_vector, (0.25, 0.0, 0.0), atol=1.0e-6)
+        np.testing.assert_allclose(center_result.step_vector, (0.0625, 0.0, 0.0), atol=1.0e-6)
+        frame_shift_result = slot.data["center_frame_shift_result"]
+        assert frame_shift_result is not None
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_vector,
+            (0.1875, 0.0, 0.0),
+            atol=1.0e-6,
+        )
         assert center_runtime.last_frame == third_input.frame
         assert center_runtime.old_world_position == center_result.now_world_position
         assert slot.debug_snapshot()["center_step_result"] is not None
+        assert slot.debug_snapshot()["center_frame_shift_result"] is not None
         third_candidate = slot.data["result_candidate"]
         assert third_candidate.revision == 3
         assert third_candidate.frame == third_input.frame

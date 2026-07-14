@@ -772,6 +772,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
     m.def("mc2_context_v0_update_center_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_dynamic, a); });
+    m.def("mc2_context_v0_apply_center_frame_shift",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_update_parameters",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_parameters, a); });
     m.def("mc2_context_v0_update_dynamic",

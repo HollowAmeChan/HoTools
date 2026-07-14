@@ -60,6 +60,7 @@ struct Mc2ContextV0 {
     std::int64_t bending_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
     std::int64_t center_step_count = 0;
+    std::int64_t center_frame_shift_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -1039,6 +1040,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "particle_inertia_count", context.particle_inertia_count) ||
         !dict_i64(result, "bending_solve_count", context.bending_solve_count) ||
         !dict_i64(result, "center_step_count", context.center_step_count) ||
+        !dict_i64(result, "center_frame_shift_count", context.center_frame_shift_count) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -1565,6 +1567,101 @@ PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args) {
     context->center_dynamic_ready = true;
     context->center_result_ready = false;
     ++context->center_dynamic_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 4) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_apply_center_frame_shift expects 4 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (!context->initialized || context->state_positions.size() != count * 3 ||
+        context->state_rotations.size() != count * 4 ||
+        context->state_velocities.size() != count * 3 ||
+        context->velocity_reference_positions.size() != count * 3) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is not initialized for Center frame shift");
+        return nullptr;
+    }
+    Buffer pivot, shift_vector, shift_rotation;
+    if (!pivot.get(PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND, "center_shift_pivot") ||
+        !shift_vector.get(PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND, "center_shift_vector") ||
+        !shift_rotation.get(PyTuple_GET_ITEM(args, 3), PyBUF_FORMAT | PyBUF_ND, "center_shift_rotation")) {
+        return nullptr;
+    }
+    if (!expect_float32(pivot, "center_shift_pivot") ||
+        !expect_1d_array(pivot, "center_shift_pivot", 3) ||
+        !finite_floats(pivot, "center_shift_pivot") ||
+        !expect_float32(shift_vector, "center_shift_vector") ||
+        !expect_1d_array(shift_vector, "center_shift_vector", 3) ||
+        !finite_floats(shift_vector, "center_shift_vector") ||
+        !expect_float32(shift_rotation, "center_shift_rotation") ||
+        !expect_1d_array(shift_rotation, "center_shift_rotation", 4) ||
+        !finite_floats(shift_rotation, "center_shift_rotation")) {
+        return nullptr;
+    }
+    const auto* rotation = static_cast<const float*>(shift_rotation.view.buf);
+    float rotation_length_squared = 0.0f;
+    for (std::size_t component = 0; component < 4; ++component) {
+        rotation_length_squared += rotation[component] * rotation[component];
+    }
+    if (std::fabs(rotation_length_squared - 1.0f) > 2.0e-5f) {
+        PyErr_SetString(PyExc_ValueError, "center_shift_rotation must contain a unit quaternion");
+        return nullptr;
+    }
+    const auto* pivot_values = static_cast<const float*>(pivot.view.buf);
+    const auto* shift_values = static_cast<const float*>(shift_vector.view.buf);
+    const std::array<float, 4> shift_quaternion {
+        rotation[0], rotation[1], rotation[2], rotation[3]
+    };
+    for (std::size_t vertex = 0; vertex < count; ++vertex) {
+        const auto offset = vertex * 3;
+        const auto rotation_offset = vertex * 4;
+        float local_position[3] {
+            context->state_positions[offset + 0] - pivot_values[0],
+            context->state_positions[offset + 1] - pivot_values[1],
+            context->state_positions[offset + 2] - pivot_values[2],
+        };
+        float rotated_position[3] {};
+        rotate_vector_xyzw(rotation, local_position, rotated_position);
+        for (std::size_t component = 0; component < 3; ++component) {
+            context->state_positions[offset + component] =
+                pivot_values[component] + rotated_position[component] + shift_values[component];
+        }
+        float local_reference[3] {
+            context->velocity_reference_positions[offset + 0] - pivot_values[0],
+            context->velocity_reference_positions[offset + 1] - pivot_values[1],
+            context->velocity_reference_positions[offset + 2] - pivot_values[2],
+        };
+        float rotated_reference[3] {};
+        rotate_vector_xyzw(rotation, local_reference, rotated_reference);
+        for (std::size_t component = 0; component < 3; ++component) {
+            context->velocity_reference_positions[offset + component] =
+                pivot_values[component] + rotated_reference[component] + shift_values[component];
+        }
+        float rotated_velocity[3] {};
+        rotate_vector_xyzw(
+            rotation,
+            context->state_velocities.data() + offset,
+            rotated_velocity
+        );
+        std::copy_n(rotated_velocity, 3, context->state_velocities.data() + offset);
+        const std::array<float, 4> state_rotation {
+            context->state_rotations[rotation_offset + 0],
+            context->state_rotations[rotation_offset + 1],
+            context->state_rotations[rotation_offset + 2],
+            context->state_rotations[rotation_offset + 3],
+        };
+        auto shifted_rotation = quaternion_multiply(shift_quaternion, state_rotation);
+        normalize_quaternion(shifted_rotation);
+        std::copy(
+            shifted_rotation.begin(), shifted_rotation.end(),
+            context->state_rotations.begin() + static_cast<std::ptrdiff_t>(rotation_offset)
+        );
+    }
+    ++context->center_frame_shift_count;
     Py_RETURN_NONE;
 }
 

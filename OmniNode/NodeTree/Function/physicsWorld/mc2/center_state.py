@@ -319,6 +319,7 @@ def derive_mc2_center_world_pose(
 class MC2CenterPersistentState:
     center_static_signature: str
     component_identity: str = ""
+    anchor_identity: str = ""
     initialized: bool = False
     reset_count: int = 0
     old_component_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -350,6 +351,7 @@ class MC2CenterPersistentState:
         if not 0.0 <= float(velocity_weight) <= 1.0:
             raise ValueError("velocity_weight must be in 0..1")
         self.component_identity = frame_pose.component_identity
+        self.anchor_identity = frame_pose.anchor_identity
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = _unit_quaternion(
             frame_pose.component_world_rotation_xyzw, "component_world_rotation_xyzw"
@@ -377,6 +379,7 @@ class MC2CenterPersistentState:
         simulation_delta_time: float,
         frame_interpolation: float,
         distance_weight: float = 1.0,
+        frame_shift: MC2CenterFrameShiftResult | None = None,
     ) -> MC2CenterStepInputSpec:
         if not self.initialized:
             raise RuntimeError("Center persistent state must be reset before stepping")
@@ -386,21 +389,76 @@ class MC2CenterPersistentState:
             raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
         if frame_pose.component_identity != self.component_identity:
             raise ValueError("Center component identity changed without reset")
+        if frame_shift is not None and not isinstance(frame_shift, MC2CenterFrameShiftResult):
+            raise TypeError("frame_shift must be MC2CenterFrameShiftResult")
         return MC2CenterStepInputSpec(
             simulation_delta_time=float(simulation_delta_time),
             frame_interpolation=float(frame_interpolation),
-            old_frame_world_position=self.old_frame_world_position,
+            old_frame_world_position=(
+                frame_shift.old_frame_world_position
+                if frame_shift is not None
+                else self.old_frame_world_position
+            ),
             frame_world_position=center_pose.position,
-            old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
+            old_frame_world_rotation_xyzw=(
+                frame_shift.old_frame_world_rotation_xyzw
+                if frame_shift is not None
+                else self.old_frame_world_rotation_xyzw
+            ),
             frame_world_rotation_xyzw=center_pose.rotation_xyzw,
             old_frame_world_scale=self.old_frame_world_scale,
             frame_world_scale=center_pose.scale,
-            old_world_position=self.old_world_position,
-            old_world_rotation_xyzw=self.old_world_rotation_xyzw,
+            old_world_position=(
+                frame_shift.now_world_position
+                if frame_shift is not None
+                else self.old_world_position
+            ),
+            old_world_rotation_xyzw=(
+                frame_shift.now_world_rotation_xyzw
+                if frame_shift is not None
+                else self.old_world_rotation_xyzw
+            ),
             initial_scale=self.initial_scale,
             negative_scale_direction=center_pose.negative_scale_direction,
             velocity_weight=self.velocity_weight,
             distance_weight=float(distance_weight),
+        )
+
+    def make_frame_shift_input(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        *,
+        simulation_delta_time: float,
+        frame_delta_time: float,
+        world_inertia: float,
+        movement_speed_limit: float = -1.0,
+        rotation_speed_limit: float = -1.0,
+        now_time_scale: float = 1.0,
+        skip_count: int = 0,
+    ) -> MC2CenterFrameShiftInputSpec:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before frame shift")
+        if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+            raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+        if frame_pose.component_identity != self.component_identity:
+            raise ValueError("Center component identity changed without reset")
+        return MC2CenterFrameShiftInputSpec(
+            simulation_delta_time=float(simulation_delta_time),
+            frame_delta_time=float(frame_delta_time),
+            now_time_scale=float(now_time_scale),
+            velocity_weight=float(self.velocity_weight),
+            skip_count=skip_count,
+            world_inertia=float(world_inertia),
+            movement_speed_limit=float(movement_speed_limit),
+            rotation_speed_limit=float(rotation_speed_limit),
+            old_component_world_position=self.old_component_world_position,
+            old_component_world_rotation_xyzw=self.old_component_world_rotation_xyzw,
+            component_world_position=frame_pose.component_world_position,
+            component_world_rotation_xyzw=frame_pose.component_world_rotation_xyzw,
+            old_frame_world_position=self.old_frame_world_position,
+            old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
+            now_world_position=self.old_world_position,
+            now_world_rotation_xyzw=self.old_world_rotation_xyzw,
         )
 
     def commit_step(
@@ -420,6 +478,7 @@ class MC2CenterPersistentState:
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = tuple(frame_pose.component_world_rotation_xyzw)
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self.anchor_identity = frame_pose.anchor_identity
         self.old_frame_world_position = tuple(center_pose.position)
         self.old_frame_world_rotation_xyzw = tuple(center_pose.rotation_xyzw)
         self.old_frame_world_scale = tuple(center_pose.scale)
@@ -433,6 +492,7 @@ class MC2CenterPersistentState:
         return {
             "center_static_signature": self.center_static_signature,
             "component_identity": self.component_identity,
+            "anchor_identity": self.anchor_identity,
             "initialized": self.initialized,
             "reset_count": self.reset_count,
             "last_frame": self.last_frame,
@@ -932,6 +992,8 @@ def evaluate_mc2_center_step(
 
 __all__ = [
     "MC2CenterFramePoseSpec",
+    "MC2CenterFrameShiftInputSpec",
+    "MC2CenterFrameShiftResult",
     "MC2CenterPersistentState",
     "MC2CenterStepInputSpec",
     "MC2CenterStepResult",
@@ -939,6 +1001,7 @@ __all__ = [
     "MC2CenterWorldPoseSpec",
     "build_mc2_center_static",
     "derive_mc2_center_world_pose",
+    "evaluate_mc2_center_frame_shift",
     "evaluate_mc2_center_step",
     "pack_mc2_center_static",
 ]

@@ -113,6 +113,7 @@ def test_center_persistent_reset_uses_frame_component_and_derived_center_pose() 
     persistent.reset(frame, (2.0, 3.0, 4.0), (0.0, 0.0, 0.0, 1.0))
     assert persistent.initialized and persistent.reset_count == 1
     assert persistent.old_component_world_position == frame.component_world_position
+    assert persistent.anchor_identity == frame.anchor_identity
     assert persistent.old_frame_world_position == persistent.old_world_position == (2.0, 3.0, 4.0)
     assert persistent.smoothing_velocity == (0.0, 0.0, 0.0)
 
@@ -205,9 +206,63 @@ def test_center_persistent_state_builds_and_commits_continuous_step() -> None:
     )
     persistent.commit_step(second_frame, second_pose, result)
     assert persistent.last_frame == 2
+    assert persistent.anchor_identity == second_frame.anchor_identity
     assert persistent.old_frame_world_position == second_pose.position
     assert persistent.old_world_position == result.now_world_position
     assert persistent.velocity_weight == result.velocity_weight
+
+
+def test_center_persistent_state_threads_frame_shift_into_step_history() -> None:
+    static = _adapter_static(())
+    first_frame = center.MC2CenterFramePoseSpec(
+        frame=1,
+        generation=0,
+        component_identity="object:shift",
+        component_world_position=(0.0, 0.0, 0.0),
+        component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+        component_world_scale=(1.0, 1.0, 1.0),
+    )
+    persistent = center.MC2CenterPersistentState(static.center_static_signature)
+    persistent.reset(first_frame, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), velocity_weight=1.0)
+    half_angle = np.float32(np.radians(90.0) * 0.5)
+    second_frame = center.MC2CenterFramePoseSpec(
+        frame=2,
+        generation=0,
+        component_identity="object:shift",
+        component_world_position=(10.0, 0.0, 0.0),
+        component_world_rotation_xyzw=(
+            0.0,
+            float(np.sin(half_angle)),
+            0.0,
+            float(np.cos(half_angle)),
+        ),
+        component_world_scale=(1.0, 1.0, 1.0),
+    )
+    shift = center.evaluate_mc2_center_frame_shift(
+        persistent.make_frame_shift_input(
+            second_frame,
+            simulation_delta_time=0.1,
+            frame_delta_time=0.1,
+            world_inertia=0.25,
+        )
+    )
+    center_pose = center.MC2CenterWorldPoseSpec(
+        position=second_frame.component_world_position,
+        rotation_xyzw=second_frame.component_world_rotation_xyzw,
+        scale=second_frame.component_world_scale,
+        negative_scale_direction=(1.0, 1.0, 1.0),
+    )
+    step = persistent.make_step_input(
+        second_frame,
+        center_pose,
+        simulation_delta_time=0.1,
+        frame_interpolation=1.0,
+        frame_shift=shift,
+    )
+    np.testing.assert_allclose(step.old_frame_world_position, shift.old_frame_world_position)
+    np.testing.assert_allclose(step.old_frame_world_rotation_xyzw, shift.old_frame_world_rotation_xyzw)
+    np.testing.assert_allclose(step.old_world_position, shift.now_world_position)
+    np.testing.assert_allclose(step.old_world_rotation_xyzw, shift.now_world_rotation_xyzw)
 
 
 def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:

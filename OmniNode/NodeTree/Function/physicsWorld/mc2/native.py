@@ -11,8 +11,12 @@ import sys
 import numpy as np
 
 from .bending_static import pack_mc2_bending_static
-from .center_state import pack_mc2_center_static
-from .center_state import MC2CenterStepInputSpec, MC2CenterStepResult
+from .center_state import (
+    MC2CenterFrameShiftResult,
+    MC2CenterStepInputSpec,
+    MC2CenterStepResult,
+    pack_mc2_center_static,
+)
 from .distance_static import pack_mc2_distance_static
 from .frame_state import MC2FrameInputSpec
 from .runtime_parameters import (
@@ -33,6 +37,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
     "mc2_context_v0_update_center_dynamic",
+    "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_update_parameters",
     "mc2_context_v0_update_dynamic",
     "mc2_context_v0_reset",
@@ -243,6 +248,22 @@ class MC2NativeContextV0:
             step.velocity_weight,
         )
         self._center_step_dt = float(step.simulation_delta_time)
+
+    def apply_center_frame_shift(
+        self,
+        pivot,
+        result: MC2CenterFrameShiftResult,
+    ) -> None:
+        if not isinstance(result, MC2CenterFrameShiftResult):
+            raise TypeError("result must be MC2CenterFrameShiftResult")
+        self._ensure_live()
+        array = lambda values: np.ascontiguousarray(values, dtype=np.float32)
+        self._module.mc2_context_v0_apply_center_frame_shift(
+            self._handle,
+            array(pivot),
+            array(result.frame_component_shift_vector),
+            array(result.frame_component_shift_rotation_xyzw),
+        )
 
     def reset(self) -> None:
         self._ensure_live()
