@@ -6,6 +6,12 @@ import numpy as np
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_gravity_damping_001.json"
 INERTIA_FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_inertia_001.json"
+FRAME_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "tier_a"
+    / "particle_step_constraints_post_001.json"
+)
 BASELINE_FIXTURES = tuple(
     Path(__file__).parent / "fixtures" / "tier_a" / name
     for name in (
@@ -232,8 +238,141 @@ def test_baseline_step_pose_matches_fixed_mc2_oracle() -> None:
         _assert_baseline_step_pose_fixture(path)
 
 
+def test_particle_frame_constraints_and_post_match_fixed_mc2_oracle() -> None:
+    fixture = json.loads(FRAME_FIXTURE.read_text(encoding="utf-8"))
+    values = fixture["input"]
+    expected = fixture["expected"]
+    assert fixture["oracle_tier"] == "A"
+    assert fixture["mc2_commit"] == EXPECTED_COMMIT
+    dt = np.float32(values["simulation_delta_time"])
+    simulation_power_z = np.float32(values["simulation_power"][2])
+    damping_factor = np.float32(
+        1.0 - np.float32(values["damping"]) * simulation_power_z
+    )
+    depths = np.asarray(values["depths"], dtype=np.float32)
+    attributes = np.asarray(values["attributes"], dtype=np.uint8)
+    animated = np.asarray(values["animated_positions"], dtype=np.float32)
+    old_animated = np.asarray(values["old_animated_positions"], dtype=np.float32)
+    previous_positions = np.asarray(
+        values["initial_particle_positions"], dtype=np.float32
+    )
+    previous_velocities = np.asarray(values["initial_velocities"], dtype=np.float32)
+    gravity_direction = np.asarray(values["gravity_direction"], dtype=np.float32)
+    prediction_stages = np.asarray(
+        expected["positions_after_prediction"], dtype=np.float32
+    )
+    post_positions = np.asarray(expected["positions_after_post"], dtype=np.float32)
+    post_velocities = np.asarray(expected["velocities_after_post"], dtype=np.float32)
+    real_velocities = np.asarray(
+        expected["real_velocities_after_post"], dtype=np.float32
+    )
+    velocity_references = np.asarray(
+        expected["velocity_references_after_second_distance"], dtype=np.float32
+    )
+    center_now = np.asarray(expected["center_now_world_positions"], dtype=np.float32)
+    center_step_vectors = np.asarray(expected["center_step_vectors"], dtype=np.float32)
+    center_step_rotations = np.asarray(
+        expected["center_step_rotations_xyzw"], dtype=np.float32
+    )
+    center_inertia_vectors = np.asarray(
+        expected["center_inertia_vectors"], dtype=np.float32
+    )
+    center_inertia_rotations = np.asarray(
+        expected["center_inertia_rotations_xyzw"], dtype=np.float32
+    )
+    center_weights = np.asarray(expected["center_velocity_weights"], dtype=np.float32)
+    center_gravity = np.asarray(expected["center_gravity_ratios"], dtype=np.float32)
+    center_scales = np.asarray(expected["center_scale_ratios"], dtype=np.float32)
+    frame_interpolations = np.asarray(
+        expected["center_frame_interpolations"], dtype=np.float32
+    )
+
+    for step_index in range(int(values["update_count"])):
+        expected_prediction = np.empty_like(previous_positions)
+        expected_prediction[0] = (
+            old_animated[0]
+            + (animated[0] - old_animated[0]) * frame_interpolations[step_index]
+        )
+        old_world = (
+            np.zeros(3, dtype=np.float32)
+            if step_index == 0
+            else center_now[step_index - 1]
+        )
+        for vertex in range(1, len(previous_positions)):
+            assert attributes[vertex] == 2
+            inertia_depth = np.float32(values["depth_inertia"]) * (
+                np.float32(1.0) - depths[vertex] * depths[vertex]
+            )
+            inertia_vector = (
+                center_inertia_vectors[step_index] * (np.float32(1.0) - inertia_depth)
+                + center_step_vectors[step_index] * inertia_depth
+            )
+            inertia_rotation = _slerp(
+                center_inertia_rotations[step_index],
+                center_step_rotations[step_index],
+                inertia_depth,
+            )
+            world_position = old_world + _rotate(
+                inertia_rotation,
+                previous_positions[vertex] - old_world,
+            ) + inertia_vector
+            velocity = _rotate(inertia_rotation, previous_velocities[vertex])
+            velocity *= center_weights[step_index] * damping_factor
+            velocity += (
+                gravity_direction
+                * np.float32(values["gravity"])
+                * center_gravity[step_index]
+                * center_scales[step_index]
+                * dt
+            )
+            expected_prediction[vertex] = world_position + velocity * dt
+        np.testing.assert_allclose(
+            prediction_stages[step_index],
+            expected_prediction,
+            rtol=1.0e-6,
+            atol=2.0e-6,
+        )
+
+        expected_velocity = (
+            post_positions[step_index] - velocity_references[step_index]
+        ) / dt * center_weights[step_index]
+        expected_velocity[attributes == 1] = 0.0
+        np.testing.assert_allclose(
+            post_velocities[step_index],
+            expected_velocity,
+            rtol=1.0e-6,
+            atol=2.0e-6,
+        )
+        np.testing.assert_allclose(
+            real_velocities[step_index],
+            (post_positions[step_index] - previous_positions) / dt,
+            rtol=1.0e-6,
+            atol=2.0e-6,
+        )
+        previous_positions = post_positions[step_index]
+        previous_velocities = post_velocities[step_index]
+
+    np.testing.assert_allclose(
+        expected["positions_after_post"],
+        expected["positions_after_second_distance"],
+        rtol=0.0,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        expected["post_old_component_world_position"],
+        values["component_world_position"],
+        atol=1.0e-6,
+    )
+    np.testing.assert_allclose(
+        expected["post_old_frame_world_position"],
+        values["frame_world_position"],
+        atol=1.0e-6,
+    )
+
+
 if __name__ == "__main__":
     test_particle_prediction_matches_fixed_mc2_oracle()
     test_particle_center_inertia_matches_fixed_mc2_oracle()
     test_baseline_step_pose_matches_fixed_mc2_oracle()
+    test_particle_frame_constraints_and_post_match_fixed_mc2_oracle()
     print("PASS MC2 particle-step Tier A oracle")

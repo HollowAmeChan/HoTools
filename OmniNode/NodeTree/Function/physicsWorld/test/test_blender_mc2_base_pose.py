@@ -513,7 +513,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_dynamic_revision"] == 1
         assert native_info["center_step_count"] == 1
         assert native_info["center_frame_shift_count"] == 1
-        assert native_info["distance_solve_count"] == 1
+        assert native_info["distance_solve_count"] == 2
         center_result = slot.data["center_step_result"]
         assert center_result is not None
         np.testing.assert_allclose(

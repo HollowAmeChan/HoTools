@@ -51,6 +51,10 @@ directory:
   position/velocity-reference shift, velocity rotation, and step-basic pose.
   Two baseline cases freeze parent-first step-basic reconstruction under
   positive scale and an X-axis negative-scale transition.
+  The complete-frame case executes two source-ordered no-collision substeps
+  with Center inertia, prediction, Distance, Bending/Sum, the second Distance
+  pass, particle post, and Team post so the second step consumes committed
+  velocity from the first.
 - `center_step_*.json`: direct reflective calls to
   `TeamManager.SimulationStepTeamUpdate()`, freezing frame interpolation,
   local movement/rotation inertia limits, inertia vector/rotation, angular

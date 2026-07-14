@@ -300,14 +300,17 @@ def test_lifecycle_and_transactional_validation():
         hotools_native.mc2_context_v0_read(first, out_positions, out_rotations)
         np.testing.assert_allclose(
             out_positions,
-            np.array([[2.0, 0.0, 0.0], [3.25, 0.0, 0.0]], dtype=np.float32),
+            np.array(
+                [[1.6603498, 0.0, 0.0], [2.6753435, 0.0, 0.0]],
+                dtype=np.float32,
+            ),
             rtol=0.0,
             atol=1.0e-6,
         )
         np.testing.assert_array_equal(out_rotations, rotations)
         info = hotools_native.mc2_context_v0_inspect(first)
         assert info["reset_count"] == 1 and info["step_count"] == 1
-        assert info["distance_solve_count"] == 1
+        assert info["distance_solve_count"] == 2
 
         tier_a_proxy, tier_a_baseline = static_arrays(3)
         hotools_native.mc2_context_v0_update_proxy_static(second, *tier_a_proxy)
@@ -340,7 +343,7 @@ def test_lifecycle_and_transactional_validation():
         )
         np.testing.assert_allclose(
             tier_a_out,
-            np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=np.float32),
+            np.array([[1.75, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 0.0]], dtype=np.float32),
             rtol=0.0,
             atol=1.0e-6,
         )
@@ -428,7 +431,7 @@ def test_lifecycle_and_transactional_validation():
             pin_out_positions,
             np.array([[5.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
         )
-        assert hotools_native.mc2_context_v0_inspect(second)["distance_solve_count"] == 1
+        assert hotools_native.mc2_context_v0_inspect(second)["distance_solve_count"] == 2
 
         interpolated_positions = pin_positions.copy()
         interpolated_positions[0, 0] = 9.0

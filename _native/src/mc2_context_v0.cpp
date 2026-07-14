@@ -1147,7 +1147,13 @@ void solve_bending_once(Mc2ContextV0& context, float simulation_power_y) {
     ++context.bending_solve_count;
 }
 
-void solve_distance_once(Mc2ContextV0& context) {
+float distance_inverse_mass(const Mc2ContextV0& context, std::size_t vertex) {
+    if (!is_move(context.proxy_attributes[vertex])) return kDistanceFixedInverseMass;
+    const float depth_delta = 1.0f - context.baseline_depths[vertex];
+    return 1.0f / (1.0f + depth_delta * depth_delta * 5.0f);
+}
+
+void solve_distance_once(Mc2ContextV0& context, float simulation_power_y) {
     const auto count = static_cast<std::size_t>(context.vertex_count);
     if (context.state_positions.size() != count * 3 ||
         context.proxy_attributes.size() != count) {
@@ -1169,7 +1175,7 @@ void solve_distance_once(Mc2ContextV0& context) {
                 context.curve_values,
                 kDistanceStiffnessCurve,
                 context.baseline_depths[vertex]
-            ))
+            ) * simulation_power_y)
         );
         if (stiffness <= kMc2Epsilon) continue;
         const auto start = context.distance_ranges[vertex * 2];
@@ -1178,6 +1184,7 @@ void solve_distance_once(Mc2ContextV0& context) {
         const float current_x = context.state_positions[offset + 0];
         const float current_y = context.state_positions[offset + 1];
         const float current_z = context.state_positions[offset + 2];
+        const float inverse_mass = distance_inverse_mass(context, vertex);
         float add_x = 0.0f;
         float add_y = 0.0f;
         float add_z = 0.0f;
@@ -1190,8 +1197,8 @@ void solve_distance_once(Mc2ContextV0& context) {
             const float dy = context.state_positions[target_offset + 1] - current_y;
             const float dz = context.state_positions[target_offset + 2] - current_z;
             const float rest_signed = context.distance_rest_signed[record];
-            const float rest = std::fabs(rest_signed);
-            if (rest <= kMc2Epsilon) {
+            const float static_rest = std::fabs(rest_signed);
+            if (static_rest <= kMc2Epsilon) {
                 add_x = dx * 0.5f;
                 add_y = dy * 0.5f;
                 add_z = dz * 0.5f;
@@ -1200,18 +1207,33 @@ void solve_distance_once(Mc2ContextV0& context) {
             }
             const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (distance <= kMc2Epsilon) continue;
-            const float target_inverse_mass = is_move(context.proxy_attributes[target])
-                ? 1.0f
-                : kDistanceFixedInverseMass;
+            const float target_inverse_mass = distance_inverse_mass(context, target);
+            const float animated_dx =
+                context.step_basic_positions[target_offset + 0] -
+                context.step_basic_positions[offset + 0];
+            const float animated_dy =
+                context.step_basic_positions[target_offset + 1] -
+                context.step_basic_positions[offset + 1];
+            const float animated_dz =
+                context.step_basic_positions[target_offset + 2] -
+                context.step_basic_positions[offset + 2];
+            const float animated_rest = std::sqrt(
+                animated_dx * animated_dx + animated_dy * animated_dy +
+                animated_dz * animated_dz
+            );
+            const float rest =
+                static_rest * context.scale_ratio * (1.0f - context.animation_pose_ratio) +
+                animated_rest * context.animation_pose_ratio;
             const float local_stiffness = rest_signed < 0.0f
                 ? stiffness * kDistanceHorizontalStiffness
                 : stiffness;
             const float correction =
-                ((distance - rest) * local_stiffness / (1.0f + target_inverse_mass)) /
+                ((distance - rest) * local_stiffness /
+                 (inverse_mass + target_inverse_mass)) /
                 distance;
-            add_x += dx * correction;
-            add_y += dy * correction;
-            add_z += dz * correction;
+            add_x += dx * correction * inverse_mass;
+            add_y += dy * correction * inverse_mass;
+            add_z += dz * correction * inverse_mass;
             ++add_count;
         }
         if (add_count > 0) {
@@ -2222,8 +2244,9 @@ PyObject* mc2_context_v0_step(PyObject*, PyObject* args) {
             PyErr_SetString(PyExc_RuntimeError, "MC2 V0 particle state is incomplete");
             return nullptr;
         }
-        solve_distance_once(*context);
+        solve_distance_once(*context, static_cast<float>(simulation_power_y));
         solve_bending_once(*context, static_cast<float>(simulation_power_y));
+        solve_distance_once(*context, static_cast<float>(simulation_power_y));
         commit_particle_velocities(*context, static_cast<float>(dt));
     }
     if (center_step_active) {
