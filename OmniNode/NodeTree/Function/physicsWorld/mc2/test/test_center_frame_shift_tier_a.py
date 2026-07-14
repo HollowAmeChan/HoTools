@@ -34,11 +34,12 @@ for package_name, package_path in (
 center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
 
 
-FIXTURE = (
-    Path(__file__).parent
-    / "fixtures"
-    / "tier_a"
-    / "center_frame_shift_world_inertia_001.json"
+FIXTURES = tuple(
+    Path(__file__).parent / "fixtures" / "tier_a" / name
+    for name in (
+        "center_frame_shift_world_inertia_001.json",
+        "center_frame_shift_speed_limit_001.json",
+    )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
 
@@ -83,8 +84,8 @@ def _shift_position(position, pivot, shift_vector, shift_rotation) -> np.ndarray
     )
 
 
-def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:
-    fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
+def _assert_center_frame_shift_fixture(path: Path) -> None:
+    fixture = json.loads(path.read_text(encoding="utf-8"))
     source = fixture["source"]
     assert fixture["oracle_tier"] == "A"
     assert fixture["mc2_commit"] == EXPECTED_COMMIT
@@ -135,8 +136,40 @@ def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:
     # Retain an independent formula check so the fixture does not only test itself
     # through the production evaluator.
     shift_ratio = _f32(1.0) - _f32(values["world_inertia"])
+    rotation_shift_ratio = shift_ratio
+    work_old_component = old_component + (component - old_component) * shift_ratio
+    work_old_rotation = _slerp(old_rotation, component_rotation, rotation_shift_ratio)
+    movement_speed = _f32(np.linalg.norm(component - work_old_component)) / _f32(
+        values["frame_delta_time"]
+    )
+    movement_limit = _f32(values["movement_speed_limit"])
+    if movement_limit >= 0.0 and movement_speed > movement_limit:
+        limit_ratio = _f32((movement_speed - movement_limit) / movement_speed)
+        shift_ratio += (_f32(1.0) - shift_ratio) * limit_ratio
+        work_old_component += (component - work_old_component) * limit_ratio
+    rotation_cosine = np.clip(
+        abs(_f32(np.dot(work_old_rotation, component_rotation))),
+        _f32(0.0),
+        _f32(1.0),
+    )
+    rotation_speed = _f32(
+        np.degrees(_f32(2.0) * _f32(np.arccos(rotation_cosine)))
+    ) / _f32(values["frame_delta_time"])
+    rotation_limit = _f32(values["rotation_speed_limit"])
+    if rotation_limit >= 0.0 and rotation_speed > rotation_limit:
+        limit_ratio = _f32((rotation_speed - rotation_limit) / rotation_speed)
+        rotation_shift_ratio += (_f32(1.0) - rotation_shift_ratio) * limit_ratio
+        work_old_rotation = _slerp(
+            work_old_rotation,
+            component_rotation,
+            limit_ratio,
+        )
     frame_shift_vector = (component - old_component) * shift_ratio
-    frame_shift_rotation = _slerp(old_rotation, component_rotation, shift_ratio)
+    frame_shift_rotation = _slerp(
+        old_rotation,
+        component_rotation,
+        rotation_shift_ratio,
+    )
 
     old_frame = np.asarray(values["old_frame_world_position"], dtype=np.float32)
     now = np.asarray(values["now_world_position"], dtype=np.float32)
@@ -152,7 +185,6 @@ def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:
         frame_shift_vector,
         frame_shift_rotation,
     )
-    work_old_component = old_component + (component - old_component) * shift_ratio
     moving_vector = component - work_old_component
     moving_length = _f32(np.linalg.norm(moving_vector))
     moving_direction = moving_vector / moving_length
@@ -178,6 +210,11 @@ def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:
         rtol=1.0e-6,
         atol=1.0e-6,
     )
+
+
+def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:
+    for path in FIXTURES:
+        _assert_center_frame_shift_fixture(path)
 
 
 if __name__ == "__main__":

@@ -58,7 +58,8 @@ directory:
   `TeamManager.SimulationCalcCenterAndInertiaAndWind()`. The first case isolates
   positive-scale `worldInertia` translation/rotation shift with fixed points,
   anchor, smoothing, limits, teleport, synchronization, culling, skip, and
-  stabilization disabled.
+  stabilization disabled. The second case applies movement and rotation speed
+  limits after the same world-inertia shift.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

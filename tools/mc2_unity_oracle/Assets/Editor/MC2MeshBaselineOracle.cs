@@ -425,14 +425,48 @@ namespace HoTools.MC2Oracle.Editor
 
         private static int WriteCenterFrameShiftFixtures(string outputDirectory)
         {
-            CenterFrameShiftDump dump = RunCenterFrameShiftOracle();
-            string path = Path.Combine(outputDirectory, "center_frame_shift_world_inertia_001.json");
-            File.WriteAllText(path, BuildCenterFrameShiftJson(dump), new UTF8Encoding(false));
-            Debug.Log($"[MC2 Oracle] wrote {path}");
-            return 1;
+            CenterFrameShiftDump worldInertia = RunCenterFrameShiftOracle(-1.0f, -1.0f);
+            string worldInertiaPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_world_inertia_001.json"
+            );
+            File.WriteAllText(
+                worldInertiaPath,
+                BuildCenterFrameShiftJson(
+                    "center_frame_shift_world_inertia_001",
+                    "Isolates positive-scale world-inertia frame shift with no fixed list, anchor, smoothing, speed limits, teleport, synchronization, culling, skip, or stabilization effects.",
+                    -1.0f,
+                    -1.0f,
+                    worldInertia
+                ),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {worldInertiaPath}");
+
+            CenterFrameShiftDump speedLimit = RunCenterFrameShiftOracle(10.0f, 90.0f);
+            string speedLimitPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_speed_limit_001.json"
+            );
+            File.WriteAllText(
+                speedLimitPath,
+                BuildCenterFrameShiftJson(
+                    "center_frame_shift_speed_limit_001",
+                    "Isolates movement and rotation speed-limit cancellation after positive-scale world-inertia shift, with no fixed list, anchor, smoothing, teleport, synchronization, culling, skip, or stabilization effects.",
+                    10.0f,
+                    90.0f,
+                    speedLimit
+                ),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {speedLimitPath}");
+            return 2;
         }
 
-        private static CenterFrameShiftDump RunCenterFrameShiftOracle()
+        private static CenterFrameShiftDump RunCenterFrameShiftOracle(
+            float movementSpeedLimit,
+            float rotationSpeedLimit
+        )
         {
             MethodInfo method = typeof(TeamManager).GetMethod(
                 "SimulationCalcCenterAndInertiaAndWind",
@@ -465,8 +499,8 @@ namespace HoTools.MC2Oracle.Editor
                 {
                     worldInertia = 0.25f,
                     movementInertiaSmoothing = 0.0f,
-                    movementSpeedLimit = -1.0f,
-                    rotationSpeedLimit = -1.0f,
+                    movementSpeedLimit = movementSpeedLimit,
+                    rotationSpeedLimit = rotationSpeedLimit,
                     teleportMode = InertiaConstraint.TeleportMode.None,
                 },
             };
@@ -2719,11 +2753,17 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
-        private static string BuildCenterFrameShiftJson(CenterFrameShiftDump dump)
+        private static string BuildCenterFrameShiftJson(
+            string caseId,
+            string scope,
+            float movementSpeedLimit,
+            float rotationSpeedLimit,
+            CenterFrameShiftDump dump
+        )
         {
             var text = new StringBuilder();
             text.AppendLine("{");
-            Property(text, 2, "case_id", Quote("center_frame_shift_world_inertia_001"));
+            Property(text, 2, "case_id", Quote(caseId));
             Property(text, 2, "oracle_tier", Quote("A"));
             Property(text, 2, "mc2_version", Quote(MC2Version));
             Property(text, 2, "mc2_commit", Quote(MC2Commit));
@@ -2737,7 +2777,7 @@ namespace HoTools.MC2Oracle.Editor
                 text,
                 2,
                 "scope",
-                Quote("Isolates positive-scale world-inertia frame shift with no fixed list, anchor, smoothing, speed limits, teleport, synchronization, culling, skip, or stabilization effects.")
+                Quote(scope)
             );
             text.AppendLine("  \"input\": {");
             Property(text, 4, "simulation_delta_time", "0.1");
@@ -2746,8 +2786,8 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "velocity_weight", "1");
             Property(text, 4, "world_inertia", "0.25");
             Property(text, 4, "movement_inertia_smoothing", "0");
-            Property(text, 4, "movement_speed_limit", "-1");
-            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "movement_speed_limit", FloatJson(movementSpeedLimit));
+            Property(text, 4, "rotation_speed_limit", FloatJson(rotationSpeedLimit));
             Property(text, 4, "old_component_world_position", "[0,0,0]");
             Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
             Property(text, 4, "old_component_world_scale", "[1,1,1]");

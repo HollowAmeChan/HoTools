@@ -312,8 +312,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 stabilization_time_after_reset=0.0,
                 world_inertia=0.25,
                 movement_inertia_smoothing=0.0,
-                movement_speed_limit=-1.0,
-                rotation_speed_limit=-1.0,
+                movement_speed_limit=0.1,
+                rotation_speed_limit=90.0,
             ),
         )
         mc2_solver.step_mc2(
@@ -435,7 +435,10 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                     second_input.center_frame_pose.component_world_position[2],
                 ),
                 component_world_rotation_xyzw=(
-                    second_input.center_frame_pose.component_world_rotation_xyzw
+                    0.0,
+                    float(np.sin(np.pi * 0.25)),
+                    0.0,
+                    float(np.cos(np.pi * 0.25)),
                 ),
                 component_world_scale=second_input.center_frame_pose.component_world_scale,
             ),
@@ -457,12 +460,36 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["distance_solve_count"] == 1
         center_result = slot.data["center_step_result"]
         assert center_result is not None
-        np.testing.assert_allclose(center_result.step_vector, (0.0625, 0.0, 0.0), atol=1.0e-6)
+        np.testing.assert_allclose(
+            center_result.step_vector,
+            (1.0 / 600.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            center_result.step_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(0.75))),
+                0.0,
+                float(np.cos(np.radians(0.75))),
+            ),
+            atol=1.0e-6,
+        )
         frame_shift_result = slot.data["center_frame_shift_result"]
         assert frame_shift_result is not None
         np.testing.assert_allclose(
             frame_shift_result.frame_component_shift_vector,
-            (0.1875, 0.0, 0.0),
+            (149.0 / 600.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(44.25))),
+                0.0,
+                float(np.cos(np.radians(44.25))),
+            ),
             atol=1.0e-6,
         )
         assert center_runtime.last_frame == third_input.frame

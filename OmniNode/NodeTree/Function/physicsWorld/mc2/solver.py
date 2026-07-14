@@ -218,8 +218,6 @@ def _make_slot_center_frame_shift(
         and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
         and int(substeps) == 1
         and math.isclose(float(profile.movement_inertia_smoothing), 0.0, abs_tol=1.0e-8)
-        and float(profile.movement_speed_limit) < 0.0
-        and float(profile.rotation_speed_limit) < 0.0
         and float(profile.world_inertia) < 1.0 - 1.0e-8
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
