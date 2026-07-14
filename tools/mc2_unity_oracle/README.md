@@ -54,6 +54,11 @@ directory:
   local movement/rotation inertia limits, inertia vector/rotation, angular
   velocity, scale ratio, gravity falloff, velocity stabilization, and blend
   weight with wind disabled.
+- `center_frame_shift_*.json`: direct reflective calls to
+  `TeamManager.SimulationCalcCenterAndInertiaAndWind()`. The first case isolates
+  positive-scale `worldInertia` translation/rotation shift with fixed points,
+  anchor, smoothing, limits, teleport, synchronization, culling, skip, and
+  stabilization disabled.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the
