@@ -80,6 +80,7 @@ def test_owner_lifecycle_and_readback() -> None:
 class _RecordingModule:
     def __init__(self) -> None:
         self.center_args = None
+        self.interpolation_args = []
         self.step_calls = []
         self.freed = False
 
@@ -92,6 +93,9 @@ class _RecordingModule:
 
     def mc2_context_v0_update_center_dynamic(self, *args):
         self.center_args = args
+
+    def mc2_context_v0_update_step_interpolation(self, *args):
+        self.interpolation_args.append(args)
 
     def mc2_context_v0_step(self, *args):
         self.step_calls.append(args)
@@ -140,6 +144,12 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
         velocity_weight=0.2,
         distance_weight=0.8,
     )
+    try:
+        owner.update_step_interpolation(0.25)
+    except RuntimeError as exc:
+        assert "complete Center frame update" in str(exc)
+    else:
+        raise AssertionError("step interpolation accepted a missing Center frame")
     owner.update_center_dynamic(step_input)
     assert len(module.center_args) == 14
     for value in module.center_args[1:11]:
@@ -160,6 +170,17 @@ def test_owner_center_step_packing_dt_guard_and_readback() -> None:
     assert len(module.step_calls) == 1
     owner.step_no_collision(0.1)
     assert len(module.step_calls) == 2
+    owner.update_step_interpolation(0.75)
+    assert module.interpolation_args == [(owner._handle, 0.75)]
+    owner.step_no_collision(0.1)
+    assert len(module.step_calls) == 3
+
+    try:
+        owner.update_step_interpolation(1.1)
+    except ValueError as exc:
+        assert "0..1" in str(exc)
+    else:
+        raise AssertionError("out-of-range step interpolation was accepted")
 
     result = owner.read_center_step()
     assert isinstance(result, center.MC2CenterStepResult)

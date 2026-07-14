@@ -59,6 +59,7 @@ struct Mc2ContextV0 {
     std::int64_t particle_inertia_count = 0;
     std::int64_t bending_solve_count = 0;
     std::int64_t center_dynamic_revision = 0;
+    std::int64_t step_interpolation_revision = 0;
     std::int64_t center_step_count = 0;
     std::int64_t center_frame_shift_count = 0;
     std::int64_t center_negative_scale_teleport_count = 0;
@@ -79,6 +80,7 @@ struct Mc2ContextV0 {
     bool bending_static_ready = false;
     bool center_static_ready = false;
     bool center_dynamic_ready = false;
+    bool center_frame_ready = false;
     bool center_result_ready = false;
     bool dynamic_ready = false;
     bool initialized = false;
@@ -201,6 +203,7 @@ void release_resources(Mc2ContextV0& context) {
     context.bending_static_ready = false;
     context.center_static_ready = false;
     context.center_dynamic_ready = false;
+    context.center_frame_ready = false;
     context.center_result_ready = false;
     context.dynamic_ready = false;
     context.initialized = false;
@@ -1244,6 +1247,11 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_i64(result, "bending_static_revision", context.bending_static_revision) ||
         !dict_i64(result, "center_static_revision", context.center_static_revision) ||
         !dict_i64(result, "center_dynamic_revision", context.center_dynamic_revision) ||
+        !dict_i64(
+            result,
+            "step_interpolation_revision",
+            context.step_interpolation_revision
+        ) ||
         !dict_i64(result, "edge_count", static_cast<std::int64_t>(context.proxy_edges.size() / 2)) ||
         !dict_i64(result, "triangle_count", static_cast<std::int64_t>(context.proxy_triangles.size() / 3)) ||
         !dict_i64(result, "baseline_count", static_cast<std::int64_t>(context.baseline_ranges.size() / 2)) ||
@@ -1278,6 +1286,7 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
         !dict_bool(result, "bending_static_ready", context.bending_static_ready) ||
         !dict_bool(result, "center_static_ready", context.center_static_ready) ||
         !dict_bool(result, "center_dynamic_ready", context.center_dynamic_ready) ||
+        !dict_bool(result, "center_frame_ready", context.center_frame_ready) ||
         !dict_bool(result, "center_result_ready", context.center_result_ready) ||
         !dict_bool(
             result,
@@ -1676,6 +1685,7 @@ PyObject* mc2_context_v0_update_center_static(PyObject*, PyObject* args) {
     context->center_initial_local_gravity_direction.swap(next_gravity);
     context->center_static_ready = true;
     context->center_dynamic_ready = false;
+    context->center_frame_ready = false;
     context->center_result_ready = false;
     ++context->center_static_revision;
     Py_RETURN_NONE;
@@ -1793,8 +1803,42 @@ PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args) {
     context->frame_interpolation = static_cast<float>(frame_interpolation);
     context->velocity_weight = static_cast<float>(velocity_weight);
     context->center_dynamic_ready = true;
+    context->center_frame_ready = true;
     context->center_result_ready = false;
     ++context->center_dynamic_revision;
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_update_step_interpolation(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(
+            PyExc_TypeError,
+            "mc2_context_v0_update_step_interpolation expects 2 arguments"
+        );
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    if (!context->center_frame_ready) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "Step interpolation requires a complete Center frame update"
+        );
+        return nullptr;
+    }
+    const double frame_interpolation = as_double(
+        PyTuple_GET_ITEM(args, 1), "frame_interpolation"
+    );
+    if (PyErr_Occurred()) return nullptr;
+    if (!std::isfinite(frame_interpolation) ||
+        frame_interpolation < 0.0 || frame_interpolation > 1.0) {
+        PyErr_SetString(PyExc_ValueError, "frame_interpolation must be in 0..1");
+        return nullptr;
+    }
+    context->frame_interpolation = static_cast<float>(frame_interpolation);
+    context->center_dynamic_ready = true;
+    context->center_result_ready = false;
+    ++context->step_interpolation_revision;
     Py_RETURN_NONE;
 }
 
@@ -2096,6 +2140,9 @@ PyObject* mc2_context_v0_update_dynamic(PyObject*, PyObject* args) {
     context->scale_ratio = static_cast<float>(scale_ratio);
     context->negative_scale_sign = static_cast<float>(negative_scale_sign);
     context->frame_interpolation = static_cast<float>(frame_interpolation);
+    context->center_dynamic_ready = false;
+    context->center_frame_ready = false;
+    context->center_result_ready = false;
     context->dynamic_ready = true;
     ++context->dynamic_revision;
     Py_RETURN_NONE;
@@ -2124,6 +2171,7 @@ PyObject* mc2_context_v0_reset(PyObject*, PyObject* args) {
     context->step_basic_positions = context->dynamic_positions;
     context->step_basic_rotations = context->dynamic_rotations;
     context->center_dynamic_ready = false;
+    context->center_frame_ready = false;
     context->center_result_ready = false;
     context->initialized = true;
     ++context->reset_count;

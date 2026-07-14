@@ -38,6 +38,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
     "mc2_context_v0_update_center_dynamic",
+    "mc2_context_v0_update_step_interpolation",
     "mc2_context_v0_update_team_options",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",
@@ -110,6 +111,7 @@ class MC2NativeContextV0:
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
         self._step_basic_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._step_basic_rotations = np.empty((vertex_count, 4), dtype=np.float32)
+        self._center_frame_dt: float | None = None
         self._center_step_dt: float | None = None
         self._center_now_position = np.empty(3, dtype=np.float32)
         self._center_now_rotation = np.empty(4, dtype=np.float32)
@@ -247,6 +249,8 @@ class MC2NativeContextV0:
             frame_input.frame_interpolation,
         )
         self.last_frame = (frame_input.frame, frame_input.generation)
+        self._center_frame_dt = None
+        self._center_step_dt = None
 
     def update_center_dynamic(self, step: MC2CenterStepInputSpec) -> None:
         if not isinstance(step, MC2CenterStepInputSpec):
@@ -269,7 +273,21 @@ class MC2NativeContextV0:
             step.frame_interpolation,
             step.velocity_weight,
         )
-        self._center_step_dt = float(step.simulation_delta_time)
+        self._center_frame_dt = float(step.simulation_delta_time)
+        self._center_step_dt = self._center_frame_dt
+
+    def update_step_interpolation(self, frame_interpolation: float) -> None:
+        self._ensure_live()
+        frame_interpolation = float(frame_interpolation)
+        if not math.isfinite(frame_interpolation) or not 0.0 <= frame_interpolation <= 1.0:
+            raise ValueError("frame_interpolation must be finite and in 0..1")
+        if self._center_frame_dt is None:
+            raise RuntimeError("step interpolation requires a complete Center frame update")
+        self._module.mc2_context_v0_update_step_interpolation(
+            self._handle,
+            frame_interpolation,
+        )
+        self._center_step_dt = self._center_frame_dt
 
     def apply_center_frame_shift(
         self,
@@ -308,6 +326,7 @@ class MC2NativeContextV0:
     def reset(self) -> None:
         self._ensure_live()
         self._module.mc2_context_v0_reset(self._handle)
+        self._center_frame_dt = None
         self._center_step_dt = None
 
     def step_no_collision(self, dt: float) -> None:
@@ -413,6 +432,7 @@ class MC2NativeContextV0:
         self._out_rotations = np.empty((0, 4), dtype=np.float32)
         self._step_basic_positions = np.empty((0, 3), dtype=np.float32)
         self._step_basic_rotations = np.empty((0, 4), dtype=np.float32)
+        self._center_frame_dt = None
         self._center_step_dt = None
         self._center_now_position = np.empty(0, dtype=np.float32)
         self._center_now_rotation = np.empty(0, dtype=np.float32)

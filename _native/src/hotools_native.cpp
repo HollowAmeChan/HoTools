@@ -772,6 +772,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
     m.def("mc2_context_v0_update_center_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_dynamic, a); });
+    m.def("mc2_context_v0_update_step_interpolation",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_step_interpolation, a); });
     m.def("mc2_context_v0_update_team_options",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_team_options, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
