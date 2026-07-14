@@ -165,4 +165,12 @@ if ($BoneConnectionFixtureCount -ne 6) {
     throw "Unity oracle produced $BoneConnectionFixtureCount bone-connection fixtures instead of 6. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $BoneConnectionFixtureCount bone connection)"
+$BoneRotationLineFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "bone_rotation_line_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($BoneRotationLineFixtureCount -ne 3) {
+    throw "Unity oracle produced $BoneRotationLineFixtureCount bone-rotation-line fixtures instead of 3. See $LogPath"
+}
+
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $BoneConnectionFixtureCount bone connection, $BoneRotationLineFixtureCount bone rotation line)"

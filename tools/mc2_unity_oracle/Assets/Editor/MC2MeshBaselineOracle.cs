@@ -102,6 +102,27 @@ namespace HoTools.MC2Oracle.Editor
             public int3[] Triangles;
         }
 
+        private sealed class BoneRotationLineCase
+        {
+            public string Id;
+            public float3[] Positions;
+            public float3[] BasePositions;
+            public float RotationalInterpolation;
+            public float RootRotation;
+            public float AnimationPoseRatio;
+            public float BlendWeight;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BoneRotationLineDump
+        {
+            public quaternion[] ProxyRotations;
+            public float3[] WorldPositions;
+            public quaternion[] WorldRotations;
+            public float3[] LocalPositions;
+            public quaternion[] LocalRotations;
+        }
+
         private sealed class DistanceCase
         {
             public string Id;
@@ -481,6 +502,7 @@ namespace HoTools.MC2Oracle.Editor
             int centerFrameShiftWritten = WriteCenterFrameShiftFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
             int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
+            int boneRotationLineWritten = WriteBoneRotationLineFixtures(outputDirectory);
 
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
@@ -494,7 +516,8 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerStepWritten} center-step fixtures, "
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
                 + $"{particleStepWritten} particle-step fixtures, "
-                + $"{boneConnectionWritten} bone-connection fixtures"
+                + $"{boneConnectionWritten} bone-connection fixtures, "
+                + $"{boneRotationLineWritten} bone-rotation-line fixtures"
             );
         }
 
@@ -702,6 +725,284 @@ namespace HoTools.MC2Oracle.Editor
             text.AppendLine("  \"expected\": {");
             Property(text, 4, "lines", ArrayJson(dump.Lines, Int2Json));
             Property(text, 4, "triangles", ArrayJson(dump.Triangles, Int3Json), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static int WriteBoneRotationLineFixtures(string outputDirectory)
+        {
+            int written = 0;
+            foreach (BoneRotationLineCase oracleCase in BoneRotationLineCases())
+            {
+                BoneRotationLineDump dump = RunBoneRotationLineCase(oracleCase);
+                string path = Path.Combine(outputDirectory, oracleCase.Id + ".json");
+                File.WriteAllText(
+                    path,
+                    BuildBoneRotationLineJson(oracleCase, dump),
+                    new UTF8Encoding(false)
+                );
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                written++;
+            }
+            return written;
+        }
+
+        private static IEnumerable<BoneRotationLineCase> BoneRotationLineCases()
+        {
+            float3[] bent =
+            {
+                new float3(0, 0, 0),
+                new float3(1, 1, 0),
+                new float3(2, 1, 0),
+            };
+            float3[] vertical =
+            {
+                new float3(0, 0, 0),
+                new float3(0, 1, 0),
+                new float3(0, 2, 0),
+            };
+            yield return new BoneRotationLineCase
+            {
+                Id = "bone_rotation_line_full_001",
+                Positions = bent,
+                BasePositions = vertical,
+                RotationalInterpolation = 1.0f,
+                RootRotation = 1.0f,
+                AnimationPoseRatio = 0.0f,
+                BlendWeight = 1.0f,
+                Note = "Full root/child line rotation followed by world and parent-local transform output.",
+            };
+            yield return new BoneRotationLineCase
+            {
+                Id = "bone_rotation_line_interpolation_001",
+                Positions = bent,
+                BasePositions = vertical,
+                RotationalInterpolation = 0.25f,
+                RootRotation = 0.75f,
+                AnimationPoseRatio = 0.0f,
+                BlendWeight = 0.6f,
+                Note = "Root and Move vertices use different direction interpolation before blend weight.",
+            };
+            yield return new BoneRotationLineCase
+            {
+                Id = "bone_rotation_line_animation_pose_001",
+                Positions = bent,
+                BasePositions = new[]
+                {
+                    new float3(0, 0, 0),
+                    new float3(1, 0, 0),
+                    new float3(2, 0, 0),
+                },
+                RotationalInterpolation = 1.0f,
+                RootRotation = 1.0f,
+                AnimationPoseRatio = 1.0f,
+                BlendWeight = 1.0f,
+                Note = "AnimationPoseRatio one consumes current base child vectors rather than initial vertical rest vectors.",
+            };
+        }
+
+        private static BoneRotationLineDump RunBoneRotationLineCase(
+            BoneRotationLineCase oracleCase
+        )
+        {
+            const int count = 3;
+            MethodInfo lineMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateLine",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo worldMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateWorldTransform",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo localMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateLocalTransform",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (lineMethod == null || worldMethod == null || localMethod == null)
+                throw new MissingMethodException(typeof(VirtualMeshManager).FullName, "Bone rotation post methods");
+
+            var team = new TeamManager.TeamData
+            {
+                proxyCommonChunk = new DataChunk(0, count),
+                particleChunk = new DataChunk(0, count),
+                proxyVertexChildDataChunk = new DataChunk(0, count - 1),
+                baseLineChunk = new DataChunk(0, 1),
+                baseLineDataChunk = new DataChunk(0, count),
+                proxyBoneChunk = new DataChunk(0, count),
+                proxyTransformChunk = new DataChunk(0, count),
+                proxyMeshType = VirtualMesh.MeshType.ProxyBoneMesh,
+                animationPoseRatio = oracleCase.AnimationPoseRatio,
+                blendWeight = oracleCase.BlendWeight,
+                negativeScaleDirection = new float3(1.0f),
+                negativeScaleQuaternionValue = new float4(1.0f),
+            };
+            team.flag.SetBits(TeamManager.Flag_ProxyMeshLine, true);
+            var parameters = new ClothParameters
+            {
+                rotationalInterpolation = oracleCase.RotationalInterpolation,
+                rootRotation = oracleCase.RootRotation,
+            };
+            var attributes = new NativeArray<VertexAttribute>(
+                new[] { new VertexAttribute(1), new VertexAttribute(2), new VertexAttribute(2) },
+                Allocator.TempJob
+            );
+            var positions = new NativeArray<float3>(oracleCase.Positions, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            var vertexLocalPositions = new NativeArray<float3>(
+                new[] { new float3(0), new float3(0, 1, 0), new float3(0, 1, 0) },
+                Allocator.TempJob
+            );
+            var vertexLocalRotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            var childRanges = new NativeArray<uint>(
+                new[] { DataUtility.Pack12_20(1, 0), DataUtility.Pack12_20(1, 1), DataUtility.Pack12_20(0, 2) },
+                Allocator.TempJob
+            );
+            var childData = new NativeArray<ushort>(new ushort[] { 1, 2 }, Allocator.TempJob);
+            var baselineFlags = new NativeArray<ExBitFlag8>(
+                new[] { new ExBitFlag8(VirtualMesh.BaseLineFlag_IncludeLine) },
+                Allocator.TempJob
+            );
+            var baselineStarts = new NativeArray<ushort>(new ushort[] { 0 }, Allocator.TempJob);
+            var baselineCounts = new NativeArray<ushort>(new ushort[] { count }, Allocator.TempJob);
+            var baselineData = new NativeArray<ushort>(new ushort[] { 0, 1, 2 }, Allocator.TempJob);
+            var basePositions = new NativeArray<float3>(oracleCase.BasePositions, Allocator.TempJob);
+            var baseRotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            var vertexToTransform = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            var parentIndices = new NativeArray<int>(new[] { -1, 0, 1 }, Allocator.TempJob);
+            var transformPositions = new NativeArray<float3>(count, Allocator.TempJob);
+            var transformRotations = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var transformScales = new NativeArray<float3>(
+                Enumerable.Repeat(new float3(1.0f), count).ToArray(),
+                Allocator.TempJob
+            );
+            var transformLocalPositions = new NativeArray<float3>(count, Allocator.TempJob);
+            var transformLocalRotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            try
+            {
+                object[] lineArguments =
+                {
+                    new DataChunk(0, 1), team, parameters, attributes, positions, rotations,
+                    vertexLocalPositions, vertexLocalRotations, childRanges, childData,
+                    baselineFlags, baselineStarts, baselineCounts, baselineData,
+                    basePositions, baseRotations,
+                };
+                InvokeStatic(lineMethod, lineArguments);
+                team = (TeamManager.TeamData)lineArguments[1];
+                rotations = (NativeArray<quaternion>)lineArguments[5];
+
+                object[] worldArguments =
+                {
+                    new DataChunk(0, count), team, positions, rotations, vertexToTransform,
+                    transformPositions, transformRotations,
+                };
+                InvokeStatic(worldMethod, worldArguments);
+                team = (TeamManager.TeamData)worldArguments[1];
+                transformPositions = (NativeArray<float3>)worldArguments[5];
+                transformRotations = (NativeArray<quaternion>)worldArguments[6];
+
+                object[] localArguments =
+                {
+                    team, attributes, parentIndices, transformPositions, transformRotations,
+                    transformScales, transformLocalPositions, transformLocalRotations,
+                };
+                InvokeStatic(localMethod, localArguments);
+                transformLocalPositions = (NativeArray<float3>)localArguments[6];
+                transformLocalRotations = (NativeArray<quaternion>)localArguments[7];
+                return new BoneRotationLineDump
+                {
+                    ProxyRotations = rotations.ToArray(),
+                    WorldPositions = transformPositions.ToArray(),
+                    WorldRotations = transformRotations.ToArray(),
+                    LocalPositions = transformLocalPositions.ToArray(),
+                    LocalRotations = transformLocalRotations.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose(); positions.Dispose(); rotations.Dispose();
+                vertexLocalPositions.Dispose(); vertexLocalRotations.Dispose();
+                childRanges.Dispose(); childData.Dispose(); baselineFlags.Dispose();
+                baselineStarts.Dispose(); baselineCounts.Dispose(); baselineData.Dispose();
+                basePositions.Dispose(); baseRotations.Dispose(); vertexToTransform.Dispose();
+                parentIndices.Dispose(); transformPositions.Dispose(); transformRotations.Dispose();
+                transformScales.Dispose(); transformLocalPositions.Dispose(); transformLocalRotations.Dispose();
+            }
+        }
+
+        private static string BuildBoneRotationLineJson(
+            BoneRotationLineCase oracleCase,
+            BoneRotationLineDump dump
+        )
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote(oracleCase.Id));
+            Property(text, 2, "source", SourceJson(
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateLine",
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateWorldTransform",
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateLocalTransform"
+            ));
+            Property(text, 2, "note", Quote(oracleCase.Note));
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "attributes", NumberArray(new[] { 1, 2, 2 }));
+            Property(text, 4, "positions", ArrayJson(oracleCase.Positions, Vector3Json));
+            Property(text, 4, "rotations", ArrayJson(
+                Enumerable.Repeat(quaternion.identity, 3), QuaternionJson
+            ));
+            Property(text, 4, "base_positions", ArrayJson(oracleCase.BasePositions, Vector3Json));
+            Property(text, 4, "base_rotations", ArrayJson(
+                Enumerable.Repeat(quaternion.identity, 3), QuaternionJson
+            ));
+            Property(text, 4, "vertex_local_positions", ArrayJson(
+                new[] { new float3(0), new float3(0, 1, 0), new float3(0, 1, 0) },
+                Vector3Json
+            ));
+            Property(text, 4, "vertex_local_rotations", ArrayJson(
+                Enumerable.Repeat(quaternion.identity, 3), QuaternionJson
+            ));
+            Property(text, 4, "vertex_to_transform_rotations", ArrayJson(
+                Enumerable.Repeat(quaternion.identity, 3), QuaternionJson
+            ));
+            Property(text, 4, "parent_indices", NumberArray(new[] { -1, 0, 1 }));
+            Property(text, 4, "transform_scales", ArrayJson(
+                Enumerable.Repeat(new float3(1.0f), 3), Vector3Json
+            ));
+            Property(text, 4, "transform_local_positions", ArrayJson(
+                Enumerable.Repeat(new float3(0.0f), 3), Vector3Json
+            ));
+            Property(text, 4, "transform_local_rotations", ArrayJson(
+                Enumerable.Repeat(quaternion.identity, 3), QuaternionJson
+            ));
+            Property(text, 4, "child_ranges", ArrayJson(new[] { new int2(0, 1), new int2(1, 1), new int2(2, 0) }, Int2Json));
+            Property(text, 4, "child_data", NumberArray(new[] { 1, 2 }));
+            Property(text, 4, "baseline_data", NumberArray(new[] { 0, 1, 2 }));
+            Property(text, 4, "rotational_interpolation", FloatJson(oracleCase.RotationalInterpolation));
+            Property(text, 4, "root_rotation", FloatJson(oracleCase.RootRotation));
+            Property(text, 4, "animation_pose_ratio", FloatJson(oracleCase.AnimationPoseRatio));
+            Property(text, 4, "blend_weight", FloatJson(oracleCase.BlendWeight), false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "proxy_rotations", ArrayJson(dump.ProxyRotations, QuaternionJson));
+            Property(text, 4, "world_positions", ArrayJson(dump.WorldPositions, Vector3Json));
+            Property(text, 4, "world_rotations", ArrayJson(dump.WorldRotations, QuaternionJson));
+            Property(text, 4, "local_positions", ArrayJson(dump.LocalPositions, Vector3Json));
+            Property(text, 4, "local_rotations", ArrayJson(dump.LocalRotations, QuaternionJson), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

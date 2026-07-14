@@ -87,6 +87,8 @@ _EXPORTS = {
     "MC2NativeContextV0": ".native",
     "MC2BoneConnectionSpec": ".bone_connection",
     "build_mc2_bone_connection": ".bone_connection",
+    "MC2BoneLineRotationResult": ".bone_rotation",
+    "evaluate_mc2_bone_line_rotation": ".bone_rotation",
     "MC2SourceTopologySpec": ".topology",
     "MC2TopologySpec": ".topology",
     "build_mc2_topology_spec": ".topology",
