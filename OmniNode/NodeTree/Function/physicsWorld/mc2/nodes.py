@@ -233,7 +233,7 @@ def physicsMC2MeshClothTask(
     is_output_node=False,
     _INPUT_NAME=["骨链", "粒子配置", "连接模式", "旋转插值", "根旋转", "启用"],
     input_init={
-        "connection_mode": {"min_value": 0, "max_value": 2},
+        "connection_mode": {"min_value": 0, "max_value": 3},
         "rotational_interpolation": {"min_value": 0.0, "max_value": 1.0},
         "root_rotation": {"min_value": 0.0, "max_value": 1.0},
     },

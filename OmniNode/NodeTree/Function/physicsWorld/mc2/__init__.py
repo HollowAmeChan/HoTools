@@ -85,6 +85,8 @@ _EXPORTS = {
     "evaluate_mc2_center_frame_shift": ".center_state",
     "pack_mc2_center_static": ".center_state",
     "MC2NativeContextV0": ".native",
+    "MC2BoneConnectionSpec": ".bone_connection",
+    "build_mc2_bone_connection": ".bone_connection",
     "MC2SourceTopologySpec": ".topology",
     "MC2TopologySpec": ".topology",
     "build_mc2_topology_spec": ".topology",

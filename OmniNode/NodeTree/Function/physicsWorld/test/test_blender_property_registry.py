@@ -499,14 +499,24 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     loop_options = mc2_parameters.make_mc2_setup_options(
         mc2_names.MC2_SETUP_BONE_CLOTH, connection_mode=2
     )
+    nonloop_options = mc2_parameters.make_mc2_setup_options(
+        mc2_names.MC2_SETUP_BONE_CLOTH, connection_mode=3
+    )
     line_task = mc2_specs.make_mc2_task_spec(
         mc2_names.MC2_SETUP_BONE_CLOTH, cloth_sources, setup_options=line_options
     )
     loop_task = mc2_specs.make_mc2_task_spec(
         mc2_names.MC2_SETUP_BONE_CLOTH, cloth_sources, setup_options=loop_options
     )
+    nonloop_task = mc2_specs.make_mc2_task_spec(
+        mc2_names.MC2_SETUP_BONE_CLOTH,
+        cloth_sources,
+        setup_options=nonloop_options,
+    )
     assert line_task.task_id == loop_task.task_id
     assert line_task.topology_signature != loop_task.topology_signature
+    assert nonloop_options.connection_mode == 3
+    assert nonloop_task.topology_signature != loop_task.topology_signature
     spring_options = mc2_parameters.make_mc2_setup_options(
         mc2_names.MC2_SETUP_BONE_SPRING, connection_mode=2
     )
@@ -576,6 +586,9 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
         bone_topology = mc2_topology.build_mc2_topology_spec(bone_task)
         assert bone_topology.particle_count == 2
         assert bone_topology.sources[0].resolved is True
+        assert bone_topology.bone_connection is not None
+        assert bone_topology.bone_connection.lines == ((0, 1),)
+        assert bone_topology.bone_connection.triangles == ()
         bone_payload = bone_topology.sources[0].debug_dict(include_payload=True)["payload"]
         assert [record["name"] for record in bone_payload["bones"]] == ["Root", "Child"]
         assert [record["parent_index"] for record in bone_payload["bones"]] == [-1, 0]

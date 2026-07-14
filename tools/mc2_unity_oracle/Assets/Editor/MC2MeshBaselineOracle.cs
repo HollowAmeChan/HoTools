@@ -75,6 +75,33 @@ namespace HoTools.MC2Oracle.Editor
             public float4[] VertexBindPoseRotations;
         }
 
+        private sealed class BoneVertexCase
+        {
+            public string Name;
+            public string Parent;
+            public float3 Position;
+        }
+
+        private sealed class BoneConnectionCase
+        {
+            public string Id;
+            public RenderSetupData.BoneConnectionMode Mode;
+            public BoneVertexCase[] Vertices;
+            public string[] Roots;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BoneConnectionDump
+        {
+            public string[] Names;
+            public float3[] Positions;
+            public int[] Parents;
+            public int[][] Children;
+            public int[] Roots;
+            public int2[] Lines;
+            public int3[] Triangles;
+        }
+
         private sealed class DistanceCase
         {
             public string Id;
@@ -453,6 +480,7 @@ namespace HoTools.MC2Oracle.Editor
             int centerStepWritten = WriteCenterStepFixtures(outputDirectory);
             int centerFrameShiftWritten = WriteCenterFrameShiftFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
+            int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
 
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
@@ -465,8 +493,218 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerWritten} center fixtures, "
                 + $"{centerStepWritten} center-step fixtures, "
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
-                + $"{particleStepWritten} particle-step fixtures"
+                + $"{particleStepWritten} particle-step fixtures, "
+                + $"{boneConnectionWritten} bone-connection fixtures"
             );
+        }
+
+        private static int WriteBoneConnectionFixtures(string outputDirectory)
+        {
+            int written = 0;
+            foreach (BoneConnectionCase oracleCase in BoneConnectionCases())
+            {
+                BoneConnectionDump dump = RunBoneConnectionCase(oracleCase);
+                string path = Path.Combine(outputDirectory, oracleCase.Id + ".json");
+                File.WriteAllText(
+                    path,
+                    BuildBoneConnectionJson(oracleCase, dump),
+                    new UTF8Encoding(false)
+                );
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                written++;
+            }
+            return written;
+        }
+
+        private static IEnumerable<BoneConnectionCase> BoneConnectionCases()
+        {
+            BoneVertexCase V(string name, string parent, float x, float y, float z = 0.0f)
+            {
+                return new BoneVertexCase
+                {
+                    Name = name,
+                    Parent = parent,
+                    Position = new float3(x, y, z),
+                };
+            }
+
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_line_branch_001",
+                Mode = RenderSetupData.BoneConnectionMode.Line,
+                Vertices = new[]
+                {
+                    V("r0", null, 0, 0), V("r0a", "r0", 0, 1),
+                    V("r0b", "r0", 1, 1), V("r1", null, 3, 0),
+                    V("r1a", "r1", 3, 1),
+                },
+                Roots = new[] { "r0", "r1" },
+                Note = "Line mode emits only canonical transform parent-child edges.",
+            };
+
+            BoneVertexCase[] strip =
+            {
+                V("r0", null, 0, 0), V("r0a", "r0", 0, 1),
+                V("r1", null, 1, 0), V("r1a", "r1", 1, 1),
+                V("r2", null, 2, 0), V("r2a", "r2", 2, 1),
+            };
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_sequential_loop_001",
+                Mode = RenderSetupData.BoneConnectionMode.SequentialLoopMesh,
+                Vertices = strip,
+                Roots = new[] { "r0", "r1", "r2" },
+                Note = "Sequential loop preserves authoring root order and connects first to last.",
+            };
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_sequential_nonloop_001",
+                Mode = RenderSetupData.BoneConnectionMode.SequentialNonLoopMesh,
+                Vertices = strip,
+                Roots = new[] { "r0", "r1", "r2" },
+                Note = "Sequential non-loop preserves authoring order but rejects first-last links.",
+            };
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_automatic_reverse_001",
+                Mode = RenderSetupData.BoneConnectionMode.AutomaticMesh,
+                Vertices = new[]
+                {
+                    V("r0", null, 0, 0), V("r0a", "r0", 0, 1),
+                    V("r1", null, 1, 0), V("r1a", "r1", 1, 1),
+                    V("r2", null, 100, 0), V("r2a", "r2", 100, 1),
+                    V("r3", null, 101, 0), V("r3a", "r3", 101, 1),
+                },
+                Roots = new[] { "r0", "r1", "r2", "r3" },
+                Note = "An overlong nearest step reverses the accumulated automatic root chain.",
+            };
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_branch_many_001",
+                Mode = RenderSetupData.BoneConnectionMode.SequentialNonLoopMesh,
+                Vertices = new[]
+                {
+                    V("r0", null, 0, 0), V("r0a", "r0", 0, 1, -0.25f),
+                    V("r0b", "r0", 0, 1, 0.25f), V("r1", null, 2, 0),
+                    V("r1a", "r1", 2, 1, -0.25f), V("r1b", "r1", 2, 1, 0.25f),
+                },
+                Roots = new[] { "r0", "r1" },
+                Note = "Same-level branches connect all legal adjacent-root candidates, not zip pairs.",
+            };
+            yield return new BoneConnectionCase
+            {
+                Id = "bone_connection_zero_residual_001",
+                Mode = RenderSetupData.BoneConnectionMode.SequentialNonLoopMesh,
+                Vertices = new[]
+                {
+                    V("r0", null, 0, 0), V("r0a", "r0", 0, 0),
+                    V("r1", null, 1, 0), V("r1a", "r1", 1, 1),
+                },
+                Roots = new[] { "r0", "r1" },
+                Note = "Zero-length triangle links are rejected while unused edges remain lines.",
+            };
+        }
+
+        private static BoneConnectionDump RunBoneConnectionCase(BoneConnectionCase oracleCase)
+        {
+            var owner = new GameObject(oracleCase.Id + "_owner");
+            var objects = new Dictionary<string, GameObject>();
+            try
+            {
+                foreach (BoneVertexCase vertex in oracleCase.Vertices)
+                {
+                    var item = new GameObject(vertex.Name);
+                    item.transform.SetParent(owner.transform, false);
+                    objects.Add(vertex.Name, item);
+                }
+                foreach (BoneVertexCase vertex in oracleCase.Vertices)
+                {
+                    if (!string.IsNullOrEmpty(vertex.Parent))
+                        objects[vertex.Name].transform.SetParent(objects[vertex.Parent].transform, true);
+                }
+                foreach (BoneVertexCase vertex in oracleCase.Vertices)
+                    objects[vertex.Name].transform.position = vertex.Position;
+
+                var roots = oracleCase.Roots.Select(name => objects[name].transform).ToList();
+                using (var setup = new RenderSetupData(
+                    null,
+                    RenderSetupData.SetupType.BoneCloth,
+                    owner.transform,
+                    roots,
+                    null,
+                    oracleCase.Mode,
+                    oracleCase.Id
+                ))
+                using (var mesh = new VirtualMesh(oracleCase.Id))
+                {
+                    if (setup.IsFaild())
+                        throw new InvalidOperationException($"Bone setup failed: {setup.result.Result}");
+                    mesh.ImportFrom(setup, 0);
+                    if (mesh.result.IsError())
+                        throw new InvalidOperationException($"Bone import failed: {mesh.result.Result}");
+
+                    int count = setup.TransformCount - 1;
+                    Transform[] transforms = setup.transformList.Take(count).ToArray();
+                    var indexByTransform = transforms
+                        .Select((transform, index) => new { transform, index })
+                        .ToDictionary(item => item.transform, item => item.index);
+                    return new BoneConnectionDump
+                    {
+                        Names = transforms.Select(transform => transform.name).ToArray(),
+                        Positions = mesh.localPositions.ToArray(),
+                        Parents = transforms.Select(transform =>
+                            transform.parent != null && indexByTransform.TryGetValue(transform.parent, out int index)
+                                ? index : -1
+                        ).ToArray(),
+                        Children = transforms.Select(transform =>
+                            Enumerable.Range(0, transform.childCount)
+                                .Select(childIndex => transform.GetChild(childIndex))
+                                .Where(indexByTransform.ContainsKey)
+                                .Select(child => indexByTransform[child])
+                                .ToArray()
+                        ).ToArray(),
+                        Roots = roots.Select(root => indexByTransform[root]).ToArray(),
+                        Lines = mesh.LineCount > 0
+                            ? mesh.lines.ToArray().OrderBy(value => value.x).ThenBy(value => value.y).ToArray()
+                            : Array.Empty<int2>(),
+                        Triangles = mesh.TriangleCount > 0
+                            ? mesh.triangles.ToArray().OrderBy(value => value.x).ThenBy(value => value.y).ThenBy(value => value.z).ToArray()
+                            : Array.Empty<int3>(),
+                    };
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(owner);
+            }
+        }
+
+        private static string BuildBoneConnectionJson(
+            BoneConnectionCase oracleCase,
+            BoneConnectionDump dump
+        )
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote(oracleCase.Id));
+            Property(text, 2, "source", SourceJson(
+                "Runtime/VirtualMesh/Function/VirtualMeshInputOutput.cs::ImportBoneType"
+            ));
+            Property(text, 2, "note", Quote(oracleCase.Note));
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "connection_mode", ((int)oracleCase.Mode).ToString(CultureInfo.InvariantCulture));
+            Property(text, 4, "names", ArrayJson(dump.Names, Quote));
+            Property(text, 4, "positions", ArrayJson(dump.Positions, Vector3Json));
+            Property(text, 4, "parent_indices", NumberArray(dump.Parents));
+            Property(text, 4, "child_indices", ArrayJson(dump.Children, NumberArray));
+            Property(text, 4, "root_indices", NumberArray(dump.Roots), false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "lines", ArrayJson(dump.Lines, Int2Json));
+            Property(text, 4, "triangles", ArrayJson(dump.Triangles, Int3Json), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
         }
 
         private static int WriteParticleStepFixtures(string outputDirectory)

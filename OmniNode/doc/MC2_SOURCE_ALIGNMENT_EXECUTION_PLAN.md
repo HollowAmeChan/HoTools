@@ -137,7 +137,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 
 下一交付是 **剩余 Center frame shift 与 Mesh vertical-slice 收口**：
 
-1. Blender component/BasePose frame snapshot 到 Center dynamic、world-inertia/speed-limit frame shift、anchor cancellation及其组合、movement smoothing、正/零time scale、Fixed-derived Center、configured Keep/Reset teleport、Keep/Reset与negative-scale顺序、单轴negative-scale teleport、Move particle inertia、animated step-basic scratch、正/负缩放 Mesh baseline step-basic重建、constraint/post两子步完整闭环与production scheduler/native多子步纵切已在受限精确域闭环；anchor域要求稳定同一 identity，configured teleport与active sign transition均已覆盖正time scale多子步，Keep另覆盖非默认world inertia。本地负缩放支持正缩放父级下的shear-free TRS，父级继承负缩放与shear为显式拒绝边界，整体仍要求 stabilization 完成。下一步优先建立Bone connection与connection-aware rotation Tier A contract。
+1. Blender component/BasePose frame snapshot 到 Center dynamic、world-inertia/speed-limit frame shift、anchor cancellation及其组合、movement smoothing、正/零time scale、Fixed-derived Center、configured Keep/Reset teleport、Keep/Reset与negative-scale顺序、单轴negative-scale teleport、Move particle inertia、animated step-basic scratch、正/负缩放 Mesh baseline step-basic重建、constraint/post两子步完整闭环与production scheduler/native多子步纵切已在受限精确域闭环；anchor域要求稳定同一 identity，configured teleport与active sign transition均已覆盖正time scale多子步，Keep另覆盖非默认world inertia。本地负缩放支持正缩放父级下的shear-free TRS，父级继承负缩放与shear为显式拒绝边界，整体仍要求 stabilization 完成。Bone connection import membership已由6个 Tier A fixture、mode 0..3参数面和不可变host builder闭环；下一步优先冻结120度边界、selection/proxy后的Bone static与connection-aware rotation Tier A contract。
 2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；公共 Mesh result transaction、发布失败回滚、统一 GN writeback交接、节点自动 N3 snapshot与写回失败恢复验收均已完成。
 3. candidate 与公共 envelope 已分别验证 frame/frame generation/world generation/revision；same-frame不得重复 read/step/revision，只重发同一 revision。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；除 initial gravity direction等明确 N1 producer外，参数热更新继续保留粒子 history。
@@ -194,7 +194,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 | D-05 | Unity packed 12/20、ushort/ulong 只保留在 raw oracle；ABI 展开为显式 checked int32 arrays。 |
 | D-06 | Tier A host 为 `tools/mc2_unity_oracle`；废弃 HoClothUnity 与旧 solver均为 Tier C。 |
 | D-07 | Normal/Split 只迁移共同数学语义，不复制 Unity manager/job 调度结构。 |
-| D-08 | Bone connection mode 3 的内部语义必须保留；是否公开节点 surface 仍是产品决定。 |
+| D-08 | Bone connection mode 3 的内部语义必须保留，并由 BoneCloth 节点整数模式 0..3 公开表达；BoneSpring继续强制 Line。 |
 
 ## 提交与声明规则
 

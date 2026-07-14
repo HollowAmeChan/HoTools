@@ -522,8 +522,8 @@ class MC2SetupOptionsSpec:
     def __post_init__(self) -> None:
         if self.setup_type not in MC2_SETUP_TYPES:
             raise ValueError(f"未知 MC2 setup_type: {self.setup_type!r}")
-        if self.connection_mode not in (0, 1, 2):
-            raise ValueError("connection_mode 必须是 0、1 或 2")
+        if self.connection_mode not in (0, 1, 2, 3):
+            raise ValueError("connection_mode 必须是 0、1、2 或 3")
         if self.setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING) and self.connection_mode != 0:
             raise ValueError("MeshCloth/BoneSpring connection_mode 必须是 Line(0)")
 
@@ -546,8 +546,11 @@ def make_mc2_setup_options(
     if setup_type not in MC2_SETUP_TYPES:
         raise ValueError(f"未知 MC2 setup_type: {setup_type!r}")
     connection_mode = int(connection_mode)
-    if connection_mode not in (0, 1, 2):
-        raise ValueError("connection_mode 必须是 0(Line)、1(AutomaticMesh) 或 2(SequentialLoopMesh)")
+    if connection_mode not in (0, 1, 2, 3):
+        raise ValueError(
+            "connection_mode 必须是 0(Line)、1(AutomaticMesh)、"
+            "2(SequentialLoopMesh) 或 3(SequentialNonLoopMesh)"
+        )
     if setup_type in (MC2_SETUP_MESH_CLOTH, MC2_SETUP_BONE_SPRING):
         # Unity MeshCloth 不消费该字段；BoneSpring 强制 Line。
         connection_mode = 0
