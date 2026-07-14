@@ -115,6 +115,7 @@ def _slot_debug_snapshot(slot) -> dict:
                 "shift_rotation": center_frame_shift_result.frame_component_shift_rotation_xyzw,
                 "moving_speed": center_frame_shift_result.frame_moving_speed,
                 "smoothing_velocity": center_frame_shift_result.smoothing_velocity,
+                "keep_teleport": center_frame_shift_result.keep_teleport,
             }
             if center_frame_shift_result is not None
             else None
@@ -242,6 +243,7 @@ def _make_slot_center_frame_shift(
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     skip_shift_active = int(skip_count) > 0
+    keep_teleport_active = int(profile.teleport_mode) == 2
     in_verified_domain = (
         (
             world_shift_active
@@ -249,6 +251,7 @@ def _make_slot_center_frame_shift(
             or smoothing_active
             or time_scale_active
             or skip_shift_active
+            or keep_teleport_active
         )
         and 0.0 <= float(time_scale) <= 1.0
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
@@ -276,6 +279,9 @@ def _make_slot_center_frame_shift(
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
         skip_count=int(skip_count),
+        teleport_mode=2 if keep_teleport_active else 0,
+        teleport_distance=profile.teleport_distance,
+        teleport_rotation=profile.teleport_rotation,
         negative_scale_transition=negative_scale_transition,
     )
     return evaluate_mc2_center_frame_shift(shift_input)

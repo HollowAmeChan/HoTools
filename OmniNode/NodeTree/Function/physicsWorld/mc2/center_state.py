@@ -492,6 +492,9 @@ class MC2CenterPersistentState:
         is_running: bool = True,
         now_time_scale: float = 1.0,
         skip_count: int = 0,
+        teleport_mode: int = 0,
+        teleport_distance: float = 0.5,
+        teleport_rotation: float = 90.0,
         negative_scale_transition: MC2NegativeScaleTransitionResult | None = None,
     ) -> MC2CenterFrameShiftInputSpec:
         if not self.initialized:
@@ -559,6 +562,11 @@ class MC2CenterPersistentState:
             frame_world_rotation_xyzw=(
                 center_pose.rotation_xyzw if center_pose is not None else None
             ),
+            component_world_scale=frame_pose.component_world_scale,
+            initial_scale=self.initial_scale,
+            teleport_mode=teleport_mode,
+            teleport_distance=teleport_distance,
+            teleport_rotation=teleport_rotation,
         )
 
     def commit_frame_shift(self, result: MC2CenterFrameShiftResult | None) -> None:
@@ -672,8 +680,9 @@ class MC2CenterFrameShiftInputSpec:
     """Source-aligned world-inertia inputs before Center substep derivation.
 
     V0 covers component or fixed-derived Center frames after any verified
-    negative-scale transition, with optional anchor and movement smoothing,
-    and excludes configured teleport, synchronization, and culling.
+    negative-scale transition, with optional anchor, movement smoothing, and
+    configured Keep teleport. Reset teleport, synchronization, and culling
+    remain outside this evaluator.
     """
 
     simulation_delta_time: float
@@ -704,6 +713,11 @@ class MC2CenterFrameShiftInputSpec:
     is_running: bool = True
     frame_world_position: tuple[float, float, float] | None = None
     frame_world_rotation_xyzw: tuple[float, float, float, float] | None = None
+    component_world_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    initial_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    teleport_mode: int = 0
+    teleport_distance: float = 0.5
+    teleport_rotation: float = 90.0
 
     def __post_init__(self) -> None:
         simulation_dt = float(self.simulation_delta_time)
@@ -731,6 +745,16 @@ class MC2CenterFrameShiftInputSpec:
             raise ValueError("movement_inertia_smoothing must be in 0..1")
         if not isinstance(self.is_running, bool):
             raise TypeError("is_running must be bool")
+        if (
+            isinstance(self.teleport_mode, bool)
+            or int(self.teleport_mode) != self.teleport_mode
+            or int(self.teleport_mode) not in (0, 1, 2)
+        ):
+            raise ValueError("teleport_mode must be 0, 1, or 2")
+        for name in ("teleport_distance", "teleport_rotation"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be finite and non-negative")
         for name in ("movement_speed_limit", "rotation_speed_limit"):
             if not math.isfinite(float(getattr(self, name))):
                 raise ValueError(f"{name} must be finite")
@@ -743,8 +767,13 @@ class MC2CenterFrameShiftInputSpec:
             "anchor_world_position",
             "anchor_component_local_position",
             "smoothing_velocity",
+            "component_world_scale",
+            "initial_scale",
         ):
             _vector(getattr(self, name), 3, name)
+        for name in ("component_world_scale", "initial_scale"):
+            if any(abs(float(value)) <= 1.0e-8 for value in getattr(self, name)):
+                raise ValueError(f"{name} cannot contain zero")
         if self.frame_world_position is not None:
             _vector(self.frame_world_position, 3, "frame_world_position")
         for name in (
@@ -776,6 +805,8 @@ class MC2CenterFrameShiftResult:
     frame_moving_direction: tuple[float, float, float]
     frame_moving_speed: float
     smoothing_velocity: tuple[float, float, float]
+    keep_teleport: bool = False
+    reset_teleport: bool = False
 
 
 @dataclass(frozen=True)
@@ -1204,12 +1235,40 @@ def evaluate_mc2_center_frame_shift(
             )
         )
 
+    component_scale = _f32_vector(
+        frame.component_world_scale, 3, "component_world_scale"
+    )
+    initial_scale = _f32_vector(frame.initial_scale, 3, "initial_scale")
+    component_scale_ratio = _f32(
+        _f32(np.linalg.norm(component_scale))
+        / _f32(np.linalg.norm(initial_scale))
+    )
+    teleport_delta = np.asarray(component - adjusted_old_component, dtype=np.float32)
+    teleport_cosine = np.clip(
+        abs(_f32(np.dot(adjusted_old_component_rotation, component_rotation))),
+        _f32(0.0),
+        _f32(1.0),
+    )
+    teleport_angle = _f32(2.0) * _f32(np.arccos(teleport_cosine))
+    teleport_triggered = bool(
+        int(frame.teleport_mode) != 0
+        and (
+            _f32(np.linalg.norm(teleport_delta))
+            >= _f32(frame.teleport_distance) * component_scale_ratio
+            or _f32(np.degrees(teleport_angle)) >= _f32(frame.teleport_rotation)
+        )
+    )
+    keep_teleport = teleport_triggered and int(frame.teleport_mode) == 2
+    reset_teleport = teleport_triggered and int(frame.teleport_mode) == 1
+    if reset_teleport:
+        raise NotImplementedError("configured Reset teleport is not implemented")
+
     smooth_shift_vector = np.zeros(3, dtype=np.float32)
     smoothing_velocity = _f32_vector(
         frame.smoothing_velocity, 3, "smoothing_velocity"
     )
     smoothing = _f32(frame.movement_inertia_smoothing)
-    if smoothing >= _f32(1.0e-6):
+    if smoothing >= _f32(1.0e-6) and not keep_teleport:
         if frame.is_running:
             frame_delta_velocity = np.asarray(
                 (component - adjusted_old_component) / frame_dt,
@@ -1249,7 +1308,11 @@ def evaluate_mc2_center_frame_shift(
             _inverse_quaternion_f32(adjusted_old_component_rotation),
         )
     )
-    move_shift_ratio = _f32(1.0) - _f32(frame.world_inertia)
+    move_shift_ratio = (
+        _f32(1.0)
+        if keep_teleport
+        else _f32(1.0) - _f32(frame.world_inertia)
+    )
     rotation_shift_ratio = move_shift_ratio
     work_old_component = np.asarray(
         adjusted_old_component + full_shift_vector * move_shift_ratio,
@@ -1399,6 +1462,8 @@ def evaluate_mc2_center_frame_shift(
         frame_moving_direction=tuple(float(value) for value in moving_direction),
         frame_moving_speed=float(moving_speed),
         smoothing_velocity=tuple(float(value) for value in smoothing_velocity),
+        keep_teleport=keep_teleport,
+        reset_teleport=False,
     )
 
 

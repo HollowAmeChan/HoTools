@@ -45,6 +45,7 @@ FIXTURES = tuple(
         "center_frame_shift_skip_count_001.json",
         "center_frame_shift_fixed_center_001.json",
         "center_frame_shift_zero_time_scale_001.json",
+        "center_frame_shift_keep_teleport_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -207,6 +208,13 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             frame_world_rotation_xyzw=tuple(
                 float(value) for value in frame_world_rotation
             ),
+            component_world_scale=values.get(
+                "component_world_scale", (1.0, 1.0, 1.0)
+            ),
+            initial_scale=values.get("initial_scale", (1.0, 1.0, 1.0)),
+            teleport_mode=values.get("teleport_mode", 0),
+            teleport_distance=values.get("teleport_distance", 0.5),
+            teleport_rotation=values.get("teleport_rotation", 90.0),
         )
     )
     scheduler_fields = {
@@ -256,13 +264,45 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             _multiply(anchor_shift_rotation, adjusted_old_rotation)
         )
 
+    component_scale = np.asarray(
+        values.get("component_world_scale", (1.0, 1.0, 1.0)),
+        dtype=np.float32,
+    )
+    initial_scale = np.asarray(
+        values.get("initial_scale", (1.0, 1.0, 1.0)),
+        dtype=np.float32,
+    )
+    component_scale_ratio = _f32(
+        _f32(np.linalg.norm(component_scale))
+        / _f32(np.linalg.norm(initial_scale))
+    )
+    teleport_delta = component - adjusted_old_component
+    teleport_cosine = np.clip(
+        abs(_f32(np.dot(adjusted_old_rotation, component_rotation))),
+        _f32(0.0),
+        _f32(1.0),
+    )
+    teleport_angle = _f32(2.0) * _f32(np.arccos(teleport_cosine))
+    teleport_triggered = bool(
+        int(values.get("teleport_mode", 0)) != 0
+        and (
+            _f32(np.linalg.norm(teleport_delta))
+            >= _f32(values.get("teleport_distance", 0.5)) * component_scale_ratio
+            or _f32(np.degrees(teleport_angle))
+            >= _f32(values.get("teleport_rotation", 90.0))
+        )
+    )
+    keep_teleport = teleport_triggered and int(values.get("teleport_mode", 0)) == 2
+    assert result.keep_teleport is keep_teleport
+    assert result.reset_teleport is False
+
     smooth_shift_vector = np.zeros(3, dtype=np.float32)
     smoothing_velocity = np.asarray(
         values.get("smoothing_velocity", (0.0, 0.0, 0.0)),
         dtype=np.float32,
     )
     smoothing = _f32(values.get("movement_inertia_smoothing", 0.0))
-    if smoothing >= _f32(1.0e-6):
+    if smoothing >= _f32(1.0e-6) and not keep_teleport:
         if values.get("is_running", True):
             frame_delta_velocity = (
                 component - adjusted_old_component
@@ -291,7 +331,11 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         smooth_shift_vector = smooth_position - adjusted_old_component
         adjusted_old_component = smooth_position
 
-    shift_ratio = _f32(1.0) - _f32(values["world_inertia"])
+    shift_ratio = (
+        _f32(1.0)
+        if keep_teleport
+        else _f32(1.0) - _f32(values["world_inertia"])
+    )
     rotation_shift_ratio = shift_ratio
     world_component_delta = component - adjusted_old_component
     work_old_component = adjusted_old_component + world_component_delta * shift_ratio

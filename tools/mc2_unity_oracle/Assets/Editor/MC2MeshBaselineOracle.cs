@@ -286,6 +286,8 @@ namespace HoTools.MC2Oracle.Editor
 
         private sealed class CenterFrameShiftDump
         {
+            public bool KeepTeleport;
+            public bool Reset;
             public int UpdateCount;
             public int SkipCount;
             public float Time;
@@ -790,6 +792,33 @@ namespace HoTools.MC2Oracle.Editor
             );
             Debug.Log($"[MC2 Oracle] wrote {zeroTimeScalePath}");
 
+            CenterFrameShiftDump keepTeleport = RunCenterFrameShiftOracle(
+                1.0f,
+                0.5f,
+                -1.0f,
+                -1.0f,
+                new float3(2.0f, 0.0f, 0.0f),
+                true,
+                0.1f,
+                0.1f,
+                1.0f,
+                0,
+                false,
+                InertiaConstraint.TeleportMode.Keep,
+                5.0f,
+                180.0f
+            );
+            string keepTeleportPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_keep_teleport_001.json"
+            );
+            File.WriteAllText(
+                keepTeleportPath,
+                BuildCenterKeepTeleportJson(keepTeleport),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {keepTeleportPath}");
+
             NegativeScaleTeleportDump negativeScale = RunNegativeScaleTeleportOracle();
             string negativeScalePath = Path.Combine(
                 outputDirectory,
@@ -801,7 +830,7 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {negativeScalePath}");
-            return 10;
+            return 11;
         }
 
         private static NegativeScaleTeleportDump RunNegativeScaleTeleportOracle()
@@ -958,7 +987,10 @@ namespace HoTools.MC2Oracle.Editor
             float frameDeltaTime,
             float nowTimeScale,
             int skipCount,
-            bool useFixedCenter
+            bool useFixedCenter,
+            InertiaConstraint.TeleportMode teleportMode = InertiaConstraint.TeleportMode.None,
+            float teleportDistance = 0.5f,
+            float teleportRotation = 90.0f
         )
         {
             MethodInfo method = typeof(TeamManager).GetMethod(
@@ -1010,7 +1042,9 @@ namespace HoTools.MC2Oracle.Editor
                     movementInertiaSmoothing = movementInertiaSmoothing,
                     movementSpeedLimit = movementSpeedLimit,
                     rotationSpeedLimit = rotationSpeedLimit,
-                    teleportMode = InertiaConstraint.TeleportMode.None,
+                    teleportMode = teleportMode,
+                    teleportDistance = teleportDistance,
+                    teleportRotation = teleportRotation,
                 },
             };
             var center = new InertiaConstraint.CenterData
@@ -1110,6 +1144,8 @@ namespace HoTools.MC2Oracle.Editor
                 }
                 return new CenterFrameShiftDump
                 {
+                    KeepTeleport = team.IsKeepReset,
+                    Reset = team.IsReset,
                     UpdateCount = team.updateCount,
                     SkipCount = team.skipCount,
                     Time = team.time,
@@ -3653,6 +3689,69 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
             Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
             Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterKeepTeleportJson(CenterFrameShiftDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_keep_teleport_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates configured Keep teleport detection before smoothing, with unit positive scale and no fixed list, anchor, speed limits, synchronization, culling, skip, or stabilization effects.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "now_time_scale", "1");
+            Property(text, 4, "velocity_weight", "1");
+            Property(text, 4, "world_inertia", "1");
+            Property(text, 4, "movement_inertia_smoothing", "0.5");
+            Property(text, 4, "movement_speed_limit", "-1");
+            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "teleport_mode", "2");
+            Property(text, 4, "teleport_distance", "5");
+            Property(text, 4, "teleport_rotation", "180");
+            Property(text, 4, "old_component_world_position", "[0,0,0]");
+            Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_component_world_scale", "[1,1,1]");
+            Property(text, 4, "component_world_position", "[10,0,0]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "component_world_scale", "[1,1,1]");
+            Property(text, 4, "old_frame_world_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "now_world_position", "[2,0,0]");
+            Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "smoothing_velocity", "[2,0,0]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "keep_teleport", dump.KeepTeleport ? "true" : "false");
+            Property(text, 4, "reset_teleport", dump.Reset ? "true" : "false");
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
+            Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

@@ -143,6 +143,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     auto_world = None
     fixed_world = None
     scheduler_world = None
+    keep_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -1491,6 +1492,142 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             atol=1.0e-6,
         )
         assert scheduler_slot.data["result_candidate"].native_step_count == 3
+
+        source.hotools_mesh_collision.pin_enabled = False
+        keep_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity=0.0,
+                damping=0.0,
+                animation_pose_ratio=0.0,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.5,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                teleport_mode=2,
+                teleport_distance=5.0,
+                teleport_rotation=180.0,
+            ),
+        )
+        keep_topology = mc2_topology.build_mc2_topology_spec(keep_task)
+        keep_first_positions = np.asarray(
+            first_input.world_positions,
+            dtype=np.float32,
+        )
+        keep_rotation_matrix = np.asarray(
+            (
+                (0.0, 0.0, 1.0),
+                (0.0, 1.0, 0.0),
+                (-1.0, 0.0, 0.0),
+            ),
+            dtype=np.float32,
+        )
+        keep_second_positions = np.asarray(
+            keep_first_positions @ keep_rotation_matrix.T
+            + np.asarray((10.0, 0.0, 0.0), dtype=np.float32),
+            dtype=np.float32,
+        )
+        keep_first_rotations = np.tile(
+            np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32),
+            (keep_topology.particle_count, 1),
+        )
+        keep_second_rotations = np.tile(
+            fixed_rotation,
+            (keep_topology.particle_count, 1),
+        )
+        keep_first_input = frame_input.make_mc2_frame_input(
+            task_id=keep_task.task_id,
+            topology_signature=keep_topology.topology_signature,
+            frame=40,
+            generation=14,
+            world_positions=keep_first_positions,
+            world_rotations_xyzw=keep_first_rotations,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=40,
+                generation=14,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        keep_second_input = frame_input.make_mc2_frame_input(
+            task_id=keep_task.task_id,
+            topology_signature=keep_topology.topology_signature,
+            frame=41,
+            generation=14,
+            world_positions=keep_second_positions,
+            world_rotations_xyzw=keep_second_rotations,
+            source_world_linear=keep_rotation_matrix,
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=41,
+                generation=14,
+                component_identity=component_identity,
+                component_world_position=(10.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(float(value) for value in fixed_rotation),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        keep_world = world_types.PhysicsWorldCache()
+        keep_world.generation = 14
+        keep_world.frame_context.frame = 40
+        keep_world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(0.1), np.float32(np.inf))
+        )
+        mc2_solver.step_mc2(
+            keep_world,
+            [keep_task],
+            settings=fixed_settings,
+            frame_inputs={keep_task.task_id: keep_first_input},
+        )
+        keep_slot = keep_world.solver_slots[keep_task.task_id]
+        keep_slot.data["center_state"].smoothing_velocity = (2.0, 0.0, 0.0)
+        keep_world.frame_context.frame = 41
+        mc2_solver.step_mc2(
+            keep_world,
+            [keep_task],
+            settings=fixed_settings,
+            frame_inputs={keep_task.task_id: keep_second_input},
+            dt=0.1,
+        )
+        keep_info = keep_slot.data["native_context"].inspect()
+        assert keep_info["center_fixed_count"] == 0
+        assert keep_info["step_count"] == 3
+        assert keep_info["center_frame_shift_count"] == 1
+        keep_shift = keep_slot.data["center_frame_shift_result"]
+        assert keep_shift.keep_teleport is True
+        assert keep_shift.reset_teleport is False
+        np.testing.assert_allclose(
+            keep_shift.frame_component_shift_vector,
+            (10.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            keep_shift.frame_component_shift_rotation_xyzw,
+            fixed_rotation,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            keep_shift.smoothing_velocity,
+            (2.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            keep_shift.frame_moving_speed,
+            0.0,
+            atol=1.0e-6,
+        )
+        keep_candidate = keep_slot.data["result_candidate"]
+        np.testing.assert_allclose(
+            keep_candidate.world_positions,
+            keep_second_positions,
+            atol=1.0e-5,
+        )
+        assert keep_candidate.native_step_count == 3
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -1500,6 +1637,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             fixed_world.omni_cache_dispose("test_complete")
         if scheduler_world is not None:
             scheduler_world.omni_cache_dispose("test_complete")
+        if keep_world is not None:
+            keep_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:
