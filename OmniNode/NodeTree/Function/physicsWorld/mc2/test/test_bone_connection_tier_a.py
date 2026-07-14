@@ -45,7 +45,7 @@ EXPECTED_PRODUCER = [
 
 def _fixtures():
     paths = sorted(glob.glob(os.path.join(FIXTURE_DIRECTORY, "bone_connection_*.json")))
-    assert len(paths) == 6, paths
+    assert len(paths) == 8, paths
     fixtures = {}
     for path in paths:
         with open(path, "r", encoding="utf-8") as handle:
@@ -101,6 +101,11 @@ def test_bone_connection_modes_lock_source_boundaries() -> None:
     residual = _build(fixtures["bone_connection_zero_residual_001"])
     assert residual.triangles == ()
     assert residual.lines == ((0, 1), (2, 3))
+
+    below_angle = _build(fixtures["bone_connection_angle_119_001"])
+    above_angle = _build(fixtures["bone_connection_angle_121_001"])
+    assert set(above_angle.triangles) < set(below_angle.triangles)
+    assert len(below_angle.triangles) == len(above_angle.triangles) + 1
 
 
 def test_bone_connection_membership_survives_identity_remap() -> None:

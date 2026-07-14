@@ -161,8 +161,8 @@ $BoneConnectionFixtureCount = @(
     Get-ChildItem -LiteralPath $OutputDirectory -Filter "bone_connection_*.json" -File |
         Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
 ).Count
-if ($BoneConnectionFixtureCount -ne 6) {
-    throw "Unity oracle produced $BoneConnectionFixtureCount bone-connection fixtures instead of 6. See $LogPath"
+if ($BoneConnectionFixtureCount -ne 8) {
+    throw "Unity oracle produced $BoneConnectionFixtureCount bone-connection fixtures instead of 8. See $LogPath"
 }
 
 $BoneRotationLineFixtureCount = @(

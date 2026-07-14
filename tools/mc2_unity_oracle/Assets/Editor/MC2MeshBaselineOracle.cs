@@ -626,6 +626,28 @@ namespace HoTools.MC2Oracle.Editor
                 Roots = new[] { "r0", "r1" },
                 Note = "Zero-length triangle links are rejected while unused edges remain lines.",
             };
+
+            BoneConnectionCase AngleCase(string id, float degrees)
+            {
+                float2 r0 = new float2(-0.76408917f, -1.063566f);
+                float2 r2 = new float2(-1.910781f, -0.93513364f);
+                float angle = math.atan2(r0.y, r0.x) + math.radians(degrees);
+                return new BoneConnectionCase
+                {
+                    Id = id,
+                    Mode = RenderSetupData.BoneConnectionMode.AutomaticMesh,
+                    Vertices = new[]
+                    {
+                        V("r0", null, r0.x, r0.y), V("r0a", "r0", r0.x, r0.y + 5.0f),
+                        V("r1", null, 0, 0), V("r1a", "r1", math.cos(angle), math.sin(angle)),
+                        V("r2", null, r2.x, r2.y), V("r2a", "r2", r2.x, r2.y + 5.0f),
+                    },
+                    Roots = new[] { "r0", "r1", "r2" },
+                    Note = $"Automatic triangle candidate bracket at {degrees} degrees around the 120 degree rejection threshold.",
+                };
+            }
+            yield return AngleCase("bone_connection_angle_119_001", 119.0f);
+            yield return AngleCase("bone_connection_angle_121_001", 121.0f);
         }
 
         private static BoneConnectionDump RunBoneConnectionCase(BoneConnectionCase oracleCase)
