@@ -599,7 +599,31 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {fixedCenterPath}");
-            return 7;
+
+            CenterFrameShiftDump zeroTimeScale = RunCenterFrameShiftOracle(
+                0.75f,
+                0.0f,
+                -1.0f,
+                -1.0f,
+                float3.zero,
+                false,
+                0.0f,
+                0.1f,
+                0.0f,
+                0,
+                false
+            );
+            string zeroTimeScalePath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_zero_time_scale_001.json"
+            );
+            File.WriteAllText(
+                zeroTimeScalePath,
+                BuildCenterZeroTimeScaleShiftJson(zeroTimeScale),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {zeroTimeScalePath}");
+            return 8;
         }
 
         private static CenterFrameShiftDump RunCenterFrameShiftOracle(
@@ -3337,6 +3361,64 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "component_world_scale", "[1,1,1]");
             Property(text, 4, "frame_world_position", "[12,2,0]");
             Property(text, 4, "frame_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "old_frame_world_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "now_world_position", "[2,0,0]");
+            Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
+            Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterZeroTimeScaleShiftJson(CenterFrameShiftDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_zero_time_scale_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates zero-time-scale full cancellation and zero moving speed without running a simulation step.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0");
+            Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "now_time_scale", "0");
+            Property(text, 4, "velocity_weight", "1");
+            Property(text, 4, "skip_count", "0");
+            Property(text, 4, "world_inertia", "0.75");
+            Property(text, 4, "movement_inertia_smoothing", "0");
+            Property(text, 4, "movement_speed_limit", "-1");
+            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "old_component_world_position", "[0,0,0]");
+            Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_component_world_scale", "[1,1,1]");
+            Property(text, 4, "component_world_position", "[10,0,0]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "component_world_scale", "[1,1,1]");
             Property(text, 4, "old_frame_world_position", "[1,0,0]");
             Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
             Property(text, 4, "now_world_position", "[2,0,0]");

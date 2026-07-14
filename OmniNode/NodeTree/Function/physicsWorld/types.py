@@ -93,6 +93,7 @@ class PhysicsFrameContext:
         "same_frame",
         "reset_requested",
         "restart_required",
+        "raw_dt",
         "dt",
         "time_scale",
         "substeps",
@@ -107,6 +108,7 @@ class PhysicsFrameContext:
         self.same_frame: bool = False
         self.reset_requested: bool = False
         self.restart_required: bool = True
+        self.raw_dt: float = 0.0
         self.dt: float = 0.0
         self.time_scale: float = 1.0
         self.substeps: int = 1
@@ -121,6 +123,7 @@ class PhysicsFrameContext:
             "same_frame": self.same_frame,
             "reset_requested": self.reset_requested,
             "restart_required": self.restart_required,
+            "raw_dt": round(self.raw_dt, 6),
             "dt": round(self.dt, 6),
             "time_scale": self.time_scale,
             "substeps": self.substeps,

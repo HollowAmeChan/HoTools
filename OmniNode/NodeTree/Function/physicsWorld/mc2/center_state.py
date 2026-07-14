@@ -496,6 +496,33 @@ class MC2CenterPersistentState:
             raise TypeError("result must be MC2CenterFrameShiftResult")
         self.smoothing_velocity = tuple(result.smoothing_velocity)
 
+    def commit_paused_frame(
+        self,
+        frame_pose: MC2CenterFramePoseSpec,
+        result: MC2CenterFrameShiftResult,
+    ) -> None:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before commit")
+        if not isinstance(frame_pose, MC2CenterFramePoseSpec):
+            raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
+        if not isinstance(result, MC2CenterFrameShiftResult):
+            raise TypeError("result must be MC2CenterFrameShiftResult")
+        self.old_component_world_position = tuple(frame_pose.component_world_position)
+        self.old_component_world_rotation_xyzw = tuple(
+            frame_pose.component_world_rotation_xyzw
+        )
+        self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self._commit_anchor_pose(frame_pose)
+        self.smoothing_velocity = tuple(result.smoothing_velocity)
+        self.old_frame_world_position = tuple(result.old_frame_world_position)
+        self.old_frame_world_rotation_xyzw = tuple(
+            result.old_frame_world_rotation_xyzw
+        )
+        self.old_world_position = tuple(result.now_world_position)
+        self.old_world_rotation_xyzw = tuple(result.now_world_rotation_xyzw)
+        self.last_frame = int(frame_pose.frame)
+        self.last_generation = int(frame_pose.generation)
+
     def _commit_anchor_pose(self, frame_pose: MC2CenterFramePoseSpec) -> None:
         self.anchor_identity = frame_pose.anchor_identity
         if not frame_pose.anchor_identity:
@@ -599,10 +626,15 @@ class MC2CenterFrameShiftInputSpec:
     frame_world_rotation_xyzw: tuple[float, float, float, float] | None = None
 
     def __post_init__(self) -> None:
-        for name in ("simulation_delta_time", "frame_delta_time", "now_time_scale"):
-            value = float(getattr(self, name))
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be finite and positive")
+        simulation_dt = float(self.simulation_delta_time)
+        if not math.isfinite(simulation_dt) or simulation_dt < 0.0:
+            raise ValueError("simulation_delta_time must be finite and non-negative")
+        frame_dt = float(self.frame_delta_time)
+        if not math.isfinite(frame_dt) or frame_dt <= 0.0:
+            raise ValueError("frame_delta_time must be finite and positive")
+        time_scale = float(self.now_time_scale)
+        if not math.isfinite(time_scale) or time_scale < 0.0:
+            raise ValueError("now_time_scale must be finite and non-negative")
         if not 0.0 <= float(self.velocity_weight) <= 1.0:
             raise ValueError("velocity_weight must be in 0..1")
         if isinstance(self.skip_count, bool) or int(self.skip_count) != self.skip_count:
@@ -976,10 +1008,15 @@ def evaluate_mc2_center_frame_shift(
 
     other_shift_ratio = _f32(0.0)
     if frame.skip_count > 0:
-        skip_ratio = np.clip(
-            (_f32(frame.skip_count) * simulation_dt) / (frame_dt * time_scale),
-            _f32(0.0),
-            _f32(1.0),
+        skip_denominator = frame_dt * time_scale
+        skip_ratio = (
+            _f32(1.0)
+            if skip_denominator <= _f32(1.0e-8)
+            else np.clip(
+                (_f32(frame.skip_count) * simulation_dt) / skip_denominator,
+                _f32(0.0),
+                _f32(1.0),
+            )
         )
         other_shift_ratio += (_f32(1.0) - other_shift_ratio) * skip_ratio
     velocity_weight = _f32(frame.velocity_weight)
@@ -1055,7 +1092,11 @@ def evaluate_mc2_center_frame_shift(
         else np.zeros(3, dtype=np.float32)
     )
     moving_speed = moving_length / frame_dt
-    moving_speed *= _f32(1.0) / time_scale
+    moving_speed *= (
+        _f32(1.0) / time_scale
+        if time_scale > _f32(1.0e-6)
+        else _f32(0.0)
+    )
     return MC2CenterFrameShiftResult(
         frame_component_shift_vector=tuple(float(value) for value in shift_vector),
         frame_component_shift_rotation_xyzw=tuple(float(value) for value in shift_rotation),

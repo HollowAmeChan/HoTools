@@ -476,6 +476,7 @@ def physicsWorldBegin(
     fc.same_frame = same_frame
     fc.reset_requested = bool(reset)
     fc.restart_required = restart_required
+    fc.raw_dt = raw_dt
     fc.dt = effective_dt
     fc.time_scale = float(time_scale)
     fc.substeps = max(1, int(substeps))

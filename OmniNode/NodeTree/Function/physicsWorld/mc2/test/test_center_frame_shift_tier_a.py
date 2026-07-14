@@ -43,6 +43,7 @@ FIXTURES = tuple(
         "center_frame_shift_smoothing_001.json",
         "center_frame_shift_time_scale_001.json",
         "center_frame_shift_fixed_center_001.json",
+        "center_frame_shift_zero_time_scale_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -307,14 +308,19 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
     other_shift_ratio = _f32(0.0)
     skip_count = int(values.get("skip_count", 0))
     if skip_count > 0:
-        skip_ratio = np.clip(
-            (_f32(skip_count) * _f32(values["simulation_delta_time"]))
-            / (
-                _f32(values["frame_delta_time"])
-                * _f32(values["now_time_scale"])
-            ),
-            _f32(0.0),
-            _f32(1.0),
+        denominator = (
+            _f32(values["frame_delta_time"])
+            * _f32(values["now_time_scale"])
+        )
+        skip_ratio = (
+            _f32(1.0)
+            if denominator <= _f32(1.0e-8)
+            else np.clip(
+                (_f32(skip_count) * _f32(values["simulation_delta_time"]))
+                / denominator,
+                _f32(0.0),
+                _f32(1.0),
+            )
         )
         other_shift_ratio += (
             _f32(1.0) - other_shift_ratio
@@ -373,9 +379,17 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
     )
     moving_vector = component - work_old_component
     moving_length = _f32(np.linalg.norm(moving_vector))
-    moving_direction = moving_vector / moving_length
+    moving_direction = (
+        moving_vector / moving_length
+        if moving_length > _f32(1.0e-6)
+        else np.zeros(3, dtype=np.float32)
+    )
     moving_speed = moving_length / _f32(values["frame_delta_time"])
-    moving_speed /= _f32(values["now_time_scale"])
+    moving_speed *= (
+        _f32(1.0) / _f32(values["now_time_scale"])
+        if _f32(values["now_time_scale"]) > _f32(1.0e-6)
+        else _f32(0.0)
+    )
 
     vector_values = {
         "frame_component_shift_vector": frame_shift_vector,

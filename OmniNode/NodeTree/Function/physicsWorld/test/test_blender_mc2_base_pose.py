@@ -838,12 +838,79 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert seventh_candidate.revision == 7
         assert seventh_candidate.frame == seventh_input.frame
 
+        zero_time_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=time_scale_task.profile,
+        )
+        eighth_input = frame_input.make_mc2_frame_input(
+            task_id=seventh_input.task_id,
+            topology_signature=seventh_input.topology_signature,
+            frame=8,
+            generation=seventh_input.generation,
+            world_positions=seventh_input.world_positions,
+            world_rotations_xyzw=seventh_input.world_rotations_xyzw,
+            source_world_linear=seventh_input.source_world_linear,
+            center_frame_pose=type(seventh_input.center_frame_pose)(
+                frame=8,
+                generation=seventh_input.generation,
+                component_identity=seventh_input.center_frame_pose.component_identity,
+                component_world_position=(3.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, -1.0),
+                component_world_scale=seventh_input.center_frame_pose.component_world_scale,
+            ),
+        )
+        world.frame_context.frame = 8
+        world.frame_context.raw_dt = 1.0 / 60.0
+        world.frame_context.dt = 0.0
+        world.frame_context.time_scale = 0.0
+        mc2_solver.step_mc2(
+            world,
+            [zero_time_task],
+            frame_inputs={zero_time_task.task_id: eighth_input},
+            dt=0.0,
+        )
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 8
+        assert native_info["step_count"] == 5
+        assert native_info["center_dynamic_revision"] == 5
+        assert native_info["center_step_count"] == 5
+        assert native_info["center_frame_shift_count"] == 5
+        assert slot.data["center_step_result"] is None
+        frame_shift_result = slot.data["center_frame_shift_result"]
+        assert frame_shift_result is not None
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_vector,
+            (1.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(45.0))),
+                0.0,
+                float(np.cos(np.radians(45.0))),
+            ),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_moving_speed,
+            0.0,
+            atol=1.0e-6,
+        )
+        assert center_runtime.old_component_world_position == (3.0, 0.0, 0.0)
+        assert center_runtime.last_frame == eighth_input.frame
+        eighth_candidate = slot.data["result_candidate"]
+        assert eighth_candidate.revision == 8
+        assert eighth_candidate.frame == eighth_input.frame
+
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
             world,
-            [time_scale_task],
-            frame_inputs={time_scale_task.task_id: seventh_input},
-            dt=1.0 / 120.0,
+            [zero_time_task],
+            frame_inputs={zero_time_task.task_id: eighth_input},
+            dt=0.0,
         )
         assert "重建 1" in status
         recovered_native_owner = world.solver_slots[soft_task.task_id].data["native_context"]
@@ -854,7 +921,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert recovered_info["step_count"] == 0
         recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
         assert recovered_candidate.revision == 1
-        assert recovered_candidate.frame == seventh_input.frame
+        assert recovered_candidate.frame == eighth_input.frame
         recovered_results = world.consume_results(
             world_names.GN_ATTRIBUTE_CHANNEL,
             solver="mc2",

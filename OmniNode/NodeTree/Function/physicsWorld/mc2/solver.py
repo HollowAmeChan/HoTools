@@ -223,9 +223,15 @@ def _make_slot_center_frame_shift(
     )
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
+    time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     in_verified_domain = (
-        (world_shift_active or anchor_shift_active or smoothing_active)
-        and 0.0 < float(time_scale) <= 1.0
+        (
+            world_shift_active
+            or anchor_shift_active
+            or smoothing_active
+            or time_scale_active
+        )
+        and 0.0 <= float(time_scale) <= 1.0
         and int(substeps) == 1
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
@@ -249,6 +255,7 @@ def _make_slot_center_frame_shift(
         movement_inertia_smoothing=profile.movement_inertia_smoothing,
         movement_speed_limit=profile.movement_speed_limit,
         rotation_speed_limit=profile.rotation_speed_limit,
+        is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
     )
     return evaluate_mc2_center_frame_shift(shift_input)
@@ -569,19 +576,25 @@ def step_mc2(
                     if frame_plan.action == "reset" or not center_state.initialized:
                         center_action = "reset"
                     else:
-                        if dt <= 0.0:
-                            raise ValueError(
-                                "MC2 continuous Center frame requires a positive dt"
-                            )
-                        center_action = "step"
                         effective_time_scale = (
                             float(world.frame_context.time_scale)
                             * float(settings.time_scale)
                         )
-                        frame_dt = (
-                            dt / effective_time_scale
-                            if effective_time_scale > 0.0
-                            else 0.0
+                        if effective_time_scale > 0.0 and dt <= 0.0:
+                            raise ValueError(
+                                "MC2 continuous Center frame requires a positive dt"
+                            )
+                        frame_dt = float(
+                            getattr(world.frame_context, "raw_dt", 0.0) or 0.0
+                        )
+                        if frame_dt <= 0.0 and effective_time_scale > 0.0:
+                            frame_dt = dt / effective_time_scale
+                        if frame_dt <= 0.0:
+                            raise ValueError(
+                                "MC2 Center frame shift requires a positive raw frame dt"
+                            )
+                        center_action = (
+                            "step" if effective_time_scale > 0.0 else "pause"
                         )
                         center_frame_shift_result = _make_slot_center_frame_shift(
                             slot,
@@ -595,13 +608,14 @@ def step_mc2(
                                 int(settings.substeps),
                             ),
                         )
-                        center_step_input = center_state.make_step_input(
-                            frame_input.center_frame_pose,
-                            center_pose,
-                            simulation_delta_time=dt,
-                            frame_interpolation=frame_input.frame_interpolation,
-                            frame_shift=center_frame_shift_result,
-                        )
+                        if center_action == "step":
+                            center_step_input = center_state.make_step_input(
+                                frame_input.center_frame_pose,
+                                center_pose,
+                                simulation_delta_time=dt,
+                                frame_interpolation=frame_input.frame_interpolation,
+                                frame_shift=center_frame_shift_result,
+                            )
                 if (
                     native_context is not None
                     and frame_plan.action != "same_frame"
@@ -613,15 +627,16 @@ def step_mc2(
                     else:
                         if center_step_input is not None:
                             native_context.update_center_dynamic(center_step_input)
-                            if center_frame_shift_result is not None:
-                                native_context.apply_center_frame_shift(
-                                    center_state.old_component_world_position,
-                                    center_frame_shift_result,
-                                )
-                        native_context.step_no_collision(dt)
-                        if center_step_input is not None:
-                            center_step_result = native_context.read_center_step()
-                elif center_step_input is not None:
+                        if center_frame_shift_result is not None:
+                            native_context.apply_center_frame_shift(
+                                center_state.old_component_world_position,
+                                center_frame_shift_result,
+                            )
+                        if center_action != "pause":
+                            native_context.step_no_collision(dt)
+                            if center_step_input is not None:
+                                center_step_result = native_context.read_center_step()
+                elif center_step_input is not None or center_action == "pause":
                     raise RuntimeError("MC2 Center step requires a live native context")
                 candidate = (
                     slot.data.get("result_candidate")
@@ -663,6 +678,15 @@ def step_mc2(
                         center_step_result,
                     )
                     slot.data["center_step_result"] = center_step_result
+                    slot.data["center_frame_shift_result"] = center_frame_shift_result
+                elif center_action == "pause":
+                    if center_frame_shift_result is None:
+                        raise RuntimeError("MC2 paused Center frame requires a frame shift")
+                    center_state.commit_paused_frame(
+                        frame_input.center_frame_pose,
+                        center_frame_shift_result,
+                    )
+                    slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
                 frame_result = sync_mc2_frame_input(
                     runtime_state,
