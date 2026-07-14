@@ -3407,6 +3407,87 @@ class OP_HumanoidMappingPreview_Clear(Operator):
         return {'FINISHED'}
 
 
+HUMANOID_COLLECTION_NAME = "Humanoid"
+
+
+def find_humanoid_bone_names(armature):
+    source_names = [bone.name for bone in armature.data.bones]
+    result = auto_map_source_names_to_humanoid(source_names)
+    return [match.source_name for match in result.matches], result
+
+
+class OP_MoveHumanoidBonesToCollection(Operator):
+    bl_idname = "ho.move_humanoid_bones_to_collection"
+    bl_label = "整理Humanoid骨骼集合"
+    bl_description = (
+        "自动识别活动骨架中的Humanoid骨骼，并将它们移动到Humanoid骨骼集合；"
+        "不会修改其他骨骼或骨架数据"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == 'ARMATURE'
+
+    def execute(self, context):
+        armature = context.object
+        collections = getattr(armature.data, "collections", None)
+        if collections is None:
+            self.report({'ERROR'}, "当前Blender版本不支持骨骼集合")
+            return {'CANCELLED'}
+
+        try:
+            humanoid_names, result = find_humanoid_bone_names(armature)
+        except Exception as error:
+            self.report({'ERROR'}, f"自动识别Humanoid骨骼失败：{error}")
+            return {'CANCELLED'}
+
+        if not humanoid_names:
+            self.report({'WARNING'}, "未识别到Humanoid骨骼")
+            return {'CANCELLED'}
+
+        moved_count = 0
+        unchanged_count = 0
+
+        try:
+            collection = collections.get(HUMANOID_COLLECTION_NAME)
+            if collection is None:
+                collection = collections.new(HUMANOID_COLLECTION_NAME)
+
+            for bone_name in humanoid_names:
+                bone = armature.data.bones.get(bone_name)
+                if bone is None:
+                    continue
+
+                current_collections = list(bone.collections)
+                if (
+                    len(current_collections) == 1
+                    and current_collections[0] == collection
+                ):
+                    unchanged_count += 1
+                    continue
+
+                if collection not in current_collections:
+                    collection.assign(bone)
+                for old_collection in current_collections:
+                    if old_collection != collection:
+                        old_collection.unassign(bone)
+                moved_count += 1
+        except RuntimeError as error:
+            self.report({'ERROR'}, f"无法修改骨骼集合：{error}")
+            return {'CANCELLED'}
+
+        message = (
+            f"Humanoid骨骼集合整理完成：识别 {len(humanoid_names)}，"
+            f"移动 {moved_count}，已在目标集合 {unchanged_count}"
+        )
+        if result.low_confidence_matches:
+            message += f"，低置信度 {len(result.low_confidence_matches)}"
+        self.report({'INFO'}, message)
+        return {'FINISHED'}
+
+
 def drawBoneHumanoidPanel(layout: UILayout, context: Context):
     scene = context.scene
 
@@ -3426,6 +3507,9 @@ def drawBoneHumanoidPanel(layout: UILayout, context: Context):
         icon="PRESET",
     )
     op.preset_id = scene.bone_humanoid_deform_tag_preset
+
+    row = mapping_box.row(align=True)
+    row.operator(OP_MoveHumanoidBonesToCollection.bl_idname, text="独立Humanoid骨骼集合")
 
     # ── Humanoid 检查预览 ──────────────────────────────────
     layout.separator(factor=0.8)
@@ -3513,6 +3597,7 @@ cls = [
     OP_Mapping_ClearHumanoidBoneProps,
     OP_HumanoidMappingPreview_Show,
     OP_HumanoidMappingPreview_Clear,
+    OP_MoveHumanoidBonesToCollection,
     OP_Humanoid_ForceAlign,
     OP_Humanoid_FixLimbIkRoll,
 ]
