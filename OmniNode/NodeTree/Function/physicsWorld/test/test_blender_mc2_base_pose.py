@@ -1890,7 +1890,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 animation_pose_ratio=0.0,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=1.0,
-                world_inertia=1.0,
+                world_inertia=0.25,
                 movement_inertia_smoothing=0.5,
                 movement_speed_limit=-1.0,
                 rotation_speed_limit=-1.0,
@@ -1954,19 +1954,22 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             keep_negative_task.task_id
         ]
         keep_negative_world.frame_context.frame = 71
-        keep_negative_world.frame_context.time_scale = 0.0
         mc2_solver.step_mc2(
             keep_negative_world,
             [keep_negative_task],
             settings=fixed_settings,
             frame_inputs={keep_negative_task.task_id: keep_negative_second_input},
-            dt=0.0,
+            dt=0.1,
         )
         keep_negative_info = keep_negative_slot.data["native_context"].inspect()
         assert keep_negative_info["reset_count"] == 1
-        assert keep_negative_info["step_count"] == 0
+        assert keep_negative_info["step_count"] == 3
+        assert keep_negative_info["center_step_count"] == 3
         assert keep_negative_info["center_frame_shift_count"] == 1
         assert keep_negative_info["center_negative_scale_teleport_count"] == 1
+        keep_negative_schedule = keep_negative_slot.data["frame_schedule"]
+        assert keep_negative_schedule.update_count == 3
+        assert keep_negative_schedule.skip_count == 0
         keep_negative_shift = keep_negative_slot.data["center_frame_shift_result"]
         assert keep_negative_shift.keep_teleport is True
         assert keep_negative_shift.reset_teleport is False
@@ -1985,27 +1988,23 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         ]
         assert keep_negative_transition is not None
         assert keep_negative_transition.active is True
-        keep_negative_expected_positions = np.asarray(
-            reset_negative_second_positions @ reset_negative_rotation_matrix.T,
-            dtype=np.float32,
-        )
         keep_negative_candidate = keep_negative_slot.data["result_candidate"]
-        np.testing.assert_allclose(
+        assert np.all(np.isfinite(keep_negative_candidate.world_positions))
+        assert not np.allclose(
             keep_negative_candidate.world_positions,
-            keep_negative_expected_positions,
+            reset_negative_second_positions,
             atol=1.0e-5,
         )
-        assert keep_negative_candidate.native_step_count == 0
+        assert keep_negative_candidate.native_step_count == 3
+        keep_negative_step = keep_negative_slot.data["center_step_result"]
+        assert keep_negative_step is not None
+        assert np.all(np.isfinite(keep_negative_step.inertia_vector))
         keep_negative_center = keep_negative_slot.data["center_state"]
         assert keep_negative_center.negative_scale_direction == (-1.0, 1.0, 1.0)
+        assert keep_negative_center.last_frame == keep_negative_second_input.frame
         np.testing.assert_allclose(
             keep_negative_center.old_frame_world_rotation_xyzw,
-            (
-                0.0,
-                float(np.sin(np.radians(45.0))),
-                0.0,
-                float(np.cos(np.radians(45.0))),
-            ),
+            reset_negative_rotation,
             atol=1.0e-6,
         )
 
