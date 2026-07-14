@@ -334,6 +334,78 @@ def test_center_persistent_state_builds_anchor_shift_from_pose_history() -> None
         )
 
 
+def test_center_persistent_state_commits_smoothing_velocity() -> None:
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "fixtures",
+        "tier_a",
+        "center_frame_shift_smoothing_001.json",
+    )
+    with open(path, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    values = fixture["input"]
+    expected = fixture["expected"]
+    state = center.MC2CenterPersistentState("center:smoothing")
+    first_frame = center.MC2CenterFramePoseSpec(
+        frame=1,
+        generation=0,
+        component_identity="object:smoothing",
+        component_world_position=values["old_component_world_position"],
+        component_world_rotation_xyzw=values[
+            "old_component_world_rotation_xyzw"
+        ],
+        component_world_scale=values["old_component_world_scale"],
+    )
+    state.reset(
+        first_frame,
+        values["old_frame_world_position"],
+        values["old_frame_world_rotation_xyzw"],
+        velocity_weight=values["velocity_weight"],
+    )
+    state.old_world_position = tuple(values["now_world_position"])
+    state.old_world_rotation_xyzw = tuple(values["now_world_rotation_xyzw"])
+    state.smoothing_velocity = tuple(values["smoothing_velocity"])
+    half_angle = np.float32(np.radians(90.0) * 0.5)
+    second_frame = center.MC2CenterFramePoseSpec(
+        frame=2,
+        generation=0,
+        component_identity=first_frame.component_identity,
+        component_world_position=values["component_world_position"],
+        component_world_rotation_xyzw=(
+            0.0,
+            float(np.sin(half_angle)),
+            0.0,
+            float(np.cos(half_angle)),
+        ),
+        component_world_scale=values["component_world_scale"],
+    )
+    shift_input = state.make_frame_shift_input(
+        second_frame,
+        simulation_delta_time=values["simulation_delta_time"],
+        frame_delta_time=values["frame_delta_time"],
+        world_inertia=values["world_inertia"],
+        movement_inertia_smoothing=values["movement_inertia_smoothing"],
+        movement_speed_limit=values["movement_speed_limit"],
+        rotation_speed_limit=values["rotation_speed_limit"],
+        now_time_scale=values["now_time_scale"],
+        is_running=values["is_running"],
+    )
+    shift = center.evaluate_mc2_center_frame_shift(shift_input)
+    np.testing.assert_allclose(
+        shift.smoothing_velocity,
+        expected["smoothing_velocity"],
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+    state.commit_frame_shift(shift)
+    np.testing.assert_allclose(
+        state.smoothing_velocity,
+        expected["smoothing_velocity"],
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+
+
 def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
     with open(CENTER_STEP_FIXTURE_PATH, "r", encoding="utf-8") as handle:
         fixture = json.load(handle)

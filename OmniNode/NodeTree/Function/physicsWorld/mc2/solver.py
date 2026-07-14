@@ -100,6 +100,7 @@ def _slot_debug_snapshot(slot) -> dict:
                 "shift_vector": center_frame_shift_result.frame_component_shift_vector,
                 "shift_rotation": center_frame_shift_result.frame_component_shift_rotation_xyzw,
                 "moving_speed": center_frame_shift_result.frame_moving_speed,
+                "smoothing_velocity": center_frame_shift_result.smoothing_velocity,
             }
             if center_frame_shift_result is not None
             else None
@@ -219,12 +220,12 @@ def _make_slot_center_frame_shift(
         anchor_stable and float(profile.anchor_inertia) < 1.0 - 1.0e-8
     )
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
+    smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
     in_verified_domain = (
         not mesh_static.center.fixed_indices
-        and (world_shift_active or anchor_shift_active)
+        and (world_shift_active or anchor_shift_active or smoothing_active)
         and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
         and int(substeps) == 1
-        and math.isclose(float(profile.movement_inertia_smoothing), 0.0, abs_tol=1.0e-8)
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
             math.isclose(float(value), expected, abs_tol=1.0e-8)
@@ -243,6 +244,7 @@ def _make_slot_center_frame_shift(
         frame_delta_time=dt,
         world_inertia=profile.world_inertia,
         anchor_inertia=profile.anchor_inertia,
+        movement_inertia_smoothing=profile.movement_inertia_smoothing,
         movement_speed_limit=profile.movement_speed_limit,
         rotation_speed_limit=profile.rotation_speed_limit,
         now_time_scale=time_scale,
@@ -638,6 +640,7 @@ def step_mc2(
                 elif center_action == "step":
                     if center_step_result is None:
                         raise RuntimeError("MC2 native Center step did not produce a result")
+                    center_state.commit_frame_shift(center_frame_shift_result)
                     center_state.commit_step(
                         frame_input.center_frame_pose,
                         center_pose,

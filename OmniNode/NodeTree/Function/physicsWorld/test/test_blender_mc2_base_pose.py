@@ -666,11 +666,87 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert fifth_candidate.revision == 5
         assert fifth_candidate.frame == fifth_input.frame
 
+        smoothing_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.5,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        sixth_input = frame_input.make_mc2_frame_input(
+            task_id=fifth_input.task_id,
+            topology_signature=fifth_input.topology_signature,
+            frame=6,
+            generation=fifth_input.generation,
+            world_positions=fifth_input.world_positions,
+            world_rotations_xyzw=fifth_input.world_rotations_xyzw,
+            source_world_linear=fifth_input.source_world_linear,
+            center_frame_pose=type(fifth_input.center_frame_pose)(
+                frame=6,
+                generation=fifth_input.generation,
+                component_identity=fifth_input.center_frame_pose.component_identity,
+                component_world_position=(1.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 1.0, 0.0, 0.0),
+                component_world_scale=fifth_input.center_frame_pose.component_world_scale,
+            ),
+        )
+        world.frame_context.frame = 6
+        mc2_solver.step_mc2(
+            world,
+            [smoothing_task],
+            frame_inputs={smoothing_task.task_id: sixth_input},
+            dt=1.0 / 60.0,
+        )
+        native_info = native_owner.inspect()
+        assert native_info["dynamic_revision"] == 6
+        assert native_info["step_count"] == 4
+        assert native_info["center_dynamic_revision"] == 4
+        assert native_info["center_step_count"] == 4
+        assert native_info["center_frame_shift_count"] == 3
+        frame_shift_result = slot.data["center_frame_shift_result"]
+        assert frame_shift_result is not None
+        np.testing.assert_allclose(
+            frame_shift_result.frame_component_shift_vector,
+            (0.86625, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.smoothing_velocity,
+            (8.025, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_moving_speed,
+            8.025,
+            atol=1.0e-6,
+        )
+        center_result = slot.data["center_step_result"]
+        assert center_result is not None
+        np.testing.assert_allclose(
+            center_result.step_vector,
+            (0.13375, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            center_runtime.smoothing_velocity,
+            frame_shift_result.smoothing_velocity,
+            atol=1.0e-6,
+        )
+        sixth_candidate = slot.data["result_candidate"]
+        assert sixth_candidate.revision == 6
+        assert sixth_candidate.frame == sixth_input.frame
+
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
             world,
-            [anchor_world_limit_task],
-            frame_inputs={anchor_world_limit_task.task_id: fifth_input},
+            [smoothing_task],
+            frame_inputs={smoothing_task.task_id: sixth_input},
             dt=1.0 / 60.0,
         )
         assert "重建 1" in status
@@ -682,7 +758,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert recovered_info["step_count"] == 0
         recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
         assert recovered_candidate.revision == 1
-        assert recovered_candidate.frame == fifth_input.frame
+        assert recovered_candidate.frame == sixth_input.frame
         recovered_results = world.consume_results(
             world_names.GN_ATTRIBUTE_CHANNEL,
             solver="mc2",

@@ -437,6 +437,8 @@ class MC2CenterPersistentState:
         movement_speed_limit: float = -1.0,
         rotation_speed_limit: float = -1.0,
         anchor_inertia: float = 0.0,
+        movement_inertia_smoothing: float = 0.0,
+        is_running: bool = True,
         now_time_scale: float = 1.0,
         skip_count: int = 0,
     ) -> MC2CenterFrameShiftInputSpec:
@@ -473,7 +475,19 @@ class MC2CenterPersistentState:
             anchor_world_position=frame_pose.anchor_world_position,
             anchor_world_rotation_xyzw=frame_pose.anchor_world_rotation_xyzw,
             anchor_component_local_position=self.anchor_component_local_position,
+            movement_inertia_smoothing=float(movement_inertia_smoothing),
+            smoothing_velocity=self.smoothing_velocity,
+            is_running=is_running,
         )
+
+    def commit_frame_shift(self, result: MC2CenterFrameShiftResult | None) -> None:
+        if not self.initialized:
+            raise RuntimeError("Center persistent state must be reset before commit")
+        if result is None:
+            return
+        if not isinstance(result, MC2CenterFrameShiftResult):
+            raise TypeError("result must be MC2CenterFrameShiftResult")
+        self.smoothing_velocity = tuple(result.smoothing_velocity)
 
     def _commit_anchor_pose(self, frame_pose: MC2CenterFramePoseSpec) -> None:
         self.anchor_identity = frame_pose.anchor_identity
@@ -533,6 +547,7 @@ class MC2CenterPersistentState:
             "last_frame": self.last_frame,
             "last_generation": self.last_generation,
             "velocity_weight": self.velocity_weight,
+            "smoothing_velocity": self.smoothing_velocity,
             "old_frame_world_position": self.old_frame_world_position,
             "old_world_position": self.old_world_position,
         }
@@ -543,7 +558,8 @@ class MC2CenterFrameShiftInputSpec:
     """Source-aligned world-inertia inputs before Center substep derivation.
 
     V0 deliberately covers no fixed list and unit positive scale, with optional
-    anchor, and excludes smoothing, teleport, synchronization, and culling.
+    anchor and movement smoothing, and excludes teleport, synchronization, and
+    culling.
     """
 
     simulation_delta_time: float
@@ -569,6 +585,9 @@ class MC2CenterFrameShiftInputSpec:
     anchor_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     anchor_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
     anchor_component_local_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    movement_inertia_smoothing: float = 0.0
+    smoothing_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    is_running: bool = True
 
     def __post_init__(self) -> None:
         for name in ("simulation_delta_time", "frame_delta_time", "now_time_scale"):
@@ -587,6 +606,10 @@ class MC2CenterFrameShiftInputSpec:
             raise TypeError("use_anchor must be bool")
         if not 0.0 <= float(self.anchor_inertia) <= 1.0:
             raise ValueError("anchor_inertia must be in 0..1")
+        if not 0.0 <= float(self.movement_inertia_smoothing) <= 1.0:
+            raise ValueError("movement_inertia_smoothing must be in 0..1")
+        if not isinstance(self.is_running, bool):
+            raise TypeError("is_running must be bool")
         for name in ("movement_speed_limit", "rotation_speed_limit"):
             if not math.isfinite(float(getattr(self, name))):
                 raise ValueError(f"{name} must be finite")
@@ -598,6 +621,7 @@ class MC2CenterFrameShiftInputSpec:
             "old_anchor_world_position",
             "anchor_world_position",
             "anchor_component_local_position",
+            "smoothing_velocity",
         ):
             _vector(getattr(self, name), 3, name)
         for name in (
@@ -623,6 +647,7 @@ class MC2CenterFrameShiftResult:
     frame_world_rotation_xyzw: tuple[float, float, float, float]
     frame_moving_direction: tuple[float, float, float]
     frame_moving_speed: float
+    smoothing_velocity: tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -827,6 +852,44 @@ def evaluate_mc2_center_frame_shift(
             )
         )
 
+    smooth_shift_vector = np.zeros(3, dtype=np.float32)
+    smoothing_velocity = _f32_vector(
+        frame.smoothing_velocity, 3, "smoothing_velocity"
+    )
+    smoothing = _f32(frame.movement_inertia_smoothing)
+    if smoothing >= _f32(1.0e-6):
+        if frame.is_running:
+            frame_delta_velocity = np.asarray(
+                (component - adjusted_old_component) / frame_dt,
+                dtype=np.float32,
+            )
+            movement_limit = _f32(frame.movement_speed_limit)
+            frame_delta_speed = _f32(np.linalg.norm(frame_delta_velocity))
+            if movement_limit >= _f32(0.0) and frame_delta_speed > movement_limit:
+                frame_delta_velocity *= movement_limit / frame_delta_speed
+            one_minus_smoothing = _f32(1.0) - smoothing
+            average_ratio = np.clip(
+                one_minus_smoothing
+                * one_minus_smoothing
+                * one_minus_smoothing
+                * _f32(0.99)
+                + _f32(0.01),
+                _f32(0.0),
+                _f32(1.0),
+            )
+            smoothing_velocity += (
+                frame_delta_velocity - smoothing_velocity
+            ) * average_ratio
+        smooth_position = np.asarray(
+            component - smoothing_velocity * frame_dt,
+            dtype=np.float32,
+        )
+        smooth_shift_vector = np.asarray(
+            smooth_position - adjusted_old_component,
+            dtype=np.float32,
+        )
+        adjusted_old_component = smooth_position
+
     full_shift_vector = np.asarray(component - adjusted_old_component, dtype=np.float32)
     full_shift_rotation = _normalize_quaternion_f32(
         _quaternion_multiply_f32(
@@ -913,7 +976,9 @@ def evaluate_mc2_center_frame_shift(
         )
 
     shift_vector = np.asarray(
-        full_shift_vector * move_shift_ratio + anchor_shift_vector,
+        full_shift_vector * move_shift_ratio
+        + anchor_shift_vector
+        + smooth_shift_vector,
         dtype=np.float32,
     )
     world_shift_rotation = _quaternion_slerp_f32(
@@ -972,6 +1037,7 @@ def evaluate_mc2_center_frame_shift(
         frame_world_rotation_xyzw=tuple(float(value) for value in component_rotation),
         frame_moving_direction=tuple(float(value) for value in moving_direction),
         frame_moving_speed=float(moving_speed),
+        smoothing_velocity=tuple(float(value) for value in smoothing_velocity),
     )
 
 

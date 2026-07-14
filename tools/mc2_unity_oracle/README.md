@@ -62,6 +62,8 @@ directory:
   limits after the same world-inertia shift. The third case isolates anchor
   translation/rotation cancellation with world inertia disabled. The fourth
   freezes anchor cancellation followed by world inertia and both speed limits.
+  The fifth isolates the persistent movement-smoothing velocity update and its
+  position cancellation.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

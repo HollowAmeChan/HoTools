@@ -40,6 +40,7 @@ FIXTURES = tuple(
         "center_frame_shift_world_inertia_001.json",
         "center_frame_shift_speed_limit_001.json",
         "center_frame_shift_anchor_world_limit_001.json",
+        "center_frame_shift_smoothing_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -174,6 +175,11 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             anchor_component_local_position=values.get(
                 "anchor_component_local_position", (0.0, 0.0, 0.0)
             ),
+            movement_inertia_smoothing=values.get(
+                "movement_inertia_smoothing", 0.0
+            ),
+            smoothing_velocity=values.get("smoothing_velocity", (0.0, 0.0, 0.0)),
+            is_running=values.get("is_running", True),
         )
     )
     for field, expected_value in expected.items():
@@ -210,6 +216,41 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             _multiply(anchor_shift_rotation, adjusted_old_rotation)
         )
 
+    smooth_shift_vector = np.zeros(3, dtype=np.float32)
+    smoothing_velocity = np.asarray(
+        values.get("smoothing_velocity", (0.0, 0.0, 0.0)),
+        dtype=np.float32,
+    )
+    smoothing = _f32(values.get("movement_inertia_smoothing", 0.0))
+    if smoothing >= _f32(1.0e-6):
+        if values.get("is_running", True):
+            frame_delta_velocity = (
+                component - adjusted_old_component
+            ) / _f32(values["frame_delta_time"])
+            movement_limit = _f32(values["movement_speed_limit"])
+            frame_delta_speed = _f32(np.linalg.norm(frame_delta_velocity))
+            if movement_limit >= 0.0 and frame_delta_speed > movement_limit:
+                frame_delta_velocity *= movement_limit / frame_delta_speed
+            one_minus_smoothing = _f32(1.0) - smoothing
+            average_ratio = np.clip(
+                one_minus_smoothing
+                * one_minus_smoothing
+                * one_minus_smoothing
+                * _f32(0.99)
+                + _f32(0.01),
+                _f32(0.0),
+                _f32(1.0),
+            )
+            smoothing_velocity += (
+                frame_delta_velocity - smoothing_velocity
+            ) * average_ratio
+        smooth_position = (
+            component
+            - smoothing_velocity * _f32(values["frame_delta_time"])
+        )
+        smooth_shift_vector = smooth_position - adjusted_old_component
+        adjusted_old_component = smooth_position
+
     shift_ratio = _f32(1.0) - _f32(values["world_inertia"])
     rotation_shift_ratio = shift_ratio
     world_component_delta = component - adjusted_old_component
@@ -244,7 +285,11 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             component_rotation,
             limit_ratio,
         )
-    frame_shift_vector = anchor_shift_vector + world_component_delta * shift_ratio
+    frame_shift_vector = (
+        anchor_shift_vector
+        + smooth_shift_vector
+        + world_component_delta * shift_ratio
+    )
     full_world_rotation = _normalize_quaternion(
         _multiply(component_rotation, _inverse(adjusted_old_rotation))
     )
@@ -296,6 +341,13 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         rtol=1.0e-6,
         atol=1.0e-6,
     )
+    if "smoothing_velocity" in expected:
+        np.testing.assert_allclose(
+            smoothing_velocity,
+            expected["smoothing_velocity"],
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
 
 
 def test_center_frame_shift_matches_fixed_mc2_oracle() -> None:

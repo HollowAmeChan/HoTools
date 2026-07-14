@@ -290,6 +290,7 @@ namespace HoTools.MC2Oracle.Editor
             public quaternion FrameWorldRotation;
             public float3 FrameMovingDirection;
             public float FrameMovingSpeed;
+            public float3 SmoothingVelocity;
         }
 
         public static void RunBatch()
@@ -425,7 +426,14 @@ namespace HoTools.MC2Oracle.Editor
 
         private static int WriteCenterFrameShiftFixtures(string outputDirectory)
         {
-            CenterFrameShiftDump worldInertia = RunCenterFrameShiftOracle(-1.0f, -1.0f);
+            CenterFrameShiftDump worldInertia = RunCenterFrameShiftOracle(
+                0.25f,
+                0.0f,
+                -1.0f,
+                -1.0f,
+                float3.zero,
+                false
+            );
             string worldInertiaPath = Path.Combine(
                 outputDirectory,
                 "center_frame_shift_world_inertia_001.json"
@@ -443,7 +451,14 @@ namespace HoTools.MC2Oracle.Editor
             );
             Debug.Log($"[MC2 Oracle] wrote {worldInertiaPath}");
 
-            CenterFrameShiftDump speedLimit = RunCenterFrameShiftOracle(10.0f, 90.0f);
+            CenterFrameShiftDump speedLimit = RunCenterFrameShiftOracle(
+                0.25f,
+                0.0f,
+                10.0f,
+                90.0f,
+                float3.zero,
+                false
+            );
             string speedLimitPath = Path.Combine(
                 outputDirectory,
                 "center_frame_shift_speed_limit_001.json"
@@ -502,12 +517,35 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {anchorWorldLimitPath}");
-            return 4;
+
+            CenterFrameShiftDump smoothing = RunCenterFrameShiftOracle(
+                1.0f,
+                0.5f,
+                -1.0f,
+                -1.0f,
+                new float3(2.0f, 0.0f, 0.0f),
+                true
+            );
+            string smoothingPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_smoothing_001.json"
+            );
+            File.WriteAllText(
+                smoothingPath,
+                BuildCenterSmoothingShiftJson(smoothing),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {smoothingPath}");
+            return 5;
         }
 
         private static CenterFrameShiftDump RunCenterFrameShiftOracle(
+            float worldInertia,
+            float movementInertiaSmoothing,
             float movementSpeedLimit,
-            float rotationSpeedLimit
+            float rotationSpeedLimit,
+            float3 smoothingVelocity,
+            bool isRunning
         )
         {
             MethodInfo method = typeof(TeamManager).GetMethod(
@@ -535,12 +573,13 @@ namespace HoTools.MC2Oracle.Editor
                 negativeScaleQuaternionValue = new float4(1.0f),
                 velocityWeight = 1.0f,
             };
+            team.flag.SetBits(TeamManager.Flag_Running, isRunning);
             var parameters = new ClothParameters
             {
                 inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
                 {
-                    worldInertia = 0.25f,
-                    movementInertiaSmoothing = 0.0f,
+                    worldInertia = worldInertia,
+                    movementInertiaSmoothing = movementInertiaSmoothing,
                     movementSpeedLimit = movementSpeedLimit,
                     rotationSpeedLimit = rotationSpeedLimit,
                     teleportMode = InertiaConstraint.TeleportMode.None,
@@ -559,6 +598,7 @@ namespace HoTools.MC2Oracle.Editor
                 nowWorldRotation = quaternion.identity,
                 oldWorldPosition = new float3(2.0f, 0.0f, 0.0f),
                 oldWorldRotation = quaternion.identity,
+                smoothingVelocity = smoothingVelocity,
             };
             var wind = new TeamWindData();
             var positions = new NativeArray<float3>(0, Allocator.TempJob);
@@ -612,6 +652,7 @@ namespace HoTools.MC2Oracle.Editor
                     FrameWorldRotation = center.frameWorldRotation,
                     FrameMovingDirection = center.frameMovingDirection,
                     FrameMovingSpeed = center.frameMovingSpeed,
+                    SmoothingVelocity = center.smoothingVelocity,
                 };
             }
             finally
@@ -3051,6 +3092,65 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
             Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
             Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterSmoothingShiftJson(CenterFrameShiftDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_smoothing_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates positive-scale movement-inertia smoothing velocity update and cancellation with world inertia, fixed list, anchor, limits, teleport, synchronization, culling, skip, and stabilization disabled.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "now_time_scale", "1");
+            Property(text, 4, "velocity_weight", "1");
+            Property(text, 4, "is_running", "true");
+            Property(text, 4, "world_inertia", "1");
+            Property(text, 4, "movement_inertia_smoothing", "0.5");
+            Property(text, 4, "movement_speed_limit", "-1");
+            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "smoothing_velocity", "[2,0,0]");
+            Property(text, 4, "old_component_world_position", "[0,0,0]");
+            Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_component_world_scale", "[1,1,1]");
+            Property(text, 4, "component_world_position", "[10,0,0]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "component_world_scale", "[1,1,1]");
+            Property(text, 4, "old_frame_world_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "now_world_position", "[2,0,0]");
+            Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
+            Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity), false);
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();
