@@ -59,7 +59,8 @@ directory:
   positive-scale `worldInertia` translation/rotation shift with fixed points,
   anchor, smoothing, limits, teleport, synchronization, culling, skip, and
   stabilization disabled. The second case applies movement and rotation speed
-  limits after the same world-inertia shift.
+  limits after the same world-inertia shift. The third case isolates anchor
+  translation/rotation cancellation with world inertia disabled.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

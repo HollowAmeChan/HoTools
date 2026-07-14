@@ -460,7 +460,19 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {speedLimitPath}");
-            return 2;
+
+            CenterFrameShiftDump anchor = RunCenterAnchorShiftOracle();
+            string anchorPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_anchor_001.json"
+            );
+            File.WriteAllText(
+                anchorPath,
+                BuildCenterAnchorShiftJson(anchor),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {anchorPath}");
+            return 3;
         }
 
         private static CenterFrameShiftDump RunCenterFrameShiftOracle(
@@ -525,6 +537,132 @@ namespace HoTools.MC2Oracle.Editor
             var fixedIndices = new NativeArray<ushort>(0, Allocator.TempJob);
             var transformPositions = new NativeArray<float3>(
                 new[] { new float3(10.0f, 0.0f, 0.0f) },
+                Allocator.TempJob
+            );
+            var transformRotations = new NativeArray<quaternion>(
+                new[] { quaternion.AxisAngle(math.up(), math.radians(90.0f)) },
+                Allocator.TempJob
+            );
+            var transformScales = new NativeArray<float3>(
+                new[] { new float3(1.0f) },
+                Allocator.TempJob
+            );
+            var windData = new NativeArray<WindManager.WindData>(0, Allocator.TempJob);
+            try
+            {
+                object[] arguments =
+                {
+                    0.1f,
+                    0,
+                    team,
+                    center,
+                    wind,
+                    parameters,
+                    positions,
+                    rotations,
+                    bindRotations,
+                    fixedIndices,
+                    transformPositions,
+                    transformRotations,
+                    transformScales,
+                    0,
+                    windData,
+                };
+                InvokeStatic(method, arguments);
+                center = (InertiaConstraint.CenterData)arguments[3];
+                return new CenterFrameShiftDump
+                {
+                    FrameComponentShiftVector = center.frameComponentShiftVector,
+                    FrameComponentShiftRotation = center.frameComponentShiftRotation,
+                    OldFrameWorldPosition = center.oldFrameWorldPosition,
+                    OldFrameWorldRotation = center.oldFrameWorldRotation,
+                    NowWorldPosition = center.nowWorldPosition,
+                    NowWorldRotation = center.nowWorldRotation,
+                    FrameWorldPosition = center.frameWorldPosition,
+                    FrameWorldRotation = center.frameWorldRotation,
+                    FrameMovingDirection = center.frameMovingDirection,
+                    FrameMovingSpeed = center.frameMovingSpeed,
+                };
+            }
+            finally
+            {
+                positions.Dispose();
+                rotations.Dispose();
+                bindRotations.Dispose();
+                fixedIndices.Dispose();
+                transformPositions.Dispose();
+                transformRotations.Dispose();
+                transformScales.Dispose();
+                windData.Dispose();
+            }
+        }
+
+        private static CenterFrameShiftDump RunCenterAnchorShiftOracle()
+        {
+            MethodInfo method = typeof(TeamManager).GetMethod(
+                "SimulationCalcCenterAndInertiaAndWind",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(TeamManager).FullName,
+                    "SimulationCalcCenterAndInertiaAndWind"
+                );
+            }
+
+            var team = new TeamManager.TeamData
+            {
+                frameDeltaTime = 0.1f,
+                nowTimeScale = 1.0f,
+                updateCount = 1,
+                initScale = new float3(1.0f),
+                negativeScaleSign = 1.0f,
+                negativeScaleDirection = new float3(1.0f),
+                negativeScaleChange = new float3(1.0f),
+                negativeScaleTriangleSign = new float2(1.0f),
+                negativeScaleQuaternionValue = new float4(1.0f),
+                velocityWeight = 1.0f,
+            };
+            team.flag.SetBits(TeamManager.Flag_Anchor, true);
+            var parameters = new ClothParameters
+            {
+                inertiaConstraint = new InertiaConstraint.InertiaConstraintParams
+                {
+                    anchorInertia = 0.25f,
+                    worldInertia = 1.0f,
+                    movementInertiaSmoothing = 0.0f,
+                    movementSpeedLimit = -1.0f,
+                    rotationSpeedLimit = -1.0f,
+                    teleportMode = InertiaConstraint.TeleportMode.None,
+                },
+            };
+            var center = new InertiaConstraint.CenterData
+            {
+                centerTransformIndex = 0,
+                oldComponentWorldPosition = new float3(1.0f, 0.0f, 0.0f),
+                oldComponentWorldRotation = quaternion.identity,
+                oldComponentWorldScale = new float3(1.0f),
+                oldFrameWorldPosition = new float3(1.0f, 0.0f, 0.0f),
+                oldFrameWorldRotation = quaternion.identity,
+                oldFrameWorldScale = new float3(1.0f),
+                nowWorldPosition = new float3(1.0f, 0.0f, 0.0f),
+                nowWorldRotation = quaternion.identity,
+                oldWorldPosition = new float3(1.0f, 0.0f, 0.0f),
+                oldWorldRotation = quaternion.identity,
+                anchorPosition = new float3(0.0f, 0.0f, 1.0f),
+                anchorRotation = quaternion.AxisAngle(math.up(), math.radians(90.0f)),
+                oldAnchorPosition = new float3(0.0f),
+                oldAnchorRotation = quaternion.identity,
+                anchorComponentLocalPosition = new float3(1.0f, 0.0f, 0.0f),
+            };
+            var wind = new TeamWindData();
+            var positions = new NativeArray<float3>(0, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(0, Allocator.TempJob);
+            var bindRotations = new NativeArray<quaternion>(0, Allocator.TempJob);
+            var fixedIndices = new NativeArray<ushort>(0, Allocator.TempJob);
+            var transformPositions = new NativeArray<float3>(
+                new[] { new float3(0.0f) },
                 Allocator.TempJob
             );
             var transformRotations = new NativeArray<quaternion>(
@@ -2797,6 +2935,68 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "old_frame_world_position", "[1,0,0]");
             Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
             Property(text, 4, "now_world_position", "[2,0,0]");
+            Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
+            Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterAnchorShiftJson(CenterFrameShiftDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_anchor_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates positive-scale anchor cancellation with world inertia, fixed list, smoothing, speed limits, teleport, synchronization, culling, skip, and stabilization disabled.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "now_time_scale", "1");
+            Property(text, 4, "velocity_weight", "1");
+            Property(text, 4, "anchor_inertia", "0.25");
+            Property(text, 4, "world_inertia", "1");
+            Property(text, 4, "movement_inertia_smoothing", "0");
+            Property(text, 4, "movement_speed_limit", "-1");
+            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "old_component_world_position", "[1,0,0]");
+            Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_component_world_scale", "[1,1,1]");
+            Property(text, 4, "component_world_position", "[0,0,0]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "component_world_scale", "[1,1,1]");
+            Property(text, 4, "old_anchor_world_position", "[0,0,0]");
+            Property(text, 4, "old_anchor_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "anchor_world_position", "[0,0,1]");
+            Property(text, 4, "anchor_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "anchor_component_local_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "now_world_position", "[1,0,0]");
             Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
             text.AppendLine("  },");
             text.AppendLine("  \"expected\": {");
