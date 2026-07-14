@@ -10,9 +10,9 @@ arp_ref(3spine),shoulder.L,肩.L,左肩,LeftSholder,Left shoulder,Shoulder_L,c_shou
 arp_deform(onlymainBone),upper_arm.L,腕.L,左腕,LeftUpperArm,Left arm,Upper Arm_L,c_arm_fk.l,arm_ref.l,arm_stretch.l
 ,lower_arm.L,ひじ.L,左ひじ,LeftLowerArm,Left elbow,Lower Arm_L,c_forearm_fk.l,forearm_ref.l,forearm_stretch.l
 ,hand.L,手首.L,左手首,LeftHand,Left wrist,Hand_L,c_hand_fk.l,hand_ref.l,hand.l
-,thumb_proximal.L,親指０.L,左親指０,LeftThumb1,Thumb1_L,Thumb Proximal_L,c_thumb1.l,thumb1_ref.l,thumb1.l
-,thumb_intermediate.L,親指１.L,左親指１,LeftThumb2,Thumb2_L,Thumb Intermediate_L,c_thumb2.l,thumb2_ref.l,thumb1.l
-,thumb_distal.L,親指２.L,左親指２,LeftThumb3,Thumb3_L,Thumb Distal_L,c_thumb3.l,thumb3_ref.l,thumb1.l
+关于四指手掌骨,thumb_proximal.L,親指０.L,左親指０,LeftThumb1,Thumb1_L,Thumb Proximal_L,c_thumb1.l,thumb1_ref.l,thumb1.l
+humannoid中没有但是比较有用,thumb_intermediate.L,親指１.L,左親指１,LeftThumb2,Thumb2_L,Thumb Intermediate_L,c_thumb2.l,thumb2_ref.l,thumb1.l
+可以叫做thumb_metacarpal这样,thumb_distal.L,親指２.L,左親指２,LeftThumb3,Thumb3_L,Thumb Distal_L,c_thumb3.l,thumb3_ref.l,thumb1.l
 ,index_proximal.L,人指１.L,左人指１,LeftIndex1,IndexFinger1_L,Index Proximal_L,c_index1.l,index1_ref.l,index1.l
 ,index_intermediate.L,人指２.L,左人指２,LeftIndex2,IndexFinger2_L,Index Intermediate_L,c_index2.l,index2_ref.l,index1.l
 ,index_distal.L,人指３.L,左人指３,LeftIndex3,IndexFinger3_L,Index Distal_L,c_index3.l,index3_ref.l,index1.l
