@@ -116,6 +116,7 @@ def _slot_debug_snapshot(slot) -> dict:
                 "moving_speed": center_frame_shift_result.frame_moving_speed,
                 "smoothing_velocity": center_frame_shift_result.smoothing_velocity,
                 "keep_teleport": center_frame_shift_result.keep_teleport,
+                "reset_teleport": center_frame_shift_result.reset_teleport,
             }
             if center_frame_shift_result is not None
             else None
@@ -243,7 +244,8 @@ def _make_slot_center_frame_shift(
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
     time_scale_active = float(time_scale) < 1.0 - 1.0e-8
     skip_shift_active = int(skip_count) > 0
-    keep_teleport_active = int(profile.teleport_mode) == 2
+    teleport_mode = int(profile.teleport_mode)
+    configured_teleport_active = teleport_mode in (1, 2)
     in_verified_domain = (
         (
             world_shift_active
@@ -251,7 +253,7 @@ def _make_slot_center_frame_shift(
             or smoothing_active
             or time_scale_active
             or skip_shift_active
-            or keep_teleport_active
+            or configured_teleport_active
         )
         and 0.0 <= float(time_scale) <= 1.0
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
@@ -279,7 +281,7 @@ def _make_slot_center_frame_shift(
         is_running=float(time_scale) > 0.0,
         now_time_scale=time_scale,
         skip_count=int(skip_count),
-        teleport_mode=2 if keep_teleport_active else 0,
+        teleport_mode=teleport_mode if configured_teleport_active else 0,
         teleport_distance=profile.teleport_distance,
         teleport_rotation=profile.teleport_rotation,
         negative_scale_transition=negative_scale_transition,
@@ -632,6 +634,8 @@ def step_mc2(
                 center_action = None
                 center_negative_scale_result = None
                 center_frame_shift_result = None
+                configured_reset_teleport = False
+                staged_reset_center_state = None
                 center_step_input = None
                 center_step_result = None
                 frame_schedule = None
@@ -696,6 +700,23 @@ def step_mc2(
                                 skip_count=frame_schedule.skip_count,
                                 negative_scale_transition=center_negative_scale_result,
                             )
+                            configured_reset_teleport = bool(
+                                center_frame_shift_result is not None
+                                and center_frame_shift_result.reset_teleport
+                            )
+                            if configured_reset_teleport:
+                                staged_reset_center_state = replace(center_state)
+                                stabilization = float(
+                                    spec.profile.stabilization_time_after_reset
+                                )
+                                staged_reset_center_state.reset(
+                                    frame_input.center_frame_pose,
+                                    center_pose.position,
+                                    center_pose.rotation_xyzw,
+                                    velocity_weight=(
+                                        0.0 if stabilization > 1.0e-6 else 1.0
+                                    ),
+                                )
                 if (
                     native_context is not None
                     and frame_plan.action != "same_frame"
@@ -705,32 +726,44 @@ def step_mc2(
                     if frame_plan.action == "reset":
                         native_context.reset()
                     else:
-                        if (
-                            center_negative_scale_result is not None
-                            and center_negative_scale_result.active
-                        ):
-                            native_context.apply_center_negative_scale_teleport(
-                                center_negative_scale_result
-                            )
-                        if center_frame_shift_result is not None:
-                            native_context.apply_center_frame_shift(
-                                center_state.old_component_world_position,
-                                center_frame_shift_result,
-                            )
+                        if configured_reset_teleport:
+                            native_context.reset()
+                        else:
+                            if (
+                                center_negative_scale_result is not None
+                                and center_negative_scale_result.active
+                            ):
+                                native_context.apply_center_negative_scale_teleport(
+                                    center_negative_scale_result
+                                )
+                            if center_frame_shift_result is not None:
+                                native_context.apply_center_frame_shift(
+                                    center_state.old_component_world_position,
+                                    center_frame_shift_result,
+                                )
                         if center_action == "step":
+                            step_center_state = (
+                                staged_reset_center_state
+                                if configured_reset_teleport
+                                else center_state
+                            )
                             for update_index in range(frame_schedule.update_count):
                                 frame_interpolation = time_scheduler.advance_step(
                                     update_index
                                 )
                                 if update_index == 0:
-                                    center_step_input = center_state.make_step_input(
+                                    center_step_input = step_center_state.make_step_input(
                                         frame_input.center_frame_pose,
                                         center_pose,
                                         simulation_delta_time=(
                                             frame_schedule.simulation_delta_time
                                         ),
                                         frame_interpolation=frame_interpolation,
-                                        frame_shift=center_frame_shift_result,
+                                        frame_shift=(
+                                            None
+                                            if configured_reset_teleport
+                                            else center_frame_shift_result
+                                        ),
                                     )
                                     native_context.update_center_dynamic(center_step_input)
                                 else:
@@ -781,46 +814,74 @@ def step_mc2(
                 elif center_action == "step":
                     if center_step_result is None:
                         raise RuntimeError("MC2 native Center step did not produce a result")
-                    center_state.apply_negative_scale_transition(
-                        center_negative_scale_result
+                    committed_center_state = (
+                        staged_reset_center_state
+                        if configured_reset_teleport
+                        else center_state
                     )
-                    center_state.commit_frame_shift(center_frame_shift_result)
-                    center_state.commit_step(
+                    if configured_reset_teleport:
+                        slot.data["center_state"] = committed_center_state
+                        center_state = committed_center_state
+                    else:
+                        center_state.apply_negative_scale_transition(
+                            center_negative_scale_result
+                        )
+                        center_state.commit_frame_shift(center_frame_shift_result)
+                    committed_center_state.commit_step(
                         frame_input.center_frame_pose,
                         center_pose,
                         center_step_result,
                     )
                     slot.data["center_step_result"] = center_step_result
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
-                    slot.data["center_negative_scale_result"] = center_negative_scale_result
+                    slot.data["center_negative_scale_result"] = (
+                        None
+                        if configured_reset_teleport
+                        else center_negative_scale_result
+                    )
                     slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "pause":
                     if center_frame_shift_result is None:
                         raise RuntimeError("MC2 paused Center frame requires a frame shift")
-                    center_state.apply_negative_scale_transition(
-                        center_negative_scale_result
-                    )
-                    center_state.commit_paused_frame(
-                        frame_input.center_frame_pose,
-                        center_frame_shift_result,
-                    )
+                    if configured_reset_teleport:
+                        slot.data["center_state"] = staged_reset_center_state
+                        center_state = staged_reset_center_state
+                    else:
+                        center_state.apply_negative_scale_transition(
+                            center_negative_scale_result
+                        )
+                        center_state.commit_paused_frame(
+                            frame_input.center_frame_pose,
+                            center_frame_shift_result,
+                        )
                     slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = center_frame_shift_result
-                    slot.data["center_negative_scale_result"] = center_negative_scale_result
+                    slot.data["center_negative_scale_result"] = (
+                        None
+                        if configured_reset_teleport
+                        else center_negative_scale_result
+                    )
                     slot.data["frame_schedule"] = frame_schedule
                 elif center_action == "idle":
                     slot.data["center_step_result"] = None
                     slot.data["center_frame_shift_result"] = None
                     slot.data["center_negative_scale_result"] = None
                     slot.data["frame_schedule"] = frame_schedule
-                frame_result = sync_mc2_frame_input(
-                    runtime_state,
-                    slot.data["particle_buffer"],
-                    frame_input,
-                    user_reset=bool(user_reset),
-                )
-                if frame_result != frame_plan:
-                    raise RuntimeError("MC2 frame plan changed during commit")
+                if configured_reset_teleport:
+                    slot.data["particle_buffer"].reset_from_frame(frame_input)
+                    runtime_state.mark_frame_reset(
+                        frame_input,
+                        "configured_teleport",
+                    )
+                else:
+                    frame_result = sync_mc2_frame_input(
+                        runtime_state,
+                        slot.data["particle_buffer"],
+                        frame_input,
+                        user_reset=bool(user_reset),
+                    )
+                    if frame_result != frame_plan:
+                        raise RuntimeError("MC2 frame plan changed during commit")
                 if candidate is not None:
                     slot.data["result_candidate"] = candidate
                     slot.data["result_candidate_revision"] = candidate.revision

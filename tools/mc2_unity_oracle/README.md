@@ -70,9 +70,11 @@ directory:
   and zero moving speed without a simulation step. The ninth executes the
   scheduler jobs and freezes update/skip counts plus multi-step interpolation.
   The tenth freezes configured Keep teleport detection before smoothing and its
-  100% frame shift. The eleventh freezes an X-axis component scale-sign
-  transition, both negative-scale TRS delta matrices, and the resulting Center
-  and particle-history transforms before inertia shift.
+  100% frame shift. The eleventh freezes configured Reset teleport detection,
+  zero frame shift, Center history replacement, and smoothing reset. The
+  twelfth freezes an X-axis component scale-sign transition, both negative-scale
+  TRS delta matrices, and the resulting Center and particle-history transforms
+  before inertia shift.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

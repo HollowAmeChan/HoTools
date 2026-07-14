@@ -145,8 +145,8 @@ $CenterFrameShiftFixtureCount = @(
     Get-ChildItem -LiteralPath $OutputDirectory -Filter "center_frame_shift_*.json" -File |
         Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
 ).Count
-if ($CenterFrameShiftFixtureCount -ne 11) {
-    throw "Unity oracle produced $CenterFrameShiftFixtureCount center-frame-shift fixtures instead of 11. See $LogPath"
+if ($CenterFrameShiftFixtureCount -ne 12) {
+    throw "Unity oracle produced $CenterFrameShiftFixtureCount center-frame-shift fixtures instead of 12. See $LogPath"
 }
 
 $ParticleStepFixtureCount = @(

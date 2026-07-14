@@ -46,6 +46,7 @@ FIXTURES = tuple(
         "center_frame_shift_fixed_center_001.json",
         "center_frame_shift_zero_time_scale_001.json",
         "center_frame_shift_keep_teleport_001.json",
+        "center_frame_shift_reset_teleport_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -293,8 +294,37 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         )
     )
     keep_teleport = teleport_triggered and int(values.get("teleport_mode", 0)) == 2
+    reset_teleport = teleport_triggered and int(values.get("teleport_mode", 0)) == 1
     assert result.keep_teleport is keep_teleport
-    assert result.reset_teleport is False
+    assert result.reset_teleport is reset_teleport
+    if reset_teleport:
+        zero = np.zeros(3, dtype=np.float32)
+        reset_values = {
+            "frame_component_shift_vector": zero,
+            "frame_component_shift_rotation_xyzw": identity,
+            "old_frame_world_position": frame_world_position,
+            "old_frame_world_rotation_xyzw": frame_world_rotation,
+            "now_world_position": frame_world_position,
+            "now_world_rotation_xyzw": frame_world_rotation,
+            "frame_world_position": frame_world_position,
+            "frame_world_rotation_xyzw": frame_world_rotation,
+            "frame_moving_direction": zero,
+            "smoothing_velocity": zero,
+        }
+        for field, actual in reset_values.items():
+            np.testing.assert_allclose(
+                actual,
+                expected[field],
+                rtol=1.0e-6,
+                atol=1.0e-6,
+            )
+        np.testing.assert_allclose(
+            expected["frame_moving_speed"],
+            0.0,
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+        return
 
     smooth_shift_vector = np.zeros(3, dtype=np.float32)
     smoothing_velocity = np.asarray(

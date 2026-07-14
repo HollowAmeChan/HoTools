@@ -681,8 +681,8 @@ class MC2CenterFrameShiftInputSpec:
 
     V0 covers component or fixed-derived Center frames after any verified
     negative-scale transition, with optional anchor, movement smoothing, and
-    configured Keep teleport. Reset teleport, synchronization, and culling
-    remain outside this evaluator.
+    configured Keep/Reset teleport. Synchronization and culling remain outside
+    this evaluator.
     """
 
     simulation_delta_time: float
@@ -1261,7 +1261,29 @@ def evaluate_mc2_center_frame_shift(
     keep_teleport = teleport_triggered and int(frame.teleport_mode) == 2
     reset_teleport = teleport_triggered and int(frame.teleport_mode) == 1
     if reset_teleport:
-        raise NotImplementedError("configured Reset teleport is not implemented")
+        return MC2CenterFrameShiftResult(
+            frame_component_shift_vector=(0.0, 0.0, 0.0),
+            frame_component_shift_rotation_xyzw=IDENTITY_QUATERNION,
+            old_frame_world_position=tuple(
+                float(value) for value in frame_world_position
+            ),
+            old_frame_world_rotation_xyzw=tuple(
+                float(value) for value in frame_world_rotation
+            ),
+            now_world_position=tuple(float(value) for value in frame_world_position),
+            now_world_rotation_xyzw=tuple(
+                float(value) for value in frame_world_rotation
+            ),
+            frame_world_position=tuple(float(value) for value in frame_world_position),
+            frame_world_rotation_xyzw=tuple(
+                float(value) for value in frame_world_rotation
+            ),
+            frame_moving_direction=(0.0, 0.0, 0.0),
+            frame_moving_speed=0.0,
+            smoothing_velocity=(0.0, 0.0, 0.0),
+            keep_teleport=False,
+            reset_teleport=True,
+        )
 
     smooth_shift_vector = np.zeros(3, dtype=np.float32)
     smoothing_velocity = _f32_vector(
@@ -1463,7 +1485,7 @@ def evaluate_mc2_center_frame_shift(
         frame_moving_speed=float(moving_speed),
         smoothing_velocity=tuple(float(value) for value in smoothing_velocity),
         keep_teleport=keep_teleport,
-        reset_teleport=False,
+        reset_teleport=reset_teleport,
     )
 
 
