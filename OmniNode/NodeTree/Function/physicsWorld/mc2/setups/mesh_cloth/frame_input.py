@@ -39,13 +39,20 @@ def _matrix_to_numpy(matrix) -> np.ndarray:
 def _decompose_component_transform(evaluated_source, source_matrix):
     position, rotation, decomposed_scale = source_matrix.decompose()
     local_scale = tuple(float(value) for value in evaluated_source.scale)
+    parent = evaluated_source.parent
+    while parent is not None:
+        parent_scale = tuple(float(value) for value in parent.scale)
+        if any(value < 0.0 for value in parent_scale):
+            raise ValueError(
+                "MC2 negative-scale Mesh source does not support negative scale "
+                "inherited from a parent"
+            )
+        if any(abs(value) <= _NORMAL_EPSILON for value in parent_scale):
+            raise ValueError("MC2 component parent scale cannot contain zero")
+        parent = parent.parent
     if not any(value < 0.0 for value in local_scale):
         rotation.normalize()
         return position, rotation, decomposed_scale
-    if evaluated_source.parent is not None:
-        raise ValueError(
-            "MC2 negative-scale Mesh source currently requires an unparented object"
-        )
     signed_scale = np.asarray(
         [
             (-1.0 if local < 0.0 else 1.0) * abs(float(world))
@@ -64,7 +71,7 @@ def _decompose_component_transform(evaluated_source, source_matrix):
         atol=1.0e-6,
     ) or np.linalg.det(rotation_matrix) <= 0.0:
         raise ValueError(
-            "MC2 negative-scale Mesh source cannot contain parent scale or shear"
+            "MC2 negative-scale Mesh source world transform must be shear-free"
         )
     rotation = Matrix(rotation_matrix.tolist()).to_quaternion()
     rotation.normalize()
