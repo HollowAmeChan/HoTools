@@ -367,7 +367,7 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     declaration = solver_registry.resolve_solver_declaration("mc2")
     assert declaration is not None
     assert solver_declarations.validate_solver_declaration(declaration) == []
-    assert declaration["implementation_status"] == "particle_buffer_framework"
+    assert declaration["implementation_status"] == "mesh_native_public_result_foundation"
     assert tuple(declaration["setup_types"]) == (
         mc2_names.MC2_SETUP_MESH_CLOTH,
         mc2_names.MC2_SETUP_BONE_CLOTH,
@@ -376,15 +376,16 @@ def test_mc2_is_one_solver_with_three_setup_types_and_safe_framework_step():
     assert declaration["solver_id"] == mc2_names.MC2_SOLVER_ID == "mc2"
     assert "one_solver_three_setup_adapters" in declaration["native_strategy"]
     assert declaration["native_strategy"].endswith("single_native_context")
-    assert declaration["update_policy"]["framework"] == "sync_topology_particle_buffer_no_result_no_legacy_solver_call"
+    assert declaration["update_policy"]["framework"] == "sync_topology_native_context_and_public_mesh_result"
     assert declaration["update_policy"]["native_backend"] == "single_native_context_no_python_fallback"
     assert declaration["export"]["result_channels"] == []
-    assert declaration["export"]["shared_result_channels"] == []
+    assert declaration["export"]["shared_result_channels"] == [
+        world_names.GN_ATTRIBUTE_CHANNEL,
+    ]
     assert tuple(declaration["export"]["planned_result_channels"]) == (
         mc2_names.MC2_STATS_CHANNEL,
     )
     assert tuple(declaration["export"]["planned_shared_result_channels"]) == (
-        world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
     )
 
@@ -838,10 +839,9 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
     mc2_declaration = solver_registry.resolve_solver_declaration("mc2")
     summary = solver_declarations.solver_declaration_summary(mc2_declaration)
     assert summary["result_channels"] == []
-    assert summary["shared_result_channels"] == []
+    assert summary["shared_result_channels"] == [world_names.GN_ATTRIBUTE_CHANNEL]
     assert summary["planned_result_channels"] == [mc2_names.MC2_STATS_CHANNEL]
     assert summary["planned_shared_result_channels"] == [
-        world_names.GN_ATTRIBUTE_CHANNEL,
         world_names.BONE_TRANSFORM_CHANNEL,
     ]
 
@@ -861,13 +861,12 @@ def test_solver_registry_separates_owned_shared_and_planned_result_channels():
     assert baseline["shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL] == [
         "spring_vrm"
     ]
+    assert baseline["shared_result_channels"][world_names.GN_ATTRIBUTE_CHANNEL] == ["mc2"]
     assert baseline["planned_result_channels"][mc2_names.MC2_STATS_CHANNEL] == ["mc2"]
     assert baseline["planned_shared_result_channels"][world_names.BONE_TRANSFORM_CHANNEL] == [
         "mc2"
     ]
-    assert baseline["planned_shared_result_channels"][world_names.GN_ATTRIBUTE_CHANNEL] == [
-        "mc2"
-    ]
+    assert world_names.GN_ATTRIBUTE_CHANNEL not in baseline["planned_shared_result_channels"]
 
     shared_domain = "test_shared_result_solver"
     exclusive_domain = "test_exclusive_result_solver"

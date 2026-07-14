@@ -20,9 +20,9 @@ from .names import (
 MC2_SOLVER_DECLARATION = {
     "solver_id": MC2_SOLVER_ID,
     "slot_kind": MC2_SLOT_KIND,
-    "stage": "particle_buffer_framework_no_runtime_backend",
+    "stage": "mesh_native_no_collision_public_result",
     "native_strategy": "one_solver_three_setup_adapters_single_native_context",
-    "implementation_status": "particle_buffer_framework",
+    "implementation_status": "mesh_native_public_result_foundation",
     "setup_types": list(MC2_SETUP_TYPES),
     "nodes": [
         "MC2粒子配置",
@@ -41,7 +41,7 @@ MC2_SOLVER_DECLARATION = {
         "MC2SolverSettingsSpec",
     ],
     "produces": [
-        f'planned:world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
+        f'world.result_streams["{GN_ATTRIBUTE_CHANNEL}"]',
         f'planned:world.result_streams["{BONE_TRANSFORM_CHANNEL}"]',
         f'planned:world.result_streams["{MC2_STATS_CHANNEL}"]',
     ],
@@ -52,7 +52,8 @@ MC2_SOLVER_DECLARATION = {
         "slot.data.effective_parameters",
         "slot.data.runtime_state",
         "slot.data.writeback_plan",
-        "planned:slot.data.mc2_context",
+        "slot.data.native_context",
+        "slot.data.result_candidate",
     ],
     "dirty_keys": [
         "world.generation",
@@ -66,9 +67,9 @@ MC2_SOLVER_DECLARATION = {
         "step.settings.signature",
         "planned:collider_snapshot.source_key",
     ],
-    "same_frame_policy": "reuse_synced_slot_no_backend_step",
+    "same_frame_policy": "reuse_candidate_no_backend_step_republish_result",
     "update_policy": {
-        "framework": "sync_topology_particle_buffer_no_result_no_legacy_solver_call",
+        "framework": "sync_topology_native_context_and_public_mesh_result",
         "solver_core": "one_shared_mc2_step",
         "setup_dispatch": "mesh_cloth_or_bone_cloth_or_bone_spring_adapter",
         "native_backend": "single_native_context_no_python_fallback",
@@ -97,14 +98,13 @@ MC2_SOLVER_DECLARATION = {
     },
     "export": {
         "result_channels": [],
-        "shared_result_channels": [],
+        "shared_result_channels": [
+            GN_ATTRIBUTE_CHANNEL,
+        ],
         "planned_result_channels": [
             MC2_STATS_CHANNEL,
         ],
-        "planned_shared_result_channels": [
-            GN_ATTRIBUTE_CHANNEL,
-            BONE_TRANSFORM_CHANNEL,
-        ],
+        "planned_shared_result_channels": [BONE_TRANSFORM_CHANNEL],
         "supports_bake": False,
         "solver_acceptance_blocker": True,
     },

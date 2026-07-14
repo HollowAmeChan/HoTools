@@ -16,6 +16,7 @@ from .candidate import make_mc2_result_candidate
 from .center_state import MC2CenterPersistentState, derive_mc2_center_world_pose
 from .frame_state import MC2FrameInputSpec, plan_mc2_frame_sync, sync_mc2_frame_input
 from .initial_state import MC2InitialStateSpec, build_mc2_initial_state
+from .results import make_mc2_mesh_result, publish_mc2_result_transaction
 from .specs import build_mc2_task_specs
 from .state import MC2ParticleBuffer, MC2SlotRuntimeState
 from .topology import build_mc2_topology_spec
@@ -23,7 +24,7 @@ from .topology import build_mc2_topology_spec
 
 MC2_FRAMEWORK_STATUS = (
     "MC2 context V0 已接入 Center/Move inertia、Gravity、Pin、Distance、Bending 数值 step；"
-    "公共结果发布尚未接入"
+    "Mesh 公共结果事务已接入"
 )
 
 
@@ -319,6 +320,18 @@ def step_mc2(
         raise ValueError(f"MC2 frame inputs contain unknown task ids: {sorted(unknown_frame_ids)!r}")
     if any(not isinstance(value, MC2FrameInputSpec) for value in frame_inputs.values()):
         raise TypeError("frame_inputs values must be MC2FrameInputSpec")
+    if int(world.generation) > 0:
+        world_frame = int(getattr(world.frame_context, "frame", 0) or 0)
+        mismatched_frames = sorted(
+            task_id
+            for task_id, frame_input in frame_inputs.items()
+            if frame_input.frame != world_frame
+        )
+        if mismatched_frames:
+            raise ValueError(
+                "MC2 frame inputs do not match the active Physics World frame: "
+                f"{mismatched_frames!r}"
+            )
     # 先完成全部只读构建，保证任一 task 校验失败时 world 不会半更新。
     prepared_items = []
     staged_native_contexts = []
@@ -405,6 +418,8 @@ def step_mc2(
     prepared = tuple(prepared_items)
     counts = {"created": 0, "rebuilt": 0, "updated": 0, "reused": 0}
     active_slot_ids: list[str] = []
+    public_results: list[dict] = []
+    published_results = ()
     world.acquire_write(MC2_SOLVER_ID)
     try:
         for (
@@ -477,7 +492,11 @@ def step_mc2(
                             center_step_result = native_context.read_center_step()
                 elif center_step_input is not None:
                     raise RuntimeError("MC2 Center step requires a live native context")
-                candidate = None
+                candidate = (
+                    slot.data.get("result_candidate")
+                    if frame_plan.action == "same_frame"
+                    else None
+                )
                 if native_context is not None and frame_plan.action != "same_frame":
                     native_positions, native_rotations = native_context.read()
                     if slot.data.get("mesh_static") is not None:
@@ -522,7 +541,18 @@ def step_mc2(
                 if candidate is not None:
                     slot.data["result_candidate"] = candidate
                     slot.data["result_candidate_revision"] = candidate.revision
+                    if int(world.generation) > 0 and spec.setup_type == "mesh_cloth":
+                        public_results.append(
+                            make_mc2_mesh_result(
+                                spec=spec,
+                                candidate=candidate,
+                                frame=frame_input.frame,
+                                world_generation=world.generation,
+                            )
+                        )
         pruned = _prune_stale_mc2_slots(world, active_slot_ids)
+        if int(world.generation) > 0:
+            published_results = publish_mc2_result_transaction(world, public_results)
     finally:
         world.release_write(MC2_SOLVER_ID)
         for context in staged_native_contexts:
@@ -533,4 +563,4 @@ def step_mc2(
         f"新建 {counts['created']}，重建 {counts['rebuilt']}，"
         f"更新 {counts['updated']}，复用 {counts['reused']}，清理 {pruned}）"
     )
-    return world, False, status
+    return world, bool(published_results), status

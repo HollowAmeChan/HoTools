@@ -105,7 +105,10 @@ _EXPORTS = {
     "get_mc2_setup_adapter": ".setups",
     "MC2_FRAMEWORK_STATUS": ".solver",
     "step_mc2": ".solver",
+    "MC2_PUBLIC_RESULT_SCHEMA_VERSION": ".results",
     "iter_mc2_results": ".results",
+    "make_mc2_mesh_result": ".results",
+    "publish_mc2_result_transaction": ".results",
 }
 
 

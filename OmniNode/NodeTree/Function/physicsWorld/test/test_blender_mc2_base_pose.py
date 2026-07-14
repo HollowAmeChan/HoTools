@@ -43,6 +43,9 @@ world_names = importlib.import_module(
 gn_offset = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.gn_offset"
 )
+world_writeback = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.writeback"
+)
 base_pose = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.setups.mesh_cloth.base_pose"
 )
@@ -202,11 +205,14 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
 
         world = world_types.PhysicsWorldCache()
-        mc2_solver.step_mc2(
+        world.generation = 1
+        world.frame_context.frame = 1
+        _, ready, _ = mc2_solver.step_mc2(
             world,
             [task],
             frame_inputs={task.task_id: first_input},
         )
+        assert ready is True
         slot = world.solver_slots[task.task_id]
         runtime_state = slot.data["runtime_state"]
         particle_buffer = slot.data["particle_buffer"]
@@ -250,7 +256,22 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert candidate.world_positions.flags.writeable is False
         assert candidate.world_rotations_xyzw.flags.writeable is False
         np.testing.assert_allclose(candidate.mesh_object_local_offsets, 0.0, atol=1.0e-6)
-        assert world.result_streams == {}
+        public_results = world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+            frame=1,
+            generation=1,
+        )
+        assert len(public_results) == 1
+        assert public_results[0]["ready"] is True
+        assert public_results[0]["revision"] == 1
+        assert public_results[0]["frame_generation"] == first_input.generation
+        assert public_results[0]["local_offsets"].flags.writeable is False
+        assert world_writeback.writeback_gn_attributes(world) == 1
+        written_offsets = source.data.attributes[world_names.GN_OFFSET_ATTRIBUTE_NAME]
+        written_values = np.empty(len(source.data.vertices) * 3, dtype=np.float32)
+        written_offsets.data.foreach_get("vector", written_values)
+        np.testing.assert_allclose(written_values, 0.0, atol=1.0e-6)
         snapshot = slot.debug_snapshot()
         assert snapshot["result_candidate"]["revision"] == 1
         assert snapshot["result_candidate"]["ready"] is False
@@ -271,6 +292,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_owner.inspect()["dynamic_revision"] == 1
         assert slot.data["result_candidate"] is candidate
         assert slot.data["result_candidate_revision"] == 1
+        same_frame_results = world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert len(same_frame_results) == 1
+        assert same_frame_results[0]["revision"] == 1
 
         history_before_parameter_update = particle_buffer.next_positions.copy()
         soft_task = mc2_specs.make_mc2_task_spec(
@@ -350,6 +377,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             static,
             topology_signature=topology.topology_signature,
         )
+        world.frame_context.frame = 2
         mc2_solver.step_mc2(
             world,
             [soft_task],
@@ -367,6 +395,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert second_candidate.revision == 2
         assert second_candidate.frame == second_input.frame
         assert second_candidate is not candidate
+        second_results = world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert len(second_results) == 1
+        assert second_results[0]["revision"] == 2
+        assert second_results[0]["frame_generation"] == second_input.generation
         np.testing.assert_array_equal(
             particle_buffer.next_positions,
             second.animated_base_world_positions,
@@ -394,6 +429,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
                 component_world_scale=second_input.center_frame_pose.component_world_scale,
             ),
         )
+        world.frame_context.frame = 3
         mc2_solver.step_mc2(
             world,
             [soft_task],
@@ -417,7 +453,13 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert third_candidate.revision == 3
         assert third_candidate.frame == third_input.frame
         assert third_candidate.native_step_count == 1
-        assert world.result_streams == {}
+        third_results = world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert len(third_results) == 1
+        assert third_results[0]["revision"] == 3
+        assert third_results[0]["native_step_count"] == 1
 
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
@@ -436,6 +478,12 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         recovered_candidate = world.solver_slots[soft_task.task_id].data["result_candidate"]
         assert recovered_candidate.revision == 1
         assert recovered_candidate.frame == third_input.frame
+        recovered_results = world.consume_results(
+            world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert len(recovered_results) == 1
+        assert recovered_results[0]["revision"] == 1
 
         try:
             frame_input.read_base_pose_frame_snapshot(

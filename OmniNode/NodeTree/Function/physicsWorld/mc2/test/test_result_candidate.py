@@ -37,10 +37,68 @@ candidate_module = importlib.import_module(
 frame_module = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.frame_state"
 )
+results_module = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.results"
+)
+
+
+class _PointerOwner:
+    def __init__(self, pointer: int) -> None:
+        self._pointer = pointer
+
+    def as_pointer(self) -> int:
+        return self._pointer
+
+
+class _MeshSource(_PointerOwner):
+    def __init__(self, pointer: int, data_pointer: int) -> None:
+        super().__init__(pointer)
+        self.type = "MESH"
+        self.data = _PointerOwner(data_pointer)
+
+
+class _ResultWorld:
+    def __init__(self, frame: int = 12, generation: int = 4) -> None:
+        self.frame_context = SimpleNamespace(frame=frame)
+        self.generation = generation
+        self.result_streams = {}
+        self.fail_publish = False
+
+    def clear_results(self, channel=None, solver=None) -> None:
+        if channel is None and solver is None:
+            self.result_streams.clear()
+            return
+        channels = (str(channel),) if channel is not None else tuple(self.result_streams)
+        for result_channel in channels:
+            items = self.result_streams.get(result_channel, ())
+            if solver is None:
+                self.result_streams.pop(result_channel, None)
+                continue
+            kept = [item for item in items if item.get("solver") != solver]
+            if kept:
+                self.result_streams[result_channel] = kept
+            else:
+                self.result_streams.pop(result_channel, None)
+
+    def publish_result(self, item, channel=None, solver="unknown", **payload):
+        if self.fail_publish:
+            raise RuntimeError("injected publish failure")
+        result = dict(item or {})
+        result.update(payload)
+        result["channel"] = str(channel or result.get("channel") or "")
+        result.setdefault("solver", solver)
+        self.result_streams.setdefault(result["channel"], []).append(result)
+        return result
 
 
 def _inputs():
-    spec = SimpleNamespace(task_id="mc2:mesh:test", setup_type="mesh_cloth")
+    source = _MeshSource(101, 202)
+    spec = SimpleNamespace(
+        task_id="mc2:mesh:test",
+        setup_type="mesh_cloth",
+        topology_signature="topology",
+        sources=(source,),
+    )
     slot = SimpleNamespace(slot_id=spec.task_id, world_generation=4)
     frame = frame_module.make_mc2_frame_input(
         task_id=spec.task_id,
@@ -163,6 +221,104 @@ def test_candidate_rejects_mismatched_native_identity() -> None:
         assert "world linear snapshot" in str(exc)
     else:
         raise AssertionError("Mesh candidate accepted a missing source transform snapshot")
+
+
+def test_public_mesh_result_is_ready_and_read_only() -> None:
+    spec, slot, frame, native_info = _inputs()
+    candidate = candidate_module.make_mc2_result_candidate(
+        spec=spec,
+        slot=slot,
+        frame_input=frame,
+        revision=5,
+        native_info=native_info,
+        world_positions=frame.world_positions + np.float32(1.0),
+        world_rotations_xyzw=frame.world_rotations_xyzw,
+    )
+    result = results_module.make_mc2_mesh_result(
+        spec=spec,
+        candidate=candidate,
+        frame=12,
+        world_generation=4,
+    )
+    assert result["ready"] is True
+    assert result["revision"] == 5
+    assert result["frame_generation"] == 3
+    assert result["generation"] == result["world_generation"] == 4
+    assert result["object_ptr"] == 101
+    assert result["object_data_ptr"] == 202
+    assert result["local_offsets"].flags.writeable is False
+    np.testing.assert_allclose(
+        result["local_offsets"],
+        ((0.5, 0.25, 0.2),) * 2,
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+
+
+def test_public_result_transaction_replaces_same_frame_without_revision_change() -> None:
+    spec, slot, frame, native_info = _inputs()
+    candidate = candidate_module.make_mc2_result_candidate(
+        spec=spec,
+        slot=slot,
+        frame_input=frame,
+        revision=7,
+        native_info=native_info,
+        world_positions=frame.world_positions,
+        world_rotations_xyzw=frame.world_rotations_xyzw,
+    )
+    result = results_module.make_mc2_mesh_result(
+        spec=spec,
+        candidate=candidate,
+        frame=12,
+        world_generation=4,
+    )
+    world = _ResultWorld()
+    other_result = {"channel": "gn_attribute", "solver": "other"}
+    world.result_streams["gn_attribute"] = [other_result]
+    first = results_module.publish_mc2_result_transaction(world, (result,))
+    second = results_module.publish_mc2_result_transaction(world, (result,))
+    assert first[0]["revision"] == second[0]["revision"] == 7
+    assert world.result_streams["gn_attribute"][0] is other_result
+    assert len(world.result_streams["gn_attribute"]) == 2
+
+
+def test_public_result_transaction_rolls_back_on_publish_failure() -> None:
+    spec, slot, frame, native_info = _inputs()
+    candidate = candidate_module.make_mc2_result_candidate(
+        spec=spec,
+        slot=slot,
+        frame_input=frame,
+        revision=2,
+        native_info=native_info,
+        world_positions=frame.world_positions,
+        world_rotations_xyzw=frame.world_rotations_xyzw,
+    )
+    result = results_module.make_mc2_mesh_result(
+        spec=spec,
+        candidate=candidate,
+        frame=12,
+        world_generation=4,
+    )
+    world = _ResultWorld()
+    previous = {
+        "channel": "gn_attribute",
+        "solver": "other",
+        "slot_id": "other:slot",
+    }
+    old_mc2 = {
+        "channel": "gn_attribute",
+        "solver": "mc2",
+        "slot_id": "old:mc2",
+    }
+    world.result_streams["gn_attribute"] = [previous, old_mc2]
+    world.fail_publish = True
+    try:
+        results_module.publish_mc2_result_transaction(world, (result,))
+    except RuntimeError as exc:
+        assert "injected publish failure" in str(exc)
+    else:
+        raise AssertionError("MC2 publish failure was not propagated")
+    assert world.result_streams == {"gn_attribute": [previous, old_mc2]}
 
 
 if __name__ == "__main__":

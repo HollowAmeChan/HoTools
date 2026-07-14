@@ -191,7 +191,7 @@ world_delta = display_world - animated_base_world_positions
 object_local_offset = inverse_linear(source.matrix_world) * world_delta
 ```
 
-当前 private candidate 已用同帧只读 source world linear完成该空间转换，但尚未进入公共 result/writeback transaction。
+当前 private candidate 已用同帧只读 source world linear完成该空间转换并保持 `ready=False`。公共层验证 active world frame/generation、task/slot与单 Mesh target后，发布 `ready=True` 的共享 `gn_attribute` envelope；same-frame只重发同 revision，批次发布失败恢复旧 result streams，真实 Blender 写入仍只由公共 writeback执行。
 
 危险边界：
 
