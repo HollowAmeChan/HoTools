@@ -102,6 +102,44 @@ namespace HoTools.MC2Oracle.Editor
             public int3[] Triangles;
         }
 
+        private sealed class BoneStaticVertexCase
+        {
+            public string Name;
+            public string Parent;
+            public float3 Position;
+            public float3 EulerDegrees;
+            public byte Attribute;
+        }
+
+        private sealed class BoneStaticCase
+        {
+            public string Id;
+            public BoneStaticVertexCase[] Vertices;
+            public string[] Roots;
+            public NormalAlignmentSettings.AlignmentMode AlignmentMode;
+            public float3 AdjustmentCenter;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BoneStaticDump
+        {
+            public string[] Names;
+            public float3[] LocalPositions;
+            public float3[] LocalNormals;
+            public float3[] LocalTangents;
+            public float2[] Uvs;
+            public byte[] InputAttributes;
+            public int[] Parents;
+            public int[] Roots;
+            public int2[] Lines;
+            public int3[] Triangles;
+            public float4[] TransformLocalRotations;
+            public ProxyDump Proxy;
+            public OracleDump Baseline;
+            public float4[] NormalAdjustmentRotations;
+            public float4[] VertexToTransformRotations;
+        }
+
         private sealed class BoneRotationLineCase
         {
             public string Id;
@@ -521,6 +559,7 @@ namespace HoTools.MC2Oracle.Editor
             int centerFrameShiftWritten = WriteCenterFrameShiftFixtures(outputDirectory);
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
             int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
+            int boneStaticWritten = WriteBoneStaticFixtures(outputDirectory);
             int boneRotationLineWritten = WriteBoneRotationLineFixtures(outputDirectory);
             int boneRotationTriangleWritten = WriteBoneRotationTriangleFixtures(outputDirectory);
 
@@ -537,6 +576,7 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
                 + $"{particleStepWritten} particle-step fixtures, "
                 + $"{boneConnectionWritten} bone-connection fixtures, "
+                + $"{boneStaticWritten} bone-static fixtures, "
                 + $"{boneRotationLineWritten} bone-rotation-line fixtures, "
                 + $"{boneRotationTriangleWritten} bone-rotation-triangle fixtures"
             );
@@ -770,6 +810,261 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "triangles", ArrayJson(dump.Triangles, Int3Json), false);
             text.AppendLine("  }");
             text.Append("}");
+            return text.ToString();
+        }
+
+        private static int WriteBoneStaticFixtures(string outputDirectory)
+        {
+            int written = 0;
+            foreach (BoneStaticCase oracleCase in BoneStaticCases())
+            {
+                BoneStaticDump dump = RunBoneStaticCase(oracleCase);
+                string path = Path.Combine(outputDirectory, oracleCase.Id + ".json");
+                File.WriteAllText(
+                    path,
+                    BuildBoneStaticJson(oracleCase, dump),
+                    new UTF8Encoding(false)
+                );
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                written++;
+            }
+            return written;
+        }
+
+        private static IEnumerable<BoneStaticCase> BoneStaticCases()
+        {
+            BoneStaticVertexCase V(
+                string name,
+                string parent,
+                float x,
+                float y,
+                float z,
+                byte attribute,
+                float rx = 0.0f,
+                float ry = 0.0f,
+                float rz = 0.0f
+            )
+            {
+                return new BoneStaticVertexCase
+                {
+                    Name = name,
+                    Parent = parent,
+                    Position = new float3(x, y, z),
+                    EulerDegrees = new float3(rx, ry, rz),
+                    Attribute = attribute,
+                };
+            }
+
+            yield return new BoneStaticCase
+            {
+                Id = "bone_static_line_chain_001",
+                Vertices = new[]
+                {
+                    V("root", null, 0, 0, 0, 0x01),
+                    V("mid", "root", 0, 1, 0, 0x02, 0, 0, 20),
+                    V("tip", "mid", 0.4f, 2, 0.2f, 0x02, 10, -15, 30),
+                },
+                Roots = new[] { "root" },
+                AlignmentMode = NormalAlignmentSettings.AlignmentMode.None,
+                Note = "Bone Line proxy freezes imported transform basis, bind pose, baseline, and writeback rotations.",
+            };
+            yield return new BoneStaticCase
+            {
+                Id = "bone_static_line_fixed_prefix_001",
+                Vertices = new[]
+                {
+                    V("root", null, 0, 0, 0, 0x01),
+                    V("fixed", "root", 0, 0.75f, 0, 0x01),
+                    V("move0", "fixed", 0, 1.5f, 0, 0x02),
+                    V("move1", "move0", 0.25f, 2.25f, 0, 0x02),
+                },
+                Roots = new[] { "root" },
+                AlignmentMode = NormalAlignmentSettings.AlignmentMode.None,
+                Note = "Transform baseline starts at the deepest fixed vertex with a direct Move child.",
+            };
+            yield return new BoneStaticCase
+            {
+                Id = "bone_static_line_normal_adjustment_001",
+                Vertices = new[]
+                {
+                    V("root", null, -1, 0, 0, 0x01, 0, 0, -15),
+                    V("left", "root", -1, 1, 0.5f, 0x02, 5, 10, -15),
+                    V("right", "root", 0.5f, 1.25f, -0.25f, 0x02, -10, 20, 25),
+                },
+                Roots = new[] { "root" },
+                AlignmentMode = NormalAlignmentSettings.AlignmentMode.Transform,
+                AdjustmentCenter = new float3(2.0f, -1.0f, 0.5f),
+                Note = "Transform-centered normal adjustment is frozen before bind pose and Bone writeback rotation derivation.",
+            };
+        }
+
+        private static BoneStaticDump RunBoneStaticCase(BoneStaticCase oracleCase)
+        {
+            var owner = new GameObject(oracleCase.Id + "_owner");
+            var adjustment = new GameObject(oracleCase.Id + "_adjustment");
+            var objects = new Dictionary<string, GameObject>();
+            try
+            {
+                foreach (BoneStaticVertexCase vertex in oracleCase.Vertices)
+                {
+                    var item = new GameObject(vertex.Name);
+                    item.transform.SetParent(owner.transform, false);
+                    objects.Add(vertex.Name, item);
+                }
+                foreach (BoneStaticVertexCase vertex in oracleCase.Vertices)
+                {
+                    if (!string.IsNullOrEmpty(vertex.Parent))
+                        objects[vertex.Name].transform.SetParent(objects[vertex.Parent].transform, true);
+                }
+                foreach (BoneStaticVertexCase vertex in oracleCase.Vertices)
+                {
+                    objects[vertex.Name].transform.position = vertex.Position;
+                    objects[vertex.Name].transform.rotation = Quaternion.Euler(vertex.EulerDegrees);
+                }
+                adjustment.transform.position = oracleCase.AdjustmentCenter;
+
+                var roots = oracleCase.Roots.Select(name => objects[name].transform).ToList();
+                using (var setup = new RenderSetupData(
+                    null,
+                    RenderSetupData.SetupType.BoneCloth,
+                    owner.transform,
+                    roots,
+                    null,
+                    RenderSetupData.BoneConnectionMode.Line,
+                    oracleCase.Id
+                ))
+                using (var mesh = new VirtualMesh(oracleCase.Id))
+                {
+                    if (setup.IsFaild())
+                        throw new InvalidOperationException($"Bone setup failed: {setup.result.Result}");
+                    mesh.ImportFrom(setup, 0);
+                    if (mesh.result.IsError())
+                        throw new InvalidOperationException($"Bone import failed: {mesh.result.Result}");
+
+                    int count = setup.TransformCount - 1;
+                    Transform[] transforms = setup.transformList.Take(count).ToArray();
+                    var indexByTransform = transforms
+                        .Select((transform, index) => new { transform, index })
+                        .ToDictionary(item => item.transform, item => item.index);
+                    var caseByName = oracleCase.Vertices.ToDictionary(vertex => vertex.Name);
+                    byte[] inputAttributes = transforms
+                        .Select(transform => caseByName[transform.name].Attribute)
+                        .ToArray();
+                    for (int index = 0; index < count; index++)
+                        mesh.attributes[index] = new VertexAttribute(inputAttributes[index]);
+
+                    var dump = new BoneStaticDump
+                    {
+                        Names = transforms.Select(transform => transform.name).ToArray(),
+                        LocalPositions = mesh.localPositions.ToArray(),
+                        LocalNormals = mesh.localNormals.ToArray(),
+                        LocalTangents = mesh.localTangents.ToArray(),
+                        Uvs = mesh.uv.ToArray(),
+                        InputAttributes = inputAttributes,
+                        Parents = transforms.Select(transform =>
+                            transform.parent != null && indexByTransform.TryGetValue(transform.parent, out int index)
+                                ? index : -1
+                        ).ToArray(),
+                        Roots = roots.Select(root => indexByTransform[root]).ToArray(),
+                        Lines = mesh.LineCount > 0
+                            ? mesh.lines.ToArray().OrderBy(value => value.x).ThenBy(value => value.y).ToArray()
+                            : Array.Empty<int2>(),
+                        Triangles = mesh.TriangleCount > 0
+                            ? mesh.triangles.ToArray().OrderBy(value => value.x).ThenBy(value => value.y).ThenBy(value => value.z).ToArray()
+                            : Array.Empty<int3>(),
+                        TransformLocalRotations = transforms.Select(transform =>
+                        {
+                            Quaternion value = transform.rotation;
+                            return new float4(value.x, value.y, value.z, value.w);
+                        }).ToArray(),
+                    };
+
+                    var sdata = new ClothSerializeData
+                    {
+                        clothType = ClothProcess.ClothType.BoneCloth,
+                    };
+                    sdata.normalAlignmentSetting.alignmentMode = oracleCase.AlignmentMode;
+                    var clothRecord = new TransformRecord(owner.transform, true);
+                    var adjustmentRecord = new TransformRecord(adjustment.transform, true);
+                    mesh.ConvertProxyMesh(
+                        sdata,
+                        clothRecord,
+                        new List<TransformRecord>(),
+                        adjustmentRecord
+                    );
+                    if (mesh.result.IsError())
+                    {
+                        throw new InvalidOperationException(
+                            $"ConvertProxyMesh failed for {oracleCase.Id}: {mesh.result.Result}"
+                        );
+                    }
+
+                    dump.Proxy = ReadProxyDump(mesh);
+                    dump.Baseline = ReadDump(mesh);
+                    dump.NormalAdjustmentRotations = NativeArrayOrEmpty(mesh.normalAdjustmentRotations)
+                        .Select(value => value.value).ToArray();
+                    dump.VertexToTransformRotations = NativeArrayOrEmpty(mesh.vertexToTransformRotations)
+                        .Select(value => value.value).ToArray();
+                    return dump;
+                }
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(owner);
+                UnityEngine.Object.DestroyImmediate(adjustment);
+            }
+        }
+
+        private static string BuildBoneStaticJson(BoneStaticCase oracleCase, BoneStaticDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "schema_version", "1");
+            Property(text, 2, "case_id", Quote(oracleCase.Id));
+            Property(text, 2, "source", SourceJson(
+                "Runtime/VirtualMesh/Function/VirtualMeshInputOutput.cs::ImportBoneType",
+                "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ConvertProxyMesh",
+                "Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateTransformBaseLine"
+            ));
+            Property(text, 2, "scope", Quote(oracleCase.Note));
+            Property(text, 2, "input", BoneStaticInputJson(oracleCase, dump));
+            Property(text, 2, "expected", BoneStaticExpectedJson(dump), false);
+            text.AppendLine("}");
+            return text.ToString();
+        }
+
+        private static string BoneStaticInputJson(BoneStaticCase oracleCase, BoneStaticDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "task_id", Quote("mc2:bone_cloth:" + oracleCase.Id));
+            Property(text, 4, "setup_type", Quote("bone_cloth"));
+            Property(text, 4, "vertex_identities", StringArray(dump.Names));
+            Property(text, 4, "local_positions", ArrayJson(dump.LocalPositions, Vector3Json));
+            Property(text, 4, "local_normals", ArrayJson(dump.LocalNormals, Vector3Json));
+            Property(text, 4, "local_tangents", ArrayJson(dump.LocalTangents, Vector3Json));
+            Property(text, 4, "uvs", ArrayJson(dump.Uvs, Vector2Json));
+            Property(text, 4, "vertex_attributes", NumberArray(dump.InputAttributes.Select(value => (int)value)));
+            Property(text, 4, "parent_indices", NumberArray(dump.Parents));
+            Property(text, 4, "root_indices", NumberArray(dump.Roots));
+            Property(text, 4, "lines", ArrayJson(dump.Lines, Int2Json));
+            Property(text, 4, "triangles", ArrayJson(dump.Triangles, Int3Json));
+            Property(text, 4, "transform_local_rotations", ArrayJson(dump.TransformLocalRotations, Vector4Json));
+            Property(text, 4, "normal_alignment_mode", ((int)oracleCase.AlignmentMode).ToString(CultureInfo.InvariantCulture));
+            Property(text, 4, "normal_adjustment_center", Vector3Json(oracleCase.AdjustmentCenter), false);
+            text.Append("  }");
+            return text.ToString();
+        }
+
+        private static string BoneStaticExpectedJson(BoneStaticDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 4, "proxy", ProxyFinalJson(dump.Proxy));
+            Property(text, 4, "baseline", BaselineExpectedJson(dump.Baseline));
+            Property(text, 4, "normal_adjustment_rotations", ArrayJson(dump.NormalAdjustmentRotations, Vector4Json));
+            Property(text, 4, "vertex_to_transform_rotations", ArrayJson(dump.VertexToTransformRotations, Vector4Json), false);
+            text.Append("  }");
             return text.ToString();
         }
 
@@ -4051,7 +4346,9 @@ namespace HoTools.MC2Oracle.Editor
             return new ProxyDump
             {
                 FinalAttributes = mesh.attributes.ToArray().Select(value => value.Value).ToArray(),
-                Triangles = mesh.triangles.ToArray(),
+                Triangles = mesh.TriangleCount > 0
+                    ? mesh.triangles.ToArray()
+                    : Array.Empty<int3>(),
                 Edges = CanonicalEdges(NativeArrayOrEmpty(mesh.edges)),
                 VertexToVertexRanges = vertexToVertexRanges,
                 VertexToVertexData = vertexToVertexData.Select(value => (int)value).ToArray(),

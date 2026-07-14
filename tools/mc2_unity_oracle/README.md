@@ -43,6 +43,15 @@ directory:
   `SolverConstraint()` and `SumConstraint()`, recording fixed-point scratch
   counts/components, averaged positions, unconditional scratch clear, Fixed
   particle behavior, and negative-scale consumption.
+- `bone_connection_*.json`: real BoneCloth `RenderSetupData` imports covering
+  Line, Automatic, Sequential loop/non-loop, branch, residual-line, and the
+  strict 120-degree triangle boundary.
+- `bone_static_*.json`: real Bone Line `ImportFrom()` followed by resolved
+  attributes and `ConvertProxyMesh()`, recording final proxy/finalizer arrays,
+  transform baseline, normal adjustment, and vertex-to-transform rotations.
+- `bone_rotation_line_*.json` and `bone_rotation_triangle_*.json`: isolated
+  source jobs freezing the positive-scale Bone display-rotation and
+  world-to-parent-local output stages.
 - `particle_step_*.json`: direct reflective calls to
   `SimulationStepUpdateParticles()`. One case disables inertia, wind,
   collision, and external force while locking velocity stabilization, damping,

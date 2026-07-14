@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "case_id": "bone_static_line_chain_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/VirtualMesh/Function/VirtualMeshInputOutput.cs::ImportBoneType","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ConvertProxyMesh","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateTransformBaseLine"]
+  },
+  "scope": "Bone Line proxy freezes imported transform basis, bind pose, baseline, and writeback rotations.",
+  "input": {
+    "task_id": "mc2:bone_cloth:bone_static_line_chain_001",
+    "setup_type": "bone_cloth",
+    "vertex_identities": ["root","mid","tip"],
+    "local_positions": [[0,0,0],[0,1,0],[0.400000036,2,0.2]],
+    "local_normals": [[0,1,0],[-0.342020184,0.9396926,0],[-0.5218851,0.852868557,0.0158499852]],
+    "local_tangents": [[0,0,1],[0,0,1],[-0.2548871,-0.173648208,0.9512512]],
+    "uvs": [[0,0],[0,0],[0,0]],
+    "vertex_attributes": [1,2,2],
+    "parent_indices": [-1,0,1],
+    "root_indices": [0],
+    "lines": [[0,1],[1,2]],
+    "triangles": [],
+    "transform_local_rotations": [[0,0,0,1],[0,0,0.1736482,0.9848078],[0.0498116463,-0.147963479,0.266616821,0.9510737]],
+    "normal_alignment_mode": 0,
+    "normal_adjustment_center": [0,0,0]
+  },
+  "expected": {
+    "proxy": {
+      "vertex_attributes": [1,2,2],
+      "triangles": [],
+      "edges": [[0,1],[1,2]],
+      "vertex_to_vertex_ranges": [[0,1],[1,2],[3,1]],
+      "vertex_to_vertex_data": [1,2,0,1],
+      "vertex_to_triangle_records": [[],[],[]],
+      "local_normals": [[0,1,0],[-0.342020184,0.9396926,0],[-0.5218851,0.852868557,0.0158499852]],
+      "local_tangents": [[0,0,1],[0,0,1],[-0.2548871,-0.173648208,0.9512512]],
+      "vertex_bind_pose_positions": [[0,0,0],[0,-1,0],[-0.400000036,-2,-0.2]],
+      "vertex_bind_pose_rotations": [[0,0,0,1],[0,0,-0.1736482,0.98480767],[-0.04981165,0.147963509,-0.266616851,0.951073647]]
+    },
+    "baseline": {
+      "parent_indices": [-1,0,1],
+      "child_ranges": [[0,1],[1,1],[2,0]],
+      "child_data": [1,2],
+      "baseline_flags": [1],
+      "baseline_ranges": [[0,3]],
+      "baseline_data": [0,1,2],
+      "root_indices": [-1,0,0],
+      "depths": [0,0.477225572,1],
+      "vertex_local_positions": [[0,0,0],[0,1,0],[0.717897236,0.8028846,0.2]],
+      "vertex_local_rotations": [[0,0,0,1],[0,0,0.173648208,0.9848078],[0.0233613,-0.1543653,0.0974141061,0.9829222]]
+    },
+    "normal_adjustment_rotations": [[0,0,0,1],[0,0,0,1],[0,0,0,1]],
+    "vertex_to_transform_rotations": [[0,0,0,1],[0,0,-1.49011612E-08,0.99999994],[-3.7252903E-09,2.32830644E-08,-5.7742E-08,1]]
+  }
+}

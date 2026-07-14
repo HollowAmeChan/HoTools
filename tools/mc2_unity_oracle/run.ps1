@@ -165,6 +165,14 @@ if ($BoneConnectionFixtureCount -ne 8) {
     throw "Unity oracle produced $BoneConnectionFixtureCount bone-connection fixtures instead of 8. See $LogPath"
 }
 
+$BoneStaticFixtureCount = @(
+    Get-ChildItem -LiteralPath $OutputDirectory -Filter "bone_static_*.json" -File |
+        Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
+).Count
+if ($BoneStaticFixtureCount -ne 3) {
+    throw "Unity oracle produced $BoneStaticFixtureCount bone-static fixtures instead of 3. See $LogPath"
+}
+
 $BoneRotationLineFixtureCount = @(
     Get-ChildItem -LiteralPath $OutputDirectory -Filter "bone_rotation_line_*.json" -File |
         Where-Object { $_.LastWriteTimeUtc -ge $StartedAtUtc }
@@ -181,4 +189,4 @@ if ($BoneRotationTriangleFixtureCount -ne 3) {
     throw "Unity oracle produced $BoneRotationTriangleFixtureCount bone-rotation-triangle fixtures instead of 3. See $LogPath"
 }
 
-Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $BoneConnectionFixtureCount bone connection, $BoneRotationLineFixtureCount bone rotation line, $BoneRotationTriangleFixtureCount bone rotation triangle)"
+Write-Host "MC2 Tier A fixtures written to $OutputDirectory ($FixtureCount baseline, $ProxyFixtureCount proxy, $DistanceFixtureCount distance static, $DistanceRuntimeFixtureCount distance runtime, $BendingFixtureCount bending static, $BendingRuntimeFixtureCount bending runtime, $RuntimeParameterFixtureCount runtime parameters, $FrameResetFixtureCount frame/reset, $CenterFixtureCount center static, $CenterStepFixtureCount center step, $CenterFrameShiftFixtureCount center frame shift, $ParticleStepFixtureCount particle step, $BoneConnectionFixtureCount bone connection, $BoneStaticFixtureCount bone static, $BoneRotationLineFixtureCount bone rotation line, $BoneRotationTriangleFixtureCount bone rotation triangle)"

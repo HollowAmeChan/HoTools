@@ -303,6 +303,192 @@ def make_mc2_proxy_static_spec(
     return MC2ProxyStaticSpec(**payload, proxy_signature=_signature(payload))
 
 
+def _unit_quaternions(values, name: str, *, count: int) -> tuple:
+    result = _vectors(values, 4, name, count=count)
+    for index, value in enumerate(result):
+        length_squared = sum(component * component for component in value)
+        if abs(length_squared - 1.0) > 1.0e-4:
+            raise ValueError(f"{name}[{index}] must be a unit xyzw quaternion")
+    return result
+
+
+@dataclass(frozen=True)
+class MC2ProxyFinalizerStaticSpec:
+    proxy_signature: str
+    vertex_count: int
+    vertex_to_vertex_ranges: tuple[tuple[int, int], ...]
+    vertex_to_vertex_data: tuple[int, ...]
+    vertex_to_triangle_records: tuple[tuple[tuple[int, int], ...], ...]
+    vertex_bind_pose_positions: tuple[tuple[float, float, float], ...]
+    vertex_bind_pose_rotations: tuple[tuple[float, float, float, float], ...]
+    finalizer_signature: str
+    schema_version: int = MC2_STATIC_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != MC2_STATIC_SCHEMA_VERSION:
+            raise ValueError("unsupported MC2 proxy finalizer static schema")
+        if not self.proxy_signature:
+            raise ValueError("proxy_signature cannot be empty")
+        if self.vertex_count <= 0:
+            raise ValueError("vertex_count must be positive")
+        tuple_fields = (
+            self.vertex_to_vertex_ranges,
+            self.vertex_to_vertex_data,
+            self.vertex_to_triangle_records,
+            self.vertex_bind_pose_positions,
+            self.vertex_bind_pose_rotations,
+        )
+        if any(not isinstance(values, tuple) for values in tuple_fields):
+            raise TypeError("MC2 proxy finalizer arrays must be immutable tuples")
+        neighbor_data = _integers(self.vertex_to_vertex_data, "vertex_to_vertex_data")
+        _validate_vertex_indices((neighbor_data,), self.vertex_count, "vertex_to_vertex_data")
+        neighbor_ranges = _normalize_ranges(
+            self.vertex_to_vertex_ranges,
+            "vertex_to_vertex_ranges",
+            len(neighbor_data),
+            count=self.vertex_count,
+        )
+        if neighbor_ranges != self.vertex_to_vertex_ranges:
+            raise TypeError("vertex adjacency ranges must be immutable tuples")
+        for vertex, (start, length) in enumerate(neighbor_ranges):
+            neighbors = neighbor_data[start:start + length]
+            if vertex in neighbors or len(set(neighbors)) != len(neighbors):
+                raise ValueError("vertex adjacency cannot contain self or duplicate neighbors")
+        if len(self.vertex_to_triangle_records) != self.vertex_count:
+            raise ValueError("vertex_to_triangle_records length must match vertex_count")
+        for vertex, values in enumerate(self.vertex_to_triangle_records):
+            if not isinstance(values, tuple):
+                raise TypeError("vertex-to-triangle rows must be immutable tuples")
+            records = _records(values, 2, f"vertex_to_triangle_records[{vertex}]")
+            if records != values:
+                raise TypeError("vertex-to-triangle records must be immutable tuples")
+            if len(records) > 7:
+                raise ValueError("MC2 vertex_to_triangle_records supports at most 7 triangles per vertex")
+            if any(not 0 <= flip <= 0x3 or triangle_index < 0 for flip, triangle_index in records):
+                raise ValueError("vertex-to-triangle record is outside the packed source contract")
+        if self.vertex_bind_pose_positions != _vectors(
+            self.vertex_bind_pose_positions,
+            3,
+            "vertex_bind_pose_positions",
+            count=self.vertex_count,
+        ):
+            raise TypeError("vertex bind pose positions must be immutable tuples")
+        if self.vertex_bind_pose_rotations != _unit_quaternions(
+            self.vertex_bind_pose_rotations,
+            "vertex_bind_pose_rotations",
+            count=self.vertex_count,
+        ):
+            raise TypeError("vertex bind pose rotations must be immutable tuples")
+        expected = _signature(self.signature_payload())
+        if self.finalizer_signature != expected:
+            raise ValueError("finalizer_signature does not match proxy finalizer payload")
+
+    def signature_payload(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "proxy_signature": self.proxy_signature,
+            "vertex_count": self.vertex_count,
+            "vertex_to_vertex_ranges": self.vertex_to_vertex_ranges,
+            "vertex_to_vertex_data": self.vertex_to_vertex_data,
+            "vertex_to_triangle_records": self.vertex_to_triangle_records,
+            "vertex_bind_pose_positions": self.vertex_bind_pose_positions,
+            "vertex_bind_pose_rotations": self.vertex_bind_pose_rotations,
+        }
+
+    def debug_dict(self, *, include_arrays: bool = False) -> dict:
+        result = {
+            "schema_version": self.schema_version,
+            "vertex_count": self.vertex_count,
+            "proxy_signature": self.proxy_signature,
+            "finalizer_signature": self.finalizer_signature,
+        }
+        if include_arrays:
+            result.update(self.signature_payload())
+        return result
+
+
+def make_mc2_proxy_finalizer_static_spec(
+    *,
+    proxy: MC2ProxyStaticSpec,
+    vertex_to_vertex_ranges,
+    vertex_to_vertex_data,
+    vertex_to_triangle_records,
+    vertex_bind_pose_positions,
+    vertex_bind_pose_rotations,
+) -> MC2ProxyFinalizerStaticSpec:
+    if not isinstance(proxy, MC2ProxyStaticSpec):
+        raise TypeError("proxy must be MC2ProxyStaticSpec")
+    count = proxy.vertex_count
+    neighbor_data = _integers(vertex_to_vertex_data, "vertex_to_vertex_data")
+    _validate_vertex_indices((neighbor_data,), count, "vertex_to_vertex_data")
+    neighbor_ranges = _normalize_ranges(
+        vertex_to_vertex_ranges,
+        "vertex_to_vertex_ranges",
+        len(neighbor_data),
+        count=count,
+    )
+    observed_relations = set()
+    for vertex, (start, length) in enumerate(neighbor_ranges):
+        neighbors = neighbor_data[start:start + length]
+        if len(set(neighbors)) != len(neighbors):
+            raise ValueError(f"vertex_to_vertex_data contains duplicate neighbor for vertex {vertex}")
+        for neighbor in neighbors:
+            if neighbor == vertex:
+                raise ValueError("vertex_to_vertex_data cannot contain self adjacency")
+            observed_relations.add((vertex, neighbor))
+    expected_relations = {
+        relation
+        for first, second in proxy.edges
+        for relation in ((first, second), (second, first))
+    }
+    if observed_relations != expected_relations:
+        raise ValueError("vertex adjacency must cover exactly the finalized proxy edges")
+
+    triangle_rows = []
+    for vertex, values in enumerate(_values_or_empty(vertex_to_triangle_records)):
+        records = _records(values, 2, f"vertex_to_triangle_records[{vertex}]")
+        if len(records) > 7:
+            raise ValueError("MC2 vertex_to_triangle_records supports at most 7 triangles per vertex")
+        seen = set()
+        for flip, triangle_index in records:
+            if not 0 <= flip <= 0x3:
+                raise ValueError("vertex-to-triangle flip flag must fit the source 2-bit contract")
+            if not 0 <= triangle_index < len(proxy.triangles):
+                raise ValueError("vertex-to-triangle triangle index is out of range")
+            if triangle_index in seen:
+                raise ValueError("vertex-to-triangle records cannot repeat a triangle")
+            if vertex not in proxy.triangles[triangle_index]:
+                raise ValueError("vertex-to-triangle record does not reference an incident triangle")
+            seen.add(triangle_index)
+        triangle_rows.append(records)
+    if len(triangle_rows) != count:
+        raise ValueError("vertex_to_triangle_records length must match vertex_count")
+
+    payload = {
+        "schema_version": MC2_STATIC_SCHEMA_VERSION,
+        "proxy_signature": proxy.proxy_signature,
+        "vertex_count": count,
+        "vertex_to_vertex_ranges": neighbor_ranges,
+        "vertex_to_vertex_data": neighbor_data,
+        "vertex_to_triangle_records": tuple(triangle_rows),
+        "vertex_bind_pose_positions": _vectors(
+            vertex_bind_pose_positions,
+            3,
+            "vertex_bind_pose_positions",
+            count=count,
+        ),
+        "vertex_bind_pose_rotations": _unit_quaternions(
+            vertex_bind_pose_rotations,
+            "vertex_bind_pose_rotations",
+            count=count,
+        ),
+    }
+    return MC2ProxyFinalizerStaticSpec(
+        **payload,
+        finalizer_signature=_signature(payload),
+    )
+
+
 @dataclass(frozen=True)
 class MC2BaselineStaticSpec:
     proxy_signature: str
@@ -562,6 +748,51 @@ def pack_mc2_proxy_static(spec: MC2ProxyStaticSpec) -> dict[str, np.ndarray]:
     }
 
 
+def pack_mc2_proxy_finalizer_static(
+    spec: MC2ProxyFinalizerStaticSpec,
+) -> dict[str, np.ndarray]:
+    if not isinstance(spec, MC2ProxyFinalizerStaticSpec):
+        raise TypeError("spec must be MC2ProxyFinalizerStaticSpec")
+    triangle_ranges = []
+    triangle_data = []
+    for records in spec.vertex_to_triangle_records:
+        triangle_ranges.append((len(triangle_data), len(records)))
+        triangle_data.extend(records)
+    count = spec.vertex_count
+    return {
+        "vertex_to_vertex_ranges": _readonly_array(
+            spec.vertex_to_vertex_ranges,
+            np.int32,
+            (count, 2),
+        ),
+        "vertex_to_vertex_data": _readonly_array(
+            spec.vertex_to_vertex_data,
+            np.int32,
+            (len(spec.vertex_to_vertex_data),),
+        ),
+        "vertex_to_triangle_ranges": _readonly_array(
+            triangle_ranges,
+            np.int32,
+            (count, 2),
+        ),
+        "vertex_to_triangle_data": _readonly_array(
+            triangle_data,
+            np.int32,
+            (len(triangle_data), 2),
+        ),
+        "vertex_bind_pose_positions": _readonly_array(
+            spec.vertex_bind_pose_positions,
+            np.float32,
+            (count, 3),
+        ),
+        "vertex_bind_pose_rotations": _readonly_array(
+            spec.vertex_bind_pose_rotations,
+            np.float32,
+            (count, 4),
+        ),
+    }
+
+
 def pack_mc2_baseline_static(spec: MC2BaselineStaticSpec) -> dict[str, np.ndarray]:
     if not isinstance(spec, MC2BaselineStaticSpec):
         raise TypeError("spec must be MC2BaselineStaticSpec")
@@ -582,10 +813,13 @@ def pack_mc2_baseline_static(spec: MC2BaselineStaticSpec) -> dict[str, np.ndarra
 
 __all__ = [
     "MC2BaselineStaticSpec",
+    "MC2ProxyFinalizerStaticSpec",
     "MC2ProxyStaticSpec",
     "MC2_STATIC_SCHEMA_VERSION",
     "make_mc2_baseline_static_spec",
+    "make_mc2_proxy_finalizer_static_spec",
     "make_mc2_proxy_static_spec",
     "pack_mc2_baseline_static",
+    "pack_mc2_proxy_finalizer_static",
     "pack_mc2_proxy_static",
 ]

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "case_id": "bone_static_line_normal_adjustment_001",
+  "source": {
+    "repository": "MagicaCloth2",
+    "version": "2.18.1",
+    "commit": "418f89ff31a45bb4b2336641ad5907a1110eabea",
+    "oracle_tier": "A",
+    "unity_editor": "6000.3.15f1",
+    "burst": "1.8.29",
+    "collections": "2.6.5",
+    "mathematics": "1.3.3",
+    "producer": ["Runtime/VirtualMesh/Function/VirtualMeshInputOutput.cs::ImportBoneType","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::ConvertProxyMesh","Runtime/VirtualMesh/Function/VirtualMeshProxy.cs::CreateTransformBaseLine"]
+  },
+  "scope": "Transform-centered normal adjustment is frozen before bind pose and Bone writeback rotation derivation.",
+  "input": {
+    "task_id": "mc2:bone_cloth:bone_static_line_normal_adjustment_001",
+    "setup_type": "bone_cloth",
+    "vertex_identities": ["root","right","left"],
+    "local_positions": [[-1,0,0],[0.5,1.25,-0.25],[-1,0.99999994,0.5]],
+    "local_normals": [[0.258819073,0.9659258,0],[-0.450957984,0.8925389,-0.00334361941],[0.269505769,0.9622502,0.0379635468]],
+    "local_tangents": [[0,0,1],[0.336824119,0.173648179,0.9254166],[0.172987372,-0.08715574,0.981060266]],
+    "uvs": [[0,0],[0,0],[0,0]],
+    "vertex_attributes": [1,2,2],
+    "parent_indices": [-1,0,0],
+    "root_indices": [0],
+    "lines": [[0,1],[0,2]],
+    "triangles": [],
+    "transform_local_rotations": [[0,0,-0.1305262,0.9914449],[-0.04635577,0.187464282,0.227116019,0.9545295],[0.03171637,0.0919996649,-0.1336749,0.986235857]],
+    "normal_alignment_mode": 2,
+    "normal_adjustment_center": [2,-1,0.5]
+  },
+  "expected": {
+    "proxy": {
+      "vertex_attributes": [1,2,2],
+      "triangles": [],
+      "edges": [[0,1],[0,2]],
+      "vertex_to_vertex_ranges": [[0,2],[2,1],[3,1]],
+      "vertex_to_vertex_data": [2,1,0,0],
+      "vertex_to_triangle_records": [[],[],[]],
+      "local_normals": [[-0.9370426,0.312347531,-0.156173766],[-0.534522533,0.801783741,-0.267261267],[-0.8320503,0.5547002,0]],
+      "local_tangents": [[-0.148159459,0.0493864864,0.987729669],[0.190903455,0.422597051,0.885984063],[0.01324837,0.0198725555,0.9997148]],
+      "vertex_bind_pose_positions": [[1,0,0],[-0.5,-1.25,0.25],[1,-0.99999994,-0.5]],
+      "vertex_bind_pose_rotations": [[0.06354261,0.04579892,-0.582913935,0.808749855],[0.184081286,-0.15205951,-0.255386472,0.936893761],[0.00563529227,-0.0105296373,-0.471824318,0.8816118]]
+    },
+    "baseline": {
+      "parent_indices": [-1,0,0],
+      "child_ranges": [[0,2],[2,0],[2,0]],
+      "child_data": [2,1],
+      "baseline_flags": [1],
+      "baseline_ranges": [[0,3]],
+      "baseline_data": [0,1,2],
+      "root_indices": [-1,0,0],
+      "depths": [0,1,0.5679618],
+      "vertex_local_positions": [[0,0,0],[1.66019583,-0.976086438,-0.407438517],[0.9486834,0.234260559,0.543251336]],
+      "vertex_local_rotations": [[0,0,0,1],[0.0109909922,0.256962419,-0.3214916,0.9113138],[0.07920928,0.02219665,-0.131388783,0.9879121]]
+    },
+    "normal_adjustment_rotations": [[-0.05702103,-0.0537010767,0.683490038,0.725745261],[-0.14562127,-0.000519651,0.00353049859,0.989334],[-0.07833448,-0.056512028,0.582327,0.807196]],
+    "vertex_to_transform_rotations": [[0.0570210367,0.05370108,-0.6834901,0.7257453],[0.14562127,0.000519640744,-0.00353052234,0.9893341],[0.07833448,0.056512028,-0.582327068,0.80719614]]
+  }
+}

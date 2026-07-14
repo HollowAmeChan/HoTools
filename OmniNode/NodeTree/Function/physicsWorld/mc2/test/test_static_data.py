@@ -107,6 +107,52 @@ def test_static_packers_freeze_explicit_native_dtypes_and_shapes() -> None:
     assert numpy_proxy.proxy_signature == proxy.proxy_signature
 
 
+def _finalizer(proxy):
+    return static_data.make_mc2_proxy_finalizer_static_spec(
+        proxy=proxy,
+        vertex_to_vertex_ranges=((0, 2), (2, 2), (4, 2)),
+        vertex_to_vertex_data=(2, 1, 2, 0, 1, 0),
+        vertex_to_triangle_records=(((0, 0),), ((0, 0),), ((0, 0),)),
+        vertex_bind_pose_positions=((0, 0, 0), (-1, 0, 0), (0, -1, 0)),
+        vertex_bind_pose_rotations=((0, 0, 0, 1),) * 3,
+    )
+
+
+def test_proxy_finalizer_validates_derived_topology_and_packs_ragged_records() -> None:
+    _fixture, proxy, _baseline = _fixture_specs()
+    finalizer = _finalizer(proxy)
+    buffers = static_data.pack_mc2_proxy_finalizer_static(finalizer)
+    assert finalizer.proxy_signature == proxy.proxy_signature
+    assert buffers["vertex_to_triangle_ranges"].shape == (3, 2)
+    assert buffers["vertex_to_triangle_data"].shape == (3, 2)
+    assert all(not array.flags.writeable for array in buffers.values())
+
+    _expect_error(
+        ValueError,
+        lambda: static_data.make_mc2_proxy_finalizer_static_spec(
+            proxy=proxy,
+            vertex_to_vertex_ranges=((0, 1), (1, 1), (2, 0)),
+            vertex_to_vertex_data=(1, 0),
+            vertex_to_triangle_records=(((0, 0),), ((0, 0),), ((0, 0),)),
+            vertex_bind_pose_positions=((0, 0, 0), (-1, 0, 0), (0, -1, 0)),
+            vertex_bind_pose_rotations=((0, 0, 0, 1),) * 3,
+        ),
+        "exactly the finalized proxy edges",
+    )
+    _expect_error(
+        ValueError,
+        lambda: static_data.make_mc2_proxy_finalizer_static_spec(
+            proxy=proxy,
+            vertex_to_vertex_ranges=finalizer.vertex_to_vertex_ranges,
+            vertex_to_vertex_data=finalizer.vertex_to_vertex_data,
+            vertex_to_triangle_records=((), ((0, 0),)),
+            vertex_bind_pose_positions=finalizer.vertex_bind_pose_positions,
+            vertex_bind_pose_rotations=finalizer.vertex_bind_pose_rotations,
+        ),
+        "length must match vertex_count",
+    )
+
+
 def test_proxy_signature_is_canonical_for_unordered_edges_but_keeps_winding() -> None:
     fixture, first, _ = _fixture_specs()
     payload = dict(fixture["proxy"])
@@ -169,6 +215,10 @@ def test_baseline_validation_rejects_cycles_ranges_and_non_unit_rotations() -> N
 TESTS = (
     ("Tier B fixture separates proxy and baseline", test_tier_b_fixture_builds_separate_proxy_and_baseline_specs),
     ("packers freeze dtype and shape", test_static_packers_freeze_explicit_native_dtypes_and_shapes),
+    (
+        "proxy finalizer validates and packs derived arrays",
+        test_proxy_finalizer_validates_derived_topology_and_packs_ragged_records,
+    ),
     (
         "proxy signatures canonicalize only unordered edges",
         test_proxy_signature_is_canonical_for_unordered_edges_but_keeps_winding,

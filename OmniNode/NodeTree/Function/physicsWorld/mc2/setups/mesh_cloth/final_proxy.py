@@ -18,6 +18,8 @@ from ...mesh_baseline import MC2_VERTEX_FIXED
 from ...mesh_baseline import MC2_VERTEX_MOVE
 from ...mesh_baseline import MC2_VERTEX_TRIANGLE
 from ...static_data import MC2ProxyStaticSpec
+from ...static_data import MC2ProxyFinalizerStaticSpec
+from ...static_data import make_mc2_proxy_finalizer_static_spec
 from ...static_data import make_mc2_proxy_static_spec
 
 
@@ -29,11 +31,27 @@ UV_SEAM_TOLERANCE = 1.0e-6
 class MC2MeshFinalProxyBuildResult:
     proxy: MC2ProxyStaticSpec
     lines: tuple[tuple[int, int], ...]
-    vertex_to_vertex_ranges: tuple[tuple[int, int], ...]
-    vertex_to_vertex_data: tuple[int, ...]
-    vertex_to_triangle_records: tuple[tuple[tuple[int, int], ...], ...]
-    vertex_bind_pose_positions: tuple[tuple[float, float, float], ...]
-    vertex_bind_pose_rotations: tuple[tuple[float, float, float, float], ...]
+    finalizer: MC2ProxyFinalizerStaticSpec
+
+    @property
+    def vertex_to_vertex_ranges(self):
+        return self.finalizer.vertex_to_vertex_ranges
+
+    @property
+    def vertex_to_vertex_data(self):
+        return self.finalizer.vertex_to_vertex_data
+
+    @property
+    def vertex_to_triangle_records(self):
+        return self.finalizer.vertex_to_triangle_records
+
+    @property
+    def vertex_bind_pose_positions(self):
+        return self.finalizer.vertex_bind_pose_positions
+
+    @property
+    def vertex_bind_pose_rotations(self):
+        return self.finalizer.vertex_bind_pose_rotations
 
 
 def _array(values, *, width: int, name: str) -> np.ndarray:
@@ -444,9 +462,10 @@ def _validate_indices(vertex_count: int, records: Iterable[tuple[int, ...]], nam
                 raise ValueError(f"{name}[{record_index}] index {value} is out of range")
 
 
-def build_mc2_mesh_final_proxy(
+def build_mc2_final_proxy(
     *,
     task_id: str,
+    setup_type: str,
     vertex_identities,
     local_positions,
     local_normals,
@@ -504,7 +523,7 @@ def build_mc2_mesh_final_proxy(
     bind_positions, bind_rotations = _bind_pose(positions, normals, tangents)
     proxy = make_mc2_proxy_static_spec(
         task_id=task_id,
-        setup_type="mesh_cloth",
+        setup_type=setup_type,
         vertex_identities=identities,
         local_positions=_tuple_vectors(positions),
         local_normals=_tuple_vectors(normals),
@@ -514,14 +533,44 @@ def build_mc2_mesh_final_proxy(
         edges=edges,
         triangles=final_triangles,
     )
-    return MC2MeshFinalProxyBuildResult(
+    finalizer = make_mc2_proxy_finalizer_static_spec(
         proxy=proxy,
-        lines=tuple(_canonical_edge(first, second) for first, second in line_records),
         vertex_to_vertex_ranges=vertex_to_vertex_ranges,
         vertex_to_vertex_data=vertex_to_vertex_data,
         vertex_to_triangle_records=vertex_to_triangle_records,
         vertex_bind_pose_positions=bind_positions,
         vertex_bind_pose_rotations=bind_rotations,
+    )
+    return MC2MeshFinalProxyBuildResult(
+        proxy=proxy,
+        lines=tuple(_canonical_edge(first, second) for first, second in line_records),
+        finalizer=finalizer,
+    )
+
+
+def build_mc2_mesh_final_proxy(
+    *,
+    task_id: str,
+    vertex_identities,
+    local_positions,
+    local_normals,
+    local_tangents,
+    uvs,
+    vertex_attributes,
+    lines=(),
+    triangles=(),
+) -> MC2MeshFinalProxyBuildResult:
+    return build_mc2_final_proxy(
+        task_id=task_id,
+        setup_type="mesh_cloth",
+        vertex_identities=vertex_identities,
+        local_positions=local_positions,
+        local_normals=local_normals,
+        local_tangents=local_tangents,
+        uvs=uvs,
+        vertex_attributes=vertex_attributes,
+        lines=lines,
+        triangles=triangles,
     )
 
 
@@ -641,6 +690,7 @@ __all__ = [
     "SAME_SURFACE_ANGLE_DEGREES",
     "UV_SEAM_TOLERANCE",
     "build_blender_mesh_final_proxy",
+    "build_mc2_final_proxy",
     "build_mc2_mesh_final_proxy",
     "mc2_world_rotation_xyzw",
 ]
