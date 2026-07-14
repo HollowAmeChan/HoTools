@@ -42,6 +42,7 @@ FIXTURES = tuple(
         "center_frame_shift_anchor_world_limit_001.json",
         "center_frame_shift_smoothing_001.json",
         "center_frame_shift_time_scale_001.json",
+        "center_frame_shift_skip_count_001.json",
         "center_frame_shift_fixed_center_001.json",
         "center_frame_shift_zero_time_scale_001.json",
     )
@@ -116,9 +117,15 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
     assert fixture["oracle_tier"] == "A"
     assert fixture["mc2_commit"] == EXPECTED_COMMIT
     assert source["commit"] == EXPECTED_COMMIT
-    assert source["producer"] == [
+    expected_producers = [
         "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind"
     ]
+    if fixture["case_id"] == "center_frame_shift_skip_count_001":
+        expected_producers = [
+            "Runtime/Manager/Team/TeamManager.cs::SimulationUpdate",
+            "Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind",
+        ]
+    assert source["producer"] == expected_producers
 
     values = fixture["input"]
     expected = fixture["expected"]
