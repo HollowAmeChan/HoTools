@@ -2,10 +2,36 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
+import sys
+import types
 
 import numpy as np
+
+
+MC2_ROOT = Path(__file__).resolve().parents[1]
+PHYSICS_WORLD = MC2_ROOT.parent
+FUNCTION = PHYSICS_WORLD.parent
+NODETREE = FUNCTION.parent
+OMNINODE = NODETREE.parent
+HOTOOLS = OMNINODE.parent
+
+for package_name, package_path in (
+    ("HoTools", HOTOOLS),
+    ("HoTools.OmniNode", OMNINODE),
+    ("HoTools.OmniNode.NodeTree", NODETREE),
+    ("HoTools.OmniNode.NodeTree.Function", FUNCTION),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld", PHYSICS_WORLD),
+    ("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2", MC2_ROOT),
+):
+    module = types.ModuleType(package_name)
+    module.__path__ = [str(package_path)]
+    module.__package__ = package_name
+    sys.modules.setdefault(package_name, module)
+
+center = importlib.import_module("HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state")
 
 
 FIXTURE = (
@@ -109,6 +135,44 @@ def test_center_anchor_shift_matches_fixed_mc2_oracle() -> None:
     moving_speed = moving_length / _f32(values["frame_delta_time"])
 
     component_rotation = _axis_angle_y(values["component_world_rotation_axis_angle"])
+    result = center.evaluate_mc2_center_frame_shift(
+        center.MC2CenterFrameShiftInputSpec(
+            simulation_delta_time=values["simulation_delta_time"],
+            frame_delta_time=values["frame_delta_time"],
+            now_time_scale=values["now_time_scale"],
+            velocity_weight=values["velocity_weight"],
+            skip_count=0,
+            world_inertia=values["world_inertia"],
+            movement_speed_limit=values["movement_speed_limit"],
+            rotation_speed_limit=values["rotation_speed_limit"],
+            old_component_world_position=values["old_component_world_position"],
+            old_component_world_rotation_xyzw=values[
+                "old_component_world_rotation_xyzw"
+            ],
+            component_world_position=values["component_world_position"],
+            component_world_rotation_xyzw=tuple(float(value) for value in component_rotation),
+            old_frame_world_position=values["old_frame_world_position"],
+            old_frame_world_rotation_xyzw=values["old_frame_world_rotation_xyzw"],
+            now_world_position=values["now_world_position"],
+            now_world_rotation_xyzw=values["now_world_rotation_xyzw"],
+            use_anchor=True,
+            anchor_inertia=values["anchor_inertia"],
+            old_anchor_world_position=values["old_anchor_world_position"],
+            old_anchor_world_rotation_xyzw=values[
+                "old_anchor_world_rotation_xyzw"
+            ],
+            anchor_world_position=values["anchor_world_position"],
+            anchor_world_rotation_xyzw=tuple(float(value) for value in anchor_rotation),
+            anchor_component_local_position=values[
+                "anchor_component_local_position"
+            ],
+        )
+    )
+    for field, expected_value in expected.items():
+        np.testing.assert_allclose(
+            getattr(result, field), expected_value, rtol=1.0e-6, atol=1.0e-6
+        )
+
     vector_values = {
         "frame_component_shift_vector": anchor_delta_vector,
         "frame_component_shift_rotation_xyzw": anchor_delta_rotation,

@@ -211,14 +211,29 @@ def _make_slot_center_frame_shift(
         return None
     profile = spec.profile
     unit_scale = (1.0, 1.0, 1.0)
+    anchor_stable = bool(
+        center_state.anchor_identity
+        and center_state.anchor_identity == frame_pose.anchor_identity
+    )
+    anchor_shift_active = (
+        anchor_stable and float(profile.anchor_inertia) < 1.0 - 1.0e-8
+    )
+    world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
+    anchor_domain_valid = (
+        not anchor_shift_active
+        or (
+            math.isclose(float(profile.world_inertia), 1.0, abs_tol=1.0e-8)
+            and float(profile.movement_speed_limit) < 0.0
+            and float(profile.rotation_speed_limit) < 0.0
+        )
+    )
     in_verified_domain = (
         not mesh_static.center.fixed_indices
-        and not center_state.anchor_identity
-        and not frame_pose.anchor_identity
+        and (world_shift_active or anchor_shift_active)
+        and anchor_domain_valid
         and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
         and int(substeps) == 1
         and math.isclose(float(profile.movement_inertia_smoothing), 0.0, abs_tol=1.0e-8)
-        and float(profile.world_inertia) < 1.0 - 1.0e-8
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and all(
             math.isclose(float(value), expected, abs_tol=1.0e-8)
@@ -236,6 +251,7 @@ def _make_slot_center_frame_shift(
         simulation_delta_time=dt,
         frame_delta_time=dt,
         world_inertia=profile.world_inertia,
+        anchor_inertia=profile.anchor_inertia,
         movement_speed_limit=profile.movement_speed_limit,
         rotation_speed_limit=profile.rotation_speed_limit,
         now_time_scale=time_scale,

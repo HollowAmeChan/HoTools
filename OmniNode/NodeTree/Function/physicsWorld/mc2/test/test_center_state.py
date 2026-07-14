@@ -265,6 +265,75 @@ def test_center_persistent_state_threads_frame_shift_into_step_history() -> None
     np.testing.assert_allclose(step.old_world_rotation_xyzw, shift.now_world_rotation_xyzw)
 
 
+def test_center_persistent_state_builds_anchor_shift_from_pose_history() -> None:
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "fixtures",
+        "tier_a",
+        "center_frame_shift_anchor_001.json",
+    )
+    with open(path, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    values = fixture["input"]
+    expected = fixture["expected"]
+    half_angle = np.float32(np.radians(90.0) * 0.5)
+    rotation_90 = (
+        0.0,
+        float(np.sin(half_angle)),
+        0.0,
+        float(np.cos(half_angle)),
+    )
+    first_frame = center.MC2CenterFramePoseSpec(
+        frame=1,
+        generation=0,
+        component_identity="object:anchor",
+        component_world_position=values["old_component_world_position"],
+        component_world_rotation_xyzw=values["old_component_world_rotation_xyzw"],
+        component_world_scale=values["old_component_world_scale"],
+        anchor_identity="anchor:fixture",
+        anchor_world_position=values["old_anchor_world_position"],
+        anchor_world_rotation_xyzw=values["old_anchor_world_rotation_xyzw"],
+    )
+    persistent = center.MC2CenterPersistentState("anchor-static")
+    persistent.reset(
+        first_frame,
+        values["old_frame_world_position"],
+        values["old_frame_world_rotation_xyzw"],
+        velocity_weight=1.0,
+    )
+    np.testing.assert_allclose(
+        persistent.anchor_component_local_position,
+        values["anchor_component_local_position"],
+        atol=1.0e-6,
+    )
+    second_frame = center.MC2CenterFramePoseSpec(
+        frame=2,
+        generation=0,
+        component_identity="object:anchor",
+        component_world_position=values["component_world_position"],
+        component_world_rotation_xyzw=rotation_90,
+        component_world_scale=values["component_world_scale"],
+        anchor_identity="anchor:fixture",
+        anchor_world_position=values["anchor_world_position"],
+        anchor_world_rotation_xyzw=rotation_90,
+    )
+    shift = center.evaluate_mc2_center_frame_shift(
+        persistent.make_frame_shift_input(
+            second_frame,
+            simulation_delta_time=values["simulation_delta_time"],
+            frame_delta_time=values["frame_delta_time"],
+            world_inertia=values["world_inertia"],
+            anchor_inertia=values["anchor_inertia"],
+            movement_speed_limit=values["movement_speed_limit"],
+            rotation_speed_limit=values["rotation_speed_limit"],
+        )
+    )
+    for field, expected_value in expected.items():
+        np.testing.assert_allclose(
+            getattr(shift, field), expected_value, rtol=1.0e-6, atol=1.0e-6
+        )
+
+
 def test_center_step_evaluator_matches_fixed_mc2_oracle() -> None:
     with open(CENTER_STEP_FIXTURE_PATH, "r", encoding="utf-8") as handle:
         fixture = json.load(handle)

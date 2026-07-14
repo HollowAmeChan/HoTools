@@ -325,6 +325,9 @@ class MC2CenterPersistentState:
     old_component_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     old_component_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
     old_component_world_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    old_anchor_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    old_anchor_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
+    anchor_component_local_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     old_frame_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     old_frame_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
     old_frame_world_scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
@@ -351,12 +354,12 @@ class MC2CenterPersistentState:
         if not 0.0 <= float(velocity_weight) <= 1.0:
             raise ValueError("velocity_weight must be in 0..1")
         self.component_identity = frame_pose.component_identity
-        self.anchor_identity = frame_pose.anchor_identity
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = _unit_quaternion(
             frame_pose.component_world_rotation_xyzw, "component_world_rotation_xyzw"
         )
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
+        self._commit_anchor_pose(frame_pose)
         self.old_frame_world_position = center_position
         self.old_frame_world_rotation_xyzw = center_rotation
         self.old_frame_world_scale = tuple(frame_pose.component_world_scale)
@@ -433,6 +436,7 @@ class MC2CenterPersistentState:
         world_inertia: float,
         movement_speed_limit: float = -1.0,
         rotation_speed_limit: float = -1.0,
+        anchor_inertia: float = 0.0,
         now_time_scale: float = 1.0,
         skip_count: int = 0,
     ) -> MC2CenterFrameShiftInputSpec:
@@ -459,6 +463,34 @@ class MC2CenterPersistentState:
             old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
             now_world_position=self.old_world_position,
             now_world_rotation_xyzw=self.old_world_rotation_xyzw,
+            use_anchor=bool(
+                self.anchor_identity
+                and self.anchor_identity == frame_pose.anchor_identity
+            ),
+            anchor_inertia=float(anchor_inertia),
+            old_anchor_world_position=self.old_anchor_world_position,
+            old_anchor_world_rotation_xyzw=self.old_anchor_world_rotation_xyzw,
+            anchor_world_position=frame_pose.anchor_world_position,
+            anchor_world_rotation_xyzw=frame_pose.anchor_world_rotation_xyzw,
+            anchor_component_local_position=self.anchor_component_local_position,
+        )
+
+    def _commit_anchor_pose(self, frame_pose: MC2CenterFramePoseSpec) -> None:
+        self.anchor_identity = frame_pose.anchor_identity
+        if not frame_pose.anchor_identity:
+            self.old_anchor_world_position = (0.0, 0.0, 0.0)
+            self.old_anchor_world_rotation_xyzw = IDENTITY_QUATERNION
+            self.anchor_component_local_position = (0.0, 0.0, 0.0)
+            return
+        self.old_anchor_world_position = tuple(frame_pose.anchor_world_position)
+        self.old_anchor_world_rotation_xyzw = tuple(frame_pose.anchor_world_rotation_xyzw)
+        self.anchor_component_local_position = tuple(
+            float(value)
+            for value in _inverse_transform_point_unit_scale_f32(
+                frame_pose.component_world_position,
+                frame_pose.anchor_world_position,
+                frame_pose.anchor_world_rotation_xyzw,
+            )
         )
 
     def commit_step(
@@ -478,7 +510,7 @@ class MC2CenterPersistentState:
         self.old_component_world_position = tuple(frame_pose.component_world_position)
         self.old_component_world_rotation_xyzw = tuple(frame_pose.component_world_rotation_xyzw)
         self.old_component_world_scale = tuple(frame_pose.component_world_scale)
-        self.anchor_identity = frame_pose.anchor_identity
+        self._commit_anchor_pose(frame_pose)
         self.old_frame_world_position = tuple(center_pose.position)
         self.old_frame_world_rotation_xyzw = tuple(center_pose.rotation_xyzw)
         self.old_frame_world_scale = tuple(center_pose.scale)
@@ -493,6 +525,9 @@ class MC2CenterPersistentState:
             "center_static_signature": self.center_static_signature,
             "component_identity": self.component_identity,
             "anchor_identity": self.anchor_identity,
+            "old_anchor_world_position": self.old_anchor_world_position,
+            "old_anchor_world_rotation_xyzw": self.old_anchor_world_rotation_xyzw,
+            "anchor_component_local_position": self.anchor_component_local_position,
             "initialized": self.initialized,
             "reset_count": self.reset_count,
             "last_frame": self.last_frame,
@@ -507,8 +542,8 @@ class MC2CenterPersistentState:
 class MC2CenterFrameShiftInputSpec:
     """Source-aligned world-inertia inputs before Center substep derivation.
 
-    V0 deliberately covers no fixed list and unit positive scale, and excludes
-    anchor, smoothing, teleport, synchronization, culling, and stabilization.
+    V0 deliberately covers no fixed list and unit positive scale, with optional
+    anchor, and excludes smoothing, teleport, synchronization, and culling.
     """
 
     simulation_delta_time: float
@@ -527,6 +562,13 @@ class MC2CenterFrameShiftInputSpec:
     old_frame_world_rotation_xyzw: tuple[float, float, float, float]
     now_world_position: tuple[float, float, float]
     now_world_rotation_xyzw: tuple[float, float, float, float]
+    use_anchor: bool = False
+    anchor_inertia: float = 0.0
+    old_anchor_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    old_anchor_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
+    anchor_world_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    anchor_world_rotation_xyzw: tuple[float, float, float, float] = IDENTITY_QUATERNION
+    anchor_component_local_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def __post_init__(self) -> None:
         for name in ("simulation_delta_time", "frame_delta_time", "now_time_scale"):
@@ -541,6 +583,10 @@ class MC2CenterFrameShiftInputSpec:
             raise ValueError("skip_count cannot be negative")
         if not 0.0 <= float(self.world_inertia) <= 1.0:
             raise ValueError("world_inertia must be in 0..1")
+        if not isinstance(self.use_anchor, bool):
+            raise TypeError("use_anchor must be bool")
+        if not 0.0 <= float(self.anchor_inertia) <= 1.0:
+            raise ValueError("anchor_inertia must be in 0..1")
         for name in ("movement_speed_limit", "rotation_speed_limit"):
             if not math.isfinite(float(getattr(self, name))):
                 raise ValueError(f"{name} must be finite")
@@ -549,6 +595,9 @@ class MC2CenterFrameShiftInputSpec:
             "component_world_position",
             "old_frame_world_position",
             "now_world_position",
+            "old_anchor_world_position",
+            "anchor_world_position",
+            "anchor_component_local_position",
         ):
             _vector(getattr(self, name), 3, name)
         for name in (
@@ -556,6 +605,8 @@ class MC2CenterFrameShiftInputSpec:
             "component_world_rotation_xyzw",
             "old_frame_world_rotation_xyzw",
             "now_world_rotation_xyzw",
+            "old_anchor_world_rotation_xyzw",
+            "anchor_world_rotation_xyzw",
         ):
             _require_unit_quaternion(getattr(self, name), name)
 
@@ -696,6 +747,13 @@ def _shift_position_f32(position, pivot, shift_vector, shift_rotation) -> np.nda
     )
 
 
+def _inverse_transform_point_unit_scale_f32(position, origin, rotation) -> np.ndarray:
+    position = _f32_vector(position, 3, "position")
+    origin = _f32_vector(origin, 3, "origin")
+    rotation = _f32_vector(rotation, 4, "rotation")
+    return _rotate_f32(_inverse_quaternion_f32(rotation), position - origin)
+
+
 def evaluate_mc2_center_frame_shift(
     frame: MC2CenterFrameShiftInputSpec,
 ) -> MC2CenterFrameShiftResult:
@@ -719,21 +777,71 @@ def evaluate_mc2_center_frame_shift(
     component_rotation = _f32_vector(
         frame.component_world_rotation_xyzw, 4, "component_world_rotation_xyzw"
     )
-    full_shift_vector = np.asarray(component - old_component, dtype=np.float32)
+    anchor_shift_vector = np.zeros(3, dtype=np.float32)
+    identity = np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
+    anchor_shift_rotation = identity.copy()
+    adjusted_old_component = old_component.copy()
+    adjusted_old_component_rotation = old_component_rotation.copy()
+    if frame.use_anchor:
+        anchor_position = _f32_vector(
+            frame.anchor_world_position, 3, "anchor_world_position"
+        )
+        anchor_rotation = _f32_vector(
+            frame.anchor_world_rotation_xyzw, 4, "anchor_world_rotation_xyzw"
+        )
+        old_anchor_rotation = _f32_vector(
+            frame.old_anchor_world_rotation_xyzw,
+            4,
+            "old_anchor_world_rotation_xyzw",
+        )
+        anchor_local = _f32_vector(
+            frame.anchor_component_local_position,
+            3,
+            "anchor_component_local_position",
+        )
+        anchor_center = np.asarray(
+            anchor_position + _rotate_f32(anchor_rotation, anchor_local),
+            dtype=np.float32,
+        )
+        anchor_ratio = _f32(1.0) - _f32(frame.anchor_inertia)
+        anchor_shift_vector = np.asarray(
+            (anchor_center - old_component) * anchor_ratio,
+            dtype=np.float32,
+        )
+        full_anchor_rotation = _normalize_quaternion_f32(
+            _quaternion_multiply_f32(
+                anchor_rotation,
+                _inverse_quaternion_f32(old_anchor_rotation),
+            )
+        )
+        anchor_shift_rotation = _quaternion_slerp_f32(
+            identity,
+            full_anchor_rotation,
+            anchor_ratio,
+        )
+        adjusted_old_component += anchor_shift_vector
+        adjusted_old_component_rotation = _normalize_quaternion_f32(
+            _quaternion_multiply_f32(
+                anchor_shift_rotation,
+                adjusted_old_component_rotation,
+            )
+        )
+
+    full_shift_vector = np.asarray(component - adjusted_old_component, dtype=np.float32)
     full_shift_rotation = _normalize_quaternion_f32(
         _quaternion_multiply_f32(
             component_rotation,
-            _inverse_quaternion_f32(old_component_rotation),
+            _inverse_quaternion_f32(adjusted_old_component_rotation),
         )
     )
     move_shift_ratio = _f32(1.0) - _f32(frame.world_inertia)
     rotation_shift_ratio = move_shift_ratio
     work_old_component = np.asarray(
-        old_component + full_shift_vector * move_shift_ratio,
+        adjusted_old_component + full_shift_vector * move_shift_ratio,
         dtype=np.float32,
     )
     work_old_rotation = _quaternion_slerp_f32(
-        old_component_rotation,
+        adjusted_old_component_rotation,
         component_rotation,
         rotation_shift_ratio,
     )
@@ -804,12 +912,17 @@ def evaluate_mc2_center_frame_shift(
             other_shift_ratio,
         )
 
-    shift_vector = np.asarray(full_shift_vector * move_shift_ratio, dtype=np.float32)
-    identity = np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
-    shift_rotation = _quaternion_slerp_f32(
+    shift_vector = np.asarray(
+        full_shift_vector * move_shift_ratio + anchor_shift_vector,
+        dtype=np.float32,
+    )
+    world_shift_rotation = _quaternion_slerp_f32(
         identity,
         full_shift_rotation,
         rotation_shift_ratio,
+    )
+    shift_rotation = _normalize_quaternion_f32(
+        _quaternion_multiply_f32(anchor_shift_rotation, world_shift_rotation)
     )
     old_frame_position = _f32_vector(
         frame.old_frame_world_position, 3, "old_frame_world_position"
