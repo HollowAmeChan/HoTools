@@ -337,6 +337,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             [source],
             profile=mc2_parameters.make_mc2_particle_profile(
                 damping=0.2,
+                animation_pose_ratio=0.25,
                 stabilization_time_after_reset=0.0,
                 world_inertia=0.25,
                 movement_inertia_smoothing=0.0,
@@ -354,6 +355,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert runtime_state.reset_count == 1
         native_info = native_owner.inspect()
         assert native_info["parameter_revision"] == 2
+        assert native_info["animation_pose_ratio"] == 0.25
         assert native_info["dynamic_revision"] == 1
         assert native_info["reset_count"] == 1
         np.testing.assert_array_equal(
@@ -934,6 +936,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             [source],
             profile=mc2_parameters.make_mc2_particle_profile(
                 damping=0.2,
+                animation_pose_ratio=1.0,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=1.0,
                 world_inertia=1.0,
@@ -976,6 +979,9 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert native_info["center_step_count"] == 6
         assert native_info["center_frame_shift_count"] == 5
         assert native_info["center_negative_scale_teleport_count"] == 1
+        assert native_info["animation_pose_ratio"] == 1.0
+        assert native_info["baseline_count"] == 0
+        assert native_info["baseline_pose_rebuild_count"] == 0
         negative_scale_result = slot.data["center_negative_scale_result"]
         assert negative_scale_result is not None
         assert negative_scale_result.active is True
@@ -1132,6 +1138,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             [source],
             profile=mc2_parameters.make_mc2_particle_profile(
                 damping=0.2,
+                animation_pose_ratio=0.25,
                 stabilization_time_after_reset=0.0,
                 anchor_inertia=1.0,
                 world_inertia=0.25,
@@ -1224,6 +1231,20 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         fixed_native_info = fixed_slot.data["native_context"].inspect()
         assert fixed_native_info["center_fixed_count"] == 1
         assert fixed_native_info["center_frame_shift_count"] == 1
+        assert fixed_native_info["baseline_count"] > 0
+        assert fixed_native_info["baseline_pose_rebuild_count"] == 1
+        assert fixed_native_info["animation_pose_ratio"] == 0.25
+        fixed_step_positions, _ = fixed_slot.data["native_context"].read_step_basic()
+        np.testing.assert_allclose(
+            fixed_step_positions[0],
+            fixed_second_input.world_positions[0],
+            atol=1.0e-6,
+        )
+        assert not np.allclose(
+            fixed_step_positions[1:],
+            fixed_second_input.world_positions[1:],
+            atol=1.0e-6,
+        )
         fixed_shift = fixed_slot.data["center_frame_shift_result"]
         assert fixed_shift is not None
         fixed_center_pose = mc2_center.derive_mc2_center_world_pose(
@@ -1256,6 +1277,65 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         np.testing.assert_allclose(
             fixed_shift.frame_world_rotation_xyzw,
             fixed_center_pose.rotation_xyzw,
+            atol=1.0e-6,
+        )
+
+        fixed_animated_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                animation_pose_ratio=1.0,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=0.25,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        fixed_third_input = frame_input.make_mc2_frame_input(
+            task_id=fixed_animated_task.task_id,
+            topology_signature=fixed_topology.topology_signature,
+            frame=22,
+            generation=12,
+            world_positions=fixed_second_input.world_positions,
+            world_rotations_xyzw=fixed_second_input.world_rotations_xyzw,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=22,
+                generation=12,
+                component_identity=component_identity,
+                component_world_position=(10.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(float(value) for value in fixed_rotation),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        fixed_world.frame_context.frame = 22
+        mc2_solver.step_mc2(
+            fixed_world,
+            [fixed_animated_task],
+            frame_inputs={fixed_animated_task.task_id: fixed_third_input},
+            dt=0.1,
+        )
+        fixed_hot_info = fixed_slot.data["native_context"].inspect()
+        assert fixed_hot_info["step_count"] == 2
+        assert fixed_hot_info["baseline_pose_rebuild_count"] == 1, fixed_hot_info
+        assert fixed_hot_info["animation_pose_ratio"] == 1.0
+        fixed_step_positions, fixed_step_rotations = fixed_slot.data[
+            "native_context"
+        ].read_step_basic()
+        np.testing.assert_allclose(
+            fixed_step_positions,
+            fixed_third_input.world_positions,
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            np.abs(np.sum(
+                fixed_step_rotations * fixed_third_input.world_rotations_xyzw,
+                axis=1,
+            )),
+            1.0,
             atol=1.0e-6,
         )
     finally:

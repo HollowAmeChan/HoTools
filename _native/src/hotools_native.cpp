@@ -772,6 +772,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_static, a); });
     m.def("mc2_context_v0_update_center_dynamic",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_center_dynamic, a); });
+    m.def("mc2_context_v0_update_team_options",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_update_team_options, a); });
     m.def("mc2_context_v0_apply_center_frame_shift",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_apply_center_frame_shift, a); });
     m.def("mc2_context_v0_apply_center_negative_scale_teleport",
@@ -786,6 +788,8 @@ NB_MODULE(hotools_native, m) {
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_step, a); });
     m.def("mc2_context_v0_read",
         [](nb::args a) { call_legacy(hotools::mc2_context_v0_read, a); });
+    m.def("mc2_context_v0_read_step_basic",
+        [](nb::args a) { call_legacy(hotools::mc2_context_v0_read_step_basic, a); });
     m.def("mc2_context_v0_read_center_step",
         [](nb::args a) { return steal_or_throw(hotools::mc2_context_v0_read_center_step(nullptr, a.ptr())); });
     m.def("mc2_context_v0_free",

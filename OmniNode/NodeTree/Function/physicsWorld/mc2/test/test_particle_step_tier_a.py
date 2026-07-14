@@ -6,6 +6,7 @@ import numpy as np
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_gravity_damping_001.json"
 INERTIA_FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_inertia_001.json"
+BASELINE_FIXTURE = Path(__file__).parent / "fixtures" / "tier_a" / "particle_step_baseline_pose_001.json"
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
 
 
@@ -31,6 +32,31 @@ def _slerp(first: np.ndarray, second: np.ndarray, ratio: np.float32) -> np.ndarr
 def _z_rotation(degrees: float) -> np.ndarray:
     half_angle = np.float32(np.radians(np.float32(degrees)) * np.float32(0.5))
     return np.asarray((0.0, 0.0, np.sin(half_angle), np.cos(half_angle)), dtype=np.float32)
+
+
+def _axis_angle(value) -> np.ndarray:
+    if value is None:
+        return np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    axis = np.asarray(value["axis"], dtype=np.float32)
+    half_angle = np.float32(np.radians(np.float32(value["degrees"])) * np.float32(0.5))
+    return np.asarray(
+        tuple(axis * np.sin(half_angle)) + (np.cos(half_angle),),
+        dtype=np.float32,
+    )
+
+
+def _multiply(left: np.ndarray, right: np.ndarray) -> np.ndarray:
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return np.asarray(
+        (
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+            lw * rw - lx * rx - ly * ry - lz * rz,
+        ),
+        dtype=np.float32,
+    )
 
 
 def _rotate(rotation: np.ndarray, vector: np.ndarray) -> np.ndarray:
@@ -130,7 +156,73 @@ def test_particle_center_inertia_matches_fixed_mc2_oracle() -> None:
     np.testing.assert_array_equal(expected["step_basic_rotations_xyzw"][0], (0, 0, 0, 1))
 
 
+def test_baseline_step_pose_matches_fixed_mc2_oracle() -> None:
+    fixture = json.loads(BASELINE_FIXTURE.read_text(encoding="utf-8"))
+    source = fixture["source"]
+    assert fixture["oracle_tier"] == source["oracle_tier"] == "A"
+    assert fixture["mc2_commit"] == source["commit"] == EXPECTED_COMMIT
+    assert source["producer"] == [
+        "Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationStepUpdateBaseLinePose"
+    ]
+    values = fixture["input"]
+    expected = fixture["expected"]
+    base_positions = np.asarray(values["base_positions"], dtype=np.float32)
+    base_rotations = np.asarray(
+        [_axis_angle(value) for value in values["base_rotation_axis_angles"]],
+        dtype=np.float32,
+    )
+    local_positions = np.asarray(values["vertex_local_positions"], dtype=np.float32)
+    local_rotations = np.asarray(
+        [_axis_angle(value) for value in values["vertex_local_rotation_axis_angles"]],
+        dtype=np.float32,
+    )
+    step_positions = base_positions.copy()
+    step_rotations = base_rotations.copy()
+    direction = np.asarray(values["negative_scale_direction"], dtype=np.float32)
+    quaternion_value = np.asarray(
+        values["negative_scale_quaternion_value"], dtype=np.float32
+    )
+    scale = np.asarray(values["initial_scale"], dtype=np.float32) * np.float32(
+        values["scale_ratio"]
+    )
+    for start, count in values["baseline_ranges"]:
+        for vertex in values["baseline_data"][start : start + count]:
+            parent = values["parent_indices"][vertex]
+            if values["attributes"][vertex] == 2 and parent >= 0:
+                local_position = local_positions[vertex] * direction * scale
+                local_rotation = local_rotations[vertex] * quaternion_value
+                step_positions[vertex] = (
+                    step_positions[parent]
+                    + _rotate(step_rotations[parent], local_position)
+                )
+                step_rotations[vertex] = _normalize_quaternion(
+                    _multiply(step_rotations[parent], local_rotation)
+                )
+    blend = np.float32(values["animation_pose_ratio"])
+    for start, count in values["baseline_ranges"]:
+        for vertex in values["baseline_data"][start : start + count]:
+            step_positions[vertex] += (
+                base_positions[vertex] - step_positions[vertex]
+            ) * blend
+            step_rotations[vertex] = _slerp(
+                step_rotations[vertex], base_rotations[vertex], blend
+            )
+    np.testing.assert_allclose(
+        step_positions, expected["step_basic_positions"], rtol=1.0e-6, atol=1.0e-6
+    )
+    expected_rotations = np.asarray(
+        expected["step_basic_rotations_xyzw"], dtype=np.float32
+    )
+    for index in range(len(step_rotations)):
+        if np.dot(step_rotations[index], expected_rotations[index]) < 0.0:
+            step_rotations[index] *= -1.0
+    np.testing.assert_allclose(
+        step_rotations, expected_rotations, rtol=1.0e-6, atol=1.0e-6
+    )
+
+
 if __name__ == "__main__":
     test_particle_prediction_matches_fixed_mc2_oracle()
     test_particle_center_inertia_matches_fixed_mc2_oracle()
+    test_baseline_step_pose_matches_fixed_mc2_oracle()
     print("PASS MC2 particle-step Tier A oracle")

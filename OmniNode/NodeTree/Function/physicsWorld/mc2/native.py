@@ -38,6 +38,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_update_bending_static",
     "mc2_context_v0_update_center_static",
     "mc2_context_v0_update_center_dynamic",
+    "mc2_context_v0_update_team_options",
     "mc2_context_v0_apply_center_frame_shift",
     "mc2_context_v0_apply_center_negative_scale_teleport",
     "mc2_context_v0_update_parameters",
@@ -45,6 +46,7 @@ _REQUIRED_SYMBOLS = (
     "mc2_context_v0_reset",
     "mc2_context_v0_step",
     "mc2_context_v0_read",
+    "mc2_context_v0_read_step_basic",
     "mc2_context_v0_read_center_step",
     "mc2_context_v0_free",
     "mc2_context_v0_stats",
@@ -106,6 +108,8 @@ class MC2NativeContextV0:
         self.last_frame: tuple[int, int] | None = None
         self._out_positions = np.empty((vertex_count, 3), dtype=np.float32)
         self._out_rotations = np.empty((vertex_count, 4), dtype=np.float32)
+        self._step_basic_positions = np.empty((vertex_count, 3), dtype=np.float32)
+        self._step_basic_rotations = np.empty((vertex_count, 4), dtype=np.float32)
         self._center_step_dt: float | None = None
         self._center_now_position = np.empty(3, dtype=np.float32)
         self._center_now_rotation = np.empty(4, dtype=np.float32)
@@ -126,10 +130,16 @@ class MC2NativeContextV0:
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
         self.dispose()
 
-    def update_parameters(self, spec: MC2RuntimeParametersV0) -> None:
+    def update_parameters(
+        self,
+        spec: MC2RuntimeParametersV0,
+        *,
+        animation_pose_ratio: float = 0.0,
+    ) -> None:
         if not isinstance(spec, MC2RuntimeParametersV0):
             raise TypeError("spec must be MC2RuntimeParametersV0")
         self._ensure_live()
+        self.update_team_options(animation_pose_ratio)
         packed = pack_mc2_runtime_parameters(spec)
         self._module.mc2_context_v0_update_parameters(
             self._handle,
@@ -138,6 +148,16 @@ class MC2NativeContextV0:
             packed["curve_values"],
         )
         self.parameter_signature = spec.parameter_signature
+
+    def update_team_options(self, animation_pose_ratio: float) -> None:
+        self._ensure_live()
+        animation_pose_ratio = float(animation_pose_ratio)
+        if not math.isfinite(animation_pose_ratio) or not 0.0 <= animation_pose_ratio <= 1.0:
+            raise ValueError("animation_pose_ratio must be finite and in 0..1")
+        self._module.mc2_context_v0_update_team_options(
+            self._handle,
+            animation_pose_ratio,
+        )
 
     def update_mesh_static(self, static) -> None:
         from .setups.mesh_cloth.static_build import MC2MeshClothStaticBuildResult
@@ -325,6 +345,15 @@ class MC2NativeContextV0:
         )
         return self._out_positions, self._out_rotations
 
+    def read_step_basic(self) -> tuple[np.ndarray, np.ndarray]:
+        self._ensure_live()
+        self._module.mc2_context_v0_read_step_basic(
+            self._handle,
+            self._step_basic_positions,
+            self._step_basic_rotations,
+        )
+        return self._step_basic_positions, self._step_basic_rotations
+
     def read_center_step(self) -> MC2CenterStepResult:
         self._ensure_live()
         scalar = self._module.mc2_context_v0_read_center_step(
@@ -382,6 +411,8 @@ class MC2NativeContextV0:
         self.last_frame = None
         self._out_positions = np.empty((0, 3), dtype=np.float32)
         self._out_rotations = np.empty((0, 4), dtype=np.float32)
+        self._step_basic_positions = np.empty((0, 3), dtype=np.float32)
+        self._step_basic_rotations = np.empty((0, 4), dtype=np.float32)
         self._center_step_dt = None
         self._center_now_position = np.empty(0, dtype=np.float32)
         self._center_now_rotation = np.empty(0, dtype=np.float32)

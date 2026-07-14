@@ -56,7 +56,8 @@ def test_owner_lifecycle_and_readback() -> None:
 
     with native.MC2NativeContextV0(2) as owner:
         assert module.mc2_context_v0_stats()["live"] == baseline + 1
-        owner.update_parameters(runtime_spec)
+        owner.update_parameters(runtime_spec, animation_pose_ratio=0.25)
+        owner.update_team_options(1.0)
         owner.update_dynamic(frame)
         owner.reset()
         owner.step_no_collision(1.0 / 60.0)
@@ -65,6 +66,8 @@ def test_owner_lifecycle_and_readback() -> None:
         np.testing.assert_array_equal(rotations, frame.world_rotations_xyzw)
         info = owner.inspect()
         assert info["parameter_revision"] == 1
+        assert info["team_options_revision"] == 2
+        assert info["animation_pose_ratio"] == 1.0
         assert info["dynamic_revision"] == 1
         assert info["reset_count"] == 1
         assert info["step_count"] == 1

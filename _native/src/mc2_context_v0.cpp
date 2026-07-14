@@ -62,6 +62,8 @@ struct Mc2ContextV0 {
     std::int64_t center_step_count = 0;
     std::int64_t center_frame_shift_count = 0;
     std::int64_t center_negative_scale_teleport_count = 0;
+    std::int64_t team_options_revision = 0;
+    std::int64_t baseline_pose_rebuild_count = 0;
     std::int64_t frame = 0;
     std::int64_t generation = 0;
     float velocity_weight = 1.0f;
@@ -69,6 +71,7 @@ struct Mc2ContextV0 {
     float scale_ratio = 1.0f;
     float negative_scale_sign = 1.0f;
     float frame_interpolation = 1.0f;
+    float animation_pose_ratio = 0.0f;
     bool parameters_ready = false;
     bool proxy_static_ready = false;
     bool baseline_static_ready = false;
@@ -449,6 +452,8 @@ void rotate_vector_xyzw(const float* rotation, const float* value, float* output
         (rotation[0] * twice_cross_y - rotation[1] * twice_cross_x);
 }
 
+bool rebuild_baseline_step_pose(Mc2ContextV0& context);
+
 bool predict_particles(
     Mc2ContextV0& context,
     float dt,
@@ -568,6 +573,7 @@ bool predict_particles(
         context.state_positions[offset + 1] += context.state_velocities[offset + 1] * dt;
         context.state_positions[offset + 2] += context.state_velocities[offset + 2] * dt;
     }
+    if (!rebuild_baseline_step_pose(context)) return false;
     ++context.particle_prediction_count;
     return true;
 }
@@ -694,6 +700,166 @@ Vec3 rotate_vector(const std::array<float, 4>& rotation, Vec3 value) {
     const Vec3 xyz {rotation[0], rotation[1], rotation[2]};
     const Vec3 twice_cross = mul(cross(xyz, value), 2.0f);
     return add(add(value, mul(twice_cross, rotation[3])), cross(xyz, twice_cross));
+}
+
+bool rebuild_baseline_step_pose(Mc2ContextV0& context) {
+    if (context.animation_pose_ratio > 0.99f) return true;
+    const auto count = static_cast<std::size_t>(context.vertex_count);
+    if (context.baseline_parents.size() != count ||
+        context.baseline_local_positions.size() != count * 3 ||
+        context.baseline_local_rotations.size() != count * 4 ||
+        context.proxy_attributes.size() != count ||
+        context.step_basic_positions.size() != count * 3 ||
+        context.step_basic_rotations.size() != count * 4 ||
+        context.old_dynamic_positions.size() != count * 3 ||
+        context.dynamic_positions.size() != count * 3 ||
+        context.old_dynamic_rotations.size() != count * 4 ||
+        context.dynamic_rotations.size() != count * 4 ||
+        context.baseline_ranges.size() % 2 != 0) {
+        return false;
+    }
+    const std::array<float, 4> negative_quaternion {
+        context.center_negative_scale_direction[0] < 0.0f
+            ? 1.0f : -1.0f,
+        context.center_negative_scale_direction[1] < 0.0f
+            ? 1.0f : -1.0f,
+        context.center_negative_scale_direction[2] < 0.0f
+            ? 1.0f : -1.0f,
+        1.0f,
+    };
+    const bool has_negative =
+        context.center_negative_scale_direction[0] < 0.0f ||
+        context.center_negative_scale_direction[1] < 0.0f ||
+        context.center_negative_scale_direction[2] < 0.0f;
+    for (std::size_t baseline = 0; baseline < context.baseline_ranges.size() / 2; ++baseline) {
+        const std::int32_t start = context.baseline_ranges[baseline * 2 + 0];
+        const std::int32_t range_count = context.baseline_ranges[baseline * 2 + 1];
+        for (std::int32_t offset = 0; offset < range_count; ++offset) {
+            const std::int32_t data_index = start + offset;
+            if (data_index < 0 ||
+                data_index >= static_cast<std::int32_t>(context.baseline_data.size())) {
+                return false;
+            }
+            const std::int32_t vertex = context.baseline_data[data_index];
+            if (vertex < 0 || vertex >= static_cast<std::int32_t>(count)) return false;
+            const std::int32_t parent = context.baseline_parents[vertex];
+            const auto position_offset = static_cast<std::size_t>(vertex) * 3;
+            const auto rotation_offset = static_cast<std::size_t>(vertex) * 4;
+            if (is_move(context.proxy_attributes[vertex]) && parent >= 0) {
+                if (parent >= static_cast<std::int32_t>(count)) return false;
+                const auto parent_position_offset = static_cast<std::size_t>(parent) * 3;
+                const auto parent_rotation_offset = static_cast<std::size_t>(parent) * 4;
+                const Vec3 local_position {
+                    context.baseline_local_positions[position_offset + 0] *
+                        context.center_negative_scale_direction[0] *
+                        context.center_initial_scale[0] * context.scale_ratio,
+                    context.baseline_local_positions[position_offset + 1] *
+                        context.center_negative_scale_direction[1] *
+                        context.center_initial_scale[1] * context.scale_ratio,
+                    context.baseline_local_positions[position_offset + 2] *
+                        context.center_negative_scale_direction[2] *
+                        context.center_initial_scale[2] * context.scale_ratio,
+                };
+                const std::array<float, 4> parent_rotation {
+                    context.step_basic_rotations[parent_rotation_offset + 0],
+                    context.step_basic_rotations[parent_rotation_offset + 1],
+                    context.step_basic_rotations[parent_rotation_offset + 2],
+                    context.step_basic_rotations[parent_rotation_offset + 3],
+                };
+                const Vec3 parent_position {
+                    context.step_basic_positions[parent_position_offset + 0],
+                    context.step_basic_positions[parent_position_offset + 1],
+                    context.step_basic_positions[parent_position_offset + 2],
+                };
+                const Vec3 world_position = add(
+                    parent_position,
+                    rotate_vector(parent_rotation, local_position)
+                );
+                context.step_basic_positions[position_offset + 0] = world_position.x;
+                context.step_basic_positions[position_offset + 1] = world_position.y;
+                context.step_basic_positions[position_offset + 2] = world_position.z;
+                std::array<float, 4> local_rotation {
+                    context.baseline_local_rotations[rotation_offset + 0],
+                    context.baseline_local_rotations[rotation_offset + 1],
+                    context.baseline_local_rotations[rotation_offset + 2],
+                    context.baseline_local_rotations[rotation_offset + 3],
+                };
+                if (has_negative) {
+                    for (std::size_t component = 0; component < 4; ++component) {
+                        local_rotation[component] *= negative_quaternion[component];
+                    }
+                }
+                auto world_rotation = quaternion_multiply(parent_rotation, local_rotation);
+                normalize_quaternion(world_rotation);
+                std::copy(
+                    world_rotation.begin(), world_rotation.end(),
+                    context.step_basic_rotations.begin() +
+                        static_cast<std::ptrdiff_t>(rotation_offset)
+                );
+            } else if (has_negative) {
+                const float negative_matrix[16] = {
+                    context.center_negative_scale_direction[0], 0.0f, 0.0f, 0.0f,
+                    0.0f, context.center_negative_scale_direction[1], 0.0f, 0.0f,
+                    0.0f, 0.0f, context.center_negative_scale_direction[2], 0.0f,
+                    0.0f, 0.0f, 0.0f, 1.0f,
+                };
+                const std::array<float, 4> rotation {
+                    context.step_basic_rotations[rotation_offset + 0],
+                    context.step_basic_rotations[rotation_offset + 1],
+                    context.step_basic_rotations[rotation_offset + 2],
+                    context.step_basic_rotations[rotation_offset + 3],
+                };
+                const auto transformed = transform_rotation_matrix(negative_matrix, rotation);
+                std::copy(
+                    transformed.begin(), transformed.end(),
+                    context.step_basic_rotations.begin() +
+                        static_cast<std::ptrdiff_t>(rotation_offset)
+                );
+            }
+        }
+    }
+    const float blend = context.animation_pose_ratio;
+    if (blend > kMc2Epsilon) {
+        for (std::size_t baseline = 0; baseline < context.baseline_ranges.size() / 2; ++baseline) {
+            const std::int32_t start = context.baseline_ranges[baseline * 2 + 0];
+            const std::int32_t range_count = context.baseline_ranges[baseline * 2 + 1];
+            for (std::int32_t offset = 0; offset < range_count; ++offset) {
+                const std::int32_t vertex = context.baseline_data[start + offset];
+                const auto position_offset = static_cast<std::size_t>(vertex) * 3;
+                const auto rotation_offset = static_cast<std::size_t>(vertex) * 4;
+                for (std::size_t component = 0; component < 3; ++component) {
+                    const float animated_position =
+                        context.old_dynamic_positions[position_offset + component] *
+                            (1.0f - context.frame_interpolation) +
+                        context.dynamic_positions[position_offset + component] *
+                            context.frame_interpolation;
+                    context.step_basic_positions[position_offset + component] +=
+                        (animated_position -
+                         context.step_basic_positions[position_offset + component]) * blend;
+                }
+                float animated_rotation[4] {};
+                slerp_xyzw(
+                    context.old_dynamic_rotations.data() + rotation_offset,
+                    context.dynamic_rotations.data() + rotation_offset,
+                    context.frame_interpolation,
+                    animated_rotation
+                );
+                float blended_rotation[4] {};
+                slerp_xyzw(
+                    context.step_basic_rotations.data() + rotation_offset,
+                    animated_rotation,
+                    blend,
+                    blended_rotation
+                );
+                std::copy_n(
+                    blended_rotation, 4,
+                    context.step_basic_rotations.data() + rotation_offset
+                );
+            }
+        }
+    }
+    if (!context.baseline_ranges.empty()) ++context.baseline_pose_rebuild_count;
+    return true;
 }
 
 bool evaluate_center_step(Mc2ContextV0& context, float dt) {
@@ -1100,6 +1266,9 @@ PyObject* inspect_context(const Mc2ContextV0& context) {
             "center_negative_scale_teleport_count",
             context.center_negative_scale_teleport_count
         ) ||
+        !dict_i64(result, "team_options_revision", context.team_options_revision) ||
+        !dict_i64(result, "baseline_pose_rebuild_count", context.baseline_pose_rebuild_count) ||
+        !dict_float(result, "animation_pose_ratio", context.animation_pose_ratio) ||
         !dict_i64(result, "frame", context.frame) ||
         !dict_i64(result, "generation", context.generation) ||
         !dict_bool(result, "parameters_ready", context.parameters_ready) ||
@@ -1629,6 +1798,27 @@ PyObject* mc2_context_v0_update_center_dynamic(PyObject*, PyObject* args) {
     Py_RETURN_NONE;
 }
 
+PyObject* mc2_context_v0_update_team_options(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 2) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_update_team_options expects 2 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const double animation_pose_ratio = as_double(
+        PyTuple_GET_ITEM(args, 1), "animation_pose_ratio"
+    );
+    if (PyErr_Occurred()) return nullptr;
+    if (!std::isfinite(animation_pose_ratio) ||
+        animation_pose_ratio < 0.0 || animation_pose_ratio > 1.0) {
+        PyErr_SetString(PyExc_ValueError, "animation_pose_ratio must be in 0..1");
+        return nullptr;
+    }
+    context->animation_pose_ratio = static_cast<float>(animation_pose_ratio);
+    ++context->team_options_revision;
+    Py_RETURN_NONE;
+}
+
 PyObject* mc2_context_v0_apply_center_frame_shift(PyObject*, PyObject* args) {
     if (PyTuple_GET_SIZE(args) != 4) {
         PyErr_SetString(PyExc_TypeError, "mc2_context_v0_apply_center_frame_shift expects 4 arguments");
@@ -2023,6 +2213,50 @@ PyObject* mc2_context_v0_read(PyObject*, PyObject* args) {
     std::memcpy(rotations.view.buf,
                 context->state_rotations.data(),
                 context->state_rotations.size() * sizeof(float));
+    Py_RETURN_NONE;
+}
+
+PyObject* mc2_context_v0_read_step_basic(PyObject*, PyObject* args) {
+    if (PyTuple_GET_SIZE(args) != 3) {
+        PyErr_SetString(PyExc_TypeError, "mc2_context_v0_read_step_basic expects 3 arguments");
+        return nullptr;
+    }
+    auto* context = context_from(PyTuple_GET_ITEM(args, 0));
+    if (!ensure_live(context)) return nullptr;
+    const auto count = static_cast<std::size_t>(context->vertex_count);
+    if (context->step_basic_positions.size() != count * 3 ||
+        context->step_basic_rotations.size() != count * 4) {
+        PyErr_SetString(PyExc_RuntimeError, "MC2 V0 step-basic pose is not ready");
+        return nullptr;
+    }
+    Buffer positions, rotations;
+    if (!positions.get(
+            PyTuple_GET_ITEM(args, 1), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_step_basic_positions"
+        ) ||
+        !rotations.get(
+            PyTuple_GET_ITEM(args, 2), PyBUF_FORMAT | PyBUF_ND | PyBUF_WRITABLE,
+            "out_step_basic_rotations"
+        )) {
+        return nullptr;
+    }
+    const Py_ssize_t vertex_count = static_cast<Py_ssize_t>(context->vertex_count);
+    if (!expect_float32(positions, "out_step_basic_positions") ||
+        !expect_2d(positions, "out_step_basic_positions", vertex_count, 3) ||
+        !expect_float32(rotations, "out_step_basic_rotations") ||
+        !expect_2d(rotations, "out_step_basic_rotations", vertex_count, 4)) {
+        return nullptr;
+    }
+    std::memcpy(
+        positions.view.buf,
+        context->step_basic_positions.data(),
+        context->step_basic_positions.size() * sizeof(float)
+    );
+    std::memcpy(
+        rotations.view.buf,
+        context->step_basic_rotations.data(),
+        context->step_basic_rotations.size() * sizeof(float)
+    );
     Py_RETURN_NONE;
 }
 

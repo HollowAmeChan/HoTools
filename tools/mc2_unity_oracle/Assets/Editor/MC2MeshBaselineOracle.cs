@@ -176,6 +176,12 @@ namespace HoTools.MC2Oracle.Editor
             public float3[] VelocityPositions;
         }
 
+        private sealed class BaselineStepPoseDump
+        {
+            public float3[] StepBasicPositions;
+            public quaternion[] StepBasicRotations;
+        }
+
         [Serializable]
         private sealed class ParameterRuntimeDump
         {
@@ -424,7 +430,113 @@ namespace HoTools.MC2Oracle.Editor
             path = Path.Combine(outputDirectory, "particle_step_inertia_001.json");
             File.WriteAllText(path, BuildParticleInertiaStepJson(inertiaDump), new UTF8Encoding(false));
             Debug.Log($"[MC2 Oracle] wrote {path}");
-            return 2;
+            BaselineStepPoseDump baselineDump = RunBaselineStepPoseOracle();
+            path = Path.Combine(outputDirectory, "particle_step_baseline_pose_001.json");
+            File.WriteAllText(path, BuildBaselineStepPoseJson(baselineDump), new UTF8Encoding(false));
+            Debug.Log($"[MC2 Oracle] wrote {path}");
+            return 3;
+        }
+
+        private static BaselineStepPoseDump RunBaselineStepPoseOracle()
+        {
+            MethodInfo method = typeof(SimulationManager).GetMethod(
+                "SimulationStepUpdateBaseLinePose",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (method == null)
+            {
+                throw new MissingMethodException(
+                    typeof(SimulationManager).FullName,
+                    "SimulationStepUpdateBaseLinePose"
+                );
+            }
+            var team = new TeamManager.TeamData
+            {
+                particleChunk = new DataChunk(0, 4),
+                proxyCommonChunk = new DataChunk(0, 4),
+                baseLineChunk = new DataChunk(0, 1),
+                baseLineDataChunk = new DataChunk(0, 3),
+                initScale = new float3(2.0f, 1.0f, 0.5f),
+                scaleRatio = 1.5f,
+                negativeScaleDirection = new float3(1.0f),
+                negativeScaleQuaternionValue = new float4(1.0f),
+                animationPoseRatio = 0.25f,
+            };
+            var attributes = new NativeArray<VertexAttribute>(
+                new[]
+                {
+                    new VertexAttribute(1), new VertexAttribute(2),
+                    new VertexAttribute(2), new VertexAttribute(2),
+                },
+                Allocator.TempJob
+            );
+            var parents = new NativeArray<int>(new[] { -1, 0, 1, -1 }, Allocator.TempJob);
+            var baselineStarts = new NativeArray<ushort>(new ushort[] { 0 }, Allocator.TempJob);
+            var baselineCounts = new NativeArray<ushort>(new ushort[] { 3 }, Allocator.TempJob);
+            var baselineData = new NativeArray<ushort>(new ushort[] { 0, 1, 2 }, Allocator.TempJob);
+            var localPositions = new NativeArray<float3>(
+                new[]
+                {
+                    float3.zero, new float3(1.0f, 0.0f, 0.0f),
+                    new float3(0.0f, 1.0f, 0.0f), float3.zero,
+                },
+                Allocator.TempJob
+            );
+            var localRotations = new NativeArray<quaternion>(
+                new[]
+                {
+                    quaternion.identity,
+                    quaternion.AxisAngle(math.forward(), math.radians(30.0f)),
+                    quaternion.AxisAngle(math.right(), math.radians(20.0f)),
+                    quaternion.identity,
+                },
+                Allocator.TempJob
+            );
+            var basePositions = new NativeArray<float3>(
+                new[]
+                {
+                    new float3(10.0f, 0.0f, 0.0f),
+                    new float3(12.0f, 4.0f, 0.0f),
+                    new float3(-1.0f, 8.0f, 2.0f),
+                    new float3(7.0f, 7.0f, 7.0f),
+                },
+                Allocator.TempJob
+            );
+            var baseRotations = new NativeArray<quaternion>(
+                new[]
+                {
+                    quaternion.AxisAngle(math.up(), math.radians(10.0f)),
+                    quaternion.AxisAngle(math.up(), math.radians(80.0f)),
+                    quaternion.AxisAngle(math.forward(), math.radians(-25.0f)),
+                    quaternion.AxisAngle(math.right(), math.radians(15.0f)),
+                },
+                Allocator.TempJob
+            );
+            var stepPositions = new NativeArray<float3>(basePositions.ToArray(), Allocator.TempJob);
+            var stepRotations = new NativeArray<quaternion>(baseRotations.ToArray(), Allocator.TempJob);
+            try
+            {
+                object[] arguments =
+                {
+                    new DataChunk(0, 1), team, attributes, parents,
+                    baselineStarts, baselineCounts, baselineData,
+                    localPositions, localRotations,
+                    basePositions, baseRotations, stepPositions, stepRotations,
+                };
+                InvokeStatic(method, arguments);
+                return new BaselineStepPoseDump
+                {
+                    StepBasicPositions = stepPositions.ToArray(),
+                    StepBasicRotations = stepRotations.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose(); parents.Dispose(); baselineStarts.Dispose();
+                baselineCounts.Dispose(); baselineData.Dispose(); localPositions.Dispose();
+                localRotations.Dispose(); basePositions.Dispose(); baseRotations.Dispose();
+                stepPositions.Dispose(); stepRotations.Dispose();
+            }
         }
 
         private static int WriteCenterFixtures(string outputDirectory)
@@ -3189,6 +3301,50 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "step_basic_rotations_xyzw", ArrayJson(dump.StepBasicRotations, QuaternionJson));
             Property(text, 4, "next_positions", ArrayJson(dump.NextPositions, Vector3Json));
             Property(text, 4, "velocity_positions", ArrayJson(dump.VelocityPositions, Vector3Json), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildBaselineStepPoseJson(BaselineStepPoseDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("particle_step_baseline_pose_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text, 2, "source",
+                SourceJson(
+                    "Runtime/Manager/Simulation/SimulationManagerNormal.cs::SimulationStepUpdateBaseLinePose"
+                )
+            );
+            Property(
+                text, 2, "scope",
+                Quote("Isolates parent-first baseline step-basic reconstruction, nonuniform team scale, animation-pose blending, and an uncovered Move island at positive scale.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "attributes", "[1,2,2,2]");
+            Property(text, 4, "parent_indices", "[-1,0,1,-1]");
+            Property(text, 4, "baseline_ranges", "[[0,3]]");
+            Property(text, 4, "baseline_data", "[0,1,2]");
+            Property(text, 4, "vertex_local_positions", "[[0,0,0],[1,0,0],[0,1,0],[0,0,0]]");
+            Property(text, 4, "vertex_local_rotation_axis_angles", "[null,{\"axis\":[0,0,1],\"degrees\":30},{\"axis\":[1,0,0],\"degrees\":20},null]");
+            Property(text, 4, "base_positions", "[[10,0,0],[12,4,0],[-1,8,2],[7,7,7]]");
+            Property(text, 4, "base_rotation_axis_angles", "[{\"axis\":[0,1,0],\"degrees\":10},{\"axis\":[0,1,0],\"degrees\":80},{\"axis\":[0,0,1],\"degrees\":-25},{\"axis\":[1,0,0],\"degrees\":15}]");
+            Property(text, 4, "initial_scale", "[2,1,0.5]");
+            Property(text, 4, "scale_ratio", "1.5");
+            Property(text, 4, "negative_scale_direction", "[1,1,1]");
+            Property(text, 4, "negative_scale_quaternion_value", "[1,1,1,1]");
+            Property(text, 4, "animation_pose_ratio", "0.25", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "step_basic_positions", ArrayJson(dump.StepBasicPositions, Vector3Json));
+            Property(
+                text, 4, "step_basic_rotations_xyzw",
+                ArrayJson(dump.StepBasicRotations, QuaternionJson), false
+            );
             text.AppendLine("  }");
             text.Append("}");
             return text.ToString();

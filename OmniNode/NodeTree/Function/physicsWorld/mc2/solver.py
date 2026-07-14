@@ -340,9 +340,20 @@ def _sync_mc2_slot(
         previous_state.config_signature != spec.config_signature
         or previous_state.parameter_signature != effective.parameter_signature
     )
+    previous_spec = slot.data.get("spec")
+    team_options_will_change = (
+        previous_spec is None
+        or previous_spec.profile.animation_pose_ratio
+        != spec.profile.animation_pose_ratio
+    )
     native_context = slot.data.get("native_context")
     if parameter_will_change and native_context is not None:
-        native_context.update_parameters(effective)
+        native_context.update_parameters(
+            effective,
+            animation_pose_ratio=spec.profile.animation_pose_ratio,
+        )
+    elif team_options_will_change and native_context is not None:
+        native_context.update_team_options(spec.profile.animation_pose_ratio)
     parameter_changed, settings_changed = previous_state.update_contracts(
         config_signature=spec.config_signature,
         parameter_signature=effective.parameter_signature,
@@ -354,7 +365,7 @@ def _sync_mc2_slot(
     slot.data["settings"] = settings
     if parameter_changed:
         slot.data["writeback_plan"] = {}
-    if parameter_changed or settings_changed:
+    if parameter_changed or settings_changed or team_options_will_change:
         return "updated", slot
     return "reused", slot
 
@@ -502,7 +513,10 @@ def step_mc2(
                 try:
                     if mesh_static is not None:
                         staged_native_context.update_mesh_static(mesh_static)
-                    staged_native_context.update_parameters(effective)
+                    staged_native_context.update_parameters(
+                        effective,
+                        animation_pose_ratio=spec.profile.animation_pose_ratio,
+                    )
                     if frame_input is not None:
                         staged_native_context.update_dynamic(frame_input)
                         staged_native_context.reset()
