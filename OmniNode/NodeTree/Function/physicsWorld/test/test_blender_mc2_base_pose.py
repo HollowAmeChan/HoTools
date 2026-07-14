@@ -566,6 +566,19 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             (0.25, 0.0, 0.0),
             atol=1.0e-6,
         )
+        anchor_world_limit_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=0.25,
+                world_inertia=0.25,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=0.5,
+                rotation_speed_limit=90.0,
+            ),
+        )
 
         fifth_input = frame_input.make_mc2_frame_input(
             task_id=fourth_input.task_id,
@@ -595,8 +608,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         world.frame_context.frame = 5
         mc2_solver.step_mc2(
             world,
-            [anchor_task],
-            frame_inputs={anchor_task.task_id: fifth_input},
+            [anchor_world_limit_task],
+            frame_inputs={anchor_world_limit_task.task_id: fifth_input},
             dt=1.0 / 60.0,
         )
         native_info = native_owner.inspect()
@@ -609,16 +622,16 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert center_result is not None
         np.testing.assert_allclose(
             center_result.step_vector,
-            (-0.0625, 0.0, 0.0),
+            (-1.0 / 120.0, 0.0, 0.0),
             atol=1.0e-6,
         )
         np.testing.assert_allclose(
             center_result.step_rotation_xyzw,
             (
                 0.0,
-                float(np.sin(np.radians(11.25))),
+                float(np.sin(np.radians(0.75))),
                 0.0,
-                float(np.cos(np.radians(11.25))),
+                float(np.cos(np.radians(0.75))),
             ),
             atol=1.0e-6,
         )
@@ -626,17 +639,27 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         assert frame_shift_result is not None
         np.testing.assert_allclose(
             frame_shift_result.frame_component_shift_vector,
-            (-0.1875, 0.0, 0.0),
+            (-29.0 / 120.0, 0.0, 0.0),
             atol=1.0e-6,
         )
         np.testing.assert_allclose(
             frame_shift_result.frame_component_shift_rotation_xyzw,
             (
                 0.0,
-                float(np.sin(np.radians(33.75))),
+                float(np.sin(np.radians(44.25))),
                 0.0,
-                float(np.cos(np.radians(33.75))),
+                float(np.cos(np.radians(44.25))),
             ),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_moving_direction,
+            (-1.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            frame_shift_result.frame_moving_speed,
+            0.5,
             atol=1.0e-6,
         )
         fifth_candidate = slot.data["result_candidate"]
@@ -646,8 +669,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         native_owner.dispose()
         _, _, status = mc2_solver.step_mc2(
             world,
-            [anchor_task],
-            frame_inputs={anchor_task.task_id: fifth_input},
+            [anchor_world_limit_task],
+            frame_inputs={anchor_world_limit_task.task_id: fifth_input},
             dt=1.0 / 60.0,
         )
         assert "重建 1" in status

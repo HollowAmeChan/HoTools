@@ -219,18 +219,9 @@ def _make_slot_center_frame_shift(
         anchor_stable and float(profile.anchor_inertia) < 1.0 - 1.0e-8
     )
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
-    anchor_domain_valid = (
-        not anchor_shift_active
-        or (
-            math.isclose(float(profile.world_inertia), 1.0, abs_tol=1.0e-8)
-            and float(profile.movement_speed_limit) < 0.0
-            and float(profile.rotation_speed_limit) < 0.0
-        )
-    )
     in_verified_domain = (
         not mesh_static.center.fixed_indices
         and (world_shift_active or anchor_shift_active)
-        and anchor_domain_valid
         and math.isclose(float(time_scale), 1.0, abs_tol=1.0e-8)
         and int(substeps) == 1
         and math.isclose(float(profile.movement_inertia_smoothing), 0.0, abs_tol=1.0e-8)

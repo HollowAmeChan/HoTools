@@ -60,7 +60,8 @@ directory:
   anchor, smoothing, limits, teleport, synchronization, culling, skip, and
   stabilization disabled. The second case applies movement and rotation speed
   limits after the same world-inertia shift. The third case isolates anchor
-  translation/rotation cancellation with world inertia disabled.
+  translation/rotation cancellation with world inertia disabled. The fourth
+  freezes anchor cancellation followed by world inertia and both speed limits.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

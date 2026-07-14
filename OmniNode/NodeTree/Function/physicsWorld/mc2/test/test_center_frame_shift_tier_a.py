@@ -39,6 +39,7 @@ FIXTURES = tuple(
     for name in (
         "center_frame_shift_world_inertia_001.json",
         "center_frame_shift_speed_limit_001.json",
+        "center_frame_shift_anchor_world_limit_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -77,6 +78,27 @@ def _rotate(rotation: np.ndarray, vector: np.ndarray) -> np.ndarray:
     )
 
 
+def _multiply(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    first_xyz = first[:3]
+    second_xyz = second[:3]
+    return np.asarray(
+        (
+            first[3] * second_xyz
+            + second[3] * first_xyz
+            + np.cross(first_xyz, second_xyz)
+        ).tolist()
+        + [first[3] * second[3] - np.dot(first_xyz, second_xyz)],
+        dtype=np.float32,
+    )
+
+
+def _inverse(rotation: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        (-rotation[0], -rotation[1], -rotation[2], rotation[3]),
+        dtype=np.float32,
+    )
+
+
 def _shift_position(position, pivot, shift_vector, shift_rotation) -> np.ndarray:
     return np.asarray(
         pivot + _rotate(shift_rotation, position - pivot) + shift_vector,
@@ -106,6 +128,17 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         (0.0, np.sin(half_angle), 0.0, np.cos(half_angle)),
         dtype=np.float32,
     )
+    identity = np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32)
+    use_anchor = "anchor_inertia" in values
+    anchor_rotation = identity
+    if use_anchor:
+        anchor_half_angle = _f32(
+            np.radians(values["anchor_world_rotation_axis_angle"]["degrees"]) * 0.5
+        )
+        anchor_rotation = np.asarray(
+            (0.0, np.sin(anchor_half_angle), 0.0, np.cos(anchor_half_angle)),
+            dtype=np.float32,
+        )
     result = center.evaluate_mc2_center_frame_shift(
         center.MC2CenterFrameShiftInputSpec(
             simulation_delta_time=values["simulation_delta_time"],
@@ -126,6 +159,21 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             old_frame_world_rotation_xyzw=values["old_frame_world_rotation_xyzw"],
             now_world_position=values["now_world_position"],
             now_world_rotation_xyzw=values["now_world_rotation_xyzw"],
+            use_anchor=use_anchor,
+            anchor_inertia=values.get("anchor_inertia", 0.0),
+            old_anchor_world_position=values.get(
+                "old_anchor_world_position", (0.0, 0.0, 0.0)
+            ),
+            old_anchor_world_rotation_xyzw=values.get(
+                "old_anchor_world_rotation_xyzw", (0.0, 0.0, 0.0, 1.0)
+            ),
+            anchor_world_position=values.get(
+                "anchor_world_position", (0.0, 0.0, 0.0)
+            ),
+            anchor_world_rotation_xyzw=tuple(float(value) for value in anchor_rotation),
+            anchor_component_local_position=values.get(
+                "anchor_component_local_position", (0.0, 0.0, 0.0)
+            ),
         )
     )
     for field, expected_value in expected.items():
@@ -135,10 +183,42 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
 
     # Retain an independent formula check so the fixture does not only test itself
     # through the production evaluator.
+    anchor_shift_vector = np.zeros(3, dtype=np.float32)
+    anchor_shift_rotation = identity
+    adjusted_old_component = old_component.copy()
+    adjusted_old_rotation = old_rotation.copy()
+    if use_anchor:
+        anchor_position = np.asarray(values["anchor_world_position"], dtype=np.float32)
+        anchor_local = np.asarray(
+            values["anchor_component_local_position"], dtype=np.float32
+        )
+        old_anchor_rotation = np.asarray(
+            values["old_anchor_world_rotation_xyzw"], dtype=np.float32
+        )
+        anchor_center = anchor_position + _rotate(anchor_rotation, anchor_local)
+        anchor_ratio = _f32(1.0) - _f32(values["anchor_inertia"])
+        anchor_shift_vector = (anchor_center - old_component) * anchor_ratio
+        anchor_shift_rotation = _slerp(
+            identity,
+            _normalize_quaternion(
+                _multiply(anchor_rotation, _inverse(old_anchor_rotation))
+            ),
+            anchor_ratio,
+        )
+        adjusted_old_component += anchor_shift_vector
+        adjusted_old_rotation = _normalize_quaternion(
+            _multiply(anchor_shift_rotation, adjusted_old_rotation)
+        )
+
     shift_ratio = _f32(1.0) - _f32(values["world_inertia"])
     rotation_shift_ratio = shift_ratio
-    work_old_component = old_component + (component - old_component) * shift_ratio
-    work_old_rotation = _slerp(old_rotation, component_rotation, rotation_shift_ratio)
+    world_component_delta = component - adjusted_old_component
+    work_old_component = adjusted_old_component + world_component_delta * shift_ratio
+    work_old_rotation = _slerp(
+        adjusted_old_rotation,
+        component_rotation,
+        rotation_shift_ratio,
+    )
     movement_speed = _f32(np.linalg.norm(component - work_old_component)) / _f32(
         values["frame_delta_time"]
     )
@@ -164,11 +244,17 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             component_rotation,
             limit_ratio,
         )
-    frame_shift_vector = (component - old_component) * shift_ratio
-    frame_shift_rotation = _slerp(
-        old_rotation,
-        component_rotation,
+    frame_shift_vector = anchor_shift_vector + world_component_delta * shift_ratio
+    full_world_rotation = _normalize_quaternion(
+        _multiply(component_rotation, _inverse(adjusted_old_rotation))
+    )
+    world_shift_rotation = _slerp(
+        identity,
+        full_world_rotation,
         rotation_shift_ratio,
+    )
+    frame_shift_rotation = _normalize_quaternion(
+        _multiply(anchor_shift_rotation, world_shift_rotation)
     )
 
     old_frame = np.asarray(values["old_frame_world_position"], dtype=np.float32)
