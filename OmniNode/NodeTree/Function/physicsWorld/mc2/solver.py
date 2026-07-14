@@ -197,6 +197,7 @@ def _derive_slot_center_pose(slot, frame_input: MC2FrameInputSpec):
 def _make_slot_center_frame_shift(
     slot,
     frame_input: MC2FrameInputSpec,
+    center_pose,
     dt: float,
     *,
     frame_dt: float,
@@ -223,8 +224,7 @@ def _make_slot_center_frame_shift(
     world_shift_active = float(profile.world_inertia) < 1.0 - 1.0e-8
     smoothing_active = float(profile.movement_inertia_smoothing) >= 1.0e-6
     in_verified_domain = (
-        not mesh_static.center.fixed_indices
-        and (world_shift_active or anchor_shift_active or smoothing_active)
+        (world_shift_active or anchor_shift_active or smoothing_active)
         and 0.0 < float(time_scale) <= 1.0
         and int(substeps) == 1
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
@@ -241,6 +241,7 @@ def _make_slot_center_frame_shift(
         return None
     shift_input = center_state.make_frame_shift_input(
         frame_pose,
+        center_pose=center_pose,
         simulation_delta_time=dt,
         frame_delta_time=frame_dt,
         world_inertia=profile.world_inertia,
@@ -585,6 +586,7 @@ def step_mc2(
                         center_frame_shift_result = _make_slot_center_frame_shift(
                             slot,
                             frame_input,
+                            center_pose,
                             dt,
                             frame_dt=frame_dt,
                             time_scale=effective_time_scale,

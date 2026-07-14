@@ -431,6 +431,7 @@ class MC2CenterPersistentState:
         self,
         frame_pose: MC2CenterFramePoseSpec,
         *,
+        center_pose: MC2CenterWorldPoseSpec | None = None,
         simulation_delta_time: float,
         frame_delta_time: float,
         world_inertia: float,
@@ -448,6 +449,8 @@ class MC2CenterPersistentState:
             raise TypeError("frame_pose must be MC2CenterFramePoseSpec")
         if frame_pose.component_identity != self.component_identity:
             raise ValueError("Center component identity changed without reset")
+        if center_pose is not None and not isinstance(center_pose, MC2CenterWorldPoseSpec):
+            raise TypeError("center_pose must be MC2CenterWorldPoseSpec")
         return MC2CenterFrameShiftInputSpec(
             simulation_delta_time=float(simulation_delta_time),
             frame_delta_time=float(frame_delta_time),
@@ -478,6 +481,10 @@ class MC2CenterPersistentState:
             movement_inertia_smoothing=float(movement_inertia_smoothing),
             smoothing_velocity=self.smoothing_velocity,
             is_running=is_running,
+            frame_world_position=(center_pose.position if center_pose is not None else None),
+            frame_world_rotation_xyzw=(
+                center_pose.rotation_xyzw if center_pose is not None else None
+            ),
         )
 
     def commit_frame_shift(self, result: MC2CenterFrameShiftResult | None) -> None:
@@ -557,9 +564,9 @@ class MC2CenterPersistentState:
 class MC2CenterFrameShiftInputSpec:
     """Source-aligned world-inertia inputs before Center substep derivation.
 
-    V0 deliberately covers no fixed list and unit positive scale, with optional
-    anchor and movement smoothing, and excludes teleport, synchronization, and
-    culling.
+    V0 covers component or fixed-derived Center frames at unit positive scale,
+    with optional anchor and movement smoothing, and excludes teleport,
+    synchronization, and culling.
     """
 
     simulation_delta_time: float
@@ -588,6 +595,8 @@ class MC2CenterFrameShiftInputSpec:
     movement_inertia_smoothing: float = 0.0
     smoothing_velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
     is_running: bool = True
+    frame_world_position: tuple[float, float, float] | None = None
+    frame_world_rotation_xyzw: tuple[float, float, float, float] | None = None
 
     def __post_init__(self) -> None:
         for name in ("simulation_delta_time", "frame_delta_time", "now_time_scale"):
@@ -624,6 +633,8 @@ class MC2CenterFrameShiftInputSpec:
             "smoothing_velocity",
         ):
             _vector(getattr(self, name), 3, name)
+        if self.frame_world_position is not None:
+            _vector(self.frame_world_position, 3, "frame_world_position")
         for name in (
             "old_component_world_rotation_xyzw",
             "component_world_rotation_xyzw",
@@ -633,6 +644,11 @@ class MC2CenterFrameShiftInputSpec:
             "anchor_world_rotation_xyzw",
         ):
             _require_unit_quaternion(getattr(self, name), name)
+        if self.frame_world_rotation_xyzw is not None:
+            _require_unit_quaternion(
+                self.frame_world_rotation_xyzw,
+                "frame_world_rotation_xyzw",
+            )
 
 
 @dataclass(frozen=True)
@@ -801,6 +817,20 @@ def evaluate_mc2_center_frame_shift(
     )
     component_rotation = _f32_vector(
         frame.component_world_rotation_xyzw, 4, "component_world_rotation_xyzw"
+    )
+    frame_world_position = (
+        component
+        if frame.frame_world_position is None
+        else _f32_vector(frame.frame_world_position, 3, "frame_world_position")
+    )
+    frame_world_rotation = (
+        component_rotation
+        if frame.frame_world_rotation_xyzw is None
+        else _f32_vector(
+            frame.frame_world_rotation_xyzw,
+            4,
+            "frame_world_rotation_xyzw",
+        )
     )
     anchor_shift_vector = np.zeros(3, dtype=np.float32)
     identity = np.asarray(IDENTITY_QUATERNION, dtype=np.float32)
@@ -1033,8 +1063,8 @@ def evaluate_mc2_center_frame_shift(
         old_frame_world_rotation_xyzw=tuple(float(value) for value in shifted_old_rotation),
         now_world_position=tuple(float(value) for value in shifted_now),
         now_world_rotation_xyzw=tuple(float(value) for value in shifted_now_rotation),
-        frame_world_position=tuple(float(value) for value in component),
-        frame_world_rotation_xyzw=tuple(float(value) for value in component_rotation),
+        frame_world_position=tuple(float(value) for value in frame_world_position),
+        frame_world_rotation_xyzw=tuple(float(value) for value in frame_world_rotation),
         frame_moving_direction=tuple(float(value) for value in moving_direction),
         frame_moving_speed=float(moving_speed),
         smoothing_velocity=tuple(float(value) for value in smoothing_velocity),

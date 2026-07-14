@@ -42,6 +42,7 @@ FIXTURES = tuple(
         "center_frame_shift_anchor_world_limit_001.json",
         "center_frame_shift_smoothing_001.json",
         "center_frame_shift_time_scale_001.json",
+        "center_frame_shift_fixed_center_001.json",
     )
 )
 EXPECTED_COMMIT = "418f89ff31a45bb4b2336641ad5907a1110eabea"
@@ -141,6 +142,19 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             (0.0, np.sin(anchor_half_angle), 0.0, np.cos(anchor_half_angle)),
             dtype=np.float32,
         )
+    frame_world_position = np.asarray(
+        values.get("frame_world_position", values["component_world_position"]),
+        dtype=np.float32,
+    )
+    frame_world_rotation = component_rotation
+    if "frame_world_rotation_axis_angle" in values:
+        frame_half_angle = _f32(
+            np.radians(values["frame_world_rotation_axis_angle"]["degrees"]) * 0.5
+        )
+        frame_world_rotation = np.asarray(
+            (0.0, np.sin(frame_half_angle), 0.0, np.cos(frame_half_angle)),
+            dtype=np.float32,
+        )
     result = center.evaluate_mc2_center_frame_shift(
         center.MC2CenterFrameShiftInputSpec(
             simulation_delta_time=values["simulation_delta_time"],
@@ -181,6 +195,10 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
             ),
             smoothing_velocity=values.get("smoothing_velocity", (0.0, 0.0, 0.0)),
             is_running=values.get("is_running", True),
+            frame_world_position=tuple(float(value) for value in frame_world_position),
+            frame_world_rotation_xyzw=tuple(
+                float(value) for value in frame_world_rotation
+            ),
         )
     )
     for field, expected_value in expected.items():
@@ -366,8 +384,8 @@ def _assert_center_frame_shift_fixture(path: Path) -> None:
         "old_frame_world_rotation_xyzw": frame_shift_rotation,
         "now_world_position": shifted_now,
         "now_world_rotation_xyzw": frame_shift_rotation,
-        "frame_world_position": component,
-        "frame_world_rotation_xyzw": component_rotation,
+        "frame_world_position": frame_world_position,
+        "frame_world_rotation_xyzw": frame_world_rotation,
         "frame_moving_direction": moving_direction,
     }
     for field, actual in vector_values.items():

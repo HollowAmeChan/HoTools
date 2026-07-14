@@ -436,7 +436,8 @@ namespace HoTools.MC2Oracle.Editor
                 0.1f,
                 0.1f,
                 1.0f,
-                0
+                0,
+                false
             );
             string worldInertiaPath = Path.Combine(
                 outputDirectory,
@@ -465,7 +466,8 @@ namespace HoTools.MC2Oracle.Editor
                 0.1f,
                 0.1f,
                 1.0f,
-                0
+                0,
+                false
             );
             string speedLimitPath = Path.Combine(
                 outputDirectory,
@@ -536,7 +538,8 @@ namespace HoTools.MC2Oracle.Editor
                 0.1f,
                 0.1f,
                 1.0f,
-                0
+                0,
+                false
             );
             string smoothingPath = Path.Combine(
                 outputDirectory,
@@ -559,7 +562,8 @@ namespace HoTools.MC2Oracle.Editor
                 0.05f,
                 0.1f,
                 0.5f,
-                0
+                0,
+                false
             );
             string timeScalePath = Path.Combine(
                 outputDirectory,
@@ -571,7 +575,31 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {timeScalePath}");
-            return 6;
+
+            CenterFrameShiftDump fixedCenter = RunCenterFrameShiftOracle(
+                0.25f,
+                0.0f,
+                -1.0f,
+                -1.0f,
+                float3.zero,
+                false,
+                0.1f,
+                0.1f,
+                1.0f,
+                0,
+                true
+            );
+            string fixedCenterPath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_fixed_center_001.json"
+            );
+            File.WriteAllText(
+                fixedCenterPath,
+                BuildCenterFixedShiftJson(fixedCenter),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {fixedCenterPath}");
+            return 7;
         }
 
         private static CenterFrameShiftDump RunCenterFrameShiftOracle(
@@ -584,7 +612,8 @@ namespace HoTools.MC2Oracle.Editor
             float simulationDeltaTime,
             float frameDeltaTime,
             float nowTimeScale,
-            int skipCount
+            int skipCount,
+            bool useFixedCenter
         )
         {
             MethodInfo method = typeof(TeamManager).GetMethod(
@@ -605,6 +634,12 @@ namespace HoTools.MC2Oracle.Editor
                 nowTimeScale = nowTimeScale,
                 updateCount = 1,
                 skipCount = skipCount,
+                proxyCommonChunk = useFixedCenter
+                    ? new DataChunk(0, 1)
+                    : default,
+                fixedDataChunk = useFixedCenter
+                    ? new DataChunk(0, 1)
+                    : default,
                 initScale = new float3(1.0f),
                 negativeScaleSign = 1.0f,
                 negativeScaleDirection = new float3(1.0f),
@@ -641,10 +676,17 @@ namespace HoTools.MC2Oracle.Editor
                 smoothingVelocity = smoothingVelocity,
             };
             var wind = new TeamWindData();
-            var positions = new NativeArray<float3>(0, Allocator.TempJob);
-            var rotations = new NativeArray<quaternion>(0, Allocator.TempJob);
-            var bindRotations = new NativeArray<quaternion>(0, Allocator.TempJob);
-            var fixedIndices = new NativeArray<ushort>(0, Allocator.TempJob);
+            var positions = new NativeArray<float3>(useFixedCenter ? 1 : 0, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(useFixedCenter ? 1 : 0, Allocator.TempJob);
+            var bindRotations = new NativeArray<quaternion>(useFixedCenter ? 1 : 0, Allocator.TempJob);
+            var fixedIndices = new NativeArray<ushort>(useFixedCenter ? 1 : 0, Allocator.TempJob);
+            if (useFixedCenter)
+            {
+                positions[0] = new float3(12.0f, 2.0f, 0.0f);
+                rotations[0] = quaternion.AxisAngle(math.up(), math.radians(90.0f));
+                bindRotations[0] = quaternion.identity;
+                fixedIndices[0] = 0;
+            }
             var transformPositions = new NativeArray<float3>(
                 new[] { new float3(10.0f, 0.0f, 0.0f) },
                 Allocator.TempJob
@@ -3232,6 +3274,69 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "component_world_position", "[10,0,0]");
             Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
             Property(text, 4, "component_world_scale", "[1,1,1]");
+            Property(text, 4, "old_frame_world_position", "[1,0,0]");
+            Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "now_world_position", "[2,0,0]");
+            Property(text, 4, "now_world_rotation_xyzw", "[0,0,0,1]", false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "frame_component_shift_vector", Vector3Json(dump.FrameComponentShiftVector));
+            Property(text, 4, "frame_component_shift_rotation_xyzw", QuaternionJson(dump.FrameComponentShiftRotation));
+            Property(text, 4, "old_frame_world_position", Vector3Json(dump.OldFrameWorldPosition));
+            Property(text, 4, "old_frame_world_rotation_xyzw", QuaternionJson(dump.OldFrameWorldRotation));
+            Property(text, 4, "now_world_position", Vector3Json(dump.NowWorldPosition));
+            Property(text, 4, "now_world_rotation_xyzw", QuaternionJson(dump.NowWorldRotation));
+            Property(text, 4, "frame_world_position", Vector3Json(dump.FrameWorldPosition));
+            Property(text, 4, "frame_world_rotation_xyzw", QuaternionJson(dump.FrameWorldRotation));
+            Property(text, 4, "frame_moving_direction", Vector3Json(dump.FrameMovingDirection));
+            Property(text, 4, "frame_moving_speed", FloatJson(dump.FrameMovingSpeed));
+            Property(text, 4, "smoothing_velocity", Vector3Json(dump.SmoothingVelocity), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static string BuildCenterFixedShiftJson(CenterFrameShiftDump dump)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote("center_frame_shift_fixed_center_001"));
+            Property(text, 2, "oracle_tier", Quote("A"));
+            Property(text, 2, "mc2_version", Quote(MC2Version));
+            Property(text, 2, "mc2_commit", Quote(MC2Commit));
+            Property(
+                text,
+                2,
+                "source",
+                SourceJson("Runtime/Manager/Team/TeamManager.cs::SimulationCalcCenterAndInertiaAndWind")
+            );
+            Property(
+                text,
+                2,
+                "scope",
+                Quote("Isolates positive-scale world-inertia frame shift while the current Center frame is derived from a Fixed particle instead of the component transform.")
+            );
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "simulation_delta_time", "0.1");
+            Property(text, 4, "frame_delta_time", "0.1");
+            Property(text, 4, "now_time_scale", "1");
+            Property(text, 4, "velocity_weight", "1");
+            Property(text, 4, "skip_count", "0");
+            Property(text, 4, "world_inertia", "0.25");
+            Property(text, 4, "movement_inertia_smoothing", "0");
+            Property(text, 4, "movement_speed_limit", "-1");
+            Property(text, 4, "rotation_speed_limit", "-1");
+            Property(text, 4, "fixed_indices", "[0]");
+            Property(text, 4, "fixed_world_positions", "[[12,2,0]]");
+            Property(text, 4, "fixed_world_rotations_xyzw", "[[0,0.707106769,0,0.707106769]]");
+            Property(text, 4, "old_component_world_position", "[0,0,0]");
+            Property(text, 4, "old_component_world_rotation_xyzw", "[0,0,0,1]");
+            Property(text, 4, "old_component_world_scale", "[1,1,1]");
+            Property(text, 4, "component_world_position", "[10,0,0]");
+            Property(text, 4, "component_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
+            Property(text, 4, "component_world_scale", "[1,1,1]");
+            Property(text, 4, "frame_world_position", "[12,2,0]");
+            Property(text, 4, "frame_world_rotation_axis_angle", "{\"axis\":[0,1,0],\"degrees\":90}");
             Property(text, 4, "old_frame_world_position", "[1,0,0]");
             Property(text, 4, "old_frame_world_rotation_xyzw", "[0,0,0,1]");
             Property(text, 4, "now_world_position", "[2,0,0]");

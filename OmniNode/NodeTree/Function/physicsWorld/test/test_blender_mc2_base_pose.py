@@ -58,6 +58,9 @@ mc2_specs = importlib.import_module(
 mc2_parameters = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.parameters"
 )
+mc2_center = importlib.import_module(
+    "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.center_state"
+)
 mc2_topology = importlib.import_module(
     "HoTools.OmniNode.NodeTree.Function.physicsWorld.mc2.topology"
 )
@@ -138,6 +141,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     base_obj = None
     world = None
     auto_world = None
+    fixed_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -947,11 +951,149 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             assert "拓扑签名" in str(exc)
         else:
             raise AssertionError("mismatched Mesh topology signature must be rejected")
+
+        source.hotools_mesh_collision.pin_enabled = True
+        fixed_group = source.vertex_groups.new(name="MC2FixedCenter")
+        fixed_group.add([0], 1.0, "REPLACE")
+        source.hotools_mesh_collision.pin_vertex_group = fixed_group.name
+        fixed_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                damping=0.2,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=0.25,
+                movement_inertia_smoothing=0.0,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+            ),
+        )
+        fixed_topology = mc2_topology.build_mc2_topology_spec(fixed_task)
+        fixed_static = mc2_static.build_mc2_mesh_cloth_static_for_task(
+            fixed_task,
+            fixed_topology,
+        )
+        assert tuple(fixed_static.center.fixed_indices) == (0,), (
+            fixed_static.center.fixed_indices,
+            source.hotools_mesh_collision.pin_enabled,
+            source.hotools_mesh_collision.pin_vertex_group,
+        )
+        fixed_identity_rotations = np.tile(
+            np.asarray((0.0, 0.0, 0.0, 1.0), dtype=np.float32),
+            (3, 1),
+        )
+        fixed_first_positions = np.tile(
+            np.asarray((1.0, 0.0, 0.0), dtype=np.float32),
+            (3, 1),
+        )
+        component_identity = f"object:{source.as_pointer()}"
+        fixed_first_input = frame_input.make_mc2_frame_input(
+            task_id=fixed_task.task_id,
+            topology_signature=fixed_topology.topology_signature,
+            frame=20,
+            generation=12,
+            world_positions=fixed_first_positions,
+            world_rotations_xyzw=fixed_identity_rotations,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=20,
+                generation=12,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        fixed_world = world_types.PhysicsWorldCache()
+        fixed_world.generation = 12
+        fixed_world.frame_context.frame = 20
+        mc2_solver.step_mc2(
+            fixed_world,
+            [fixed_task],
+            frame_inputs={fixed_task.task_id: fixed_first_input},
+        )
+        fixed_rotation = np.asarray(
+            (
+                0.0,
+                float(np.sin(np.radians(45.0))),
+                0.0,
+                float(np.cos(np.radians(45.0))),
+            ),
+            dtype=np.float32,
+        )
+        fixed_second_input = frame_input.make_mc2_frame_input(
+            task_id=fixed_task.task_id,
+            topology_signature=fixed_topology.topology_signature,
+            frame=21,
+            generation=12,
+            world_positions=np.tile(
+                np.asarray((12.0, 2.0, 0.0), dtype=np.float32),
+                (3, 1),
+            ),
+            world_rotations_xyzw=np.tile(fixed_rotation, (3, 1)),
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=21,
+                generation=12,
+                component_identity=component_identity,
+                component_world_position=(10.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(float(value) for value in fixed_rotation),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        fixed_world.frame_context.frame = 21
+        mc2_solver.step_mc2(
+            fixed_world,
+            [fixed_task],
+            frame_inputs={fixed_task.task_id: fixed_second_input},
+            dt=0.1,
+        )
+        fixed_slot = fixed_world.solver_slots[fixed_task.task_id]
+        fixed_native_info = fixed_slot.data["native_context"].inspect()
+        assert fixed_native_info["center_fixed_count"] == 1
+        assert fixed_native_info["center_frame_shift_count"] == 1
+        fixed_shift = fixed_slot.data["center_frame_shift_result"]
+        assert fixed_shift is not None
+        fixed_center_pose = mc2_center.derive_mc2_center_world_pose(
+            fixed_static.center,
+            fixed_second_input.center_frame_pose,
+            world_positions=fixed_second_input.world_positions,
+            world_rotations_xyzw=fixed_second_input.world_rotations_xyzw,
+            vertex_bind_pose_rotations=fixed_static.finalizer.vertex_bind_pose_rotations,
+        )
+        np.testing.assert_allclose(
+            fixed_shift.frame_component_shift_vector,
+            (7.5, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            fixed_shift.frame_component_shift_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(33.75))),
+                0.0,
+                float(np.cos(np.radians(33.75))),
+            ),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            fixed_shift.frame_world_position,
+            (12.0, 2.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            fixed_shift.frame_world_rotation_xyzw,
+            fixed_center_pose.rotation_xyzw,
+            atol=1.0e-6,
+        )
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
         if auto_world is not None:
             auto_world.omni_cache_dispose("test_complete")
+        if fixed_world is not None:
+            fixed_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:

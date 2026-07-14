@@ -64,7 +64,9 @@ directory:
   freezes anchor cancellation followed by world inertia and both speed limits.
   The fifth isolates the persistent movement-smoothing velocity update and its
   position cancellation. The sixth isolates the extra world-inertia shift and
-  moving-speed normalization caused by a positive time scale below one.
+  moving-speed normalization caused by a positive time scale below one. The
+  seventh keeps component inertia while deriving the current Center frame from
+  a Fixed particle pose.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the
