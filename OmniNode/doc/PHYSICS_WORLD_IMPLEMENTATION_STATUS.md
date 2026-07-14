@@ -66,7 +66,7 @@ physicsWorld/
 | Collision | 可用 | Object/Bone schema、RNA、group mask、snapshot、共享 capability | 继续消除 solver 私有重复 resolver |
 | SpringBone VRM | 已完成 world-aware vertical slice | 隐式骨链、native context、slot、碰撞、result、PoseBone writeback、debug、dispose | 后续只做能力扩展和性能维护 |
 | Rigid/Jolt | vertical slice 可用，P0 release 门禁已闭环 | body/constraint spec、约束引用拓扑、Jolt resource、scope hook、result/writeback、query/event/debug、dispose；S1/S2/S3 60 fixture、py311/py313 自动容差差分、两类 overflow、双 ABI 10,000 帧 soak、冻结性能门禁、首版 approved golden | Path、剩余高级 shape/query 的 binding、native、debug 和 fixture 同步 |
-| MC2 | Mesh native no-collision + public GN result foundation | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance/Bending/Center immutable contract、签名与只读 packer；完整 Mesh connectivity token进入 static dirty signature；N2 value ABI；节点从已配置 BasePose自动生成 active World N3 snapshot并消费 World dt；N3 reset/continuity、old/current frame interpolation、source world linear与 evaluated component pose snapshot；per-slot staged native context；Center fixed/component frame adapter、persistent reset/step history、Move depth inertia与 animated step-basic scratch；gravity/damping prediction、Pin、ordered Distance、Bending fixed-point scratch、persistent velocity；只读内部 candidate保持 `ready=False`，公共 Mesh envelope为 `ready=True` object-local offset；same-frame同 revision重发、result transaction失败回滚、统一 GN writeback与 Blender BasePose集成；双 ABI/soak。Bone/stats channel仍仅 planned | Center world/anchor inertia shift、negative-scale teleport、baseline重建型 step-basic、Mesh 写回失败验收、Bone connection/topology/output、collision/self-collision |
+| MC2 | Mesh native no-collision + public GN result foundation | 唯一 solver id与三种 setup；slot reuse/rebuild/prune；source-aligned proxy/baseline/Distance/Bending/Center immutable contract、签名与只读 packer；完整 Mesh connectivity token进入 static dirty signature；N2 value ABI；节点从已配置 BasePose自动生成 active World N3 snapshot并消费 World dt；N3 reset/continuity、old/current frame interpolation、source world linear与 evaluated component pose snapshot；per-slot staged native context；Center fixed/component frame adapter、persistent reset/step history、Move depth inertia与 animated step-basic scratch；gravity/damping prediction、Pin、ordered Distance、Bending fixed-point scratch、persistent velocity；只读内部 candidate保持 `ready=False`，公共 Mesh envelope为 `ready=True` object-local offset；same-frame同 revision重发、result transaction失败回滚、统一 GN writeback成功/失败清零/恢复与 Blender BasePose集成；双 ABI/soak。Bone/stats channel仍仅 planned | Center world/anchor inertia shift、negative-scale teleport、baseline重建型 step-basic、Bone connection/topology/output、collision/self-collision |
 | Mesh XPBD | 旧路径 | 可作为简单布料参考 | 是否迁移或删除需单独决策 |
 
 ## 统一 MC2 决策
@@ -115,7 +115,7 @@ MC2 只有一个 solver identity：`mc2`。
 ## 当前优先级
 
 1. 保持 Rigid/Jolt schema、native ABI、专用 debug renderer 和 fixture 同步，避免能力只落一层。
-2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 继续收口 Center frame shift与 Mesh 写回失败验收；禁止按旧 solver 或未验证近似扩展 spec。
+2. MC2 按 `MC2_SOURCE_ALIGNMENT_EXECUTION_PLAN.md` 继续收口 Center frame shift；禁止按旧 solver 或未验证近似扩展 spec。
 3. 用真实业务场景验证 rigid → cloth、body transform → collider 或其它跨 solver exchange。
 4. 决定 Mesh XPBD 的迁移或删除，不维持无期限的第二套布料语义。
 

@@ -45,7 +45,7 @@
 | Runtime parameters N2 | landed foundation | `runtime_parameters.py` 已冻结 V0 value ABI：47 个 `float32`、11 个 `int32`、9x16 个 curve samples；task/slot parameter signature已改用该运行时块，scheduler保持独立签名。Mesh 非线性曲线与 BoneSpring完整覆写由 2 个固定 commit Tier A dump逐数组验证；particle prediction已消费 gravity/direction与 damping curve，Distance消费 stiffness/velocity attenuation，其余值仍只保存未消费。 |
 | Dynamic/reset N3/N4 | landed foundation | `frame_state.py` 已冻结 frame identity与 first pose/same-frame/continuous/reverse/gap/generation/user reset transition；N3携带受检 `velocity_weight/gravity_ratio/scale_ratio/negative_scale_sign/frame_interpolation`。native context V0 已接 old/current animated pose、Fixed position/rotation interpolation、prediction、Pin、Distance、Bending、post与read。Bone connection-aware rotation、Move step-basic pose与inertia仍未实现。 |
 | 新 native context/step | landed foundation | 新 V0 已完成 `create -> inspect -> update N0/N1/parameters/dynamic/center dynamic -> reset -> step(no collision) -> read -> free`，由 slot 独占并支持 staged replacement、输入先验证、幂等释放、双 ABI 与 soak 测试。step 已执行 Center derived state与Move inertia、frame interpolation、animated step-basic scratch、gravity/damping prediction、Pin、Distance、Bending fixed-point scratch与 persistent velocity commit；仍无 wind/collision、Bone output与 stats。旧 `_native` full-core 不计入此项。 |
-| result/writeback | landed Mesh transaction | Mesh native readback先复制为带 frame/generation/world generation/revision/native revision 的只读内部 candidate，始终保持 `ready=False`；公共层验证 active world frame/generation与单 final-proxy target后，构造 `ready=True` 的共享 `gn_attribute` object-local offset envelope。same-frame只重发已有 candidate且不重复 read/step/revision，context rebuild从 revision 1重新开始；批次先完整验证、发布失败恢复旧 result streams，并已由 Blender 测试通过统一 GN writeback。`BONE_TRANSFORM_CHANNEL`与`mc2_stats` 仍为计划通道。 |
+| result/writeback | landed Mesh transaction | Mesh native readback先复制为带 frame/generation/world generation/revision/native revision 的只读内部 candidate，始终保持 `ready=False`；公共层验证 active world frame/generation与单 final-proxy target后，构造 `ready=True` 的共享 `gn_attribute` object-local offset envelope。same-frame只重发已有 candidate且不重复 read/step/revision，context rebuild从 revision 1重新开始；批次先完整验证、发布失败恢复旧 result streams。统一 GN writeback已覆盖成功、vertex-count mismatch清零/诊断及下一有效 result恢复。`BONE_TRANSFORM_CHANNEL`与`mc2_stats` 仍为计划通道。 |
 
 ## Host/Native 契约
 
@@ -138,7 +138,7 @@ result item 至少包含 frame、generation、slot id、setup type、target iden
 下一交付是 **剩余 Center frame shift 与 Mesh vertical-slice 收口**：
 
 1. Blender component/BasePose frame snapshot 到 Center dynamic、再到 Move particle inertia 与 animated step-basic scratch 的纵切已完成；下一步补 world/anchor inertia shift、negative-scale teleport 和 baseline重建型 step-basic边界。
-2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；公共 Mesh result transaction、发布失败回滚、统一 GN writeback交接与节点自动 N3 snapshot均已完成。下一步补写回失败场景验收。
+2. private candidate 已同时持有同 vertex identity 的 world pose和 object-local offset并保持 `ready=False`；公共 Mesh result transaction、发布失败回滚、统一 GN writeback交接、节点自动 N3 snapshot与写回失败恢复验收均已完成。
 3. candidate 与公共 envelope 已分别验证 frame/frame generation/world generation/revision；same-frame不得重复 read/step/revision，只重发同一 revision。
 4. static 上传或 rebuild 失败必须保留旧 slot/context；除 initial gravity direction等明确 N1 producer外，参数热更新继续保留粒子 history。
 

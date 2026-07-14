@@ -529,6 +529,41 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
         )
         assert len(auto_results) == 1
         assert auto_results[0]["revision"] == 2
+        assert world_writeback.writeback_gn_attributes(auto_world) == 1
+
+        valid_result = auto_results[0]
+        invalid_result = dict(valid_result)
+        invalid_offsets = np.zeros((len(source.data.vertices) + 1, 3), dtype=np.float32)
+        invalid_offsets.flags.writeable = False
+        invalid_result["vertex_count"] = len(invalid_offsets)
+        invalid_result["local_offsets"] = invalid_offsets
+        auto_world.clear_results(world_names.GN_ATTRIBUTE_CHANNEL, solver="mc2")
+        auto_world.publish_result(
+            invalid_result,
+            channel=world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert world_writeback.writeback_gn_attributes(auto_world) == 0
+        assert "拓扑已变化" in auto_slot.data["_writeback_error"]
+        diagnostics = world_writeback.get_gn_writeback_diagnostics(auto_world)
+        assert diagnostics["written_count"] == 0
+        assert diagnostics["cleared_count"] == 1
+        assert any("拓扑已变化" in item["message"] for item in diagnostics["errors"])
+        failed_values = np.empty(len(source.data.vertices) * 3, dtype=np.float32)
+        source.data.attributes[world_names.GN_OFFSET_ATTRIBUTE_NAME].data.foreach_get(
+            "vector",
+            failed_values,
+        )
+        np.testing.assert_allclose(failed_values, 0.0, atol=1.0e-6)
+
+        auto_world.clear_results(world_names.GN_ATTRIBUTE_CHANNEL, solver="mc2")
+        auto_world.publish_result(
+            valid_result,
+            channel=world_names.GN_ATTRIBUTE_CHANNEL,
+            solver="mc2",
+        )
+        assert world_writeback.writeback_gn_attributes(auto_world) == 1
+        assert "_writeback_error" not in auto_slot.data
 
         try:
             frame_input.read_base_pose_frame_snapshot(
