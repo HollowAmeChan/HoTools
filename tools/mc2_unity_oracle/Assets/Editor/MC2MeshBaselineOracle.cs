@@ -123,6 +123,25 @@ namespace HoTools.MC2Oracle.Editor
             public quaternion[] LocalRotations;
         }
 
+        private sealed class BoneRotationTriangleCase
+        {
+            public string Id;
+            public int[] FlipFlags;
+            public quaternion[] NormalAdjustments;
+            public string Note = string.Empty;
+        }
+
+        private sealed class BoneRotationTriangleDump
+        {
+            public float3[] TriangleNormals;
+            public float3[] TriangleTangents;
+            public quaternion[] ProxyRotations;
+            public float3[] WorldPositions;
+            public quaternion[] WorldRotations;
+            public float3[] LocalPositions;
+            public quaternion[] LocalRotations;
+        }
+
         private sealed class DistanceCase
         {
             public string Id;
@@ -503,6 +522,7 @@ namespace HoTools.MC2Oracle.Editor
             int particleStepWritten = WriteParticleStepFixtures(outputDirectory);
             int boneConnectionWritten = WriteBoneConnectionFixtures(outputDirectory);
             int boneRotationLineWritten = WriteBoneRotationLineFixtures(outputDirectory);
+            int boneRotationTriangleWritten = WriteBoneRotationTriangleFixtures(outputDirectory);
 
             Debug.Log(
                 $"[MC2 Oracle] PASS: {written} Tier A Mesh baseline fixtures, "
@@ -517,7 +537,8 @@ namespace HoTools.MC2Oracle.Editor
                 + $"{centerFrameShiftWritten} center-frame-shift fixtures, "
                 + $"{particleStepWritten} particle-step fixtures, "
                 + $"{boneConnectionWritten} bone-connection fixtures, "
-                + $"{boneRotationLineWritten} bone-rotation-line fixtures"
+                + $"{boneRotationLineWritten} bone-rotation-line fixtures, "
+                + $"{boneRotationTriangleWritten} bone-rotation-triangle fixtures"
             );
         }
 
@@ -1020,6 +1041,255 @@ namespace HoTools.MC2Oracle.Editor
             Property(text, 4, "blend_weight", FloatJson(oracleCase.BlendWeight), false);
             text.AppendLine("  },");
             text.AppendLine("  \"expected\": {");
+            Property(text, 4, "proxy_rotations", ArrayJson(dump.ProxyRotations, QuaternionJson));
+            Property(text, 4, "world_positions", ArrayJson(dump.WorldPositions, Vector3Json));
+            Property(text, 4, "world_rotations", ArrayJson(dump.WorldRotations, QuaternionJson));
+            Property(text, 4, "local_positions", ArrayJson(dump.LocalPositions, Vector3Json));
+            Property(text, 4, "local_rotations", ArrayJson(dump.LocalRotations, QuaternionJson), false);
+            text.AppendLine("  }");
+            text.Append("}");
+            return text.ToString();
+        }
+
+        private static int WriteBoneRotationTriangleFixtures(string outputDirectory)
+        {
+            int written = 0;
+            foreach (BoneRotationTriangleCase oracleCase in BoneRotationTriangleCases())
+            {
+                BoneRotationTriangleDump dump = RunBoneRotationTriangleCase(oracleCase);
+                string path = Path.Combine(outputDirectory, oracleCase.Id + ".json");
+                File.WriteAllText(
+                    path,
+                    BuildBoneRotationTriangleJson(oracleCase, dump),
+                    new UTF8Encoding(false)
+                );
+                Debug.Log($"[MC2 Oracle] wrote {path}");
+                written++;
+            }
+            return written;
+        }
+
+        private static IEnumerable<BoneRotationTriangleCase> BoneRotationTriangleCases()
+        {
+            quaternion identity = quaternion.identity;
+            yield return new BoneRotationTriangleCase
+            {
+                Id = "bone_rotation_triangle_override_001",
+                FlipFlags = new[] { 0, 0, 0 },
+                NormalAdjustments = new[] { identity, identity, identity },
+                Note = "Triangle normal/tangent overwrites distinct incoming Line rotations before transform output.",
+            };
+            yield return new BoneRotationTriangleCase
+            {
+                Id = "bone_rotation_triangle_flip_001",
+                FlipFlags = new[] { 0, 1, 2 },
+                NormalAdjustments = new[] { identity, identity, identity },
+                Note = "Vertex-to-triangle bit zero flips normal and bit one flips tangent independently.",
+            };
+            yield return new BoneRotationTriangleCase
+            {
+                Id = "bone_rotation_triangle_adjustment_001",
+                FlipFlags = new[] { 0, 0, 0 },
+                NormalAdjustments = new[]
+                {
+                    identity,
+                    quaternion.AxisAngle(math.forward(), math.radians(30.0f)),
+                    quaternion.AxisAngle(math.right(), math.radians(-20.0f)),
+                },
+                Note = "Per-vertex normal adjustment is multiplied after triangle LookRotation.",
+            };
+        }
+
+        private static BoneRotationTriangleDump RunBoneRotationTriangleCase(
+            BoneRotationTriangleCase oracleCase
+        )
+        {
+            const int count = 3;
+            MethodInfo triangleMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateTriangle",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo sumMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateTriangleSum",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo worldMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateWorldTransform",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            MethodInfo localMethod = typeof(VirtualMeshManager).GetMethod(
+                "SimulationPostProxyMeshUpdateLocalTransform",
+                BindingFlags.Static | BindingFlags.NonPublic
+            );
+            if (triangleMethod == null || sumMethod == null || worldMethod == null || localMethod == null)
+                throw new MissingMethodException(typeof(VirtualMeshManager).FullName, "Bone triangle rotation post methods");
+
+            var team = new TeamManager.TeamData
+            {
+                proxyCommonChunk = new DataChunk(0, count),
+                proxyTriangleChunk = new DataChunk(0, 1),
+                proxyBoneChunk = new DataChunk(0, count),
+                proxyTransformChunk = new DataChunk(0, count),
+                proxyMeshType = VirtualMesh.MeshType.ProxyBoneMesh,
+                negativeScaleTriangleSign = new float2(1.0f),
+                negativeScaleQuaternionValue = new float4(1.0f),
+            };
+            float3[] sourcePositions =
+            {
+                new float3(0, 0, 0),
+                new float3(2, 0.25f, 0.5f),
+                new float3(0.25f, 1.5f, 1.0f),
+            };
+            quaternion[] sourceRotations =
+            {
+                quaternion.AxisAngle(math.up(), math.radians(20.0f)),
+                quaternion.AxisAngle(math.forward(), math.radians(-35.0f)),
+                quaternion.AxisAngle(math.right(), math.radians(50.0f)),
+            };
+            float2[] sourceUvs =
+            {
+                new float2(0, 0), new float2(1, 0), new float2(0.2f, 1),
+            };
+            FixedList32Bytes<uint>[] records = new FixedList32Bytes<uint>[count];
+            for (int vertex = 0; vertex < count; vertex++)
+            {
+                var list = records[vertex];
+                list.Add(DataUtility.Pack12_20(oracleCase.FlipFlags[vertex], 0));
+                records[vertex] = list;
+            }
+            var attributes = new NativeArray<VertexAttribute>(
+                new[] { new VertexAttribute(1), new VertexAttribute(2), new VertexAttribute(2) },
+                Allocator.TempJob
+            );
+            var positions = new NativeArray<float3>(sourcePositions, Allocator.TempJob);
+            var rotations = new NativeArray<quaternion>(sourceRotations, Allocator.TempJob);
+            var triangles = new NativeArray<int3>(new[] { new int3(0, 1, 2) }, Allocator.TempJob);
+            var triangleNormals = new NativeArray<float3>(1, Allocator.TempJob);
+            var triangleTangents = new NativeArray<float3>(1, Allocator.TempJob);
+            var uvs = new NativeArray<float2>(sourceUvs, Allocator.TempJob);
+            var vertexToTriangles = new NativeArray<FixedList32Bytes<uint>>(records, Allocator.TempJob);
+            var normalAdjustments = new NativeArray<quaternion>(oracleCase.NormalAdjustments, Allocator.TempJob);
+            var vertexToTransform = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            var parentIndices = new NativeArray<int>(new[] { -1, 0, 1 }, Allocator.TempJob);
+            var transformPositions = new NativeArray<float3>(count, Allocator.TempJob);
+            var transformRotations = new NativeArray<quaternion>(count, Allocator.TempJob);
+            var transformScales = new NativeArray<float3>(
+                Enumerable.Repeat(new float3(1.0f), count).ToArray(),
+                Allocator.TempJob
+            );
+            var transformLocalPositions = new NativeArray<float3>(count, Allocator.TempJob);
+            var transformLocalRotations = new NativeArray<quaternion>(
+                Enumerable.Repeat(quaternion.identity, count).ToArray(),
+                Allocator.TempJob
+            );
+            try
+            {
+                object[] triangleArguments =
+                {
+                    new DataChunk(0, 1), team, positions, triangles,
+                    triangleNormals, triangleTangents, uvs,
+                };
+                InvokeStatic(triangleMethod, triangleArguments);
+                team = (TeamManager.TeamData)triangleArguments[1];
+                triangleNormals = (NativeArray<float3>)triangleArguments[4];
+                triangleTangents = (NativeArray<float3>)triangleArguments[5];
+
+                object[] sumArguments =
+                {
+                    new DataChunk(0, count), team, rotations, triangleNormals,
+                    triangleTangents, vertexToTriangles, normalAdjustments,
+                };
+                InvokeStatic(sumMethod, sumArguments);
+                team = (TeamManager.TeamData)sumArguments[1];
+                rotations = (NativeArray<quaternion>)sumArguments[2];
+
+                object[] worldArguments =
+                {
+                    new DataChunk(0, count), team, positions, rotations, vertexToTransform,
+                    transformPositions, transformRotations,
+                };
+                InvokeStatic(worldMethod, worldArguments);
+                team = (TeamManager.TeamData)worldArguments[1];
+                transformPositions = (NativeArray<float3>)worldArguments[5];
+                transformRotations = (NativeArray<quaternion>)worldArguments[6];
+
+                object[] localArguments =
+                {
+                    team, attributes, parentIndices, transformPositions, transformRotations,
+                    transformScales, transformLocalPositions, transformLocalRotations,
+                };
+                InvokeStatic(localMethod, localArguments);
+                transformLocalPositions = (NativeArray<float3>)localArguments[6];
+                transformLocalRotations = (NativeArray<quaternion>)localArguments[7];
+                return new BoneRotationTriangleDump
+                {
+                    TriangleNormals = triangleNormals.ToArray(),
+                    TriangleTangents = triangleTangents.ToArray(),
+                    ProxyRotations = rotations.ToArray(),
+                    WorldPositions = transformPositions.ToArray(),
+                    WorldRotations = transformRotations.ToArray(),
+                    LocalPositions = transformLocalPositions.ToArray(),
+                    LocalRotations = transformLocalRotations.ToArray(),
+                };
+            }
+            finally
+            {
+                attributes.Dispose(); positions.Dispose(); rotations.Dispose(); triangles.Dispose();
+                triangleNormals.Dispose(); triangleTangents.Dispose(); uvs.Dispose();
+                vertexToTriangles.Dispose(); normalAdjustments.Dispose(); vertexToTransform.Dispose();
+                parentIndices.Dispose(); transformPositions.Dispose(); transformRotations.Dispose();
+                transformScales.Dispose(); transformLocalPositions.Dispose(); transformLocalRotations.Dispose();
+            }
+        }
+
+        private static string BuildBoneRotationTriangleJson(
+            BoneRotationTriangleCase oracleCase,
+            BoneRotationTriangleDump dump
+        )
+        {
+            float3[] positions =
+            {
+                new float3(0, 0, 0), new float3(2, 0.25f, 0.5f), new float3(0.25f, 1.5f, 1.0f),
+            };
+            quaternion[] rotations =
+            {
+                quaternion.AxisAngle(math.up(), math.radians(20.0f)),
+                quaternion.AxisAngle(math.forward(), math.radians(-35.0f)),
+                quaternion.AxisAngle(math.right(), math.radians(50.0f)),
+            };
+            var text = new StringBuilder();
+            text.AppendLine("{");
+            Property(text, 2, "case_id", Quote(oracleCase.Id));
+            Property(text, 2, "source", SourceJson(
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateTriangle",
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateTriangleSum",
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateWorldTransform",
+                "Runtime/Manager/VirtualMesh/VirtualMeshManager.cs::SimulationPostProxyMeshUpdateLocalTransform"
+            ));
+            Property(text, 2, "note", Quote(oracleCase.Note));
+            text.AppendLine("  \"input\": {");
+            Property(text, 4, "attributes", NumberArray(new[] { 1, 2, 2 }));
+            Property(text, 4, "positions", ArrayJson(positions, Vector3Json));
+            Property(text, 4, "rotations", ArrayJson(rotations, QuaternionJson));
+            Property(text, 4, "triangles", ArrayJson(new[] { new int3(0, 1, 2) }, Int3Json));
+            Property(text, 4, "uvs", ArrayJson(new[] { new float2(0, 0), new float2(1, 0), new float2(0.2f, 1) }, Vector2Json));
+            Property(text, 4, "vertex_to_triangle_records", ArrayJson(
+                oracleCase.FlipFlags.Select(flag => new[] { new int2(flag, 0) }),
+                records => ArrayJson(records, Int2Json)
+            ));
+            Property(text, 4, "normal_adjustment_rotations", ArrayJson(oracleCase.NormalAdjustments, QuaternionJson));
+            Property(text, 4, "vertex_to_transform_rotations", ArrayJson(Enumerable.Repeat(quaternion.identity, 3), QuaternionJson));
+            Property(text, 4, "parent_indices", NumberArray(new[] { -1, 0, 1 }));
+            Property(text, 4, "transform_scales", ArrayJson(Enumerable.Repeat(new float3(1.0f), 3), Vector3Json));
+            Property(text, 4, "transform_local_positions", ArrayJson(Enumerable.Repeat(new float3(0.0f), 3), Vector3Json));
+            Property(text, 4, "transform_local_rotations", ArrayJson(Enumerable.Repeat(quaternion.identity, 3), QuaternionJson), false);
+            text.AppendLine("  },");
+            text.AppendLine("  \"expected\": {");
+            Property(text, 4, "triangle_normals", ArrayJson(dump.TriangleNormals, Vector3Json));
+            Property(text, 4, "triangle_tangents", ArrayJson(dump.TriangleTangents, Vector3Json));
             Property(text, 4, "proxy_rotations", ArrayJson(dump.ProxyRotations, QuaternionJson));
             Property(text, 4, "world_positions", ArrayJson(dump.WorldPositions, Vector3Json));
             Property(text, 4, "world_rotations", ArrayJson(dump.WorldRotations, QuaternionJson));

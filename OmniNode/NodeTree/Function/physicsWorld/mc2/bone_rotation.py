@@ -115,6 +115,106 @@ def _is_zero_distance(value: np.ndarray) -> bool:
     return np.float32(np.linalg.norm(value)) < np.float32(1.0e-8)
 
 
+def _matrix_to_quaternion(matrix: np.ndarray) -> np.ndarray:
+    m00, m01, m02 = matrix[0]
+    m10, m11, m12 = matrix[1]
+    m20, m21, m22 = matrix[2]
+    trace = np.float32(m00 + m11 + m22)
+    if trace > np.float32(0.0):
+        scale = np.float32(np.sqrt(trace + np.float32(1.0)) * np.float32(2.0))
+        result = (m21 - m12, m02 - m20, m10 - m01, np.float32(0.25) * scale)
+        result = (result[0] / scale, result[1] / scale, result[2] / scale, result[3])
+    elif m00 > m11 and m00 > m22:
+        scale = np.float32(np.sqrt(np.float32(1.0) + m00 - m11 - m22) * np.float32(2.0))
+        result = (
+            np.float32(0.25) * scale,
+            (m01 + m10) / scale,
+            (m02 + m20) / scale,
+            (m21 - m12) / scale,
+        )
+    elif m11 > m22:
+        scale = np.float32(np.sqrt(np.float32(1.0) + m11 - m00 - m22) * np.float32(2.0))
+        result = (
+            (m01 + m10) / scale,
+            np.float32(0.25) * scale,
+            (m12 + m21) / scale,
+            (m02 - m20) / scale,
+        )
+    else:
+        scale = np.float32(np.sqrt(np.float32(1.0) + m22 - m00 - m11) * np.float32(2.0))
+        result = (
+            (m02 + m20) / scale,
+            (m12 + m21) / scale,
+            np.float32(0.25) * scale,
+            (m10 - m01) / scale,
+        )
+    return _normalize_quaternion(np.asarray(result, dtype=np.float32))
+
+
+def _look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
+    forward = _normalize_vector(forward)
+    right = _normalize_vector(np.asarray(np.cross(up, forward), dtype=np.float32))
+    corrected_up = np.asarray(np.cross(forward, right), dtype=np.float32)
+    matrix = np.column_stack((right, corrected_up, forward)).astype(np.float32)
+    return _matrix_to_quaternion(matrix)
+
+
+def _triangle_tangent(positions: np.ndarray, uvs: np.ndarray) -> np.ndarray:
+    distance_ba = positions[1] - positions[0]
+    distance_ca = positions[2] - positions[0]
+    uv_ba = uvs[1] - uvs[0]
+    uv_ca = uvs[2] - uvs[0]
+    area = np.float32(uv_ba[0] * uv_ca[1] - uv_ba[1] * uv_ca[0])
+    if area == np.float32(0.0):
+        area = np.float32(1.0)
+    delta = np.float32(1.0) / area
+    tangent = -np.asarray(
+        distance_ba * uv_ca[1] + distance_ca * -uv_ba[1],
+        dtype=np.float32,
+    ) * delta
+    length = np.float32(np.linalg.norm(tangent))
+    return (
+        np.zeros(3, dtype=np.float32)
+        if length <= np.float32(0.0)
+        else np.asarray(tangent / length, dtype=np.float32)
+    )
+
+
+def _write_world_local(
+    *,
+    attributes: np.ndarray,
+    positions: np.ndarray,
+    rotations: np.ndarray,
+    vertex_to_transform: np.ndarray,
+    parents: np.ndarray,
+    scales: np.ndarray,
+    initial_local_positions: np.ndarray,
+    initial_local_rotations: np.ndarray,
+):
+    count = len(positions)
+    world_positions = positions.copy()
+    world_rotations = np.empty_like(rotations)
+    for index in range(count):
+        world_rotations[index] = _normalize_quaternion(
+            _quaternion_multiply(rotations[index], vertex_to_transform[index])
+        )
+    local_positions = initial_local_positions.copy()
+    local_rotations = initial_local_rotations.copy()
+    for index, parent in enumerate(parents):
+        parent = int(parent)
+        if parent < 0 or not (int(attributes[index]) & MC2_VERTEX_MOVE):
+            continue
+        inverse_parent = _quaternion_inverse(world_rotations[parent])
+        local_positions[index] = (
+            _rotate(inverse_parent, world_positions[index] - world_positions[parent])
+            / scales[parent]
+        )
+        local_rotations[index] = _normalize_quaternion(
+            _quaternion_multiply(inverse_parent, world_rotations[index])
+        )
+    return world_positions, world_rotations, local_positions, local_rotations
+
+
 @dataclass(frozen=True)
 class MC2BoneLineRotationResult:
     proxy_rotations: tuple[tuple[float, float, float, float], ...]
@@ -135,6 +235,22 @@ class MC2BoneLineRotationResult:
             "result_signature": self.result_signature,
             "schema_version": self.schema_version,
         }
+
+
+@dataclass(frozen=True)
+class MC2BoneTriangleRotationResult:
+    triangle_normals: tuple[tuple[float, float, float], ...]
+    triangle_tangents: tuple[tuple[float, float, float], ...]
+    proxy_rotations: tuple[tuple[float, float, float, float], ...]
+    world_positions: tuple[tuple[float, float, float], ...]
+    world_rotations: tuple[tuple[float, float, float, float], ...]
+    local_positions: tuple[tuple[float, float, float], ...]
+    local_rotations: tuple[tuple[float, float, float, float], ...]
+    result_signature: str
+    schema_version: int = 0
+
+    def debug_dict(self) -> dict:
+        return dict(self.__dict__)
 
 
 def evaluate_mc2_bone_line_rotation(
@@ -277,24 +393,21 @@ def evaluate_mc2_bone_line_rotation(
             rotation = _quaternion_multiply(adjustment, rotation)
         work_rotations[index] = _slerp(base_rotation, rotation, blend)
 
-    world_positions = work_positions.copy()
-    world_rotations = np.empty_like(work_rotations)
-    for index in range(count):
-        world_rotations[index] = _normalize_quaternion(
-            _quaternion_multiply(work_rotations[index], vertex_to_transform[index])
-        )
-    for index, parent in enumerate(parents):
-        parent = int(parent)
-        if parent < 0 or not (int(attrs[index]) & MC2_VERTEX_MOVE):
-            continue
-        inverse_parent = _quaternion_inverse(world_rotations[parent])
-        output_local_positions[index] = (
-            _rotate(inverse_parent, world_positions[index] - world_positions[parent])
-            / scales[parent]
-        )
-        output_local_rotations[index] = _normalize_quaternion(
-            _quaternion_multiply(inverse_parent, world_rotations[index])
-        )
+    (
+        world_positions,
+        world_rotations,
+        output_local_positions,
+        output_local_rotations,
+    ) = _write_world_local(
+        attributes=attrs,
+        positions=work_positions,
+        rotations=work_rotations,
+        vertex_to_transform=vertex_to_transform,
+        parents=parents,
+        scales=scales,
+        initial_local_positions=output_local_positions,
+        initial_local_rotations=output_local_rotations,
+    )
 
     payload = {
         "schema_version": 0,
@@ -314,7 +427,145 @@ def evaluate_mc2_bone_line_rotation(
     )
 
 
+def evaluate_mc2_bone_triangle_rotation(
+    *,
+    attributes,
+    positions,
+    rotations,
+    triangles,
+    uvs,
+    vertex_to_triangle_records,
+    normal_adjustment_rotations,
+    vertex_to_transform_rotations,
+    parent_indices,
+    transform_scales,
+    transform_local_positions,
+    transform_local_rotations,
+) -> MC2BoneTriangleRotationResult:
+    """Evaluate positive-scale Triangle/Sum -> world -> local Bone output."""
+
+    count = len(positions)
+    attrs = _array(attributes, (count,), "attributes", np.uint8)
+    work_positions = _array(positions, (count, 3), "positions")
+    work_rotations = _array(rotations, (count, 4), "rotations").copy()
+    triangle_array = np.ascontiguousarray(triangles, dtype=np.int32)
+    if triangle_array.ndim != 2 or triangle_array.shape[1:] != (3,):
+        raise ValueError("triangles must have shape (N,3)")
+    if np.any(triangle_array < 0) or np.any(triangle_array >= count):
+        raise ValueError("triangle index out of range")
+    uv_array = _array(uvs, (count, 2), "uvs")
+    adjustments = _array(
+        normal_adjustment_rotations,
+        (count, 4),
+        "normal_adjustment_rotations",
+    )
+    vertex_to_transform = _array(
+        vertex_to_transform_rotations,
+        (count, 4),
+        "vertex_to_transform_rotations",
+    )
+    parents = _array(parent_indices, (count,), "parent_indices", np.int32)
+    scales = _array(transform_scales, (count, 3), "transform_scales")
+    initial_local_positions = _array(
+        transform_local_positions,
+        (count, 3),
+        "transform_local_positions",
+    )
+    initial_local_rotations = _array(
+        transform_local_rotations,
+        (count, 4),
+        "transform_local_rotations",
+    )
+    if len(vertex_to_triangle_records) != count:
+        raise ValueError("vertex_to_triangle_records length mismatch")
+    if any(value < -1 or value >= count for value in parents):
+        raise ValueError("parent index out of range")
+    if np.any(np.abs(scales) <= np.float32(1.0e-8)):
+        raise ValueError("transform scale cannot contain zero")
+
+    triangle_normals = np.zeros((len(triangle_array), 3), dtype=np.float32)
+    triangle_tangents = np.zeros((len(triangle_array), 3), dtype=np.float32)
+    for triangle_index, triangle in enumerate(triangle_array):
+        triangle_positions = work_positions[triangle]
+        cross = np.asarray(
+            np.cross(
+                triangle_positions[1] - triangle_positions[0],
+                triangle_positions[2] - triangle_positions[0],
+            ),
+            dtype=np.float32,
+        )
+        length = np.float32(np.linalg.norm(cross))
+        if length > np.float32(1.0e-8):
+            triangle_normals[triangle_index] = cross / length
+        tangent = _triangle_tangent(triangle_positions, uv_array[triangle])
+        if np.dot(tangent, tangent) > np.float32(0.0):
+            triangle_tangents[triangle_index] = tangent
+
+    for vertex, raw_records in enumerate(vertex_to_triangle_records):
+        if not raw_records:
+            continue
+        normal = np.zeros(3, dtype=np.float32)
+        tangent = np.zeros(3, dtype=np.float32)
+        for raw_record in raw_records:
+            if len(raw_record) != 2:
+                raise ValueError("vertex-to-triangle record must be (flip, triangle)")
+            flip, triangle_index = (int(value) for value in raw_record)
+            if flip < 0 or flip > 0xFFF or triangle_index < 0 or triangle_index >= len(triangle_array):
+                raise ValueError("vertex-to-triangle record out of range")
+            normal += triangle_normals[triangle_index] * (-1 if flip & 0x1 else 1)
+            tangent += triangle_tangents[triangle_index] * (-1 if flip & 0x2 else 1)
+        normal_length = np.float32(np.linalg.norm(normal))
+        tangent_length = np.float32(np.linalg.norm(tangent))
+        if normal_length <= np.float32(1.0e-6) or tangent_length <= np.float32(1.0e-6):
+            continue
+        normal /= normal_length
+        tangent /= tangent_length
+        dot = np.float32(np.dot(normal, tangent))
+        if dot == np.float32(1.0) or dot == np.float32(-1.0):
+            continue
+        binormal = _normalize_vector(np.asarray(np.cross(normal, tangent), dtype=np.float32))
+        work_rotations[vertex] = _normalize_quaternion(
+            _quaternion_multiply(
+                _look_rotation(binormal, normal),
+                adjustments[vertex],
+            )
+        )
+
+    world_positions, world_rotations, local_positions, local_rotations = _write_world_local(
+        attributes=attrs,
+        positions=work_positions,
+        rotations=work_rotations,
+        vertex_to_transform=vertex_to_transform,
+        parents=parents,
+        scales=scales,
+        initial_local_positions=initial_local_positions,
+        initial_local_rotations=initial_local_rotations,
+    )
+    payload = {
+        "schema_version": 0,
+        "triangle_normals": triangle_normals.tolist(),
+        "triangle_tangents": triangle_tangents.tolist(),
+        "proxy_rotations": work_rotations.tolist(),
+        "world_positions": world_positions.tolist(),
+        "world_rotations": world_rotations.tolist(),
+        "local_positions": local_positions.tolist(),
+        "local_rotations": local_rotations.tolist(),
+    }
+    return MC2BoneTriangleRotationResult(
+        triangle_normals=tuple(tuple(float(value) for value in row) for row in triangle_normals),
+        triangle_tangents=tuple(tuple(float(value) for value in row) for row in triangle_tangents),
+        proxy_rotations=tuple(tuple(float(value) for value in row) for row in work_rotations),
+        world_positions=tuple(tuple(float(value) for value in row) for row in world_positions),
+        world_rotations=tuple(tuple(float(value) for value in row) for row in world_rotations),
+        local_positions=tuple(tuple(float(value) for value in row) for row in local_positions),
+        local_rotations=tuple(tuple(float(value) for value in row) for row in local_rotations),
+        result_signature=_signature(payload),
+    )
+
+
 __all__ = [
     "MC2BoneLineRotationResult",
+    "MC2BoneTriangleRotationResult",
     "evaluate_mc2_bone_line_rotation",
+    "evaluate_mc2_bone_triangle_rotation",
 ]
