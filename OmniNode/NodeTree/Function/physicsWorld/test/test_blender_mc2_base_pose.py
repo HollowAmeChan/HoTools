@@ -146,6 +146,7 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
     keep_world = None
     reset_world = None
     reset_negative_world = None
+    keep_negative_world = None
     native_owner = None
     recovered_native_owner = None
     try:
@@ -1878,6 +1879,134 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             atol=1.0e-5,
         )
         assert reset_negative_candidate.native_step_count == 3
+
+        keep_negative_task = mc2_specs.make_mc2_task_spec(
+            "mesh_cloth",
+            [source],
+            profile=mc2_parameters.make_mc2_particle_profile(
+                gravity=0.0,
+                damping=0.0,
+                animation_pose_ratio=0.0,
+                stabilization_time_after_reset=0.0,
+                anchor_inertia=1.0,
+                world_inertia=1.0,
+                movement_inertia_smoothing=0.5,
+                movement_speed_limit=-1.0,
+                rotation_speed_limit=-1.0,
+                teleport_mode=2,
+                teleport_distance=1000.0,
+                teleport_rotation=30.0,
+            ),
+        )
+        keep_negative_topology = mc2_topology.build_mc2_topology_spec(
+            keep_negative_task
+        )
+        keep_negative_first_input = frame_input.make_mc2_frame_input(
+            task_id=keep_negative_task.task_id,
+            topology_signature=keep_negative_topology.topology_signature,
+            frame=70,
+            generation=20,
+            world_positions=keep_first_positions,
+            world_rotations_xyzw=keep_first_rotations,
+            source_world_linear=np.eye(3, dtype=np.float32),
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=70,
+                generation=20,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                component_world_scale=(1.0, 1.0, 1.0),
+            ),
+        )
+        keep_negative_second_input = frame_input.make_mc2_frame_input(
+            task_id=keep_negative_task.task_id,
+            topology_signature=keep_negative_topology.topology_signature,
+            frame=71,
+            generation=20,
+            world_positions=reset_negative_second_positions,
+            world_rotations_xyzw=reset_negative_second_rotations,
+            source_world_linear=reset_negative_linear,
+            center_frame_pose=type(first_input.center_frame_pose)(
+                frame=71,
+                generation=20,
+                component_identity=component_identity,
+                component_world_position=(0.0, 0.0, 0.0),
+                component_world_rotation_xyzw=tuple(
+                    float(value) for value in reset_negative_rotation
+                ),
+                component_world_scale=(-1.0, 1.0, 1.0),
+            ),
+        )
+        keep_negative_world = world_types.PhysicsWorldCache()
+        keep_negative_world.generation = 20
+        keep_negative_world.frame_context.frame = 70
+        keep_negative_world.frame_context.raw_dt = float(
+            np.nextafter(np.float32(0.1), np.float32(np.inf))
+        )
+        mc2_solver.step_mc2(
+            keep_negative_world,
+            [keep_negative_task],
+            settings=fixed_settings,
+            frame_inputs={keep_negative_task.task_id: keep_negative_first_input},
+        )
+        keep_negative_slot = keep_negative_world.solver_slots[
+            keep_negative_task.task_id
+        ]
+        keep_negative_world.frame_context.frame = 71
+        keep_negative_world.frame_context.time_scale = 0.0
+        mc2_solver.step_mc2(
+            keep_negative_world,
+            [keep_negative_task],
+            settings=fixed_settings,
+            frame_inputs={keep_negative_task.task_id: keep_negative_second_input},
+            dt=0.0,
+        )
+        keep_negative_info = keep_negative_slot.data["native_context"].inspect()
+        assert keep_negative_info["reset_count"] == 1
+        assert keep_negative_info["step_count"] == 0
+        assert keep_negative_info["center_frame_shift_count"] == 1
+        assert keep_negative_info["center_negative_scale_teleport_count"] == 1
+        keep_negative_shift = keep_negative_slot.data["center_frame_shift_result"]
+        assert keep_negative_shift.keep_teleport is True
+        assert keep_negative_shift.reset_teleport is False
+        np.testing.assert_allclose(
+            keep_negative_shift.frame_component_shift_vector,
+            (0.0, 0.0, 0.0),
+            atol=1.0e-6,
+        )
+        np.testing.assert_allclose(
+            keep_negative_shift.frame_component_shift_rotation_xyzw,
+            reset_negative_rotation,
+            atol=1.0e-6,
+        )
+        keep_negative_transition = keep_negative_slot.data[
+            "center_negative_scale_result"
+        ]
+        assert keep_negative_transition is not None
+        assert keep_negative_transition.active is True
+        keep_negative_expected_positions = np.asarray(
+            reset_negative_second_positions @ reset_negative_rotation_matrix.T,
+            dtype=np.float32,
+        )
+        keep_negative_candidate = keep_negative_slot.data["result_candidate"]
+        np.testing.assert_allclose(
+            keep_negative_candidate.world_positions,
+            keep_negative_expected_positions,
+            atol=1.0e-5,
+        )
+        assert keep_negative_candidate.native_step_count == 0
+        keep_negative_center = keep_negative_slot.data["center_state"]
+        assert keep_negative_center.negative_scale_direction == (-1.0, 1.0, 1.0)
+        np.testing.assert_allclose(
+            keep_negative_center.old_frame_world_rotation_xyzw,
+            (
+                0.0,
+                float(np.sin(np.radians(45.0))),
+                0.0,
+                float(np.cos(np.radians(45.0))),
+            ),
+            atol=1.0e-6,
+        )
     finally:
         if world is not None:
             world.omni_cache_dispose("test_complete")
@@ -1893,6 +2022,8 @@ def test_armature_base_pose_isolated_from_shared_gn_output():
             reset_world.omni_cache_dispose("test_complete")
         if reset_negative_world is not None:
             reset_negative_world.omni_cache_dispose("test_complete")
+        if keep_negative_world is not None:
+            keep_negative_world.omni_cache_dispose("test_complete")
         if native_owner is not None:
             assert native_owner.inspect()["released"] is True
         if recovered_native_owner is not None:

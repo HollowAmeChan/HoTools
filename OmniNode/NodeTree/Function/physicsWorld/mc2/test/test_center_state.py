@@ -54,6 +54,10 @@ RESET_NEGATIVE_SCALE_FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "fixtures", "tier_a", "center_frame_shift_reset_negative_scale_x_001.json",
 )
+KEEP_NEGATIVE_SCALE_FIXTURE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures", "tier_a", "center_frame_shift_keep_negative_scale_x_001.json",
+)
 
 
 def _axis_angle(value):
@@ -721,6 +725,93 @@ def test_center_reset_teleport_takes_precedence_over_negative_scale() -> None:
     ):
         np.testing.assert_allclose(expected[field], (0.0, 0.0, 0.0), atol=1.0e-6)
     assert expected["friction"] == expected["static_friction"] == 0.0
+
+
+def test_center_keep_teleport_follows_negative_scale_transition() -> None:
+    with open(KEEP_NEGATIVE_SCALE_FIXTURE_PATH, "r", encoding="utf-8") as handle:
+        fixture = json.load(handle)
+    values = fixture["input"]
+    expected = fixture["expected"]
+    old_rotation = _axis_angle(values["old_component_world_rotation_axis_angle"])
+    component_rotation = _axis_angle(values["component_world_rotation_axis_angle"])
+    old_frame_rotation = _axis_angle(values["old_frame_world_rotation_axis_angle"])
+    first_frame = center.MC2CenterFramePoseSpec(
+        frame=1,
+        generation=0,
+        component_identity="object:keep-negative",
+        component_world_position=values["old_component_world_position"],
+        component_world_rotation_xyzw=old_rotation,
+        component_world_scale=values["old_component_world_scale"],
+    )
+    persistent = center.MC2CenterPersistentState("keep-negative-static")
+    persistent.reset(
+        first_frame,
+        values["old_frame_world_position"],
+        old_frame_rotation,
+        velocity_weight=1.0,
+    )
+    persistent.initial_scale = tuple(values["initial_scale"])
+    persistent.smoothing_velocity = tuple(values["smoothing_velocity"])
+    second_frame = center.MC2CenterFramePoseSpec(
+        frame=2,
+        generation=0,
+        component_identity="object:keep-negative",
+        component_world_position=values["component_world_position"],
+        component_world_rotation_xyzw=component_rotation,
+        component_world_scale=values["component_world_scale"],
+    )
+    center_pose = center.MC2CenterWorldPoseSpec(
+        position=tuple(values["component_world_position"]),
+        rotation_xyzw=component_rotation,
+        scale=tuple(values["component_world_scale"]),
+        negative_scale_direction=(-1.0, 1.0, 1.0),
+    )
+    transition = persistent.make_negative_scale_transition(second_frame, center_pose)
+    assert transition.active
+    shift_input = persistent.make_frame_shift_input(
+        second_frame,
+        center_pose=center_pose,
+        simulation_delta_time=0.1,
+        frame_delta_time=0.1,
+        world_inertia=1.0,
+        movement_speed_limit=-1.0,
+        rotation_speed_limit=-1.0,
+        movement_inertia_smoothing=0.5,
+        teleport_mode=values["teleport_mode"],
+        teleport_distance=values["teleport_distance"],
+        teleport_rotation=values["teleport_rotation"],
+        negative_scale_transition=transition,
+    )
+    np.testing.assert_allclose(
+        shift_input.old_component_world_position,
+        expected["old_component_world_position"],
+        rtol=1.0e-6,
+        atol=1.0e-6,
+    )
+    assert shift_input.old_frame_world_position == center_pose.position
+    assert shift_input.old_frame_world_rotation_xyzw == center_pose.rotation_xyzw
+    assert shift_input.now_world_position == center_pose.position
+    assert shift_input.now_world_rotation_xyzw == center_pose.rotation_xyzw
+    result = center.evaluate_mc2_center_frame_shift(shift_input)
+    assert result.keep_teleport is expected["keep_teleport"]
+    assert result.reset_teleport is expected["reset_teleport"]
+    for field in (
+        "frame_component_shift_vector",
+        "frame_component_shift_rotation_xyzw",
+        "old_frame_world_position",
+        "old_frame_world_rotation_xyzw",
+        "now_world_position",
+        "now_world_rotation_xyzw",
+        "frame_world_position",
+        "frame_world_rotation_xyzw",
+        "smoothing_velocity",
+    ):
+        np.testing.assert_allclose(
+            getattr(result, field),
+            expected[field],
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
 
 
 if __name__ == "__main__":

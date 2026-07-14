@@ -516,6 +516,10 @@ class MC2CenterPersistentState:
             if negative_scale_transition is not None and negative_scale_transition.active
             else None
         )
+        if transition is not None and center_pose is None:
+            raise ValueError(
+                "active negative_scale_transition requires the current Center pose"
+            )
         return MC2CenterFrameShiftInputSpec(
             simulation_delta_time=float(simulation_delta_time),
             frame_delta_time=float(frame_delta_time),
@@ -533,10 +537,26 @@ class MC2CenterPersistentState:
             old_component_world_rotation_xyzw=self.old_component_world_rotation_xyzw,
             component_world_position=frame_pose.component_world_position,
             component_world_rotation_xyzw=frame_pose.component_world_rotation_xyzw,
-            old_frame_world_position=self.old_frame_world_position,
-            old_frame_world_rotation_xyzw=self.old_frame_world_rotation_xyzw,
-            now_world_position=self.old_world_position,
-            now_world_rotation_xyzw=self.old_world_rotation_xyzw,
+            old_frame_world_position=(
+                center_pose.position
+                if transition is not None
+                else self.old_frame_world_position
+            ),
+            old_frame_world_rotation_xyzw=(
+                center_pose.rotation_xyzw
+                if transition is not None
+                else self.old_frame_world_rotation_xyzw
+            ),
+            now_world_position=(
+                center_pose.position
+                if transition is not None
+                else self.old_world_position
+            ),
+            now_world_rotation_xyzw=(
+                center_pose.rotation_xyzw
+                if transition is not None
+                else self.old_world_rotation_xyzw
+            ),
             use_anchor=bool(
                 self.anchor_identity
                 and self.anchor_identity == frame_pose.anchor_identity
@@ -1151,7 +1171,7 @@ def evaluate_mc2_negative_scale_transition(
 def evaluate_mc2_center_frame_shift(
     frame: MC2CenterFrameShiftInputSpec,
 ) -> MC2CenterFrameShiftResult:
-    """Evaluate the verified no-fixed-list, unit-positive-scale shift domain."""
+    """Evaluate verified Center shift and configured teleport domains."""
     if not isinstance(frame, MC2CenterFrameShiftInputSpec):
         raise TypeError("frame must be MC2CenterFrameShiftInputSpec")
     simulation_dt = _f32(frame.simulation_delta_time)

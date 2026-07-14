@@ -254,8 +254,8 @@ def _make_slot_center_frame_shift(
         )
         for value, expected in zip(values, unit_scale)
     )
-    reset_negative_transition_domain = bool(
-        teleport_mode == 1
+    configured_negative_transition_domain = bool(
+        teleport_mode in (1, 2)
         and negative_scale_transition is not None
         and negative_scale_transition.active
     )
@@ -272,7 +272,7 @@ def _make_slot_center_frame_shift(
         and math.isclose(float(center_state.velocity_weight), 1.0, abs_tol=1.0e-8)
         and (
             unit_positive_scale_domain
-            or reset_negative_transition_domain
+            or configured_negative_transition_domain
         )
     )
     if not in_verified_domain:
@@ -746,8 +746,16 @@ def step_mc2(
                                     center_negative_scale_result
                                 )
                             if center_frame_shift_result is not None:
+                                frame_shift_pivot = (
+                                    center_negative_scale_result.old_component_world_position
+                                    if (
+                                        center_negative_scale_result is not None
+                                        and center_negative_scale_result.active
+                                    )
+                                    else center_state.old_component_world_position
+                                )
                                 native_context.apply_center_frame_shift(
-                                    center_state.old_component_world_position,
+                                    frame_shift_pivot,
                                     center_frame_shift_result,
                                 )
                         if center_action == "step":

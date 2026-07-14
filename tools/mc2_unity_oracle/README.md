@@ -72,11 +72,12 @@ directory:
   The tenth freezes configured Keep teleport detection before smoothing and its
   100% frame shift. The eleventh freezes configured Reset teleport detection,
   zero frame shift, Center history replacement, and smoothing reset. The
-  twelfth combines Reset with an X-axis scale-sign transition and proves particle
-  reset takes precedence over the negative-scale matrix. The thirteenth freezes
-  the X-axis component scale-sign transition by itself, both negative-scale TRS
-  delta matrices, and the resulting Center and particle-history transforms
-  before inertia shift.
+  twelfth combines Keep with an X-axis scale-sign transition and freezes
+  negative-matrix then frame-shift ordering. The thirteenth combines Reset with
+  the same transition and proves particle reset takes precedence over the
+  negative-scale matrix. The fourteenth freezes the X-axis component scale-sign
+  transition by itself, both negative-scale TRS delta matrices, and the resulting
+  Center and particle-history transforms before inertia shift.
 
 Generated `Library`, `Temp`, logs, and nonessential ProjectSettings are ignored.
 `Packages/packages-lock.json` is committed after a successful run so the

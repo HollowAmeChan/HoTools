@@ -865,6 +865,24 @@ namespace HoTools.MC2Oracle.Editor
             );
             Debug.Log($"[MC2 Oracle] wrote {resetTeleportPath}");
 
+            NegativeScaleTeleportDump keepNegativeScale =
+                RunNegativeScaleTeleportOracle(InertiaConstraint.TeleportMode.Keep);
+            string keepNegativeScalePath = Path.Combine(
+                outputDirectory,
+                "center_frame_shift_keep_negative_scale_x_001.json"
+            );
+            File.WriteAllText(
+                keepNegativeScalePath,
+                BuildConfiguredNegativeScaleTeleportJson(
+                    keepNegativeScale,
+                    "center_frame_shift_keep_negative_scale_x_001",
+                    InertiaConstraint.TeleportMode.Keep,
+                    "Isolates configured Keep teleport after an X-axis scale-sign transition and freezes negative-matrix then frame-shift particle ordering."
+                ),
+                new UTF8Encoding(false)
+            );
+            Debug.Log($"[MC2 Oracle] wrote {keepNegativeScalePath}");
+
             NegativeScaleTeleportDump resetNegativeScale =
                 RunNegativeScaleTeleportOracle(InertiaConstraint.TeleportMode.Reset);
             string resetNegativeScalePath = Path.Combine(
@@ -873,7 +891,12 @@ namespace HoTools.MC2Oracle.Editor
             );
             File.WriteAllText(
                 resetNegativeScalePath,
-                BuildResetNegativeScaleTeleportJson(resetNegativeScale),
+                BuildConfiguredNegativeScaleTeleportJson(
+                    resetNegativeScale,
+                    "center_frame_shift_reset_negative_scale_x_001",
+                    InertiaConstraint.TeleportMode.Reset,
+                    "Isolates configured Reset teleport after an X-axis scale-sign transition and proves particle reset takes precedence over the negative-scale matrix."
+                ),
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {resetNegativeScalePath}");
@@ -889,7 +912,7 @@ namespace HoTools.MC2Oracle.Editor
                 new UTF8Encoding(false)
             );
             Debug.Log($"[MC2 Oracle] wrote {negativeScalePath}");
-            return 13;
+            return 14;
         }
 
         private static NegativeScaleTeleportDump RunNegativeScaleTeleportOracle(
@@ -4418,13 +4441,16 @@ namespace HoTools.MC2Oracle.Editor
             return text.ToString();
         }
 
-        private static string BuildResetNegativeScaleTeleportJson(
-            NegativeScaleTeleportDump dump
+        private static string BuildConfiguredNegativeScaleTeleportJson(
+            NegativeScaleTeleportDump dump,
+            string caseId,
+            InertiaConstraint.TeleportMode teleportMode,
+            string scope
         )
         {
             var text = new StringBuilder();
             text.AppendLine("{");
-            Property(text, 2, "case_id", Quote("center_frame_shift_reset_negative_scale_x_001"));
+            Property(text, 2, "case_id", Quote(caseId));
             Property(text, 2, "oracle_tier", Quote("A"));
             Property(text, 2, "mc2_version", Quote(MC2Version));
             Property(text, 2, "mc2_commit", Quote(MC2Commit));
@@ -4441,10 +4467,15 @@ namespace HoTools.MC2Oracle.Editor
                 text,
                 2,
                 "scope",
-                Quote("Isolates configured Reset teleport after an X-axis scale-sign transition and proves particle reset takes precedence over the negative-scale matrix.")
+                Quote(scope)
             );
             text.AppendLine("  \"input\": {");
-            Property(text, 4, "teleport_mode", "1");
+            Property(
+                text,
+                4,
+                "teleport_mode",
+                teleportMode == InertiaConstraint.TeleportMode.Reset ? "1" : "2"
+            );
             Property(text, 4, "teleport_distance", "1000");
             Property(text, 4, "teleport_rotation", "30");
             Property(text, 4, "initial_scale", "[1,1,1]");
